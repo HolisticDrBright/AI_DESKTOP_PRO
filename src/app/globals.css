@@ -137,6 +137,19 @@ body {
   background: none !important;
 }
 
+/*
+ * Display scale — one accessible control covering "comfortable vs dense"
+ * information density and larger text. Applied to the scrolling content area
+ * only, so the chrome (sidebar, top bar) stays a stable size. `zoom` scales
+ * both layout and the design's fixed-px type together.
+ */
+[data-scale="compact"] #main-content {
+  zoom: 0.94;
+}
+[data-scale="large"] #main-content {
+  zoom: 1.09;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

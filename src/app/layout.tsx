@@ -3,6 +3,8 @@ import { Inter } from "next/font/google";
 import "./globals.css";
 import { AppShell } from "@/components/shell/AppShell";
 import { MaterialProvider, ShellUiProvider } from "@/lib/providers";
+import { FeedbackProvider } from "@/lib/feedback";
+import { ComposerProvider } from "@/lib/composer";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -24,7 +26,17 @@ export default function RootLayout({
       <body>
         <MaterialProvider>
           <ShellUiProvider>
-            <AppShell>{children}</AppShell>
+            <FeedbackProvider>
+              <ComposerProvider>
+                <a
+                  href="#main-content"
+                  className="sr-only rounded-md bg-action px-3 py-2 text-[13px] font-semibold text-white focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-[300]"
+                >
+                  Skip to content
+                </a>
+                <AppShell>{children}</AppShell>
+              </ComposerProvider>
+            </FeedbackProvider>
           </ShellUiProvider>
         </MaterialProvider>
       </body>

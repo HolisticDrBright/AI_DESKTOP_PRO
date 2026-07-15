@@ -8,7 +8,12 @@ export default async function PatientSummaryPage({
   params: Promise<{ patientId: string }>;
 }) {
   const { patientId } = await params;
-  const summary = await api.patients.summary(patientId);
+  const [summary, patient] = await Promise.all([
+    api.patients.summary(patientId),
+    api.patients.get(patientId),
+  ]);
   if (!summary) notFound();
-  return <SummaryTab summary={summary} patientId={patientId} />;
+  return (
+    <SummaryTab summary={summary} patientId={patientId} patientName={patient?.name} />
+  );
 }
