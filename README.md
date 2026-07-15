@@ -108,13 +108,31 @@ flow, and the tRPC swap plan.
 
 ## Roadmap
 
+The platform-level plan lives in [`docs/platform/`](docs/platform/):
+the original backend prompt (`backend-prompt.md`, targeting the
+`rork-ai-longevity-coach` repo that hosts the Expo app and shared backend)
+plus the enhancement addendum (`backend-addendum.md`) that adds billing &
+claims, telehealth and automations, an outcomes/population layer, migration
+importers, and a versioned connector framework.
+
+For this desktop repo, in order:
+
 1. **Phase 2+ screens** from `product-spec.txt` — Client directory, Health
    Twin system map, three-pane Clinical Reasoning workspace, Labs workspace,
    Supplement Intelligence, N-of-1 Lab, unified Timeline, Program /
    Assessment builders, Tasks & Review Queue.
 2. **Backend integration** — replace `src/adapters/*` with tRPC queries
-   against the shared Hono/Supabase backend (see the platform development
-   plan; the desktop app must share domain schemas with the Expo patient
-   app rather than duplicating them).
-3. Auth, organizations and patient-access authorization, audit logging —
-   prerequisites before any real patient data flows through this UI.
+   against the shared Hono/Supabase backend; the desktop app must share
+   domain schemas with the Expo patient app rather than duplicating them.
+   Blocked on the backend's Phase 1 (tenant isolation, patient access,
+   audit) landing in the platform repo first.
+3. **Ops surfaces from the addendum** (after the corresponding backend
+   routers exist): Billing (invoices, payments, packages), insurance claims
+   status, Automations rules + run history, connector-health Integrations
+   screen, staged migration-import review, telehealth join links on
+   appointments, and population/outcomes analytics views. These need design
+   passes first — the approved v2 shell does not yet include them, so they
+   must not be improvised into the sidebar.
+4. **Trust surfaces** — the addendum's AI data-use guarantee ("processed
+   in-region, never used to train external models") gets a visible home in
+   the assistant UI and Settings once the config exists server-side.

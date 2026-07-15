@@ -62,9 +62,14 @@ Rules the data layer already follows:
 
 ### Swapping to tRPC later
 
-1. Stand up the shared backend (Hono + tRPC + Supabase per the platform
-   development plan) and expose routers matching the `api` namespaces
-   (`patients`, `practice`, `assistant`, `commands`).
+1. Stand up the shared backend (Hono + tRPC + Supabase per
+   [`docs/platform/backend-prompt.md`](platform/backend-prompt.md) and its
+   [enhancement addendum](platform/backend-addendum.md)) and expose routers
+   matching the `api` namespaces (`patients`, `practice`, `assistant`,
+   `commands`). The addendum also specifies `billing`, `claims`,
+   `automations`, `telehealth`, `population`, `outcomes` and `imports`
+   routers — each will arrive here as a new adapter namespace plus screens
+   once designed.
 2. Replace the function bodies in `src/adapters/index.ts` with tRPC calls;
    the interfaces in `src/adapters/types.ts` become the shared output
    schemas (Zod on the server).
