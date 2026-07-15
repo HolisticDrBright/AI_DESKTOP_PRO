@@ -27,6 +27,12 @@ insert into public.organizations (id, name, slug, created_by) values
  ('00000000-0000-0000-0000-0000000000b1','Org B','org-b-test','00000000-0000-0000-0000-00000000000b');
 insert into public.patient_profiles (id, organization_id, first_name, last_name, created_by)
  values ('00000000-0000-0000-0000-0000000000a2','00000000-0000-0000-0000-0000000000a1','Alex','A','00000000-0000-0000-0000-00000000000a');
+-- A patient-scoped clinical row (reasoning) and a billing row, to prove the
+-- can_access_patient() gate isolates the whole clinical + financial stack.
+insert into public.clinical_hypotheses (organization_id, patient_id, title, created_by)
+ values ('00000000-0000-0000-0000-0000000000a1','00000000-0000-0000-0000-0000000000a2','Test hypothesis','00000000-0000-0000-0000-00000000000a');
+insert into public.invoices (organization_id, patient_id, amount_minor, created_by)
+ values ('00000000-0000-0000-0000-0000000000a1','00000000-0000-0000-0000-0000000000a2', 5000, '00000000-0000-0000-0000-00000000000a');
 
 create temp table _t (label text, val int, expected int) on commit drop;
 grant all on _t to authenticated;
@@ -35,18 +41,22 @@ grant all on _t to authenticated;
 set local role authenticated;
 select set_config('request.jwt.claims','{"sub":"00000000-0000-0000-0000-00000000000b","role":"authenticated"}', true);
 insert into _t values
- ('B sees Org A (cross-tenant)',     (select count(*) from public.organizations   where id='00000000-0000-0000-0000-0000000000a1'), 0),
- ('B sees Org B (own)',              (select count(*) from public.organizations   where id='00000000-0000-0000-0000-0000000000b1'), 1),
- ('B sees Patient A (cross-tenant)', (select count(*) from public.patient_profiles where id='00000000-0000-0000-0000-0000000000a2'), 0),
- ('B visible memberships (own only)',(select count(*) from public.organization_memberships), 1);
+ ('B sees Org A (cross-tenant)',        (select count(*) from public.organizations      where id='00000000-0000-0000-0000-0000000000a1'), 0),
+ ('B sees Org B (own)',                 (select count(*) from public.organizations      where id='00000000-0000-0000-0000-0000000000b1'), 1),
+ ('B sees Patient A (cross-tenant)',    (select count(*) from public.patient_profiles    where id='00000000-0000-0000-0000-0000000000a2'), 0),
+ ('B sees Hypothesis A (cross-tenant)', (select count(*) from public.clinical_hypotheses where patient_id='00000000-0000-0000-0000-0000000000a2'), 0),
+ ('B sees Invoice A (cross-tenant)',    (select count(*) from public.invoices            where patient_id='00000000-0000-0000-0000-0000000000a2'), 0),
+ ('B visible memberships (own only)',   (select count(*) from public.organization_memberships), 1);
 reset role;
 
 -- Simulate User A (owner of Org A) — own rows must be visible.
 set local role authenticated;
 select set_config('request.jwt.claims','{"sub":"00000000-0000-0000-0000-00000000000a","role":"authenticated"}', true);
 insert into _t values
- ('A sees Org A (own)',     (select count(*) from public.organizations   where id='00000000-0000-0000-0000-0000000000a1'), 1),
- ('A sees Patient A (own)', (select count(*) from public.patient_profiles where id='00000000-0000-0000-0000-0000000000a2'), 1);
+ ('A sees Org A (own)',        (select count(*) from public.organizations      where id='00000000-0000-0000-0000-0000000000a1'), 1),
+ ('A sees Patient A (own)',    (select count(*) from public.patient_profiles    where id='00000000-0000-0000-0000-0000000000a2'), 1),
+ ('A sees Hypothesis A (own)', (select count(*) from public.clinical_hypotheses where patient_id='00000000-0000-0000-0000-0000000000a2'), 1),
+ ('A sees Invoice A (own)',    (select count(*) from public.invoices            where patient_id='00000000-0000-0000-0000-0000000000a2'), 1);
 reset role;
 
 select label, val, expected, (val = expected) as pass from _t order by label;

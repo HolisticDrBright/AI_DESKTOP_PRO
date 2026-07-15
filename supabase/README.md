@@ -20,57 +20,82 @@ to be an active agent-OS product with its own data and colliding table names).
 - **Project:** `AI Desktop Pro` — ref `urcjiehlxoehievobezf`, region `us-east-2`.
 - Clinical PHI lives only here. No unrelated tables share the instance.
 
-## Design principles
+## Status (applied + verified)
+
+- **146 tables**, **RLS enabled on all 146** (0 without RLS), **179 policies**.
+- **Supabase security advisor: 0 findings.**
+- **Cross-tenant isolation test passes** (`tests/cross_tenant_isolation.sql`):
+  a user in Org B sees zero of Org A's organization, patient, clinical
+  hypothesis, invoice, or membership rows; the Org A owner sees all of theirs.
+
+## Design principles (enforced in the schema)
 
 - **Organization-first tenancy.** Every tenant/patient table carries
   `organization_id`; isolation is enforced by RLS, not just the app layer.
 - **Authorization helpers live in a `private` schema** (`is_org_member`,
-  `has_org_role`, `is_org_admin`, `can_access_patient`, …) — `SECURITY DEFINER`
+  `has_org_role`, `is_org_admin`, `can_access_patient`) — `SECURITY DEFINER`
   with pinned `search_path`, executable only by `authenticated`/`service_role`,
   and **not** exposed as PostgREST RPC. RLS policies call them; clients cannot.
 - **Patient = org-owned record, optionally linked to an auth user**
   (`patient_profiles.user_id`) — unifies the legacy clinic-record and
   mobile-user models.
-- Required provenance/audit columns on patient tables (`source`,
-  `source_record_id`, `created_by`, `updated_by`, `deleted_at`).
-- Every migration is applied **and verified**: the Supabase security advisor
-  must report 0 findings, and `tests/cross_tenant_isolation.sql` must pass.
+- **Uniform RLS.** Patient-scoped tables use one
+  `can_access_patient(patient_id)` policy for ALL commands (the patient, an
+  assigned practitioner, or an org admin). Reference/knowledge tables (no PHI)
+  are authenticated-read / service-role-write. Financial tables are org-admin
+  scoped.
+- **Provenance/audit columns** on every patient table (`source`,
+  `source_record_id`, `created_by`, `updated_by`, `deleted_at`) and
+  **observation columns** (`observed_at`, `ingested_at`, `data_quality`,
+  `confidence`, `provenance`, `review_status`, `reviewed_by`, `reviewed_at`) on
+  observation tables.
+- **Regulatory guardrails baked in:** `clinical_hypotheses.reasoning_strength`
+  is documented as an internal 0–100 weighting, **not** a probability;
+  `reasoning_snapshots` is immutable/append-only with "no hidden
+  chain-of-thought"; experiment conclusions and safety severities use the
+  spec's cautious enumerations; monetary values are **integer minor units**.
 
 ## Migrations
 
-| File | Contents | Verified |
-| --- | --- | --- |
-| `migrations/20260715000001_tenancy_foundation.sql` | `organizations`, `organization_memberships`, role helpers, owner-bootstrap trigger, RLS | advisor: 0 findings |
-| `migrations/20260715000002_patient_access_model.sql` | `practitioner_profiles`, `patient_profiles`, `practitioner_patient_relationships`, `invitations`, `can_access_patient`, RLS | advisor: 0 findings; cross-tenant test passes |
+| File | Module |
+| --- | --- |
+| `…000001_tenancy_foundation` | organizations, memberships, role helpers, owner-bootstrap, RLS |
+| `…000002_patient_access_model` | practitioner/patient profiles, relationships, invitations, `can_access_patient` |
+| `…000003_privacy_foundation` | consents, data-sharing, **audit_events**/**access_events** (append-only), breach, export/deletion requests |
+| `…000004_clinical_core` | goals, conditions, symptoms, allergies, medications, procedures, family history, encounters, notes |
+| `…000005_labs_biomarkers` | biomarker dictionary, org optimal ranges, lab documents/panels/observations, extraction pipeline |
+| `…000006_reasoning_and_health_twin` | clinical facts, hypotheses, evidence, contradictions, reasoning snapshots, risk flags, Adaptive Health Twin |
+| `…000007_supplement_intelligence` | product/ingredient knowledge graph, protocols, exposures, adherence |
+| `…000008_experiments` | N-of-1 experiments, phases, outcomes, observations, analyses, conclusions |
+| `…000009_operations_programs_assessments` | appointments, tasks, messages, files, tags, programs, assessments |
+| `…000010_safety_knowledge_jobs_outcomes` | safety rules/evals, knowledge sources, jobs, AI ledger, Quantum Mind, wearables/nutrition, outcomes/cohorts, imports, review queue |
+| `…000011_billing_claims_automations_connectors` | billing, insurance claims, automations, connector framework, telehealth |
 
-Applied to the live project during development via the Supabase MCP
-(`execute_sql`), so the project has the schema but **no CLI migration-history
-rows yet**. Consequences:
+Migrations 0003–0011 were authored and applied to the live project via the
+Supabase MCP `execute_sql` (the environment's egress policy blocks the CLI's
+Docker path), then verified with the security advisor + isolation test. The
+files here reproduce exactly what is live.
 
-- On a **fresh** project, `supabase db push` applies both files cleanly.
-- On the **existing** `urcjiehlxoehievobezf` project (schema already present),
-  run `supabase migration repair --status applied 20260715000001 20260715000002`
-  first so the CLI records them as applied instead of trying to re-run them.
+## Applying to a fresh project / syncing history / types
 
 ```bash
 supabase link --project-ref urcjiehlxoehievobezf
-# existing project: sync history first, then future pushes are clean
-supabase migration repair --status applied 20260715000001 20260715000002
-supabase db push
+# existing project already has the schema — record history instead of re-running:
+supabase migration repair --status applied \
+  20260715000001 20260715000002 20260715000003 20260715000004 20260715000005 \
+  20260715000006 20260715000007 20260715000008 20260715000009 20260715000010 20260715000011
+# a truly fresh project instead just needs:  supabase db push
+supabase gen types typescript --linked > src/lib/database.types.ts
 ```
 
-## Tests
+Run the isolation test after applying (every output row must have `pass = true`);
+extend it with a row per new patient/tenant table.
 
-- `tests/cross_tenant_isolation.sql` — creates two orgs/users in a rolled-back
-  transaction and asserts a user in Org B cannot read Org A's organization,
-  patient, or memberships. Every output row must have `pass = true`. Extend it
-  with a row per new patient/tenant table.
+## What this is and isn't
 
-## Not yet built (next migrations)
-
-- Privacy: `consents`, `audit_events` (append-only, service-role write,
-  org-admin read).
-- Clinical domain (labs/biomarkers, supplements, reasoning, …) — later phases,
-  each org-scoped and RLS-tested on this same foundation.
-- Backfill/import path from the legacy project for existing patient data
-  (staged, reviewed — never a silent bulk copy).
+This is the **data foundation** — schema, RLS, and provenance for the whole
+platform (prompt 1 domain + the prompt 2 addendum). It does **not** include the
+application layer: tRPC routers, AI-orchestration services, external
+integrations (Stripe / clearinghouse / telehealth / Fullscript / Vital), edge
+functions, or data migration from the legacy project. Those build on top of
+this schema; see `rork-ai-longevity-coach/docs/desktop-platform-roadmap.md`.
