@@ -1,7 +1,8 @@
 "use client";
 
+import { useQuery } from "@tanstack/react-query";
 import { CircleAlert, Send, Sparkles, X } from "lucide-react";
-import { getAssistantSession } from "@/adapters/assistant.mock";
+import { api } from "@/adapters";
 import type { AssistantFact, ProvenanceSourceType } from "@/adapters/types";
 import { ProvenanceBadge } from "@/components/ui/Provenance";
 import { toneColor } from "@/lib/tones";
@@ -18,9 +19,12 @@ const FACT_SOURCE: Record<AssistantFact["badge"], ProvenanceSourceType> = {
 export function AssistantDrawer() {
   const { aiOpen, closeAi } = useShellUi();
   const composer = useComposerOptional();
-  if (!aiOpen) return null;
-
-  const session = getAssistantSession();
+  const { data: session } = useQuery({
+    queryKey: ["assistant", "session"],
+    queryFn: () => api.assistant.session(),
+    enabled: aiOpen,
+  });
+  if (!aiOpen || !session) return null;
 
   return (
     <aside

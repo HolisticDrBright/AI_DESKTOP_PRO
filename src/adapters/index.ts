@@ -17,12 +17,24 @@ import { getAssistantSession } from "./assistant.mock";
 import { getCommandGroups } from "./commands.mock";
 import { generateDraft, type ComposerContext } from "./composer.mock";
 import { buildImportPlan, type ImportSourceId } from "./imports.mock";
+import { USE_LIVE_API } from "./config";
 import type { DraftKind } from "./types";
 
 export const api = {
   patients: {
-    list: async () => listPatients(),
-    get: async (id: string) => getPatient(id),
+    // `patients` is the one swapped namespace (Item 6). When USE_LIVE_API is
+    // on, list/get read real patient_profiles rows through the authenticated
+    // tRPC backend (RLS enforced). The live module is loaded lazily so the
+    // default mock build never pulls in server-only code. `summary` synthesizes
+    // data with no DB source, so it stays on the mock until parity is proven.
+    list: async () => {
+      if (USE_LIVE_API) return (await import("./patients.live")).patientsLive.list();
+      return listPatients();
+    },
+    get: async (id: string) => {
+      if (USE_LIVE_API) return (await import("./patients.live")).patientsLive.get(id);
+      return getPatient(id);
+    },
     summary: async (id: string) => getPatientSummary(id),
   },
   practice: {
