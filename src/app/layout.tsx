@@ -5,6 +5,7 @@ import { AppShell } from "@/components/shell/AppShell";
 import { MaterialProvider, ShellUiProvider } from "@/lib/providers";
 import { FeedbackProvider } from "@/lib/feedback";
 import { ComposerProvider } from "@/lib/composer";
+import { QueryProvider } from "@/lib/query";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -25,6 +26,7 @@ export default function RootLayout({
     <html lang="en" className={inter.variable}>
       <body>
         <MaterialProvider>
+          <QueryProvider>
           <ShellUiProvider>
             <FeedbackProvider>
               <ComposerProvider>
@@ -38,6 +40,7 @@ export default function RootLayout({
               </ComposerProvider>
             </FeedbackProvider>
           </ShellUiProvider>
+          </QueryProvider>
         </MaterialProvider>
       </body>
     </html>

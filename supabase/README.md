@@ -22,11 +22,20 @@ to be an active agent-OS product with its own data and colliding table names).
 
 ## Status (applied + verified)
 
-- **146 tables**, **RLS enabled on all 146** (0 without RLS), **179 policies**.
-- **Supabase security advisor: 0 findings.**
+- **146 tables**, **RLS enabled on all 146** (0 without RLS); after migration
+  0012 the 81 bulk `FOR ALL` patient policies are split into per-command
+  policies (82 patient-gated SELECTs + 243 role-gated write policies).
+- **Supabase security advisor: 0 findings** (re-verified after 0012).
 - **Cross-tenant isolation test passes** (`tests/cross_tenant_isolation.sql`):
   a user in Org B sees zero of Org A's organization, patient, clinical
   hypothesis, invoice, or membership rows; the Org A owner sees all of theirs.
+- **Practitioner-assignment keystone test passes — 37/37 live assertions**
+  (`tests/practitioner_assignment_access.sql`): unassigned same-org
+  practitioners see/write nothing across clinical core, labs, supplements,
+  reasoning, and billing; assignment grants, revocation removes (including
+  self-authored rows); staff read only when assigned and never write; patients
+  read only their own record and cannot write clinical rows; soft-deleted rows
+  vanish from SELECT.
 
 ## Design principles (enforced in the schema)
 
@@ -39,11 +48,15 @@ to be an active agent-OS product with its own data and colliding table names).
 - **Patient = org-owned record, optionally linked to an auth user**
   (`patient_profiles.user_id`) — unifies the legacy clinic-record and
   mobile-user models.
-- **Uniform RLS.** Patient-scoped tables use one
-  `can_access_patient(patient_id)` policy for ALL commands (the patient, an
-  assigned practitioner, or an org admin). Reference/knowledge tables (no PHI)
-  are authenticated-read / service-role-write. Financial tables are org-admin
-  scoped.
+- **Read/write-split RLS** (migration 0012). Patient-scoped tables: SELECT =
+  `can_access_patient(patient_id) and deleted_at is null` (patient-self,
+  assigned care team, org admin); INSERT/UPDATE/DELETE =
+  `can_write_patient_data(patient_id)` (must also hold practitioner/admin/
+  owner role — patients and staff never write clinical rows). Deliberate
+  exceptions: the patient-rights tables (`data_sharing_authorizations`,
+  `record_export_requests`, `record_deletion_requests`) remain
+  patient-writable by design. Reference/knowledge tables (no PHI) are
+  authenticated-read / service-role-write.
 - **Provenance/audit columns** on every patient table (`source`,
   `source_record_id`, `created_by`, `updated_by`, `deleted_at`) and
   **observation columns** (`observed_at`, `ingested_at`, `data_quality`,
@@ -70,26 +83,38 @@ to be an active agent-OS product with its own data and colliding table names).
 | `…000009_operations_programs_assessments` | appointments, tasks, messages, files, tags, programs, assessments |
 | `…000010_safety_knowledge_jobs_outcomes` | safety rules/evals, knowledge sources, jobs, AI ledger, Quantum Mind, wearables/nutrition, outcomes/cohorts, imports, review queue |
 | `…000011_billing_claims_automations_connectors` | billing, insurance claims, automations, connector framework, telehealth |
+| `…000012_access_hardening` | write-role gate (`can_write_patient_data`), soft-delete SELECT exclusion, invitation token hashing, `updated_by` normalization, migration-history bootstrap |
 
-Migrations 0003–0011 were authored and applied to the live project via the
+Migrations 0003–0012 were authored and applied to the live project via the
 Supabase MCP `execute_sql` (the environment's egress policy blocks the CLI's
-Docker path), then verified with the security advisor + isolation test. The
-files here reproduce exactly what is live.
+Docker path), then verified with the security advisor + both isolation tests.
+The files here reproduce exactly what is live.
 
-## Applying to a fresh project / syncing history / types
+## Migration history reconciliation
+
+Because the live schema was applied through the management API rather than the
+CLI, migration 0012 **bootstraps the CLI's history table**
+(`supabase_migrations.schema_migrations`) and records versions
+`20260715000001`–`20260715000012`. As a result:
+
+- **Existing project:** `supabase link --project-ref urcjiehlxoehievobezf`
+  then `supabase migration list` shows local and remote in sync — no
+  `migration repair` needed (if the list ever drifts, repair with
+  `supabase migration repair --status applied <versions…>`).
+- **Fresh environment:** `supabase db push` applies 0001–0012 in order and
+  converges to the same state (0012's history inserts are `on conflict do
+  nothing`, so the CLI recording them first is harmless).
 
 ```bash
 supabase link --project-ref urcjiehlxoehievobezf
-# existing project already has the schema — record history instead of re-running:
-supabase migration repair --status applied \
-  20260715000001 20260715000002 20260715000003 20260715000004 20260715000005 \
-  20260715000006 20260715000007 20260715000008 20260715000009 20260715000010 20260715000011
-# a truly fresh project instead just needs:  supabase db push
+supabase migration list          # verify convergence
 supabase gen types typescript --linked > src/lib/database.types.ts
 ```
 
-Run the isolation test after applying (every output row must have `pass = true`);
-extend it with a row per new patient/tenant table.
+Run both tests after applying (every output row must have `pass = true`):
+`tests/cross_tenant_isolation.sql` and
+`tests/practitioner_assignment_access.sql`. Extend them with a labelled row
+per new patient/tenant table.
 
 ## What this is and isn't
 

@@ -2,8 +2,9 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
+import { useQuery } from "@tanstack/react-query";
 import { Search } from "lucide-react";
-import { getCommandGroups } from "@/adapters/commands.mock";
+import { api } from "@/adapters";
 import type { CommandItem, Tone } from "@/adapters/types";
 import { commandIcons } from "@/components/icons";
 import { cn } from "@/lib/cn";
@@ -31,7 +32,11 @@ export function CommandPalette() {
   const [selected, setSelected] = useState(0);
 
   const patientId = parsePatientPath(pathname)?.patientId;
-  const groups = useMemo(() => getCommandGroups(patientId), [patientId]);
+  const { data: groups = [] } = useQuery({
+    queryKey: ["commands", patientId ?? null],
+    queryFn: () => api.commands.groups(patientId),
+    enabled: cmdOpen,
+  });
 
   const visibleGroups = useMemo(() => {
     const q = query.trim().toLowerCase();
