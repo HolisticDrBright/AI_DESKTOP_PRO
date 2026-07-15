@@ -1,0 +1,973 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="viewport" content="width=1440">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+html,body{margin:0;padding:0;background:#F1F4F8;}
+*{box-sizing:border-box;}
+a{color:#2563C7;text-decoration:none;} a:hover{color:#1B4FA5;}
+button{font-family:inherit;} input{font-family:inherit;}
+::-webkit-scrollbar{width:10px;height:10px;} ::-webkit-scrollbar-thumb{background:#CBD6E0;border-radius:8px;border:2px solid #F1F4F8;} ::-webkit-scrollbar-track{background:transparent;}
+@keyframes fadeUp{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:none;}}
+@media (prefers-reduced-motion: reduce){*{animation:none !important;transition:none !important;}}
+</style>
+</helmet>
+<div style="display:flex;height:100vh;min-width:1280px;font-family:'Inter',ui-sans-serif,system-ui,-apple-system,'SF Pro Text',sans-serif;color:#182A3D;background:#F1F4F8;overflow:hidden;font-size:14px;font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased;">
+
+  <nav aria-label="Primary navigation" style="width:236px;flex-shrink:0;display:flex;flex-direction:column;border-right:1px solid #E4EAF1;background:rgba(248,250,252,0.9);{{ glassCss }} position:relative;z-index:40;">
+    <div style="display:flex;gap:7px;padding:14px 16px 4px 16px;">
+      <span style="width:11px;height:11px;border-radius:50%;background:#F5655B;"></span>
+      <span style="width:11px;height:11px;border-radius:50%;background:#F6BD3B;"></span>
+      <span style="width:11px;height:11px;border-radius:50%;background:#43C64C;"></span>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;padding:12px 16px 14px 16px;">
+      <div style="width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,#0D5C63,#1A7A82);display:flex;align-items:center;justify-content:center;flex-shrink:0;box-shadow:0 2px 6px rgba(13,92,99,0.25);">
+        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-3.5l-3 8.5L9 3.5l-3 8.5H2.5"></path></svg>
+      </div>
+      <div style="line-height:1.3;">
+        <div style="font-size:14px;font-weight:700;letter-spacing:-0.01em;">AI Longevity Pro</div>
+        <div style="font-size:10.5px;color:#7288A1;">Clinical Intelligence Platform</div>
+      </div>
+    </div>
+    <div style="flex:1;overflow-y:auto;padding:2px 12px 12px 12px;display:flex;flex-direction:column;gap:2px;">
+      <sc-for list="{{ navItems }}" as="it" hint-placeholder-count="12">
+        <button onClick="{{ it.onClick }}" style="display:flex;align-items:center;gap:11px;width:100%;border:1px solid {{ it.border }};cursor:pointer;padding:8px 10px;border-radius:9px;text-align:left;font-size:13px;background:{{ it.bg }};color:{{ it.color }};font-weight:{{ it.weight }};" style-hover="background:rgba(37,99,199,0.06);" style-focus="outline:2px solid #2563C7;outline-offset:-2px;">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;opacity:0.9;" aria-hidden="true"><path d="{{ it.d1 }}"></path><path d="{{ it.d2 }}"></path><path d="{{ it.d3 }}"></path></svg>
+          <span style="flex:1;">{{ it.label }}</span>
+          <sc-if value="{{ it.badge }}" hint-placeholder-val="{{ false }}">
+            <span style="font-size:11px;font-weight:600;color:#5C6F82;background:rgba(90,107,126,0.12);border-radius:99px;padding:1px 7px;">{{ it.badge }}</span>
+          </sc-if>
+        </button>
+      </sc-for>
+    </div>
+    <div style="padding:12px;display:flex;flex-direction:column;gap:8px;border-top:1px solid #E9EFF5;">
+      <button style="display:flex;align-items:center;gap:9px;width:100%;padding:9px 11px;border-radius:10px;background:#FFFFFF;border:1px solid #E4EAF1;cursor:pointer;text-align:left;" style-hover="border-color:#C9D6E3;">
+        <span style="width:26px;height:26px;border-radius:8px;background:rgba(13,92,99,0.1);display:flex;align-items:center;justify-content:center;">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#0D5C63" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-1.8a4.2 4.2 0 0 0-4.2-4.2H6.2A4.2 4.2 0 0 0 2 19.2V21"></path><path d="M13 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0"></path></svg>
+        </span>
+        <span style="flex:1;line-height:1.25;">
+          <span style="display:block;font-size:10.5px;color:#7288A1;">Viewing as</span>
+          <span style="display:block;font-size:12.5px;font-weight:600;color:#182A3D;">Practitioner</span>
+        </span>
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#8A9BAC" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"></path></svg>
+      </button>
+      <button style="display:flex;align-items:center;gap:9px;width:100%;padding:8px 11px;border-radius:10px;background:none;border:1px solid transparent;cursor:pointer;text-align:left;color:#5C6F82;font-size:12.5px;font-weight:600;" style-hover="background:rgba(37,99,199,0.06);">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M9.2 9a2.9 2.9 0 0 1 5.6 1c0 1.9-2.8 2.3-2.8 4"></path><path d="M12 18h.01"></path></svg>
+        Help Center
+      </button>
+    </div>
+  </nav>
+
+  <div style="flex:1;display:flex;flex-direction:column;min-width:0;position:relative;">
+    <header style="height:58px;flex-shrink:0;display:flex;align-items:center;gap:12px;padding:0 24px;border-bottom:1px solid #E4EAF1;background:rgba(250,252,253,0.85);{{ glassCss }} position:relative;z-index:30;">
+      <button onClick="{{ openCmd }}" aria-label="Search or open command palette" style="display:flex;align-items:center;gap:10px;width:400px;height:36px;padding:0 14px;border-radius:99px;border:1px solid #E4EAF1;background:#FFFFFF;cursor:pointer;color:#8A9BAC;font-size:13px;" style-hover="border-color:#C9D6E3;" style-focus="outline:2px solid #2563C7;outline-offset:1px;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path></svg>
+        <span style="flex:1;text-align:left;">Search patients, labs, reports, protocols…</span>
+        <span style="font-size:11px;font-weight:600;color:#8A9BAC;border:1px solid #E4EAF1;border-radius:6px;padding:1px 6px;background:#F7FAFC;">⌘K</span>
+      </button>
+      <div style="flex:1;"></div>
+      <button onClick="{{ toggleAi }}" aria-label="Open clinical assistant" style="display:flex;align-items:center;gap:6px;height:34px;padding:0 13px;border-radius:99px;border:1px solid rgba(116,97,201,0.3);background:rgba(116,97,201,0.07);color:#5D4BB5;font-size:12.5px;font-weight:600;cursor:pointer;" style-hover="background:rgba(116,97,201,0.13);" style-focus="outline:2px solid #7461C9;outline-offset:1px;">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5l2 5.3 5.3 2-5.3 2-2 5.3-2-5.3-5.3-2 5.3-2Z"></path></svg>
+        Assistant
+      </button>
+      <button aria-label="Notifications, unread" style="position:relative;width:36px;height:36px;border-radius:50%;border:1px solid #E4EAF1;background:#FFFFFF;cursor:pointer;display:flex;align-items:center;justify-content:center;color:#44586E;" style-hover="border-color:#C9D6E3;" style-focus="outline:2px solid #2563C7;outline-offset:1px;">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8.5a6 6 0 0 1 12 0c0 6 2.5 7.5 2.5 7.5h-17S6 14.5 6 8.5"></path><path d="M10.3 20.5a2 2 0 0 0 3.4 0"></path></svg>
+      </button>
+      <button aria-label="Messages, 2 unread" style="position:relative;width:36px;height:36px;border-radius:50%;border:1px solid #E4EAF1;background:#FFFFFF;cursor:pointer;display:flex;align-items:center;justify-content:center;color:#44586E;" style-hover="border-color:#C9D6E3;" style-focus="outline:2px solid #2563C7;outline-offset:1px;">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5 8.4 8.4 0 0 1-3.9-.95L3 20.5l1.45-5.6A8.5 8.5 0 1 1 21 11.5Z"></path></svg>
+        <span style="position:absolute;top:2px;right:2px;width:8px;height:8px;border-radius:50%;background:#D6544A;border:1.5px solid #FFFFFF;"></span>
+      </button>
+      <button style="display:flex;align-items:center;gap:9px;height:42px;padding:3px 8px 3px 4px;border-radius:99px;border:1px solid #E4EAF1;background:#FFFFFF;cursor:pointer;" style-hover="border-color:#C9D6E3;" style-focus="outline:2px solid #2563C7;outline-offset:1px;">
+        <span style="width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,#2563C7,#5B8AD9);color:#FFFFFF;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;">SM</span>
+        <span style="text-align:left;line-height:1.25;">
+          <span style="display:block;font-size:12.5px;font-weight:600;color:#182A3D;">Dr. Sarah Mitchell</span>
+          <span style="display:block;font-size:10.5px;color:#7288A1;">Functional Medicine</span>
+        </span>
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#8A9BAC" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"></path></svg>
+      </button>
+    </header>
+
+    <main style="flex:1;overflow-y:auto;position:relative;">
+      <div aria-hidden="true" style="position:absolute;inset:0;pointer-events:none;background:{{ atmosphereBg }};"></div>
+
+      <sc-if value="{{ isPatient }}" hint-placeholder-val="{{ true }}">
+        <section data-screen-label="Patient Overview" style="position:relative;padding:18px 22px 20px 22px;max-width:1560px;">
+          <div style="display:flex;align-items:center;gap:22px;background:rgba(255,255,255,0.92);{{ glassCss }} border:1px solid #E4EAF1;border-radius:16px;padding:18px 22px;box-shadow:0 1px 2px rgba(24,42,61,0.04);">
+            <div style="display:flex;align-items:center;gap:14px;min-width:0;">
+              <span style="width:56px;height:56px;border-radius:50%;background:linear-gradient(135deg,#0E8388,#3BA5A5);color:#FFFFFF;font-size:19px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;">AM</span>
+              <div style="line-height:1.35;">
+                <div style="display:flex;align-items:center;gap:6px;">
+                  <h1 style="margin:0;font-size:17px;font-weight:700;letter-spacing:-0.01em;">Alexandra Morgan</h1>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#2563C7" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="8.5" r="5"></circle><path d="M12 13.5V21M9 18h6"></path></svg>
+                </div>
+                <div style="font-size:12.5px;color:#5C6F82;margin-top:2px;">34 y/o · Female · 04/12/1992</div>
+                <div style="font-size:12.5px;color:#5C6F82;">Patient ID: P-78435</div>
+              </div>
+            </div>
+            <div style="width:1px;height:52px;background:#EDF2F7;"></div>
+            <div style="line-height:1.5;min-width:0;flex:1.2;">
+              <div style="font-size:11.5px;font-weight:600;color:#7288A1;margin-bottom:3px;">Primary Goals</div>
+              <div style="font-size:12.5px;color:#33475C;">Improve energy, sleep quality, hormone balance, reduce inflammation</div>
+            </div>
+            <div style="line-height:1.5;flex:1;">
+              <div style="font-size:11.5px;font-weight:600;color:#7288A1;margin-bottom:3px;">Care Team</div>
+              <div style="font-size:12.5px;color:#33475C;">Dr. Sarah Mitchell (You)<br>Holistic Health Coach · Registered Dietitian</div>
+            </div>
+            <div style="line-height:1.5;">
+              <div style="display:flex;gap:24px;">
+                <span><span style="display:block;font-size:11.5px;font-weight:600;color:#7288A1;">Last Visit</span><span style="display:block;font-size:12.5px;font-weight:600;color:#182A3D;margin-top:3px;">May 10, 2026</span></span>
+                <span><span style="display:block;font-size:11.5px;font-weight:600;color:#7288A1;">Next Visit</span><span style="display:block;font-size:12.5px;font-weight:600;color:#182A3D;margin-top:3px;">Jul 21, 2026</span></span>
+              </div>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <button style="height:36px;padding:0 16px;border-radius:9px;border:none;background:#2563C7;color:#FFFFFF;font-size:12.5px;font-weight:600;cursor:pointer;" style-hover="background:#1B4FA5;" style-focus="outline:2px solid #182A3D;outline-offset:2px;">New Appointment</button>
+              <button aria-label="More actions" style="width:36px;height:36px;border-radius:9px;border:1px solid #E4EAF1;background:#FFFFFF;cursor:pointer;color:#5C6F82;font-size:16px;font-weight:700;letter-spacing:1px;display:flex;align-items:center;justify-content:center;padding-bottom:7px;" style-hover="border-color:#C9D6E3;">…</button>
+            </div>
+          </div>
+
+          <div style="display:grid;grid-template-columns:minmax(0,1fr) 296px;gap:18px;align-items:start;margin-top:4px;">
+            <div style="min-width:0;">
+              <div style="display:flex;gap:2px;padding:6px 0 0 0;border-bottom:1px solid #E4EAF1;margin-bottom:16px;overflow-x:auto;" role="tablist" aria-label="Patient sections">
+                <sc-for list="{{ patientTabs }}" as="tb" hint-placeholder-count="8">
+                  <button onClick="{{ tb.onClick }}" role="tab" aria-selected="{{ tb.selStr }}" style="background:none;border:none;cursor:pointer;padding:9px 12px 10px 12px;font-size:13px;color:{{ tb.color }};font-weight:{{ tb.weight }};border-bottom:2px solid {{ tb.line }};margin-bottom:-1px;white-space:nowrap;" style-hover="color:#182A3D;" style-focus="outline:2px solid #2563C7;outline-offset:-2px;">{{ tb.label }}</button>
+                </sc-for>
+              </div>
+
+              <sc-if value="{{ isPatientSummary }}" hint-placeholder-val="{{ true }}">
+                <div data-screen-label="Patient Summary" style="display:flex;flex-direction:column;gap:16px;">
+                  <div style="display:grid;grid-template-columns:210px minmax(0,1.15fr) minmax(0,1fr) minmax(0,1fr);gap:16px;">
+                    <div style="background:#FFFFFF;border:1px solid #E4EAF1;border-radius:14px;padding:14px 16px;display:flex;flex-direction:column;align-items:center;">
+                      <div style="display:flex;align-items:center;gap:5px;width:100%;font-size:13px;font-weight:700;">Health Score
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#B9C9D9" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 11v5m0-8h.01"></path></svg>
+                      </div>
+                      <svg width="122" height="122" viewBox="0 0 128 128" role="img" aria-label="Health score 78 of 100, good" style="margin:6px 0 2px 0;">
+                        <circle cx="64" cy="64" r="52" fill="none" stroke="#EDF2F6" stroke-width="10"></circle>
+                        <circle cx="64" cy="64" r="52" fill="none" stroke="#22B573" stroke-width="10" stroke-linecap="round" stroke-dasharray="254.9 326.7" transform="rotate(-90 64 64)"></circle>
+                        <text x="64" y="64" text-anchor="middle" font-size="32" font-weight="700" fill="#182A3D" font-family="Inter,sans-serif">78</text>
+                        <text x="64" y="84" text-anchor="middle" font-size="12.5" font-weight="600" fill="#5C6F82" font-family="Inter,sans-serif">Good</text>
+                      </svg>
+                      <div style="display:flex;align-items:center;gap:5px;font-size:11.5px;color:#1F9D63;font-weight:600;">
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5m-6 6 6-6 6 6"></path></svg>
+                        6 pts vs last month
+                      </div>
+                    </div>
+                    <div style="background:#FFFFFF;border:1px solid #E4EAF1;border-radius:14px;padding:14px 16px;">
+                      <div style="display:flex;align-items:center;gap:5px;font-size:13px;font-weight:700;">System Balance
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#B9C9D9" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 11v5m0-8h.01"></path></svg>
+                      </div>
+                      <div style="display:flex;justify-content:center;">
+                        <svg width="238" height="176" viewBox="0 0 252 186" role="img" aria-label="Systems balance radar across eight health domains; inflammation and stress are the weakest.">
+                          <g>{{ radarRings }}</g>
+                          <g>{{ radarSpokes }}</g>
+                          <polygon points="{{ radarPoints }}" fill="rgba(34,181,115,0.14)" stroke="#22B573" stroke-width="1.75" stroke-linejoin="round"></polygon>
+                          <g>{{ radarDots }}</g>
+                          <g>{{ radarLabels }}</g>
+                        </svg>
+                      </div>
+                    </div>
+                    <div style="background:#FFFFFF;border:1px solid #E4EAF1;border-radius:14px;padding:14px 16px;display:flex;flex-direction:column;">
+                      <div style="font-size:13px;font-weight:700;margin-bottom:11px;">Top Priorities</div>
+                      <div style="display:flex;flex-direction:column;gap:10px;flex:1;">
+                        <sc-for list="{{ priorities }}" as="p" hint-placeholder-count="4">
+                          <div style="display:flex;gap:10px;align-items:baseline;">
+                            <span style="width:19px;height:19px;border-radius:50%;background:#EEF3FC;color:#5C6F82;font-size:10.5px;font-weight:600;display:flex;align-items:center;justify-content:center;flex-shrink:0;transform:translateY(3px);">{{ p.n }}</span>
+                            <span style="font-size:12.5px;color:#33475C;line-height:1.4;">{{ p.text }}</span>
+                          </div>
+                        </sc-for>
+                      </div>
+                      <button style="margin-top:12px;width:100%;height:32px;border-radius:9px;border:1px solid #DCE5EE;background:#FFFFFF;color:#2563C7;font-size:12px;font-weight:600;cursor:pointer;" style-hover="border-color:#B9C9D9;background:#F7FAFD;">View All Priorities</button>
+                    </div>
+                    <div style="background:#FFFFFF;border:1px solid #E4EAF1;border-radius:14px;padding:14px 16px;display:flex;flex-direction:column;">
+                      <div style="display:flex;align-items:center;gap:5px;font-size:13px;font-weight:700;margin-bottom:11px;">Risk Flags
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#B9C9D9" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 11v5m0-8h.01"></path></svg>
+                      </div>
+                      <div style="display:flex;flex-direction:column;gap:11px;flex:1;">
+                        <sc-for list="{{ flags }}" as="f" hint-placeholder-count="3">
+                          <div style="display:flex;align-items:flex-start;gap:9px;">
+                            <span style="width:24px;height:24px;border-radius:7px;background:{{ f.tint }};display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="{{ f.color }}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.3 4.1 2.6 17a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7-3L13.7 4.1a2 2 0 0 0-3.4 0Z"></path><path d="M12 9v4m0 4h.01"></path></svg>
+                            </span>
+                            <span style="min-width:0;">
+                              <span style="display:block;font-size:12.5px;font-weight:600;line-height:1.3;">{{ f.label }}</span>
+                              <span style="display:block;font-size:11px;color:#7288A1;margin-top:1px;">{{ f.action }}</span>
+                            </span>
+                          </div>
+                        </sc-for>
+                      </div>
+                      <button style="margin-top:12px;width:100%;height:32px;border-radius:9px;border:1px solid #DCE5EE;background:#FFFFFF;color:#2563C7;font-size:12px;font-weight:600;cursor:pointer;" style-hover="border-color:#B9C9D9;background:#F7FAFD;">View All Risks</button>
+                    </div>
+                  </div>
+
+                  <div style="display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1.1fr) minmax(0,1fr);gap:16px;">
+                    <div style="background:#FFFFFF;border:1px solid #E4EAF1;border-radius:14px;padding:14px 16px;display:flex;flex-direction:column;">
+                      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+                        <div style="font-size:13px;font-weight:700;">Biomarker Trends</div>
+                        <div style="display:flex;background:#F1F5F9;border-radius:8px;padding:2px;">
+                          <span style="font-size:11px;font-weight:600;color:#182A3D;background:#FFFFFF;border-radius:6px;padding:3px 9px;box-shadow:0 1px 2px rgba(24,42,61,0.08);">Key Biomarkers</span>
+                          <span style="font-size:11px;font-weight:600;color:#7288A1;padding:3px 9px;">All Biomarkers</span>
+                        </div>
+                      </div>
+                      <div style="display:flex;flex-direction:column;flex:1;">
+                        <sc-for list="{{ biomarkers }}" as="bm" hint-placeholder-count="5">
+                          <div style="display:flex;align-items:center;gap:10px;padding:6px 2px;border-radius:8px;" style-hover="background:#F7FAFC;">
+                            <span style="width:96px;flex-shrink:0;">
+                              <span style="display:block;font-size:12px;font-weight:600;">{{ bm.name }}</span>
+                              <span style="display:block;font-size:10px;color:#8A9BAC;">{{ bm.unit }}</span>
+                            </span>
+                            <svg width="100%" height="24" viewBox="0 0 120 24" preserveAspectRatio="none" style="flex:1;min-width:0;" role="img" aria-label="{{ bm.name }} trend {{ bm.trendWord }}"><polyline points="{{ bm.points }}" fill="none" stroke="{{ bm.color }}" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"></polyline></svg>
+                            <span style="text-align:right;width:56px;flex-shrink:0;">
+                              <span style="display:block;font-size:12.5px;font-weight:700;">{{ bm.value }}</span>
+                              <span style="display:block;font-size:10px;font-weight:600;color:{{ bm.color }};">{{ bm.status }}</span>
+                            </span>
+                          </div>
+                        </sc-for>
+                      </div>
+                      <a href="#" style="font-size:12px;font-weight:600;margin-top:10px;">View All Biomarkers</a>
+                    </div>
+                    <div style="background:#FFFFFF;border:1px solid #E4EAF1;border-radius:14px;padding:14px 16px;display:flex;flex-direction:column;">
+                      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+                        <div style="font-size:13px;font-weight:700;">Sleep &amp; Recovery</div>
+                        <div style="display:flex;background:#F1F5F9;border-radius:8px;padding:2px;">
+                          <span style="font-size:11px;font-weight:600;color:#182A3D;background:#FFFFFF;border-radius:6px;padding:3px 9px;box-shadow:0 1px 2px rgba(24,42,61,0.08);">7 Days</span>
+                          <span style="font-size:11px;font-weight:600;color:#7288A1;padding:3px 9px;">30 Days</span>
+                        </div>
+                      </div>
+                      <div style="display:flex;gap:14px;align-items:stretch;border:1px solid #EDF2F7;border-radius:12px;padding:12px 14px;">
+                        <div style="flex-shrink:0;">
+                          <div style="font-size:11px;color:#7288A1;font-weight:600;">Sleep Score</div>
+                          <div style="font-size:30px;font-weight:700;letter-spacing:-0.02em;line-height:1.15;">72</div>
+                          <div style="font-size:11.5px;font-weight:600;color:#1F9D63;">Good</div>
+                        </div>
+                        <svg width="100%" height="64" viewBox="0 0 200 64" preserveAspectRatio="none" style="flex:1;min-width:0;align-self:center;" role="img" aria-label="Sleep score trend over 14 nights, gradually improving"><polyline points="{{ sleepPoints }}" fill="none" stroke="#22B573" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"></polyline></svg>
+                      </div>
+                      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:10px;flex:1;">
+                        <sc-for list="{{ sleepStats }}" as="s" hint-placeholder-count="4">
+                          <div style="background:#F7FAFC;border-radius:10px;padding:8px 9px;">
+                            <div style="font-size:9.5px;color:#7288A1;font-weight:600;">{{ s.label }}</div>
+                            <div style="font-size:13px;font-weight:700;margin-top:2px;white-space:nowrap;">{{ s.value }}</div>
+                          </div>
+                        </sc-for>
+                      </div>
+                      <a href="#" style="font-size:12px;font-weight:600;margin-top:10px;">View Sleep Details</a>
+                    </div>
+                    <div style="background:#FFFFFF;border:1px solid #E4EAF1;border-radius:14px;padding:14px 16px;display:flex;flex-direction:column;">
+                      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+                        <div style="font-size:13px;font-weight:700;">N-of-1 Experiments</div>
+                        <span style="font-size:10.5px;font-weight:600;color:#5D4BB5;background:rgba(116,97,201,0.1);border-radius:99px;padding:3px 9px;">Active Experiments</span>
+                      </div>
+                      <div style="display:flex;flex-direction:column;gap:10px;flex:1;">
+                        <sc-for list="{{ experiments }}" as="ex" hint-placeholder-count="2">
+                          <div style="border:1px solid #EDF2F7;border-radius:12px;padding:10px 12px;">
+                            <div style="display:flex;justify-content:space-between;align-items:baseline;">
+                              <span style="font-size:12.5px;font-weight:600;">{{ ex.name }}</span>
+                              <span style="font-size:10.5px;color:#8A9BAC;white-space:nowrap;">Day {{ ex.day }}</span>
+                            </div>
+                            <div style="font-size:11px;color:#7288A1;margin:1px 0 8px 0;">{{ ex.goal }}</div>
+                            <div style="display:flex;align-items:center;gap:8px;">
+                              <div style="flex:1;height:5px;border-radius:99px;background:#EDF2F6;overflow:hidden;"><div style="height:100%;width:{{ ex.pct }}%;border-radius:99px;background:#2563C7;"></div></div>
+                              <span style="font-size:10.5px;color:#8A9BAC;">{{ ex.pct }}%</span>
+                            </div>
+                            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;">
+                              <span style="font-size:10.5px;color:#7288A1;">Primary Outcome<br><b style="font-size:12px;color:#182A3D;font-weight:600;">{{ ex.outcome }}</b></span>
+                              <span style="font-size:11.5px;font-weight:700;color:{{ ex.dirColor }};background:{{ ex.dirTint }};border-radius:99px;padding:3px 10px;">{{ ex.dir }}</span>
+                            </div>
+                          </div>
+                        </sc-for>
+                      </div>
+                      <a href="#" style="font-size:12px;font-weight:600;margin-top:10px;">View All Experiments</a>
+                    </div>
+                  </div>
+
+                  <div style="background:#FFFFFF;border:1px solid #E4EAF1;border-radius:14px;">
+                    <div style="display:flex;align-items:center;gap:10px;padding:14px 18px 0 18px;">
+                      <h2 style="margin:0;font-size:14px;font-weight:700;">Clinical Reasoning Snapshot</h2>
+                      <span style="font-size:10.5px;font-weight:600;color:#5C6F82;background:#F1F5F9;border-radius:99px;padding:3px 9px;">Updated Jul 12, 2026</span>
+                      <div style="flex:1;"></div>
+                      <span style="display:flex;align-items:center;gap:5px;font-size:11px;font-weight:600;color:#B45309;background:#FBF3E4;border:1px solid rgba(199,126,20,0.22);border-radius:99px;padding:3px 10px;">Awaiting practitioner review</span>
+                    </div>
+                    <div style="display:grid;grid-template-columns:1.15fr 1fr 1fr 1fr;gap:0;padding:6px 4px 4px 4px;">
+                      <div style="padding:12px 14px;border-right:1px solid #F1F5F9;">
+                        <h3 style="margin:0 0 10px 0;font-size:12px;font-weight:700;color:#44586E;">Top Hypotheses</h3>
+                        <div style="display:flex;flex-direction:column;gap:12px;">
+                          <sc-for list="{{ hypotheses }}" as="h" hint-placeholder-count="3">
+                            <div style="display:flex;gap:9px;align-items:flex-start;">
+                              <span style="width:18px;height:18px;border-radius:50%;background:#EEF3FC;color:#5C6F82;font-size:10px;font-weight:600;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px;">{{ h.n }}</span>
+                              <span style="flex:1;min-width:0;">
+                                <span style="display:block;font-size:12.5px;font-weight:600;line-height:1.3;">{{ h.name }}</span>
+                                <span style="display:block;font-size:11px;color:#7288A1;margin-top:1px;">{{ h.sub }}</span>
+                              </span>
+                              <span style="font-size:11px;font-weight:700;color:#5D4BB5;background:rgba(116,97,201,0.1);border-radius:7px;padding:2px 8px;flex-shrink:0;">{{ h.strength }}</span>
+                            </div>
+                          </sc-for>
+                        </div>
+                        <div style="font-size:9.5px;color:#8A9BAC;margin-top:12px;line-height:1.4;">Strength reflects internal evidence weighting — not a medical probability.</div>
+                      </div>
+                      <div style="padding:12px 14px;border-right:1px solid #F1F5F9;">
+                        <h3 style="margin:0 0 10px 0;font-size:12px;font-weight:700;color:#44586E;">Key Evidence For</h3>
+                        <div style="display:flex;flex-direction:column;gap:10px;">
+                          <sc-for list="{{ evidenceFor }}" as="e" hint-placeholder-count="4">
+                            <div style="display:flex;gap:8px;align-items:flex-start;">
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#22B573" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;margin-top:1px;" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="m8.5 12.5 2.5 2.5 4.5-5"></path></svg>
+                              <span style="font-size:12px;color:#33475C;line-height:1.4;">{{ e.text }}</span>
+                            </div>
+                          </sc-for>
+                        </div>
+                      </div>
+                      <div style="padding:12px 14px;border-right:1px solid #F1F5F9;">
+                        <h3 style="margin:0 0 10px 0;font-size:12px;font-weight:700;color:#44586E;">Key Evidence Against</h3>
+                        <div style="display:flex;flex-direction:column;gap:10px;">
+                          <sc-for list="{{ evidenceAgainst }}" as="e" hint-placeholder-count="4">
+                            <div style="display:flex;gap:8px;align-items:flex-start;">
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#D6544A" stroke-width="2" stroke-linecap="round" style="flex-shrink:0;margin-top:1px;" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M9 9l6 6m0-6-6 6"></path></svg>
+                              <span style="font-size:12px;color:#33475C;line-height:1.4;">{{ e.text }}</span>
+                            </div>
+                          </sc-for>
+                        </div>
+                      </div>
+                      <div style="padding:12px 14px;display:flex;flex-direction:column;">
+                        <h3 style="margin:0 0 10px 0;font-size:12px;font-weight:700;color:#44586E;">Recommended Next Steps</h3>
+                        <div style="display:flex;flex-direction:column;gap:9px;flex:1;">
+                          <sc-for list="{{ nextSteps }}" as="n" hint-placeholder-count="4">
+                            <span style="font-size:12px;color:#33475C;display:flex;gap:8px;line-height:1.4;"><span style="color:#8A9BAC;">•</span>{{ n }}</span>
+                          </sc-for>
+                        </div>
+                        <button onClick="{{ openReasoning }}" style="margin-top:10px;background:none;border:none;padding:0;text-align:left;font-size:12px;font-weight:600;color:#2563C7;cursor:pointer;font-family:inherit;" style-hover="color:#1B4FA5;">View Full Analysis</button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div style="display:flex;align-items:center;justify-content:space-between;padding:2px 2px 0 2px;font-size:11.5px;color:#8A9BAC;">
+                    <span style="display:flex;align-items:center;gap:6px;"><span style="width:7px;height:7px;border-radius:50%;background:#22B573;"></span>All systems operational</span>
+                    <span style="display:flex;align-items:center;gap:6px;">Data updated: 2 min ago
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.6-6.4M21 3v5h-5"></path></svg>
+                    </span>
+                  </div>
+                </div>
+              </sc-if>
+
+              <sc-if value="{{ isPatientOther }}" hint-placeholder-val="{{ false }}">
+                <div style="padding:70px 24px;display:flex;flex-direction:column;align-items:center;gap:10px;background:#FFFFFF;border:1px solid #E4EAF1;border-radius:14px;">
+                  <span style="width:44px;height:44px;border-radius:12px;background:rgba(37,99,199,0.08);display:flex;align-items:center;justify-content:center;">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#2563C7" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5l2 5.3 5.3 2-5.3 2-2 5.3-2-5.3-5.3-2 5.3-2Z"></path></svg>
+                  </span>
+                  <div style="font-size:15px;font-weight:700;">{{ patientTabLabel }} — next design phase</div>
+                  <div style="font-size:12.5px;color:#7288A1;max-width:380px;text-align:center;line-height:1.5;">This section is queued in the build plan. The Summary tab shows the flagship composition.</div>
+                </div>
+              </sc-if>
+            </div>
+
+            <aside aria-label="Alerts, tasks and appointments" style="display:flex;flex-direction:column;gap:16px;padding-top:6px;">
+              <div style="background:#FFFFFF;border:1px solid #E4EAF1;border-radius:14px;padding:14px 16px;">
+                <div style="font-size:13px;font-weight:700;margin-bottom:11px;">Alerts &amp; Notifications</div>
+                <div style="display:flex;flex-direction:column;gap:12px;">
+                  <sc-for list="{{ alerts }}" as="al" hint-placeholder-count="4">
+                    <div style="display:flex;gap:10px;align-items:flex-start;">
+                      <span style="width:30px;height:30px;border-radius:50%;background:{{ al.tint }};display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="{{ al.color }}" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{ al.d1 }}"></path><path d="{{ al.d2 }}"></path></svg>
+                      </span>
+                      <span style="min-width:0;">
+                        <span style="display:block;font-size:12.5px;font-weight:600;line-height:1.35;">{{ al.title }}</span>
+                        <span style="display:block;font-size:11px;color:#7288A1;margin-top:1px;">{{ al.sub }}</span>
+                      </span>
+                    </div>
+                  </sc-for>
+                </div>
+                <a href="#" style="display:block;font-size:12px;font-weight:600;margin-top:12px;">View All Notifications</a>
+              </div>
+              <div style="background:#FFFFFF;border:1px solid #E4EAF1;border-radius:14px;padding:14px 16px;">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:11px;">
+                  <div style="font-size:13px;font-weight:700;">Tasks</div>
+                  <button style="display:flex;align-items:center;gap:4px;height:24px;padding:0 9px;border-radius:7px;border:none;background:#2563C7;color:#FFFFFF;font-size:11px;font-weight:600;cursor:pointer;" style-hover="background:#1B4FA5;">
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+                    New Task
+                  </button>
+                </div>
+                <div style="display:flex;flex-direction:column;gap:11px;">
+                  <sc-for list="{{ railTasks }}" as="tk" hint-placeholder-count="4">
+                    <div style="display:flex;align-items:flex-start;gap:10px;">
+                      <span style="width:15px;height:15px;border-radius:5px;border:1.5px solid #B9C9D9;flex-shrink:0;margin-top:2px;"></span>
+                      <span style="flex:1;min-width:0;">
+                        <span style="display:block;font-size:12.5px;font-weight:600;line-height:1.3;">{{ tk.title }}</span>
+                        <span style="display:block;font-size:11px;color:#7288A1;margin-top:1px;">{{ tk.who }}</span>
+                      </span>
+                      <span style="font-size:10px;font-weight:600;color:{{ tk.pColor }};background:{{ tk.pTint }};border-radius:6px;padding:2px 8px;flex-shrink:0;">{{ tk.priority }}</span>
+                    </div>
+                  </sc-for>
+                </div>
+                <a href="#" style="display:block;font-size:12px;font-weight:600;margin-top:12px;">View All Tasks (8)</a>
+              </div>
+              <div style="background:#FFFFFF;border:1px solid #E4EAF1;border-radius:14px;padding:14px 16px;">
+                <div style="font-size:13px;font-weight:700;margin-bottom:11px;">Upcoming Appointments</div>
+                <div style="display:flex;flex-direction:column;gap:11px;">
+                  <sc-for list="{{ railAppts }}" as="ap" hint-placeholder-count="3">
+                    <div style="display:flex;align-items:center;gap:10px;">
+                      <span style="width:30px;height:30px;border-radius:50%;background:{{ ap.bg }};color:#FFFFFF;font-size:10.5px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;">{{ ap.initials }}</span>
+                      <span style="min-width:0;">
+                        <span style="display:block;font-size:12.5px;font-weight:600;">{{ ap.name }}</span>
+                        <span style="display:block;font-size:11px;color:#7288A1;">{{ ap.when }}</span>
+                      </span>
+                    </div>
+                  </sc-for>
+                </div>
+                <a href="#" style="display:block;font-size:12px;font-weight:600;margin-top:12px;">View Calendar</a>
+              </div>
+            </aside>
+          </div>
+        </section>
+      </sc-if>
+
+      <sc-if value="{{ isPractice }}" hint-placeholder-val="{{ false }}">
+        <section data-screen-label="Practice Dashboard" style="position:relative;padding:22px 24px 16px 24px;max-width:1480px;">
+          <div style="display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:18px;">
+            <div>
+              <h1 style="margin:0;font-size:20px;font-weight:700;letter-spacing:-0.015em;">Practice dashboard</h1>
+              <div style="font-size:13px;color:#5C6F82;margin-top:3px;">Tuesday, July 14, 2026 · 6 appointments today</div>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;font-size:12px;color:#7288A1;">
+              <span style="width:7px;height:7px;border-radius:50%;background:#22B573;"></span>
+              All integrations connected · synced 2 min ago
+            </div>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin-bottom:20px;">
+            <sc-for list="{{ stats }}" as="st" hint-placeholder-count="6">
+              <button onClick="{{ st.onClick }}" style="display:flex;flex-direction:column;gap:8px;text-align:left;background:#FFFFFF;border:1px solid #E4EAF1;border-radius:14px;padding:14px;cursor:pointer;" style-hover="border-color:#C9D6E3;box-shadow:0 3px 10px rgba(24,42,61,0.06);" style-focus="outline:2px solid #2563C7;outline-offset:1px;">
+                <span style="display:flex;align-items:center;justify-content:space-between;width:100%;">
+                  <span style="font-size:12px;font-weight:600;color:#5C6F82;">{{ st.label }}</span>
+                  <span style="width:26px;height:26px;border-radius:8px;background:{{ st.tint }};display:flex;align-items:center;justify-content:center;">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="{{ st.color }}" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{ st.d1 }}"></path><path d="{{ st.d2 }}"></path></svg>
+                  </span>
+                </span>
+                <span style="display:flex;align-items:baseline;gap:7px;">
+                  <span style="font-size:24px;font-weight:700;letter-spacing:-0.02em;color:#182A3D;">{{ st.value }}</span>
+                  <span style="font-size:11.5px;font-weight:600;color:{{ st.subColor }};">{{ st.sub }}</span>
+                </span>
+              </button>
+            </sc-for>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 332px;gap:16px;align-items:start;">
+            <div style="display:flex;flex-direction:column;gap:16px;">
+              <div style="background:#FFFFFF;border:1px solid #E4EAF1;border-radius:14px;">
+                <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid #EDF2F7;">
+                  <h2 style="margin:0;font-size:14px;font-weight:700;">Review queue</h2>
+                  <a href="#" style="font-size:12.5px;font-weight:600;">Open queue (12)</a>
+                </div>
+                <div>
+                  <sc-for list="{{ queue }}" as="q" hint-placeholder-count="5">
+                    <button onClick="{{ q.onClick }}" style="display:flex;align-items:center;gap:12px;width:100%;text-align:left;background:none;border:none;border-bottom:1px solid #F3F7FA;padding:11px 18px;cursor:pointer;" style-hover="background:#F7FAFC;" style-focus="outline:2px solid #2563C7;outline-offset:-2px;">
+                      <span style="font-size:11px;font-weight:600;color:{{ q.typeColor }};background:{{ q.typeTint }};border-radius:6px;padding:3px 8px;white-space:nowrap;">{{ q.type }}</span>
+                      <span style="flex:1;min-width:0;">
+                        <span style="display:block;font-size:13px;font-weight:600;color:#182A3D;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ q.title }}</span>
+                        <span style="display:block;font-size:11.5px;color:#7288A1;margin-top:1px;">{{ q.patient }} · {{ q.when }}</span>
+                      </span>
+                      <span style="font-size:11px;font-weight:600;color:{{ q.prColor }};background:{{ q.prTint }};border-radius:99px;padding:2px 9px;">{{ q.priority }}</span>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#B9C9D9" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 6 6 6-6 6"></path></svg>
+                    </button>
+                  </sc-for>
+                </div>
+              </div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+                <div style="background:#FFFFFF;border:1px solid #E4EAF1;border-radius:14px;">
+                  <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid #EDF2F7;">
+                    <h2 style="margin:0;font-size:14px;font-weight:700;">New abnormal biomarkers</h2>
+                    <a href="#" style="font-size:12.5px;font-weight:600;">All labs</a>
+                  </div>
+                  <div style="padding:4px 0;">
+                    <sc-for list="{{ abnormal }}" as="b" hint-placeholder-count="4">
+                      <div style="display:flex;align-items:center;gap:10px;padding:9px 16px;border-bottom:1px solid #F5F8FA;">
+                        <span style="width:8px;height:8px;border-radius:50%;background:{{ b.color }};flex-shrink:0;"></span>
+                        <span style="flex:1;min-width:0;">
+                          <span style="display:block;font-size:13px;font-weight:600;">{{ b.marker }} <span style="font-weight:700;color:{{ b.color }};">{{ b.value }}</span></span>
+                          <span style="display:block;font-size:11.5px;color:#7288A1;">{{ b.patient }} · lab range {{ b.range }}</span>
+                        </span>
+                        <span style="font-size:11px;color:#8A9BAC;white-space:nowrap;">{{ b.when }}</span>
+                      </div>
+                    </sc-for>
+                  </div>
+                </div>
+                <div style="background:#FFFFFF;border:1px solid #E4EAF1;border-radius:14px;">
+                  <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid #EDF2F7;">
+                    <h2 style="margin:0;font-size:14px;font-weight:700;">Experiments completed</h2>
+                    <a href="#" style="font-size:12.5px;font-weight:600;">N-of-1 Lab</a>
+                  </div>
+                  <div style="padding:4px 0;">
+                    <sc-for list="{{ expDone }}" as="x" hint-placeholder-count="3">
+                      <div style="padding:10px 16px;border-bottom:1px solid #F5F8FA;">
+                        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+                          <span style="font-size:13px;font-weight:600;">{{ x.name }}</span>
+                          <span style="font-size:11px;font-weight:600;color:{{ x.ccolor }};background:{{ x.ctint }};border-radius:99px;padding:2px 9px;white-space:nowrap;">{{ x.conclusion }}</span>
+                        </div>
+                        <div style="font-size:11.5px;color:#7288A1;margin-top:2px;">{{ x.patient }} · {{ x.outcome }}</div>
+                      </div>
+                    </sc-for>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:16px;">
+              <div style="background:#FFFFFF;border:1px solid #E4EAF1;border-radius:14px;">
+                <div style="padding:13px 16px;border-bottom:1px solid #EDF2F7;"><h2 style="margin:0;font-size:14px;font-weight:700;">Risk changes this week</h2></div>
+                <div style="padding:4px 0;">
+                  <sc-for list="{{ riskChanges }}" as="r" hint-placeholder-count="3">
+                    <button onClick="{{ r.onClick }}" style="display:flex;align-items:center;gap:10px;width:100%;text-align:left;background:none;border:none;border-bottom:1px solid #F5F8FA;padding:9px 16px;cursor:pointer;" style-hover="background:#F7FAFC;">
+                      <span style="width:28px;height:28px;border-radius:50%;background:{{ r.avatarBg }};color:#FFFFFF;font-size:10.5px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;">{{ r.initials }}</span>
+                      <span style="flex:1;font-size:12.5px;font-weight:600;color:#182A3D;">{{ r.name }}</span>
+                      <span style="display:flex;align-items:center;gap:5px;font-size:11px;font-weight:600;">
+                        <span style="color:{{ r.fromColor }};">{{ r.from }}</span>
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#8A9BAC" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6"></path></svg>
+                        <span style="color:{{ r.toColor }};">{{ r.to }}</span>
+                      </span>
+                    </button>
+                  </sc-for>
+                </div>
+              </div>
+              <div style="background:#FFFFFF;border:1px solid #E4EAF1;border-radius:14px;">
+                <div style="padding:13px 16px;border-bottom:1px solid #EDF2F7;"><h2 style="margin:0;font-size:14px;font-weight:700;">Low adherence</h2></div>
+                <div style="padding:4px 0 8px 0;">
+                  <sc-for list="{{ lowAdherence }}" as="l" hint-placeholder-count="3">
+                    <div style="padding:8px 16px;">
+                      <div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:5px;">
+                        <span style="font-weight:600;">{{ l.name }}</span>
+                        <span style="font-weight:700;color:{{ l.color }};">{{ l.pct }}%</span>
+                      </div>
+                      <div style="height:5px;border-radius:99px;background:#EDF2F6;overflow:hidden;" role="img" aria-label="{{ l.name }} adherence {{ l.pct }} percent">
+                        <div style="height:100%;border-radius:99px;background:{{ l.color }};width:{{ l.pct }}%;"></div>
+                      </div>
+                      <div style="font-size:11px;color:#7288A1;margin-top:4px;">{{ l.detail }}</div>
+                    </div>
+                  </sc-for>
+                </div>
+              </div>
+              <div style="background:#FFFFFF;border:1px solid #E4EAF1;border-radius:14px;">
+                <div style="padding:13px 16px;border-bottom:1px solid #EDF2F7;"><h2 style="margin:0;font-size:14px;font-weight:700;">Team workload</h2></div>
+                <div style="padding:6px 0 10px 0;">
+                  <sc-for list="{{ teamLoad }}" as="t" hint-placeholder-count="3">
+                    <div style="display:flex;align-items:center;gap:10px;padding:7px 16px;">
+                      <span style="width:26px;height:26px;border-radius:50%;background:{{ t.bg }};color:#FFFFFF;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;">{{ t.initials }}</span>
+                      <span style="width:88px;font-size:12px;font-weight:600;">{{ t.name }}</span>
+                      <span style="flex:1;height:5px;border-radius:99px;background:#EDF2F6;overflow:hidden;"><span style="display:block;height:100%;border-radius:99px;background:#2563C7;width:{{ t.pct }}%;"></span></span>
+                      <span style="font-size:11.5px;color:#5C6F82;width:56px;text-align:right;">{{ t.count }} open</span>
+                    </div>
+                  </sc-for>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </sc-if>
+
+      <sc-if value="{{ isPlaceholder }}" hint-placeholder-val="{{ false }}">
+        <section data-screen-label="Placeholder" style="position:relative;padding:120px 24px;display:flex;flex-direction:column;align-items:center;gap:10px;">
+          <span style="width:48px;height:48px;border-radius:14px;background:rgba(37,99,199,0.08);display:flex;align-items:center;justify-content:center;">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#2563C7" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 3.5h15a1 1 0 0 1 1 1v15a1 1 0 0 1-1 1h-15a1 1 0 0 1-1-1v-15a1 1 0 0 1 1-1Z"></path><path d="M3.5 9.5h17M9.5 20.5v-11"></path></svg>
+          </span>
+          <div style="font-size:16px;font-weight:700;">{{ placeholderLabel }} — queued for the next phase</div>
+          <div style="font-size:13px;color:#7288A1;max-width:420px;text-align:center;line-height:1.5;">The Overview and the practice dashboard are live. This screen is on the build list and will follow the same shell and design language.</div>
+          <button onClick="{{ goOverview }}" style="margin-top:6px;height:32px;padding:0 14px;border-radius:8px;border:1px solid #DCE5EE;background:#FFFFFF;font-size:12.5px;font-weight:600;color:#2563C7;cursor:pointer;" style-hover="border-color:#B9C9D9;">Back to Overview</button>
+        </section>
+      </sc-if>
+    </main>
+  </div>
+
+  <sc-if value="{{ cmdOpen }}" hint-placeholder-val="{{ false }}">
+    <div onClick="{{ closeCmd }}" style="position:fixed;inset:0;background:rgba(24,42,61,0.32);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);z-index:100;display:flex;justify-content:center;padding-top:110px;">
+      <div onClick="{{ stop }}" role="dialog" aria-label="Command palette" style="width:620px;height:fit-content;background:rgba(255,255,255,0.94);backdrop-filter:blur(28px) saturate(1.6);-webkit-backdrop-filter:blur(28px) saturate(1.6);border:1px solid rgba(255,255,255,0.7);outline:1px solid rgba(203,214,224,0.6);border-radius:16px;box-shadow:0 24px 64px rgba(24,42,61,0.22),inset 0 1px 0 rgba(255,255,255,0.85);overflow:hidden;animation:fadeUp 0.18s ease-out;">
+        <div style="display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid #EDF2F7;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8A9BAC" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path></svg>
+          <input autoFocus placeholder="Search patients, labs, actions… or ask the assistant" style="flex:1;border:none;outline:none;background:none;font-size:14.5px;color:#182A3D;" aria-label="Command palette search">
+          <span style="font-size:10.5px;font-weight:600;color:#8A9BAC;border:1px solid #E4EAF1;border-radius:5px;padding:1px 6px;">esc</span>
+        </div>
+        <div style="max-height:380px;overflow-y:auto;padding:6px 6px 10px 6px;">
+          <sc-for list="{{ cmdGroups }}" as="g" hint-placeholder-count="3">
+            <div>
+              <div style="font-size:10.5px;font-weight:700;color:#8A9BAC;letter-spacing:0.07em;text-transform:uppercase;padding:10px 12px 4px 12px;">{{ g.label }}</div>
+              <sc-for list="{{ g.items }}" as="c" hint-placeholder-count="3">
+                <button onClick="{{ c.onClick }}" style="display:flex;align-items:center;gap:11px;width:100%;text-align:left;background:none;border:none;border-radius:9px;padding:9px 12px;cursor:pointer;" style-hover="background:rgba(37,99,199,0.07);" style-focus="outline:2px solid #2563C7;outline-offset:-2px;">
+                  <span style="width:26px;height:26px;border-radius:7px;background:{{ c.tint }};display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:10px;font-weight:700;color:{{ c.color }};">
+                    <sc-if value="{{ c.initials }}" hint-placeholder-val="{{ false }}">{{ c.initials }}</sc-if>
+                    <sc-if value="{{ c.d1 }}" hint-placeholder-val="{{ false }}">
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="{{ c.color }}" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{ c.d1 }}"></path><path d="{{ c.d2 }}"></path></svg>
+                    </sc-if>
+                  </span>
+                  <span style="flex:1;">
+                    <span style="display:block;font-size:13px;font-weight:600;color:#182A3D;">{{ c.label }}</span>
+                    <span style="display:block;font-size:11px;color:#8A9BAC;">{{ c.sub }}</span>
+                  </span>
+                  <span style="font-size:10.5px;font-weight:600;color:#8A9BAC;">{{ c.kbd }}</span>
+                </button>
+              </sc-for>
+            </div>
+          </sc-for>
+        </div>
+        <div style="display:flex;gap:16px;padding:9px 16px;border-top:1px solid #EDF2F7;font-size:10.5px;color:#8A9BAC;background:rgba(247,250,252,0.6);">
+          <span><b style="color:#5C6F82;">↑↓</b> navigate</span><span><b style="color:#5C6F82;">↵</b> open</span><span><b style="color:#5C6F82;">tab</b> ask assistant</span>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ aiOpen }}" hint-placeholder-val="{{ false }}">
+    <aside role="dialog" aria-label="Clinical assistant panel" style="position:fixed;top:12px;right:12px;bottom:12px;width:392px;z-index:90;background:rgba(255,255,255,0.92);backdrop-filter:blur(28px) saturate(1.6);-webkit-backdrop-filter:blur(28px) saturate(1.6);border:1px solid rgba(255,255,255,0.7);outline:1px solid rgba(203,214,224,0.6);border-radius:20px;box-shadow:0 20px 56px rgba(24,42,61,0.2),inset 0 1px 0 rgba(255,255,255,0.85);display:flex;flex-direction:column;overflow:hidden;animation:fadeUp 0.18s ease-out;">
+      <div style="height:3px;background:linear-gradient(90deg,#7461C9,#9D8DE8);flex-shrink:0;"></div>
+      <div style="display:flex;align-items:center;gap:9px;padding:14px 16px 12px 16px;border-bottom:1px solid #EDF2F7;">
+        <span style="width:28px;height:28px;border-radius:8px;background:rgba(116,97,201,0.12);display:flex;align-items:center;justify-content:center;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#7461C9" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5l2 5.3 5.3 2-5.3 2-2 5.3-2-5.3-5.3-2 5.3-2Z"></path></svg>
+        </span>
+        <div style="flex:1;">
+          <div style="font-size:14px;font-weight:700;">Clinical Assistant</div>
+          <div style="font-size:11px;color:#7288A1;">Alexandra Morgan · data through Jul 12, 2026</div>
+        </div>
+        <button onClick="{{ closeAi }}" aria-label="Close assistant" style="width:28px;height:28px;border-radius:8px;border:none;background:none;cursor:pointer;color:#8A9BAC;display:flex;align-items:center;justify-content:center;" style-hover="background:rgba(90,107,126,0.1);color:#182A3D;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"></path></svg>
+        </button>
+      </div>
+      <div style="flex:1;overflow-y:auto;padding:14px 16px;">
+        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px;">
+          <sc-for list="{{ aiChips }}" as="ch" hint-placeholder-count="3">
+            <button style="border:1px solid rgba(116,97,201,0.3);background:rgba(116,97,201,0.06);color:#5D4BB5;font-size:11.5px;font-weight:600;border-radius:99px;padding:5px 11px;cursor:pointer;" style-hover="background:rgba(116,97,201,0.12);">{{ ch }}</button>
+          </sc-for>
+        </div>
+        <div style="font-size:12px;font-weight:700;color:#182A3D;margin-bottom:8px;">Why is her sleep score declining?</div>
+        <div style="border:1px solid #ECE9F8;background:rgba(116,97,201,0.04);border-radius:12px;padding:12px;">
+          <div style="display:flex;flex-direction:column;gap:9px;">
+            <sc-for list="{{ aiFacts }}" as="fa" hint-placeholder-count="4">
+              <div style="display:flex;gap:8px;align-items:baseline;">
+                <span style="width:8px;height:8px;border-radius:3px;background:{{ fa.color }};flex-shrink:0;transform:translateY(1px);"></span>
+                <span style="flex:1;font-size:12px;color:#33475C;line-height:1.45;">{{ fa.text }} <span style="display:inline-block;font-size:9.5px;font-weight:700;color:{{ fa.color }};background:{{ fa.tint }};border-radius:4px;padding:1px 5px;margin-left:3px;vertical-align:1px;">{{ fa.badge }}</span></span>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+        <div style="margin-top:14px;">
+          <div style="font-size:10.5px;font-weight:700;color:#8A9BAC;letter-spacing:0.06em;text-transform:uppercase;margin-bottom:7px;">Sources used</div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px;">
+            <sc-for list="{{ aiSources }}" as="so" hint-placeholder-count="4">
+              <span style="font-size:11px;font-weight:600;color:#5C6F82;background:#F1F5F9;border-radius:6px;padding:3px 8px;">{{ so }}</span>
+            </sc-for>
+          </div>
+        </div>
+        <div style="margin-top:14px;">
+          <div style="font-size:10.5px;font-weight:700;color:#8A9BAC;letter-spacing:0.06em;text-transform:uppercase;margin-bottom:7px;">Missing information</div>
+          <div style="font-size:12px;color:#5C6F82;line-height:1.5;">No evening cortisol data · check-ins missing 4 of last 14 days · room-temperature data unavailable.</div>
+        </div>
+      </div>
+      <div style="padding:12px 16px;border-top:1px solid #EDF2F7;background:rgba(247,250,252,0.7);">
+        <div style="display:flex;align-items:center;gap:7px;margin-bottom:10px;">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#C77E14" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 8v4m0 4h.01"></path></svg>
+          <span style="font-size:11px;color:#B45309;font-weight:600;">Not reviewed — assistant output requires practitioner review.</span>
+        </div>
+        <div style="display:flex;gap:8px;margin-bottom:10px;">
+          <button style="flex:1;height:30px;border-radius:8px;border:1px solid #E4EAF1;background:#FFFFFF;font-size:12px;font-weight:600;color:#33475C;cursor:pointer;" style-hover="border-color:#C9D6E3;">Insert into note</button>
+          <button style="flex:1;height:30px;border-radius:8px;border:1px solid rgba(116,97,201,0.35);background:rgba(116,97,201,0.08);font-size:12px;font-weight:600;color:#5D4BB5;cursor:pointer;" style-hover="background:rgba(116,97,201,0.14);">Explain reasoning</button>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;border:1px solid #E4EAF1;background:#FFFFFF;border-radius:10px;padding:0 10px;height:36px;">
+          <input placeholder="Ask about this patient…" style="flex:1;border:none;outline:none;background:none;font-size:12.5px;" aria-label="Ask about this patient">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#7461C9" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 14-7-4 14-3.5-5.5Z"></path></svg>
+        </div>
+      </div>
+    </aside>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:900},&quot;material&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;solid&quot;,&quot;glass&quot;],&quot;default&quot;:&quot;solid&quot;,&quot;tsType&quot;:&quot;'solid'|'glass'&quot;,&quot;section&quot;:&quot;Surface&quot;},&quot;atmosphere&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;section&quot;:&quot;Surface&quot;,&quot;tsType&quot;:&quot;boolean&quot;}}">
+class Component extends DCLogic {
+  state = { screen: 'patient', patientTab: 'summary', cmdOpen: false, aiOpen: false, placeholderLabel: '' };
+
+  componentDidMount() {
+    this._kd = (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key && e.key.toLowerCase() === 'k') { e.preventDefault(); this.setState(s => ({ cmdOpen: !s.cmdOpen })); }
+      if (e.key === 'Escape') this.setState({ cmdOpen: false, aiOpen: false });
+    };
+    window.addEventListener('keydown', this._kd);
+  }
+  componentWillUnmount() { window.removeEventListener('keydown', this._kd); }
+
+  icons() {
+    return {
+      home: { d1: 'M3 10.5 12 3l9 7.5V20a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 20Z', d2: 'M9.5 21.5v-8h5v8' },
+      users: { d1: 'M16 21v-1.8a4.2 4.2 0 0 0-4.2-4.2H6.2A4.2 4.2 0 0 0 2 19.2V21', d2: 'M13 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0', d3: 'M22 21v-1.8a4.2 4.2 0 0 0-3.2-4.1M15.8 3.2a4 4 0 0 1 0 7.6' },
+      calendar: { d1: 'M4.5 5.5h15A1.5 1.5 0 0 1 21 7v13a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 20V7a1.5 1.5 0 0 1 1.5-1.5Z', d2: 'M16 3v5M8 3v5M3 11h18' },
+      tasks: { d1: 'M9 11.5 11.5 14 15 9.5', d2: 'M4.5 3.5h15a1 1 0 0 1 1 1v15a1 1 0 0 1-1 1h-15a1 1 0 0 1-1-1v-15a1 1 0 0 1 1-1Z' },
+      messages: { d1: 'M21 11.5a8.5 8.5 0 0 1-8.5 8.5 8.4 8.4 0 0 1-3.9-.95L3 20.5l1.45-5.6A8.5 8.5 0 1 1 21 11.5Z' },
+      twin: { d1: 'M22 12h-3.5l-3 8.5L9 3.5l-3 8.5H2.5' },
+      clock: { d1: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z', d2: 'M12 7v5l3.5 2' },
+      flask: { d1: 'M9.5 2.5v6.6L4.2 18.6A2 2 0 0 0 6 21.5h12a2 2 0 0 0 1.8-2.9L14.5 9.1V2.5', d2: 'M8 2.5h8M7.2 14.5h9.6' },
+      reasoning: { d1: 'M6 8.5v7', d2: 'M6 8.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5ZM6 20.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5ZM18 10.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z', d3: 'M18 10.5a9 9 0 0 1-9 7.7' },
+      clipboard: { d1: 'M9 4.5H6.5A1.5 1.5 0 0 0 5 6v14a1.5 1.5 0 0 0 1.5 1.5h11A1.5 1.5 0 0 0 19 20V6a1.5 1.5 0 0 0-1.5-1.5H15', d2: 'M9.5 2.5h5a1 1 0 0 1 1 1v1a1 1 0 0 1-1 1h-5a1 1 0 0 1-1-1v-1a1 1 0 0 1 1-1Z', d3: 'M9 12h6M9 16h4' },
+      pill: { d1: 'M10.6 20.4a4.9 4.9 0 0 1-7-7l9.8-9.8a4.9 4.9 0 0 1 7 7Z', d2: 'M8.5 8.5l7 7' },
+      tube: { d1: 'M14.5 2.5v16.75a2.25 2.25 0 0 1-4.5 0V2.5', d2: 'M8.5 2.5h7.5M10 15h4.5' },
+      watch: { d1: 'M12 17.5a5.5 5.5 0 1 0 0-11 5.5 5.5 0 0 0 0 11Z', d2: 'M12 9.5V12l1.8 1M9.2 6.8 8.5 2.5h7l-.7 4.3M9.2 17.2l-.7 4.3h7l-.7-4.3' },
+      file: { d1: 'M14 2.5H6.5A1.5 1.5 0 0 0 5 4v16a1.5 1.5 0 0 0 1.5 1.5h11A1.5 1.5 0 0 0 19 20V7.5Z', d2: 'M14 2.5V7.5H19M9 13h6M9 17h4' },
+      sparkle: { d1: 'M12 3.5l2 5.3 5.3 2-5.3 2-2 5.3-2-5.3-5.3-2 5.3-2Z', d2: 'M19 15.5l.9 2.4 2.4.9-2.4.9-.9 2.4-.9-2.4-2.4-.9 2.4-.9Z' },
+      layers: { d1: 'm12 2.5 9.5 5L12 12.5l-9.5-5Z', d2: 'm2.5 12.5 9.5 5 9.5-5M2.5 17.5l9.5 5 9.5-5' },
+      zap: { d1: 'M13 2.5 3.5 14H11l-1 7.5L19.5 10H12Z' },
+      chart: { d1: 'M6 20.5v-5M12 20.5V9.5M18 20.5v-16' },
+      link: { d1: 'M9.5 13.5a4.5 4.5 0 0 0 6.8.5l2.7-2.7a4.5 4.5 0 0 0-6.4-6.4l-1.5 1.5', d2: 'M14.5 10.5a4.5 4.5 0 0 0-6.8-.5l-2.7 2.7a4.5 4.5 0 0 0 6.4 6.4l1.5-1.5' },
+      sliders: { d1: 'M5 21v-6M5 11V3M12 21v-9M12 8V3M19 21v-4M19 13V3', d2: 'M2.5 15h5M9.5 8h5M16.5 17h5' },
+      note: { d1: 'M12 20h9', d2: 'M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z' },
+      upload: { d1: 'M12 16V4m0 0L7 9m5-5 5 5', d2: 'M4 20h16' },
+      moon: { d1: 'M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z' },
+      sun: { d1: 'M16 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0', d2: 'M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4' }
+    };
+  }
+
+  nav(screen, tab) { return () => this.setState({ screen, patientTab: tab || 'summary', cmdOpen: false }); }
+  ph(label) { return () => this.setState({ screen: 'placeholder', placeholderLabel: label, cmdOpen: false }); }
+
+  spark(vals, w, h) {
+    const min = Math.min(...vals), max = Math.max(...vals), rng = (max - min) || 1;
+    return vals.map((v, i) => `${(i / (vals.length - 1)) * (w - 4) + 2},${h - 3 - ((v - min) / rng) * (h - 6)}`).join(' ');
+  }
+
+  radar() {
+    const cx = 126, cy = 95, R = 62;
+    const axes = [
+      { l: 'Metabolic', v: 0.78 }, { l: 'Hormonal', v: 0.55 }, { l: 'Inflammation', v: 0.45 }, { l: 'Detox', v: 0.7 },
+      { l: 'Sleep & Recovery', v: 0.6 }, { l: 'Energy', v: 0.5 }, { l: 'Gut Health', v: 0.72 }, { l: 'Stress', v: 0.52 }
+    ];
+    const pt = (i, r) => { const a = (Math.PI * 2 * i) / axes.length - Math.PI / 2; return [cx + Math.cos(a) * r, cy + Math.sin(a) * r]; };
+    const ring = (f) => axes.map((_, i) => pt(i, R * f).map(n => n.toFixed(1)).join(',')).join(' ');
+    const R_ = window.React || React;
+    const rings = [0.33, 0.66, 1].map((f, i) => R_.createElement('polygon', { key: i, points: ring(f), fill: 'none', stroke: '#E4EAF1', strokeWidth: 1 }));
+    const spokes = axes.map((_, i) => { const [x, y] = pt(i, R); return R_.createElement('line', { key: i, x1: cx, y1: cy, x2: x, y2: y, stroke: '#EDF2F6', strokeWidth: 1 }); });
+    const points = axes.map((a, i) => pt(i, R * a.v).map(n => n.toFixed(1)).join(',')).join(' ');
+    const dots = axes.map((a, i) => { const [x, y] = pt(i, R * a.v); return R_.createElement('circle', { key: i, cx: x, cy: y, r: 2.2, fill: '#22B573' }); });
+    const labels = axes.map((a, i) => {
+      const [x, y] = pt(i, R + 14);
+      return R_.createElement('text', { key: i, x, y: y + 3, textAnchor: 'middle', fontSize: 9.5, fontWeight: 600, fill: '#7288A1', fontFamily: 'Inter,sans-serif' }, a.l);
+    });
+    return { rings, spokes, points, dots, labels };
+  }
+
+  renderVals() {
+    const S = this.state, ic = this.icons();
+    const material = this.props.material ?? 'solid';
+    const glassCss = material === 'glass' ? 'backdrop-filter:blur(22px) saturate(1.5);-webkit-backdrop-filter:blur(22px) saturate(1.5);' : '';
+    const atmosphere = this.props.atmosphere ?? true;
+    const atmosphereBg = atmosphere ? 'radial-gradient(1100px 560px at 72% -12%, rgba(37,99,199,0.05), transparent 65%), radial-gradient(900px 520px at 6% 108%, rgba(13,92,99,0.04), transparent 60%)' : 'none';
+
+    const c = {
+      blue: '#2563C7', blueTint: 'rgba(37,99,199,0.1)', teal: '#0E8388', tealTint: 'rgba(14,131,136,0.1)',
+      green: '#1F9D63', greenBright: '#22B573', greenTint: '#E9F6EF', amber: '#C77E14', amberTint: '#FBF3E4',
+      coral: '#D6544A', coralTint: '#FBEDEC', violet: '#7461C9', violetTint: 'rgba(116,97,201,0.1)',
+      slate: '#5C6F82', slateTint: '#EEF2F6'
+    };
+
+    const navDefs = [
+      { id: 'overview', label: 'Overview', ...ic.home, onClick: this.nav('patient', 'summary') },
+      { id: 'clients', label: 'Clients', ...ic.users, onClick: this.nav('practice') },
+      { id: 'twin', label: 'Health Twin', ...ic.twin, onClick: this.nav('patient', 'twin') },
+      { id: 'timeline', label: 'Timeline', ...ic.clock, onClick: this.nav('patient', 'timeline') },
+      { id: 'labs', label: 'Labs & Biomarkers', ...ic.flask, onClick: this.nav('patient', 'labs') },
+      { id: 'reasoning', label: 'Clinical Reasoning', ...ic.reasoning, onClick: this.nav('patient', 'reasoning') },
+      { id: 'supplements', label: 'Supplements', ...ic.pill, onClick: this.nav('patient', 'supplements') },
+      { id: 'nof1', label: 'N-of-1 Lab', ...ic.tube, onClick: this.nav('patient', 'nof1lab') },
+      { id: 'protocols', label: 'Protocols', ...ic.clipboard, onClick: this.nav('patient', 'protocols') },
+      { id: 'wearables', label: 'Wearables', ...ic.watch, onClick: this.ph('Wearables') },
+      { id: 'assessments', label: 'Assessments', ...ic.file, onClick: this.ph('Assessments') },
+      { id: 'quantum', label: 'Quantum Mind', ...ic.sparkle, onClick: this.ph('Quantum Mind') },
+      { id: 'reports', label: 'Reports', ...ic.chart, onClick: this.nav('patient', 'reports') },
+      { id: 'tasks', label: 'Tasks', ...ic.tasks, badge: '8', onClick: this.ph('Tasks & Review Queue') },
+      { id: 'messages', label: 'Messages', ...ic.messages, badge: '3', onClick: this.ph('Messages') },
+      { id: 'integrations', label: 'Integrations', ...ic.link, onClick: this.ph('Integrations') },
+      { id: 'settings', label: 'Settings', ...ic.sliders, onClick: this.ph('Settings') }
+    ];
+    const activeId = S.screen === 'practice' ? 'clients'
+      : S.screen === 'patient' ? ({ summary: 'overview', twin: 'twin', timeline: 'timeline', labs: 'labs', reasoning: 'reasoning', supplements: 'supplements', nof1lab: 'nof1', protocols: 'protocols', reports: 'reports' }[S.patientTab] || '')
+      : '';
+    const navItems = navDefs.map(it => ({
+      ...it, badge: it.badge || false, d2: it.d2 || '', d3: it.d3 || '',
+      bg: it.id === activeId ? '#E9F0FB' : 'transparent',
+      border: it.id === activeId ? '#D7E3F5' : 'transparent',
+      color: it.id === activeId ? '#1B4FA5' : '#44586E',
+      weight: it.id === activeId ? 600 : 500
+    }));
+
+    const tabs = [
+      { label: 'Summary', id: 'summary' }, { label: 'Health Twin', id: 'twin' }, { label: 'Timeline', id: 'timeline' },
+      { label: 'Labs', id: 'labs' }, { label: 'Clinical Reasoning', id: 'reasoning' }, { label: 'Supplements', id: 'supplements' },
+      { label: 'N-of-1 Lab', id: 'nof1lab' }, { label: 'Protocols', id: 'protocols' }, { label: 'Reports', id: 'reports' }
+    ];
+    const patientTabs = tabs.map(t => {
+      const sel = S.patientTab === t.id;
+      return { label: t.label, selStr: String(sel), color: sel ? '#1B4FA5' : '#5C6F82', weight: sel ? 650 : 500, line: sel ? '#2563C7' : 'transparent', onClick: () => this.setState({ patientTab: t.id }) };
+    });
+
+    const priorities = [
+      { n: '1', text: 'Support sleep quality' },
+      { n: '2', text: 'Reduce systemic inflammation' },
+      { n: '3', text: 'Balance cortisol rhythm' },
+      { n: '4', text: 'Optimize mitochondrial function' }
+    ];
+    const flags = [
+      { label: 'Low Vitamin D (24 ng/mL)', action: 'Monitor', color: c.amber, tint: c.amberTint },
+      { label: 'Elevated hs-CRP (2.8 mg/L)', action: 'Review', color: c.amber, tint: c.amberTint },
+      { label: 'High Cortisol (AM)', action: 'Monitor', color: c.coral, tint: c.coralTint }
+    ];
+
+    const biomarkers = [
+      { name: 'hs-CRP', unit: 'mg/L', value: '2.8', status: 'High', color: c.coral, vals: [3.6, 3.4, 3.5, 3.1, 3.0, 2.9, 2.8], trendWord: 'improving' },
+      { name: 'Vitamin D', unit: 'ng/mL', value: '24', status: 'Low', color: c.amber, vals: [18, 19, 20, 21, 22, 23, 24], trendWord: 'rising' },
+      { name: 'Ferritin', unit: 'ng/mL', value: '45', status: 'Optimal', color: c.green, vals: [42, 44, 43, 45, 44, 46, 45], trendWord: 'stable' },
+      { name: 'Cortisol (AM)', unit: 'µg/dL', value: '21.3', status: 'High', color: c.coral, vals: [18, 19, 20.5, 20, 21, 21.5, 21.3], trendWord: 'elevated' },
+      { name: 'Omega-3 Index', unit: '%', value: '6.2', status: 'Optimal', color: c.green, vals: [4.8, 5.1, 5.4, 5.7, 5.9, 6.1, 6.2], trendWord: 'rising' }
+    ].map(b => ({ ...b, points: this.spark(b.vals, 120, 24) }));
+
+    const sleepStats = [
+      { label: 'Avg Sleep', value: '7h 12m' }, { label: 'HRV (Avg)', value: '68 ms' },
+      { label: 'Resting HR', value: '54 bpm' }, { label: 'Recovery', value: '78%' }
+    ];
+
+    const experiments = [
+      { name: 'Morning Light + 10 min', goal: 'Goal: Improve sleep quality', day: '7 of 14', pct: 50, outcome: 'Deep Sleep', dir: '↑ 18%', dirColor: c.green, dirTint: c.greenTint },
+      { name: 'Magnesium Glycinate', goal: 'Goal: Reduce muscle tension', day: '5 of 21', pct: 24, outcome: 'Muscle Tension', dir: '↓ 22%', dirColor: c.green, dirTint: c.greenTint }
+    ];
+
+    const hypotheses = [
+      { n: '1', name: 'Inflammatory burden', sub: 'Contributing to fatigue, poor sleep', strength: 82 },
+      { n: '2', name: 'Cortisol dysregulation', sub: 'Contributing to sleep disruption', strength: 74 },
+      { n: '3', name: 'Mitochondrial dysfunction', sub: 'Contributing to low energy', strength: 68 }
+    ];
+    const evidenceFor = [
+      { text: 'Elevated hs-CRP (2.8 mg/L)' },
+      { text: 'High AM cortisol (21.3 µg/dL)' },
+      { text: 'Poor sleep efficiency (72%)' },
+      { text: 'Low vitamin D (24 ng/mL)' }
+    ];
+    const evidenceAgainst = [
+      { text: 'Normal TSH, Free T3, Free T4' },
+      { text: 'No anemia or iron deficiency' },
+      { text: 'Normal fasting glucose' },
+      { text: 'Good HRV trend' }
+    ];
+    const nextSteps = ['Optimize sleep environment', 'Support cortisol rhythm', 'Reduce inflammatory triggers', 'Recheck Vitamin D in 8 weeks'];
+
+    const alerts = [
+      { title: 'New lab results available', sub: 'Jul 11, 2026', ...ic.flask, color: c.violet, tint: c.violetTint },
+      { title: '3 items await your review', sub: 'Clinical reasoning updated', d1: ic.clipboard.d1, d2: ic.clipboard.d2, color: c.coral, tint: c.coralTint },
+      { title: 'Sleep experiment ready for review', sub: '7-day analysis complete', ...ic.moon, color: c.blue, tint: c.blueTint },
+      { title: 'Vitamin D recheck recommended', sub: 'Based on last labs', ...ic.sun, color: c.amber, tint: c.amberTint }
+    ].map(a => ({ ...a, d2: a.d2 || '' }));
+
+    const railTasks = [
+      { title: 'Review new lab results', who: 'Alexandra Morgan', priority: 'High', pColor: c.coral, pTint: c.coralTint },
+      { title: 'Approve sleep protocol', who: 'Alexandra Morgan', priority: 'High', pColor: c.coral, pTint: c.coralTint },
+      { title: 'Update supplement plan', who: 'Michael Johnson', priority: 'Medium', pColor: c.amber, pTint: c.amberTint },
+      { title: 'Review assessment', who: 'Jessica Parker', priority: 'Low', pColor: c.slate, pTint: c.slateTint }
+    ];
+    const railAppts = [
+      { name: 'Alexandra Morgan', when: 'Jul 21, 2026 · 10:00 AM', initials: 'AM', bg: '#0E8388' },
+      { name: 'Michael Johnson', when: 'Jul 21, 2026 · 11:00 AM', initials: 'MJ', bg: '#2563C7' },
+      { name: 'Jessica Parker', when: 'Jul 21, 2026 · 2:00 PM', initials: 'JP', bg: '#7461C9' }
+    ];
+
+    const stats = [
+      { label: 'Active clients', value: '48', sub: '+3 this month', subColor: c.green, ...ic.users, tint: c.blueTint, color: c.blue, onClick: this.nav('practice') },
+      { label: 'Needing review', value: '7', sub: '2 urgent', subColor: c.coral, ...ic.tasks, tint: c.amberTint, color: c.amber, onClick: this.ph('Tasks & Review Queue') },
+      { label: 'New lab results', value: '5', sub: '3 abnormal', subColor: c.amber, ...ic.flask, tint: c.coralTint, color: c.coral, onClick: this.nav('patient', 'labs') },
+      { label: 'Active programs', value: '12', sub: '86% engaged', subColor: c.slate, ...ic.layers, tint: c.tealTint, color: c.teal, onClick: this.ph('Program Builder') },
+      { label: 'Overdue tasks', value: '4', sub: 'oldest 6 d', subColor: c.coral, ...ic.clock, tint: c.coralTint, color: c.coral, onClick: this.ph('Tasks & Review Queue') },
+      { label: 'Appointments', value: '6', sub: 'today', subColor: c.slate, ...ic.calendar, tint: c.blueTint, color: c.blue, onClick: this.ph('Calendar') }
+    ].map(s => ({ ...s, d2: s.d2 || '' }));
+
+    const pType = {
+      lab: { type: 'Lab extraction', typeColor: '#3D5A80', typeTint: '#E8EEF5' },
+      reason: { type: 'Reasoning update', typeColor: '#5D4BB5', typeTint: 'rgba(116,97,201,0.12)' },
+      safety: { type: 'Safety alert', typeColor: c.coral, typeTint: c.coralTint },
+      proto: { type: 'Protocol approval', typeColor: c.blue, typeTint: 'rgba(37,99,199,0.12)' },
+      exp: { type: 'Experiment approval', typeColor: c.teal, typeTint: 'rgba(14,131,136,0.12)' }
+    };
+    const pr = { High: { prColor: c.coral, prTint: c.coralTint }, Medium: { prColor: c.amber, prTint: c.amberTint }, Low: { prColor: c.slate, prTint: c.slateTint } };
+    const queue = [
+      { ...pType.safety, title: 'Ferritin 9 ng/mL — below lab range, iron protocol active', patient: 'Priya Sharma', when: '35 min ago', priority: 'High', ...pr.High, onClick: this.nav('patient', 'summary') },
+      { ...pType.lab, title: 'Quest panel extracted — 2 markers low confidence', patient: 'Alexandra Morgan', when: '1 h ago', priority: 'High', ...pr.High, onClick: this.nav('patient', 'labs') },
+      { ...pType.reason, title: 'New hypothesis: HPA-axis dysregulation (strength 74)', patient: 'Alexandra Morgan', when: '2 h ago', priority: 'Medium', ...pr.Medium, onClick: this.nav('patient', 'reasoning') },
+      { ...pType.proto, title: 'Metabolic Reset Phase 3 awaiting sign-off', patient: 'Michael Johnson', when: 'Yesterday', priority: 'Medium', ...pr.Medium, onClick: this.ph('Tasks & Review Queue') },
+      { ...pType.exp, title: 'Berberine 500 mg experiment design ready for approval', patient: 'Marcus Webb', when: 'Yesterday', priority: 'Low', ...pr.Low, onClick: this.nav('patient', 'nof1lab') }
+    ];
+    const abnormal = [
+      { marker: 'Ferritin', value: '9 ng/mL', range: '16–154', color: c.coral, patient: 'Priya Sharma', when: 'Today' },
+      { marker: 'hs-CRP', value: '4.1 mg/L', range: '< 3.0', color: c.coral, patient: 'Michael Johnson', when: 'Today' },
+      { marker: 'HbA1c', value: '5.9 %', range: '4.0–5.6', color: c.amber, patient: 'Marcus Webb', when: 'Jul 12' },
+      { marker: 'Vitamin D', value: '24 ng/mL', range: '30–100', color: c.amber, patient: 'Alexandra Morgan', when: 'Jul 11' }
+    ];
+    const expDone = [
+      { name: 'Magnesium glycinate 300 mg', patient: 'Jessica Parker', outcome: 'Deep sleep +21 min avg', conclusion: 'Likely beneficial', ccolor: c.green, ctint: c.greenTint },
+      { name: 'Late-caffeine withdrawal', patient: 'Michael Johnson', outcome: 'HRV +4 ms, within noise', conclusion: 'Inconclusive', ccolor: c.slate, ctint: c.slateTint },
+      { name: 'Cold exposure 3×/wk', patient: 'Marcus Webb', outcome: 'Energy score unchanged', conclusion: 'No measurable effect', ccolor: c.slate, ctint: c.slateTint }
+    ];
+    const riskChanges = [
+      { name: 'Priya Sharma', initials: 'PS', avatarBg: '#B45309', from: 'Moderate', fromColor: c.amber, to: 'High', toColor: c.coral, onClick: this.nav('patient', 'summary') },
+      { name: 'Alexandra Morgan', initials: 'AM', avatarBg: '#0E8388', from: 'High', fromColor: c.coral, to: 'Moderate', toColor: c.amber, onClick: this.nav('patient', 'summary') },
+      { name: 'Jessica Parker', initials: 'JP', avatarBg: '#5D4BB5', from: 'Moderate', fromColor: c.amber, to: 'Low', toColor: c.green, onClick: this.nav('patient', 'summary') }
+    ];
+    const lowAdherence = [
+      { name: 'Michael Johnson', pct: 46, color: c.coral, detail: 'Supplements missed 8 of last 14 days' },
+      { name: 'Marcus Webb', pct: 58, color: c.amber, detail: 'Check-ins stopped Jul 6' },
+      { name: 'Dana Whitfield', pct: 63, color: c.amber, detail: 'Habit tracking incomplete' }
+    ];
+    const teamLoad = [
+      { name: 'Dr. Mitchell', initials: 'SM', bg: '#2563C7', pct: 78, count: 14 },
+      { name: 'K. Reyes, HC', initials: 'KR', bg: '#0E8388', pct: 52, count: 9 },
+      { name: 'T. Okafor, RD', initials: 'TO', bg: '#7461C9', pct: 34, count: 6 }
+    ];
+
+    const cmdGroups = [
+      { label: 'Actions', items: [
+        { label: 'Add note', sub: 'For Alexandra Morgan', kbd: 'N', ...ic.note, tint: c.blueTint, color: c.blue, onClick: () => this.setState({ cmdOpen: false }) },
+        { label: 'Upload lab report', sub: 'PDF, HL7 or photo', kbd: 'U', ...ic.upload, tint: c.blueTint, color: c.blue, onClick: () => this.setState({ cmdOpen: false }) },
+        { label: 'Start N-of-1 experiment', sub: 'Opens the experiment builder', kbd: 'E', ...ic.tube, tint: c.violetTint, color: c.violet, onClick: this.nav('patient', 'nof1lab') }
+      ]},
+      { label: 'Patients', items: [
+        { label: 'Alexandra Morgan', sub: '34 F · Metabolic Reset — Phase 2', kbd: '', initials: 'AM', tint: 'rgba(14,131,136,0.14)', color: c.teal, onClick: this.nav('patient', 'summary') },
+        { label: 'Michael Johnson', sub: '52 M · Cardiometabolic program', kbd: '', initials: 'MJ', tint: 'rgba(37,99,199,0.12)', color: c.blue, onClick: this.nav('patient', 'summary') },
+        { label: 'Priya Sharma', sub: '47 F · High risk — ferritin alert', kbd: '', initials: 'PS', tint: c.coralTint, color: c.coral, onClick: this.nav('patient', 'summary') }
+      ]},
+      { label: 'Go to', items: [
+        { label: 'Overview', sub: 'Patient dashboard', kbd: 'G O', ...ic.home, tint: c.slateTint, color: c.slate, onClick: this.nav('patient', 'summary') },
+        { label: 'Practice dashboard', sub: 'Clients & review queue', kbd: 'G P', ...ic.users, tint: c.slateTint, color: c.slate, onClick: this.nav('practice') },
+        { label: 'Clinical Reasoning', sub: 'Alexandra Morgan', kbd: 'G R', ...ic.reasoning, tint: c.slateTint, color: c.slate, onClick: this.nav('patient', 'reasoning') }
+      ]}
+    ].map(g => ({ ...g, items: g.items.map(i => ({ ...i, d1: i.d1 || false, d2: i.d2 || '', initials: i.initials || false })) }));
+
+    const aiFacts = [
+      { text: 'Sleep efficiency fell from 81% to 72% over the past 14 nights.', badge: 'Measured', color: '#3D5A80', tint: '#E8EEF5' },
+      { text: 'Sleep onset moved ~40 min later after Jun 28.', badge: 'Measured', color: '#3D5A80', tint: '#E8EEF5' },
+      { text: 'She reports increased evening work stress since late June.', badge: 'Patient-reported', color: c.teal, tint: 'rgba(14,131,136,0.12)' },
+      { text: 'The pattern is consistent with stress-related sleep-onset delay rather than a sleep-maintenance problem.', badge: 'AI inference', color: '#5D4BB5', tint: 'rgba(116,97,201,0.12)' }
+    ];
+    const aiSources = ['Oura wearable · 30 d', 'Labs · May 13', 'Daily check-ins · 14 d', 'Visit notes · 2'];
+    const aiChips = ['Why is her sleep score declining?', 'Summarize labs since April', 'Draft a follow-up note'];
+
+    const rd = this.radar();
+    const tabLabel = { twin: 'Health Twin', timeline: 'Timeline', labs: 'Labs', reasoning: 'Clinical Reasoning', supplements: 'Supplements', nof1lab: 'N-of-1 Lab', protocols: 'Protocols', reports: 'Reports' }[S.patientTab] || '';
+
+    return {
+      glassCss, atmosphereBg, navItems, patientTabs,
+      isPatient: S.screen === 'patient', isPractice: S.screen === 'practice', isPlaceholder: S.screen === 'placeholder',
+      isPatientSummary: S.patientTab === 'summary', isPatientOther: S.patientTab !== 'summary',
+      patientTabLabel: tabLabel, placeholderLabel: S.placeholderLabel, goOverview: this.nav('patient', 'summary'),
+      priorities, flags, biomarkers, sleepStats, experiments, hypotheses, evidenceFor, evidenceAgainst, nextSteps,
+      alerts, railTasks, railAppts,
+      stats, queue, abnormal, expDone, riskChanges, lowAdherence, teamLoad,
+      sleepPoints: this.spark([64, 66, 63, 67, 65, 69, 68, 70, 72, 69, 71, 73, 72, 74], 200, 64),
+      radarRings: rd.rings, radarSpokes: rd.spokes, radarPoints: rd.points, radarDots: rd.dots, radarLabels: rd.labels,
+      cmdOpen: S.cmdOpen, aiOpen: S.aiOpen, cmdGroups, aiFacts, aiSources, aiChips,
+      openCmd: () => this.setState({ cmdOpen: true }), closeCmd: () => this.setState({ cmdOpen: false }),
+      toggleAi: () => this.setState(s => ({ aiOpen: !s.aiOpen })), closeAi: () => this.setState({ aiOpen: false }),
+      openReasoning: this.nav('patient', 'reasoning'),
+      stop: (e) => e.stopPropagation()
+    };
+  }
+}
+</script>
+</body>
+</html>

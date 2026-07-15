@@ -1,0 +1,1295 @@
+
+    
+You are a world-class healthcare product designer, clinical workflow designer, information architect, and senior front-end design engineer.
+    
+Design a desktop-first web application called:
+    
+AI Longevity Pro Clinical Intelligence
+    
+This platform combines:
+    
+The personalized health intelligence, lab interpretation, nutrition tracking, supplement tracking, wearable data, protocol management, hormone tracking, recovery coaching and AI guidance already present in AI Longevity Pro.
+    
+The strongest operational capabilities of functional-health platforms such as Biocanic:
+    
+Client management
+    
+Intake forms and assessments
+    
+Lab aggregation
+    
+Health trackers
+    
+Functional summaries
+    
+Supplement protocols
+    
+Program delivery
+    
+Scheduling
+    
+Tasks
+    
+Practitioner workflows
+    
+Team management
+    
+A differentiated intelligence layer:
+    
+Dynamic clinical reasoning
+    
+Adaptive Health Twin
+    
+Ranked clinical hypotheses
+    
+Supporting and contradicting evidence
+    
+Longitudinal timelines
+    
+N-of-1 personal experiments
+    
+Supplement Intelligence Network
+    
+Intervention-response analysis
+    
+Practitioner review and approval
+    
+Quantum Mind behavioral support
+    
+Do not make the product look like a generic hospital EMR, CRM, crypto dashboard, consumer fitness tracker or AI chatbot.
+    
+The product should feel like:
+    
+Apple Health meets a premium clinical operating system meets a scientific research workspace.
+    
+VISUAL DIRECTION
+    
+Create a clean, clinical, highly refined interface with restrained Apple glass aesthetics.
+    
+Core qualities:
+    
+Premium
+    
+Calm
+    
+Scientific
+    
+Trustworthy
+    
+Minimal
+    
+High-information but never cluttered
+    
+Modern without appearing trendy
+    
+Clinical without feeling sterile
+    
+Intelligent without appearing magical
+    
+Warm enough for longevity and wellness care
+    
+Use glass effects selectively.
+    
+Do not place every component inside translucent glass cards. Use glass for:
+    
+The fixed navigation sidebar
+    
+Floating command bar
+    
+Patient context header
+    
+Modal dialogs
+    
+AI reasoning drawer
+    
+Selected high-level summary cards
+    
+Use more solid surfaces for:
+    
+Tables
+    
+Detailed clinical records
+    
+Form-heavy screens
+    
+Lab results
+    
+Medication and supplement lists
+    
+COLOR SYSTEM
+    
+Base background:
+    
+Soft cool white or very pale blue-gray
+    
+Avoid pure white covering the entire screen
+    
+Primary text:
+    
+Deep charcoal navy
+    
+Secondary text:
+    
+Cool slate
+    
+Primary action:
+    
+Refined cobalt or clinical blue
+    
+Positive:
+    
+Muted emerald
+    
+Warning:
+    
+Amber
+    
+Critical:
+    
+Restrained coral red
+    
+AI or inference:
+    
+Muted violet
+    
+Patient-reported:
+    
+Teal
+    
+Practitioner-confirmed:
+    
+Clinical blue
+    
+Use system colors semantically and consistently.
+    
+Avoid excessive gradients. Use a subtle atmospheric radial gradient behind the main dashboard only.
+    
+GLASS MATERIAL
+    
+Glass surfaces should use:
+    
+Soft transparency
+    
+Background blur
+    
+Fine white inner highlight
+    
+Subtle cool border
+    
+Very restrained shadow
+    
+Slightly increased saturation behind the surface
+    
+The glass should resemble recent macOS and visionOS interfaces, not heavy frosted plastic.
+    
+TYPOGRAPHY
+    
+Use a premium system-first type stack:
+    
+Geist
+    
+Inter
+    
+SF Pro fallback
+    
+ui-sans-serif
+    
+Use tabular numbers for:
+    
+Biomarkers
+    
+Scores
+    
+Dates
+    
+Dosages
+    
+Vital signs
+    
+Financial or usage metrics
+    
+Headings should be calm and compact rather than oversized.
+    
+LAYOUT
+    
+Design for:
+    
+1440 × 900 primary desktop viewport
+    
+1280-pixel minimum supported desktop width
+    
+Responsive tablet layout
+    
+Patient mobile experience remains a separate Expo application
+    
+Create a persistent left sidebar approximately 232–248 pixels wide.
+    
+Create a contextual top bar containing:
+    
+Global search
+    
+Command palette
+    
+Quick-add button
+    
+Notifications
+    
+Current organization or clinic
+    
+User profile
+    
+The left sidebar should contain:
+    
+WORKSPACE
+    
+Overview
+    
+Clients
+    
+Calendar
+    
+Tasks
+    
+Messages
+    
+CLINICAL
+    
+Health Twin
+    
+Timeline
+    
+Labs
+    
+Clinical Reasoning
+    
+Protocols
+    
+Supplements
+    
+N-of-1 Lab
+    
+Wearables
+    
+Assessments
+    
+Nutrition
+    
+Quantum Mind
+    
+OPERATIONS
+    
+Programs
+    
+Templates
+    
+Automations
+    
+Reports
+    
+Integrations
+    
+Team
+    
+SYSTEM
+    
+Audit Log
+    
+Settings
+    
+Allow sections to collapse.
+    
+PATIENT CONTEXT HEADER
+    
+When a patient is selected, show a persistent patient header directly beneath the global toolbar.
+    
+Include:
+    
+Patient photo or initials
+    
+Full name
+    
+Age and sex
+    
+Patient ID
+    
+Pronouns when supplied
+    
+Current program
+    
+Primary practitioner
+    
+Last visit
+    
+Next visit
+    
+Major goals
+    
+Compact risk status
+    
+Quick actions:
+    
+Add note
+    
+Upload lab
+    
+Assign protocol
+    
+Start experiment
+    
+Message patient
+    
+Schedule appointment
+    
+Allow the header to collapse into a compact sticky strip while scrolling.
+    
+PRIMARY PATIENT NAVIGATION
+    
+Inside a selected patient, use horizontal subnavigation:
+    
+Summary
+    
+Health Twin
+    
+Timeline
+    
+Labs
+    
+Reasoning
+    
+Protocol
+    
+Supplements
+    
+Experiments
+    
+Wearables
+    
+Assessments
+    
+Notes
+    
+Files
+    
+PRACTITIONER OVERVIEW DASHBOARD
+    
+Design a global practice dashboard showing:
+    
+Top row:
+    
+Active clients
+    
+Clients needing review
+    
+New lab results
+    
+Active programs
+    
+Overdue tasks
+    
+Upcoming appointments
+    
+Main area:
+    
+Practitioner review queue
+    
+Recently changed patient risk
+    
+New abnormal biomarkers
+    
+Experiment completions
+    
+Low-adherence alerts
+    
+Program engagement
+    
+Upcoming appointments
+    
+Team workload
+    
+Do not overuse vanity metrics.
+    
+Every metric should lead to an actionable filtered view.
+    
+CLIENT DIRECTORY
+    
+Create an advanced client table supporting:
+    
+Search
+    
+Saved filters
+    
+Tags
+    
+Program
+    
+Practitioner
+    
+Status
+    
+Risk level
+    
+Last contact
+    
+Last lab
+    
+Adherence
+    
+Active experiment
+    
+Next appointment
+    
+Tasks due
+    
+Include:
+    
+Dense and comfortable display modes
+    
+Column configuration
+    
+Bulk assignment
+    
+Bulk messaging
+    
+Bulk program enrollment
+    
+Export with permissions
+    
+Saved views
+    
+Use calm, readable tables with sticky headers.
+    
+PATIENT SUMMARY SCREEN
+    
+Create the flagship patient screen.
+    
+Desktop composition:
+    
+Row 1:
+    
+Health trajectory score
+    
+Top priorities
+    
+Risk and review flags
+    
+Active protocol adherence
+    
+Row 2:
+    
+Systems balance visualization
+    
+Biomarker changes
+    
+Sleep and recovery
+    
+Active N-of-1 experiments
+    
+Row 3:
+    
+Clinical Reasoning Snapshot spanning most of the screen
+    
+Tasks and next appointments in a narrower right rail
+    
+Clinical Reasoning Snapshot should show:
+    
+Top hypotheses
+    
+Reasoning strength
+    
+Supporting evidence
+    
+Contradicting evidence
+    
+Missing information
+    
+Recommended next actions
+    
+What changed since the previous snapshot
+    
+Practitioner approval status
+    
+Clearly label:
+    
+Measured
+    
+Patient-reported
+    
+Practitioner-confirmed
+    
+AI inference
+    
+Published evidence
+    
+Never present AI support scores as medical probabilities.
+    
+HEALTH TWIN SCREEN
+    
+Create an Adaptive Health Twin screen.
+    
+The main visualization should not be a gimmicky 3D human body.
+    
+Use a sophisticated system map with interconnected health domains:
+    
+Metabolic
+    
+Cardiovascular
+    
+Inflammation and immune
+    
+Hormonal
+    
+Gastrointestinal
+    
+Detoxification and exposure
+    
+Mitochondrial and energy
+    
+Cognitive and neurological
+    
+Musculoskeletal
+    
+Stress and autonomic
+    
+Sleep and circadian
+    
+Healthy aging
+    
+Each system node should display:
+    
+Current status
+    
+Trend
+    
+Data completeness
+    
+Number of supporting observations
+    
+Number of unresolved contradictions
+    
+Last update
+    
+Clicking a system opens a contextual inspector containing:
+    
+Current facts
+    
+Relevant biomarkers
+    
+Symptoms
+    
+Contributing factors
+    
+Interventions
+    
+Historical response
+    
+Missing information
+    
+Active hypotheses
+    
+Practitioner comments
+    
+Include an optional chronological “state replay” control that shows how the twin changed over time.
+    
+CLINICAL REASONING SCREEN
+    
+Create a three-pane clinical workspace.
+    
+Left pane:
+    
+Timeline
+    
+Filters
+    
+Source selection
+    
+Date range
+    
+Data types
+    
+Center pane:
+    
+Ranked hypotheses
+    
+System relationships
+    
+Reasoning map
+    
+Changes since last analysis
+    
+Right inspector:
+    
+Evidence for
+    
+Evidence against
+    
+Contradictions
+    
+Missing data
+    
+Safety considerations
+    
+Recommended next steps
+    
+Source provenance
+    
+Each hypothesis card should contain:
+    
+Name
+    
+Status
+    
+Reasoning strength
+    
+Last change
+    
+Supporting evidence count
+    
+Contradictions count
+    
+Review status
+    
+Allow practitioners to:
+    
+Accept
+    
+Modify
+    
+Reject
+    
+Add evidence
+    
+Add contradiction
+    
+Add alternative hypothesis
+    
+Add note
+    
+Request data
+    
+Convert recommendation into task
+    
+Convert recommendation into experiment
+    
+LABS SCREEN
+    
+Create a professional lab workspace with:
+    
+Upload zone
+    
+Processing status
+    
+Review queue
+    
+Lab timeline
+    
+Marker table
+    
+Systems view
+    
+Trend charts
+    
+Reference-range overlays
+    
+Optimal-range overlays
+    
+Source document viewer
+    
+Extraction confidence
+    
+Marker table columns:
+    
+Marker
+    
+Current result
+    
+Unit
+    
+Laboratory range
+    
+Configured optimal range
+    
+Prior result
+    
+Change
+    
+Trend
+    
+Status
+    
+Source
+    
+Reviewed
+    
+Allow split-screen viewing of the original report and extracted data.
+    
+Never hide the laboratory’s original reference interval.
+    
+SUPPLEMENT INTELLIGENCE SCREEN
+    
+Create a full supplement workspace.
+    
+Primary sections:
+    
+Current stack
+    
+Stack audit
+    
+Product library
+    
+Ingredient intelligence
+    
+Personal response
+    
+Protocol templates
+    
+Refills and adherence
+    
+Current stack table:
+    
+Product
+    
+Brand
+    
+Ingredients
+    
+Dose
+    
+Schedule
+    
+Purpose
+    
+Start date
+    
+Adherence
+    
+Evidence
+    
+Safety status
+    
+Personal response
+    
+Practitioner approval
+    
+Stack audit should clearly identify:
+    
+Duplicate ingredients
+    
+Cumulative daily exposure
+    
+Potential excessive amounts
+    
+Medication interactions
+    
+Supplement interactions
+    
+Condition-specific cautions
+    
+Required monitoring
+    
+Products without an active purpose
+    
+Products that may be simplified
+    
+Create a “Does this work for this patient?” panel showing:
+    
+Intended target
+    
+Relevant biomarkers
+    
+Relevant symptoms
+    
+Adherence
+    
+Outcome trend
+    
+Confounders
+    
+Personal response conclusion
+    
+Use precise, cautious language.
+    
+N-OF-1 LAB
+    
+Design a scientific but approachable experiment workspace.
+    
+Experiment cards should show:
+    
+Hypothesis
+    
+Intervention
+    
+Phase
+    
+Day
+    
+Completion
+    
+Primary outcome
+    
+Current direction
+    
+Confounders
+    
+Safety status
+    
+Experiment Builder steps:
+    
+Define goal
+    
+Define hypothesis
+    
+Choose one primary intervention
+    
+Choose baseline duration
+    
+Choose intervention duration
+    
+Select primary and secondary outcomes
+    
+Define variables to keep stable
+    
+Define confounders
+    
+Define stopping rules
+    
+Review design
+    
+Practitioner approval
+    
+Launch
+    
+Support:
+    
+Before-and-after
+    
+Withdrawal and rechallenge
+    
+Alternating treatment
+    
+Randomized crossover
+    
+Custom design
+    
+Experiment result view:
+    
+Baseline versus intervention
+    
+Absolute change
+    
+Relative change
+    
+Data completeness
+    
+Adherence
+    
+Confounders
+    
+Adverse events
+    
+Interpretation
+    
+Conclusion:
+    
+Likely beneficial
+    
+Possibly beneficial
+    
+No measurable effect
+    
+Possibly harmful
+    
+Inconclusive
+    
+TIMELINE
+    
+Create a unified clinical timeline.
+    
+Support layered events:
+    
+Symptoms
+    
+Labs
+    
+Medications
+    
+Supplements
+    
+Protocol changes
+    
+Wearable changes
+    
+Nutrition changes
+    
+Visits
+    
+Notes
+    
+Experiments
+    
+Adverse events
+    
+Quantum Mind sessions
+    
+Allow practitioners to compare events visually and inspect possible temporal relationships without implying causation.
+    
+PROGRAM BUILDER
+    
+Include a Biocanic-style program builder with stronger intelligence.
+    
+Programs may contain:
+    
+Intake forms
+    
+Assessments
+    
+Education
+    
+Nutrition plans
+    
+Supplements
+    
+Habits
+    
+Wearable targets
+    
+Tasks
+    
+Appointments
+    
+Messages
+    
+Quantum Mind sessions
+    
+Labs
+    
+Experiments
+    
+Use a timeline-based builder with:
+    
+Drag and drop
+    
+Templates
+    
+Conditions
+    
+Branching
+    
+Scheduled release
+    
+Milestones
+    
+Completion criteria
+    
+Practitioner approvals
+    
+Automated reminders
+    
+ASSESSMENT BUILDER
+    
+Create:
+    
+Form builder
+    
+Scoring rules
+    
+Conditional questions
+    
+Reusable sections
+    
+Versioning
+    
+Longitudinal comparison
+    
+Patient preview
+    
+Clinical review
+    
+TASKS AND REVIEW QUEUE
+    
+Create a central practitioner inbox.
+    
+Categories:
+    
+New lab results
+    
+Extraction review
+    
+Clinical reasoning review
+    
+Safety alerts
+    
+Protocol approval
+    
+Experiment approval
+    
+Patient messages
+    
+Assessment review
+    
+Overdue follow-up
+    
+Low adherence
+    
+Refill request
+    
+Allow:
+    
+Assignment
+    
+Priority
+    
+Due date
+    
+Bulk action
+    
+Snooze
+    
+Resolve
+    
+Convert to note
+    
+Convert to appointment
+    
+AI INTERFACE
+    
+Do not make a chatbot the main interface.
+    
+Create a contextual AI assistant that appears as:
+    
+Command palette
+    
+Contextual side panel
+    
+Inline suggestions
+    
+“Ask about this patient” field
+    
+Drafting assistant
+    
+Reasoning explainer
+    
+The assistant must always show:
+    
+Data sources used
+    
+Date range
+    
+Fact versus inference
+    
+Missing information
+    
+Practitioner review status
+    
+KEY INTERACTIONS
+    
+Design:
+    
+Hover states
+    
+Focus states
+    
+Loading states
+    
+Empty states
+    
+Processing states
+    
+Partial data states
+    
+Extraction review states
+    
+Error states
+    
+Offline or integration-disconnected states
+    
+Permission-denied states
+    
+ACCESSIBILITY
+    
+Meet WCAG 2.2 AA.
+    
+Requirements:
+    
+Strong text contrast
+    
+Visible keyboard focus
+    
+Full keyboard navigation
+    
+Semantic headings
+    
+Screen-reader labels
+    
+No meaning conveyed by color alone
+    
+Reduced-motion support
+    
+Large enough click targets
+    
+Accessible charts and data tables
+    
+DESIGN SYSTEM DELIVERABLE
+    
+Create a complete component system including:
+    
+Navigation
+    
+Patient header
+    
+Buttons
+    
+Inputs
+    
+Search
+    
+Command palette
+    
+Tabs
+    
+Segmented controls
+    
+Cards
+    
+Glass panels
+    
+Tables
+    
+Status badges
+    
+Evidence badges
+    
+Metric displays
+    
+Charts
+    
+Timeline
+    
+Drawers
+    
+Modals
+    
+Toasts
+    
+Empty states
+    
+Skeleton loaders
+    
+AI reasoning panels
+    
+Review states
+    
+Audit history
+    
+Use an 8-point spacing grid.
+    
+Recommended radii:
+    
+Small controls: 8–10 px
+    
+Cards: 14–18 px
+    
+Major glass surfaces: 20–24 px
+    
+Keep shadows subtle.
+    
+PROTOTYPE DATA
+    
+Use realistic synthetic functional-medicine data.
+    
+Do not use vague labels such as “Metric 1.”
+    
+Use examples such as:
+    
+hs-CRP
+    
+Fasting insulin
+    
+HbA1c
+    
+Vitamin D
+    
+Ferritin
+    
+Homocysteine
+    
+Cortisol
+    
+Omega-3 Index
+    
+HRV
+    
+Resting heart rate
+    
+Sleep efficiency
+    
+Deep sleep
+    
+Energy score
+    
+Bloating severity
+    
+Use plausible units and dates.
+    
+DELIVERABLES
+    
+Produce:
+    
+Information architecture
+    
+Route map
+    
+Desktop shell
+    
+Global practice dashboard
+    
+Client directory
+    
+Patient summary
+    
+Health Twin
+    
+Clinical Reasoning
+    
+Labs
+    
+Supplement Intelligence
+    
+N-of-1 Lab
+    
+Timeline
+    
+Program Builder
+    
+Assessment Builder
+    
+Tasks and review queue
+    
+Design tokens
+    
+Component inventory
+    
+Responsive behavior
+    
+Loading, empty and error states
+    
+Accessibility annotations
+    
+Create production-quality React and TypeScript front-end designs rather than static image mockups.
+    
+Use reusable components and realistic interactions.
+    
+Do not build the backend in this phase.
+    
+Where data is unavailable, use clearly isolated typed mock adapters that can later be replaced with tRPC queries.
+    
+The final result should look like a product that a premium longevity clinic, functional-medicine practice or precision-health organization would trust with complex patient care.
+    
+      
+        
+                
+        
+        
+              
+      
+    
+  

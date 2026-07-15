@@ -1,0 +1,147 @@
+@import "tailwindcss";
+
+/*
+ * Design tokens — from the Clinical Intelligence design handoff.
+ * Semantics are binding: blue = action / practitioner-confirmed, teal = patient-reported,
+ * violet = AI / inference, green = positive / optimal, amber = warning, coral = critical.
+ */
+@theme {
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system,
+    "SF Pro Text", sans-serif;
+
+  /* Surfaces */
+  --color-canvas: #f1f4f8;
+  --color-card: #ffffff;
+  --color-sunken: #f7fafc;
+  --color-sunken-2: #f1f5f9;
+  --color-track: #edf2f6;
+
+  /* Borders */
+  --color-line: #e4eaf1; /* cards */
+  --color-hairline: #edf2f7; /* inner tiles / dividers */
+  --color-hairline-2: #f1f5f9;
+  --color-line-btn: #dce5ee; /* outline buttons */
+  --color-line-hover: #c9d6e3;
+  --color-line-hover-2: #b9c9d9;
+
+  /* Ink */
+  --color-ink: #182a3d;
+  --color-body: #33475c;
+  --color-body-2: #44586e;
+  --color-muted: #5c6f82;
+  --color-subtle: #7288a1;
+  --color-faint: #8a9bac;
+  --color-ghost: #b9c9d9;
+
+  /* Action blue */
+  --color-action: #2563c7;
+  --color-action-deep: #1b4fa5;
+  --color-action-tint: rgba(37, 99, 199, 0.1);
+  --color-nav-active: #e9f0fb;
+  --color-nav-active-line: #d7e3f5;
+  --color-number-tint: #eef3fc;
+
+  /* Brand teal + patient-reported teal */
+  --color-brand: #0d5c63;
+  --color-brand-2: #1a7a82;
+  --color-teal: #0e8388;
+  --color-teal-tint: rgba(14, 131, 136, 0.1);
+
+  /* Status */
+  --color-positive: #1f9d63;
+  --color-positive-bright: #22b573;
+  --color-positive-tint: #e9f6ef;
+  --color-warning: #c77e14;
+  --color-warning-deep: #b45309;
+  --color-warning-tint: #fbf3e4;
+  --color-critical: #d6544a;
+  --color-critical-tint: #fbedec;
+
+  /* AI violet */
+  --color-ai: #7461c9;
+  --color-ai-deep: #5d4bb5;
+  --color-ai-tint: rgba(116, 97, 201, 0.1);
+
+  /* Provenance navy (Measured) */
+  --color-navy: #3d5a80;
+  --color-navy-tint: #e8eef5;
+
+  /* Slate chip */
+  --color-slate-badge: #5c6f82;
+  --color-slate-tint: #eef2f6;
+
+  /* macOS traffic lights */
+  --color-mac-red: #f5655b;
+  --color-mac-yellow: #f6bd3b;
+  --color-mac-green: #43c64c;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--color-canvas);
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd6e0;
+  border-radius: 8px;
+  border: 2px solid #f1f4f8;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@keyframes fadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.animate-fade-up {
+  animation: fadeUp 0.18s ease-out;
+}
+
+/* Material mode: glass adds blur to the sidebar, top bar and patient header card. */
+[data-material="glass"] .glassable {
+  backdrop-filter: blur(22px) saturate(1.5);
+  -webkit-backdrop-filter: blur(22px) saturate(1.5);
+}
+
+/* Overlay glass (command palette, assistant drawer) is always on. */
+.glass-overlay {
+  backdrop-filter: blur(28px) saturate(1.6);
+  -webkit-backdrop-filter: blur(28px) saturate(1.6);
+}
+
+[data-atmosphere="off"] .atmosphere-layer {
+  background: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
