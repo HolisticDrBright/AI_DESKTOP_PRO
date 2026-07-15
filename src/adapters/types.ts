@@ -22,6 +22,34 @@ export type Tone =
 
 export type Priority = "High" | "Medium" | "Low";
 
+/* ------------------------------------------------------------- provenance */
+
+/**
+ * Where a piece of data came from. Drives the provenance component's tone and
+ * label. Kept in the adapter layer so both UI and future tRPC payloads share it.
+ */
+export type ProvenanceSourceType =
+  | "measured"
+  | "patient-reported"
+  | "practitioner-confirmed"
+  | "ai-inference"
+  | "published-evidence"
+  | "imported-record";
+
+export type ReviewState = "reviewed" | "awaiting-review" | "not-reviewed";
+
+export interface ProvenanceData {
+  sourceType: ProvenanceSourceType;
+  /** Source name / document, e.g. "Quest panel · May 13" or "Oura · 30 d". */
+  sourceName?: string;
+  dateRange?: string;
+  lastUpdated?: string;
+  /** 0–100 completeness. Labelled as completeness, never a medical probability. */
+  confidence?: number;
+  conflicts?: number;
+  review?: ReviewState;
+}
+
 export type PatientTabId =
   | "summary"
   | "twin"
@@ -104,6 +132,14 @@ export interface Hypothesis {
   sub: string;
   /** Internal evidence weighting — never a medical probability. */
   strength: number;
+  /** Provenance of the data supporting this hypothesis. */
+  provenance?: ProvenanceData;
+}
+
+/** A change to the clinical picture since the previous snapshot. */
+export interface ReasoningChange {
+  text: string;
+  direction: "new" | "strengthened" | "weakened" | "resolved";
 }
 
 export interface ReasoningSnapshot {
@@ -115,6 +151,44 @@ export interface ReasoningSnapshot {
   evidenceFor: string[];
   evidenceAgainst: string[];
   nextSteps: string[];
+  /** Data the model flags as missing / would raise its confidence. */
+  missingInformation?: string[];
+  /** What changed since the last snapshot. */
+  whatChanged?: ReasoningChange[];
+  /** Safety considerations a practitioner must weigh before acting. */
+  safetyConsiderations?: string[];
+  /** Provenance summary for the snapshot as a whole. */
+  provenance?: ProvenanceData;
+}
+
+/* ---------------------------------------------------------------- composer */
+
+/**
+ * Draft types the note/report composer can produce. Every draft is a
+ * practitioner-review artifact — never final, never auto-sent.
+ */
+export type DraftKind =
+  | "soap-note"
+  | "patient-followup"
+  | "lab-summary"
+  | "supplement-rationale"
+  | "nof1-interpretation"
+  | "reasoning-summary"
+  | "patient-message"
+  | "referral";
+
+export interface ComposerDraft {
+  kind: DraftKind;
+  title: string;
+  /** Editable draft body (plain text). */
+  body: string;
+  sources: string[];
+  dateRange?: string;
+  missingInfo: string[];
+  /** Drafts always start un-finalized; approval is an explicit practitioner step. */
+  review: ReviewState;
+  /** True for content that would reach the patient (extra review gate). */
+  patientFacing: boolean;
 }
 
 export interface PatientSummary {

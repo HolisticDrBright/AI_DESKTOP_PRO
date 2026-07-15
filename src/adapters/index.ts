@@ -15,6 +15,9 @@ import {
 import { getPracticeDashboard, getRightRail } from "./practice.mock";
 import { getAssistantSession } from "./assistant.mock";
 import { getCommandGroups } from "./commands.mock";
+import { generateDraft, type ComposerContext } from "./composer.mock";
+import { buildImportPlan, type ImportSourceId } from "./imports.mock";
+import type { DraftKind } from "./types";
 
 export const api = {
   patients: {
@@ -31,6 +34,15 @@ export const api = {
   },
   commands: {
     groups: async (patientId?: string) => getCommandGroups(patientId),
+  },
+  composer: {
+    /** MOCK draft generation. Replace with a server-side generation call. */
+    generate: async (kind: DraftKind, context: ComposerContext) =>
+      generateDraft(kind, context),
+  },
+  imports: {
+    /** MOCK import planning. Replace with a real parse + match pipeline. */
+    plan: async (sourceId: ImportSourceId) => buildImportPlan(sourceId),
   },
 };
 

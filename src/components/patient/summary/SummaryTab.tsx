@@ -10,9 +10,11 @@ import { ReasoningSnapshotCard } from "./ReasoningSnapshotCard";
 export function SummaryTab({
   summary,
   patientId,
+  patientName,
 }: {
   summary: PatientSummary;
   patientId: string;
+  patientName?: string;
 }) {
   return (
     <div data-screen-label="Patient Summary" className="flex flex-col gap-4">
@@ -29,7 +31,11 @@ export function SummaryTab({
         <ExperimentsCard experiments={summary.experiments} patientId={patientId} />
       </div>
 
-      <ReasoningSnapshotCard reasoning={summary.reasoning} patientId={patientId} />
+      <ReasoningSnapshotCard
+        reasoning={summary.reasoning}
+        patientId={patientId}
+        patientName={patientName}
+      />
 
       <div className="flex items-center justify-between px-[2px] text-[11.5px] text-faint">
         <span className="flex items-center gap-[6px]">

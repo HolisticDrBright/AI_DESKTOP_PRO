@@ -2,18 +2,22 @@
 
 import { CircleAlert, Send, Sparkles, X } from "lucide-react";
 import { getAssistantSession } from "@/adapters/assistant.mock";
-import type { Tone } from "@/adapters/types";
+import type { AssistantFact, ProvenanceSourceType } from "@/adapters/types";
+import { ProvenanceBadge } from "@/components/ui/Provenance";
+import { toneColor } from "@/lib/tones";
+import { useComposerOptional } from "@/lib/composer";
 import { useShellUi } from "@/lib/providers";
 
-/* Provenance badge colors — Measured / Patient-reported / AI inference. */
-const FACT_STYLE: Partial<Record<Tone, { color: string; tint: string }>> = {
-  navy: { color: "#3D5A80", tint: "#E8EEF5" },
-  teal: { color: "#0E8388", tint: "rgba(14,131,136,0.12)" },
-  ai: { color: "#5D4BB5", tint: "rgba(116,97,201,0.12)" },
+/* Assistant fact badge → shared provenance source type (reused component). */
+const FACT_SOURCE: Record<AssistantFact["badge"], ProvenanceSourceType> = {
+  Measured: "measured",
+  "Patient-reported": "patient-reported",
+  "AI inference": "ai-inference",
 };
 
 export function AssistantDrawer() {
   const { aiOpen, closeAi } = useShellUi();
+  const composer = useComposerOptional();
   if (!aiOpen) return null;
 
   const session = getAssistantSession();
@@ -60,27 +64,21 @@ export function AssistantDrawer() {
         <div className="mb-2 text-[12px] font-bold text-ink">{session.question}</div>
         <div className="rounded-xl border border-[#ECE9F8] bg-[rgba(116,97,201,0.04)] p-3">
           <div className="flex flex-col gap-[9px]">
-            {session.facts.map((fact) => {
-              const style = FACT_STYLE[fact.tone];
-              return (
-                <div key={fact.text} className="flex items-baseline gap-2">
-                  <span
-                    aria-hidden
-                    className="h-2 w-2 shrink-0 translate-y-px rounded-[3px]"
-                    style={{ background: style?.color }}
-                  />
-                  <span className="flex-1 text-[12px] leading-[1.45] text-body">
-                    {fact.text}{" "}
-                    <span
-                      className="ml-[3px] inline-block rounded-[4px] px-[5px] py-px align-[1px] text-[9.5px] font-bold"
-                      style={{ color: style?.color, background: style?.tint }}
-                    >
-                      {fact.badge}
-                    </span>
+            {session.facts.map((fact) => (
+              <div key={fact.text} className="flex items-baseline gap-2">
+                <span
+                  aria-hidden
+                  className="h-2 w-2 shrink-0 translate-y-px rounded-[3px]"
+                  style={{ background: toneColor[fact.tone] }}
+                />
+                <span className="flex-1 text-[12px] leading-[1.45] text-body">
+                  {fact.text}{" "}
+                  <span className="ml-[3px] inline-block align-[1px]">
+                    <ProvenanceBadge sourceType={FACT_SOURCE[fact.badge]} />
                   </span>
-                </div>
-              );
-            })}
+                </span>
+              </div>
+            ))}
           </div>
         </div>
 
@@ -116,7 +114,17 @@ export function AssistantDrawer() {
           </span>
         </div>
         <div className="mb-[10px] flex gap-2">
-          <button className="h-[30px] flex-1 cursor-pointer rounded-lg border border-line bg-card text-[12px] font-semibold text-body hover:border-line-hover focus-visible:outline-2 focus-visible:outline-ai">
+          <button
+            onClick={() =>
+              composer?.openComposer("reasoning-summary", {
+                patientName: session.patientName,
+                subjectType: "assistant answer",
+                subjectLabel: session.question,
+                seeds: session.facts.map((f) => f.text),
+              })
+            }
+            className="h-[30px] flex-1 cursor-pointer rounded-lg border border-line bg-card text-[12px] font-semibold text-body hover:border-line-hover focus-visible:outline-2 focus-visible:outline-ai"
+          >
             Insert into note
           </button>
           <button className="h-[30px] flex-1 cursor-pointer rounded-lg border border-[rgba(116,97,201,0.35)] bg-[rgba(116,97,201,0.08)] text-[12px] font-semibold text-ai-deep hover:bg-[rgba(116,97,201,0.14)] focus-visible:outline-2 focus-visible:outline-ai">

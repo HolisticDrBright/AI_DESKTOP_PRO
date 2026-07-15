@@ -13,30 +13,38 @@ import {
 /* ------------------------------------------------------------------ material */
 
 export type Material = "solid" | "glass";
+/** Content display scale — covers "comfortable vs dense" and larger text in one control. */
+export type DisplayScale = "compact" | "default" | "large";
 
 interface MaterialContextValue {
   material: Material;
   atmosphere: boolean;
+  scale: DisplayScale;
   setMaterial: (m: Material) => void;
   setAtmosphere: (on: boolean) => void;
+  setScale: (s: DisplayScale) => void;
 }
 
 const MaterialContext = createContext<MaterialContextValue | null>(null);
 
 const MATERIAL_KEY = "aidp:material";
 const ATMOSPHERE_KEY = "aidp:atmosphere";
+const SCALE_KEY = "aidp:scale";
 
 export function MaterialProvider({ children }: { children: ReactNode }) {
   // Surfaces support solid | glass; the design default is solid but the
   // user currently prefers glass, so glass is the shipped default.
   const [material, setMaterialState] = useState<Material>("glass");
   const [atmosphere, setAtmosphereState] = useState(true);
+  const [scale, setScaleState] = useState<DisplayScale>("default");
 
   useEffect(() => {
     const m = window.localStorage.getItem(MATERIAL_KEY);
     if (m === "solid" || m === "glass") setMaterialState(m);
     const a = window.localStorage.getItem(ATMOSPHERE_KEY);
     if (a === "on" || a === "off") setAtmosphereState(a === "on");
+    const s = window.localStorage.getItem(SCALE_KEY);
+    if (s === "compact" || s === "default" || s === "large") setScaleState(s);
   }, []);
 
   const setMaterial = useCallback((m: Material) => {
@@ -49,9 +57,14 @@ export function MaterialProvider({ children }: { children: ReactNode }) {
     window.localStorage.setItem(ATMOSPHERE_KEY, on ? "on" : "off");
   }, []);
 
+  const setScale = useCallback((s: DisplayScale) => {
+    setScaleState(s);
+    window.localStorage.setItem(SCALE_KEY, s);
+  }, []);
+
   const value = useMemo(
-    () => ({ material, atmosphere, setMaterial, setAtmosphere }),
-    [material, atmosphere, setMaterial, setAtmosphere],
+    () => ({ material, atmosphere, scale, setMaterial, setAtmosphere, setScale }),
+    [material, atmosphere, scale, setMaterial, setAtmosphere, setScale],
   );
 
   return (
