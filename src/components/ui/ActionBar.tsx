@@ -3,11 +3,13 @@
 import { useState } from "react";
 import {
   ACTIONS,
+  ACTION_REVIEW_OUTCOME,
   COMPOSER_ACTIONS,
   executeAction,
   type ActionContext,
   type ActionKind,
 } from "@/adapters/actions";
+import { useReviewOutcome } from "@/adapters/session-store";
 import { actionIcons } from "@/components/icons";
 import { cn } from "@/lib/cn";
 import { useComposerOptional } from "@/lib/composer";
@@ -40,6 +42,8 @@ export function ActionBar({
   const { announce } = useFeedback();
   const composer = useComposerOptional();
   const [pending, setPending] = useState<ActionKind | null>(null);
+  // When the subject is reviewable, a recorded outcome settles its actions.
+  const outcome = useReviewOutcome(context.reviewKey ?? "");
 
   const run = async (kind: ActionKind) => {
     if (onAction) {
@@ -74,13 +78,20 @@ export function ActionBar({
       {actions.map((kind) => {
         const d = ACTIONS[kind];
         const Icon = actionIcons[d.icon];
+        // A settling action (approve/reject/resolve/…) is disabled once the
+        // subject's review has settled — it must not read as "nothing happened".
+        const isSettling = kind in ACTION_REVIEW_OUTCOME;
+        const disabled = Boolean(outcome) && isSettling;
         return (
           <button
             key={kind}
-            onClick={() => handleClick(kind)}
+            onClick={() => !disabled && handleClick(kind)}
+            disabled={disabled}
+            aria-disabled={disabled || undefined}
             aria-label={`${d.label} — ${context.subjectType} ${context.subjectLabel}`}
             className={cn(
-              "flex cursor-pointer items-center gap-[5px] rounded-[7px] border font-semibold focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-action",
+              "flex items-center gap-[5px] rounded-[7px] border font-semibold focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-action",
+              disabled ? "cursor-not-allowed opacity-40" : "cursor-pointer",
               pad,
             )}
             style={{

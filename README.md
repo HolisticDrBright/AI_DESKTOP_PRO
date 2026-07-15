@@ -7,12 +7,13 @@ practice operations (review queue, tasks, appointments, team workload) and a
 differentiated AI layer (clinical reasoning snapshot, evidence for/against,
 contextual assistant, command palette).
 
-This repository contains the **Phase 1 front end**, recreated in
-high fidelity from the design handoff in
-[`docs/design-handoff/`](docs/design-handoff/README.md)
-(`Clinical Intelligence v2.dc.html` is the primary visual reference).
-There is **no backend yet** — all data comes from clearly isolated, typed
-mock adapters designed to be swapped for tRPC queries later.
+This repository contains the **desktop front end** plus the **clinical
+database schema** (`supabase/`). The UI renders from clearly isolated, typed
+mock adapters (`src/adapters/*`); the authenticated tRPC backend lives in the
+platform repo and one namespace (`patients`) is already flag-swappable to it
+(see [`docs/live-api.md`](docs/live-api.md)). Everything else still reads from
+mock adapters, and all mutable UI state (review outcomes, audit events) is
+**demo/session-only** — see [Demo persistence boundaries](#demo-persistence-boundaries).
 
 ![Patient Overview](docs/screenshots/patient-overview.png)
 
@@ -40,17 +41,49 @@ width).
 
 | Area | Status |
 | --- | --- |
-| App shell — 236 px sidebar (17 sections, badges), 58 px top bar, glass/solid material modes, atmospheric background | ✅ Live |
-| Patient Overview (`/patients/:id/summary`) — flagship screen: header card, tabs, health score ring, system-balance radar, priorities, risk flags, biomarker trends, sleep & recovery, active N-of-1 experiments, Clinical Reasoning Snapshot, right rail (alerts / tasks / appointments) | ✅ Live |
-| Practice Dashboard (`/practice`) — stat row, review queue, abnormal biomarkers, completed experiments, risk changes, low adherence, team workload | ✅ Live |
-| Command palette — ⌘K / Ctrl+K, filtering, ↑↓ + ↵ keyboard navigation, Tab hands off to the assistant, Esc / backdrop closes | ✅ Live |
-| Clinical Assistant drawer — provenance-labelled output (Measured / Patient-reported / AI inference), sources used, missing information, review-status notice | ✅ Live |
-| Remaining sections (Health Twin, Timeline, Labs, Clinical Reasoning workspace, Supplements, N-of-1 Lab, Protocols, Reports, Wearables, Assessments, Quantum Mind, Tasks & Review Queue, Messages, Integrations, Calendar, Program Builder, Settings) | 🔜 Designed placeholders — build from [`docs/design-handoff/product-spec.txt`](docs/design-handoff/product-spec.txt) |
+| App shell — grouped sidebar (Workspace / Clinical / Operations / System), 58 px top bar with working notifications / messages / account popovers, glass/solid material, atmospheric background | ✅ Live |
+| Patient Overview (`/patients/:id/summary`) — header card with working actions, tabs, health score ring, system-balance radar, priorities, risk flags, biomarker trends, sleep & recovery, N-of-1 experiments, right rail | ✅ Live |
+| **Review-to-action** — reusable `ActionBar` on cards / hypotheses / queue rows / lab markers; destructive & patient-facing actions confirm; outcomes announced and audited | ✅ Live |
+| **Provenance & confidence** — reusable `Provenance` / `ProvenanceBadge` (source type, range, completeness, conflicts, review state) across summary, reasoning, assistant, tasks, labs | ✅ Live |
+| **Clinical Reasoning Snapshot** — per-hypothesis provenance + actions, missing info, what-changed, safety considerations; **approve/reject updates the visible status in-session** and disables settled actions | ✅ Live (demo state) |
+| **Note / report composer** — 8 draft types behind a mock adapter; drafts show sources / range / missing info / review state; never final until approved; patient-facing drafts confirm | ✅ Live (demo) |
+| **Tasks & Review Queue** (`/tasks`) — 12 review categories, provenance per row, resolve / convert-to-note / request-data / open-patient / assign / snooze / change-priority, search + category + priority + status + my/all filters, empty state | ✅ Live (demo state) |
+| **Imports & migration wizard** (`/imports`) — source → detect → map → resolve conflicts → preview → commit → audit; preserves `source_record_id`; links into the review queue | ✅ Live (demo) |
+| **AI / decision-support safety registry** (`/ai-safety`) — per-feature classification with a no-regulatory-claims scope banner | ✅ Live |
+| **Audit Log** (`/audit-log`) — demo session audit viewer, **survives reloads via `sessionStorage`**, clears with the session | ✅ Live (session) |
+| System-of-record navigation + operational spec screens (Nutrition, Templates, Automations, Billing, Claims, Reports, Team) — honest workflow / permissions / next-action specs | ✅ Live |
+| Practice Dashboard (`/practice`), Command palette (⌘K), Clinical Assistant drawer | ✅ Live |
+| Appearance & accessibility — solid/glass material, atmospheric background, **display scale (compact / default / large)** | ✅ Live |
+| Remaining sections (Health Twin, Timeline, Clinical Reasoning workspace, Supplements, N-of-1 Lab, Protocols, Reports tab, Wearables, Assessments, Quantum Mind, Messages, Integrations, Calendar, Program Builder) | 🔜 Placeholders — build from [`docs/design-handoff/product-spec.txt`](docs/design-handoff/product-spec.txt) |
+| **Labs Workspace** (`/patients/:id/labs`) — marker table (lab + optimal ranges, confidence, review), trend panel, source inspector, extraction review, upload demo, optimal-range config | ✅ Live (demo) |
 
 Six synthetic patients ship with the mock adapters; Alexandra Morgan
 (`p-78435`) carries the exact flagship dataset from the handoff, and the
 other records are derived from the practice-dashboard data so cross-links
 stay coherent. **All health data is synthetic.**
+
+## Demo persistence boundaries
+
+This build has **no backend persistence** for interactions. Two kinds of
+mutable state exist, both demo-only and isolated behind the adapter facade so
+they can become tRPC mutations later:
+
+- **Review outcomes** (approve / reject / accept hypothesis / resolve queue
+  item / mark lab reviewed) and the **audit log** are stored in the browser's
+  `sessionStorage` via `src/adapters/session-store.ts`. They survive page
+  reloads **within a browser session** and are **cleared when the session
+  ends** — this is a demo, not a database. The Audit Log screen says so, and
+  action toasts read "demo — not persisted".
+- **Everything read** (patients, labs, queue, reasoning, imports, composer
+  drafts) comes from typed mock adapters in `src/adapters/*`. The `patients`
+  namespace can be flag-swapped to the real backend
+  (`NEXT_PUBLIC_USE_LIVE_API`, see [`docs/live-api.md`](docs/live-api.md)); the
+  rest await their tRPC routers.
+
+Backend persistence — writing review actions, audit events, and lab reviews to
+the clinical Supabase project — still requires the tRPC mutations + `audit_events`
+table wiring described in [`docs/live-api.md`](docs/live-api.md). No UI copy
+implies real persistence.
 
 ## Architecture
 
@@ -115,12 +148,17 @@ plus the enhancement addendum (`backend-addendum.md`) that adds billing &
 claims, telehealth and automations, an outcomes/population layer, migration
 importers, and a versioned connector framework.
 
+Shipped since the handoff (see the status table): review-to-action,
+provenance, the Clinical Reasoning Snapshot upgrade, system-of-record
+navigation, the composer, the imports wizard, the AI/CDS safety registry, the
+session audit log, appearance/display-scale settings, the Tasks & Review
+Queue, and the Labs Workspace.
+
 For this desktop repo, in order:
 
-1. **Phase 2+ screens** from `product-spec.txt` — Client directory, Health
-   Twin system map, three-pane Clinical Reasoning workspace, Labs workspace,
-   Supplement Intelligence, N-of-1 Lab, unified Timeline, Program /
-   Assessment builders, Tasks & Review Queue.
+1. **Remaining Phase 2+ screens** from `product-spec.txt` — Health Twin
+   system map, three-pane Clinical Reasoning workspace, Supplement
+   Intelligence, N-of-1 Lab, unified Timeline, Program / Assessment builders.
 2. **Backend integration** — replace `src/adapters/*` with tRPC queries
    against the shared Hono/Supabase backend; the desktop app must share
    domain schemas with the Expo patient app rather than duplicating them.
