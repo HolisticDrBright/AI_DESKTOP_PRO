@@ -43,11 +43,19 @@ to be an active agent-OS product with its own data and colliding table names).
 | `migrations/20260715000001_tenancy_foundation.sql` | `organizations`, `organization_memberships`, role helpers, owner-bootstrap trigger, RLS | advisor: 0 findings |
 | `migrations/20260715000002_patient_access_model.sql` | `practitioner_profiles`, `patient_profiles`, `practitioner_patient_relationships`, `invitations`, `can_access_patient`, RLS | advisor: 0 findings; cross-tenant test passes |
 
-Applied to the live project during development via the Supabase MCP. To apply
-elsewhere (or re-provision) with the CLI:
+Applied to the live project during development via the Supabase MCP
+(`execute_sql`), so the project has the schema but **no CLI migration-history
+rows yet**. Consequences:
+
+- On a **fresh** project, `supabase db push` applies both files cleanly.
+- On the **existing** `urcjiehlxoehievobezf` project (schema already present),
+  run `supabase migration repair --status applied 20260715000001 20260715000002`
+  first so the CLI records them as applied instead of trying to re-run them.
 
 ```bash
 supabase link --project-ref urcjiehlxoehievobezf
+# existing project: sync history first, then future pushes are clean
+supabase migration repair --status applied 20260715000001 20260715000002
 supabase db push
 ```
 
