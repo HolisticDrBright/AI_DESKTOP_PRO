@@ -147,6 +147,13 @@ export function getReviewOutcome(key: string): ReviewOutcome | undefined {
   return readReviews()[key];
 }
 
+/** Remove a single review outcome (used to roll back an optimistic update). */
+export function removeReviewOutcome(key: string) {
+  const next = { ...readReviews() };
+  delete next[key];
+  persistReviews(next);
+}
+
 export function getReviewSnapshot(): Record<string, ReviewOutcome> {
   return readReviews();
 }

@@ -2,9 +2,16 @@
  * Data adapter façade.
  *
  * The UI consumes data exclusively through this `api` object, shaped the way
- * the future tRPC client will be (async, per-domain namespaces). Replacing
- * the mocks with real queries means swapping the function bodies here — the
- * components should not need to change.
+ * the future tRPC client will be (async, per-domain namespaces). Swapping a
+ * namespace from mock to live means adding a flag branch here — components
+ * never change, and never import Supabase/tRPC/live modules directly.
+ *
+ * Live wiring status (NEXT_PUBLIC_USE_LIVE_API):
+ *   - patients.list / patients.get  -> live (server components, tRPC)
+ *   - labs.getWorkspace / reviewMarker / flagMarker / createReviewTask -> live
+ *     (client components -> /api/live/* route handlers -> tRPC -> RPCs 0013)
+ *   - actions.listLiveAuditEvents   -> live (dual-mode Audit Log)
+ *   - everything else               -> mock/demo session (see docs/live-api.md)
  */
 import {
   DEFAULT_PATIENT_ID,
@@ -28,20 +35,26 @@ import { getProgramTemplates } from "./programs.mock";
 import { getConnectors } from "./integrations.mock";
 import { CAPABILITIES, ROLES } from "./permissions.mock";
 import { USE_LIVE_API } from "./config";
+import { liveClient } from "./live-client";
+import { runClinicalMutation, type MutationOutcome } from "./mutations";
 import {
   executeAction,
   type ActionContext,
   type ActionKind,
 } from "./actions";
 import {
+  addSessionQueueItem,
   clearAuditEntries,
+  getReviewOutcome,
   listAuditEntries,
   recordAuditEntry,
+  removeReviewOutcome,
   setReviewOutcome,
 } from "./session-store";
+import type { LiveAuditEvent } from "./live-types";
 import type { DraftKind } from "./types";
 
-/** Context passed to lab marker mutations so the demo audit entry is meaningful. */
+/** Context passed to lab marker mutations so the audit entry is meaningful. */
 interface LabMarkerCtx {
   patientId: string;
   patientName: string;
@@ -50,11 +63,9 @@ interface LabMarkerCtx {
 
 export const api = {
   patients: {
-    // `patients` is the one swapped namespace (Item 6). When USE_LIVE_API is
-    // on, list/get read real patient_profiles rows through the authenticated
-    // tRPC backend (RLS enforced). The live module is loaded lazily so the
-    // default mock build never pulls in server-only code. `summary` synthesizes
-    // data with no DB source, so it stays on the mock until parity is proven.
+    // When USE_LIVE_API is on, list/get read real patient_profiles rows through
+    // the authenticated tRPC backend (RLS enforced). The live module is loaded
+    // lazily so the default mock build never pulls in server-only code.
     list: async () => {
       if (USE_LIVE_API) return (await import("./patients.live")).patientsLive.list();
       return listPatients();
@@ -87,13 +98,16 @@ export const api = {
   actions: {
     /**
      * Execute a review action. MOCK: records to the demo session audit store
-     * and settles any linked review; no backend persistence. Replace with a
-     * tRPC mutation writing the append-only audit_events table.
+     * and settles any linked review. The labs-review slice persists through
+     * `labs.reviewMarker` instead; other namespaces stay demo until wired.
      */
     execute: async (kind: ActionKind, context: ActionContext, timestamp: string) =>
       executeAction(kind, context, timestamp),
     /** Demo session audit log (sessionStorage). Not backend persistence. */
     listAuditEvents: () => listAuditEntries(),
+    /** Live append-only audit log for the caller's org (empty in mock mode). */
+    listLiveAuditEvents: async (limit = 50): Promise<LiveAuditEvent[]> =>
+      USE_LIVE_API ? liveClient.listAuditEvents(limit) : [],
     /** Clear the demo session audit log (demo reset). */
     clearSessionAuditEvents: () => clearAuditEntries(),
   },
@@ -135,34 +149,95 @@ export const api = {
     getMatrix: async () => ({ roles: ROLES, capabilities: CAPABILITIES }),
   },
   labs: {
-    /** MOCK labs workspace. Replace with a tRPC query. */
-    getWorkspace: async (patientId: string, patientName?: string) =>
-      getLabWorkspace(patientId, patientName),
-    /** Settle a marker as reviewed (demo session state + audit). */
-    reviewMarker: async (markerId: string, ctx: LabMarkerCtx) => {
-      setReviewOutcome(`lab:${ctx.patientId}:${markerId}`, "reviewed");
-      recordAuditEntry({
-        kind: "mark_reviewed",
-        subjectType: "lab marker",
-        subjectLabel: ctx.markerName,
-        patientName: ctx.patientName,
-        reviewed: true,
-        outcome: "reviewed",
-      });
-      return { ok: true, message: `Marked reviewed: ${ctx.markerName}. (demo — not persisted)` };
+    /**
+     * Labs workspace read. LIVE: real biomarker_observations via the tRPC
+     * backend (RLS-scoped, reference intervals preserved). MOCK: demo workspace.
+     */
+    getWorkspace: async (patientId: string, patientName?: string) => {
+      if (USE_LIVE_API) return liveClient.labsWorkspace(patientId);
+      return getLabWorkspace(patientId, patientName);
     },
-    /** Flag a marker for further review (demo session state + audit). */
-    flagMarker: async (markerId: string, ctx: LabMarkerCtx) => {
-      setReviewOutcome(`lab:${ctx.patientId}:${markerId}`, "flagged");
-      recordAuditEntry({
-        kind: "flag",
-        subjectType: "lab marker",
-        subjectLabel: ctx.markerName,
-        patientName: ctx.patientName,
-        reviewed: false,
-        outcome: "flagged",
+    /**
+     * Mark a marker reviewed. LIVE: `review_biomarker` RPC updates the review
+     * columns and appends an audit_events row atomically (migration 0013),
+     * stamping reviewer id server-side and preserving lab values/provenance.
+     * MOCK: session review state + session audit entry.
+     */
+    reviewMarker: async (markerId: string, ctx: LabMarkerCtx): Promise<MutationOutcome> => {
+      const key = `lab:${ctx.patientId}:${markerId}`;
+      const prev = getReviewOutcome(key);
+      return runClinicalMutation({
+        optimistic: () => setReviewOutcome(key, "reviewed"),
+        rollback: () => (prev ? setReviewOutcome(key, prev) : removeReviewOutcome(key)),
+        live: () => liveClient.reviewMarker(markerId, "accepted"),
+        demo: () =>
+          recordAuditEntry({
+            kind: "mark_reviewed",
+            subjectType: "lab marker",
+            subjectLabel: ctx.markerName,
+            patientName: ctx.patientName,
+            reviewed: true,
+            outcome: "reviewed",
+          }),
+        liveMessage: `Marked reviewed: ${ctx.markerName}. (saved to record)`,
+        demoMessage: `Marked reviewed: ${ctx.markerName}. (demo — not persisted)`,
       });
-      return { ok: true, message: `Flagged for review: ${ctx.markerName}. (demo — not persisted)` };
+    },
+    /** Flag a marker for further review. LIVE: review_biomarker(flagged) + audit. */
+    flagMarker: async (markerId: string, ctx: LabMarkerCtx): Promise<MutationOutcome> => {
+      const key = `lab:${ctx.patientId}:${markerId}`;
+      const prev = getReviewOutcome(key);
+      return runClinicalMutation({
+        optimistic: () => setReviewOutcome(key, "flagged"),
+        rollback: () => (prev ? setReviewOutcome(key, prev) : removeReviewOutcome(key)),
+        live: () => liveClient.reviewMarker(markerId, "flagged"),
+        demo: () =>
+          recordAuditEntry({
+            kind: "flag",
+            subjectType: "lab marker",
+            subjectLabel: ctx.markerName,
+            patientName: ctx.patientName,
+            reviewed: false,
+            outcome: "flagged",
+          }),
+        liveMessage: `Flagged for review: ${ctx.markerName}. (saved to record)`,
+        demoMessage: `Flagged for review: ${ctx.markerName}. (demo — not persisted)`,
+      });
+    },
+    /**
+     * Downstream link from a review: enqueue a follow-up review task. LIVE:
+     * `create_review_task` RPC (+ audit). MOCK: a session queue item that
+     * surfaces on the Tasks screen this session.
+     */
+    createReviewTask: async (input: {
+      markerId: string;
+      markerName: string;
+      patientId: string;
+      patientName: string;
+      priority?: "High" | "Medium" | "Low";
+    }): Promise<MutationOutcome> => {
+      const priority = input.priority ?? "Medium";
+      return runClinicalMutation({
+        live: () =>
+          liveClient.createReviewTask({
+            patientId: input.patientId,
+            title: `Follow up: ${input.markerName}`,
+            itemType: "abnormal_result",
+            priority: priority.toLowerCase() as "low" | "medium" | "high",
+            refId: input.markerId,
+          }),
+        demo: () =>
+          addSessionQueueItem({
+            title: `Follow up: ${input.markerName}`,
+            patientName: input.patientName,
+            patientId: input.patientId,
+            category: "Lab review",
+            priority,
+            seeds: [`Lab marker ${input.markerName} flagged for follow-up.`],
+          }),
+        liveMessage: `Follow-up task created for ${input.markerName}. (saved to queue)`,
+        demoMessage: `Follow-up task created for ${input.markerName}. (demo — session queue)`,
+      });
     },
     /** Configure the practice optimal range (never touches the lab reference interval). */
     configureOptimalRange: async (markerId: string, range: OptimalRange, ctx: LabMarkerCtx) => {

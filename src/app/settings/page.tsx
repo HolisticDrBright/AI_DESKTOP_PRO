@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { AppearanceCard } from "@/components/settings/AppearanceCard";
+import { DataSourceCard } from "@/components/settings/DataSourceCard";
 import { PrivacyCard } from "@/components/settings/PrivacyCard";
 
 export default function SettingsPage() {
@@ -15,6 +16,7 @@ export default function SettingsPage() {
         </p>
       </div>
       <AppearanceCard />
+      <DataSourceCard />
       <PrivacyCard />
     </section>
   );

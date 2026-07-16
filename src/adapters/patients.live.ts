@@ -3,6 +3,7 @@ if (typeof window !== "undefined") {
 }
 import { ACTIVE_ORG_ID } from "./config";
 import { trpcQuery } from "./trpc.server";
+import { isAdapterError } from "./errors";
 import type { PatientDirectoryEntry } from "./types";
 
 /**
@@ -89,9 +90,15 @@ export const patientsLive = {
         patientId: id,
       });
       return toDirectoryEntry(row);
-    } catch {
-      // NOT_FOUND from the RLS gate ⇒ no access / no such patient.
-      return undefined;
+    } catch (e) {
+      // "No such patient / no access" is a legitimate undefined (caller renders
+      // not-found). But a backend outage or expired session must NOT be
+      // silently reported as "not found" — propagate it so the error boundary
+      // shows a retryable "unavailable" state instead of a misleading 404.
+      if (isAdapterError(e) && (e.code === "not_found" || e.code === "forbidden")) {
+        return undefined;
+      }
+      throw e;
     }
   },
 };

@@ -3,47 +3,105 @@ if (typeof window !== "undefined") {
 }
 import { TRPC_BASE_URL } from "./config";
 import { getClinicalAccessToken } from "./session.server";
+import { AdapterError, codeFromHttpStatus, type AdapterErrorCode } from "./errors";
 
 /**
- * Minimal, dependency-free tRPC HTTP client for the shared backend
- * (Item 6). Server-only. Calls a single (non-batched) query with the
- * superjson wire shape the backend expects, presenting the demo
- * practitioner's bearer token. The desktop reaches Postgres ONLY through
- * this backend — never directly.
+ * Minimal, dependency-free tRPC HTTP client for the shared backend.
+ * Server-only. Presents the practitioner's bearer token so the backend runs
+ * RLS as that user; the desktop reaches Postgres ONLY through this backend
+ * (ADR 0002), never directly.
  *
- * Kept intentionally tiny (no @trpc/client dependency) so the verified
- * desktop build is unchanged; the response `result.data.json` field is the
- * superjson-unwrapped value for the plain shapes these procedures return.
+ * Kept intentionally tiny (no @trpc/client dependency). Reads/writes use the
+ * superjson wire shape ({ json: <value> }); the response's `result.data.json`
+ * is the unwrapped value. Every failure is normalized to an AdapterError with
+ * a safe message — response bodies (possible PHI) never reach the thrown
+ * message, only server-side `detail`.
  */
 
 interface TrpcError {
-  error?: { json?: { message?: string; data?: { code?: string } } };
+  error?: { json?: { message?: string; data?: { code?: string; httpStatus?: number } } };
 }
 
-export async function trpcQuery<T>(path: string, input?: unknown): Promise<T> {
-  const token = await getClinicalAccessToken();
-  const url = new URL(`${TRPC_BASE_URL}/${path}`);
-  if (input !== undefined) {
-    // Transformer (superjson) input wire shape: { json: <value> }.
-    url.searchParams.set("input", JSON.stringify({ json: input }));
+/** Map a tRPC error code / HTTP status to our adapter code. */
+function mapCode(trpcCode: string | undefined, httpStatus: number): AdapterErrorCode {
+  switch (trpcCode) {
+    case "UNAUTHORIZED":
+      return "unauthenticated";
+    case "FORBIDDEN":
+      return "forbidden";
+    case "NOT_FOUND":
+      return "not_found";
+    case "BAD_REQUEST":
+    case "PARSE_ERROR":
+    case "UNPROCESSABLE_CONTENT":
+      return "invalid";
+    default:
+      return codeFromHttpStatus(httpStatus);
+  }
+}
+
+async function call<T>(path: string, method: "GET" | "POST", input?: unknown): Promise<T> {
+  let token: string;
+  try {
+    token = await getClinicalAccessToken();
+  } catch (e) {
+    // No session / not configured — the backend would reject anyway.
+    throw new AdapterError(
+      "unavailable",
+      undefined,
+      `token: ${e instanceof Error ? e.message : "unknown"}`,
+    );
   }
 
-  const res = await fetch(url.toString(), {
-    method: "GET",
-    headers: { Authorization: `Bearer ${token}` },
-    cache: "no-store",
-  });
+  const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
+  let url = `${TRPC_BASE_URL}/${path}`;
+  let bodyInit: string | undefined;
 
-  const body = (await res.json()) as
-    | { result?: { data?: { json?: T } } }
-    | TrpcError;
+  if (method === "GET") {
+    if (input !== undefined) {
+      const u = new URL(url);
+      u.searchParams.set("input", JSON.stringify({ json: input }));
+      url = u.toString();
+    }
+  } else {
+    headers["content-type"] = "application/json";
+    bodyInit = JSON.stringify({ json: input ?? null });
+  }
+
+  let res: Response;
+  try {
+    res = await fetch(url, { method, headers, body: bodyInit, cache: "no-store" });
+  } catch (e) {
+    // Network failure / backend unreachable (the state in this sandbox).
+    throw new AdapterError(
+      "unavailable",
+      undefined,
+      `fetch ${path}: ${e instanceof Error ? e.message : "network error"}`,
+    );
+  }
+
+  let body: { result?: { data?: { json?: T } } } | TrpcError;
+  try {
+    body = (await res.json()) as typeof body;
+  } catch {
+    throw new AdapterError("unknown", undefined, `tRPC ${path}: non-JSON response (${res.status})`);
+  }
 
   if (!res.ok || "error" in body) {
     const e = body as TrpcError;
-    const code = e.error?.json?.data?.code ?? String(res.status);
-    // Never include the response body (may carry PHI) in the thrown message.
-    throw new Error(`tRPC ${path} failed (${code})`);
+    const trpcCode = e.error?.json?.data?.code;
+    const code = mapCode(trpcCode, res.status);
+    // Safe message only; the (potentially sensitive) server message stays in detail.
+    throw new AdapterError(code, undefined, `tRPC ${path} (${trpcCode ?? res.status})`);
   }
 
   return (body as { result: { data: { json: T } } }).result.data.json;
+}
+
+export function trpcQuery<T>(path: string, input?: unknown): Promise<T> {
+  return call<T>(path, "GET", input);
+}
+
+export function trpcMutation<T>(path: string, input?: unknown): Promise<T> {
+  return call<T>(path, "POST", input);
 }

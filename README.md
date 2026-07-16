@@ -28,11 +28,21 @@ mock adapters, and all mutable UI state (review outcomes, audit events) is
 
 ```bash
 npm install
-npm run dev        # http://localhost:3000
+npm run dev        # http://localhost:3000  (demo mode — no env needed)
 ```
 
 Other scripts: `npm run build` · `npm run start` · `npm run lint` ·
 `npm run typecheck`.
+
+**Demo vs live.** With no env, the app runs entirely on mock/session adapters —
+nothing is persisted. Setting `NEXT_PUBLIC_USE_LIVE_API=true` (plus the backend
+env in [`.env.example`](.env.example)) routes the wired vertical slice —
+real patient read, labs workspace, marker review + persistent audit, and a
+downstream review task — through the authenticated backend under RLS. See
+[`docs/live-api.md`](docs/live-api.md) for the architecture, the secure write
+path (migration `0013`), what's wired vs still mock, security assumptions, and
+how to wire future domains. Settings → **Data source & environment** shows the
+resolved mode and configured backend vars (presence only).
 
 The app targets a 1440×900 desktop viewport (1280 px minimum supported
 width).

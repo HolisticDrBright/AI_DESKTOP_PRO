@@ -13,7 +13,6 @@ import {
 } from "lucide-react";
 import { api } from "@/adapters";
 import {
-  getLabWorkspace,
   type BiomarkerMarker,
   type ExtractionConfidenceBand,
   type LabWorkspace,
@@ -21,9 +20,11 @@ import {
   type MarkerTrendKind,
   type OptimalRange,
 } from "@/adapters/labs.mock";
+import { isAdapterError } from "@/adapters/errors";
 import { useReviewOutcome, type ReviewOutcome } from "@/adapters/session-store";
 import type { ReviewState, Tone } from "@/adapters/types";
 import { ActionBar } from "@/components/ui/ActionBar";
+import { ClinicalEmpty, ClinicalError, ClinicalLoading } from "@/components/ui/ClinicalStates";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { Provenance } from "@/components/ui/Provenance";
 import { Sparkline } from "@/components/ui/Sparkline";
@@ -93,11 +94,63 @@ export function LabsWorkspace({
   patientId: string;
   patientName: string;
 }) {
-  const [ws] = useState<LabWorkspace>(() => getLabWorkspace(patientId, patientName));
-  const [selectedId, setSelectedId] = useState<string>(ws.markers[0]?.id ?? "");
+  const [ws, setWs] = useState<LabWorkspace | null>(null);
+  const [loadState, setLoadState] = useState<"loading" | "ready" | "error">("loading");
+  const [errorMsg, setErrorMsg] = useState("");
+  const [reloadKey, setReloadKey] = useState(0);
+  const [selectedId, setSelectedId] = useState<string>("");
   const [uploadOpen, setUploadOpen] = useState(false);
   const [configMarker, setConfigMarker] = useState<BiomarkerMarker | null>(null);
   const [overrides, setOverrides] = useState<Record<string, OptimalRange>>({});
+
+  // Real workspace read through the façade: mock in demo mode, the live
+  // biomarker_observations query (RLS-scoped) when NEXT_PUBLIC_USE_LIVE_API is on.
+  useEffect(() => {
+    let alive = true;
+    setLoadState("loading");
+    api.labs
+      .getWorkspace(patientId, patientName)
+      .then((w) => {
+        if (!alive) return;
+        setWs(w);
+        setSelectedId(w.markers[0]?.id ?? "");
+        setLoadState("ready");
+      })
+      .catch((e) => {
+        if (!alive) return;
+        setErrorMsg(isAdapterError(e) ? e.safeMessage : "Unable to load labs right now.");
+        setLoadState("error");
+      });
+    return () => {
+      alive = false;
+    };
+  }, [patientId, patientName, reloadKey]);
+
+  if (loadState === "loading") {
+    return (
+      <section data-screen-label="Labs & Biomarkers" className="relative px-6 pt-[22px] pb-6">
+        <ClinicalLoading label="Loading labs & biomarkers…" />
+      </section>
+    );
+  }
+  if (loadState === "error") {
+    return (
+      <section data-screen-label="Labs & Biomarkers" className="relative px-6 pt-[22px] pb-6">
+        <ClinicalError message={errorMsg} onRetry={() => setReloadKey((k) => k + 1)} />
+      </section>
+    );
+  }
+  if (!ws || ws.markers.length === 0) {
+    return (
+      <section data-screen-label="Labs & Biomarkers" className="relative px-6 pt-[22px] pb-6">
+        <ClinicalEmpty
+          icon={<FlaskConical size={20} strokeWidth={1.75} className="text-slate-badge" aria-hidden />}
+          title="No lab results yet"
+          message={`There are no lab markers on file for ${patientName}. Uploaded reports appear here after extraction and practitioner review.`}
+        />
+      </section>
+    );
+  }
 
   const selected = ws.markers.find((m) => m.id === selectedId) ?? null;
   const optimalOf = (m: BiomarkerMarker) => overrides[m.id] ?? m.optimalRange;
@@ -414,6 +467,16 @@ function MarkerInspector({
     void api.labs
       .flagMarker(marker.id, { patientId, patientName, markerName: marker.name })
       .then((r) => announce(r.message));
+  const onCreateTask = () =>
+    void api.labs
+      .createReviewTask({
+        markerId: marker.id,
+        markerName: marker.name,
+        patientId,
+        patientName,
+        priority: marker.status.startsWith("critical") ? "High" : "Medium",
+      })
+      .then((r) => announce(r.message));
 
   const Field = ({ label, children }: { label: string; children: React.ReactNode }) => (
     <div>
@@ -539,6 +602,13 @@ function MarkerInspector({
             className="flex h-[30px] cursor-pointer items-center gap-[6px] rounded-lg border border-line bg-card px-[12px] text-[12px] font-semibold text-warning-deep hover:border-line-hover focus-visible:outline-2 focus-visible:outline-action"
           >
             Flag for review
+          </button>
+          <button
+            onClick={onCreateTask}
+            className="flex h-[30px] cursor-pointer items-center gap-[6px] rounded-lg border border-line bg-card px-[12px] text-[12px] font-semibold text-body hover:border-line-hover focus-visible:outline-2 focus-visible:outline-action"
+          >
+            <ListChecks size={12} strokeWidth={2} aria-hidden />
+            Create follow-up task
           </button>
           <button
             onClick={onConfigure}
