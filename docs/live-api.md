@@ -134,10 +134,14 @@ npm run dev            # NEXT_PUBLIC_USE_LIVE_API unset → demo mode
 NEXT_PUBLIC_USE_LIVE_API=true
 TRPC_BASE_URL=…                 # reachable tRPC backend
 CLINICAL_ORG_ID=…               # or NEXT_PUBLIC_DEV_ORG_ID
-CLINICAL_SUPABASE_URL=… ANON_KEY=… DEMO_EMAIL=… DEMO_PASSWORD=…   # demo session
+CLINICAL_SUPABASE_URL=… CLINICAL_SUPABASE_ANON_KEY=…   # auth token endpoint
 ```
-Then `npm run dev`. Settings → **Data source & environment** shows the resolved
-mode and which server-side vars are configured (presence only).
+Then `npm run dev` and **sign in at `/login`** (httpOnly cookie session; see
+[`live-auth-and-seeding.md`](live-auth-and-seeding.md)). `CLINICAL_DEMO_EMAIL/
+PASSWORD` is a local/e2e-only fallback when no one is signed in — do not set it
+in a real deployment. Settings → **Data source & environment** shows the
+resolved mode, the practitioner session, and which server-side vars are
+configured (presence only).
 
 **Live mode without infrastructure (contract fixture):** to exercise the live
 UI where no backend is reachable, run the committed fixture —

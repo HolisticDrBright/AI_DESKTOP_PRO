@@ -40,12 +40,18 @@ function mapCode(trpcCode: string | undefined, httpStatus: number): AdapterError
   }
 }
 
-async function call<T>(path: string, method: "GET" | "POST", input?: unknown): Promise<T> {
+async function call<T>(
+  path: string,
+  method: "GET" | "POST",
+  input?: unknown,
+  sessionToken?: string | null,
+): Promise<T> {
   let token: string;
   try {
-    token = await getClinicalAccessToken();
+    token = await getClinicalAccessToken(sessionToken);
   } catch (e) {
-    // No session / not configured — the backend would reject anyway.
+    // Preserve typed auth errors (signed-out ≠ backend down); wrap the rest.
+    if (e instanceof AdapterError) throw e;
     throw new AdapterError(
       "unavailable",
       undefined,
@@ -98,10 +104,10 @@ async function call<T>(path: string, method: "GET" | "POST", input?: unknown): P
   return (body as { result: { data: { json: T } } }).result.data.json;
 }
 
-export function trpcQuery<T>(path: string, input?: unknown): Promise<T> {
-  return call<T>(path, "GET", input);
+export function trpcQuery<T>(path: string, input?: unknown, sessionToken?: string | null): Promise<T> {
+  return call<T>(path, "GET", input, sessionToken);
 }
 
-export function trpcMutation<T>(path: string, input?: unknown): Promise<T> {
-  return call<T>(path, "POST", input);
+export function trpcMutation<T>(path: string, input?: unknown, sessionToken?: string | null): Promise<T> {
+  return call<T>(path, "POST", input, sessionToken);
 }

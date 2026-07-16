@@ -55,6 +55,53 @@ test("resolve persists across reload and lands in the live audit log", async ({ 
   await expect(page.getByText("review_task.resolve").first()).toBeVisible();
 });
 
+test("live labs workspace loads markers and a review persists across reload", async ({ page }) => {
+  await page.goto("/patients/aaaaaaaa-1111-2222-3333-444444444401/labs");
+
+  // Markers come from the fixture backend's clinical.labs.getWorkspace.
+  await page.getByRole("button", { name: "Select hs-CRP" }).waitFor();
+  await expect(page.getByRole("button", { name: "Select TSH" })).toBeVisible();
+
+  // Review the high-confidence marker (no confirm dialog on this path).
+  await page.getByRole("button", { name: "Select hs-CRP" }).click();
+  await page.getByRole("button", { name: "Mark reviewed" }).click();
+  await expect(page.getByText(/Marked reviewed: hs-CRP.*saved to record/).first()).toBeVisible();
+
+  // Fresh load with session state cleared: reviewed state must come from the
+  // BACKEND marker row (reviewState), not this browser session.
+  await page.evaluate(() => window.sessionStorage.clear());
+  await page.reload();
+  const row = page.locator("tr", { hasText: "hs-CRP" });
+  await expect(row.getByText("Reviewed", { exact: true })).toBeVisible();
+
+  // The review landed in the live audit trail.
+  await page.goto("/audit-log");
+  await expect(page.getByText("biomarker.review").first()).toBeVisible();
+});
+
+test("practitioner sign-in and sign-out work via httpOnly cookie session", async ({ page }) => {
+  await page.goto("/login");
+  await page.getByLabel("Email").fill("practitioner@fixture.local");
+  await page.getByLabel("Password").fill("fixture-password");
+  await page.getByRole("button", { name: "Sign in" }).click();
+  // Redirects home on success; the session endpoint reflects the cookie session.
+  await page.waitForURL("**/");
+  const session = await page.evaluate(() =>
+    fetch("/api/auth/session").then((r) => r.json()),
+  );
+  expect(session?.data?.signedIn).toBe(true);
+  expect(session?.data?.email).toBe("practitioner@fixture.local");
+
+  await page.goto("/login");
+  await expect(page.getByText(/Signed in as/)).toBeVisible();
+  await page.getByRole("button", { name: "Sign out" }).click();
+  await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
+  const after = await page.evaluate(() =>
+    fetch("/api/auth/session").then((r) => r.json()),
+  );
+  expect(after?.data?.signedIn).toBe(false);
+});
+
 test("no console errors in the live flow", async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
@@ -62,6 +109,7 @@ test("no console errors in the live flow", async ({ page }) => {
     if (m.type() === "error" && !/Failed to load resource/.test(m.text())) errors.push(m.text());
   });
   await page.goto("/tasks", { waitUntil: "networkidle" });
+  await page.goto("/patients/aaaaaaaa-1111-2222-3333-444444444401/labs", { waitUntil: "networkidle" });
   await page.goto("/audit-log", { waitUntil: "networkidle" });
   await page.goto("/settings", { waitUntil: "networkidle" });
   expect(errors).toEqual([]);

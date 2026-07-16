@@ -77,18 +77,18 @@ function toDirectoryEntry(row: ClinicalPatientRow, i = 0): PatientDirectoryEntry
 }
 
 export const patientsLive = {
-  async list(): Promise<PatientDirectoryEntry[]> {
+  async list(sessionToken?: string | null): Promise<PatientDirectoryEntry[]> {
     const rows = await trpcQuery<ClinicalPatientRow[]>("clinical.patients.list", {
       organizationId: ACTIVE_ORG_ID,
-    });
+    }, sessionToken);
     return rows.map((r, i) => toDirectoryEntry(r, i));
   },
 
-  async get(id: string): Promise<PatientDirectoryEntry | undefined> {
+  async get(id: string, sessionToken?: string | null): Promise<PatientDirectoryEntry | undefined> {
     try {
       const row = await trpcQuery<ClinicalPatientRow>("clinical.patients.get", {
         patientId: id,
-      });
+      }, sessionToken);
       return toDirectoryEntry(row);
     } catch (e) {
       // "No such patient / no access" is a legitimate undefined (caller renders

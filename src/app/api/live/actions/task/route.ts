@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { actionsLive } from "@/adapters/actions.live";
 import { AdapterError } from "@/adapters/errors";
+import { getRequestSession } from "@/server/session";
 import { liveGuard, runLive } from "../../route-helpers";
 
 const PRIORITIES = ["low", "medium", "high"] as const;
@@ -27,12 +28,13 @@ export async function POST(req: NextRequest) {
     const priority: Priority = PRIORITIES.includes(body.priority as Priority)
       ? (body.priority as Priority)
       : "medium";
+    const session = await getRequestSession();
     return actionsLive.createReviewTask({
       patientId: body.patientId,
       title: body.title.trim(),
       itemType: typeof body.itemType === "string" ? body.itemType : undefined,
       priority,
       refId: typeof body.refId === "string" ? body.refId : undefined,
-    });
+    }, session.token);
   });
 }

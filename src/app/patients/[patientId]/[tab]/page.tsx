@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { api } from "@/adapters";
+import { getRequestSession } from "@/server/session";
 import type { PatientTabId } from "@/adapters/types";
 import { TabPlaceholderCard } from "@/components/patient/TabPlaceholderCard";
 import { LabsWorkspace } from "@/components/labs/LabsWorkspace";
@@ -40,7 +41,7 @@ export default async function PatientTabPage({
   };
 
   if (BUILT[tab]) {
-    const patient = await api.patients.get(patientId);
+    const patient = await api.patients.get(patientId, (await getRequestSession()).token);
     const name = patient?.name ?? "this patient";
     if (tab === "labs") return <LabsWorkspace patientId={patientId} patientName={name} />;
     if (tab === "lab-orders") return <LabOrdersWorkspace patientId={patientId} patientName={name} />;

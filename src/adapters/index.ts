@@ -92,12 +92,14 @@ export const api = {
     // When USE_LIVE_API is on, list/get read real patient_profiles rows through
     // the authenticated tRPC backend (RLS enforced). The live module is loaded
     // lazily so the default mock build never pulls in server-only code.
-    list: async () => {
-      if (USE_LIVE_API) return (await import("./patients.live")).patientsLive.list();
+    // sessionToken: the cookie session's access token, passed by SERVER
+    // callers (src/server/session.ts). Client/demo callers omit it.
+    list: async (sessionToken?: string | null) => {
+      if (USE_LIVE_API) return (await import("./patients.live")).patientsLive.list(sessionToken);
       return listPatients();
     },
-    get: async (id: string) => {
-      if (USE_LIVE_API) return (await import("./patients.live")).patientsLive.get(id);
+    get: async (id: string, sessionToken?: string | null) => {
+      if (USE_LIVE_API) return (await import("./patients.live")).patientsLive.get(id, sessionToken);
       return getPatient(id);
     },
     summary: async (id: string) => getPatientSummary(id),

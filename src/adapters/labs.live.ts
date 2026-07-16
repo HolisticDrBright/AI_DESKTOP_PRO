@@ -22,19 +22,20 @@ import type { LiveReviewResult, ReviewDecision } from "./live-types";
  * renders its error state — never a fake success.
  */
 export const labsLive = {
-  getWorkspace(patientId: string): Promise<LabWorkspace> {
-    return trpcQuery<LabWorkspace>("clinical.labs.getWorkspace", { patientId });
+  getWorkspace(patientId: string, sessionToken?: string | null): Promise<LabWorkspace> {
+    return trpcQuery<LabWorkspace>("clinical.labs.getWorkspace", { patientId }, sessionToken);
   },
 
   reviewMarker(
     observationId: string,
     decision: ReviewDecision,
     note?: string,
+    sessionToken?: string | null,
   ): Promise<LiveReviewResult> {
-    return trpcMutation<LiveReviewResult>("clinical.labs.reviewMarker", {
-      observationId,
-      decision,
-      note,
-    });
+    return trpcMutation<LiveReviewResult>(
+      "clinical.labs.reviewMarker",
+      { observationId, decision, note },
+      sessionToken,
+    );
   },
 };

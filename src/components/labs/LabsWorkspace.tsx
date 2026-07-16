@@ -98,6 +98,7 @@ export function LabsWorkspace({
   const [ws, setWs] = useState<LabWorkspace | null>(null);
   const [loadState, setLoadState] = useState<"loading" | "ready" | "error">("loading");
   const [errorMsg, setErrorMsg] = useState("");
+  const [errorCode, setErrorCode] = useState<string | undefined>(undefined);
   const [reloadKey, setReloadKey] = useState(0);
   const [selectedId, setSelectedId] = useState<string>("");
   const [uploadOpen, setUploadOpen] = useState(false);
@@ -120,6 +121,7 @@ export function LabsWorkspace({
       .catch((e) => {
         if (!alive) return;
         setErrorMsg(isAdapterError(e) ? e.safeMessage : "Unable to load labs right now.");
+        setErrorCode(isAdapterError(e) ? e.code : undefined);
         setLoadState("error");
       });
     return () => {
@@ -135,9 +137,15 @@ export function LabsWorkspace({
     );
   }
   if (loadState === "error") {
+    const signedOut = errorCode === "unauthenticated";
     return (
       <section data-screen-label="Labs & Biomarkers" className="relative px-6 pt-[22px] pb-6">
-        <ClinicalError message={errorMsg} onRetry={() => setReloadKey((k) => k + 1)} />
+        <ClinicalError
+          message={errorMsg}
+          onRetry={() => setReloadKey((k) => k + 1)}
+          actionHref={signedOut ? "/login" : undefined}
+          actionLabel={signedOut ? "Sign in" : undefined}
+        />
       </section>
     );
   }

@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { actionsLive } from "@/adapters/actions.live";
 import { AdapterError } from "@/adapters/errors";
+import { getRequestSession } from "@/server/session";
 import { liveGuard, runLive } from "../../route-helpers";
 
 /** GET ?limit= -> the caller's audit events (own events, or all if org admin). */
@@ -10,7 +11,8 @@ export async function GET(req: NextRequest) {
   return runLive(async () => {
     const raw = req.nextUrl.searchParams.get("limit");
     const limit = raw ? Math.min(Math.max(Number(raw) || 50, 1), 200) : 50;
-    return actionsLive.listAuditEvents(undefined, limit);
+    const session = await getRequestSession();
+    return actionsLive.listAuditEvents(undefined, limit, session.token);
   });
 }
 
@@ -31,6 +33,7 @@ export async function POST(req: NextRequest) {
       throw new AdapterError("invalid", "An audit action is required.");
     }
     const str = (v: unknown) => (typeof v === "string" ? v : undefined);
+    const session = await getRequestSession();
     return actionsLive.recordAudit({
       action: body.action,
       resourceType: str(body.resourceType),
@@ -41,6 +44,6 @@ export async function POST(req: NextRequest) {
         body.metadata && typeof body.metadata === "object"
           ? (body.metadata as Record<string, unknown>)
           : {},
-    });
+    }, session.token);
   });
 }

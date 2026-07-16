@@ -48,17 +48,20 @@ backend or env vars. In sandboxed CI images with a pre-installed browser, point
 `PW_CHROMIUM_PATH` at the Chromium binary instead of running `playwright install`.
 
 **Demo vs live.** With no env, the app runs entirely on mock/session adapters —
-nothing is persisted. Setting `NEXT_PUBLIC_USE_LIVE_API=true` (plus the backend
-env in [`.env.example`](.env.example)) routes the wired vertical slice —
-real patient read, labs workspace, marker review + persistent audit, and a
-downstream review task — through the authenticated backend under RLS. See
-[`docs/live-api.md`](docs/live-api.md) for the architecture, the secure write
-path (migration `0013`), what's wired vs still mock, security assumptions, and
-how to wire future domains. Settings → **Data source & environment** shows the
-resolved mode and configured backend vars (presence only).
-[`docs/live-data-readiness.md`](docs/live-data-readiness.md) maps every domain
-(adapter → mock source → session state → live tables → first mutation) and the
-recommended wiring order — **Tasks/Review queue is the next live slice**.
+nothing is persisted and no sign-in is needed. Setting
+`NEXT_PUBLIC_USE_LIVE_API=true` (plus the backend env in
+[`.env.example`](.env.example)) routes the wired slices — patient read, labs
+workspace + marker review, Tasks/Review queue + resolve, and the append-only
+audit trail — through the authenticated backend under RLS, as the practitioner
+signed in at `/login` (httpOnly cookie session; see
+[`docs/live-auth-and-seeding.md`](docs/live-auth-and-seeding.md) for sign-in
+and demo-data seeding). See [`docs/live-api.md`](docs/live-api.md) for the
+architecture, the secure write path (migrations `0013`–`0015`), what's wired vs
+still mock, and security assumptions. Settings → **Data source & environment**
+shows the resolved mode, the practitioner session, and configured backend vars
+(presence only). [`docs/live-data-readiness.md`](docs/live-data-readiness.md)
+maps every domain (adapter → mock source → session state → live tables → first
+mutation) and the recommended wiring order.
 
 The app targets a 1440×900 desktop viewport (1280 px minimum supported
 width).

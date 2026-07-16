@@ -1,7 +1,10 @@
 import { AlertTriangle, Check, Database, Minus } from "lucide-react";
 import Link from "next/link";
 import { describeMode } from "@/adapters/mode";
+import { cookies } from "next/headers";
+import { readAuthSession } from "@/adapters/auth.server";
 import { getLiveServerStatus } from "@/adapters/live-status.server";
+import { SignOutButton } from "@/components/auth/SignOutButton";
 import { Card, CardTitle } from "@/components/ui/bits";
 
 /**
@@ -12,9 +15,10 @@ import { Card, CardTitle } from "@/components/ui/bits";
  * warns clearly when dev-only identity overrides are active. This is the
  * env/status indicator for the vertical slice; details live in docs/live-api.md.
  */
-export function DataSourceCard() {
+export async function DataSourceCard() {
   const mode = describeMode();
   const server = getLiveServerStatus();
+  const session = mode.live ? readAuthSession(await cookies()) : null;
   const overrideNames = [
     mode.devOverrides.orgId && "org",
     mode.devOverrides.patientId && "patient",
@@ -72,8 +76,33 @@ export function DataSourceCard() {
 
         {mode.live && (
           <>
+            {/* Auth: signed in / signed out / expired — distinct from backend reachability. */}
+            <div className="flex items-center justify-between gap-3 border-t border-hairline-2 py-[8px]">
+              <span className="text-[12px] text-body">Practitioner session</span>
+              {session?.signedIn ? (
+                <span className="flex items-center gap-2">
+                  <span className="flex items-center gap-[5px] text-[12px] font-semibold text-positive">
+                    <Check size={13} strokeWidth={2.5} aria-hidden />
+                    {session.email ?? "Signed in"}
+                  </span>
+                  <SignOutButton />
+                </span>
+              ) : (
+                <Link
+                  href="/login"
+                  className="text-[12px] font-semibold text-action hover:text-action-deep focus-visible:outline-2 focus-visible:outline-action"
+                >
+                  {session?.expired ? "Session expired — sign in →" : "Signed out — sign in →"}
+                </Link>
+              )}
+            </div>
             <StatusRow label="tRPC backend endpoint" ok={server.trpcConfigured} />
-            <StatusRow label="Practitioner session credentials" ok={server.demoSessionConfigured} />
+            <StatusRow
+              label="Env fallback session (local/e2e only)"
+              ok={server.demoSessionConfigured}
+              okText="Present"
+              offText="Not set (expected in production)"
+            />
             <StatusRow label="Organization scope" ok={server.orgConfigured} />
           </>
         )}

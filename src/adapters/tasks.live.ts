@@ -16,13 +16,15 @@ import type { LiveQueueItem, LiveResolveResult } from "./live-types";
  * stamping the actor server-side. Idempotent on already-resolved items.
  */
 export const tasksLive = {
-  getQueue(): Promise<LiveQueueItem[]> {
-    return trpcQuery<LiveQueueItem[]>("clinical.tasks.getQueue", {
-      organizationId: ACTIVE_ORG_ID,
-    });
+  getQueue(sessionToken?: string | null): Promise<LiveQueueItem[]> {
+    return trpcQuery<LiveQueueItem[]>(
+      "clinical.tasks.getQueue",
+      { organizationId: ACTIVE_ORG_ID },
+      sessionToken,
+    );
   },
 
-  resolveItem(itemId: string, note?: string): Promise<LiveResolveResult> {
-    return trpcMutation<LiveResolveResult>("clinical.tasks.resolve", { itemId, note });
+  resolveItem(itemId: string, note?: string, sessionToken?: string | null): Promise<LiveResolveResult> {
+    return trpcMutation<LiveResolveResult>("clinical.tasks.resolve", { itemId, note }, sessionToken);
   },
 };

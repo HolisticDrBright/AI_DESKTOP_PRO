@@ -26,7 +26,7 @@ export interface RecordAuditInput {
 }
 
 export const actionsLive = {
-  recordAudit(input: RecordAuditInput): Promise<{ id: string }> {
+  recordAudit(input: RecordAuditInput, sessionToken?: string | null): Promise<{ id: string }> {
     return trpcMutation<{ id: string }>("clinical.actions.recordAudit", {
       organizationId: input.organizationId ?? ACTIVE_ORG_ID,
       action: input.action,
@@ -35,14 +35,18 @@ export const actionsLive = {
       safeMessage: input.safeMessage ?? null,
       patientId: input.patientId ?? null,
       metadata: input.metadata ?? {},
-    });
+    }, sessionToken);
   },
 
-  listAuditEvents(organizationId?: string, limit = 50): Promise<LiveAuditEvent[]> {
+  listAuditEvents(
+    organizationId?: string,
+    limit = 50,
+    sessionToken?: string | null,
+  ): Promise<LiveAuditEvent[]> {
     return trpcQuery<LiveAuditEvent[]>("clinical.actions.listAuditEvents", {
       organizationId: organizationId ?? ACTIVE_ORG_ID,
       limit,
-    });
+    }, sessionToken);
   },
 
   createReviewTask(input: {
@@ -51,13 +55,13 @@ export const actionsLive = {
     itemType?: string;
     priority?: "low" | "medium" | "high";
     refId?: string;
-  }): Promise<LiveTaskResult> {
+  }, sessionToken?: string | null): Promise<LiveTaskResult> {
     return trpcMutation<LiveTaskResult>("clinical.actions.createReviewTask", {
       patientId: input.patientId,
       title: input.title,
       itemType: input.itemType ?? "abnormal_result",
       priority: input.priority ?? "medium",
       refId: input.refId ?? null,
-    });
+    }, sessionToken);
   },
 };

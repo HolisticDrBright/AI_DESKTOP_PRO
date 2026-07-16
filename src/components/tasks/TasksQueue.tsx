@@ -88,7 +88,7 @@ export function TasksQueue({
   // Queue read through the façade: demo mock by default, real
   // review_queue_items (RLS-scoped) when NEXT_PUBLIC_USE_LIVE_API is on.
   const [baseItems, setBaseItems] = useState<QueueItem[] | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<{ message: string; code?: string } | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const sessionAdded = useSessionQueueItems();
   const reviews = useReviewOutcomes();
@@ -103,7 +103,11 @@ export function TasksQueue({
       })
       .catch((e) => {
         if (alive)
-          setLoadError(isAdapterError(e) ? e.safeMessage : "Unable to load the review queue.");
+          setLoadError(
+            isAdapterError(e)
+              ? { message: e.safeMessage, code: e.code }
+              : { message: "Unable to load the review queue." },
+          );
       });
     return () => {
       alive = false;
@@ -212,9 +216,15 @@ export function TasksQueue({
   const openCount = items.filter((it) => outcomeOf(it) !== "resolved").length;
 
   if (loadError) {
+    const signedOut = loadError.code === "unauthenticated";
     return (
       <section data-screen-label="Tasks & Review Queue" className="relative mx-auto max-w-[1180px] px-6 pt-[22px] pb-10">
-        <ClinicalError message={loadError} onRetry={() => setReloadKey((k) => k + 1)} />
+        <ClinicalError
+          message={loadError.message}
+          onRetry={() => setReloadKey((k) => k + 1)}
+          actionHref={signedOut ? "/login" : undefined}
+          actionLabel={signedOut ? "Sign in" : undefined}
+        />
       </section>
     );
   }

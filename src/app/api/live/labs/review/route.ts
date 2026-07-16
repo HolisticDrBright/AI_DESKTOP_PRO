@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { labsLive } from "@/adapters/labs.live";
 import { AdapterError } from "@/adapters/errors";
 import type { ReviewDecision } from "@/adapters/live-types";
+import { getRequestSession } from "@/server/session";
 import { liveGuard, runLive } from "../../route-helpers";
 
 const DECISIONS: ReviewDecision[] = ["accepted", "flagged", "rejected"];
@@ -23,6 +24,7 @@ export async function POST(req: NextRequest) {
       throw new AdapterError("invalid", "That review action isn't recognized.");
     }
     const note = typeof body.note === "string" ? body.note : undefined;
-    return labsLive.reviewMarker(body.observationId, body.decision as ReviewDecision, note);
+    const session = await getRequestSession();
+    return labsLive.reviewMarker(body.observationId, body.decision as ReviewDecision, note, session.token);
   });
 }

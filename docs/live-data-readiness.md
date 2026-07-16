@@ -8,10 +8,11 @@ with SECURITY DEFINER RPCs (migration `0013`) as the append-only write path.
 
 Shared assumptions for every domain:
 
-- **Auth:** practitioner signs in against the clinical project (ADR 0002); the
-  backend runs RLS as that user. Until login ships, the server-side demo
-  session (`CLINICAL_DEMO_EMAIL/PASSWORD`) stands in — server-only, never in
-  the browser.
+- **Auth:** practitioner signs in at `/login` against the clinical project
+  (ADR 0002); the token lives in httpOnly cookies and the backend runs RLS as
+  that user (see [`live-auth-and-seeding.md`](live-auth-and-seeding.md)). The
+  env fallback (`CLINICAL_DEMO_EMAIL/PASSWORD`) is local/e2e-only — never set
+  it in a real deployment.
 - **RLS:** org membership via `organization_memberships`; patient access via
   `private.can_access_patient` (assignment or org-admin); writes via
   `private.can_write_patient_data` (practitioner/admin role + access).
