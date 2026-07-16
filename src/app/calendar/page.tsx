@@ -1,5 +1,5 @@
-import { PlaceholderScreen } from "@/components/ui/PlaceholderScreen";
+import { CalendarView } from "@/components/calendar/CalendarView";
 
 export default function Page() {
-  return <PlaceholderScreen label="Calendar" />;
+  return <CalendarView />;
 }

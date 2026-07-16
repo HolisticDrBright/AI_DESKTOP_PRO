@@ -25,6 +25,7 @@ import { getCommandGroups } from "./commands.mock";
 import { generateDraft, type ComposerContext } from "./composer.mock";
 import { buildImportPlan, type ImportSourceId } from "./imports.mock";
 import { getTaskQueue } from "./tasks.mock";
+import { getCalendar } from "./calendar.mock";
 import { getLabWorkspace, type OptimalRange } from "./labs.mock";
 import { getReasoningWorkspace } from "./reasoning.mock";
 import { getSupplementWorkspace } from "./supplements.mock";
@@ -114,6 +115,10 @@ export const api = {
   tasks: {
     /** MOCK practitioner review queue. Replace with a tRPC query. */
     getQueue: async () => getTaskQueue(),
+  },
+  calendar: {
+    /** MOCK scheduling data (recurring weekly template). Replace with a tRPC query. */
+    getSchedule: async () => getCalendar(),
   },
   reasoning: {
     /** MOCK reasoning workspace. Replace with a tRPC query. */
