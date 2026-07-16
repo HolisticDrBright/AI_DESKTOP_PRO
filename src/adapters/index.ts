@@ -27,6 +27,12 @@ import { buildImportPlan, type ImportSourceId } from "./imports.mock";
 import { getTaskQueue } from "./tasks.mock";
 import { getCalendar } from "./calendar.mock";
 import { SEED_PRODUCTS, type InventoryProduct } from "./inventory.mock";
+import {
+  getLabCatalog,
+  getPanelById,
+  getRecommendedPanels,
+  type OrderEvent,
+} from "./labOrders.mock";
 import { getLabWorkspace, type OptimalRange } from "./labs.mock";
 import { getReasoningWorkspace } from "./reasoning.mock";
 import { getSupplementWorkspace } from "./supplements.mock";
@@ -50,6 +56,7 @@ import {
   adjustInventory,
   clearAuditEntries,
   getInventoryAdjustments,
+  getLabOrderDraft,
   getReviewOutcome,
   listAuditEntries,
   listCustomProducts,
@@ -59,8 +66,16 @@ import {
   removeReviewOutcome,
   setInventoryLevel,
   setReviewOutcome,
+  updateLabOrderDraft,
   type SaleLine,
 } from "./session-store";
+
+/** Build a demo order event. */
+const orderEvent = (label: string): OrderEvent => ({
+  id: `evt-${Date.now()}-${Math.round(Math.random() * 1e6)}`,
+  at: new Date().toISOString(),
+  label,
+});
 import type { LiveAuditEvent } from "./live-types";
 import type { DraftKind } from "./types";
 
@@ -128,6 +143,88 @@ export const api = {
   calendar: {
     /** MOCK scheduling data (recurring weekly template). Replace with a tRPC query. */
     getSchedule: async () => getCalendar(),
+  },
+  labOrders: {
+    /**
+     * MOCK lab ordering. DEMO ONLY — no lab order is ever submitted, no
+     * requisition is generated, no price is charged. Replace with a tRPC
+     * mutation over a real lab-vendor integration.
+     */
+    listCatalogPanels: async (patientId: string) => {
+      void patientId; // per-patient catalog filtering lands with the backend
+      return getLabCatalog();
+    },
+    listRecommendedPanels: async (patientId: string) => {
+      void patientId; // recommendations derive from this patient's record server-side
+      return getRecommendedPanels();
+    },
+    getDraftOrder: async (patientId: string) => getLabOrderDraft(patientId),
+    addPanelToDraft: async (patientId: string, panelId: string) => {
+      const panel = getPanelById(panelId);
+      updateLabOrderDraft(patientId, (d) =>
+        d.panelIds.includes(panelId)
+          ? d
+          : {
+              ...d,
+              status: "draft",
+              reviewed: false,
+              panelIds: [...d.panelIds, panelId],
+              events: [orderEvent(`Added panel: ${panel?.name ?? panelId}`), ...d.events],
+            },
+      );
+      recordAuditEntry({
+        kind: "order_panel_added",
+        subjectType: "lab order",
+        subjectLabel: panel?.name ?? panelId,
+        reviewed: true,
+      });
+      return { ok: true, message: `Added ${panel?.name ?? "panel"} to the order draft. (demo — not submitted)` };
+    },
+    removePanelFromDraft: async (patientId: string, panelId: string) => {
+      const panel = getPanelById(panelId);
+      updateLabOrderDraft(patientId, (d) => ({
+        ...d,
+        panelIds: d.panelIds.filter((id) => id !== panelId),
+        reviewed: false,
+        events: [orderEvent(`Removed panel: ${panel?.name ?? panelId}`), ...d.events],
+      }));
+      recordAuditEntry({
+        kind: "order_panel_removed",
+        subjectType: "lab order",
+        subjectLabel: panel?.name ?? panelId,
+        reviewed: true,
+      });
+      return { ok: true, message: `Removed ${panel?.name ?? "panel"} from the order draft. (demo)` };
+    },
+    prepareOrderDraft: async (patientId: string) => {
+      updateLabOrderDraft(patientId, (d) => ({
+        ...d,
+        status: "prepared",
+        events: [orderEvent("Order draft prepared"), ...d.events],
+      }));
+      recordAuditEntry({
+        kind: "order_prepared",
+        subjectType: "lab order",
+        subjectLabel: "Order draft",
+        reviewed: true,
+      });
+      return { ok: true, message: "Order draft prepared. (demo — no lab order is submitted)" };
+    },
+    markOrderReviewed: async (patientId: string) => {
+      updateLabOrderDraft(patientId, (d) => ({
+        ...d,
+        reviewed: true,
+        events: [orderEvent("Order reviewed by practitioner"), ...d.events],
+      }));
+      recordAuditEntry({
+        kind: "order_reviewed",
+        subjectType: "lab order",
+        subjectLabel: "Order draft",
+        reviewed: true,
+      });
+      return { ok: true, message: "Order marked reviewed. (demo — not persisted)" };
+    },
+    listOrderEvents: async (patientId: string) => getLabOrderDraft(patientId).events,
   },
   inventory: {
     /**

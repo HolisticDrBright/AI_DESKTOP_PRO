@@ -3,6 +3,7 @@
 import { useSyncExternalStore } from "react";
 import type { ActionKind } from "./actions";
 import type { InventoryProduct } from "./inventory.mock";
+import { EMPTY_DRAFT as EMPTY_LAB_DRAFT, type LabOrderDraft } from "./labOrders.mock";
 
 /**
  * Demo session store — the isolated boundary for mock, in-session state.
@@ -412,5 +413,53 @@ export function useCustomProducts(): InventoryProduct[] {
     subscribe,
     listCustomProducts,
     () => EMPTY_PRODUCTS as InventoryProduct[],
+  );
+}
+
+/* ------------------------------------------------------- lab order drafts */
+
+const LAB_ORDERS_KEY = "aidp:demo:lab-orders";
+let labOrdersCache: Record<string, LabOrderDraft> | null = null;
+
+function readLabOrders(): Record<string, LabOrderDraft> {
+  if (labOrdersCache) return labOrdersCache;
+  if (typeof window === "undefined") return (labOrdersCache = {});
+  try {
+    labOrdersCache = JSON.parse(window.sessionStorage.getItem(LAB_ORDERS_KEY) ?? "{}");
+  } catch {
+    labOrdersCache = {};
+  }
+  return labOrdersCache!;
+}
+
+function persistLabOrders(next: Record<string, LabOrderDraft>) {
+  labOrdersCache = next;
+  if (typeof window !== "undefined") {
+    try {
+      window.sessionStorage.setItem(LAB_ORDERS_KEY, JSON.stringify(next));
+    } catch {
+      /* ignore */
+    }
+  }
+  emit();
+}
+
+export function getLabOrderDraft(patientId: string): LabOrderDraft {
+  return readLabOrders()[patientId] ?? EMPTY_LAB_DRAFT;
+}
+
+export function updateLabOrderDraft(
+  patientId: string,
+  updater: (draft: LabOrderDraft) => LabOrderDraft,
+) {
+  const cur = getLabOrderDraft(patientId);
+  persistLabOrders({ ...readLabOrders(), [patientId]: updater(cur) });
+}
+
+export function useLabOrderDraft(patientId: string): LabOrderDraft {
+  return useSyncExternalStore(
+    subscribe,
+    () => getLabOrderDraft(patientId),
+    () => EMPTY_LAB_DRAFT,
   );
 }

@@ -49,7 +49,12 @@ export type ActionKind =
   | "open_patient"
   // dispensary / inventory
   | "receive_stock"
-  | "record_sale";
+  | "record_sale"
+  // lab ordering
+  | "order_panel_added"
+  | "order_panel_removed"
+  | "order_prepared"
+  | "order_reviewed";
 
 export type ActionIcon =
   | "check"
@@ -139,6 +144,10 @@ export const ACTIONS: Record<ActionKind, ActionDescriptor> = {
   open_patient: { kind: "open_patient", label: "Open patient", icon: "user", tone: "action" },
   receive_stock: { kind: "receive_stock", label: "Receive stock", icon: "plus", tone: "positive" },
   record_sale: { kind: "record_sale", label: "Dispense / sale", icon: "check-check", tone: "teal" },
+  order_panel_added: { kind: "order_panel_added", label: "Lab panel added", icon: "plus", tone: "action" },
+  order_panel_removed: { kind: "order_panel_removed", label: "Lab panel removed", icon: "minus", tone: "slate" },
+  order_prepared: { kind: "order_prepared", label: "Lab order draft prepared", icon: "flask", tone: "action" },
+  order_reviewed: { kind: "order_reviewed", label: "Lab order reviewed", icon: "check-check", tone: "positive" },
 };
 
 /**

@@ -3,6 +3,7 @@ import { api } from "@/adapters";
 import type { PatientTabId } from "@/adapters/types";
 import { TabPlaceholderCard } from "@/components/patient/TabPlaceholderCard";
 import { LabsWorkspace } from "@/components/labs/LabsWorkspace";
+import { LabOrdersWorkspace } from "@/components/laborders/LabOrdersWorkspace";
 import { ReasoningWorkspace } from "@/components/reasoning/ReasoningWorkspace";
 import { SupplementsWorkspace } from "@/components/supplements/SupplementsWorkspace";
 import { HealthTwinMap } from "@/components/twin/HealthTwinMap";
@@ -13,6 +14,7 @@ const TAB_LABELS: Record<Exclude<PatientTabId, "summary">, string> = {
   twin: "Health Twin",
   timeline: "Timeline",
   labs: "Labs",
+  "lab-orders": "Lab Orders",
   reasoning: "Clinical Reasoning",
   supplements: "Supplements",
   "nof1-lab": "N-of-1 Lab",
@@ -30,6 +32,7 @@ export default async function PatientTabPage({
 
   const BUILT: Partial<Record<PatientTabId, boolean>> = {
     labs: true,
+    "lab-orders": true,
     reasoning: true,
     supplements: true,
     twin: true,
@@ -40,6 +43,7 @@ export default async function PatientTabPage({
     const patient = await api.patients.get(patientId);
     const name = patient?.name ?? "this patient";
     if (tab === "labs") return <LabsWorkspace patientId={patientId} patientName={name} />;
+    if (tab === "lab-orders") return <LabOrdersWorkspace patientId={patientId} patientName={name} />;
     if (tab === "reasoning") return <ReasoningWorkspace patientId={patientId} patientName={name} />;
     if (tab === "supplements") return <SupplementsWorkspace patientId={patientId} patientName={name} />;
     if (tab === "twin") return <HealthTwinMap patientId={patientId} patientName={name} />;

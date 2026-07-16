@@ -55,6 +55,7 @@ export type PatientTabId =
   | "twin"
   | "timeline"
   | "labs"
+  | "lab-orders"
   | "reasoning"
   | "supplements"
   | "nof1-lab"

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import {
   Download,
@@ -610,6 +611,13 @@ function MarkerInspector({
             <ListChecks size={12} strokeWidth={2} aria-hidden />
             Create follow-up task
           </button>
+          <Link
+            href={`/patients/${patientId}/lab-orders`}
+            className="flex h-[30px] cursor-pointer items-center gap-[6px] rounded-lg border border-line bg-card px-[12px] text-[12px] font-semibold text-body hover:border-line-hover focus-visible:outline-2 focus-visible:outline-action"
+          >
+            <FlaskConical size={12} strokeWidth={2} aria-hidden />
+            Create lab order draft
+          </Link>
           <button
             onClick={onConfigure}
             className="flex h-[30px] cursor-pointer items-center gap-[6px] rounded-lg border border-line bg-card px-[12px] text-[12px] font-semibold text-body hover:border-line-hover focus-visible:outline-2 focus-visible:outline-action"
