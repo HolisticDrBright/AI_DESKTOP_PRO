@@ -10,6 +10,8 @@ import { SupplementsWorkspace } from "@/components/supplements/SupplementsWorksp
 import { HealthTwinMap } from "@/components/twin/HealthTwinMap";
 import { Nof1Lab } from "@/components/nof1/Nof1Lab";
 import { isPatientTabId } from "@/lib/routes";
+import { USE_LIVE_API } from "@/adapters/mode";
+import { PatientTimeline } from "@/components/encounter/PatientTimeline";
 
 const TAB_LABELS: Record<Exclude<PatientTabId, "summary">, string> = {
   twin: "Health Twin",
@@ -30,6 +32,11 @@ export default async function PatientTabPage({
 }) {
   const { patientId, tab } = await params;
   if (!isPatientTabId(tab) || tab === "summary") notFound();
+
+  // Live mode: the timeline tab is the real longitudinal chart (0021).
+  if (tab === "timeline" && USE_LIVE_API) {
+    return <PatientTimeline patientId={patientId} />;
+  }
 
   const BUILT: Partial<Record<PatientTabId, boolean>> = {
     labs: true,

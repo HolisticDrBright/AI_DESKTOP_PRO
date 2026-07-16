@@ -445,6 +445,84 @@ test("multi-org: auto-select, validated switch clears org data, tabs agree, mid-
   await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
 });
 
+test("EMR: appointment → encounter → autosaved draft → recovery → sign → locked → addendum → timeline → audit", async ({ page }) => {
+  // 1–2. Open the appointment and start the encounter from it.
+  await page.goto("/calendar");
+  const block = page.getByRole("button", { name: /Fixture Patient/ }).first();
+  await block.waitFor();
+  await block.click();
+  await page.getByRole("button", { name: "Open encounter" }).click();
+  await page.waitForURL("**/encounter/**");
+  const encounterUrl = page.url();
+  await expect(page.getByTestId("encounter-status")).toHaveText("In progress");
+
+  // 3. Create a SOAP draft; autosave must confirm from the SERVER before "Saved".
+  await page.getByRole("button", { name: "Start" }).click();
+  await page.getByLabel("Subjective").fill("Fatigue for two weeks.");
+  await expect(page.getByTestId("save-state")).toHaveText(/Saved .*v1/, { timeout: 10_000 });
+  await page.getByLabel("Objective").fill("BP 118/76. HR 64.");
+  await expect(page.getByTestId("save-state")).toHaveText(/v2/, { timeout: 10_000 });
+
+  // 4. Reload → the AUTHORITATIVE draft is recovered from the backend.
+  await page.reload();
+  await page.getByRole("button", { name: /SOAP/ }).first().click();
+  await expect(page.getByLabel("Subjective")).toHaveValue("Fatigue for two weeks.");
+  await expect(page.getByLabel("Objective")).toHaveValue("BP 118/76. HR 64.");
+
+  // 5. Ready for review.
+  await page.getByRole("button", { name: "Ready for review" }).click();
+  await expect(page.getByText("Marked ready for review.")).toBeVisible();
+
+  // 6. Sign with explicit confirmation → locked read-only view.
+  await page.getByRole("button", { name: "Sign note" }).click();
+  await page.getByRole("button", { name: "Sign and lock" }).click();
+  await expect(page.getByTestId("signature-line")).toContainText("Signed at v2");
+
+  // 7. Editing the signed note is blocked: the editor is gone, content is
+  //    read-only, and the immutability lives in the database (proven by the
+  //    rolled-back suite) — not just hidden controls.
+  await expect(page.getByLabel("Subjective")).toHaveCount(0);
+  await expect(page.getByText("Fatigue for two weeks.")).toBeVisible();
+  await expect(page.getByText("Signed content is locked.")).toBeVisible();
+
+  // 8–9. Append-only correction; the original text stays untouched.
+  await page.getByLabel("Reason").fill("BP transcription");
+  await page.getByLabel("Correction").fill("BP was 128/76, not 118/76.");
+  await page.getByRole("button", { name: "Record addendum" }).click();
+  await expect(page.getByText("Addendum recorded. The original note is unchanged.")).toBeVisible();
+  await expect(page.getByTestId("addenda-list").getByText("BP was 128/76, not 118/76.")).toBeVisible();
+  await expect(page.getByText("BP 118/76. HR 64.")).toBeVisible(); // original untouched
+
+  // 10. Timeline shows the clinical chain (never security-audit rows).
+  await page.goto("/patients/aaaaaaaa-1111-2222-3333-444444444401/timeline");
+  const timeline = page.getByTestId("timeline-list");
+  await expect(timeline.getByText(/Encounter started/).first()).toBeVisible();
+  await expect(timeline.getByText("Note signed").first()).toBeVisible();
+  await expect(timeline.getByText("Addendum added").first()).toBeVisible();
+
+  // 11 & 13. The audit log carries server-owned events — and exactly ONE
+  //          "Note signed" row (duplicate signing cannot duplicate audits;
+  //          idempotency itself is DB-proven).
+  await page.goto("/audit-log");
+  await expect(page.getByText("Encounter started").first()).toBeVisible();
+  await expect(page.getByText("Note signed")).toHaveCount(1);
+
+  // 12. A signed-in user outside the organization cannot open the encounter.
+  await page.goto("/login");
+  await page.getByLabel("Email").fill("no-orgs@fixture.local");
+  await page.getByLabel("Password").fill("fixture-password");
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await page.waitForURL("**/");
+  await page.goto(encounterUrl);
+  await expect(page.getByText(/isn't available|not available|access denied/i).first()).toBeVisible();
+  await expect(page.getByTestId("encounter-status")).toHaveCount(0);
+  await expect(page.getByText("Fatigue for two weeks.")).toHaveCount(0);
+
+  await page.goto("/login");
+  await page.getByRole("button", { name: "Sign out" }).click();
+  await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
+});
+
 test("no console errors in the live flow", async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
@@ -454,6 +532,7 @@ test("no console errors in the live flow", async ({ page }) => {
   await page.goto("/tasks", { waitUntil: "networkidle" });
   await page.goto("/patients/aaaaaaaa-1111-2222-3333-444444444401/labs", { waitUntil: "networkidle" });
   await page.goto("/calendar", { waitUntil: "networkidle" });
+  await page.goto("/patients/aaaaaaaa-1111-2222-3333-444444444401/timeline", { waitUntil: "networkidle" });
   await page.goto("/audit-log", { waitUntil: "networkidle" });
   await page.goto("/settings", { waitUntil: "networkidle" });
   expect(errors).toEqual([]);
