@@ -1,12 +1,14 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import {
   ArrowRight,
   Check,
   CircleAlert,
   Database,
   FileUp,
+  ListChecks,
   ShieldCheck,
   TriangleAlert,
 } from "lucide-react";
@@ -515,13 +517,20 @@ function SummaryStep({
         <AuditLine>This action would be written to the audit log with actor and timestamp.</AuditLine>
       </ul>
 
-      <div className="mt-4 flex justify-end">
+      <div className="mt-4 flex items-center justify-end gap-2">
         <button
           onClick={onRestart}
           className="h-9 cursor-pointer rounded-lg border border-line bg-card px-[16px] text-[12.5px] font-semibold text-body hover:border-line-hover focus-visible:outline-2 focus-visible:outline-action"
         >
           Start another import
         </button>
+        <Link
+          href="/tasks?filter=import-review"
+          className="flex h-9 items-center gap-[6px] rounded-lg border-none bg-action px-[16px] text-[12.5px] font-semibold text-white hover:bg-action-deep focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink"
+        >
+          <ListChecks size={14} strokeWidth={2} aria-hidden />
+          Open review queue
+        </Link>
       </div>
     </Card>
   );

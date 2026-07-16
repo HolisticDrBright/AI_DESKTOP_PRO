@@ -48,24 +48,33 @@ export function RightRail({ data }: { data: RightRailData }) {
             );
           })}
         </div>
-        <a href="#" className={railLinkClass}>
+        <Link href="/tasks" className={railLinkClass}>
           View All Notifications
-        </a>
+        </Link>
       </Card>
 
       <Card className="px-4 py-[14px]">
         <div className="mb-[11px] flex items-center justify-between">
           <h2 className="m-0 text-[13px] font-bold">Tasks</h2>
-          <button className="flex h-6 cursor-pointer items-center gap-1 rounded-[7px] border-none bg-action px-[9px] text-[11px] font-semibold text-white hover:bg-action-deep focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-action">
+          {/* Task creation flows from Labs ("Create follow-up task") and Reasoning
+              ("Convert to task") — this opens the queue rather than faking a form. */}
+          <Link
+            href="/tasks"
+            className="flex h-6 cursor-pointer items-center gap-1 rounded-[7px] border-none bg-action px-[9px] text-[11px] font-semibold text-white hover:bg-action-deep focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-action"
+          >
             <Plus size={10} strokeWidth={2.5} aria-hidden />
-            New Task
-          </button>
+            Open queue
+          </Link>
         </div>
         <div className="flex flex-col gap-[11px]">
           {data.tasks.map((task) => {
             const chip = PRIORITY_CHIP[task.priority];
             return (
-              <div key={task.title} className="flex items-start gap-[10px]">
+              <Link
+                key={task.title}
+                href={`/tasks?priority=${task.priority}`}
+                className="-mx-[6px] flex items-start gap-[10px] rounded-lg px-[6px] py-[3px] hover:bg-sunken focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-action"
+              >
                 <span
                   className="mt-[2px] h-[15px] w-[15px] shrink-0 rounded-[5px] border-[1.5px] border-ghost"
                   aria-hidden
@@ -82,7 +91,7 @@ export function RightRail({ data }: { data: RightRailData }) {
                 >
                   {task.priority}
                 </span>
-              </div>
+              </Link>
             );
           })}
         </div>

@@ -1,23 +1,46 @@
 /**
- * Data-source feature flag (Item 6 of the server-layer slice).
+ * Backend configuration for the live data path.
  *
- * Default: MOCK. The desktop ships on mock adapters until each namespace's
- * live parity is proven. Set NEXT_PUBLIC_USE_LIVE_API=1 to route flag-enabled
- * namespaces through the authenticated tRPC backend instead.
+ * The mock/live decision now lives in `./mode.ts` (the single source of truth,
+ * client-safe, and accepts `NEXT_PUBLIC_USE_LIVE_API=true|1`). This module
+ * re-exports the flag for existing importers and adds the server-only backend
+ * endpoints used by the live modules.
  *
  * IMPORTANT: even when live, the desktop talks ONLY to the tRPC backend over
  * HTTP — never to Postgres/Supabase data directly (ADR 0002). The backend
- * enforces RLS + the procedure guards.
+ * enforces RLS + the procedure guards, and is the one place that calls the
+ * SECURITY DEFINER RPCs (migration 0013) as the authenticated practitioner.
  */
-export const USE_LIVE_API = process.env.NEXT_PUBLIC_USE_LIVE_API === "1";
+export { USE_LIVE_API } from "./mode";
 
-/** Base URL of the shared tRPC backend (rork-ai-longevity-coach). */
+/** Base URL of the shared tRPC backend (rork-ai-longevity-coach). Server-only. */
 export const TRPC_BASE_URL =
   process.env.TRPC_BASE_URL ?? "http://localhost:3000/api/trpc";
 
 /**
- * The organization the desktop operates in. In the real product this comes
- * from the practitioner's session (organizations.mine); for the live-path
- * proof it is provided by env so a server component can scope its query.
+ * ⚠️ LOCAL/E2E FALLBACK ONLY. The active organization now comes from the
+ * practitioner's session (validated `aidp_org` cookie, set at sign-in or via
+ * the Settings switcher). This env value exists solely for headless local
+ * runs and the contract-fixture e2e suite — do NOT set it in a real
+ * deployment.
  */
-export const ACTIVE_ORG_ID = process.env.CLINICAL_ORG_ID ?? "";
+const ENV_FALLBACK_ORG_ID =
+  process.env.CLINICAL_ORG_ID ?? process.env.NEXT_PUBLIC_DEV_ORG_ID ?? "";
+
+import { AdapterError } from "./errors";
+
+/**
+ * Resolve the organization an org-scoped live call runs against: the
+ * session's validated org first, the env fallback second (local/e2e only),
+ * otherwise a clean, actionable error — never a silent empty scope.
+ */
+export function resolveOrgId(orgId?: string | null): string {
+  const resolved = orgId || ENV_FALLBACK_ORG_ID;
+  if (!resolved) {
+    throw new AdapterError(
+      "invalid",
+      "No organization selected. Choose your organization in Settings.",
+    );
+  }
+  return resolved;
+}

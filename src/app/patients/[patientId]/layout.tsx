@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { api } from "@/adapters";
+import { getRequestSession } from "@/server/session";
 import { PatientHeaderCard } from "@/components/patient/PatientHeaderCard";
 import { PatientTabs } from "@/components/patient/PatientTabs";
 import { RightRail } from "@/components/patient/RightRail";
@@ -12,7 +13,7 @@ export default async function PatientLayout({
   params: Promise<{ patientId: string }>;
 }) {
   const { patientId } = await params;
-  const patient = await api.patients.get(patientId);
+  const patient = await api.patients.get(patientId, (await getRequestSession()).token);
   if (!patient) notFound();
   const rail = await api.practice.rightRail();
 

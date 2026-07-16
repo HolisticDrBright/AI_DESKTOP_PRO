@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "claude/**"]
+  pull_request:
+
+jobs:
+  checks:
+    name: Typecheck, lint, unit, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run test:unit
+      - run: npm run build
+
+  e2e-mock:
+    name: Browser suite (demo mode)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run build
+      - run: npm run test:e2e -- e2e/mock-app.spec.ts
+
+  e2e-live-fixture:
+    name: Browser suite (live mode vs contract fixture)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: NEXT_PUBLIC_USE_LIVE_API=true npm run build
+      - name: Run gated live suite against the committed contract fixture
+        run: |
+          node scripts/live-stub-server.mjs &
+          sleep 2
+          E2E_LIVE=1 \
+          TRPC_BASE_URL=http://127.0.0.1:3999/api/trpc \
+          CLINICAL_SUPABASE_URL=http://127.0.0.1:3999 \
+          CLINICAL_SUPABASE_ANON_KEY=stub \
+          CLINICAL_DEMO_EMAIL=demo@local \
+          CLINICAL_DEMO_PASSWORD=demo \
+          CLINICAL_ORG_ID=org-fixture \
+          npm run test:e2e -- e2e/live-tasks.spec.ts
+
+  e2e-deployed:
+    name: Browser suite (deployed backend — gated on secrets)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: gate
+        name: Check deployed-backend secrets
+        env:
+          HAS: ${{ secrets.DEPLOYED_TRPC_BASE_URL != '' && secrets.DEPLOYED_CLINICAL_SUPABASE_URL != '' }}
+        run: echo "run=$HAS" >> "$GITHUB_OUTPUT"
+      - if: steps.gate.outputs.run == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - if: steps.gate.outputs.run == 'true'
+        run: npm ci
+      - if: steps.gate.outputs.run == 'true'
+        run: npx playwright install --with-deps chromium
+      - if: steps.gate.outputs.run == 'true'
+        run: NEXT_PUBLIC_USE_LIVE_API=true npm run build
+      - if: steps.gate.outputs.run == 'true'
+        name: Run gated live suite against the DEPLOYED backend
+        env:
+          TRPC_BASE_URL: ${{ secrets.DEPLOYED_TRPC_BASE_URL }}
+          CLINICAL_SUPABASE_URL: ${{ secrets.DEPLOYED_CLINICAL_SUPABASE_URL }}
+          CLINICAL_SUPABASE_ANON_KEY: ${{ secrets.DEPLOYED_CLINICAL_SUPABASE_ANON_KEY }}
+          CLINICAL_DEMO_EMAIL: ${{ secrets.DEPLOYED_CLINICAL_DEMO_EMAIL }}
+          CLINICAL_DEMO_PASSWORD: ${{ secrets.DEPLOYED_CLINICAL_DEMO_PASSWORD }}
+          CLINICAL_ORG_ID: ${{ secrets.DEPLOYED_CLINICAL_ORG_ID }}
+        run: E2E_LIVE=1 npm run test:e2e -- e2e/live-tasks.spec.ts
+      - if: steps.gate.outputs.run != 'true'
+        run: echo "Deployed-backend secrets not configured — job skipped (fixture suite still ran)."

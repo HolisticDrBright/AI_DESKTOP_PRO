@@ -3,6 +3,7 @@ import type { PatientSummary } from "@/adapters/types";
 import { RadarChart } from "@/components/ui/RadarChart";
 import { ScoreRing } from "@/components/ui/ScoreRing";
 import { Card, CardTitle, OutlineButton } from "@/components/ui/bits";
+import { patientPath } from "@/lib/routes";
 import { toneBright, toneColor, toneTint } from "@/lib/tones";
 import { BiomarkerTrendsCard, ExperimentsCard, SleepRecoveryCard } from "./TrendCards";
 import { ReasoningSnapshotCard } from "./ReasoningSnapshotCard";
@@ -21,8 +22,8 @@ export function SummaryTab({
       <div className="grid grid-cols-[210px_minmax(0,1.15fr)_minmax(0,1fr)_minmax(0,1fr)] gap-4">
         <HealthScoreCard summary={summary} />
         <SystemBalanceCard summary={summary} />
-        <TopPrioritiesCard summary={summary} />
-        <RiskFlagsCard summary={summary} />
+        <TopPrioritiesCard summary={summary} patientId={patientId} />
+        <RiskFlagsCard summary={summary} patientId={patientId} />
       </div>
 
       <div className="grid grid-cols-[minmax(0,1.25fr)_minmax(0,1.1fr)_minmax(0,1fr)] gap-4">
@@ -86,7 +87,13 @@ function SystemBalanceCard({ summary }: { summary: PatientSummary }) {
   );
 }
 
-function TopPrioritiesCard({ summary }: { summary: PatientSummary }) {
+function TopPrioritiesCard({
+  summary,
+  patientId,
+}: {
+  summary: PatientSummary;
+  patientId: string;
+}) {
   return (
     <Card className="flex flex-col px-4 py-[14px]">
       <CardTitle className="mb-[11px]">Top Priorities</CardTitle>
@@ -100,12 +107,18 @@ function TopPrioritiesCard({ summary }: { summary: PatientSummary }) {
           </div>
         ))}
       </div>
-      <OutlineButton>View All Priorities</OutlineButton>
+      <OutlineButton href={patientPath(patientId, "reasoning")}>View All Priorities</OutlineButton>
     </Card>
   );
 }
 
-function RiskFlagsCard({ summary }: { summary: PatientSummary }) {
+function RiskFlagsCard({
+  summary,
+  patientId,
+}: {
+  summary: PatientSummary;
+  patientId: string;
+}) {
   return (
     <Card className="flex flex-col px-4 py-[14px]">
       <CardTitle info className="mb-[11px]">
@@ -134,7 +147,7 @@ function RiskFlagsCard({ summary }: { summary: PatientSummary }) {
           </div>
         ))}
       </div>
-      <OutlineButton>View All Risks</OutlineButton>
+      <OutlineButton href={patientPath(patientId, "labs")}>View All Risks</OutlineButton>
     </Card>
   );
 }

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { CircleHelp } from "lucide-react";
 import { DEFAULT_PATIENT_ID } from "@/adapters";
+import { USE_LIVE_API } from "@/adapters/mode";
 import { patientPath } from "@/lib/routes";
 
 export default function NotFound() {
@@ -15,7 +16,7 @@ export default function NotFound() {
         available in this build.
       </p>
       <Link
-        href={patientPath(DEFAULT_PATIENT_ID)}
+        href={USE_LIVE_API ? "/clients" : patientPath(DEFAULT_PATIENT_ID)}
         className="mt-[6px] flex h-8 items-center rounded-lg border border-line-btn bg-card px-[14px] text-[12.5px] font-semibold text-action hover:border-line-hover-2 focus-visible:outline-2 focus-visible:outline-action"
       >
         Back to Overview

@@ -55,6 +55,20 @@ export const AI_FEATURES: AiFeatureClassification[] = [
       "Evidence weighting is internal, not a medical probability or diagnosis. For practitioner review.",
   },
   {
+    feature: "Lab panel recommendation",
+    roles: ["Practitioner"],
+    patientFacing: false,
+    inputs: ["Reasoning hypotheses", "Prior labs", "Patient goals", "Active protocols"],
+    outputType: "Suggested lab panels with reason + provenance (draft order only)",
+    actionVerb: "recommends",
+    determinism: "Hybrid",
+    risk: "Moderate",
+    review: "Practitioner review required",
+    audited: true,
+    disclaimer:
+      "Suggestions are not orders. No lab order is submitted; clinical indication and patient consent are required before ordering.",
+  },
+  {
     feature: "Clinical Assistant (Q&A)",
     roles: ["Practitioner"],
     patientFacing: false,

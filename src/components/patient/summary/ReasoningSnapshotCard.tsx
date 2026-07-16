@@ -1,3 +1,5 @@
+"use client";
+
 import {
   ArrowRight,
   CircleCheck,
@@ -7,15 +9,28 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import type {
+  Hypothesis,
   ReasoningChange,
   ReasoningSnapshot,
   Tone,
 } from "@/adapters/types";
+import { useReviewOutcome, type ReviewOutcome } from "@/adapters/session-store";
 import { ActionBar } from "@/components/ui/ActionBar";
 import { Provenance, ProvenanceBadge } from "@/components/ui/Provenance";
 import { Card, CardLink } from "@/components/ui/bits";
 import { patientPath } from "@/lib/routes";
 import { toneText, toneTint } from "@/lib/tones";
+
+/** Small settled-state pill for a reviewed subject (text + reinforcing color). */
+const OUTCOME_PILL: Record<ReviewOutcome, { label: string; tone: Tone }> = {
+  approved: { label: "Approved this session", tone: "positive" },
+  accepted: { label: "Accepted this session", tone: "positive" },
+  reviewed: { label: "Reviewed this session", tone: "positive" },
+  resolved: { label: "Resolved this session", tone: "positive" },
+  rejected: { label: "Rejected this session", tone: "critical" },
+  flagged: { label: "Flagged this session", tone: "warning" },
+  snoozed: { label: "Snoozed this session", tone: "slate" },
+};
 
 /** Change-direction → text label + tone (text always shown; color reinforces). */
 const CHANGE_META: Record<ReasoningChange["direction"], { label: string; tone: Tone }> = {
@@ -56,6 +71,8 @@ export function ReasoningSnapshotCard({
   patientName?: string;
 }) {
   const evidenceSeeds = reasoning.evidenceFor.slice(0, 3);
+  const snapshotKey = `snapshot:${patientId}`;
+  const settled = useReviewOutcome(snapshotKey);
 
   return (
     <Card>
@@ -65,7 +82,17 @@ export function ReasoningSnapshotCard({
           Updated {reasoning.updatedOn}
         </span>
         <div className="flex-1" />
-        {reasoning.review.status === "awaiting" ? (
+        {settled ? (
+          <span
+            className="flex items-center gap-[5px] rounded-full px-[10px] py-[3px] text-[11px] font-semibold"
+            style={{
+              color: toneText[OUTCOME_PILL[settled].tone],
+              background: toneTint[OUTCOME_PILL[settled].tone],
+            }}
+          >
+            {OUTCOME_PILL[settled].label}
+          </span>
+        ) : reasoning.review.status === "awaiting" ? (
           <span className="flex items-center gap-[5px] rounded-full border border-[rgba(199,126,20,0.22)] bg-warning-tint px-[10px] py-[3px] text-[11px] font-semibold text-warning-deep">
             Awaiting practitioner review
           </span>
@@ -93,41 +120,14 @@ export function ReasoningSnapshotCard({
         </div>
         <div className="flex flex-col gap-[10px]">
           {reasoning.hypotheses.map((h, i) => (
-            <div
+            <HypothesisRow
               key={h.name}
-              className="rounded-[11px] border border-line bg-[rgba(248,250,252,0.6)] px-[13px] py-[11px]"
-            >
-              <div className="flex items-start gap-[10px]">
-                <span className="mt-px flex h-[20px] w-[20px] shrink-0 items-center justify-center rounded-full bg-number-tint text-[10.5px] font-semibold text-muted">
-                  {i + 1}
-                </span>
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-[8px]">
-                    <span className="text-[13px] leading-[1.3] font-semibold">{h.name}</span>
-                    {h.provenance && <ProvenanceBadge sourceType={h.provenance.sourceType} />}
-                  </div>
-                  <span className="mt-px block text-[11.5px] text-subtle">{h.sub}</span>
-                  {h.provenance && (
-                    <Provenance data={h.provenance} className="mt-[7px]" />
-                  )}
-                </div>
-                <span className="shrink-0 rounded-[7px] bg-ai-tint px-2 py-[3px] text-[11px] font-bold text-ai-deep">
-                  {h.strength}
-                  <span className="ml-[2px] text-[9px] font-semibold text-ai">wt</span>
-                </span>
-              </div>
-              <ActionBar
-                size="sm"
-                className="mt-[10px] border-t border-hairline-2 pt-[10px]"
-                actions={[...HYPOTHESIS_ACTIONS]}
-                context={{
-                  subjectType: "hypothesis",
-                  subjectLabel: h.name,
-                  patientName,
-                  seeds: [h.sub, ...evidenceSeeds],
-                }}
-              />
-            </div>
+              h={h}
+              index={i}
+              patientId={patientId}
+              patientName={patientName}
+              seeds={[h.sub, ...evidenceSeeds]}
+            />
           ))}
         </div>
       </div>
@@ -238,12 +238,75 @@ export function ReasoningSnapshotCard({
             subjectLabel: `Snapshot · ${reasoning.updatedOn}`,
             patientName,
             seeds: evidenceSeeds,
+            reviewKey: snapshotKey,
           }}
         />
         <div className="flex-1" />
         <CardLink href={patientPath(patientId, "reasoning")}>View full analysis</CardLink>
       </div>
     </Card>
+  );
+}
+
+function HypothesisRow({
+  h,
+  index,
+  patientId,
+  patientName,
+  seeds,
+}: {
+  h: Hypothesis;
+  index: number;
+  patientId: string;
+  patientName?: string;
+  seeds: string[];
+}) {
+  const reviewKey = `hypothesis:${patientId}:${index}`;
+  const settled = useReviewOutcome(reviewKey);
+
+  return (
+    <div className="rounded-[11px] border border-line bg-[rgba(248,250,252,0.6)] px-[13px] py-[11px]">
+      <div className="flex items-start gap-[10px]">
+        <span className="mt-px flex h-[20px] w-[20px] shrink-0 items-center justify-center rounded-full bg-number-tint text-[10.5px] font-semibold text-muted">
+          {index + 1}
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-[8px]">
+            <span className="text-[13px] leading-[1.3] font-semibold">{h.name}</span>
+            {h.provenance && <ProvenanceBadge sourceType={h.provenance.sourceType} />}
+            {settled && (
+              <span
+                className="rounded-full px-[7px] py-px text-[9.5px] font-bold"
+                style={{
+                  color: toneText[OUTCOME_PILL[settled].tone],
+                  background: toneTint[OUTCOME_PILL[settled].tone],
+                }}
+              >
+                {OUTCOME_PILL[settled].label}
+              </span>
+            )}
+          </div>
+          <span className="mt-px block text-[11.5px] text-subtle">{h.sub}</span>
+          {h.provenance && <Provenance data={h.provenance} className="mt-[7px]" />}
+        </div>
+        <span className="shrink-0 rounded-[7px] bg-ai-tint px-2 py-[3px] text-[11px] font-bold text-ai-deep">
+          {h.strength}
+          <span className="ml-[2px] text-[9px] font-semibold text-ai">wt</span>
+        </span>
+      </div>
+      <ActionBar
+        size="sm"
+        className="mt-[10px] border-t border-hairline-2 pt-[10px]"
+        actions={[...HYPOTHESIS_ACTIONS]}
+        context={{
+          subjectType: "hypothesis",
+          subjectLabel: h.name,
+          patientName,
+          seeds,
+          reviewKey,
+        }}
+      />
+    </div>
   );
 }
 

@@ -1,6 +1,7 @@
 import { Mars, Venus } from "lucide-react";
 import type { PatientDirectoryEntry } from "@/adapters/types";
 import { InitialsAvatar } from "@/components/ui/bits";
+import { PatientHeaderActions } from "./PatientHeaderActions";
 
 export function PatientHeaderCard({ patient }: { patient: PatientDirectoryEntry }) {
   const SexGlyph = patient.sex === "Female" ? Venus : Mars;
@@ -19,7 +20,7 @@ export function PatientHeaderCard({ patient }: { patient: PatientDirectoryEntry 
             <SexGlyph size={13} strokeWidth={2} className="text-action" aria-hidden />
           </div>
           <div className="mt-[2px] text-[12.5px] text-muted">
-            {patient.age} y/o · {patient.sex} · {patient.dob}
+            {patient.age == null ? "Age not recorded" : `${patient.age} y/o`} · {patient.sex} · {patient.dob}
           </div>
           <div className="text-[12.5px] text-muted">Patient ID: {patient.mrn}</div>
         </div>
@@ -60,17 +61,7 @@ export function PatientHeaderCard({ patient }: { patient: PatientDirectoryEntry 
         </div>
       </div>
 
-      <div className="flex items-center gap-2">
-        <button className="h-9 cursor-pointer rounded-[9px] border-none bg-action px-4 text-[12.5px] font-semibold text-white hover:bg-action-deep focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink">
-          New Appointment
-        </button>
-        <button
-          aria-label="More actions"
-          className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-[9px] border border-line bg-card pb-[7px] text-[16px] font-bold tracking-[1px] text-muted hover:border-line-hover focus-visible:outline-2 focus-visible:outline-action"
-        >
-          …
-        </button>
-      </div>
+      <PatientHeaderActions patientName={patient.name} />
     </div>
   );
 }

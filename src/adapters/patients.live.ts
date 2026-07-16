@@ -1,9 +1,11 @@
 if (typeof window !== "undefined") {
   throw new Error("This module is server-only and must not run in the browser.");
 }
-import { ACTIVE_ORG_ID } from "./config";
+import { resolveOrgId } from "./config";
 import { trpcQuery } from "./trpc.server";
+import { isAdapterError } from "./errors";
 import type { PatientDirectoryEntry } from "./types";
+import { calendarAge, displaySex, formatDateOnly } from "@/lib/dates";
 
 /**
  * Live `patients` namespace (Item 6) — the one swapped namespace.
@@ -40,32 +42,16 @@ function initials(first: string, last: string): string {
   return `${first[0] ?? ""}${last[0] ?? ""}`.toUpperCase() || "?";
 }
 
-function ageFrom(dob: string | null): number {
-  if (!dob) return 0;
-  const born = new Date(dob);
-  const nowYear = new Date().getFullYear();
-  let age = nowYear - born.getFullYear();
-  const m = new Date().getMonth() - born.getMonth();
-  if (m < 0 || (m === 0 && new Date().getDate() < born.getDate())) age -= 1;
-  return age > 0 ? age : 0;
-}
-
-function formatDob(dob: string | null): string {
-  if (!dob) return "—";
-  const d = new Date(dob);
-  return `${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")}/${d.getFullYear()}`;
-}
-
 function toDirectoryEntry(row: ClinicalPatientRow, i = 0): PatientDirectoryEntry {
-  const sex: PatientDirectoryEntry["sex"] = row.sex === "male" ? "Male" : "Female";
   return {
     id: row.id,
     mrn: row.mrn ?? row.id.slice(0, 8),
     name: `${row.first_name} ${row.last_name}`.trim(),
     initials: initials(row.first_name, row.last_name),
-    sex,
-    age: ageFrom(row.date_of_birth),
-    dob: formatDob(row.date_of_birth),
+    // Calendar-date parsing (no UTC shift) + no guessing: unknown stays unknown.
+    sex: displaySex(row.sex),
+    age: calendarAge(row.date_of_birth),
+    dob: formatDateOnly(row.date_of_birth),
     avatarGradient: GRADIENTS[i % GRADIENTS.length],
     // Presentation-only fields with no column yet — neutral, clearly not DB data.
     primaryGoals: "—",
@@ -76,22 +62,28 @@ function toDirectoryEntry(row: ClinicalPatientRow, i = 0): PatientDirectoryEntry
 }
 
 export const patientsLive = {
-  async list(): Promise<PatientDirectoryEntry[]> {
+  async list(sessionToken?: string | null, orgId?: string | null): Promise<PatientDirectoryEntry[]> {
     const rows = await trpcQuery<ClinicalPatientRow[]>("clinical.patients.list", {
-      organizationId: ACTIVE_ORG_ID,
-    });
+      organizationId: resolveOrgId(orgId),
+    }, sessionToken);
     return rows.map((r, i) => toDirectoryEntry(r, i));
   },
 
-  async get(id: string): Promise<PatientDirectoryEntry | undefined> {
+  async get(id: string, sessionToken?: string | null): Promise<PatientDirectoryEntry | undefined> {
     try {
       const row = await trpcQuery<ClinicalPatientRow>("clinical.patients.get", {
         patientId: id,
-      });
+      }, sessionToken);
       return toDirectoryEntry(row);
-    } catch {
-      // NOT_FOUND from the RLS gate ⇒ no access / no such patient.
-      return undefined;
+    } catch (e) {
+      // "No such patient / no access" is a legitimate undefined (caller renders
+      // not-found). But a backend outage or expired session must NOT be
+      // silently reported as "not found" — propagate it so the error boundary
+      // shows a retryable "unavailable" state instead of a misleading 404.
+      if (isAdapterError(e) && (e.code === "not_found" || e.code === "forbidden")) {
+        return undefined;
+      }
+      throw e;
     }
   },
 };

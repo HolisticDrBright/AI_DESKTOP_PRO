@@ -1,6 +1,5 @@
-import { SurfaceScreen } from "@/components/ui/SurfaceScreen";
-import { SURFACES } from "@/lib/surfaces";
+import { PermissionMatrix } from "@/components/team/PermissionMatrix";
 
 export default function TeamPage() {
-  return <SurfaceScreen spec={SURFACES.team} />;
+  return <PermissionMatrix />;
 }

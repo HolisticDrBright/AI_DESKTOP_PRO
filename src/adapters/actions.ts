@@ -13,6 +13,11 @@
  *    keep them gated behind practitioner review.
  */
 import type { Tone } from "./types";
+import {
+  recordAuditEntry,
+  setReviewOutcome,
+  type ReviewOutcome,
+} from "./session-store";
 
 export type ActionKind =
   | "approve"
@@ -31,7 +36,25 @@ export type ActionKind =
   | "add_evidence"
   | "add_contradiction"
   | "convert_to_task"
-  | "convert_to_experiment";
+  | "convert_to_experiment"
+  // review-queue + labs
+  | "resolve"
+  | "assign"
+  | "snooze"
+  | "change_priority"
+  | "mark_reviewed"
+  | "flag"
+  | "request_recheck"
+  | "configure_range"
+  | "open_patient"
+  // dispensary / inventory
+  | "receive_stock"
+  | "record_sale"
+  // lab ordering
+  | "order_panel_added"
+  | "order_panel_removed"
+  | "order_prepared"
+  | "order_reviewed";
 
 export type ActionIcon =
   | "check"
@@ -48,7 +71,13 @@ export type ActionIcon =
   | "history"
   | "plus"
   | "minus"
-  | "git-branch";
+  | "git-branch"
+  | "user"
+  | "clock"
+  | "flag"
+  | "check-check"
+  | "rotate"
+  | "sliders";
 
 export interface ActionDescriptor {
   kind: ActionKind;
@@ -98,6 +127,42 @@ export const ACTIONS: Record<ActionKind, ActionDescriptor> = {
   add_contradiction: { kind: "add_contradiction", label: "Add contradiction", icon: "minus", tone: "critical" },
   convert_to_task: { kind: "convert_to_task", label: "Convert to task", icon: "clipboard-plus", tone: "action" },
   convert_to_experiment: { kind: "convert_to_experiment", label: "Convert to experiment", icon: "git-branch", tone: "ai" },
+  resolve: {
+    kind: "resolve", label: "Resolve", icon: "check-check", tone: "positive",
+    confirm: true, confirmText: "Resolve this item? It will be marked done and recorded in the session audit log.",
+  },
+  assign: { kind: "assign", label: "Assign", icon: "user", tone: "action" },
+  snooze: { kind: "snooze", label: "Snooze", icon: "clock", tone: "slate" },
+  change_priority: { kind: "change_priority", label: "Change priority", icon: "flag", tone: "warning" },
+  mark_reviewed: { kind: "mark_reviewed", label: "Mark reviewed", icon: "check-check", tone: "positive" },
+  flag: { kind: "flag", label: "Flag for review", icon: "flag", tone: "warning" },
+  request_recheck: {
+    kind: "request_recheck", label: "Request recheck", icon: "rotate", tone: "action",
+    confirm: true, confirmText: "Request a recheck for this marker? This is an outward-facing clinical action.",
+  },
+  configure_range: { kind: "configure_range", label: "Configure optimal range", icon: "sliders", tone: "slate" },
+  open_patient: { kind: "open_patient", label: "Open patient", icon: "user", tone: "action" },
+  receive_stock: { kind: "receive_stock", label: "Receive stock", icon: "plus", tone: "positive" },
+  record_sale: { kind: "record_sale", label: "Dispense / sale", icon: "check-check", tone: "teal" },
+  order_panel_added: { kind: "order_panel_added", label: "Lab panel added", icon: "plus", tone: "action" },
+  order_panel_removed: { kind: "order_panel_removed", label: "Lab panel removed", icon: "minus", tone: "slate" },
+  order_prepared: { kind: "order_prepared", label: "Lab order draft prepared", icon: "flask", tone: "action" },
+  order_reviewed: { kind: "order_reviewed", label: "Lab order reviewed", icon: "check-check", tone: "positive" },
+};
+
+/**
+ * Actions that SETTLE a review, and the outcome they record. When an action's
+ * context carries a `reviewKey`, executing it writes this outcome to the demo
+ * review store so the UI reflects the settled state immediately.
+ */
+export const ACTION_REVIEW_OUTCOME: Partial<Record<ActionKind, ReviewOutcome>> = {
+  approve: "approved",
+  accept_hypothesis: "accepted",
+  reject: "rejected",
+  resolve: "resolved",
+  mark_reviewed: "reviewed",
+  flag: "flagged",
+  snooze: "snoozed",
 };
 
 export interface ActionContext {
@@ -108,6 +173,15 @@ export interface ActionContext {
   patientName?: string;
   /** Supporting facts to seed a composer draft (evidence, values). */
   seeds?: string[];
+  /** Stable key for the reviewable subject (e.g. "snapshot:p-78435"). When set,
+   *  settling actions record their outcome to the demo review store. */
+  reviewKey?: string;
+  /**
+   * Live-record reference. When present AND live mode is on, the façade routes
+   * the matching action to the real backend mutation (persist + audit) instead
+   * of the demo executor. Ignored entirely in demo mode.
+   */
+  liveRef?: { kind: "queue-item"; id: string };
 }
 
 /** Review actions that open the note/report composer instead of recording. */
@@ -123,23 +197,9 @@ export interface ActionResult {
   message: string;
 }
 
-/** In-memory audit trail of mock actions (demonstration only, never persisted). */
-export interface MockAuditEntry {
-  at: string;
-  kind: ActionKind;
-  subjectType: string;
-  subjectLabel: string;
-  patientName?: string;
-  reviewed: boolean;
-}
-const mockAuditLog: MockAuditEntry[] = [];
-
-export function getMockAuditLog(): readonly MockAuditEntry[] {
-  return mockAuditLog;
-}
-
 /**
- * MOCK executor. Records the action and returns an outcome message. Preserves
+ * MOCK executor. Records the action to the demo session audit store, settles
+ * any linked review, and returns an outcome message. Preserves
  * practitioner-review semantics: patient-facing actions are marked as requiring
  * review, never auto-finalized. Replace with `api.actions.execute` (tRPC).
  */
@@ -149,14 +209,21 @@ export async function executeAction(
   timestamp: string,
 ): Promise<ActionResult> {
   const d = ACTIONS[kind];
-  mockAuditLog.push({
+  const outcome = ACTION_REVIEW_OUTCOME[kind];
+
+  recordAuditEntry({
     at: timestamp,
     kind,
     subjectType: ctx.subjectType,
     subjectLabel: ctx.subjectLabel,
     patientName: ctx.patientName,
     reviewed: !d.patientFacing,
+    outcome,
   });
+
+  // Settle the visible review state when the action targets a reviewable subject.
+  if (ctx.reviewKey && outcome) setReviewOutcome(ctx.reviewKey, outcome);
+
   const suffix = d.patientFacing ? " — queued for your review before it reaches the patient" : "";
   return {
     ok: true,

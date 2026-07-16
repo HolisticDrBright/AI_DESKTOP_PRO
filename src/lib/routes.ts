@@ -5,6 +5,7 @@ export const PATIENT_TABS: { id: PatientTabId; label: string }[] = [
   { id: "twin", label: "Health Twin" },
   { id: "timeline", label: "Timeline" },
   { id: "labs", label: "Labs" },
+  { id: "lab-orders", label: "Lab Orders" },
   { id: "reasoning", label: "Clinical Reasoning" },
   { id: "supplements", label: "Supplements" },
   { id: "nof1-lab", label: "N-of-1 Lab" },

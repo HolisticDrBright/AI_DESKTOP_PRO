@@ -1,13 +1,15 @@
 "use client";
 
 import { useState } from "react";
+import { api } from "@/adapters";
 import {
   ACTIONS,
+  ACTION_REVIEW_OUTCOME,
   COMPOSER_ACTIONS,
-  executeAction,
   type ActionContext,
   type ActionKind,
 } from "@/adapters/actions";
+import { useReviewOutcome, type ReviewOutcome } from "@/adapters/session-store";
 import { actionIcons } from "@/components/icons";
 import { cn } from "@/lib/cn";
 import { useComposerOptional } from "@/lib/composer";
@@ -21,33 +23,45 @@ import { ConfirmDialog } from "./ConfirmDialog";
  *
  * - Confirm-required (destructive / patient-facing) actions open a ConfirmDialog.
  * - Outcomes are announced via the accessible feedback channel.
- * - Execution goes through the mock `executeAction` adapter (no real
- *   persistence); pass `onAction` to override with a real mutation later.
+ * - Execution goes through the `api.actions.execute` façade — demo session
+ *   audit by default; actions whose context carries a `liveRef` persist to the
+ *   real backend in live mode. Pass `onAction` to override entirely.
  */
 export function ActionBar({
   actions,
   context,
   onAction,
+  onExecuted,
+  settledOutcome,
   size = "md",
   className,
 }: {
   actions: ActionKind[];
   context: ActionContext;
   onAction?: (kind: ActionKind, context: ActionContext) => Promise<void> | void;
+  /** Called after an action executes through the default path (audit recorded). */
+  onExecuted?: (kind: ActionKind) => void;
+  /** Settled state carried by the record itself (live rows) — session outcome wins. */
+  settledOutcome?: ReviewOutcome;
   size?: "sm" | "md";
   className?: string;
 }) {
   const { announce } = useFeedback();
   const composer = useComposerOptional();
   const [pending, setPending] = useState<ActionKind | null>(null);
+  // When the subject is reviewable, a recorded outcome settles its actions.
+  const sessionOutcome = useReviewOutcome(context.reviewKey ?? "");
+  const outcome = sessionOutcome ?? settledOutcome;
 
   const run = async (kind: ActionKind) => {
     if (onAction) {
       await onAction(kind, context);
+      onExecuted?.(kind);
       return;
     }
-    const result = await executeAction(kind, context, new Date().toISOString());
+    const result = await api.actions.execute(kind, context, new Date().toISOString());
     announce(result.message);
+    onExecuted?.(kind);
   };
 
   const handleClick = (kind: ActionKind) => {
@@ -74,13 +88,20 @@ export function ActionBar({
       {actions.map((kind) => {
         const d = ACTIONS[kind];
         const Icon = actionIcons[d.icon];
+        // A settling action (approve/reject/resolve/…) is disabled once the
+        // subject's review has settled — it must not read as "nothing happened".
+        const isSettling = kind in ACTION_REVIEW_OUTCOME;
+        const disabled = Boolean(outcome) && isSettling;
         return (
           <button
             key={kind}
-            onClick={() => handleClick(kind)}
+            onClick={() => !disabled && handleClick(kind)}
+            disabled={disabled}
+            aria-disabled={disabled || undefined}
             aria-label={`${d.label} — ${context.subjectType} ${context.subjectLabel}`}
             className={cn(
-              "flex cursor-pointer items-center gap-[5px] rounded-[7px] border font-semibold focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-action",
+              "flex items-center gap-[5px] rounded-[7px] border font-semibold focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-action",
+              disabled ? "cursor-not-allowed opacity-40" : "cursor-pointer",
               pad,
             )}
             style={{

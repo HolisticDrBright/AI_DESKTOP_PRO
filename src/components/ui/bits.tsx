@@ -59,13 +59,25 @@ export function CardLink({
   );
 }
 
-/** Full-width outline button (32px, #DCE5EE border, action-blue label). */
-export function OutlineButton({ children }: { children: ReactNode }) {
-  return (
-    <button className="mt-3 h-8 w-full cursor-pointer rounded-[9px] border border-line-btn bg-card text-[12px] font-semibold text-action hover:border-line-hover-2 hover:bg-[#F7FAFD] focus-visible:outline-2 focus-visible:outline-action">
-      {children}
-    </button>
-  );
+/** Full-width outline button (32px, #DCE5EE border, action-blue label).
+ *  Renders as a Link when `href` is provided so it navigates rather than no-ops. */
+export function OutlineButton({
+  children,
+  href,
+}: {
+  children: ReactNode;
+  href?: string;
+}) {
+  const className =
+    "mt-3 flex h-8 w-full cursor-pointer items-center justify-center rounded-[9px] border border-line-btn bg-card text-[12px] font-semibold text-action hover:border-line-hover-2 hover:bg-[#F7FAFD] focus-visible:outline-2 focus-visible:outline-action";
+  if (href) {
+    return (
+      <Link href={href} className={className}>
+        {children}
+      </Link>
+    );
+  }
+  return <button className={className}>{children}</button>;
 }
 
 /** Initials avatar — solid color or [from, to] gradient. */

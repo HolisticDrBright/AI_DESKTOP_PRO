@@ -55,6 +55,7 @@ export type PatientTabId =
   | "twin"
   | "timeline"
   | "labs"
+  | "lab-orders"
   | "reasoning"
   | "supplements"
   | "nof1-lab"
@@ -68,9 +69,11 @@ export interface PatientDirectoryEntry {
   mrn: string;
   name: string;
   initials: string;
-  sex: "Female" | "Male";
-  age: number;
-  /** Display date of birth, MM/DD/YYYY. */
+  /** Recorded value only — never guessed; missing is "Not recorded". */
+  sex: "Female" | "Male" | "Other" | "Unknown" | "Not recorded";
+  /** Whole-year calendar age; null when the birth date is not recorded. */
+  age: number | null;
+  /** Display date of birth, MM/DD/YYYY, or "—" when not recorded. */
   dob: string;
   /** Header avatar gradient, [from, to]. */
   avatarGradient: [string, string];

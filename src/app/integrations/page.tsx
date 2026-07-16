@@ -1,5 +1,5 @@
-import { PlaceholderScreen } from "@/components/ui/PlaceholderScreen";
+import { ConnectorHealth } from "@/components/integrations/ConnectorHealth";
 
 export default function Page() {
-  return <PlaceholderScreen label="Integrations" />;
+  return <ConnectorHealth />;
 }
