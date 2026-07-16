@@ -1,7 +1,7 @@
 if (typeof window !== "undefined") {
   throw new Error("This module is server-only and must not run in the browser.");
 }
-import { ACTIVE_ORG_ID } from "./config";
+import { resolveOrgId } from "./config";
 import { trpcQuery } from "./trpc.server";
 import { isAdapterError } from "./errors";
 import type { PatientDirectoryEntry } from "./types";
@@ -62,9 +62,9 @@ function toDirectoryEntry(row: ClinicalPatientRow, i = 0): PatientDirectoryEntry
 }
 
 export const patientsLive = {
-  async list(sessionToken?: string | null): Promise<PatientDirectoryEntry[]> {
+  async list(sessionToken?: string | null, orgId?: string | null): Promise<PatientDirectoryEntry[]> {
     const rows = await trpcQuery<ClinicalPatientRow[]>("clinical.patients.list", {
-      organizationId: ACTIVE_ORG_ID,
+      organizationId: resolveOrgId(orgId),
     }, sessionToken);
     return rows.map((r, i) => toDirectoryEntry(r, i));
   },

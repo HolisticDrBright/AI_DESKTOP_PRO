@@ -232,6 +232,34 @@ test("login honors a same-origin next= return path", async ({ page, context }) =
   await context.clearCookies();
 });
 
+test("password reset: enumeration-safe request + recovery-token completion", async ({ page, context }) => {
+  await context.clearCookies();
+
+  // Request from the sign-in screen — the confirmation never reveals whether
+  // the account exists.
+  await page.goto("/login");
+  await page.getByLabel("Email").fill("practitioner@fixture.local");
+  await page.getByRole("button", { name: /Forgot password/ }).click();
+  await expect(page.getByText(/If an account exists for that email/)).toBeVisible();
+
+  // Complete via the emailed link's fragment token (fixture recovery token).
+  await page.goto("/reset#access_token=recovery-token-fixture&type=recovery");
+  await page.getByLabel("New password").fill("brand-new-password-1");
+  await page.getByLabel("Confirm password").fill("brand-new-password-1");
+  await page.getByRole("button", { name: "Set new password" }).click();
+  await expect(page.getByText("Password updated")).toBeVisible();
+
+  // A bad/expired token is rejected honestly. (Navigate away first — a
+  // fragment-only change would not remount the page.)
+  await page.goto("/login");
+  await page.goto("/reset#access_token=expired-recovery-token&type=recovery");
+  await page.getByLabel("New password").fill("brand-new-password-1");
+  await page.getByLabel("Confirm password").fill("brand-new-password-1");
+  await page.getByRole("button", { name: "Set new password" }).click();
+  await expect(page.getByText(/invalid or has expired/)).toBeVisible();
+  await context.clearCookies();
+});
+
 test("practitioner sign-in and sign-out work via httpOnly cookie session", async ({ page }) => {
   await page.goto("/login");
   await page.getByLabel("Email").fill("practitioner@fixture.local");
@@ -244,6 +272,13 @@ test("practitioner sign-in and sign-out work via httpOnly cookie session", async
   );
   expect(session?.data?.signedIn).toBe(true);
   expect(session?.data?.email).toBe("practitioner@fixture.local");
+
+  // P1: the practitioner's organization is auto-selected at sign-in from
+  // their own memberships — no env-based org in the session path.
+  expect(session?.data?.orgId).toBe("org-fixture");
+  const org = await page.evaluate(() => fetch("/api/auth/org").then((r) => r.json()));
+  expect(org?.data?.activeOrgId).toBe("org-fixture");
+  expect(org?.data?.organizations?.[0]?.name).toBe("Fixture Clinic");
 
   await page.goto("/login");
   await expect(page.getByText(/Signed in as/)).toBeVisible();

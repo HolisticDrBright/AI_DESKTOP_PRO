@@ -15,7 +15,8 @@ export default async function ClientsPage() {
   if (!USE_LIVE_API) return <ClientDirectory />;
 
   try {
-    const entries = await api.patients.list((await getRequestSession()).token);
+    const session = await getRequestSession();
+    const entries = await api.patients.list(session.token, session.orgId);
     return <LiveClientDirectory entries={entries} />;
   } catch (e) {
     const code = isAdapterError(e) ? e.code : "unknown";

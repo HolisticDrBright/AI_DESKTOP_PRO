@@ -20,6 +20,6 @@ export async function getRequestSession(): Promise<RequestSession> {
     return { ...s, token: s.signedIn ? s.accessToken : null };
   } catch {
     // Outside a request scope (build/prerender) — no session.
-    return { signedIn: false, email: null, expired: false, expiresAt: null, token: null };
+    return { signedIn: false, email: null, expired: false, expiresAt: null, orgId: null, token: null };
   }
 }

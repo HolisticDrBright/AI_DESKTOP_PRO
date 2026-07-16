@@ -15,7 +15,7 @@ import { USE_LIVE_API } from "@/adapters/mode";
  */
 export async function GET() {
   if (!USE_LIVE_API) {
-    return NextResponse.json({ data: { mode: "mock", signedIn: false, email: null } });
+    return NextResponse.json({ data: { mode: "mock", signedIn: false, email: null, orgId: null } });
   }
   const session = readAuthSession(await cookies());
 
@@ -45,6 +45,11 @@ export async function GET() {
   }
 
   return NextResponse.json({
-    data: { mode: "live", signedIn: session.signedIn, email: session.signedIn ? session.email : null },
+    data: {
+      mode: "live",
+      signedIn: session.signedIn,
+      email: session.signedIn ? session.email : null,
+      orgId: session.signedIn ? session.orgId : null,
+    },
   });
 }

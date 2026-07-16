@@ -2,7 +2,7 @@ if (typeof window !== "undefined") {
   throw new Error("This module is server-only and must not run in the browser.");
 }
 import { trpcMutation, trpcQuery } from "./trpc.server";
-import { ACTIVE_ORG_ID } from "./config";
+import { resolveOrgId } from "./config";
 import type { LiveAuditEvent, LiveTaskResult } from "./live-types";
 
 /**
@@ -32,7 +32,7 @@ export interface RecordAuditInput {
 export const actionsLive = {
   recordAudit(input: RecordAuditInput, sessionToken?: string | null): Promise<{ id: string }> {
     return trpcMutation<{ id: string }>("clinical.actions.recordAudit", {
-      organizationId: input.organizationId ?? ACTIVE_ORG_ID,
+      organizationId: resolveOrgId(input.organizationId),
       eventType: input.eventType,
       resourceId: input.resourceId ?? null,
       patientId: input.patientId ?? null,
@@ -46,7 +46,7 @@ export const actionsLive = {
     sessionToken?: string | null,
   ): Promise<LiveAuditEvent[]> {
     return trpcQuery<LiveAuditEvent[]>("clinical.actions.listAuditEvents", {
-      organizationId: organizationId ?? ACTIVE_ORG_ID,
+      organizationId: resolveOrgId(organizationId),
       limit,
     }, sessionToken);
   },

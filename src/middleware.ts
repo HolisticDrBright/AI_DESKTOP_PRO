@@ -62,7 +62,8 @@ export async function middleware(req: NextRequest) {
 
   const { pathname } = req.nextUrl;
   const isApi = pathname.startsWith("/api/");
-  const isLogin = pathname === "/login";
+  // Public auth pages: reachable signed-out (reset links arrive by email).
+  const isLogin = pathname === "/login" || pathname === "/reset";
   // The auth endpoints manage cookies themselves — never intercept them.
   if (pathname.startsWith("/api/auth/")) return NextResponse.next();
 

@@ -2,7 +2,7 @@ if (typeof window !== "undefined") {
   throw new Error("This module is server-only and must not run in the browser.");
 }
 import { trpcMutation, trpcQuery } from "./trpc.server";
-import { ACTIVE_ORG_ID } from "./config";
+import { resolveOrgId } from "./config";
 import type { LiveQueueItem, LiveResolveResult } from "./live-types";
 
 /**
@@ -16,10 +16,10 @@ import type { LiveQueueItem, LiveResolveResult } from "./live-types";
  * stamping the actor server-side. Idempotent on already-resolved items.
  */
 export const tasksLive = {
-  getQueue(sessionToken?: string | null): Promise<LiveQueueItem[]> {
+  getQueue(sessionToken?: string | null, orgId?: string | null): Promise<LiveQueueItem[]> {
     return trpcQuery<LiveQueueItem[]>(
       "clinical.tasks.getQueue",
-      { organizationId: ACTIVE_ORG_ID },
+      { organizationId: resolveOrgId(orgId) },
       sessionToken,
     );
   },

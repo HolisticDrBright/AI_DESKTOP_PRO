@@ -42,6 +42,7 @@ export async function POST(req: NextRequest) {
         location: str(body.location),
       },
       session.token,
+      session.orgId,
     );
   });
 }

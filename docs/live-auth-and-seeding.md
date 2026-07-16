@@ -30,8 +30,51 @@ the contract-fixture e2e suite and headless local runs — do **not** set these
 in a real deployment.
 
 Required env (live): `NEXT_PUBLIC_USE_LIVE_API=true`, `TRPC_BASE_URL`,
-`CLINICAL_SUPABASE_URL`, `CLINICAL_SUPABASE_ANON_KEY`, `CLINICAL_ORG_ID`.
-See `.env.example`.
+`CLINICAL_SUPABASE_URL`, `CLINICAL_SUPABASE_ANON_KEY`. See `.env.example`.
+(`CLINICAL_ORG_ID` is now only a local/e2e fallback — see below.)
+
+## Organization selection (authenticated, not env-based)
+
+The active organization is a **per-session choice validated against the
+signed-in practitioner's real memberships**, not a deployment constant:
+
+- On sign-in, `/api/auth/login` fetches the practitioner's memberships
+  (`clinical.organizations.mine`, which reads `org_members` under RLS) and
+  auto-selects the first one into an httpOnly `aidp_org` cookie.
+- `GET /api/auth/org` lists the caller's memberships + the active org;
+  `POST /api/auth/org` switches — the server re-validates that the requested
+  org is one of the **caller's own memberships** and answers `forbidden`
+  otherwise. The browser can never pick an arbitrary org id.
+- Settings → **Data source & environment** shows the active organization
+  (name + role) and, when the practitioner belongs to more than one org, an
+  **organization switcher**.
+- Every live adapter call threads the session's org id through to the
+  backend, which re-enforces membership inside RLS and the SECURITY DEFINER
+  RPCs — the cookie is a selector, never an authority.
+
+**Env fallback (local/e2e only):** `CLINICAL_ORG_ID` fills in when the
+session has no org cookie (contract-fixture runs, headless local). With it
+unset — the correct state for a real deployment — a session with no selected
+organization gets an honest "No organization selected" error instead of
+silently reading another tenant's default.
+
+## Password reset
+
+- **Request**: on `/login`, "Forgot password? Email me a reset link" posts to
+  `/api/auth/reset` → Supabase `auth/v1/recover`. The confirmation copy is
+  identical whether or not the account exists (enumeration-safe), and the
+  endpoint is rate-limited per IP.
+- **Complete**: the emailed link opens `/reset` with a one-time recovery
+  token in the URL **fragment** (never sent to a server by the browser). The
+  page reads it once, strips it from the URL bar, and posts the new password
+  to `/api/auth/reset-complete`, which calls Supabase `PUT /auth/v1/user`
+  with the recovery token and then clears all session cookies so the
+  practitioner signs in fresh with the new password.
+- Expired/invalid recovery links get an honest "This reset link is invalid
+  or has expired" error — no fake success.
+- For the emailed link to point at the app, set the Supabase project's
+  **Auth → URL Configuration → Site URL** to the deployed desktop origin and
+  add `https://<desktop-domain>/reset` to the redirect allowlist.
 
 ## Seeding the clinical project
 

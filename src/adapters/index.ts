@@ -95,8 +95,8 @@ export const api = {
     // lazily so the default mock build never pulls in server-only code.
     // sessionToken: the cookie session's access token, passed by SERVER
     // callers (src/server/session.ts). Client/demo callers omit it.
-    list: async (sessionToken?: string | null) => {
-      if (USE_LIVE_API) return (await import("./patients.live")).patientsLive.list(sessionToken);
+    list: async (sessionToken?: string | null, orgId?: string | null) => {
+      if (USE_LIVE_API) return (await import("./patients.live")).patientsLive.list(sessionToken, orgId);
       return listPatients();
     },
     get: async (id: string, sessionToken?: string | null) => {

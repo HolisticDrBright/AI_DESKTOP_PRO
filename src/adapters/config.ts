@@ -18,10 +18,29 @@ export const TRPC_BASE_URL =
   process.env.TRPC_BASE_URL ?? "http://localhost:3000/api/trpc";
 
 /**
- * The organization the desktop operates in. In the real product this comes
- * from the practitioner's session (organizations.mine); for the live-path
- * proof it is provided by env so a server component can scope its query.
- * Falls back to the dev override so a single value can drive both.
+ * ⚠️ LOCAL/E2E FALLBACK ONLY. The active organization now comes from the
+ * practitioner's session (validated `aidp_org` cookie, set at sign-in or via
+ * the Settings switcher). This env value exists solely for headless local
+ * runs and the contract-fixture e2e suite — do NOT set it in a real
+ * deployment.
  */
-export const ACTIVE_ORG_ID =
+const ENV_FALLBACK_ORG_ID =
   process.env.CLINICAL_ORG_ID ?? process.env.NEXT_PUBLIC_DEV_ORG_ID ?? "";
+
+import { AdapterError } from "./errors";
+
+/**
+ * Resolve the organization an org-scoped live call runs against: the
+ * session's validated org first, the env fallback second (local/e2e only),
+ * otherwise a clean, actionable error — never a silent empty scope.
+ */
+export function resolveOrgId(orgId?: string | null): string {
+  const resolved = orgId || ENV_FALLBACK_ORG_ID;
+  if (!resolved) {
+    throw new AdapterError(
+      "invalid",
+      "No organization selected. Choose your organization in Settings.",
+    );
+  }
+  return resolved;
+}

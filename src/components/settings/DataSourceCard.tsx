@@ -4,7 +4,9 @@ import { describeMode } from "@/adapters/mode";
 import { cookies } from "next/headers";
 import { readAuthSession } from "@/adapters/auth.server";
 import { getLiveServerStatus } from "@/adapters/live-status.server";
+import { organizationsLive } from "@/adapters/organizations.live";
 import { SignOutButton } from "@/components/auth/SignOutButton";
+import { OrgSwitcher } from "@/components/settings/OrgSwitcher";
 import { Card, CardTitle } from "@/components/ui/bits";
 
 /**
@@ -19,6 +21,21 @@ export async function DataSourceCard() {
   const mode = describeMode();
   const server = getLiveServerStatus();
   const session = mode.live ? readAuthSession(await cookies()) : null;
+
+  // Organizations for the signed-in practitioner (tolerated failure: the row
+  // shows the honest state; backend reachability has its own rows below).
+  let organizations: { organizationId: string; name: string | null; role: string }[] = [];
+  if (mode.live && session?.signedIn && session.accessToken) {
+    try {
+      const orgs = await organizationsLive.mine(session.accessToken);
+      organizations = orgs
+        .filter((o): o is typeof o & { organizationId: string } => Boolean(o.organizationId))
+        .map((o) => ({ organizationId: o.organizationId, name: o.name, role: o.role }));
+    } catch {
+      organizations = [];
+    }
+  }
+  const activeOrg = organizations.find((o) => o.organizationId === session?.orgId) ?? null;
   const overrideNames = [
     mode.devOverrides.orgId && "org",
     mode.devOverrides.patientId && "patient",
@@ -94,6 +111,26 @@ export async function DataSourceCard() {
                 >
                   {session?.expired ? "Session expired — sign in →" : "Signed out — sign in →"}
                 </Link>
+              )}
+            </div>
+            {/* Organization: session-scoped (validated cookie), never env in prod. */}
+            <div className="flex items-center justify-between gap-3 border-t border-hairline-2 py-[8px]">
+              <span className="text-[12px] text-body">Organization</span>
+              {session?.signedIn ? (
+                <span className="flex items-center gap-2">
+                  <span
+                    className={`text-[12px] font-semibold ${activeOrg ? "text-positive" : "text-warning-deep"}`}
+                  >
+                    {activeOrg
+                      ? `${activeOrg.name ?? activeOrg.organizationId} · ${activeOrg.role}`
+                      : organizations.length > 0
+                        ? "None selected"
+                        : "No memberships found"}
+                  </span>
+                  <OrgSwitcher organizations={organizations} activeOrgId={session.orgId} />
+                </span>
+              ) : (
+                <span className="text-[12px] font-semibold text-faint">Sign in first</span>
               )}
             </div>
             <StatusRow label="tRPC backend endpoint" ok={server.trpcConfigured} />

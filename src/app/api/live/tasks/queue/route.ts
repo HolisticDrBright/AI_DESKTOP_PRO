@@ -7,5 +7,5 @@ export async function GET() {
   const blocked = liveGuard();
   if (blocked) return blocked;
   const session = await getRequestSession();
-  return runLive(() => tasksLive.getQueue(session.token));
+  return runLive(() => tasksLive.getQueue(session.token, session.orgId));
 }

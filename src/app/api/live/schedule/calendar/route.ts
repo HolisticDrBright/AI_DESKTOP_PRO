@@ -16,6 +16,6 @@ export async function POST(req: NextRequest) {
       throw new AdapterError("invalid", "A valid date range is required.");
     }
     const session = await getRequestSession();
-    return scheduleLive.getCalendar(fromIso, toIso, session.token);
+    return scheduleLive.getCalendar(fromIso, toIso, session.token, session.orgId);
   });
 }

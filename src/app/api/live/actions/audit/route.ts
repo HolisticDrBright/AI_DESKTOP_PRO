@@ -12,7 +12,7 @@ export async function GET(req: NextRequest) {
     const raw = req.nextUrl.searchParams.get("limit");
     const limit = raw ? Math.min(Math.max(Number(raw) || 50, 1), 200) : 50;
     const session = await getRequestSession();
-    return actionsLive.listAuditEvents(undefined, limit, session.token);
+    return actionsLive.listAuditEvents(session.orgId ?? undefined, limit, session.token);
   });
 }
 
@@ -50,6 +50,7 @@ export async function POST(req: NextRequest) {
       resourceId: str(body.resourceId),
       patientId: str(body.patientId),
       metadata,
+      organizationId: session.orgId ?? undefined,
     }, session.token);
   });
 }

@@ -27,6 +27,35 @@ export function LoginForm() {
   const [password, setPassword] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [resetSent, setResetSent] = useState(false);
+
+  // Enumeration-safe by design: the confirmation copy is identical whether or
+  // not the account exists. Requires the email field to be filled in.
+  const requestReset = async () => {
+    if (!email) {
+      setError("Enter your email above first, then request the reset link.");
+      return;
+    }
+    setError(null);
+    setPending(true);
+    try {
+      const res = await fetch("/api/auth/reset", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+      if (res.ok) {
+        setResetSent(true);
+      } else {
+        const json = (await res.json().catch(() => ({}))) as { error?: { message?: string } };
+        setError(json.error?.message ?? "Could not request a reset right now.");
+      }
+    } catch {
+      setError("The reset service is unreachable right now. Please try again.");
+    } finally {
+      setPending(false);
+    }
+  };
 
   useEffect(() => {
     let alive = true;
@@ -150,6 +179,24 @@ export function LoginForm() {
           {pending ? "Signing in…" : "Sign in"}
         </button>
       </form>
+
+      <div className="mt-3 border-t border-hairline pt-3">
+        {resetSent ? (
+          <p className="m-0 text-[12px] leading-[1.5] text-body" role="status">
+            If an account exists for that email, a reset link is on its way. Open it to set a
+            new password.
+          </p>
+        ) : (
+          <button
+            type="button"
+            onClick={requestReset}
+            disabled={pending}
+            className="cursor-pointer border-none bg-transparent p-0 text-[12px] font-semibold text-action hover:underline focus-visible:outline-2 focus-visible:outline-action disabled:opacity-50"
+          >
+            Forgot password? Email me a reset link
+          </button>
+        )}
+      </div>
     </Card>
   );
 }

@@ -2,7 +2,7 @@ if (typeof window !== "undefined") {
   throw new Error("This module is server-only and must not run in the browser.");
 }
 import { trpcMutation, trpcQuery } from "./trpc.server";
-import { ACTIVE_ORG_ID } from "./config";
+import { resolveOrgId } from "./config";
 import type {
   LiveAppointmentStatusResult,
   LiveBookInput,
@@ -21,18 +21,27 @@ import type {
  * and every write appends an audit_events row atomically.
  */
 export const scheduleLive = {
-  getCalendar(fromIso: string, toIso: string, sessionToken?: string | null): Promise<LiveCalendar> {
+  getCalendar(
+    fromIso: string,
+    toIso: string,
+    sessionToken?: string | null,
+    orgId?: string | null,
+  ): Promise<LiveCalendar> {
     return trpcQuery<LiveCalendar>(
       "clinical.schedule.getCalendar",
-      { organizationId: ACTIVE_ORG_ID, fromIso, toIso },
+      { organizationId: resolveOrgId(orgId), fromIso, toIso },
       sessionToken,
     );
   },
 
-  book(input: LiveBookInput, sessionToken?: string | null): Promise<LiveBookResult> {
+  book(
+    input: LiveBookInput,
+    sessionToken?: string | null,
+    orgId?: string | null,
+  ): Promise<LiveBookResult> {
     return trpcMutation<LiveBookResult>(
       "clinical.schedule.book",
-      { organizationId: ACTIVE_ORG_ID, ...input },
+      { organizationId: resolveOrgId(orgId), ...input },
       sessionToken,
     );
   },

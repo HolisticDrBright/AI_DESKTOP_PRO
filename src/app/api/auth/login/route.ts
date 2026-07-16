@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { AUTH_COOKIES, cookieOptions, passwordSignIn } from "@/adapters/auth.server";
 import { AdapterError, HTTP_STATUS, toAdapterError } from "@/adapters/errors";
 import { USE_LIVE_API } from "@/adapters/mode";
+import { organizationsLive } from "@/adapters/organizations.live";
 
 /**
  * POST { email, password } → practitioner sign-in against the clinical
@@ -70,12 +71,24 @@ export async function POST(req: NextRequest) {
       throw new AdapterError("invalid", "Email and password are required.");
     }
     const tokens = await passwordSignIn(body.email.trim(), body.password);
+
+    // Auto-select the organization when the practitioner has exactly one (or
+    // default to the first). Tolerated failure: Settings offers selection.
+    let orgId: string | null = null;
+    try {
+      const orgs = await organizationsLive.mine(tokens.accessToken);
+      orgId = orgs.find((o) => o.organizationId)?.organizationId ?? null;
+    } catch {
+      orgId = null;
+    }
+
     const res = NextResponse.json({ data: { signedIn: true, email: tokens.email } });
     const week = 60 * 60 * 24 * 7;
     res.cookies.set(AUTH_COOKIES.access, tokens.accessToken, cookieOptions(week));
     res.cookies.set(AUTH_COOKIES.refresh, tokens.refreshToken, cookieOptions(week));
     res.cookies.set(AUTH_COOKIES.expires, String(tokens.expiresAt), cookieOptions(week));
     res.cookies.set(AUTH_COOKIES.email, tokens.email, cookieOptions(week));
+    if (orgId) res.cookies.set(AUTH_COOKIES.org, orgId, cookieOptions(week));
     return res;
   } catch (e) {
     const err = toAdapterError(e);

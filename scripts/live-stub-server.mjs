@@ -309,6 +309,21 @@ createServer(async (req, res) => {
   // Supabase-auth-shaped token endpoint (identity only, fixture tokens).
   // Handles both password and refresh_token grants; echoes a stable email so
   // the desktop's cookie-session sign-in flow can be exercised end-to-end.
+  // Password reset fixtures: request always succeeds (enumeration-safe, like
+  // Supabase); completing requires the fixture recovery token.
+  if (url.pathname === "/auth/v1/recover" && req.method === "POST") {
+    await readBody(req);
+    return json(res, 200, {});
+  }
+  if (url.pathname === "/auth/v1/user" && req.method === "PUT") {
+    const bearer = (req.headers.authorization ?? "").replace(/^Bearer /, "");
+    const body = await readBody(req);
+    if (bearer !== "recovery-token-fixture" || !body.password) {
+      return json(res, 401, { error: "invalid_token" });
+    }
+    return json(res, 200, { id: "dddddddd-1111-2222-3333-444444444401", email: "practitioner@fixture.local" });
+  }
+
   if (url.pathname === "/auth/v1/token") {
     const body = await readBody(req);
     // Revoked-refresh fixture: exercises the desktop middleware's clear-session
@@ -376,6 +391,10 @@ createServer(async (req, res) => {
       const row = PATIENTS.find((p) => p.id === input.patientId);
       return row ? trpcOk(res, row) : trpcErr(res, 404, "NOT_FOUND", "no such patient");
     }
+    case "clinical.organizations.mine":
+      return trpcOk(res, [
+        { organizationId: "org-fixture", name: "Fixture Clinic", slug: "fixture-clinic", role: "practitioner" },
+      ]);
     case "clinical.tasks.getQueue":
       return trpcOk(res, [...queue.values()]);
     case "clinical.tasks.resolve": {

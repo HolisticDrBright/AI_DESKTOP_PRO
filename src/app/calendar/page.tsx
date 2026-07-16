@@ -12,7 +12,8 @@ export default async function Page() {
   let patientOptions: { id: string; name: string }[] = [];
   if (USE_LIVE_API) {
     try {
-      const list = await api.patients.list((await getRequestSession()).token);
+      const session = await getRequestSession();
+      const list = await api.patients.list(session.token, session.orgId);
       patientOptions = list.map((p) => ({ id: p.id, name: p.name }));
     } catch {
       // Signed-out / backend-down surfaces on the calendar itself.

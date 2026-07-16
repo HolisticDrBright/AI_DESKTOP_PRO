@@ -30,6 +30,8 @@ export const AUTH_COOKIES = {
   refresh: "aidp_rt",
   expires: "aidp_exp",
   email: "aidp_em",
+  /** Active organization (validated against memberships before it is set). */
+  org: "aidp_org",
 } as const;
 
 export interface AuthTokens {
@@ -46,6 +48,8 @@ export interface AuthSessionState {
   /** True when an access token exists but is past expiry (needs refresh/sign-in). */
   expired: boolean;
   expiresAt: number | null;
+  /** Active organization id (from the validated org cookie), or null. */
+  orgId: string | null;
 }
 
 function authBase(): { url: string; anon: string } {
@@ -102,6 +106,69 @@ export function passwordSignIn(email: string, password: string): Promise<AuthTok
   return grant({ email, password }, "password");
 }
 
+/**
+ * Request a password-reset email. Enumeration-safe by design: any non-network
+ * outcome resolves — callers always show the same "if an account exists…"
+ * message. Only a network/config failure throws (honest unavailable state).
+ */
+export async function requestPasswordReset(email: string): Promise<void> {
+  const { url, anon } = authBase();
+  try {
+    await fetch(`${url}/auth/v1/recover`, {
+      method: "POST",
+      headers: { "content-type": "application/json", apikey: anon },
+      body: JSON.stringify({ email }),
+      cache: "no-store",
+    });
+  } catch (e) {
+    throw new AdapterError(
+      "unavailable",
+      "The reset service is unreachable right now. Please try again.",
+      e instanceof Error ? e.message : undefined,
+    );
+  }
+}
+
+/**
+ * Complete a reset using the RECOVERY access token from the emailed link
+ * (Supabase puts it in the URL fragment, so only the browser ever sees it —
+ * it reaches us in a POST body, is used once here, and is never stored).
+ */
+export async function completePasswordReset(
+  recoveryAccessToken: string,
+  newPassword: string,
+): Promise<void> {
+  const { url, anon } = authBase();
+  let res: Response;
+  try {
+    res = await fetch(`${url}/auth/v1/user`, {
+      method: "PUT",
+      headers: {
+        "content-type": "application/json",
+        apikey: anon,
+        Authorization: `Bearer ${recoveryAccessToken}`,
+      },
+      body: JSON.stringify({ password: newPassword }),
+      cache: "no-store",
+    });
+  } catch (e) {
+    throw new AdapterError(
+      "unavailable",
+      "The reset service is unreachable right now. Please try again.",
+      e instanceof Error ? e.message : undefined,
+    );
+  }
+  if (res.status === 400 || res.status === 401 || res.status === 403) {
+    throw new AdapterError(
+      "unauthenticated",
+      "This reset link is invalid or has expired. Request a new one.",
+    );
+  }
+  if (!res.ok) {
+    throw new AdapterError("unavailable", "Could not update the password. Please try again.");
+  }
+}
+
 export function refreshSession(refreshToken: string): Promise<AuthTokens> {
   return grant({ refresh_token: refreshToken }, "refresh_token");
 }
@@ -120,11 +187,13 @@ export function readAuthSession(
   const email = store.get(AUTH_COOKIES.email)?.value ?? null;
   const expiresAt = Number(store.get(AUTH_COOKIES.expires)?.value ?? 0) || null;
   const expired = Boolean(accessToken && expiresAt && Date.now() > expiresAt - 30_000);
+  const orgId = store.get(AUTH_COOKIES.org)?.value || null;
   return {
     signedIn: Boolean(accessToken && !expired),
     email,
     expired,
     expiresAt,
+    orgId,
     accessToken,
     refreshToken,
   };
