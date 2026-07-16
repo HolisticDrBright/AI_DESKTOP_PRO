@@ -1,9 +1,9 @@
 if (typeof window !== "undefined") {
   throw new Error("This module is server-only and must not run in the browser.");
 }
-import { trpcMutation, trpcQuery } from "./trpc.server";
+import { backendUpload, trpcMutation, trpcQuery } from "./trpc.server";
 import type { LabWorkspace } from "./labs.mock";
-import type { LiveReviewResult, ReviewDecision } from "./live-types";
+import type { LiveReviewResult, LiveUploadResult, ReviewDecision } from "./live-types";
 
 /**
  * Live `labs` namespace (server-only).
@@ -37,5 +37,24 @@ export const labsLive = {
       { observationId, decision, note },
       sessionToken,
     );
+  },
+
+  /**
+   * Upload a lab PDF for ingestion. The backend runs the whole pipeline as
+   * the signed-in practitioner: lab_documents insert under RLS → storage
+   * upload (path-scoped storage RLS) → deterministic extraction →
+   * ingest_lab_extraction RPC (observations + review-queue item + audit,
+   * atomic — migration 0016). A 'failed' status is an honest outcome: the
+   * PDF is stored for manual review and the failure is audited.
+   */
+  uploadDocument(
+    patientId: string,
+    file: File,
+    sessionToken?: string | null,
+  ): Promise<LiveUploadResult> {
+    const form = new FormData();
+    form.set("patientId", patientId);
+    form.set("file", file);
+    return backendUpload<LiveUploadResult>("/api/clinical/labs/upload", form, sessionToken);
   },
 };

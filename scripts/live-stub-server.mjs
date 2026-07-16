@@ -89,12 +89,16 @@ const labMarkers = [
   },
 ];
 
+const labReports = [
+  { id: "ffffffff-1111-2222-3333-444444444401", name: "Fixture panel — July", lab: "Fixture Lab", collectedAt: iso(15 * 864e5), uploadedAt: iso(6 * 864e5), markerCount: 3 },
+];
+
 function labsWorkspaceFor(patient) {
   const reviewed = labMarkers.filter((m) => m.reviewState === "reviewed").length;
   return {
     patientId: patient.id,
     patientName: `${patient.first_name} ${patient.last_name}`,
-    lastUpload: iso(6 * 864e5),
+    lastUpload: labReports[labReports.length - 1].uploadedAt,
     lastSynced: new Date().toISOString(),
     reviewSummary: {
       reviewed,
@@ -102,11 +106,77 @@ function labsWorkspaceFor(patient) {
       lowConfidence: labMarkers.filter((m) => m.confidenceBand === "low").length,
       abnormal: labMarkers.filter((m) => m.status !== "normal" && m.status !== "optimal").length,
     },
-    reports: [
-      { id: "ffffffff-1111-2222-3333-444444444401", name: "Fixture panel — July", lab: "Fixture Lab", collectedAt: iso(15 * 864e5), uploadedAt: iso(6 * 864e5), markerCount: labMarkers.length },
-    ],
+    reports: [...labReports].reverse(),
     queue: [],
     markers: labMarkers,
+  };
+}
+
+/** Fixture ingestion result for an uploaded PDF: 2 markers, 1 low-confidence. */
+function ingestUploadFixture(patientId) {
+  const docId = "ffffffff-1111-2222-3333-444444444402";
+  labReports.push({
+    id: docId,
+    name: "Uploaded panel (fixture extraction)",
+    lab: "Fixture Lab",
+    collectedAt: new Date().toISOString(),
+    uploadedAt: new Date().toISOString(),
+    markerCount: 2,
+  });
+  labMarkers.push(
+    {
+      id: "eeeeeeee-1111-2222-3333-444444444404",
+      name: "Glucose", unit: "mg/dL", current: 92, currentDisplay: "92 mg/dL",
+      labRangeText: "65-99 mg/dL", optimalRange: { unit: "mg/dL", source: "Not configured" },
+      status: "normal", trend: "needs-review",
+      series: [{ date: "Jul", value: 92 }],
+      confidence: 93, confidenceBand: "high", reviewState: "awaiting-review",
+      collectedAt: new Date().toISOString(),
+      source: { reportName: "Uploaded panel (fixture extraction)", location: "p. 1", snippet: "Glucose 92 mg/dL", confidenceNote: "Extraction confidence 93% (fixture)" },
+      provenance: { sourceType: "measured", sourceName: "Uploaded panel", lastUpdated: new Date().toISOString() },
+      relatedSystems: [], relatedContext: [], relatedHypotheses: [], relatedProtocols: [], seeds: [],
+    },
+    {
+      id: "eeeeeeee-1111-2222-3333-444444444405",
+      name: "Osmolality", unit: "mOsm/kg", current: 285, currentDisplay: "285 mOsm/kg",
+      labRangeText: "275-295 mOsm/kg", optimalRange: { unit: "mOsm/kg", source: "Not configured" },
+      status: "normal", trend: "needs-review",
+      series: [{ date: "Jul", value: 285 }],
+      confidence: 58, confidenceBand: "low", reviewState: "not-reviewed",
+      collectedAt: new Date().toISOString(),
+      source: { reportName: "Uploaded panel (fixture extraction)", location: "p. 1", snippet: "Osmolality 285 mOsm/kg", confidenceNote: "Extraction confidence 58% — verify against source (fixture)" },
+      provenance: { sourceType: "measured", sourceName: "Uploaded panel", lastUpdated: new Date().toISOString() },
+      relatedSystems: [], relatedContext: [], relatedHypotheses: [], relatedProtocols: [], seeds: [],
+    },
+  );
+  const queueId = "bbbbbbbb-1111-2222-3333-444444444405";
+  queue.set(queueId, {
+    id: queueId,
+    itemType: "lab_extraction",
+    title: "Verify 1 low-confidence marker from uploaded panel",
+    priority: "medium",
+    status: "open",
+    patientId,
+    patientName: "Fixture Patient",
+    assigneeName: "Demo Practitioner",
+    dueAt: null,
+    createdAt: new Date().toISOString(),
+  });
+  pushAudit(
+    "lab_document.ingest",
+    "lab_document",
+    docId,
+    "Lab document extracted (2 markers)",
+    { marker_count: 2, low_confidence_count: 1, matched_definitions: 1, review_queue_item_id: queueId },
+    patientId,
+  );
+  return {
+    documentId: docId,
+    status: "extracted",
+    inserted: 2,
+    matched: 1,
+    lowConfidence: 1,
+    queueItemId: queueId,
   };
 }
 
@@ -149,6 +219,39 @@ const readBody = (req) =>
     });
   });
 
+const readRaw = (req) =>
+  new Promise((resolve) => {
+    const chunks = [];
+    req.on("data", (c) => chunks.push(c));
+    req.on("end", () => resolve(Buffer.concat(chunks)));
+  });
+
+/** Just enough multipart parsing for the fixture: text fields + file presence. */
+function parseMultipart(buffer, contentType) {
+  const boundary = /boundary=(?:"([^"]+)"|([^;]+))/.exec(contentType ?? "");
+  if (!boundary) return { fields: {}, hasFile: false, fileBytes: 0 };
+  const marker = `--${(boundary[1] ?? boundary[2]).trim()}`;
+  const raw = buffer.toString("latin1");
+  const fields = {};
+  let hasFile = false;
+  let fileBytes = 0;
+  for (const part of raw.split(marker)) {
+    const headerEnd = part.indexOf("\r\n\r\n");
+    if (headerEnd === -1) continue;
+    const headers = part.slice(0, headerEnd);
+    const value = part.slice(headerEnd + 4).replace(/\r\n$/, "");
+    const name = /name="([^"]+)"/.exec(headers)?.[1];
+    if (!name) continue;
+    if (/filename="/.test(headers)) {
+      hasFile = true;
+      fileBytes = value.length;
+    } else {
+      fields[name] = value;
+    }
+  }
+  return { fields, hasFile, fileBytes };
+}
+
 /* ------------------------------------------------------------------- server */
 
 createServer(async (req, res) => {
@@ -165,6 +268,23 @@ createServer(async (req, res) => {
       expires_in: 3600,
       user: { email: body.email ?? "demo@local" },
     });
+  }
+
+  // Multipart lab-PDF ingestion endpoint (same contract as the real backend).
+  if (url.pathname === "/api/clinical/labs/upload" && req.method === "POST") {
+    if (!/^Bearer .+/.test(req.headers.authorization ?? "")) {
+      return json(res, 401, { error: { code: "unauthenticated", message: "Authentication required" } });
+    }
+    const raw = await readRaw(req);
+    const { fields, hasFile, fileBytes } = parseMultipart(raw, req.headers["content-type"]);
+    if (!hasFile || fileBytes === 0 || !fields.patientId) {
+      return json(res, 400, { error: { code: "invalid", message: "A PDF file is required" } });
+    }
+    const patient = PATIENTS.find((p) => p.id === fields.patientId);
+    if (!patient) {
+      return json(res, 403, { error: { code: "forbidden", message: "Patient not found or not accessible" } });
+    }
+    return json(res, 200, { data: ingestUploadFixture(patient.id) });
   }
 
   if (!url.pathname.startsWith("/api/trpc/")) return json(res, 404, { error: "not found" });

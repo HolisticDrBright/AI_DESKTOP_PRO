@@ -60,3 +60,16 @@ export interface LiveAuditEvent {
   occurredAt: string;
   metadata: Record<string, unknown>;
 }
+
+/** Result of a live lab-PDF upload+ingestion (backend /api/clinical/labs/upload). */
+export interface LiveUploadResult {
+  documentId: string;
+  status: "extracted" | "failed";
+  /** extracted only */
+  inserted?: number;
+  matched?: number;
+  lowConfidence?: number;
+  queueItemId?: string | null;
+  /** failed only — fixed vocabulary, never free text */
+  failureReason?: "unreadable_pdf" | "no_text_extracted" | "no_markers_found";
+}

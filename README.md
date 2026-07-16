@@ -51,7 +51,8 @@ backend or env vars. In sandboxed CI images with a pre-installed browser, point
 nothing is persisted and no sign-in is needed. Setting
 `NEXT_PUBLIC_USE_LIVE_API=true` (plus the backend env in
 [`.env.example`](.env.example)) routes the wired slices — patient read, labs
-workspace + marker review, Tasks/Review queue + resolve, and the append-only
+workspace + marker review, **lab PDF upload → extraction → review queue**,
+Tasks/Review queue + resolve, and the append-only
 audit trail — through the authenticated backend under RLS, as the practitioner
 signed in at `/login` (httpOnly cookie session; see
 [`docs/live-auth-and-seeding.md`](docs/live-auth-and-seeding.md) for sign-in

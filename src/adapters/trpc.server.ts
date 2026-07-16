@@ -111,3 +111,68 @@ export function trpcQuery<T>(path: string, input?: unknown, sessionToken?: strin
 export function trpcMutation<T>(path: string, input?: unknown, sessionToken?: string | null): Promise<T> {
   return call<T>(path, "POST", input, sessionToken);
 }
+
+/**
+ * Multipart POST to a non-tRPC backend endpoint (same host as TRPC_BASE_URL,
+ * e.g. /api/clinical/labs/upload — file uploads can't ride the superjson
+ * link). Same auth + error normalization as the tRPC calls; the backend's
+ * error envelope { error: { code, message } } already speaks AdapterError
+ * codes.
+ */
+export async function backendUpload<T>(
+  path: string,
+  form: FormData,
+  sessionToken?: string | null,
+): Promise<T> {
+  let token: string;
+  try {
+    token = await getClinicalAccessToken(sessionToken);
+  } catch (e) {
+    if (e instanceof AdapterError) throw e;
+    throw new AdapterError(
+      "unavailable",
+      undefined,
+      `token: ${e instanceof Error ? e.message : "unknown"}`,
+    );
+  }
+
+  const base = TRPC_BASE_URL.replace(/\/api\/trpc\/?$/, "");
+  let res: Response;
+  try {
+    res = await fetch(`${base}${path}`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: form,
+      cache: "no-store",
+    });
+  } catch (e) {
+    throw new AdapterError(
+      "unavailable",
+      undefined,
+      `upload ${path}: ${e instanceof Error ? e.message : "network error"}`,
+    );
+  }
+
+  let body: { data?: T; error?: { code?: string; message?: string } } = {};
+  try {
+    body = (await res.json()) as typeof body;
+  } catch {
+    throw new AdapterError("unknown", undefined, `upload ${path}: non-JSON response (${res.status})`);
+  }
+
+  if (!res.ok || body.error) {
+    const known: AdapterErrorCode[] = [
+      "unauthenticated",
+      "forbidden",
+      "not_found",
+      "invalid",
+      "unavailable",
+      "unknown",
+    ];
+    const code = known.includes(body.error?.code as AdapterErrorCode)
+      ? (body.error?.code as AdapterErrorCode)
+      : codeFromHttpStatus(res.status);
+    throw new AdapterError(code, body.error?.message, `upload ${path} (${res.status})`);
+  }
+  return body.data as T;
+}

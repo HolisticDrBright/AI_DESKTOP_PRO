@@ -13,6 +13,7 @@
  *   - actions.listLiveAuditEvents   -> live (dual-mode Audit Log)
  *   - everything else               -> mock/demo session (see docs/live-api.md)
  */
+import { AdapterError } from "./errors";
 import {
   DEFAULT_PATIENT_ID,
   getPatient,
@@ -464,6 +465,19 @@ export const api = {
         reviewed: true,
       });
       return { ok: true, message: `Optimal range updated: ${ctx.markerName}. (demo — not persisted)` };
+    },
+    /**
+     * LIVE ONLY: upload a lab PDF for real ingestion — storage + extraction +
+     * observations + review-queue item + audit, all as the signed-in
+     * practitioner (see labs.live.ts). A "failed" result is honest: the PDF
+     * is stored for manual review and the failure is audited. Demo mode uses
+     * queueUploadDemo instead (no file ever leaves the browser).
+     */
+    uploadDocument: async (patientId: string, file: File) => {
+      if (!USE_LIVE_API) {
+        throw new AdapterError("invalid", "Demo mode does not upload files.");
+      }
+      return liveClient.uploadLabDocument(patientId, file);
     },
     /** Queue a demo upload — no file is uploaded, no persistence. */
     queueUploadDemo: async (input: { source: string; lab: string; patientName: string }) => {

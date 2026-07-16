@@ -76,6 +76,7 @@ is revoked from `public` + `anon` and granted to `authenticated` only.
 | `labs.getWorkspace` | mock | ✅ real workspace via `clinical.labs.getWorkspace` |
 | `labs.reviewMarker` / `flagMarker` | session + session audit | ✅ `review_biomarker` RPC (persist + audit) |
 | `labs.createReviewTask` | session queue item | ✅ `create_review_task` RPC |
+| `labs.uploadDocument` | n/a (demo keeps `queueUploadDemo`, no file leaves the browser) | ✅ real PDF ingestion: storage upload + deterministic extraction + `ingest_lab_extraction` RPC (migration `0016` — observations w/ verbatim originals + confidence, low-confidence review-queue item, audit, atomic); failures → `mark_lab_document_failed` (PDF stays stored, audited) |
 | `tasks.getQueue` | mock queue | ✅ real `review_queue_items` (RLS-scoped), settled status carried through reload |
 | `actions.execute` — `resolve` on a queue item | session outcome + session audit | ✅ `resolve_review_queue_item` RPC (migration `0014`): status + audit atomically, idempotent |
 | `actions.listLiveAuditEvents` | `[]` | ✅ `list_audit_events` RPC |

@@ -22,6 +22,8 @@ import {
   type OptimalRange,
 } from "@/adapters/labs.mock";
 import { isAdapterError } from "@/adapters/errors";
+import type { LiveUploadResult } from "@/adapters/live-types";
+import { USE_LIVE_API } from "@/adapters/mode";
 import { useReviewOutcome, type ReviewOutcome } from "@/adapters/session-store";
 import type { ReviewState, Tone } from "@/adapters/types";
 import { ActionBar } from "@/components/ui/ActionBar";
@@ -149,45 +151,58 @@ export function LabsWorkspace({
       </section>
     );
   }
-  if (!ws || ws.markers.length === 0) {
-    return (
-      <section data-screen-label="Labs & Biomarkers" className="relative px-6 pt-[22px] pb-6">
-        <ClinicalEmpty
-          icon={<FlaskConical size={20} strokeWidth={1.75} className="text-slate-badge" aria-hidden />}
-          title="No lab results yet"
-          message={`There are no lab markers on file for ${patientName}. Uploaded reports appear here after extraction and practitioner review.`}
-        />
-      </section>
-    );
-  }
+  if (!ws) return null;
 
+  const empty = ws.markers.length === 0;
   const selected = ws.markers.find((m) => m.id === selectedId) ?? null;
   const optimalOf = (m: BiomarkerMarker) => overrides[m.id] ?? m.optimalRange;
 
   return (
     <section data-screen-label="Labs & Biomarkers" className="relative pb-6">
       <WorkspaceHeader ws={ws} onUpload={() => setUploadOpen(true)} />
-      <QueueStrip ws={ws} />
 
-      <div className="mt-4 grid grid-cols-[minmax(0,1fr)_340px] items-start gap-4">
-        <MarkerTable
-          markers={ws.markers}
-          patientId={patientId}
-          selectedId={selectedId}
-          optimalOf={optimalOf}
-          onSelect={setSelectedId}
-        />
-        <MarkerInspector
-          marker={selected}
-          patientId={patientId}
-          patientName={patientName}
-          optimalRange={selected ? optimalOf(selected) : undefined}
-          onConfigure={() => selected && setConfigMarker(selected)}
-        />
-      </div>
+      {empty ? (
+        // Upload stays available — a fresh live patient starts exactly here.
+        <div className="mt-4">
+          <ClinicalEmpty
+            icon={<FlaskConical size={20} strokeWidth={1.75} className="text-slate-badge" aria-hidden />}
+            title="No lab results yet"
+            message={`There are no lab markers on file for ${patientName}. Upload a lab report to run extraction and practitioner review.`}
+          />
+        </div>
+      ) : (
+        <>
+          <QueueStrip ws={ws} />
+
+          <div className="mt-4 grid grid-cols-[minmax(0,1fr)_340px] items-start gap-4">
+            <MarkerTable
+              markers={ws.markers}
+              patientId={patientId}
+              selectedId={selectedId}
+              optimalOf={optimalOf}
+              onSelect={setSelectedId}
+            />
+            <MarkerInspector
+              marker={selected}
+              patientId={patientId}
+              patientName={patientName}
+              optimalRange={selected ? optimalOf(selected) : undefined}
+              onConfigure={() => selected && setConfigMarker(selected)}
+            />
+          </div>
+        </>
+      )}
 
       {uploadOpen && (
-        <UploadDrawer patientName={patientName} onClose={() => setUploadOpen(false)} />
+        <UploadDrawer
+          patientId={patientId}
+          patientName={patientName}
+          onClose={() => setUploadOpen(false)}
+          onUploaded={() => {
+            setUploadOpen(false);
+            setReloadKey((k) => k + 1);
+          }}
+        />
       )}
       {configMarker && (
         <OptimalRangeModal
@@ -686,11 +701,18 @@ function ContextRow({ label, items }: { label: string; items: string[] }) {
 
 /* ------------------------------------------------------------- upload drawer */
 
-function UploadDrawer({ patientName, onClose }: { patientName: string; onClose: () => void }) {
-  const { announce } = useFeedback();
-  const [lab, setLab] = useState("Quest Diagnostics");
+function UploadDrawer({
+  patientId,
+  patientName,
+  onClose,
+  onUploaded,
+}: {
+  patientId: string;
+  patientName: string;
+  onClose: () => void;
+  onUploaded: () => void;
+}) {
   const headingRef = useRef<HTMLHeadingElement>(null);
-  const steps = ["Upload received", "OCR / extraction", "Marker matching", "Confidence scoring", "Practitioner review queue"];
 
   useEffect(() => {
     headingRef.current?.focus();
@@ -698,14 +720,6 @@ function UploadDrawer({ patientName, onClose }: { patientName: string; onClose: 
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
-
-  const queue = () =>
-    void api.labs
-      .queueUploadDemo({ source: "manual upload", lab, patientName })
-      .then((r) => {
-        announce(r.message);
-        onClose();
-      });
 
   return (
     <aside
@@ -726,6 +740,146 @@ function UploadDrawer({ patientName, onClose }: { patientName: string; onClose: 
         </button>
       </div>
 
+      {USE_LIVE_API ? (
+        <LiveUploadBody patientId={patientId} onUploaded={onUploaded} />
+      ) : (
+        <DemoUploadBody patientName={patientName} onClose={onClose} />
+      )}
+    </aside>
+  );
+}
+
+/** LIVE upload: real PDF → backend ingestion pipeline → honest result panel. */
+function LiveUploadBody({ patientId, onUploaded }: { patientId: string; onUploaded: () => void }) {
+  const { announce } = useFeedback();
+  const [file, setFile] = useState<File | null>(null);
+  const [phase, setPhase] = useState<"idle" | "working" | "done">("idle");
+  const [result, setResult] = useState<LiveUploadResult | null>(null);
+  const [errorMsg, setErrorMsg] = useState("");
+
+  const submit = () => {
+    if (!file || phase === "working") return;
+    setPhase("working");
+    setErrorMsg("");
+    api.labs
+      .uploadDocument(patientId, file)
+      .then((r) => {
+        setResult(r);
+        setPhase("done");
+        announce(
+          r.status === "extracted"
+            ? `Lab report extracted: ${r.inserted} markers. (saved to record + audit)`
+            : "Lab report stored, but extraction failed — it is queued for manual review.",
+        );
+      })
+      .catch((e) => {
+        setPhase("idle");
+        setErrorMsg(isAdapterError(e) ? e.safeMessage : "Upload failed. Please try again.");
+      });
+  };
+
+  const FAILURE_COPY: Record<string, string> = {
+    unreadable_pdf: "The PDF could not be read (it may be scanned or encrypted).",
+    no_text_extracted: "No text could be extracted (image-only PDFs are not supported yet).",
+    no_markers_found: "No lab results were recognized in the document.",
+  };
+
+  if (phase === "done" && result) {
+    const ok = result.status === "extracted";
+    return (
+      <div className="flex flex-1 flex-col">
+        <div className="flex-1 overflow-y-auto px-4 py-[13px]">
+          <div
+            className={cn(
+              "rounded-[12px] border px-4 py-[14px]",
+              ok ? "border-[rgba(31,138,90,0.3)] bg-positive-tint" : "border-[rgba(199,126,20,0.28)] bg-warning-tint",
+            )}
+            role="status"
+          >
+            <div className="text-[13px] font-bold text-ink">
+              {ok ? `${result.inserted} markers extracted` : "Stored — extraction failed"}
+            </div>
+            <p className="m-0 mt-[6px] text-[12px] leading-[1.5] text-body">
+              {ok
+                ? `${result.matched ?? 0} matched known biomarkers · ${result.lowConfidence ?? 0} flagged low-confidence${
+                    (result.lowConfidence ?? 0) > 0 ? " and queued for your review" : ""
+                  }. Every extracted value keeps the lab's original text and needs practitioner review before use.`
+                : `${FAILURE_COPY[result.failureReason ?? ""] ?? "Extraction failed."} The original PDF is stored with the patient record for manual review, and the failure was audited.`}
+            </p>
+          </div>
+        </div>
+        <div className="shrink-0 border-t border-hairline bg-[rgba(247,250,252,0.7)] px-4 py-3">
+          <button
+            onClick={onUploaded}
+            className="h-9 w-full cursor-pointer rounded-lg border-none bg-action text-[12.5px] font-semibold text-white hover:bg-action-deep focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink"
+          >
+            {ok ? "View extracted markers" : "Back to workspace"}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-1 flex-col">
+      <div className="flex-1 overflow-y-auto px-4 py-[13px]">
+        <label className="flex cursor-pointer flex-col items-center gap-[7px] rounded-[12px] border border-dashed border-line-btn bg-[rgba(247,250,252,0.6)] px-4 py-[26px] text-center hover:border-action focus-within:outline-2 focus-within:outline-action">
+          <Upload size={22} strokeWidth={1.5} className="text-muted" aria-hidden />
+          <span className="text-[12.5px] font-semibold text-body">
+            {file ? file.name : "Choose a lab report PDF"}
+          </span>
+          <span className="text-[11px] text-faint">PDF only · 15 MB max</span>
+          <input
+            type="file"
+            accept="application/pdf,.pdf"
+            aria-label="Lab report PDF"
+            className="sr-only"
+            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+          />
+        </label>
+
+        {errorMsg && (
+          <p role="alert" className="mt-[12px] rounded-[9px] bg-critical-tint px-[11px] py-[9px] text-[12px] font-medium text-critical">
+            {errorMsg}
+          </p>
+        )}
+
+        <div className="mt-[13px] rounded-[9px] border border-line bg-[rgba(247,250,252,0.6)] px-[11px] py-[9px] text-[11px] leading-[1.5] text-subtle">
+          The PDF is stored with the patient record; values are extracted with
+          per-marker confidence. Low-confidence extractions go to your review
+          queue — nothing is used clinically until you review it.
+        </div>
+      </div>
+
+      <div className="shrink-0 border-t border-hairline bg-[rgba(247,250,252,0.7)] px-4 py-3">
+        <button
+          onClick={submit}
+          disabled={!file || phase === "working"}
+          className="h-9 w-full cursor-pointer rounded-lg border-none bg-action text-[12.5px] font-semibold text-white hover:bg-action-deep focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {phase === "working" ? "Uploading & extracting…" : "Upload & extract"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** DEMO upload: unchanged behavior — no file leaves the browser. */
+function DemoUploadBody({ patientName, onClose }: { patientName: string; onClose: () => void }) {
+  const { announce } = useFeedback();
+  const [lab, setLab] = useState("Quest Diagnostics");
+  const steps = ["Upload received", "OCR / extraction", "Marker matching", "Confidence scoring", "Practitioner review queue"];
+
+  const queue = () =>
+    void api.labs
+      .queueUploadDemo({ source: "manual upload", lab, patientName })
+      .then((r) => {
+        announce(r.message);
+        onClose();
+      });
+
+  return (
+    <>
       <div className="flex-1 overflow-y-auto px-4 py-[13px]">
         <div className="flex flex-col items-center gap-[7px] rounded-[12px] border border-dashed border-line-btn bg-[rgba(247,250,252,0.6)] px-4 py-[26px] text-center">
           <Upload size={22} strokeWidth={1.5} className="text-muted" aria-hidden />
@@ -770,7 +924,7 @@ function UploadDrawer({ patientName, onClose }: { patientName: string; onClose: 
           Queue for review (demo)
         </button>
       </div>
-    </aside>
+    </>
   );
 }
 

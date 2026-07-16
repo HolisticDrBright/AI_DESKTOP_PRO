@@ -14,6 +14,7 @@ import type {
   LiveResolveResult,
   LiveReviewResult,
   LiveTaskResult,
+  LiveUploadResult,
   ReviewDecision,
 } from "./live-types";
 
@@ -24,14 +25,18 @@ interface Envelope<T> {
 
 async function liveFetch<T>(
   path: string,
-  init: { method: "GET" | "POST"; body?: unknown },
+  init: { method: "GET" | "POST"; body?: unknown; form?: FormData },
 ): Promise<T> {
   let res: Response;
   try {
+    // FormData sets its own multipart boundary — no explicit content-type.
     res = await fetch(`/api/live/${path}`, {
       method: init.method,
-      headers: init.body !== undefined ? { "content-type": "application/json" } : undefined,
-      body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
+      headers:
+        init.form === undefined && init.body !== undefined
+          ? { "content-type": "application/json" }
+          : undefined,
+      body: init.form ?? (init.body !== undefined ? JSON.stringify(init.body) : undefined),
     });
   } catch (e) {
     throw new AdapterError("unavailable", undefined, e instanceof Error ? e.message : undefined);
@@ -60,6 +65,13 @@ export const liveClient = {
       method: "POST",
       body: { observationId, decision, note },
     }),
+
+  uploadLabDocument: (patientId: string, file: File) => {
+    const form = new FormData();
+    form.set("patientId", patientId);
+    form.set("file", file);
+    return liveFetch<LiveUploadResult>("labs/upload", { method: "POST", form });
+  },
 
   listQueue: () => liveFetch<LiveQueueItem[]>("tasks/queue", { method: "GET" }),
 

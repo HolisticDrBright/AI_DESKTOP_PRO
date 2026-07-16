@@ -79,6 +79,32 @@ test("live labs workspace loads markers and a review persists across reload", as
   await expect(page.getByText("biomarker.review").first()).toBeVisible();
 });
 
+test("uploading a lab PDF extracts markers and queues a low-confidence review", async ({ page }) => {
+  await page.goto("/patients/aaaaaaaa-1111-2222-3333-444444444401/labs");
+  await page.getByRole("button", { name: "Upload lab" }).click();
+
+  await page.getByLabel("Lab report PDF").setInputFiles({
+    name: "panel.pdf",
+    mimeType: "application/pdf",
+    buffer: Buffer.from("%PDF-1.4 fixture panel"),
+  });
+  await page.getByRole("button", { name: "Upload & extract" }).click();
+
+  // Honest result panel, then the refreshed workspace shows the new markers.
+  await expect(page.getByText("2 markers extracted")).toBeVisible();
+  await page.getByRole("button", { name: "View extracted markers" }).click();
+  await expect(page.getByRole("button", { name: "Select Glucose" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Select Osmolality" })).toBeVisible();
+
+  // The low-confidence extraction landed in the live review queue…
+  await page.goto("/tasks");
+  await expect(page.getByText("Verify 1 low-confidence marker from uploaded panel")).toBeVisible();
+
+  // …and the ingestion event is in the live audit trail.
+  await page.goto("/audit-log");
+  await expect(page.getByText("lab_document.ingest").first()).toBeVisible();
+});
+
 test("practitioner sign-in and sign-out work via httpOnly cookie session", async ({ page }) => {
   await page.goto("/login");
   await page.getByLabel("Email").fill("practitioner@fixture.local");

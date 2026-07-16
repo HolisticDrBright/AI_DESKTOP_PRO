@@ -37,14 +37,19 @@ Status legend: ✅ live path exists · 🟢 ready to wire (schema + pattern exis
 - **First live mutation:** patient demographics edit → `UPDATE patient_profiles`
   (role-gated) + audit event
 
-## Labs — ✅ live path exists (the proven slice)
+## Labs — ✅ live path exists (the proven slice, now incl. PDF ingestion)
 - **Route:** `/patients/:id/labs` · **Adapter:** `api.labs.*`
 - **Mock:** `labs.mock.ts` · **Session:** `lab:<pid>:<mid>` review outcomes
 - **Live tables:** `biomarker_observations`, `biomarker_definitions`,
-  `lab_panels`, `lab_documents`; RPC `review_biomarker` (atomic review+audit)
-- **Missing fields:** trend series need a per-marker history query; optimal
-  ranges need `biomarker_optimal_ranges` (practice-scoped) — lab reference
-  interval is never replaced
+  `lab_panels`, `lab_documents`; RPCs `review_biomarker` (atomic review+audit)
+  and `ingest_lab_extraction` / `mark_lab_document_failed` (migration `0016`)
+- **Ingestion:** Upload lab (live) → `lab-documents` storage bucket
+  (path-scoped storage RLS) → backend deterministic extraction (alias-anchored
+  parser, no AI) → observations with verbatim originals + per-marker
+  confidence → low-confidence rows open a review-queue item → audit
+- **Missing fields:** optimal ranges need `biomarker_optimal_ranges`
+  (practice-scoped) — lab reference interval is never replaced; image-only
+  (scanned) PDFs are not extracted yet (stored + honest `failed` status)
 - **First live mutation:** already defined — `review_biomarker` (backend
   procedure `clinical.labs.reviewMarker` is the remaining hop)
 

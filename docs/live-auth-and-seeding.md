@@ -85,7 +85,8 @@ E2E_LIVE=1 TRPC_BASE_URL=https://<railway-domain>/api/trpc \
 ```
 
 This exercises sign-in/sign-out, live queue load, resolve → reload
-persistence, the labs workspace + marker review → reload persistence, the
+persistence, the labs workspace + marker review → reload persistence, a lab
+PDF upload → extraction → low-confidence review-queue item → audit, the
 persistent audit log, and a console-error sweep against the real stack. (In
 sandboxes that block `*.supabase.co`, the same suite runs against the
 committed contract fixture instead — see `docs/live-api.md`.)
