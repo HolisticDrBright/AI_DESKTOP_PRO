@@ -10,7 +10,8 @@
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "test:e2e": "playwright test",
-    "test:e2e:headed": "playwright test --headed"
+    "test:e2e:headed": "playwright test --headed",
+    "test:unit": "TZ=America/Los_Angeles vitest run"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.101.2",
@@ -30,6 +31,10 @@
     "eslint-config-next": "^15.5.20",
     "playwright": "^1.61.1",
     "tailwindcss": "^4.3.2",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "4.1.5"
+  },
+  "overrides": {
+    "postcss": "^8.5.10"
   }
 }

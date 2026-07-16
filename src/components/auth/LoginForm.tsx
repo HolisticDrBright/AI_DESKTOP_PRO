@@ -58,7 +58,10 @@ export function LoginForm() {
         return;
       }
       setSession({ signedIn: true, email: json.data?.email ?? email });
-      router.push("/");
+      // Return to where the practitioner was headed. Same-origin paths only —
+      // absolute/protocol-relative values would be an open redirect.
+      const next = new URLSearchParams(window.location.search).get("next") ?? "/";
+      router.push(next.startsWith("/") && !next.startsWith("//") ? next : "/");
       router.refresh();
     } catch {
       setError("The sign-in service is unreachable right now. Please try again.");

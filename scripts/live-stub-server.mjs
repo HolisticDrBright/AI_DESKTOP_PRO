@@ -59,7 +59,7 @@ const labMarkers = [
     series: [{ date: "May", value: 3.4 }, { date: "Jul", value: 2.8 }],
     confidence: 97, confidenceBand: "high", reviewState: "awaiting-review",
     collectedAt: iso(15 * 864e5),
-    source: { reportName: "Fixture panel — July", location: "p. 2", snippet: "hs-CRP 2.8 mg/L (H)", confidenceNote: "Extraction confidence 97% (fixture)" },
+    source: { reportName: "Fixture panel — July", location: "p. 2", snippet: "hs-CRP 2.8 mg/L (H)", confidenceNote: "Extraction confidence 97% (fixture)", documentId: "ffffffff-1111-2222-3333-444444444401" },
     provenance: { sourceType: "measured", sourceName: "Fixture panel — July", lastUpdated: iso(6 * 864e5) },
     relatedSystems: [], relatedContext: [], relatedHypotheses: [], relatedProtocols: [], seeds: [],
   },
@@ -71,7 +71,7 @@ const labMarkers = [
     series: [{ date: "Jul", value: 96 }],
     confidence: 55, confidenceBand: "low", reviewState: "not-reviewed",
     collectedAt: iso(15 * 864e5),
-    source: { reportName: "Fixture panel — July", location: "p. 3", snippet: "Ferritin 96 ng/mL", confidenceNote: "Extraction confidence 55% — verify against source (fixture)" },
+    source: { reportName: "Fixture panel — July", location: "p. 3", snippet: "Ferritin 96 ng/mL", confidenceNote: "Extraction confidence 55% — verify against source (fixture)", documentId: "ffffffff-1111-2222-3333-444444444401" },
     provenance: { sourceType: "measured", sourceName: "Fixture panel — July", lastUpdated: iso(6 * 864e5) },
     relatedSystems: [], relatedContext: [], relatedHypotheses: [], relatedProtocols: [], seeds: [],
   },
@@ -83,7 +83,19 @@ const labMarkers = [
     series: [{ date: "May", value: 2.3 }, { date: "Jul", value: 2.1 }],
     confidence: 99, confidenceBand: "high", reviewState: "reviewed",
     collectedAt: iso(15 * 864e5),
-    source: { reportName: "Fixture panel — July", location: "p. 3", snippet: "TSH 2.1 mIU/L", confidenceNote: "Extraction confidence 99% (fixture)" },
+    source: { reportName: "Fixture panel — July", location: "p. 3", snippet: "TSH 2.1 mIU/L", confidenceNote: "Extraction confidence 99% (fixture)", documentId: "ffffffff-1111-2222-3333-444444444401" },
+    provenance: { sourceType: "measured", sourceName: "Fixture panel — July", lastUpdated: iso(6 * 864e5) },
+    relatedSystems: [], relatedContext: [], relatedHypotheses: [], relatedProtocols: [], seeds: [],
+  },
+  {
+    id: "eeeeeeee-1111-2222-3333-444444444406",
+    name: "Sodium", unit: "mmol/L", current: 141, currentDisplay: "141 mmol/L",
+    labRangeText: "Not provided by lab", optimalRange: { unit: "mmol/L", source: "Not configured" },
+    status: "unknown", trend: "needs-review",
+    series: [{ date: "Jul", value: 141 }],
+    confidence: null, confidenceBand: "unknown", reviewState: "not-reviewed",
+    collectedAt: iso(15 * 864e5),
+    source: { reportName: "Fixture panel — July", location: "Structured result preview", snippet: "Sodium 141 mmol/L", confidenceNote: "Extraction confidence was not recorded — verify against the source before relying on this result.", documentId: "ffffffff-1111-2222-3333-444444444401" },
     provenance: { sourceType: "measured", sourceName: "Fixture panel — July", lastUpdated: iso(6 * 864e5) },
     relatedSystems: [], relatedContext: [], relatedHypotheses: [], relatedProtocols: [], seeds: [],
   },
@@ -132,7 +144,7 @@ function ingestUploadFixture(patientId) {
       series: [{ date: "Jul", value: 92 }],
       confidence: 93, confidenceBand: "high", reviewState: "awaiting-review",
       collectedAt: new Date().toISOString(),
-      source: { reportName: "Uploaded panel (fixture extraction)", location: "p. 1", snippet: "Glucose 92 mg/dL", confidenceNote: "Extraction confidence 93% (fixture)" },
+      source: { reportName: "Uploaded panel (fixture extraction)", location: "p. 1", snippet: "Glucose 92 mg/dL", confidenceNote: "Extraction confidence 93% (fixture)", documentId: docId },
       provenance: { sourceType: "measured", sourceName: "Uploaded panel", lastUpdated: new Date().toISOString() },
       relatedSystems: [], relatedContext: [], relatedHypotheses: [], relatedProtocols: [], seeds: [],
     },
@@ -144,7 +156,7 @@ function ingestUploadFixture(patientId) {
       series: [{ date: "Jul", value: 285 }],
       confidence: 58, confidenceBand: "low", reviewState: "not-reviewed",
       collectedAt: new Date().toISOString(),
-      source: { reportName: "Uploaded panel (fixture extraction)", location: "p. 1", snippet: "Osmolality 285 mOsm/kg", confidenceNote: "Extraction confidence 58% — verify against source (fixture)" },
+      source: { reportName: "Uploaded panel (fixture extraction)", location: "p. 1", snippet: "Osmolality 285 mOsm/kg", confidenceNote: "Extraction confidence 58% — verify against source (fixture)", documentId: docId },
       provenance: { sourceType: "measured", sourceName: "Uploaded panel", lastUpdated: new Date().toISOString() },
       relatedSystems: [], relatedContext: [], relatedHypotheses: [], relatedProtocols: [], seeds: [],
     },
@@ -299,12 +311,32 @@ createServer(async (req, res) => {
   // the desktop's cookie-session sign-in flow can be exercised end-to-end.
   if (url.pathname === "/auth/v1/token") {
     const body = await readBody(req);
+    // Revoked-refresh fixture: exercises the desktop middleware's clear-session
+    // path exactly like Supabase rejecting a rotated-out token.
+    if (body.refresh_token === "revoked-refresh-token") {
+      return json(res, 400, { error: "invalid_grant", error_description: "Token revoked" });
+    }
     return json(res, 200, {
       access_token: "fixture-access-token",
       refresh_token: "fixture-refresh-token",
       expires_in: 3600,
       user: { email: body.email ?? "demo@local" },
     });
+  }
+
+  // Authorized source-document download (same contract as the real backend).
+  const docMatch = /^\/api\/clinical\/labs\/document\/([0-9a-f-]{36})$/.exec(url.pathname);
+  if (docMatch && req.method === "GET") {
+    if (!/^Bearer .+/.test(req.headers.authorization ?? "")) {
+      return json(res, 401, { error: { code: "unauthenticated", message: "Authentication required" } });
+    }
+    const knownDocs = ["ffffffff-1111-2222-3333-444444444401", "ffffffff-1111-2222-3333-444444444402"];
+    if (!knownDocs.includes(docMatch[1])) {
+      return json(res, 403, { error: { code: "forbidden", message: "Document not found or not accessible" } });
+    }
+    pushAudit("document.viewed", "lab_document", docMatch[1], "Source document viewed", {}, PATIENTS[0].id);
+    res.writeHead(200, { "content-type": "application/pdf" });
+    return res.end("%PDF-1.4 fixture source document\n%%EOF");
   }
 
   // Multipart lab-PDF ingestion endpoint (same contract as the real backend).

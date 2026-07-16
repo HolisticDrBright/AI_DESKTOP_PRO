@@ -16,34 +16,40 @@ export async function GET(req: NextRequest) {
   });
 }
 
-/** POST { action, ... } -> append one PHI-safe audit event. */
+/**
+ * POST { eventType, patientId?, resourceId?, metadata? } -> append one
+ * registry-validated audit event. The event's action, resource type, and
+ * display text are server-owned (backend audit registry) — this route never
+ * forwards free-form messages.
+ */
 export async function POST(req: NextRequest) {
   const blocked = liveGuard();
   if (blocked) return blocked;
   return runLive(async () => {
     const body = (await req.json().catch(() => ({}))) as {
-      action?: unknown;
-      resourceType?: unknown;
+      eventType?: unknown;
       resourceId?: unknown;
-      safeMessage?: unknown;
       patientId?: unknown;
       metadata?: unknown;
     };
-    if (typeof body.action !== "string" || !body.action) {
-      throw new AdapterError("invalid", "An audit action is required.");
+    if (typeof body.eventType !== "string" || !body.eventType) {
+      throw new AdapterError("invalid", "An audit event type is required.");
     }
     const str = (v: unknown) => (typeof v === "string" ? v : undefined);
+    const metadata: Record<string, string | number | boolean> = {};
+    if (body.metadata && typeof body.metadata === "object") {
+      for (const [k, v] of Object.entries(body.metadata as Record<string, unknown>)) {
+        if (["string", "number", "boolean"].includes(typeof v)) {
+          metadata[k] = v as string | number | boolean;
+        }
+      }
+    }
     const session = await getRequestSession();
     return actionsLive.recordAudit({
-      action: body.action,
-      resourceType: str(body.resourceType),
+      eventType: body.eventType,
       resourceId: str(body.resourceId),
-      safeMessage: str(body.safeMessage),
       patientId: str(body.patientId),
-      metadata:
-        body.metadata && typeof body.metadata === "object"
-          ? (body.metadata as Record<string, unknown>)
-          : {},
+      metadata,
     }, session.token);
   });
 }

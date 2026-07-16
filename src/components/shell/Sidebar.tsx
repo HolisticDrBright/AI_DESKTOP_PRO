@@ -162,7 +162,10 @@ const ROUTE_TO_NAV: Record<string, string> = {
 export function Sidebar() {
   const pathname = usePathname();
   const patient = parsePatientPath(pathname);
-  const patientId = patient?.patientId ?? DEFAULT_PATIENT_ID;
+  // LIVE mode has no synthetic fallback patient: outside a patient route the
+  // clinical tabs route to the real directory to pick one. Demo keeps its
+  // showcase patient so the tour always lands somewhere.
+  const patientId = patient?.patientId ?? (USE_LIVE_API ? null : DEFAULT_PATIENT_ID);
   const activeId = patient ? TAB_TO_NAV[patient.tab] : (ROUTE_TO_NAV[pathname] ?? "");
 
   // Open-task badge from the same stores as /tasks so it matches the screen.
@@ -210,7 +213,9 @@ export function Sidebar() {
               const href =
                 "href" in item.target
                   ? item.target.href
-                  : patientPath(patientId, item.target.tab);
+                  : patientId
+                    ? patientPath(patientId, item.target.tab)
+                    : "/clients";
               const Icon = item.icon;
               const badge =
                 item.id === "tasks" ? (openTasks > 0 ? String(openTasks) : undefined) : item.badge;

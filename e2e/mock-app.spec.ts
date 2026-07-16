@@ -77,6 +77,24 @@ test("tasks filters narrow the queue (saved view + priority param)", async ({ pa
   expect(high).toBeLessThan(all);
 });
 
+test("overdue saved view actually filters to overdue items (P0 regression)", async ({ page }) => {
+  await page.goto("/tasks");
+  const rows = page.getByText(/Assigned /);
+  await rows.first().waitFor();
+  const all = await rows.count();
+
+  await page.getByRole("button", { name: "Overdue", exact: true }).click();
+  // The memo previously omitted overdueOnly from its deps, so this view
+  // silently showed everything. It must narrow to ONLY overdue rows now.
+  await expect
+    .poll(async () => rows.count(), { message: "overdue view should narrow rows" })
+    .toBe(2);
+  await expect(page.getByText("Iron repletion protocol — phase 1 pending approval")).toBeVisible();
+  // A known non-overdue row must be gone.
+  await expect(page.getByText(/Assigned /).first()).toBeVisible();
+  expect(await rows.count()).toBeLessThan(all);
+});
+
 test("task resolve updates the row and records audit", async ({ page }) => {
   await page.goto("/tasks");
   await page.getByRole("button", { name: /^Resolve —/ }).first().click();

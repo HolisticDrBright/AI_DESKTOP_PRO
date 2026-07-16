@@ -98,12 +98,10 @@ export const liveClient = {
     liveFetch<LiveAuditEvent[]>(`actions/audit?limit=${limit}`, { method: "GET" }),
 
   recordAudit: (input: {
-    action: string;
-    resourceType?: string;
+    eventType: string;
     resourceId?: string;
-    safeMessage?: string;
     patientId?: string;
-    metadata?: Record<string, unknown>;
+    metadata?: Record<string, string | number | boolean>;
   }) => liveFetch<{ id: string }>("actions/audit", { method: "POST", body: input }),
 
   createReviewTask: (input: {

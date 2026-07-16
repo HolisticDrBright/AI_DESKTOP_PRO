@@ -20,7 +20,7 @@ export function PatientHeaderCard({ patient }: { patient: PatientDirectoryEntry 
             <SexGlyph size={13} strokeWidth={2} className="text-action" aria-hidden />
           </div>
           <div className="mt-[2px] text-[12.5px] text-muted">
-            {patient.age} y/o · {patient.sex} · {patient.dob}
+            {patient.age == null ? "Age not recorded" : `${patient.age} y/o`} · {patient.sex} · {patient.dob}
           </div>
           <div className="text-[12.5px] text-muted">Patient ID: {patient.mrn}</div>
         </div>

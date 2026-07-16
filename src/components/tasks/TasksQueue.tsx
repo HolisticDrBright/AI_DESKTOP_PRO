@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Inbox, Search, X } from "lucide-react";
 import { api } from "@/adapters";
@@ -160,8 +160,10 @@ export function TasksQueue({
 
   // Session outcome (optimistic, within this tab) wins; otherwise the LIVE
   // row's settled status applies — that's what makes resolve survive reload.
-  const outcomeOf = (it: QueueItem): ReviewOutcome | undefined =>
-    reviews[`queue:${it.id}`] ?? it.settledOutcome;
+  const outcomeOf = useCallback(
+    (it: QueueItem): ReviewOutcome | undefined => reviews[`queue:${it.id}`] ?? it.settledOutcome,
+    [reviews],
+  );
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -176,8 +178,7 @@ export function TasksQueue({
       if (q && !`${it.title} ${it.patientName}`.toLowerCase().includes(q)) return false;
       return true;
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [items, cats, priority, scope, status, search, reviews]);
+  }, [items, cats, priority, overdueOnly, scope, status, search, outcomeOf]);
 
   const toggleCat = (c: QueueCategory) =>
     setCats((prev) => {

@@ -19,6 +19,25 @@ test.skip(!process.env.E2E_LIVE, "live-mode suite: set E2E_LIVE=1 with a live-fl
 
 test.describe.configure({ mode: "serial" });
 
+test("root enters the real workspace: directory → patient → labs (no mock patient)", async ({ page }) => {
+  // A root 404 (or a redirect to the synthetic demo patient) must FAIL here.
+  const res = await page.goto("/");
+  expect(res!.status()).toBe(200);
+  await page.waitForURL("**/clients");
+  expect(page.url()).not.toContain("p-78435");
+  await expect(page.getByText("live record, scoped to your access")).toBeVisible();
+
+  // Real directory row → real patient shell (header from patient_profiles).
+  await page.getByRole("link", { name: "Fixture Patient" }).click();
+  await page.waitForURL("**/patients/aaaaaaaa-1111-2222-3333-444444444401/summary");
+  await expect(page.getByText("Fixture Patient").first()).toBeVisible();
+  await expect(page.getByText(/Summary panels aren't live yet/)).toBeVisible();
+
+  // Straight into the live labs workspace for the same real patient.
+  await page.getByRole("link", { name: "Open live labs" }).click();
+  await expect(page.getByRole("button", { name: "Select hs-CRP" })).toBeVisible();
+});
+
 test("live queue loads and shows the live boundary copy", async ({ page }) => {
   await page.goto("/tasks");
   await expect(page.getByText(/Live queue — resolving updates the record/)).toBeVisible();
@@ -61,6 +80,30 @@ test("live labs workspace loads markers and a review persists across reload", as
   // Markers come from the fixture backend's clinical.labs.getWorkspace.
   await page.getByRole("button", { name: "Select hs-CRP" }).waitFor();
   await expect(page.getByRole("button", { name: "Select TSH" })).toBeVisible();
+
+  // P0 status/confidence integrity: an unflagged marker reads UNCLASSIFIED
+  // (never "normal"), and missing confidence reads "Not provided" (never 50%).
+  await page.getByRole("button", { name: "Select Sodium" }).click();
+  const inspector = page.locator("section").getByText("Sodium").first();
+  await inspector.waitFor();
+  await expect(page.getByText("Unclassified").first()).toBeVisible();
+  await expect(page.getByText("Not provided").first()).toBeVisible();
+  await expect(page.getByText(/confidence was not recorded/i).first()).toBeVisible();
+
+  // P0 persisted review state, inspector-level: TSH is reviewed IN THE RECORD —
+  // the action must be settled (disabled) even in a fresh session.
+  await page.getByRole("button", { name: "Select TSH" }).click();
+  const reviewedBtn = page.getByRole("button", { name: "Reviewed", exact: true });
+  await expect(reviewedBtn).toBeVisible();
+  await expect(reviewedBtn).toBeDisabled();
+
+  // True-source provenance: the inspector links the ACTUAL stored document.
+  await expect(page.getByRole("link", { name: /Open source PDF/ })).toBeVisible();
+  const doc = await page.request.get(
+    "/api/live/labs/document/ffffffff-1111-2222-3333-444444444401",
+  );
+  expect(doc.status()).toBe(200);
+  expect((await doc.text()).startsWith("%PDF")).toBe(true);
 
   // Review the high-confidence marker (no confirm dialog on this path).
   await page.getByRole("button", { name: "Select hs-CRP" }).click();
@@ -141,6 +184,52 @@ test("booking a new appointment persists to the live week", async ({ page }) => 
 
   await page.goto("/audit-log");
   await expect(page.getByText("appointment.book").first()).toBeVisible();
+});
+
+const BASE = `http://localhost:${Number(process.env.E2E_PORT ?? 3114)}`;
+
+test("expired access token refreshes globally with rotation (P0 auth lifecycle)", async ({ page, context }) => {
+  await context.clearCookies();
+  await context.addCookies([
+    { name: "aidp_at", value: "deliberately-expired-token", url: BASE },
+    { name: "aidp_rt", value: "fixture-refresh-token", url: BASE },
+    { name: "aidp_exp", value: String(Date.now() - 60_000), url: BASE },
+    { name: "aidp_em", value: "practitioner@fixture.local", url: BASE },
+  ]);
+  // Any app page — NOT the login screen — must recover the session.
+  await page.goto("/tasks");
+  await expect(page.getByText(/Live queue — resolving updates the record/)).toBeVisible();
+  const session = await page.evaluate(() => fetch("/api/auth/session").then((r) => r.json()));
+  expect(session?.data?.signedIn).toBe(true);
+  const rotated = (await context.cookies(BASE)).find((c) => c.name === "aidp_at");
+  expect(rotated?.value).toBe("fixture-access-token");
+  await context.clearCookies();
+});
+
+test("revoked refresh token clears the session instead of looping", async ({ page, context }) => {
+  await context.clearCookies();
+  await context.addCookies([
+    { name: "aidp_at", value: "deliberately-expired-token", url: BASE },
+    { name: "aidp_rt", value: "revoked-refresh-token", url: BASE },
+    { name: "aidp_exp", value: String(Date.now() - 60_000), url: BASE },
+  ]);
+  await page.goto("/tasks");
+  // The e2e env fallback keeps the page working; the dead session is gone.
+  await expect(page.getByText(/Live queue — resolving updates the record/)).toBeVisible();
+  const session = await page.evaluate(() => fetch("/api/auth/session").then((r) => r.json()));
+  expect(session?.data?.signedIn).toBe(false);
+  await context.clearCookies();
+});
+
+test("login honors a same-origin next= return path", async ({ page, context }) => {
+  await context.clearCookies();
+  await page.goto("/login?next=/tasks");
+  await page.getByLabel("Email").fill("practitioner@fixture.local");
+  await page.getByLabel("Password").fill("fixture-password");
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await page.waitForURL("**/tasks");
+  await expect(page.getByText(/Live queue — resolving updates the record/)).toBeVisible();
+  await context.clearCookies();
 });
 
 test("practitioner sign-in and sign-out work via httpOnly cookie session", async ({ page }) => {

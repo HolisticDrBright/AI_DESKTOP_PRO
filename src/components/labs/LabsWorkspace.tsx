@@ -45,6 +45,8 @@ const STATUS_META: Record<MarkerStatus, { label: string; tone: Tone }> = {
   "critical-low": { label: "Critical low", tone: "critical" },
   "critical-high": { label: "Critical high", tone: "critical" },
   normal: { label: "Within range", tone: "slate" },
+  // No source flag recorded — direction is unclassified, never assumed normal.
+  unknown: { label: "Unclassified", tone: "warning" },
 };
 
 const TREND_META: Record<MarkerTrendKind, { label: string; tone: Tone }> = {
@@ -59,7 +61,13 @@ const CONF_META: Record<ExtractionConfidenceBand, { label: string; tone: Tone }>
   high: { label: "High", tone: "positive" },
   medium: { label: "Medium", tone: "warning" },
   low: { label: "Low", tone: "critical" },
+  // Not recorded by the source — requires review; never shown as a number.
+  unknown: { label: "Not provided", tone: "warning" },
 };
+
+/** Confidence display: the number when recorded, honest absence otherwise. */
+const confPctText = (confidence: number | null): string =>
+  confidence == null ? "—" : `${confidence}%`;
 
 const REVIEW_META: Record<ReviewState, { label: string; tone: Tone }> = {
   reviewed: { label: "Reviewed", tone: "positive" },
@@ -426,7 +434,7 @@ function MarkerRow({
       <td className={cn(td, "text-[11px] text-muted")}>{marker.source.location}</td>
       <td className={td}>
         <span className="flex items-center gap-[5px]">
-          <span className="text-[11px] font-semibold text-body">{marker.confidence}%</span>
+          <span className="text-[11px] font-semibold text-body">{confPctText(marker.confidence)}</span>
           <Pill tone={conf.tone}>{conf.label}</Pill>
         </span>
       </td>
@@ -477,8 +485,12 @@ function MarkerInspector({
   const trend = TREND_META[marker.trend];
   const conf = CONF_META[marker.confidenceBand];
   const review = effectiveReview(marker, outcome);
-  const reviewed = outcome === "reviewed";
-  const needsConfirm = marker.confidenceBand === "low" || marker.status.startsWith("critical");
+  // PERSISTED backend review state and this-session optimistic state both
+  // settle the marker — a reviewed record must not offer "Mark reviewed" again.
+  const reviewed = outcome === "reviewed" || marker.reviewState === "reviewed";
+  const needsExtractionCheck =
+    marker.confidenceBand === "low" || marker.confidenceBand === "unknown";
+  const needsConfirm = needsExtractionCheck || marker.status.startsWith("critical");
 
   const doReview = () => {
     setConfirming(false);
@@ -552,7 +564,7 @@ function MarkerInspector({
           <Field label="Configured optimal">{optimalRange ? fmtOptimal(optimalRange) : fmtOptimal(marker.optimalRange)} {marker.unit}</Field>
           <Field label="Extraction confidence">
             <span className="flex items-center gap-[5px]">
-              {marker.confidence}% <Pill tone={conf.tone}>{conf.label}</Pill>
+              {confPctText(marker.confidence)} <Pill tone={conf.tone}>{conf.label}</Pill>
             </span>
           </Field>
           <Field label="Review state"><Pill tone={review.tone}>{review.label}</Pill></Field>
@@ -580,11 +592,22 @@ function MarkerInspector({
 {marker.source.snippet}
             </pre>
             <div className="mt-[6px] flex items-start gap-[5px] text-[10.5px] leading-[1.4] text-subtle">
-              {marker.confidenceBand === "low" && (
+              {needsExtractionCheck && (
                 <TriangleAlert size={11} strokeWidth={2} className="mt-[2px] shrink-0 text-warning" aria-hidden />
               )}
               {marker.source.confidenceNote}
             </div>
+            {marker.source.documentId && (
+              <a
+                href={`/api/live/labs/document/${marker.source.documentId}`}
+                target="_blank"
+                rel="noreferrer"
+                className="mt-[7px] inline-flex items-center gap-[5px] text-[11px] font-semibold text-action hover:underline focus-visible:outline-2 focus-visible:outline-action"
+              >
+                <FileText size={11} strokeWidth={2} aria-hidden />
+                Open source PDF (audited)
+              </a>
+            )}
           </div>
         </div>
 
@@ -599,12 +622,14 @@ function MarkerInspector({
           </div>
         </div>
 
-        {/* Extraction-review note for low confidence */}
-        {marker.confidenceBand === "low" && !reviewed && (
+        {/* Extraction-review note for low/unknown confidence */}
+        {needsExtractionCheck && !reviewed && (
           <div className="mt-[12px] flex items-start gap-[7px] rounded-[9px] border border-[rgba(199,126,20,0.28)] bg-warning-tint px-[11px] py-[9px]">
             <TriangleAlert size={14} strokeWidth={2} className="mt-px shrink-0 text-warning-deep" aria-hidden />
             <span className="text-[11px] leading-[1.45] text-warning-deep">
-              Low extraction confidence. Confirm the value and unit against the source snippet
+              {marker.confidenceBand === "unknown"
+                ? "Extraction confidence was not recorded. Confirm the value and unit against the source snippet"
+                : "Low extraction confidence. Confirm the value and unit against the source snippet"}
               before marking reviewed.
             </span>
           </div>

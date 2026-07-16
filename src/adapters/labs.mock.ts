@@ -20,7 +20,9 @@ export type MarkerStatus =
   | "high"
   | "critical-low"
   | "critical-high"
-  | "normal";
+  | "normal"
+  /** Source recorded no flag — never assumed normal. */
+  | "unknown";
 
 export type MarkerTrendKind =
   | "improving"
@@ -29,7 +31,8 @@ export type MarkerTrendKind =
   | "newly-abnormal"
   | "needs-review";
 
-export type ExtractionConfidenceBand = "high" | "medium" | "low";
+/** "unknown" = the source recorded no confidence — shown as such, never as a number. */
+export type ExtractionConfidenceBand = "high" | "medium" | "low" | "unknown";
 
 export interface MarkerTrendPoint {
   date: string;
@@ -48,6 +51,8 @@ export interface SourcePreview {
   location: string;
   snippet: string;
   confidenceNote: string;
+  /** Live: the stored lab document behind this result (authorized download). */
+  documentId?: string | null;
 }
 
 export interface BiomarkerMarker {
@@ -66,8 +71,8 @@ export interface BiomarkerMarker {
   status: MarkerStatus;
   trend: MarkerTrendKind;
   series: MarkerTrendPoint[];
-  /** 0–100 EXTRACTION confidence (not medical certainty). */
-  confidence: number;
+  /** 0–100 EXTRACTION confidence (not medical certainty); null = not recorded. */
+  confidence: number | null;
   confidenceBand: ExtractionConfidenceBand;
   reviewState: ReviewState;
   collectedAt: string;
