@@ -176,6 +176,12 @@ export interface ActionContext {
   /** Stable key for the reviewable subject (e.g. "snapshot:p-78435"). When set,
    *  settling actions record their outcome to the demo review store. */
   reviewKey?: string;
+  /**
+   * Live-record reference. When present AND live mode is on, the façade routes
+   * the matching action to the real backend mutation (persist + audit) instead
+   * of the demo executor. Ignored entirely in demo mode.
+   */
+  liveRef?: { kind: "queue-item"; id: string };
 }
 
 /** Review actions that open the note/report composer instead of recording. */

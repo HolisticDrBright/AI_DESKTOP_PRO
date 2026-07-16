@@ -10,6 +10,8 @@ import { AdapterError, codeFromHttpStatus, type AdapterErrorCode } from "./error
 import type { LabWorkspace } from "./labs.mock";
 import type {
   LiveAuditEvent,
+  LiveQueueItem,
+  LiveResolveResult,
   LiveReviewResult,
   LiveTaskResult,
   ReviewDecision,
@@ -58,6 +60,11 @@ export const liveClient = {
       method: "POST",
       body: { observationId, decision, note },
     }),
+
+  listQueue: () => liveFetch<LiveQueueItem[]>("tasks/queue", { method: "GET" }),
+
+  resolveQueueItem: (itemId: string, note?: string) =>
+    liveFetch<LiveResolveResult>("tasks/resolve", { method: "POST", body: { itemId, note } }),
 
   listAuditEvents: (limit = 50) =>
     liveFetch<LiveAuditEvent[]>(`actions/audit?limit=${limit}`, { method: "GET" }),

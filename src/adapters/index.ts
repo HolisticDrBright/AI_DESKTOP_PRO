@@ -25,6 +25,7 @@ import { getCommandGroups } from "./commands.mock";
 import { generateDraft, type ComposerContext } from "./composer.mock";
 import { buildImportPlan, type ImportSourceId } from "./imports.mock";
 import { getTaskQueue } from "./tasks.mock";
+import { mapLiveQueueItem } from "./tasks.map";
 import { getCalendar } from "./calendar.mock";
 import { SEED_PRODUCTS, type InventoryProduct } from "./inventory.mock";
 import {
@@ -123,11 +124,30 @@ export const api = {
   actions: {
     /**
      * Execute a review action. MOCK: records to the demo session audit store
-     * and settles any linked review. The labs-review slice persists through
-     * `labs.reviewMarker` instead; other namespaces stay demo until wired.
+     * and settles any linked review. LIVE: actions whose context carries a
+     * `liveRef` route to the real backend mutation — currently `resolve` on a
+     * review-queue item, which calls the `resolve_review_queue_item` RPC
+     * (migration 0014): status update + audit_events row, atomically,
+     * idempotent on retries. Demo mode never enters this branch.
      */
-    execute: async (kind: ActionKind, context: ActionContext, timestamp: string) =>
-      executeAction(kind, context, timestamp),
+    execute: async (kind: ActionKind, context: ActionContext, timestamp: string) => {
+      if (USE_LIVE_API && kind === "resolve" && context.liveRef?.kind === "queue-item") {
+        const key = context.reviewKey;
+        const prev = key ? getReviewOutcome(key) : undefined;
+        const itemId = context.liveRef.id;
+        const outcome = await runClinicalMutation({
+          optimistic: () => key && setReviewOutcome(key, "resolved"),
+          rollback: () =>
+            key && (prev ? setReviewOutcome(key, prev) : removeReviewOutcome(key)),
+          live: () => liveClient.resolveQueueItem(itemId),
+          demo: () => {},
+          liveMessage: `Resolved: ${context.subjectLabel}. (saved to record + audit)`,
+          demoMessage: "",
+        });
+        return { ok: outcome.ok, message: outcome.message };
+      }
+      return executeAction(kind, context, timestamp);
+    },
     /** Demo session audit log (sessionStorage). Not backend persistence. */
     listAuditEvents: () => listAuditEntries(),
     /** Live append-only audit log for the caller's org (empty in mock mode). */
@@ -137,8 +157,16 @@ export const api = {
     clearSessionAuditEvents: () => clearAuditEntries(),
   },
   tasks: {
-    /** MOCK practitioner review queue. Replace with a tRPC query. */
-    getQueue: async () => getTaskQueue(),
+    /**
+     * Practitioner review queue. LIVE: real review_queue_items for the active
+     * org (RLS-scoped — the caller only sees patients they can access), mapped
+     * to the QueueItem shape with the row's settled status carried through so
+     * resolved items survive reload. MOCK: demo queue, unchanged.
+     */
+    getQueue: async () => {
+      if (USE_LIVE_API) return (await liveClient.listQueue()).map(mapLiveQueueItem);
+      return getTaskQueue();
+    },
   },
   calendar: {
     /** MOCK scheduling data (recurring weekly template). Replace with a tRPC query. */

@@ -56,6 +56,7 @@ from `auth.uid()` server-side:
 | `record_audit_event(org, action, …)` | General append-only audit writer (PHI-safe metadata only). |
 | `list_audit_events(org, limit)` | Read the caller's own events (all events if org admin). |
 | `create_review_task(patient_id, title, …)` | Downstream link: enqueue a `review_queue_items` row + audit. |
+| `resolve_review_queue_item(item_id, note?)` — migration `0014` | Resolve a queue item + append audit row, atomically. Idempotent on already-resolved items; org-level (patient-null) items require a practitioner/admin role. |
 
 `search_path` is pinned empty and every object is schema-qualified. `EXECUTE`
 is revoked from `public` + `anon` and granted to `authenticated` only.
@@ -75,9 +76,15 @@ is revoked from `public` + `anon` and granted to `authenticated` only.
 | `labs.getWorkspace` | mock | ✅ real workspace via `clinical.labs.getWorkspace` |
 | `labs.reviewMarker` / `flagMarker` | session + session audit | ✅ `review_biomarker` RPC (persist + audit) |
 | `labs.createReviewTask` | session queue item | ✅ `create_review_task` RPC |
+| `tasks.getQueue` | mock queue | ✅ real `review_queue_items` (RLS-scoped), settled status carried through reload |
+| `actions.execute` — `resolve` on a queue item | session outcome + session audit | ✅ `resolve_review_queue_item` RPC (migration `0014`): status + audit atomically, idempotent |
 | `actions.listLiveAuditEvents` | `[]` | ✅ `list_audit_events` RPC |
-| `actions.execute` / `listAuditEvents` | session | session (other screens not yet wired) |
+| `actions.execute` — other kinds | session | session (wired per-domain as slices land) |
 | everything else | mock | mock |
+
+`ActionBar` executes through `api.actions.execute`; an action whose context
+carries a `liveRef` routes to the real mutation in live mode, so future live
+domains plug in at the façade without touching components.
 
 All live mutations flow through the reusable `runClinicalMutation` helper
 (`src/adapters/mutations.ts`): optimistic update → live write (or demo effect)
@@ -131,6 +138,15 @@ CLINICAL_SUPABASE_URL=… ANON_KEY=… DEMO_EMAIL=… DEMO_PASSWORD=…   # demo
 ```
 Then `npm run dev`. Settings → **Data source & environment** shows the resolved
 mode and which server-side vars are configured (presence only).
+
+**Live mode without infrastructure (contract fixture):** to exercise the live
+UI where no backend is reachable, run the committed fixture —
+`node scripts/live-stub-server.mjs` — and point the env at it (exact recipe in
+the header of `e2e/live-tasks.spec.ts`). It speaks the same wire contract with
+synthetic in-memory data; it is **not** the real backend, and the real data
+layer is verified separately (`supabase/tests/*.sql` via MCP). The gated live
+suite runs against it: `E2E_LIVE=1 npm run test:e2e -- e2e/live-tasks.spec.ts`
+after a live-flag build.
 
 ## Verification (this change)
 

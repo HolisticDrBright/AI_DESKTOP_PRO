@@ -39,6 +39,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { DEFAULT_PATIENT_ID } from "@/adapters";
+import { USE_LIVE_API } from "@/adapters/mode";
 import { getTaskQueue } from "@/adapters/tasks.mock";
 import { useReviewOutcomes, useSessionQueueItems } from "@/adapters/session-store";
 import type { PatientTabId } from "@/adapters/types";
@@ -164,15 +165,18 @@ export function Sidebar() {
   const patientId = patient?.patientId ?? DEFAULT_PATIENT_ID;
   const activeId = patient ? TAB_TO_NAV[patient.tab] : (ROUTE_TO_NAV[pathname] ?? "");
 
-  // Live open-task count: base queue + session-added items − session-resolved.
-  // Uses the same stores as /tasks so the badge always matches the screen.
+  // Open-task badge from the same stores as /tasks so it matches the screen.
+  // Demo mode only — the live queue is fetched per screen, so no badge there
+  // rather than a possibly-stale number.
   const sessionAdded = useSessionQueueItems();
   const reviews = useReviewOutcomes();
   const baseCount = useMemo(() => getTaskQueue().length, []);
   const resolvedCount = Object.entries(reviews).filter(
     ([key, outcome]) => key.startsWith("queue:") && outcome === "resolved",
   ).length;
-  const openTasks = Math.max(0, baseCount + sessionAdded.length - resolvedCount);
+  const openTasks = USE_LIVE_API
+    ? 0
+    : Math.max(0, baseCount + sessionAdded.length - resolvedCount);
 
   return (
     <nav

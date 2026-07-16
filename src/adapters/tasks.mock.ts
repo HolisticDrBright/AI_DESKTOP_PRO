@@ -71,6 +71,14 @@ export interface QueueItem {
   seeds: string[];
   /** Extra actions beyond the shared default set. */
   extraActions?: ActionKind[];
+  /** True when this row came from the live backend (review_queue_items). */
+  live?: boolean;
+  /**
+   * Settled state carried by the LIVE row itself (status column), so a
+   * resolved/snoozed item still reads as settled after reload. Session
+   * outcomes take precedence for within-session optimistic updates.
+   */
+  settledOutcome?: "resolved" | "snoozed";
 }
 
 const QUEUE: QueueItem[] = [

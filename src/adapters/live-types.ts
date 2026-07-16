@@ -24,6 +24,30 @@ export interface LiveTaskResult {
   message: string;
 }
 
+/** One live review-queue row (review_queue_items), as the backend returns it. */
+export interface LiveQueueItem {
+  id: string;
+  /** review_queue_items.item_type enum value, e.g. "abnormal_result". */
+  itemType: string;
+  title: string;
+  priority: "low" | "medium" | "high";
+  status: "open" | "in_review" | "resolved" | "snoozed" | "dismissed";
+  patientId: string | null;
+  /** Display name resolved server-side (RLS-scoped join). */
+  patientName: string | null;
+  assigneeName: string | null;
+  dueAt: string | null;
+  createdAt: string;
+}
+
+export interface LiveResolveResult {
+  id: string;
+  status: string;
+  previousStatus: string;
+  alreadyResolved: boolean;
+  auditEventId?: string;
+}
+
 /** One row from the append-only audit log, PHI-safe. */
 export interface LiveAuditEvent {
   id: string;

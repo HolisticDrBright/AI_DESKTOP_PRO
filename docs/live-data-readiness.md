@@ -47,16 +47,19 @@ Status legend: ✅ live path exists · 🟢 ready to wire (schema + pattern exis
 - **First live mutation:** already defined — `review_biomarker` (backend
   procedure `clinical.labs.reviewMarker` is the remaining hop)
 
-## Tasks / Review queue — 🟢 ready to wire
-- **Route:** `/tasks` · **Adapter:** `api.tasks.getQueue`
+## Tasks / Review queue — ✅ live path exists
+- **Route:** `/tasks` · **Adapter:** `api.tasks.getQueue` (live behind flag) +
+  `actions.execute("resolve")` with a `liveRef` → real mutation
 - **Mock:** `tasks.mock.ts` · **Session:** `queue:<id>` outcomes + session-added items
-- **Live tables:** `review_queue_items` (item_type/priority/status enums match);
-  RPC `create_review_task` already deployed + verified
-- **Audit:** resolve/assign/snooze → `record_audit_event`
-- **Missing fields:** `due` date + `assignee` display need columns/joins
-  (`assigned_to` exists); saved-view counts computed client-side
-- **First live mutation:** resolve queue item → `UPDATE review_queue_items.status`
-  ('resolved') + audit — mirrors the demo exactly
+- **Live tables:** `review_queue_items`; RPC `resolve_review_queue_item`
+  (migration `0014`, atomic status+audit, idempotent) + `create_review_task`
+- **Reload persistence:** the row's settled status maps into the UI
+  (`settledOutcome`), so resolve survives reload without sessionStorage
+- **Missing fields:** assignee display name needs a join (`assignee_user_id`);
+  seeds are title-only until sources are linked
+- **Remaining hop:** `clinical.tasks.getQueue` / `clinical.tasks.resolve`
+  procedures in the tRPC backend (desktop + DB sides verified; contract
+  fixture in `scripts/live-stub-server.mjs`)
 
 ## Clinical Reasoning — 🟡 needs backend shaping
 - **Route:** `/patients/:id/reasoning` (+ summary snapshot card)
@@ -121,9 +124,12 @@ Status legend: ✅ live path exists · 🟢 ready to wire (schema + pattern exis
 
 ## Recommended wiring order
 
-1. **Tasks/Review queue** (next slice — everything funnels here; RPC deployed)
-2. Labs backend procedures (`clinical.labs.*` in the tRPC repo) → full labs live
-3. Reasoning reads + accept/reject mutation
+1. ~~Tasks/Review queue~~ — ✅ done (RPC 0014, façade + UI live, gated e2e)
+2. **Backend procedures** (`clinical.tasks.*`, `clinical.labs.*`,
+   `clinical.actions.*` in the tRPC repo) — the single remaining hop that turns
+   both finished slices fully on; the committed contract fixture defines the
+   exact shapes
+3. Reasoning reads + accept/reject mutation (same liveRef pattern via ActionBar)
 4. Composer save-note (with sign-off gates)
 5. Dispensary sale → invoices (+ inventory table migration)
 6. Programs / N-of-1 / Twin / Imports as their pipelines land

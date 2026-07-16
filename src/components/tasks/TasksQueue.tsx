@@ -1,14 +1,16 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Inbox, Search, X } from "lucide-react";
+import { api } from "@/adapters";
+import { isAdapterError } from "@/adapters/errors";
+import { USE_LIVE_API } from "@/adapters/mode";
 import {
   CATEGORY_LABEL,
   CATEGORY_TONE,
   PRACTITIONER_SELF,
   QUEUE_CATEGORIES,
-  getTaskQueue,
   type QueueCategory,
   type QueueItem,
 } from "@/adapters/tasks.mock";
@@ -19,6 +21,7 @@ import {
 } from "@/adapters/session-store";
 import type { PatientTabId, Priority, Tone } from "@/adapters/types";
 import { ActionBar } from "@/components/ui/ActionBar";
+import { ClinicalError, ClinicalLoading } from "@/components/ui/ClinicalStates";
 import { Provenance } from "@/components/ui/Provenance";
 import { Card } from "@/components/ui/bits";
 import { cn } from "@/lib/cn";
@@ -82,9 +85,30 @@ export function TasksQueue({
   initialCategory?: string;
   initialPriority?: string;
 }) {
-  const [baseItems] = useState<QueueItem[]>(() => getTaskQueue());
+  // Queue read through the façade: demo mock by default, real
+  // review_queue_items (RLS-scoped) when NEXT_PUBLIC_USE_LIVE_API is on.
+  const [baseItems, setBaseItems] = useState<QueueItem[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
   const sessionAdded = useSessionQueueItems();
   const reviews = useReviewOutcomes();
+
+  useEffect(() => {
+    let alive = true;
+    setLoadError(null);
+    api.tasks
+      .getQueue()
+      .then((rows) => {
+        if (alive) setBaseItems(rows);
+      })
+      .catch((e) => {
+        if (alive)
+          setLoadError(isAdapterError(e) ? e.safeMessage : "Unable to load the review queue.");
+      });
+    return () => {
+      alive = false;
+    };
+  }, [reloadKey]);
 
   // Items converted-to-task this session (e.g. from the reasoning workspace)
   // appear at the top, clearly session-scoped.
@@ -108,7 +132,7 @@ export function TasksQueue({
       assignee: PRACTITIONER_SELF,
       seeds: s.seeds,
     }));
-    return [...added, ...baseItems];
+    return [...added, ...(baseItems ?? [])];
   }, [baseItems, sessionAdded]);
 
   const [savedView, setSavedView] = useState<string | null>(null);
@@ -130,7 +154,10 @@ export function TasksQueue({
   const [status, setStatus] = useState<StatusFilter>("all");
   const [scope, setScope] = useState<ScopeFilter>("all");
 
-  const outcomeOf = (id: string): ReviewOutcome | undefined => reviews[`queue:${id}`];
+  // Session outcome (optimistic, within this tab) wins; otherwise the LIVE
+  // row's settled status applies — that's what makes resolve survive reload.
+  const outcomeOf = (it: QueueItem): ReviewOutcome | undefined =>
+    reviews[`queue:${it.id}`] ?? it.settledOutcome;
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -139,7 +166,7 @@ export function TasksQueue({
       if (priority !== "All" && it.priority !== priority) return false;
       if (overdueOnly && it.dueInDays >= 0) return false;
       if (scope === "mine" && it.assignee !== PRACTITIONER_SELF) return false;
-      const settled = outcomeOf(it.id);
+      const settled = outcomeOf(it);
       if (status === "resolved" && settled !== "resolved") return false;
       if (status === "open" && settled === "resolved") return false;
       if (q && !`${it.title} ${it.patientName}`.toLowerCase().includes(q)) return false;
@@ -182,7 +209,22 @@ export function TasksQueue({
     setStatus("all");
   };
 
-  const openCount = items.filter((it) => outcomeOf(it.id) !== "resolved").length;
+  const openCount = items.filter((it) => outcomeOf(it) !== "resolved").length;
+
+  if (loadError) {
+    return (
+      <section data-screen-label="Tasks & Review Queue" className="relative mx-auto max-w-[1180px] px-6 pt-[22px] pb-10">
+        <ClinicalError message={loadError} onRetry={() => setReloadKey((k) => k + 1)} />
+      </section>
+    );
+  }
+  if (baseItems === null) {
+    return (
+      <section data-screen-label="Tasks & Review Queue" className="relative mx-auto max-w-[1180px] px-6 pt-[22px] pb-10">
+        <ClinicalLoading label="Loading review queue…" />
+      </section>
+    );
+  }
 
   return (
     <section
@@ -194,8 +236,10 @@ export function TasksQueue({
         <div>
           <h1 className="m-0 text-[21px] font-bold tracking-[-0.015em]">Tasks &amp; review queue</h1>
           <p className="mt-[4px] mb-0 text-[12.5px] text-subtle">
-            {openCount} open · {items.length} total. Resolving an item records a demo session
-            audit event — not backend persistence.
+            {openCount} open · {items.length} total.{" "}
+            {USE_LIVE_API
+              ? "Live queue — resolving updates the record and writes a persistent audit event."
+              : "Resolving an item records a demo session audit event — not backend persistence."}
           </p>
         </div>
         <div className="flex items-center gap-2" role="group" aria-label="Task scope">
@@ -345,7 +389,7 @@ export function TasksQueue({
       ) : (
         <div className="flex flex-col gap-[10px]">
           {filtered.map((it) => (
-            <QueueRow key={it.id} item={it} outcome={outcomeOf(it.id)} />
+            <QueueRow key={it.id} item={it} outcome={outcomeOf(it)} />
           ))}
         </div>
       )}
@@ -382,7 +426,9 @@ function QueueRow({ item, outcome }: { item: QueueItem; outcome?: ReviewOutcome 
             </span>
             {outcome && (
               <Pill tone={outcome === "resolved" ? "positive" : "warning"}>
-                {outcome[0].toUpperCase() + outcome.slice(1)} this session
+                {/* Live rows carry record state; demo rows are session-scoped. */}
+                {outcome[0].toUpperCase() + outcome.slice(1)}
+                {item.live ? "" : " this session"}
               </Pill>
             )}
           </div>
@@ -419,12 +465,15 @@ function QueueRow({ item, outcome }: { item: QueueItem; outcome?: ReviewOutcome 
         size="sm"
         className="mt-[10px] border-t border-hairline-2 pt-[10px]"
         actions={actions}
+        settledOutcome={item.settledOutcome}
         context={{
           subjectType: CATEGORY_LABEL[item.category].toLowerCase(),
           subjectLabel: item.title,
           patientName: item.patientName,
           seeds: item.seeds,
           reviewKey: `queue:${item.id}`,
+          // Live rows route "resolve" to the real backend mutation (RPC 0014).
+          liveRef: item.live ? { kind: "queue-item", id: item.id } : undefined,
         }}
       />
     </Card>

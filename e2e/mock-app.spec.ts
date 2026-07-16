@@ -59,6 +59,8 @@ test("audit event survives reload in the same session", async ({ page }) => {
 test("tasks filters narrow the queue (saved view + priority param)", async ({ page }) => {
   await page.goto("/tasks");
   const rows = page.getByText(/Assigned /);
+  // The queue loads through the async façade — wait for rows before counting.
+  await rows.first().waitFor();
   const all = await rows.count();
   expect(all).toBeGreaterThan(4);
 
@@ -69,6 +71,7 @@ test("tasks filters narrow the queue (saved view + priority param)", async ({ pa
 
   // Deep-linked priority filter (used by the patient right rail).
   await page.goto("/tasks?priority=High");
+  await rows.first().waitFor();
   const high = await rows.count();
   expect(high).toBeGreaterThan(0);
   expect(high).toBeLessThan(all);

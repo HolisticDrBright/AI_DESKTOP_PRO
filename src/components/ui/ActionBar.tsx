@@ -1,15 +1,15 @@
 "use client";
 
 import { useState } from "react";
+import { api } from "@/adapters";
 import {
   ACTIONS,
   ACTION_REVIEW_OUTCOME,
   COMPOSER_ACTIONS,
-  executeAction,
   type ActionContext,
   type ActionKind,
 } from "@/adapters/actions";
-import { useReviewOutcome } from "@/adapters/session-store";
+import { useReviewOutcome, type ReviewOutcome } from "@/adapters/session-store";
 import { actionIcons } from "@/components/icons";
 import { cn } from "@/lib/cn";
 import { useComposerOptional } from "@/lib/composer";
@@ -23,14 +23,16 @@ import { ConfirmDialog } from "./ConfirmDialog";
  *
  * - Confirm-required (destructive / patient-facing) actions open a ConfirmDialog.
  * - Outcomes are announced via the accessible feedback channel.
- * - Execution goes through the mock `executeAction` adapter (no real
- *   persistence); pass `onAction` to override with a real mutation later.
+ * - Execution goes through the `api.actions.execute` façade — demo session
+ *   audit by default; actions whose context carries a `liveRef` persist to the
+ *   real backend in live mode. Pass `onAction` to override entirely.
  */
 export function ActionBar({
   actions,
   context,
   onAction,
   onExecuted,
+  settledOutcome,
   size = "md",
   className,
 }: {
@@ -39,6 +41,8 @@ export function ActionBar({
   onAction?: (kind: ActionKind, context: ActionContext) => Promise<void> | void;
   /** Called after an action executes through the default path (audit recorded). */
   onExecuted?: (kind: ActionKind) => void;
+  /** Settled state carried by the record itself (live rows) — session outcome wins. */
+  settledOutcome?: ReviewOutcome;
   size?: "sm" | "md";
   className?: string;
 }) {
@@ -46,7 +50,8 @@ export function ActionBar({
   const composer = useComposerOptional();
   const [pending, setPending] = useState<ActionKind | null>(null);
   // When the subject is reviewable, a recorded outcome settles its actions.
-  const outcome = useReviewOutcome(context.reviewKey ?? "");
+  const sessionOutcome = useReviewOutcome(context.reviewKey ?? "");
+  const outcome = sessionOutcome ?? settledOutcome;
 
   const run = async (kind: ActionKind) => {
     if (onAction) {
@@ -54,7 +59,7 @@ export function ActionBar({
       onExecuted?.(kind);
       return;
     }
-    const result = await executeAction(kind, context, new Date().toISOString());
+    const result = await api.actions.execute(kind, context, new Date().toISOString());
     announce(result.message);
     onExecuted?.(kind);
   };
