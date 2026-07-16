@@ -103,42 +103,78 @@ membership row is written through the caller's RLS-scoped RPC). Optional
 `/reset`. Without the service key, adding existing accounts still works and
 the new-email path fails honestly.
 
-## Seeding the clinical project
+### Where each invitation-security property lives
 
-`supabase/seed/demo_practice_seed.sql` creates one synthetic practice
-(NO real PHI): organization **Bright Longevity Clinic (Demo)**, your
-practitioner membership + profile, patient **Avery Demo**, the
-practitioner↔patient access row, one lab document, 5 biomarker definitions,
-6 observations (hs-CRP history for trends, one abnormal, one **low-confidence
-0.55** to exercise the review gate), 2 review-queue items (one org-level),
-a reasoning snapshot + 2 hypotheses, 1 draft supplement protocol, and 3
-example audit events.
+Invitation tokens are **delegated to Supabase Auth (GoTrue)** rather than a
+hand-rolled token table — the auth server already implements the hard parts:
+
+| Requirement | Enforced by |
+|---|---|
+| Expiring, single-use tokens | GoTrue invite/recovery links: hashed one-time tokens with server-side expiry; consumed on first successful use (our e2e proves the reused/expired path gets an honest error) |
+| Server-side hashing | GoTrue stores token hashes, never raw tokens; the raw token exists only in the emailed link's URL fragment (read once by `/reset`, stripped from the URL bar) |
+| Organization + intended role | `organization_memberships` row created at invite time (`role`, `organization_id`), status `invited` |
+| Inviter identity | `organization_memberships.created_by` + the `member.invited` audit event's actor |
+| Accepted / revoked / expired state | Accepted: `activate_my_memberships()` flips `invited → active` on the invitee's first sign-in (audited as `member.joined`). Revoked: `remove_org_member()` deletes the pending membership (audited). Expired email link: the auth token expires server-side; the membership stays `invited` and the roster shows it truthfully — re-invite is not blocked |
+| Audit events | `member.invited` / `member.joined` / `member.role_changed` / `member.removed`, written atomically inside the SECURITY DEFINER RPCs |
+| No elevated role from browser input | The role in the invite call is validated inside `add_org_member`: admins can grant up to `admin`; **only an owner can grant `owner`**; the caller's own role comes from the database, never the request |
+
+**Email delivery — externally blocked:** actual delivery uses the Supabase
+project's email sender (built-in for low volume; configure SMTP under Auth →
+Email for production). The sandbox cannot reach the auth server, so delivery
+has not been exercised end-to-end; the send call, both invite outcomes, and
+all failure states are implemented and covered by backend tests + the
+contract-fixture e2e. Setup: Supabase Auth → URL Configuration (Site URL +
+`/reset` redirect) and, for brand-new-email invites, the two backend env vars
+above.
+
+## Seeding the clinical project (seed v2)
+
+`supabase/seed/demo_practice_seed.sql` creates **two** synthetic practices
+(NO real PHI) so tenancy and access rules can be exercised with real logins:
+
+- **Org A — Bright Longevity Clinic (Demo)**: P1 (owner) + P2 (plain
+  practitioner); patients **Avery Demo** (P1 only) and **Jordan Sample**
+  (P1 + P2); a source lab document; observations incl. hs-CRP history for
+  trends, one **reviewed** marker (TSH), one **critical** result (potassium
+  6.2), one **unclassified** marker (Sodium, no lab flag → the app must show
+  "Unclassified"), one **low-confidence 0.55** extraction (review-gated);
+  three tasks (one org-level); appointments (in-person, telehealth, break);
+  reasoning snapshot + hypotheses; a draft protocol; audit events.
+- **Org B — Second Practice (Demo)**: P2 is the **dual-org** practitioner
+  (owner here); patient **Riley Crosscheck** (P2 only); a lab document +
+  observation, one task, one appointment, audit events.
+- **Access matrix** the deployed gate verifies: P1 → Avery ✓ Jordan ✓
+  Riley ✗ · P2 → Jordan ✓ (Org A) Riley ✓ (Org B) Avery ✗.
 
 Steps:
 
-1. **Create your login**: Supabase Dashboard → Authentication → *Add user*
-   (email + password). Copy the new user's **UUID**.
-2. **Edit two lines** at the top of the seed's DO block:
-   `practitioner_user_id := '<that UUID>'` and
-   `practitioner_email := '<that email>'`. The script refuses to run with the
-   placeholder and verifies the auth user exists.
+1. **Create two logins**: Supabase Dashboard → Authentication → *Add user*,
+   twice (P1 and P2). Copy both **UUIDs**.
+2. **Edit the five marked lines** at the top of the seed's DO block: both
+   UUIDs, both emails, and `allow_demo_seed := true`.
 3. **Run the whole file** in the Supabase SQL editor. It is **idempotent**
    (fixed UUIDs + `ON CONFLICT DO NOTHING`) — safe to re-run, never
    duplicates, never overwrites rows you've edited.
-4. Set `CLINICAL_ORG_ID=a0000000-0000-4000-8000-000000000001` in the desktop
-   env, sign in at `/login`, and the queue/labs/audit screens load the seeded
-   records.
+4. Sign in at `/login` as P1 or P2 — the organization comes from the
+   account's own memberships (no `CLINICAL_ORG_ID` needed).
+
+**Production guard:** the seed **refuses to run** unless the
+`allow_demo_seed := true` override is edited in by hand, and refuses when the
+database contains organizations it did not create (a sign it is not a
+disposable demo environment). This is a development/staging tool only.
 
 The desktop app never needs the service-role key — the seed runs once in the
 SQL editor (as `postgres`, which is why the append-only `audit_events`
 examples are allowed); everything the app does afterwards goes through RLS
 and the SECURITY DEFINER RPCs as your signed-in user.
 
-**Verified:** the exact seed (with a temporary auth user substituted) was run
-against the real project inside a rolled-back transaction — all inserts pass
-the live constraints, a second run is a clean no-op, and under role-switched
-RLS the seeded practitioner sees 2 queue rows + 6 observations and
-`resolve_review_queue_item` returns `resolved`.
+**Verified (rolled back, real project):** the guard refuses without the
+override; with temporary auth users substituted, a double run applies cleanly
+and is a no-op the second time; all fixtures land (critical, unclassified,
+reviewed, low-confidence, 4 tasks, 4 appointments, audit in both orgs); and
+under role-switched RLS the access matrix holds exactly (P1 sees Avery+Jordan
+only; P2 sees Jordan+Riley only; P2's memberships span both orgs) — 14/14
+checks.
 
 ## Deployed-environment verification (run after Railway deploy)
 

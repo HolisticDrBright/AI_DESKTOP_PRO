@@ -39,6 +39,7 @@ const iso = (msAgo) => new Date(now - msAgo).toISOString();
 // practitioner is the org owner; guard errors reuse the backend's exact
 // server-owned copy so the desktop's message allowlist passes them through.
 let memberSeq = 2;
+const revokedBearers = new Set();
 const members = new Map([
   ["mem-1", {
     membershipId: "mem-1",
@@ -356,12 +357,28 @@ createServer(async (req, res) => {
     if (body.refresh_token === "revoked-refresh-token") {
       return json(res, 400, { error: "invalid_grant", error_description: "Token revoked" });
     }
+    // Per-user fixture identities (org edge cases): the bearer carries a
+    // suffix so tRPC handlers can answer with that user's memberships.
+    const email = body.email ?? "demo@local";
+    const suffix =
+      email === "no-orgs@fixture.local" ? "--noorg"
+      : email === "dual-org@fixture.local" ? "--multi"
+      : "";
     return json(res, 200, {
-      access_token: "fixture-access-token",
+      access_token: `fixture-access-token${suffix}`,
       refresh_token: "fixture-refresh-token",
       expires_in: 3600,
-      user: { email: body.email ?? "demo@local" },
+      user: { email },
     });
+  }
+
+  // Test control: revoke ALL memberships for a bearer mid-session — mirrors an
+  // admin removing the practitioner while their app is open (rows vanish under
+  // RLS; org-scoped calls become forbidden).
+  if (url.pathname === "/__control/revoke-memberships" && req.method === "POST") {
+    const body = await readBody(req);
+    revokedBearers.add(String(body.bearer ?? ""));
+    return json(res, 200, { ok: true });
   }
 
   // Authorized source-document download (same contract as the real backend).
@@ -409,20 +426,57 @@ createServer(async (req, res) => {
       ? JSON.parse(url.searchParams.get("input") ?? "{}").json ?? {}
       : (await readBody(req)).json ?? {};
 
+  // Membership view for this bearer — mirrors organizations.mine under RLS.
+  // Revoked/suspended memberships simply vanish (status filter), exactly like
+  // the real backend; org ids never come from the browser's claims.
+  const bearerToken = (req.headers.authorization ?? "").replace(/^Bearer /, "");
+  const memberOrgIds = revokedBearers.has(bearerToken)
+    ? []
+    : bearerToken.endsWith("--noorg")
+      ? []
+      : bearerToken.endsWith("--multi")
+        ? ["org-fixture", "org-second"]
+        : ["org-fixture"];
+
+  // Faithful organizationProcedure mirror: ANY org-scoped call from a
+  // non-member is forbidden, regardless of which org id the client presents.
+  if (
+    input && typeof input === "object" && typeof input.organizationId === "string" &&
+    !memberOrgIds.includes(input.organizationId)
+  ) {
+    return trpcErr(res, 403, "FORBIDDEN", "Not a member of this organization");
+  }
+  // org-second is a second, EMPTY practice for the dual-org fixture user —
+  // switching must never leak org-fixture's records into it.
+  const orgScopedEmpty =
+    input && typeof input === "object" && input.organizationId === "org-second";
+
   switch (proc) {
     case "clinical.patients.list":
-      return trpcOk(res, PATIENTS);
+      return trpcOk(res, orgScopedEmpty ? [] : PATIENTS);
     case "clinical.patients.get": {
       const row = PATIENTS.find((p) => p.id === input.patientId);
       return row ? trpcOk(res, row) : trpcErr(res, 404, "NOT_FOUND", "no such patient");
     }
-    case "clinical.organizations.mine":
-      return trpcOk(res, [
-        { organizationId: "org-fixture", name: "Fixture Clinic", slug: "fixture-clinic", role: "owner" },
-      ]);
+    case "clinical.organizations.mine": {
+      const mine = [];
+      if (memberOrgIds.includes("org-fixture")) {
+        mine.push({
+          organizationId: "org-fixture",
+          name: "Fixture Clinic",
+          slug: "fixture-clinic",
+          role: bearerToken.endsWith("--multi") ? "practitioner" : "owner",
+        });
+      }
+      if (memberOrgIds.includes("org-second")) {
+        mine.push({ organizationId: "org-second", name: "Second Practice", slug: "second-practice", role: "practitioner" });
+      }
+      return trpcOk(res, mine);
+    }
     case "clinical.organizations.claim":
       return trpcOk(res, { activated: 0 });
     case "clinical.organizations.members":
+      if (orgScopedEmpty) return trpcErr(res, 403, "FORBIDDEN", "Administrator role required");
       return trpcOk(res, [...members.values()]);
     case "clinical.organizations.invite": {
       const email = String(input.email ?? "").toLowerCase();
@@ -468,7 +522,7 @@ createServer(async (req, res) => {
       return trpcOk(res, { ok: true });
     }
     case "clinical.tasks.getQueue":
-      return trpcOk(res, [...queue.values()]);
+      return trpcOk(res, orgScopedEmpty ? [] : [...queue.values()]);
     case "clinical.tasks.resolve": {
       const item = queue.get(input.itemId);
       if (!item) return trpcErr(res, 404, "NOT_FOUND", "no such item");

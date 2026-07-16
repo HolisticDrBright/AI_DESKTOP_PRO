@@ -342,6 +342,109 @@ test("org members: roster, invite, honest guards, confirmed removal (admin-gated
   await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
 });
 
+test("org substitution: a forged organization id is refused and the session org is unchanged", async ({ page }) => {
+  await page.goto("/login");
+  await page.getByLabel("Email").fill("practitioner@fixture.local");
+  await page.getByLabel("Password").fill("fixture-password");
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await page.waitForURL("**/");
+
+  // The org id is browser input here — the server must validate it against
+  // the caller's OWN memberships, not trust it.
+  const attackStatus = await page.evaluate(() =>
+    fetch("/api/auth/org", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ organizationId: "org-evil" }),
+    }).then((r) => r.status),
+  );
+  expect(attackStatus).toBe(403);
+
+  const session = await page.evaluate(() => fetch("/api/auth/session").then((r) => r.json()));
+  expect(session?.data?.orgId).toBe("org-fixture");
+  const org = await page.evaluate(() => fetch("/api/auth/org").then((r) => r.json()));
+  const ids = (org?.data?.organizations ?? []).map(
+    (o: { organizationId: string }) => o.organizationId,
+  );
+  expect(ids).not.toContain("org-evil");
+
+  await page.goto("/login");
+  await page.getByRole("button", { name: "Sign out" }).click();
+  await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
+});
+
+test("a signed-in user with no active memberships gets honest states, never tenant data", async ({ page }) => {
+  // Covers both no-membership and disabled/suspended membership — under RLS
+  // a non-active membership simply vanishes from organizations.mine.
+  await page.goto("/login");
+  await page.getByLabel("Email").fill("no-orgs@fixture.local");
+  await page.getByLabel("Password").fill("fixture-password");
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await page.waitForURL("**/");
+
+  const session = await page.evaluate(() => fetch("/api/auth/session").then((r) => r.json()));
+  expect(session?.data?.signedIn).toBe(true);
+  expect(session?.data?.orgId).toBeNull();
+
+  // Org-scoped reads are refused server-side for non-members no matter what
+  // org id the client (or env fallback) presents — honest state, no data.
+  await page.goto("/tasks");
+  await expect(page.getByText("You don't have access to this record.")).toBeVisible();
+  await expect(page.getByText("Recheck hs-CRP after abnormal result")).toHaveCount(0);
+
+  await page.goto("/settings");
+  await expect(page.getByText("No memberships found")).toBeVisible();
+
+  await page.goto("/login");
+  await page.getByRole("button", { name: "Sign out" }).click();
+  await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
+});
+
+test("multi-org: auto-select, validated switch clears org data, tabs agree, mid-session revocation is honest", async ({ page, context }) => {
+  await page.goto("/login");
+  await page.getByLabel("Email").fill("dual-org@fixture.local");
+  await page.getByLabel("Password").fill("fixture-password");
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await page.waitForURL("**/");
+
+  // Safe default: exactly-one-or-first membership auto-selected at sign-in.
+  const session = await page.evaluate(() => fetch("/api/auth/session").then((r) => r.json()));
+  expect(session?.data?.orgId).toBe("org-fixture");
+
+  await page.goto("/tasks");
+  await expect(page.getByText("Recheck hs-CRP after abnormal result")).toBeVisible();
+
+  // Switch to the second practice (server re-validates membership); the
+  // switcher reflects the new org after the authoritative reload.
+  await page.goto("/settings");
+  await page.getByLabel("Switch organization").selectOption("org-second");
+  await expect(page.getByLabel("Switch organization")).toHaveValue("org-second", { timeout: 15_000 });
+
+  // No org-A records leak into org B after the switch.
+  await page.goto("/tasks");
+  await expect(page.getByText("No items match your filters")).toBeVisible();
+  await expect(page.getByText("Recheck hs-CRP after abnormal result")).toHaveCount(0);
+
+  // A second tab agrees on the active organization (one authoritative cookie).
+  const tab2 = await context.newPage();
+  await tab2.goto("/login");
+  const tabSession = await tab2.evaluate(() => fetch("/api/auth/session").then((r) => r.json()));
+  expect(tabSession?.data?.orgId).toBe("org-second");
+  await tab2.close();
+
+  // Membership revoked while the app is open → the very next read is refused.
+  await page.request.post("http://127.0.0.1:3999/__control/revoke-memberships", {
+    data: { bearer: "fixture-access-token--multi" },
+  });
+  await page.goto("/tasks");
+  await expect(page.getByText("You don't have access to this record.")).toBeVisible();
+  await expect(page.getByText("Recheck hs-CRP after abnormal result")).toHaveCount(0);
+
+  await page.goto("/login");
+  await page.getByRole("button", { name: "Sign out" }).click();
+  await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
+});
+
 test("no console errors in the live flow", async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
