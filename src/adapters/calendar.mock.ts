@@ -19,7 +19,13 @@ export type AppointmentType =
   | "group"
   | "break";
 
-export type AppointmentStatus = "confirmed" | "arrived" | "completed" | "no-show" | "cancelled";
+export type AppointmentStatus =
+  | "scheduled"
+  | "confirmed"
+  | "arrived"
+  | "completed"
+  | "no-show"
+  | "cancelled";
 
 export interface AppointmentTypeMeta {
   type: AppointmentType;

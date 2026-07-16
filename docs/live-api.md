@@ -81,6 +81,8 @@ is revoked from `public` + `anon` and granted to `authenticated` only.
 | `actions.execute` — `resolve` on a queue item | session outcome + session audit | ✅ `resolve_review_queue_item` RPC (migration `0014`): status + audit atomically, idempotent |
 | `actions.listLiveAuditEvents` | `[]` | ✅ `list_audit_events` RPC |
 | `actions.execute` — other kinds | session | session (wired per-domain as slices land) |
+| `schedule.getWeek` | n/a (demo calendar renders the weekday-pattern mock directly) | ✅ real `appointments` week read (RLS-scoped; patient-NULL breaks org-visible via migration `0017`) |
+| `schedule.book` / `updateStatus` | n/a (demo announces, never pretends to persist) | ✅ `book_appointment` / `update_appointment_status` RPCs (migration `0017`): validation + double-booking rejection (practitioner AND patient) + status-transition rules + audit, atomic. `reschedule_appointment` exists server-side; drag-to-reschedule UI is a later slice |
 | everything else | mock | mock |
 
 `ActionBar` executes through `api.actions.execute`; an action whose context

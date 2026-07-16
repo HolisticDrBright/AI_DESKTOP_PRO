@@ -180,6 +180,43 @@ function ingestUploadFixture(patientId) {
   };
 }
 
+/**
+ * Schedule fixture: seeded on the FIRST calendar request, relative to the
+ * requested week, so the e2e run always finds appointments in view. Booked
+ * and status-changed rows mutate in memory like the real backend.
+ */
+const PRACTITIONER_USER_ID = "dddddddd-1111-2222-3333-444444444401";
+let scheduleSeeded = false;
+let apptSeq = 0;
+const scheduleAppointments = [];
+function seedScheduleFor(fromIso) {
+  if (scheduleSeeded) return;
+  scheduleSeeded = true;
+  const from = new Date(fromIso);
+  const at = (dayOffset, h, m = 0) => {
+    const d = new Date(from);
+    d.setDate(d.getDate() + dayOffset);
+    d.setHours(h, m, 0, 0);
+    return d;
+  };
+  scheduleAppointments.push(
+    {
+      id: "abababab-1111-2222-3333-444444444401",
+      patientId: PATIENTS[0].id, patientName: "Fixture Patient",
+      practitionerUserId: PRACTITIONER_USER_ID, practitionerName: "Demo Practitioner",
+      title: null, appointmentType: "follow-up", location: "Room 1", telehealthUrl: null,
+      status: "confirmed", startsAt: at(1, 15).toISOString(), endsAt: at(1, 15, 45).toISOString(),
+    },
+    {
+      id: "abababab-1111-2222-3333-444444444402",
+      patientId: null, patientName: null,
+      practitionerUserId: PRACTITIONER_USER_ID, practitionerName: "Demo Practitioner",
+      title: "Admin block", appointmentType: "break", location: "Admin", telehealthUrl: null,
+      status: "scheduled", startsAt: at(2, 12).toISOString(), endsAt: at(2, 13).toISOString(),
+    },
+  );
+}
+
 const auditEvents = [];
 let auditSeq = 0;
 function pushAudit(action, resourceType, resourceId, safeMessage, metadata, patientId = null) {
@@ -361,6 +398,63 @@ createServer(async (req, res) => {
     }
     case "clinical.actions.listAuditEvents":
       return trpcOk(res, auditEvents.slice(0, Math.min(Number(input.limit ?? 50), 200)));
+    case "clinical.schedule.getCalendar": {
+      seedScheduleFor(input.fromIso);
+      const from = Date.parse(input.fromIso);
+      const to = Date.parse(input.toIso);
+      return trpcOk(res, {
+        appointments: scheduleAppointments.filter((a) => {
+          const t = Date.parse(a.startsAt);
+          return t >= from && t < to;
+        }),
+        practitioners: [
+          { userId: PRACTITIONER_USER_ID, displayName: "Demo Practitioner", credentials: "ND", specialty: null },
+        ],
+      });
+    }
+    case "clinical.schedule.book": {
+      seedScheduleFor(input.startsAtIso);
+      const patient = input.patientId ? PATIENTS.find((p) => p.id === input.patientId) : null;
+      if (input.patientId && !patient) {
+        return trpcErr(res, 403, "FORBIDDEN", "not authorized for this patient");
+      }
+      const id = `abababab-1111-2222-3333-4444444444${String(10 + ++apptSeq)}`;
+      scheduleAppointments.push({
+        id,
+        patientId: patient ? patient.id : null,
+        patientName: patient ? `${patient.first_name} ${patient.last_name}` : null,
+        practitionerUserId: input.practitionerUserId, practitionerName: "Demo Practitioner",
+        title: input.title ?? null, appointmentType: input.appointmentType,
+        location: input.location ?? null, telehealthUrl: null,
+        status: "scheduled", startsAt: input.startsAtIso, endsAt: input.endsAtIso,
+      });
+      pushAudit(
+        "appointment.book", "appointment", id,
+        `Appointment booked (${input.appointmentType})`,
+        { appointment_type: input.appointmentType, starts_at: input.startsAtIso },
+        patient ? patient.id : null,
+      );
+      return trpcOk(res, {
+        ok: true, id, status: "scheduled",
+        startsAt: input.startsAtIso, endsAt: input.endsAtIso, message: "Appointment booked.",
+      });
+    }
+    case "clinical.schedule.updateStatus": {
+      const appt = scheduleAppointments.find((a) => a.id === input.appointmentId);
+      if (!appt) return trpcErr(res, 404, "NOT_FOUND", "no such appointment");
+      const prev = appt.status;
+      appt.status = input.status;
+      pushAudit(
+        "appointment.status", "appointment", appt.id,
+        `Appointment ${input.status}`,
+        { previous_status: prev, status: input.status },
+        appt.patientId,
+      );
+      return trpcOk(res, {
+        ok: true, id: appt.id, status: input.status, previousStatus: prev,
+        alreadySet: false, message: `Appointment ${input.status}.`,
+      });
+    }
     default:
       return trpcErr(res, 404, "NOT_FOUND", `unknown procedure ${proc}`);
   }

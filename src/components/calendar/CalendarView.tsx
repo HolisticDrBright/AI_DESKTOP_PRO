@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   CalendarPlus,
@@ -18,10 +18,17 @@ import {
   getCalendar,
   type Appointment,
   type AppointmentStatus,
+  type AppointmentType,
   type CalendarData,
   type Practitioner,
 } from "@/adapters/calendar.mock";
+import { api } from "@/adapters";
+import { isAdapterError } from "@/adapters/errors";
+import type { LiveCalendar } from "@/adapters/live-types";
+import { USE_LIVE_API } from "@/adapters/mode";
 import type { Tone } from "@/adapters/types";
+import { ClinicalError, ClinicalLoading } from "@/components/ui/ClinicalStates";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { Card } from "@/components/ui/bits";
 import { cn } from "@/lib/cn";
 import { useFeedback } from "@/lib/feedback";
@@ -77,12 +84,112 @@ function deriveStatus(date: Date, appt: Appointment, now: Date): AppointmentStat
 }
 
 const STATUS_LABEL: Record<AppointmentStatus, string> = {
+  scheduled: "Scheduled",
   confirmed: "Confirmed",
   arrived: "In progress",
   completed: "Completed",
   "no-show": "No-show",
   cancelled: "Cancelled",
 };
+
+/* ----------------------------------------------------- live-mode mapping */
+
+const KNOWN_TYPES = new Set<AppointmentType>(APPOINTMENT_TYPES.map((t) => t.type));
+const LIVE_TONES: Tone[] = ["action", "teal", "positive", "ai", "navy", "warning"];
+
+const initialsOf = (name: string): string =>
+  name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((w) => w[0]!.toUpperCase())
+    .join("") || "?";
+
+const STATUS_FROM_DB: Record<string, AppointmentStatus> = {
+  scheduled: "scheduled",
+  confirmed: "confirmed",
+  arrived: "arrived",
+  completed: "completed",
+  cancelled: "cancelled",
+  no_show: "no-show",
+};
+
+/**
+ * Shape a live week (real, dated appointments) into the grid's CalendarData +
+ * a per-appointment REAL status map (live status comes from the record, never
+ * derived from the clock). Cancelled / no-show rows are hidden from the grid.
+ */
+function mapLiveWeek(live: LiveCalendar): {
+  data: CalendarData;
+  statusById: Map<string, AppointmentStatus>;
+} {
+  const statusById = new Map<string, AppointmentStatus>();
+  const appointments: Appointment[] = [];
+  let minStart = 8 * 60;
+  let maxEnd = 18 * 60;
+
+  for (const a of live.appointments) {
+    const status = STATUS_FROM_DB[a.status] ?? "scheduled";
+    if (!a.startsAt || !a.endsAt || status === "cancelled" || status === "no-show") continue;
+    const startDate = new Date(a.startsAt);
+    const endDate = new Date(a.endsAt);
+    const start = startDate.getHours() * 60 + startDate.getMinutes();
+    const durationMin = Math.max(Math.round((endDate.getTime() - startDate.getTime()) / 60_000), 5);
+    const type: AppointmentType = KNOWN_TYPES.has(a.appointmentType as AppointmentType)
+      ? (a.appointmentType as AppointmentType)
+      : "follow-up";
+
+    statusById.set(a.id, status);
+    appointments.push({
+      id: a.id,
+      practitionerId: a.practitionerUserId ?? "unknown",
+      weekday: isoWeekday(startDate),
+      start,
+      durationMin,
+      type,
+      patientName: a.patientName ?? a.title ?? APPOINTMENT_TYPE_META[type].label,
+      patientId: a.patientId ?? undefined,
+      location: a.location ?? (a.telehealthUrl ? "Telehealth" : "—"),
+    });
+    minStart = Math.min(minStart, start);
+    maxEnd = Math.max(maxEnd, start + durationMin);
+  }
+
+  const seen = new Set(live.practitioners.map((p) => p.userId));
+  const practitioners: Practitioner[] = live.practitioners.map((p, i) => ({
+    id: p.userId,
+    name: p.displayName ?? "Practitioner",
+    role: p.credentials ?? p.specialty ?? "Practitioner",
+    initials: initialsOf(p.displayName ?? "P"),
+    tone: LIVE_TONES[i % LIVE_TONES.length],
+  }));
+  // Appointments can reference members without a practitioner profile yet.
+  for (const a of live.appointments) {
+    if (a.practitionerUserId && !seen.has(a.practitionerUserId)) {
+      seen.add(a.practitionerUserId);
+      practitioners.push({
+        id: a.practitionerUserId,
+        name: a.practitionerName ?? "Practitioner",
+        role: "Practitioner",
+        initials: initialsOf(a.practitionerName ?? "P"),
+        tone: LIVE_TONES[practitioners.length % LIVE_TONES.length],
+      });
+    }
+  }
+  if (practitioners.length === 0) {
+    practitioners.push({ id: "unknown", name: "Practitioner", role: "—", initials: "P", tone: "action" });
+  }
+
+  return {
+    data: {
+      practitioners,
+      appointments,
+      dayStart: Math.floor(minStart / 60) * 60,
+      dayEnd: Math.ceil(maxEnd / 60) * 60,
+    },
+    statusById,
+  };
+}
 
 /* ------------------------------------------------------------- root screen */
 
@@ -96,12 +203,26 @@ interface Selection {
 
 const HOUR_PX = 54;
 
-export function CalendarView() {
-  const data = useMemo<CalendarData>(() => getCalendar(), []);
+export function CalendarView({
+  patientOptions = [],
+}: {
+  /** Live mode: bookable patients (fetched server-side under RLS). */
+  patientOptions?: { id: string; name: string }[];
+}) {
+  // Demo mode renders the weekday-pattern mock exactly as before; live mode
+  // fetches the real week (dated rows, record statuses) per anchor change.
+  const demoData = useMemo<CalendarData | null>(() => (USE_LIVE_API ? null : getCalendar()), []);
+  const [liveWeek, setLiveWeek] = useState<ReturnType<typeof mapLiveWeek> | null>(null);
+  const [liveState, setLiveState] = useState<"loading" | "ready" | "error">("loading");
+  const [liveError, setLiveError] = useState<{ message: string; code?: string }>({ message: "" });
+  const [reloadKey, setReloadKey] = useState(0);
+  const [bookingOpen, setBookingOpen] = useState(false);
+
+  const { announce } = useFeedback();
   const [now, setNow] = useState<Date | null>(null);
   const [anchor, setAnchor] = useState<Date | null>(null);
   const [view, setView] = useState<ViewMode>("week");
-  const [practitionerId, setPractitionerId] = useState(data.practitioners[0].id);
+  const [practitionerId, setPractitionerId] = useState(demoData?.practitioners[0]?.id ?? "");
   const [selection, setSelection] = useState<Selection | null>(null);
 
   // Resolve "now" on the client only (avoids hydration mismatch from the clock).
@@ -113,6 +234,42 @@ export function CalendarView() {
     return () => clearInterval(t);
   }, []);
 
+  // LIVE: fetch the anchored week through the façade (RLS-scoped read).
+  const weekStartIso = anchor ? startOfWeek(anchor).toISOString() : null;
+  useEffect(() => {
+    if (!USE_LIVE_API || !weekStartIso) return;
+    let alive = true;
+    setLiveState("loading");
+    const from = new Date(weekStartIso);
+    api.schedule
+      .getWeek(from.toISOString(), addDays(from, 7).toISOString())
+      .then((week) => {
+        if (!alive) return;
+        setLiveWeek(mapLiveWeek(week));
+        setLiveState("ready");
+      })
+      .catch((e) => {
+        if (!alive) return;
+        setLiveError({
+          message: isAdapterError(e) ? e.safeMessage : "Unable to load the calendar right now.",
+          code: isAdapterError(e) ? e.code : undefined,
+        });
+        setLiveState("error");
+      });
+    return () => {
+      alive = false;
+    };
+  }, [weekStartIso, reloadKey]);
+
+  const data = USE_LIVE_API ? (liveWeek?.data ?? null) : demoData;
+
+  // Keep the practitioner filter valid as live weeks load.
+  useEffect(() => {
+    if (data && !data.practitioners.some((p) => p.id === practitionerId)) {
+      setPractitionerId(data.practitioners[0]?.id ?? "");
+    }
+  }, [data, practitionerId]);
+
   if (!anchor || !now) {
     return (
       <section data-screen-label="Calendar" className="px-5 pt-4 pb-8">
@@ -120,6 +277,39 @@ export function CalendarView() {
       </section>
     );
   }
+
+  if (USE_LIVE_API && liveState === "error") {
+    const signedOut = liveError.code === "unauthenticated";
+    return (
+      <section data-screen-label="Calendar" className="px-5 pt-4 pb-8">
+        <ClinicalError
+          message={liveError.message}
+          onRetry={() => setReloadKey((k) => k + 1)}
+          actionHref={signedOut ? "/login" : undefined}
+          actionLabel={signedOut ? "Sign in" : undefined}
+        />
+      </section>
+    );
+  }
+  if (USE_LIVE_API && (liveState === "loading" || !data)) {
+    return (
+      <section data-screen-label="Calendar" className="px-5 pt-4 pb-8">
+        <ClinicalLoading label="Loading calendar…" />
+      </section>
+    );
+  }
+  if (!data) return null;
+
+  const statusOf = (appt: Appointment, date: Date): AppointmentStatus =>
+    USE_LIVE_API
+      ? (liveWeek?.statusById.get(appt.id) ?? "scheduled")
+      : deriveStatus(date, appt, now);
+
+  const onChanged = () => {
+    setSelection(null);
+    setBookingOpen(false);
+    setReloadKey((k) => k + 1);
+  };
 
   const weekStart = startOfWeek(anchor);
   const weekDates = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
@@ -155,6 +345,11 @@ export function CalendarView() {
         practitionerId={practitionerId}
         setPractitionerId={setPractitionerId}
         showPractitioner={view === "week"}
+        onNew={
+          USE_LIVE_API
+            ? () => setBookingOpen(true)
+            : () => announce("New appointment — scheduling opens with the backend. (demo)")
+        }
       />
 
       <div className="mt-3 grid grid-cols-[220px_minmax(0,1fr)] items-start gap-4">
@@ -177,6 +372,7 @@ export function CalendarView() {
               pxPerMin={pxPerMin}
               now={now}
               practitionerId={practitionerId}
+              statusOf={statusOf}
               onSelect={setSelection}
             />
           ) : (
@@ -187,13 +383,30 @@ export function CalendarView() {
               gridHeight={gridHeight}
               pxPerMin={pxPerMin}
               now={now}
+              statusOf={statusOf}
               onSelect={setSelection}
             />
           )}
         </Card>
       </div>
 
-      {selection && <DetailDrawer selection={selection} data={data} onClose={() => setSelection(null)} />}
+      {selection && (
+        <DetailDrawer
+          selection={selection}
+          data={data}
+          onClose={() => setSelection(null)}
+          onChanged={onChanged}
+        />
+      )}
+      {bookingOpen && USE_LIVE_API && (
+        <BookingDrawer
+          practitioners={data.practitioners}
+          patientOptions={patientOptions}
+          defaultDate={anchor}
+          onClose={() => setBookingOpen(false)}
+          onBooked={onChanged}
+        />
+      )}
     </section>
   );
 }
@@ -211,6 +424,7 @@ function Toolbar({
   practitionerId,
   setPractitionerId,
   showPractitioner,
+  onNew,
 }: {
   rangeLabel: string;
   view: ViewMode;
@@ -222,8 +436,8 @@ function Toolbar({
   practitionerId: string;
   setPractitionerId: (id: string) => void;
   showPractitioner: boolean;
+  onNew: () => void;
 }) {
-  const { announce } = useFeedback();
   const btn =
     "flex h-8 items-center justify-center rounded-lg border border-line bg-card text-body hover:border-line-hover focus-visible:outline-2 focus-visible:outline-action";
   return (
@@ -275,7 +489,7 @@ function Toolbar({
           ))}
         </div>
         <button
-          onClick={() => announce("New appointment — scheduling opens with the backend. (demo)")}
+          onClick={onNew}
           className="flex h-8 items-center gap-[6px] rounded-lg border-none bg-action px-3 text-[12.5px] font-semibold text-white hover:bg-action-deep focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink"
         >
           <CalendarPlus size={14} strokeWidth={2} aria-hidden />
@@ -502,6 +716,7 @@ function WeekGrid({
   pxPerMin,
   now,
   practitionerId,
+  statusOf,
   onSelect,
 }: {
   data: CalendarData;
@@ -511,6 +726,7 @@ function WeekGrid({
   pxPerMin: number;
   now: Date;
   practitionerId: string;
+  statusOf: (appt: Appointment, date: Date) => AppointmentStatus;
   onSelect: (s: Selection) => void;
 }) {
   const nowTop = (now.getHours() * 60 + now.getMinutes() - data.dayStart) * pxPerMin;
@@ -570,7 +786,7 @@ function WeekGrid({
                     key={a.id}
                     appt={a}
                     date={d}
-                    status={deriveStatus(d, a, now)}
+                    status={statusOf(a, d)}
                     pxPerMin={pxPerMin}
                     dayStart={data.dayStart}
                     onSelect={onSelect}
@@ -596,6 +812,7 @@ function DayGrid({
   gridHeight,
   pxPerMin,
   now,
+  statusOf,
   onSelect,
 }: {
   data: CalendarData;
@@ -604,6 +821,7 @@ function DayGrid({
   gridHeight: number;
   pxPerMin: number;
   now: Date;
+  statusOf: (appt: Appointment, date: Date) => AppointmentStatus;
   onSelect: (s: Selection) => void;
 }) {
   const weekday = isoWeekday(date);
@@ -652,7 +870,7 @@ function DayGrid({
                     key={a.id}
                     appt={a}
                     date={date}
-                    status={deriveStatus(date, a, now)}
+                    status={statusOf(a, date)}
                     pxPerMin={pxPerMin}
                     dayStart={data.dayStart}
                     onSelect={onSelect}
@@ -687,22 +905,43 @@ function DetailDrawer({
   selection,
   data,
   onClose,
+  onChanged,
 }: {
   selection: Selection;
   data: CalendarData;
   onClose: () => void;
+  onChanged: () => void;
 }) {
   const { announce } = useFeedback();
   const { appt, date, status } = selection;
   const meta = APPOINTMENT_TYPE_META[appt.type];
   const practitioner = data.practitioners.find((p) => p.id === appt.practitionerId);
   const end = appt.start + appt.durationMin;
+  const [working, setWorking] = useState(false);
+  const [confirmCancel, setConfirmCancel] = useState(false);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
+
+  // LIVE: audited status transitions through the 0017 RPC.
+  const setLiveStatus = (target: "arrived" | "completed" | "cancelled") => {
+    if (working) return;
+    setWorking(true);
+    setConfirmCancel(false);
+    api.schedule
+      .updateStatus(appt.id, target)
+      .then((r) => {
+        announce(`${r.message} (saved to record + audit)`);
+        onChanged();
+      })
+      .catch((e) => {
+        setWorking(false);
+        announce(isAdapterError(e) ? e.safeMessage : "Could not update the appointment.");
+      });
+  };
 
   const Row = ({ icon, children }: { icon: React.ReactNode; children: React.ReactNode }) => (
     <div className="flex items-start gap-[9px] px-4 py-[7px]">
@@ -771,20 +1010,248 @@ function DetailDrawer({
             Open chart
           </button>
         )}
-        <div className="flex gap-2">
-          <button
-            onClick={() => announce(`${appt.patientName} checked in. (demo — not persisted)`)}
-            className="flex h-8 flex-1 items-center justify-center rounded-lg border border-line bg-card text-[12px] font-semibold text-body hover:border-line-hover focus-visible:outline-2 focus-visible:outline-action"
-          >
-            Check in
-          </button>
-          <button
-            onClick={() => announce("Reschedule opens with the backend. (demo)")}
-            className="flex h-8 flex-1 items-center justify-center rounded-lg border border-line bg-card text-[12px] font-semibold text-body hover:border-line-hover focus-visible:outline-2 focus-visible:outline-action"
-          >
-            Reschedule
-          </button>
+        {USE_LIVE_API ? (
+          <div className="flex gap-2">
+            {(status === "scheduled" || status === "confirmed") && (
+              <button
+                onClick={() => setLiveStatus("arrived")}
+                disabled={working}
+                className="flex h-8 flex-1 items-center justify-center rounded-lg border border-line bg-card text-[12px] font-semibold text-body hover:border-line-hover focus-visible:outline-2 focus-visible:outline-action disabled:opacity-50"
+              >
+                {working ? "Saving…" : "Check in"}
+              </button>
+            )}
+            {status === "arrived" && (
+              <button
+                onClick={() => setLiveStatus("completed")}
+                disabled={working}
+                className="flex h-8 flex-1 items-center justify-center rounded-lg border border-line bg-card text-[12px] font-semibold text-body hover:border-line-hover focus-visible:outline-2 focus-visible:outline-action disabled:opacity-50"
+              >
+                {working ? "Saving…" : "Complete"}
+              </button>
+            )}
+            {status !== "completed" && status !== "cancelled" && status !== "no-show" && (
+              <button
+                onClick={() => setConfirmCancel(true)}
+                disabled={working}
+                className="flex h-8 flex-1 items-center justify-center rounded-lg border border-line bg-card text-[12px] font-semibold text-critical hover:border-line-hover focus-visible:outline-2 focus-visible:outline-action disabled:opacity-50"
+              >
+                Cancel appt
+              </button>
+            )}
+          </div>
+        ) : (
+          <div className="flex gap-2">
+            <button
+              onClick={() => announce(`${appt.patientName} checked in. (demo — not persisted)`)}
+              className="flex h-8 flex-1 items-center justify-center rounded-lg border border-line bg-card text-[12px] font-semibold text-body hover:border-line-hover focus-visible:outline-2 focus-visible:outline-action"
+            >
+              Check in
+            </button>
+            <button
+              onClick={() => announce("Reschedule opens with the backend. (demo)")}
+              className="flex h-8 flex-1 items-center justify-center rounded-lg border border-line bg-card text-[12px] font-semibold text-body hover:border-line-hover focus-visible:outline-2 focus-visible:outline-action"
+            >
+              Reschedule
+            </button>
+          </div>
+        )}
+      </div>
+
+      <ConfirmDialog
+        open={confirmCancel}
+        title="Cancel this appointment?"
+        body={`${appt.patientName} · ${fmtTime(appt.start)}. Cancelling updates the record and is audited.`}
+        confirmLabel="Cancel appointment"
+        destructive
+        onConfirm={() => setLiveStatus("cancelled")}
+        onCancel={() => setConfirmCancel(false)}
+      />
+    </aside>
+  );
+}
+
+/* ----------------------------------------------------------- booking drawer */
+
+/** LIVE booking: real appointment through book_appointment (0017, audited). */
+function BookingDrawer({
+  practitioners,
+  patientOptions,
+  defaultDate,
+  onClose,
+  onBooked,
+}: {
+  practitioners: Practitioner[];
+  patientOptions: { id: string; name: string }[];
+  defaultDate: Date;
+  onClose: () => void;
+  onBooked: () => void;
+}) {
+  const { announce } = useFeedback();
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const [patientId, setPatientId] = useState(patientOptions[0]?.id ?? "");
+  const [practitionerId, setPractitionerId] = useState(practitioners[0]?.id ?? "");
+  const [type, setType] = useState<AppointmentType>("follow-up");
+  const [dateStr, setDateStr] = useState(
+    `${defaultDate.getFullYear()}-${String(defaultDate.getMonth() + 1).padStart(2, "0")}-${String(defaultDate.getDate()).padStart(2, "0")}`,
+  );
+  const [timeStr, setTimeStr] = useState("09:00");
+  const [durationMin, setDurationMin] = useState(45);
+  const [location, setLocation] = useState("");
+  const [working, setWorking] = useState(false);
+  const [errorMsg, setErrorMsg] = useState("");
+
+  useEffect(() => {
+    headingRef.current?.focus();
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const needsPatient = type !== "break" && type !== "group";
+  const field =
+    "h-9 w-full rounded-lg border border-line bg-card px-[10px] text-[12.5px] text-body outline-none focus-visible:border-action focus-visible:outline-2 focus-visible:outline-action";
+  const labelCls = "mb-[5px] block text-[10px] font-bold tracking-[0.04em] text-faint uppercase";
+
+  const submit = () => {
+    if (working) return;
+    setErrorMsg("");
+    if (needsPatient && !patientId) {
+      setErrorMsg("Choose a patient for this appointment type.");
+      return;
+    }
+    const starts = new Date(`${dateStr}T${timeStr}`);
+    if (Number.isNaN(starts.getTime())) {
+      setErrorMsg("Choose a valid date and time.");
+      return;
+    }
+    const ends = new Date(starts.getTime() + durationMin * 60_000);
+    setWorking(true);
+    api.schedule
+      .book({
+        practitionerUserId: practitionerId,
+        appointmentType: type,
+        startsAtIso: starts.toISOString(),
+        endsAtIso: ends.toISOString(),
+        patientId: needsPatient ? patientId : undefined,
+        location: location.trim() || undefined,
+      })
+      .then((r) => {
+        announce(`${r.message} (saved to record + audit)`);
+        onBooked();
+      })
+      .catch((e) => {
+        setWorking(false);
+        setErrorMsg(
+          isAdapterError(e)
+            ? `${e.safeMessage}${e.code === "invalid" ? " If the time overlaps an existing appointment, pick another slot." : ""}`
+            : "Could not book the appointment.",
+        );
+      });
+  };
+
+  return (
+    <aside
+      role="dialog"
+      aria-label="New appointment"
+      className="glass-overlay animate-fade-up fixed top-3 right-3 bottom-3 z-[95] flex w-[380px] max-w-[calc(100vw-24px)] flex-col overflow-hidden rounded-[20px] border border-[rgba(255,255,255,0.7)] bg-[rgba(255,255,255,0.97)] shadow-[0_20px_56px_rgba(24,42,61,0.2)]"
+    >
+      <div className="flex items-start gap-[9px] border-b border-hairline px-4 pt-[14px] pb-3">
+        <span className="mt-px flex h-7 w-7 items-center justify-center rounded-lg bg-action-tint">
+          <CalendarPlus size={14} strokeWidth={1.75} className="text-action" aria-hidden />
+        </span>
+        <div className="flex-1">
+          <h2 ref={headingRef} tabIndex={-1} className="m-0 text-[14px] font-bold outline-none">New appointment</h2>
+          <div className="text-[11px] text-subtle">Booked to the record — double-booking is rejected.</div>
         </div>
+        <button
+          onClick={onClose}
+          aria-label="Close booking"
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-faint hover:bg-[rgba(90,107,126,0.1)] hover:text-ink focus-visible:outline-2 focus-visible:outline-action"
+        >
+          <X size={14} strokeWidth={2} aria-hidden />
+        </button>
+      </div>
+
+      <div className="flex flex-1 flex-col gap-[12px] overflow-y-auto px-4 py-[13px]">
+        <div>
+          <label htmlFor="book-type" className={labelCls}>Type</label>
+          <select id="book-type" value={type} onChange={(e) => setType(e.target.value as AppointmentType)} className={field}>
+            {APPOINTMENT_TYPES.map((t) => (
+              <option key={t.type} value={t.type}>{t.label}</option>
+            ))}
+          </select>
+        </div>
+
+        {needsPatient && (
+          <div>
+            <label htmlFor="book-patient" className={labelCls}>Patient</label>
+            <select id="book-patient" value={patientId} onChange={(e) => setPatientId(e.target.value)} className={field}>
+              {patientOptions.length === 0 && <option value="">No accessible patients</option>}
+              {patientOptions.map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        <div>
+          <label htmlFor="book-practitioner" className={labelCls}>Practitioner</label>
+          <select id="book-practitioner" value={practitionerId} onChange={(e) => setPractitionerId(e.target.value)} className={field}>
+            {practitioners.map((p) => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </select>
+        </div>
+
+        <div className="grid grid-cols-2 gap-[10px]">
+          <div>
+            <label htmlFor="book-date" className={labelCls}>Date</label>
+            <input id="book-date" type="date" value={dateStr} onChange={(e) => setDateStr(e.target.value)} className={field} />
+          </div>
+          <div>
+            <label htmlFor="book-time" className={labelCls}>Start time</label>
+            <input id="book-time" type="time" value={timeStr} onChange={(e) => setTimeStr(e.target.value)} className={field} />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-[10px]">
+          <div>
+            <label htmlFor="book-duration" className={labelCls}>Duration</label>
+            <select id="book-duration" value={durationMin} onChange={(e) => setDurationMin(Number(e.target.value))} className={field}>
+              {[15, 30, 45, 60, 90].map((m) => (
+                <option key={m} value={m}>{m} min</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label htmlFor="book-location" className={labelCls}>Location</label>
+            <input
+              id="book-location"
+              type="text"
+              value={location}
+              onChange={(e) => setLocation(e.target.value)}
+              placeholder={type === "telehealth" ? "Telehealth" : "Room…"}
+              className={field}
+            />
+          </div>
+        </div>
+
+        {errorMsg && (
+          <p role="alert" className="m-0 rounded-[9px] bg-critical-tint px-[11px] py-[9px] text-[12px] font-medium text-critical">
+            {errorMsg}
+          </p>
+        )}
+      </div>
+
+      <div className="shrink-0 border-t border-hairline bg-[rgba(247,250,252,0.7)] px-4 py-3">
+        <button
+          onClick={submit}
+          disabled={working || (needsPatient && !patientId)}
+          className="h-9 w-full cursor-pointer rounded-lg border-none bg-action text-[12.5px] font-semibold text-white hover:bg-action-deep focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {working ? "Booking…" : "Book appointment"}
+        </button>
       </div>
     </aside>
   );

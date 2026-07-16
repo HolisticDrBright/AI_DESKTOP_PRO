@@ -73,3 +73,60 @@ export interface LiveUploadResult {
   /** failed only — fixed vocabulary, never free text */
   failureReason?: "unreadable_pdf" | "no_text_extracted" | "no_markers_found";
 }
+
+/* ---------------------------------------------------------------- schedule */
+
+/** One appointment row as clinical.schedule.getCalendar returns it. */
+export interface LiveAppointment {
+  id: string;
+  patientId: string | null;
+  patientName: string | null;
+  practitionerUserId: string | null;
+  practitionerName: string | null;
+  title: string | null;
+  appointmentType: string | null;
+  location: string | null;
+  telehealthUrl: string | null;
+  status: string;
+  startsAt: string | null;
+  endsAt: string | null;
+}
+
+export interface LiveCalendarPractitioner {
+  userId: string;
+  displayName: string | null;
+  credentials: string | null;
+  specialty: string | null;
+}
+
+export interface LiveCalendar {
+  appointments: LiveAppointment[];
+  practitioners: LiveCalendarPractitioner[];
+}
+
+export interface LiveBookResult {
+  ok: true;
+  id: string;
+  status: string;
+  startsAt: string;
+  endsAt: string;
+  message: string;
+}
+
+export interface LiveAppointmentStatusResult {
+  ok: true;
+  id: string;
+  status: string;
+  previousStatus: string;
+  alreadySet: boolean;
+  message: string;
+}
+
+export interface LiveBookInput {
+  practitionerUserId: string;
+  appointmentType: string;
+  startsAtIso: string;
+  endsAtIso: string;
+  patientId?: string;
+  location?: string;
+}

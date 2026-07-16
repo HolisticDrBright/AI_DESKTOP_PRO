@@ -132,6 +132,26 @@ begin
   values ('a0000000-0000-4000-8000-000000000050', org_id, patient_id, 'Foundational anti-inflammatory support (draft)', 'draft', 'seed')
   on conflict (id) do nothing;
 
+  -- Calendar appointments: one upcoming in-person follow-up, one telehealth,
+  -- one org-level break (patient-NULL — exercises the 0017 visibility branch).
+  -- Times are relative to seeding so they land in the visible week.
+  insert into public.appointments (id, organization_id, patient_id, practitioner_user_id,
+    appointment_type, location, telehealth_url, status, starts_at, ends_at, source, created_by)
+  values
+    ('a0000000-0000-4000-8000-000000000070', org_id, patient_id, practitioner_user_id,
+     'follow-up', 'Room 1', null, 'confirmed',
+     date_trunc('hour', now()) + interval '26 hours',
+     date_trunc('hour', now()) + interval '26 hours 45 minutes', 'seed', practitioner_user_id),
+    ('a0000000-0000-4000-8000-000000000071', org_id, patient_id, practitioner_user_id,
+     'telehealth', 'Telehealth', null, 'scheduled',
+     date_trunc('hour', now()) + interval '50 hours',
+     date_trunc('hour', now()) + interval '50 hours 30 minutes', 'seed', practitioner_user_id),
+    ('a0000000-0000-4000-8000-000000000072', org_id, null, practitioner_user_id,
+     'break', 'Admin', null, 'scheduled',
+     date_trunc('hour', now()) + interval '28 hours',
+     date_trunc('hour', now()) + interval '29 hours', 'seed', practitioner_user_id)
+  on conflict (id) do nothing;
+
   -- Example audit events (seeded as postgres; app-role writes stay RPC-only)
   insert into public.audit_events (id, organization_id, patient_id, actor_user_id, action, resource_type, resource_id, safe_message, metadata) values
     ('a0000000-0000-4000-8000-000000000060', org_id, patient_id, practitioner_user_id, 'seed.import',

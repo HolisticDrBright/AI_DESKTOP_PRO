@@ -105,6 +105,44 @@ test("uploading a lab PDF extracts markers and queues a low-confidence review", 
   await expect(page.getByText("lab_document.ingest").first()).toBeVisible();
 });
 
+test("live calendar shows real appointments and check-in persists with audit", async ({ page }) => {
+  await page.goto("/calendar");
+  const block = page.getByRole("button", { name: /Fixture Patient/ }).first();
+  await block.waitFor();
+  await block.click();
+  await page.getByRole("button", { name: "Check in" }).click();
+  await expect(page.getByText(/Appointment arrived/).first()).toBeVisible();
+
+  // Fresh load: the status must come from the backend record, not UI state.
+  await page.reload();
+  await page.getByRole("button", { name: /Fixture Patient/ }).first().click();
+  await expect(
+    page.getByRole("dialog", { name: "Appointment details" }).getByText("In progress"),
+  ).toBeVisible();
+
+  await page.goto("/audit-log");
+  await expect(page.getByText("appointment.status").first()).toBeVisible();
+});
+
+test("booking a new appointment persists to the live week", async ({ page }) => {
+  await page.goto("/calendar");
+  await page.getByRole("button", { name: "New" }).click();
+  const dialog = page.getByRole("dialog", { name: "New appointment" });
+  await dialog.getByLabel("Patient").selectOption({ label: "Sample Client" });
+  await dialog.getByLabel("Start time").fill("20:00");
+  await dialog.getByLabel("Location").fill("Room 3");
+  await dialog.getByRole("button", { name: "Book appointment" }).click();
+
+  // The booked block renders from the refetched week…
+  await expect(page.getByRole("button", { name: /Sample Client/ }).first()).toBeVisible();
+  // …and survives a reload (the record, not local state).
+  await page.reload();
+  await expect(page.getByRole("button", { name: /Sample Client/ }).first()).toBeVisible();
+
+  await page.goto("/audit-log");
+  await expect(page.getByText("appointment.book").first()).toBeVisible();
+});
+
 test("practitioner sign-in and sign-out work via httpOnly cookie session", async ({ page }) => {
   await page.goto("/login");
   await page.getByLabel("Email").fill("practitioner@fixture.local");
@@ -136,6 +174,7 @@ test("no console errors in the live flow", async ({ page }) => {
   });
   await page.goto("/tasks", { waitUntil: "networkidle" });
   await page.goto("/patients/aaaaaaaa-1111-2222-3333-444444444401/labs", { waitUntil: "networkidle" });
+  await page.goto("/calendar", { waitUntil: "networkidle" });
   await page.goto("/audit-log", { waitUntil: "networkidle" });
   await page.goto("/settings", { waitUntil: "networkidle" });
   expect(errors).toEqual([]);

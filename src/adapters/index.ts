@@ -78,7 +78,7 @@ const orderEvent = (label: string): OrderEvent => ({
   at: new Date().toISOString(),
   label,
 });
-import type { LiveAuditEvent } from "./live-types";
+import type { LiveAuditEvent, LiveBookInput } from "./live-types";
 import type { DraftKind } from "./types";
 
 /** Context passed to lab marker mutations so the audit entry is meaningful. */
@@ -108,6 +108,27 @@ export const api = {
   practice: {
     dashboard: async () => getPracticeDashboard(),
     rightRail: async () => getRightRail(),
+  },
+  schedule: {
+    /**
+     * LIVE ONLY namespace — real appointments (RLS-scoped reads; 0017
+     * SECURITY DEFINER RPC writes with double-booking rejection + audit).
+     * The demo calendar keeps rendering the weekday-pattern mock directly
+     * (calendar.mock.getCalendar); these methods throw in demo mode instead
+     * of pretending to persist.
+     */
+    getWeek: async (fromIso: string, toIso: string) => {
+      if (!USE_LIVE_API) throw new AdapterError("invalid", "Demo mode does not load live schedule data.");
+      return liveClient.scheduleCalendar(fromIso, toIso);
+    },
+    book: async (input: LiveBookInput) => {
+      if (!USE_LIVE_API) throw new AdapterError("invalid", "Demo mode does not book appointments.");
+      return liveClient.bookAppointment(input);
+    },
+    updateStatus: async (appointmentId: string, status: string) => {
+      if (!USE_LIVE_API) throw new AdapterError("invalid", "Demo mode does not change appointment status.");
+      return liveClient.updateAppointmentStatus(appointmentId, status);
+    },
   },
   assistant: {
     session: async () => getAssistantSession(),

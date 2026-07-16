@@ -9,7 +9,11 @@
 import { AdapterError, codeFromHttpStatus, type AdapterErrorCode } from "./errors";
 import type { LabWorkspace } from "./labs.mock";
 import type {
+  LiveAppointmentStatusResult,
   LiveAuditEvent,
+  LiveBookInput,
+  LiveBookResult,
+  LiveCalendar,
   LiveQueueItem,
   LiveResolveResult,
   LiveReviewResult,
@@ -72,6 +76,18 @@ export const liveClient = {
     form.set("file", file);
     return liveFetch<LiveUploadResult>("labs/upload", { method: "POST", form });
   },
+
+  scheduleCalendar: (fromIso: string, toIso: string) =>
+    liveFetch<LiveCalendar>("schedule/calendar", { method: "POST", body: { fromIso, toIso } }),
+
+  bookAppointment: (input: LiveBookInput) =>
+    liveFetch<LiveBookResult>("schedule/book", { method: "POST", body: input }),
+
+  updateAppointmentStatus: (appointmentId: string, status: string) =>
+    liveFetch<LiveAppointmentStatusResult>("schedule/status", {
+      method: "POST",
+      body: { appointmentId, status },
+    }),
 
   listQueue: () => liveFetch<LiveQueueItem[]>("tasks/queue", { method: "GET" }),
 

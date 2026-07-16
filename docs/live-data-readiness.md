@@ -67,6 +67,21 @@ Status legend: ✅ live path exists · 🟢 ready to wire (schema + pattern exis
   procedures in the tRPC backend (desktop + DB sides verified; contract
   fixture in `scripts/live-stub-server.mjs`)
 
+## Calendar / Scheduling — ✅ live path exists
+- **Route:** `/calendar` · **Adapter:** `api.schedule.getWeek/book/updateStatus`
+  (live-only; the demo calendar renders the weekday-pattern mock directly)
+- **Live tables:** `appointments` (types/status vocab + patient-NULL breaks
+  org-visible via migration `0017`); RPCs `book_appointment` (double-booking
+  rejected for practitioner AND patient) / `update_appointment_status`
+  (transition rules, terminal idempotent) / `reschedule_appointment` — all
+  audited atomically
+- **Live UI:** real week fetch per anchor, record statuses (never derived from
+  the clock), booking drawer (patient/practitioner/type/time), check-in /
+  complete / cancel (confirm + audit)
+- **Deferred (documented, not faked):** patient-facing online booking page,
+  reminders (email/SMS provider decision), external calendar sync,
+  drag-to-reschedule UI (RPC already exists)
+
 ## Clinical Reasoning — 🟡 needs backend shaping
 - **Route:** `/patients/:id/reasoning` (+ summary snapshot card)
 - **Adapter:** `api.reasoning.getWorkspace` · **Session:** `hypothesis:*`/snapshot keys
