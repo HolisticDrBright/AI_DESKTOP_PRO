@@ -45,9 +45,17 @@ export function PracticeDashboard({ data }: { data: PracticeDashboardData }) {
           </h1>
           <div className="mt-[3px] text-[13px] text-muted">{data.dateLine}</div>
         </div>
-        <div className="flex items-center gap-[6px] text-[12px] text-subtle">
-          <span className="h-[7px] w-[7px] rounded-full bg-positive-bright" aria-hidden />
-          {data.statusLine}
+        <div className="flex items-center gap-3">
+          <Link
+            href="/clients"
+            className="text-[12px] font-semibold text-action hover:text-action-deep focus-visible:outline-2 focus-visible:outline-action"
+          >
+            Client directory →
+          </Link>
+          <div className="flex items-center gap-[6px] text-[12px] text-subtle">
+            <span className="h-[7px] w-[7px] rounded-full bg-positive-bright" aria-hidden />
+            {data.statusLine}
+          </div>
         </div>
       </div>
 

@@ -19,6 +19,14 @@ import { generateDraft, type ComposerContext } from "./composer.mock";
 import { buildImportPlan, type ImportSourceId } from "./imports.mock";
 import { getTaskQueue } from "./tasks.mock";
 import { getLabWorkspace, type OptimalRange } from "./labs.mock";
+import { getReasoningWorkspace } from "./reasoning.mock";
+import { getSupplementWorkspace } from "./supplements.mock";
+import { getHealthTwin } from "./twin.mock";
+import { getActiveExperiments, getCompletedExperiments } from "./experiments.mock";
+import { getClientRows } from "./clients.mock";
+import { getProgramTemplates } from "./programs.mock";
+import { getConnectors } from "./integrations.mock";
+import { CAPABILITIES, ROLES } from "./permissions.mock";
 import { USE_LIVE_API } from "./config";
 import {
   executeAction,
@@ -92,6 +100,39 @@ export const api = {
   tasks: {
     /** MOCK practitioner review queue. Replace with a tRPC query. */
     getQueue: async () => getTaskQueue(),
+  },
+  reasoning: {
+    /** MOCK reasoning workspace. Replace with a tRPC query. */
+    getWorkspace: async (patientId: string) => getReasoningWorkspace(patientId),
+  },
+  supplements: {
+    /** MOCK supplement workspace. Replace with a tRPC query. */
+    getWorkspace: async (patientId: string) => getSupplementWorkspace(patientId),
+  },
+  healthTwin: {
+    /** MOCK health-twin system map (with snapshots). Replace with a tRPC query. */
+    getMap: async (patientId: string) => getHealthTwin(patientId),
+  },
+  experiments: {
+    /** MOCK N-of-1 experiments. Replace with tRPC queries. */
+    listActive: async () => getActiveExperiments(),
+    listCompleted: async () => getCompletedExperiments(),
+  },
+  clients: {
+    /** MOCK client directory. Replace with a tRPC query. */
+    list: async () => getClientRows(),
+  },
+  programs: {
+    /** MOCK program templates. Replace with tRPC queries. */
+    listTemplates: async () => getProgramTemplates(),
+  },
+  integrations: {
+    /** MOCK connector health. Replace with a tRPC query. */
+    getConnectors: async () => getConnectors(),
+  },
+  permissions: {
+    /** MOCK role/permission matrix (intended policy; DB enforces). */
+    getMatrix: async () => ({ roles: ROLES, capabilities: CAPABILITIES }),
   },
   labs: {
     /** MOCK labs workspace. Replace with a tRPC query. */

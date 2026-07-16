@@ -12,7 +12,11 @@ import {
   type QueueCategory,
   type QueueItem,
 } from "@/adapters/tasks.mock";
-import { useReviewOutcomes, type ReviewOutcome } from "@/adapters/session-store";
+import {
+  useReviewOutcomes,
+  useSessionQueueItems,
+  type ReviewOutcome,
+} from "@/adapters/session-store";
 import type { Priority, Tone } from "@/adapters/types";
 import { ActionBar } from "@/components/ui/ActionBar";
 import { Provenance } from "@/components/ui/Provenance";
@@ -30,6 +34,8 @@ const PRIORITY_TONE: Record<Priority, Tone> = {
 const ROW_ACTIONS = [
   "resolve",
   "add_to_note",
+  "insert_into_report",
+  "add_evidence",
   "request_data",
   "schedule_appointment",
   "assign",
@@ -41,6 +47,22 @@ const ROW_ACTIONS = [
 
 type StatusFilter = "all" | "open" | "resolved";
 type ScopeFilter = "mine" | "all";
+
+/** Saved views — one-click filter presets. */
+const SAVED_VIEWS: {
+  id: string;
+  label: string;
+  cats?: QueueCategory[];
+  priority?: Priority;
+  overdueOnly?: boolean;
+}[] = [
+  { id: "urgent", label: "Urgent", priority: "High" },
+  { id: "labs", label: "Labs", cats: ["new-lab", "extraction-review"] },
+  { id: "reasoning", label: "Reasoning", cats: ["reasoning-review"] },
+  { id: "messages", label: "Messages", cats: ["patient-message"] },
+  { id: "imports", label: "Imports", cats: ["import-review"] },
+  { id: "overdue", label: "Overdue", overdueOnly: true },
+];
 
 function Pill({ tone, children }: { tone: Tone; children: React.ReactNode }) {
   return (
@@ -60,9 +82,37 @@ export function TasksQueue({
   initialCategory?: string;
   initialPriority?: string;
 }) {
-  const [items] = useState<QueueItem[]>(() => getTaskQueue());
+  const [baseItems] = useState<QueueItem[]>(() => getTaskQueue());
+  const sessionAdded = useSessionQueueItems();
   const reviews = useReviewOutcomes();
 
+  // Items converted-to-task this session (e.g. from the reasoning workspace)
+  // appear at the top, clearly session-scoped.
+  const items = useMemo<QueueItem[]>(() => {
+    const added: QueueItem[] = sessionAdded.map((s) => ({
+      id: s.id,
+      category: (QUEUE_CATEGORIES.some((c) => c.id === s.category)
+        ? s.category
+        : "reasoning-review") as QueueCategory,
+      title: s.title,
+      patientName: s.patientName,
+      patientId: s.patientId,
+      priority: s.priority,
+      due: "Added this session",
+      dueInDays: 0,
+      provenance: {
+        sourceType: "practitioner-confirmed",
+        sourceName: "Created from workspace (session)",
+        review: "awaiting-review",
+      },
+      assignee: PRACTITIONER_SELF,
+      seeds: s.seeds,
+    }));
+    return [...added, ...baseItems];
+  }, [baseItems, sessionAdded]);
+
+  const [savedView, setSavedView] = useState<string | null>(null);
+  const [overdueOnly, setOverdueOnly] = useState(false);
   const [search, setSearch] = useState("");
   const [cats, setCats] = useState<Set<QueueCategory>>(
     () =>
@@ -87,6 +137,7 @@ export function TasksQueue({
     return items.filter((it) => {
       if (cats.size > 0 && !cats.has(it.category)) return false;
       if (priority !== "All" && it.priority !== priority) return false;
+      if (overdueOnly && it.dueInDays >= 0) return false;
       if (scope === "mine" && it.assignee !== PRACTITIONER_SELF) return false;
       const settled = outcomeOf(it.id);
       if (status === "resolved" && settled !== "resolved") return false;
@@ -106,13 +157,29 @@ export function TasksQueue({
     });
 
   const hasFilters =
-    cats.size > 0 || priority !== "All" || status !== "all" || scope !== "all" || search.trim() !== "";
+    cats.size > 0 || priority !== "All" || status !== "all" || scope !== "all" ||
+    search.trim() !== "" || overdueOnly || savedView !== null;
   const clearFilters = () => {
     setCats(new Set());
     setPriority("All");
     setStatus("all");
     setScope("all");
     setSearch("");
+    setOverdueOnly(false);
+    setSavedView(null);
+  };
+
+  const applySavedView = (id: string) => {
+    if (savedView === id) {
+      clearFilters();
+      return;
+    }
+    const v = SAVED_VIEWS.find((s) => s.id === id)!;
+    setSavedView(id);
+    setCats(new Set(v.cats ?? []));
+    setPriority(v.priority ?? "All");
+    setOverdueOnly(Boolean(v.overdueOnly));
+    setStatus("all");
   };
 
   const openCount = items.filter((it) => outcomeOf(it.id) !== "resolved").length;
@@ -148,6 +215,27 @@ export function TasksQueue({
             </button>
           ))}
         </div>
+      </div>
+
+      {/* Saved views */}
+      <div className="mb-3 flex flex-wrap items-center gap-[6px]" role="group" aria-label="Saved views">
+        <span className="text-[10.5px] font-bold tracking-[0.05em] text-faint uppercase">Saved views</span>
+        {SAVED_VIEWS.map((v) => (
+          <button
+            key={v.id}
+            onClick={() => applySavedView(v.id)}
+            aria-pressed={savedView === v.id}
+            className={cn(
+              "rounded-full border px-[11px] py-[4px] text-[11.5px] font-semibold focus-visible:outline-2 focus-visible:outline-action",
+              savedView === v.id
+                ? "border-action bg-action-tint text-action-deep"
+                : "border-line bg-card text-body-2 hover:border-line-hover",
+            )}
+          >
+            {v.label}
+          </button>
+        ))}
+        <span className="text-[10.5px] text-faint">(presets — client-side only)</span>
       </div>
 
       {/* Filters */}

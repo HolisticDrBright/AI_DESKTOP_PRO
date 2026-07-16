@@ -65,7 +65,7 @@ const NAV_GROUPS: NavGroup[] = [
     label: "Workspace",
     items: [
       { id: "overview", label: "Overview", icon: Home, target: { tab: "summary" } },
-      { id: "clients", label: "Clients", icon: Users, target: { href: "/practice" } },
+      { id: "clients", label: "Clients", icon: Users, target: { href: "/clients" } },
       { id: "calendar", label: "Calendar", icon: Calendar, target: { href: "/calendar" } },
       { id: "tasks", label: "Tasks", icon: CheckSquare, badge: "8", target: { href: "/tasks" } },
       { id: "messages", label: "Messages", icon: MessageCircle, badge: "3", target: { href: "/messages" } },
@@ -124,6 +124,7 @@ const TAB_TO_NAV: Partial<Record<PatientTabId, string>> = {
 };
 
 const ROUTE_TO_NAV: Record<string, string> = {
+  "/clients": "clients",
   "/practice": "clients",
   "/calendar": "calendar",
   "/tasks": "tasks",

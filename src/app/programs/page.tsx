@@ -1,5 +1,5 @@
-import { PlaceholderScreen } from "@/components/ui/PlaceholderScreen";
+import { ProgramBuilder } from "@/components/programs/ProgramBuilder";
 
 export default function Page() {
-  return <PlaceholderScreen label="Program Builder" />;
+  return <ProgramBuilder />;
 }

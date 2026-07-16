@@ -157,6 +157,64 @@ export function clearReviewOutcomes() {
 
 const EMPTY_REVIEWS: Readonly<Record<string, ReviewOutcome>> = Object.freeze({});
 
+/* -------------------------------------------------- session queue items */
+
+/**
+ * Queue items ADDED during this demo session (e.g. "convert to task" from the
+ * reasoning workspace). Merged into the tasks queue on render. Session-only.
+ */
+export interface SessionQueueItem {
+  id: string;
+  title: string;
+  patientName: string;
+  patientId: string;
+  category: string;
+  priority: "High" | "Medium" | "Low";
+  createdAt: string;
+  seeds: string[];
+}
+
+const QUEUE_ADD_KEY = "aidp:demo:queue-added";
+let queueCache: SessionQueueItem[] | null = null;
+const EMPTY_QUEUE: readonly SessionQueueItem[] = Object.freeze([]);
+
+function readQueue(): SessionQueueItem[] {
+  if (queueCache) return queueCache;
+  if (typeof window === "undefined") return queueCache = [];
+  try {
+    queueCache = JSON.parse(window.sessionStorage.getItem(QUEUE_ADD_KEY) ?? "[]");
+  } catch {
+    queueCache = [];
+  }
+  return queueCache!;
+}
+
+export function addSessionQueueItem(
+  item: Omit<SessionQueueItem, "id" | "createdAt">,
+): SessionQueueItem {
+  const entry: SessionQueueItem = { ...item, id: newId(), createdAt: new Date().toISOString() };
+  queueCache = [entry, ...readQueue()];
+  if (typeof window !== "undefined") {
+    try {
+      window.sessionStorage.setItem(QUEUE_ADD_KEY, JSON.stringify(queueCache));
+    } catch { /* ignore */ }
+  }
+  emit();
+  return entry;
+}
+
+export function listSessionQueueItems(): SessionQueueItem[] {
+  return readQueue();
+}
+
+export function useSessionQueueItems(): SessionQueueItem[] {
+  return useSyncExternalStore(
+    subscribe,
+    listSessionQueueItems,
+    () => EMPTY_QUEUE as SessionQueueItem[],
+  );
+}
+
 /* ----------------------------------------------------------------- hooks */
 
 export function useAuditEntries(): SessionAuditEntry[] {

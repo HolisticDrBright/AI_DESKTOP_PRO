@@ -30,12 +30,15 @@ export function ActionBar({
   actions,
   context,
   onAction,
+  onExecuted,
   size = "md",
   className,
 }: {
   actions: ActionKind[];
   context: ActionContext;
   onAction?: (kind: ActionKind, context: ActionContext) => Promise<void> | void;
+  /** Called after an action executes through the default path (audit recorded). */
+  onExecuted?: (kind: ActionKind) => void;
   size?: "sm" | "md";
   className?: string;
 }) {
@@ -48,10 +51,12 @@ export function ActionBar({
   const run = async (kind: ActionKind) => {
     if (onAction) {
       await onAction(kind, context);
+      onExecuted?.(kind);
       return;
     }
     const result = await executeAction(kind, context, new Date().toISOString());
     announce(result.message);
+    onExecuted?.(kind);
   };
 
   const handleClick = (kind: ActionKind) => {

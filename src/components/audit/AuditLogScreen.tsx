@@ -1,12 +1,38 @@
 "use client";
 
-import { ShieldCheck, Trash2 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { ShieldCheck, Trash2, X } from "lucide-react";
 import { ACTIONS } from "@/adapters/actions";
 import { api } from "@/adapters";
-import { useAuditEntries, type ReviewOutcome } from "@/adapters/session-store";
+import {
+  useAuditEntries,
+  type ReviewOutcome,
+  type SessionAuditEntry,
+} from "@/adapters/session-store";
 import { Card } from "@/components/ui/bits";
 import type { Tone } from "@/adapters/types";
 import { toneText, toneTint } from "@/lib/tones";
+
+/**
+ * Detail fields the BACKEND audit table will carry. Typed now, empty in the
+ * demo, so the drawer's shape survives the tRPC swap unchanged.
+ */
+interface AuditBackendFields {
+  actorId: string | null;
+  requestId: string | null;
+  organizationId: string | null;
+  beforeState: string | null;
+  afterState: string | null;
+  ipAddress: string | null;
+}
+const EMPTY_BACKEND_FIELDS: AuditBackendFields = {
+  actorId: null,
+  requestId: null,
+  organizationId: null,
+  beforeState: null,
+  afterState: null,
+  ipAddress: null,
+};
 
 /**
  * Demo session audit log viewer. Reads the sessionStorage-backed store, so it
@@ -55,6 +81,7 @@ function timeAgo(iso: string): string {
 
 export function AuditLogScreen() {
   const entries = useAuditEntries();
+  const [detail, setDetail] = useState<SessionAuditEntry | null>(null);
 
   return (
     <section
@@ -114,28 +141,113 @@ export function AuditLogScreen() {
             {entries.map((e) => {
               const label = ACTIONS[e.kind]?.label ?? e.kind;
               return (
-                <li
-                  key={e.id}
-                  className="grid grid-cols-[128px_150px_minmax(0,1fr)_140px_72px] items-center gap-3 border-b border-[#F3F7FA] px-4 py-[11px]"
-                >
-                  <span className="text-[12.5px] font-semibold text-ink">{label}</span>
-                  <span className="text-[12px] text-muted capitalize">{e.subjectType}</span>
-                  <span className="min-w-0">
-                    <span className="block truncate text-[12.5px] text-body">
-                      {e.subjectLabel}
+                <li key={e.id}>
+                  <button
+                    onClick={() => setDetail(e)}
+                    aria-label={`Open details for ${label} on ${e.subjectLabel}`}
+                    className="grid w-full cursor-pointer grid-cols-[128px_150px_minmax(0,1fr)_140px_72px] items-center gap-3 border-b border-[#F3F7FA] px-4 py-[11px] text-left hover:bg-sunken focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-action"
+                  >
+                    <span className="text-[12.5px] font-semibold text-ink">{label}</span>
+                    <span className="text-[12px] text-muted capitalize">{e.subjectType}</span>
+                    <span className="min-w-0">
+                      <span className="block truncate text-[12.5px] text-body">
+                        {e.subjectLabel}
+                      </span>
+                      {e.patientName && (
+                        <span className="block text-[11px] text-faint">{e.patientName}</span>
+                      )}
                     </span>
-                    {e.patientName && (
-                      <span className="block text-[11px] text-faint">{e.patientName}</span>
-                    )}
-                  </span>
-                  <OutcomeBadge outcome={e.outcome} reviewed={e.reviewed} />
-                  <span className="text-[11px] text-faint">{timeAgo(e.at)}</span>
+                    <OutcomeBadge outcome={e.outcome} reviewed={e.reviewed} />
+                    <span className="text-[11px] text-faint">{timeAgo(e.at)}</span>
+                  </button>
                 </li>
               );
             })}
           </ul>
         )}
       </Card>
+
+      {detail && <AuditDetailDrawer entry={detail} onClose={() => setDetail(null)} />}
     </section>
+  );
+}
+
+function AuditDetailDrawer({
+  entry,
+  onClose,
+}: {
+  entry: SessionAuditEntry;
+  onClose: () => void;
+}) {
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const backend = EMPTY_BACKEND_FIELDS;
+
+  useEffect(() => {
+    headingRef.current?.focus();
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const Row = ({ label, value }: { label: string; value: React.ReactNode }) => (
+    <div className="flex items-start justify-between gap-3 border-t border-hairline-2 px-4 py-[8px] first:border-t-0">
+      <span className="shrink-0 text-[11px] text-faint">{label}</span>
+      <span className="min-w-0 text-right text-[12px] font-semibold break-words text-ink">{value}</span>
+    </div>
+  );
+
+  return (
+    <aside
+      role="dialog"
+      aria-label="Audit event details"
+      className="glass-overlay animate-fade-up fixed top-3 right-3 bottom-3 z-[95] flex w-[380px] max-w-[calc(100vw-24px)] flex-col overflow-hidden rounded-[20px] border border-[rgba(255,255,255,0.7)] bg-[rgba(255,255,255,0.96)] shadow-[0_20px_56px_rgba(24,42,61,0.2)] outline-1 outline-[rgba(203,214,224,0.6)]"
+    >
+      <div className="flex items-start gap-[9px] border-b border-hairline px-4 pt-[14px] pb-3">
+        <div className="min-w-0 flex-1">
+          <h2 ref={headingRef} tabIndex={-1} className="m-0 text-[14px] font-bold outline-none">
+            Audit event
+          </h2>
+          <div className="text-[11px] text-subtle">{ACTIONS[entry.kind]?.label ?? entry.kind}</div>
+        </div>
+        <button
+          onClick={onClose}
+          aria-label="Close details"
+          className="flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-lg text-faint hover:bg-[rgba(90,107,126,0.1)] hover:text-ink focus-visible:outline-2 focus-visible:outline-action"
+        >
+          <X size={14} strokeWidth={2} aria-hidden />
+        </button>
+      </div>
+
+      <div className="flex-1 overflow-y-auto py-[6px]">
+        <Row label="Actor" value="Dr. Sarah Mitchell (demo identity)" />
+        <Row label="Timestamp" value={new Date(entry.at).toLocaleString()} />
+        <Row label="Action" value={ACTIONS[entry.kind]?.label ?? entry.kind} />
+        <Row label="Subject type" value={<span className="capitalize">{entry.subjectType}</span>} />
+        <Row label="Subject" value={entry.subjectLabel} />
+        <Row label="Patient" value={entry.patientName ?? "—"} />
+        <Row label="Review state" value={<OutcomeBadge outcome={entry.outcome} reviewed={entry.reviewed} />} />
+        <Row label="Source" value="Demo session store (sessionStorage)" />
+
+        <div className="mt-[8px] border-t border-hairline px-4 pt-[10px] pb-[4px]">
+          <h3 className="m-0 mb-[4px] text-[10.5px] font-bold tracking-[0.04em] text-faint uppercase">
+            Backend fields (pending tRPC audit)
+          </h3>
+          <p className="mt-0 mb-[6px] text-[10.5px] leading-[1.45] text-subtle">
+            Populated by the append-only audit table once backend persistence lands. Typed
+            now, empty in the demo.
+          </p>
+        </div>
+        <Row label="Actor ID" value={backend.actorId ?? "—"} />
+        <Row label="Request ID" value={backend.requestId ?? "—"} />
+        <Row label="Organization" value={backend.organizationId ?? "—"} />
+        <Row label="Before state" value={backend.beforeState ?? "—"} />
+        <Row label="After state" value={backend.afterState ?? "—"} />
+      </div>
+
+      <div className="shrink-0 border-t border-hairline bg-[rgba(247,250,252,0.7)] px-4 py-[9px] text-[10.5px] leading-[1.45] text-faint">
+        Demo boundary: this event exists only in your browser session and is not persisted
+        to any backend.
+      </div>
+    </aside>
   );
 }
