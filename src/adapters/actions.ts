@@ -46,7 +46,10 @@ export type ActionKind =
   | "flag"
   | "request_recheck"
   | "configure_range"
-  | "open_patient";
+  | "open_patient"
+  // dispensary / inventory
+  | "receive_stock"
+  | "record_sale";
 
 export type ActionIcon =
   | "check"
@@ -134,6 +137,8 @@ export const ACTIONS: Record<ActionKind, ActionDescriptor> = {
   },
   configure_range: { kind: "configure_range", label: "Configure optimal range", icon: "sliders", tone: "slate" },
   open_patient: { kind: "open_patient", label: "Open patient", icon: "user", tone: "action" },
+  receive_stock: { kind: "receive_stock", label: "Receive stock", icon: "plus", tone: "positive" },
+  record_sale: { kind: "record_sale", label: "Dispense / sale", icon: "check-check", tone: "teal" },
 };
 
 /**

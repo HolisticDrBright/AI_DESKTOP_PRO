@@ -1,7 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { Pill as PillIcon, ShieldCheck, TriangleAlert } from "lucide-react";
+import { useSearchParams } from "next/navigation";
+import { Boxes, Pill as PillIcon, ShieldCheck, ShoppingCart, Sparkles, TriangleAlert } from "lucide-react";
+import { DispensePanel } from "./DispensePanel";
+import { InventoryPanel } from "./InventoryPanel";
 import {
   CONCLUSION_TONE,
   getSupplementWorkspace,
@@ -43,7 +46,63 @@ function Pill({ tone, children }: { tone: Tone; children: React.ReactNode }) {
   );
 }
 
+type SubTab = "intelligence" | "inventory" | "dispense";
+
+const SUB_TABS: { id: SubTab; label: string; icon: typeof Sparkles }[] = [
+  { id: "intelligence", label: "Intelligence", icon: Sparkles },
+  { id: "inventory", label: "Inventory", icon: Boxes },
+  { id: "dispense", label: "Dispense & checkout", icon: ShoppingCart },
+];
+
 export function SupplementsWorkspace({
+  patientId,
+  patientName,
+}: {
+  patientId: string;
+  patientName: string;
+}) {
+  const params = useSearchParams();
+  const initial = params.get("tab");
+  const [tab, setTab] = useState<SubTab>(
+    initial === "dispense" || initial === "inventory" ? initial : "intelligence",
+  );
+
+  return (
+    <div className="relative pt-1">
+      <div
+        role="tablist"
+        aria-label="Supplements sections"
+        className="mb-3 flex w-fit items-center gap-[2px] rounded-lg border border-line bg-card p-[3px]"
+      >
+        {SUB_TABS.map((t) => {
+          const Icon = t.icon;
+          const active = tab === t.id;
+          return (
+            <button
+              key={t.id}
+              role="tab"
+              aria-selected={active}
+              onClick={() => setTab(t.id)}
+              className={cn(
+                "flex h-[30px] items-center gap-[6px] rounded-md px-[12px] text-[12.5px] font-semibold focus-visible:outline-2 focus-visible:outline-action",
+                active ? "bg-action text-white" : "text-muted hover:text-ink",
+              )}
+            >
+              <Icon size={14} strokeWidth={2} aria-hidden />
+              {t.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {tab === "intelligence" && <IntelligencePanel patientId={patientId} patientName={patientName} />}
+      {tab === "inventory" && <InventoryPanel />}
+      {tab === "dispense" && <DispensePanel patientId={patientId} patientName={patientName} />}
+    </div>
+  );
+}
+
+function IntelligencePanel({
   patientId,
   patientName,
 }: {

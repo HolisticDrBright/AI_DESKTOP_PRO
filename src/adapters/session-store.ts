@@ -2,6 +2,7 @@
 
 import { useSyncExternalStore } from "react";
 import type { ActionKind } from "./actions";
+import type { InventoryProduct } from "./inventory.mock";
 
 /**
  * Demo session store — the isolated boundary for mock, in-session state.
@@ -245,5 +246,171 @@ export function useReviewOutcomes(): Record<string, ReviewOutcome> {
     subscribe,
     getReviewSnapshot,
     () => EMPTY_REVIEWS as Record<string, ReviewOutcome>,
+  );
+}
+
+/* ---------------------------------------------------- dispensary inventory */
+
+/**
+ * Supplement dispensary state (demo/session): net inventory movements and the
+ * sales log. Effective stock = seed + net movement, so selling counts stock
+ * down and restocking counts it up — all session-only, cleared with the tab.
+ */
+
+export interface SaleLine {
+  productId: string;
+  name: string;
+  qty: number;
+  unitPriceMinor: number;
+  lineTotalMinor: number;
+}
+
+export interface Sale {
+  id: string;
+  at: string;
+  patientId: string;
+  patientName: string;
+  lines: SaleLine[];
+  subtotalMinor: number;
+  discountMinor: number;
+  taxMinor: number;
+  totalMinor: number;
+}
+
+const INV_ADJ_KEY = "aidp:demo:inventory-adj";
+const SALES_KEY = "aidp:demo:sales";
+const EMPTY_ADJ: Readonly<Record<string, number>> = Object.freeze({});
+const EMPTY_SALES: readonly Sale[] = Object.freeze([]);
+
+let invAdjCache: Record<string, number> | null = null;
+let salesCache: Sale[] | null = null;
+
+function readInvAdj(): Record<string, number> {
+  if (invAdjCache) return invAdjCache;
+  if (typeof window === "undefined") return (invAdjCache = {});
+  try {
+    invAdjCache = JSON.parse(window.sessionStorage.getItem(INV_ADJ_KEY) ?? "{}");
+  } catch {
+    invAdjCache = {};
+  }
+  return invAdjCache!;
+}
+
+function persistInvAdj(next: Record<string, number>) {
+  invAdjCache = next;
+  if (typeof window !== "undefined") {
+    try {
+      window.sessionStorage.setItem(INV_ADJ_KEY, JSON.stringify(next));
+    } catch {
+      /* ignore */
+    }
+  }
+  emit();
+}
+
+/** Net session movement for a product (negative = sold, positive = restocked). */
+export function getInventoryAdjustments(): Record<string, number> {
+  return readInvAdj();
+}
+
+export function adjustInventory(productId: string, delta: number) {
+  const cur = readInvAdj();
+  persistInvAdj({ ...cur, [productId]: (cur[productId] ?? 0) + delta });
+}
+
+/** Set the net adjustment so effective stock becomes `target`, given `seed`. */
+export function setInventoryLevel(productId: string, seed: number, target: number) {
+  const cur = readInvAdj();
+  persistInvAdj({ ...cur, [productId]: target - seed });
+}
+
+export function useInventoryAdjustments(): Record<string, number> {
+  return useSyncExternalStore(
+    subscribe,
+    getInventoryAdjustments,
+    () => EMPTY_ADJ as Record<string, number>,
+  );
+}
+
+function readSales(): Sale[] {
+  if (salesCache) return salesCache;
+  if (typeof window === "undefined") return (salesCache = []);
+  try {
+    salesCache = JSON.parse(window.sessionStorage.getItem(SALES_KEY) ?? "[]");
+  } catch {
+    salesCache = [];
+  }
+  return salesCache!;
+}
+
+function persistSales(next: Sale[]) {
+  salesCache = next;
+  if (typeof window !== "undefined") {
+    try {
+      window.sessionStorage.setItem(SALES_KEY, JSON.stringify(next));
+    } catch {
+      /* ignore */
+    }
+  }
+  emit();
+}
+
+export function recordSale(sale: Omit<Sale, "id" | "at"> & { at?: string }): Sale {
+  const entry: Sale = { ...sale, id: newId(), at: sale.at ?? new Date().toISOString() };
+  persistSales([entry, ...readSales()]);
+  return entry;
+}
+
+export function listSales(): Sale[] {
+  return readSales();
+}
+
+export function useSales(): Sale[] {
+  return useSyncExternalStore(subscribe, listSales, () => EMPTY_SALES as Sale[]);
+}
+
+/* ------------------------------------------- dispensary: added products */
+
+const CUSTOM_PRODUCTS_KEY = "aidp:demo:custom-products";
+const EMPTY_PRODUCTS: readonly InventoryProduct[] = Object.freeze([]);
+let customProductsCache: InventoryProduct[] | null = null;
+
+function readCustomProducts(): InventoryProduct[] {
+  if (customProductsCache) return customProductsCache;
+  if (typeof window === "undefined") return (customProductsCache = []);
+  try {
+    customProductsCache = JSON.parse(window.sessionStorage.getItem(CUSTOM_PRODUCTS_KEY) ?? "[]");
+  } catch {
+    customProductsCache = [];
+  }
+  return customProductsCache!;
+}
+
+function persistCustomProducts(next: InventoryProduct[]) {
+  customProductsCache = next;
+  if (typeof window !== "undefined") {
+    try {
+      window.sessionStorage.setItem(CUSTOM_PRODUCTS_KEY, JSON.stringify(next));
+    } catch {
+      /* ignore */
+    }
+  }
+  emit();
+}
+
+/** Add a product to inventory this session (prepended, newest first). */
+export function addCustomProduct(product: InventoryProduct) {
+  persistCustomProducts([product, ...readCustomProducts()]);
+}
+
+export function listCustomProducts(): InventoryProduct[] {
+  return readCustomProducts();
+}
+
+export function useCustomProducts(): InventoryProduct[] {
+  return useSyncExternalStore(
+    subscribe,
+    listCustomProducts,
+    () => EMPTY_PRODUCTS as InventoryProduct[],
   );
 }

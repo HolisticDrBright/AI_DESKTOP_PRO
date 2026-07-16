@@ -26,6 +26,7 @@ import { generateDraft, type ComposerContext } from "./composer.mock";
 import { buildImportPlan, type ImportSourceId } from "./imports.mock";
 import { getTaskQueue } from "./tasks.mock";
 import { getCalendar } from "./calendar.mock";
+import { SEED_PRODUCTS, type InventoryProduct } from "./inventory.mock";
 import { getLabWorkspace, type OptimalRange } from "./labs.mock";
 import { getReasoningWorkspace } from "./reasoning.mock";
 import { getSupplementWorkspace } from "./supplements.mock";
@@ -44,13 +45,21 @@ import {
   type ActionKind,
 } from "./actions";
 import {
+  addCustomProduct,
   addSessionQueueItem,
+  adjustInventory,
   clearAuditEntries,
+  getInventoryAdjustments,
   getReviewOutcome,
   listAuditEntries,
+  listCustomProducts,
+  listSales,
   recordAuditEntry,
+  recordSale,
   removeReviewOutcome,
+  setInventoryLevel,
   setReviewOutcome,
+  type SaleLine,
 } from "./session-store";
 import type { LiveAuditEvent } from "./live-types";
 import type { DraftKind } from "./types";
@@ -119,6 +128,80 @@ export const api = {
   calendar: {
     /** MOCK scheduling data (recurring weekly template). Replace with a tRPC query. */
     getSchedule: async () => getCalendar(),
+  },
+  inventory: {
+    /**
+     * MOCK dispensary. Products with EFFECTIVE stock = seed + session movement,
+     * so selling counts stock down this session. Replace with a tRPC query over
+     * products_services + an inventory table; sales become invoice/line-item rows.
+     */
+    listProducts: async (): Promise<InventoryProduct[]> => {
+      const adj = getInventoryAdjustments();
+      const all = [...listCustomProducts(), ...SEED_PRODUCTS];
+      return all.map((p) => ({ ...p, stock: Math.max(0, p.stock + (adj[p.id] ?? 0)) }));
+    },
+    /** Add a new product to inventory this session + audit. */
+    addProduct: async (product: InventoryProduct) => {
+      addCustomProduct(product);
+      recordAuditEntry({
+        kind: "receive_stock",
+        subjectType: "inventory",
+        subjectLabel: `Added ${product.name} (${product.stock} on hand)`,
+        reviewed: true,
+      });
+      return { ok: true, message: `Added ${product.name} to inventory. (demo — not persisted)` };
+    },
+    /** Receive (restock) units into inventory + audit. */
+    receiveStock: async (productId: string, qty: number, name: string) => {
+      const n = Math.max(1, Math.round(qty));
+      adjustInventory(productId, n);
+      recordAuditEntry({
+        kind: "receive_stock",
+        subjectType: "inventory",
+        subjectLabel: `+${n} · ${name}`,
+        reviewed: true,
+      });
+      return { ok: true, message: `Received ${n} into stock: ${name}. (demo — not persisted)` };
+    },
+    /** Correct an on-hand count to an absolute value + audit. */
+    setStock: async (productId: string, seed: number, target: number, name: string) => {
+      const t = Math.max(0, Math.round(target));
+      setInventoryLevel(productId, seed, t);
+      recordAuditEntry({
+        kind: "receive_stock",
+        subjectType: "inventory",
+        subjectLabel: `Set ${name} → ${t}`,
+        reviewed: true,
+      });
+      return { ok: true, message: `Stock set to ${t}: ${name}. (demo — not persisted)` };
+    },
+    /**
+     * Complete a supplement sale for a patient: decrement each line's stock,
+     * record the sale, and write an audit entry. No PHI in the audit label.
+     */
+    recordSale: async (input: {
+      patientId: string;
+      patientName: string;
+      lines: SaleLine[];
+      subtotalMinor: number;
+      discountMinor: number;
+      taxMinor: number;
+      totalMinor: number;
+    }) => {
+      for (const l of input.lines) adjustInventory(l.productId, -Math.abs(l.qty));
+      const sale = recordSale(input);
+      const count = input.lines.reduce((n, l) => n + l.qty, 0);
+      recordAuditEntry({
+        kind: "record_sale",
+        subjectType: "supplement sale",
+        subjectLabel: `${count} item${count === 1 ? "" : "s"} · $${(input.totalMinor / 100).toFixed(2)}`,
+        patientName: input.patientName,
+        reviewed: true,
+      });
+      return { ok: true, sale, message: `Sale recorded for ${input.patientName}. (demo — not persisted)` };
+    },
+    /** Demo session sales log. */
+    listSales: async () => listSales(),
   },
   reasoning: {
     /** MOCK reasoning workspace. Replace with a tRPC query. */
