@@ -34,7 +34,9 @@ const PRIORITY: Record<LiveQueueItem["priority"], Priority> = {
 const DAY_MS = 86_400_000;
 
 function dueLabel(dueAt: string | null): { due: string; dueInDays: number } {
-  if (!dueAt) return { due: "No due date", dueInDays: 0 };
+  // Large positive keeps "no due date" out of the overdue filter AND out of
+  // the due-today warning tone (0 would style it as due today).
+  if (!dueAt) return { due: "No due date", dueInDays: 9999 };
   const days = Math.round((new Date(dueAt).getTime() - Date.now()) / DAY_MS);
   if (days < -1) return { due: `${-days} days overdue`, dueInDays: days };
   if (days === -1) return { due: "1 day overdue", dueInDays: days };

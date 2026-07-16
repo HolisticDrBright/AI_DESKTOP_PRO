@@ -433,15 +433,20 @@ function QueueRow({ item, outcome }: { item: QueueItem; outcome?: ReviewOutcome 
             )}
           </div>
           <div className="mt-[3px] flex flex-wrap items-center gap-x-[10px] gap-y-1 text-[11.5px] text-subtle">
-            <Link
-              href={patientPath(item.patientId, targetTab)}
-              className="font-semibold text-action hover:text-action-deep focus-visible:outline-2 focus-visible:outline-action"
-            >
-              {item.patientName}
-              {targetTab !== "summary" && (
-                <span className="font-normal text-subtle"> · open {targetTab === "labs" ? "labs" : "reasoning"} →</span>
-              )}
-            </Link>
+            {item.patientId ? (
+              <Link
+                href={patientPath(item.patientId, targetTab)}
+                className="font-semibold text-action hover:text-action-deep focus-visible:outline-2 focus-visible:outline-action"
+              >
+                {item.patientName}
+                {targetTab !== "summary" && (
+                  <span className="font-normal text-subtle"> · open {targetTab === "labs" ? "labs" : "reasoning"} →</span>
+                )}
+              </Link>
+            ) : (
+              /* Org-level items (live rows with no patient) have no chart to open. */
+              <span className="font-semibold text-body">{item.patientName}</span>
+            )}
             <span aria-hidden>·</span>
             <span>Assigned {item.assignee}</span>
           </div>
