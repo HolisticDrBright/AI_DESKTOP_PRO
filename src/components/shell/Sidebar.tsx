@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useMemo } from "react";
 import { usePathname } from "next/navigation";
 import {
   Activity,
@@ -38,9 +39,15 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { DEFAULT_PATIENT_ID } from "@/adapters";
+import { getTaskQueue } from "@/adapters/tasks.mock";
+import { useReviewOutcomes, useSessionQueueItems } from "@/adapters/session-store";
 import type { PatientTabId } from "@/adapters/types";
+import { Popover, PopoverDemoNote, PopoverHeader } from "@/components/ui/Popover";
 import { cn } from "@/lib/cn";
 import { parsePatientPath, patientPath } from "@/lib/routes";
+
+const footerMenuLink =
+  "flex items-center justify-between px-[13px] py-[9px] text-[12.5px] font-medium text-body-2 hover:bg-[rgba(37,99,199,0.06)] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-action";
 
 interface NavItem {
   id: string;
@@ -68,8 +75,9 @@ const NAV_GROUPS: NavGroup[] = [
       { id: "overview", label: "Overview", icon: Home, target: { tab: "summary" } },
       { id: "clients", label: "Clients", icon: Users, target: { href: "/clients" } },
       { id: "calendar", label: "Calendar", icon: Calendar, target: { href: "/calendar" } },
-      { id: "tasks", label: "Tasks", icon: CheckSquare, badge: "8", target: { href: "/tasks" } },
-      { id: "messages", label: "Messages", icon: MessageCircle, badge: "3", target: { href: "/messages" } },
+      // Tasks badge is computed live from the queue (base + session − resolved).
+      { id: "tasks", label: "Tasks", icon: CheckSquare, target: { href: "/tasks" } },
+      { id: "messages", label: "Messages", icon: MessageCircle, badge: "2", target: { href: "/messages" } },
     ],
   },
   {
@@ -156,6 +164,16 @@ export function Sidebar() {
   const patientId = patient?.patientId ?? DEFAULT_PATIENT_ID;
   const activeId = patient ? TAB_TO_NAV[patient.tab] : (ROUTE_TO_NAV[pathname] ?? "");
 
+  // Live open-task count: base queue + session-added items − session-resolved.
+  // Uses the same stores as /tasks so the badge always matches the screen.
+  const sessionAdded = useSessionQueueItems();
+  const reviews = useReviewOutcomes();
+  const baseCount = useMemo(() => getTaskQueue().length, []);
+  const resolvedCount = Object.entries(reviews).filter(
+    ([key, outcome]) => key.startsWith("queue:") && outcome === "resolved",
+  ).length;
+  const openTasks = Math.max(0, baseCount + sessionAdded.length - resolvedCount);
+
   return (
     <nav
       aria-label="Primary navigation"
@@ -190,6 +208,8 @@ export function Sidebar() {
                   ? item.target.href
                   : patientPath(patientId, item.target.tab);
               const Icon = item.icon;
+              const badge =
+                item.id === "tasks" ? (openTasks > 0 ? String(openTasks) : undefined) : item.badge;
               return (
                 <Link
                   key={item.id}
@@ -204,9 +224,9 @@ export function Sidebar() {
                 >
                   <Icon size={17} strokeWidth={1.75} className="shrink-0 opacity-90" aria-hidden />
                   <span className="flex-1">{item.label}</span>
-                  {item.badge && (
+                  {badge && (
                     <span className="rounded-full bg-[rgba(90,107,126,0.12)] px-[7px] py-px text-[11px] font-semibold text-muted">
-                      {item.badge}
+                      {badge}
                     </span>
                   )}
                 </Link>
@@ -217,20 +237,81 @@ export function Sidebar() {
       </div>
 
       <div className="flex flex-col gap-2 border-t border-[#E9EFF5] p-3">
-        <button className="flex w-full cursor-pointer items-center gap-[9px] rounded-[10px] border border-line bg-card px-[11px] py-[9px] text-left hover:border-line-hover focus-visible:outline-2 focus-visible:outline-action">
-          <span className="flex h-[26px] w-[26px] items-center justify-center rounded-lg bg-[rgba(13,92,99,0.1)]">
-            <User size={13} strokeWidth={1.75} className="text-brand" aria-hidden />
-          </span>
-          <span className="flex-1 leading-[1.25]">
-            <span className="block text-[10.5px] text-subtle">Viewing as</span>
-            <span className="block text-[12.5px] font-semibold text-ink">Practitioner</span>
-          </span>
-          <ChevronDown size={13} strokeWidth={2} className="text-faint" aria-hidden />
-        </button>
-        <button className="flex w-full cursor-pointer items-center gap-[9px] rounded-[10px] border border-transparent bg-transparent px-[11px] py-2 text-left text-[12.5px] font-semibold text-muted hover:bg-[rgba(37,99,199,0.06)] focus-visible:outline-2 focus-visible:outline-action">
-          <CircleHelp size={14} strokeWidth={1.75} aria-hidden />
-          Help Center
-        </button>
+        <Popover
+          label="Viewing role"
+          side="top"
+          align="left"
+          panelClassName="w-[228px]"
+          trigger={({ open, toggle }) => (
+            <button
+              onClick={toggle}
+              aria-haspopup="menu"
+              aria-expanded={open}
+              className="flex w-full cursor-pointer items-center gap-[9px] rounded-[10px] border border-line bg-card px-[11px] py-[9px] text-left hover:border-line-hover focus-visible:outline-2 focus-visible:outline-action"
+            >
+              <span className="flex h-[26px] w-[26px] items-center justify-center rounded-lg bg-[rgba(13,92,99,0.1)]">
+                <User size={13} strokeWidth={1.75} className="text-brand" aria-hidden />
+              </span>
+              <span className="flex-1 leading-[1.25]">
+                <span className="block text-[10.5px] text-subtle">Viewing as</span>
+                <span className="block text-[12.5px] font-semibold text-ink">Practitioner</span>
+              </span>
+              <ChevronDown size={13} strokeWidth={2} className="text-faint" aria-hidden />
+            </button>
+          )}
+        >
+          {({ close }) => (
+            <>
+              <PopoverHeader title="Viewing as Practitioner" note="Demo identity" />
+              <Link href="/team" onClick={close} className={footerMenuLink}>
+                See roles &amp; permissions
+                <span className="text-faint" aria-hidden>→</span>
+              </Link>
+              <PopoverDemoNote>
+                Role switching arrives with real sign-in. Access is enforced by the backend, not
+                this label.
+              </PopoverDemoNote>
+            </>
+          )}
+        </Popover>
+        <Popover
+          label="Help"
+          side="top"
+          align="left"
+          panelClassName="w-[228px]"
+          trigger={({ open, toggle }) => (
+            <button
+              onClick={toggle}
+              aria-haspopup="menu"
+              aria-expanded={open}
+              className="flex w-full cursor-pointer items-center gap-[9px] rounded-[10px] border border-transparent bg-transparent px-[11px] py-2 text-left text-[12.5px] font-semibold text-muted hover:bg-[rgba(37,99,199,0.06)] focus-visible:outline-2 focus-visible:outline-action"
+            >
+              <CircleHelp size={14} strokeWidth={1.75} aria-hidden />
+              Help Center
+            </button>
+          )}
+        >
+          {({ close }) => (
+            <>
+              <PopoverHeader title="Help" note="In-app references" />
+              <Link href="/ai-safety" onClick={close} className={footerMenuLink}>
+                AI safety registry
+                <span className="text-faint" aria-hidden>→</span>
+              </Link>
+              <Link href="/audit-log" onClick={close} className={footerMenuLink}>
+                Audit log
+                <span className="text-faint" aria-hidden>→</span>
+              </Link>
+              <Link href="/settings" onClick={close} className={footerMenuLink}>
+                Settings &amp; data boundaries
+                <span className="text-faint" aria-hidden>→</span>
+              </Link>
+              <PopoverDemoNote>
+                Full help center ships with the product site — these are the in-app references.
+              </PopoverDemoNote>
+            </>
+          )}
+        </Popover>
       </div>
     </nav>
   );

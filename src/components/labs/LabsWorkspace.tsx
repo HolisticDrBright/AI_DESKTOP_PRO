@@ -228,10 +228,10 @@ function WorkspaceHeader({ ws, onUpload }: { ws: LabWorkspace; onUpload: () => v
           <Upload size={13} strokeWidth={2} aria-hidden />
           Upload lab
         </button>
-        <button onClick={() => announce("Extraction queue: 2 reports awaiting review. (demo)")} className={btn}>
+        <Link href="/tasks?filter=extraction-review" className={btn}>
           <ListChecks size={13} strokeWidth={2} aria-hidden />
           Review extraction queue
-        </button>
+        </Link>
         <button onClick={() => announce("Optimal ranges are configured per marker from the inspector. (demo)")} className={btn}>
           <SlidersHorizontal size={13} strokeWidth={2} aria-hidden />
           Configure optimal ranges

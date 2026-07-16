@@ -34,6 +34,19 @@ npm run dev        # http://localhost:3000  (demo mode — no env needed)
 Other scripts: `npm run build` · `npm run start` · `npm run lint` ·
 `npm run typecheck`.
 
+**End-to-end tests (Playwright, mock app):**
+
+```bash
+npx playwright install chromium   # once, downloads the test browser
+npm run build                     # the suite runs the production server
+npm run test:e2e                  # 13 tests: shell, review loop, labs, imports…
+npm run test:e2e:headed           # same, with a visible browser
+```
+
+The suite lives in [`e2e/mock-app.spec.ts`](e2e/mock-app.spec.ts) and needs no
+backend or env vars. In sandboxed CI images with a pre-installed browser, point
+`PW_CHROMIUM_PATH` at the Chromium binary instead of running `playwright install`.
+
 **Demo vs live.** With no env, the app runs entirely on mock/session adapters —
 nothing is persisted. Setting `NEXT_PUBLIC_USE_LIVE_API=true` (plus the backend
 env in [`.env.example`](.env.example)) routes the wired vertical slice —
@@ -43,6 +56,9 @@ downstream review task — through the authenticated backend under RLS. See
 path (migration `0013`), what's wired vs still mock, security assumptions, and
 how to wire future domains. Settings → **Data source & environment** shows the
 resolved mode and configured backend vars (presence only).
+[`docs/live-data-readiness.md`](docs/live-data-readiness.md) maps every domain
+(adapter → mock source → session state → live tables → first mutation) and the
+recommended wiring order — **Tasks/Review queue is the next live slice**.
 
 The app targets a 1440×900 desktop viewport (1280 px minimum supported
 width).

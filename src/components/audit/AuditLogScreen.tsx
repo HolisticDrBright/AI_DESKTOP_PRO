@@ -394,11 +394,11 @@ function AuditDetailDrawer({
 
         <div className="mt-[8px] border-t border-hairline px-4 pt-[10px] pb-[4px]">
           <h3 className="m-0 mb-[4px] text-[10.5px] font-bold tracking-[0.04em] text-faint uppercase">
-            Backend fields (pending tRPC audit)
+            Backend fields (live mode only)
           </h3>
           <p className="mt-0 mb-[6px] text-[10.5px] leading-[1.45] text-subtle">
-            Populated by the append-only audit table once backend persistence lands. Typed
-            now, empty in the demo.
+            Demo events never carry these. In live mode (NEXT_PUBLIC_USE_LIVE_API) the audit
+            log reads the append-only audit_events table, where they are stamped server-side.
           </p>
         </div>
         <Row label="Actor ID" value={backend.actorId ?? "—"} />

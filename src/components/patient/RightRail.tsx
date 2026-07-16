@@ -56,12 +56,14 @@ export function RightRail({ data }: { data: RightRailData }) {
       <Card className="px-4 py-[14px]">
         <div className="mb-[11px] flex items-center justify-between">
           <h2 className="m-0 text-[13px] font-bold">Tasks</h2>
+          {/* Task creation flows from Labs ("Create follow-up task") and Reasoning
+              ("Convert to task") — this opens the queue rather than faking a form. */}
           <Link
-            href="/tasks?new=1"
+            href="/tasks"
             className="flex h-6 cursor-pointer items-center gap-1 rounded-[7px] border-none bg-action px-[9px] text-[11px] font-semibold text-white hover:bg-action-deep focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-action"
           >
             <Plus size={10} strokeWidth={2.5} aria-hidden />
-            New Task
+            Open queue
           </Link>
         </div>
         <div className="flex flex-col gap-[11px]">

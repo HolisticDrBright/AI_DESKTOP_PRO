@@ -12,12 +12,15 @@ export function Popover({
   trigger,
   children,
   align = "right",
+  side = "bottom",
   panelClassName,
   label,
 }: {
   trigger: (o: { open: boolean; toggle: () => void }) => ReactNode;
   children: (o: { close: () => void }) => ReactNode;
   align?: "left" | "right";
+  /** Which side of the trigger the panel opens on (top for footer controls). */
+  side?: "bottom" | "top";
   panelClassName?: string;
   label: string;
 }) {
@@ -48,7 +51,8 @@ export function Popover({
           role="menu"
           aria-label={label}
           className={cn(
-            "glass-overlay animate-fade-up absolute top-[calc(100%+8px)] z-[120] w-[260px] overflow-hidden rounded-[14px] border border-[rgba(255,255,255,0.7)] bg-[rgba(255,255,255,0.97)] shadow-[0_18px_48px_rgba(24,42,61,0.2)] outline-1 outline-[rgba(203,214,224,0.6)]",
+            "glass-overlay animate-fade-up absolute z-[120] w-[260px] overflow-hidden rounded-[14px] border border-[rgba(255,255,255,0.7)] bg-[rgba(255,255,255,0.97)] shadow-[0_18px_48px_rgba(24,42,61,0.2)] outline-1 outline-[rgba(203,214,224,0.6)]",
+            side === "bottom" ? "top-[calc(100%+8px)]" : "bottom-[calc(100%+8px)]",
             align === "right" ? "right-0" : "left-0",
             panelClassName,
           )}

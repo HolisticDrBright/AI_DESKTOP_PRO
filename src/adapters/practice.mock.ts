@@ -65,7 +65,8 @@ export function getRightRail(): RightRailData {
       { title: "Update supplement plan", who: "Michael Johnson", priority: "Medium" },
       { title: "Review assessment", who: "Jessica Parker", priority: "Low" },
     ],
-    openTaskCount: 8,
+    // Matches the base review-queue size (tasks.mock) so counts agree across surfaces.
+    openTaskCount: 12,
     appointments: [
       { name: "Alexandra Morgan", when: "Jul 21, 2026 · 10:00 AM", initials: "AM", color: "#0E8388" },
       { name: "Michael Johnson", when: "Jul 21, 2026 · 11:00 AM", initials: "MJ", color: "#2563C7" },

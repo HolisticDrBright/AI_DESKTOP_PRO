@@ -17,7 +17,7 @@ import {
   useSessionQueueItems,
   type ReviewOutcome,
 } from "@/adapters/session-store";
-import type { Priority, Tone } from "@/adapters/types";
+import type { PatientTabId, Priority, Tone } from "@/adapters/types";
 import { ActionBar } from "@/components/ui/ActionBar";
 import { Provenance } from "@/components/ui/Provenance";
 import { Card } from "@/components/ui/bits";
@@ -353,11 +353,20 @@ export function TasksQueue({
   );
 }
 
+/** Category → the workspace where this item is actually worked (loop continuity). */
+const CATEGORY_TAB: Partial<Record<QueueCategory, PatientTabId>> = {
+  "new-lab": "labs",
+  "extraction-review": "labs",
+  "reasoning-review": "reasoning",
+  "protocol-approval": "reasoning",
+};
+
 function QueueRow({ item, outcome }: { item: QueueItem; outcome?: ReviewOutcome }) {
   const resolved = outcome === "resolved";
   const dueTone: Tone =
     item.dueInDays < 0 ? "critical" : item.dueInDays === 0 ? "warning" : "slate";
   const actions = [...ROW_ACTIONS, ...(item.extraActions ?? [])];
+  const targetTab = CATEGORY_TAB[item.category] ?? "summary";
 
   return (
     <Card
@@ -379,10 +388,13 @@ function QueueRow({ item, outcome }: { item: QueueItem; outcome?: ReviewOutcome 
           </div>
           <div className="mt-[3px] flex flex-wrap items-center gap-x-[10px] gap-y-1 text-[11.5px] text-subtle">
             <Link
-              href={patientPath(item.patientId, "summary")}
+              href={patientPath(item.patientId, targetTab)}
               className="font-semibold text-action hover:text-action-deep focus-visible:outline-2 focus-visible:outline-action"
             >
               {item.patientName}
+              {targetTab !== "summary" && (
+                <span className="font-normal text-subtle"> · open {targetTab === "labs" ? "labs" : "reasoning"} →</span>
+              )}
             </Link>
             <span aria-hidden>·</span>
             <span>Assigned {item.assignee}</span>
