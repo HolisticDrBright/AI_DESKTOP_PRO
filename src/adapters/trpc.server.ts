@@ -22,6 +22,20 @@ interface TrpcError {
   error?: { json?: { message?: string; data?: { code?: string; httpStatus?: number } } };
 }
 
+/**
+ * Backend error text is discarded by default (it could carry sensitive
+ * detail). These EXACT server-owned constants — membership guard copy the
+ * backend composes itself, no interpolation, no PHI — are the only messages
+ * allowed through to the UI. Anything else falls back to the generic message
+ * for the mapped code.
+ */
+const SAFE_SERVER_MESSAGES = new Set<string>([
+  "That person is already a member of this organization.",
+  "You cannot remove your own membership.",
+  "An organization must keep at least one owner.",
+  "No account exists for that email, and email invitations are not configured on this backend. Ask them to create an account first, then add them by email.",
+]);
+
 /** Map a tRPC error code / HTTP status to our adapter code. */
 function mapCode(trpcCode: string | undefined, httpStatus: number): AdapterErrorCode {
   switch (trpcCode) {
@@ -34,6 +48,8 @@ function mapCode(trpcCode: string | undefined, httpStatus: number): AdapterError
     case "BAD_REQUEST":
     case "PARSE_ERROR":
     case "UNPROCESSABLE_CONTENT":
+    case "CONFLICT":
+    case "PRECONDITION_FAILED":
       return "invalid";
     default:
       return codeFromHttpStatus(httpStatus);
@@ -97,8 +113,11 @@ async function call<T>(
     const e = body as TrpcError;
     const trpcCode = e.error?.json?.data?.code;
     const code = mapCode(trpcCode, res.status);
-    // Safe message only; the (potentially sensitive) server message stays in detail.
-    throw new AdapterError(code, undefined, `tRPC ${path} (${trpcCode ?? res.status})`);
+    // Safe message only; the (potentially sensitive) server message stays in
+    // detail — unless it is one of the exact allowlisted server constants.
+    const serverMessage = e.error?.json?.message;
+    const safe = serverMessage && SAFE_SERVER_MESSAGES.has(serverMessage) ? serverMessage : undefined;
+    throw new AdapterError(code, safe, `tRPC ${path} (${trpcCode ?? res.status})`);
   }
 
   return (body as { result: { data: { json: T } } }).result.data.json;

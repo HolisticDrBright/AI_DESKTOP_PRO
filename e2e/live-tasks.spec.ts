@@ -290,6 +290,58 @@ test("practitioner sign-in and sign-out work via httpOnly cookie session", async
   expect(after?.data?.signedIn).toBe(false);
 });
 
+test("org members: roster, invite, honest guards, confirmed removal (admin-gated)", async ({ page }) => {
+  // Member management is a cookie-session surface — sign in first.
+  await page.goto("/login");
+  await page.getByLabel("Email").fill("practitioner@fixture.local");
+  await page.getByLabel("Password").fill("fixture-password");
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await page.waitForURL("**/");
+
+  await page.goto("/settings");
+  const card = page.getByTestId("org-members-card");
+  await expect(card.getByText("Organization members")).toBeVisible();
+
+  // Roster: own row is labeled and offers no self-removal control.
+  const selfRow = card.locator("li", { hasText: "practitioner@fixture.local" });
+  await expect(selfRow.getByText("(you)")).toBeVisible();
+  await expect(selfRow.getByRole("button", { name: "Remove" })).toHaveCount(0);
+  const colleagueRow = card.locator("li", { hasText: "colleague@fixture.local" });
+  await expect(colleagueRow).toBeVisible();
+
+  // Invite a brand-new email → the stub's invite-email path; honest notice +
+  // the roster shows the pending state truthfully.
+  await card.getByLabel("Invite by email").fill("new-nurse@fixture.local");
+  await card.getByLabel("Role for the invitee").selectOption("staff");
+  await card.getByRole("button", { name: "Invite" }).click();
+  await expect(card.getByText("Invitation email sent to new-nurse@fixture.local.")).toBeVisible();
+  const nurseRow = card.locator("li", { hasText: "new-nurse@fixture.local" });
+  await expect(nurseRow.getByText("Invited — hasn't signed in yet")).toBeVisible();
+
+  // Duplicate invite → the server-owned guard message reaches the UI verbatim.
+  await card.getByLabel("Invite by email").fill("colleague@fixture.local");
+  await card.getByRole("button", { name: "Invite" }).click();
+  await expect(
+    card.getByText("That person is already a member of this organization."),
+  ).toBeVisible();
+
+  // Role change round-trips.
+  await nurseRow.getByLabel("Role for new-nurse@fixture.local").selectOption("practitioner");
+  await expect(card.getByText(/Role updated to practitioner/)).toBeVisible();
+
+  // Removal is destructive → explicit confirmation, then the row is gone.
+  await colleagueRow.getByRole("button", { name: "Remove" }).click();
+  await expect(page.getByText("Remove member?")).toBeVisible();
+  await page.getByRole("button", { name: "Remove member" }).click();
+  await expect(card.getByText("colleague@fixture.local removed from the organization.")).toBeVisible();
+  await expect(card.locator("li", { hasText: "colleague@fixture.local" })).toHaveCount(0);
+
+  // Restore the signed-out baseline for the remaining tests.
+  await page.goto("/login");
+  await page.getByRole("button", { name: "Sign out" }).click();
+  await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
+});
+
 test("no console errors in the live flow", async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));

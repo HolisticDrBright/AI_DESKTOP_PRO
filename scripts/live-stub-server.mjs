@@ -35,6 +35,31 @@ const PATIENTS = [
 const now = Date.now();
 const iso = (msAgo) => new Date(now - msAgo).toISOString();
 
+// Organization roster (membership management fixtures). The signed-in fixture
+// practitioner is the org owner; guard errors reuse the backend's exact
+// server-owned copy so the desktop's message allowlist passes them through.
+let memberSeq = 2;
+const members = new Map([
+  ["mem-1", {
+    membershipId: "mem-1",
+    userId: "user-demo",
+    email: "practitioner@fixture.local",
+    displayName: "Demo Practitioner",
+    role: "owner",
+    status: "active",
+    joinedAt: "2026-07-01T00:00:00Z",
+  }],
+  ["mem-2", {
+    membershipId: "mem-2",
+    userId: "user-colleague",
+    email: "colleague@fixture.local",
+    displayName: null,
+    role: "practitioner",
+    status: "active",
+    joinedAt: "2026-07-02T00:00:00Z",
+  }],
+]);
+
 const queue = new Map(
   [
     { id: "bbbbbbbb-1111-2222-3333-444444444401", itemType: "abnormal_result", title: "Recheck hs-CRP after abnormal result", priority: "high", status: "open", patientId: PATIENTS[0].id, patientName: "Fixture Patient", assigneeName: "Demo Practitioner", dueAt: iso(-2 * 864e5), createdAt: iso(3 * 864e5) },
@@ -393,8 +418,55 @@ createServer(async (req, res) => {
     }
     case "clinical.organizations.mine":
       return trpcOk(res, [
-        { organizationId: "org-fixture", name: "Fixture Clinic", slug: "fixture-clinic", role: "practitioner" },
+        { organizationId: "org-fixture", name: "Fixture Clinic", slug: "fixture-clinic", role: "owner" },
       ]);
+    case "clinical.organizations.claim":
+      return trpcOk(res, { activated: 0 });
+    case "clinical.organizations.members":
+      return trpcOk(res, [...members.values()]);
+    case "clinical.organizations.invite": {
+      const email = String(input.email ?? "").toLowerCase();
+      if ([...members.values()].some((m) => m.email === email)) {
+        return trpcErr(res, 409, "CONFLICT", "That person is already a member of this organization.");
+      }
+      memberSeq += 1;
+      const membershipId = `mem-${memberSeq}`;
+      // Fixture convention: emails starting with "new-" have no account yet,
+      // so the invite email path runs; everything else is an existing account.
+      const invitedNewUser = email.startsWith("new-");
+      members.set(membershipId, {
+        membershipId,
+        userId: `user-${memberSeq}`,
+        email,
+        displayName: null,
+        role: String(input.role ?? "member"),
+        status: "invited",
+        joinedAt: new Date().toISOString(),
+      });
+      return trpcOk(res, { membershipId, invitedNewUser });
+    }
+    case "clinical.organizations.setRole": {
+      const row = members.get(String(input.membershipId ?? ""));
+      if (!row) return trpcErr(res, 404, "NOT_FOUND", "membership not found");
+      const owners = [...members.values()].filter((m) => m.role === "owner" && m.status === "active");
+      if (row.role === "owner" && input.role !== "owner" && owners.length === 1) {
+        return trpcErr(res, 400, "BAD_REQUEST", "An organization must keep at least one owner.");
+      }
+      row.role = String(input.role ?? row.role);
+      return trpcOk(res, { ok: true });
+    }
+    case "clinical.organizations.remove": {
+      const row = members.get(String(input.membershipId ?? ""));
+      if (!row) return trpcErr(res, 404, "NOT_FOUND", "membership not found");
+      if (row.email === "practitioner@fixture.local") {
+        return trpcErr(res, 400, "BAD_REQUEST", "You cannot remove your own membership.");
+      }
+      if (row.role === "owner") {
+        return trpcErr(res, 400, "BAD_REQUEST", "An organization must keep at least one owner.");
+      }
+      members.delete(row.membershipId);
+      return trpcOk(res, { ok: true });
+    }
     case "clinical.tasks.getQueue":
       return trpcOk(res, [...queue.values()]);
     case "clinical.tasks.resolve": {

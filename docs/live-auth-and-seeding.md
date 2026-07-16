@@ -76,6 +76,33 @@ silently reading another tenant's default.
   **Auth → URL Configuration → Site URL** to the deployed desktop origin and
   add `https://<desktop-domain>/reset` to the redirect allowlist.
 
+## Team members & invitations
+
+Settings → **Organization members** (admins and owners only; everyone else
+sees an honest explanation instead of dead controls):
+
+- **Roster** — email, profile name, role, and truthful status
+  (Active / *Invited — hasn't signed in yet* / Suspended).
+- **Invite by email** — an existing account is linked immediately as an
+  `invited` membership and activates on that person's next sign-in. A
+  brand-new email additionally gets an auth account + invitation email (they
+  set a password on the `/reset` page). Duplicate invites are refused with a
+  clear message.
+- **Role changes and removal** — removal requires an explicit confirmation.
+  The rules are enforced inside the database RPCs (migration 0020), not just
+  the UI: only owners grant/revoke the owner role, the last owner can never
+  be demoted or removed, and you cannot remove yourself. Every membership
+  change writes an audit event (`member.invited` / `member.role_changed` /
+  `member.removed` / `member.joined`).
+
+Backend requirements: inviting a **brand-new** email needs
+`CLINICAL_SUPABASE_SERVICE_ROLE_KEY` on the backend — its ONLY use is the
+`auth.admin.inviteUserByEmail` call (it never touches clinical tables; the
+membership row is written through the caller's RLS-scoped RPC). Optional
+`CLINICAL_DESKTOP_URL` points invitation links at the deployed desktop's
+`/reset`. Without the service key, adding existing accounts still works and
+the new-email path fails honestly.
+
 ## Seeding the clinical project
 
 `supabase/seed/demo_practice_seed.sql` creates one synthetic practice

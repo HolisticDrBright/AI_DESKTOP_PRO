@@ -73,9 +73,12 @@ export async function POST(req: NextRequest) {
     const tokens = await passwordSignIn(body.email.trim(), body.password);
 
     // Auto-select the organization when the practitioner has exactly one (or
-    // default to the first). Tolerated failure: Settings offers selection.
+    // default to the first). Pending invitations are claimed first, so a
+    // newly invited practitioner's first sign-in activates their membership.
+    // Tolerated failure: Settings offers selection.
     let orgId: string | null = null;
     try {
+      await organizationsLive.claim(tokens.accessToken).catch(() => undefined);
       const orgs = await organizationsLive.mine(tokens.accessToken);
       orgId = orgs.find((o) => o.organizationId)?.organizationId ?? null;
     } catch {

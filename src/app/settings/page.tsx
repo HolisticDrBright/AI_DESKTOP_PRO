@@ -1,6 +1,8 @@
 import Link from "next/link";
+import { USE_LIVE_API } from "@/adapters/mode";
 import { AppearanceCard } from "@/components/settings/AppearanceCard";
 import { DataSourceCard } from "@/components/settings/DataSourceCard";
+import { OrgMembersCard } from "@/components/settings/OrgMembersCard";
 import { PrivacyCard } from "@/components/settings/PrivacyCard";
 
 export default function SettingsPage() {
@@ -17,6 +19,7 @@ export default function SettingsPage() {
       </div>
       <AppearanceCard />
       <DataSourceCard />
+      {USE_LIVE_API && <OrgMembersCard />}
       <PrivacyCard />
     </section>
   );
