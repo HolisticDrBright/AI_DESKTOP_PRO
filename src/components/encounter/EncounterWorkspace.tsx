@@ -1,13 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { CalendarClock, Stethoscope } from "lucide-react";
 import { Card } from "@/components/ui/bits";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { ReasonDialog } from "./ReasonDialog";
 import { RecordingScribePanel } from "./RecordingScribePanel";
-import { NoteComposer, NOTE_TYPE_LABEL, type ComposerNoteType } from "./NoteComposer";
+import { LensPanel } from "./LensPanel";
+import { NoteComposer, NOTE_TYPE_LABEL, type ComposerNoteType, type ComposerInsert } from "./NoteComposer";
 
 /**
  * Practitioner encounter workspace (live). Quiet and work-focused: header
@@ -57,6 +58,8 @@ export function EncounterWorkspace({ encounterId, patientId }: { encounterId: st
   const [cancelOpen, setCancelOpen] = useState(false);
   const [errorOpen, setErrorOpen] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [noteInsert, setNoteInsert] = useState<ComposerInsert | null>(null);
+  const insertSeq = useRef(0);
 
   const load = useCallback(async () => {
     try {
@@ -118,6 +121,15 @@ export function EncounterWorkspace({ encounterId, patientId }: { encounterId: st
   }
 
   const open = encounter.status === "in_progress" || encounter.status === "completed";
+
+  // The one draft/ready note the lens panel's EXPLICIT add-to-note may write
+  // into. Signed/amended/error notes are never a target; nothing is inserted
+  // automatically. (While composing a brand-new note, activeNoteId is set on
+  // its first save — before that there is no target.)
+  const activeDraftNote = notes.find(
+    (n) => n.noteId === activeNoteId && (n.status === "draft" || n.status === "ready_for_review"),
+  );
+  const activeDraftNoteId = open && activeDraftNote ? activeDraftNote.noteId : null;
 
   return (
     <div data-testid="encounter-workspace">
@@ -257,6 +269,7 @@ export function EncounterWorkspace({ encounterId, patientId }: { encounterId: st
               noteId={null}
               noteType={newNoteType}
               encounterOpen={open}
+              insert={noteInsert}
               onNoteCreated={(id) => setActiveNoteId(id)}
               onStateChanged={() => void load()}
             />
@@ -267,6 +280,7 @@ export function EncounterWorkspace({ encounterId, patientId }: { encounterId: st
               noteId={activeNoteId}
               noteType={notes.find((n) => n.noteId === activeNoteId)?.noteType ?? "soap"}
               encounterOpen={open}
+              insert={noteInsert}
               onNoteCreated={(id) => setActiveNoteId(id)}
               onStateChanged={() => void load()}
             />
@@ -290,6 +304,18 @@ export function EncounterWorkspace({ encounterId, patientId }: { encounterId: st
           setActiveNoteId(id);
           void load();
         }}
+      />
+
+      <LensPanel
+        encounterId={encounterId}
+        activeDraftNoteId={activeDraftNoteId}
+        onAddToNote={({ questionId, text, label }) =>
+          setNoteInsert({
+            seq: ++insertSeq.current,
+            text,
+            provenance: { refType: "differential_question", refId: questionId, label },
+          })
+        }
       />
 
       <ConfirmDialog

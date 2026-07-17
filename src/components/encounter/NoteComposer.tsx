@@ -50,7 +50,20 @@ const PROVENANCE_TYPE_LABEL: Record<string, string> = {
   patient_form: "Patient form",
   chart_item: "Chart item",
   practitioner_entered: "Practitioner-entered",
+  differential_question: "Differential question",
+  lens_evaluation: "Lens evaluation",
 };
+
+/**
+ * An EXPLICIT insertion request from another panel (e.g. the lens panel's
+ * add-to-note). Each request carries a fresh `seq`; it appends to the first
+ * section of an EDITABLE note only — signed content is never touched.
+ */
+export interface ComposerInsert {
+  seq: number;
+  text: string;
+  provenance: { refType: string; refId?: string | null; label: string };
+}
 
 interface ProvenanceRef {
   sectionKey: string;
@@ -91,6 +104,7 @@ export function NoteComposer({
   noteId: initialNoteId,
   noteType,
   encounterOpen,
+  insert = null,
   onNoteCreated,
   onStateChanged,
 }: {
@@ -99,6 +113,8 @@ export function NoteComposer({
   noteType: ComposerNoteType;
   /** Whether the encounter still accepts documentation (in_progress/completed). */
   encounterOpen: boolean;
+  /** Explicit external insertion request (lens add-to-note). Applied once per seq. */
+  insert?: ComposerInsert | null;
   onNoteCreated: (noteId: string) => void;
   onStateChanged: () => void;
 }) {
@@ -252,6 +268,37 @@ export function NoteComposer({
     window.addEventListener("beforeunload", handler);
     return () => window.removeEventListener("beforeunload", handler);
   }, []);
+
+  // Explicit external insertion (lens add-to-note): append to the FIRST
+  // section with a provenance reference, once per request. Editable drafts
+  // only — a signed note is never modified from outside.
+  const appliedInsertSeq = useRef(0);
+  useEffect(() => {
+    if (!insert || insert.seq === appliedInsertSeq.current) return;
+    appliedInsertSeq.current = insert.seq;
+    if (!editable) {
+      setNotice(null);
+      setSaveError("This note no longer accepts insertions — it is not an editable draft.");
+      return;
+    }
+    const firstKey = sections[0].key;
+    setContent((c) => ({
+      ...c,
+      [firstKey]: `${(c[firstKey] ?? "").trimEnd()}${(c[firstKey] ?? "").trim() ? "\n" : ""}${insert.text}`,
+    }));
+    setProvenance((p) => [
+      ...p,
+      {
+        sectionKey: firstKey,
+        refType: insert.provenance.refType,
+        refId: insert.provenance.refId ?? null,
+        label: insert.provenance.label,
+      },
+    ]);
+    setDirty(true);
+    setNotice("Inserted from the lens panel — review, then save.");
+    scheduleAutosave();
+  }, [insert, editable, sections, scheduleAutosave]);
 
   const noteAction = async (payload: Record<string, unknown>, failLabel: string) => {
     setBusy(true);
