@@ -1,72 +1,113 @@
-# Deployed real-data verification gate
+# Deployed real-data verification gate (v2 — through migration 0024)
 
-**Status: NOT RUN.** This gate requires a deployed backend (Railway) and
-dashboard actions in the clinical Supabase project — credentials and console
-access only the operator has. Nothing below has been executed against a
-deployed environment, and the contract-fixture browser suite is **not** a
-substitute for this run. When the gate is executed, record the results in the
-table at the bottom and commit the update.
+**Status: NOT RUN.** This gate requires a deployed backend (Railway) and the
+real clinical Supabase project. The contract-fixture browser suites are
+**supporting evidence only, never a substitute** — the gate is complete only
+when every step below has run against the deployed stack. Record results in
+the table at the bottom and commit the update.
+
+Covers everything shipped through migration `0024`: tenancy + auth (0012–0020),
+labs + ingestion (0013–0016), scheduling (0017), EMR encounters/notes/
+signatures/addenda (0021), consent-gated recording + AI scribe (0022/0023),
+and the differential-questions + clinical-lens engine (0024).
 
 What HAS been verified without deployment (labeled honestly, none of it
 replaces this gate):
 
-- The full browser workflow against the committed contract fixture
-  (`e2e/live-tasks.spec.ts`, 17 tests) — locally and in GitHub Actions.
-- All SECURITY DEFINER RPCs, RLS policies, tenant-isolation attacks, and the
-  seed itself against the **real clinical project** in rolled-back
-  transactions (`supabase/tests/*.sql`, seed access-matrix run).
+- Browser workflows against the committed contract fixture: `live-tasks`
+  (18), `live-scribe` (8), `live-lens` (5 — the milestone's 14-step lens
+  gate), `mock-app` (14), locally and in GitHub Actions.
+- All SECURITY DEFINER RPCs, RLS policies, tenant-isolation attacks, state
+  machines, and the seed itself against the **real clinical project** in
+  rolled-back transactions (`supabase/tests/*.sql`).
 - The production Docker image build (frozen lockfile, pinned Bun) in CI.
+- Backend vitest (389) including the deployed-environment fixture-refusal
+  guard and the 11 adversarial lens evaluations.
 
-## Operator checklist (the steps only you can do)
+## Deployment posture (fail closed — no fixtures when deployed)
 
-1. **Deploy the backend**: Railway → new service from
-   `rork-ai-longevity-coach` (Dockerfile build; `railway.json` already sets
-   the `/health` healthcheck). Set env per `expo/backend/ENV.md`:
+The backend REFUSES fixture providers whenever it detects a deployment
+platform (`RAILWAY_*`, `FLY_APP_NAME`) or `DEPLOYED_ENVIRONMENT` is set:
+
+- `SCRIBE_MODE` must be `live` — every scribe endpoint fails closed until a
+  production transcription provider is fully configured AND enabled by a
+  platform administrator (env flags are never proof; the BAA is an external,
+  human-verified fact). Leaving it unset does **not** fall back to fixture.
+- `LENS_AI_MODE` must be `live` — AI-assisted question generation refuses
+  (pending external approval). The deterministic lens engine is unaffected.
+- The desktop's live routes are gated by `NEXT_PUBLIC_USE_LIVE_API=true`;
+  demo fallbacks (`CLINICAL_DEMO_*`, `CLINICAL_ORG_ID`) must NOT be set on a
+  deployed desktop.
+
+## Operator checklist (dashboard steps only the operator can do)
+
+1. **Deploy the backend**: Railway → service from `rork-ai-longevity-coach`
+   `main` (Dockerfile build; `railway.json` sets the `/health` healthcheck).
+   Variables (see `expo/backend/ENV.md`):
    `CLINICAL_SUPABASE_URL`, `CLINICAL_SUPABASE_ANON_KEY`,
-   `CORS_ALLOWED_ORIGINS=<desktop origin>`; optional
-   `CLINICAL_SUPABASE_SERVICE_ROLE_KEY` + `CLINICAL_DESKTOP_URL` for
-   new-email invitations. Confirm `/health` answers `healthy`.
-2. **Create two practitioner logins**: Supabase Dashboard → Authentication →
-   Add user, twice (P1, P2). Copy both UUIDs.
-3. **Run the seed**: edit the five marked lines in
-   `supabase/seed/demo_practice_seed.sql` (both UUIDs, both emails,
-   `allow_demo_seed := true`) and run the whole file in the SQL editor.
-   It refuses to run on anything that looks like a real environment.
-4. **Auth URL config**: Supabase → Auth → URL Configuration → set Site URL to
-   the deployed desktop origin and allowlist `<desktop origin>/reset`.
-5. **Deploy or start the desktop** with `NEXT_PUBLIC_USE_LIVE_API=true`,
+   `CORS_ALLOWED_ORIGINS=<desktop origin>`, `SCRIBE_MODE=live`,
+   `LENS_AI_MODE=live`, `SCRIBE_CALLBACK_SECRET=<random ≥16 chars>`,
+   `NODE_ENV=production`. Confirm `GET /health` answers healthy and the boot
+   log prints `deployment=deployed scribe_mode=live lens_ai_mode=live`.
+2. **Create two synthetic practitioner logins** (P1, P2) in the clinical
+   Supabase project (Dashboard → Authentication → Add user, or SQL as the
+   project owner). Synthetic emails; never reuse real credentials.
+3. **Run seed v2** (`supabase/seed/demo_practice_seed.sql`): edit the five
+   marked lines (both UUIDs, both emails, `allow_demo_seed := true`) and run
+   the whole file. It refuses on anything that looks like a real practice.
+4. **Auth URL config** (only needed for email flows): Supabase → Auth → URL
+   Configuration → Site URL = deployed desktop origin; allowlist
+   `<desktop origin>/reset`.
+5. **Desktop live environment**: build/run with
+   `NEXT_PUBLIC_USE_LIVE_API=true`,
    `TRPC_BASE_URL=https://<railway-domain>/api/trpc`,
    `CLINICAL_SUPABASE_URL`, `CLINICAL_SUPABASE_ANON_KEY`. Do **not** set
-   `CLINICAL_DEMO_*` or `CLINICAL_ORG_ID` — those are local/e2e fallbacks.
-6. Either walk the 15 steps below by hand, or add the `DEPLOYED_*` secrets in
-   GitHub (see `.github/workflows/ci.yml`) so the gated job runs the suite
-   against the deployed stack on every push.
+   `CLINICAL_DEMO_*` or `CLINICAL_ORG_ID`.
+6. **Protected CI secrets** (optional, after the gate): add `DEPLOYED_*`
+   secrets in GitHub (`.github/workflows/ci.yml`) so the gated job re-runs
+   the live suite against the deployed stack on every push. Use dedicated
+   synthetic gate credentials, rotated by the operator.
 
-## The 15-step gate
+Seeded fixtures: Org A "Bright Longevity Clinic (Demo)" — P1 owner, P2
+practitioner; patients Avery Demo (P1 only) + Jordan Sample (P1+P2); Avery
+carries labs (hs-CRP high w/ history, vitamin D low, TSH reviewed, ferritin
+low-confidence, **potassium critical**, sodium unclassified), an appointment,
+tasks, a reasoning snapshot, and deliberate lens fixtures (Sertraline +
+St. John's Wort → interaction caution; Penicillin VK + penicillin allergy →
+conflicting chart data). Org B — P2 owner; patient Riley Crosscheck.
+ALL SYNTHETIC.
 
-Sign in as **P1** (owner of Org A) unless stated otherwise. Seeded data:
-Org A has patients Avery Demo + Jordan Sample; Org B has Riley Crosscheck;
-P2 belongs to both orgs (practitioner in A, owner of B).
+## The 20-step deployed acceptance gate
+
+Sign in as **P1** unless stated otherwise. Every step runs against the
+deployed backend + real clinical project.
 
 | # | Step | Expected |
 |---|---|---|
-| 1 | `/login` → sign in as P1 | Lands on the app; Settings shows the account email |
-| 2 | Organization | Org A auto-selected from membership (Settings → Data source shows it) |
-| 3 | Open `/clients` | Real directory renders |
-| 4 | Authorized patients only | P1 sees **exactly** Avery + Jordan, never Riley |
-| 5 | Open Avery's summary | Real header (name/MRN/DOB), honest not-yet-live panels |
-| 6 | Open Avery's labs | hs-CRP **High**, Vitamin D **Low**, Potassium **Critical**, Sodium **Unclassified** ("Not provided" confidence), TSH already reviewed |
-| 7 | "Open source PDF (audited)" | Original document streams; `document.viewed` lands in audit |
-| 8 | Review a marker (accept hs-CRP) | Saves; reload keeps it; audit row written |
-| 9 | Resolve the critical-potassium task (or create follow-up) | State changes persist |
-| 10 | Reload the browser | Steps 8–9 results still present (server persistence, not client state) |
-| 11 | `/audit-log` | Shows the review/resolve/document events with server-owned text |
-| 12 | Sign in as **P2**, switch Org A → Org B in Settings | After switch: only Riley visible; no Org A tasks/patients anywhere |
-| 13 | Cross-tenant attempt: open Avery's URL as P2-in-Org-B; POST `/api/auth/org` with Org A's id while P2's membership to A is removed | Refused (404/403); no data leak |
-| 14 | Expire the access token (wait out expiry or edit the `aidp_exp` cookie to a past time) | Next navigation silently refreshes with rotation; work continues |
-| 15 | Revoke the session (Supabase → Auth → user → sign out everywhere) | App clears the session and lands on `/login` — no loop, no stale data |
+| 1 | Sign in; then expire the access token (edit the `aidp_exp` cookie to a past time) and navigate | Lands in the app; expired session refreshes silently with rotation; work continues |
+| 2 | Organization selection; as **P2**, switch Org A → Org B in Settings | Org auto-selected from membership; switch swaps the working org |
+| 3 | After the P2 switch, revisit `/clients`, `/tasks`, `/calendar` | Only Org B data anywhere; nothing cached from Org A leaks across the switch (and vice versa on switching back) |
+| 4 | Open Avery Demo (P1) | Real header (name/MRN/DOB) from `patient_profiles`; P1 sees exactly Avery + Jordan, never Riley |
+| 5 | Open Avery's labs; upload the synthetic PDF; open "source PDF (audited)" | Markers render with honest statuses (critical potassium, unclassified sodium, low-confidence ferritin); upload extracts + queues review; the authorized document streams and `document.viewed` lands in audit |
+| 6 | Calendar → open Avery's appointment → start the encounter | Encounter workspace opens `in_progress`, linked to the appointment |
+| 7 | Note lifecycle: type → autosave → reload → mark ready → sign → try to edit → addendum | Autosave v1 confirmed by the server; reload restores server copy; signing locks content (edits refused); addendum appends without changing the original |
+| 8 | Patient timeline + `/audit-log` | Timeline shows encounter/note clinical events; audit shows server-owned rows for review/document/sign actions |
+| 9 | Lens panel → run evaluation (western_conventional) | Deterministic run completes; invariant core shows URGENT critical-lab flag, the Sertraline+St. John's Wort interaction, and the penicillin conflict; provider line shows NO AI participation (deterministic only) |
+| 10 | Run the evaluation under all six paradigms | The invariant-core panel is byte-identical under every lens; only framing/ranking of non-urgent domains changes; urgent domains stay pinned first |
+| 11 | Question lifecycle: accept → ask → answer → correct → defer → dismiss (with feedback) | Transitions follow the 0024 map; the corrected answer preserves v1; dismissal requires structured feedback |
+| 12 | Change supporting evidence (review/accept a marker on Avery) and reload the lens panel | Evaluation shows STALE with the reason; not-yet-asked questions become stale; asked/answered keep their state; re-run clears it |
+| 13 | Accept a question with a draft note open, WITHOUT clicking add-to-note; then click "Add to note" | Accepting inserts nothing anywhere; only the explicit add-to-note writes into the draft (audited), and signed notes are never a target |
+| 14 | Cross-tenant attacks: open Avery's URL as P2-in-Org-B; POST `/api/auth/org` with a forged org id | Refused (403/404); session org unchanged; no data leak |
+| 15 | Scribe panel + lens AI status on the deployed stack | Both fail closed: provider unavailable with an explicit reason (live mode, nothing configured/approved) — fixtures are refused, recording cannot start, no fixture AI questions appear |
+| 16 | With devtools network open, walk the recording/consent routes | Every request stays on the app + backend origins; CSP `connect-src 'self'`; no third-party request fires |
+| 17 | Railway boot logs + worker behavior | Startup prints deployment/mode posture (names only); scribe workers do NOT start (no provider in live mode); no PHI, transcript text, question text, or tokens in any log line |
+| 18 | Stop the backend (or point the desktop at a dead URL) mid-session; then restore | Desktop shows honest unavailable states with retry affordances — no fake data, no crash; recovery resumes cleanly |
+| 19 | Full reload after steps 5–13 | Every authoritative state (review decisions, notes, signatures, question lifecycle, evaluations) persists server-side |
+| 20 | Record results | Fill the table below: date, operator, deployed backend URL + git SHA, desktop SHA, per-step pass/fail, failures + follow-ups, screenshots where useful |
 
-Suite form of the same gate (run from this repo against the deployed stack):
+Suite form (supporting evidence for steps 1–8, run from this repo against the
+deployed stack — the org-fixture control-endpoint tests are expected to skip
+or fail verbatim and are covered manually):
 
 ```
 NEXT_PUBLIC_USE_LIVE_API=true npm run build
@@ -77,17 +118,13 @@ E2E_LIVE=1 TRPC_BASE_URL=https://<railway-domain>/api/trpc \
   npm run test:e2e -- e2e/live-tasks.spec.ts
 ```
 
-(The org-fixture-specific tests — membership roster, multi-org switching,
-revocation — assume the contract fixture's control endpoints and will not all
-pass verbatim against a deployed stack; the manual steps 12–13 above cover
-those behaviors with the seeded dual-org practitioner instead.)
-
 ## Results (fill in when executed)
 
 | Field | Value |
 |---|---|
 | Date / operator | _not yet run_ |
 | Backend URL / commit | _not yet run_ |
-| Desktop URL / commit | _not yet run_ |
+| Desktop commit | _not yet run_ |
 | Steps passed | _not yet run_ |
 | Failures + follow-ups | _not yet run_ |
+| Evidence (screenshots/logs) | _not yet run_ |
