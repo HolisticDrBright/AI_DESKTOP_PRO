@@ -168,7 +168,7 @@ SQL editor (as `postgres`, which is why the append-only `audit_events`
 examples are allowed); everything the app does afterwards goes through RLS
 and the SECURITY DEFINER RPCs as your signed-in user.
 
-**Verified (rolled back, real project):** the guard refuses without the
+**Verified (rolled back, staging project):** the guard refuses without the
 override; with temporary auth users substituted, a double run applies cleanly
 and is a no-op the second time; all fixtures land (critical, unclassified,
 reviewed, low-confidence, 4 tasks, 4 appointments, audit in both orgs); and
