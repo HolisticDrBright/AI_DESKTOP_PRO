@@ -16,6 +16,7 @@ export type AdapterErrorCode =
   | "forbidden" // authenticated but not allowed (RLS / access gate)
   | "not_found" // no such resource, or not visible to this user
   | "invalid" // bad input / failed validation
+  | "conflict" // optimistic-concurrency clash (record changed elsewhere)
   | "unavailable" // backend unreachable / not configured / timeout
   | "unknown";
 
@@ -25,6 +26,7 @@ const DEFAULT_MESSAGE: Record<AdapterErrorCode, string> = {
   forbidden: "You don't have access to this record.",
   not_found: "This record isn't available.",
   invalid: "That action couldn't be completed as requested.",
+  conflict: "This record changed in another tab or session. Review the latest version before saving again.",
   unavailable: "The clinical service is unavailable right now. Please try again.",
   unknown: "Something went wrong. Please try again.",
 };
@@ -35,6 +37,7 @@ export const HTTP_STATUS: Record<AdapterErrorCode, number> = {
   forbidden: 403,
   not_found: 404,
   invalid: 400,
+  conflict: 409,
   unavailable: 503,
   unknown: 500,
 };

@@ -48,9 +48,10 @@ function mapCode(trpcCode: string | undefined, httpStatus: number): AdapterError
     case "BAD_REQUEST":
     case "PARSE_ERROR":
     case "UNPROCESSABLE_CONTENT":
-    case "CONFLICT":
     case "PRECONDITION_FAILED":
       return "invalid";
+    case "CONFLICT":
+      return "conflict";
     default:
       return codeFromHttpStatus(httpStatus);
   }

@@ -29,6 +29,7 @@ import { USE_LIVE_API } from "@/adapters/mode";
 import type { Tone } from "@/adapters/types";
 import { ClinicalError, ClinicalLoading } from "@/components/ui/ClinicalStates";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { StartEncounterButton } from "@/components/encounter/StartEncounterButton";
 import { Card } from "@/components/ui/bits";
 import { cn } from "@/lib/cn";
 import { useFeedback } from "@/lib/feedback";
@@ -1009,6 +1010,14 @@ function DetailDrawer({
           >
             Open chart
           </button>
+        )}
+        {USE_LIVE_API && appt.patientId && (
+          <StartEncounterButton
+            patientId={appt.patientId}
+            appointmentId={appt.id}
+            visitType={appt.type === "telehealth" ? "telehealth" : "follow-up"}
+            label="Open encounter"
+          />
         )}
         {USE_LIVE_API ? (
           <div className="flex gap-2">
