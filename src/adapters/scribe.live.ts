@@ -139,7 +139,7 @@ export interface DeletionStatus {
 }
 
 export interface ProviderStatus {
-  mode: "fixture" | "live";
+  mode: "fixture" | "live" | "disabled";
   provider: string | null;
   available: boolean;
   reason: string | null;

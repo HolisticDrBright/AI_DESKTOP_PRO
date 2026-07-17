@@ -33,7 +33,7 @@ export const LENS_PARADIGMS: LensParadigm[] = [
 ];
 
 export interface LensAiStatus {
-  mode: "fixture" | "live";
+  mode: "fixture" | "live" | "disabled";
   available: boolean;
   liveConfigured: boolean;
   reason: string | null;

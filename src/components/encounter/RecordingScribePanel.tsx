@@ -817,7 +817,11 @@ export function RecordingScribePanel({
         </h3>
         {provider && (
           <span className="text-[11px] font-medium text-subtle" data-testid="scribe-provider">
-            {provider.available ? `Provider: ${provider.provider} (${provider.mode})` : "Provider unavailable"}
+            {provider.available
+              ? `Provider: ${provider.provider} (${provider.mode})`
+              : provider.mode === "disabled"
+                ? "Provider: Not configured"
+                : "Provider unavailable"}
           </span>
         )}
       </div>

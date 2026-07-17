@@ -48,7 +48,7 @@ interface KnowledgeSource {
   fundingConflicts: string | null;
 }
 interface AiStatus {
-  mode: "fixture" | "live";
+  mode: "fixture" | "live" | "disabled";
   available: boolean;
   liveConfigured: boolean;
   reason: string | null;
@@ -505,7 +505,7 @@ export function LensPanel({
             AI assistance: <strong>{meta.ai.mode}</strong>
             {meta.ai.available
               ? " — deterministic test provider (fixture-lens-1); runs through the same safety gates as every rule. Not the production AI."
-              : ` — unavailable. ${meta.ai.reason ?? ""}`}
+              : ` — ${meta.ai.reason ?? "unavailable."}`}
           </span>
         </p>
       )}

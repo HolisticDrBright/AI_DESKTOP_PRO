@@ -26,32 +26,50 @@ replaces this gate):
 
 ## Deployment posture (fail closed — no fixtures when deployed)
 
+**Staging first.** The gate runs against a Railway STAGING environment with
+synthetic users and seed data only. After the gate passes, promote the SAME
+verified revision to production. Never seed synthetic practitioners or demo
+data into a production environment.
+
 The backend REFUSES fixture providers whenever it detects a deployment
 platform (`RAILWAY_*`, `FLY_APP_NAME`) or `DEPLOYED_ENVIRONMENT` is set:
 
-- `SCRIBE_MODE` must be `live` — every scribe endpoint fails closed until a
-  production transcription provider is fully configured AND enabled by a
-  platform administrator (env flags are never proof; the BAA is an external,
-  human-verified fact). Leaving it unset does **not** fall back to fixture.
-- `LENS_AI_MODE` must be `live` — AI-assisted question generation refuses
-  (pending external approval). The deterministic lens engine is unaffected.
+- `SCRIBE_MODE=disabled` — the honest posture while no approved production
+  provider exists: every scribe entry point answers "Not configured" and
+  fails closed. (`live` also refuses until a provider is fully configured
+  AND administrator-enabled, but implies a provider is expected; env flags
+  are never proof — the BAA is an external, human-verified fact.) Leaving
+  the mode unset does **not** fall back to fixture.
+- `LENS_AI_MODE=disabled` — AI assistance off ("Not configured"). The
+  deterministic (non-AI) lens engine runs regardless, independently.
 - The desktop's live routes are gated by `NEXT_PUBLIC_USE_LIVE_API=true`;
   demo fallbacks (`CLINICAL_DEMO_*`, `CLINICAL_ORG_ID`) must NOT be set on a
   deployed desktop.
 
 ## Operator checklist (dashboard steps only the operator can do)
 
-1. **Deploy the backend**: Railway → service from `rork-ai-longevity-coach`
-   `main` (Dockerfile build; `railway.json` sets the `/health` healthcheck).
-   Variables (see `expo/backend/ENV.md`):
-   `CLINICAL_SUPABASE_URL`, `CLINICAL_SUPABASE_ANON_KEY`,
-   `CORS_ALLOWED_ORIGINS=<desktop origin>`, `SCRIBE_MODE=live`,
-   `LENS_AI_MODE=live`, `SCRIBE_CALLBACK_SECRET=<random ≥16 chars>`,
-   `NODE_ENV=production`. Confirm `GET /health` answers healthy and the boot
-   log prints `deployment=deployed scribe_mode=live lens_ai_mode=live`.
-2. **Create two synthetic practitioner logins** (P1, P2) in the clinical
-   Supabase project (Dashboard → Authentication → Add user, or SQL as the
-   project owner). Synthetic emails; never reuse real credentials.
+1. **Deploy the backend to a STAGING environment**: Railway → service from
+   `rork-ai-longevity-coach` `main` (Dockerfile build; `railway.json` sets
+   the `/health` healthcheck — the endpoint returns status/uptime/version
+   only, no secrets, provider config, or patient data). Start with ONE
+   replica (the rate limiter is process-local) in a region close to the
+   clinical Supabase project (`us-east-2` → Railway US East). Variables
+   (see `expo/backend/ENV.md`): `CLINICAL_SUPABASE_URL`,
+   `CLINICAL_SUPABASE_ANON_KEY`, `CORS_ALLOWED_ORIGINS=<exact desktop
+   origin(s) only>`, `SCRIBE_MODE=disabled`, `LENS_AI_MODE=disabled`,
+   `SCRIBE_CALLBACK_SECRET=<random ≥16 chars>`, `NODE_ENV=production`.
+   Keep the service-role key ABSENT. Confirm `GET /health` answers healthy
+   and the boot log prints `deployment=deployed scribe_mode=disabled
+   lens_ai_mode=disabled` (worker log: "workers not started" — worker
+   absence never makes `/health` unhealthy).
+2. **Create two synthetic practitioner logins** (P1, P2) through an
+   ADMIN-CONTROLLED path only — Supabase Dashboard → Authentication → Add
+   user (or an authorized invitation flow). Practitioner registration is
+   never open public signup; keep signups disabled in Auth settings.
+   Synthetic emails; never reuse real credentials. Put the temporary test
+   credentials in PROTECTED environment secrets (Railway/CI/Claude
+   environment secrets) — never chat, files, or repos — and rotate or
+   remove them after testing.
 3. **Run seed v2** (`supabase/seed/demo_practice_seed.sql`): edit the five
    marked lines (both UUIDs, both emails, `allow_demo_seed := true`) and run
    the whole file. It refuses on anything that looks like a real practice.
@@ -63,10 +81,16 @@ platform (`RAILWAY_*`, `FLY_APP_NAME`) or `DEPLOYED_ENVIRONMENT` is set:
    `TRPC_BASE_URL=https://<railway-domain>/api/trpc`,
    `CLINICAL_SUPABASE_URL`, `CLINICAL_SUPABASE_ANON_KEY`. Do **not** set
    `CLINICAL_DEMO_*` or `CLINICAL_ORG_ID`.
-6. **Protected CI secrets** (optional, after the gate): add `DEPLOYED_*`
+6. **Network allowlist for the gate runner**: allow the EXACT clinical
+   Supabase hostname and the EXACT generated Railway hostname only — no
+   wildcards, no full network access.
+7. **Protected CI secrets** (optional, after the gate): add `DEPLOYED_*`
    secrets in GitHub (`.github/workflows/ci.yml`) so the gated job re-runs
    the live suite against the deployed stack on every push. Use dedicated
    synthetic gate credentials, rotated by the operator.
+8. **Promotion**: after the gate passes in staging, promote the same
+   verified revision to production with providers still `disabled`. The
+   production environment gets NO synthetic users and NO seed data.
 
 Seeded fixtures: Org A "Bright Longevity Clinic (Demo)" — P1 owner, P2
 practitioner; patients Avery Demo (P1 only) + Jordan Sample (P1+P2); Avery
@@ -98,7 +122,7 @@ deployed backend + real clinical project.
 | 12 | Change supporting evidence (review/accept a marker on Avery) and reload the lens panel | Evaluation shows STALE with the reason; not-yet-asked questions become stale; asked/answered keep their state; re-run clears it |
 | 13 | Accept a question with a draft note open, WITHOUT clicking add-to-note; then click "Add to note" | Accepting inserts nothing anywhere; only the explicit add-to-note writes into the draft (audited), and signed notes are never a target |
 | 14 | Cross-tenant attacks: open Avery's URL as P2-in-Org-B; POST `/api/auth/org` with a forged org id | Refused (403/404); session org unchanged; no data leak |
-| 15 | Scribe panel + lens AI status on the deployed stack | Both fail closed: provider unavailable with an explicit reason (live mode, nothing configured/approved) — fixtures are refused, recording cannot start, no fixture AI questions appear |
+| 15 | Scribe panel + lens AI status on the deployed stack | Both display an honest "Not configured" state and fail closed — fixtures are refused, recording cannot start, no fixture content appears anywhere, and no audio or chart data can reach any unapproved provider |
 | 16 | With devtools network open, walk the recording/consent routes | Every request stays on the app + backend origins; CSP `connect-src 'self'`; no third-party request fires |
 | 17 | Railway boot logs + worker behavior | Startup prints deployment/mode posture (names only); scribe workers do NOT start (no provider in live mode); no PHI, transcript text, question text, or tokens in any log line |
 | 18 | Stop the backend (or point the desktop at a dead URL) mid-session; then restore | Desktop shows honest unavailable states with retry affordances — no fake data, no crash; recovery resumes cleanly |
