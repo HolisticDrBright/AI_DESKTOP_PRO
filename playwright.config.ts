@@ -21,9 +21,18 @@ export default defineConfig({
   use: {
     baseURL: `http://localhost:${PORT}`,
     viewport: { width: 1440, height: 900 },
-    launchOptions: process.env.PW_CHROMIUM_PATH
-      ? { executablePath: process.env.PW_CHROMIUM_PATH }
-      : {},
+    // Fake media devices: getUserMedia succeeds headlessly and MediaRecorder
+    // produces real audio chunks — the scribe suite drives the actual capture
+    // pipeline. Harmless for suites that never request the microphone.
+    permissions: ["microphone"],
+    launchOptions: {
+      args: [
+        "--use-fake-device-for-media-stream",
+        "--use-fake-ui-for-media-stream",
+        "--autoplay-policy=no-user-gesture-required",
+      ],
+      ...(process.env.PW_CHROMIUM_PATH ? { executablePath: process.env.PW_CHROMIUM_PATH } : {}),
+    },
   },
   webServer: {
     command: `npx next start -p ${PORT}`,

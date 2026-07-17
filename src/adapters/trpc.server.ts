@@ -48,8 +48,12 @@ function mapCode(trpcCode: string | undefined, httpStatus: number): AdapterError
     case "BAD_REQUEST":
     case "PARSE_ERROR":
     case "UNPROCESSABLE_CONTENT":
-    case "PRECONDITION_FAILED":
       return "invalid";
+    case "PRECONDITION_FAILED":
+      // State/consent preconditions (0022 SQLSTATE 55000): a conflict with
+      // current server state, not malformed input — surfaces as HTTP 409 so
+      // capture UIs stop and re-check.
+      return "conflict";
     case "CONFLICT":
       return "conflict";
     default:
