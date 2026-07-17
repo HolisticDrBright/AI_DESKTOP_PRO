@@ -223,6 +223,32 @@ begin
   values ('a0000000-0000-4000-8000-000000000050', org_a, patient1, 'Foundational anti-inflammatory support (draft)', 'draft', 'seed')
   on conflict (id) do nothing;
 
+  -- ── Chart data for the lens engine (Avery, Org A) — ALL SYNTHETIC ────────
+  -- Deliberate fixtures so the deterministic differential/lens gate has real
+  -- invariant-core output to verify:
+  --   • Sertraline (active) + St. John's Wort item → INTERACTION caution
+  --   • Penicillin VK (active) + penicillin allergy → deliberate CONFLICTING
+  --     chart data (the engine must surface it, never resolve it silently)
+  --   • Critical potassium above → critical-lab urgent red flag
+  insert into public.medications (id, organization_id, patient_id, name, status, source, created_by) values
+    ('a0000000-0000-4000-8000-000000000080', org_a, patient1, 'Sertraline', 'active', 'seed', p1_user_id),
+    ('a0000000-0000-4000-8000-000000000081', org_a, patient1, 'Penicillin VK', 'active', 'seed', p1_user_id)
+  on conflict (id) do nothing;
+
+  insert into public.allergies (id, organization_id, patient_id, allergen, reaction, severity, status, source, created_by) values
+    ('a0000000-0000-4000-8000-000000000082', org_a, patient1, 'penicillin', 'hives', 'moderate', 'active', 'seed', p1_user_id)
+  on conflict (id) do nothing;
+
+  insert into public.supplement_products (id, name, form, description)
+  values ('a0000000-0000-4000-8000-000000000083', 'St. John''s Wort Extract (Demo)', 'capsule', 'Synthetic demo product for interaction fixtures')
+  on conflict (id) do nothing;
+
+  insert into public.supplement_protocol_items (id, organization_id, patient_id, protocol_id, product_id, schedule, timing, purpose, source, created_by)
+  values ('a0000000-0000-4000-8000-000000000084', org_a, patient1,
+          'a0000000-0000-4000-8000-000000000050', 'a0000000-0000-4000-8000-000000000083',
+          'daily', 'morning', 'Demo fixture — interaction caution with sertraline', 'seed', p1_user_id)
+  on conflict (id) do nothing;
+
   -- ── Appointments (relative times → land in the visible week) ─────────────
   insert into public.appointments (id, organization_id, patient_id, practitioner_user_id,
     appointment_type, location, telehealth_url, status, starts_at, ends_at, source, created_by) values
