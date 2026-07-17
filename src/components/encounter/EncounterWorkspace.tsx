@@ -6,6 +6,7 @@ import { CalendarClock, Stethoscope } from "lucide-react";
 import { Card } from "@/components/ui/bits";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { ReasonDialog } from "./ReasonDialog";
+import { RecordingScribePanel } from "./RecordingScribePanel";
 import { NoteComposer, NOTE_TYPE_LABEL, type ComposerNoteType } from "./NoteComposer";
 
 /**
@@ -280,6 +281,16 @@ export function EncounterWorkspace({ encounterId, patientId }: { encounterId: st
           )}
         </Card>
       </div>
+
+      <RecordingScribePanel
+        encounterId={encounterId}
+        encounterOpen={open}
+        onDraftCreated={(id) => {
+          setCreating(false);
+          setActiveNoteId(id);
+          void load();
+        }}
+      />
 
       <ConfirmDialog
         open={completeOpen}

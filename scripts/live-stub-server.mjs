@@ -68,6 +68,79 @@ let emrSeq = 0;
 const encounters = new Map(); // id → { id, organizationId, patientId, appointmentId, visitType, status, startedAt, endedAt, statusReason, createdAt }
 const emrNotes = new Map();   // id → { id, encounterId, patientId, organizationId, noteType, status, currentVersion, versions: Map<v,{content,savedAt,sha}>, signature, addenda: [], provenance: [], statusReason }
 
+/* ---- scribe (0022/0023 semantics): consent-gated recording + transcripts ---- */
+const scribeDocs = [
+  { id: "99999999-aaaa-bbbb-cccc-000000000001", scope: "recording", version: 1, locale: "en", jurisdiction: "US-CA", title: "Recording consent", body: "You agree this visit may be audio recorded.", presentationFormat: "text/markdown", contentSha256: "1".repeat(64), effectiveDate: "2026-01-01", shared: false },
+  { id: "99999999-aaaa-bbbb-cccc-000000000002", scope: "transcription", version: 1, locale: "en", jurisdiction: "US-CA", title: "Transcription consent", body: "You agree the recording may be transcribed.", presentationFormat: "text/markdown", contentSha256: "2".repeat(64), effectiveDate: "2026-01-01", shared: false },
+  { id: "99999999-aaaa-bbbb-cccc-000000000003", scope: "ai_drafting", version: 1, locale: "en", jurisdiction: "US-CA", title: "AI drafting consent", body: "You agree an AI scribe may draft a note for practitioner review.", presentationFormat: "text/markdown", contentSha256: "3".repeat(64), effectiveDate: "2026-01-01", shared: false },
+];
+let scribeSeq = 0;
+const scribeId = (tag) => `99999999-${tag}-4444-5555-${String(444444444400 + ++scribeSeq)}`;
+const scribeParticipants = new Map(); // id -> {id, encounterId, kind, displayName, canSelfConsent, leftAt, consents: []}
+const scribeRecordings = new Map();   // id -> rec
+const scribeSessions = new Map();     // id -> {id, recordingId, status, pauseReason}
+const scribeTokens = new Map();       // token -> {recordingId, sessionId, action, revoked, consumed}
+const scribeTranscripts = new Map();  // recordingId -> transcript
+const scribeGenerations = new Map();  // `${transcriptId}:${rev}:${tmpl}` -> {noteId, generationId}
+const scribeAccessLog = [];           // SECURITY log — never merged into auditEvents
+
+function scribeAllConsented(encounterId, scope) {
+  const active = [...scribeParticipants.values()].filter((p) => p.encounterId === encounterId && !p.leftAt);
+  if (active.length === 0) return false;
+  return active.every((p) => p.consents.some((c) => c.scope === scope && c.status === "granted"));
+}
+function scribeTransition(rec, to, reason) {
+  rec.transitions.push({ from: rec.status, to, reason, at: new Date().toISOString() });
+  rec.status = to;
+}
+function scribePauseLive(encounterId, reason) {
+  for (const sess of scribeSessions.values()) {
+    const rec = scribeRecordings.get(sess.recordingId);
+    if (rec && rec.encounterId === encounterId && sess.status === "active") {
+      sess.status = "paused";
+      sess.pauseReason = reason;
+      if (rec.status === "capturing") scribeTransition(rec, "paused", reason);
+    }
+  }
+}
+function scribeRevokeLive(encounterId) {
+  for (const t of scribeTokens.values()) {
+    const rec = scribeRecordings.get(t.recordingId);
+    if (rec && rec.encounterId === encounterId && !t.consumed) t.revoked = true;
+  }
+  for (const sess of scribeSessions.values()) {
+    const rec = scribeRecordings.get(sess.recordingId);
+    if (rec && rec.encounterId === encounterId && ["active", "paused"].includes(sess.status)) {
+      sess.status = "revoked";
+      sess.pauseReason = "consent_withdrawn";
+      if (rec.status === "capturing") scribeTransition(rec, "paused", "consent withdrawn");
+    }
+  }
+}
+function scribeTranscriptDto(recordingId) {
+  const t = scribeTranscripts.get(recordingId);
+  if (!t) return null;
+  return {
+    transcriptId: t.transcriptId,
+    encounterId: t.encounterId,
+    provider: "fixture",
+    revision: t.revision,
+    status: t.status,
+    finalizedAt: t.finalizedAt ?? null,
+    segments: t.segments.map((seg) => {
+      const latest = seg.corrections[seg.corrections.length - 1] ?? null;
+      return {
+        id: seg.id, seq: seg.seq, speaker: seg.speaker, startMs: seg.startMs, endMs: seg.endMs,
+        rawText: seg.rawText, confidence: seg.confidence,
+        providerRevisions: [],
+        corrections: seg.corrections.map((c, i) => ({ version: i + 1, sourceRevision: 0, text: c, reason: null })),
+        effectiveText: latest ?? seg.rawText,
+        effectiveSource: latest ? "correction" : "raw",
+      };
+    }),
+  };
+}
+
 const nowIso = () => new Date().toISOString();
 
 function emrAudit(action, resourceId, message, patientId) {
@@ -426,6 +499,51 @@ createServer(async (req, res) => {
     return json(res, 200, { data: ingestUploadFixture(patient.id) });
   }
 
+  // ===== scribe binary endpoints (0022 token semantics) =====
+  const chunkMatch = /^\/api\/clinical\/scribe\/recordings\/([0-9a-f-]{36})\/chunks$/.exec(url.pathname);
+  if (chunkMatch && req.method === "POST") {
+    if (!/^Bearer .+/.test(req.headers.authorization ?? "")) return json(res, 401, { error: { code: "unauthenticated", message: "auth" } });
+    const rec = scribeRecordings.get(chunkMatch[1]);
+    if (!rec) return json(res, 404, { error: { code: "not_found", message: "recording" } });
+    const token = req.headers["x-capture-token"] ?? "";
+    const t = scribeTokens.get(token);
+    const sess = t ? scribeSessions.get(t.sessionId) : null;
+    if (!t || t.recordingId !== rec.id || t.action !== "chunk" || t.revoked || !sess || sess.status !== "active" ||
+        !scribeAllConsented(rec.encounterId, "recording")) {
+      return json(res, 409, { error: { code: "capture_refused", message: "Capture is no longer authorized" } });
+    }
+    const bytes = await new Promise((resolve) => {
+      const parts = [];
+      req.on("data", (c) => parts.push(c));
+      req.on("end", () => resolve(Buffer.concat(parts)));
+    });
+    rec.bytes += bytes.length;
+    return json(res, 200, { data: { receivedBytes: bytes.length, totalBytes: rec.bytes } });
+  }
+  const completeMatch = /^\/api\/clinical\/scribe\/recordings\/([0-9a-f-]{36})\/complete$/.exec(url.pathname);
+  if (completeMatch && req.method === "POST") {
+    if (!/^Bearer .+/.test(req.headers.authorization ?? "")) return json(res, 401, { error: { code: "unauthenticated", message: "auth" } });
+    const rec = scribeRecordings.get(completeMatch[1]);
+    if (!rec) return json(res, 404, { error: { code: "not_found", message: "recording" } });
+    if (["uploaded", "transcription_queued", "transcribing", "transcript_ready", "review_pending", "finalized"].includes(rec.status)) {
+      return json(res, 200, { data: { status: rec.status, idempotent: true, totalBytes: rec.bytes } });
+    }
+    const body = await readBody(req);
+    const t = scribeTokens.get(body.completionToken ?? "");
+    if (!t || t.recordingId !== rec.id || t.action !== "complete" || t.revoked || t.consumed ||
+        !scribeAllConsented(rec.encounterId, "recording")) {
+      return json(res, 409, { error: { code: "completion_refused", message: "Completion is not authorized" } });
+    }
+    t.consumed = true;
+    rec.durationMs = Number(body.durationMs) || 60000;
+    const sess = scribeSessions.get(t.sessionId);
+    if (sess && ["active", "paused"].includes(sess.status)) sess.status = "closed";
+    scribeTransition(rec, "uploading", "upload received");
+    scribeTransition(rec, "uploaded", "upload complete");
+    pushAudit("recording.uploaded", "encounter_recording", rec.id, "Recording uploaded", {}, rec.patientId);
+    return json(res, 200, { data: { status: "uploaded", idempotent: false, totalBytes: rec.bytes } });
+  }
+
   if (!url.pathname.startsWith("/api/trpc/")) return json(res, 404, { error: "not found" });
 
   // Every procedure requires a bearer — exercises the desktop's auth path.
@@ -465,6 +583,305 @@ createServer(async (req, res) => {
     input && typeof input === "object" && input.organizationId === "org-second";
 
   switch (proc) {
+    // ===== scribe: consent, capture, transcript, draft, deletion =====
+    case "clinical.scribe.providerStatus":
+      return trpcOk(res, { mode: "fixture", provider: "fixture", available: true, reason: null });
+    case "clinical.scribe.consentDocuments":
+      return trpcOk(res, orgScopedEmpty ? [] : scribeDocs);
+    case "clinical.scribe.participants": {
+      const rows = [...scribeParticipants.values()].filter((p) => p.encounterId === input.encounterId);
+      return trpcOk(res, rows.map((p) => ({
+        id: p.id, kind: p.kind, displayName: p.displayName, relationship: null,
+        canSelfConsent: p.canSelfConsent, joinedAt: p.joinedAt, leftAt: p.leftAt,
+        consents: p.consents.map((c) => ({
+          id: c.id, scope: c.scope, status: c.status, method: c.method,
+          grantedAt: c.grantedAt, withdrawnAt: c.withdrawnAt ?? null,
+          representative: Boolean(c.representative), consentDocumentId: c.consentDocumentId,
+        })),
+      })));
+    }
+    case "clinical.scribe.addParticipant": {
+      const e = encounters.get(input.encounterId);
+      if (!e) return trpcErr(res, 404, "NOT_FOUND", "encounter not found");
+      const id = scribeId("aaaa");
+      scribeParticipants.set(id, {
+        id, encounterId: input.encounterId, kind: input.kind, displayName: input.displayName,
+        canSelfConsent: input.canSelfConsent !== false, leftAt: null, joinedAt: new Date().toISOString(), consents: [],
+      });
+      // late join pauses live capture until the new participant consents
+      scribePauseLive(input.encounterId, "participant_joined");
+      pushAudit("consent.participant_added", "encounter_recording_participant", id, "Participant added", {}, e.patientId);
+      return trpcOk(res, { participantId: id });
+    }
+    case "clinical.scribe.recordConsent": {
+      const p = scribeParticipants.get(input.participantId);
+      if (!p) return trpcErr(res, 404, "NOT_FOUND", "participant not found");
+      if (!p.canSelfConsent && !input.representative) {
+        return trpcErr(res, 400, "BAD_REQUEST", "representative basis and authority are required");
+      }
+      const existing = p.consents.find((c) => c.scope === input.scope && c.status === "granted");
+      if (existing) return trpcOk(res, { consentId: existing.id });
+      const id = scribeId("bbbb");
+      p.consents.push({
+        id, scope: input.scope, status: "granted", method: input.method,
+        grantedAt: new Date().toISOString(), consentDocumentId: input.consentDocumentId,
+        representative: input.representative ?? null,
+      });
+      pushAudit("consent.granted", "encounter_consent", id, "Consent recorded", { scope: input.scope }, null);
+      return trpcOk(res, { consentId: id });
+    }
+    case "clinical.scribe.withdrawConsent": {
+      for (const p of scribeParticipants.values()) {
+        const c = p.consents.find((x) => x.id === input.consentId);
+        if (c) {
+          if (c.status === "withdrawn") return trpcOk(res, { ok: true });
+          c.status = "withdrawn";
+          c.withdrawnAt = new Date().toISOString();
+          if (c.scope === "recording") scribeRevokeLive(p.encounterId);
+          pushAudit("consent.withdrawn", "encounter_consent", c.id, "Consent withdrawn", { scope: c.scope }, null);
+          return trpcOk(res, { ok: true });
+        }
+      }
+      return trpcErr(res, 404, "NOT_FOUND", "consent not found");
+    }
+    case "clinical.scribe.beginRecording": {
+      const e = encounters.get(input.encounterId);
+      if (!e) return trpcErr(res, 404, "NOT_FOUND", "encounter not found");
+      if (e.status !== "in_progress") return trpcErr(res, 412, "PRECONDITION_FAILED", "encounter is not in progress");
+      if (!scribeAllConsented(input.encounterId, "recording")) {
+        return trpcErr(res, 412, "PRECONDITION_FAILED", "recording consent has not been granted by all participants");
+      }
+      const live = [...scribeRecordings.values()].find(
+        (r) => r.encounterId === input.encounterId && ["authorized", "capturing", "paused", "uploading"].includes(r.status),
+      );
+      if (live) return trpcErr(res, 412, "PRECONDITION_FAILED", "a recording is already in progress for this encounter");
+      const recId = scribeId("cccc");
+      const sessId = scribeId("dddd");
+      const token = `stub-chunk-${recId}-1`;
+      const rec = {
+        id: recId, encounterId: input.encounterId, patientId: e.patientId, provider: "fixture",
+        status: "authorized", contentType: input.contentType, maxBytes: input.maxBytes ?? 268435456,
+        bytes: 0, durationMs: null, legalHold: false, audioDeletedAt: null, deletionProof: null,
+        failureReason: null, validationResult: null, deletionJobs: [], rotation: 1,
+        createdAt: new Date().toISOString(), transitions: [],
+        deletionDeadline: new Date(Date.now() + 864e5).toISOString(),
+      };
+      scribeRecordings.set(recId, rec);
+      scribeSessions.set(sessId, { id: sessId, recordingId: recId, status: "active", pauseReason: null });
+      scribeTokens.set(token, { recordingId: recId, sessionId: sessId, action: "chunk", revoked: false, consumed: false });
+      scribeTransition(rec, "capturing", "begin_recording");
+      pushAudit("recording.started", "encounter_recording", recId, "Recording started", { provider: "fixture" }, e.patientId);
+      return trpcOk(res, {
+        recordingId: recId, sessionId: sessId, captureToken: token,
+        expiresAt: new Date(Date.now() + 120000).toISOString(),
+        contentType: input.contentType, maxBytes: rec.maxBytes, provider: "fixture",
+      });
+    }
+    case "clinical.scribe.heartbeat": {
+      const sess = scribeSessions.get(input.sessionId);
+      if (!sess) return trpcErr(res, 404, "NOT_FOUND", "session not found");
+      if (sess.status === "revoked") return trpcErr(res, 412, "PRECONDITION_FAILED", "capture session revoked");
+      const rec = scribeRecordings.get(sess.recordingId);
+      if (sess.status !== "active") return trpcOk(res, { ok: false, status: sess.status, captureToken: null, expiresAt: null });
+      if (!scribeAllConsented(rec.encounterId, "recording")) {
+        scribeRevokeLive(rec.encounterId);
+        return trpcErr(res, 412, "PRECONDITION_FAILED", "recording consent is no longer valid");
+      }
+      rec.rotation += 1;
+      const token = `stub-chunk-${rec.id}-${rec.rotation}`;
+      scribeTokens.set(token, { recordingId: rec.id, sessionId: sess.id, action: "chunk", revoked: false, consumed: false });
+      return trpcOk(res, { ok: true, status: "active", captureToken: token, expiresAt: new Date(Date.now() + 120000).toISOString() });
+    }
+    case "clinical.scribe.resume": {
+      const sess = scribeSessions.get(input.sessionId);
+      if (!sess) return trpcErr(res, 404, "NOT_FOUND", "session not found");
+      if (sess.status === "revoked") return trpcErr(res, 412, "PRECONDITION_FAILED", "a revoked session cannot resume");
+      const rec = scribeRecordings.get(sess.recordingId);
+      if (!scribeAllConsented(rec.encounterId, "recording")) {
+        return trpcErr(res, 412, "PRECONDITION_FAILED", "all participants must consent before resuming");
+      }
+      if (rec.status === "paused") scribeTransition(rec, "capturing", "resume");
+      else if (rec.status !== "capturing") return trpcErr(res, 409, "CONFLICT", "invalid transition");
+      sess.status = "active";
+      sess.pauseReason = null;
+      return trpcOk(res, { ok: true });
+    }
+    case "clinical.scribe.issueCompletionAuthorization": {
+      const sess = scribeSessions.get(input.sessionId);
+      if (!sess) return trpcErr(res, 404, "NOT_FOUND", "session not found");
+      if (sess.status === "revoked") return trpcErr(res, 412, "PRECONDITION_FAILED", "capture session revoked");
+      const rec = scribeRecordings.get(sess.recordingId);
+      if (!["capturing", "paused"].includes(rec.status)) {
+        return trpcErr(res, 412, "PRECONDITION_FAILED", "recording is not ready for upload completion");
+      }
+      if (!scribeAllConsented(rec.encounterId, "recording")) {
+        return trpcErr(res, 412, "PRECONDITION_FAILED", "recording consent is no longer valid");
+      }
+      const token = `stub-complete-${rec.id}`;
+      scribeTokens.set(token, { recordingId: rec.id, sessionId: sess.id, action: "complete", revoked: false, consumed: false });
+      return trpcOk(res, { completionToken: token, expiresAt: new Date(Date.now() + 120000).toISOString() });
+    }
+    case "clinical.scribe.queueTranscription": {
+      const rec = scribeRecordings.get(input.recordingId);
+      if (!rec) return trpcErr(res, 404, "NOT_FOUND", "recording not found");
+      if (rec.status !== "uploaded") return trpcErr(res, 409, "CONFLICT", "invalid transition");
+      scribeTransition(rec, "transcription_queued", "queued");
+      // fixture worker: same contract as production (transcribing → ready),
+      // but only when every participant granted transcription
+      if (scribeAllConsented(rec.encounterId, "transcription")) {
+        scribeTransition(rec, "transcribing", "transcription started (worker)");
+        const tid = scribeId("eeee");
+        scribeTranscripts.set(rec.id, {
+          transcriptId: tid, encounterId: rec.encounterId, revision: 1, status: "accepted", finalizedAt: null,
+          segments: [
+            { id: scribeId("ffff"), seq: 1, speaker: "clinician", startMs: 0, endMs: 4000,
+              rawText: "Blood pressure today is one eighteen over seventy six, seated.", confidence: 0.94, corrections: [] },
+            { id: scribeId("abcd"), seq: 2, speaker: "patient", startMs: 4200, endMs: 9000,
+              rawText: "I have been sleeping poorly for about two weeks.", confidence: 0.91, corrections: [] },
+          ],
+        });
+        scribeTransition(rec, "transcript_ready", "transcript received (worker)");
+        pushAudit("transcription.batch_received", "encounter_transcript", tid, "Transcript received", { segments: 2, provider: "fixture" }, rec.patientId);
+      }
+      return trpcOk(res, { ok: true });
+    }
+    case "clinical.scribe.recording": {
+      const rec = scribeRecordings.get(input.recordingId);
+      if (!rec) return trpcErr(res, 404, "NOT_FOUND", "recording not found");
+      return trpcOk(res, {
+        id: rec.id, encounterId: rec.encounterId, patientId: rec.patientId, provider: "fixture",
+        status: rec.status, contentType: rec.contentType, audioBytes: rec.bytes, durationMs: rec.durationMs,
+        legalHold: rec.legalHold, deletionDeadline: rec.deletionDeadline, audioDeletedAt: rec.audioDeletedAt,
+        deletionProof: rec.deletionProof, failureReason: rec.failureReason, validationResult: rec.validationResult,
+        createdAt: rec.createdAt,
+        transitions: rec.transitions.map((t) => ({ from: t.from, to: t.to, reason: t.reason, at: t.at })),
+      });
+    }
+    case "clinical.scribe.recordingsForEncounter": {
+      const rows = [...scribeRecordings.values()]
+        .filter((r) => r.encounterId === input.encounterId)
+        .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+      return trpcOk(res, rows.map((r) => ({
+        id: r.id, status: r.status, provider: "fixture", createdAt: r.createdAt, audioDeletedAt: r.audioDeletedAt,
+      })));
+    }
+    case "clinical.scribe.captureSession": {
+      const sess = [...scribeSessions.values()].find((x) => x.recordingId === input.recordingId);
+      if (!sess) return trpcOk(res, null);
+      return trpcOk(res, { id: sess.id, status: sess.status, pauseReason: sess.pauseReason, lastHeartbeatAt: new Date().toISOString() });
+    }
+    case "clinical.scribe.transcript":
+      return trpcOk(res, scribeTranscriptDto(input.recordingId));
+    case "clinical.scribe.correctSegment": {
+      for (const t of scribeTranscripts.values()) {
+        const seg = t.segments.find((x) => x.id === input.segmentId);
+        if (seg) {
+          if (t.status === "finalized") return trpcErr(res, 400, "BAD_REQUEST", "transcript is finalized");
+          seg.corrections.push(input.correctedText);
+          t.revision += 1;
+          t.status = "corrected";
+          pushAudit("transcription.corrected", "encounter_transcript", t.transcriptId, "Transcript corrected", { version: seg.corrections.length }, null);
+          return trpcOk(res, { version: seg.corrections.length });
+        }
+      }
+      return trpcErr(res, 404, "NOT_FOUND", "segment not found");
+    }
+    case "clinical.scribe.setReview": {
+      for (const [recId, t] of scribeTranscripts) {
+        if (t.transcriptId === input.transcriptId) {
+          const rec = scribeRecordings.get(recId);
+          if (rec.status === "transcript_ready") scribeTransition(rec, "review_pending", "transcript review");
+          return trpcOk(res, { ok: true });
+        }
+      }
+      return trpcErr(res, 404, "NOT_FOUND", "transcript not found");
+    }
+    case "clinical.scribe.finalizeTranscript": {
+      for (const [recId, t] of scribeTranscripts) {
+        if (t.transcriptId === input.transcriptId) {
+          const rec = scribeRecordings.get(recId);
+          if (t.status !== "finalized") {
+            t.status = "finalized";
+            t.finalizedAt = new Date().toISOString();
+            if (rec.status === "review_pending") scribeTransition(rec, "finalized", "transcript finalized");
+            pushAudit("transcription.finalized", "encounter_transcript", t.transcriptId, "Transcript finalized", {}, rec.patientId);
+          }
+          return trpcOk(res, { ok: true });
+        }
+      }
+      return trpcErr(res, 404, "NOT_FOUND", "transcript not found");
+    }
+    case "clinical.scribe.generateDraft": {
+      let found = null;
+      let foundRecId = null;
+      for (const [recId, t] of scribeTranscripts) {
+        if (t.transcriptId === input.transcriptId) { found = t; foundRecId = recId; }
+      }
+      if (!found) return trpcErr(res, 404, "NOT_FOUND", "transcript not found");
+      const rec = scribeRecordings.get(foundRecId);
+      if (!scribeAllConsented(rec.encounterId, "ai_drafting")) {
+        return trpcErr(res, 412, "PRECONDITION_FAILED", "AI drafting consent has not been granted by all participants");
+      }
+      const key = `${found.transcriptId}:${found.revision}:m1-scribe-tmpl-v1`;
+      const prior = scribeGenerations.get(key);
+      if (prior) return trpcOk(res, { ...prior, idempotent: true });
+      const effective = found.segments
+        .map((seg) => seg.corrections[seg.corrections.length - 1] ?? seg.rawText)
+        .join("\n");
+      emrSeq += 1;
+      const noteId = `eeeeeeee-3333-4444-5555-${String(444444444400 + emrSeq)}`;
+      const e = encounters.get(rec.encounterId);
+      const note = {
+        id: noteId, encounterId: rec.encounterId, patientId: e.patientId, organizationId: e.organizationId,
+        noteType: input.noteType, status: "draft", currentVersion: 1,
+        versions: new Map(), signature: null, addenda: [],
+        provenance: [{ sectionKey: "S", refType: "transcript", refId: found.transcriptId, label: `Encounter transcript r${found.revision} (AI scribe source)` }],
+        statusReason: null, createdAt: nowIso(),
+      };
+      note.versions.set(1, {
+        content: { S: `AI scribe draft (unreviewed, proposed). Verify against the source transcript before signing.\n\n${effective}`, O: "", A: "", P: "" },
+        savedAt: nowIso(),
+      });
+      emrNotes.set(noteId, note);
+      const generationId = scribeId("dead");
+      scribeGenerations.set(key, { noteId, generationId });
+      pushAudit("scribe.draft_generated", "clinical_note", noteId, "Scribe draft generated", { transcript_revision: found.revision, model: "fixture-scribe-1", provider: "fixture" }, e.patientId);
+      return trpcOk(res, { noteId, generationId, idempotent: false });
+    }
+    case "clinical.scribe.requestDeletion": {
+      const rec = scribeRecordings.get(input.recordingId);
+      if (!rec) return trpcErr(res, 404, "NOT_FOUND", "recording not found");
+      if (rec.legalHold) return trpcErr(res, 412, "PRECONDITION_FAILED", "recording is under legal hold");
+      if (rec.status === "deleted") return trpcOk(res, { ok: true });
+      scribeTransition(rec, "deletion_pending", "deletion requested");
+      // durable worker model: first attempt fails (retry visible), next confirms
+      rec.deletionJobs = [{ id: scribeId("beef"), target: "local", status: "failed", attempts: 1, lastError: "simulated storage outage — will retry", nextAttemptAt: new Date().toISOString(), deadLetteredAt: null, confirmationRef: null }];
+      return trpcOk(res, { ok: true });
+    }
+    case "clinical.scribe.deletionStatus": {
+      const rec = scribeRecordings.get(input.recordingId);
+      if (!rec) return trpcErr(res, 404, "NOT_FOUND", "recording not found");
+      // advance the retrying worker one step per poll
+      const job = rec.deletionJobs[0];
+      if (job && job.status === "failed") {
+        job.status = "confirmed";
+        job.attempts += 1;
+        job.confirmationRef = "local-purge:stub";
+        rec.audioDeletedAt = new Date().toISOString();
+        rec.deletionProof = "local-purge:stub";
+        scribeTransition(rec, "deleted", "all deletion targets confirmed (worker)");
+        pushAudit("recording.deleted", "encounter_recording", rec.id, "Recording audio deleted", { provider: "fixture" }, rec.patientId);
+      }
+      return trpcOk(res, {
+        recordingStatus: rec.status, audioDeletedAt: rec.audioDeletedAt, deletionProof: rec.deletionProof,
+        legalHold: rec.legalHold,
+        jobs: rec.deletionJobs.map((j) => ({ ...j })),
+      });
+    }
+    case "clinical.scribe.logAccess": {
+      scribeAccessLog.push({ transcriptId: input.transcriptId, kind: input.kind, at: new Date().toISOString() });
+      return trpcOk(res, { ok: true });
+    }
     case "clinical.patients.list":
       return trpcOk(res, orgScopedEmpty ? [] : PATIENTS);
     case "clinical.patients.get": {
