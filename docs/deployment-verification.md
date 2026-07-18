@@ -1,7 +1,9 @@
-# Deployed real-data verification gate (v2 — through migration 0024)
+# Staging deployment verification gate (v3 — through migration 0025)
 
-**Status: NOT RUN.** This gate requires a deployed backend (Railway) and the
-real clinical Supabase project. The contract-fixture browser suites are
+**Status: NOT RUN.** This gate requires the Railway STAGING backend and the
+STAGING clinical Supabase project (`urcjiehlxoehievobezf` — its PERMANENT
+designation; this project is never called "live" or "production").
+The contract-fixture browser suites are
 **supporting evidence only, never a substitute** — the gate is complete only
 when every step below has run against the deployed stack. Record results in
 the table at the bottom and commit the update.
@@ -18,7 +20,7 @@ replaces this gate):
   (18), `live-scribe` (8), `live-lens` (5 — the milestone's 14-step lens
   gate), `mock-app` (14), locally and in GitHub Actions.
 - All SECURITY DEFINER RPCs, RLS policies, tenant-isolation attacks, state
-  machines, and the seed itself against the **real clinical project** in
+  machines, and the seed itself against the **staging clinical project** in
   rolled-back transactions (`supabase/tests/*.sql`).
 - The production Docker image build (frozen lockfile, pinned Bun) in CI.
 - Backend vitest (389) including the deployed-environment fixture-refusal
@@ -26,10 +28,12 @@ replaces this gate):
 
 ## Deployment posture (fail closed — no fixtures when deployed)
 
-**Staging first.** The gate runs against a Railway STAGING environment with
-synthetic users and seed data only. After the gate passes, promote the SAME
-verified revision to production. Never seed synthetic practitioners or demo
-data into a production environment.
+**Staging only, here.** The gate runs against the Railway STAGING
+environment + the staging Supabase project — synthetic users and seed data
+only. The desktop pins a persistent "Staging environment — synthetic data
+only" banner whenever it is connected to a staging project. After the gate
+passes, promote the SAME verified revision to a SEPARATE production
+environment (see "Production (future)").
 
 The backend REFUSES fixture providers whenever it detects a deployment
 platform (`RAILWAY_*`, `FLY_APP_NAME`) or `DEPLOYED_ENVIRONMENT` is set:
@@ -57,8 +61,9 @@ platform (`RAILWAY_*`, `FLY_APP_NAME`) or `DEPLOYED_ENVIRONMENT` is set:
    (see `expo/backend/ENV.md`): `CLINICAL_SUPABASE_URL`,
    `CLINICAL_SUPABASE_ANON_KEY`, `CORS_ALLOWED_ORIGINS=<exact desktop
    origin(s) only>`, `SCRIBE_MODE=disabled`, `LENS_AI_MODE=disabled`,
-   `SCRIBE_CALLBACK_SECRET=<random ≥16 chars>`, `NODE_ENV=production`.
-   Keep the service-role key ABSENT. Confirm `GET /health` answers healthy
+   `NODE_ENV=production`. OMIT `SCRIBE_CALLBACK_SECRET` (only fixture/live
+   modes use it; the disabled callback route answers not-configured without
+   it). Keep the service-role key ABSENT. Confirm `GET /health` answers healthy
    and the boot log prints `deployment=deployed scribe_mode=disabled
    lens_ai_mode=disabled` (worker log: "workers not started" — worker
    absence never makes `/health` unhealthy).
@@ -73,9 +78,10 @@ platform (`RAILWAY_*`, `FLY_APP_NAME`) or `DEPLOYED_ENVIRONMENT` is set:
 3. **Run seed v2** (`supabase/seed/demo_practice_seed.sql`): edit the five
    marked lines (both UUIDs, both emails, `allow_demo_seed := true`) and run
    the whole file. It refuses on anything that looks like a real practice.
-4. **Auth URL config** (only needed for email flows): Supabase → Auth → URL
-   Configuration → Site URL = deployed desktop origin; allowlist
-   `<desktop origin>/reset`.
+4. **Auth URL config** (only needed for email flows): staging Supabase →
+   Auth → URL Configuration → Site URL = the STAGING desktop origin;
+   allowlist `<staging desktop origin>/reset`. Production uses its own
+   project with production-specific URLs — never shared.
 5. **Desktop live environment**: build/run with
    `NEXT_PUBLIC_USE_LIVE_API=true`,
    `TRPC_BASE_URL=https://<railway-domain>/api/trpc`,
@@ -89,8 +95,23 @@ platform (`RAILWAY_*`, `FLY_APP_NAME`) or `DEPLOYED_ENVIRONMENT` is set:
    the live suite against the deployed stack on every push. Use dedicated
    synthetic gate credentials, rotated by the operator.
 8. **Promotion**: after the gate passes in staging, promote the same
-   verified revision to production with providers still `disabled`. The
-   production environment gets NO synthetic users and NO seed data.
+   verified revision to production with providers still `disabled`.
+
+## Production (future) — hard requirements
+
+Production is a fully separate environment. It must receive:
+
+- A NEW Supabase project (never `urcjiehlxoehievobezf`, which is staging
+  forever).
+- A separate Railway production environment/service.
+- Separate storage buckets and separate secrets — nothing shared with
+  staging.
+- Migrations only — NO seed data, NO synthetic users, NO demo fixtures.
+- Admin-created REAL practitioner accounts (invitation/admin flows only;
+  public signup stays disabled).
+- Production-specific authentication URLs and CORS origins.
+- Providers remaining `disabled` until their contracts (BAA) and
+  operational approval are complete — no environment flag is ever proof.
 
 Seeded fixtures: Org A "Bright Longevity Clinic (Demo)" — P1 owner, P2
 practitioner; patients Avery Demo (P1 only) + Jordan Sample (P1+P2); Avery
@@ -104,7 +125,8 @@ ALL SYNTHETIC.
 ## The 20-step deployed acceptance gate
 
 Sign in as **P1** unless stated otherwise. Every step runs against the
-deployed backend + real clinical project.
+staging backend + staging clinical project, with the staging banner
+visible throughout.
 
 | # | Step | Expected |
 |---|---|---|

@@ -1,5 +1,7 @@
 -- ============================================================
--- Demo practice seed v2 — clinical project (urcjiehlxoehievobezf)
+-- Demo practice seed v2 — STAGING clinical project (urcjiehlxoehievobezf)
+-- This project is permanently staging: synthetic data only, never called
+-- live or production. Production gets a NEW project, migrations only.
 --
 -- Seeds TWO synthetic practices so tenancy, access rules, and the deployed
 -- verification gate can be exercised with real accounts:
