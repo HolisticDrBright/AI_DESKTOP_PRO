@@ -166,13 +166,74 @@ E2E_LIVE=1 TRPC_BASE_URL=https://<railway-domain>/api/trpc \
 
 ## Results (fill in when executed)
 
+**Gate status: NOT RUN — run attempt on 2026-07-19 BLOCKED in Preflight B
+(staging Supabase rejects the runner's P1 credentials). Preflight A passed;
+no gate steps were executed, the desktop was not built, and nothing on
+Supabase or Railway was changed. Statuses/codes/operation names and row
+counts only below — no credentials, tokens, emails, keys, or row contents.**
+
 | Field | Value |
 |---|---|
-| Date / operator | _not yet run_ |
-| Backend URL / commit | _not yet run_ |
-| Desktop commit | _not yet run_ |
-| Steps passed | _not yet run_ |
-| Failures + follow-ups | _not yet run_ |
-| Evidence (screenshots/logs) | _not yet run_ |
+| Date / operator | 2026-07-19 (~22:30 UTC) / automated gate runner (Claude session) — **BLOCKED in Preflight B, gate not run** |
+| Backend URL / commit | https://rork-ai-longevity-coach-production.up.railway.app / `c96ab6a` (not exercised beyond Preflight A transport) |
+| Desktop commit | `2a79d57` (origin/main; build not attempted) |
+| Steps passed | 0 of 20 attempted — all NOT RUN |
+| Failures + follow-ups | Preflight B(1) password grant rejected; see attempt log below |
+| Evidence (screenshots/logs) | None (no UI reached). HTTP statuses + error codes only, recorded below |
 
-<!-- gate runner started 2026-07-19T22:24:37Z -->
+### Run attempt log — 2026-07-19 (blocked in Preflight B)
+
+An earlier attempt the same day was blocked in Preflight A (runner
+unprovisioned: five gate variables absent, egress denied). Both of those
+blockers are RESOLVED in the current runner — this attempt got further and
+stopped at credential validation instead.
+
+Preflight A(1) — environment variables (names + present/absent only):
+`GATE_P1_EMAIL`, `GATE_P1_PASSWORD`, `GATE_P2_EMAIL`, `GATE_P2_PASSWORD`,
+`CLINICAL_SUPABASE_ANON_KEY` — all five present and non-empty.
+
+Preflight A(2) — transport: HEAD `/rest/v1/` on the staging clinical
+Supabase host with the `apikey` header → **HTTP 401 received**, which per
+the gate's transport rule proves the transport is reachable (and is not
+used to judge key validity either way).
+
+Preflight B — signed-in comparison (P1):
+
+| Probe | Result |
+|---|---|
+| B1: POST `/auth/v1/token?grant_type=password` (apikey header + P1 email/password JSON) | **Token acquired: no.** HTTP 400, `error_code=invalid_credentials` — identical on the initial attempt and the single permitted retry |
+| B1 hygiene check (booleans only, values never read into output) | All five runner env values have no leading/trailing whitespace, no CR/LF, no wrapping quotes — the rejection is not a formatting artifact |
+| B2: direct REST `organization_memberships` / `organizations` with P1 JWT | NOT ATTEMPTED — no token |
+| B3: Railway tRPC `clinical.organizations.mine` with P1 JWT | NOT ATTEMPTED — no token |
+
+Key-validity inference (allowed here — this is Preflight B, not the A(2)
+transport probe): an invalid publishable key is rejected at the Supabase
+gateway with HTTP 401 "Invalid API key" before auth logic runs. B1 instead
+returned a GoTrue application-level **400 `invalid_credentials`**, so the
+runner's `CLINICAL_SUPABASE_ANON_KEY` IS accepted by the staging project;
+the failure isolates to the **P1 email/password pair** as provisioned in
+the runner environment (wrong/rotated password, or the synthetic user no
+longer exists — GoTrue deliberately does not distinguish these).
+
+Decision per the gate protocol: the signed-in entry condition failed →
+STOP. No fixes, no retries beyond the one permitted, no gate steps run.
+The earlier desktop failures can NOT yet be attributed to stale
+cookies/demo routing — that comparison never became possible.
+
+Follow-ups required before a re-run (operator actions only, no code
+changes):
+
+1. In the staging Supabase project (Authentication → Users), confirm the
+   two synthetic practitioner accounts (P1, P2) still exist. The operator
+   checklist itself mandates rotating/removing test credentials after
+   testing — if a rotation or cleanup happened after the last run, the
+   runner secrets are stale by design.
+2. Re-sync the CURRENT P1/P2 passwords (or recreate the users via the
+   admin-controlled path, checklist item 2, re-running seed v2 if the
+   auth users were recreated with new UUIDs, checklist item 3) into the
+   runner environment secrets `GATE_P1_EMAIL`, `GATE_P1_PASSWORD`,
+   `GATE_P2_EMAIL`, `GATE_P2_PASSWORD`.
+3. Re-run the gate from Preflight A. Runner environment and transport are
+   now proven good; the anon key is proven accepted. Nothing about backend
+   `c96ab6a`, desktop `2a79d57`, or either host was changed by this
+   attempt.
