@@ -174,3 +174,5 @@ E2E_LIVE=1 TRPC_BASE_URL=https://<railway-domain>/api/trpc \
 | Steps passed | _not yet run_ |
 | Failures + follow-ups | _not yet run_ |
 | Evidence (screenshots/logs) | _not yet run_ |
+
+<!-- gate runner started 2026-07-19T22:24:37Z -->
