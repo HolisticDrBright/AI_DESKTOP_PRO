@@ -7,7 +7,7 @@ import { parsePatientPath, patientPath, PATIENT_TABS } from "@/lib/routes";
 
 export function PatientTabs({ patientId }: { patientId: string }) {
   const pathname = usePathname();
-  const activeTab = parsePatientPath(pathname)?.tab ?? "summary";
+  const activeTab = parsePatientPath(pathname)?.tab ?? "overview";
 
   return (
     <div

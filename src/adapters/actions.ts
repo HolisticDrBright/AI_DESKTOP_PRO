@@ -54,7 +54,15 @@ export type ActionKind =
   | "order_panel_added"
   | "order_panel_removed"
   | "order_prepared"
-  | "order_reviewed";
+  | "order_reviewed"
+  // practitioner-OS surfaces (front desk, POS, studio, automations)
+  | "appointment_status"
+  | "checkout"
+  | "refund_payment"
+  | "publish"
+  | "automation_test"
+  | "template_update"
+  | "upload_file";
 
 export type ActionIcon =
   | "check"
@@ -148,6 +156,19 @@ export const ACTIONS: Record<ActionKind, ActionDescriptor> = {
   order_panel_removed: { kind: "order_panel_removed", label: "Lab panel removed", icon: "minus", tone: "slate" },
   order_prepared: { kind: "order_prepared", label: "Lab order draft prepared", icon: "flask", tone: "action" },
   order_reviewed: { kind: "order_reviewed", label: "Lab order reviewed", icon: "check-check", tone: "positive" },
+  appointment_status: { kind: "appointment_status", label: "Appointment status", icon: "calendar-plus", tone: "action" },
+  checkout: { kind: "checkout", label: "Checkout", icon: "check-check", tone: "teal" },
+  refund_payment: {
+    kind: "refund_payment", label: "Refund", icon: "rotate", tone: "critical",
+    confirm: true, destructive: true, confirmText: "Refund this payment? Refunds are recorded and cannot be silently undone.",
+  },
+  publish: {
+    kind: "publish", label: "Publish", icon: "check", tone: "positive",
+    confirm: true, confirmText: "Publish this item? It becomes visible wherever this library or catalog is used.",
+  },
+  automation_test: { kind: "automation_test", label: "Automation test run", icon: "rotate", tone: "ai" },
+  template_update: { kind: "template_update", label: "Template updated", icon: "pencil", tone: "action" },
+  upload_file: { kind: "upload_file", label: "File added", icon: "file-plus", tone: "action" },
 };
 
 /**

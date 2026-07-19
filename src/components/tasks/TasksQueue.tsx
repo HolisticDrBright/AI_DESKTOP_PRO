@@ -409,11 +409,13 @@ export function TasksQueue({
 }
 
 /** Category → the workspace where this item is actually worked (loop continuity). */
-const CATEGORY_TAB: Partial<Record<QueueCategory, PatientTabId>> = {
-  "new-lab": "labs",
-  "extraction-review": "labs",
-  "reasoning-review": "reasoning",
-  "protocol-approval": "reasoning",
+const CATEGORY_TAB: Partial<
+  Record<QueueCategory, { tab: PatientTabId; query?: string; label: string }>
+> = {
+  "new-lab": { tab: "labs", label: "labs" },
+  "extraction-review": { tab: "labs", label: "labs" },
+  "reasoning-review": { tab: "labs", query: "?view=reasoning", label: "reasoning" },
+  "protocol-approval": { tab: "care-plan", label: "care plan" },
 };
 
 function QueueRow({ item, outcome }: { item: QueueItem; outcome?: ReviewOutcome }) {
@@ -421,7 +423,7 @@ function QueueRow({ item, outcome }: { item: QueueItem; outcome?: ReviewOutcome 
   const dueTone: Tone =
     item.dueInDays < 0 ? "critical" : item.dueInDays === 0 ? "warning" : "slate";
   const actions = [...ROW_ACTIONS, ...(item.extraActions ?? [])];
-  const targetTab = CATEGORY_TAB[item.category] ?? "summary";
+  const target = CATEGORY_TAB[item.category];
 
   return (
     <Card
@@ -446,12 +448,16 @@ function QueueRow({ item, outcome }: { item: QueueItem; outcome?: ReviewOutcome 
           <div className="mt-[3px] flex flex-wrap items-center gap-x-[10px] gap-y-1 text-[11.5px] text-subtle">
             {item.patientId ? (
               <Link
-                href={patientPath(item.patientId, targetTab)}
+                href={
+                  target
+                    ? `${patientPath(item.patientId, target.tab)}${target.query ?? ""}`
+                    : patientPath(item.patientId)
+                }
                 className="font-semibold text-action hover:text-action-deep focus-visible:outline-2 focus-visible:outline-action"
               >
                 {item.patientName}
-                {targetTab !== "summary" && (
-                  <span className="font-normal text-subtle"> · open {targetTab === "labs" ? "labs" : "reasoning"} →</span>
+                {target && (
+                  <span className="font-normal text-subtle"> · open {target.label} →</span>
                 )}
               </Link>
             ) : (

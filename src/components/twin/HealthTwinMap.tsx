@@ -170,9 +170,9 @@ export function HealthTwinMap({
               }}
             />
             <div className="mt-[8px] flex flex-wrap gap-x-3 gap-y-1 text-[11px] font-semibold">
-              <Link href={patientPath(patientId, "reasoning")} className="text-action hover:text-action-deep focus-visible:outline-2 focus-visible:outline-action">Open reasoning</Link>
+              <Link href={`${patientPath(patientId, "labs")}?view=reasoning`} className="text-action hover:text-action-deep focus-visible:outline-2 focus-visible:outline-action">Open reasoning</Link>
               <Link href={patientPath(patientId, "labs")} className="text-action hover:text-action-deep focus-visible:outline-2 focus-visible:outline-action">Open labs</Link>
-              <Link href={patientPath(patientId, "supplements")} className="text-action hover:text-action-deep focus-visible:outline-2 focus-visible:outline-action">Open supplements</Link>
+              <Link href={`${patientPath(patientId, "care-plan")}?view=supplements`} className="text-action hover:text-action-deep focus-visible:outline-2 focus-visible:outline-action">Open supplements</Link>
             </div>
           </div>
         </Card>

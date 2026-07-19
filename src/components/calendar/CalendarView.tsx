@@ -27,6 +27,26 @@ import { isAdapterError } from "@/adapters/errors";
 import type { LiveCalendar } from "@/adapters/live-types";
 import { USE_LIVE_API } from "@/adapters/mode";
 import type { Tone } from "@/adapters/types";
+import {
+  copyAppointment,
+  getApptOverride,
+  rescheduleAppointment,
+  setAppointmentNote,
+  setFrontDeskStatus,
+  statusLabel as fdStatusLabel,
+  STATUS_TONE as FD_STATUS_TONE,
+  telehealthReadiness,
+  useApptSession,
+  type FrontDeskStatus,
+} from "@/adapters/appointments.session";
+import { getProfileExtras } from "@/adapters/patient-profile.mock";
+import { getPatient } from "@/adapters/patients.mock";
+import { APPOINTMENT_TYPE_SERVICE, patientLedger, SERVICES } from "@/adapters/billing.mock";
+import { formatMinor } from "@/lib/money";
+import { patientPath } from "@/lib/routes";
+import { Btn, BtnLink } from "@/components/ui/Btn";
+import { Field, Select as UiSelect, TextArea as UiTextArea } from "@/components/ui/Field";
+import { Pill } from "@/components/ui/Pill";
 import { ClinicalError, ClinicalLoading } from "@/components/ui/ClinicalStates";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { StartEncounterButton } from "@/components/encounter/StartEncounterButton";
@@ -206,13 +226,22 @@ const HOUR_PX = 54;
 
 export function CalendarView({
   patientOptions = [],
+  initialApptId,
 }: {
   /** Live mode: bookable patients (fetched server-side under RLS). */
   patientOptions?: { id: string; name: string }[];
+  /** Deep link (?appt=) that opens the detail drawer on load. Demo only. */
+  initialApptId?: string;
 }) {
-  // Demo mode renders the weekday-pattern mock exactly as before; live mode
-  // fetches the real week (dated rows, record statuses) per anchor change.
-  const demoData = useMemo<CalendarData | null>(() => (USE_LIVE_API ? null : getCalendar()), []);
+  // Demo mode renders the weekday-pattern mock exactly as before (plus any
+  // session-added copies/reschedules); live mode fetches the real week
+  // (dated rows, record statuses) per anchor change.
+  const apptSession = useApptSession();
+  const demoData = useMemo<CalendarData | null>(() => {
+    if (USE_LIVE_API) return null;
+    const base = getCalendar();
+    return { ...base, appointments: [...base.appointments, ...apptSession.added] };
+  }, [apptSession.added]);
   const [liveWeek, setLiveWeek] = useState<ReturnType<typeof mapLiveWeek> | null>(null);
   const [liveState, setLiveState] = useState<"loading" | "ready" | "error">("loading");
   const [liveError, setLiveError] = useState<{ message: string; code?: string }>({ message: "" });
@@ -225,6 +254,18 @@ export function CalendarView({
   const [view, setView] = useState<ViewMode>("week");
   const [practitionerId, setPractitionerId] = useState(demoData?.practitioners[0]?.id ?? "");
   const [selection, setSelection] = useState<Selection | null>(null);
+  const deepLinked = useRef(false);
+
+  // ?appt= deep link (Today, patient tabs): open the drawer on the demo
+  // grid's matching slot for the current week.
+  useEffect(() => {
+    if (deepLinked.current || !initialApptId || !demoData || !anchor) return;
+    const appt = demoData.appointments.find((a) => a.id === initialApptId);
+    if (!appt) return;
+    deepLinked.current = true;
+    const date = addDays(startOfWeek(anchor), appt.weekday - 1);
+    setSelection({ appt, date, status: deriveStatus(date, appt, new Date()) });
+  }, [initialApptId, demoData, anchor]);
 
   // Resolve "now" on the client only (avoids hydration mismatch from the clock).
   useEffect(() => {
@@ -656,13 +697,17 @@ function AppointmentBlock({
   compact?: boolean;
 }) {
   const meta = APPOINTMENT_TYPE_META[appt.type];
+  // Front-desk session overlay (demo): arrivals, no-shows, cancellations,
+  // reschedules recorded in the drawer reflect on the grid immediately.
+  const overrideStatus = useApptSession().overrides[appt.id]?.status;
+  const effective = overrideStatus ? FD_TO_STATUS[overrideStatus] : status;
   const top = (appt.start - dayStart) * pxPerMin;
   const height = Math.max(appt.durationMin * pxPerMin - 3, 18);
-  const done = status === "completed";
-  const live = status === "arrived";
+  const done = effective === "completed" || effective === "cancelled" || effective === "no-show";
+  const live = effective === "arrived";
   return (
     <button
-      onClick={() => onSelect({ appt, date, status })}
+      onClick={() => onSelect({ appt, date, status: effective })}
       className={cn(
         "absolute right-[3px] left-[3px] overflow-hidden rounded-[7px] border-l-[3px] px-[7px] py-[3px] text-left transition focus-visible:z-30 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-action",
         done ? "opacity-60" : "hover:brightness-[0.98]",
@@ -889,6 +934,16 @@ function DayGrid({
 
 /* ------------------------------------------------------------ detail drawer */
 
+/** Front-desk override status → base calendar status, for grid styling. */
+const FD_TO_STATUS: Record<FrontDeskStatus, AppointmentStatus> = {
+  arrived: "arrived",
+  "checked-in": "arrived",
+  "no-show": "no-show",
+  cancelled: "cancelled",
+  completed: "completed",
+  rescheduled: "cancelled",
+};
+
 function StatusPill({ status }: { status: AppointmentStatus }) {
   const tone: Tone =
     status === "completed" ? "slate" : status === "arrived" ? "positive" : "action";
@@ -899,6 +954,252 @@ function StatusPill({ status }: { status: AppointmentStatus }) {
     >
       {STATUS_LABEL[status]}
     </span>
+  );
+}
+
+/** Demo drawer context: patient basics, alerts, comms, money, telehealth. */
+function DemoApptContext({ appt }: { appt: Appointment }) {
+  useApptSession(); // subscribe (note / status / checkout link updates)
+  const patient = appt.patientId ? getPatient(appt.patientId) : undefined;
+  const extras = appt.patientId ? getProfileExtras(appt.patientId) : null;
+  const ledger = appt.patientId ? patientLedger(appt.patientId) : null;
+  const override = getApptOverride(appt.id);
+  const tele = telehealthReadiness(appt);
+  const svc = SERVICES.find((s) => s.id === APPOINTMENT_TYPE_SERVICE[appt.type]);
+
+  return (
+    <div className="flex flex-col gap-2 px-4 pb-2">
+      {patient && extras ? (
+        <div className="rounded-lg border border-hairline bg-sunken px-3 py-[8px] text-[11.5px] leading-[1.6] text-body">
+          <span className="block font-semibold text-ink">
+            {patient.name} · {patient.age == null ? "age n/r" : `${patient.age} y/o`} · {patient.mrn}
+          </span>
+          <span className="block text-subtle">
+            {extras.contact.phone} · prefers {extras.contact.preferred.toLowerCase()}
+          </span>
+          {extras.medicalAlerts.length > 0 && (
+            <span className="mt-1 flex flex-wrap gap-1">
+              {extras.medicalAlerts.map((a) => (
+                <Pill key={a.label} tone={a.tone}>{a.label}</Pill>
+              ))}
+            </span>
+          )}
+          {extras.comms[0] && (
+            <span className="mt-1 block text-subtle">
+              Last comms: {extras.comms[0].summary} ({extras.comms[0].atLabel})
+            </span>
+          )}
+        </div>
+      ) : (
+        <p className="m-0 rounded-lg border border-hairline bg-sunken px-3 py-[8px] text-[11.5px] text-subtle">
+          Not linked to a chart in the demo roster.
+        </p>
+      )}
+
+      {appt.type === "telehealth" && (
+        <p className={cn(
+          "m-0 rounded-lg px-3 py-[7px] text-[11.5px] font-medium",
+          tele.ready ? "bg-positive-tint text-positive" : "bg-warning-tint text-warning-deep",
+        )}>
+          Telehealth: {tele.detail}
+        </p>
+      )}
+
+      <div className="rounded-lg border border-hairline bg-sunken px-3 py-[8px] text-[11.5px] leading-[1.6] text-body">
+        <span className="block">
+          <span className="font-semibold text-subtle">Visit fee:</span>{" "}
+          {svc ? `${svc.label} · ${formatMinor(svc.priceMinor)}` : "—"}
+        </span>
+        {ledger && (
+          <span className="block">
+            <span className="font-semibold text-subtle">Balance:</span>{" "}
+            {ledger.balanceMinor > 0 ? (
+              <span className="font-semibold text-warning-deep">{formatMinor(ledger.balanceMinor)} due</span>
+            ) : (
+              "Settled"
+            )}
+            {" · "}
+            <span className="font-semibold text-subtle">Card:</span>{" "}
+            {ledger.card.status === "missing" ? "none on file" : `${ledger.card.brand} ····${ledger.card.last4}`}
+          </span>
+        )}
+        {override?.checkoutInvoiceId && (
+          <span className="block font-semibold text-positive">Checked out · invoice recorded this session</span>
+        )}
+      </div>
+
+      {override?.note && (
+        <p className="m-0 rounded-lg border border-[rgba(199,126,20,0.3)] bg-warning-tint px-3 py-[7px] text-[11.5px] text-warning-deep">
+          <span className="font-bold">Note:</span> {override.note}
+        </p>
+      )}
+    </div>
+  );
+}
+
+const RESCHEDULE_DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
+
+/** Full demo front-desk action set with confirmations + honest feedback. */
+function DemoApptActions({
+  appt,
+  onClose,
+}: {
+  appt: Appointment;
+  onClose: () => void;
+}) {
+  const { announce } = useFeedback();
+  const override = getApptOverride(appt.id);
+  const fd = override?.status;
+  const [confirming, setConfirming] = useState<null | "no-show" | "cancelled">(null);
+  const [panel, setPanel] = useState<null | "reschedule" | "note">(null);
+  const [note, setNote] = useState(override?.note ?? "");
+  const [day, setDay] = useState(2);
+  const [time, setTime] = useState("09:00");
+
+  const act = (s: FrontDeskStatus, detail?: string) => {
+    const r = setFrontDeskStatus(appt, s, detail);
+    announce(r.message);
+  };
+  const settled = fd === "cancelled" || fd === "no-show" || fd === "rescheduled" || fd === "completed";
+  const patientHref = appt.patientId ? patientPath(appt.patientId) : null;
+  const checkoutHref = `/billing?tab=checkout${appt.patientId ? `&patient=${appt.patientId}` : ""}&appt=${appt.id}&service=${APPOINTMENT_TYPE_SERVICE[appt.type] ?? ""}`;
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="grid grid-cols-2 gap-[6px]">
+        {!settled && fd !== "checked-in" && (
+          <Btn size="sm" variant={fd === "arrived" ? "primary" : "outline"} onClick={() => act(fd === "arrived" ? "checked-in" : "arrived")}>
+            {fd === "arrived" ? "Check in" : "Arrive"}
+          </Btn>
+        )}
+        {!settled && (
+          <Btn size="sm" onClick={() => setConfirming("no-show")}>No show</Btn>
+        )}
+        {!settled && (
+          <Btn size="sm" onClick={() => setConfirming("cancelled")}>Cancel</Btn>
+        )}
+        {!settled && (
+          <Btn size="sm" onClick={() => setPanel(panel === "reschedule" ? null : "reschedule")} aria-expanded={panel === "reschedule"}>
+            Reschedule
+          </Btn>
+        )}
+        <Btn
+          size="sm"
+          onClick={() => {
+            copyAppointment(appt);
+            announce("Appointment copied to the next free hour. (demo — this session only)");
+          }}
+        >
+          Copy
+        </Btn>
+        {appt.patientId ? (
+          <BtnLink size="sm" href={`/patients/${appt.patientId}/messages`}>Message</BtnLink>
+        ) : (
+          <Btn size="sm" onClick={() => announce("No portal thread — patient isn't linked to a chart in the demo.")}>Message</Btn>
+        )}
+        <Btn size="sm" onClick={() => setPanel(panel === "note" ? null : "note")} aria-expanded={panel === "note"}>
+          Add note
+        </Btn>
+        <BtnLink size="sm" href={checkoutHref}>Add item</BtnLink>
+      </div>
+
+      {panel === "reschedule" && (
+        <div className="rounded-lg border border-line bg-card px-3 py-2">
+          <div className="flex items-end gap-2">
+            <Field label="Day" className="flex-1">
+              <UiSelect value={day} onChange={(e) => setDay(Number(e.target.value))}>
+                {RESCHEDULE_DAYS.map((d, i) => (
+                  <option key={d} value={i + 1}>{d}</option>
+                ))}
+              </UiSelect>
+            </Field>
+            <Field label="Time" className="flex-1">
+              <UiSelect value={time} onChange={(e) => setTime(e.target.value)}>
+                {["08:00", "08:30", "09:00", "09:30", "10:00", "10:30", "11:00", "13:00", "13:30", "14:00", "14:30", "15:00", "15:30", "16:00"].map((t) => (
+                  <option key={t} value={t}>{t}</option>
+                ))}
+              </UiSelect>
+            </Field>
+            <Btn
+              size="sm"
+              variant="primary"
+              onClick={() => {
+                const [h, m] = time.split(":").map(Number);
+                const label = `${RESCHEDULE_DAYS[day - 1].slice(0, 3)} ${time}`;
+                const r = rescheduleAppointment(appt, { weekday: day, start: h * 60 + m, label });
+                announce(r.message);
+                setPanel(null);
+              }}
+            >
+              Move
+            </Btn>
+          </div>
+        </div>
+      )}
+
+      {panel === "note" && (
+        <div className="rounded-lg border border-line bg-card px-3 py-2">
+          <UiTextArea value={note} onChange={(e) => setNote(e.target.value)} rows={2} placeholder="Front-desk note for this appointment…" aria-label="Appointment note" />
+          <div className="mt-2 flex justify-end gap-2">
+            <Btn size="sm" variant="ghost" onClick={() => setPanel(null)}>Cancel</Btn>
+            <Btn
+              size="sm"
+              variant="primary"
+              disabled={!note.trim()}
+              onClick={() => {
+                const r = setAppointmentNote(appt, note.trim());
+                announce(r.message);
+                setPanel(null);
+              }}
+            >
+              Save note
+            </Btn>
+          </div>
+        </div>
+      )}
+
+      <div className="grid grid-cols-2 gap-[6px]">
+        {patientHref ? (
+          <BtnLink size="sm" variant="primary" href={patientHref}>Open patient</BtnLink>
+        ) : (
+          <Btn size="sm" onClick={() => announce(`${appt.patientName} isn't linked to a chart in this demo dataset.`)}>Open patient</Btn>
+        )}
+        {appt.patientId ? (
+          <BtnLink size="sm" href={`/patients/${appt.patientId}/encounter/demo`}>Start encounter</BtnLink>
+        ) : (
+          <Btn size="sm" onClick={() => announce("Encounters need a linked chart.")}>Start encounter</Btn>
+        )}
+        {appt.type === "telehealth" && !settled && (
+          <Btn
+            size="sm"
+            onClick={() => announce("Telehealth room simulated — no video provider is connected (see Integrations).")}
+          >
+            Start telehealth
+          </Btn>
+        )}
+        <BtnLink size="sm" variant={fd === "checked-in" ? "primary" : "outline"} href={checkoutHref}>
+          Checkout
+        </BtnLink>
+      </div>
+
+      <p className="m-0 text-center text-[10.5px] text-faint">
+        Front-desk changes are demo/session-only and audited in the session log.
+      </p>
+
+      <ConfirmDialog
+        open={confirming != null}
+        title={confirming === "no-show" ? "Mark as no-show?" : "Cancel this appointment?"}
+        body={`${appt.patientName} · ${fmtTime(appt.start)} · ${APPOINTMENT_TYPE_META[appt.type].label}. Recorded in the session audit log; demo only — nothing external happens.`}
+        confirmLabel={confirming === "no-show" ? "Mark no-show" : "Cancel appointment"}
+        destructive
+        onCancel={() => setConfirming(null)}
+        onConfirm={() => {
+          if (confirming) act(confirming);
+          setConfirming(null);
+          onClose();
+        }}
+      />
+    </div>
   );
 }
 
@@ -978,8 +1279,17 @@ function DetailDrawer({
       </div>
 
       <div className="flex-1 overflow-y-auto py-[6px]">
-        <div className="px-4 py-[8px]">
-          <StatusPill status={status} />
+        <div className="flex items-center gap-2 px-4 py-[8px]">
+          {!USE_LIVE_API && getApptOverride(appt.id)?.status ? (
+            <Pill tone={FD_STATUS_TONE[getApptOverride(appt.id)!.status!]}>
+              {fdStatusLabel(getApptOverride(appt.id)!.status!)}
+              {getApptOverride(appt.id)?.rescheduledToLabel
+                ? ` → ${getApptOverride(appt.id)!.rescheduledToLabel}`
+                : ""}
+            </Pill>
+          ) : (
+            <StatusPill status={status} />
+          )}
         </div>
         <Row icon={<Clock size={14} strokeWidth={2} aria-hidden />}>
           {WEEKDAYS[isoWeekday(date) - 1]} {MONTHS[date.getMonth()].slice(0, 3)} {date.getDate()} ·{" "}
@@ -993,23 +1303,18 @@ function DetailDrawer({
         <Row icon={appt.type === "telehealth" ? <Video size={14} strokeWidth={2} aria-hidden /> : <MapPin size={14} strokeWidth={2} aria-hidden />}>
           {appt.location}
         </Row>
+        {!USE_LIVE_API && <DemoApptContext appt={appt} />}
       </div>
 
       <div className="flex flex-col gap-2 border-t border-hairline bg-[rgba(247,250,252,0.7)] p-3">
-        {appt.patientId ? (
+        {!USE_LIVE_API && <DemoApptActions appt={appt} onClose={onClose} />}
+        {USE_LIVE_API && appt.patientId && (
           <Link
-            href={`/patients/${appt.patientId}/supplements?tab=dispense`}
+            href={`/patients/${appt.patientId}/care-plan?view=supplements`}
             className="flex h-9 items-center justify-center gap-[7px] rounded-lg border-none bg-action text-[12.5px] font-semibold text-white hover:bg-action-deep focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink"
           >
             Open chart & add to order →
           </Link>
-        ) : (
-          <button
-            onClick={() => announce(`${appt.patientName} isn't linked to a chart in this demo dataset.`)}
-            className="flex h-9 items-center justify-center rounded-lg border border-line bg-card text-[12.5px] font-semibold text-body hover:border-line-hover focus-visible:outline-2 focus-visible:outline-action"
-          >
-            Open chart
-          </button>
         )}
         {USE_LIVE_API && appt.patientId && (
           <StartEncounterButton
@@ -1019,7 +1324,7 @@ function DetailDrawer({
             label="Open encounter"
           />
         )}
-        {USE_LIVE_API ? (
+        {USE_LIVE_API && (
           <div className="flex gap-2">
             {(status === "scheduled" || status === "confirmed") && (
               <button
@@ -1048,21 +1353,6 @@ function DetailDrawer({
                 Cancel appt
               </button>
             )}
-          </div>
-        ) : (
-          <div className="flex gap-2">
-            <button
-              onClick={() => announce(`${appt.patientName} checked in. (demo — not persisted)`)}
-              className="flex h-8 flex-1 items-center justify-center rounded-lg border border-line bg-card text-[12px] font-semibold text-body hover:border-line-hover focus-visible:outline-2 focus-visible:outline-action"
-            >
-              Check in
-            </button>
-            <button
-              onClick={() => announce("Reschedule opens with the backend. (demo)")}
-              className="flex h-8 flex-1 items-center justify-center rounded-lg border border-line bg-card text-[12px] font-semibold text-body hover:border-line-hover focus-visible:outline-2 focus-visible:outline-action"
-            >
-              Reschedule
-            </button>
           </div>
         )}
       </div>

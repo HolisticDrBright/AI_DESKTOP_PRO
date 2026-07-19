@@ -20,15 +20,15 @@ export function getCommandGroups(patientId?: string): CommandGroup[] {
     {
       label: "Patients",
       items: [
-        { label: "Alexandra Morgan", sub: "34 F · Metabolic Reset — Phase 2", initials: "AM", tone: "teal", href: "/patients/p-78435/summary" },
-        { label: "Michael Johnson", sub: "52 M · Cardiometabolic program", initials: "MJ", tone: "action", href: "/patients/p-64201/summary" },
-        { label: "Priya Sharma", sub: "47 F · High risk — ferritin alert", initials: "PS", tone: "critical", href: "/patients/p-59318/summary" },
+        { label: "Alexandra Morgan", sub: "34 F · Metabolic Reset — Phase 2", initials: "AM", tone: "teal", href: "/patients/p-78435/overview" },
+        { label: "Michael Johnson", sub: "52 M · Cardiometabolic program", initials: "MJ", tone: "action", href: "/patients/p-64201/overview" },
+        { label: "Priya Sharma", sub: "47 F · High risk — ferritin alert", initials: "PS", tone: "critical", href: "/patients/p-59318/overview" },
       ],
     },
     {
       label: "Go to",
       items: [
-        { label: "Overview", sub: "Patient dashboard", kbd: "G O", icon: "home", tone: "slate", href: `/patients/${pid}/summary` },
+        { label: "Overview", sub: "Patient dashboard", kbd: "G O", icon: "home", tone: "slate", href: `/patients/${pid}/overview` },
         { label: "Practice dashboard", sub: "Clients & review queue", kbd: "G P", icon: "users", tone: "slate", href: "/practice" },
         { label: "Clinical Reasoning", sub: patientName, kbd: "G R", icon: "reasoning", tone: "slate", href: `/patients/${pid}/reasoning` },
       ],

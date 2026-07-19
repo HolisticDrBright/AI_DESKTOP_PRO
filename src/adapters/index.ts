@@ -20,7 +20,6 @@ import {
   getPatientSummary,
   listPatients,
 } from "./patients.mock";
-import { getPracticeDashboard, getRightRail } from "./practice.mock";
 import { getAssistantSession } from "./assistant.mock";
 import { getCommandGroups } from "./commands.mock";
 import { generateDraft, type ComposerContext } from "./composer.mock";
@@ -40,8 +39,6 @@ import { getReasoningWorkspace } from "./reasoning.mock";
 import { getSupplementWorkspace } from "./supplements.mock";
 import { getHealthTwin } from "./twin.mock";
 import { getActiveExperiments, getCompletedExperiments } from "./experiments.mock";
-import { getClientRows } from "./clients.mock";
-import { getProgramTemplates } from "./programs.mock";
 import { getConnectors } from "./integrations.mock";
 import { CAPABILITIES, ROLES } from "./permissions.mock";
 import { USE_LIVE_API } from "./config";
@@ -104,10 +101,6 @@ export const api = {
       return getPatient(id);
     },
     summary: async (id: string) => getPatientSummary(id),
-  },
-  practice: {
-    dashboard: async () => getPracticeDashboard(),
-    rightRail: async () => getRightRail(),
   },
   schedule: {
     /**
@@ -368,14 +361,6 @@ export const api = {
     /** MOCK N-of-1 experiments. Replace with tRPC queries. */
     listActive: async () => getActiveExperiments(),
     listCompleted: async () => getCompletedExperiments(),
-  },
-  clients: {
-    /** MOCK client directory. Replace with a tRPC query. */
-    list: async () => getClientRows(),
-  },
-  programs: {
-    /** MOCK program templates. Replace with tRPC queries. */
-    listTemplates: async () => getProgramTemplates(),
   },
   integrations: {
     /** MOCK connector health. Replace with a tRPC query. */
