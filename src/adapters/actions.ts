@@ -54,7 +54,11 @@ export type ActionKind =
   | "order_panel_added"
   | "order_panel_removed"
   | "order_prepared"
-  | "order_reviewed";
+  | "order_reviewed"
+  // assessments (screening submissions + protocol drafts)
+  | "assessment_invited"
+  | "assessment_submitted"
+  | "protocol_draft_created";
 
 export type ActionIcon =
   | "check"
@@ -147,6 +151,9 @@ export const ACTIONS: Record<ActionKind, ActionDescriptor> = {
   order_panel_added: { kind: "order_panel_added", label: "Lab panel added", icon: "plus", tone: "action" },
   order_panel_removed: { kind: "order_panel_removed", label: "Lab panel removed", icon: "minus", tone: "slate" },
   order_prepared: { kind: "order_prepared", label: "Lab order draft prepared", icon: "flask", tone: "action" },
+  assessment_invited: { kind: "assessment_invited", label: "Screening invitation sent", icon: "clipboard-plus", tone: "action" },
+  assessment_submitted: { kind: "assessment_submitted", label: "Screening submitted for review", icon: "clipboard-plus", tone: "teal" },
+  protocol_draft_created: { kind: "protocol_draft_created", label: "Protocol draft created", icon: "pencil", tone: "action" },
   order_reviewed: { kind: "order_reviewed", label: "Lab order reviewed", icon: "check-check", tone: "positive" },
 };
 

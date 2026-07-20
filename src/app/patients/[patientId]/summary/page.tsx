@@ -4,6 +4,7 @@ import Link from "next/link";
 import { api } from "@/adapters";
 import { USE_LIVE_API } from "@/adapters/mode";
 import { getRequestSession } from "@/server/session";
+import { PatientScreeningCard } from "@/components/patient/PatientScreeningCard";
 import { SummaryTab } from "@/components/patient/summary/SummaryTab";
 import { ClinicalEmpty } from "@/components/ui/ClinicalStates";
 import { patientPath } from "@/lib/routes";
@@ -45,6 +46,11 @@ export default async function PatientSummaryPage({
 
   if (!summary) notFound();
   return (
-    <SummaryTab summary={summary} patientId={patientId} patientName={patient?.name} />
+    <>
+      <div className="pt-4">
+        <PatientScreeningCard patientId={patientId} />
+      </div>
+      <SummaryTab summary={summary} patientId={patientId} patientName={patient?.name} />
+    </>
   );
 }
