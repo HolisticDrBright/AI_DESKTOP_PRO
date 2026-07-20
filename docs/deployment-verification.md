@@ -237,3 +237,23 @@ changes):
    now proven good; the anon key is proven accepted. Nothing about backend
    `c96ab6a`, desktop `2a79d57`, or either host was changed by this
    attempt.
+
+### Run attempt 3 — 2026-07-20T08:20Z (coordinating session, fresh container; blocked in Preflight B)
+
+Environment provisioning and network policy are now PROVEN GOOD from the
+coordinating session itself: all five gate variables present; Supabase
+transport reachable (HEAD `/rest/v1/` → 401 per the transport rule); Railway
+`GET /health` → 200. Preflight B (statuses/codes only):
+
+| Probe | Result |
+|---|---|
+| B1: P1 password grant | HTTP 400 `invalid_credentials` (single attempt) |
+| B1': P2 password grant | HTTP 400 `invalid_credentials` (single attempt) |
+
+Both stored password values remain out of sync with staging auth (the
+database-side passwords were last verified working 2026-07-19 ~01:25Z via
+successful `action: login` events). Remaining operator action: re-sync
+`GATE_P1_PASSWORD`/`GATE_P2_PASSWORD` with the working passwords, or set
+fresh ones in both the SQL editor and the environment secrets in one
+sitting. Everything else is ready; the coordinating session will auto-retry
+the sign-in and start the full gate the moment credentials validate.
