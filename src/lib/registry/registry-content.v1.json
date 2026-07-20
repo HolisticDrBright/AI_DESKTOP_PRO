@@ -1,0 +1,1662 @@
+{
+  "registryVersion": "2026.07.20-v1",
+  "generated": "node expo/scripts/generate-registry-content.mjs (deterministic; do not hand-edit the JSON)",
+  "clinicalLanguage": {
+    "scoreName": "symptom-pattern screening score",
+    "disclaimer": "A symptom-pattern screening score is not a diagnosis, a medical probability, or confirmation of any condition. It only prioritizes which functional patterns to review with your practitioner."
+  },
+  "questionnaire": {
+    "id": "symptom-pattern-screening",
+    "version": "q.v1",
+    "effectiveDate": "2026-07-20",
+    "scoringVersion": "scoring.v2",
+    "legacyScoringVersion": "scoring.v1-legacy",
+    "answerScale": {
+      "type": "severity-0-4",
+      "options": [
+        {
+          "value": 0,
+          "label": "Never"
+        },
+        {
+          "value": 1,
+          "label": "Rarely"
+        },
+        {
+          "value": 2,
+          "label": "Sometimes"
+        },
+        {
+          "value": 3,
+          "label": "Often"
+        },
+        {
+          "value": 4,
+          "label": "Almost always"
+        }
+      ],
+      "specialAnswers": [
+        {
+          "value": "not_applicable",
+          "label": "Not applicable"
+        },
+        {
+          "value": "unsure",
+          "label": "Unsure"
+        },
+        {
+          "value": "prefer_not_to_answer",
+          "label": "Prefer not to answer"
+        }
+      ]
+    },
+    "interpretation": {
+      "bands": [
+        {
+          "id": "below-threshold",
+          "label": "Below screening threshold",
+          "min": 0
+        },
+        {
+          "id": "moderate",
+          "label": "Moderate symptom-pattern screening score",
+          "min": 25
+        },
+        {
+          "id": "elevated",
+          "label": "Elevated symptom-pattern screening score",
+          "min": 50
+        }
+      ],
+      "insufficientDataBelowCompleteness": 0.5
+    },
+    "categories": [
+      {
+        "id": "thyroid",
+        "name": "Thyroid Function",
+        "icon": "Thermometer",
+        "description": "Thyroid and metabolic symptoms",
+        "questions": [
+          {
+            "id": "thy_1",
+            "text": "Do you experience unexplained weight gain or difficulty losing weight?"
+          },
+          {
+            "id": "thy_2",
+            "text": "Do you feel cold when others feel comfortable?"
+          },
+          {
+            "id": "thy_3",
+            "text": "Do you have dry skin, brittle nails, or thinning hair?"
+          },
+          {
+            "id": "thy_4",
+            "text": "Do you experience constipation regularly?"
+          },
+          {
+            "id": "thy_5",
+            "text": "Do you feel sluggish or fatigued, especially in the morning?"
+          },
+          {
+            "id": "thy_6",
+            "text": "Do you have brain fog or poor concentration?"
+          },
+          {
+            "id": "thy_7",
+            "text": "Do you have a puffy face or swelling around eyes?"
+          },
+          {
+            "id": "thy_8",
+            "text": "Do you experience muscle weakness or aches?"
+          },
+          {
+            "id": "thy_9",
+            "text": "Do you have irregular or heavy menstrual periods (if applicable)?"
+          },
+          {
+            "id": "thy_10",
+            "text": "Do you have elevated cholesterol despite healthy diet?"
+          }
+        ]
+      },
+      {
+        "id": "adrenal",
+        "name": "Adrenal Function",
+        "icon": "Zap",
+        "description": "Adrenal fatigue and HPA axis symptoms",
+        "questions": [
+          {
+            "id": "adr_1",
+            "text": "Do you feel \"wired but tired\" - exhausted yet unable to relax?"
+          },
+          {
+            "id": "adr_2",
+            "text": "Do you need caffeine or stimulants to get through the day?"
+          },
+          {
+            "id": "adr_3",
+            "text": "Do you feel dizzy or lightheaded when standing up quickly?"
+          },
+          {
+            "id": "adr_4",
+            "text": "Do you crave salt or salty foods?"
+          },
+          {
+            "id": "adr_5",
+            "text": "Do you have a \"second wind\" of energy late at night (after 11pm)?"
+          },
+          {
+            "id": "adr_6",
+            "text": "Do you feel overwhelmed by stress that you previously handled well?"
+          },
+          {
+            "id": "adr_7",
+            "text": "Do you have difficulty recovering from illness or exercise?"
+          },
+          {
+            "id": "adr_8",
+            "text": "Do you experience afternoon energy crashes (2-4pm)?"
+          },
+          {
+            "id": "adr_9",
+            "text": "Do you startle easily or feel anxious without reason?"
+          },
+          {
+            "id": "adr_10",
+            "text": "Do you have low blood pressure or feel faint?"
+          }
+        ]
+      },
+      {
+        "id": "hormones",
+        "name": "Hormonal Balance",
+        "icon": "Activity",
+        "description": "Sex hormone and metabolic hormone symptoms",
+        "questions": [
+          {
+            "id": "horm_1",
+            "text": "Do you experience low libido or sexual dysfunction?"
+          },
+          {
+            "id": "horm_2",
+            "text": "Do you have mood swings, irritability, or depression?"
+          },
+          {
+            "id": "horm_3",
+            "text": "Do you experience hot flashes or night sweats?"
+          },
+          {
+            "id": "horm_4",
+            "text": "Do you have difficulty building or maintaining muscle?"
+          },
+          {
+            "id": "horm_5",
+            "text": "Do you have acne, oily skin, or excess facial hair (women)?"
+          },
+          {
+            "id": "horm_6",
+            "text": "Do you experience PMS, irregular periods, or painful periods?"
+          },
+          {
+            "id": "horm_7",
+            "text": "Do you have weight gain around hips, thighs, or midsection?"
+          },
+          {
+            "id": "horm_8",
+            "text": "Do you feel fatigued despite adequate sleep?"
+          },
+          {
+            "id": "horm_9",
+            "text": "Do you have breast tenderness or fibrocystic breasts?"
+          },
+          {
+            "id": "horm_10",
+            "text": "Do you experience water retention or bloating cyclically?"
+          }
+        ]
+      },
+      {
+        "id": "gut_digestive",
+        "name": "Digestive Health",
+        "icon": "Stethoscope",
+        "description": "SIBO, leaky gut, IBS, Crohn's symptoms",
+        "questions": [
+          {
+            "id": "gut_1",
+            "text": "Do you experience bloating within 1-2 hours after eating?"
+          },
+          {
+            "id": "gut_2",
+            "text": "Do you have excessive gas or flatulence?"
+          },
+          {
+            "id": "gut_3",
+            "text": "Do you experience alternating constipation and diarrhea?"
+          },
+          {
+            "id": "gut_4",
+            "text": "Do you have abdominal pain or cramping?"
+          },
+          {
+            "id": "gut_5",
+            "text": "Do you notice undigested food in your stool?"
+          },
+          {
+            "id": "gut_6",
+            "text": "Do you react to many foods that didn't bother you before?"
+          },
+          {
+            "id": "gut_7",
+            "text": "Do you experience acid reflux or heartburn?"
+          },
+          {
+            "id": "gut_8",
+            "text": "Do you have mucus or blood in your stool?"
+          },
+          {
+            "id": "gut_9",
+            "text": "Do symptoms worsen with fiber, prebiotics, or probiotics?"
+          },
+          {
+            "id": "gut_10",
+            "text": "Do you feel worse after eating fermented foods?"
+          }
+        ]
+      },
+      {
+        "id": "gallbladder",
+        "name": "Gallbladder & Bile",
+        "icon": "Droplet",
+        "description": "Gallbladder and bile flow symptoms",
+        "questions": [
+          {
+            "id": "gb_1",
+            "text": "Do you have difficulty digesting fatty or greasy foods?"
+          },
+          {
+            "id": "gb_2",
+            "text": "Do you experience pain or discomfort under right ribcage?"
+          },
+          {
+            "id": "gb_3",
+            "text": "Do you have nausea after eating fatty meals?"
+          },
+          {
+            "id": "gb_4",
+            "text": "Do you have light-colored or floating stools?"
+          },
+          {
+            "id": "gb_5",
+            "text": "Do you experience burping or belching after meals?"
+          },
+          {
+            "id": "gb_6",
+            "text": "Do you have pain between shoulder blades?"
+          },
+          {
+            "id": "gb_7",
+            "text": "Do you feel sluggish or tired after eating?"
+          },
+          {
+            "id": "gb_8",
+            "text": "Do you have a history of gallstones or gallbladder removal?"
+          },
+          {
+            "id": "gb_9",
+            "text": "Do you experience bitter taste in mouth?"
+          },
+          {
+            "id": "gb_10",
+            "text": "Do you have difficulty absorbing fat-soluble vitamins (A, D, E, K)?"
+          }
+        ]
+      },
+      {
+        "id": "blood_sugar",
+        "name": "Blood Sugar",
+        "icon": "TrendingUp",
+        "description": "Blood sugar and insulin resistance symptoms",
+        "questions": [
+          {
+            "id": "bs_1",
+            "text": "Do you experience energy crashes after meals?"
+          },
+          {
+            "id": "bs_2",
+            "text": "Do you crave sugar or carbohydrates frequently?"
+          },
+          {
+            "id": "bs_3",
+            "text": "Do you feel shaky, irritable, or anxious if you skip meals?"
+          },
+          {
+            "id": "bs_4",
+            "text": "Do you have difficulty losing weight, especially around midsection?"
+          },
+          {
+            "id": "bs_5",
+            "text": "Do you experience frequent urination or excessive thirst?"
+          },
+          {
+            "id": "bs_6",
+            "text": "Do you have skin tags or dark patches on skin (acanthosis)?"
+          },
+          {
+            "id": "bs_7",
+            "text": "Do you feel fatigued after eating carbohydrates?"
+          },
+          {
+            "id": "bs_8",
+            "text": "Do you wake up at night hungry or sweating?"
+          },
+          {
+            "id": "bs_9",
+            "text": "Do you have brain fog or difficulty concentrating?"
+          },
+          {
+            "id": "bs_10",
+            "text": "Do you have elevated triglycerides or low HDL cholesterol?"
+          }
+        ]
+      },
+      {
+        "id": "autoimmune",
+        "name": "Autoimmune",
+        "icon": "Shield",
+        "description": "Autoimmune and immune dysregulation symptoms",
+        "questions": [
+          {
+            "id": "ai_1",
+            "text": "Do you have joint pain that moves around your body?"
+          },
+          {
+            "id": "ai_2",
+            "text": "Do you experience skin rashes, hives, or unexplained itching?"
+          },
+          {
+            "id": "ai_3",
+            "text": "Do you have a family history of autoimmune conditions?"
+          },
+          {
+            "id": "ai_4",
+            "text": "Do you experience chronic fatigue that rest doesn't improve?"
+          },
+          {
+            "id": "ai_5",
+            "text": "Do you have multiple food sensitivities or allergies?"
+          },
+          {
+            "id": "ai_6",
+            "text": "Do you experience numbness, tingling, or nerve pain?"
+          },
+          {
+            "id": "ai_7",
+            "text": "Do you have hair loss in patches or overall thinning?"
+          },
+          {
+            "id": "ai_8",
+            "text": "Do you have dry eyes, dry mouth (Sicca symptoms)?"
+          },
+          {
+            "id": "ai_9",
+            "text": "Do you experience recurring fevers or inflammation without infection?"
+          },
+          {
+            "id": "ai_10",
+            "text": "Do symptoms flare unpredictably or with stress?"
+          }
+        ]
+      },
+      {
+        "id": "parasites",
+        "name": "Parasites",
+        "icon": "Bug",
+        "description": "Parasitic infection symptoms",
+        "questions": [
+          {
+            "id": "par_1",
+            "text": "Do you experience teeth grinding (bruxism) at night?"
+          },
+          {
+            "id": "par_2",
+            "text": "Do you have anal itching, especially at night?"
+          },
+          {
+            "id": "par_3",
+            "text": "Do you have unexplained rashes or skin issues?"
+          },
+          {
+            "id": "par_4",
+            "text": "Do you experience digestive issues that come and go cyclically?"
+          },
+          {
+            "id": "par_5",
+            "text": "Do you have unexplained anemia or iron deficiency?"
+          },
+          {
+            "id": "par_6",
+            "text": "Do you crave or dislike certain foods intensely?"
+          },
+          {
+            "id": "par_7",
+            "text": "Have you traveled internationally or consumed contaminated water?"
+          },
+          {
+            "id": "par_8",
+            "text": "Do you have unexplained weight loss despite normal appetite?"
+          },
+          {
+            "id": "par_9",
+            "text": "Do you experience fatigue and malaise that worsens around full moon?"
+          },
+          {
+            "id": "par_10",
+            "text": "Do you have visible mucus or unusual material in stool?"
+          }
+        ]
+      },
+      {
+        "id": "lyme",
+        "name": "Lyme Disease",
+        "icon": "Target",
+        "description": "Lyme and tick-borne illness symptoms",
+        "questions": [
+          {
+            "id": "lyme_1",
+            "text": "Have you ever been bitten by a tick or had a bulls-eye rash?"
+          },
+          {
+            "id": "lyme_2",
+            "text": "Do you experience migratory joint pain that moves around?"
+          },
+          {
+            "id": "lyme_3",
+            "text": "Do you have chronic fatigue that doesn't improve with rest?"
+          },
+          {
+            "id": "lyme_4",
+            "text": "Do you experience brain fog, memory issues, or word-finding difficulty?"
+          },
+          {
+            "id": "lyme_5",
+            "text": "Do you have muscle twitching, tremors, or fasciculations?"
+          },
+          {
+            "id": "lyme_6",
+            "text": "Do you experience night sweats or temperature dysregulation?"
+          },
+          {
+            "id": "lyme_7",
+            "text": "Do you have heart palpitations or chest discomfort?"
+          },
+          {
+            "id": "lyme_8",
+            "text": "Do you experience tingling, numbness, or burning sensations?"
+          },
+          {
+            "id": "lyme_9",
+            "text": "Do symptoms flare every 4 weeks or with stress?"
+          },
+          {
+            "id": "lyme_10",
+            "text": "Do you have light or sound sensitivity, or headaches?"
+          }
+        ]
+      },
+      {
+        "id": "mold",
+        "name": "Mold Toxicity",
+        "icon": "CloudRain",
+        "description": "Mold and mycotoxin exposure symptoms",
+        "questions": [
+          {
+            "id": "mold_1",
+            "text": "Do you feel worse in damp or musty environments?"
+          },
+          {
+            "id": "mold_2",
+            "text": "Have you lived or worked in water-damaged buildings?"
+          },
+          {
+            "id": "mold_3",
+            "text": "Do you have chronic sinus congestion or post-nasal drip?"
+          },
+          {
+            "id": "mold_4",
+            "text": "Do you experience shortness of breath or air hunger?"
+          },
+          {
+            "id": "mold_5",
+            "text": "Do you have unusual static shocks or sensitivity to electronics?"
+          },
+          {
+            "id": "mold_6",
+            "text": "Do you experience brain fog, memory issues, or confusion?"
+          },
+          {
+            "id": "mold_7",
+            "text": "Do you have unexplained body aches or joint pain?"
+          },
+          {
+            "id": "mold_8",
+            "text": "Do you experience light sensitivity or visual disturbances?"
+          },
+          {
+            "id": "mold_9",
+            "text": "Do symptoms improve when away from home for extended time?"
+          },
+          {
+            "id": "mold_10",
+            "text": "Do you have unexplained anxiety, mood changes, or depression?"
+          }
+        ]
+      },
+      {
+        "id": "heavy_metals",
+        "name": "Heavy Metals",
+        "icon": "Atom",
+        "description": "Heavy metal toxicity symptoms",
+        "questions": [
+          {
+            "id": "hm_1",
+            "text": "Do you have mercury amalgam (silver) dental fillings?"
+          },
+          {
+            "id": "hm_2",
+            "text": "Do you eat fish more than 2-3 times per week?"
+          },
+          {
+            "id": "hm_3",
+            "text": "Do you experience metallic taste in your mouth?"
+          },
+          {
+            "id": "hm_4",
+            "text": "Do you have tremors, poor coordination, or balance issues?"
+          },
+          {
+            "id": "hm_5",
+            "text": "Do you experience memory problems or cognitive decline?"
+          },
+          {
+            "id": "hm_6",
+            "text": "Do you have numbness or tingling in hands and feet?"
+          },
+          {
+            "id": "hm_7",
+            "text": "Have you been exposed to lead paint, industrial chemicals, or contaminated water?"
+          },
+          {
+            "id": "hm_8",
+            "text": "Do you have chronic headaches or migraines?"
+          },
+          {
+            "id": "hm_9",
+            "text": "Do you experience mood swings, irritability, or depression?"
+          },
+          {
+            "id": "hm_10",
+            "text": "Do you have unexplained fatigue or weakness?"
+          }
+        ]
+      },
+      {
+        "id": "viral",
+        "name": "Chronic Viruses (EBV)",
+        "icon": "Bug",
+        "description": "EBV, CMV, and chronic viral reactivation symptoms",
+        "questions": [
+          {
+            "id": "vir_1",
+            "text": "Have you ever had mononucleosis (mono/glandular fever)?"
+          },
+          {
+            "id": "vir_2",
+            "text": "Do you have swollen lymph nodes in neck or armpits?"
+          },
+          {
+            "id": "vir_3",
+            "text": "Do you experience chronic sore throat or recurring infections?"
+          },
+          {
+            "id": "vir_4",
+            "text": "Do you have extreme fatigue that started after an illness?"
+          },
+          {
+            "id": "vir_5",
+            "text": "Do you experience low-grade fevers or feeling feverish?"
+          },
+          {
+            "id": "vir_6",
+            "text": "Do you have muscle or joint pain without injury?"
+          },
+          {
+            "id": "vir_7",
+            "text": "Do symptoms worsen with physical exertion (post-exertional malaise)?"
+          },
+          {
+            "id": "vir_8",
+            "text": "Do you have recurring cold sores or shingles outbreaks?"
+          },
+          {
+            "id": "vir_9",
+            "text": "Do you experience unrefreshing sleep despite adequate hours?"
+          },
+          {
+            "id": "vir_10",
+            "text": "Do you have brain fog or cognitive issues that fluctuate?"
+          }
+        ]
+      },
+      {
+        "id": "methylation",
+        "name": "Methylation",
+        "icon": "Dna",
+        "description": "Methylation and genetic detox symptoms",
+        "questions": [
+          {
+            "id": "meth_1",
+            "text": "Do you have sensitivity to supplements, medications, or chemicals?"
+          },
+          {
+            "id": "meth_2",
+            "text": "Do you experience anxiety, depression, or mood instability?"
+          },
+          {
+            "id": "meth_3",
+            "text": "Do you have high homocysteine levels (if tested)?"
+          },
+          {
+            "id": "meth_4",
+            "text": "Do you react poorly to B vitamins, especially B12 or folate?"
+          },
+          {
+            "id": "meth_5",
+            "text": "Do you have a family history of heart disease, stroke, or dementia?"
+          },
+          {
+            "id": "meth_6",
+            "text": "Do you experience brain fog or difficulty concentrating?"
+          },
+          {
+            "id": "meth_7",
+            "text": "Do you have histamine intolerance symptoms (flushing, hives, headaches)?"
+          },
+          {
+            "id": "meth_8",
+            "text": "Do you have chronic fatigue not explained by other causes?"
+          },
+          {
+            "id": "meth_9",
+            "text": "Do you have fertility issues or history of miscarriage?"
+          },
+          {
+            "id": "meth_10",
+            "text": "Do you react negatively to nitrous oxide (laughing gas)?"
+          }
+        ]
+      },
+      {
+        "id": "emf",
+        "name": "EMF Sensitivity",
+        "icon": "Wifi",
+        "description": "Electromagnetic field sensitivity symptoms",
+        "questions": [
+          {
+            "id": "emf_1",
+            "text": "Do you experience headaches or pressure near electronics or WiFi?"
+          },
+          {
+            "id": "emf_2",
+            "text": "Do you have difficulty sleeping with electronics in bedroom?"
+          },
+          {
+            "id": "emf_3",
+            "text": "Do you experience ringing in ears (tinnitus)?"
+          },
+          {
+            "id": "emf_4",
+            "text": "Do you feel fatigued or irritable after extended screen time?"
+          },
+          {
+            "id": "emf_5",
+            "text": "Do you have heart palpitations near electrical equipment?"
+          },
+          {
+            "id": "emf_6",
+            "text": "Do you experience skin tingling or burning sensations?"
+          },
+          {
+            "id": "emf_7",
+            "text": "Do symptoms improve when in nature away from electronics?"
+          },
+          {
+            "id": "emf_8",
+            "text": "Do you have difficulty concentrating in offices with lots of electronics?"
+          },
+          {
+            "id": "emf_9",
+            "text": "Do you experience dizziness or nausea near cell towers or power lines?"
+          },
+          {
+            "id": "emf_10",
+            "text": "Have you noticed worsening symptoms with 5G or new technology?"
+          }
+        ]
+      },
+      {
+        "id": "leaky_gut",
+        "name": "Leaky Gut",
+        "icon": "AlertCircle",
+        "description": "Intestinal permeability symptoms",
+        "questions": [
+          {
+            "id": "lg_1",
+            "text": "Do you have multiple food sensitivities or intolerances?"
+          },
+          {
+            "id": "lg_2",
+            "text": "Do you experience skin issues (acne, eczema, rashes)?"
+          },
+          {
+            "id": "lg_3",
+            "text": "Do you have joint pain or inflammation?"
+          },
+          {
+            "id": "lg_4",
+            "text": "Do you experience brain fog or cognitive issues?"
+          },
+          {
+            "id": "lg_5",
+            "text": "Do you have chronic fatigue or low energy?"
+          },
+          {
+            "id": "lg_6",
+            "text": "Do you have seasonal allergies or histamine issues?"
+          },
+          {
+            "id": "lg_7",
+            "text": "Do you experience bloating, gas, or digestive discomfort?"
+          },
+          {
+            "id": "lg_8",
+            "text": "Do you have autoimmune conditions or symptoms?"
+          },
+          {
+            "id": "lg_9",
+            "text": "Have you used antibiotics, NSAIDs, or PPIs long-term?"
+          },
+          {
+            "id": "lg_10",
+            "text": "Do you have nutrient deficiencies despite good diet?"
+          }
+        ]
+      }
+    ]
+  },
+  "labCatalog": [
+    {
+      "id": "lab_vibrant_blood_panel",
+      "panelName": "Vibrant Blood Panel",
+      "vendor": "Vibrant America",
+      "kind": "blood",
+      "specimen": "Serum/whole blood draw",
+      "orderCode": null,
+      "jurisdictions": null,
+      "active": true,
+      "vendorVerified": false,
+      "orderLink": {
+        "url": "https://labs.rupahealth.com/store/storefront_6G8WA4P",
+        "reviewStatus": "unreviewed"
+      }
+    },
+    {
+      "id": "lab_gut_zoomer",
+      "panelName": "Gut Zoomer",
+      "vendor": "Vibrant Wellness",
+      "kind": "stool",
+      "specimen": "Stool collection kit",
+      "orderCode": null,
+      "jurisdictions": null,
+      "active": true,
+      "vendorVerified": false,
+      "orderLink": {
+        "url": "https://holisticdrbright.wellproz.com/patient/product/27874",
+        "reviewStatus": "unreviewed"
+      }
+    },
+    {
+      "id": "lab_sibo_breath_test",
+      "panelName": "SIBO Breath Test",
+      "vendor": null,
+      "kind": "breath",
+      "specimen": "Lactulose breath kit",
+      "orderCode": null,
+      "jurisdictions": null,
+      "active": true,
+      "vendorVerified": false,
+      "orderLink": {
+        "url": "https://labs.rupahealth.com/store/storefront_6G8WA4P?storefrontProduct=strprod_GxEadBx",
+        "reviewStatus": "unreviewed"
+      }
+    },
+    {
+      "id": "lab_dutch_complete",
+      "panelName": "DUTCH Complete Test",
+      "vendor": "Precision Analytical",
+      "kind": "dried-urine",
+      "specimen": "Dried urine, 4-5 collections",
+      "orderCode": null,
+      "jurisdictions": null,
+      "active": true,
+      "vendorVerified": false,
+      "orderLink": {
+        "url": "https://labs.rupahealth.com/store/storefront_6G8WA4P?storefrontProduct=strprod_kM2JwrM",
+        "reviewStatus": "unreviewed"
+      }
+    },
+    {
+      "id": "lab_food_sensitivity_panel",
+      "panelName": "Food Sensitivity Panel",
+      "vendor": null,
+      "kind": "blood",
+      "specimen": "Blood spot or draw (vendor-dependent)",
+      "orderCode": null,
+      "jurisdictions": null,
+      "active": true,
+      "vendorVerified": false,
+      "orderLink": {
+        "url": "https://labs.rupahealth.com/store/storefront_6G8WA4P?storefrontProduct=strprod_aOpW617",
+        "reviewStatus": "unreviewed"
+      }
+    },
+    {
+      "id": "lab_cyrex_array_5",
+      "panelName": "Cyrex Array 5 - Autoimmune Panel",
+      "vendor": "Cyrex Laboratories",
+      "kind": "blood",
+      "specimen": "Serum draw",
+      "orderCode": null,
+      "jurisdictions": null,
+      "active": true,
+      "vendorVerified": false,
+      "orderLink": {
+        "url": "https://labs.rupahealth.com/store/storefront_6G8WA4P?storefrontProduct=strprod_L7gqJJx",
+        "reviewStatus": "unreviewed"
+      }
+    },
+    {
+      "id": "lab_cyrex_array_12",
+      "panelName": "Cyrex Array 12 - Pathogens",
+      "vendor": "Cyrex Laboratories",
+      "kind": "blood",
+      "specimen": "Serum draw",
+      "orderCode": null,
+      "jurisdictions": null,
+      "active": true,
+      "vendorVerified": false,
+      "orderLink": {
+        "url": "https://labs.rupahealth.com/store/storefront_6G8WA4P?storefrontProduct=strprod_8OJNqgO",
+        "reviewStatus": "unreviewed"
+      }
+    },
+    {
+      "id": "lab_mycotoxin_panel",
+      "panelName": "Mycotoxin Panel",
+      "vendor": null,
+      "kind": "urine",
+      "specimen": "First-morning urine",
+      "orderCode": null,
+      "jurisdictions": null,
+      "active": true,
+      "vendorVerified": false,
+      "orderLink": {
+        "url": "https://labs.rupahealth.com/store/storefront_6G8WA4P?storefrontProduct=strprod_exV5p2O",
+        "reviewStatus": "unreviewed"
+      }
+    },
+    {
+      "id": "lab_heavy_metals_panel",
+      "panelName": "Heavy Metals Test",
+      "vendor": null,
+      "kind": "urine",
+      "specimen": "Urine (provocation per practitioner)",
+      "orderCode": null,
+      "jurisdictions": null,
+      "active": true,
+      "vendorVerified": false,
+      "orderLink": {
+        "url": "https://labs.rupahealth.com/store/storefront_6G8WA4P?storefrontProduct=strprod_2xvd6e7",
+        "reviewStatus": "unreviewed"
+      }
+    },
+    {
+      "id": "lab_tri_mercury",
+      "panelName": "Tri-Mercury Test",
+      "vendor": "Quicksilver Scientific",
+      "kind": "multi",
+      "specimen": "Blood + hair + urine tri-test",
+      "orderCode": null,
+      "jurisdictions": null,
+      "active": true,
+      "vendorVerified": false,
+      "orderLink": {
+        "url": "https://labs.rupahealth.com/store/storefront_6G8WA4P?storefrontProduct=strprod_nxnq6BO",
+        "reviewStatus": "unreviewed"
+      }
+    },
+    {
+      "id": "lab_3x4_genetics",
+      "panelName": "3x4 Genetic Testing",
+      "vendor": "3X4 Genetics",
+      "kind": "cheek-swab",
+      "specimen": "Buccal swab. Practitioner code BBRI003 (carried from legacy copy; unverified)",
+      "orderCode": null,
+      "jurisdictions": null,
+      "active": true,
+      "vendorVerified": false,
+      "orderLink": {
+        "url": "https://3x4genetics.com",
+        "reviewStatus": "unreviewed"
+      }
+    },
+    {
+      "id": "env_emf_home_assessment",
+      "panelName": "EMF Home Assessment",
+      "vendor": null,
+      "kind": "environmental-assessment",
+      "specimen": "Professional home/work environment assessment — not a laboratory test",
+      "orderCode": null,
+      "jurisdictions": null,
+      "active": true,
+      "vendorVerified": false,
+      "orderLink": {
+        "url": null,
+        "reviewStatus": "not_applicable"
+      }
+    }
+  ],
+  "labRules": {
+    "version": "labrules.v1",
+    "triggerBand": "moderate",
+    "notes": "Rules fire when a category screening score reaches the moderate band (>=25). Elevated (>=50) raises rank, never adds panels. Derived from the legacy insights.tsx mapping; clinical review pending.",
+    "rules": [
+      {
+        "categoryId": "gallbladder",
+        "labId": "lab_vibrant_blood_panel",
+        "priority": "primary",
+        "why": "Assesses liver and gallbladder function markers",
+        "legacyAliasId": "vibrant_blood"
+      },
+      {
+        "categoryId": "leaky_gut",
+        "labId": "lab_gut_zoomer",
+        "priority": "primary",
+        "why": "Gut health panel including intestinal permeability markers",
+        "legacyAliasId": "gut_zoomer"
+      },
+      {
+        "categoryId": "gut_digestive",
+        "labId": "lab_gut_zoomer",
+        "priority": "primary",
+        "why": "Full microbiome analysis with pathogen and dysbiosis markers",
+        "legacyAliasId": "gut_zoomer_digestive"
+      },
+      {
+        "categoryId": "gut_digestive",
+        "labId": "lab_sibo_breath_test",
+        "priority": "conditional",
+        "why": "If bloating is a primary symptom — tests for small intestinal bacterial overgrowth",
+        "legacyAliasId": "sibo_test"
+      },
+      {
+        "categoryId": "blood_sugar",
+        "labId": "lab_vibrant_blood_panel",
+        "priority": "primary",
+        "why": "Includes fasting glucose, HbA1c, insulin, and metabolic markers",
+        "legacyAliasId": "vibrant_blood_sugar"
+      },
+      {
+        "categoryId": "adrenal",
+        "labId": "lab_dutch_complete",
+        "priority": "primary",
+        "why": "Cortisol rhythm, DHEA, and adrenal metabolites",
+        "legacyAliasId": "dutch_test_adrenal"
+      },
+      {
+        "categoryId": "hormones",
+        "labId": "lab_dutch_complete",
+        "priority": "primary",
+        "why": "Full sex hormone panel with metabolites and androgens",
+        "legacyAliasId": "dutch_test_hormones"
+      },
+      {
+        "categoryId": "thyroid",
+        "labId": "lab_vibrant_blood_panel",
+        "priority": "primary",
+        "why": "Full thyroid panel: TSH, Free T3, Free T4, Reverse T3, TPO & TG antibodies",
+        "legacyAliasId": "vibrant_thyroid"
+      },
+      {
+        "categoryId": "autoimmune",
+        "labId": "lab_food_sensitivity_panel",
+        "priority": "primary",
+        "why": "Identifies IgG reactions that may accompany autoimmune responses",
+        "legacyAliasId": "food_sensitivities"
+      },
+      {
+        "categoryId": "autoimmune",
+        "labId": "lab_cyrex_array_5",
+        "priority": "primary",
+        "why": "Autoimmune reactivity screen across multiple tissues",
+        "legacyAliasId": "cyrex_array_5"
+      },
+      {
+        "categoryId": "parasites",
+        "labId": "lab_gut_zoomer",
+        "priority": "primary",
+        "why": "Includes parasite detection and gut pathogen analysis",
+        "legacyAliasId": "gut_zoomer_parasites"
+      },
+      {
+        "categoryId": "lyme",
+        "labId": "lab_cyrex_array_12",
+        "priority": "primary",
+        "why": "Borrelia, co-infections, and tick-borne pathogens",
+        "legacyAliasId": "cyrex_array_12"
+      },
+      {
+        "categoryId": "mold",
+        "labId": "lab_mycotoxin_panel",
+        "priority": "primary",
+        "why": "Urinary mycotoxin testing for mold exposure",
+        "legacyAliasId": "mycotoxin_panel"
+      },
+      {
+        "categoryId": "heavy_metals",
+        "labId": "lab_heavy_metals_panel",
+        "priority": "primary",
+        "why": "Heavy metal panel including lead, mercury, arsenic, cadmium",
+        "legacyAliasId": "heavy_metals_test"
+      },
+      {
+        "categoryId": "heavy_metals",
+        "labId": "lab_tri_mercury",
+        "priority": "conditional",
+        "why": "Mercury speciation for dental amalgam and fish exposure",
+        "legacyAliasId": "tri_mercury"
+      },
+      {
+        "categoryId": "methylation",
+        "labId": "lab_3x4_genetics",
+        "priority": "primary",
+        "why": "Genetic analysis including MTHFR, COMT, and detox pathways",
+        "legacyAliasId": "genetic_testing"
+      },
+      {
+        "categoryId": "viral",
+        "labId": "lab_cyrex_array_12",
+        "priority": "primary",
+        "why": "Includes EBV, CMV, HHV-6, and other chronic viral markers",
+        "legacyAliasId": "cyrex_array_12_viral"
+      },
+      {
+        "categoryId": "emf",
+        "labId": "env_emf_home_assessment",
+        "priority": "conditional",
+        "why": "Professional EMF assessment of home and work environment (not a lab test)",
+        "legacyAliasId": "emf_assessment"
+      }
+    ]
+  },
+  "supplements": {
+    "version": "supp.v1",
+    "authoritativeListStatus": "not_found",
+    "reconciliationDoc": "docs/supplement-reconciliation.md",
+    "products": [
+      {
+        "id": "prod_proomega_2000",
+        "name": "ProOmega 2000",
+        "brand": "Nordic Naturals",
+        "formulation": "softgel",
+        "doseText": "2 softgels daily with meals",
+        "indications": [
+          "omega-3",
+          "fish oil",
+          "EPA/DHA",
+          "inflammation",
+          "cardiovascular",
+          "triglycerides"
+        ],
+        "doseBounds": null,
+        "ingredients": [
+          "EPA 1125 mg",
+          "DHA 875 mg",
+          "Other Omega-3s 180 mg"
+        ],
+        "cautions": [
+          "Fish allergy (absolute)",
+          "Bleeding disorders (caution)"
+        ],
+        "interactions": [
+          "Anticoagulants (moderate)",
+          "Antihypertensives (minor)"
+        ],
+        "monitoring": null,
+        "approvalState": "pending_verification",
+        "provenance": "structured-catalog",
+        "sourceRef": "expo/mocks/curatedProducts.ts"
+      },
+      {
+        "id": "prod_glucoprime",
+        "name": "GlucoPrime",
+        "brand": "Healthgevity",
+        "formulation": "capsule",
+        "doseText": "1 capsule 2x daily with meals",
+        "indications": [
+          "blood sugar",
+          "insulin resistance",
+          "glucose",
+          "HbA1c"
+        ],
+        "doseBounds": null,
+        "ingredients": [
+          "Dihydroberberine (GlucoVantage) 200 mg",
+          "Chromium 200 mcg",
+          "Cinnamon Extract 250 mg"
+        ],
+        "cautions": null,
+        "interactions": null,
+        "monitoring": null,
+        "approvalState": "pending_verification",
+        "provenance": "structured-catalog",
+        "sourceRef": "expo/mocks/curatedProducts.ts"
+      },
+      {
+        "id": "prod_protect_plus_10",
+        "name": "Protect+ 10",
+        "brand": "Healthgevity",
+        "formulation": "softgel",
+        "doseText": "1 softgel daily with fat",
+        "indications": [
+          "foundational multi",
+          "vitamin D",
+          "antioxidants"
+        ],
+        "doseBounds": null,
+        "ingredients": [
+          "Vitamin A 2500 IU",
+          "Vitamin D3 10000 IU",
+          "Vitamin E 50 IU",
+          "Vitamin K2 (MK-7) 100 mcg"
+        ],
+        "cautions": null,
+        "interactions": null,
+        "monitoring": [
+          "25-OH vitamin D at recheck — high-dose D3"
+        ],
+        "approvalState": "pending_verification",
+        "provenance": "structured-catalog",
+        "sourceRef": "expo/mocks/curatedProducts.ts"
+      },
+      {
+        "id": "prod_liver_sauce",
+        "name": "Liver Sauce",
+        "brand": "Quicksilver Scientific",
+        "formulation": "liposomal liquid",
+        "doseText": "1 tsp daily on empty stomach",
+        "indications": [
+          "liver support",
+          "detox",
+          "ALT/AST elevation"
+        ],
+        "doseBounds": null,
+        "ingredients": [
+          "Milk Thistle (Silymarin) 100 mg",
+          "DIM 50 mg",
+          "Dandelion Root 75 mg",
+          "Artichoke Extract 50 mg"
+        ],
+        "cautions": null,
+        "interactions": null,
+        "monitoring": null,
+        "approvalState": "pending_verification",
+        "provenance": "structured-catalog",
+        "sourceRef": "expo/mocks/curatedProducts.ts"
+      },
+      {
+        "id": "prod_liposomal_glutathione",
+        "name": "Liposomal Glutathione Complex",
+        "brand": "Quicksilver Scientific",
+        "formulation": "liposomal liquid",
+        "doseText": "1 tsp daily on empty stomach",
+        "indications": [
+          "glutathione",
+          "oxidative stress",
+          "detox"
+        ],
+        "doseBounds": null,
+        "ingredients": null,
+        "cautions": null,
+        "interactions": null,
+        "monitoring": null,
+        "approvalState": "pending_verification",
+        "provenance": "structured-catalog",
+        "sourceRef": "expo/mocks/curatedProducts.ts"
+      },
+      {
+        "id": "prod_glutaryl",
+        "name": "Glutaryl Transdermal Glutathione",
+        "brand": "Auro Wellness",
+        "formulation": "transdermal spray",
+        "doseText": "4 pumps daily on skin",
+        "indications": [
+          "glutathione",
+          "detox support"
+        ],
+        "doseBounds": null,
+        "ingredients": [
+          "Reduced Glutathione (GSH) 100 mg per 4 pumps"
+        ],
+        "cautions": null,
+        "interactions": null,
+        "monitoring": null,
+        "approvalState": "pending_verification",
+        "provenance": "structured-catalog",
+        "sourceRef": "expo/mocks/curatedProducts.ts"
+      },
+      {
+        "id": "prod_mitocore",
+        "name": "MitoCore",
+        "brand": "Orthomolecular",
+        "formulation": "capsule",
+        "doseText": "4 capsules daily with breakfast",
+        "indications": [
+          "mitochondrial support",
+          "CoQ10",
+          "energy",
+          "fatigue"
+        ],
+        "doseBounds": null,
+        "ingredients": null,
+        "cautions": null,
+        "interactions": null,
+        "monitoring": null,
+        "approvalState": "pending_verification",
+        "provenance": "structured-catalog",
+        "sourceRef": "expo/mocks/curatedProducts.ts"
+      },
+      {
+        "id": "prod_nac_900_plus",
+        "name": "NAC 900+",
+        "brand": "Healthgevity",
+        "formulation": "capsule",
+        "doseText": "1-2 capsules daily",
+        "indications": [
+          "NAC",
+          "liver support",
+          "glutathione precursor"
+        ],
+        "doseBounds": null,
+        "ingredients": null,
+        "cautions": null,
+        "interactions": null,
+        "monitoring": null,
+        "approvalState": "pending_verification",
+        "provenance": "structured-catalog",
+        "sourceRef": "expo/mocks/curatedProducts.ts"
+      },
+      {
+        "id": "prod_gut_shield",
+        "name": "Gut Shield",
+        "brand": "Healthgevity",
+        "formulation": "powder",
+        "doseText": "1 scoop daily",
+        "indications": [
+          "gut repair",
+          "leaky gut",
+          "IBS",
+          "gut inflammation"
+        ],
+        "doseBounds": null,
+        "ingredients": null,
+        "cautions": null,
+        "interactions": null,
+        "monitoring": null,
+        "approvalState": "pending_verification",
+        "provenance": "ai-prompt",
+        "sourceRef": "expo/providers/LabsProvider.tsx (extraction prompt)"
+      },
+      {
+        "id": "prod_probiota_histaminx",
+        "name": "ProBiota HistaminX",
+        "brand": "Seeking Health",
+        "formulation": "capsule",
+        "doseText": "1 capsule daily",
+        "indications": [
+          "probiotics",
+          "histamine intolerance",
+          "gut health"
+        ],
+        "doseBounds": null,
+        "ingredients": null,
+        "cautions": null,
+        "interactions": null,
+        "monitoring": null,
+        "approvalState": "pending_verification",
+        "provenance": "ai-prompt",
+        "sourceRef": "expo/providers/LabsProvider.tsx (extraction prompt)"
+      },
+      {
+        "id": "prod_sleep_deep",
+        "name": "Sleep Deep",
+        "brand": "Healthgevity",
+        "formulation": "capsule",
+        "doseText": "2 capsules before bed",
+        "indications": [
+          "sleep",
+          "insomnia",
+          "GABA",
+          "magnesium"
+        ],
+        "doseBounds": null,
+        "ingredients": null,
+        "cautions": null,
+        "interactions": null,
+        "monitoring": null,
+        "approvalState": "pending_verification",
+        "provenance": "ai-prompt",
+        "sourceRef": "expo/providers/LabsProvider.tsx (extraction prompt)"
+      },
+      {
+        "id": "prod_magnesium_glycinate_300",
+        "name": "Magnesium Glycinate 300",
+        "brand": "Healthgevity",
+        "formulation": "capsule",
+        "doseText": "1-2 capsules evening",
+        "indications": [
+          "magnesium",
+          "sleep",
+          "muscle cramps",
+          "stress"
+        ],
+        "doseBounds": null,
+        "ingredients": null,
+        "cautions": null,
+        "interactions": null,
+        "monitoring": null,
+        "approvalState": "pending_verification",
+        "provenance": "ai-prompt",
+        "sourceRef": "expo/providers/LabsProvider.tsx (extraction prompt)"
+      },
+      {
+        "id": "prod_methyl_b_complex",
+        "name": "Methyl B Complex",
+        "brand": "Healthgevity",
+        "formulation": "capsule",
+        "doseText": "1 capsule morning",
+        "indications": [
+          "B vitamins",
+          "methylation",
+          "MTHFR",
+          "homocysteine"
+        ],
+        "doseBounds": null,
+        "ingredients": null,
+        "cautions": null,
+        "interactions": null,
+        "monitoring": null,
+        "approvalState": "pending_verification",
+        "provenance": "ai-prompt",
+        "sourceRef": "expo/providers/LabsProvider.tsx (extraction prompt)"
+      },
+      {
+        "id": "prod_d3_k2_5000",
+        "name": "D3+K2 5000",
+        "brand": "Healthgevity",
+        "formulation": "softgel",
+        "doseText": "1 softgel morning with fat",
+        "indications": [
+          "vitamin D deficiency",
+          "bone health",
+          "immune"
+        ],
+        "doseBounds": null,
+        "ingredients": null,
+        "cautions": null,
+        "interactions": null,
+        "monitoring": [
+          "25-OH vitamin D at recheck"
+        ],
+        "approvalState": "pending_verification",
+        "provenance": "ai-prompt",
+        "sourceRef": "expo/providers/LabsProvider.tsx (extraction prompt)"
+      },
+      {
+        "id": "prod_adrenal_restore",
+        "name": "Adrenal Restore",
+        "brand": "Healthgevity",
+        "formulation": "capsule",
+        "doseText": "2 capsules morning",
+        "indications": [
+          "adrenal fatigue",
+          "cortisol",
+          "HPA axis",
+          "stress"
+        ],
+        "doseBounds": null,
+        "ingredients": null,
+        "cautions": null,
+        "interactions": null,
+        "monitoring": null,
+        "approvalState": "pending_verification",
+        "provenance": "ai-prompt",
+        "sourceRef": "expo/providers/LabsProvider.tsx (extraction prompt)"
+      }
+    ]
+  },
+  "protocolTemplates": [
+    {
+      "id": "tpl_foundation_v1",
+      "version": 1,
+      "name": "Foundational support (draft template)",
+      "status": "draft",
+      "purpose": "Baseline micronutrient + omega-3 foundation while labs are pending",
+      "items": [
+        {
+          "supplementId": "prod_proomega_2000",
+          "doseText": "2 softgels daily with meals",
+          "schedule": "daily",
+          "durationDays": 90,
+          "monitoring": [
+            "Recheck lipids/omega-3 index at 90 days"
+          ]
+        },
+        {
+          "supplementId": "prod_protect_plus_10",
+          "doseText": "1 softgel daily with fat",
+          "schedule": "daily",
+          "durationDays": 90,
+          "monitoring": [
+            "25-OH vitamin D at 90 days"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "tpl_gut_restore_v1",
+      "version": 1,
+      "name": "Gut restoration starter (draft template)",
+      "status": "draft",
+      "purpose": "Support intestinal lining and microbiome while awaiting stool panel review",
+      "items": [
+        {
+          "supplementId": "prod_gut_shield",
+          "doseText": "1 scoop daily",
+          "schedule": "daily",
+          "durationDays": 60,
+          "monitoring": [
+            "Symptom diary weekly"
+          ]
+        },
+        {
+          "supplementId": "prod_probiota_histaminx",
+          "doseText": "1 capsule daily",
+          "schedule": "daily",
+          "durationDays": 60,
+          "monitoring": [
+            "Histamine symptom check at 2 weeks"
+          ]
+        }
+      ]
+    }
+  ],
+  "consents": [
+    {
+      "id": "consent_privacy",
+      "version": "2026-07.v1",
+      "title": "Privacy & data use",
+      "required": true,
+      "summary": "How your health information is stored, protected, and used to provide care. No diagnosis is made from screening questionnaires."
+    },
+    {
+      "id": "consent_communications",
+      "version": "2026-07.v1",
+      "title": "Communications",
+      "required": true,
+      "summary": "Secure portal messaging is the default channel. You choose whether reminders may use other channels."
+    },
+    {
+      "id": "consent_telehealth",
+      "version": "2026-07.v1",
+      "title": "Telehealth",
+      "required": false,
+      "summary": "Applies when you book video visits: technology limits, privacy, and emergency guidance."
+    },
+    {
+      "id": "consent_clinical_care",
+      "version": "2026-07.v1",
+      "title": "Clinical care relationship",
+      "required": true,
+      "summary": "Screening scores and drafts are reviewed by your practitioner before anything becomes a recommendation or order."
+    },
+    {
+      "id": "consent_recording_ai",
+      "version": "2026-07.v1",
+      "title": "Visit recording & AI assistance",
+      "required": false,
+      "summary": "Optional, revocable consent for visit recording and AI-drafted notes; nothing is enabled without it."
+    }
+  ],
+  "intakeModules": [
+    {
+      "id": "mod_account",
+      "title": "Account & preferences",
+      "kind": "account",
+      "order": 1
+    },
+    {
+      "id": "mod_consents",
+      "title": "Consents",
+      "kind": "consents",
+      "order": 2
+    },
+    {
+      "id": "mod_concerns_goals",
+      "title": "Concerns & goals",
+      "kind": "concerns-goals",
+      "order": 3
+    },
+    {
+      "id": "mod_medical_history",
+      "title": "Medical history",
+      "kind": "medical-history",
+      "order": 4
+    },
+    {
+      "id": "mod_lifestyle",
+      "title": "Lifestyle & environment",
+      "kind": "lifestyle",
+      "order": 5
+    },
+    {
+      "id": "mod_symptom_screening",
+      "title": "Symptom-pattern screening",
+      "kind": "questionnaire",
+      "order": 6,
+      "sections": [
+        {
+          "order": 1,
+          "categoryId": "thyroid"
+        },
+        {
+          "order": 2,
+          "categoryId": "adrenal"
+        },
+        {
+          "order": 3,
+          "categoryId": "hormones"
+        },
+        {
+          "order": 4,
+          "categoryId": "gut_digestive"
+        },
+        {
+          "order": 5,
+          "categoryId": "gallbladder"
+        },
+        {
+          "order": 6,
+          "categoryId": "blood_sugar"
+        },
+        {
+          "order": 7,
+          "categoryId": "autoimmune"
+        },
+        {
+          "order": 8,
+          "categoryId": "parasites"
+        },
+        {
+          "order": 9,
+          "categoryId": "lyme"
+        },
+        {
+          "order": 10,
+          "categoryId": "mold"
+        },
+        {
+          "order": 11,
+          "categoryId": "heavy_metals"
+        },
+        {
+          "order": 12,
+          "categoryId": "viral"
+        },
+        {
+          "order": 13,
+          "categoryId": "methylation"
+        },
+        {
+          "order": 14,
+          "categoryId": "emf"
+        },
+        {
+          "order": 15,
+          "categoryId": "leaky_gut"
+        }
+      ]
+    },
+    {
+      "id": "mod_records_upload",
+      "title": "Records & prior labs",
+      "kind": "uploads",
+      "order": 7
+    },
+    {
+      "id": "mod_review_submit",
+      "title": "Review & submit",
+      "kind": "review",
+      "order": 8
+    }
+  ]
+}
