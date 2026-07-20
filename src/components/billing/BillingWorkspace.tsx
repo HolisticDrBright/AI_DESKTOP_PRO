@@ -197,7 +197,7 @@ function Checkout({
   };
 
   const catalogBtn =
-    "flex w-full cursor-pointer items-center gap-2 rounded-lg border border-line bg-card px-3 py-[7px] text-left text-[12px] hover:border-line-hover focus-visible:outline-2 focus-visible:outline-action";
+    "flex w-full cursor-pointer flex-col gap-[2px] rounded-lg border border-line bg-card px-3 py-[7px] text-left text-[12px] hover:border-line-hover focus-visible:outline-2 focus-visible:outline-action";
 
   return (
     <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">
@@ -237,8 +237,11 @@ function Checkout({
             <div className="flex flex-col gap-[6px]">
               {SERVICES.map((s) => (
                 <button key={s.id} className={catalogBtn} onClick={() => addLine({ kind: "service", refId: s.id, label: s.label, qty: 1, unitMinor: s.priceMinor, taxable: s.taxable })}>
-                  <span className="min-w-0 flex-1 truncate">{s.label}</span>
-                  <span className="font-semibold tabular-nums">{formatMinor(s.priceMinor)}</span>
+                  <span className="truncate font-medium text-ink">{s.label}</span>
+                  <span className="flex items-baseline justify-between text-[10.5px] text-faint">
+                    {s.durationMin} min
+                    <span className="text-[12px] font-semibold text-ink tabular-nums">{formatMinor(s.priceMinor)}</span>
+                  </span>
                 </button>
               ))}
             </div>
@@ -253,9 +256,11 @@ function Checkout({
                   disabled={p.stock === 0}
                   onClick={() => addLine({ kind: "product", refId: p.id, label: `${p.name} (${p.unitLabel})`, qty: 1, unitMinor: p.priceMinor, taxable: true, stock: p.stock })}
                 >
-                  <span className="min-w-0 flex-1 truncate">{p.name}</span>
-                  <span className="text-[10.5px] text-faint">{p.stock === 0 ? "out" : `${p.stock} in stock`}</span>
-                  <span className="font-semibold tabular-nums">{formatMinor(p.priceMinor)}</span>
+                  <span className="truncate font-medium text-ink">{p.name}</span>
+                  <span className="flex items-baseline justify-between text-[10.5px] text-faint">
+                    {p.stock === 0 ? "out of stock" : `${p.stock} in stock`}
+                    <span className="text-[12px] font-semibold text-ink tabular-nums">{formatMinor(p.priceMinor)}</span>
+                  </span>
                 </button>
               ))}
             </div>
@@ -266,8 +271,11 @@ function Checkout({
               {programs.map((pr) =>
                 pr.offers.map((o) => (
                   <button key={o.id} className={catalogBtn} onClick={() => addLine({ kind: o.kind === "subscription" ? "membership" : "program", refId: pr.id, label: `${pr.title} — ${o.label}`, qty: 1, unitMinor: o.amountMinor })}>
-                    <span className="min-w-0 flex-1 truncate">{pr.title} <Tag>{o.kind}</Tag></span>
-                    <span className="font-semibold tabular-nums">{formatMinor(o.amountMinor)}</span>
+                    <span className="truncate font-medium text-ink">{pr.title}</span>
+                    <span className="flex items-baseline justify-between text-[10.5px] text-faint">
+                      <Tag>{o.kind}</Tag>
+                      <span className="text-[12px] font-semibold text-ink tabular-nums">{formatMinor(o.amountMinor)}</span>
+                    </span>
                   </button>
                 )),
               )}

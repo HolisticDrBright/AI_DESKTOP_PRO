@@ -49,16 +49,6 @@ export const UNSIGNED_NOTES: UnsignedNote[] = [
   { id: "un-2", patientName: "Priya Sharma", patientId: "p-59318", encounterLabel: "Lab review · Jul 15", ageLabel: "4 days unsigned" },
 ];
 
-/**
- * Effective demo weekday: the calendar template covers Mon–Fri; on a
- * weekend the brief shows Monday's template with an explicit note.
- */
-export function effectiveWeekday(now = new Date()): { weekday: number; isWeekendFallback: boolean } {
-  const js = now.getDay(); // 0 Sun … 6 Sat
-  if (js === 0 || js === 6) return { weekday: 1, isWeekendFallback: true };
-  return { weekday: js, isWeekendFallback: false };
-}
-
 export function todaysAppointments(weekday: number): TodayAppointment[] {
   const cal = getCalendar();
   return cal.appointments
@@ -92,8 +82,12 @@ export interface TodayData {
   attention: { id: string; title: string; sub: string; href: string; tone: "critical" | "warning" | "slate" }[];
 }
 
-/** Client hook — subscribes to every session store the brief reads. */
-export function useTodayData(): TodayData {
+/**
+ * Client hook — subscribes to every session store the brief reads. The
+ * weekday comes from the SERVER render (dynamic page) so prerendered HTML
+ * and hydration never disagree about what "today" is.
+ */
+export function useTodayData(weekday: number, isWeekendFallback: boolean): TodayData {
   // Subscriptions (values partly unused directly; they drive recompute).
   useApptSession();
   useSessionInvoices();
@@ -101,7 +95,6 @@ export function useTodayData(): TodayData {
   const sessionTasks = useSessionQueueItems();
   const reviews = useReviewOutcomes();
 
-  const { weekday, isWeekendFallback } = effectiveWeekday();
   const schedule = todaysAppointments(weekday);
   const arrivals = schedule.filter(
     (s) => s.override?.status === "arrived" || s.override?.status === "checked-in",

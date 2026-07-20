@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import {
   ArrowDown,
   ArrowLeft,
@@ -661,13 +661,13 @@ function CopilotDrawer({
 
 export function ProgramsStudio({ initialProgramId }: { initialProgramId?: string }) {
   const { announce } = useFeedback();
-  useStudioState();
   const [openId, setOpenId] = useState<string | null>(initialProgramId ?? null);
   const [tab, setTab] = useState<BuilderTab>("curriculum");
   const [copilotOpen, setCopilotOpen] = useState(false);
   const [confirmPublish, setConfirmPublish] = useState(false);
-  const program = useMemo(() => (openId ? listPrograms().find((p) => p.id === openId) : undefined), [openId]);
-  useStudioState(); // re-render on session edits
+  // Derive from the LIVE session state so edits/approve/publish re-render.
+  const studio = useStudioState();
+  const program = openId ? listPrograms(studio).find((p) => p.id === openId) : undefined;
 
   if (!program) {
     return (

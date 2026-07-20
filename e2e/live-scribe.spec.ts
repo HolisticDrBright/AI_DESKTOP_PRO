@@ -25,7 +25,7 @@ test.skip(!process.env.E2E_LIVE, "live-mode suite: set E2E_LIVE=1 with a live-fl
 
 test.describe.configure({ mode: "serial" });
 
-const PATIENT_URL = "/patients/aaaaaaaa-1111-2222-3333-444444444401/timeline";
+const PATIENT_URL = "/patients/aaaaaaaa-1111-2222-3333-444444444401/chart";
 
 /** Start a FRESH encounter (no appointment → a new encounter every time). */
 async function openNewEncounter(page: Page): Promise<void> {

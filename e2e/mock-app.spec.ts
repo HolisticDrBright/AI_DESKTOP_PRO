@@ -23,37 +23,43 @@ function trackErrors(page: Page): string[] {
   return errors;
 }
 
-test("app shell loads (sidebar, top bar, patient overview)", async ({ page }) => {
+test("app shell loads (sidebar, Today home)", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByRole("navigation", { name: "Primary navigation" })).toBeVisible();
+  await page.waitForURL("**/today");
+  const nav = page.getByRole("navigation", { name: "Primary navigation" });
+  await expect(nav).toBeVisible();
   await expect(page.getByRole("button", { name: /command palette/i })).toBeVisible();
-  await expect(page.getByRole("link", { name: "Labs & Biomarkers" })).toBeVisible();
+  await expect(nav.getByRole("link", { name: /Review Queue/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Today", exact: true })).toBeVisible();
 });
 
-test("patient summary loads with header card", async ({ page }) => {
+test("patient overview loads with header card (legacy /summary redirects)", async ({ page }) => {
   await page.goto(`/patients/${PATIENT}/summary`);
+  await page.waitForURL(`**/patients/${PATIENT}/overview`);
   await expect(page.getByRole("heading", { name: "Alexandra Morgan" })).toBeVisible();
   await expect(page.getByText("Primary Goals")).toBeVisible();
+  await expect(page.getByText("Total bookings")).toBeVisible();
 });
 
-test("snapshot approve updates visible state", async ({ page }) => {
-  await page.goto(`/patients/${PATIENT}/summary`);
-  const approve = page.getByRole("button", { name: /^Approve —/ }).first();
-  await approve.click();
-  await page.getByRole("alertdialog").getByRole("button", { name: "Approve" }).click();
-  await expect(page.getByText("Approved this session").first()).toBeVisible();
+test("hypothesis accept updates visible state (reasoning view)", async ({ page }) => {
+  await page.goto(`/patients/${PATIENT}/labs?view=reasoning`);
+  const accept = page.getByRole("button", { name: /^Accept — hypothesis/ }).first();
+  await accept.click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Accept" }).click();
+  await expect(page.getByText("Accepted this session").first()).toBeVisible();
 });
 
 test("audit event survives reload in the same session", async ({ page }) => {
-  await page.goto(`/patients/${PATIENT}/summary`);
-  await page.getByRole("button", { name: /^Approve —/ }).first().click();
-  await page.getByRole("alertdialog").getByRole("button", { name: "Approve" }).click();
-  await expect(page.getByText("Approved this session").first()).toBeVisible();
+  await page.goto(`/patients/${PATIENT}/labs?view=reasoning`);
+  await page.getByRole("button", { name: /^Accept — hypothesis/ }).first().click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Accept" }).click();
+  await expect(page.getByText("Accepted this session").first()).toBeVisible();
 
   await page.goto("/audit-log");
-  await expect(page.getByText("Approve", { exact: true }).first()).toBeVisible();
+  await page.waitForURL("**/settings/governance?tab=audit");
+  await expect(page.getByText("Accept", { exact: true }).first()).toBeVisible();
   await page.reload();
-  await expect(page.getByText("Approve", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("Accept", { exact: true }).first()).toBeVisible();
 });
 
 test("tasks filters narrow the queue (saved view + priority param)", async ({ page }) => {
@@ -168,20 +174,35 @@ test("settings display scale changes UI mode", async ({ page }) => {
 test("no console errors across the main flows", async ({ page }) => {
   const errors = trackErrors(page);
   for (const route of [
-    "/practice",
+    "/today",
     "/tasks",
-    `/patients/${PATIENT}/summary`,
+    `/patients/${PATIENT}/overview`,
+    `/patients/${PATIENT}/chart`,
     `/patients/${PATIENT}/labs`,
-    `/patients/${PATIENT}/lab-orders`,
-    `/patients/${PATIENT}/reasoning`,
-    `/patients/${PATIENT}/supplements`,
+    `/patients/${PATIENT}/labs?view=orders`,
+    `/patients/${PATIENT}/labs?view=reasoning`,
+    `/patients/${PATIENT}/care-plan`,
+    `/patients/${PATIENT}/care-plan?view=supplements`,
+    `/patients/${PATIENT}/care-plan?view=nutrition`,
+    `/patients/${PATIENT}/tracking`,
+    `/patients/${PATIENT}/tracking?view=mind`,
+    `/patients/${PATIENT}/appointments`,
+    `/patients/${PATIENT}/billing`,
+    `/patients/${PATIENT}/files`,
+    "/patients",
+    "/inbox",
     "/calendar",
     "/programs",
-    "/imports",
-    "/audit-log",
+    "/billing",
+    "/billing?tab=checkout",
+    "/reports",
     "/integrations",
+    "/integrations?tab=automations",
+    "/templates",
     "/settings",
-    "/ai-safety",
+    "/settings/data",
+    "/settings/governance",
+    "/team",
   ]) {
     await page.goto(route, { waitUntil: "networkidle" });
   }

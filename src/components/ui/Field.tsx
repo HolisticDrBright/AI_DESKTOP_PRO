@@ -45,6 +45,11 @@ export function TextArea({
   return <textarea className={cn(control, "min-h-[72px] py-[7px] leading-[1.5]", className)} {...props} />;
 }
 
+/**
+ * Labeled control. The control is nested INSIDE the <label> so the name is
+ * programmatically associated (screen readers + getByLabel) without id
+ * plumbing.
+ */
 export function Field({
   label,
   children,
@@ -55,9 +60,9 @@ export function Field({
   className?: string;
 }) {
   return (
-    <div className={className}>
-      <FieldLabel>{label}</FieldLabel>
+    <label className={cn("block", className)}>
+      <span className="mb-[4px] block text-[11.5px] font-semibold text-subtle">{label}</span>
       {children}
-    </div>
+    </label>
   );
 }

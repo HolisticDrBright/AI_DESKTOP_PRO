@@ -175,8 +175,16 @@ function BriefRow({ href, title, sub, pill }: { href: string; title: string; sub
   );
 }
 
-export function TodayWorkspace({ dateLine }: { dateLine: string }) {
-  const data = useTodayData();
+export function TodayWorkspace({
+  dateLine,
+  weekday,
+  isWeekendFallback,
+}: {
+  dateLine: string;
+  weekday: number;
+  isWeekendFallback: boolean;
+}) {
+  const data = useTodayData(weekday, isWeekendFallback);
   const [nowMin, setNowMin] = useState<number | null>(null);
 
   useEffect(() => {

@@ -23,13 +23,14 @@ test("root enters the real workspace: directory → patient → labs (no mock pa
   // A root 404 (or a redirect to the synthetic demo patient) must FAIL here.
   const res = await page.goto("/");
   expect(res!.status()).toBe(200);
-  await page.waitForURL("**/clients");
+  await page.waitForURL("**/today");
+  await page.goto("/patients");
   expect(page.url()).not.toContain("p-78435");
   await expect(page.getByText("live record, scoped to your access")).toBeVisible();
 
   // Real directory row → real patient shell (header from patient_profiles).
   await page.getByRole("link", { name: "Fixture Patient" }).click();
-  await page.waitForURL("**/patients/aaaaaaaa-1111-2222-3333-444444444401/summary");
+  await page.waitForURL("**/patients/aaaaaaaa-1111-2222-3333-444444444401/overview");
   await expect(page.getByText("Fixture Patient").first()).toBeVisible();
   await expect(page.getByText(/Summary panels aren't live yet/)).toBeVisible();
 

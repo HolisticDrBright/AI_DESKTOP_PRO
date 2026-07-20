@@ -17,6 +17,33 @@ mock adapters, and all mutable UI state (review outcomes, audit events) is
 
 ![Patient Overview](docs/screenshots/patient-overview.png)
 
+## Practitioner OS — information architecture (2026-07 overhaul)
+
+The app presents as a practice operating system. The sidebar carries
+**practice-level destinations only** — Today (default home), Calendar,
+Patients, Review Queue, Inbox, Programs, Billing, Reports, Integrations,
+Team, Settings — and everything patient-scoped lives in ONE local tab
+system inside the chart: Overview · Chart & Timeline · Labs & Reasoning ·
+Care Plan · Tracking & Experiments · Appointments · Messages · Billing ·
+Files. Old URLs (including `/clients`, `/messages`, `/practice`,
+`/audit-log`, `/ai-safety`, and every legacy patient tab) redirect to
+their new homes — see
+[`docs/information-architecture.md`](docs/information-architecture.md)
+for the full route map, redirect table, and mock/live boundary rules.
+
+Newly built mock-first surfaces (typed adapters + session stores, all
+synthetic): the Today daily brief, the appointment drawer (front-desk
+actions), the patient profile + longitudinal chart timeline, Care Plan
+with a Passio-shaped nutrition boundary (key server-side only), Tracking
+& Experiments (systems-model trajectories, N-of-1, wearables, Mind &
+Cognition, assessments), the three-pane Inbox (portal channel; SMS/email
+honestly unconfigured), Programs Studio with a review-gated AI Program
+Copilot, the Stripe **test-mode-labeled** POS + ledgers, the role-aware
+report catalog, and Integrations (connections / automations / webhooks /
+sync log — no connection is ever faked). Governance (AI registry + audit
+log) lives under **Settings → Security & Governance**; templates are a
+contextual versioned library at `/templates`.
+
 ## Stack
 
 - [Next.js 15](https://nextjs.org) (App Router) + React 19 + TypeScript
@@ -39,11 +66,12 @@ Other scripts: `npm run build` · `npm run start` · `npm run lint` ·
 ```bash
 npx playwright install chromium   # once, downloads the test browser
 npm run build                     # the suite runs the production server
-npm run test:e2e                  # 13 tests: shell, review loop, labs, imports…
+npm run test:e2e                  # mock-app + practitioner-os suites (25 tests)
 npm run test:e2e:headed           # same, with a visible browser
 ```
 
-The suite lives in [`e2e/mock-app.spec.ts`](e2e/mock-app.spec.ts) and needs no
+The suites live in [`e2e/mock-app.spec.ts`](e2e/mock-app.spec.ts) and
+[`e2e/practitioner-os.spec.ts`](e2e/practitioner-os.spec.ts) and need no
 backend or env vars. In sandboxed CI images with a pre-installed browser, point
 `PW_CHROMIUM_PATH` at the Chromium binary instead of running `playwright install`.
 
@@ -72,7 +100,7 @@ width).
 | Area | Status |
 | --- | --- |
 | App shell — grouped sidebar (Workspace / Clinical / Operations / System), 58 px top bar with working notifications / messages / account popovers, glass/solid material, atmospheric background | ✅ Live |
-| Patient Overview (`/patients/:id/summary`) — header card with working actions, tabs, health score ring, system-balance radar, priorities, risk flags, biomarker trends, sleep & recovery, N-of-1 experiments, right rail | ✅ Live |
+| Patient Overview (`/patients/:id/overview`) — header card with working actions, tabs, health score ring, system-balance radar, priorities, risk flags, biomarker trends, sleep & recovery, N-of-1 experiments, right rail | ✅ Live |
 | **Review-to-action** — reusable `ActionBar` on cards / hypotheses / queue rows / lab markers; destructive & patient-facing actions confirm; outcomes announced and audited | ✅ Live |
 | **Provenance & confidence** — reusable `Provenance` / `ProvenanceBadge` (source type, range, completeness, conflicts, review state) across summary, reasoning, assistant, tasks, labs | ✅ Live |
 | **Clinical Reasoning Snapshot** — per-hypothesis provenance + actions, missing info, what-changed, safety considerations; **approve/reject updates the visible status in-session** and disables settled actions | ✅ Live (demo state) |
@@ -82,7 +110,7 @@ width).
 | **AI / decision-support safety registry** (`/ai-safety`) — per-feature classification with a no-regulatory-claims scope banner | ✅ Live |
 | **Audit Log** (`/audit-log`) — demo session audit viewer, **survives reloads via `sessionStorage`**, clears with the session | ✅ Live (session) |
 | System-of-record navigation + operational spec screens (Nutrition, Templates, Automations, Billing, Claims, Reports, Team) — honest workflow / permissions / next-action specs | ✅ Live |
-| Practice Dashboard (`/practice`), Command palette (⌘K), Clinical Assistant drawer | ✅ Live |
+| Today workspace (`/today`), Command palette (⌘K), Clinical Assistant drawer | ✅ Live |
 | Appearance & accessibility — solid/glass material, atmospheric background, **display scale (compact / default / large)** | ✅ Live |
 | Remaining sections (Health Twin, Timeline, Clinical Reasoning workspace, Supplements, N-of-1 Lab, Protocols, Reports tab, Wearables, Assessments, Quantum Mind, Messages, Integrations, Calendar, Program Builder) | 🔜 Placeholders — build from [`docs/design-handoff/product-spec.txt`](docs/design-handoff/product-spec.txt) |
 | **Labs Workspace** (`/patients/:id/labs`) — marker table (lab + optimal ranges, confidence, review), trend panel, source inspector, extraction review, upload demo, optimal-range config | ✅ Live (demo) |

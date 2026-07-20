@@ -1,12 +1,17 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { USE_LIVE_API } from "@/adapters/mode";
+import { effectiveWeekday } from "@/adapters/today-shared";
 import { TodayWorkspace } from "@/components/today/TodayWorkspace";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Metric } from "@/components/ui/Metric";
 import { DemoNote } from "@/components/ui/DemoNote";
 
 export const metadata: Metadata = { title: "Today — AI Longevity Pro" };
+
+// "Today" is request-time state — never prerender it at build time (a baked
+// weekday/date would mismatch hydration the next day).
+export const dynamic = "force-dynamic";
 
 function dateLine(): string {
   return new Intl.DateTimeFormat("en-US", {
@@ -45,5 +50,12 @@ export default function TodayPage() {
       </section>
     );
   }
-  return <TodayWorkspace dateLine={dateLine()} />;
+  const { weekday, isWeekendFallback } = effectiveWeekday();
+  return (
+    <TodayWorkspace
+      dateLine={dateLine()}
+      weekday={weekday}
+      isWeekendFallback={isWeekendFallback}
+    />
+  );
 }
