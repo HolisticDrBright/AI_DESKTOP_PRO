@@ -52,6 +52,7 @@ export interface ProvenanceData {
 
 export type PatientTabId =
   | "summary"
+  | "charts"
   | "twin"
   | "timeline"
   | "labs"
