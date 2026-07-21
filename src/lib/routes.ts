@@ -2,6 +2,7 @@ import type { PatientTabId } from "@/adapters/types";
 
 export const PATIENT_TABS: { id: PatientTabId; label: string }[] = [
   { id: "summary", label: "Summary" },
+  { id: "chart", label: "Chart" },
   { id: "twin", label: "Health Twin" },
   { id: "timeline", label: "Timeline" },
   { id: "labs", label: "Labs" },

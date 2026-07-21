@@ -3,6 +3,7 @@ import { api } from "@/adapters";
 import { getRequestSession } from "@/server/session";
 import type { PatientTabId } from "@/adapters/types";
 import { TabPlaceholderCard } from "@/components/patient/TabPlaceholderCard";
+import { ChartingWorkspace } from "@/components/charting/ChartingWorkspace";
 import { LabsWorkspace } from "@/components/labs/LabsWorkspace";
 import { LabOrdersWorkspace } from "@/components/laborders/LabOrdersWorkspace";
 import { ReasoningWorkspace } from "@/components/reasoning/ReasoningWorkspace";
@@ -12,6 +13,7 @@ import { Nof1Lab } from "@/components/nof1/Nof1Lab";
 import { isPatientTabId } from "@/lib/routes";
 
 const TAB_LABELS: Record<Exclude<PatientTabId, "summary">, string> = {
+  chart: "Chart",
   twin: "Health Twin",
   timeline: "Timeline",
   labs: "Labs",
@@ -23,6 +25,17 @@ const TAB_LABELS: Record<Exclude<PatientTabId, "summary">, string> = {
   reports: "Reports",
 };
 
+/** Human-readable author name derived from the signed-in email. */
+function practitionerName(email: string | null): string {
+  if (!email) return "Practitioner";
+  const local = email.split("@")[0];
+  return local
+    .split(/[._-]+/)
+    .filter(Boolean)
+    .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
+    .join(" ") || "Practitioner";
+}
+
 export default async function PatientTabPage({
   params,
 }: {
@@ -32,6 +45,7 @@ export default async function PatientTabPage({
   if (!isPatientTabId(tab) || tab === "summary") notFound();
 
   const BUILT: Partial<Record<PatientTabId, boolean>> = {
+    chart: true,
     labs: true,
     "lab-orders": true,
     reasoning: true,
@@ -41,8 +55,13 @@ export default async function PatientTabPage({
   };
 
   if (BUILT[tab]) {
-    const patient = await api.patients.get(patientId, (await getRequestSession()).token);
+    const session = await getRequestSession();
+    const patient = await api.patients.get(patientId, session.token);
     const name = patient?.name ?? "this patient";
+    if (tab === "chart") {
+      const author = practitionerName(session.email);
+      return <ChartingWorkspace patientId={patientId} patientName={name} author={author} />;
+    }
     if (tab === "labs") return <LabsWorkspace patientId={patientId} patientName={name} />;
     if (tab === "lab-orders") return <LabOrdersWorkspace patientId={patientId} patientName={name} />;
     if (tab === "reasoning") return <ReasoningWorkspace patientId={patientId} patientName={name} />;

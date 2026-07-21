@@ -171,6 +171,7 @@ test("no console errors across the main flows", async ({ page }) => {
     "/practice",
     "/tasks",
     `/patients/${PATIENT}/summary`,
+    `/patients/${PATIENT}/chart`,
     `/patients/${PATIENT}/labs`,
     `/patients/${PATIENT}/lab-orders`,
     `/patients/${PATIENT}/reasoning`,
@@ -185,5 +186,54 @@ test("no console errors across the main flows", async ({ page }) => {
   ]) {
     await page.goto(route, { waitUntil: "networkidle" });
   }
+  expect(errors).toEqual([]);
+});
+
+test("chart: dynamic fields, body-chart draw, sign, and AI scribe", async ({ page }) => {
+  const errors = trackErrors(page);
+  await page.goto(`/patients/${PATIENT}/chart`, { waitUntil: "networkidle" });
+
+  // Template renders: a checkbox group, a 0–10 slider, SOAP boxes.
+  await expect(page.getByText("Lung & Large Intestine")).toBeVisible();
+  await expect(page.getByRole("slider", { name: "Energy" })).toBeVisible();
+
+  // Subjective quick-tag toggles.
+  const tag = page.getByRole("button", { name: "Poor Sleep", exact: true });
+  await tag.click();
+  await expect(tag).toHaveAttribute("aria-pressed", "true");
+
+  // A symptom checkbox toggles on.
+  const symptom = page.getByRole("checkbox", { name: "Allergies", exact: true });
+  await symptom.click();
+  await expect(symptom).toHaveAttribute("aria-checked", "true");
+
+  // Draw a stroke on the first body chart (front silhouette).
+  const canvas = page.locator("svg.touch-none").first();
+  await canvas.scrollIntoViewIfNeeded();
+  const box = await canvas.boundingBox();
+  if (box) {
+    await page.mouse.move(box.x + box.width * 0.4, box.y + box.height * 0.3);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width * 0.5, box.y + box.height * 0.45, { steps: 6 });
+    await page.mouse.up();
+    await expect(canvas.locator("polyline")).toHaveCount(1);
+  }
+
+  // AI Scribe panel opens.
+  await page.getByRole("button", { name: "AI Scribe" }).click();
+  await expect(page.getByRole("dialog", { name: "AI Scribe" })).toBeVisible();
+  await page.getByRole("button", { name: "Close AI Scribe" }).click();
+  await expect(page.getByRole("dialog", { name: "AI Scribe" })).toHaveCount(0);
+
+  // Sign the note → read-only banner appears.
+  await page.getByRole("button", { name: "Sign note" }).click();
+  await expect(page.getByText("Signed note — read only.")).toBeVisible();
+
+  // Selection persists after a reload (demo session store).
+  await page.reload({ waitUntil: "networkidle" });
+  await expect(
+    page.getByRole("button", { name: "Poor Sleep", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+
   expect(errors).toEqual([]);
 });

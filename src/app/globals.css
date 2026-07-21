@@ -158,3 +158,49 @@ body {
     transition: none !important;
   }
 }
+
+/*
+ * Clinical 0–10 slider (pain / energy / stress on the practitioner chart).
+ * A single filled track with a round thumb, themed with the action colour and
+ * driven by the `--pct` custom property the field sets from its value.
+ */
+.aidp-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 6px;
+  border-radius: 999px;
+  background: linear-gradient(
+    to right,
+    var(--color-action) 0%,
+    var(--color-action) var(--pct, 50%),
+    var(--color-track) var(--pct, 50%),
+    var(--color-track) 100%
+  );
+  cursor: pointer;
+}
+.aidp-slider:focus-visible {
+  outline: 2px solid var(--color-action);
+  outline-offset: 3px;
+}
+.aidp-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid var(--color-action);
+  box-shadow: 0 1px 3px rgba(24, 42, 61, 0.25);
+}
+.aidp-slider::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid var(--color-action);
+  box-shadow: 0 1px 3px rgba(24, 42, 61, 0.25);
+}
+.aidp-slider:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
