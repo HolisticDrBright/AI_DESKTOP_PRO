@@ -7,13 +7,13 @@ practice operations (review queue, tasks, appointments, team workload) and a
 differentiated AI layer (clinical reasoning snapshot, evidence for/against,
 contextual assistant, command palette).
 
-This repository contains the **desktop front end** plus the **clinical
-database schema** (`supabase/`). The UI renders from clearly isolated, typed
-mock adapters (`src/adapters/*`); the authenticated tRPC backend lives in the
-platform repo and one namespace (`patients`) is already flag-swappable to it
-(see [`docs/live-api.md`](docs/live-api.md)). Everything else still reads from
-mock adapters, and all mutable UI state (review outcomes, audit events) is
-**demo/session-only** — see [Demo persistence boundaries](#demo-persistence-boundaries).
+This repository owns the **desktop application**, its server-side clinical
+boundary, and the **clinical database schema** (`supabase/`). The UI renders
+through isolated, typed adapters (`src/adapters/*`) that support demo and live
+modes. The clinical knowledge registry is the first live slice routed through
+Desktop-owned server code to Supabase under the practitioner's JWT and RLS.
+AI Longevity Pro remains a separate repository; see
+[`ADR 0003`](docs/architecture-decisions/0003-desktop-backend-separation.md).
 
 ![Patient Overview](docs/screenshots/patient-overview.png)
 
@@ -136,9 +136,9 @@ stay coherent. **All health data is synthetic.**
 
 ## Demo persistence boundaries
 
-This build has **no backend persistence** for interactions. Two kinds of
-mutable state exist, both demo-only and isolated behind the adapter facade so
-they can become tRPC mutations later:
+Demo mode has no backend persistence. Its mutable state is isolated behind the
+adapter facade so each domain can move to the Desktop-owned live boundary
+without changing its components:
 
 - **Review outcomes** (approve / reject / accept hypothesis / resolve queue
   item / mark lab reviewed) and the **audit log** are stored in the browser's
@@ -146,25 +146,23 @@ they can become tRPC mutations later:
   reloads **within a browser session** and are **cleared when the session
   ends** — this is a demo, not a database. The Audit Log screen says so, and
   action toasts read "demo — not persisted".
-- **Everything read** (patients, labs, queue, reasoning, imports, composer
-  drafts) comes from typed mock adapters in `src/adapters/*`. The `patients`
-  namespace can be flag-swapped to the real backend
-  (`NEXT_PUBLIC_USE_LIVE_API`, see [`docs/live-api.md`](docs/live-api.md)); the
-  rest await their tRPC routers.
+- **Most demo reads** (patients, labs, queue, reasoning, composer drafts) come
+  from typed mock adapters in `src/adapters/*`. Wired domains can be switched
+  to live mode with `NEXT_PUBLIC_USE_LIVE_API`; the clinical knowledge registry
+  then persists pathways and governed import decisions through the
+  Desktop-owned Supabase boundary.
 
-Backend persistence — writing review actions, audit events, and lab reviews to
-the clinical Supabase project — still requires the tRPC mutations + `audit_events`
-table wiring described in [`docs/live-api.md`](docs/live-api.md). No UI copy
-implies real persistence.
+Each surface labels its actual persistence boundary. No demo UI copy implies
+real persistence.
 
 ## Architecture
 
 ```
 src/
-  adapters/        Typed mock data layer — THE swap point for tRPC later
+  adapters/        Typed demo/live data boundary
     types.ts         Domain interfaces shared with the UI
     *.mock.ts        Synthetic datasets (patients, practice, assistant, commands)
-    index.ts         `api` façade shaped like the future tRPC client
+    index.ts         `api` façade consumed by UI components
   app/             App Router routes (patient tabs, practice, placeholders)
   components/
     shell/           Sidebar, TopBar, CommandPalette, AssistantDrawer, AppShell
@@ -213,12 +211,9 @@ flow, and the tRPC swap plan.
 
 ## Roadmap
 
-The platform-level plan lives in [`docs/platform/`](docs/platform/):
-the original backend prompt (`backend-prompt.md`, targeting the
-`rork-ai-longevity-coach` repo that hosts the Expo app and shared backend)
-plus the enhancement addendum (`backend-addendum.md`) that adds billing &
-claims, telehealth and automations, an outcomes/population layer, migration
-importers, and a versioned connector framework.
+Historical platform prompts live in [`docs/platform/`](docs/platform/). ADR
+0003 supersedes their shared-backend assumption: Desktop features remain in
+this repository and AI Longevity Pro remains independent.
 
 Shipped since the handoff (see the status table): review-to-action,
 provenance, the Clinical Reasoning Snapshot upgrade, system-of-record
@@ -231,11 +226,10 @@ For this desktop repo, in order:
 1. **Remaining Phase 2+ screens** from `product-spec.txt` — Health Twin
    system map, three-pane Clinical Reasoning workspace, Supplement
    Intelligence, N-of-1 Lab, unified Timeline, Program / Assessment builders.
-2. **Backend integration** — replace `src/adapters/*` with tRPC queries
-   against the shared Hono/Supabase backend; the desktop app must share
-   domain schemas with the Expo patient app rather than duplicating them.
-   Blocked on the backend's Phase 1 (tenant isolation, patient access,
-   audit) landing in the platform repo first.
+2. **Desktop-owned live integration** — migrate transitional adapters to
+   same-origin Desktop server routes backed by the clinical Supabase project,
+   one tested vertical slice at a time. Share stable contracts with other
+   products without coupling their repositories or deployments.
 3. **Ops surfaces from the addendum** (after the corresponding backend
    routers exist): Billing (invoices, payments, packages), insurance claims
    status, Automations rules + run history, connector-health Integrations

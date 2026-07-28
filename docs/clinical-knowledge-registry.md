@@ -23,9 +23,10 @@ modes:
     it to the source owner when validation blocks acceptance.
 
 Demo edits live in browser session storage and are labeled accordingly. Live
-edits pass through same-origin routes to authenticated tRPC procedures and
-database RPCs. The patient Clinical Copilot reads only the approved pathway
-version and snapshots that version into each generated run.
+edits pass through same-origin AI Desktop Pro routes to the clinical Supabase
+REST/RPC boundary under the signed-in practitioner's JWT and RLS. The browser
+never calls the database directly. The patient Clinical Copilot reads only the
+approved pathway version and snapshots that version into each generated run.
 
 The prepared, de-identified bundle is stored server-side at
 `data/clinical-knowledge/authoring-pack-core.json`. It is deterministically
@@ -89,7 +90,8 @@ access.
 3. Run `supabase/tests/clinical_knowledge_registry.sql` and
    `supabase/tests/clinical_knowledge_import_review.sql` in rolled-back test
    transactions.
-4. Deploy the backend router that exposes `clinical.knowledge.*`.
+4. Configure the AI Desktop Pro server with the clinical project URL and
+   publishable key.
 5. Run the mock regression suite and a gated live browser workflow before
    promotion.
 

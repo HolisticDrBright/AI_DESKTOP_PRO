@@ -18,28 +18,29 @@ or auth clients directly.
 `src/adapters/mode.ts` is the single source of truth for the flag and the
 dev-only identity overrides.
 
-## Architecture (ADR 0002)
+## Architecture (ADR 0002 + ADR 0003)
 
 ```
 client component
    └─ api.<domain>.*                 (src/adapters/index.ts — the only import UI uses)
         ├─ DEMO → mock module + session-store            (unchanged)
         └─ LIVE
-             ├─ reads in server components → *.live.ts → trpc.server → tRPC backend → Supabase (RLS)
-             └─ client-initiated calls  → live-client (fetch) → /api/live/* route handler
-                                                            → *.live.ts → trpc.server → tRPC backend → Supabase (RLS)
+             ├─ knowledge registry → same-origin route → knowledge.live
+             │                                         → supabase-rest.server → Supabase (RLS/RPC)
+             └─ transitional domains → same-origin route/server component
+                                      → *.live.ts → trpc.server → legacy tRPC transport
 ```
 
-- The desktop **never** talks to Postgres/Supabase directly. Server-only
-  modules (`*.live.ts`, `trpc.server.ts`, `session.server.ts`,
-  `live-status.server.ts`) carry a `typeof window` guard and are only reached
-  from server components or `/api/live/*` route handlers — they never enter the
-  client bundle.
+- The browser **never** talks to Postgres/Supabase directly. Server-only
+  modules (`*.live.ts`, `supabase-rest.server.ts`, `trpc.server.ts`,
+  `session.server.ts`, `live-status.server.ts`) carry a browser guard and are
+  only reached from server components or `/api/live/*` route handlers.
 - Client components in live mode reach the backend through same-origin route
   handlers (`src/app/api/live/*`) via the client-safe `live-client.ts`. No
   credentials or server clients ship to the browser.
-- The backend is the one place that holds Supabase keys and calls the
-  **SECURITY DEFINER RPCs** below as the authenticated practitioner.
+- Desktop server code uses only the publishable key plus the signed-in
+  practitioner's JWT. It does not use a service-role key. The database's RLS
+  policies and role-gated **SECURITY DEFINER RPCs** remain authoritative.
 
 ## The secure write path — migration `0013`
 
@@ -106,6 +107,7 @@ All live mutations flow through the reusable `runClinicalMutation` helper
 | `src/adapters/live-types.ts` | PHI-safe wire DTOs |
 | `src/adapters/*.live.ts` | server-only tRPC calls per domain |
 | `src/adapters/trpc.server.ts` | dependency-free tRPC query/mutation client |
+| `src/adapters/supabase-rest.server.ts` | Desktop-owned, server-only clinical REST/RPC transport |
 | `src/app/api/live/*` | route handlers (client → server bridge) |
 | `src/components/ui/ClinicalStates.tsx` | shared loading / empty / error |
 | `src/components/settings/DataSourceCard.tsx` | env/status panel |
@@ -114,6 +116,12 @@ All live mutations flow through the reusable `runClinicalMutation` helper
 `/api/live/<domain>/*` route (client-initiated) or call it from a server
 component (reads) → add the live branch in `index.ts` behind `USE_LIVE_API`,
 reusing `runClinicalMutation` for writes and `ClinicalStates` for async UI.
+
+The clinical knowledge registry is the first domain migrated to the
+Desktop-owned boundary defined in ADR 0003. Its `<domain>.live.ts` uses
+`supabase-rest.server.ts`, with the publishable key and caller JWT confined to
+the Next.js server. Other domains remain on their existing transitional
+adapters until migrated in their own tested slices.
 
 ## Security assumptions
 
@@ -137,9 +145,9 @@ npm run dev            # NEXT_PUBLIC_USE_LIVE_API unset → demo mode
 **Live:** set the env in `.env.local` (see `.env.example`):
 ```
 NEXT_PUBLIC_USE_LIVE_API=true
-TRPC_BASE_URL=…                 # reachable tRPC backend
+TRPC_BASE_URL=…                 # transitional domains only
 CLINICAL_ORG_ID=…               # or NEXT_PUBLIC_DEV_ORG_ID
-CLINICAL_SUPABASE_URL=… CLINICAL_SUPABASE_ANON_KEY=…   # auth token endpoint
+CLINICAL_SUPABASE_URL=… CLINICAL_SUPABASE_ANON_KEY=…   # auth + Desktop-owned registry
 ```
 Then `npm run dev` and **sign in at `/login`** (httpOnly cookie session; see
 [`live-auth-and-seeding.md`](live-auth-and-seeding.md)). `CLINICAL_DEMO_EMAIL/
@@ -167,20 +175,11 @@ after a live-flag build.
 | Live shell (browser) | Playwright, flag on + unreachable backend | **11/11** (LIVE badge + dev-override warning; clean retryable error state; no fake data; no misleading not-found; live append-only audit view) |
 | Live route handlers | `curl /api/live/*` | clean JSON envelopes — `503 unavailable` (backend down), `400 invalid` (bad input); never a crash or fake success |
 
-## The one hop not exercised here, and why
+## Repository boundary
 
-The final wire — **tRPC backend → real clinical Supabase over HTTP**, and the
-desktop reaching a deployed backend — could not be exercised from this sandbox:
-the egress proxy rejects `*.supabase.co` (`host not in allowlist`), and the
-shared tRPC backend is not deployed/reachable here. Both sides of that hop are
-verified independently (DB via MCP; desktop shell + route handlers + error
-states via Playwright/curl). In an environment where the backend can reach the
-project, the same calls complete end-to-end.
-
-### Exact backend task remaining (in `rork-ai-longevity-coach`)
-
-Add the `clinical.labs.getWorkspace`, `clinical.labs.reviewMarker`,
-`clinical.actions.recordAudit`, `clinical.actions.listAuditEvents`, and
-`clinical.actions.createReviewTask` procedures that forward the practitioner's
-JWT and call the `0013` RPCs / read the workspace. The desktop already speaks
-this contract.
+AI Desktop Pro and AI Longevity Pro are separate products. New Desktop server
+work stays in this repository (or a future Desktop-owned API repository);
+Desktop feature branches and procedures are not added to
+`rork-ai-longevity-coach`. See ADR 0003. Legacy tRPC-backed slices are migrated
+to the Desktop-owned boundary one domain at a time, with a signed-in live
+browser gate before the old transport is removed.
