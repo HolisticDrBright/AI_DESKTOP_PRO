@@ -105,6 +105,12 @@ Status legend: ✅ live path exists · 🟢 ready to wire (schema + pattern exis
 ## Audit Log — ✅ dual-mode
 - **Route:** `/audit-log` — demo (sessionStorage) vs live (`list_audit_events`
   RPC: own events, all if org-admin)
+- **Desktop boundary:** reads and registered generic UI events go directly
+  through `list_audit_events` / `record_registered_audit_event` with the
+  practitioner JWT. The private registry owns action names, resource types,
+  display wording, and allowed scalar metadata. Direct table access is revoked.
+- **Compatibility:** the older free-form `record_audit_event` function remains
+  for transitional legacy callers; the Desktop route does not expose it.
 - **Missing:** pagination + filters when volume grows
 
 ## Supplements — 🟢 reads ready · 🟡 stack writes
@@ -151,9 +157,8 @@ Status legend: ✅ live path exists · 🟢 ready to wire (schema + pattern exis
 ## Recommended wiring order
 
 1. ~~Tasks/Review queue and labs read/review~~ — ✅ Desktop-owned boundary
-2. **Audit reads/writes** — move the remaining `clinical.actions.*` transport
-   while retaining the server-owned event registry
-3. Scheduling/calendar — move existing RLS/RPC contracts off transitional tRPC
+2. ~~Audit reads/registered generic writes~~ — ✅ Desktop-owned boundary
+3. **Scheduling/calendar** — move existing RLS/RPC contracts off transitional tRPC
 4. Reasoning reads + accept/reject mutation (same liveRef pattern via ActionBar)
 5. Composer save-note (with sign-off gates)
 6. Dispensary sale → invoices (+ inventory table migration)

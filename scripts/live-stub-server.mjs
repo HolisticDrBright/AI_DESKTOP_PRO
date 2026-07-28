@@ -793,9 +793,18 @@ function seedScheduleFor(fromIso) {
 
 const auditEvents = [];
 let auditSeq = 0;
-function pushAudit(action, resourceType, resourceId, safeMessage, metadata, patientId = null) {
-  auditEvents.unshift({
+function pushAudit(
+  action,
+  resourceType,
+  resourceId,
+  safeMessage,
+  metadata,
+  patientId = null,
+  organizationId = "org-fixture",
+) {
+  const event = {
     id: `cccccccc-1111-2222-3333-${String(444444444400 + ++auditSeq)}`,
+    organizationId,
     action,
     resourceType,
     resourceId,
@@ -804,7 +813,66 @@ function pushAudit(action, resourceType, resourceId, safeMessage, metadata, pati
     patientId,
     actorUserId: "dddddddd-1111-2222-3333-444444444401",
     occurredAt: new Date().toISOString(),
-  });
+  };
+  auditEvents.unshift(event);
+  return event;
+}
+
+const registeredAuditEvents = {
+  "marker.view": {
+    action: "marker.view",
+    resourceType: "biomarker_observation",
+    safeMessage: "Marker viewed",
+    patientRequired: true,
+    resourceRequired: true,
+    metadataKeys: [],
+  },
+  "document.viewed": {
+    action: "document.viewed",
+    resourceType: "lab_document",
+    safeMessage: "Source document viewed",
+    patientRequired: true,
+    resourceRequired: true,
+    metadataKeys: [],
+  },
+  "document.exported": {
+    action: "document.exported",
+    resourceType: "lab_document",
+    safeMessage: "Source document exported",
+    patientRequired: true,
+    resourceRequired: true,
+    metadataKeys: ["format"],
+  },
+  "report.exported": {
+    action: "report.exported",
+    resourceType: "report",
+    safeMessage: "Report exported",
+    patientRequired: false,
+    resourceRequired: true,
+    metadataKeys: ["format", "report_type"],
+  },
+  "audit.exported": {
+    action: "audit.exported",
+    resourceType: "audit_log",
+    safeMessage: "Audit log exported",
+    patientRequired: false,
+    resourceRequired: false,
+    metadataKeys: ["format", "row_count"],
+  },
+};
+
+function auditEventRow(event) {
+  return {
+    id: event.id,
+    action: event.action,
+    resource_type: event.resourceType,
+    resource_id: event.resourceId,
+    safe_message: event.safeMessage,
+    patient_id: event.patientId,
+    actor_user_id: event.actorUserId,
+    occurred_at: event.occurredAt,
+    metadata: event.metadata,
+  };
 }
 
 /* --------------------------------------------------------------- wire utils */
@@ -951,6 +1019,92 @@ createServer(async (req, res) => {
 
     if (url.pathname === "/rest/v1/rpc/activate_my_memberships" && req.method === "POST") {
       return json(res, 200, 0);
+    }
+
+    if (url.pathname === "/rest/v1/rpc/list_audit_events" && req.method === "POST") {
+      const body = await readBody(req);
+      const organizationId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(organizationId)) {
+        return json(res, 403, { code: "42501", message: "not an organization member" });
+      }
+      const isOrgAdmin = organizationId === "org-fixture" && !bearerToken.endsWith("--multi");
+      const limit = Math.min(Math.max(Number(body._limit ?? 50), 1), 200);
+      return json(res, 200, auditEvents
+        .filter((event) =>
+          event.organizationId === organizationId
+          && (isOrgAdmin || event.actorUserId === PRACTITIONER_USER_ID)
+        )
+        .slice(0, limit)
+        .map(auditEventRow));
+    }
+
+    if (
+      url.pathname === "/rest/v1/rpc/record_registered_audit_event"
+      && req.method === "POST"
+    ) {
+      const body = await readBody(req);
+      const organizationId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(organizationId)) {
+        return json(res, 403, { code: "42501", message: "not an organization member" });
+      }
+
+      const definition = registeredAuditEvents[String(body._event_type ?? "")];
+      if (!definition) {
+        return json(res, 400, { code: "22023", message: "unregistered audit event" });
+      }
+
+      const resourceId = body._resource_id == null
+        ? null
+        : String(body._resource_id).trim();
+      const patientId = body._patient_id == null
+        ? null
+        : String(body._patient_id);
+      if (definition.resourceRequired && !resourceId) {
+        return json(res, 400, { code: "22023", message: "resource id required" });
+      }
+      if (resourceId && resourceId.length > 128) {
+        return json(res, 400, { code: "22023", message: "resource id too long" });
+      }
+      if (definition.patientRequired && !patientId) {
+        return json(res, 400, { code: "22023", message: "patient id required" });
+      }
+      if (patientId) {
+        const patient = PATIENTS.find((item) =>
+          item.id === patientId && item.organization_id === organizationId
+        );
+        if (!patient) {
+          return json(res, 403, { code: "42501", message: "patient not accessible" });
+        }
+      }
+
+      const metadata = body._metadata ?? {};
+      if (
+        !metadata
+        || typeof metadata !== "object"
+        || Array.isArray(metadata)
+        || Object.keys(metadata).length > 16
+      ) {
+        return json(res, 400, { code: "22023", message: "metadata must be an object" });
+      }
+      for (const [key, value] of Object.entries(metadata)) {
+        const scalar = typeof value === "string"
+          || typeof value === "boolean"
+          || (typeof value === "number" && Number.isFinite(value));
+        if (!definition.metadataKeys.includes(key) || !scalar) {
+          return json(res, 400, { code: "22023", message: "audit metadata is not allowed" });
+        }
+      }
+
+      const event = pushAudit(
+        definition.action,
+        definition.resourceType,
+        resourceId,
+        definition.safeMessage,
+        metadata,
+        patientId,
+        organizationId,
+      );
+      return json(res, 200, event.id);
     }
 
     if (url.pathname === "/rest/v1/rpc/list_org_members" && req.method === "POST") {
@@ -2096,8 +2250,6 @@ createServer(async (req, res) => {
       members.delete(row.membershipId);
       return trpcOk(res, { ok: true });
     }
-    case "clinical.actions.listAuditEvents":
-      return trpcOk(res, auditEvents.slice(0, Math.min(Number(input.limit ?? 50), 200)));
     case "clinical.schedule.getCalendar": {
       seedScheduleFor(input.fromIso);
       const from = Date.parse(input.fromIso);

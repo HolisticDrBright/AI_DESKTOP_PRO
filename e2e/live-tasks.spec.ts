@@ -76,6 +76,39 @@ test("resolve persists across reload and lands in the live audit log", async ({ 
   await expect(page.getByText("review_task.resolve").first()).toBeVisible();
 });
 
+test("registered audit events use database-owned wording and reject invented content", async ({ page }) => {
+  const accepted = await page.request.post("/api/live/actions/audit", {
+    data: {
+      eventType: "marker.view",
+      resourceId: "marker-audit-e2e",
+      patientId: "aaaaaaaa-1111-2222-3333-444444444401",
+    },
+  });
+  expect(accepted.status()).toBe(200);
+
+  const invented = await page.request.post("/api/live/actions/audit", {
+    data: {
+      eventType: "invented.clinical_claim",
+      resourceId: "claim-1",
+    },
+  });
+  expect(invented.status()).toBe(400);
+
+  const nestedMetadata = await page.request.post("/api/live/actions/audit", {
+    data: {
+      eventType: "report.exported",
+      resourceId: "report-1",
+      metadata: { format: { value: "pdf" } },
+    },
+  });
+  expect(nestedMetadata.status()).toBe(400);
+
+  await page.goto("/audit-log");
+  await expect(page.getByText("Marker viewed").first()).toBeVisible();
+  await expect(page.getByText("marker.view").first()).toBeVisible();
+  await expect(page.getByText("invented.clinical_claim")).toHaveCount(0);
+});
+
 test("live labs workspace loads markers and a review persists across reload", async ({ page }) => {
   await page.goto("/patients/aaaaaaaa-1111-2222-3333-444444444401/labs");
 

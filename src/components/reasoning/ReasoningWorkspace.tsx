@@ -423,7 +423,8 @@ function EvidenceInspector({
         <Section title="Audit trail">
           <p className="m-0 text-[11px] leading-[1.5] text-subtle">
             Session actions on this hypothesis are recorded in the demo audit log
-            (see System → Audit Log). Backend audit history lands with the tRPC layer.
+            (see System → Audit Log). Live domain events appear through the
+            caller-authorized clinical database boundary.
           </p>
         </Section>
       </div>

@@ -42,27 +42,32 @@ client component
   practitioner's JWT. It does not use a service-role key. The database's RLS
   policies and role-gated **SECURITY DEFINER RPCs** remain authoritative.
 
-## The secure write path — migration `0013`
+## The secure write path
 
 `audit_events` is append-only (migration 0003): org-admin `SELECT`, and **no**
-insert/update/delete policy. Rather than hand the backend a service-role key
-(which would bypass every RLS check), migration `0013` adds four app-facing
-SECURITY DEFINER functions that run as owner but **authorize the caller
-explicitly** with the same `private.*` helpers RLS uses, and stamp actor ids
-from `auth.uid()` server-side:
+insert/update/delete policy. Rather than hand the server a service-role key
+(which would bypass every RLS check), app-facing SECURITY DEFINER functions
+run as owner but **authorize the caller explicitly** with the same `private.*`
+helpers RLS uses, and stamp actor ids from `auth.uid()`:
 
 | Function | Purpose |
 | --- | --- |
 | `review_biomarker(observation_id, decision, note?)` | Update review columns + append audit row, atomically. Never touches lab value / unit / reference interval / provenance / confidence. |
-| `record_audit_event(org, action, …)` | General append-only audit writer (PHI-safe metadata only). |
 | `list_audit_events(org, limit)` | Read the caller's own events (all events if org admin). |
 | `create_review_task(patient_id, title, …)` | Downstream link: enqueue a `review_queue_items` row + audit. |
 | `resolve_review_queue_item(item_id, note?)` — migration `0014` | Resolve a queue item + append audit row, atomically. Idempotent on already-resolved items; org-level (patient-null) items require a practitioner/admin role. |
+| `record_registered_audit_event(org, event, …)` — migration `20260728222649` | Append a generic Desktop UI event using database-owned action, resource type, wording, and per-event scalar metadata rules. |
 
 `search_path` is pinned empty and every object is schema-qualified. `EXECUTE`
-is revoked from `public` + `anon` and granted to `authenticated` only.
+is revoked from `public` + `anon` and granted to `authenticated` only. Migration
+`20260728222813` also revokes direct `audit_events` table privileges; reads and
+generic writes pass through the caller-authorized functions.
 
-> Advisor note: these four raise the expected
+The legacy `record_audit_event` function remains temporarily for older callers.
+The Desktop same-origin route does not expose it: it accepts only a registered
+event key, identifiers, and bounded scalar metadata.
+
+> Advisor note: these functions raise the expected
 > `authenticated_security_definer_function_executable` WARN. That is
 > **accepted by design** — they are the deliberate authenticated write path to
 > the append-only table; each authorizes the caller in-function. `SECURITY
@@ -82,7 +87,7 @@ is revoked from `public` + `anon` and granted to `authenticated` only.
 | `labs.uploadDocument` | n/a (demo keeps `queueUploadDemo`, no file leaves the browser) | ✅ real PDF ingestion: storage upload + deterministic extraction + `ingest_lab_extraction` RPC (migration `0016` — observations w/ verbatim originals + confidence, low-confidence review-queue item, audit, atomic); failures → `mark_lab_document_failed` (PDF stays stored, audited) |
 | `tasks.getQueue` | mock queue | ✅ Desktop-owned `list_review_queue` (SECURITY INVOKER + RLS), settled status carried through reload |
 | `actions.execute` — `resolve` on a queue item | session outcome + session audit | ✅ direct `resolve_review_queue_item` RPC (migration `0014`): status + audit atomically, idempotent |
-| `actions.listLiveAuditEvents` | `[]` | ✅ `list_audit_events` RPC |
+| `actions.listLiveAuditEvents` / registered generic events | `[]` / session events | ✅ direct `list_audit_events` / `record_registered_audit_event` RPCs |
 | `actions.execute` — other kinds | session | session (wired per-domain as slices land) |
 | `schedule.getWeek` | n/a (demo calendar renders the weekday-pattern mock directly) | ✅ real `appointments` week read (RLS-scoped; patient-NULL breaks org-visible via migration `0017`) |
 | `schedule.book` / `updateStatus` | n/a (demo announces, never pretends to persist) | ✅ `book_appointment` / `update_appointment_status` RPCs (migration `0017`): validation + double-booking rejection (practitioner AND patient) + status-transition rules + audit, atomic. `reschedule_appointment` exists server-side; drag-to-reschedule UI is a later slice |
@@ -122,16 +127,17 @@ reusing `runClinicalMutation` for writes and `ClinicalStates` for async UI.
 
 The clinical knowledge registry, practitioner identity/session lifecycle,
 organization selection and membership management, patient directory, labs
-workspace/review, and review queue use the Desktop-owned boundary defined in
-ADR 0003. Their live adapters use `supabase-rest.server.ts`, with the
-publishable key and caller JWT confined to the Next.js server. Lab PDF
+workspace/review, review queue, and audit log use the Desktop-owned boundary
+defined in ADR 0003. Their live adapters use `supabase-rest.server.ts`, with
+the publishable key and caller JWT confined to the Next.js server. Lab PDF
 ingestion remains worker-backed; other domains stay on transitional adapters
 until migrated in their own tested slices.
 
 ## Security assumptions
 
-- No PHI in console logs; audit metadata carries no raw lab values or note text
-  (enforced in `review_biomarker` and the app layer).
+- No PHI in console logs. Registered generic audit events allow only
+  database-approved scalar metadata and never accept display wording from the
+  browser; domain mutation functions govern their own metadata.
 - No client-side service-role key; no direct writes that bypass RLS.
 - `organization_id` / `patient_id` are never trusted from the client — every
   RPC re-checks access with `private.can_write_patient_data` /
@@ -175,11 +181,12 @@ e2e/live-tasks.spec.ts e2e/live-scribe.spec.ts e2e/live-lens.spec.ts`.
 | Layer | How | Result |
 | --- | --- | --- |
 | Static checks | `npm run typecheck`, `npm run lint`, live production build | green |
-| Unit adapters | `npm run test:unit` | **50/50** (auth, PostgREST errors, organizations, selected-org patient/lab/queue reads, review/task mutations, dates, knowledge) |
+| Unit adapters | `npm run test:unit` | **52/52** (auth, PostgREST errors, organizations, selected-org patient/lab/queue/audit reads, registered audit and review/task mutations, dates, knowledge) |
 | Desktop identity DB boundary | rolled-back SQL against the clinical project — `supabase/tests/desktop_identity_directory.sql` | **6/6** (active memberships only, assigned-patient RLS, cross-tenant denial, anon execute denied, explicit grants) |
 | Desktop labs/queue DB boundary | rolled-back SQL against the clinical project — `supabase/tests/desktop_labs_review_queue.sql` | **12/12** (patient and org queue visibility, reference/provenance joins, cross-tenant and anonymous denial, minimum grants, atomic review/resolve/create) |
+| Desktop audit DB boundary | rolled-back SQL against the clinical project — `supabase/tests/desktop_audit_actions.sql` | **13/13** (registered wording, metadata allowlist, tenant and role visibility, anonymous and direct-table denial) |
 | Demo UI | production build + Playwright | **41/41** |
-| Full live contract fixture | live production build + Playwright (`live-tasks`, `live-scribe`, `live-lens`) | **31/31** (auth rotation/revocation/logout, organizations, patient isolation, labs, scheduling, EMR, scribe, lens, audit) |
+| Full live contract fixture | live production build + Playwright (`live-tasks`, `live-scribe`, `live-lens`) | **32/32** (auth rotation/revocation/logout, organizations, patient isolation, labs, scheduling, EMR, scribe, lens, registered audit boundary) |
 | Dependency audit | `npm audit` after non-breaking remediation | safe patch updates applied; remaining reports are the Next/sharp and ESLint/minimatch toolchains whose automated remedies require breaking downgrades |
 
 The real signed-in staging browser gate remains an external deployment check;

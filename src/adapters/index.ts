@@ -11,7 +11,7 @@
  *   - labs.getWorkspace / reviewMarker / flagMarker / createReviewTask -> live
  *     (client components -> /api/live/* -> Desktop-owned Supabase REST/RPC)
  *   - tasks.getQueue / resolve       -> live (Desktop-owned Supabase REST/RPC)
- *   - actions.listLiveAuditEvents   -> live (dual-mode Audit Log)
+ *   - actions.listLiveAuditEvents   -> live (Desktop-owned Supabase RPC)
  *   - everything else               -> mock/demo session (see docs/live-api.md)
  */
 import { AdapterError } from "./errors";
@@ -170,7 +170,7 @@ export const api = {
     },
     /** Demo session audit log (sessionStorage). Not backend persistence. */
     listAuditEvents: () => listAuditEntries(),
-    /** Live append-only audit log for the caller's org (empty in mock mode). */
+    /** Live append-only audit log through the caller-authorized DB function. */
     listLiveAuditEvents: async (limit = 50): Promise<LiveAuditEvent[]> =>
       USE_LIVE_API ? liveClient.listAuditEvents(limit) : [],
     /** Clear the demo session audit log (demo reset). */

@@ -46,11 +46,11 @@ Decisions are recorded in the repo that owns them.
 
 ## Backend & live path
 
-- Authenticated tRPC layer: `backend/trpc/clinical-authorization.ts` +
-  `routes/clinical/` in the platform repo.
-- [live-api.md](./live-api.md) — how the desktop's `patients` namespace is
-  flag-swapped to the backend, and exactly what is verified vs. what the
-  sandbox egress policy blocks.
+- Desktop-owned authenticated Supabase boundary: identity, patient directory,
+  labs, review queue, and audit. Transitional worker/coordinator domains still
+  use the older tRPC transport until migrated.
+- [live-api.md](./live-api.md) — the per-domain boundary, and exactly what is
+  verified locally, against the database, and in the live contract fixture.
 
 ## Product & design
 
