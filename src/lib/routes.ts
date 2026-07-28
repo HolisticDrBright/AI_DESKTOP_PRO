@@ -2,14 +2,16 @@ import type { PatientTabId } from "@/adapters/types";
 
 /**
  * One patient-local tab system (practitioner-OS IA). Everything
- * patient-scoped lives in these nine tabs — the sidebar carries
+ * patient-scoped lives in these tabs — the sidebar carries
  * practice-level destinations only.
  */
 export const PATIENT_TABS: { id: PatientTabId; label: string }[] = [
   { id: "overview", label: "Overview" },
   { id: "chart", label: "Chart & Timeline" },
   { id: "labs", label: "Labs & Reasoning" },
-  { id: "care-plan", label: "Care Plan" },
+  { id: "protocol", label: "Protocol" },
+  { id: "nutrition", label: "Nutrition" },
+  { id: "supplements", label: "Supplements" },
   { id: "tracking", label: "Tracking & Experiments" },
   { id: "appointments", label: "Appointments" },
   { id: "messages", label: "Messages" },
@@ -17,7 +19,11 @@ export const PATIENT_TABS: { id: PatientTabId; label: string }[] = [
   { id: "files", label: "Files" },
 ];
 
-export const PATIENT_TAB_IDS = PATIENT_TABS.map((t) => t.id);
+// `care-plan` remains routable only so old bookmarks can be redirected.
+export const PATIENT_TAB_IDS: PatientTabId[] = [
+  ...PATIENT_TABS.map((t) => t.id),
+  "care-plan",
+];
 
 export function isPatientTabId(value: string): value is PatientTabId {
   return (PATIENT_TAB_IDS as string[]).includes(value);
@@ -32,8 +38,7 @@ export const LEGACY_PATIENT_TABS: Record<string, { tab: PatientTabId; query?: st
   timeline: { tab: "chart" },
   "lab-orders": { tab: "labs", query: "view=orders" },
   reasoning: { tab: "labs", query: "view=reasoning" },
-  protocols: { tab: "care-plan" },
-  supplements: { tab: "care-plan", query: "view=supplements" },
+  protocols: { tab: "protocol" },
   twin: { tab: "tracking", query: "view=twin" },
   "nof1-lab": { tab: "tracking", query: "view=experiments" },
   reports: { tab: "files" },

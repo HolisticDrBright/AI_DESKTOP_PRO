@@ -10,6 +10,30 @@ import type {
  * mock data so cross-links stay coherent.
  */
 
+function schedulePatient(
+  id: string,
+  name: string,
+  sex: PatientDirectoryEntry["sex"],
+  age: number,
+  primaryGoals: string,
+  avatarGradient: [string, string],
+): PatientDirectoryEntry {
+  return {
+    id,
+    mrn: id.toUpperCase(),
+    name,
+    initials: name.split(" ").map((part) => part[0]).join("").slice(0, 2),
+    sex,
+    age,
+    dob: "—",
+    avatarGradient,
+    primaryGoals,
+    careTeam: ["Dr. Sarah Mitchell (You)"],
+    lastVisit: "See chart",
+    nextVisit: "See calendar",
+  };
+}
+
 const directory: PatientDirectoryEntry[] = [
   {
     id: "p-78435",
@@ -97,6 +121,16 @@ const directory: PatientDirectoryEntry[] = [
     lastVisit: "Jul 1, 2026",
     nextVisit: "Aug 5, 2026",
   },
+  schedulePatient("p-80514", "David Chen", "Male", 46, "Cardiometabolic prevention and sustainable energy", ["#236B73", "#4B9AA1"]),
+  schedulePatient("p-80515", "Sofia Ramirez", "Female", 41, "Digestive comfort, energy, and sleep consistency", ["#8A5A44", "#C08A6B"]),
+  schedulePatient("p-80516", "Ethan Brooks", "Male", 38, "Performance recovery and long-term metabolic health", ["#365F91", "#6D92BD"]),
+  schedulePatient("p-80517", "Olivia Bennett", "Female", 50, "Hormone transition support and cardiovascular health", ["#7A568E", "#A985BA"]),
+  schedulePatient("p-80518", "Hannah Kim", "Female", 36, "Stress resilience, sleep quality, and nutrition consistency", ["#A05C39", "#CA8766"]),
+  schedulePatient("p-80519", "Robert Diaz", "Male", 58, "Strength preservation and cardiometabolic risk reduction", ["#315D55", "#5C8B82"]),
+  schedulePatient("p-80520", "Grace Park", "Female", 43, "Energy, thyroid follow-up, and recovery", ["#355A78", "#668AA6"]),
+  schedulePatient("p-80521", "Liam Walsh", "Male", 49, "Blood pressure, sleep, and sustainable movement", ["#4E5E77", "#7A8BA5"]),
+  schedulePatient("p-80522", "Nadia Hassan", "Female", 45, "Inflammation support and digestive health", ["#7D5947", "#AE826B"]),
+  schedulePatient("p-80523", "Tom Fletcher", "Male", 53, "Healthy aging, mobility, and metabolic maintenance", ["#426A63", "#6F978F"]),
 ];
 
 const summaries: Record<string, PatientSummary> = {

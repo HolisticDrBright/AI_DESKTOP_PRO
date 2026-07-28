@@ -89,6 +89,24 @@ export interface CalendarData {
 
 const T = (h: number, m = 0) => h * 60 + m;
 
+/** Individual schedule names must resolve to the same synthetic patient file everywhere. */
+const PATIENT_RECORD_BY_SCHEDULE_NAME: Record<string, { id: string; name?: string }> = {
+  "Priya Shah": { id: "p-59318", name: "Priya Sharma" },
+  "Michael Johnson": { id: "p-64201" },
+  "David Chen": { id: "p-80514" },
+  "Sofia Ramirez": { id: "p-80515" },
+  "Ethan Brooks": { id: "p-80516" },
+  "Alexandra Morgan": { id: "p-78435" },
+  "Olivia Bennett": { id: "p-80517" },
+  "Marcus Lee": { id: "p-52984", name: "Marcus Webb" },
+  "Hannah Kim": { id: "p-80518" },
+  "Robert Diaz": { id: "p-80519" },
+  "Grace Park": { id: "p-80520" },
+  "Liam Walsh": { id: "p-80521" },
+  "Nadia Hassan": { id: "p-80522" },
+  "Tom Fletcher": { id: "p-80523" },
+};
+
 // [practitionerId, weekday, start, duration, type, patientName, patientId|null, location]
 type Row = [
   string,
@@ -181,6 +199,9 @@ const TITLE: Record<AppointmentType, string> = {
 export function getCalendar(): CalendarData {
   const appointments: Appointment[] = ROWS.map((r, i) => {
     const [practitionerId, weekday, start, durationMin, type, patientName, patientId, location] = r;
+    const patientRecord = patientId
+      ? { id: patientId }
+      : PATIENT_RECORD_BY_SCHEDULE_NAME[patientName];
     return {
       id: `appt-${i}`,
       practitionerId,
@@ -188,8 +209,8 @@ export function getCalendar(): CalendarData {
       start,
       durationMin,
       type,
-      patientName,
-      patientId: patientId ?? undefined,
+      patientName: patientRecord?.name ?? patientName,
+      patientId: patientRecord?.id,
       location,
     };
   });

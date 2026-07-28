@@ -21,6 +21,8 @@ import { Card, CardTitle } from "@/components/ui/bits";
 import { Metric } from "@/components/ui/Metric";
 import { Pill, Tag } from "@/components/ui/Pill";
 import { BtnLink } from "@/components/ui/Btn";
+import { ClinicalOverviewSnapshot } from "@/components/patient/ClinicalOverviewSnapshot";
+import { PatientChangeBrief } from "@/components/patient/PatientChangeBrief";
 
 function KV({ label, value }: { label: string; value: React.ReactNode }) {
   return (
@@ -70,14 +72,6 @@ export function ProfileOverview({ patient }: { patient: PatientDirectoryEntry })
 
   return (
     <div data-screen-label="Patient Overview" className="flex flex-col gap-4">
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-        <Metric label="Total bookings" value={extras.booking.total} sub={`Member since ${extras.booking.memberSinceLabel}`} href={p("appointments")} />
-        <Metric label="Upcoming" value={extras.booking.upcoming} sub={extras.booking.nextAppointmentLabel.split(" · ")[0] ?? "—"} href={p("appointments")} />
-        <Metric label="No-shows" value={extras.booking.noShows} sub={`${extras.booking.cancellations} cancellation${extras.booking.cancellations === 1 ? "" : "s"}`} subTone={extras.booking.noShows > 0 ? "warning" : undefined} href={p("appointments")} />
-        <Metric label="Last visit" value={extras.booking.lastVisitLabel} sub={`${extras.booking.sinceLastVisit} ago`} href={p("chart")} />
-        <Metric label="Balance" value={formatMinor(ledger.balanceMinor)} sub={ledger.card.status === "missing" ? "No card on file" : `${ledger.card.brand} ····${ledger.card.last4}`} subTone={ledger.balanceMinor > 0 ? "warning" : undefined} href={p("billing")} />
-      </div>
-
       {extras.medicalAlerts.length > 0 && (
         <Card className="border-[rgba(214,84,74,0.35)] bg-[rgba(251,237,236,0.5)] px-4 py-[10px]">
           <div className="flex flex-wrap items-center gap-2">
@@ -92,6 +86,22 @@ export function ProfileOverview({ patient }: { patient: PatientDirectoryEntry })
           </div>
         </Card>
       )}
+
+      {summary && <ClinicalOverviewSnapshot summary={summary} patientId={patient.id} />}
+      <PatientChangeBrief patientId={patient.id} patientName={patient.name} />
+
+      <div className="mt-1 flex items-center gap-3 px-[2px]">
+        <h2 className="m-0 text-[16px] font-bold text-ink">Patient profile &amp; practice details</h2>
+        <span className="h-px flex-1 bg-line" aria-hidden />
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+        <Metric label="Total bookings" value={extras.booking.total} sub={`Member since ${extras.booking.memberSinceLabel}`} href={p("appointments")} />
+        <Metric label="Upcoming" value={extras.booking.upcoming} sub={extras.booking.nextAppointmentLabel.split(" · ")[0] ?? "—"} href={p("appointments")} />
+        <Metric label="No-shows" value={extras.booking.noShows} sub={`${extras.booking.cancellations} cancellation${extras.booking.cancellations === 1 ? "" : "s"}`} subTone={extras.booking.noShows > 0 ? "warning" : undefined} href={p("appointments")} />
+        <Metric label="Last visit" value={extras.booking.lastVisitLabel} sub={`${extras.booking.sinceLastVisit} ago`} href={p("chart")} />
+        <Metric label="Balance" value={formatMinor(ledger.balanceMinor)} sub={ledger.card.status === "missing" ? "No card on file" : `${ledger.card.brand} ····${ledger.card.last4}`} subTone={ledger.balanceMinor > 0 ? "warning" : undefined} href={p("billing")} />
+      </div>
 
       <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-2">
         <div className="flex min-w-0 flex-col gap-4">
@@ -164,48 +174,17 @@ export function ProfileOverview({ patient }: { patient: PatientDirectoryEntry })
             </p>
           </SectionCard>
 
-          {summary && (
-            <SectionCard
-              icon={<ClipboardList size={14} strokeWidth={1.75} className="text-ai-deep" aria-hidden />}
-              title="Clinical summary (concise)"
-              action={<BtnLink size="sm" href={p("labs") + "?view=reasoning"}>Full reasoning</BtnLink>}
-            >
-              <div className="mb-2 flex items-center gap-3">
-                <span className="text-[24px] leading-none font-bold tracking-[-0.01em]">{summary.healthScore.value}</span>
-                <Pill tone={summary.healthScore.tone}>{summary.healthScore.band}</Pill>
-                <span className="text-[11.5px] text-subtle">{summary.healthScore.delta.text}</span>
-              </div>
-              <div className="mb-2 flex flex-wrap gap-1">
-                {summary.riskFlags.map((r) => (
-                  <Pill key={r.label} tone={r.tone}>{r.label} · {r.action}</Pill>
-                ))}
-              </div>
-              <ul className="m-0 list-none p-0">
-                {summary.priorities.slice(0, 3).map((pr) => (
-                  <li key={pr} className="border-b border-hairline py-[6px] text-[12.5px] text-body last:border-b-0">
-                    {pr}
-                  </li>
-                ))}
-              </ul>
-              <p className="mt-2 mb-0 text-[11px] text-faint">
-                Deep dives: <Link className="font-semibold text-action" href={p("labs")}>Labs</Link> ·{" "}
-                <Link className="font-semibold text-action" href={p("care-plan")}>Care Plan</Link> ·{" "}
-                <Link className="font-semibold text-action" href={p("tracking")}>Tracking</Link>
-              </p>
-            </SectionCard>
-          )}
-
           <SectionCard
             icon={<ClipboardList size={14} strokeWidth={1.75} className="text-positive" aria-hidden />}
             title="Active care plan"
-            action={<BtnLink size="sm" href={p("care-plan")}>Care Plan</BtnLink>}
+            action={<BtnLink size="sm" href={p("protocol")}>Full protocol</BtnLink>}
           >
             {plans.length === 0 ? (
               <p className="m-0 text-[12px] text-faint">No active protocols.</p>
             ) : (
               <div className="flex flex-col">
                 {plans.map((pl) => (
-                  <Link key={pl.id} href={p("care-plan")} className="flex items-center gap-2 border-b border-hairline py-[7px] last:border-b-0 hover:bg-sunken focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-action">
+                  <Link key={pl.id} href={p("protocol")} className="flex items-center gap-2 border-b border-hairline py-[7px] last:border-b-0 hover:bg-sunken focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-action">
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-[12.5px] font-medium text-ink">{pl.name}</span>
                       <span className="block text-[11.5px] text-subtle">{pl.phase} · review {pl.nextReviewLabel}</span>

@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import {
   passioMockAdapter,
+  useDietPlan,
   useNutritionEntries,
   type CaptureMethod,
   type NutritionEntry,
@@ -22,11 +23,13 @@ import { useFeedback } from "@/lib/feedback";
 import { thumbDataUri } from "@/lib/thumb";
 import { toneColor } from "@/lib/tones";
 import { Card, CardTitle, ProgressBar } from "@/components/ui/bits";
-import { Btn } from "@/components/ui/Btn";
+import { Btn, BtnLink } from "@/components/ui/Btn";
 import { Field, TextArea, TextInput } from "@/components/ui/Field";
 import { Pill } from "@/components/ui/Pill";
 import { Sparkline } from "@/components/ui/Sparkline";
 import { DemoNote } from "@/components/ui/DemoNote";
+import { patientPath } from "@/lib/routes";
+import { DietPlanAuthoring } from "@/components/nutrition/DietPlanAuthoring";
 
 const METHODS: { id: CaptureMethod; label: string; icon: React.ReactNode }[] = [
   { id: "photo", label: "Photo", icon: <Camera size={13} aria-hidden /> },
@@ -125,6 +128,7 @@ export function NutritionWorkspace({
   const [query, setQuery] = useState("");
   const [editing, setEditing] = useState<string | null>(null);
   const targets = passioMockAdapter.targets(patientId);
+  const dietPlan = useDietPlan(patientId);
   const trends = passioMockAdapter.trends(patientId);
   const plans = passioMockAdapter.mealPlans(patientId);
 
@@ -141,6 +145,104 @@ export function NutritionWorkspace({
 
   return (
     <div className="flex flex-col gap-4" data-screen-label="Nutrition">
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="m-0 text-[19px] font-bold text-ink">Diet plan &amp; nutrition</h1>
+          <p className="m-0 mt-1 text-[12px] text-subtle">The prescribed food pattern, daily targets, meal plan, adherence, and food log in one workspace.</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <DietPlanAuthoring patientId={patientId} patientName={patientName} current={dietPlan} />
+          <BtnLink size="sm" href={patientPath(patientId, "protocol")}>Open complete protocol</BtnLink>
+        </div>
+      </header>
+
+      {dietPlan ? (
+        <Card className="overflow-hidden">
+          <div className="flex flex-wrap items-start justify-between gap-3 border-b border-hairline bg-[#F7FAFC] px-5 py-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="m-0 text-[16px] font-bold text-ink">{dietPlan.name}</h2>
+                <Pill tone={dietPlan.status === "active" ? "positive" : "warning"}>{dietPlan.status}</Pill>
+              </div>
+              <p className="m-0 mt-1 text-[11.5px] text-subtle">{dietPlan.pattern}</p>
+            </div>
+            <div className="text-right text-[10.5px] text-subtle">
+              <div className="font-semibold text-body">{dietPlan.reviewLabel}</div>
+              <div>{dietPlan.practitioner}</div>
+            </div>
+          </div>
+
+          {dietPlan.summary && (
+            <section className="border-b border-hairline px-5 py-3">
+              <h3 className="m-0 mb-1 text-[10px] font-bold text-faint uppercase">What this plan is</h3>
+              <p className="m-0 text-[12px] leading-[1.55] text-body">{dietPlan.summary}</p>
+              {dietPlan.evidenceLabel && <div className="mt-2"><Pill tone={dietPlan.evidenceLabel.includes("Insufficient") || dietPlan.evidenceLabel.includes("Limited") ? "warning" : "slate"}>{dietPlan.evidenceLabel}</Pill></div>}
+            </section>
+          )}
+
+          <div className="grid border-b border-hairline lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
+            <section className="border-b border-hairline px-5 py-4 lg:border-r lg:border-b-0">
+              <h3 className="m-0 mb-3 text-[10px] font-bold text-faint uppercase">Daily meal structure</h3>
+              <div className="flex flex-col gap-2">
+                {dietPlan.dailyStructure.map((row) => (
+                  <div key={row.meal} className="grid grid-cols-[75px_minmax(0,0.8fr)_minmax(0,1.2fr)] gap-3 border-b border-hairline py-2 last:border-b-0">
+                    <span className="text-[11.5px] font-bold text-ink">{row.meal}</span>
+                    <span className="text-[11px] text-body">{row.target}</span>
+                    <span className="text-[11px] text-subtle">{row.example}</span>
+                  </div>
+                ))}
+              </div>
+            </section>
+            <section className="px-5 py-4">
+              <h3 className="m-0 mb-2 text-[10px] font-bold text-faint uppercase">Plan goals</h3>
+              <ul className="m-0 flex list-none flex-col gap-2 p-0">
+                {dietPlan.goals.map((goal) => <li key={goal} className="flex items-start gap-2 text-[11.5px] text-body"><Check size={12} className="mt-[2px] shrink-0 text-positive" aria-hidden />{goal}</li>)}
+              </ul>
+              <div className="mt-4 rounded-md bg-sunken px-3 py-2 text-[11px] text-body"><span className="font-semibold">Hydration:</span> {dietPlan.hydration}</div>
+            </section>
+          </div>
+
+          {(dietPlan.phases?.length || dietPlan.cautions?.length) ? (
+            <div className="grid border-b border-hairline lg:grid-cols-[minmax(0,1.25fr)_minmax(0,0.75fr)]">
+              {dietPlan.phases?.length ? (
+                <section className="border-b border-hairline px-5 py-4 lg:border-r lg:border-b-0">
+                  <h3 className="m-0 mb-2 text-[10px] font-bold text-faint uppercase">How to follow it</h3>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {dietPlan.phases.map((phase, index) => (
+                      <div key={phase.name} className="rounded-lg border border-hairline bg-sunken px-3 py-2">
+                        <p className="m-0 text-[11.5px] font-bold text-ink">{index + 1}. {phase.name}</p>
+                        <p className="mt-1 mb-0 text-[10.5px] text-faint">{phase.duration}</p>
+                        <p className="mt-1 mb-0 text-[11px] leading-[1.4] text-body">{phase.focus}</p>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              ) : null}
+              {dietPlan.cautions?.length ? (
+                <section className="px-5 py-4">
+                  <h3 className="m-0 mb-2 text-[10px] font-bold text-warning uppercase">Safety and suitability</h3>
+                  <ul className="m-0 flex flex-col gap-1.5 pl-4 text-[11px] leading-[1.45] text-body">
+                    {dietPlan.cautions.map((caution) => <li key={caution}>{caution}</li>)}
+                  </ul>
+                </section>
+              ) : null}
+            </div>
+          ) : null}
+
+          <div className="grid gap-4 px-5 py-4 sm:grid-cols-3">
+            <FoodList title="Emphasize" items={dietPlan.emphasize} tone="positive" />
+            <FoodList title="Limit" items={dietPlan.limit} tone="warning" />
+            <FoodList title="Avoid / restrictions" items={[...dietPlan.avoid, ...dietPlan.restrictions]} tone="slate" />
+          </div>
+          <div className="flex flex-wrap items-center gap-2 border-t border-hairline px-5 py-3 text-[10.5px] text-subtle">
+            <span className="flex-1">{dietPlan.notes.join(" · ")}</span>
+            {dietPlan.sourceUrl && dietPlan.sourceLabel && <a href={dietPlan.sourceUrl} target="_blank" rel="noreferrer" className="font-semibold text-action hover:underline">Education source: {dietPlan.sourceLabel}</a>}
+          </div>
+        </Card>
+      ) : (
+        <Card className="px-5 py-8 text-center text-[12px] text-faint">No diet plan is currently assigned.</Card>
+      )}
+
       <Card className="px-4 py-3">
         <div className="flex flex-wrap items-center gap-2">
           <CardTitle className="mr-1">Log a food entry</CardTitle>
@@ -314,5 +416,14 @@ export function NutritionWorkspace({
         </div>
       </div>
     </div>
+  );
+}
+
+function FoodList({ title, items, tone }: { title: string; items: string[]; tone: "positive" | "warning" | "slate" }) {
+  return (
+    <section>
+      <h3 className="m-0 mb-2 text-[10px] font-bold text-faint uppercase">{title}</h3>
+      <div className="flex flex-wrap gap-1.5">{items.map((item) => <Pill key={item} tone={tone}>{item}</Pill>)}</div>
+    </section>
   );
 }

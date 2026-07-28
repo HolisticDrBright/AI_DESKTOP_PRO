@@ -43,6 +43,7 @@ export type ActionKind =
   | "snooze"
   | "change_priority"
   | "mark_reviewed"
+  | "dismiss"
   | "flag"
   | "request_recheck"
   | "configure_range"
@@ -143,6 +144,7 @@ export const ACTIONS: Record<ActionKind, ActionDescriptor> = {
   snooze: { kind: "snooze", label: "Snooze", icon: "clock", tone: "slate" },
   change_priority: { kind: "change_priority", label: "Change priority", icon: "flag", tone: "warning" },
   mark_reviewed: { kind: "mark_reviewed", label: "Mark reviewed", icon: "check-check", tone: "positive" },
+  dismiss: { kind: "dismiss", label: "Dismiss", icon: "x", tone: "slate" },
   flag: { kind: "flag", label: "Flag for review", icon: "flag", tone: "warning" },
   request_recheck: {
     kind: "request_recheck", label: "Request recheck", icon: "rotate", tone: "action",
@@ -182,6 +184,7 @@ export const ACTION_REVIEW_OUTCOME: Partial<Record<ActionKind, ReviewOutcome>> =
   reject: "rejected",
   resolve: "resolved",
   mark_reviewed: "reviewed",
+  dismiss: "dismissed",
   flag: "flagged",
   snooze: "snoozed",
 };

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { CreditCard } from "lucide-react";
 import {
   MEMBERSHIPS,
@@ -77,8 +77,8 @@ export function PatientBillingTab({
             const paid = inv.payments.reduce((n, p) => n + p.amountMinor, 0);
             const open = expanded === inv.id;
             return (
-              <>
-                <tr key={inv.id}>
+              <Fragment key={inv.id}>
+                <tr>
                   <TD className="font-semibold text-ink">#{inv.number}{inv.sessionCreated ? " · this session" : ""}</TD>
                   <TD>{inv.atLabel}</TD>
                   <TD className="max-w-[280px] truncate">{inv.lines.map((l) => l.label).join(" · ")}</TD>
@@ -92,16 +92,19 @@ export function PatientBillingTab({
                   </TD>
                 </tr>
                 {open && (
-                  <tr key={`${inv.id}-detail`}>
+                  <tr>
                     <TD colSpan={7} className="bg-sunken">
                       <div className="grid grid-cols-1 gap-3 py-1 lg:grid-cols-2">
                         <div>
                           <p className="m-0 mb-1 text-[11px] font-bold tracking-[0.05em] text-faint uppercase">Lines</p>
                           {inv.lines.map((l) => (
-                            <p key={l.id} className="m-0 flex justify-between py-[2px] text-[12px]">
-                              <span>{l.label} × {l.qty}</span>
-                              <span className="tabular-nums">{formatMinor(l.totalMinor)}</span>
-                            </p>
+                            <div key={l.id} className="flex justify-between gap-4 py-[3px] text-[12px]">
+                              <span>
+                                <span className="block">{l.label} × {l.qty}</span>
+                                {l.description && <span className="block max-w-[460px] text-[10.5px] leading-[1.4] text-subtle">{l.description}</span>}
+                              </span>
+                              <span className="shrink-0 tabular-nums">{formatMinor(l.totalMinor)}</span>
+                            </div>
                           ))}
                           <p className="m-0 flex justify-between border-t border-line pt-1 text-[12px]">
                             <span>Subtotal / discount / tax</span>
@@ -130,7 +133,7 @@ export function PatientBillingTab({
                     </TD>
                   </tr>
                 )}
-              </>
+              </Fragment>
             );
           })}
           {ledger.invoices.length === 0 && (

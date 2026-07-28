@@ -51,6 +51,7 @@ const OUTCOME_TONE: Record<ReviewOutcome, Tone> = {
   reviewed: "positive",
   resolved: "positive",
   rejected: "critical",
+  dismissed: "slate",
   flagged: "warning",
   snoozed: "slate",
 };

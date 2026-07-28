@@ -20,6 +20,8 @@ export interface InvoiceLine {
   kind: LineKind;
   refId?: string;
   label: string;
+  /** Snapshot of patient-facing catalog copy at the time of sale. */
+  description?: string;
   qty: number;
   unitMinor: number;
   /** Negative lines (credits/discounts) allowed. */

@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { useSearchParams } from "next/navigation";
 import { Boxes, Pill as PillIcon, ShieldCheck, ShoppingCart, Sparkles, TriangleAlert } from "lucide-react";
 import { DispensePanel } from "./DispensePanel";
 import { InventoryPanel } from "./InventoryPanel";
@@ -57,14 +56,14 @@ const SUB_TABS: { id: SubTab; label: string; icon: typeof Sparkles }[] = [
 export function SupplementsWorkspace({
   patientId,
   patientName,
+  initialTab,
 }: {
   patientId: string;
   patientName: string;
+  initialTab?: string;
 }) {
-  const params = useSearchParams();
-  const initial = params.get("tab");
   const [tab, setTab] = useState<SubTab>(
-    initial === "dispense" || initial === "inventory" ? initial : "intelligence",
+    initialTab === "dispense" || initialTab === "inventory" ? initialTab : "intelligence",
   );
 
   return (

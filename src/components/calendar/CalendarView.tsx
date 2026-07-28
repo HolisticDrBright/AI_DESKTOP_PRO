@@ -1310,7 +1310,7 @@ function DetailDrawer({
         {!USE_LIVE_API && <DemoApptActions appt={appt} onClose={onClose} />}
         {USE_LIVE_API && appt.patientId && (
           <Link
-            href={`/patients/${appt.patientId}/care-plan?view=supplements`}
+            href={`/patients/${appt.patientId}/supplements`}
             className="flex h-9 items-center justify-center gap-[7px] rounded-lg border-none bg-action text-[12.5px] font-semibold text-white hover:bg-action-deep focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink"
           >
             Open chart & add to order →

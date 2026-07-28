@@ -24,7 +24,7 @@ The app presents as a practice operating system. The sidebar carries
 Patients, Review Queue, Inbox, Programs, Billing, Reports, Integrations,
 Team, Settings — and everything patient-scoped lives in ONE local tab
 system inside the chart: Overview · Chart & Timeline · Labs & Reasoning ·
-Care Plan · Tracking & Experiments · Appointments · Messages · Billing ·
+Protocol · Nutrition · Supplements · Tracking & Experiments · Appointments · Messages · Billing ·
 Files. Old URLs (including `/clients`, `/messages`, `/practice`,
 `/audit-log`, `/ai-safety`, and every legacy patient tab) redirect to
 their new homes — see
@@ -43,6 +43,14 @@ report catalog, and Integrations (connections / automations / webhooks /
 sync log — no connection is ever faked). Governance (AI registry + audit
 log) lives under **Settings → Security & Governance**; templates are a
 contextual versioned library at `/templates`.
+
+The patient **Labs & Reasoning → Clinical copilot** view adds a governed,
+deterministic prototype of adaptive intake → differentiating questions →
+confirming-lab candidates → exact-product protocol drafting. Product candidates
+cannot enter a protocol until core safety information is present, the
+practitioner marks the output reviewed, and the current manufacturer label is
+explicitly verified. Affiliate links remain hidden during clinical selection;
+all generated plans stay draft-only and session-only.
 
 ## Stack
 

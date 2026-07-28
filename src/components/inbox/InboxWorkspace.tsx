@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import {
+  Sparkles,
   CalendarClock,
   CheckCheck,
   ClipboardPlus,
@@ -14,6 +15,7 @@ import {
   StickyNote,
   UserRound,
 } from "lucide-react";
+import { buildInboxAiAssist } from "@/adapters/ai-assistance.mock";
 import {
   assignThread,
   CHANNEL_META,
@@ -38,6 +40,7 @@ import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { TextArea, TextInput } from "@/components/ui/Field";
 import { Pill, Tag } from "@/components/ui/Pill";
 import { DemoNote } from "@/components/ui/DemoNote";
+import { AiAssistancePanel } from "@/components/ai/AiAssistancePanel";
 
 type ListFilter = "open" | "unread" | "priority" | "assigned" | "schedule-request" | "closed";
 
@@ -100,6 +103,7 @@ export function InboxWorkspace({
     [threads, filter, q, channel],
   );
   const selected = threads.find((t) => t.id === selectedId) ?? null;
+  const aiAssist = selected ? buildInboxAiAssist(selected) : null;
 
   useEffect(() => {
     if (selected && selected.unread) markThreadRead(selected.id);
@@ -222,8 +226,8 @@ export function InboxWorkspace({
             </div>
           ) : (
             <>
-              <div className="flex items-center gap-2 border-b border-hairline px-4 py-[10px]">
-                <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-2 border-b border-hairline px-4 py-[10px]">
+                <div className="min-w-[180px] flex-1">
                   <div className="truncate text-[13.5px] font-bold text-ink">{selected.subject}</div>
                   <div className="text-[11.5px] text-subtle">
                     {selected.patientName} · {CHANNEL_META[selected.channel].label} · {selected.status}
@@ -378,9 +382,37 @@ export function InboxWorkspace({
                 <div>
                   <p className="m-0 mb-1 text-[11px] font-bold tracking-[0.05em] text-faint uppercase">Medical alerts</p>
                   <div className="flex flex-wrap gap-1">
-                    {extras.medicalAlerts.map((a) => <Pill key={a.label} tone={a.tone}>{a.label}</Pill>)}
+                    {extras.medicalAlerts.map((a) => (
+                      <Pill key={a.label} tone={a.tone} className="whitespace-normal leading-[1.35]">
+                        {a.label}
+                      </Pill>
+                    ))}
                   </div>
                 </div>
+              )}
+              {aiAssist && (
+                <AiAssistancePanel
+                  brief={aiAssist}
+                  compact
+                  embedded
+                  className="-mx-4"
+                  actions={
+                    aiAssist.status === "fixture" ? (
+                      <Btn
+                        size="sm"
+                        variant="ai"
+                        onClick={() => {
+                          setDraft(aiAssist.suggestedReply);
+                          setInternal(false);
+                          setReviewed(false);
+                          announce("AI-assisted reply placed in the composer for your review.");
+                        }}
+                      >
+                        <Sparkles size={12} aria-hidden /> Use reply draft
+                      </Btn>
+                    ) : undefined
+                  }
+                />
               )}
               {selected.kind === "schedule-request" && (
                 <div className="rounded-lg border border-nav-active-line bg-nav-active px-3 py-[8px]">

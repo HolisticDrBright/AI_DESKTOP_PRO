@@ -415,7 +415,7 @@ const CATEGORY_TAB: Partial<
   "new-lab": { tab: "labs", label: "labs" },
   "extraction-review": { tab: "labs", label: "labs" },
   "reasoning-review": { tab: "labs", query: "?view=reasoning", label: "reasoning" },
-  "protocol-approval": { tab: "care-plan", label: "care plan" },
+  "protocol-approval": { tab: "protocol", label: "protocol" },
 };
 
 function QueueRow({ item, outcome }: { item: QueueItem; outcome?: ReviewOutcome }) {

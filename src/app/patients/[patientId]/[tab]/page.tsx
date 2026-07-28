@@ -9,9 +9,11 @@ import type { PatientTabId } from "@/adapters/types";
 import { ClinicalEmpty } from "@/components/ui/ClinicalStates";
 import { PatientTimeline } from "@/components/encounter/PatientTimeline";
 import { ProfileOverview } from "@/components/patient/ProfileOverview";
-import { ChartTimeline } from "@/components/patient/ChartTimeline";
+import { ChartWorkspace } from "@/components/patient/ChartWorkspace";
 import { LabsHub } from "@/components/patient/LabsHub";
-import { CarePlanTab } from "@/components/patient/CarePlanTab";
+import { ProtocolWorkspace } from "@/components/patient/ProtocolWorkspace";
+import { NutritionWorkspace } from "@/components/nutrition/NutritionWorkspace";
+import { SupplementsWorkspace } from "@/components/supplements/SupplementsWorkspace";
 import { TrackingTab } from "@/components/patient/TrackingTab";
 import { PatientAppointments } from "@/components/patient/PatientAppointments";
 import { PatientMessagesTab } from "@/components/patient/PatientMessagesTab";
@@ -49,6 +51,16 @@ export default async function PatientTabPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { patientId, tab } = await params;
+  const sp = await searchParams;
+  const view = typeof sp.view === "string" ? sp.view : undefined;
+  const section = typeof sp.tab === "string" ? sp.tab : undefined;
+
+  // The former nested Care Plan is now three visible patient tabs. Preserve
+  // old bookmarks, including the nested view query, without hiding content.
+  if (tab === "care-plan") {
+    const destination = view === "supplements" ? "supplements" : view === "nutrition" ? "nutrition" : "protocol";
+    redirect(`/patients/${patientId}/${destination}`);
+  }
 
   // Pre-overhaul tab URLs stay alive (docs/information-architecture.md).
   const legacy = LEGACY_PATIENT_TABS[tab];
@@ -56,9 +68,6 @@ export default async function PatientTabPage({
     redirect(`/patients/${patientId}/${legacy.tab}${legacy.query ? `?${legacy.query}` : ""}`);
   }
   if (!isPatientTabId(tab)) notFound();
-
-  const sp = await searchParams;
-  const view = typeof sp.view === "string" ? sp.view : undefined;
 
   const patient = await api.patients.get(patientId, (await getRequestSession()).token);
   if (!patient) notFound();
@@ -91,7 +100,7 @@ export default async function PatientTabPage({
 
   if (tab === "chart") {
     if (USE_LIVE_API) return <PatientTimeline patientId={patientId} />;
-    return <ChartTimeline patientId={patientId} patientName={name} />;
+    return <ChartWorkspace patientId={patientId} patientName={name} />;
   }
 
   if (tab === "labs") {
@@ -100,15 +109,21 @@ export default async function PatientTabPage({
 
   if (USE_LIVE_API && !LIVE_READY[tab]) {
     const label =
-      tab === "care-plan"
-        ? "Care Plan"
+      tab === "protocol"
+        ? "Protocol"
+        : tab === "nutrition"
+          ? "Nutrition"
+          : tab === "supplements"
+            ? "Supplements"
         : tab === "tracking"
           ? "Tracking & Experiments"
           : tab.charAt(0).toUpperCase() + tab.slice(1);
     return <LiveHold patientId={patientId} label={label} />;
   }
 
-  if (tab === "care-plan") return <CarePlanTab patientId={patientId} patientName={name} view={view} />;
+  if (tab === "protocol") return <ProtocolWorkspace patientId={patientId} patientName={name} />;
+  if (tab === "nutrition") return <NutritionWorkspace patientId={patientId} patientName={name} />;
+  if (tab === "supplements") return <SupplementsWorkspace patientId={patientId} patientName={name} initialTab={section} />;
   if (tab === "tracking") return <TrackingTab patientId={patientId} patientName={name} view={view} />;
   if (tab === "appointments") return <PatientAppointments patientId={patientId} patientName={name} />;
   if (tab === "messages") return <PatientMessagesTab patientId={patientId} />;

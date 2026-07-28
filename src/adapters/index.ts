@@ -50,7 +50,6 @@ import {
   type ActionKind,
 } from "./actions";
 import {
-  addCustomProduct,
   addSessionQueueItem,
   adjustInventory,
   clearAuditEntries,
@@ -61,10 +60,11 @@ import {
   listCustomProducts,
   listSales,
   recordAuditEntry,
+  recordInventoryMovement,
   recordSale,
   removeReviewOutcome,
-  setInventoryLevel,
   setReviewOutcome,
+  upsertCustomProduct,
   updateLabOrderDraft,
   type SaleLine,
 } from "./session-store";
@@ -279,12 +279,14 @@ export const api = {
      */
     listProducts: async (): Promise<InventoryProduct[]> => {
       const adj = getInventoryAdjustments();
-      const all = [...listCustomProducts(), ...SEED_PRODUCTS];
+      const custom = listCustomProducts();
+      const editedIds = new Set(custom.map((p) => p.id));
+      const all = [...custom, ...SEED_PRODUCTS.filter((p) => !editedIds.has(p.id))];
       return all.map((p) => ({ ...p, stock: Math.max(0, p.stock + (adj[p.id] ?? 0)) }));
     },
     /** Add a new product to inventory this session + audit. */
     addProduct: async (product: InventoryProduct) => {
-      addCustomProduct(product);
+      upsertCustomProduct(product);
       recordAuditEntry({
         kind: "receive_stock",
         subjectType: "inventory",
@@ -293,10 +295,29 @@ export const api = {
       });
       return { ok: true, message: `Added ${product.name} to inventory. (demo — not persisted)` };
     },
+    /** Edit catalog details while preserving historical invoice snapshots. */
+    updateProduct: async (product: InventoryProduct) => {
+      const movement = getInventoryAdjustments()[product.id] ?? 0;
+      upsertCustomProduct({ ...product, stock: Math.max(0, product.stock - movement) });
+      recordAuditEntry({
+        kind: "receive_stock",
+        subjectType: "inventory",
+        subjectLabel: `Updated ${product.name}`,
+        reviewed: true,
+      });
+      return { ok: true, message: `Updated ${product.name}. Existing invoices were not changed.` };
+    },
     /** Receive (restock) units into inventory + audit. */
     receiveStock: async (productId: string, qty: number, name: string) => {
       const n = Math.max(1, Math.round(qty));
       adjustInventory(productId, n);
+      recordInventoryMovement({
+        productId,
+        productName: name,
+        kind: "received",
+        delta: n,
+        note: "Stock received",
+      });
       recordAuditEntry({
         kind: "receive_stock",
         subjectType: "inventory",
@@ -306,9 +327,16 @@ export const api = {
       return { ok: true, message: `Received ${n} into stock: ${name}. (demo — not persisted)` };
     },
     /** Correct an on-hand count to an absolute value + audit. */
-    setStock: async (productId: string, seed: number, target: number, name: string) => {
+    setStock: async (productId: string, current: number, target: number, name: string) => {
       const t = Math.max(0, Math.round(target));
-      setInventoryLevel(productId, seed, t);
+      adjustInventory(productId, t - current);
+      recordInventoryMovement({
+        productId,
+        productName: name,
+        kind: "count-correction",
+        delta: t - current,
+        note: `On-hand count corrected to ${t}`,
+      });
       recordAuditEntry({
         kind: "receive_stock",
         subjectType: "inventory",
@@ -330,7 +358,16 @@ export const api = {
       taxMinor: number;
       totalMinor: number;
     }) => {
-      for (const l of input.lines) adjustInventory(l.productId, -Math.abs(l.qty));
+      for (const l of input.lines) {
+        adjustInventory(l.productId, -Math.abs(l.qty));
+        recordInventoryMovement({
+          productId: l.productId,
+          productName: l.name,
+          kind: "sale",
+          delta: -Math.abs(l.qty),
+          note: "Patient sale",
+        });
+      }
       const sale = recordSale(input);
       const count = input.lines.reduce((n, l) => n + l.qty, 0);
       recordAuditEntry({

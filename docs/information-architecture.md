@@ -36,6 +36,8 @@ Settings sub-pages:
 
 - `/settings/data` — data boundaries: Imports (wizard) · storage posture.
 - `/settings/governance` — Security & Governance: AI governance registry
+- `/settings/catalog` — Products & inventory: suppliers, pricing, stock alerts,
+  inventory history, tax handling, and patient-facing invoice explanations.
   (`?tab=ai`) · Audit log (`?tab=audit`). Removed from primary navigation,
   **not** deleted.
 
@@ -72,19 +74,21 @@ mock vs live):
 | `/` | `/today` | `/today` |
 | `/wearables` | default patient → `tracking?view=wearables` | `/patients` |
 | `/quantum-mind` | default patient → `tracking?view=mind` | `/patients` |
-| `/nutrition` | default patient → `care-plan?view=nutrition` | `/patients` |
+| `/nutrition` | default patient → `nutrition` | `/patients` |
 
 ## Patient-local navigation (one tab system)
 
-`/patients/[patientId]/[tab]` — nine tabs, everything patient-scoped lives
+`/patients/[patientId]/[tab]` — eleven tabs, everything patient-scoped lives
 here and nowhere else:
 
 | Tab | Route segment | Contents |
 |---|---|---|
 | Overview | `overview` | Profile: bookings, upcoming visits, no-shows, time since last visit, balance, demographics, contacts, medical alerts, next appointment, communications, forms, concise clinical/reasoning highlights |
-| Chart & Timeline | `chart` | Filterable longitudinal record: encounters, signed notes, addenda, forms, communications, lab events, prescriptions/supplements, protocol changes, wearable alerts, payments. Live mode renders the real EMR timeline (0021) unchanged |
-| Labs & Reasoning | `labs` | `?view=results` (default) · `?view=orders` · `?view=reasoning` — labs workspace, lab orders, extraction review, trends, provenance, hypotheses, evidence, missing info, safety considerations, differential questions |
-| Care Plan | `care-plan` | `?view=plan` (default: protocols) · `?view=supplements` (dispensary) · `?view=nutrition` (Passio-adapter mock: photo/barcode/voice/search/label/manual entries, corrections, targets, macro/micro trends, meal plans, adherence, protocol linkage) |
+| Chart & Timeline | `chart` | Dynamic chart entries with premade and practitioner-built templates, text/select/checkbox/scale fields, drawable body maps with pain/acupuncture/ashi points, copy-forward, autosave, review/sign locking, AI Scribe launch, and the filterable longitudinal record. Live mode preserves the real EMR and consent-gated scribe safeguards |
+| Labs & Reasoning | `labs` | `?view=results` (default) · `?view=orders` · `?view=reasoning` · `?view=copilot` — labs workspace, lab orders, extraction review, trends, provenance, hypotheses, evidence, missing info, safety considerations, differential questions, and the review-gated clinical copilot flow (adaptive intake → lab candidates → exact-product protocol draft) |
+| Protocol | `protocol` | Complete coordinated plan: goals, phases, interventions, schedule, linked nutrition, supplements, labs, monitoring, safety, stop criteria, approvals, and version history |
+| Nutrition | `nutrition` | Diet plan, meal structure, goals, foods to emphasize/limit, Passio-adapter mock entries, corrections, targets, trends, meal plans, adherence, and protocol linkage |
+| Supplements | `supplements` | Current stack, safety audit, personal-response review, product library, refills, inventory, and dispensary checkout |
 | Tracking & Experiments | `tracking` | `?view=twin` (longitudinal systems model) · `?view=experiments` (N-of-1) · `?view=wearables` · `?view=mind` (Mind & Cognition — mood, sleep, stress, cognition, neurocognitive scores, interventions, trends) · `?view=assessments` (assigned forms, validated questionnaires, scored outcomes, longitudinal comparisons) |
 | Appointments | `appointments` | Booking history + upcoming, links to calendar |
 | Messages | `messages` | Patient-scoped conversation view; full workspace at `/inbox` |
@@ -100,8 +104,9 @@ Legacy patient tab aliases (server-side redirects in the tab router):
 | `labs` | `labs` (unchanged) |
 | `lab-orders` | `labs?view=orders` |
 | `reasoning` | `labs?view=reasoning` |
-| `protocols` | `care-plan` |
-| `supplements` | `care-plan?view=supplements` |
+| `protocols` | `protocol` |
+| `care-plan` | `protocol` (preserves nested nutrition/supplement redirects) |
+| `supplements` | `supplements` |
 | `twin` | `tracking?view=twin` |
 | `nof1-lab` | `tracking?view=experiments` |
 | `reports` | `files` |

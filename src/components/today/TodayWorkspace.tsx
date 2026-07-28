@@ -8,16 +8,20 @@ import {
   CheckSquare,
   FileWarning,
   FlaskConical,
+  GraduationCap,
   Inbox as InboxIcon,
   RefreshCw,
   Video,
 } from "lucide-react";
 import { APPOINTMENT_TYPE_META, appointmentTitle } from "@/adapters/calendar.mock";
+import { buildTodayAiBrief } from "@/adapters/ai-assistance.mock";
 import { setFrontDeskStatus, statusLabel, STATUS_TONE } from "@/adapters/appointments.session";
 import { useTodayData, type TodayAppointment } from "@/adapters/today.mock";
+import { LEARNERS, listPrograms, useStudioState } from "@/adapters/programs-studio.mock";
 import { useFeedback } from "@/lib/feedback";
 import { formatMinor } from "@/lib/money";
 import { patientPath } from "@/lib/routes";
+import { AiAssistancePanel } from "@/components/ai/AiAssistancePanel";
 import { Card, CardTitle } from "@/components/ui/bits";
 import { Btn, BtnLink } from "@/components/ui/Btn";
 import { Metric } from "@/components/ui/Metric";
@@ -55,8 +59,10 @@ function ScheduleRow({ item }: { item: TodayAppointment }) {
         <div className="flex items-center gap-[7px]">
           {appt.patientId ? (
             <Link
-              href={patientPath(appt.patientId)}
-              className="truncate text-[13px] font-semibold text-ink hover:text-action focus-visible:outline-2 focus-visible:outline-action"
+              href={patientPath(appt.patientId, "overview")}
+              title={`Open full patient record for ${appt.patientName}`}
+              aria-label={`Open full patient record for ${appt.patientName}`}
+              className="truncate text-[13px] font-semibold text-action-deep hover:underline focus-visible:outline-2 focus-visible:outline-action"
             >
               {appt.patientName}
             </Link>
@@ -106,9 +112,16 @@ function ScheduleRow({ item }: { item: TodayAppointment }) {
         </Btn>
       )}
       {!done && (
-        <BtnLink size="sm" variant="ghost" href={`/calendar?appt=${appt.id}`}>
-          Open
-        </BtnLink>
+        <>
+          {appt.patientId && (
+            <BtnLink size="sm" variant="ghost" href={patientPath(appt.patientId, "overview")}>
+              Patient file
+            </BtnLink>
+          )}
+          <BtnLink size="sm" variant="ghost" href={`/calendar?appt=${appt.id}`}>
+            Appointment
+          </BtnLink>
+        </>
       )}
     </div>
   );
@@ -175,6 +188,67 @@ function BriefRow({ href, title, sub, pill }: { href: string; title: string; sub
   );
 }
 
+function ProgramsOverview() {
+  const studio = useStudioState();
+  const activePrograms = listPrograms(studio).filter(
+    (program) => program.status === "published" && program.enrollment.active > 0,
+  );
+
+  return (
+    <div data-testid="today-programs">
+      <Card className="overflow-hidden">
+      <div className="flex items-center gap-2 border-b border-hairline px-4 py-[10px]">
+        <span className="flex h-[26px] w-[26px] items-center justify-center rounded-[7px] bg-ai-tint">
+          <GraduationCap size={14} strokeWidth={1.75} className="text-ai-deep" aria-hidden />
+        </span>
+        <CardTitle className="flex-1">Programs &amp; active users</CardTitle>
+        <span className="text-[11.5px] font-semibold text-subtle">{activePrograms.length} live</span>
+        <Link href="/programs" className="text-[11.5px] font-semibold text-action hover:text-action-deep focus-visible:outline-2 focus-visible:outline-action">All programs</Link>
+      </div>
+      <div className="divide-y divide-hairline">
+        {activePrograms.map((program) => {
+          const linkedPatients = LEARNERS.filter(
+            (learner) => learner.programId === program.id && !learner.completed && learner.patientId,
+          );
+          const otherCount = Math.max(0, program.enrollment.active - linkedPatients.length);
+          return (
+            <section key={program.id} className="px-4 py-3" aria-label={program.title}>
+              <div className="flex flex-wrap items-start gap-2">
+                <div className="min-w-0 flex-1">
+                  <h3 className="m-0 text-[13px] font-bold text-ink">{program.title}</h3>
+                  <p className="mt-1 mb-0 truncate text-[11px] text-subtle">{program.tagline}</p>
+                </div>
+                <Pill tone="positive">{program.enrollment.active} active</Pill>
+                <Pill tone="slate">{program.enrollment.avgProgressPct}% avg progress</Pill>
+              </div>
+              <div className="mt-3 grid gap-2 md:grid-cols-3">
+                {linkedPatients.map((learner) => (
+                  <Link
+                    key={learner.id}
+                    href={patientPath(learner.patientId!, "overview")}
+                    aria-label={`Open patient overview for ${learner.name}`}
+                    className="group flex min-w-0 items-center gap-2 rounded-lg border border-line bg-sunken px-2.5 py-2 hover:border-line-hover hover:bg-card focus-visible:outline-2 focus-visible:outline-action"
+                  >
+                    <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-action-tint text-[10px] font-bold text-action-deep">
+                      {learner.name.split(" ").map((part) => part[0]).join("").slice(0, 2)}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[11.5px] font-semibold text-ink group-hover:text-action-deep">{learner.name}</span>
+                      <span className="block text-[10px] text-faint">{learner.progressPct}% complete · {learner.lastActiveLabel}</span>
+                    </span>
+                  </Link>
+                ))}
+              </div>
+              {otherCount > 0 && <p className="mt-2 mb-0 text-[10px] text-faint">Showing linked patient records · {otherCount} additional active program user{otherCount === 1 ? "" : "s"}</p>}
+            </section>
+          );
+        })}
+      </div>
+      </Card>
+    </div>
+  );
+}
+
 export function TodayWorkspace({
   dateLine,
   weekday,
@@ -185,6 +259,7 @@ export function TodayWorkspace({
   isWeekendFallback: boolean;
 }) {
   const data = useTodayData(weekday, isWeekendFallback);
+  const aiBrief = buildTodayAiBrief(data);
   const [nowMin, setNowMin] = useState<number | null>(null);
 
   useEffect(() => {
@@ -235,6 +310,8 @@ export function TodayWorkspace({
         <Metric label="Unsigned notes" value={data.unsignedNotes.length} sub="Sign to lock the record" subTone={data.unsignedNotes.length ? "critical" : undefined} href={patientPath(data.unsignedNotes[0]?.patientId ?? "p-78435", "chart")} />
       </div>
 
+      <AiAssistancePanel brief={aiBrief} className="mb-4" />
+
       <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
         <div className="flex min-w-0 flex-col gap-4">
           <Card className="overflow-hidden">
@@ -270,6 +347,8 @@ export function TodayWorkspace({
               )}
             </div>
           </Card>
+
+          <ProgramsOverview />
 
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             <BriefSection

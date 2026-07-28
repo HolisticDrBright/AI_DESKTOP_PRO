@@ -12,12 +12,11 @@ import { useCustomProducts, useInventoryAdjustments } from "@/adapters/session-s
 export function useInventory(): InventoryProduct[] {
   const adj = useInventoryAdjustments();
   const custom = useCustomProducts();
-  return useMemo(
-    () =>
-      [...custom, ...SEED_PRODUCTS].map((p) => ({
+  return useMemo(() => {
+    const editedIds = new Set(custom.map((p) => p.id));
+    return [...custom, ...SEED_PRODUCTS.filter((p) => !editedIds.has(p.id))].map((p) => ({
         ...p,
         stock: Math.max(0, p.stock + (adj[p.id] ?? 0)),
-      })),
-    [adj, custom],
-  );
+      }));
+  }, [adj, custom]);
 }

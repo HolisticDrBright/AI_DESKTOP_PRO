@@ -20,7 +20,7 @@ import { api } from "@/adapters";
 import { listPatients } from "@/adapters/patients.mock";
 import { listPrograms } from "@/adapters/programs-studio.mock";
 import { linkCheckoutInvoice } from "@/adapters/appointments.session";
-import { adjustInventory } from "@/adapters/session-store";
+import { adjustInventory, recordInventoryMovement } from "@/adapters/session-store";
 import type { InventoryProduct } from "@/adapters/inventory.mock";
 import { useFeedback } from "@/lib/feedback";
 import { formatMinor, parseToMinor, testModeFeeMinor } from "@/lib/money";
@@ -107,6 +107,7 @@ interface CartLine {
   kind: LineKind;
   refId?: string;
   label: string;
+  description?: string;
   qty: number;
   unitMinor: number;
   taxable?: boolean;
@@ -172,7 +173,16 @@ function Checkout({
 
   const complete = () => {
     for (const l of lines) {
-      if (l.kind === "product" && l.refId) adjustInventory(l.refId, -l.qty);
+      if (l.kind === "product" && l.refId) {
+        adjustInventory(l.refId, -l.qty);
+        recordInventoryMovement({
+          productId: l.refId,
+          productName: l.label,
+          kind: "sale",
+          delta: -l.qty,
+          note: `Invoice sale to ${patient?.name ?? "walk-in"}`,
+        });
+      }
     }
     const payments: { method: PaymentMethod; amountMinor: number }[] = [];
     if (cash > 0) payments.push({ method: "cash", amountMinor: cash });
@@ -181,7 +191,7 @@ function Checkout({
       patientId: patient?.id,
       patientName: patient?.name ?? "Walk-in",
       appointmentId: apptId,
-      lines: lines.map((l) => ({ kind: l.kind, refId: l.refId, label: l.label, qty: l.qty, unitMinor: l.unitMinor, taxable: l.taxable })),
+      lines: lines.map((l) => ({ kind: l.kind, refId: l.refId, label: l.label, description: l.description, qty: l.qty, unitMinor: l.unitMinor, taxable: l.taxable })),
       discountMinor: discount,
       creditAppliedMinor: credit,
       payments,
@@ -254,7 +264,7 @@ function Checkout({
                   key={p.id}
                   className={cn(catalogBtn, p.stock === 0 && "cursor-not-allowed opacity-45")}
                   disabled={p.stock === 0}
-                  onClick={() => addLine({ kind: "product", refId: p.id, label: `${p.name} (${p.unitLabel})`, qty: 1, unitMinor: p.priceMinor, taxable: true, stock: p.stock })}
+                  onClick={() => addLine({ kind: "product", refId: p.id, label: `${p.name} (${p.unitLabel})`, description: p.invoiceDescription, qty: 1, unitMinor: p.priceMinor, taxable: p.taxable, stock: p.stock })}
                 >
                   <span className="truncate font-medium text-ink">{p.name}</span>
                   <span className="flex items-baseline justify-between text-[10.5px] text-faint">
@@ -298,6 +308,7 @@ function Checkout({
               <div key={l.key} className="flex items-center gap-2 rounded-lg border border-hairline bg-sunken px-2 py-[6px]">
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-[12px] font-medium text-ink">{l.label}</span>
+                  {l.description && <span className="mt-px block line-clamp-2 text-[10px] leading-[1.35] text-subtle">{l.description}</span>}
                   <span className="block text-[10.5px] text-faint">{formatMinor(l.unitMinor)} each{l.taxable ? " · taxable" : ""}</span>
                 </span>
                 <Btn size="sm" variant="ghost" aria-label={`Decrease ${l.label}`} onClick={() => setLines((prev) => prev.map((x) => (x.key === l.key ? { ...x, qty: Math.max(1, x.qty - 1) } : x)))}>
@@ -375,7 +386,13 @@ function Checkout({
             <p className="m-0 text-[12px] text-subtle">{receipt.patientName} · Today · {receipt.staff}</p>
             <div className="mt-2 border-t border-hairline pt-2 text-[12.5px]">
               {receipt.lines.map((l) => (
-                <p key={l.id} className="m-0 flex justify-between py-[2px]"><span>{l.label} × {l.qty}</span><span className="tabular-nums">{formatMinor(l.totalMinor)}</span></p>
+                <div key={l.id} className="flex justify-between gap-4 py-[3px]">
+                  <span>
+                    <span className="block">{l.label} × {l.qty}</span>
+                    {l.description && <span className="block text-[10px] leading-[1.35] text-subtle">{l.description}</span>}
+                  </span>
+                  <span className="shrink-0 tabular-nums">{formatMinor(l.totalMinor)}</span>
+                </div>
               ))}
               <p className="m-0 flex justify-between border-t border-hairline py-[3px] font-bold"><span>Total</span><span className="tabular-nums">{formatMinor(receipt.totalMinor)}</span></p>
               {receipt.payments.map((p) => (

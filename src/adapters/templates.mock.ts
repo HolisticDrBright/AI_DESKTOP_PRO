@@ -90,11 +90,11 @@ const SEED: TemplateItem[] = [
   T("tp-iron", "Iron repletion protocol", "protocol",
     "Phased repletion with recheck gates. Practitioner approval required per phase.",
     "Phase 1 (weeks 1–4): …\nRecheck gate: ferritin + CBC before phase 2.\nPhase 2: …",
-    [{ label: "Care Plan", href: "/patients/p-59318/care-plan" }], 3),
+    [{ label: "Protocol", href: "/patients/p-59318/protocol" }], 3),
   T("tp-sleep", "Sleep & recovery care plan", "care-plan",
     "Light, timing, temperature, magnesium — the practice's standard base.",
     "Morning: 10 min outdoor light…\nEvening: cutoff schedule…\nSupplements: …",
-    [{ label: "Care Plan", href: "/patients/p-78435/care-plan" }]),
+    [{ label: "Protocol", href: "/patients/p-78435/protocol" }]),
   T("tp-welcome", "New-patient welcome message", "message",
     "Portal message sent after intake; review-gated before send.",
     "Welcome to the practice! Here's what happens next…",
@@ -134,7 +134,7 @@ const SEED: TemplateItem[] = [
   T("tp-supp-rationale", "Supplement rationale snippet", "note",
     "Explains a recommendation with evidence slot left explicit.",
     "Recommendation: … Rationale: … Evidence: (add citations)",
-    [{ label: "Care Plan → Supplements", href: "/patients/p-78435/care-plan?view=supplements" }],
+    [{ label: "Supplements", href: "/patients/p-78435/supplements" }],
     1, "draft"),
 ];
 

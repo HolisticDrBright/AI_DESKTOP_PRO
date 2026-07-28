@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Boxes, Package, Plus, X } from "lucide-react";
+import { Boxes, History, Package, Plus, Search, X } from "lucide-react";
 import { api } from "@/adapters";
 import {
   CATEGORY_TONE,
@@ -17,6 +17,7 @@ import { Card } from "@/components/ui/bits";
 import { cn } from "@/lib/cn";
 import { useFeedback } from "@/lib/feedback";
 import { toneText, toneTint } from "@/lib/tones";
+import { useInventoryMovements } from "@/adapters/session-store";
 import { useInventory } from "./useInventory";
 
 function Pill({ tone, children }: { tone: Tone; children: React.ReactNode }) {
@@ -34,6 +35,18 @@ export function InventoryPanel() {
   const products = useInventory();
   const [manage, setManage] = useState<InventoryProduct | null>(null);
   const [adding, setAdding] = useState(false);
+  const [query, setQuery] = useState("");
+  const [stockFilter, setStockFilter] = useState<"all" | "attention">("all");
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return products.filter((p) => {
+      const matchesQuery = !q || [p.name, p.brand, p.sku, p.supplier, p.category]
+        .some((value) => value.toLowerCase().includes(q));
+      const matchesStock = stockFilter === "all" || stockLevel(p.stock, p.reorderPoint) !== "ok";
+      return matchesQuery && matchesStock;
+    });
+  }, [products, query, stockFilter]);
 
   const summary = useMemo(() => {
     let low = 0;
@@ -54,11 +67,11 @@ export function InventoryPanel() {
         <div>
           <div className="flex items-center gap-[7px]">
             <Boxes size={17} strokeWidth={2} className="text-brand" aria-hidden />
-            <h2 className="m-0 text-[17px] font-bold tracking-[-0.015em]">Dispensary inventory</h2>
+            <h2 className="m-0 text-[17px] font-bold tracking-[-0.015em]">Products &amp; inventory</h2>
           </div>
           <p className="mt-[3px] mb-0 text-[11.5px] text-subtle">
-            Practice-wide supplement stock. Selling to a patient (Dispense tab) counts stock down.
-            Session demo — not persisted to a backend.
+            Practice-wide catalog for checkout, supplement dispensing, suppliers, pricing, and stock.
+            Product explanations follow the item onto the patient invoice. Session demo — not persisted.
           </p>
         </div>
         <button
@@ -78,13 +91,40 @@ export function InventoryPanel() {
         <SummaryChip label="Retail value on hand" value={money(summary.retailValue)} tone="positive" />
       </div>
 
+      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-line bg-card p-2">
+        <label className="relative min-w-[260px] flex-1">
+          <span className="sr-only">Search products</span>
+          <Search size={14} className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-faint" aria-hidden />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search product, SKU, supplier, or category"
+            className="h-9 w-full rounded-lg border border-line bg-card pr-3 pl-9 text-[12.5px] outline-none focus-visible:outline-2 focus-visible:outline-action"
+          />
+        </label>
+        <div className="flex h-9 rounded-lg border border-line bg-sunken p-[3px]" aria-label="Stock filter">
+          {(["all", "attention"] as const).map((value) => (
+            <button
+              key={value}
+              onClick={() => setStockFilter(value)}
+              className={cn(
+                "rounded-md px-3 text-[11.5px] font-semibold",
+                stockFilter === value ? "bg-card text-ink shadow-sm" : "text-subtle hover:text-ink",
+              )}
+            >
+              {value === "all" ? "All products" : "Needs attention"}
+            </button>
+          ))}
+        </div>
+      </div>
+
       <Card className="overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full border-collapse text-[12px]">
             <caption className="sr-only">Supplement inventory with stock, price and cost</caption>
             <thead>
               <tr>
-                {["Product", "Category", "On hand", "Price", "Cost", "Margin", ""].map((h) => (
+                {["Product", "Supplier", "Invoice explanation", "On hand", "Price", "Margin", ""].map((h) => (
                   <th
                     key={h}
                     scope="col"
@@ -96,7 +136,7 @@ export function InventoryPanel() {
               </tr>
             </thead>
             <tbody>
-              {products.map((p) => {
+              {filtered.map((p) => {
                 const lvl = stockLevel(p.stock, p.reorderPoint);
                 const margin = p.priceMinor > 0 ? Math.round(((p.priceMinor - p.costMinor) / p.priceMinor) * 100) : 0;
                 return (
@@ -108,7 +148,12 @@ export function InventoryPanel() {
                       </div>
                     </td>
                     <td className="px-[11px] py-[9px]">
+                      <div className="font-medium text-body">{p.supplier}</div>
                       <Pill tone={CATEGORY_TONE[p.category] ?? "slate"}>{p.category}</Pill>
+                    </td>
+                    <td className="max-w-[300px] px-[11px] py-[9px]">
+                      <p className="m-0 line-clamp-2 text-[11px] leading-[1.4] text-subtle">{p.invoiceDescription}</p>
+                      <span className="text-[10px] font-semibold text-faint">{p.taxable ? "Taxable" : "Non-taxable"}</span>
                     </td>
                     <td className="px-[11px] py-[9px]">
                       <div className="flex items-center gap-[7px]">
@@ -118,7 +163,6 @@ export function InventoryPanel() {
                       <div className="text-[10px] text-faint">reorder at {p.reorderPoint}</div>
                     </td>
                     <td className="px-[11px] py-[9px] font-semibold tabular-nums text-ink">{money(p.priceMinor)}</td>
-                    <td className="px-[11px] py-[9px] tabular-nums text-muted">{money(p.costMinor)}</td>
                     <td className="px-[11px] py-[9px] tabular-nums text-muted">{margin}%</td>
                     <td className="px-[11px] py-[9px] text-right">
                       <button
@@ -131,6 +175,13 @@ export function InventoryPanel() {
                   </tr>
                 );
               })}
+              {filtered.length === 0 && (
+                <tr>
+                  <td colSpan={7} className="px-4 py-8 text-center text-[12px] text-faint">
+                    No products match this search and stock filter.
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
@@ -166,10 +217,13 @@ function ModalShell({
 }) {
   return (
     <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={title}
       className="fixed inset-0 z-[95] flex items-center justify-center bg-[rgba(24,42,61,0.34)] p-4"
       onMouseDown={(e) => e.target === e.currentTarget && onClose()}
     >
-      <Card className="animate-fade-up w-[380px] max-w-full p-0">
+      <Card className="animate-fade-up max-h-[90vh] w-[640px] max-w-full overflow-y-auto p-0">
         <div className="flex items-center justify-between border-b border-hairline px-4 py-[12px]">
           <h3 className="m-0 text-[14px] font-bold">{title}</h3>
           <button
@@ -192,8 +246,20 @@ const labelCls = "mb-[3px] block text-[10px] font-bold tracking-[0.04em] text-fa
 
 function RestockModal({ product, onClose }: { product: InventoryProduct; onClose: () => void }) {
   const { announce } = useFeedback();
+  const movements = useInventoryMovements().filter((m) => m.productId === product.id).slice(0, 5);
   const [qty, setQty] = useState("12");
   const [exact, setExact] = useState(String(product.stock));
+  const [name, setName] = useState(product.name);
+  const [brand, setBrand] = useState(product.brand);
+  const [supplier, setSupplier] = useState(product.supplier);
+  const [sku, setSku] = useState(product.sku);
+  const [unitLabel, setUnitLabel] = useState(product.unitLabel);
+  const [category, setCategory] = useState(product.category);
+  const [price, setPrice] = useState((product.priceMinor / 100).toFixed(2));
+  const [cost, setCost] = useState((product.costMinor / 100).toFixed(2));
+  const [reorder, setReorder] = useState(String(product.reorderPoint));
+  const [description, setDescription] = useState(product.invoiceDescription);
+  const [taxable, setTaxable] = useState(product.taxable);
 
   const receive = () => {
     const n = Number(qty);
@@ -208,8 +274,80 @@ function RestockModal({ product, onClose }: { product: InventoryProduct; onClose
     onClose();
   };
 
+  const save = () => {
+    const priceMinor = Math.round(Number(price) * 100);
+    if (name.trim().length < 2 || !Number.isFinite(priceMinor) || priceMinor < 0) return;
+    void api.inventory.updateProduct({
+      ...product,
+      name: name.trim(),
+      brand: brand.trim() || "—",
+      supplier: supplier.trim() || "Not set",
+      sku: sku.trim() || product.sku,
+      unitLabel: unitLabel.trim() || "each",
+      category,
+      priceMinor,
+      costMinor: Math.max(0, Math.round(Number(cost) * 100) || 0),
+      reorderPoint: Math.max(0, Math.round(Number(reorder)) || 0),
+      invoiceDescription: description.trim() || "No patient-facing explanation has been added.",
+      taxable,
+    }).then((r) => announce(r.message));
+    onClose();
+  };
+
   return (
     <ModalShell title={`Manage · ${product.name}`} onClose={onClose}>
+      <div className="mb-4 grid grid-cols-2 gap-2">
+        <label className="col-span-2 block">
+          <span className={labelCls}>Product name</span>
+          <input value={name} onChange={(e) => setName(e.target.value)} className={inputCls} />
+        </label>
+        <label className="block">
+          <span className={labelCls}>Brand</span>
+          <input value={brand} onChange={(e) => setBrand(e.target.value)} className={inputCls} />
+        </label>
+        <label className="block">
+          <span className={labelCls}>Supplier</span>
+          <input value={supplier} onChange={(e) => setSupplier(e.target.value)} className={inputCls} />
+        </label>
+        <label className="block">
+          <span className={labelCls}>SKU</span>
+          <input value={sku} onChange={(e) => setSku(e.target.value)} className={inputCls} />
+        </label>
+        <label className="block">
+          <span className={labelCls}>Package / unit</span>
+          <input value={unitLabel} onChange={(e) => setUnitLabel(e.target.value)} className={inputCls} />
+        </label>
+        <label className="block">
+          <span className={labelCls}>Category</span>
+          <select value={category} onChange={(e) => setCategory(e.target.value)} className={cn(inputCls, "cursor-pointer")}>
+            {INVENTORY_CATEGORIES.map((c) => <option key={c}>{c}</option>)}
+          </select>
+        </label>
+        <label className="block">
+          <span className={labelCls}>Reorder at</span>
+          <input value={reorder} onChange={(e) => setReorder(e.target.value)} inputMode="numeric" className={inputCls} />
+        </label>
+        <label className="block">
+          <span className={labelCls}>Retail price ($)</span>
+          <input value={price} onChange={(e) => setPrice(e.target.value)} inputMode="decimal" className={inputCls} />
+        </label>
+        <label className="block">
+          <span className={labelCls}>Cost ($)</span>
+          <input value={cost} onChange={(e) => setCost(e.target.value)} inputMode="decimal" className={inputCls} />
+        </label>
+        <label className="col-span-2 block">
+          <span className={labelCls}>Patient-facing invoice explanation</span>
+          <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} className="w-full resize-y rounded-lg border border-line bg-card px-[9px] py-2 text-[12px] leading-[1.45] outline-none focus-visible:outline-2 focus-visible:outline-action" />
+        </label>
+        <label className="col-span-2 flex items-center gap-2 text-[12px] font-medium text-body">
+          <input type="checkbox" checked={taxable} onChange={(e) => setTaxable(e.target.checked)} />
+          Taxable at checkout
+        </label>
+        <button onClick={save} className="col-span-2 h-9 rounded-lg border-none bg-action text-[12.5px] font-semibold text-white hover:bg-action-deep focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink">
+          Save product details
+        </button>
+      </div>
+
       <div className="mb-3 flex items-center gap-[8px] rounded-lg bg-sunken px-3 py-[8px]">
         <Package size={15} strokeWidth={2} className="text-muted" aria-hidden />
         <span className="text-[12px] text-body">
@@ -242,6 +380,20 @@ function RestockModal({ product, onClose }: { product: InventoryProduct; onClose
           </button>
         </div>
       </label>
+
+      <div className="mt-4 border-t border-line pt-3">
+        <div className="mb-2 flex items-center gap-2 text-[11px] font-bold tracking-[0.04em] text-faint uppercase">
+          <History size={13} aria-hidden /> Recent inventory history
+        </div>
+        {movements.length === 0 ? (
+          <p className="m-0 text-[11.5px] text-faint">No movements recorded this session.</p>
+        ) : movements.map((movement) => (
+          <div key={movement.id} className="flex items-center justify-between border-b border-hairline py-[5px] text-[11.5px] last:border-0">
+            <span className="text-body">{movement.note}</span>
+            <span className={cn("font-bold tabular-nums", movement.delta > 0 ? "text-positive" : "text-critical")}>{movement.delta > 0 ? "+" : ""}{movement.delta}</span>
+          </div>
+        ))}
+      </div>
     </ModalShell>
   );
 }
@@ -252,11 +404,15 @@ function AddProductModal({ onClose }: { onClose: () => void }) {
   const { announce } = useFeedback();
   const [name, setName] = useState("");
   const [brand, setBrand] = useState("");
+  const [supplier, setSupplier] = useState("");
+  const [unitLabel, setUnitLabel] = useState("60 ct bottle");
   const [category, setCategory] = useState<string>(INVENTORY_CATEGORIES[0]);
   const [price, setPrice] = useState("");
   const [cost, setCost] = useState("");
   const [stock, setStock] = useState("10");
   const [reorder, setReorder] = useState("6");
+  const [description, setDescription] = useState("");
+  const [taxable, setTaxable] = useState(true);
 
   const priceMinor = Math.round(Number(price) * 100);
   const valid = name.trim().length > 1 && Number.isFinite(priceMinor) && priceMinor > 0;
@@ -268,9 +424,12 @@ function AddProductModal({ onClose }: { onClose: () => void }) {
       id: `sup-custom-${slug}-${Math.random().toString(36).slice(2, 6)}`,
       name: name.trim(),
       brand: brand.trim() || "—",
+      supplier: supplier.trim() || brand.trim() || "Not set",
       sku: (slug || "custom").toUpperCase().slice(0, 12),
       category,
-      unitLabel: "each",
+      unitLabel: unitLabel.trim() || "each",
+      invoiceDescription: description.trim() || "No patient-facing explanation has been added.",
+      taxable,
       priceMinor,
       costMinor: Math.max(0, Math.round(Number(cost) * 100) || 0),
       stock: Math.max(0, Math.round(Number(stock)) || 0),
@@ -303,6 +462,16 @@ function AddProductModal({ onClose }: { onClose: () => void }) {
         </div>
         <div className="grid grid-cols-2 gap-2">
           <label className="block">
+            <span className={labelCls}>Supplier</span>
+            <input value={supplier} onChange={(e) => setSupplier(e.target.value)} placeholder="e.g. Fullscript or direct" className={inputCls} />
+          </label>
+          <label className="block">
+            <span className={labelCls}>Package / unit</span>
+            <input value={unitLabel} onChange={(e) => setUnitLabel(e.target.value)} className={inputCls} />
+          </label>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <label className="block">
             <span className={labelCls}>Retail price ($)</span>
             <input value={price} onChange={(e) => setPrice(e.target.value)} inputMode="decimal" placeholder="0.00" className={inputCls} />
           </label>
@@ -311,6 +480,20 @@ function AddProductModal({ onClose }: { onClose: () => void }) {
             <input value={cost} onChange={(e) => setCost(e.target.value)} inputMode="decimal" placeholder="0.00" className={inputCls} />
           </label>
         </div>
+        <label className="block">
+          <span className={labelCls}>Patient-facing invoice explanation</span>
+          <textarea
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            rows={3}
+            placeholder="Why this product was selected and what it supports. This follows the item onto the invoice."
+            className="w-full resize-y rounded-lg border border-line bg-card px-[9px] py-2 text-[12px] leading-[1.45] outline-none focus-visible:outline-2 focus-visible:outline-action"
+          />
+        </label>
+        <label className="flex items-center gap-2 text-[12px] font-medium text-body">
+          <input type="checkbox" checked={taxable} onChange={(e) => setTaxable(e.target.checked)} />
+          Taxable at checkout
+        </label>
         <div className="grid grid-cols-2 gap-2">
           <label className="block">
             <span className={labelCls}>Initial stock</span>

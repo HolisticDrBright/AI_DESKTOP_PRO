@@ -2,6 +2,7 @@ import { SegTabs } from "@/components/ui/SegTabs";
 import { LabsWorkspace } from "@/components/labs/LabsWorkspace";
 import { LabOrdersWorkspace } from "@/components/laborders/LabOrdersWorkspace";
 import { ReasoningWorkspace } from "@/components/reasoning/ReasoningWorkspace";
+import { ClinicalCopilotWorkspace } from "@/components/patient/ClinicalCopilotWorkspace";
 import { patientPath } from "@/lib/routes";
 
 /**
@@ -20,7 +21,10 @@ export function LabsHub({
   patientName: string;
   view?: string;
 }) {
-  const active = view === "orders" || view === "reasoning" ? view : "results";
+  const active =
+    view === "orders" || view === "reasoning" || view === "copilot"
+      ? view
+      : "results";
   return (
     <div>
       <SegTabs
@@ -32,11 +36,13 @@ export function LabsHub({
           { id: "results", label: "Results & review" },
           { id: "orders", label: "Lab orders" },
           { id: "reasoning", label: "Clinical reasoning" },
+          { id: "copilot", label: "Clinical copilot" },
         ]}
       />
       {active === "results" && <LabsWorkspace patientId={patientId} patientName={patientName} />}
       {active === "orders" && <LabOrdersWorkspace patientId={patientId} patientName={patientName} />}
       {active === "reasoning" && <ReasoningWorkspace patientId={patientId} patientName={patientName} />}
+      {active === "copilot" && <ClinicalCopilotWorkspace patientId={patientId} patientName={patientName} />}
     </div>
   );
 }

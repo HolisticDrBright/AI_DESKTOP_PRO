@@ -48,7 +48,10 @@ export async function PatientTimeline({ patientId }: { patientId: string }) {
           <Stethoscope size={13} strokeWidth={2.2} className="text-brand" aria-hidden />
           Clinical timeline
         </CardTitle>
-        <StartEncounterButton patientId={patientId} compact />
+        <div className="flex items-center gap-2">
+          <StartEncounterButton patientId={patientId} compact />
+          <StartEncounterButton patientId={patientId} compact label="AI Scribe" purpose="scribe" />
+        </div>
       </div>
       <p className="m-0 mt-1 text-[11px] leading-[1.5] text-faint">
         Clinical events only — encounters, notes, signatures, addenda, appointments. The

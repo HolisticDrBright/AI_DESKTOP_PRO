@@ -85,6 +85,8 @@ export interface Program {
 export interface Learner {
   id: string;
   name: string;
+  /** Present when this learner is also a patient with an accessible chart. */
+  patientId?: string;
   programId: string;
   progressPct: number;
   lastActiveLabel: string;
@@ -229,11 +231,14 @@ const SEED_PROGRAMS: Program[] = [
 ];
 
 export const LEARNERS: Learner[] = [
-  { id: "lr-1", name: "Alexandra Morgan", programId: "prog-metabolic", progressPct: 62, lastActiveLabel: "Today" },
-  { id: "lr-2", name: "Dana Whitfield", programId: "prog-metabolic", progressPct: 34, lastActiveLabel: "Yesterday" },
+  { id: "lr-1", name: "Alexandra Morgan", patientId: "p-78435", programId: "prog-metabolic", progressPct: 62, lastActiveLabel: "Today" },
+  { id: "lr-2", name: "Dana Whitfield", patientId: "p-66473", programId: "prog-metabolic", progressPct: 34, lastActiveLabel: "Yesterday" },
+  { id: "lr-8", name: "Michael Johnson", patientId: "p-64201", programId: "prog-metabolic", progressPct: 47, lastActiveLabel: "Today" },
   { id: "lr-3", name: "Sam Torres", programId: "prog-metabolic", progressPct: 100, lastActiveLabel: "Jul 12", completed: true, certificateIssued: true },
   { id: "lr-4", name: "Jules Andersen", programId: "prog-metabolic", progressPct: 88, lastActiveLabel: "Jul 16" },
-  { id: "lr-5", name: "Marcus Webb", programId: "prog-sleep", progressPct: 100, lastActiveLabel: "Jul 8", completed: true },
+  { id: "lr-5", name: "Marcus Webb", patientId: "p-52984", programId: "prog-sleep", progressPct: 100, lastActiveLabel: "Jul 8", completed: true },
+  { id: "lr-9", name: "Jessica Parker", patientId: "p-71126", programId: "prog-sleep", progressPct: 73, lastActiveLabel: "Today" },
+  { id: "lr-10", name: "Priya Sharma", patientId: "p-59318", programId: "prog-sleep", progressPct: 28, lastActiveLabel: "Yesterday" },
   { id: "lr-6", name: "Robin Okada", programId: "prog-sleep", progressPct: 55, lastActiveLabel: "Jul 15" },
   { id: "lr-7", name: "Casey Lin", programId: "prog-sleep", progressPct: 12, lastActiveLabel: "Jul 17" },
 ];
