@@ -358,11 +358,18 @@ begin
     _payload := _item.payload;
 
     if _item.entity_type = 'pathway' then
+      perform pg_catalog.pg_advisory_xact_lock(
+        pg_catalog.hashtextextended(
+          _item.organization_id::text || ':pathway:' || lower(btrim(_payload ->> 'code')),
+          0
+        )
+      );
       select id into _pathway_id
       from public.clinical_pathways
       where organization_id = _item.organization_id
         and code = lower(btrim(_payload ->> 'code'))
-        and retired_at is null;
+        and retired_at is null
+      for update;
 
       if _pathway_id is null then
         insert into public.clinical_pathways
@@ -393,6 +400,12 @@ begin
       _applied_type := 'clinical_pathway_version';
       _applied_id := _version_id;
     elsif _item.entity_type = 'product_label' then
+      perform pg_catalog.pg_advisory_xact_lock(
+        pg_catalog.hashtextextended(
+          _item.organization_id::text || ':product-label:' || lower(btrim(_payload ->> 'productCode')),
+          0
+        )
+      );
       select coalesce(max(version), 0) + 1 into _version
       from public.product_label_versions
       where organization_id = _item.organization_id

@@ -308,7 +308,9 @@ create or replace function public.create_clinical_pathway_draft(
 as $$
 declare _p public.clinical_pathways%rowtype; _uid uuid; _version integer; _version_id uuid;
 begin
-  select * into _p from public.clinical_pathways where id = _pathway_id and retired_at is null;
+  select * into _p from public.clinical_pathways
+  where id = _pathway_id and retired_at is null
+  for update;
   if not found then raise exception 'clinical pathway not found' using errcode = 'P0002'; end if;
   _uid := private.require_knowledge_editor(_p.organization_id);
   if jsonb_typeof(_content) <> 'object' or jsonb_typeof(_source_refs) <> 'array' then
@@ -368,6 +370,12 @@ begin
      or coalesce(btrim(_brand),'') = '' or jsonb_typeof(_exact_label) <> 'object' then
     raise exception 'product identity and exact label object are required' using errcode = '22023';
   end if;
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended(
+      _organization_id::text || ':product-label:' || lower(btrim(_product_code)),
+      0
+    )
+  );
   select coalesce(max(version),0)+1 into _version from public.product_label_versions
     where organization_id = _organization_id and product_code = lower(btrim(_product_code));
   insert into public.product_label_versions
