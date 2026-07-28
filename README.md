@@ -50,7 +50,10 @@ confirming-lab candidates → exact-product protocol drafting. Product candidate
 cannot enter a protocol until core safety information is present, the
 practitioner marks the output reviewed, and the current manufacturer label is
 explicitly verified. Affiliate links remain hidden during clinical selection;
-all generated plans stay draft-only and session-only.
+all generated plans stay draft-only and session-only. The versioned pathway
+workflow lives at **Settings → Clinical Knowledge Center**; its preview and
+persistent database contract are documented in
+[`docs/clinical-knowledge-registry.md`](docs/clinical-knowledge-registry.md).
 
 ## Stack
 

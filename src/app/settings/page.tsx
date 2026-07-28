@@ -7,6 +7,7 @@ import {
   CreditCard,
   Database,
   Layers,
+  LibraryBig,
   MessageSquare,
   PackageSearch,
   ShieldCheck,
@@ -32,6 +33,7 @@ const GROUPS: {
       { label: "Practice profile & branding", detail: "Identity, location, language, and display", href: "/settings#practice-preferences", icon: Building2 },
       { label: "Scheduling & online booking", detail: "Visit types, availability, wait list, and calendar", href: "/calendar", icon: CalendarDays },
       { label: "Forms & chart templates", detail: "Reusable intake, charting, and care-plan structures", href: "/templates", icon: ClipboardList },
+      { label: "Clinical Knowledge Center", detail: "Versioned protocols, lab logic, products, and safety rules", href: "/settings/knowledge", icon: LibraryBig },
     ],
   },
   {

@@ -17,6 +17,31 @@ function trackErrors(page: Page): string[] {
 
 test.describe.configure({ mode: "serial" });
 
+test("Clinical Knowledge Center versions and approves governed pathways", async ({ page }) => {
+  const errors = trackErrors(page);
+  await page.goto("/settings/knowledge");
+  await expect(page.getByRole("heading", { name: "Clinical Knowledge Center" })).toBeVisible();
+  await expect(page.getByText("6 governed pathways")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Thyroid classification pathway" })).toBeVisible();
+  await expect(page.getByText("Full Thyroid Panel", { exact: true })).toBeVisible();
+  await expect(page.getByText("Thyro Immune", { exact: true })).toBeVisible();
+  await expect(page.getByText("Exact current label must be verified before patient selection").first()).toBeVisible();
+
+  await page.getByRole("button", { name: "New version" }).click();
+  await expect(page.getByRole("button", { name: "Save draft" })).toBeVisible();
+  await page.getByLabel("Differentiating questions, one per line").fill(
+    "Are thyroid antibodies documented?\nIs thyroid medication reconciled?\nWhen is thyroid medication taken relative to food?",
+  );
+  await page.getByRole("button", { name: "Save draft" }).click();
+  await expect(page.getByRole("button", { name: "Saved" })).toBeVisible();
+  await page.getByRole("button", { name: "Approve", exact: true }).click();
+  await expect(page.getByRole("alertdialog")).toContainText("approved content becomes immutable");
+  await page.getByRole("button", { name: "Approve version" }).click();
+  await expect(page.getByRole("combobox", { name: "Pathway version" })).toHaveValue("kp-thyroid-v2");
+  await expect(page.getByRole("button", { name: "New version" })).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
 test("route consolidation: every old URL lands on its new home", async ({ page }) => {
   const cases: [string, string][] = [
     ["/practice", "/today"],

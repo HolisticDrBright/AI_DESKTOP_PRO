@@ -2,14 +2,12 @@
 
 import { createSessionStore } from "./session-kv";
 import { USE_LIVE_API } from "./mode";
+import {
+  getApprovedPathway,
+  type KnowledgeConcern,
+} from "./clinical-knowledge.mock";
 
-export type CopilotConcern =
-  | "thyroid"
-  | "digestive"
-  | "cardiometabolic"
-  | "adrenal"
-  | "autoimmune"
-  | "environmental";
+export type CopilotConcern = KnowledgeConcern;
 
 export type CopilotAnswer = "yes" | "no" | "unknown" | string;
 
@@ -381,9 +379,13 @@ export function evaluateClinicalCopilot(
   patientName: string,
   session: CopilotPatientSession,
 ): CopilotResult {
+  const registryEntry = getApprovedPathway(session.concern);
   const answers = session.answers;
   const safetyBlocks: string[] = [];
   const missingInformation = missingSafety(answers);
+  if (!registryEntry) {
+    safetyBlocks.push("No approved clinical pathway version is available for this concern.");
+  }
   if (answers["urgent-red-flags"] === "yes") {
     safetyBlocks.push("Urgent symptoms reported. Pause routine copilot workflow and follow the practice escalation policy.");
   }
@@ -393,7 +395,14 @@ export function evaluateClinicalCopilot(
 
   const sources: CopilotSource[] = [
     source(`patient:${patientId}`, `${patientName} chart context`, "current-session snapshot", "patient-record"),
-    knowledgeSource,
+    registryEntry
+      ? source(
+          `pathway:${registryEntry.pathway.id}`,
+          registryEntry.pathway.name,
+          `v${registryEntry.version.version} · approved`,
+          "practitioner-authored",
+        )
+      : knowledgeSource,
     productSource,
   ];
   const considerations: CopilotResult["considerations"] = [];
@@ -626,7 +635,9 @@ export function evaluateClinicalCopilot(
     missingInformation: uniqueMissing,
     safetyBlocks: uniqueBlocks,
     sources,
-    knowledgeVersion: "practice-knowledge/draft-2026.07 + rules/schema-1",
+    knowledgeVersion: registryEntry
+      ? `${registryEntry.pathway.code}/v${registryEntry.version.version} + rules/schema-1`
+      : "no-approved-pathway + rules/schema-1",
   };
 }
 

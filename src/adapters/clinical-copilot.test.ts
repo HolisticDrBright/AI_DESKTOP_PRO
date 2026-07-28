@@ -4,6 +4,10 @@ import {
   getAdaptiveQuestions,
   type CopilotPatientSession,
 } from "./clinical-copilot.mock";
+import { resetKnowledgeDemo } from "./clinical-knowledge.mock";
+import { beforeEach } from "vitest";
+
+beforeEach(() => resetKnowledgeDemo());
 
 function session(
   patch: Partial<CopilotPatientSession> = {},
@@ -44,6 +48,8 @@ describe("governed clinical copilot", () => {
     expect(result.products.every((item) => item.eligibility === "eligible-after-review")).toBe(true);
     expect(result.products.every((item) => item.labelStatus === "pending-exact-label-verification")).toBe(true);
     expect(result.labs[0]?.panelId).toBe("lp-vibrant-thyroid");
+    expect(result.knowledgeVersion).toBe("thyroid/v1 + rules/schema-1");
+    expect(result.sources.some((source) => source.version === "v1 · approved")).toBe(true);
   });
 
   it("does not select an autoimmune or non-autoimmune thyroid product when antibody status is unknown", () => {
