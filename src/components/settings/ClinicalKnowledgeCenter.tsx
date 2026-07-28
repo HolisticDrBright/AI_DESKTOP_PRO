@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   BadgeCheck,
   Beaker,
@@ -23,6 +23,8 @@ import {
   type KnowledgePathway,
   type KnowledgePathwayVersion,
 } from "@/adapters/clinical-knowledge.mock";
+import { liveClient } from "@/adapters/live-client";
+import { USE_LIVE_API } from "@/adapters/mode";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { cn } from "@/lib/cn";
 
@@ -59,28 +61,41 @@ function VersionDetail({
   pathway,
   version,
   onApprove,
+  onDuplicate,
+  onSave,
 }: {
   pathway: KnowledgePathway;
   version: KnowledgePathwayVersion;
   onApprove: () => void;
+  onDuplicate: () => Promise<void> | void;
+  onSave: (changes: {
+    changeSummary: string;
+    sourceRefs: string[];
+    content: KnowledgePathwayVersion["content"];
+  }) => Promise<void> | void;
 }) {
   const [summary, setSummary] = useState(version.changeSummary);
   const [questions, setQuestions] = useState(version.content.differentiatingQuestions.join("\n"));
   const [sources, setSources] = useState(version.sourceRefs.join("\n"));
-  const [saved, setSaved] = useState(false);
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const isDraft = version.status === "draft";
 
-  const save = () => {
-    updateKnowledgeDraft(pathway.id, version.id, {
-      changeSummary: summary.trim(),
-      sourceRefs: sources.split("\n").map((line) => line.trim()).filter(Boolean),
-      content: {
-        ...version.content,
-        differentiatingQuestions: questions.split("\n").map((line) => line.trim()).filter(Boolean),
-      },
-    });
-    setSaved(true);
-    window.setTimeout(() => setSaved(false), 1800);
+  const save = async () => {
+    setSaveState("saving");
+    try {
+      await onSave({
+        changeSummary: summary.trim(),
+        sourceRefs: sources.split("\n").map((line) => line.trim()).filter(Boolean),
+        content: {
+          ...version.content,
+          differentiatingQuestions: questions.split("\n").map((line) => line.trim()).filter(Boolean),
+        },
+      });
+      setSaveState("saved");
+      window.setTimeout(() => setSaveState("idle"), 1800);
+    } catch {
+      setSaveState("error");
+    }
   };
 
   return (
@@ -98,7 +113,7 @@ function VersionDetail({
         <div className="flex items-center gap-2">
           {!isDraft && (
             <button
-              onClick={() => duplicateKnowledgeVersion(pathway.id)}
+              onClick={() => void onDuplicate()}
               className="inline-flex h-8 items-center gap-1.5 rounded border border-line bg-card px-3 text-[11.5px] font-semibold text-body hover:border-line-hover"
             >
               <CopyPlus size={14} aria-hidden /> New version
@@ -107,10 +122,15 @@ function VersionDetail({
           {isDraft && (
             <>
               <button
-                onClick={save}
+                onClick={() => void save()}
+                disabled={saveState === "saving"}
                 className="inline-flex h-8 items-center gap-1.5 rounded border border-line bg-card px-3 text-[11.5px] font-semibold text-body hover:border-line-hover"
               >
-                <Save size={14} aria-hidden /> {saved ? "Saved" : "Save draft"}
+                <Save size={14} aria-hidden /> {
+                  saveState === "saving" ? "Saving..." :
+                    saveState === "saved" ? "Saved" :
+                      saveState === "error" ? "Try save again" : "Save draft"
+                }
               </button>
               <button
                 onClick={onApprove}
@@ -201,11 +221,36 @@ function VersionDetail({
 }
 
 export function ClinicalKnowledgeCenter() {
-  const pathways = useKnowledgePathways();
+  const mockPathways = useKnowledgePathways();
+  const [livePathways, setLivePathways] = useState<KnowledgePathway[]>([]);
+  const [loadState, setLoadState] = useState<"loading" | "ready" | "error">(
+    USE_LIVE_API ? "loading" : "ready",
+  );
+  const pathways = USE_LIVE_API ? livePathways : mockPathways;
   const [selectedPathwayId, setSelectedPathwayId] = useState(pathways[0]?.id ?? "");
   const selected = pathways.find((pathway) => pathway.id === selectedPathwayId) ?? pathways[0];
   const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null);
   const [approveTarget, setApproveTarget] = useState<KnowledgePathwayVersion | null>(null);
+
+  const refresh = useCallback(async () => {
+    if (!USE_LIVE_API) return;
+    setLoadState("loading");
+    try {
+      const rows = await liveClient.listKnowledgePathways();
+      setLivePathways(rows);
+      setLoadState("ready");
+    } catch {
+      setLoadState("error");
+    }
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  useEffect(() => {
+    if (!selectedPathwayId && pathways[0]) setSelectedPathwayId(pathways[0].id);
+  }, [pathways, selectedPathwayId]);
 
   const version = useMemo(() => {
     if (!selected) return undefined;
@@ -215,7 +260,19 @@ export function ClinicalKnowledgeCenter() {
       ?? selected.versions[0];
   }, [selected, selectedVersionId]);
 
-  if (!selected || !version) return null;
+  if (USE_LIVE_API && loadState === "loading") {
+    return <div className="rounded border border-line bg-card px-5 py-10 text-center text-[12px] text-subtle">Loading governed pathways...</div>;
+  }
+  if (USE_LIVE_API && loadState === "error") {
+    return (
+      <div className="rounded border border-danger/25 bg-danger-tint px-5 py-8 text-center text-[12px] text-danger">
+        The clinical registry could not be loaded. <button className="font-bold underline" onClick={() => void refresh()}>Try again</button>
+      </div>
+    );
+  }
+  if (!selected || !version) {
+    return <div className="rounded border border-line bg-card px-5 py-10 text-center text-[12px] text-subtle">No clinical pathways have been added yet. Use Import review to stage the authoring pack.</div>;
+  }
 
   return (
     <>
@@ -268,19 +325,47 @@ export function ClinicalKnowledgeCenter() {
                 ))}
               </select>
             </div>
-            <button
-              onClick={resetKnowledgeDemo}
-              className="inline-flex h-8 items-center gap-1.5 rounded border border-line bg-card px-3 text-[11px] font-semibold text-subtle hover:text-ink"
-              title="Reset demo registry"
-            >
-              <RotateCcw size={13} aria-hidden /> Reset demo
-            </button>
+            {!USE_LIVE_API && (
+              <button
+                onClick={resetKnowledgeDemo}
+                className="inline-flex h-8 items-center gap-1.5 rounded border border-line bg-card px-3 text-[11px] font-semibold text-subtle hover:text-ink"
+                title="Reset demo registry"
+              >
+                <RotateCcw size={13} aria-hidden /> Reset demo
+              </button>
+            )}
           </div>
           <VersionDetail
             key={version.id}
             pathway={selected}
             version={version}
             onApprove={() => setApproveTarget(version)}
+            onDuplicate={async () => {
+              if (USE_LIVE_API) {
+                const created = await liveClient.createKnowledgeDraft({
+                  pathwayId: selected.id,
+                  content: version.content,
+                  sourceRefs: version.sourceRefs,
+                  changeSummary: `New draft from v${version.version}`,
+                });
+                await refresh();
+                setSelectedVersionId(created.versionId);
+              } else {
+                duplicateKnowledgeVersion(selected.id);
+                setSelectedVersionId(null);
+              }
+            }}
+            onSave={async (changes) => {
+              if (USE_LIVE_API) {
+                await liveClient.updateKnowledgeDraft({
+                  versionId: version.id,
+                  ...changes,
+                });
+                await refresh();
+              } else {
+                updateKnowledgeDraft(selected.id, version.id, changes);
+              }
+            }}
           />
         </main>
       </div>
@@ -291,9 +376,18 @@ export function ClinicalKnowledgeCenter() {
         confirmLabel="Approve version"
         onCancel={() => setApproveTarget(null)}
         onConfirm={() => {
-          if (approveTarget) approveKnowledgeVersion(selected.id, approveTarget.id);
+          if (!approveTarget) return;
+          const target = approveTarget;
           setApproveTarget(null);
-          setSelectedVersionId(null);
+          void (async () => {
+            if (USE_LIVE_API) {
+              await liveClient.approveKnowledgeVersion(target.id);
+              await refresh();
+            } else {
+              approveKnowledgeVersion(selected.id, target.id);
+            }
+            setSelectedVersionId(null);
+          })();
         }}
       />
     </>

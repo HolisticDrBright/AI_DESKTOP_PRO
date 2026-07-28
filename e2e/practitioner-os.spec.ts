@@ -42,6 +42,35 @@ test("Clinical Knowledge Center versions and approves governed pathways", async 
   expect(errors).toEqual([]);
 });
 
+test("Clinical Knowledge Center stages the authoring pack and keeps review gates separate", async ({ page }) => {
+  await page.goto("/settings/knowledge");
+  await page.getByRole("tab", { name: "Import review" }).click();
+  await page.getByRole("button", { name: "Load authoring pack" }).click();
+
+  await expect(page.getByText("27", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("133", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("160", { exact: true }).first()).toBeVisible();
+  await page.getByRole("checkbox").check();
+  await page.getByRole("button", { name: "Stage for review" }).click();
+
+  await expect(page.getByText("27", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("133", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("Import staged for practitioner review. Nothing was approved or verified.")).toBeVisible();
+
+  await page.getByLabel("Import item type").selectOption("product_label");
+  await expect(page.getByText("Source correction needed").first()).toBeVisible();
+  await expect(page.getByTitle("Resolve source errors before accepting").first()).toBeDisabled();
+
+  await page.getByLabel("Import item type").selectOption("pathway");
+  const firstReady = page.locator("tbody tr").filter({ hasText: "Ready for review" }).first();
+  await firstReady.getByTitle("Accept into draft review").click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Accept as draft" }).click();
+  await expect(page.getByText("Item applied as a non-approved draft. Separate approval or label verification is still required.")).toBeVisible();
+
+  await page.getByRole("tab", { name: "Pathways" }).click();
+  await expect(page.getByText("7 governed pathways")).toBeVisible();
+});
+
 test("route consolidation: every old URL lands on its new home", async ({ page }) => {
   const cases: [string, string][] = [
     ["/practice", "/today"],

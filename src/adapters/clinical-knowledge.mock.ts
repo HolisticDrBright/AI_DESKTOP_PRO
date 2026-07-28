@@ -36,7 +36,7 @@ export interface KnowledgePathwayVersion {
 
 export interface KnowledgePathway {
   id: string;
-  code: KnowledgeConcern;
+  code: string;
   name: string;
   domain: string;
   description: string;
@@ -203,7 +203,7 @@ export function getKnowledgePathways() {
   return store.get().pathways;
 }
 
-export function getApprovedPathway(concern: KnowledgeConcern) {
+export function getApprovedPathway(concern: string) {
   const pathway = store.get().pathways.find((item) => item.code === concern);
   const version = pathway?.versions.find((item) => item.status === "approved");
   return pathway && version ? { pathway, version } : null;
@@ -276,4 +276,58 @@ export function approveKnowledgeVersion(pathwayId: string, versionId: string) {
 
 export function resetKnowledgeDemo() {
   store.set({ pathways: seeds });
+}
+
+export function importKnowledgePathwayDraft(payload: {
+  code: string;
+  name: string;
+  domainCode: string;
+  description?: string;
+  sourceRefs?: { label?: string; code?: string }[];
+  content: KnowledgePathwayContent;
+}) {
+  store.update((state) => {
+    const existing = state.pathways.find((pathway) => pathway.code === payload.code);
+    const sourceRefs = (payload.sourceRefs ?? [])
+      .map((source) => source.label ?? source.code ?? "")
+      .filter(Boolean);
+    if (!existing) {
+      const pathwayId = `kp-import-${payload.code}`;
+      return {
+        pathways: [{
+          id: pathwayId,
+          code: payload.code,
+          name: payload.name,
+          domain: payload.domainCode,
+          description: payload.description ?? "",
+          versions: [{
+            id: `${pathwayId}-v1`,
+            version: 1,
+            status: "draft",
+            changeSummary: "Imported from governed authoring pack; practitioner review required",
+            createdAt: new Date().toISOString(),
+            createdBy: "Current practitioner",
+            sourceRefs,
+            content: structuredClone(payload.content),
+          }],
+        }, ...state.pathways],
+      };
+    }
+    const version = Math.max(...existing.versions.map((item) => item.version)) + 1;
+    return {
+      pathways: state.pathways.map((pathway) => pathway.id !== existing.id ? pathway : {
+        ...pathway,
+        versions: [{
+          id: `${pathway.id}-v${version}`,
+          version,
+          status: "draft",
+          changeSummary: "Imported from governed authoring pack; practitioner review required",
+          createdAt: new Date().toISOString(),
+          createdBy: "Current practitioner",
+          sourceRefs,
+          content: structuredClone(payload.content),
+        }, ...pathway.versions],
+      }),
+    };
+  });
 }

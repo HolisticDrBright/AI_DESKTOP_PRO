@@ -54,6 +54,9 @@ all generated plans stay draft-only and session-only. The versioned pathway
 workflow lives at **Settings → Clinical Knowledge Center**; its preview and
 persistent database contract are documented in
 [`docs/clinical-knowledge-registry.md`](docs/clinical-knowledge-registry.md).
+The adjacent **Import review** view stages the de-identified practitioner
+authoring pack as reviewable pathway drafts and blocked product-label
+candidates; affiliate metadata never becomes clinical approval.
 
 ## Stack
 

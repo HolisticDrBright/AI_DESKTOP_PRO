@@ -8,6 +8,8 @@
  */
 import { AdapterError, codeFromHttpStatus, type AdapterErrorCode } from "./errors";
 import type { LabWorkspace } from "./labs.mock";
+import type { KnowledgeImportBatch, KnowledgeImportSourceItem } from "./clinical-import.types";
+import type { KnowledgePathway, KnowledgePathwayContent } from "./clinical-knowledge.mock";
 import type {
   LiveAppointmentStatusResult,
   LiveAuditEvent,
@@ -29,7 +31,7 @@ interface Envelope<T> {
 
 async function liveFetch<T>(
   path: string,
-  init: { method: "GET" | "POST"; body?: unknown; form?: FormData },
+  init: { method: "GET" | "POST" | "PUT"; body?: unknown; form?: FormData },
 ): Promise<T> {
   let res: Response;
   try {
@@ -111,4 +113,60 @@ export const liveClient = {
     priority?: "low" | "medium" | "high";
     refId?: string;
   }) => liveFetch<LiveTaskResult>("actions/task", { method: "POST", body: input }),
+
+  listKnowledgePathways: () =>
+    liveFetch<KnowledgePathway[]>("knowledge/pathways", { method: "GET" }),
+
+  createKnowledgeDraft: (input: {
+    pathwayId: string;
+    content: KnowledgePathwayContent;
+    sourceRefs: string[];
+    changeSummary: string;
+  }) => liveFetch<{ versionId: string; version: number }>("knowledge/draft", {
+    method: "POST",
+    body: input,
+  }),
+
+  updateKnowledgeDraft: (input: {
+    versionId: string;
+    content: KnowledgePathwayContent;
+    sourceRefs: string[];
+    changeSummary: string;
+  }) => liveFetch<{ ok: true }>("knowledge/draft", {
+    method: "PUT",
+    body: input,
+  }),
+
+  approveKnowledgeVersion: (versionId: string) =>
+    liveFetch<{ ok: true }>("knowledge/approve", {
+      method: "POST",
+      body: { versionId },
+    }),
+
+  listKnowledgeImports: () =>
+    liveFetch<KnowledgeImportBatch[]>("knowledge/imports", { method: "GET" }),
+
+  stageKnowledgeImport: (input: {
+    sourceName: string;
+    sourceRevision?: string;
+    schemaVersion: string;
+    items: KnowledgeImportSourceItem[];
+    attestsNoPhi: true;
+  }) => liveFetch<{ batchId: string; itemCount: number }>("knowledge/imports", {
+    method: "POST",
+    body: input,
+  }),
+
+  reviewKnowledgeImportItem: (
+    itemId: string,
+    decision: "accept" | "reject",
+    reviewNote?: string,
+  ) => liveFetch<{
+    status: "applied" | "rejected";
+    appliedRefType: string | null;
+    appliedRefId: string | null;
+  }>("knowledge/import-item", {
+    method: "POST",
+    body: { itemId, decision, reviewNote },
+  }),
 };
