@@ -59,6 +59,10 @@ Migration `20260728165840_clinical_knowledge_import_review.sql` adds:
 - a role-gated draft-update RPC;
 - organization-scoped RLS, direct-write revocation, and safe audit events.
 
+Migration `20260728194003_clinical_knowledge_index_hardening.sql` covers the
+foreign-key access paths used by tenant checks, version review, and retention
+workflows.
+
 Direct client writes are revoked. Mutations pass through the security-definer
 RPCs, which pin their search path and verify organization membership or patient
 access.
@@ -89,5 +93,20 @@ access.
 5. Run the mock regression suite and a gated live browser workflow before
    promotion.
 
-Both migrations are committed as deployable work but are not automatically
-applied to staging or production.
+## Staging verification
+
+Applied to the synthetic-only `AI Desktop Pro` staging project on 2026-07-28:
+
+- `clinical_knowledge_registry`
+- `clinical_knowledge_import_review`
+- `clinical_knowledge_index_hardening`
+
+The registry acceptance suite passed 10/10 and the import/review suite passed
+10/10 in rolled-back transactions. Supabase advisors reported zero errors.
+The authenticated SECURITY DEFINER notices are expected for the existing
+RPC-first architecture; each exposed RPC repeats role and tenant checks.
+The index hardening migration cleared all new unindexed-foreign-key notices.
+Fresh-table unused-index notices remain informational until staging traffic
+exercises those paths.
+
+No production project was modified.
