@@ -2,10 +2,37 @@ if (typeof window !== "undefined") {
   throw new Error("This module is server-only and must not run in the browser.");
 }
 
-import { AdapterError, codeFromHttpStatus } from "./errors";
+import {
+  AdapterError,
+  codeFromHttpStatus,
+  type AdapterErrorCode,
+} from "./errors";
 
 interface PostgrestError {
   code?: string;
+}
+
+function mapPostgrestError(status: number, serverCode?: string): AdapterErrorCode {
+  switch (serverCode) {
+    case "28000":
+    case "PGRST301":
+      return "unauthenticated";
+    case "42501":
+      return "forbidden";
+    case "P0002":
+    case "PGRST116":
+      return "not_found";
+    case "22023":
+    case "22P02":
+    case "23502":
+      return "invalid";
+    case "23505":
+    case "40001":
+    case "55000":
+      return "conflict";
+    default:
+      return status === 409 ? "conflict" : codeFromHttpStatus(status);
+  }
 }
 
 function clinicalConfig() {
@@ -71,10 +98,7 @@ async function request<T>(
   if (!response.ok) {
     const serverCode =
       payload && typeof payload === "object" ? (payload as PostgrestError).code : undefined;
-    const code =
-      response.status === 409 || serverCode === "55000" || serverCode === "40001"
-        ? "conflict"
-        : codeFromHttpStatus(response.status);
+    const code = mapPostgrestError(response.status, serverCode);
     throw new AdapterError(code, undefined, `PostgREST ${response.status} ${serverCode ?? ""}`.trim());
   }
 

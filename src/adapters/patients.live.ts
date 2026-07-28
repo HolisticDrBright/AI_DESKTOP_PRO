@@ -2,15 +2,15 @@ if (typeof window !== "undefined") {
   throw new Error("This module is server-only and must not run in the browser.");
 }
 import { resolveOrgId } from "./config";
-import { trpcQuery } from "./trpc.server";
-import { isAdapterError } from "./errors";
+import { clinicalSelect } from "./supabase-rest.server";
+import { getClinicalAccessToken } from "./session.server";
 import type { PatientDirectoryEntry } from "./types";
 import { calendarAge, displaySex, formatDateOnly } from "@/lib/dates";
 
 /**
  * Live `patients` namespace (Item 6) — the one swapped namespace.
  * Reads real `patient_profiles` rows from the clinical project through the
- * authenticated tRPC backend (RLS enforced server-side). Clinical fields
+ * Desktop-owned Supabase REST boundary (RLS enforced). Clinical fields
  * (name, DOB, sex, MRN, status) are real; presentation-only fields that have
  * no column yet (avatar gradient, goals, care team, visit dates) are given
  * neutral defaults and are clearly not DB-backed. `summary` is NOT swapped —
@@ -61,29 +61,42 @@ function toDirectoryEntry(row: ClinicalPatientRow, i = 0): PatientDirectoryEntry
   };
 }
 
+function patientParams(organizationId: string, patientId?: string) {
+  const params = new URLSearchParams({
+    select: "id,organization_id,mrn,first_name,last_name,date_of_birth,sex,status",
+    organization_id: `eq.${organizationId}`,
+    deleted_at: "is.null",
+    order: "last_name.asc,first_name.asc,id.asc",
+  });
+  if (patientId) {
+    params.set("id", `eq.${patientId}`);
+    params.set("limit", "1");
+  }
+  return params;
+}
+
 export const patientsLive = {
   async list(sessionToken?: string | null, orgId?: string | null): Promise<PatientDirectoryEntry[]> {
-    const rows = await trpcQuery<ClinicalPatientRow[]>("clinical.patients.list", {
-      organizationId: resolveOrgId(orgId),
-    }, sessionToken);
+    const token = await getClinicalAccessToken(sessionToken);
+    const rows = await clinicalSelect<ClinicalPatientRow[]>(
+      "patient_profiles",
+      patientParams(resolveOrgId(orgId)),
+      token,
+    );
     return rows.map((r, i) => toDirectoryEntry(r, i));
   },
 
-  async get(id: string, sessionToken?: string | null): Promise<PatientDirectoryEntry | undefined> {
-    try {
-      const row = await trpcQuery<ClinicalPatientRow>("clinical.patients.get", {
-        patientId: id,
-      }, sessionToken);
-      return toDirectoryEntry(row);
-    } catch (e) {
-      // "No such patient / no access" is a legitimate undefined (caller renders
-      // not-found). But a backend outage or expired session must NOT be
-      // silently reported as "not found" — propagate it so the error boundary
-      // shows a retryable "unavailable" state instead of a misleading 404.
-      if (isAdapterError(e) && (e.code === "not_found" || e.code === "forbidden")) {
-        return undefined;
-      }
-      throw e;
-    }
+  async get(
+    id: string,
+    sessionToken?: string | null,
+    orgId?: string | null,
+  ): Promise<PatientDirectoryEntry | undefined> {
+    const token = await getClinicalAccessToken(sessionToken);
+    const rows = await clinicalSelect<ClinicalPatientRow[]>(
+      "patient_profiles",
+      patientParams(resolveOrgId(orgId), id),
+      token,
+    );
+    return rows[0] ? toDirectoryEntry(rows[0]) : undefined;
   },
 };

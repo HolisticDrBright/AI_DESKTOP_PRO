@@ -73,14 +73,14 @@ npm run dev        # http://localhost:3000  (demo mode — no env needed)
 ```
 
 Other scripts: `npm run build` · `npm run start` · `npm run lint` ·
-`npm run typecheck`.
+`npm run typecheck` · `npm run test:unit`.
 
 **End-to-end tests (Playwright, mock app):**
 
 ```bash
 npx playwright install chromium   # once, downloads the test browser
 npm run build                     # the suite runs the production server
-npm run test:e2e                  # mock-app + practitioner-os suites (25 tests)
+npm run test:e2e                  # mock-app + practitioner-os suites (41 tests)
 npm run test:e2e:headed           # same, with a visible browser
 ```
 
@@ -91,17 +91,19 @@ backend or env vars. In sandboxed CI images with a pre-installed browser, point
 
 **Demo vs live.** With no env, the app runs entirely on mock/session adapters —
 nothing is persisted and no sign-in is needed. Setting
-`NEXT_PUBLIC_USE_LIVE_API=true` (plus the backend env in
-[`.env.example`](.env.example)) routes the wired slices — patient read, labs
-workspace + marker review, **lab PDF upload → extraction → review queue**,
-Tasks/Review queue + resolve, **calendar + booking/check-in/cancel**, and the
-append-only audit trail — through the authenticated backend under RLS, as the practitioner
-signed in at `/login` (httpOnly cookie session; see
+`NEXT_PUBLIC_USE_LIVE_API=true` (plus the server env in
+[`.env.example`](.env.example)) routes practitioner authentication,
+organization selection and membership management, and patient-directory reads
+through this app's Desktop-owned Supabase boundary under the practitioner's JWT
+and RLS. Labs, tasks, scheduling, encounters, scribe, lens, and the append-only
+audit trail still use the transitional tRPC transport while each domain is
+migrated. Practitioners sign in at `/login` through an httpOnly cookie session;
+see
 [`docs/live-auth-and-seeding.md`](docs/live-auth-and-seeding.md) for sign-in
 and demo-data seeding). See [`docs/live-api.md`](docs/live-api.md) for the
 architecture, the secure write path (migrations `0013`–`0015`), what's wired vs
 still mock, and security assumptions. Settings → **Data source & environment**
-shows the resolved mode, the practitioner session, and configured backend vars
+shows the resolved mode, the practitioner session, and configured data-source vars
 (presence only). [`docs/live-data-readiness.md`](docs/live-data-readiness.md)
 maps every domain (adapter → mock source → session state → live tables → first
 mutation) and the recommended wiring order.
@@ -172,8 +174,9 @@ src/
   lib/             Routes, providers (material + shell UI state), tone maps
 ```
 
-See [`docs/architecture.md`](docs/architecture.md) for the route map, data
-flow, and the tRPC swap plan.
+See [`docs/architecture.md`](docs/architecture.md) for the route map and data
+flow, and [`docs/desktop-identity-directory.md`](docs/desktop-identity-directory.md)
+for the migrated identity and directory boundary.
 
 ### Design system notes
 

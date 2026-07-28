@@ -2,8 +2,8 @@
  * CONTRACT-FIXTURE BACKEND — NOT the real clinical backend.
  *
  * A tiny in-memory server that speaks the exact wire contract the desktop's
- * live path expects (Supabase-auth token endpoint + superjson-shaped tRPC
- * procedures). It exists so the live-mode UI can be exercised end-to-end —
+ * live path expects (Supabase Auth + PostgREST/RPC + transitional
+ * superjson-shaped tRPC procedures). It exists so the live-mode UI can be exercised end-to-end —
  * loading a real queue, resolving an item, loading a labs workspace, reviewing
  * a marker, persisting across browser reloads, reading the audit trail — in
  * environments where the deployed tRPC backend
@@ -29,8 +29,8 @@ const PORT = Number(process.env.STUB_PORT ?? 3999);
 /* ------------------------------------------------------------ fixture state */
 
 const PATIENTS = [
-  { id: "aaaaaaaa-1111-2222-3333-444444444401", mrn: "FX-0001", first_name: "Fixture", last_name: "Patient", date_of_birth: "1990-04-12", sex: "female", status: "active" },
-  { id: "aaaaaaaa-1111-2222-3333-444444444402", mrn: "FX-0002", first_name: "Sample", last_name: "Client", date_of_birth: "1984-09-03", sex: "male", status: "active" },
+  { id: "aaaaaaaa-1111-2222-3333-444444444401", organization_id: "org-fixture", mrn: "FX-0001", first_name: "Fixture", last_name: "Patient", date_of_birth: "1990-04-12", sex: "female", status: "active" },
+  { id: "aaaaaaaa-1111-2222-3333-444444444402", organization_id: "org-fixture", mrn: "FX-0002", first_name: "Sample", last_name: "Client", date_of_birth: "1984-09-03", sex: "male", status: "active" },
 ];
 
 const now = Date.now();
@@ -61,6 +61,18 @@ const members = new Map([
     joinedAt: "2026-07-02T00:00:00Z",
   }],
 ]);
+const existingAccountEmails = new Set([
+  "practitioner@fixture.local",
+  "colleague@fixture.local",
+  "new-nurse@fixture.local",
+]);
+
+function memberOrgIdsForBearer(bearerToken) {
+  if (revokedBearers.has(bearerToken) || bearerToken.endsWith("--noorg")) return [];
+  return bearerToken.endsWith("--multi")
+    ? ["org-fixture", "org-second"]
+    : ["org-fixture"];
+}
 
 // EMR fixtures (Phase 2 slice 1): encounters + notes with the same semantics
 // as the 0021 RPCs — version conflicts, frozen-after-sign, idempotent sign,
@@ -835,6 +847,9 @@ createServer(async (req, res) => {
     }
     return json(res, 200, { id: "dddddddd-1111-2222-3333-444444444401", email: "practitioner@fixture.local" });
   }
+  if (url.pathname === "/auth/v1/logout" && req.method === "POST") {
+    return res.writeHead(204).end();
+  }
 
   if (url.pathname === "/auth/v1/token") {
     const body = await readBody(req);
@@ -865,6 +880,124 @@ createServer(async (req, res) => {
     const body = await readBody(req);
     revokedBearers.add(String(body.bearer ?? ""));
     return json(res, 200, { ok: true });
+  }
+
+  // Supabase Data API fixture for Desktop-owned identity and directory reads.
+  if (url.pathname.startsWith("/rest/v1/")) {
+    const bearerToken = (req.headers.authorization ?? "").replace(/^Bearer /, "");
+    if (!bearerToken) {
+      return json(res, 401, { code: "PGRST301", message: "JWT required" });
+    }
+    const memberOrgIds = memberOrgIdsForBearer(bearerToken);
+
+    if (url.pathname === "/rest/v1/rpc/list_my_organizations" && req.method === "POST") {
+      const rows = [];
+      if (memberOrgIds.includes("org-fixture")) {
+        rows.push({
+          organization_id: "org-fixture",
+          name: "Fixture Clinic",
+          slug: "fixture-clinic",
+          role: bearerToken.endsWith("--multi") ? "practitioner" : "owner",
+        });
+      }
+      if (memberOrgIds.includes("org-second")) {
+        rows.push({
+          organization_id: "org-second",
+          name: "Second Practice",
+          slug: "second-practice",
+          role: "practitioner",
+        });
+      }
+      return json(res, 200, rows);
+    }
+
+    if (url.pathname === "/rest/v1/rpc/activate_my_memberships" && req.method === "POST") {
+      return json(res, 200, 0);
+    }
+
+    if (url.pathname === "/rest/v1/rpc/list_org_members" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!memberOrgIds.includes(body._organization_id)) {
+        return json(res, 403, { code: "42501", message: "Administrator role required" });
+      }
+      return json(res, 200, [...members.values()].map((row) => ({
+        membership_id: row.membershipId,
+        user_id: row.userId,
+        email: row.email,
+        display_name: row.displayName,
+        role: row.role,
+        status: row.status,
+        joined_at: row.joinedAt,
+      })));
+    }
+
+    if (url.pathname === "/rest/v1/rpc/add_org_member" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!memberOrgIds.includes(body._organization_id)) {
+        return json(res, 403, { code: "42501", message: "Administrator role required" });
+      }
+      const email = String(body._email ?? "").toLowerCase();
+      if (!existingAccountEmails.has(email)) {
+        return json(res, 400, { code: "P0002", message: "no_such_user" });
+      }
+      if ([...members.values()].some((member) => member.email === email)) {
+        return json(res, 400, { code: "23505", message: "duplicate membership" });
+      }
+      memberSeq += 1;
+      const membershipId = `mem-${memberSeq}`;
+      members.set(membershipId, {
+        membershipId,
+        userId: `user-${memberSeq}`,
+        email,
+        displayName: null,
+        role: String(body._role ?? "member"),
+        status: "invited",
+        joinedAt: new Date().toISOString(),
+      });
+      return json(res, 200, membershipId);
+    }
+
+    if (url.pathname === "/rest/v1/rpc/set_org_member_role" && req.method === "POST") {
+      const body = await readBody(req);
+      const row = members.get(String(body._membership_id ?? ""));
+      if (!row) return json(res, 404, { code: "P0002", message: "membership not found" });
+      const owners = [...members.values()].filter(
+        (member) => member.role === "owner" && member.status === "active",
+      );
+      if (row.role === "owner" && body._role !== "owner" && owners.length === 1) {
+        return json(res, 400, { code: "22023", message: "last owner" });
+      }
+      row.role = String(body._role ?? row.role);
+      return json(res, 200, null);
+    }
+
+    if (url.pathname === "/rest/v1/rpc/remove_org_member" && req.method === "POST") {
+      const body = await readBody(req);
+      const row = members.get(String(body._membership_id ?? ""));
+      if (!row) return json(res, 404, { code: "P0002", message: "membership not found" });
+      if (row.email === "practitioner@fixture.local") {
+        return json(res, 400, { code: "22023", message: "self removal refused" });
+      }
+      if (row.role === "owner") {
+        return json(res, 400, { code: "22023", message: "last owner" });
+      }
+      members.delete(row.membershipId);
+      return json(res, 200, null);
+    }
+
+    if (url.pathname === "/rest/v1/patient_profiles" && req.method === "GET") {
+      const organizationId = (url.searchParams.get("organization_id") ?? "").replace(/^eq\./, "");
+      const patientId = (url.searchParams.get("id") ?? "").replace(/^eq\./, "");
+      if (!memberOrgIds.includes(organizationId)) return json(res, 200, []);
+      const rows = PATIENTS
+        .filter((patient) =>
+          patient.organization_id === organizationId &&
+          (!patientId || patient.id === patientId),
+        );
+      return json(res, 200, rows);
+    }
+
+    return json(res, 404, { code: "PGRST202", message: "fixture route not found" });
   }
 
   // Authorized source-document download (same contract as the real backend).
@@ -961,13 +1094,7 @@ createServer(async (req, res) => {
   // Revoked/suspended memberships simply vanish (status filter), exactly like
   // the real backend; org ids never come from the browser's claims.
   const bearerToken = (req.headers.authorization ?? "").replace(/^Bearer /, "");
-  const memberOrgIds = revokedBearers.has(bearerToken)
-    ? []
-    : bearerToken.endsWith("--noorg")
-      ? []
-      : bearerToken.endsWith("--multi")
-        ? ["org-fixture", "org-second"]
-        : ["org-fixture"];
+  const memberOrgIds = memberOrgIdsForBearer(bearerToken);
 
   // Faithful organizationProcedure mirror: ANY org-scoped call from a
   // non-member is forbidden, regardless of which org id the client presents.

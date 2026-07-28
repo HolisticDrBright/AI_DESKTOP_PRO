@@ -26,7 +26,12 @@ export async function GET() {
     try {
       const tokens = await refreshSession(session.refreshToken);
       const res = NextResponse.json({
-        data: { mode: "live", signedIn: true, email: tokens.email || session.email },
+        data: {
+          mode: "live",
+          signedIn: true,
+          email: tokens.email || session.email,
+          orgId: session.orgId,
+        },
       });
       const week = 60 * 60 * 24 * 7;
       res.cookies.set(AUTH_COOKIES.access, tokens.accessToken, cookieOptions(week));
@@ -36,7 +41,9 @@ export async function GET() {
       return res;
     } catch {
       // Refresh failed (revoked/expired) → treat as signed out; clear cookies.
-      const res = NextResponse.json({ data: { mode: "live", signedIn: false, email: null } });
+      const res = NextResponse.json({
+        data: { mode: "live", signedIn: false, email: null, orgId: null },
+      });
       for (const name of Object.values(AUTH_COOKIES)) {
         res.cookies.set(name, "", { httpOnly: true, sameSite: "lax", path: "/", maxAge: 0 });
       }

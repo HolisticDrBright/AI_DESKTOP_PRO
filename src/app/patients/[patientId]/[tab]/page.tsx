@@ -69,7 +69,8 @@ export default async function PatientTabPage({
   }
   if (!isPatientTabId(tab)) notFound();
 
-  const patient = await api.patients.get(patientId, (await getRequestSession()).token);
+  const session = await getRequestSession();
+  const patient = await api.patients.get(patientId, session.token, session.orgId);
   if (!patient) notFound();
   const name = patient.name;
 

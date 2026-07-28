@@ -25,8 +25,8 @@ client component
    └─ api.<domain>.*                 (src/adapters/index.ts — the only import UI uses)
         ├─ DEMO → mock module + session-store            (unchanged)
         └─ LIVE
-             ├─ knowledge registry → same-origin route → knowledge.live
-             │                                         → supabase-rest.server → Supabase (RLS/RPC)
+             ├─ migrated domains → server component or same-origin route
+             │                    → *.live.ts → supabase-rest.server → Supabase (RLS/RPC)
              └─ transitional domains → same-origin route/server component
                                       → *.live.ts → trpc.server → legacy tRPC transport
 ```
@@ -72,7 +72,9 @@ is revoked from `public` + `anon` and granted to `authenticated` only.
 
 | Namespace / method | Demo | Live |
 | --- | --- | --- |
-| `patients.list` / `patients.get` | mock | ✅ real `patient_profiles` (server component → tRPC) |
+| `patients.list` / `patients.get` | mock | ✅ real `patient_profiles` through the Desktop-owned server boundary; selected-org filter + RLS |
+| `organizations.mine` / `claim` / member management | n/a | ✅ Desktop-owned REST/RPC boundary; active caller memberships only; database-enforced admin/owner guards |
+| practitioner sign-in / refresh / sign-out | n/a | ✅ server-only Supabase Auth; rotated refresh tokens, selected-org preservation, current-session revocation |
 | `patients.summary` | mock | mock (synthesized, no DB source) |
 | `labs.getWorkspace` | mock | ✅ real workspace via `clinical.labs.getWorkspace` |
 | `labs.reviewMarker` / `flagMarker` | session + session audit | ✅ `review_biomarker` RPC (persist + audit) |
@@ -105,22 +107,24 @@ All live mutations flow through the reusable `runClinicalMutation` helper
 | `src/adapters/mutations.ts` | `runClinicalMutation` (optimistic/rollback/audit) |
 | `src/adapters/live-client.ts` | client-safe bridge to `/api/live/*` |
 | `src/adapters/live-types.ts` | PHI-safe wire DTOs |
-| `src/adapters/*.live.ts` | server-only tRPC calls per domain |
+| `src/adapters/*.live.ts` | server-only Supabase or transitional tRPC calls per domain |
 | `src/adapters/trpc.server.ts` | dependency-free tRPC query/mutation client |
 | `src/adapters/supabase-rest.server.ts` | Desktop-owned, server-only clinical REST/RPC transport |
 | `src/app/api/live/*` | route handlers (client → server bridge) |
 | `src/components/ui/ClinicalStates.tsx` | shared loading / empty / error |
 | `src/components/settings/DataSourceCard.tsx` | env/status panel |
 
-**To wire a new domain live:** add `<domain>.live.ts` (tRPC calls) → add a
+**To wire a new domain live:** add `<domain>.live.ts` (Desktop-owned
+Supabase calls by default) → add a
 `/api/live/<domain>/*` route (client-initiated) or call it from a server
 component (reads) → add the live branch in `index.ts` behind `USE_LIVE_API`,
 reusing `runClinicalMutation` for writes and `ClinicalStates` for async UI.
 
-The clinical knowledge registry is the first domain migrated to the
-Desktop-owned boundary defined in ADR 0003. Its `<domain>.live.ts` uses
-`supabase-rest.server.ts`, with the publishable key and caller JWT confined to
-the Next.js server. Other domains remain on their existing transitional
+The clinical knowledge registry, practitioner identity/session lifecycle,
+organization selection and membership management, and patient directory
+reads use the Desktop-owned boundary defined in ADR 0003. Their live adapters
+use `supabase-rest.server.ts`, with the publishable key and caller JWT confined
+to the Next.js server. Other domains remain on their existing transitional
 adapters until migrated in their own tested slices.
 
 ## Security assumptions
@@ -147,7 +151,7 @@ npm run dev            # NEXT_PUBLIC_USE_LIVE_API unset → demo mode
 NEXT_PUBLIC_USE_LIVE_API=true
 TRPC_BASE_URL=…                 # transitional domains only
 CLINICAL_ORG_ID=…               # or NEXT_PUBLIC_DEV_ORG_ID
-CLINICAL_SUPABASE_URL=… CLINICAL_SUPABASE_ANON_KEY=…   # auth + Desktop-owned registry
+CLINICAL_SUPABASE_URL=… CLINICAL_SUPABASE_ANON_KEY=…   # auth + migrated Desktop domains
 ```
 Then `npm run dev` and **sign in at `/login`** (httpOnly cookie session; see
 [`live-auth-and-seeding.md`](live-auth-and-seeding.md)). `CLINICAL_DEMO_EMAIL/
@@ -169,11 +173,16 @@ after a live-flag build.
 
 | Layer | How | Result |
 | --- | --- | --- |
-| Typecheck / lint / build | `npm run typecheck && npm run lint && npm run build` | green (mock and live builds) |
-| DB write path (RPCs 0013) | live SQL vs the real project (MCP), simulated authenticated practitioner, rolled back — `supabase/tests/app_facing_functions.sql` | **16/16** (authorized review persists + audits; unauthorized → 42501; unauthenticated → 28000; invalid decision → 22023; lab values/provenance preserved; audit PHI-safe; anon cannot execute) |
-| Demo path (browser) | Playwright | **11/11** (async labs load; review → session audit; downstream task in queue; Settings shows DEMO; audit demo view) |
-| Live shell (browser) | Playwright, flag on + unreachable backend | **11/11** (LIVE badge + dev-override warning; clean retryable error state; no fake data; no misleading not-found; live append-only audit view) |
-| Live route handlers | `curl /api/live/*` | clean JSON envelopes — `503 unavailable` (backend down), `400 invalid` (bad input); never a crash or fake success |
+| Static checks | `npm run typecheck`, `npm run lint`, live production build | green |
+| Unit adapters | `npm run test:unit` | **39/39** (auth grants/logout, PostgREST error mapping, organizations, selected-org patient reads, dates, knowledge) |
+| Desktop identity DB boundary | rolled-back SQL against the clinical project — `supabase/tests/desktop_identity_directory.sql` | **6/6** (active memberships only, assigned-patient RLS, cross-tenant denial, anon execute denied, explicit grants) |
+| Demo UI | production build + Playwright | **41/41** |
+| Full live contract fixture | live production build + Playwright (`live-tasks`, `live-scribe`, `live-lens`) | **31/31** (auth rotation/revocation/logout, organizations, patient isolation, labs, scheduling, EMR, scribe, lens, audit) |
+| Dependency audit | `npm audit` after non-breaking remediation | safe patch updates applied; remaining reports are the Next/sharp and ESLint/minimatch toolchains whose automated remedies require breaking downgrades |
+
+The real signed-in staging browser gate remains an external deployment check;
+the database acceptance suite and committed contract fixture are supporting
+evidence, not substitutes for it.
 
 ## Repository boundary
 

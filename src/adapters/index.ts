@@ -1,13 +1,13 @@
 /**
  * Data adapter façade.
  *
- * The UI consumes data exclusively through this `api` object, shaped the way
- * the future tRPC client will be (async, per-domain namespaces). Swapping a
- * namespace from mock to live means adding a flag branch here — components
- * never change, and never import Supabase/tRPC/live modules directly.
+ * The UI consumes data exclusively through this `api` object, shaped as
+ * async per-domain namespaces. Swapping a namespace from mock to live means
+ * adding a flag branch here — components never change and never import
+ * Supabase, tRPC, or live modules directly.
  *
  * Live wiring status (NEXT_PUBLIC_USE_LIVE_API):
- *   - patients.list / patients.get  -> live (server components, tRPC)
+ *   - patients.list / patients.get  -> live (Desktop-owned Supabase boundary)
  *   - labs.getWorkspace / reviewMarker / flagMarker / createReviewTask -> live
  *     (client components -> /api/live/* route handlers -> tRPC -> RPCs 0013)
  *   - actions.listLiveAuditEvents   -> live (dual-mode Audit Log)
@@ -88,16 +88,18 @@ interface LabMarkerCtx {
 export const api = {
   patients: {
     // When USE_LIVE_API is on, list/get read real patient_profiles rows through
-    // the authenticated tRPC backend (RLS enforced). The live module is loaded
-    // lazily so the default mock build never pulls in server-only code.
+    // the Desktop-owned server boundary (RLS enforced). The live module is
+    // loaded lazily so the default mock build never pulls in server-only code.
     // sessionToken: the cookie session's access token, passed by SERVER
     // callers (src/server/session.ts). Client/demo callers omit it.
     list: async (sessionToken?: string | null, orgId?: string | null) => {
       if (USE_LIVE_API) return (await import("./patients.live")).patientsLive.list(sessionToken, orgId);
       return listPatients();
     },
-    get: async (id: string, sessionToken?: string | null) => {
-      if (USE_LIVE_API) return (await import("./patients.live")).patientsLive.get(id, sessionToken);
+    get: async (id: string, sessionToken?: string | null, orgId?: string | null) => {
+      if (USE_LIVE_API) {
+        return (await import("./patients.live")).patientsLive.get(id, sessionToken, orgId);
+      }
       return getPatient(id);
     },
     summary: async (id: string) => getPatientSummary(id),

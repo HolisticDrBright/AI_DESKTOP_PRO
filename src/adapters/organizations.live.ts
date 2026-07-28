@@ -1,20 +1,22 @@
 if (typeof window !== "undefined") {
   throw new Error("This module is server-only and must not run in the browser.");
 }
-import { trpcMutation, trpcQuery } from "./trpc.server";
+import { AdapterError, isAdapterError } from "./errors";
+import { clinicalRpc } from "./supabase-rest.server";
 import { resolveOrgId } from "./config";
+import { getClinicalAccessToken } from "./session.server";
 
 /**
  * Live `organizations` namespace (server-only): the caller's ACTIVE
  * memberships, read under their own RLS view via
- * `clinical.organizations.mine`. Used to auto-select the sole organization at
+ * `list_my_organizations`. Used to auto-select the sole organization at
  * sign-in and to validate any organization switch before the org cookie is
- * set — the cookie is never trusted as authorization (the backend re-checks
- * membership on every call); it only scopes which org the UI operates in.
+ * set — the cookie is never trusted as authorization (RLS and the database
+ * RPCs re-check membership on every call); it only scopes which org the UI
+ * operates in.
  *
- * Membership management (members/invite/setRole/remove) is admin-gated twice:
- * by the backend procedure AND inside the SECURITY DEFINER RPCs (migration
- * 0020) that also write the audit rows.
+ * Membership management (members/invite/setRole/remove) is admin-gated inside
+ * the SECURITY DEFINER RPCs (migration 0020), which also write audit rows.
  */
 export interface OrgMembership {
   organizationId: string | null;
@@ -35,47 +37,116 @@ export interface OrgMemberRow {
   joinedAt: string;
 }
 
+interface DatabaseOrganization {
+  organization_id: string;
+  name: string;
+  slug: string;
+  role: string;
+}
+
+interface DatabaseOrgMember {
+  membership_id: string;
+  user_id: string;
+  email: string | null;
+  display_name: string | null;
+  role: string;
+  status: string;
+  joined_at: string;
+}
+
 export const organizationsLive = {
-  mine(sessionToken?: string | null): Promise<OrgMembership[]> {
-    return trpcQuery<OrgMembership[]>("clinical.organizations.mine", undefined, sessionToken);
+  async mine(sessionToken?: string | null): Promise<OrgMembership[]> {
+    const token = await getClinicalAccessToken(sessionToken);
+    const rows = await clinicalRpc<DatabaseOrganization[]>(
+      "list_my_organizations",
+      {},
+      token,
+    );
+    return rows.map((row) => ({
+      organizationId: row.organization_id,
+      name: row.name,
+      slug: row.slug,
+      role: row.role,
+    }));
   },
 
   /** Activate the caller's own pending invitations (idempotent). */
-  claim(sessionToken?: string | null): Promise<{ activated: number }> {
-    return trpcMutation<{ activated: number }>("clinical.organizations.claim", {}, sessionToken);
-  },
-
-  members(sessionToken?: string | null, orgId?: string | null): Promise<OrgMemberRow[]> {
-    return trpcQuery<OrgMemberRow[]>(
-      "clinical.organizations.members",
-      { organizationId: resolveOrgId(orgId) },
-      sessionToken,
+  async claim(sessionToken?: string | null): Promise<{ activated: number }> {
+    const token = await getClinicalAccessToken(sessionToken);
+    const activated = await clinicalRpc<number>(
+      "activate_my_memberships",
+      {},
+      token,
     );
+    return { activated };
   },
 
-  invite(
+  async members(sessionToken?: string | null, orgId?: string | null): Promise<OrgMemberRow[]> {
+    const token = await getClinicalAccessToken(sessionToken);
+    const rows = await clinicalRpc<DatabaseOrgMember[]>(
+      "list_org_members",
+      { _organization_id: resolveOrgId(orgId) },
+      token,
+    );
+    return rows.map((row) => ({
+      membershipId: row.membership_id,
+      userId: row.user_id,
+      email: row.email,
+      displayName: row.display_name,
+      role: row.role,
+      status: row.status,
+      joinedAt: row.joined_at,
+    }));
+  },
+
+  async invite(
     input: { email: string; role: OrgMemberRole },
     sessionToken?: string | null,
     orgId?: string | null,
   ): Promise<{ membershipId: string; invitedNewUser: boolean }> {
-    return trpcMutation("clinical.organizations.invite", {
-      organizationId: resolveOrgId(orgId),
-      email: input.email,
-      role: input.role,
-    }, sessionToken);
+    const token = await getClinicalAccessToken(sessionToken);
+    return clinicalRpc<string>(
+      "add_org_member",
+      {
+        _organization_id: resolveOrgId(orgId),
+        _email: input.email,
+        _role: input.role,
+      },
+      token,
+    )
+      .then((membershipId) => ({ membershipId, invitedNewUser: false }))
+      .catch((error: unknown) => {
+        if (isAdapterError(error) && error.code === "not_found") {
+          throw new AdapterError(
+            "invalid",
+            "No account exists for that email. Create it through the approved identity-admin process, then add it here.",
+          );
+        }
+        throw error;
+      });
   },
 
-  setRole(
+  async setRole(
     input: { membershipId: string; role: OrgMemberRole },
     sessionToken?: string | null,
   ): Promise<{ ok: true }> {
-    return trpcMutation("clinical.organizations.setRole", input, sessionToken);
+    const token = await getClinicalAccessToken(sessionToken);
+    return clinicalRpc<null>(
+      "set_org_member_role",
+      { _membership_id: input.membershipId, _role: input.role },
+      token,
+    ).then(() => ({ ok: true as const }));
   },
 
-  remove(
+  async remove(
     input: { membershipId: string },
     sessionToken?: string | null,
   ): Promise<{ ok: true }> {
-    return trpcMutation("clinical.organizations.remove", input, sessionToken);
+    const token = await getClinicalAccessToken(sessionToken);
+    return clinicalRpc<null>(
+      "remove_org_member",
+      { _membership_id: input.membershipId },
+      token,
+    ).then(() => ({ ok: true as const }));
   },
 };

@@ -6,10 +6,10 @@ import { Card, CardTitle } from "@/components/ui/bits";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 
 /**
- * Organization members (live mode, admin surface). Lists the roster, invites
- * by email, changes roles, and removes members. Every rule — admin gating,
+ * Organization members (live mode, admin surface). Lists the roster, links
+ * existing accounts by email, changes roles, and removes members. Every rule — admin gating,
  * owner transitions, last-owner lockout, self-removal — is enforced by the
- * backend RPCs; this card renders their honest answers. Non-admins see a
+ * database RPCs; this card renders their honest answers. Non-admins see a
  * plain explanation instead of controls that would always fail.
  */
 
@@ -245,7 +245,7 @@ export function OrgMembersCard() {
                 htmlFor="invite-email"
                 className="mb-[5px] block text-[10px] font-bold tracking-[0.04em] text-faint uppercase"
               >
-                Invite by email
+                Add member by email
               </label>
               <div className="flex items-center gap-[6px]">
                 <input
@@ -258,7 +258,7 @@ export function OrgMembersCard() {
                   className="h-8 min-w-0 flex-1 rounded-md border border-line bg-card px-2 text-[12px] text-body outline-none focus-visible:outline-2 focus-visible:outline-action"
                 />
                 <label className="sr-only" htmlFor="invite-role">
-                  Role for the invitee
+                  Role for the member
                 </label>
                 <select
                   id="invite-role"
@@ -278,12 +278,12 @@ export function OrgMembersCard() {
                   className="flex h-8 cursor-pointer items-center gap-[5px] rounded-md border-none bg-action px-3 text-[11.5px] font-semibold text-white hover:bg-action-deep focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <UserPlus size={12} strokeWidth={2.2} aria-hidden />
-                  {working ? "Working…" : "Invite"}
+                  {working ? "Working…" : "Add"}
                 </button>
               </div>
               <p className="m-0 mt-[6px] text-[10.5px] leading-[1.5] text-faint">
-                Existing accounts are linked immediately; new emails receive an invitation to set
-                a password. Membership changes are recorded in the audit log.
+                Existing accounts are linked immediately. New accounts must be created through the
+                approved identity-admin process first. Membership changes are recorded in the audit log.
               </p>
             </form>
 

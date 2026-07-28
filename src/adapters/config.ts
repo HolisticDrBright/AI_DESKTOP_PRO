@@ -6,14 +6,14 @@
  * re-exports the flag for existing importers and adds the server-only backend
  * endpoints used by the live modules.
  *
- * IMPORTANT: even when live, the desktop talks ONLY to the tRPC backend over
- * HTTP — never to Postgres/Supabase data directly (ADR 0002). The backend
- * enforces RLS + the procedure guards, and is the one place that calls the
- * SECURITY DEFINER RPCs (migration 0013) as the authenticated practitioner.
+ * Live domains are migrating into the Desktop repository. Migrated server
+ * adapters use the clinical Supabase Data API with the practitioner's bearer
+ * token so RLS remains authoritative. Transitional domains still use the
+ * shared tRPC endpoint until they move (ADR 0003).
  */
 export { USE_LIVE_API } from "./mode";
 
-/** Base URL of the shared tRPC backend (rork-ai-longevity-coach). Server-only. */
+/** Transitional shared tRPC endpoint for domains not migrated yet. Server-only. */
 export const TRPC_BASE_URL =
   process.env.TRPC_BASE_URL ?? "http://localhost:3000/api/trpc";
 

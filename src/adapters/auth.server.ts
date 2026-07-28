@@ -8,10 +8,12 @@ import { AdapterError } from "./errors";
  * httpOnly cookies. The browser never sees tokens or Supabase; this module
  * (and the /api/auth/* route handlers that own cookie writes) do the
  * password/refresh grants server-side against the CLINICAL project's auth
- * endpoint — identity only, never a data connection (ADR 0002).
+ * endpoint. Authenticated server adapters then present the access token to
+ * either the Desktop-owned clinical Supabase boundary or a transitional tRPC
+ * domain (ADR 0003).
  *
  * Cookie model (all httpOnly, sameSite=lax, secure in production):
- *   aidp_at  — access token (JWT presented to the tRPC backend as bearer)
+ *   aidp_at  — access token (JWT presented by server adapters as bearer)
  *   aidp_rt  — refresh token (rotated by Supabase on each refresh)
  *   aidp_exp — access-token expiry (epoch ms), for cheap freshness checks
  *   aidp_em  — signed-in email, display only (no PHI)
@@ -171,6 +173,35 @@ export async function completePasswordReset(
 
 export function refreshSession(refreshToken: string): Promise<AuthTokens> {
   return grant({ refresh_token: refreshToken }, "refresh_token");
+}
+
+/**
+ * Revoke only the current Supabase session. Cookie clearing remains mandatory
+ * even when the provider is unavailable, so callers treat this as best effort.
+ */
+export async function signOutSession(accessToken: string): Promise<void> {
+  const { url, anon } = authBase();
+  let res: Response;
+  try {
+    res = await fetch(`${url}/auth/v1/logout?scope=local`, {
+      method: "POST",
+      headers: {
+        apikey: anon,
+        Authorization: `Bearer ${accessToken}`,
+      },
+      cache: "no-store",
+    });
+  } catch (e) {
+    throw new AdapterError(
+      "unavailable",
+      undefined,
+      `auth sign-out: ${e instanceof Error ? e.message : "network"}`,
+    );
+  }
+
+  // An already expired or revoked token is functionally signed out.
+  if (res.ok || res.status === 401 || res.status === 403) return;
+  throw new AdapterError("unavailable", undefined, `auth sign-out status ${res.status}`);
 }
 
 /** Minimal cookie-store shape (matches next/headers' ReadonlyRequestCookies). */

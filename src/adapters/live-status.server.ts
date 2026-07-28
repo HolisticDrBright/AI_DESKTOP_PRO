@@ -3,13 +3,14 @@ if (typeof window !== "undefined") {
 }
 
 /**
- * Server-side view of live-backend configuration — PRESENCE ONLY.
+ * Server-side view of live data-source configuration — PRESENCE ONLY.
  *
  * Reports whether each server-only env var is set, never its value, so the
  * Settings status panel can show "configured / not configured" without any
  * secret ever reaching the client bundle.
  */
 export interface LiveServerStatus {
+  clinicalSupabaseConfigured: boolean;
   trpcConfigured: boolean;
   demoSessionConfigured: boolean;
   orgConfigured: boolean;
@@ -17,6 +18,9 @@ export interface LiveServerStatus {
 
 export function getLiveServerStatus(): LiveServerStatus {
   return {
+    clinicalSupabaseConfigured: Boolean(
+      process.env.CLINICAL_SUPABASE_URL && process.env.CLINICAL_SUPABASE_ANON_KEY,
+    ),
     trpcConfigured: Boolean(process.env.TRPC_BASE_URL),
     demoSessionConfigured: Boolean(
       process.env.CLINICAL_SUPABASE_URL &&

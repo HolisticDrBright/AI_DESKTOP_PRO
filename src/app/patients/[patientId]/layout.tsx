@@ -13,7 +13,8 @@ export default async function PatientLayout({
   params: Promise<{ patientId: string }>;
 }) {
   const { patientId } = await params;
-  const patient = await api.patients.get(patientId, (await getRequestSession()).token);
+  const session = await getRequestSession();
+  const patient = await api.patients.get(patientId, session.token, session.orgId);
   if (!patient) notFound();
 
   return (

@@ -34,7 +34,10 @@ browser → same-origin Next.js route → clinical Supabase REST/RPC
 
 ## Consequences
 
-- The clinical knowledge registry is the first independent live slice.
+- The clinical knowledge registry was the first independent live slice.
+- Identity/session lifecycle, organization selection and membership
+  management, and the patient directory/profile read path now use the same
+  Desktop-owned boundary.
 - AI Longevity Pro remains clean and can evolve independently.
 - Shared concepts are exchanged later through versioned API contracts, not
   copied backend code.
