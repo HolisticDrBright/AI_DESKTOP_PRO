@@ -2,8 +2,9 @@ import { expect, test } from "@playwright/test";
 
 /**
  * LIVE-MODE Tasks slice coverage. Skipped unless E2E_LIVE=1, because it needs
- * a live-flag build plus a reachable backend speaking the clinical.* contract
- * (the deployed tRPC backend, or the committed contract fixture).
+ * a live-flag build plus the clinical Supabase/Data API contract (the real
+ * project or the committed contract fixture). Transitional domains still use
+ * the tRPC fixture routes from the same process.
  *
  * Full recipe (from the repo root):
  *   node scripts/live-stub-server.mjs &          # or a real backend
@@ -78,7 +79,7 @@ test("resolve persists across reload and lands in the live audit log", async ({ 
 test("live labs workspace loads markers and a review persists across reload", async ({ page }) => {
   await page.goto("/patients/aaaaaaaa-1111-2222-3333-444444444401/labs");
 
-  // Markers come from the fixture backend's clinical.labs.getWorkspace.
+  // Markers come from the fixture's Desktop-owned Supabase read boundary.
   await page.getByRole("button", { name: "Select hs-CRP" }).waitFor();
   await expect(page.getByRole("button", { name: "Select TSH" })).toBeVisible();
 

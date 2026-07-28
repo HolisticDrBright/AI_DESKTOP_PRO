@@ -14,6 +14,6 @@ export async function POST(req: NextRequest) {
       throw new AdapterError("invalid", "A patient id is required.");
     }
     const session = await getRequestSession();
-    return labsLive.getWorkspace(body.patientId, session.token);
+    return labsLive.getWorkspace(body.patientId, session.orgId, session.token);
   });
 }

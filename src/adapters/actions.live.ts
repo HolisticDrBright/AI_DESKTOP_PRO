@@ -4,6 +4,8 @@ if (typeof window !== "undefined") {
 import { trpcMutation, trpcQuery } from "./trpc.server";
 import { resolveOrgId } from "./config";
 import type { LiveAuditEvent, LiveTaskResult } from "./live-types";
+import { getClinicalAccessToken } from "./session.server";
+import { clinicalRpc } from "./supabase-rest.server";
 
 /**
  * Live `actions` namespace (server-only).
@@ -51,19 +53,29 @@ export const actionsLive = {
     }, sessionToken);
   },
 
-  createReviewTask(input: {
+  async createReviewTask(input: {
     patientId: string;
     title: string;
     itemType?: string;
     priority?: "low" | "medium" | "high";
     refId?: string;
   }, sessionToken?: string | null): Promise<LiveTaskResult> {
-    return trpcMutation<LiveTaskResult>("clinical.actions.createReviewTask", {
-      patientId: input.patientId,
-      title: input.title,
-      itemType: input.itemType ?? "abnormal_result",
-      priority: input.priority ?? "medium",
-      refId: input.refId ?? null,
-    }, sessionToken);
+    const token = await getClinicalAccessToken(sessionToken);
+    const result = await clinicalRpc<{
+      id: string;
+      status: string;
+    }>("create_review_task", {
+      _patient_id: input.patientId,
+      _title: input.title,
+      _item_type: input.itemType ?? "abnormal_result",
+      _priority: input.priority ?? "medium",
+      _ref_id: input.refId ?? null,
+    }, token);
+    return {
+      ok: true,
+      id: result.id,
+      status: result.status,
+      message: "Review task created.",
+    };
   },
 };

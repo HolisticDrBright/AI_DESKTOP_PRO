@@ -561,10 +561,10 @@ seedLensFixtures();
 
 const queue = new Map(
   [
-    { id: "bbbbbbbb-1111-2222-3333-444444444401", itemType: "abnormal_result", title: "Recheck hs-CRP after abnormal result", priority: "high", status: "open", patientId: PATIENTS[0].id, patientName: "Fixture Patient", assigneeName: "Demo Practitioner", dueAt: iso(-2 * 864e5), createdAt: iso(3 * 864e5) },
-    { id: "bbbbbbbb-1111-2222-3333-444444444402", itemType: "lab_extraction", title: "Verify extracted markers from uploaded panel", priority: "medium", status: "open", patientId: PATIENTS[0].id, patientName: "Fixture Patient", assigneeName: "Demo Practitioner", dueAt: iso(0), createdAt: iso(2 * 864e5) },
-    { id: "bbbbbbbb-1111-2222-3333-444444444403", itemType: "hypothesis", title: "Review updated reasoning hypothesis", priority: "medium", status: "open", patientId: PATIENTS[1].id, patientName: "Sample Client", assigneeName: null, dueAt: null, createdAt: iso(864e5) },
-    { id: "bbbbbbbb-1111-2222-3333-444444444404", itemType: "assessment", title: "Quarterly org QA checklist", priority: "low", status: "resolved", patientId: null, patientName: null, assigneeName: "Demo Practitioner", dueAt: null, createdAt: iso(5 * 864e5) },
+    { id: "bbbbbbbb-1111-2222-3333-444444444401", organizationId: "org-fixture", itemType: "abnormal_result", title: "Recheck hs-CRP after abnormal result", priority: "high", status: "open", patientId: PATIENTS[0].id, patientName: "Fixture Patient", assigneeName: "Demo Practitioner", dueAt: iso(-2 * 864e5), createdAt: iso(3 * 864e5) },
+    { id: "bbbbbbbb-1111-2222-3333-444444444402", organizationId: "org-fixture", itemType: "lab_extraction", title: "Verify extracted markers from uploaded panel", priority: "medium", status: "open", patientId: PATIENTS[0].id, patientName: "Fixture Patient", assigneeName: "Demo Practitioner", dueAt: iso(0), createdAt: iso(2 * 864e5) },
+    { id: "bbbbbbbb-1111-2222-3333-444444444403", organizationId: "org-fixture", itemType: "hypothesis", title: "Review updated reasoning hypothesis", priority: "medium", status: "open", patientId: PATIENTS[1].id, patientName: "Sample Client", assigneeName: null, dueAt: null, createdAt: iso(864e5) },
+    { id: "bbbbbbbb-1111-2222-3333-444444444404", organizationId: "org-fixture", itemType: "assessment", title: "Quarterly org QA checklist", priority: "low", status: "resolved", patientId: null, patientName: null, assigneeName: "Demo Practitioner", dueAt: null, createdAt: iso(5 * 864e5) },
   ].map((r) => [r.id, r]),
 );
 
@@ -629,23 +629,60 @@ const labReports = [
   { id: "ffffffff-1111-2222-3333-444444444401", name: "Fixture panel — July", lab: "Fixture Lab", collectedAt: iso(15 * 864e5), uploadedAt: iso(6 * 864e5), markerCount: 3 },
 ];
 
-function labsWorkspaceFor(patient) {
-  const reviewed = labMarkers.filter((m) => m.reviewState === "reviewed").length;
-  return {
-    patientId: patient.id,
-    patientName: `${patient.first_name} ${patient.last_name}`,
-    lastUpload: labReports[labReports.length - 1].uploadedAt,
-    lastSynced: new Date().toISOString(),
-    reviewSummary: {
-      reviewed,
-      awaiting: labMarkers.length - reviewed,
-      lowConfidence: labMarkers.filter((m) => m.confidenceBand === "low").length,
-      abnormal: labMarkers.filter((m) => m.status !== "normal" && m.status !== "optimal").length,
+function labObservationRows() {
+  return [
+    ...labMarkers.map((marker) => {
+      const report = labReports.find((item) => item.id === marker.source.documentId);
+      const reviewStatus =
+        marker.reviewState === "reviewed"
+          ? "accepted"
+          : marker.reviewState === "awaiting-review"
+            ? "unreviewed"
+            : "flagged";
+      return {
+        id: marker.id,
+        biomarker_definition_id: `dddddddd-aaaa-bbbb-cccc-${marker.id.slice(-12)}`,
+        canonical_name: marker.name,
+        biological_system: null,
+        value_numeric: marker.current,
+        value_text: null,
+        unit: marker.unit,
+        status: marker.status,
+        original_reference_interval: marker.labRangeText,
+        confidence: marker.confidence == null ? null : marker.confidence / 100,
+        provenance: marker.source.location,
+        review_status: reviewStatus,
+        reviewed_at: marker.reviewState === "reviewed" ? iso(864e5) : null,
+        observed_at: marker.collectedAt,
+        ingested_at: marker.provenance.lastUpdated ?? marker.collectedAt,
+        lab_document_id: marker.source.documentId ?? null,
+        source: "fixture",
+        document_file_name: report?.name ?? marker.source.reportName,
+        document_lab_company: report?.lab ?? "Fixture Lab",
+      };
+    }),
+    {
+      id: "eeeeeeee-1111-2222-3333-444444444499",
+      biomarker_definition_id: null,
+      canonical_name: "Qualitative note",
+      biological_system: null,
+      value_numeric: null,
+      value_text: "Present",
+      unit: null,
+      status: null,
+      original_reference_interval: null,
+      confidence: null,
+      provenance: "Structured result preview",
+      review_status: "unreviewed",
+      reviewed_at: null,
+      observed_at: iso(15 * 864e5),
+      ingested_at: iso(6 * 864e5),
+      lab_document_id: labReports[0]?.id ?? null,
+      source: "fixture",
+      document_file_name: labReports[0]?.name ?? null,
+      document_lab_company: labReports[0]?.lab ?? null,
     },
-    reports: [...labReports].reverse(),
-    queue: [],
-    markers: labMarkers,
-  };
+  ];
 }
 
 /** Fixture ingestion result for an uploaded PDF: 2 markers, 1 low-confidence. */
@@ -688,6 +725,7 @@ function ingestUploadFixture(patientId) {
   const queueId = "bbbbbbbb-1111-2222-3333-444444444405";
   queue.set(queueId, {
     id: queueId,
+    organizationId: "org-fixture",
     itemType: "lab_extraction",
     title: "Verify 1 low-confidence marker from uploaded panel",
     priority: "medium",
@@ -985,6 +1023,141 @@ createServer(async (req, res) => {
       return json(res, 200, null);
     }
 
+    if (url.pathname === "/rest/v1/rpc/list_review_queue" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!memberOrgIds.includes(body._organization_id)) {
+        return json(res, 403, { code: "42501", message: "active organization membership required" });
+      }
+      return json(res, 200, [...queue.values()]
+        .filter((item) =>
+          item.organizationId === body._organization_id &&
+          item.status !== "dismissed"
+        )
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+        .map((item) => ({
+          id: item.id,
+          item_type: item.itemType,
+          title: item.title,
+          priority: item.priority,
+          status: item.status,
+          patient_id: item.patientId,
+          patient_name: item.patientName,
+          assignee_name: item.assigneeName ? "You" : null,
+          due_at: item.dueAt,
+          created_at: item.createdAt,
+        })));
+    }
+
+    if (
+      url.pathname === "/rest/v1/rpc/list_patient_lab_observations" &&
+      req.method === "POST"
+    ) {
+      const body = await readBody(req);
+      const patient = PATIENTS.find((item) =>
+        item.id === body._patient_id &&
+        item.organization_id === body._organization_id,
+      );
+      if (!patient || !memberOrgIds.includes(body._organization_id)) return json(res, 200, []);
+      return json(res, 200, patient.id === PATIENTS[0].id ? labObservationRows() : []);
+    }
+
+    if (url.pathname === "/rest/v1/rpc/review_biomarker" && req.method === "POST") {
+      const body = await readBody(req);
+      const marker = labMarkers.find((item) => item.id === body._observation_id);
+      if (!marker) return json(res, 404, { code: "P0002", message: "observation not found" });
+      const previousStatus =
+        marker.reviewState === "reviewed"
+          ? "accepted"
+          : marker.reviewState === "awaiting-review"
+            ? "unreviewed"
+            : "flagged";
+      marker.reviewState = body._decision === "accepted" ? "reviewed" : "not-reviewed";
+      pushAudit(
+        "biomarker.review",
+        "biomarker_observation",
+        marker.id,
+        `Biomarker review: ${body._decision}`,
+        { decision: body._decision, note_present: Boolean(body._note) },
+        PATIENTS[0].id,
+      );
+      return json(res, 200, {
+        review_status: body._decision,
+        reviewed_at: new Date().toISOString(),
+        previous_status: previousStatus,
+      });
+    }
+
+    if (
+      url.pathname === "/rest/v1/rpc/resolve_review_queue_item" &&
+      req.method === "POST"
+    ) {
+      const body = await readBody(req);
+      const item = queue.get(body._item_id);
+      if (!item || !memberOrgIds.includes(item.organizationId)) {
+        return json(res, 404, { code: "P0002", message: "queue item not found" });
+      }
+      if (item.status === "resolved") {
+        return json(res, 200, {
+          id: item.id,
+          status: "resolved",
+          previous_status: "resolved",
+          already_resolved: true,
+        });
+      }
+      const previousStatus = item.status;
+      item.status = "resolved";
+      pushAudit(
+        "review_task.resolve",
+        "review_queue_item",
+        item.id,
+        "Review task resolved",
+        {
+          previous_status: previousStatus,
+          item_type: item.itemType,
+          note_present: Boolean(body._note),
+        },
+        item.patientId,
+      );
+      return json(res, 200, {
+        id: item.id,
+        status: "resolved",
+        previous_status: previousStatus,
+        already_resolved: false,
+        audit_event_id: auditEvents[0].id,
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/create_review_task" && req.method === "POST") {
+      const body = await readBody(req);
+      const patient = PATIENTS.find((item) => item.id === body._patient_id);
+      if (!patient || !memberOrgIds.includes(patient.organization_id)) {
+        return json(res, 403, { code: "42501", message: "patient not accessible" });
+      }
+      const id = `bbbbbbbb-1111-2222-3333-${String(444444444400 + queue.size + 1)}`;
+      queue.set(id, {
+        id,
+        organizationId: patient.organization_id,
+        itemType: body._item_type ?? "abnormal_result",
+        title: body._title,
+        priority: body._priority ?? "medium",
+        status: "open",
+        patientId: patient.id,
+        patientName: `${patient.first_name} ${patient.last_name}`,
+        assigneeName: null,
+        dueAt: null,
+        createdAt: new Date().toISOString(),
+      });
+      pushAudit(
+        "review_task.create",
+        "review_queue_item",
+        id,
+        "Created review task",
+        { item_type: body._item_type, priority: body._priority },
+        patient.id,
+      );
+      return json(res, 200, { id, status: "open", audit_event_id: auditEvents[0].id });
+    }
+
     if (url.pathname === "/rest/v1/patient_profiles" && req.method === "GET") {
       const organizationId = (url.searchParams.get("organization_id") ?? "").replace(/^eq\./, "");
       const patientId = (url.searchParams.get("id") ?? "").replace(/^eq\./, "");
@@ -995,6 +1168,26 @@ createServer(async (req, res) => {
           (!patientId || patient.id === patientId),
         );
       return json(res, 200, rows);
+    }
+
+    if (url.pathname === "/rest/v1/lab_documents" && req.method === "GET") {
+      const organizationId = (url.searchParams.get("organization_id") ?? "").replace(/^eq\./, "");
+      const patientId = (url.searchParams.get("patient_id") ?? "").replace(/^eq\./, "");
+      const patient = PATIENTS.find((item) =>
+        item.id === patientId &&
+        item.organization_id === organizationId,
+      );
+      if (!patient || !memberOrgIds.includes(organizationId)) return json(res, 200, []);
+      return json(res, 200, [...labReports]
+        .reverse()
+        .map((report) => ({
+          id: report.id,
+          file_name: report.name,
+          lab_company: report.lab,
+          panel_name: report.name,
+          lab_date: report.collectedAt,
+          created_at: report.uploadedAt,
+        })));
     }
 
     return json(res, 404, { code: "PGRST202", message: "fixture route not found" });
@@ -1902,58 +2095,6 @@ createServer(async (req, res) => {
       }
       members.delete(row.membershipId);
       return trpcOk(res, { ok: true });
-    }
-    case "clinical.tasks.getQueue":
-      return trpcOk(res, orgScopedEmpty ? [] : [...queue.values()]);
-    case "clinical.tasks.resolve": {
-      const item = queue.get(input.itemId);
-      if (!item) return trpcErr(res, 404, "NOT_FOUND", "no such item");
-      if (item.status === "resolved") {
-        return trpcOk(res, { id: item.id, status: "resolved", previousStatus: "resolved", alreadyResolved: true });
-      }
-      const previous = item.status;
-      item.status = "resolved";
-      pushAudit(
-        "review_task.resolve",
-        "review_queue_item",
-        item.id,
-        "Review task resolved",
-        { previous_status: previous, item_type: item.itemType, note_present: Boolean(input.note) },
-        item.patientId,
-      );
-      return trpcOk(res, {
-        id: item.id,
-        status: "resolved",
-        previousStatus: previous,
-        alreadyResolved: false,
-        auditEventId: auditEvents[0].id,
-      });
-    }
-    case "clinical.labs.getWorkspace": {
-      const row = PATIENTS.find((p) => p.id === input.patientId);
-      if (!row) return trpcErr(res, 404, "NOT_FOUND", "no such patient");
-      return trpcOk(res, labsWorkspaceFor(row));
-    }
-    case "clinical.labs.reviewMarker": {
-      const marker = labMarkers.find((m) => m.id === input.observationId);
-      if (!marker) return trpcErr(res, 404, "NOT_FOUND", "no such observation");
-      const previous = marker.reviewState;
-      marker.reviewState = input.decision === "accepted" ? "reviewed" : "awaiting-review";
-      pushAudit(
-        "biomarker.review",
-        "biomarker_observation",
-        marker.id,
-        `Biomarker review: ${input.decision}`,
-        { decision: input.decision, note_present: Boolean(input.note) },
-        PATIENTS[0].id,
-      );
-      return trpcOk(res, {
-        ok: true,
-        reviewStatus: input.decision,
-        reviewedAt: new Date().toISOString(),
-        previousStatus: previous,
-        message: `Review saved (${input.decision}).`,
-      });
     }
     case "clinical.actions.listAuditEvents":
       return trpcOk(res, auditEvents.slice(0, Math.min(Number(input.limit ?? 50), 200)));

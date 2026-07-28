@@ -76,12 +76,12 @@ is revoked from `public` + `anon` and granted to `authenticated` only.
 | `organizations.mine` / `claim` / member management | n/a | ✅ Desktop-owned REST/RPC boundary; active caller memberships only; database-enforced admin/owner guards |
 | practitioner sign-in / refresh / sign-out | n/a | ✅ server-only Supabase Auth; rotated refresh tokens, selected-org preservation, current-session revocation |
 | `patients.summary` | mock | mock (synthesized, no DB source) |
-| `labs.getWorkspace` | mock | ✅ real workspace via `clinical.labs.getWorkspace` |
-| `labs.reviewMarker` / `flagMarker` | session + session audit | ✅ `review_biomarker` RPC (persist + audit) |
-| `labs.createReviewTask` | session queue item | ✅ `create_review_task` RPC |
+| `labs.getWorkspace` | mock | ✅ Desktop-owned `list_patient_lab_observations` + RLS-scoped patient/document reads |
+| `labs.reviewMarker` / `flagMarker` | session + session audit | ✅ direct `review_biomarker` RPC (persist + audit) |
+| `labs.createReviewTask` | session queue item | ✅ direct `create_review_task` RPC |
 | `labs.uploadDocument` | n/a (demo keeps `queueUploadDemo`, no file leaves the browser) | ✅ real PDF ingestion: storage upload + deterministic extraction + `ingest_lab_extraction` RPC (migration `0016` — observations w/ verbatim originals + confidence, low-confidence review-queue item, audit, atomic); failures → `mark_lab_document_failed` (PDF stays stored, audited) |
-| `tasks.getQueue` | mock queue | ✅ real `review_queue_items` (RLS-scoped), settled status carried through reload |
-| `actions.execute` — `resolve` on a queue item | session outcome + session audit | ✅ `resolve_review_queue_item` RPC (migration `0014`): status + audit atomically, idempotent |
+| `tasks.getQueue` | mock queue | ✅ Desktop-owned `list_review_queue` (SECURITY INVOKER + RLS), settled status carried through reload |
+| `actions.execute` — `resolve` on a queue item | session outcome + session audit | ✅ direct `resolve_review_queue_item` RPC (migration `0014`): status + audit atomically, idempotent |
 | `actions.listLiveAuditEvents` | `[]` | ✅ `list_audit_events` RPC |
 | `actions.execute` — other kinds | session | session (wired per-domain as slices land) |
 | `schedule.getWeek` | n/a (demo calendar renders the weekday-pattern mock directly) | ✅ real `appointments` week read (RLS-scoped; patient-NULL breaks org-visible via migration `0017`) |
@@ -121,11 +121,12 @@ component (reads) → add the live branch in `index.ts` behind `USE_LIVE_API`,
 reusing `runClinicalMutation` for writes and `ClinicalStates` for async UI.
 
 The clinical knowledge registry, practitioner identity/session lifecycle,
-organization selection and membership management, and patient directory
-reads use the Desktop-owned boundary defined in ADR 0003. Their live adapters
-use `supabase-rest.server.ts`, with the publishable key and caller JWT confined
-to the Next.js server. Other domains remain on their existing transitional
-adapters until migrated in their own tested slices.
+organization selection and membership management, patient directory, labs
+workspace/review, and review queue use the Desktop-owned boundary defined in
+ADR 0003. Their live adapters use `supabase-rest.server.ts`, with the
+publishable key and caller JWT confined to the Next.js server. Lab PDF
+ingestion remains worker-backed; other domains stay on transitional adapters
+until migrated in their own tested slices.
 
 ## Security assumptions
 
@@ -166,16 +167,17 @@ UI where no backend is reachable, run the committed fixture —
 the header of `e2e/live-tasks.spec.ts`). It speaks the same wire contract with
 synthetic in-memory data; it is **not** the real backend, and the real data
 layer is verified separately (`supabase/tests/*.sql` via MCP). The gated live
-suite runs against it: `E2E_LIVE=1 npm run test:e2e -- e2e/live-tasks.spec.ts`
-after a live-flag build.
+suite runs against it after a live-flag build: `E2E_LIVE=1 npm run test:e2e --
+e2e/live-tasks.spec.ts e2e/live-scribe.spec.ts e2e/live-lens.spec.ts`.
 
 ## Verification (this change)
 
 | Layer | How | Result |
 | --- | --- | --- |
 | Static checks | `npm run typecheck`, `npm run lint`, live production build | green |
-| Unit adapters | `npm run test:unit` | **39/39** (auth grants/logout, PostgREST error mapping, organizations, selected-org patient reads, dates, knowledge) |
+| Unit adapters | `npm run test:unit` | **50/50** (auth, PostgREST errors, organizations, selected-org patient/lab/queue reads, review/task mutations, dates, knowledge) |
 | Desktop identity DB boundary | rolled-back SQL against the clinical project — `supabase/tests/desktop_identity_directory.sql` | **6/6** (active memberships only, assigned-patient RLS, cross-tenant denial, anon execute denied, explicit grants) |
+| Desktop labs/queue DB boundary | rolled-back SQL against the clinical project — `supabase/tests/desktop_labs_review_queue.sql` | **12/12** (patient and org queue visibility, reference/provenance joins, cross-tenant and anonymous denial, minimum grants, atomic review/resolve/create) |
 | Demo UI | production build + Playwright | **41/41** |
 | Full live contract fixture | live production build + Playwright (`live-tasks`, `live-scribe`, `live-lens`) | **31/31** (auth rotation/revocation/logout, organizations, patient isolation, labs, scheduling, EMR, scribe, lens, audit) |
 | Dependency audit | `npm audit` after non-breaking remediation | safe patch updates applied; remaining reports are the Next/sharp and ESLint/minimatch toolchains whose automated remedies require breaking downgrades |

@@ -9,7 +9,8 @@
  * Live wiring status (NEXT_PUBLIC_USE_LIVE_API):
  *   - patients.list / patients.get  -> live (Desktop-owned Supabase boundary)
  *   - labs.getWorkspace / reviewMarker / flagMarker / createReviewTask -> live
- *     (client components -> /api/live/* route handlers -> tRPC -> RPCs 0013)
+ *     (client components -> /api/live/* -> Desktop-owned Supabase REST/RPC)
+ *   - tasks.getQueue / resolve       -> live (Desktop-owned Supabase REST/RPC)
  *   - actions.listLiveAuditEvents   -> live (dual-mode Audit Log)
  *   - everything else               -> mock/demo session (see docs/live-api.md)
  */
@@ -411,8 +412,9 @@ export const api = {
   },
   labs: {
     /**
-     * Labs workspace read. LIVE: real biomarker_observations via the tRPC
-     * backend (RLS-scoped, reference intervals preserved). MOCK: demo workspace.
+     * Labs workspace read. LIVE: real biomarker_observations through the
+     * Desktop-owned Supabase boundary (RLS-scoped, reference intervals
+     * preserved). MOCK: demo workspace.
      */
     getWorkspace: async (patientId: string, patientName?: string) => {
       if (USE_LIVE_API) return liveClient.labsWorkspace(patientId);
