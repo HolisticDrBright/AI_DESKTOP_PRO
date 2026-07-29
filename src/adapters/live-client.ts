@@ -16,6 +16,7 @@ import type {
   LiveBookInput,
   LiveBookResult,
   LiveCalendar,
+  LiveRescheduleResult,
   LiveQueueItem,
   LiveResolveResult,
   LiveReviewResult,
@@ -89,6 +90,12 @@ export const liveClient = {
     liveFetch<LiveAppointmentStatusResult>("schedule/status", {
       method: "POST",
       body: { appointmentId, status },
+    }),
+
+  rescheduleAppointment: (appointmentId: string, startsAtIso: string, endsAtIso: string) =>
+    liveFetch<LiveRescheduleResult>("schedule/reschedule", {
+      method: "POST",
+      body: { appointmentId, startsAtIso, endsAtIso },
     }),
 
   listQueue: () => liveFetch<LiveQueueItem[]>("tasks/queue", { method: "GET" }),

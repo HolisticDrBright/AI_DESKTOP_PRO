@@ -91,6 +91,12 @@ function fmtTime(min: number): string {
   const h12 = h % 12 === 0 ? 12 : h % 12;
   return m === 0 ? `${h12} ${ap}` : `${h12}:${String(m).padStart(2, "0")} ${ap}`;
 }
+function fmtDateInput(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+function fmtTimeInput(min: number): string {
+  return `${String(Math.floor(min / 60)).padStart(2, "0")}:${String(min % 60).padStart(2, "0")}`;
+}
 
 /* ------------------------------------------------------------ status helper */
 
@@ -143,6 +149,7 @@ const STATUS_FROM_DB: Record<string, AppointmentStatus> = {
 function mapLiveWeek(live: LiveCalendar): {
   data: CalendarData;
   statusById: Map<string, AppointmentStatus>;
+  patients: LiveCalendar["patients"];
 } {
   const statusById = new Map<string, AppointmentStatus>();
   const appointments: Appointment[] = [];
@@ -209,6 +216,7 @@ function mapLiveWeek(live: LiveCalendar): {
       dayEnd: Math.ceil(maxEnd / 60) * 60,
     },
     statusById,
+    patients: live.patients,
   };
 }
 
@@ -225,12 +233,9 @@ interface Selection {
 const HOUR_PX = 54;
 
 export function CalendarView({
-  patientOptions = [],
   initialApptId,
 }: {
-  /** Live mode: bookable patients (fetched server-side under RLS). */
-  patientOptions?: { id: string; name: string }[];
-  /** Deep link (?appt=) that opens the detail drawer on load. Demo only. */
+  /** Deep link (?appt=) that opens the detail drawer on load. */
   initialApptId?: string;
 }) {
   // Demo mode renders the weekday-pattern mock exactly as before (plus any
@@ -255,17 +260,6 @@ export function CalendarView({
   const [practitionerId, setPractitionerId] = useState(demoData?.practitioners[0]?.id ?? "");
   const [selection, setSelection] = useState<Selection | null>(null);
   const deepLinked = useRef(false);
-
-  // ?appt= deep link (Today, patient tabs): open the drawer on the demo
-  // grid's matching slot for the current week.
-  useEffect(() => {
-    if (deepLinked.current || !initialApptId || !demoData || !anchor) return;
-    const appt = demoData.appointments.find((a) => a.id === initialApptId);
-    if (!appt) return;
-    deepLinked.current = true;
-    const date = addDays(startOfWeek(anchor), appt.weekday - 1);
-    setSelection({ appt, date, status: deriveStatus(date, appt, new Date()) });
-  }, [initialApptId, demoData, anchor]);
 
   // Resolve "now" on the client only (avoids hydration mismatch from the clock).
   useEffect(() => {
@@ -304,6 +298,20 @@ export function CalendarView({
   }, [weekStartIso, reloadKey]);
 
   const data = USE_LIVE_API ? (liveWeek?.data ?? null) : demoData;
+
+  // ?appt= deep link (Today, patient tabs): open the matching appointment in
+  // both demo and live mode once the anchored week has loaded.
+  useEffect(() => {
+    if (deepLinked.current || !initialApptId || !data || !anchor) return;
+    const appt = data.appointments.find((item) => item.id === initialApptId);
+    if (!appt) return;
+    deepLinked.current = true;
+    const date = addDays(startOfWeek(anchor), appt.weekday - 1);
+    const status = USE_LIVE_API
+      ? (liveWeek?.statusById.get(appt.id) ?? "scheduled")
+      : deriveStatus(date, appt, new Date());
+    setSelection({ appt, date, status });
+  }, [initialApptId, data, anchor, liveWeek]);
 
   // Keep the practitioner filter valid as live weeks load.
   useEffect(() => {
@@ -443,7 +451,7 @@ export function CalendarView({
       {bookingOpen && USE_LIVE_API && (
         <BookingDrawer
           practitioners={data.practitioners}
-          patientOptions={patientOptions}
+          patientOptions={liveWeek?.patients ?? []}
           defaultDate={anchor}
           onClose={() => setBookingOpen(false)}
           onBooked={onChanged}
@@ -1220,7 +1228,20 @@ function DetailDrawer({
   const practitioner = data.practitioners.find((p) => p.id === appt.practitionerId);
   const end = appt.start + appt.durationMin;
   const [working, setWorking] = useState(false);
-  const [confirmCancel, setConfirmCancel] = useState(false);
+  const [confirming, setConfirming] = useState<"cancelled" | "no_show" | null>(null);
+  const [rescheduleOpen, setRescheduleOpen] = useState(false);
+  const [rescheduleDate, setRescheduleDate] = useState(() => fmtDateInput(date));
+  const [rescheduleTime, setRescheduleTime] = useState(() => fmtTimeInput(appt.start));
+  const [rescheduleError, setRescheduleError] = useState("");
+
+  useEffect(() => {
+    setWorking(false);
+    setConfirming(null);
+    setRescheduleOpen(false);
+    setRescheduleDate(fmtDateInput(date));
+    setRescheduleTime(fmtTimeInput(appt.start));
+    setRescheduleError("");
+  }, [appt.id, appt.start, date]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
@@ -1228,11 +1249,11 @@ function DetailDrawer({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  // LIVE: audited status transitions through the 0017 RPC.
-  const setLiveStatus = (target: "arrived" | "completed" | "cancelled") => {
+  // LIVE: audited status transitions through the Desktop scheduling RPC.
+  const setLiveStatus = (target: "arrived" | "completed" | "cancelled" | "no_show") => {
     if (working) return;
     setWorking(true);
-    setConfirmCancel(false);
+    setConfirming(null);
     api.schedule
       .updateStatus(appt.id, target)
       .then((r) => {
@@ -1242,6 +1263,32 @@ function DetailDrawer({
       .catch((e) => {
         setWorking(false);
         announce(isAdapterError(e) ? e.safeMessage : "Could not update the appointment.");
+      });
+  };
+
+  const saveReschedule = () => {
+    if (working) return;
+    setRescheduleError("");
+    const starts = new Date(`${rescheduleDate}T${rescheduleTime}`);
+    if (Number.isNaN(starts.getTime())) {
+      setRescheduleError("Choose a valid date and start time.");
+      return;
+    }
+    const ends = new Date(starts.getTime() + appt.durationMin * 60_000);
+    setWorking(true);
+    api.schedule
+      .reschedule(appt.id, starts.toISOString(), ends.toISOString())
+      .then((r) => {
+        announce(`${r.message} (saved to record + audit)`);
+        onChanged();
+      })
+      .catch((e) => {
+        setWorking(false);
+        setRescheduleError(
+          isAdapterError(e)
+            ? `${e.safeMessage}${e.code === "invalid" ? " The new time may overlap another appointment." : ""}`
+            : "Could not reschedule the appointment.",
+        );
       });
   };
 
@@ -1325,46 +1372,108 @@ function DetailDrawer({
           />
         )}
         {USE_LIVE_API && (
-          <div className="flex gap-2">
-            {(status === "scheduled" || status === "confirmed") && (
-              <button
-                onClick={() => setLiveStatus("arrived")}
-                disabled={working}
-                className="flex h-8 flex-1 items-center justify-center rounded-lg border border-line bg-card text-[12px] font-semibold text-body hover:border-line-hover focus-visible:outline-2 focus-visible:outline-action disabled:opacity-50"
-              >
-                {working ? "Saving…" : "Check in"}
-              </button>
+          <>
+            {rescheduleOpen && (status === "scheduled" || status === "confirmed") && (
+              <div className="rounded-lg border border-line bg-card p-3">
+                <div className="grid grid-cols-2 gap-2">
+                  <label className="text-[10px] font-bold tracking-[0.04em] text-faint uppercase">
+                    Date
+                    <input
+                      aria-label="Reschedule date"
+                      type="date"
+                      value={rescheduleDate}
+                      onChange={(e) => setRescheduleDate(e.target.value)}
+                      className="mt-1 h-8 w-full rounded-lg border border-line bg-card px-2 text-[12px] font-medium text-body"
+                    />
+                  </label>
+                  <label className="text-[10px] font-bold tracking-[0.04em] text-faint uppercase">
+                    Start time
+                    <input
+                      aria-label="Reschedule start time"
+                      type="time"
+                      value={rescheduleTime}
+                      onChange={(e) => setRescheduleTime(e.target.value)}
+                      className="mt-1 h-8 w-full rounded-lg border border-line bg-card px-2 text-[12px] font-medium text-body"
+                    />
+                  </label>
+                </div>
+                <p className="m-0 mt-2 text-[10.5px] text-subtle">
+                  Duration stays {appt.durationMin} minutes. Conflicts are rejected before saving.
+                </p>
+                {rescheduleError && (
+                  <p role="alert" className="m-0 mt-2 text-[11px] font-medium text-critical">
+                    {rescheduleError}
+                  </p>
+                )}
+                <div className="mt-2 flex justify-end gap-2">
+                  <Btn size="sm" variant="ghost" onClick={() => setRescheduleOpen(false)}>
+                    Close
+                  </Btn>
+                  <Btn size="sm" variant="primary" disabled={working} onClick={saveReschedule}>
+                    {working ? "Saving…" : "Save new time"}
+                  </Btn>
+                </div>
+              </div>
             )}
-            {status === "arrived" && (
-              <button
-                onClick={() => setLiveStatus("completed")}
-                disabled={working}
-                className="flex h-8 flex-1 items-center justify-center rounded-lg border border-line bg-card text-[12px] font-semibold text-body hover:border-line-hover focus-visible:outline-2 focus-visible:outline-action disabled:opacity-50"
-              >
-                {working ? "Saving…" : "Complete"}
-              </button>
-            )}
-            {status !== "completed" && status !== "cancelled" && status !== "no-show" && (
-              <button
-                onClick={() => setConfirmCancel(true)}
-                disabled={working}
-                className="flex h-8 flex-1 items-center justify-center rounded-lg border border-line bg-card text-[12px] font-semibold text-critical hover:border-line-hover focus-visible:outline-2 focus-visible:outline-action disabled:opacity-50"
-              >
-                Cancel appt
-              </button>
-            )}
-          </div>
+            <div className="flex flex-wrap gap-2">
+              {(status === "scheduled" || status === "confirmed") && (
+                <button
+                  onClick={() => setLiveStatus("arrived")}
+                  disabled={working}
+                  className="flex h-8 flex-1 items-center justify-center rounded-lg border border-line bg-card px-2 text-[12px] font-semibold text-body hover:border-line-hover focus-visible:outline-2 focus-visible:outline-action disabled:opacity-50"
+                >
+                  {working ? "Saving…" : "Check in"}
+                </button>
+              )}
+              {status === "arrived" && (
+                <button
+                  onClick={() => setLiveStatus("completed")}
+                  disabled={working}
+                  className="flex h-8 flex-1 items-center justify-center rounded-lg border border-line bg-card px-2 text-[12px] font-semibold text-body hover:border-line-hover focus-visible:outline-2 focus-visible:outline-action disabled:opacity-50"
+                >
+                  {working ? "Saving…" : "Complete"}
+                </button>
+              )}
+              {(status === "scheduled" || status === "confirmed") && (
+                <button
+                  onClick={() => setRescheduleOpen((open) => !open)}
+                  disabled={working}
+                  className="flex h-8 flex-1 items-center justify-center rounded-lg border border-line bg-card px-2 text-[12px] font-semibold text-body hover:border-line-hover focus-visible:outline-2 focus-visible:outline-action disabled:opacity-50"
+                >
+                  Reschedule
+                </button>
+              )}
+              {(status === "scheduled" || status === "confirmed") && (
+                <button
+                  onClick={() => setConfirming("no_show")}
+                  disabled={working}
+                  className="flex h-8 flex-1 items-center justify-center rounded-lg border border-line bg-card px-2 text-[12px] font-semibold text-critical hover:border-line-hover focus-visible:outline-2 focus-visible:outline-action disabled:opacity-50"
+                >
+                  No-show
+                </button>
+              )}
+              {status !== "completed" && status !== "cancelled" && status !== "no-show" && (
+                <button
+                  onClick={() => setConfirming("cancelled")}
+                  disabled={working}
+                  className="flex h-8 flex-1 items-center justify-center rounded-lg border border-line bg-card px-2 text-[12px] font-semibold text-critical hover:border-line-hover focus-visible:outline-2 focus-visible:outline-action disabled:opacity-50"
+                >
+                  Cancel appt
+                </button>
+              )}
+            </div>
+          </>
         )}
       </div>
 
       <ConfirmDialog
-        open={confirmCancel}
-        title="Cancel this appointment?"
-        body={`${appt.patientName} · ${fmtTime(appt.start)}. Cancelling updates the record and is audited.`}
-        confirmLabel="Cancel appointment"
+        open={confirming != null}
+        title={confirming === "no_show" ? "Mark as no-show?" : "Cancel this appointment?"}
+        body={`${appt.patientName} · ${fmtTime(appt.start)}. This updates the appointment record and is audited.`}
+        confirmLabel={confirming === "no_show" ? "Mark no-show" : "Cancel appointment"}
         destructive
-        onConfirm={() => setLiveStatus("cancelled")}
-        onCancel={() => setConfirmCancel(false)}
+        onConfirm={() => confirming && setLiveStatus(confirming)}
+        onCancel={() => setConfirming(null)}
       />
     </aside>
   );

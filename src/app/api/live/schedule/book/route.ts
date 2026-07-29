@@ -12,12 +12,20 @@ export async function POST(req: NextRequest) {
   if (blocked) return blocked;
   return runLive(async () => {
     const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
-    const str = (v: unknown) => (typeof v === "string" && v ? v : undefined);
+    const str = (v: unknown, max = 128) => {
+      if (typeof v !== "string") return undefined;
+      const value = v.trim();
+      if (!value || value.length > max) return undefined;
+      return value;
+    };
 
-    const practitionerUserId = str(body.practitionerUserId);
-    const appointmentType = str(body.appointmentType);
-    const startsAtIso = str(body.startsAtIso);
-    const endsAtIso = str(body.endsAtIso);
+    const practitionerUserId = str(body.practitionerUserId, 64);
+    const appointmentType = str(body.appointmentType, 32);
+    const startsAtIso = str(body.startsAtIso, 64);
+    const endsAtIso = str(body.endsAtIso, 64);
+    if (typeof body.location === "string" && body.location.trim().length > 200) {
+      throw new AdapterError("invalid", "Location must be 200 characters or fewer.");
+    }
     if (!practitionerUserId) throw new AdapterError("invalid", "A practitioner is required.");
     if (!appointmentType || !TYPES.includes(appointmentType)) {
       throw new AdapterError("invalid", "A valid appointment type is required.");
@@ -38,8 +46,8 @@ export async function POST(req: NextRequest) {
         appointmentType,
         startsAtIso,
         endsAtIso,
-        patientId: str(body.patientId),
-        location: str(body.location),
+        patientId: str(body.patientId, 64),
+        location: str(body.location, 200),
       },
       session.token,
       session.orgId,

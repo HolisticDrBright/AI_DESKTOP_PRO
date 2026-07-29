@@ -107,8 +107,9 @@ export const api = {
   },
   schedule: {
     /**
-     * LIVE ONLY namespace — real appointments (RLS-scoped reads; 0017
-     * SECURITY DEFINER RPC writes with double-booking rejection + audit).
+     * LIVE ONLY namespace — the Desktop-owned calendar RPC returns a
+     * role-scoped schedule and minimal booking directory. Authorized RPC
+     * writes enforce overlap, transition, and tenant rules and append audit.
      * The demo calendar keeps rendering the weekday-pattern mock directly
      * (calendar.mock.getCalendar); these methods throw in demo mode instead
      * of pretending to persist.
@@ -124,6 +125,10 @@ export const api = {
     updateStatus: async (appointmentId: string, status: string) => {
       if (!USE_LIVE_API) throw new AdapterError("invalid", "Demo mode does not change appointment status.");
       return liveClient.updateAppointmentStatus(appointmentId, status);
+    },
+    reschedule: async (appointmentId: string, startsAtIso: string, endsAtIso: string) => {
+      if (!USE_LIVE_API) throw new AdapterError("invalid", "Demo mode does not reschedule appointments.");
+      return liveClient.rescheduleAppointment(appointmentId, startsAtIso, endsAtIso);
     },
   },
   assistant: {

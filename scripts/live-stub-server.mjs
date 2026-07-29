@@ -776,6 +776,7 @@ function seedScheduleFor(fromIso) {
   scheduleAppointments.push(
     {
       id: "abababab-1111-2222-3333-444444444401",
+      organizationId: "org-fixture",
       patientId: PATIENTS[0].id, patientName: "Fixture Patient",
       practitionerUserId: PRACTITIONER_USER_ID, practitionerName: "Demo Practitioner",
       title: null, appointmentType: "follow-up", location: "Room 1", telehealthUrl: null,
@@ -783,6 +784,7 @@ function seedScheduleFor(fromIso) {
     },
     {
       id: "abababab-1111-2222-3333-444444444402",
+      organizationId: "org-fixture",
       patientId: null, patientName: null,
       practitionerUserId: PRACTITIONER_USER_ID, practitionerName: "Demo Practitioner",
       title: "Admin block", appointmentType: "break", location: "Admin", telehealthUrl: null,
@@ -1019,6 +1021,218 @@ createServer(async (req, res) => {
 
     if (url.pathname === "/rest/v1/rpc/activate_my_memberships" && req.method === "POST") {
       return json(res, 200, 0);
+    }
+
+    if (url.pathname === "/rest/v1/rpc/get_desktop_calendar" && req.method === "POST") {
+      const body = await readBody(req);
+      const organizationId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(organizationId)) {
+        return json(res, 403, { code: "42501", message: "active organization membership required" });
+      }
+      const from = Date.parse(body._from);
+      const to = Date.parse(body._to);
+      if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from || to - from > 42 * 864e5) {
+        return json(res, 400, { code: "22023", message: "invalid calendar range" });
+      }
+      seedScheduleFor(body._from);
+      const appointments = scheduleAppointments
+        .filter((appointment) => {
+          const startsAt = Date.parse(appointment.startsAt);
+          return appointment.organizationId === organizationId && startsAt >= from && startsAt < to;
+        })
+        .map((appointment) => ({
+          id: appointment.id,
+          patient_id: appointment.patientId,
+          patient_name: appointment.patientName,
+          practitioner_user_id: appointment.practitionerUserId,
+          practitioner_name: appointment.practitionerName,
+          title: appointment.title,
+          appointment_type: appointment.appointmentType,
+          location: appointment.location,
+          telehealth_url: appointment.telehealthUrl,
+          status: appointment.status,
+          starts_at: appointment.startsAt,
+          ends_at: appointment.endsAt,
+        }));
+      return json(res, 200, {
+        appointments,
+        practitioners: organizationId === "org-fixture"
+          ? [{
+              user_id: PRACTITIONER_USER_ID,
+              display_name: "Demo Practitioner",
+              credentials: "ND",
+              specialty: null,
+            }]
+          : [],
+        patients: PATIENTS
+          .filter((patient) => patient.organization_id === organizationId && patient.status === "active")
+          .map((patient) => ({
+            id: patient.id,
+            name: `${patient.first_name} ${patient.last_name}`,
+          })),
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/book_appointment" && req.method === "POST") {
+      const body = await readBody(req);
+      const organizationId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(organizationId)) {
+        return json(res, 403, { code: "42501", message: "schedule-management role required" });
+      }
+      seedScheduleFor(body._starts_at);
+      const patient = body._patient_id
+        ? PATIENTS.find((item) =>
+            item.id === body._patient_id && item.organization_id === organizationId
+          )
+        : null;
+      if (body._patient_id && !patient) {
+        return json(res, 404, { code: "P0002", message: "patient not found in this organization" });
+      }
+      if (!patient && !["break", "group"].includes(body._appointment_type)) {
+        return json(res, 400, { code: "22023", message: "a patient is required" });
+      }
+      const startsAt = Date.parse(body._starts_at);
+      const endsAt = Date.parse(body._ends_at);
+      const overlaps = scheduleAppointments.some((appointment) =>
+        appointment.organizationId === organizationId
+        && !["cancelled", "no_show"].includes(appointment.status)
+        && (
+          appointment.practitionerUserId === body._practitioner_user_id
+          || (patient && appointment.patientId === patient.id)
+        )
+        && Date.parse(appointment.startsAt) < endsAt
+        && Date.parse(appointment.endsAt) > startsAt
+      );
+      if (overlaps) {
+        return json(res, 400, { code: "22023", message: "appointment time overlaps" });
+      }
+      const id = `abababab-1111-2222-3333-4444444444${String(10 + ++apptSeq)}`;
+      scheduleAppointments.push({
+        id,
+        organizationId,
+        patientId: patient?.id ?? null,
+        patientName: patient ? `${patient.first_name} ${patient.last_name}` : null,
+        practitionerUserId: body._practitioner_user_id,
+        practitionerName: "Demo Practitioner",
+        title: body._title ?? null,
+        appointmentType: body._appointment_type,
+        location: body._location ?? null,
+        telehealthUrl: body._telehealth_url ?? null,
+        status: "scheduled",
+        startsAt: body._starts_at,
+        endsAt: body._ends_at,
+      });
+      pushAudit(
+        "appointment.book",
+        "appointment",
+        id,
+        `Appointment booked (${body._appointment_type})`,
+        { appointment_type: body._appointment_type, starts_at: body._starts_at },
+        patient?.id ?? null,
+        organizationId,
+      );
+      return json(res, 200, {
+        id,
+        status: "scheduled",
+        starts_at: body._starts_at,
+        ends_at: body._ends_at,
+      });
+    }
+
+    if (
+      url.pathname === "/rest/v1/rpc/update_appointment_status"
+      && req.method === "POST"
+    ) {
+      const body = await readBody(req);
+      const appointment = scheduleAppointments.find((item) => item.id === body._appointment_id);
+      if (!appointment) {
+        return json(res, 404, { code: "P0002", message: "appointment not found" });
+      }
+      if (!memberOrgIds.includes(appointment.organizationId)) {
+        return json(res, 403, { code: "42501", message: "not authorized to manage this appointment" });
+      }
+      const previousStatus = appointment.status;
+      if (previousStatus === body._status) {
+        return json(res, 200, {
+          id: appointment.id,
+          status: appointment.status,
+          previous_status: previousStatus,
+          already_set: true,
+        });
+      }
+      if (["completed", "cancelled", "no_show"].includes(previousStatus)) {
+        return json(res, 400, { code: "22023", message: "appointment is already settled" });
+      }
+      appointment.status = body._status;
+      pushAudit(
+        "appointment.status",
+        "appointment",
+        appointment.id,
+        `Appointment ${String(body._status).replaceAll("_", "-")}`,
+        { previous_status: previousStatus, status: body._status },
+        appointment.patientId,
+        appointment.organizationId,
+      );
+      return json(res, 200, {
+        id: appointment.id,
+        status: appointment.status,
+        previous_status: previousStatus,
+        already_set: false,
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/reschedule_appointment" && req.method === "POST") {
+      const body = await readBody(req);
+      const appointment = scheduleAppointments.find((item) => item.id === body._appointment_id);
+      if (!appointment) {
+        return json(res, 404, { code: "P0002", message: "appointment not found" });
+      }
+      if (!memberOrgIds.includes(appointment.organizationId)) {
+        return json(res, 403, { code: "42501", message: "not authorized to manage this appointment" });
+      }
+      if (["completed", "cancelled", "no_show"].includes(appointment.status)) {
+        return json(res, 400, { code: "22023", message: "appointment is already settled" });
+      }
+      const startsAt = Date.parse(body._starts_at);
+      const endsAt = Date.parse(body._ends_at);
+      const overlaps = scheduleAppointments.some((item) =>
+        item.id !== appointment.id
+        && item.organizationId === appointment.organizationId
+        && !["cancelled", "no_show"].includes(item.status)
+        && (
+          item.practitionerUserId === appointment.practitionerUserId
+          || (appointment.patientId && item.patientId === appointment.patientId)
+        )
+        && Date.parse(item.startsAt) < endsAt
+        && Date.parse(item.endsAt) > startsAt
+      );
+      if (overlaps) {
+        return json(res, 400, { code: "22023", message: "appointment time overlaps" });
+      }
+      const previousStartsAt = appointment.startsAt;
+      const previousEndsAt = appointment.endsAt;
+      appointment.startsAt = body._starts_at;
+      appointment.endsAt = body._ends_at;
+      pushAudit(
+        "appointment.reschedule",
+        "appointment",
+        appointment.id,
+        "Appointment rescheduled",
+        {
+          previous_starts_at: previousStartsAt,
+          starts_at: appointment.startsAt,
+          previous_ends_at: previousEndsAt,
+          ends_at: appointment.endsAt,
+        },
+        appointment.patientId,
+        appointment.organizationId,
+      );
+      return json(res, 200, {
+        id: appointment.id,
+        status: appointment.status,
+        starts_at: appointment.startsAt,
+        ends_at: appointment.endsAt,
+      });
     }
 
     if (url.pathname === "/rest/v1/rpc/list_audit_events" && req.method === "POST") {
@@ -2249,63 +2463,6 @@ createServer(async (req, res) => {
       }
       members.delete(row.membershipId);
       return trpcOk(res, { ok: true });
-    }
-    case "clinical.schedule.getCalendar": {
-      seedScheduleFor(input.fromIso);
-      const from = Date.parse(input.fromIso);
-      const to = Date.parse(input.toIso);
-      return trpcOk(res, {
-        appointments: scheduleAppointments.filter((a) => {
-          const t = Date.parse(a.startsAt);
-          return t >= from && t < to;
-        }),
-        practitioners: [
-          { userId: PRACTITIONER_USER_ID, displayName: "Demo Practitioner", credentials: "ND", specialty: null },
-        ],
-      });
-    }
-    case "clinical.schedule.book": {
-      seedScheduleFor(input.startsAtIso);
-      const patient = input.patientId ? PATIENTS.find((p) => p.id === input.patientId) : null;
-      if (input.patientId && !patient) {
-        return trpcErr(res, 403, "FORBIDDEN", "not authorized for this patient");
-      }
-      const id = `abababab-1111-2222-3333-4444444444${String(10 + ++apptSeq)}`;
-      scheduleAppointments.push({
-        id,
-        patientId: patient ? patient.id : null,
-        patientName: patient ? `${patient.first_name} ${patient.last_name}` : null,
-        practitionerUserId: input.practitionerUserId, practitionerName: "Demo Practitioner",
-        title: input.title ?? null, appointmentType: input.appointmentType,
-        location: input.location ?? null, telehealthUrl: null,
-        status: "scheduled", startsAt: input.startsAtIso, endsAt: input.endsAtIso,
-      });
-      pushAudit(
-        "appointment.book", "appointment", id,
-        `Appointment booked (${input.appointmentType})`,
-        { appointment_type: input.appointmentType, starts_at: input.startsAtIso },
-        patient ? patient.id : null,
-      );
-      return trpcOk(res, {
-        ok: true, id, status: "scheduled",
-        startsAt: input.startsAtIso, endsAt: input.endsAtIso, message: "Appointment booked.",
-      });
-    }
-    case "clinical.schedule.updateStatus": {
-      const appt = scheduleAppointments.find((a) => a.id === input.appointmentId);
-      if (!appt) return trpcErr(res, 404, "NOT_FOUND", "no such appointment");
-      const prev = appt.status;
-      appt.status = input.status;
-      pushAudit(
-        "appointment.status", "appointment", appt.id,
-        `Appointment ${input.status}`,
-        { previous_status: prev, status: input.status },
-        appt.patientId,
-      );
-      return trpcOk(res, {
-        ok: true, id: appt.id, status: input.status, previousStatus: prev,
-        alreadySet: false, message: `Appointment ${input.status}.`,
-      });
     }
     default:
       return trpcErr(res, 404, "NOT_FOUND", `unknown procedure ${proc}`);

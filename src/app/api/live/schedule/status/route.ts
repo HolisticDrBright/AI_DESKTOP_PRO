@@ -15,13 +15,17 @@ export async function POST(req: NextRequest) {
       appointmentId?: unknown;
       status?: unknown;
     };
-    if (typeof body.appointmentId !== "string" || !body.appointmentId) {
+    if (
+      typeof body.appointmentId !== "string"
+      || !body.appointmentId.trim()
+      || body.appointmentId.length > 64
+    ) {
       throw new AdapterError("invalid", "An appointment id is required.");
     }
     if (typeof body.status !== "string" || !TARGETS.includes(body.status)) {
       throw new AdapterError("invalid", "That status change isn't recognized.");
     }
     const session = await getRequestSession();
-    return scheduleLive.updateStatus(body.appointmentId, body.status, session.token);
+    return scheduleLive.updateStatus(body.appointmentId.trim(), body.status, session.token);
   });
 }

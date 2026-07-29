@@ -73,19 +73,25 @@ Status legend: ✅ live path exists · 🟢 ready to wire (schema + pattern exis
   links still need a governed directory/source join.
 
 ## Calendar / Scheduling — ✅ live path exists
-- **Route:** `/calendar` · **Adapter:** `api.schedule.getWeek/book/updateStatus`
+- **Route:** `/calendar` · **Adapter:**
+  `api.schedule.getWeek/book/updateStatus/reschedule`
   (live-only; the demo calendar renders the weekday-pattern mock directly)
-- **Live tables:** `appointments` (types/status vocab + patient-NULL breaks
-  org-visible via migration `0017`); RPCs `book_appointment` (double-booking
-  rejected for practitioner AND patient) / `update_appointment_status`
-  (transition rules, terminal idempotent) / `reschedule_appointment` — all
-  audited atomically
+- **Desktop boundary:** `get_desktop_calendar` returns only the caller's
+  role-scoped appointments, schedulable practitioners, and a minimal
+  id/name patient picker. Raw browser-role access to `appointments` is
+  revoked.
+- **Live writes:** `book_appointment` (practitioner and patient overlap
+  rejection), `update_appointment_status` (transition rules and idempotency),
+  and `reschedule_appointment`; each re-authorizes the caller, locks the
+  affected schedule, and appends audit atomically. Staff may operate the
+  schedule without gaining clinical-chart write access; practitioners remain
+  restricted to assigned patients.
 - **Live UI:** real week fetch per anchor, record statuses (never derived from
   the clock), booking drawer (patient/practitioner/type/time), check-in /
-  complete / cancel (confirm + audit)
+  complete / no-show / cancel, and date/time rescheduling (confirm + audit)
 - **Deferred (documented, not faked):** patient-facing online booking page,
-  reminders (email/SMS provider decision), external calendar sync,
-  drag-to-reschedule UI (RPC already exists)
+  reminders (email/SMS provider decision), external calendar sync, recurring
+  availability, and drag-to-reschedule interaction
 
 ## Clinical Reasoning — 🟡 needs backend shaping
 - **Route:** `/patients/:id/reasoning` (+ summary snapshot card)
@@ -158,7 +164,7 @@ Status legend: ✅ live path exists · 🟢 ready to wire (schema + pattern exis
 
 1. ~~Tasks/Review queue and labs read/review~~ — ✅ Desktop-owned boundary
 2. ~~Audit reads/registered generic writes~~ — ✅ Desktop-owned boundary
-3. **Scheduling/calendar** — move existing RLS/RPC contracts off transitional tRPC
+3. ~~Scheduling/calendar~~ — ✅ Desktop-owned boundary
 4. Reasoning reads + accept/reject mutation (same liveRef pattern via ActionBar)
 5. Composer save-note (with sign-off gates)
 6. Dispensary sale → invoices (+ inventory table migration)

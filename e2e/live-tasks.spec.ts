@@ -202,7 +202,7 @@ test("live calendar shows real appointments and check-in persists with audit", a
   await expect(page.getByText("appointment.status").first()).toBeVisible();
 });
 
-test("booking a new appointment persists to the live week", async ({ page }) => {
+test("booking, rescheduling, and no-show persist to the live week", async ({ page }) => {
   await page.goto("/calendar");
   await page.getByRole("button", { name: "New" }).click();
   const dialog = page.getByRole("dialog", { name: "New appointment" });
@@ -215,10 +215,35 @@ test("booking a new appointment persists to the live week", async ({ page }) => 
   await expect(page.getByRole("button", { name: /Sample Client/ }).first()).toBeVisible();
   // …and survives a reload (the record, not local state).
   await page.reload();
-  await expect(page.getByRole("button", { name: /Sample Client/ }).first()).toBeVisible();
+  const booked = page.getByRole("button", { name: /Sample Client/ }).first();
+  await expect(booked).toBeVisible();
+
+  // Rescheduling is a real backend mutation, not a session overlay.
+  await booked.click();
+  const details = page.getByRole("dialog", { name: "Appointment details" });
+  await details.getByRole("button", { name: "Reschedule" }).click();
+  await details.getByLabel("Reschedule start time").fill("21:00");
+  await details.getByRole("button", { name: "Save new time" }).click();
+  await expect(page.getByText(/Appointment rescheduled/).first()).toBeVisible();
+  await page.reload();
+  await page.getByRole("button", { name: /Sample Client/ }).first().click();
+  await expect(
+    page.getByRole("dialog", { name: "Appointment details" }).getByText(/9 PM – 9:45 PM/),
+  ).toBeVisible();
+
+  // No-show is explicitly confirmed, persists, and removes the settled slot
+  // from the active calendar grid.
+  await page.getByRole("button", { name: "No-show" }).click();
+  await page.getByRole("button", { name: "Mark no-show" }).click();
+  await expect(page.getByText(/Appointment no-show/).first()).toBeVisible();
+  await expect(page.getByRole("button", { name: /Sample Client/ })).toHaveCount(0);
+  await page.reload();
+  await expect(page.getByRole("button", { name: /Sample Client/ })).toHaveCount(0);
 
   await page.goto("/audit-log");
   await expect(page.getByText("appointment.book").first()).toBeVisible();
+  await expect(page.getByText("appointment.reschedule").first()).toBeVisible();
+  await expect(page.getByText("appointment.status").first()).toBeVisible();
 });
 
 const BASE = `http://localhost:${Number(process.env.E2E_PORT ?? 3114)}`;

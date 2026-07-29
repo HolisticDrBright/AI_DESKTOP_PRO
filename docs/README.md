@@ -37,7 +37,8 @@ Decisions are recorded in the repo that owns them.
 
 - [`supabase/README.md`](../supabase/README.md) — schema, RLS model, migration
   history reconciliation.
-- [`supabase/migrations/`](../supabase/migrations/) — 0001–0012, forward-only.
+- [`supabase/migrations/`](../supabase/migrations/) — forward-only clinical
+  schema and Desktop-owned boundary migrations.
 - Tests (run against the live project, rolled back, every row `pass = true`):
   [`cross_tenant_isolation.sql`](../supabase/tests/cross_tenant_isolation.sql)
   (org isolation) and
@@ -47,8 +48,8 @@ Decisions are recorded in the repo that owns them.
 ## Backend & live path
 
 - Desktop-owned authenticated Supabase boundary: identity, patient directory,
-  labs, review queue, and audit. Transitional worker/coordinator domains still
-  use the older tRPC transport until migrated.
+  labs, review queue, audit, knowledge registry, and scheduling. Transitional
+  worker/coordinator domains still use the older tRPC transport until migrated.
 - [live-api.md](./live-api.md) — the per-domain boundary, and exactly what is
   verified locally, against the database, and in the live contract fixture.
 

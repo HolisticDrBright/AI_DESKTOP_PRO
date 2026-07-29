@@ -89,8 +89,8 @@ event key, identifiers, and bounded scalar metadata.
 | `actions.execute` — `resolve` on a queue item | session outcome + session audit | ✅ direct `resolve_review_queue_item` RPC (migration `0014`): status + audit atomically, idempotent |
 | `actions.listLiveAuditEvents` / registered generic events | `[]` / session events | ✅ direct `list_audit_events` / `record_registered_audit_event` RPCs |
 | `actions.execute` — other kinds | session | session (wired per-domain as slices land) |
-| `schedule.getWeek` | n/a (demo calendar renders the weekday-pattern mock directly) | ✅ real `appointments` week read (RLS-scoped; patient-NULL breaks org-visible via migration `0017`) |
-| `schedule.book` / `updateStatus` | n/a (demo announces, never pretends to persist) | ✅ `book_appointment` / `update_appointment_status` RPCs (migration `0017`): validation + double-booking rejection (practitioner AND patient) + status-transition rules + audit, atomic. `reschedule_appointment` exists server-side; drag-to-reschedule UI is a later slice |
+| `schedule.getWeek` | n/a (demo calendar renders the weekday-pattern mock directly) | ✅ direct `get_desktop_calendar` RPC: caller-role schedule, schedulable practitioners, minimal patient picker; raw appointment-table access revoked |
+| `schedule.book` / `updateStatus` / `reschedule` | n/a (demo announces, never pretends to persist) | ✅ direct RPCs: scheduling-role authorization separated from chart writes, advisory overlap locks, status state machine, persisted rescheduling, and atomic audit |
 | `knowledge.pathways` / `createDraft` / `updateDraft` / `approve` | session registry | ✅ authenticated organization registry through role-gated RPCs; approved content is immutable |
 | `knowledge.imports` / `stageImport` / `reviewImportItem` | session import review | ✅ immutable, hashed import batches with no-PHI attestation; acceptance creates only a pathway draft or pending product label |
 | everything else | mock | mock |
@@ -127,11 +127,11 @@ reusing `runClinicalMutation` for writes and `ClinicalStates` for async UI.
 
 The clinical knowledge registry, practitioner identity/session lifecycle,
 organization selection and membership management, patient directory, labs
-workspace/review, review queue, and audit log use the Desktop-owned boundary
-defined in ADR 0003. Their live adapters use `supabase-rest.server.ts`, with
-the publishable key and caller JWT confined to the Next.js server. Lab PDF
-ingestion remains worker-backed; other domains stay on transitional adapters
-until migrated in their own tested slices.
+workspace/review, review queue, audit log, and scheduling use the
+Desktop-owned boundary defined in ADR 0003. Their live adapters use
+`supabase-rest.server.ts`, with the publishable key and caller JWT confined to
+the Next.js server. Lab PDF ingestion remains worker-backed; other domains
+stay on transitional adapters until migrated in their own tested slices.
 
 ## Security assumptions
 
@@ -180,11 +180,13 @@ e2e/live-tasks.spec.ts e2e/live-scribe.spec.ts e2e/live-lens.spec.ts`.
 
 | Layer | How | Result |
 | --- | --- | --- |
-| Static checks | `npm run typecheck`, `npm run lint`, live production build | green |
-| Unit adapters | `npm run test:unit` | **52/52** (auth, PostgREST errors, organizations, selected-org patient/lab/queue/audit reads, registered audit and review/task mutations, dates, knowledge) |
+| Static checks | `npm run typecheck`, `npm run lint`, demo + live production builds | green |
+| Unit adapters | `npm run test:unit` | **56/56** (auth, PostgREST errors, organizations, selected-org patient/lab/queue/audit/calendar reads, registered audit, review/task, and schedule mutations, dates, knowledge) |
 | Desktop identity DB boundary | rolled-back SQL against the clinical project — `supabase/tests/desktop_identity_directory.sql` | **6/6** (active memberships only, assigned-patient RLS, cross-tenant denial, anon execute denied, explicit grants) |
 | Desktop labs/queue DB boundary | rolled-back SQL against the clinical project — `supabase/tests/desktop_labs_review_queue.sql` | **12/12** (patient and org queue visibility, reference/provenance joins, cross-tenant and anonymous denial, minimum grants, atomic review/resolve/create) |
 | Desktop audit DB boundary | rolled-back SQL against the clinical project — `supabase/tests/desktop_audit_actions.sql` | **13/13** (registered wording, metadata allowlist, tenant and role visibility, anonymous and direct-table denial) |
+| Desktop scheduling DB boundary | rolled-back SQL against the clinical project — `supabase/tests/desktop_scheduling.sql` | **21/21** (role-scoped calendar, minimal patient picker, staff operations, practitioner assignment limits, overlap locks, cross-tenant and direct-table denial, idempotency, atomic audit) |
+| Scheduling regression DB suite | rolled-back SQL against the clinical project — `supabase/tests/scheduling.sql` | **20/20** |
 | Demo UI | production build + Playwright | **41/41** |
 | Full live contract fixture | live production build + Playwright (`live-tasks`, `live-scribe`, `live-lens`) | **32/32** (auth rotation/revocation/logout, organizations, patient isolation, labs, scheduling, EMR, scribe, lens, registered audit boundary) |
 | Dependency audit | `npm audit` after non-breaking remediation | safe patch updates applied; remaining reports are the Next/sharp and ESLint/minimatch toolchains whose automated remedies require breaking downgrades |
