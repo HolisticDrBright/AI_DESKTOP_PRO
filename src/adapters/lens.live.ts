@@ -2,17 +2,27 @@ if (typeof window !== "undefined") {
   throw new Error("This module is server-only and must not run in the browser.");
 }
 import { trpcMutation, trpcQuery } from "./trpc.server";
+import { getClinicalAccessToken } from "./session.server";
+import { clinicalRpc } from "./supabase-rest.server";
 
 /**
  * Live lens namespace (server-only): differential questions + clinical lens
  * engine (Milestone 2). QUESTION-FOCUSED by design — evaluations surface
  * questions, considerations, missing information, conflicts, and safety
  * observations; never diagnoses, treatment plans, dosing, or patient-facing
- * recommendations. Every mutation lands in a SECURITY DEFINER RPC (migration
- * 0024) via the backend's clinical.lens.* procedures: the invariant core,
- * lifecycle map, versioned answers, stale/supersede semantics, and safety
- * blocks are database-enforced. This module threads the caller's session and
- * shapes typed DTOs only.
+ * recommendations.
+ *
+ * Desktop-owned boundary: every read uses the bounded Desktop DTO functions
+ * and every question-lifecycle mutation calls the caller-authorized SECURITY
+ * DEFINER RPCs from migration 0024 directly under the practitioner JWT. The
+ * invariant core, lifecycle map, versioned answers, stale/supersede semantics,
+ * and safety blocks stay database-enforced.
+ *
+ * Transitional exception (by design): `evaluate` and `aiStatus` remain on the
+ * provider worker — the rules/AI engine computes the invariant core and
+ * questions under the caller's RLS view and persists them atomically through
+ * `run_lens_evaluation`. That compute engine is not Desktop-owned database
+ * logic; it migrates in its own slice.
  */
 
 export type LensParadigm =
@@ -156,16 +166,19 @@ export const lensLive = {
     return trpcQuery<LensAiStatus>("clinical.lens.aiStatus", undefined, sessionToken);
   },
 
-  paradigms(sessionToken?: string | null): Promise<LensParadigmInfo[]> {
-    return trpcQuery<LensParadigmInfo[]>("clinical.lens.paradigms", undefined, sessionToken);
+  async paradigms(sessionToken?: string | null): Promise<LensParadigmInfo[]> {
+    const token = await getClinicalAccessToken(sessionToken);
+    return clinicalRpc<LensParadigmInfo[]>("list_desktop_lens_paradigms", {}, token);
   },
 
-  domains(sessionToken?: string | null): Promise<LensDomainInfo[]> {
-    return trpcQuery<LensDomainInfo[]>("clinical.lens.domains", undefined, sessionToken);
+  async domains(sessionToken?: string | null): Promise<LensDomainInfo[]> {
+    const token = await getClinicalAccessToken(sessionToken);
+    return clinicalRpc<LensDomainInfo[]>("list_desktop_lens_domains", {}, token);
   },
 
-  knowledgeSources(sessionToken?: string | null): Promise<KnowledgeSourceInfo[]> {
-    return trpcQuery<KnowledgeSourceInfo[]>("clinical.lens.knowledgeSources", undefined, sessionToken);
+  async knowledgeSources(sessionToken?: string | null): Promise<KnowledgeSourceInfo[]> {
+    const token = await getClinicalAccessToken(sessionToken);
+    return clinicalRpc<KnowledgeSourceInfo[]>("list_desktop_lens_knowledge_sources", {}, token);
   },
 
   evaluate(
@@ -175,63 +188,109 @@ export const lensLive = {
     return trpcMutation<EvaluateResult>("clinical.lens.evaluate", input, sessionToken);
   },
 
-  evaluation(
+  async evaluation(
     input: { encounterId: string; paradigm: LensParadigm },
     sessionToken?: string | null,
   ): Promise<LensEvaluation | null> {
-    return trpcQuery<LensEvaluation | null>("clinical.lens.evaluation", input, sessionToken);
+    const token = await getClinicalAccessToken(sessionToken);
+    return clinicalRpc<LensEvaluation | null>("get_desktop_lens_evaluation", {
+      _encounter_id: input.encounterId,
+      _paradigm: input.paradigm,
+    }, token);
   },
 
-  answers(questionId: string, sessionToken?: string | null): Promise<QuestionAnswerVersion[]> {
-    return trpcQuery<QuestionAnswerVersion[]>("clinical.lens.answers", { questionId }, sessionToken);
+  async answers(questionId: string, sessionToken?: string | null): Promise<QuestionAnswerVersion[]> {
+    const token = await getClinicalAccessToken(sessionToken);
+    return clinicalRpc<QuestionAnswerVersion[]>("list_desktop_question_answers", {
+      _question_id: questionId,
+    }, token);
   },
 
-  questionAction(
+  async questionAction(
     input: { questionId: string; action: QuestionLifecycleAction; reason?: string },
     sessionToken?: string | null,
   ): Promise<{ ok: true }> {
-    return trpcMutation<{ ok: true }>("clinical.lens.questionAction", input, sessionToken);
+    const token = await getClinicalAccessToken(sessionToken);
+    await clinicalRpc<null>("set_question_status", {
+      _question_id: input.questionId,
+      _to: input.action,
+      _reason: input.reason ?? null,
+    }, token);
+    return { ok: true };
   },
 
-  dismiss(
+  async dismiss(
     input: { questionId: string; feedbackKind: QuestionFeedbackKind; comment?: string },
     sessionToken?: string | null,
   ): Promise<{ ok: true }> {
-    return trpcMutation<{ ok: true }>("clinical.lens.dismiss", input, sessionToken);
+    const token = await getClinicalAccessToken(sessionToken);
+    await clinicalRpc<null>("dismiss_question", {
+      _question_id: input.questionId,
+      _feedback_kind: input.feedbackKind,
+      _comment: input.comment ?? null,
+    }, token);
+    return { ok: true };
   },
 
-  answer(
+  async answer(
     input: { questionId: string; value: Record<string, unknown> },
     sessionToken?: string | null,
   ): Promise<{ version: number }> {
-    return trpcMutation<{ version: number }>("clinical.lens.answer", input, sessionToken);
+    const token = await getClinicalAccessToken(sessionToken);
+    const version = await clinicalRpc<number>("answer_question", {
+      _question_id: input.questionId,
+      _answer: input.value,
+    }, token);
+    return { version };
   },
 
-  correctAnswer(
+  async correctAnswer(
     input: { questionId: string; value: Record<string, unknown>; reason?: string },
     sessionToken?: string | null,
   ): Promise<{ version: number }> {
-    return trpcMutation<{ version: number }>("clinical.lens.correctAnswer", input, sessionToken);
+    const token = await getClinicalAccessToken(sessionToken);
+    const version = await clinicalRpc<number>("correct_question_answer", {
+      _question_id: input.questionId,
+      _answer: input.value,
+      _reason: input.reason ?? null,
+    }, token);
+    return { version };
   },
 
-  recordNoteUse(
+  async recordNoteUse(
     input: { questionId: string; noteId: string },
     sessionToken?: string | null,
   ): Promise<{ ok: true }> {
-    return trpcMutation<{ ok: true }>("clinical.lens.recordNoteUse", input, sessionToken);
+    const token = await getClinicalAccessToken(sessionToken);
+    await clinicalRpc<null>("record_question_note_use", {
+      _question_id: input.questionId,
+      _note_id: input.noteId,
+    }, token);
+    return { ok: true };
   },
 
-  feedback(
+  async feedback(
     input: { questionId: string; kind: QuestionFeedbackKind; comment?: string },
     sessionToken?: string | null,
   ): Promise<{ ok: true }> {
-    return trpcMutation<{ ok: true }>("clinical.lens.feedback", input, sessionToken);
+    const token = await getClinicalAccessToken(sessionToken);
+    await clinicalRpc<null>("submit_question_feedback", {
+      _question_id: input.questionId,
+      _kind: input.kind,
+      _comment: input.comment ?? null,
+    }, token);
+    return { ok: true };
   },
 
-  reviewSafetyBlock(
+  async reviewSafetyBlock(
     input: { blockId: string; resolution: string },
     sessionToken?: string | null,
   ): Promise<{ ok: true }> {
-    return trpcMutation<{ ok: true }>("clinical.lens.reviewSafetyBlock", input, sessionToken);
+    const token = await getClinicalAccessToken(sessionToken);
+    await clinicalRpc<null>("review_safety_block", {
+      _block_id: input.blockId,
+      _resolution: input.resolution,
+    }, token);
+    return { ok: true };
   },
 };

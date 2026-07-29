@@ -1949,6 +1949,175 @@ createServer(async (req, res) => {
       return json(res, 200, { id, status: "open", audit_event_id: auditEvents[0].id });
     }
 
+    // Desktop-owned lens boundary: bounded reads + direct question-lifecycle
+    // RPCs (0024 semantics). `evaluate` and `aiStatus` stay on the transitional
+    // tRPC worker below — the rules/AI engine is not Desktop-owned DB logic.
+    if (url.pathname === "/rest/v1/rpc/list_desktop_lens_paradigms" && req.method === "POST") {
+      return json(res, 200, LENS_PARADIGM_ROWS);
+    }
+
+    if (url.pathname === "/rest/v1/rpc/list_desktop_lens_domains" && req.method === "POST") {
+      return json(res, 200, LENS_DOMAIN_ROWS);
+    }
+
+    if (
+      url.pathname === "/rest/v1/rpc/list_desktop_lens_knowledge_sources"
+      && req.method === "POST"
+    ) {
+      return json(res, 200, LENS_SOURCES.map((s) => ({
+        id: s.id, code: s.code, revision: s.revision, citation: s.citation,
+        publisher: s.publisher ?? null, releaseDate: s.releaseDate ?? null, revisionDate: s.revisionDate ?? null,
+        intendedPurpose: s.intendedPurpose ?? null, intendedPopulation: s.intendedPopulation ?? null,
+        requiredInputs: s.requiredInputs ?? null, dataQualityExpectations: s.dataQualityExpectations ?? null,
+        logicSummary: s.logicSummary ?? null, knownLimitations: s.knownLimitations ?? null,
+        outOfScopeUses: s.outOfScopeUses ?? null, validationStatus: s.validationStatus,
+        fundingConflicts: s.fundingConflicts ?? null,
+      })));
+    }
+
+    if (url.pathname === "/rest/v1/rpc/get_desktop_lens_evaluation" && req.method === "POST") {
+      const body = await readBody(req);
+      const e = encounters.get(body._encounter_id);
+      if (!e || !memberOrgIds.includes(e.organizationId)) {
+        return json(res, 404, { code: "P0002", message: "encounter not found" });
+      }
+      if (!LENS_PARADIGM_ROWS.some((p) => p.code === body._paradigm)) {
+        return json(res, 400, { code: "22023", message: "unknown paradigm" });
+      }
+      const ev = lensLatestEvaluation(e.id, body._paradigm);
+      if (!ev) return json(res, 200, null);
+      // The question worklist is ENCOUNTER-scoped (dedupe + lifecycle span
+      // paradigm runs) — deduped urgent questions stay visible under every lens.
+      const questions = [...lensQuestions.values()]
+        .filter((q) => q.encounterId === e.id)
+        .map(lensQuestionDto);
+      const blocks = [...lensBlocks.values()]
+        .filter((b) => b.evaluationId === ev.id)
+        .map((b) => ({
+          id: b.id, ruleCode: b.ruleCode, detail: b.detail, createdAt: b.createdAt,
+          reviewedBy: b.reviewedBy, reviewedAt: b.reviewedAt, resolution: b.resolution,
+        }));
+      return json(res, 200, {
+        evaluationId: ev.id, paradigm: ev.paradigm, status: ev.status,
+        invariantCore: ev.invariantCore, lensFraming: ev.lensFraming, inputSnapshot: ev.inputSnapshot,
+        inputCutoffAt: ev.inputCutoffAt, ruleSetVersion: ev.ruleSetVersion, knowledgeVersions: ev.knowledgeVersions,
+        model: ev.model ?? null, provider: ev.provider ?? null, promptTemplateVersion: ev.promptTemplateVersion ?? null,
+        outputSchemaVersion: ev.outputSchemaVersion, outputSha256: ev.outputSha256,
+        validationResult: ev.validationResult, stale: ev.stale, staleReason: ev.staleReason,
+        createdAt: ev.createdAt, questions, safetyBlocks: blocks,
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/list_desktop_question_answers" && req.method === "POST") {
+      const body = await readBody(req);
+      const q = lensQuestions.get(body._question_id);
+      if (!q) return json(res, 404, { code: "P0002", message: "question not found" });
+      return json(res, 200, q.answers.map((a) => ({
+        version: a.version, value: a.value, correctsVersion: a.correctsVersion,
+        correctionReason: a.correctionReason, answeredAt: a.answeredAt,
+      })));
+    }
+
+    if (url.pathname === "/rest/v1/rpc/set_question_status" && req.method === "POST") {
+      const body = await readBody(req);
+      const q = lensQuestions.get(body._question_id);
+      if (!q) return json(res, 404, { code: "P0002", message: "question not found" });
+      if (!["accepted", "asked", "deferred", "skipped"].includes(body._to)) {
+        return json(res, 400, { code: "22023", message: "use the dedicated functions for that transition" });
+      }
+      if (q.status !== body._to && !LENS_QUESTION_TRANSITIONS.has(`${q.status}>${body._to}`)) {
+        return json(res, 409, { code: "40003", message: `invalid question transition ${q.status} -> ${body._to}` });
+      }
+      q.status = body._to;
+      q.statusReason = body._reason ?? null;
+      return json(res, 200, null);
+    }
+
+    if (url.pathname === "/rest/v1/rpc/dismiss_question" && req.method === "POST") {
+      const body = await readBody(req);
+      const q = lensQuestions.get(body._question_id);
+      if (!q) return json(res, 404, { code: "P0002", message: "question not found" });
+      if (!["helpful", "not_relevant", "unsafe", "incorrect", "duplicate", "other"].includes(body._feedback_kind)) {
+        return json(res, 400, { code: "22023", message: "invalid feedback kind" });
+      }
+      if (!LENS_QUESTION_TRANSITIONS.has(`${q.status}>dismissed`)) {
+        return json(res, 409, { code: "40003", message: `invalid question transition ${q.status} -> dismissed` });
+      }
+      q.status = "dismissed";
+      q.statusReason = body._feedback_kind;
+      lensFeedbackRows.push({ questionId: q.id, kind: body._feedback_kind, comment: body._comment ?? null, at: nowIso() });
+      return json(res, 200, null);
+    }
+
+    if (url.pathname === "/rest/v1/rpc/answer_question" && req.method === "POST") {
+      const body = await readBody(req);
+      const q = lensQuestions.get(body._question_id);
+      if (!q) return json(res, 404, { code: "P0002", message: "question not found" });
+      if (q.status !== "asked") {
+        return json(res, 409, { code: "55000", message: "only an asked question can be answered" });
+      }
+      const version = q.answers.length + 1;
+      q.answers.push({ version, value: body._answer, correctsVersion: null, correctionReason: null, answeredAt: nowIso() });
+      q.status = "answered";
+      return json(res, 200, version);
+    }
+
+    if (url.pathname === "/rest/v1/rpc/correct_question_answer" && req.method === "POST") {
+      const body = await readBody(req);
+      const q = lensQuestions.get(body._question_id);
+      if (!q) return json(res, 404, { code: "P0002", message: "question not found" });
+      if (q.status !== "answered") {
+        return json(res, 409, { code: "55000", message: "only an answered question can be corrected" });
+      }
+      const prev = q.answers[q.answers.length - 1];
+      const version = q.answers.length + 1;
+      q.answers.push({
+        version, value: body._answer, correctsVersion: prev.version,
+        correctionReason: body._reason ?? null, answeredAt: nowIso(),
+      });
+      return json(res, 200, version);
+    }
+
+    if (url.pathname === "/rest/v1/rpc/record_question_note_use" && req.method === "POST") {
+      const body = await readBody(req);
+      const q = lensQuestions.get(body._question_id);
+      if (!q) return json(res, 404, { code: "P0002", message: "question not found" });
+      const n = emrNotes.get(body._note_id);
+      if (!n) return json(res, 404, { code: "P0002", message: "note not found" });
+      if (n.encounterId !== q.encounterId) {
+        return json(res, 403, { code: "42501", message: "the note belongs to a different encounter" });
+      }
+      if (!["draft", "ready_for_review"].includes(n.status)) {
+        return json(res, 409, { code: "55000", message: "signed notes cannot receive new content — use an addendum" });
+      }
+      pushAudit("lens.question_added_to_note", "differential_question", q.id, "Question content explicitly added to a draft note", { noteId: n.id }, n.patientId);
+      return json(res, 200, null);
+    }
+
+    if (url.pathname === "/rest/v1/rpc/submit_question_feedback" && req.method === "POST") {
+      const body = await readBody(req);
+      const q = lensQuestions.get(body._question_id);
+      if (!q) return json(res, 404, { code: "P0002", message: "question not found" });
+      if (!["helpful", "not_relevant", "unsafe", "incorrect", "duplicate", "other"].includes(body._kind)) {
+        return json(res, 400, { code: "22023", message: "invalid feedback kind" });
+      }
+      lensFeedbackRows.push({ questionId: q.id, kind: body._kind, comment: body._comment ?? null, at: nowIso() });
+      return json(res, 200, null);
+    }
+
+    if (url.pathname === "/rest/v1/rpc/review_safety_block" && req.method === "POST") {
+      const body = await readBody(req);
+      const b = lensBlocks.get(body._block_id);
+      if (!b) return json(res, 404, { code: "P0002", message: "safety block not found" });
+      if (!body._resolution || !String(body._resolution).trim()) {
+        return json(res, 400, { code: "22023", message: "a resolution note is required" });
+      }
+      b.reviewedAt = nowIso();
+      b.reviewedBy = PRACTITIONER_USER_ID;
+      b.resolution = body._resolution;
+      return json(res, 200, null);
+    }
+
     if (url.pathname === "/rest/v1/patient_profiles" && req.method === "GET") {
       const organizationId = (url.searchParams.get("organization_id") ?? "").replace(/^eq\./, "");
       const patientId = (url.searchParams.get("id") ?? "").replace(/^eq\./, "");
@@ -2396,23 +2565,11 @@ createServer(async (req, res) => {
       scribeAccessLog.push({ transcriptId: input.transcriptId, kind: input.kind, at: new Date().toISOString() });
       return trpcOk(res, { ok: true });
     }
-    // ===== lens: paradigms, invariant core, differential questions (0024) =====
+    // ===== lens (transitional worker legs only): AI posture + evaluation =====
+    // Reads and question-lifecycle mutations moved to the Desktop-owned
+    // /rest/v1/rpc fixture handlers above.
     case "clinical.lens.aiStatus":
       return trpcOk(res, { mode: "fixture", available: true, liveConfigured: false, reason: null });
-    case "clinical.lens.paradigms":
-      return trpcOk(res, LENS_PARADIGM_ROWS);
-    case "clinical.lens.domains":
-      return trpcOk(res, LENS_DOMAIN_ROWS);
-    case "clinical.lens.knowledgeSources":
-      return trpcOk(res, LENS_SOURCES.map((s) => ({
-        id: s.id, code: s.code, revision: s.revision, citation: s.citation,
-        publisher: s.publisher ?? null, releaseDate: s.releaseDate ?? null, revisionDate: s.revisionDate ?? null,
-        intendedPurpose: s.intendedPurpose ?? null, intendedPopulation: s.intendedPopulation ?? null,
-        requiredInputs: s.requiredInputs ?? null, dataQualityExpectations: s.dataQualityExpectations ?? null,
-        logicSummary: s.logicSummary ?? null, knownLimitations: s.knownLimitations ?? null,
-        outOfScopeUses: s.outOfScopeUses ?? null, validationStatus: s.validationStatus,
-        fundingConflicts: s.fundingConflicts ?? null,
-      })));
     case "clinical.lens.evaluate": {
       const e = encounters.get(input.encounterId);
       if (!e || !memberOrgIds.includes(e.organizationId)) {
@@ -2498,105 +2655,6 @@ createServer(async (req, res) => {
       }
       pushAudit("lens.evaluation_completed", "lens_evaluation", evalId, "Lens evaluation completed", { paradigm: input.paradigm, inserted, deduped }, e.patientId);
       return trpcOk(res, { evaluationId: evalId, status: "complete", questionsInserted: inserted, questionsDeduped: deduped });
-    }
-    case "clinical.lens.evaluation": {
-      const e = encounters.get(input.encounterId);
-      if (!e || !memberOrgIds.includes(e.organizationId)) {
-        return trpcErr(res, 404, "NOT_FOUND", "Encounter not found or access denied");
-      }
-      const ev = lensLatestEvaluation(input.encounterId, input.paradigm);
-      if (!ev) return trpcOk(res, null);
-      // The question worklist is ENCOUNTER-scoped (dedupe + lifecycle span
-      // paradigm runs) — deduped urgent questions stay visible under every lens.
-      const questions = [...lensQuestions.values()]
-        .filter((q) => q.encounterId === input.encounterId)
-        .map(lensQuestionDto);
-      const blocks = [...lensBlocks.values()]
-        .filter((b) => b.evaluationId === ev.id)
-        .map((b) => ({ id: b.id, ruleCode: b.ruleCode, detail: b.detail, createdAt: b.createdAt, reviewedBy: b.reviewedBy, reviewedAt: b.reviewedAt, resolution: b.resolution }));
-      return trpcOk(res, {
-        evaluationId: ev.id, paradigm: ev.paradigm, status: ev.status,
-        invariantCore: ev.invariantCore, lensFraming: ev.lensFraming, inputSnapshot: ev.inputSnapshot,
-        inputCutoffAt: ev.inputCutoffAt, ruleSetVersion: ev.ruleSetVersion, knowledgeVersions: ev.knowledgeVersions,
-        model: ev.model ?? null, provider: ev.provider ?? null, promptTemplateVersion: ev.promptTemplateVersion ?? null,
-        outputSchemaVersion: ev.outputSchemaVersion, outputSha256: ev.outputSha256,
-        validationResult: ev.validationResult, stale: ev.stale, staleReason: ev.staleReason,
-        createdAt: ev.createdAt, questions, safetyBlocks: blocks,
-      });
-    }
-    case "clinical.lens.questionAction": {
-      const q = lensQuestions.get(input.questionId);
-      if (!q) return trpcErr(res, 404, "NOT_FOUND", "question not found");
-      if (q.status !== input.action && !LENS_QUESTION_TRANSITIONS.has(`${q.status}>${input.action}`)) {
-        return trpcErr(res, 409, "CONFLICT", `invalid question transition ${q.status} -> ${input.action}`);
-      }
-      q.status = input.action;
-      q.statusReason = input.reason ?? null;
-      return trpcOk(res, { ok: true });
-    }
-    case "clinical.lens.dismiss": {
-      const q = lensQuestions.get(input.questionId);
-      if (!q) return trpcErr(res, 404, "NOT_FOUND", "question not found");
-      if (!LENS_QUESTION_TRANSITIONS.has(`${q.status}>dismissed`)) {
-        return trpcErr(res, 409, "CONFLICT", `invalid question transition ${q.status} -> dismissed`);
-      }
-      q.status = "dismissed";
-      q.statusReason = input.feedbackKind;
-      lensFeedbackRows.push({ questionId: q.id, kind: input.feedbackKind, comment: input.comment ?? null, at: nowIso() });
-      return trpcOk(res, { ok: true });
-    }
-    case "clinical.lens.answer": {
-      const q = lensQuestions.get(input.questionId);
-      if (!q) return trpcErr(res, 404, "NOT_FOUND", "question not found");
-      if (q.status !== "asked") return trpcErr(res, 409, "CONFLICT", "answers apply to asked questions");
-      const version = q.answers.length + 1;
-      q.answers.push({ version, value: input.value, correctsVersion: null, correctionReason: null, answeredAt: nowIso() });
-      q.status = "answered";
-      return trpcOk(res, { version });
-    }
-    case "clinical.lens.correctAnswer": {
-      const q = lensQuestions.get(input.questionId);
-      if (!q) return trpcErr(res, 404, "NOT_FOUND", "question not found");
-      if (q.status !== "answered") return trpcErr(res, 409, "CONFLICT", "corrections apply to answered questions");
-      const prev = q.answers[q.answers.length - 1];
-      const version = q.answers.length + 1;
-      q.answers.push({ version, value: input.value, correctsVersion: prev.version, correctionReason: input.reason ?? null, answeredAt: nowIso() });
-      return trpcOk(res, { version });
-    }
-    case "clinical.lens.answers": {
-      const q = lensQuestions.get(input.questionId);
-      if (!q) return trpcErr(res, 404, "NOT_FOUND", "question not found");
-      return trpcOk(res, q.answers.map((a) => ({
-        version: a.version, value: a.value, correctsVersion: a.correctsVersion,
-        correctionReason: a.correctionReason, answeredAt: a.answeredAt,
-      })));
-    }
-    case "clinical.lens.recordNoteUse": {
-      const q = lensQuestions.get(input.questionId);
-      const n = emrNotes.get(input.noteId);
-      if (!q || !n) return trpcErr(res, 404, "NOT_FOUND", "question or note not found");
-      if (n.encounterId !== q.encounterId) {
-        return trpcErr(res, 412, "PRECONDITION_FAILED", "the note belongs to a different encounter");
-      }
-      if (!["draft", "ready_for_review"].includes(n.status)) {
-        return trpcErr(res, 412, "PRECONDITION_FAILED", "questions can only be added to an editable draft");
-      }
-      pushAudit("lens.question_note_use", "differential_question", q.id, "Question explicitly added to a draft note", { noteId: n.id }, n.patientId);
-      return trpcOk(res, { ok: true });
-    }
-    case "clinical.lens.feedback": {
-      const q = lensQuestions.get(input.questionId);
-      if (!q) return trpcErr(res, 404, "NOT_FOUND", "question not found");
-      lensFeedbackRows.push({ questionId: q.id, kind: input.kind, comment: input.comment ?? null, at: nowIso() });
-      return trpcOk(res, { ok: true });
-    }
-    case "clinical.lens.reviewSafetyBlock": {
-      const b = lensBlocks.get(input.blockId);
-      if (!b) return trpcErr(res, 404, "NOT_FOUND", "safety block not found");
-      b.reviewedAt = nowIso();
-      b.reviewedBy = PRACTITIONER_USER_ID;
-      b.resolution = input.resolution;
-      return trpcOk(res, { ok: true });
     }
     case "clinical.patients.list":
       return trpcOk(res, orgScopedEmpty ? [] : PATIENTS);
