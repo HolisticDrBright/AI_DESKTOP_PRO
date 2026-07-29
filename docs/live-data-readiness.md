@@ -102,11 +102,19 @@ Status legend: ✅ live path exists · 🟢 ready to wire (schema + pattern exis
 - **First live mutation:** hypothesis accept/reject → status column + audit
   (same shape as `review_biomarker`)
 
-## Composer / Notes / Reports — 🟡 needs generation endpoint
-- **Adapter:** `api.composer.generate` (mock templates)
-- **Live:** notes → `clinical_notes` (0004); generation is a server-side AI
-  endpoint with the same draft/review/sign gates; **drafts are never final**
-- **First live mutation:** save reviewed note → `INSERT clinical_notes` + audit
+## Encounters / Clinical Notes / Timeline — ✅ live path exists
+- **Adapter:** `api.encounters.*` through `encounters.live.ts`
+- **Desktop boundary:** bounded encounter, note-detail, patient-encounter, and
+  timeline reads use the narrow authenticated RPCs introduced in
+  `20260729005221_desktop_owned_encounters_notes.sql`. All lifecycle writes use
+  the existing authorized state-machine RPCs.
+- **Safety:** optimistic version checks, signed-note immutability, append-only
+  addenda, provenance, tenant agreement, and same-transaction audit remain
+  database-enforced. A same-appointment advisory lock plus a unique partial
+  index prevent duplicate active encounters.
+- **Composer generation:** `api.composer.generate` remains a separate
+  mock/server-AI concern. Generated content is always a draft and never signs,
+  sends, orders, or publishes itself.
 
 ## Audit Log — ✅ dual-mode
 - **Route:** `/audit-log` — demo (sessionStorage) vs live (`list_audit_events`

@@ -606,17 +606,84 @@ test("EMR: appointment → encounter → autosaved draft → recovery → sign �
   await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
 });
 
+test("EMR conflict recovery saves local edits against the selected server version", async ({ page }) => {
+  const patientId = "aaaaaaaa-1111-2222-3333-444444444401";
+  const started = await page.request.post("/api/live/emr/encounter", {
+    data: { patientId, visitType: "follow-up" },
+  });
+  expect(started.status()).toBe(200);
+  const encounterId = ((await started.json()) as {
+    data: { encounterId: string };
+  }).data.encounterId;
+
+  const first = await page.request.post("/api/live/emr/note", {
+    data: {
+      encounterId,
+      noteType: "soap",
+      content: { S: "Original history.", O: "", A: "", P: "" },
+      expectedVersion: 0,
+      saveKind: "manual",
+      provenance: [],
+    },
+  });
+  expect(first.status()).toBe(200);
+  const noteId = ((await first.json()) as {
+    data: { noteId: string };
+  }).data.noteId;
+
+  await page.goto(`/patients/${patientId}/encounter/${encounterId}`);
+  await page.getByRole("button", { name: /SOAP.*draft.*v1/i }).click();
+  await expect(page.getByLabel("Subjective")).toHaveValue("Original history.");
+
+  // Another tab advances the authoritative note to v2 after this composer
+  // loaded v1.
+  const external = await page.request.post("/api/live/emr/note", {
+    data: {
+      encounterId,
+      noteId,
+      noteType: "soap",
+      content: { S: "Server-side edit.", O: "", A: "", P: "" },
+      expectedVersion: 1,
+      saveKind: "manual",
+      provenance: [],
+    },
+  });
+  expect(external.status()).toBe(200);
+
+  await page.getByLabel("Subjective").fill("Practitioner keeps this local edit.");
+  await expect(page.getByTestId("conflict-view")).toBeVisible({ timeout: 10_000 });
+  await page.getByRole("button", { name: "Keep my edits (save over v2)" }).click();
+  await expect(page.getByTestId("conflict-view")).toHaveCount(0);
+  await expect(page.getByTestId("save-state")).toHaveText(/Saved .*v3/, { timeout: 10_000 });
+
+  const authoritative = await page.request.get(`/api/live/emr/note?noteId=${noteId}`);
+  expect(authoritative.status()).toBe(200);
+  expect(((await authoritative.json()) as {
+    data: { content: { S: string }; contentVersion: number };
+  }).data).toMatchObject({
+    content: { S: "Practitioner keeps this local edit." },
+    contentVersion: 3,
+  });
+});
+
 test("no console errors in the live flow", async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   page.on("console", (m) => {
     if (m.type() === "error" && !/Failed to load resource/.test(m.text())) errors.push(m.text());
   });
-  await page.goto("/tasks", { waitUntil: "networkidle" });
-  await page.goto("/patients/aaaaaaaa-1111-2222-3333-444444444401/labs", { waitUntil: "networkidle" });
-  await page.goto("/calendar", { waitUntil: "networkidle" });
-  await page.goto("/patients/aaaaaaaa-1111-2222-3333-444444444401/timeline", { waitUntil: "networkidle" });
-  await page.goto("/audit-log", { waitUntil: "networkidle" });
-  await page.goto("/settings", { waitUntil: "networkidle" });
+  const routes = [
+    "/tasks",
+    "/patients/aaaaaaaa-1111-2222-3333-444444444401/labs",
+    "/calendar",
+    "/patients/aaaaaaaa-1111-2222-3333-444444444401/timeline",
+    "/audit-log",
+    "/settings",
+  ];
+  for (const route of routes) {
+    await page.goto(route, { waitUntil: "domcontentloaded" });
+    await expect(page.locator("main")).toBeVisible();
+    await page.waitForTimeout(150);
+  }
   expect(errors).toEqual([]);
 });

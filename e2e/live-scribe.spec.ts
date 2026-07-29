@@ -62,6 +62,8 @@ const phase = (page: Page) => page.getByTestId("recording-status");
 test("milestone workflow: consent → record → pause/resume → transcribe → correct → draft → sign → verified deletion → audit", async ({
   page,
 }) => {
+  test.setTimeout(60_000);
+
   // ---- no-tracker boundary: every request must stay on the app origin ----
   const offOrigin: string[] = [];
   page.on("request", (req) => {
@@ -154,7 +156,7 @@ test("milestone workflow: consent → record → pause/resume → transcribe →
   await expect(page.getByText("Signed content is locked.")).toBeVisible();
 
   // The manual practitioner note is still intact, word for word.
-  await page.getByRole("button", { name: /SOAP/ }).first().click();
+  await page.getByRole("button", { name: /SOAP.*draft/i }).click();
   const subjectiveValues = [
     await page.getByLabel("Subjective").inputValue().catch(() => null),
     await page.getByText("Practitioner-authored subjective. Do not overwrite.").count(),

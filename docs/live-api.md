@@ -91,6 +91,8 @@ event key, identifiers, and bounded scalar metadata.
 | `actions.execute` — other kinds | session | session (wired per-domain as slices land) |
 | `schedule.getWeek` | n/a (demo calendar renders the weekday-pattern mock directly) | ✅ direct `get_desktop_calendar` RPC: caller-role schedule, schedulable practitioners, minimal patient picker; raw appointment-table access revoked |
 | `schedule.book` / `updateStatus` / `reschedule` | n/a (demo announces, never pretends to persist) | ✅ direct RPCs: scheduling-role authorization separated from chart writes, advisory overlap locks, status state machine, persisted rescheduling, and atomic audit |
+| `encounters.start` / `setStatus` / `get` / `forPatient` | honest live-only state | ✅ direct authenticated RPCs; bounded exact-shape reads, tenant checks, state machine, appointment-scoped idempotency, and database uniqueness for one active encounter per appointment |
+| `encounters.saveNote` / `getNote` / `markReady` / `signNote` / `addAddendum` / `markError` / `timeline` | honest live-only state | ✅ direct authenticated RPCs; optimistic concurrency, signed-note immutability, append-only addenda, provenance, bounded timeline, and atomic audit |
 | `knowledge.pathways` / `createDraft` / `updateDraft` / `approve` | session registry | ✅ authenticated organization registry through role-gated RPCs; approved content is immutable |
 | `knowledge.imports` / `stageImport` / `reviewImportItem` | session import review | ✅ immutable, hashed import batches with no-PHI attestation; acceptance creates only a pathway draft or pending product label |
 | everything else | mock | mock |

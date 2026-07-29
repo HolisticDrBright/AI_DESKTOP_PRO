@@ -95,9 +95,10 @@ nothing is persisted and no sign-in is needed. Setting
 [`.env.example`](.env.example)) routes practitioner authentication,
 organization selection and membership management, and patient-directory reads
 through this app's Desktop-owned Supabase boundary under the practitioner's JWT
-and RLS. Labs, tasks, scheduling, encounters, scribe, lens, and the append-only
-audit trail still use the transitional tRPC transport while each domain is
-migrated. Practitioners sign in at `/login` through an httpOnly cookie session;
+and RLS. Labs, tasks, scheduling, encounters, notes, the patient timeline, and
+the append-only audit trail now use that same direct boundary. Scribe, lens, and
+other worker/coordinator domains retain the transitional tRPC transport while
+they are migrated. Practitioners sign in at `/login` through an httpOnly cookie session;
 see
 [`docs/live-auth-and-seeding.md`](docs/live-auth-and-seeding.md) for sign-in
 and demo-data seeding). See [`docs/live-api.md`](docs/live-api.md) for the

@@ -50,6 +50,7 @@ const PROVENANCE_TYPE_LABEL: Record<string, string> = {
   patient_form: "Patient form",
   chart_item: "Chart item",
   practitioner_entered: "Practitioner-entered",
+  transcript: "Encounter transcript",
   differential_question: "Differential question",
   lens_evaluation: "Lens evaluation",
 };
@@ -192,8 +193,14 @@ export function NoteComposer({
   }, [initialNoteId, applyDetail]);
 
   const doSave = useCallback(
-    async (saveKind: "autosave" | "manual") => {
-      const snap = latest.current;
+    async (
+      saveKind: "autosave" | "manual",
+      options?: { expectedVersion?: number },
+    ) => {
+      const snap = {
+        ...latest.current,
+        serverVersion: options?.expectedVersion ?? latest.current.serverVersion,
+      };
       setSaving(true);
       setSaveError(null);
       try {
@@ -490,19 +497,26 @@ export function NoteComposer({
             >
               Use server version
             </button>
-            <button
-              type="button"
-              onClick={() => {
-                setServerVersion(conflict.contentVersion);
-                setStatus(conflict.note.status);
-                setConflict(null);
-                setDirty(true);
-                void doSave("manual");
-              }}
-              className="h-8 cursor-pointer rounded-lg border-none bg-action px-3 text-[12px] font-semibold text-white hover:bg-action-deep focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink"
-            >
-              Keep my edits (save over v{conflict.contentVersion})
-            </button>
+            {(conflict.note.status === "draft" || conflict.note.status === "ready_for_review") ? (
+              <button
+                type="button"
+                onClick={() => {
+                  const expectedVersion = conflict.contentVersion;
+                  setServerVersion(expectedVersion);
+                  setStatus(conflict.note.status);
+                  setConflict(null);
+                  setDirty(true);
+                  void doSave("manual", { expectedVersion });
+                }}
+                className="h-8 cursor-pointer rounded-lg border-none bg-action px-3 text-[12px] font-semibold text-white hover:bg-action-deep focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink"
+              >
+                Keep my edits (save over v{conflict.contentVersion})
+              </button>
+            ) : (
+              <span className="self-center text-[11.5px] font-medium text-critical">
+                The server version is locked and cannot be overwritten.
+              </span>
+            )}
           </div>
         </div>
       )}

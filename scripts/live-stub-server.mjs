@@ -160,6 +160,149 @@ function emrAudit(action, resourceId, message, patientId) {
   pushAudit(action, action.startsWith("encounter") ? "encounter" : "clinical_note", resourceId, message, {}, patientId);
 }
 
+function emrEncounterRow(e) {
+  return {
+    encounter_id: e.id,
+    organization_id: e.organizationId,
+    patient_id: e.patientId,
+    appointment_id: e.appointmentId,
+    visit_type: e.visitType,
+    status: e.status,
+    started_at: e.startedAt,
+    ended_at: e.endedAt,
+    status_reason: e.statusReason,
+    created_at: e.createdAt,
+  };
+}
+
+function emrNoteSummaryRow(n) {
+  return {
+    note_id: n.id,
+    encounter_id: n.encounterId,
+    patient_id: n.patientId,
+    note_type: n.noteType,
+    status: n.status,
+    current_version: n.currentVersion,
+    author_user_id: PRACTITIONER_USER_ID,
+    status_reason: n.statusReason ?? null,
+    created_at: n.createdAt,
+    updated_at: n.updatedAt ?? n.createdAt,
+  };
+}
+
+function emrNoteDetailRow(n) {
+  const version = n.versions.get(n.currentVersion);
+  return {
+    note: emrNoteSummaryRow(n),
+    content: version?.content ?? {},
+    content_version: n.currentVersion,
+    last_saved_at: version?.savedAt ?? null,
+    signature: n.signature
+      ? {
+          signature_id: n.signature.signatureId,
+          version: n.signature.version,
+          signed_by: n.signature.signedBy,
+          signed_at: n.signature.signedAt,
+          attestation: n.signature.attestation,
+        }
+      : null,
+    addenda: n.addenda.map((a) => ({
+      addendum_id: a.addendumId,
+      referenced_version: a.referencedVersion,
+      author_user_id: a.authorUserId,
+      reason: a.reason,
+      content: a.content,
+      created_at: a.createdAt,
+    })),
+    provenance: n.provenance.map((p) => ({
+      section_key: p.sectionKey,
+      ref_type: p.refType,
+      ref_id: p.refId ?? null,
+      label: p.label,
+    })),
+  };
+}
+
+function emrTimelineRows(patientId, memberOrgIds) {
+  const events = [];
+  for (const e of encounters.values()) {
+    if (e.patientId !== patientId || !memberOrgIds.includes(e.organizationId)) continue;
+    if (e.startedAt) {
+      events.push({
+        event_at: e.startedAt,
+        event_type: "encounter.started",
+        title: `Encounter started (${e.visitType})`,
+        ref_type: "encounter",
+        ref_id: e.id,
+        detail: { status: e.status },
+      });
+    }
+    if (e.status === "completed" && e.endedAt) {
+      events.push({
+        event_at: e.endedAt,
+        event_type: "encounter.completed",
+        title: "Encounter completed",
+        ref_type: "encounter",
+        ref_id: e.id,
+        detail: { visit_type: e.visitType },
+      });
+    }
+  }
+  for (const n of emrNotes.values()) {
+    if (n.patientId !== patientId || !memberOrgIds.includes(n.organizationId)) continue;
+    events.push({
+      event_at: n.createdAt,
+      event_type: "note.draft_created",
+      title: `Draft note created (${n.noteType})`,
+      ref_type: "clinical_note",
+      ref_id: n.id,
+      detail: { status: n.status },
+    });
+    if (n.signature) {
+      events.push({
+        event_at: n.signature.signedAt,
+        event_type: "note.signed",
+        title: "Note signed",
+        ref_type: "clinical_note",
+        ref_id: n.id,
+        detail: { version: n.signature.version },
+      });
+    }
+    for (const a of n.addenda) {
+      events.push({
+        event_at: a.createdAt,
+        event_type: "note.addendum",
+        title: "Addendum added",
+        ref_type: "clinical_note",
+        ref_id: n.id,
+        detail: { referenced_version: a.referencedVersion },
+      });
+    }
+    if (n.status === "entered_in_error") {
+      events.push({
+        event_at: n.updatedAt ?? n.createdAt,
+        event_type: "note.entered_in_error",
+        title: "Note entered in error",
+        ref_type: "clinical_note",
+        ref_id: n.id,
+        detail: {},
+      });
+    }
+  }
+  for (const appointment of scheduleAppointments ?? []) {
+    if (appointment.patientId !== patientId) continue;
+    events.push({
+      event_at: appointment.startsAt,
+      event_type: "appointment",
+      title: appointment.appointmentType ?? "appointment",
+      ref_type: "appointment",
+      ref_id: appointment.id,
+      detail: { status: appointment.status },
+    });
+  }
+  return events.sort((a, b) => (a.event_at < b.event_at ? 1 : -1));
+}
+
 /* ---- lens engine (0024 semantics): paradigms, invariant core, questions ----
  * The SAME contracts as the real backend: an invariant core identical under
  * every paradigm, lens framing that re-ranks non-urgent domains only,
@@ -997,6 +1140,286 @@ createServer(async (req, res) => {
       return json(res, 401, { code: "PGRST301", message: "JWT required" });
     }
     const memberOrgIds = memberOrgIdsForBearer(bearerToken);
+
+    // Desktop-owned encounter + signed-note RPC boundary.
+    if (url.pathname === "/rest/v1/rpc/start_encounter" && req.method === "POST") {
+      const body = await readBody(req);
+      const organizationId = String(body._organization_id ?? "");
+      const patientId = String(body._patient_id ?? "");
+      const patient = PATIENTS.find(
+        (item) => item.id === patientId && item.organization_id === organizationId,
+      );
+      if (!memberOrgIds.includes(organizationId) || !patient) {
+        return json(res, 403, { code: "42501", message: "not authorized for this patient" });
+      }
+      if (body._appointment_id) {
+        const existing = [...encounters.values()].find(
+          (encounter) =>
+            encounter.appointmentId === body._appointment_id
+            && encounter.status === "in_progress",
+        );
+        if (existing) return json(res, 200, existing.id);
+      }
+      emrSeq += 1;
+      const id = `eeeeeeee-2222-3333-4444-${String(444444444400 + emrSeq)}`;
+      const createdAt = nowIso();
+      encounters.set(id, {
+        id,
+        organizationId,
+        patientId,
+        appointmentId: body._appointment_id ?? null,
+        visitType: body._visit_type ?? "follow-up",
+        status: "in_progress",
+        startedAt: createdAt,
+        endedAt: null,
+        statusReason: null,
+        createdAt,
+      });
+      emrAudit("encounter.started", id, "Encounter started", patientId);
+      return json(res, 200, id);
+    }
+
+    if (url.pathname === "/rest/v1/rpc/set_encounter_status" && req.method === "POST") {
+      const body = await readBody(req);
+      const encounter = encounters.get(body._encounter_id);
+      if (!encounter || !memberOrgIds.includes(encounter.organizationId)) {
+        return json(res, 404, { code: "P0002", message: "encounter not found" });
+      }
+      const allowed =
+        (encounter.status === "in_progress"
+          && ["completed", "cancelled", "entered_in_error"].includes(body._status))
+        || (encounter.status === "scheduled"
+          && ["cancelled", "entered_in_error"].includes(body._status));
+      if (!allowed) {
+        return json(res, 400, { code: "22023", message: `invalid transition from ${encounter.status}` });
+      }
+      encounter.status = body._status;
+      if (body._status === "completed") encounter.endedAt = nowIso();
+      if (body._reason) encounter.statusReason = body._reason;
+      emrAudit(`encounter.${body._status}`, encounter.id, `Encounter ${body._status}`, encounter.patientId);
+      return json(res, 200, null);
+    }
+
+    if (url.pathname === "/rest/v1/rpc/get_desktop_encounter" && req.method === "POST") {
+      const body = await readBody(req);
+      const encounter = encounters.get(body._encounter_id);
+      if (!encounter || !memberOrgIds.includes(encounter.organizationId)) {
+        return json(res, 404, { code: "P0002", message: "encounter not found" });
+      }
+      const notes = [...emrNotes.values()]
+        .filter((note) => note.encounterId === encounter.id)
+        .sort((a, b) => (a.updatedAt ?? a.createdAt) < (b.updatedAt ?? b.createdAt) ? 1 : -1)
+        .map(emrNoteSummaryRow);
+      return json(res, 200, { encounter: emrEncounterRow(encounter), notes });
+    }
+
+    if (
+      url.pathname === "/rest/v1/rpc/list_desktop_patient_encounters"
+      && req.method === "POST"
+    ) {
+      const body = await readBody(req);
+      const patient = PATIENTS.find((item) => item.id === body._patient_id);
+      if (!patient || !memberOrgIds.includes(patient.organization_id)) {
+        return json(res, 403, { code: "42501", message: "not authorized for this patient" });
+      }
+      const limit = Math.min(Math.max(Number(body._limit ?? 100), 1), 200);
+      const rows = [...encounters.values()]
+        .filter(
+          (encounter) =>
+            encounter.patientId === patient.id
+            && memberOrgIds.includes(encounter.organizationId),
+        )
+        .sort((a, b) => (a.startedAt ?? a.createdAt) < (b.startedAt ?? b.createdAt) ? 1 : -1)
+        .slice(0, limit)
+        .map(emrEncounterRow);
+      return json(res, 200, rows);
+    }
+
+    if (url.pathname === "/rest/v1/rpc/save_note_draft" && req.method === "POST") {
+      const body = await readBody(req);
+      const encounter = encounters.get(body._encounter_id);
+      if (!encounter || !memberOrgIds.includes(encounter.organizationId)) {
+        return json(res, 404, { code: "P0002", message: "encounter not found" });
+      }
+      if (body._organization_id !== encounter.organizationId) {
+        return json(res, 403, { code: "42501", message: "encounter does not belong to this organization" });
+      }
+      if (!["in_progress", "completed"].includes(encounter.status)) {
+        return json(res, 400, { code: "22023", message: "encounter is not open for documentation" });
+      }
+
+      let note;
+      if (body._note_id) {
+        note = emrNotes.get(body._note_id);
+        if (!note) return json(res, 404, { code: "P0002", message: "note not found" });
+        if (!["draft", "ready_for_review"].includes(note.status)) {
+          return json(res, 400, { code: "22023", message: "note content is frozen after signing" });
+        }
+        if (note.currentVersion !== body._expected_version) {
+          return json(res, 409, { code: "40001", message: "version conflict" });
+        }
+        note.currentVersion += 1;
+        note.status = "draft";
+      } else {
+        if (body._expected_version !== 0) {
+          return json(res, 409, { code: "40001", message: "version conflict" });
+        }
+        emrSeq += 1;
+        const id = `eeeeeeee-3333-4444-5555-${String(444444444400 + emrSeq)}`;
+        const createdAt = nowIso();
+        note = {
+          id,
+          encounterId: encounter.id,
+          patientId: encounter.patientId,
+          organizationId: encounter.organizationId,
+          noteType: body._note_type,
+          status: "draft",
+          currentVersion: 1,
+          versions: new Map(),
+          signature: null,
+          addenda: [],
+          provenance: [],
+          statusReason: null,
+          createdAt,
+          updatedAt: createdAt,
+        };
+        emrNotes.set(id, note);
+        emrAudit("note.draft_created", id, "Draft note created", encounter.patientId);
+      }
+
+      const savedAt = nowIso();
+      note.updatedAt = savedAt;
+      note.versions.set(note.currentVersion, {
+        content: body._content,
+        savedAt,
+      });
+      note.provenance = Array.isArray(body._provenance) ? body._provenance : [];
+      return json(res, 200, {
+        note_id: note.id,
+        version: note.currentVersion,
+        saved_at: savedAt,
+        status: "draft",
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/get_desktop_note" && req.method === "POST") {
+      const body = await readBody(req);
+      const note = emrNotes.get(body._note_id);
+      if (!note || !memberOrgIds.includes(note.organizationId)) {
+        return json(res, 404, { code: "P0002", message: "note not found" });
+      }
+      return json(res, 200, emrNoteDetailRow(note));
+    }
+
+    if (url.pathname === "/rest/v1/rpc/mark_note_ready" && req.method === "POST") {
+      const body = await readBody(req);
+      const note = emrNotes.get(body._note_id);
+      if (!note || !memberOrgIds.includes(note.organizationId)) {
+        return json(res, 404, { code: "P0002", message: "note not found" });
+      }
+      if (note.status !== "draft") {
+        return json(res, 400, { code: "22023", message: "only a draft can be marked ready" });
+      }
+      note.status = "ready_for_review";
+      note.updatedAt = nowIso();
+      emrAudit("note.ready_for_review", note.id, "Note marked ready for review", note.patientId);
+      return json(res, 200, null);
+    }
+
+    if (url.pathname === "/rest/v1/rpc/sign_note" && req.method === "POST") {
+      const body = await readBody(req);
+      const note = emrNotes.get(body._note_id);
+      if (!note || !memberOrgIds.includes(note.organizationId)) {
+        return json(res, 404, { code: "P0002", message: "note not found" });
+      }
+      if (note.signature) {
+        if (note.signature.version === body._expected_version) {
+          return json(res, 200, {
+            signature_id: note.signature.signatureId,
+            already_signed: true,
+            version: note.signature.version,
+            signed_at: note.signature.signedAt,
+          });
+        }
+        return json(res, 400, { code: "22023", message: "note is already signed" });
+      }
+      if (!["draft", "ready_for_review"].includes(note.status)) {
+        return json(res, 400, { code: "22023", message: "note cannot be signed" });
+      }
+      if (note.currentVersion !== body._expected_version) {
+        return json(res, 409, { code: "40001", message: "version conflict" });
+      }
+      emrSeq += 1;
+      note.signature = {
+        signatureId: `eeeeeeee-4444-5555-6666-${String(444444444400 + emrSeq)}`,
+        version: note.currentVersion,
+        signedBy: PRACTITIONER_USER_ID,
+        signedAt: nowIso(),
+        attestation: "I attest this note is accurate and complete.",
+      };
+      note.status = "signed";
+      note.updatedAt = note.signature.signedAt;
+      emrAudit("note.signed", note.id, "Note signed", note.patientId);
+      return json(res, 200, {
+        signature_id: note.signature.signatureId,
+        already_signed: false,
+        version: note.signature.version,
+        signed_at: note.signature.signedAt,
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/add_note_addendum" && req.method === "POST") {
+      const body = await readBody(req);
+      const note = emrNotes.get(body._note_id);
+      if (!note || !memberOrgIds.includes(note.organizationId)) {
+        return json(res, 404, { code: "P0002", message: "note not found" });
+      }
+      if (!["signed", "amended"].includes(note.status)) {
+        return json(res, 400, { code: "22023", message: "addenda apply to signed notes" });
+      }
+      emrSeq += 1;
+      const addendum = {
+        addendumId: `eeeeeeee-5555-6666-7777-${String(444444444400 + emrSeq)}`,
+        referencedVersion: note.signature?.version ?? note.currentVersion,
+        authorUserId: PRACTITIONER_USER_ID,
+        reason: body._reason,
+        content: body._content,
+        createdAt: nowIso(),
+      };
+      note.addenda.push(addendum);
+      note.status = "amended";
+      note.updatedAt = addendum.createdAt;
+      emrAudit("note.addendum_created", note.id, "Addendum added", note.patientId);
+      return json(res, 200, addendum.addendumId);
+    }
+
+    if (url.pathname === "/rest/v1/rpc/mark_note_error" && req.method === "POST") {
+      const body = await readBody(req);
+      const note = emrNotes.get(body._note_id);
+      if (!note || !memberOrgIds.includes(note.organizationId)) {
+        return json(res, 404, { code: "P0002", message: "note not found" });
+      }
+      if (note.status !== "entered_in_error") {
+        note.status = "entered_in_error";
+        note.statusReason = body._reason;
+        note.updatedAt = nowIso();
+        emrAudit("note.entered_in_error", note.id, "Note marked entered in error", note.patientId);
+      }
+      return json(res, 200, null);
+    }
+
+    if (
+      url.pathname === "/rest/v1/rpc/get_desktop_patient_timeline"
+      && req.method === "POST"
+    ) {
+      const body = await readBody(req);
+      const patient = PATIENTS.find((item) => item.id === body._patient_id);
+      if (!patient || !memberOrgIds.includes(patient.organization_id)) {
+        return json(res, 403, { code: "42501", message: "not authorized for this patient" });
+      }
+      const limit = Math.min(Math.max(Number(body._limit ?? 200), 1), 500);
+      return json(res, 200, emrTimelineRows(patient.id, memberOrgIds).slice(0, limit));
+    }
 
     if (url.pathname === "/rest/v1/rpc/list_my_organizations" && req.method === "POST") {
       const rows = [];
@@ -2181,226 +2604,6 @@ createServer(async (req, res) => {
       const row = PATIENTS.find((p) => p.id === input.patientId);
       return row ? trpcOk(res, row) : trpcErr(res, 404, "NOT_FOUND", "no such patient");
     }
-    // ===== EMR: encounters + notes (0021 semantics) =====
-    case "clinical.encounters.start": {
-      const patient = PATIENTS.find((p) => p.id === input.patientId);
-      if (!patient) return trpcErr(res, 403, "FORBIDDEN", "not authorized for this patient");
-      if (input.appointmentId) {
-        const existing = [...encounters.values()].find(
-          (e) => e.appointmentId === input.appointmentId && e.status === "in_progress",
-        );
-        if (existing) return trpcOk(res, { encounterId: existing.id });
-      }
-      emrSeq += 1;
-      const id = `eeeeeeee-2222-3333-4444-${String(444444444400 + emrSeq)}`;
-      encounters.set(id, {
-        id,
-        organizationId: input.organizationId,
-        patientId: input.patientId,
-        appointmentId: input.appointmentId ?? null,
-        visitType: input.visitType ?? "follow-up",
-        status: "in_progress",
-        startedAt: nowIso(),
-        endedAt: null,
-        statusReason: null,
-        createdAt: nowIso(),
-      });
-      emrAudit("encounter.started", id, "Encounter started", input.patientId);
-      return trpcOk(res, { encounterId: id });
-    }
-    case "clinical.encounters.setStatus": {
-      const e = encounters.get(input.encounterId);
-      if (!e) return trpcErr(res, 404, "NOT_FOUND", "encounter not found");
-      const allowed =
-        (e.status === "in_progress" && ["completed", "cancelled", "entered_in_error"].includes(input.status)) ||
-        (e.status === "scheduled" && ["cancelled", "entered_in_error"].includes(input.status));
-      if (!allowed) return trpcErr(res, 400, "BAD_REQUEST", `invalid transition from ${e.status}`);
-      e.status = input.status;
-      if (input.status === "completed") e.endedAt = nowIso();
-      if (input.reason) e.statusReason = input.reason;
-      emrAudit(`encounter.${input.status}`, e.id, `Encounter ${input.status}`, e.patientId);
-      return trpcOk(res, { ok: true });
-    }
-    case "clinical.encounters.get": {
-      const e = encounters.get(input.encounterId);
-      if (!e || !memberOrgIds.includes(e.organizationId)) {
-        return trpcErr(res, 404, "NOT_FOUND", "Encounter not found or access denied");
-      }
-      const notesFor = [...emrNotes.values()]
-        .filter((n) => n.encounterId === e.id)
-        .map((n) => ({
-          noteId: n.id, encounterId: n.encounterId, patientId: n.patientId,
-          noteType: n.noteType, status: n.status, currentVersion: n.currentVersion,
-          authorUserId: "dddddddd-1111-2222-3333-444444444401",
-          statusReason: n.statusReason ?? null, createdAt: n.createdAt, updatedAt: nowIso(),
-        }));
-      return trpcOk(res, {
-        encounter: {
-          encounterId: e.id, organizationId: e.organizationId, patientId: e.patientId,
-          appointmentId: e.appointmentId, visitType: e.visitType, status: e.status,
-          startedAt: e.startedAt, endedAt: e.endedAt, statusReason: e.statusReason, createdAt: e.createdAt,
-        },
-        notes: notesFor,
-      });
-    }
-    case "clinical.encounters.forPatient": {
-      const list = [...encounters.values()]
-        .filter((e) => e.patientId === input.patientId && memberOrgIds.includes(e.organizationId))
-        .map((e) => ({
-          encounterId: e.id, organizationId: e.organizationId, patientId: e.patientId,
-          appointmentId: e.appointmentId, visitType: e.visitType, status: e.status,
-          startedAt: e.startedAt, endedAt: e.endedAt, statusReason: e.statusReason, createdAt: e.createdAt,
-        }));
-      return trpcOk(res, list);
-    }
-    case "clinical.notes.save": {
-      const e = encounters.get(input.encounterId);
-      if (!e) return trpcErr(res, 404, "NOT_FOUND", "encounter not found");
-      if (!["in_progress", "completed"].includes(e.status)) {
-        return trpcErr(res, 400, "BAD_REQUEST", "encounter is not open for documentation");
-      }
-      let n;
-      if (input.noteId) {
-        n = emrNotes.get(input.noteId);
-        if (!n) return trpcErr(res, 404, "NOT_FOUND", "note not found");
-        if (!["draft", "ready_for_review"].includes(n.status)) {
-          return trpcErr(res, 400, "BAD_REQUEST", "note content is frozen after signing — use an addendum");
-        }
-        if (n.currentVersion !== input.expectedVersion) {
-          return trpcErr(res, 409, "CONFLICT", "version conflict");
-        }
-        n.currentVersion += 1;
-        n.status = "draft";
-      } else {
-        if (input.expectedVersion !== 0) return trpcErr(res, 409, "CONFLICT", "version conflict");
-        emrSeq += 1;
-        const id = `eeeeeeee-3333-4444-5555-${String(444444444400 + emrSeq)}`;
-        n = {
-          id, encounterId: e.id, patientId: e.patientId, organizationId: e.organizationId,
-          noteType: input.noteType, status: "draft", currentVersion: 1,
-          versions: new Map(), signature: null, addenda: [], provenance: [],
-          statusReason: null, createdAt: nowIso(),
-        };
-        emrNotes.set(id, n);
-        emrAudit("note.draft_created", id, "Draft note created", e.patientId);
-      }
-      n.versions.set(n.currentVersion, { content: input.content, savedAt: nowIso() });
-      n.provenance = Array.isArray(input.provenance) ? input.provenance : [];
-      return trpcOk(res, { noteId: n.id, version: n.currentVersion, savedAt: nowIso() });
-    }
-    case "clinical.notes.get": {
-      const n = emrNotes.get(input.noteId);
-      if (!n || !memberOrgIds.includes(n.organizationId)) {
-        return trpcErr(res, 404, "NOT_FOUND", "Note not found or access denied");
-      }
-      const v = n.versions.get(n.currentVersion);
-      return trpcOk(res, {
-        note: {
-          noteId: n.id, encounterId: n.encounterId, patientId: n.patientId,
-          noteType: n.noteType, status: n.status, currentVersion: n.currentVersion,
-          authorUserId: "dddddddd-1111-2222-3333-444444444401",
-          statusReason: n.statusReason ?? null, createdAt: n.createdAt, updatedAt: nowIso(),
-        },
-        content: v?.content ?? {},
-        contentVersion: n.currentVersion,
-        lastSavedAt: v?.savedAt ?? null,
-        signature: n.signature,
-        addenda: n.addenda,
-        provenance: n.provenance,
-      });
-    }
-    case "clinical.notes.markReady": {
-      const n = emrNotes.get(input.noteId);
-      if (!n) return trpcErr(res, 404, "NOT_FOUND", "note not found");
-      if (n.status !== "draft") return trpcErr(res, 400, "BAD_REQUEST", "only a draft can be marked ready");
-      n.status = "ready_for_review";
-      emrAudit("note.ready_for_review", n.id, "Note marked ready for review", n.patientId);
-      return trpcOk(res, { ok: true });
-    }
-    case "clinical.notes.sign": {
-      const n = emrNotes.get(input.noteId);
-      if (!n) return trpcErr(res, 404, "NOT_FOUND", "note not found");
-      if (n.signature) {
-        if (n.signature.version === input.expectedVersion) {
-          return trpcOk(res, {
-            signatureId: n.signature.signatureId, alreadySigned: true,
-            version: n.signature.version, signedAt: n.signature.signedAt,
-          });
-        }
-        return trpcErr(res, 400, "BAD_REQUEST", "note is already signed");
-      }
-      if (!["draft", "ready_for_review"].includes(n.status)) {
-        return trpcErr(res, 400, "BAD_REQUEST", `note cannot be signed from status ${n.status}`);
-      }
-      if (n.currentVersion !== input.expectedVersion) {
-        return trpcErr(res, 409, "CONFLICT", "version conflict");
-      }
-      emrSeq += 1;
-      n.signature = {
-        signatureId: `eeeeeeee-4444-5555-6666-${String(444444444400 + emrSeq)}`,
-        version: n.currentVersion,
-        signedBy: "dddddddd-1111-2222-3333-444444444401",
-        signedAt: nowIso(),
-        attestation: "I attest this note is accurate and complete.",
-      };
-      n.status = "signed";
-      emrAudit("note.signed", n.id, "Note signed", n.patientId);
-      return trpcOk(res, {
-        signatureId: n.signature.signatureId, alreadySigned: false,
-        version: n.signature.version, signedAt: n.signature.signedAt,
-      });
-    }
-    case "clinical.notes.addAddendum": {
-      const n = emrNotes.get(input.noteId);
-      if (!n) return trpcErr(res, 404, "NOT_FOUND", "note not found");
-      if (!["signed", "amended"].includes(n.status)) {
-        return trpcErr(res, 400, "BAD_REQUEST", "addenda apply to signed notes");
-      }
-      emrSeq += 1;
-      const addendum = {
-        addendumId: `eeeeeeee-5555-6666-7777-${String(444444444400 + emrSeq)}`,
-        referencedVersion: n.signature?.version ?? n.currentVersion,
-        authorUserId: "dddddddd-1111-2222-3333-444444444401",
-        reason: input.reason, content: input.content, createdAt: nowIso(),
-      };
-      n.addenda.push(addendum);
-      n.status = "amended";
-      emrAudit("note.addendum_created", n.id, "Addendum added", n.patientId);
-      return trpcOk(res, { addendumId: addendum.addendumId });
-    }
-    case "clinical.notes.markError": {
-      const n = emrNotes.get(input.noteId);
-      if (!n) return trpcErr(res, 404, "NOT_FOUND", "note not found");
-      n.status = "entered_in_error";
-      n.statusReason = input.reason;
-      emrAudit("note.entered_in_error", n.id, "Note marked entered in error", n.patientId);
-      return trpcOk(res, { ok: true });
-    }
-    case "clinical.notes.timeline": {
-      const patient = PATIENTS.find((p) => p.id === input.patientId);
-      if (!patient) return trpcErr(res, 404, "NOT_FOUND", "Patient not found or access denied");
-      const events = [];
-      for (const e of encounters.values()) {
-        if (e.patientId !== input.patientId || !memberOrgIds.includes(e.organizationId)) continue;
-        if (e.startedAt) events.push({ eventAt: e.startedAt, eventType: "encounter.started", title: `Encounter started (${e.visitType})`, refType: "encounter", refId: e.id, detail: { status: e.status } });
-        if (e.status === "completed" && e.endedAt) events.push({ eventAt: e.endedAt, eventType: "encounter.completed", title: "Encounter completed", refType: "encounter", refId: e.id, detail: {} });
-      }
-      for (const n of emrNotes.values()) {
-        if (n.patientId !== input.patientId || !memberOrgIds.includes(n.organizationId)) continue;
-        events.push({ eventAt: n.createdAt, eventType: "note.draft_created", title: `Draft note created (${n.noteType})`, refType: "clinical_note", refId: n.id, detail: { status: n.status } });
-        if (n.signature) events.push({ eventAt: n.signature.signedAt, eventType: "note.signed", title: "Note signed", refType: "clinical_note", refId: n.id, detail: { version: n.signature.version } });
-        for (const a of n.addenda) events.push({ eventAt: a.createdAt, eventType: "note.addendum", title: "Addendum added", refType: "clinical_note", refId: n.id, detail: { referencedVersion: a.referencedVersion } });
-        if (n.status === "entered_in_error") events.push({ eventAt: nowIso(), eventType: "note.entered_in_error", title: "Note entered in error", refType: "clinical_note", refId: n.id, detail: {} });
-      }
-      for (const appt of scheduleAppointments ?? []) {
-        if (appt.patientId === input.patientId) {
-          events.push({ eventAt: appt.startsAt, eventType: "appointment", title: appt.appointmentType ?? "appointment", refType: "appointment", refId: appt.id, detail: { status: appt.status } });
-        }
-      }
-      events.sort((a, b) => (a.eventAt < b.eventAt ? 1 : -1));
-      return trpcOk(res, events);
-    }
-
     case "clinical.organizations.mine": {
       const mine = [];
       if (memberOrgIds.includes("org-fixture")) {
