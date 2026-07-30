@@ -937,6 +937,7 @@ function seedScheduleFor(fromIso) {
 }
 
 const auditEvents = [];
+let hypothesisReview = null;
 let auditSeq = 0;
 function pushAudit(
   action,
@@ -1812,6 +1813,167 @@ createServer(async (req, res) => {
       }
       members.delete(row.membershipId);
       return json(res, 200, null);
+    }
+
+    if (url.pathname === "/rest/v1/rpc/get_patient_overview" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!memberOrgIds.includes(body._organization_id)) {
+        return json(res, 403, { code: "42501", message: "active organization membership required" });
+      }
+      const patient = PATIENTS.find((item) =>
+        item.id === body._patient_id && item.organization_id === body._organization_id,
+      );
+      if (!patient) {
+        return json(res, 403, { code: "42501", message: "not authorized for this patient" });
+      }
+      return json(res, 200, {
+        patientId: patient.id,
+        demographics: {
+          fullName: `${patient.first_name} ${patient.last_name}`,
+          dateOfBirth: patient.date_of_birth,
+          sex: patient.sex,
+          hasEmail: true,
+          hasPhone: false,
+        },
+        careTeam: [
+          { userId: "user-fixture", displayName: "Demo Practitioner", role: "IFMCP", relationship: "primary", isCaller: true },
+        ],
+        allergies: [
+          { id: "al-1", allergen: "Penicillin", reaction: "Hives", severity: "moderate", status: "active", recordedAt: iso(-40 * 864e5) },
+        ],
+        medications: [
+          { id: "med-1", name: "Levothyroxine", dose: "50 mcg", route: "oral", frequency: "daily", status: "active", startDate: "2026-01-05" },
+        ],
+        conditions: [
+          { id: "cond-1", name: "Hypothyroidism", icd10: "E03.9", status: "active", onsetDate: "2025-11-01" },
+        ],
+        recentAppointments: [
+          { id: "appt-ov-1", startsAt: iso(-6 * 864e5), endsAt: iso(-6 * 864e5 + 45 * 6e4), status: "completed", appointmentType: "follow-up" },
+        ],
+        recentEncounters: [
+          { id: "enc-ov-1", occurredAt: iso(-6 * 864e5), encounterType: "follow-up", noteStatus: "signed", signedAt: iso(-5 * 864e5) },
+        ],
+        labs: {
+          latestCollectedAt: iso(-2 * 864e5),
+          markerCount: 12,
+          awaitingReview: 3,
+          abnormal: 2,
+          recent: [
+            { id: "obs-ov-1", markerName: "TSH", valueDisplay: "6.2 mIU/L", status: "high", collectedAt: iso(-2 * 864e5), reviewState: "unreviewed" },
+            { id: "obs-ov-2", markerName: "hs-CRP", valueDisplay: "2.8 mg/L", status: "high", collectedAt: iso(-2 * 864e5), reviewState: "unreviewed" },
+          ],
+        },
+        openTasks: [
+          { id: "bbbbbbbb-1111-2222-3333-444444444401", title: "Recheck hs-CRP after abnormal result", priority: "high", itemType: "abnormal_result", createdAt: iso(-1 * 864e5) },
+        ],
+        carePlan: null,
+        wearableSources: [],
+        missingInformation: ["No problem list recorded for thyroid follow-up interval"],
+        changesSinceLastVisit: {
+          anchorEncounterAt: iso(-6 * 864e5),
+          items: [
+            { label: "New lab result: TSH (6.2 mIU/L)", kind: "lab", source: { kind: "lab_observation", id: "obs-ov-1", at: iso(-2 * 864e5) } },
+            { label: "Review task opened: Recheck hs-CRP after abnormal result", kind: "task", source: { kind: "queue_item", id: "bbbbbbbb-1111-2222-3333-444444444401", at: iso(-1 * 864e5) } },
+          ],
+        },
+        generatedAt: iso(0),
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/get_reasoning_workspace" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!memberOrgIds.includes(body._organization_id)) {
+        return json(res, 403, { code: "42501", message: "active organization membership required" });
+      }
+      const patient = PATIENTS.find((item) =>
+        item.id === body._patient_id && item.organization_id === body._organization_id,
+      );
+      if (!patient) {
+        return json(res, 403, { code: "42501", message: "not authorized for this patient" });
+      }
+      return json(res, 200, {
+        patientId: patient.id,
+        snapshot: {
+          id: "snap-1",
+          version: 3,
+          generatedAt: iso(-4 * 864e5),
+          stale: true,
+          staleReason: "Source data changed after this snapshot was generated",
+        },
+        hypotheses: [
+          {
+            id: "hyp-fixture-1",
+            title: "Subclinical hypothyroid pattern",
+            status: "under_review",
+            strengthLabel: "Internal evidence weighting 78/100 — not a medical probability",
+            supporting: [
+              { id: "ev-1", factType: "measured", label: "Elevated TSH (6.2 mIU/L)", observedAt: iso(-2 * 864e5), source: { kind: "biomarker_observations", id: "obs-ov-1", at: iso(-2 * 864e5) } },
+            ],
+            conflicting: [
+              { id: "ev-2", factType: "patient_reported", label: "Fatigue is nonspecific", observedAt: iso(-5 * 864e5), source: null },
+            ],
+            missing: [
+              { id: "md-1", label: "Free T4 not on file", recommendation: "lab_panel" },
+            ],
+            review: hypothesisReview ?? { state: "unreviewed", reviewedAt: null, reviewedBy: null, note: null },
+          },
+          {
+            id: "hyp-fixture-2",
+            title: "Iron-deficiency contribution",
+            status: "proposed",
+            strengthLabel: "Unknown",
+            supporting: [],
+            conflicting: [],
+            missing: [],
+            review: { state: "unreviewed", reviewedAt: null, reviewedBy: null, note: null },
+          },
+        ],
+        urgentQuestions: [
+          { id: "q-urgent-1", text: "Any chest pain or palpitations at rest?", status: "suggested", createdAt: iso(-1 * 864e5) },
+        ],
+        aiGeneration: {
+          configured: false,
+          message: "AI snapshot generation is not configured. Existing snapshots, hypotheses, and evidence are shown from the record; nothing is generated or fabricated.",
+        },
+        generatedAt: iso(0),
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/review_hypothesis" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!["accepted", "rejected", "needs_data"].includes(body._action)) {
+        return json(res, 400, { code: "22023", message: "invalid review action" });
+      }
+      if (body._hypothesis_id !== "hyp-fixture-1" && body._hypothesis_id !== "hyp-fixture-2") {
+        return json(res, 404, { code: "P0002", message: "hypothesis not found" });
+      }
+      hypothesisReview = {
+        state: body._action,
+        reviewedAt: iso(0),
+        reviewedBy: "Demo Practitioner",
+        note: body._note ?? null,
+      };
+      const auditEvent = pushAudit(
+        `hypothesis.${body._action}`,
+        "clinical_hypothesis",
+        body._hypothesis_id,
+        `Practitioner reviewed a clinical hypothesis (${body._action})`,
+        { hadNote: body._note != null },
+        PATIENTS[0].id,
+      );
+      const auditId = auditEvent.id;
+      return json(res, 200, {
+        ok: true,
+        hypothesisId: body._hypothesis_id,
+        state: body._action,
+        auditId,
+        message:
+          body._action === "accepted"
+            ? "Hypothesis accepted as a reviewed inference. Nothing was added to a note or care plan."
+            : body._action === "rejected"
+              ? "Hypothesis rejected. The decision and audit trail are saved to the record."
+              : "More data requested. The request is saved and linked to this hypothesis.",
+      });
     }
 
     if (url.pathname === "/rest/v1/rpc/list_review_queue" && req.method === "POST") {
