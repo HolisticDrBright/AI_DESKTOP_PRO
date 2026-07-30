@@ -189,16 +189,34 @@ e2e/live-tasks.spec.ts e2e/live-scribe.spec.ts e2e/live-lens.spec.ts`.
 | --- | --- | --- |
 | Static checks | `npm run typecheck`, `npm run lint`, demo + live production builds | green |
 | Unit adapters | `npm run test:unit` | **66/66** (adds 5 lens-boundary tests: RPC names, argument parity, DTO passthrough, null evaluation, 40003/55000 → conflict, transitional-legs-only tRPC) |
-| Desktop lens DB boundary | rolled-back SQL — `supabase/tests/desktop_lens.sql` | **NOT RUN** — the staging Supabase project was not reachable from this session; run before promotion (16 checks: grants, reference reads, exact DTO shapes, null evaluation, unknown paradigm, lifecycle transitions incl. 40003 refusal, versioned answer corrections, 55000 precondition, supersede semantics, cross-tenant and anonymous denial) |
+| Desktop lens DB boundary | rolled-back SQL against the staging project — `supabase/tests/desktop_lens.sql` | **23/23** (anon+public execute denial across all 13 lens RPCs, authenticated grants, definer + pinned empty `search_path`, `can_access_patient` / `require_clinical_actor` gating, reference reads, exact evaluation and question DTO shapes, null evaluation, unknown paradigm, lifecycle transitions incl. `40003` refusal, versioned answer corrections, `55000` precondition, supersede semantics, cross-tenant read and mutation denial, anonymous denial, auth-gated reference policies, worker-ledger grant denial, 17/17 FK indexes) |
 | Prior Desktop DB boundaries | previously verified rolled-back staging suites (identity 6/6, labs/queue 12/12, audit 13/13, scheduling 21/21 + 20/20, encounters/notes 14/14) | unchanged by this slice |
+| Supabase advisors | security + performance, re-run after each DDL | **0 security ERRORs.** Lens tables cleared all 16 unindexed-FK findings and all 3 `auth_rls_initplan` WARNs; remaining lens notices are fresh-index `unused_index` INFO until staging traffic exercises them. The 5 new lens `authenticated_security_definer_function_executable` WARNs are accepted by design (each re-checks role and tenant in-body). `rls_enabled_no_policy` on `provider_callback_events` is the intended worker-only posture and is now also revoked at the grant level. |
 | Demo UI | production build + Playwright | **41/41** (two date-dependent Today tests were latent-flaky — they assumed the weekday's first schedule patient carries the curated clinical summary; now robust on every weekday) |
 | Full live contract fixture | live production build + Playwright (`live-tasks`, `live-scribe`, `live-lens`) | **20/20 + 8/8 + 5/5** — the lens suite now exercises the Desktop `/rest/v1/rpc` boundary for reads and the question lifecycle |
 
-The migration `20260729130000_desktop_owned_lens.sql` is committed but **not
-yet applied** to the staging project (session access limitation). Apply it,
-run `supabase/tests/desktop_lens.sql` rolled back, and re-check advisors
-before promotion; align the filename with the applied ledger version if it
-differs.
+Three migrations are applied to the synthetic-only staging project and their
+filenames match the recorded ledger versions: `20260730001350`
+(`desktop_owned_lens`), `20260730001742`
+(`desktop_lens_index_and_rls_hardening`), and `20260730002121`
+(`worker_callback_ledger_privileges`). Local history now matches remote
+history through `20260730002121`.
+
+Two advisor-driven fixes shipped with this slice. The lens reference-read
+policies (`clinical_paradigms`, `clinical_domains`,
+`clinical_knowledge_sources`) now wrap `auth.uid()` in a scalar subquery so it
+is evaluated once per statement instead of once per row — the predicate is
+unchanged and anonymous callers still see zero rows (asserted). And
+`provider_callback_events`, the worker-only callback ledger, still carried
+Supabase's default `anon`/`authenticated` table grants; RLS-with-no-policy was
+the only thing denying browser roles, so the grants are now revoked outright,
+mirroring what `desktop_audit_table_privileges` did for `audit_events`.
+
+Known pre-existing advisor findings **outside** this slice, deliberately left
+alone: 20 `auth_rls_initplan` WARNs and 90 `multiple_permissive_policies`
+WARNs across unrelated domains (supplements, assessments, reference catalogs),
+plus 461 unindexed-FK INFO notices schema-wide. These predate the lens work
+and warrant their own audited hardening slice rather than an untested sweep.
 
 The real signed-in staging browser gate remains an external deployment check;
 the database acceptance suite and committed contract fixture are supporting

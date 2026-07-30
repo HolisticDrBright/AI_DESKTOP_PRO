@@ -1,8 +1,5 @@
 -- Desktop-owned lens read boundary.
---
--- NOT YET APPLIED to the staging project ledger: apply this migration before
--- promoting, then align this filename with the version Supabase records if it
--- differs (the repository convention is filename == applied version).
+-- Applied migration version: 20260730001350.
 --
 -- The lens engine's evaluation computation (deterministic rules + optional AI
 -- leg) remains on the transitional provider worker: it computes under the

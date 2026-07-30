@@ -121,7 +121,8 @@ Status legend: ✅ live path exists · 🟢 ready to wire (schema + pattern exis
 - **Adapter:** `lensLive.*` through `lens.live.ts`
 - **Desktop boundary:** bounded reads (`get_desktop_lens_evaluation`,
   `list_desktop_question_answers`, `list_desktop_lens_paradigms/domains/
-  knowledge_sources`, migration `20260729130000_desktop_owned_lens.sql`) plus
+  knowledge_sources`, migration `20260730001350_desktop_owned_lens.sql`, with
+  index/RLS hardening in `20260730001742`) plus
   direct calls to the caller-authorized 0024 lifecycle RPCs
   (`set_question_status`, `dismiss_question`, `answer_question`,
   `correct_question_answer`, `record_question_note_use`,

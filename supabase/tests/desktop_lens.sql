@@ -39,10 +39,31 @@ where n.nspname='public'
     'list_desktop_question_answers'
   );
 
+-- anon AND public hold no execute on any lens read or lifecycle RPC.
 insert into _v
-select 'anon cannot execute Desktop lens reads',
-  not bool_or(has_function_privilege('anon', p.oid, 'execute')),
-  string_agg(p.proname, ', ' order by p.proname)
+select 'anon and public cannot execute any lens RPC',
+  not bool_or(
+    has_function_privilege('anon', p.oid, 'execute')
+    or has_function_privilege('public', p.oid, 'execute')
+  ),
+  count(*)::text || ' functions checked'
+from pg_proc p
+join pg_namespace n on n.oid = p.pronamespace
+where n.nspname='public'
+  and p.proname in (
+    'list_desktop_lens_paradigms','list_desktop_lens_domains',
+    'list_desktop_lens_knowledge_sources','get_desktop_lens_evaluation',
+    'list_desktop_question_answers','set_question_status','dismiss_question',
+    'answer_question','correct_question_answer','record_question_note_use',
+    'submit_question_feedback','review_safety_block','run_lens_evaluation'
+  );
+
+-- Every Desktop lens read is SECURITY DEFINER with an empty pinned
+-- search_path (stored as `search_path=""`).
+insert into _v
+select 'Desktop lens reads are definer functions with a pinned empty search_path',
+  bool_and(p.prosecdef and p.proconfig::text = '{"search_path=\"\""}'),
+  string_agg(p.proname || '=' || coalesce(p.proconfig::text,'NONE'), ' | ' order by p.proname)
 from pg_proc p
 join pg_namespace n on n.oid = p.pronamespace
 where n.nspname='public'
@@ -50,6 +71,70 @@ where n.nspname='public'
     'list_desktop_lens_paradigms','list_desktop_lens_domains',
     'list_desktop_lens_knowledge_sources','get_desktop_lens_evaluation',
     'list_desktop_question_answers'
+  );
+
+-- Patient-scoped reads gate on patient access; lifecycle writes additionally
+-- demand an active clinical actor role.
+insert into _v
+select 'patient-scoped lens reads gate on private.can_access_patient',
+  bool_and(pg_get_functiondef(p.oid) like '%private.can_access_patient%'),
+  string_agg(p.proname, ', ' order by p.proname)
+from pg_proc p
+join pg_namespace n on n.oid = p.pronamespace
+where n.nspname='public'
+  and p.proname in ('get_desktop_lens_evaluation','list_desktop_question_answers');
+
+insert into _v
+select 'lens lifecycle RPCs require an active clinical actor',
+  bool_and(pg_get_functiondef(p.oid) like '%private.require_clinical_actor%'),
+  string_agg(p.proname, ', ' order by p.proname)
+from pg_proc p
+join pg_namespace n on n.oid = p.pronamespace
+where n.nspname='public'
+  and p.proname in (
+    'set_question_status','dismiss_question','answer_question',
+    'correct_question_answer','record_question_note_use',
+    'submit_question_feedback','review_safety_block','run_lens_evaluation'
+  );
+
+-- The initplan rewrite must keep the reference policies auth-gated.
+insert into _v
+select 'reference read policies stay auth-gated after the initplan rewrite',
+  count(*) = 3 and bool_and(qual like '%auth.uid()%' and qual like '%IS NOT NULL%'),
+  string_agg(tablename || ': ' || qual, ' | ' order by tablename)
+from pg_policies
+where schemaname='public'
+  and tablename in ('clinical_paradigms','clinical_domains','clinical_knowledge_sources');
+
+-- The worker callback ledger is RPC-only in the grant table, not just in RLS.
+insert into _v
+select 'provider_callback_events denies browser roles at the grant level',
+  not has_table_privilege('anon','public.provider_callback_events','select')
+  and not has_table_privilege('anon','public.provider_callback_events','insert')
+  and not has_table_privilege('authenticated','public.provider_callback_events','select')
+  and not has_table_privilege('authenticated','public.provider_callback_events','insert'),
+  'anon_select=' || has_table_privilege('anon','public.provider_callback_events','select')::text
+  || ' authenticated_select='
+  || has_table_privilege('authenticated','public.provider_callback_events','select')::text;
+
+-- Foreign-key access paths used by tenant checks, the supersede read,
+-- feedback writes, and retention cascades are covered.
+insert into _v
+select 'lens foreign-key access paths are indexed',
+  count(*) = 17,
+  count(*)::text || ' of 17 expected indexes'
+from pg_indexes
+where schemaname='public'
+  and indexname in (
+    'lens_evaluations_organization_idx','lens_evaluations_patient_idx',
+    'lens_evaluations_paradigm_idx','lens_evaluations_created_by_idx',
+    'lens_evaluations_superseded_by_idx',
+    'differential_questions_organization_idx','differential_questions_patient_idx',
+    'differential_questions_paradigm_idx','differential_questions_updated_by_idx',
+    'question_answers_organization_idx','question_answers_patient_idx',
+    'question_answers_encounter_idx','question_answers_answered_by_idx',
+    'question_feedback_question_idx','question_feedback_created_by_idx',
+    'question_status_transitions_created_by_idx','lens_safety_blocks_reviewed_by_idx'
   );
 
 select set_config(
