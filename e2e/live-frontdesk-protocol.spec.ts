@@ -171,9 +171,12 @@ test("7: Today shows real appointment statuses and names what is not configured"
   expect((await rows.count()) > 0 || (await empty.count()) > 0).toBeTruthy();
 
   // The domains with no live backend are NAMED as not configured. No count is
-  // shown for them, and no morning brief is invented.
+  // shown for them, and no morning brief is invented. (Unread patient
+  // messages moved OUT of this list in phase 4 — the inbox card below shows
+  // counts of persisted rows instead.)
   await expect(page.getByText(/not configured/i).first()).toBeVisible();
-  await expect(page.getByText(/Unread patient messages/i)).toBeVisible();
+  await expect(page.getByText(/Notes awaiting signature/i)).toBeVisible();
+  await expect(page.getByTestId("today-inbox")).toBeVisible();
 
   for (const name of DEMO_FIXTURE_NAMES) {
     await expect(page.getByText(name, { exact: false })).toHaveCount(0);
