@@ -149,6 +149,15 @@ test("request-data records an actionable request", async ({ page }) => {
 
 test("a patient outside the caller's access shows an honest refusal, never data", async ({ page }) => {
   await page.goto(`/patients/eeeeeeee-9999-8888-7777-666666666666/overview`);
+  // Wait for the shell to paint before reading text: reading innerText the
+  // instant navigation resolves races the render and produced an empty string
+  // in roughly half of runs (this flake predates the phase-2 branch). The
+  // substance below is unchanged — SOMETHING must be said, it must be a
+  // refusal, and it must contain no patient data.
+  await expect(page.getByRole("link", { name: "Skip to content" })).toBeAttached();
+  await expect
+    .poll(async () => (await page.locator("body").innerText()).trim().length, { timeout: 10_000 })
+    .toBeGreaterThan(0);
   const body = (await page.locator("body").innerText()).trim();
 
   // Something is said, and it is a refusal/not-found — not a fabricated chart.
