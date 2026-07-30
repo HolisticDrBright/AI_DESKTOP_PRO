@@ -1812,6 +1812,36 @@ function syncApplyDelivery(e, providerEventId, kind, errorSafe) {
   return { ok: true, duplicate: false, state: e.state };
 }
 
+// verify_sync_invitation semantics shared by the __control provider stand-in
+// and the worker's service-role REST boundary: hashed single-use expiring
+// token + unique external-subject binding.
+function syncApplyVerify(token, subject) {
+  const inv = syncInvitations.get(sha256hex(token));
+  if (!inv) return { status: 404, body: { code: "P0002", message: "invitation not found" } };
+  if (inv.usedAt) return { status: 400, body: { code: "22023", message: "this invitation was already used" } };
+  if (inv.supersededAt) return { status: 400, body: { code: "22023", message: "this invitation was superseded" } };
+  if (new Date(inv.expiresAt).getTime() < Date.now()) {
+    return { status: 400, body: { code: "22023", message: "this invitation has expired" } };
+  }
+  const conn = syncConnections.get(inv.connectionId);
+  if (!conn || conn.state !== "invitation_pending") {
+    return { status: 400, body: { code: "22023", message: "connection is not awaiting verification" } };
+  }
+  if (!subject) return { status: 400, body: { code: "22023", message: "external subject required" } };
+  const taken = [...syncConnections.values()].some(
+    (c) => c.externalSubjectId === subject && c.state !== "revoked" && c.id !== conn.id,
+  );
+  if (taken) return { status: 409, body: { code: "23505", message: "external subject already bound" } };
+  inv.usedAt = nowIso();
+  conn.state = "verified";
+  conn.externalSubjectId = subject;
+  conn.verifiedAt = nowIso();
+  conn.version += 1;
+  syncEvent(conn.id, "verified", "invitation_pending", "verified", null);
+  return { status: 200, body: { ok: true, connectionId: conn.id,
+    organizationId: conn.organizationId, contractVersion: "patient-sync/1" } };
+}
+
 // record_sync_inbound semantics shared by the __control provider stand-in and
 // the worker's service-role REST boundary: verified connection, consent scope,
 // idempotency, stale-version conflicts, urgent invariant, review tasks.
@@ -3518,30 +3548,8 @@ createServer(async (req, res) => {
   // unique external-subject binding.
   if (url.pathname === "/__control/sync-verify" && req.method === "POST") {
     const body = await readBody(req);
-    const inv = syncInvitations.get(sha256hex(String(body.token ?? "")));
-    if (!inv) return json(res, 404, { code: "P0002", message: "invitation not found" });
-    if (inv.usedAt) return json(res, 400, { code: "22023", message: "this invitation was already used" });
-    if (inv.supersededAt) return json(res, 400, { code: "22023", message: "this invitation was superseded" });
-    if (new Date(inv.expiresAt).getTime() < Date.now()) {
-      return json(res, 400, { code: "22023", message: "this invitation has expired" });
-    }
-    const conn = syncConnections.get(inv.connectionId);
-    if (!conn || conn.state !== "invitation_pending") {
-      return json(res, 400, { code: "22023", message: "connection is not awaiting verification" });
-    }
-    const subject = String(body.subject ?? "");
-    if (!subject) return json(res, 400, { code: "22023", message: "external subject required" });
-    const taken = [...syncConnections.values()].some(
-      (c) => c.externalSubjectId === subject && c.state !== "revoked" && c.id !== conn.id,
-    );
-    if (taken) return json(res, 409, { code: "23505", message: "external subject already bound" });
-    inv.usedAt = nowIso();
-    conn.state = "verified";
-    conn.externalSubjectId = subject;
-    conn.verifiedAt = nowIso();
-    conn.version += 1;
-    syncEvent(conn.id, "verified", "invitation_pending", "verified", null);
-    return json(res, 200, { ok: true, connectionId: conn.id });
+    const r = syncApplyVerify(String(body.token ?? ""), String(body.subject ?? ""));
+    return json(res, r.status, r.body);
   }
 
   // Force-expire an invitation (time travel for the expiry proof).
@@ -7877,6 +7885,7 @@ createServer(async (req, res) => {
       const events = claimable.map((e) => {
         e.state = "sending"; e.attempts += 1;
         e.leaseExpiresAt = new Date(Date.now() + leaseMs).toISOString();
+        const eventConn = syncConnections.get(e.connectionId);
         return {
           eventId: e.id, eventUid: e.eventUid, contractVersion: "patient-sync/1",
           connectionId: e.connectionId, idempotencyKey: e.idempotencyKey,
@@ -7884,7 +7893,9 @@ createServer(async (req, res) => {
           resourceVersion: e.resourceVersion, occurredAt: e.occurredAt,
           producer: "desktop", provenance: { producer: "desktop" },
           payload: e.payload, payloadHash: e.payloadHash,
-          correlationId: null, attempts: e.attempts, leaseExpiresAt: e.leaseExpiresAt,
+          correlationId: null, causationId: null,
+          organizationId: eventConn?.organizationId ?? "org-fixture",
+          attempts: e.attempts, leaseExpiresAt: e.leaseExpiresAt,
         };
       });
       const queuedAges = [...syncOutbound.values()]
@@ -7953,6 +7964,13 @@ createServer(async (req, res) => {
         updatedAt: nowIso(),
       };
       return json(res, 200, { ok: true, cycleId: syncId() });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/verify_sync_invitation" && req.method === "POST") {
+      if (!isServiceRole) return json(res, 403, { code: "42501", message: "service role required" });
+      const body = await readBody(req);
+      const r = syncApplyVerify(String(body._token ?? ""), String(body._external_subject_id ?? ""));
+      return json(res, r.status, r.body);
     }
 
     if (url.pathname === "/rest/v1/rpc/record_sync_inbound" && req.method === "POST") {

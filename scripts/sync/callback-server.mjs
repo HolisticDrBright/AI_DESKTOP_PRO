@@ -28,7 +28,9 @@ export function createCallbackServer({
       res.writeHead(status, { "content-type": "application/json" });
       res.end(JSON.stringify(body));
     };
-    if (req.method !== "POST" || req.url !== "/sync/callback") {
+    const isCallback = req.method === "POST" && req.url === "/sync/callback";
+    const isVerify = req.method === "POST" && req.url === "/sync/verify";
+    if (!isCallback && !isVerify) {
       return respond(404, { error: { code: "not_found" } });
     }
     if (!/^application\/json\b/.test(req.headers["content-type"] ?? "")) {
@@ -77,6 +79,36 @@ export function createCallbackServer({
         body = parseJson(rawBody);
       } catch {
         return respond(400, { error: { code: "invalid_json" } });
+      }
+
+      if (isVerify) {
+        // Connection verification: the patient app presents the one-time
+        // invitation code together with its OPAQUE authenticated subject id.
+        // Never an email, name, phone, or date of birth. The response never
+        // includes the desktop patient id — minimum necessary only.
+        if (typeof body.token !== "string" || typeof body.subject !== "string"
+          || !body.token || !body.subject) {
+          return respond(400, { error: { code: "invalid_verification_request" } });
+        }
+        try {
+          const verified = await rpc("verify_sync_invitation", {
+            _token: body.token,
+            _external_subject_id: String(body.subject),
+          });
+          logger.log("verify_accepted", { connectionId: String(verified.connectionId ?? "") });
+          return respond(200, {
+            ok: true,
+            connectionId: verified.connectionId,
+            organizationId: verified.organizationId,
+            contractVersion: verified.contractVersion,
+          });
+        } catch (e) {
+          const code = e instanceof SyncError ? e.code : "verification_failed";
+          logger.log("verify_refused", { errorCode: code });
+          // One typed refusal for every failure mode: an attacker probing
+          // codes learns nothing about which invitations exist.
+          return respond(400, { error: { code: "invitation_invalid" } });
+        }
       }
 
       try {

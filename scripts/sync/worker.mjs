@@ -9,8 +9,11 @@
  *   SYNC_WORKER_SERVICE_ROLE_KEY   service-role key (worker only — NEVER a
  *                                  NEXT_PUBLIC_* variable, never in src/)
  *   SYNC_WORKER_ORG_ID             organization to work
- *   SYNC_PROVIDER                  none | fixture   ('alp' is Phase 6B and
- *                                  refuses until separately authorized)
+ *   SYNC_PROVIDER                  none | fixture | alp
+ *   SYNC_ALP_BASE_URL              ALP receiver base URL (alp mode only)
+ *   SYNC_ALP_OUTBOUND_SECRET       HMAC secret for envelopes TO the receiver
+ *   SYNC_ALP_KEY_ID                key id identifying that secret
+ *   SYNC_ALP_TIMEOUT_MS            per-delivery timeout (default 10000)
  *   SYNC_FIXTURE_SCENARIOS         optional JSON {resourceType: scenario}
  *   SYNC_WORKER_BATCH              batch size (default 10)
  *   SYNC_WORKER_INTERVAL_MS        loop interval (default 5000)
@@ -24,6 +27,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { createRpcClient } from "./supabase.mjs";
+import { createAlpProvider } from "./alp-provider.mjs";
 import { createFixtureProvider, FIXTURE_LABEL } from "./fixture-provider.mjs";
 import { assertFixtureAllowed } from "./deploy-guard.mjs";
 import { createCircuit } from "./circuit.mjs";
@@ -40,34 +44,63 @@ const callbackPort = portFlag >= 0 ? Number(argv[portFlag + 1]) : null;
 const logger = makeLogger();
 const providerMode = process.env.SYNC_PROVIDER ?? "none";
 
+function buildProvider() {
+  if (providerMode === "fixture") {
+    // TEST FIXTURE ONLY: refuses every deployed environment, no override.
+    assertFixtureAllowed(process.env);
+    let scenarioMap = {};
+    try {
+      scenarioMap = process.env.SYNC_FIXTURE_SCENARIOS
+        ? JSON.parse(process.env.SYNC_FIXTURE_SCENARIOS)
+        : {};
+    } catch {
+      scenarioMap = {};
+    }
+    return createFixtureProvider({
+      scenarioFor: (envelope) => scenarioMap[envelope.resourceType] ?? "success",
+    });
+  }
+  // The REAL staging bridge. Requires the COMPLETE configuration set —
+  // there is no partial mode and no fallback to the fixture, ever. The
+  // database registry (the alp_patient_sync connector) additionally gates
+  // claiming server-side; this entry point cannot bypass it.
+  if (providerMode === "alp") {
+    if (!process.env.SYNC_ALP_BASE_URL || !process.env.SYNC_ALP_OUTBOUND_SECRET
+      || !process.env.SYNC_ALP_KEY_ID || !process.env.SYNC_WORKER_ORG_ID) {
+      return null;
+    }
+    return createAlpProvider({
+      baseUrl: process.env.SYNC_ALP_BASE_URL,
+      secret: process.env.SYNC_ALP_OUTBOUND_SECRET,
+      keyId: process.env.SYNC_ALP_KEY_ID,
+      organizationId: process.env.SYNC_WORKER_ORG_ID,
+      timeoutMs: Number(process.env.SYNC_ALP_TIMEOUT_MS ?? 10_000),
+    });
+  }
+  return null;
+}
+
 async function main() {
   if (providerMode === "none") {
     logger.log("worker_idle", { posture: "disabled", reason: "no provider configured" });
     return 0;
   }
-  if (providerMode !== "fixture") {
-    // A real AI Longevity Pro provider is Phase 6B and requires separate
-    // explicit authorization — this entry point refuses to pretend otherwise.
+  if (providerMode !== "fixture" && providerMode !== "alp") {
     logger.log("worker_refused", { posture: providerMode, reason: "provider not authorized" });
     return 1;
   }
-
-  // TEST FIXTURE ONLY: refuses every deployed environment, no override.
-  assertFixtureAllowed(process.env);
-  let scenarioMap = {};
-  try {
-    scenarioMap = process.env.SYNC_FIXTURE_SCENARIOS
-      ? JSON.parse(process.env.SYNC_FIXTURE_SCENARIOS)
-      : {};
-  } catch {
-    scenarioMap = {};
+  const provider = buildProvider();
+  if (!provider) {
+    // alp without the complete staging configuration: refuse loudly —
+    // an environment flag alone is never provider approval.
+    logger.log("worker_refused", { posture: providerMode, reason: "alp configuration incomplete" });
+    return 1;
   }
-  const provider = createFixtureProvider({
-    scenarioFor: (envelope) => scenarioMap[envelope.resourceType] ?? "success",
-  });
-  logger.log("worker_started", { provider: provider.name, posture: "fixture" });
-  // The fixture identifies itself loudly, every run.
-  process.stdout.write(`# ${FIXTURE_LABEL}\n`);
+  logger.log("worker_started", { provider: provider.name, posture: providerMode });
+  if (provider.fixture) {
+    // The fixture identifies itself loudly, every run.
+    process.stdout.write(`# ${FIXTURE_LABEL}\n`);
+  }
 
   const rpc = createRpcClient({
     url: process.env.SYNC_WORKER_SUPABASE_URL,
