@@ -170,12 +170,14 @@ export function PatientSyncPanel({ patientId }: { patientId: string }) {
       {/* ------------------------------------------------- main column */}
       <div className="flex min-w-0 flex-col gap-3">
         {!data.providerConfigured && (
-          <ClinicalNote data-testid="sync-provider-note">
-            <strong>AI Longevity Pro connection not configured.</strong> Connection records,
-            invitations, and consent scopes are real persisted rows, but nothing can be queued,
-            sent, delivered, or received until an approved provider is registered — approval is a
-            reviewed operational act, never an environment flag.
-          </ClinicalNote>
+          <div data-testid="sync-provider-note">
+            <ClinicalNote>
+              <strong>AI Longevity Pro connection not configured.</strong> Connection records,
+              invitations, and consent scopes are real persisted rows, but nothing can be queued,
+              sent, delivered, or received until an approved provider is registered — approval is a
+              reviewed operational act, never an environment flag.
+            </ClinicalNote>
+          </div>
         )}
 
         {/* Connection state */}
