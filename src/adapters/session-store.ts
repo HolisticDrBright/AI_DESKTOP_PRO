@@ -529,3 +529,22 @@ export function useLabOrderDraft(patientId: string): LabOrderDraft {
     () => EMPTY_LAB_DRAFT,
   );
 }
+
+/**
+ * Drop every in-memory cache in this module and notify subscribers.
+ *
+ * Called by `resetDemoState()` after the `aidp:demo:` keys are swept, so open
+ * screens re-render from the shipped fixtures instead of a cache that outlived
+ * its storage. Storage removal is the caller's job; this restores the runtime.
+ */
+export function resetLegacySessionState(): void {
+  auditCache = null;
+  reviewCache = null;
+  queueCache = null;
+  invAdjCache = null;
+  salesCache = null;
+  inventoryMovementsCache = null;
+  customProductsCache = null;
+  labOrdersCache = null;
+  emit();
+}

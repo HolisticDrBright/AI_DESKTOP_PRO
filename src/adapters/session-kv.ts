@@ -19,6 +19,18 @@ export interface SessionStore<T> {
   reset(): void;
 }
 
+/**
+ * Every store created here registers itself so "Reset Demo" can restore the
+ * original fixtures without each domain having to remember to opt in. A new
+ * mock domain is resettable the moment it calls `createSessionStore`.
+ */
+const registry = new Set<{ reset: () => void }>();
+
+/** Restore every registered demo store to its seeded fixture state. */
+export function resetAllSessionStores(): void {
+  for (const store of registry) store.reset();
+}
+
 export function createSessionStore<T>(storageKey: string, initial: T): SessionStore<T> {
   let cache: T | null = null;
   const listeners = new Set<() => void>();
@@ -56,14 +68,26 @@ export function createSessionStore<T>(storageKey: string, initial: T): SessionSt
     emit();
   };
 
-  return {
+  const store: SessionStore<T> = {
     get: read,
     set: write,
     update: (fn) => write(fn(read())),
-    use: () =>
-      useSyncExternalStore(subscribe, read, () => initial),
-    reset: () => write(initial),
+    use: () => useSyncExternalStore(subscribe, read, () => initial),
+    reset: () => {
+      if (typeof window !== "undefined") {
+        try {
+          window.sessionStorage.removeItem(storageKey);
+        } catch {
+          /* disabled storage — the in-memory reset below still applies */
+        }
+      }
+      cache = null;
+      emit();
+    },
   };
+
+  registry.add(store);
+  return store;
 }
 
 export function newSessionId(): string {

@@ -6,6 +6,7 @@ import { Sidebar } from "./Sidebar";
 import { TopBar } from "./TopBar";
 import { CommandPalette } from "./CommandPalette";
 import { AssistantDrawer } from "./AssistantDrawer";
+import { DemoEditionBanner } from "./DemoEditionBanner";
 
 const ATMOSPHERE_BG =
   "radial-gradient(1100px 560px at 72% -12%, rgba(37,99,199,0.05), transparent 65%), radial-gradient(900px 520px at 6% 108%, rgba(13,92,99,0.04), transparent 60%)";
@@ -23,6 +24,8 @@ export function AppShell({ children }: { children: ReactNode }) {
       <Sidebar />
       <div className="relative flex min-w-0 flex-1 flex-col">
         <TopBar />
+        {/* Demo edition: standing disclosure + reset, on every screen. */}
+        <DemoEditionBanner />
         <main id="main-content" tabIndex={-1} className="relative flex-1 overflow-y-auto focus:outline-none">
           <div
             aria-hidden

@@ -43,6 +43,7 @@ import { getActiveExperiments, getCompletedExperiments } from "./experiments.moc
 import { getConnectors } from "./integrations.mock";
 import { CAPABILITIES, ROLES } from "./permissions.mock";
 import { USE_LIVE_API } from "./config";
+import { IS_CLINICAL } from "@/lib/edition";
 import { liveClient } from "./live-client";
 import { runClinicalMutation, type MutationOutcome } from "./mutations";
 import {
@@ -86,6 +87,66 @@ interface LabMarkerCtx {
   markerName: string;
 }
 
+/**
+ * THE CLINICAL FIXTURE BARRIER.
+ *
+ * Some namespaces still have no live source. In the demo edition they serve
+ * synthetic fixtures, which is the whole point. In the CLINICAL edition they
+ * must refuse — a practitioner must never see a synthetic health score,
+ * appointment, protocol, invoice, or stack presented as their patient's
+ * record, and an empty screen would read as "this patient has no data" rather
+ * than "this feature has no backend yet".
+ *
+ * So instead of returning fixtures, these throw `unavailable`, and the UI
+ * renders the honest not-yet-available state through `ClinicalStates`. This is
+ * a barrier, not a fallback: there is no code path from the clinical edition
+ * into a mock module here.
+ *
+ * A namespace leaves this list only by gaining a real Desktop-owned live
+ * implementation — see `docs/live-data-readiness.md`.
+ */
+function demoOnly<A extends unknown[], R>(
+  what: string,
+  fn: (...args: A) => R | Promise<R>,
+): (...args: A) => Promise<R> {
+  return async (...args: A): Promise<R> => {
+    assertNotClinical(what);
+    return fn(...args);
+  };
+}
+
+function assertNotClinical(what: string): void {
+  if (IS_CLINICAL) {
+    throw new AdapterError(
+      "unavailable",
+      `${what} is not available yet in the clinical edition. ` +
+        `This surface has no live data source, so nothing is shown rather ` +
+        `than synthetic data.`,
+      `demoOnly barrier: ${what}`,
+    );
+  }
+}
+
+/**
+ * Guard every method of a wholly-synthetic namespace at once. Preferred over
+ * per-method wrapping for namespaces with no live counterpart: a method added
+ * later is barred from the clinical edition by default rather than by whoever
+ * remembers to wrap it.
+ */
+function demoOnlyNamespace<T extends object>(what: string, ns: T): T {
+  const guarded: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(ns)) {
+    guarded[key] =
+      typeof value === "function"
+        ? async (...args: unknown[]) => {
+            assertNotClinical(what);
+            return (value as (...a: unknown[]) => unknown)(...args);
+          }
+        : value;
+  }
+  return guarded as T;
+}
+
 export const api = {
   patients: {
     // When USE_LIVE_API is on, list/get read real patient_profiles rows through
@@ -103,7 +164,14 @@ export const api = {
       }
       return getPatient(id);
     },
-    summary: async (id: string) => getPatientSummary(id),
+    /**
+     * Synthesized scores, system balance, biomarker trends, priorities. There
+     * is no database source for these yet, so the clinical edition shows the
+     * honest unavailable state instead of a fabricated health score.
+     */
+    summary: demoOnly("The clinical overview snapshot", (id: string) =>
+      getPatientSummary(id),
+    ),
   },
   schedule: {
     /**
@@ -132,19 +200,25 @@ export const api = {
     },
   },
   assistant: {
-    session: async () => getAssistantSession(),
+    /** Synthetic assistant transcript about a synthetic patient. */
+    session: demoOnly("The clinical assistant session", () => getAssistantSession()),
   },
   commands: {
+    /** Navigation only — carries no patient data, so both editions use it. */
     groups: async (patientId?: string) => getCommandGroups(patientId),
   },
   composer: {
     /** MOCK draft generation. Replace with a server-side generation call. */
-    generate: async (kind: DraftKind, context: ComposerContext) =>
-      generateDraft(kind, context),
+    generate: demoOnly(
+      "Generated note and report drafts",
+      (kind: DraftKind, context: ComposerContext) => generateDraft(kind, context),
+    ),
   },
   imports: {
     /** MOCK import planning. Replace with a real parse + match pipeline. */
-    plan: async (sourceId: ImportSourceId) => buildImportPlan(sourceId),
+    plan: demoOnly("Import planning", (sourceId: ImportSourceId) =>
+      buildImportPlan(sourceId),
+    ),
   },
   actions: {
     /**
@@ -194,10 +268,14 @@ export const api = {
     },
   },
   calendar: {
-    /** MOCK scheduling data (recurring weekly template). Replace with a tRPC query. */
-    getSchedule: async () => getCalendar(),
+    /**
+     * MOCK weekday-pattern template. The clinical edition reads its real week
+     * through `schedule.getWeek` (the Desktop-owned calendar RPC); it must
+     * never render this synthetic template alongside real appointments.
+     */
+    getSchedule: demoOnly("The demo calendar template", () => getCalendar()),
   },
-  labOrders: {
+  labOrders: demoOnlyNamespace("Lab ordering", {
     /**
      * MOCK lab ordering. DEMO ONLY — no lab order is ever submitted, no
      * requisition is generated, no price is charged. Replace with a tRPC
@@ -278,8 +356,8 @@ export const api = {
       return { ok: true, message: "Order marked reviewed. (demo — not persisted)" };
     },
     listOrderEvents: async (patientId: string) => getLabOrderDraft(patientId).events,
-  },
-  inventory: {
+  }),
+  inventory: demoOnlyNamespace("The dispensary and inventory", {
     /**
      * MOCK dispensary. Products with EFFECTIVE stock = seed + session movement,
      * so selling counts stock down this session. Replace with a tRPC query over
@@ -389,26 +467,35 @@ export const api = {
     },
     /** Demo session sales log. */
     listSales: async () => listSales(),
-  },
+  }),
   reasoning: {
-    /** MOCK reasoning workspace. Replace with a tRPC query. */
-    getWorkspace: async (patientId: string) => getReasoningWorkspace(patientId),
+    /** MOCK reasoning workspace (hypotheses, evidence). */
+    getWorkspace: demoOnly("The clinical reasoning workspace", (patientId: string) =>
+      getReasoningWorkspace(patientId),
+    ),
   },
   supplements: {
-    /** MOCK supplement workspace. Replace with a tRPC query. */
-    getWorkspace: async (patientId: string) => getSupplementWorkspace(patientId),
+    /** MOCK supplement workspace (stack, safety audit). */
+    getWorkspace: demoOnly("The supplement workspace", (patientId: string) =>
+      getSupplementWorkspace(patientId),
+    ),
   },
   healthTwin: {
-    /** MOCK health-twin system map (with snapshots). Replace with a tRPC query. */
-    getMap: async (patientId: string) => getHealthTwin(patientId),
+    /** MOCK health-twin system map (with snapshots). */
+    getMap: demoOnly("The longitudinal systems model", (patientId: string) =>
+      getHealthTwin(patientId),
+    ),
   },
   experiments: {
-    /** MOCK N-of-1 experiments. Replace with tRPC queries. */
-    listActive: async () => getActiveExperiments(),
-    listCompleted: async () => getCompletedExperiments(),
+    /** MOCK N-of-1 experiments. */
+    listActive: demoOnly("N-of-1 experiments", () => getActiveExperiments()),
+    listCompleted: demoOnly("N-of-1 experiments", () => getCompletedExperiments()),
   },
   integrations: {
-    /** MOCK connector health. Replace with a tRPC query. */
+    /**
+     * Connector health is display-only in both editions and states plainly
+     * that no connector is configured — it never fabricates a live connection.
+     */
     getConnectors: async () => getConnectors(),
   },
   permissions: {
