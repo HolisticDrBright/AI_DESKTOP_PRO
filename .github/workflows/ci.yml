@@ -46,12 +46,13 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx playwright install --with-deps chromium
-      - run: NEXT_PUBLIC_USE_LIVE_API=true npm run build
+      - run: APP_EDITION=clinical NEXT_PUBLIC_USE_LIVE_API=true npm run build
       - name: Run gated live suite against the committed contract fixture
         run: |
           node scripts/live-stub-server.mjs &
           sleep 2
           E2E_LIVE=1 \
+          APP_EDITION=clinical \
           TRPC_BASE_URL=http://127.0.0.1:3999/api/trpc \
           CLINICAL_SUPABASE_URL=http://127.0.0.1:3999 \
           CLINICAL_SUPABASE_ANON_KEY=stub \
@@ -80,7 +81,7 @@ jobs:
       - if: steps.gate.outputs.run == 'true'
         run: npx playwright install --with-deps chromium
       - if: steps.gate.outputs.run == 'true'
-        run: NEXT_PUBLIC_USE_LIVE_API=true npm run build
+        run: APP_EDITION=clinical NEXT_PUBLIC_USE_LIVE_API=true npm run build
       - if: steps.gate.outputs.run == 'true'
         name: Run gated live suite against the DEPLOYED backend
         env:
@@ -90,6 +91,6 @@ jobs:
           CLINICAL_DEMO_EMAIL: ${{ secrets.DEPLOYED_CLINICAL_DEMO_EMAIL }}
           CLINICAL_DEMO_PASSWORD: ${{ secrets.DEPLOYED_CLINICAL_DEMO_PASSWORD }}
           CLINICAL_ORG_ID: ${{ secrets.DEPLOYED_CLINICAL_ORG_ID }}
-        run: E2E_LIVE=1 npm run test:e2e -- e2e/live-tasks.spec.ts
+        run: E2E_LIVE=1 APP_EDITION=clinical npm run test:e2e -- e2e/live-tasks.spec.ts
       - if: steps.gate.outputs.run != 'true'
         run: echo "Deployed-backend secrets not configured — job skipped (fixture suite still ran)."
