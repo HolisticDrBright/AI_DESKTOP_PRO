@@ -170,6 +170,25 @@ export const api = {
     ) => liveClient.protocolAction({
       action: "lifecycle", protocolId, status, reason: reason ?? null,
     }),
+    /**
+     * LIVE: the real product catalog picker. Verification status is derived by
+     * the database from what the catalog holds — the client cannot claim a
+     * product is structured-verified.
+     */
+    searchCatalog: async (query: string | null, limit = 20) =>
+      liveClient.searchProtocolCatalog(query, limit),
+    /**
+     * LIVE: the deterministic interaction check. Runs only where structured
+     * data exists on both sides; otherwise every item comes back
+     * `not_completed` with the reason, which the UI renders as "Interaction
+     * review not completed". A completed check never claims a product is
+     * interaction-free.
+     */
+    checkInteractions: async (versionId: string) =>
+      liveClient.checkProtocolInteractions(versionId),
+    /** LIVE: the practitioner's explicit, audited interaction sign-off. */
+    reviewItemInteractions: async (itemId: string, note?: string | null) =>
+      liveClient.reviewProtocolItemInteractions(itemId, note ?? null),
     templates: {
       create: async (input: {
         name: string;

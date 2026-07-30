@@ -539,3 +539,69 @@ export interface LiveProtocolMutationResult {
   /** Fresh autosave token after a successful save. */
   updatedAt?: string;
 }
+
+/** One real catalog product with its exact identity, as the picker returns it. */
+export interface LiveCatalogProduct {
+  productId: string;
+  name: string;
+  form: string | null;
+  /** The catalog brand of record. Null stays null — never filled in. */
+  manufacturer: string | null;
+  productVersionId: string | null;
+  labelVersion: string | null;
+  servingSize: string | null;
+  effectiveFrom: string | null;
+  /** DERIVED from the catalog. Never asserted by the client. */
+  verificationStatus: "unverified" | "label_verified" | "structured_verified";
+  structuredIngredientCount: number;
+}
+
+export interface LiveCatalogSearch {
+  products: LiveCatalogProduct[];
+  query: string | null;
+  generatedAt: string;
+}
+
+/** One deterministic finding, always traceable to the source that stated it. */
+export interface LiveInteractionFinding {
+  ingredient: string | null;
+  medication: string | null;
+  severity: "minor" | "moderate" | "major" | null;
+  mechanism: string | null;
+  notes: string | null;
+  source: string | null;
+  version: string | null;
+}
+
+export interface LiveInteractionItem {
+  itemId: string;
+  label: string;
+  verificationStatus: "unverified" | "label_verified" | "structured_verified";
+  interactionReviewState: "not_completed" | "reviewed_by_practitioner";
+  /**
+   * 'not_completed' MUST render as "Interaction review not completed" with the
+   * reason. 'checked' means the deterministic comparison ran — an empty
+   * findings list means the checked sources contained nothing, NOT that the
+   * product is interaction-free.
+   */
+  state: "not_completed" | "checked";
+  reason: string | null;
+  findings: LiveInteractionFinding[];
+}
+
+export interface LiveInteractionCheck {
+  versionId: string;
+  items: LiveInteractionItem[];
+  medicationsRecorded: number;
+  medicationsCoded: number;
+  /** Verbatim server text. Must be displayed, never paraphrased away. */
+  disclaimer: string;
+  generatedAt: string;
+}
+
+export interface LiveInteractionReviewResult {
+  ok: true;
+  itemId: string;
+  alreadyReviewed: boolean;
+  message: string;
+}

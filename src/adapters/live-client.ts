@@ -31,6 +31,9 @@ import type {
   LiveProtocolDraftPayload,
   LiveProtocolMutationResult,
   LiveProtocolTemplate,
+  LiveCatalogSearch,
+  LiveInteractionCheck,
+  LiveInteractionReviewResult,
   ReviewDecision,
 } from "./live-types";
 
@@ -231,6 +234,24 @@ export const liveClient = {
     status?: "active" | "paused" | "completed" | "discontinued";
     reason?: string | null;
   }) => liveFetch<LiveProtocolMutationResult>("protocols/action", { method: "POST", body: input }),
+
+  searchProtocolCatalog: (query: string | null, limit = 20) =>
+    liveFetch<LiveCatalogSearch>("protocols/catalog", {
+      method: "POST",
+      body: { query, limit },
+    }),
+
+  checkProtocolInteractions: (versionId: string) =>
+    liveFetch<LiveInteractionCheck>("protocols/interactions", {
+      method: "POST",
+      body: { versionId },
+    }),
+
+  reviewProtocolItemInteractions: (itemId: string, note: string | null) =>
+    liveFetch<LiveInteractionReviewResult>("protocols/interaction-review", {
+      method: "POST",
+      body: { itemId, note },
+    }),
 
   protocolTemplateAction: (input: {
     action: "create" | "approve" | "archive";

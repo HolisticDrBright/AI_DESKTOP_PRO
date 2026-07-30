@@ -5,6 +5,9 @@ import { resolveOrgId } from "./config";
 import { getClinicalAccessToken } from "./session.server";
 import { clinicalRpc } from "./supabase-rest.server";
 import type {
+  LiveCatalogSearch,
+  LiveInteractionCheck,
+  LiveInteractionReviewResult,
   LivePatientProtocol,
   LiveProtocolDraftPayload,
   LiveProtocolMutationResult,
@@ -181,6 +184,60 @@ export const protocolsLive = {
     return clinicalRpc<LiveProtocolMutationResult>(
       "archive_protocol_template",
       { _template_id: templateId, _archived: archived },
+      token,
+    );
+  },
+
+  /**
+   * The REAL product catalog picker. Returns exact catalog identity
+   * (product id, label version id, manufacturer, label version) plus a
+   * verification status DERIVED from what the catalog actually holds — a
+   * caller can never assert that a product is structured-verified.
+   */
+  async searchCatalog(
+    query: string | null,
+    limit: number,
+    organizationId?: string | null,
+    sessionToken?: string | null,
+  ): Promise<LiveCatalogSearch> {
+    const token = await getClinicalAccessToken(sessionToken);
+    const orgId = resolveOrgId(organizationId);
+    return clinicalRpc<LiveCatalogSearch>(
+      "search_protocol_catalog",
+      { _organization_id: orgId, _query: query, _limit: limit },
+      token,
+    );
+  },
+
+  /**
+   * The deterministic interaction check. It runs ONLY where structured data
+   * exists on both sides (catalog ingredients and coded medications); every
+   * other case comes back `not_completed` with the reason. A completed check
+   * reports what the checked sources contain and never asserts that a product
+   * is interaction-free.
+   */
+  async checkInteractions(
+    versionId: string,
+    sessionToken?: string | null,
+  ): Promise<LiveInteractionCheck> {
+    const token = await getClinicalAccessToken(sessionToken);
+    return clinicalRpc<LiveInteractionCheck>(
+      "check_protocol_interactions",
+      { _version_id: versionId },
+      token,
+    );
+  },
+
+  /** The practitioner's explicit, audited interaction sign-off (drafts only). */
+  async reviewItemInteractions(
+    itemId: string,
+    note: string | null,
+    sessionToken?: string | null,
+  ): Promise<LiveInteractionReviewResult> {
+    const token = await getClinicalAccessToken(sessionToken);
+    return clinicalRpc<LiveInteractionReviewResult>(
+      "review_protocol_item_interactions",
+      { _item_id: itemId, _note: note },
       token,
     );
   },
