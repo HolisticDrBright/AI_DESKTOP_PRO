@@ -18,7 +18,8 @@
 -- authorization (staff refused), delivered-envelope cancel refused, reason
 -- required, reasoned cancel applied and audited · zero residue.
 --
--- Last full run against urcjiehlxoehievobezf: 29/29 green.
+-- Last full run against urcjiehlxoehievobezf: 30/30 green
+-- (includes the phase-6B wire organization/causation projection check).
 --
 -- Note on the two in-suite adjustments (both explained inline): the consent-
 -- revocation check accepts the revoke-cascade's own durable cancellation
@@ -153,6 +154,9 @@ begin
     jsonb_array_length(_r->'events') = 1 and _e.state='sending' and _e.attempts=1
     and _e.lease_id is not null and _e.lease_expires_at > now()
     and (_r->'events'->0->>'contractVersion') = 'patient-sync/1', _e.state);
+  insert into _v values('the claim projection carries the wire organization and causation fields',
+    (_r->'events'->0->>'organizationId') = 'bbbbbbbb-0000-0000-0000-000000000901'
+    and (_r->'events'->0) ? 'causationId', _r->'events'->0->>'organizationId');
   _r := public.claim_sync_outbound('bbbbbbbb-0000-0000-0000-000000000901', 10, 60);
   insert into _v values('a live lease is not double-claimed',
     jsonb_array_length(_r->'events') = 0 and (_r->>'leaseReclaims')::int = 0, null);
