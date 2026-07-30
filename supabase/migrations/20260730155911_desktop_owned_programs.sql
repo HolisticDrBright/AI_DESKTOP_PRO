@@ -1,10 +1,5 @@
 -- desktop_owned_programs
 --
--- STATUS: PREPARED, NOT YET APPLIED. The remote ledger ends at
--- 20260730052613 (verified this session); apply this file via the MCP
--- apply_migration flow, rename it to the recorded version, and run the
--- acceptance suite BEFORE building the RPC layer on top of it.
---
 -- Makes the 0009 program skeleton real. EXTENDS the existing tables
 -- (programs, program_versions, program_templates, program_enrollments)
 -- rather than duplicating them, and adds the missing structure:
@@ -150,6 +145,12 @@ create index if not exists program_versions_approved_by_idx on public.program_ve
 create index if not exists program_versions_published_by_idx on public.program_versions (published_by);
 create index if not exists program_versions_created_by_idx on public.program_versions (created_by);
 create index if not exists program_versions_updated_by_idx on public.program_versions (updated_by);
+-- Version numbers are unique per owner even under a race (RPCs also
+-- serialize with an advisory lock).
+create unique index if not exists program_versions_program_version_key
+  on public.program_versions (program_id, version) where program_id is not null;
+create unique index if not exists program_versions_template_version_key
+  on public.program_versions (template_id, version) where template_id is not null;
 create index if not exists programs_current_version_idx on public.programs (current_version_id);
 create index if not exists programs_published_version_idx on public.programs (published_version_id);
 create index if not exists program_templates_current_version_idx on public.program_templates (current_version_id);
@@ -435,23 +436,27 @@ alter table public.programs enable row level security;
 alter table public.program_versions enable row level security;
 alter table public.program_templates enable row level security;
 alter table public.program_enrollments enable row level security;
+-- Drop EVERY pre-existing policy on these tables (whatever its name) so no
+-- earlier, broader policy survives alongside the new select-only one.
 do $$
-declare t text;
+declare pol record; t text;
 begin
+  foreach t in array array[
+    'programs','program_versions','program_templates','program_enrollments'
+  ] loop
+    for pol in select policyname from pg_policies
+      where schemaname = 'public' and tablename = t
+    loop
+      execute format('drop policy %I on public.%I', pol.policyname, t);
+    end loop;
+  end loop;
   foreach t in array array['programs','program_versions','program_templates'] loop
-    execute format('drop policy if exists %I on public.%I', t || '_access', t);
-    execute format('drop policy if exists %I on public.%I', t || '_select', t);
     execute format(
       'create policy %I on public.%I for select using (private.is_org_member(organization_id))',
       t || '_select', t);
   end loop;
 end $$;
 -- Enrollments carry a patient reference: patient-access gated.
-drop policy if exists program_enrollments_access on public.program_enrollments;
-drop policy if exists program_enrollments_select on public.program_enrollments;
-drop policy if exists program_enrollments_insert on public.program_enrollments;
-drop policy if exists program_enrollments_update on public.program_enrollments;
-drop policy if exists program_enrollments_delete on public.program_enrollments;
 create policy program_enrollments_select on public.program_enrollments
   for select using (private.can_access_patient(patient_id) and deleted_at is null);
 revoke insert, update, delete on table public.programs from authenticated;
