@@ -7,12 +7,15 @@ import { cn } from "@/lib/cn";
 export function Card({
   className,
   children,
+  "data-testid": testId,
 }: {
   className?: string;
   children: ReactNode;
+  /** Browser-test handle; forwarded so suites can address a whole card. */
+  "data-testid"?: string;
 }) {
   return (
-    <div className={cn("rounded-[14px] border border-line bg-card", className)}>
+    <div data-testid={testId} className={cn("rounded-[14px] border border-line bg-card", className)}>
       {children}
     </div>
   );

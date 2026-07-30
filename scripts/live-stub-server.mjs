@@ -1197,6 +1197,134 @@ function protocolProjection(patientId, organizationId) {
   };
 }
 
+// ------------------------------------------------------------ program state
+// Phase 3 Programs & Education fixtures, mirroring the RPC semantics exactly:
+// wholesale draft saves with per-kind block validation and a stale-token
+// conflict, the draft -> in_review -> approved -> published -> superseded
+// machine, publish superseding WITHOUT moving pinned enrollments, offers that
+// store terms only (stripe refuses enrollment), and append-only progress.
+const programs = new Map();
+const programTemplates = new Map();
+const programVersions = new Map();
+const programOffers = new Map();
+const programEnrollments = new Map();
+const programProgressRows = new Map();
+const programEvents = [];
+let programSeq = 0;
+const pgid = (tag) =>
+  `${tag === "prog" ? "d1d1d1d1" : tag === "ptpl" ? "d2d2d2d2" : tag === "pver" ? "d3d3d3d3" : tag === "penr" ? "d4d4d4d4" : "d5d5d5d5"}-1111-2222-3333-${String(
+    600000000000 + ++programSeq,
+  )}`;
+
+function newProgramVersion({ organizationId, programId = null, templateId = null, title, seed = null, sourceTemplateId = null, sourceTemplateVersion = null, supersedesVersionId = null }) {
+  const siblings = [...programVersions.values()].filter((v) =>
+    programId ? v.programId === programId : v.templateId === templateId,
+  );
+  const version = {
+    id: pgid("pver"),
+    organizationId,
+    programId,
+    templateId,
+    version: siblings.reduce((max, v) => Math.max(max, v.version), 0) + 1,
+    status: "draft",
+    title,
+    summary: seed?.summary ?? null,
+    audience: seed?.audience ?? null,
+    disclaimer: seed?.disclaimer ?? null,
+    sourceTemplateId,
+    sourceTemplateVersion,
+    supersedesVersionId,
+    reviewNote: null,
+    approvedAt: null,
+    publishedAt: null,
+    updatedAt: nowIso(),
+    createdAt: nowIso(),
+    modules: [],
+  };
+  // A copy is DETACHED: fresh ids everywhere.
+  if (seed) {
+    version.modules = seed.modules.map((m) => ({
+      ...m,
+      id: pgid("pblk"),
+      lessons: m.lessons.map((l) => ({
+        ...l,
+        id: pgid("pblk"),
+        blocks: l.blocks.map((b) => ({ ...b, id: pgid("pblk") })),
+      })),
+    }));
+  }
+  programVersions.set(version.id, version);
+  programEvents.push({ versionId: version.id, fromStatus: null, toStatus: "draft", note: null, createdAt: nowIso() });
+  return version;
+}
+
+/** Per-kind block validation, same rules as save_program_draft. */
+function validateProgramBlock(kind, content) {
+  if (kind === "text") {
+    return String(content?.body ?? "").trim() ? null : "a text block needs a body";
+  }
+  if (["image", "video_url", "document_link", "resource"].includes(kind)) {
+    return /^https?:\/\//.test(String(content?.url ?? "")) ? null : `a ${kind} block needs an http(s) url`;
+  }
+  if (kind === "quiz") {
+    const qs = content?.questions;
+    if (!Array.isArray(qs) || qs.length < 1 || qs.length > 20) return "a quiz needs 1-20 questions";
+    for (const q of qs) {
+      if (!String(q?.prompt ?? "").trim() || !Array.isArray(q?.options) || q.options.length < 2 || q.options.length > 8) {
+        return "each quiz question needs a prompt and 2-8 options";
+      }
+      if (q.answerIndex != null && (q.answerIndex < 0 || q.answerIndex >= q.options.length)) {
+        return "quiz answerIndex out of range";
+      }
+    }
+    return null;
+  }
+  if (kind === "check_in") {
+    if (!String(content?.prompt ?? "").trim()) return "a check-in needs a prompt and a valid responseType";
+    return ["text", "scale_1_5", "yes_no", "number"].includes(String(content?.responseType ?? ""))
+      ? null
+      : "a check-in needs a prompt and a valid responseType";
+  }
+  return "unknown block kind";
+}
+
+function programVersionJson(v) {
+  if (!v) return null;
+  return {
+    id: v.id,
+    version: v.version,
+    status: v.status,
+    title: v.title,
+    summary: v.summary,
+    audience: v.audience,
+    disclaimer: v.disclaimer,
+    sourceTemplateId: v.sourceTemplateId,
+    sourceTemplateVersion: v.sourceTemplateVersion,
+    supersedesVersionId: v.supersedesVersionId,
+    reviewNote: v.reviewNote,
+    approvedAt: v.approvedAt,
+    publishedAt: v.publishedAt,
+    updatedAt: v.updatedAt,
+    createdAt: v.createdAt,
+    modules: v.modules.map((m, mi) => ({
+      id: m.id, name: m.name, summary: m.summary ?? null, position: mi,
+      lessons: m.lessons.map((l, li) => ({
+        id: l.id, title: l.title, summary: l.summary ?? null, position: li,
+        blocks: l.blocks.map((b, bi) => ({
+          id: b.id, kind: b.kind, title: b.title ?? null, content: b.content,
+          isCommercial: !!b.isCommercial, position: bi,
+        })),
+      })),
+    })),
+  };
+}
+
+function programEnrollmentCounts(programId) {
+  const rows = [...programEnrollments.values()].filter((e) => e.programId === programId);
+  const count = (s) => rows.filter((e) => e.status === s).length;
+  return { invited: count("invited"), active: count("active"), paused: count("paused"), completed: count("completed") };
+}
+
 const auditEvents = [];
 let hypothesisReview = null;
 let auditSeq = 0;
@@ -2261,6 +2389,577 @@ createServer(async (req, res) => {
         itemId,
         alreadyReviewed: false,
         message: "Interaction review recorded.",
+      });
+    }
+
+    // ---------------------------------------------- Programs (phase 3) RPCs
+    if (url.pathname === "/rest/v1/rpc/list_programs" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!memberOrgIds.includes(String(body._organization_id ?? ""))) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const q = String(body._query ?? "").trim().toLowerCase();
+      const status = body._status ? String(body._status) : null;
+      const rows = [...programs.values()]
+        .filter((p) => p.organizationId === String(body._organization_id))
+        .filter((p) => (status ? p.status === status : true))
+        .filter((p) => !q || p.name.toLowerCase().includes(q) || (p.description ?? "").toLowerCase().includes(q))
+        .map((p) => {
+          const pub = p.publishedVersionId ? programVersions.get(p.publishedVersionId) : null;
+          const cur = p.currentVersionId ? programVersions.get(p.currentVersionId) : null;
+          return {
+            id: p.id, name: p.name, description: p.description ?? null,
+            status: p.status, archivedAt: p.archivedAt ?? null, updatedAt: p.updatedAt,
+            publishedVersion: pub?.version ?? null,
+            draftStatus: cur && ["draft", "in_review", "approved"].includes(cur.status) ? cur.status : null,
+            enrollment: programEnrollmentCounts(p.id),
+          };
+        });
+      return json(res, 200, { programs: rows, generatedAt: nowIso() });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/get_program_studio" && req.method === "POST") {
+      const body = await readBody(req);
+      const program = programs.get(String(body._program_id ?? ""));
+      if (!program) return json(res, 404, { code: "P0002", message: "program not found" });
+      if (!memberOrgIds.includes(program.organizationId)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const versions = [...programVersions.values()].filter((v) => v.programId === program.id);
+      const editable = versions
+        .filter((v) => ["draft", "in_review"].includes(v.status))
+        .sort((a, b) => b.version - a.version)[0] ?? null;
+      const published = program.publishedVersionId
+        ? programVersions.get(program.publishedVersionId) ?? null
+        : null;
+      const versionIds = new Set(versions.map((v) => v.id));
+      return json(res, 200, {
+        program: {
+          id: program.id, name: program.name, description: program.description ?? null,
+          status: program.status, archivedAt: program.archivedAt ?? null,
+          updatedAt: program.updatedAt, publishedVersionId: program.publishedVersionId ?? null,
+        },
+        canAuthor: true,
+        editable: programVersionJson(editable),
+        published: programVersionJson(published),
+        history: versions
+          .sort((a, b) => b.version - a.version)
+          .map((v) => ({
+            id: v.id, version: v.version, status: v.status, title: v.title,
+            approvedAt: v.approvedAt, publishedAt: v.publishedAt,
+            createdAt: v.createdAt, supersedesVersionId: v.supersedesVersionId,
+          })),
+        events: programEvents
+          .filter((e) => versionIds.has(e.versionId))
+          .slice(-50)
+          .reverse()
+          .map((e) => ({ versionId: e.versionId, fromStatus: e.fromStatus, toStatus: e.toStatus, note: e.note, createdAt: e.createdAt })),
+        offers: [...programOffers.values()]
+          .filter((o) => o.programId === program.id)
+          .map((o) => ({
+            id: o.id, name: o.name, priceCents: o.priceCents, currency: o.currency,
+            accessDurationDays: o.accessDurationDays, paymentMode: o.paymentMode,
+            enrollmentOpen: o.enrollmentOpen, status: o.status,
+          })),
+        roster: [...programEnrollments.values()]
+          .filter((e) => e.programId === program.id)
+          .map((e) => {
+            const pv = programVersions.get(e.programVersionId);
+            const progress = [...programProgressRows.values()].filter((p) => p.enrollmentId === e.id);
+            const pat = PATIENTS.find((p) => p.id === e.patientId);
+            return {
+              enrollmentId: e.id, patientId: e.patientId,
+              patientName: pat ? `${pat.first_name} ${pat.last_name}` : "Fixture Patient",
+              status: e.status, pinnedVersion: pv?.version ?? null,
+              enrolledAt: e.enrolledAt, startedAt: e.startedAt, expiresAt: e.expiresAt,
+              completedAt: e.completedAt, compReason: e.compReason,
+              lastActivityAt: progress.length ? progress[progress.length - 1].completedAt : null,
+              progressCount: progress.length,
+              needsReviewCount: progress.filter((p) => p.needsReview).length,
+            };
+          }),
+        generatedAt: nowIso(),
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/list_program_templates" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!memberOrgIds.includes(String(body._organization_id ?? ""))) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      return json(
+        res,
+        200,
+        [...programTemplates.values()]
+          .filter((t) => (body._include_archived ? true : t.status !== "archived"))
+          .map((t) => ({
+            id: t.id, name: t.name, description: t.description ?? null, status: t.status,
+            archivedAt: t.archivedAt ?? null, approvedVersionId: t.approvedVersionId ?? null,
+            approvedVersion: t.approvedVersion ?? null, currentVersionId: t.currentVersionId ?? null,
+            updatedAt: t.updatedAt,
+          })),
+      );
+    }
+
+    if (url.pathname === "/rest/v1/rpc/create_program" && req.method === "POST") {
+      const body = await readBody(req);
+      const organizationId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(organizationId)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const name = String(body._name ?? "").trim();
+      if (!name) return json(res, 400, { code: "22023", message: "a program name is required" });
+      let seed = null;
+      let sourceTemplateId = null;
+      let sourceTemplateVersion = null;
+      if (body._from_template_id) {
+        const tpl = programTemplates.get(String(body._from_template_id));
+        if (!tpl) return json(res, 404, { code: "P0002", message: "template not found" });
+        if (tpl.status !== "approved" || !tpl.approvedVersionId) {
+          return json(res, 400, { code: "22023", message: "only approved templates can start a program" });
+        }
+        seed = programVersions.get(tpl.approvedVersionId) ?? null;
+        sourceTemplateId = tpl.id;
+        sourceTemplateVersion = seed?.version ?? null;
+      }
+      const program = {
+        id: pgid("prog"), organizationId, name, description: seed?.summary ?? null,
+        status: "draft", archivedAt: null, publishedVersionId: null, currentVersionId: null,
+        updatedAt: nowIso(),
+      };
+      programs.set(program.id, program);
+      const version = newProgramVersion({
+        organizationId, programId: program.id, title: name, seed,
+        sourceTemplateId, sourceTemplateVersion,
+      });
+      program.currentVersionId = version.id;
+      pushAudit("program.created", "program", program.id, "Program draft created", { fromTemplate: !!seed });
+      return json(res, 200, {
+        ok: true, programId: program.id, versionId: version.id,
+        message: seed ? "Program created from the approved template." : "Blank program created.",
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/save_program_draft" && req.method === "POST") {
+      const body = await readBody(req);
+      const version = programVersions.get(String(body._version_id ?? ""));
+      if (!version) return json(res, 404, { code: "P0002", message: "program version not found" });
+      if (!memberOrgIds.includes(version.organizationId)) {
+        return json(res, 403, { code: "42501", message: "not authorized to edit this program" });
+      }
+      if (!["draft", "in_review"].includes(version.status)) {
+        return json(res, 400, { code: "22023", message: "only a draft or in-review version can be edited" });
+      }
+      if (
+        body._expected_updated_at &&
+        new Date(body._expected_updated_at).getTime() !== new Date(version.updatedAt).getTime()
+      ) {
+        return json(res, 409, { code: "40001", message: "this draft changed elsewhere since it was loaded" });
+      }
+      const payload = body._payload ?? {};
+      const moduleIds = [];
+      const lessonIds = [];
+      const blockIds = [];
+      const modules = [];
+      for (const m of payload.modules ?? []) {
+        if (!String(m?.name ?? "").trim()) {
+          return json(res, 400, { code: "22023", message: "each module needs a name" });
+        }
+        const mod = { id: pgid("pblk"), name: String(m.name).trim(), summary: m.summary ?? null, lessons: [] };
+        moduleIds.push(mod.id);
+        for (const l of m.lessons ?? []) {
+          if (!String(l?.title ?? "").trim()) {
+            return json(res, 400, { code: "22023", message: "each lesson needs a title" });
+          }
+          const les = { id: pgid("pblk"), title: String(l.title).trim(), summary: l.summary ?? null, blocks: [] };
+          lessonIds.push(les.id);
+          for (const b of l.blocks ?? []) {
+            const problem = validateProgramBlock(String(b?.kind ?? ""), b?.content ?? {});
+            if (problem) return json(res, 400, { code: "22023", message: problem });
+            const blk = {
+              id: pgid("pblk"), kind: b.kind, title: b.title ?? null,
+              content: b.content ?? {}, isCommercial: !!b.isCommercial,
+            };
+            blockIds.push(blk.id);
+            les.blocks.push(blk);
+          }
+          mod.lessons.push(les);
+        }
+        modules.push(mod);
+      }
+      version.title = String(payload.title ?? "").trim() || version.title;
+      version.summary = payload.summary ?? null;
+      version.audience = payload.audience ?? null;
+      version.disclaimer = payload.disclaimer ?? null;
+      version.modules = modules;
+      version.updatedAt = nowIso();
+      return json(res, 200, {
+        ok: true, versionId: version.id, updatedAt: version.updatedAt,
+        moduleIds, lessonIds, blockIds, message: "Draft saved.",
+      });
+    }
+
+    const programTransition = (versionId, to, note) => {
+      const version = programVersions.get(String(versionId ?? ""));
+      if (!version || !version.programId) return { error: [404, { code: "P0002", message: "program version not found" }] };
+      if (!memberOrgIds.includes(version.organizationId)) {
+        return { error: [403, { code: "42501", message: "not authorized to manage this program" }] };
+      }
+      const ok =
+        (version.status === "draft" && to === "in_review") ||
+        (version.status === "in_review" && ["draft", "approved"].includes(to)) ||
+        (version.status === "approved" && to === "published");
+      if (!ok) return { error: [400, { code: "22023", message: `a ${version.status} version cannot move to ${to}` }] };
+      const from = version.status;
+      version.status = to;
+      if (["draft", "approved"].includes(to) && note) version.reviewNote = note;
+      if (to === "approved") version.approvedAt = nowIso();
+      if (to === "published") version.publishedAt = nowIso();
+      version.updatedAt = nowIso();
+      programEvents.push({ versionId: version.id, fromStatus: from, toStatus: to, note: note ?? null, createdAt: nowIso() });
+      return { version };
+    };
+
+    if (url.pathname === "/rest/v1/rpc/submit_program_version" && req.method === "POST") {
+      const body = await readBody(req);
+      const r = programTransition(body._version_id, "in_review", null);
+      if (r.error) return json(res, r.error[0], r.error[1]);
+      return json(res, 200, { ok: true, versionId: r.version.id, status: r.version.status, message: "Version submitted for review." });
+    }
+    if (url.pathname === "/rest/v1/rpc/return_program_version" && req.method === "POST") {
+      const body = await readBody(req);
+      const r = programTransition(body._version_id, "draft", body._note ?? null);
+      if (r.error) return json(res, r.error[0], r.error[1]);
+      return json(res, 200, { ok: true, versionId: r.version.id, status: r.version.status, message: "Version returned to draft for changes." });
+    }
+    if (url.pathname === "/rest/v1/rpc/approve_program_version" && req.method === "POST") {
+      const body = await readBody(req);
+      const r = programTransition(body._version_id, "approved", body._note ?? null);
+      if (r.error) return json(res, r.error[0], r.error[1]);
+      return json(res, 200, {
+        ok: true, versionId: r.version.id, status: r.version.status,
+        message: "Version approved and frozen. It is NOT published until you publish it.",
+      });
+    }
+    if (url.pathname === "/rest/v1/rpc/publish_program_version" && req.method === "POST") {
+      const body = await readBody(req);
+      const r = programTransition(body._version_id, "published", null);
+      if (r.error) return json(res, r.error[0], r.error[1]);
+      const program = programs.get(r.version.programId);
+      // Supersede the previous published version WITHOUT touching pinned
+      // enrollments; publishing has zero other side effects.
+      if (program.publishedVersionId && program.publishedVersionId !== r.version.id) {
+        const prev = programVersions.get(program.publishedVersionId);
+        if (prev) {
+          prev.status = "superseded";
+          prev.updatedAt = nowIso();
+          programEvents.push({ versionId: prev.id, fromStatus: "published", toStatus: "superseded", note: null, createdAt: nowIso() });
+        }
+      }
+      program.status = "published";
+      program.publishedVersionId = r.version.id;
+      program.currentVersionId = r.version.id;
+      program.updatedAt = nowIso();
+      return json(res, 200, {
+        ok: true, versionId: r.version.id, version: r.version.version, status: "published",
+        message: "Version published. Existing enrollments keep their pinned version.",
+      });
+    }
+    if (url.pathname === "/rest/v1/rpc/revise_program_version" && req.method === "POST") {
+      const body = await readBody(req);
+      const src = programVersions.get(String(body._version_id ?? ""));
+      if (!src || !src.programId) return json(res, 404, { code: "P0002", message: "program version not found" });
+      if (!memberOrgIds.includes(src.organizationId)) {
+        return json(res, 403, { code: "42501", message: "not authorized to manage this program" });
+      }
+      if (!["approved", "published", "superseded"].includes(src.status)) {
+        return json(res, 400, { code: "22023", message: "only a frozen version can be revised" });
+      }
+      if ([...programVersions.values()].some((v) => v.programId === src.programId && ["draft", "in_review"].includes(v.status))) {
+        return json(res, 400, { code: "22023", message: "a draft version already exists for this program" });
+      }
+      const next = newProgramVersion({
+        organizationId: src.organizationId, programId: src.programId, title: src.title,
+        seed: src, supersedesVersionId: src.id,
+      });
+      const program = programs.get(src.programId);
+      program.currentVersionId = next.id;
+      program.updatedAt = nowIso();
+      return json(res, 200, {
+        ok: true, versionId: next.id, version: next.version, supersedesVersionId: src.id,
+        message: `New draft version ${next.version} created. Version ${src.version} is unchanged.`,
+      });
+    }
+    if (url.pathname === "/rest/v1/rpc/archive_program" && req.method === "POST") {
+      const body = await readBody(req);
+      const program = programs.get(String(body._program_id ?? ""));
+      if (!program) return json(res, 404, { code: "P0002", message: "program not found" });
+      if (!memberOrgIds.includes(program.organizationId)) {
+        return json(res, 403, { code: "42501", message: "not authorized to manage this program" });
+      }
+      const archived = body._archived !== false;
+      program.status = archived ? "archived" : program.publishedVersionId ? "published" : "draft";
+      program.archivedAt = archived ? nowIso() : null;
+      program.updatedAt = nowIso();
+      return json(res, 200, {
+        ok: true, programId: program.id, archived,
+        message: archived
+          ? "Program archived. Published history and enrollments are preserved."
+          : "Program restored.",
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/create_program_template" && req.method === "POST") {
+      const body = await readBody(req);
+      const organizationId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(organizationId)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const name = String(body._name ?? "").trim();
+      if (!name) return json(res, 400, { code: "22023", message: "a template name is required" });
+      let seed = null;
+      if (body._from_version_id) {
+        seed = programVersions.get(String(body._from_version_id));
+        if (!seed) return json(res, 404, { code: "P0002", message: "source version not found" });
+      }
+      const tpl = {
+        id: pgid("ptpl"), organizationId, name, description: body._description ?? null,
+        status: "draft", archivedAt: null, approvedVersionId: null, approvedVersion: null,
+        currentVersionId: null, updatedAt: nowIso(),
+      };
+      programTemplates.set(tpl.id, tpl);
+      const version = newProgramVersion({ organizationId, templateId: tpl.id, title: name, seed });
+      tpl.currentVersionId = version.id;
+      return json(res, 200, {
+        ok: true, templateId: tpl.id, versionId: version.id,
+        message: seed ? "Template created as a detached copy of that version." : "Blank template created.",
+      });
+    }
+    if (url.pathname === "/rest/v1/rpc/approve_program_template_version" && req.method === "POST") {
+      const body = await readBody(req);
+      const version = programVersions.get(String(body._version_id ?? ""));
+      if (!version || !version.templateId) return json(res, 404, { code: "P0002", message: "template version not found" });
+      if (version.status !== "draft") {
+        return json(res, 400, { code: "22023", message: "only a draft template version can be approved" });
+      }
+      version.status = "approved";
+      version.approvedAt = nowIso();
+      const tpl = programTemplates.get(version.templateId);
+      tpl.status = "approved";
+      tpl.approvedVersionId = version.id;
+      tpl.approvedVersion = version.version;
+      tpl.updatedAt = nowIso();
+      return json(res, 200, { ok: true, versionId: version.id, message: "Template version approved." });
+    }
+    if (url.pathname === "/rest/v1/rpc/archive_program_template" && req.method === "POST") {
+      const body = await readBody(req);
+      const tpl = programTemplates.get(String(body._template_id ?? ""));
+      if (!tpl) return json(res, 404, { code: "P0002", message: "template not found" });
+      const archived = body._archived !== false;
+      tpl.status = archived ? "archived" : tpl.approvedVersionId ? "approved" : "draft";
+      tpl.archivedAt = archived ? nowIso() : null;
+      tpl.updatedAt = nowIso();
+      return json(res, 200, {
+        ok: true, templateId: tpl.id, archived,
+        message: archived ? "Template archived. Programs created from it are untouched." : "Template restored.",
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/upsert_program_offer" && req.method === "POST") {
+      const body = await readBody(req);
+      const program = programs.get(String(body._program_id ?? ""));
+      if (!program) return json(res, 404, { code: "P0002", message: "program not found" });
+      if (!memberOrgIds.includes(program.organizationId)) {
+        return json(res, 403, { code: "42501", message: "not authorized to manage program offers" });
+      }
+      if (!["free", "manual_comp", "stripe"].includes(String(body._payment_mode ?? "free"))) {
+        return json(res, 400, { code: "22023", message: "unknown payment mode" });
+      }
+      let offer = body._offer_id ? programOffers.get(String(body._offer_id)) : null;
+      if (body._offer_id && !offer) return json(res, 404, { code: "P0002", message: "offer not found" });
+      if (!offer) {
+        if (!String(body._name ?? "").trim()) {
+          return json(res, 400, { code: "22023", message: "an offer name is required" });
+        }
+        offer = { id: pgid("poff"), programId: program.id };
+        programOffers.set(offer.id, offer);
+      }
+      offer.name = String(body._name ?? offer.name ?? "").trim() || offer.name;
+      offer.priceCents = Math.max(Number(body._price_cents ?? 0) || 0, 0);
+      offer.currency = String(body._currency ?? "usd").toLowerCase();
+      offer.accessDurationDays = body._access_duration_days ?? null;
+      offer.paymentMode = String(body._payment_mode ?? "free");
+      offer.enrollmentOpen = body._enrollment_open !== false;
+      offer.status = body._status === "retired" ? "retired" : "active";
+      return json(res, 200, {
+        ok: true, offerId: offer.id,
+        message: "Offer saved. No payment is processed by this application.",
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/enroll_patient_in_program" && req.method === "POST") {
+      const body = await readBody(req);
+      const program = programs.get(String(body._program_id ?? ""));
+      if (!program) return json(res, 404, { code: "P0002", message: "program not found" });
+      if (!memberOrgIds.includes(program.organizationId)) {
+        return json(res, 403, { code: "42501", message: "not authorized to manage enrollments" });
+      }
+      if (program.status === "archived") {
+        return json(res, 400, { code: "22023", message: "an archived program cannot take new enrollments" });
+      }
+      if (!program.publishedVersionId) {
+        return json(res, 400, { code: "22023", message: "this program has no published version to enroll into" });
+      }
+      let offer = null;
+      if (body._offer_id) {
+        offer = programOffers.get(String(body._offer_id));
+        if (!offer) return json(res, 404, { code: "P0002", message: "offer not found" });
+        if (offer.status !== "active" || !offer.enrollmentOpen) {
+          return json(res, 400, { code: "22023", message: "this offer is not open for enrollment" });
+        }
+        if (offer.paymentMode === "stripe") {
+          // HONEST REFUSAL: no verified payment integration exists.
+          return json(res, 400, {
+            code: "22023",
+            message: "Stripe payment processing is not configured; this offer cannot enroll patients yet",
+          });
+        }
+        if (offer.paymentMode === "manual_comp" && !String(body._comp_reason ?? "").trim()) {
+          return json(res, 400, { code: "22023", message: "a complimentary enrollment requires a reason" });
+        }
+      }
+      const patientId = String(body._patient_id ?? "");
+      if (
+        [...programEnrollments.values()].some(
+          (e) => e.programId === program.id && e.patientId === patientId && ["invited", "active", "paused"].includes(e.status),
+        )
+      ) {
+        return json(res, 400, { code: "22023", message: "this patient already has an open enrollment in this program" });
+      }
+      const activate = body._activate !== false;
+      const enrollment = {
+        id: pgid("penr"), programId: program.id, patientId,
+        programVersionId: program.publishedVersionId, offerId: offer?.id ?? null,
+        status: activate ? "active" : "invited",
+        enrolledAt: nowIso(),
+        invitedAt: activate ? null : nowIso(),
+        startedAt: activate ? nowIso() : null,
+        expiresAt: activate && offer?.accessDurationDays
+          ? new Date(Date.now() + offer.accessDurationDays * 86400000).toISOString()
+          : null,
+        completedAt: null,
+        compReason: String(body._comp_reason ?? "").trim() || null,
+        statusReason: null,
+      };
+      programEnrollments.set(enrollment.id, enrollment);
+      pushAudit("program.enrolled", "program_enrollment", enrollment.id, "Patient enrolled in a program", { programId: program.id }, patientId);
+      return json(res, 200, {
+        ok: true, enrollmentId: enrollment.id, status: enrollment.status,
+        pinnedVersionId: enrollment.programVersionId,
+        message: activate
+          ? "Enrollment active, pinned to the published version."
+          : "Invitation recorded, pinned to the published version.",
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/set_program_enrollment_status" && req.method === "POST") {
+      const body = await readBody(req);
+      const enrollment = programEnrollments.get(String(body._enrollment_id ?? ""));
+      if (!enrollment) return json(res, 404, { code: "P0002", message: "enrollment not found" });
+      const to = String(body._status ?? "");
+      const from = enrollment.status;
+      const ok =
+        (from === "invited" && ["active", "cancelled"].includes(to)) ||
+        (from === "active" && ["paused", "completed", "cancelled", "expired"].includes(to)) ||
+        (from === "paused" && ["active", "cancelled", "expired"].includes(to));
+      if (!ok) {
+        return json(res, 400, { code: "22023", message: `an enrollment cannot move from ${from} to ${to}` });
+      }
+      enrollment.status = to;
+      enrollment.statusReason = body._reason ?? null;
+      if (to === "active" && !enrollment.startedAt) enrollment.startedAt = nowIso();
+      if (to === "completed") enrollment.completedAt = nowIso();
+      return json(res, 200, {
+        ok: true, enrollmentId: enrollment.id, status: to, previousStatus: from,
+        message: `Enrollment ${to}.`,
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/record_program_progress" && req.method === "POST") {
+      const body = await readBody(req);
+      const enrollment = programEnrollments.get(String(body._enrollment_id ?? ""));
+      if (!enrollment) return json(res, 404, { code: "P0002", message: "enrollment not found" });
+      if (!["lesson_completed", "check_in", "quiz_response", "adherence"].includes(String(body._kind ?? ""))) {
+        return json(res, 400, { code: "22023", message: "unknown progress kind" });
+      }
+      if (enrollment.status !== "active") {
+        return json(res, 400, { code: "22023", message: "progress can only be recorded on an active enrollment" });
+      }
+      // Version agreement: the lesson must belong to the PINNED version.
+      if (body._lesson_id) {
+        const pinned = programVersions.get(enrollment.programVersionId);
+        const lessonIds = new Set((pinned?.modules ?? []).flatMap((m) => m.lessons.map((l) => l.id)));
+        if (!lessonIds.has(String(body._lesson_id))) {
+          return json(res, 400, { code: "22023", message: "lesson does not belong to the enrolled program version" });
+        }
+      }
+      if (String(body._kind) === "lesson_completed" && !body._lesson_id) {
+        return json(res, 400, { code: "22023", message: "lesson_completed requires a lesson" });
+      }
+      const row = {
+        id: pgid("pprg"), enrollmentId: enrollment.id, patientId: enrollment.patientId,
+        lessonId: body._lesson_id ?? null, blockId: body._block_id ?? null,
+        kind: String(body._kind), payload: body._payload ?? {},
+        needsReview: body._needs_review === true, reviewedBy: null, reviewedAt: null,
+        completedAt: nowIso(),
+      };
+      programProgressRows.set(row.id, row);
+      // PHI-safe audit: identifiers and kind only, never the payload.
+      pushAudit("program.progress_recorded", "program_progress", row.id, "Program progress recorded", { kind: row.kind }, enrollment.patientId);
+      return json(res, 200, { ok: true, progressId: row.id, message: "Progress recorded." });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/review_program_progress" && req.method === "POST") {
+      const body = await readBody(req);
+      const row = programProgressRows.get(String(body._progress_id ?? ""));
+      if (!row) return json(res, 404, { code: "P0002", message: "progress entry not found" });
+      if (row.reviewedAt) {
+        return json(res, 200, { ok: true, progressId: row.id, alreadyReviewed: true, message: "This entry was already reviewed." });
+      }
+      row.needsReview = false;
+      row.reviewedAt = nowIso();
+      row.reviewedBy = "dddddddd-1111-2222-3333-444444444401";
+      return json(res, 200, { ok: true, progressId: row.id, alreadyReviewed: false, message: "Progress reviewed." });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/get_patient_programs" && req.method === "POST") {
+      const body = await readBody(req);
+      const patientId = String(body._patient_id ?? "");
+      const patient = PATIENTS.find((p) => p.id === patientId);
+      if (!patient || !memberOrgIds.includes(patient.organization_id)) {
+        return json(res, 403, { code: "42501", message: "not authorized for this patient" });
+      }
+      return json(res, 200, {
+        enrollments: [...programEnrollments.values()]
+          .filter((e) => e.patientId === patientId)
+          .map((e) => {
+            const program = programs.get(e.programId);
+            const pv = programVersions.get(e.programVersionId);
+            const progress = [...programProgressRows.values()].filter((p) => p.enrollmentId === e.id);
+            return {
+              enrollmentId: e.id, programId: e.programId,
+              programName: program?.name ?? "", status: e.status,
+              pinnedVersion: pv?.version ?? null, pinnedVersionTitle: pv?.title ?? null,
+              enrolledAt: e.enrolledAt, startedAt: e.startedAt, expiresAt: e.expiresAt,
+              completedAt: e.completedAt,
+              lastActivityAt: progress.length ? progress[progress.length - 1].completedAt : null,
+              progressCount: progress.length,
+              lessonsCompleted: progress.filter((p) => p.kind === "lesson_completed").length,
+              lessonTotal: (pv?.modules ?? []).reduce((n, m) => n + m.lessons.length, 0),
+              needsReviewCount: progress.filter((p) => p.needsReview).length,
+            };
+          }),
+        generatedAt: nowIso(),
       });
     }
 

@@ -186,6 +186,16 @@ export function PatientProgramsLive({ patientId }: { patientId: string }) {
               ))}
             </select>
           </div>
+          {selectedOffer?.paymentMode === "stripe" && (
+            <p
+              className="m-0 text-[12px] font-semibold text-warning-deep"
+              data-testid="enroll-stripe-blocked"
+            >
+              Stripe payment processing is not configured. This offer cannot enroll patients until a
+              verified payment integration exists — the server refuses it, and no payment is ever
+              claimed.
+            </p>
+          )}
           {selectedOffer?.paymentMode === "manual_comp" && (
             <input
               className={INPUT}
@@ -200,7 +210,7 @@ export function PatientProgramsLive({ patientId }: { patientId: string }) {
             <Btn
               variant="primary"
               size="sm"
-              disabled={!programId || busy}
+              disabled={!programId || busy || selectedOffer?.paymentMode === "stripe"}
               onClick={() => void enroll()}
               data-testid="enroll-submit"
             >

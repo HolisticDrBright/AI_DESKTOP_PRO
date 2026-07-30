@@ -53,8 +53,31 @@ export function ProgramsWorkspace() {
   const [newName, setNewName] = useState("");
   const [fromTemplate, setFromTemplate] = useState<string>("");
   const [busy, setBusy] = useState(false);
+  const [showArchivedTemplates, setShowArchivedTemplates] = useState(false);
   const queryRef = useRef(query);
   queryRef.current = query;
+
+  const loadTemplates = useCallback(async (includeArchived: boolean) => {
+    try {
+      setTemplates(await api.programs.listTemplates(includeArchived));
+    } catch (e) {
+      setError(errText(e));
+    }
+  }, []);
+
+  const templateAction = async (fn: () => Promise<{ message: string }>) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const res = await fn();
+      announce(res.message);
+      await loadTemplates(showArchivedTemplates);
+    } catch (e) {
+      announce(errText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const load = useCallback(
     async (q: string, s: string) => {
@@ -215,6 +238,77 @@ export function ProgramsWorkspace() {
           ))}
         </ul>
       )}
+
+      <Card className="px-4 py-3" data-testid="templates-panel">
+        <div className="flex items-center gap-2">
+          <CardTitle className="mb-0">Templates</CardTitle>
+          <span className="flex-1" />
+          <label className="flex items-center gap-[6px] text-[11.5px] font-semibold text-body-2">
+            <input
+              type="checkbox"
+              checked={showArchivedTemplates}
+              onChange={(e) => {
+                setShowArchivedTemplates(e.target.checked);
+                void loadTemplates(e.target.checked);
+              }}
+              data-testid="templates-show-archived"
+            />
+            Show archived
+          </label>
+        </div>
+        {(templates ?? []).length === 0 ? (
+          <p className="m-0 mt-2 text-[12px] text-faint" data-testid="templates-empty">
+            No templates. Save a published program version as a template from its studio.
+          </p>
+        ) : (
+          <ul className="m-0 mt-2 flex list-none flex-col gap-1 p-0" data-testid="template-list">
+            {(templates ?? []).map((t) => (
+              <li key={t.id} className="flex flex-wrap items-center gap-2 text-[12.5px]" data-testid={`template-${t.id}`}>
+                <span className="font-semibold text-body">{t.name}</span>
+                <span className="inline-flex h-[18px] items-center rounded-full bg-slate-tint px-2 text-[10px] font-bold text-slate-badge">
+                  {t.status}
+                  {t.approvedVersion ? ` v${t.approvedVersion}` : ""}
+                </span>
+                <span className="flex-1" />
+                {t.status === "draft" && t.currentVersionId && (
+                  <Btn
+                    size="sm"
+                    disabled={busy}
+                    onClick={() => void templateAction(() => api.programs.templates.approve(t.currentVersionId as string))}
+                    data-testid="template-approve"
+                  >
+                    Approve for use
+                  </Btn>
+                )}
+                {t.status !== "archived" ? (
+                  <Btn
+                    size="sm"
+                    variant="ghost"
+                    disabled={busy}
+                    onClick={() => void templateAction(() => api.programs.templates.archive(t.id, true))}
+                    data-testid="template-archive"
+                  >
+                    Archive
+                  </Btn>
+                ) : (
+                  <Btn
+                    size="sm"
+                    variant="ghost"
+                    disabled={busy}
+                    onClick={() => void templateAction(() => api.programs.templates.archive(t.id, false))}
+                  >
+                    Restore
+                  </Btn>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+        <ClinicalNote className="mt-2">
+          Archiving a template never changes programs already created from it — copies are fully
+          detached.
+        </ClinicalNote>
+      </Card>
 
       <ClinicalNote>
         Enrollment numbers are counts of persisted enrollment records. Engagement, revenue,

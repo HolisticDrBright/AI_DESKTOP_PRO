@@ -304,6 +304,7 @@ export function ProgramStudio({ programId }: { programId: string }) {
   const [returnNote, setReturnNote] = useState("");
   const [aiMessage, setAiMessage] = useState<string | null>(null);
   const [lastProgressId, setLastProgressId] = useState<string | null>(null);
+  const [templateName, setTemplateName] = useState("");
 
   const tokenRef = useRef<string | null>(null);
   const draftRef = useRef<DraftModel | null>(null);
@@ -1142,6 +1143,33 @@ export function ProgramStudio({ programId }: { programId: string }) {
             Published content is immutable. Corrections go into a new draft version; enrollments
             stay pinned to the exact version they enrolled under.
           </p>
+          <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-hairline-2 pt-2">
+            <input
+              className={`${INPUT} !w-[240px]`}
+              value={templateName}
+              placeholder="Template name"
+              aria-label="Template name"
+              onChange={(e) => setTemplateName(e.target.value)}
+              data-testid="template-name"
+            />
+            <Btn
+              size="sm"
+              disabled={busy || !templateName.trim()}
+              onClick={() =>
+                void runAction(async () => {
+                  const res = await api.programs.templates.create({
+                    name: templateName.trim(),
+                    fromVersionId: published.id,
+                  });
+                  setTemplateName("");
+                  return res;
+                })
+              }
+              data-testid="save-as-template"
+            >
+              Save as template (detached copy)
+            </Btn>
+          </div>
         </Card>
       )}
 
