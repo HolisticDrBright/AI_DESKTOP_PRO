@@ -34,6 +34,14 @@ import type {
   LiveCatalogSearch,
   LiveInteractionCheck,
   LiveInteractionReviewResult,
+  LiveProgramDraftPayload,
+  LiveProgramEnrollmentStatus,
+  LiveProgramLibrary,
+  LiveProgramMutationResult,
+  LiveProgramOfferPaymentMode,
+  LiveProgramStudio,
+  LiveProgramTemplate,
+  LivePatientPrograms,
   ReviewDecision,
 } from "./live-types";
 
@@ -278,4 +286,101 @@ export const liveClient = {
     method: "POST",
     body: { itemId, decision, reviewNote },
   }),
+
+  /* ---------------------------------------------- programs (phase 3) */
+  programLibrary: (input: { query?: string | null; status?: string | null; limit?: number }) =>
+    liveFetch<LiveProgramLibrary>("programs/library", { method: "POST", body: input }),
+
+  programStudio: (programId: string) =>
+    liveFetch<LiveProgramStudio>("programs/studio", { method: "POST", body: { programId } }),
+
+  listProgramTemplates: (includeArchived = false) =>
+    liveFetch<LiveProgramTemplate[]>("programs/templates", {
+      method: "POST",
+      body: { includeArchived },
+    }),
+
+  createProgram: (input: { name: string; fromTemplateId?: string | null }) =>
+    liveFetch<LiveProgramMutationResult>("programs/create", { method: "POST", body: input }),
+
+  saveProgramDraft: (input: {
+    versionId: string;
+    payload: LiveProgramDraftPayload;
+    expectedUpdatedAt: string | null;
+  }) => liveFetch<LiveProgramMutationResult>("programs/save", { method: "POST", body: input }),
+
+  programVersionAction: (input: {
+    action: "submit" | "return" | "approve" | "publish" | "revise" | "archive" | "restore";
+    versionId?: string;
+    programId?: string;
+    note?: string | null;
+  }) => liveFetch<LiveProgramMutationResult>("programs/version-action", {
+    method: "POST",
+    body: input,
+  }),
+
+  programTemplateAction: (input: {
+    action: "create" | "approve" | "archive" | "restore";
+    name?: string;
+    description?: string | null;
+    fromVersionId?: string | null;
+    versionId?: string;
+    templateId?: string;
+  }) => liveFetch<LiveProgramMutationResult>("programs/template-action", {
+    method: "POST",
+    body: input,
+  }),
+
+  upsertProgramOffer: (input: {
+    programId: string;
+    offerId?: string | null;
+    name?: string | null;
+    priceCents?: number;
+    currency?: string;
+    accessDurationDays?: number | null;
+    paymentMode?: LiveProgramOfferPaymentMode;
+    enrollmentOpen?: boolean;
+    status?: "active" | "retired";
+  }) => liveFetch<LiveProgramMutationResult>("programs/offer", { method: "POST", body: input }),
+
+  programEnroll: (input: {
+    programId: string;
+    patientId: string;
+    offerId?: string | null;
+    activate?: boolean;
+    compReason?: string | null;
+  }) => liveFetch<LiveProgramMutationResult>("programs/enrollment", {
+    method: "POST",
+    body: { action: "enroll", ...input },
+  }),
+
+  programEnrollmentStatus: (input: {
+    enrollmentId: string;
+    status: LiveProgramEnrollmentStatus;
+    reason?: string | null;
+  }) => liveFetch<LiveProgramMutationResult>("programs/enrollment", {
+    method: "POST",
+    body: { action: "status", ...input },
+  }),
+
+  programRecordProgress: (input: {
+    enrollmentId: string;
+    kind: "lesson_completed" | "check_in" | "quiz_response" | "adherence";
+    lessonId?: string | null;
+    blockId?: string | null;
+    payload?: Record<string, unknown>;
+    needsReview?: boolean;
+  }) => liveFetch<LiveProgramMutationResult>("programs/progress", {
+    method: "POST",
+    body: { action: "record", ...input },
+  }),
+
+  programReviewProgress: (progressId: string) =>
+    liveFetch<LiveProgramMutationResult>("programs/progress", {
+      method: "POST",
+      body: { action: "review", progressId },
+    }),
+
+  patientPrograms: (patientId: string) =>
+    liveFetch<LivePatientPrograms>("programs/patient", { method: "POST", body: { patientId } }),
 };

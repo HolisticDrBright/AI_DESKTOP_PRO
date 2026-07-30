@@ -4,6 +4,7 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { Metric } from "@/components/ui/Metric";
 import { ClinicalNote } from "@/components/ui/ClinicalStates";
 import { TodayScheduleLive } from "@/components/today/TodayScheduleLive";
+import { TodayProgramsLive } from "@/components/today/TodayProgramsLive";
 
 export const metadata: Metadata = { title: "Today — AI Longevity Pro" };
 
@@ -40,6 +41,9 @@ export default function TodayPage() {
       </div>
       <div className="mb-4">
         <TodayScheduleLive />
+      </div>
+      <div className="mb-4">
+        <TodayProgramsLive />
       </div>
       <ClinicalNote>
         Unread patient messages, notes awaiting signature, wearable alerts, and outstanding balances

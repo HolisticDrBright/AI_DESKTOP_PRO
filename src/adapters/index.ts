@@ -39,6 +39,9 @@ import type {
   LiveAppointmentStatus,
   LiveAuditEvent,
   LiveBookInput,
+  LiveProgramDraftPayload,
+  LiveProgramEnrollmentStatus,
+  LiveProgramOfferPaymentMode,
   LiveProtocolDraftPayload,
 } from "./live-types";
 
@@ -201,6 +204,130 @@ export const api = {
       archive: async (templateId: string, archived = true) =>
         liveClient.protocolTemplateAction({ action: "archive", templateId, archived }),
     },
+  },
+  programs: {
+    /**
+     * LIVE: the organization's program library. Enrollment counts are counts
+     * of PERSISTED enrollment rows — engagement, revenue, completion rates,
+     * and "at-risk" metrics are NOT computed anywhere because no honest data
+     * source for them exists.
+     */
+    library: async (input: { query?: string | null; status?: string | null; limit?: number } = {}) =>
+      liveClient.programLibrary(input),
+    /** LIVE: one program's studio — versions, history, events, offers, roster. */
+    studio: async (programId: string) => liveClient.programStudio(programId),
+    /** LIVE: organization-owned templates (archived hidden unless asked). */
+    listTemplates: async (includeArchived = false) =>
+      liveClient.listProgramTemplates(includeArchived),
+    /** LIVE: blank draft, or a DETACHED copy of an APPROVED template version. */
+    create: async (input: { name: string; fromTemplateId?: string | null }) =>
+      liveClient.createProgram(input),
+    /**
+     * LIVE: wholesale autosave. `expectedUpdatedAt` is the concurrency token —
+     * a stale token returns a conflict rather than overwriting another editor.
+     */
+    saveDraft: async (input: {
+      versionId: string;
+      payload: LiveProgramDraftPayload;
+      expectedUpdatedAt: string | null;
+    }) => liveClient.saveProgramDraft(input),
+    /** LIVE: draft -> in_review. */
+    submit: async (versionId: string) =>
+      liveClient.programVersionAction({ action: "submit", versionId }),
+    /** LIVE: in_review -> draft, with the reviewer's note. */
+    returnToDraft: async (versionId: string, note?: string | null) =>
+      liveClient.programVersionAction({ action: "return", versionId, note: note ?? null }),
+    /** LIVE: freeze an in-review version as approved. Does NOT publish it. */
+    approve: async (versionId: string, note?: string | null) =>
+      liveClient.programVersionAction({ action: "approve", versionId, note: note ?? null }),
+    /**
+     * LIVE: publish an approved version — a separate, confirmed action.
+     * Supersedes the previous published version WITHOUT touching pinned
+     * enrollments, and creates no enrollment, charge, invoice, message,
+     * protocol, order, task, or note.
+     */
+    publish: async (versionId: string) =>
+      liveClient.programVersionAction({ action: "publish", versionId }),
+    /** LIVE: copy a frozen version into a NEW draft (never edit it in place). */
+    revise: async (versionId: string) =>
+      liveClient.programVersionAction({ action: "revise", versionId }),
+    /** LIVE: archive/restore. Published history and enrollments are preserved. */
+    archive: async (programId: string, archived = true) =>
+      liveClient.programVersionAction({
+        action: archived ? "archive" : "restore",
+        programId,
+      }),
+    templates: {
+      create: async (input: {
+        name: string;
+        description?: string | null;
+        fromVersionId?: string | null;
+      }) => liveClient.programTemplateAction({ action: "create", ...input }),
+      approve: async (versionId: string) =>
+        liveClient.programTemplateAction({ action: "approve", versionId }),
+      /** Archiving never cascades into programs created from the template. */
+      archive: async (templateId: string, archived = true) =>
+        liveClient.programTemplateAction({
+          action: archived ? "archive" : "restore",
+          templateId,
+        }),
+    },
+    /**
+     * LIVE: offer terms storage ONLY. This application never processes a
+     * payment; a Stripe-mode offer is stored intent that the UI renders as
+     * "Not configured" and the database refuses to enroll against.
+     */
+    upsertOffer: async (input: {
+      programId: string;
+      offerId?: string | null;
+      name?: string | null;
+      priceCents?: number;
+      currency?: string;
+      accessDurationDays?: number | null;
+      paymentMode?: LiveProgramOfferPaymentMode;
+      enrollmentOpen?: boolean;
+      status?: "active" | "retired";
+    }) => liveClient.upsertProgramOffer(input),
+    /**
+     * LIVE: enroll, pinned to the exact published version. Eligibility,
+     * tenant agreement, comp reason + authorization, and the Stripe refusal
+     * are all server-enforced — the client can claim none of them.
+     */
+    enroll: async (input: {
+      programId: string;
+      patientId: string;
+      offerId?: string | null;
+      activate?: boolean;
+      compReason?: string | null;
+    }) => liveClient.programEnroll(input),
+    /** LIVE: pause / resume / complete / cancel / expire, machine-enforced. */
+    setEnrollmentStatus: async (input: {
+      enrollmentId: string;
+      status: LiveProgramEnrollmentStatus;
+      reason?: string | null;
+    }) => liveClient.programEnrollmentStatus(input),
+    /** LIVE: append-only progress against the enrollment's PINNED version. */
+    recordProgress: async (input: {
+      enrollmentId: string;
+      kind: "lesson_completed" | "check_in" | "quiz_response" | "adherence";
+      lessonId?: string | null;
+      blockId?: string | null;
+      payload?: Record<string, unknown>;
+      needsReview?: boolean;
+    }) => liveClient.programRecordProgress(input),
+    /** LIVE: the practitioner's explicit, audited progress review. */
+    reviewProgress: async (progressId: string) => liveClient.programReviewProgress(progressId),
+    /** LIVE: patient-chart enrollments with pinned versions + real progress. */
+    forPatient: async (patientId: string) => liveClient.patientPrograms(patientId),
+    /**
+     * UNAVAILABLE: the Program Builder AI. The contract is provider-neutral
+     * (a future approved provider slots in behind this same call), but with
+     * no approved provider configured it fails closed — the UI shows the
+     * honest not-configured state and NEVER renders fixture AI output.
+     */
+    builderAI: notWired<[{ instruction: string; versionId: string }], never>(
+      "AI program builder",
+    ),
   },
   reasoning: {
     /**

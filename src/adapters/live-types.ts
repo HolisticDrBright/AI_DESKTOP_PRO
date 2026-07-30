@@ -612,3 +612,282 @@ export interface LiveInteractionReviewResult {
   alreadyReviewed: boolean;
   message: string;
 }
+
+/* ------------------------------------------------------------------ */
+/* Programs & Education (phase 3)                                      */
+/* ------------------------------------------------------------------ */
+
+export type LiveProgramStatus = "draft" | "published" | "archived";
+export type LiveProgramVersionStatus =
+  | "draft"
+  | "in_review"
+  | "approved"
+  | "published"
+  | "superseded";
+export type LiveProgramBlockKind =
+  | "text"
+  | "image"
+  | "video_url"
+  | "document_link"
+  | "quiz"
+  | "check_in"
+  | "resource";
+export type LiveProgramEnrollmentStatus =
+  | "invited"
+  | "active"
+  | "paused"
+  | "completed"
+  | "cancelled"
+  | "expired";
+export type LiveProgramOfferPaymentMode = "free" | "manual_comp" | "stripe";
+
+export interface LiveProgramListItem {
+  id: string;
+  name: string;
+  description: string | null;
+  status: LiveProgramStatus;
+  archivedAt: string | null;
+  updatedAt: string;
+  publishedVersion: number | null;
+  /** Status of the version currently being edited, if one exists. */
+  draftStatus: LiveProgramVersionStatus | null;
+  /** Counts of PERSISTED enrollment rows only; nothing is projected. */
+  enrollment: {
+    invited: number;
+    active: number;
+    paused: number;
+    completed: number;
+  };
+}
+
+export interface LiveProgramLibrary {
+  programs: LiveProgramListItem[];
+  generatedAt: string;
+}
+
+export interface LiveProgramBlock {
+  id: string;
+  kind: LiveProgramBlockKind;
+  title: string | null;
+  /** Kind-specific body validated by the database on save. */
+  content: Record<string, unknown>;
+  /** Commercial resources are labeled; they never serve as clinical evidence. */
+  isCommercial: boolean;
+  position: number;
+}
+
+export interface LiveProgramLesson {
+  id: string;
+  title: string;
+  summary: string | null;
+  position: number;
+  blocks: LiveProgramBlock[];
+}
+
+export interface LiveProgramModule {
+  id: string;
+  name: string;
+  summary: string | null;
+  position: number;
+  lessons: LiveProgramLesson[];
+}
+
+/** Full nested projection of one version (modules -> lessons -> blocks). */
+export interface LiveProgramVersionDetail {
+  id: string;
+  version: number;
+  status: LiveProgramVersionStatus;
+  title: string | null;
+  summary: string | null;
+  audience: string | null;
+  disclaimer: string | null;
+  sourceTemplateId: string | null;
+  sourceTemplateVersion: number | null;
+  supersedesVersionId: string | null;
+  reviewNote: string | null;
+  approvedAt: string | null;
+  publishedAt: string | null;
+  updatedAt: string;
+  createdAt: string;
+  modules: LiveProgramModule[];
+}
+
+export interface LiveProgramHistoryEntry {
+  id: string;
+  version: number;
+  status: LiveProgramVersionStatus;
+  title: string | null;
+  approvedAt: string | null;
+  publishedAt: string | null;
+  createdAt: string;
+  supersedesVersionId: string | null;
+}
+
+export interface LiveProgramVersionEvent {
+  versionId: string;
+  fromStatus: LiveProgramVersionStatus | null;
+  toStatus: LiveProgramVersionStatus;
+  note: string | null;
+  createdAt: string;
+}
+
+export interface LiveProgramOffer {
+  id: string;
+  name: string;
+  /** Stored commercial terms ONLY — this application never processes payment. */
+  priceCents: number;
+  currency: string;
+  accessDurationDays: number | null;
+  paymentMode: LiveProgramOfferPaymentMode;
+  enrollmentOpen: boolean;
+  status: "active" | "retired";
+}
+
+export interface LiveProgramRosterEntry {
+  enrollmentId: string;
+  patientId: string;
+  patientName: string;
+  status: LiveProgramEnrollmentStatus;
+  /** The exact published version number this enrollment is pinned to. */
+  pinnedVersion: number | null;
+  enrolledAt: string;
+  startedAt: string | null;
+  expiresAt: string | null;
+  completedAt: string | null;
+  compReason: string | null;
+  lastActivityAt: string | null;
+  progressCount: number;
+  needsReviewCount: number;
+}
+
+export interface LiveProgramStudio {
+  program: {
+    id: string;
+    name: string;
+    description: string | null;
+    status: LiveProgramStatus;
+    archivedAt: string | null;
+    updatedAt: string;
+    publishedVersionId: string | null;
+  };
+  canAuthor: boolean;
+  /** The draft or in-review version being edited, if one exists. */
+  editable: LiveProgramVersionDetail | null;
+  /** The immutable published version, if one exists. */
+  published: LiveProgramVersionDetail | null;
+  history: LiveProgramHistoryEntry[];
+  events: LiveProgramVersionEvent[];
+  offers: LiveProgramOffer[];
+  roster: LiveProgramRosterEntry[];
+  generatedAt: string;
+}
+
+export interface LiveProgramTemplate {
+  id: string;
+  name: string;
+  description: string | null;
+  status: "draft" | "approved" | "archived";
+  archivedAt: string | null;
+  approvedVersionId: string | null;
+  approvedVersion: number | null;
+  currentVersionId: string | null;
+  updatedAt: string;
+}
+
+/**
+ * Wholesale autosave payload: the database replaces the whole curriculum with
+ * exactly this content, validating every block by kind. Ids come back in
+ * payload order via `moduleIds` / `lessonIds` / `blockIds`.
+ */
+export interface LiveProgramDraftPayload {
+  title?: string;
+  summary?: string | null;
+  audience?: string | null;
+  disclaimer?: string | null;
+  modules?: {
+    name: string;
+    summary?: string | null;
+    lessons?: {
+      title: string;
+      summary?: string | null;
+      blocks?: {
+        kind: LiveProgramBlockKind;
+        title?: string | null;
+        content: Record<string, unknown>;
+        isCommercial?: boolean;
+      }[];
+    }[];
+  }[];
+}
+
+export interface LiveProgramMutationResult {
+  ok: true;
+  message: string;
+  programId?: string;
+  versionId?: string;
+  version?: number;
+  status?: string;
+  templateId?: string;
+  offerId?: string;
+  enrollmentId?: string;
+  progressId?: string;
+  supersedesVersionId?: string;
+  pinnedVersionId?: string;
+  archived?: boolean;
+  alreadyReviewed?: boolean;
+  /** Fresh autosave token after a successful save. */
+  updatedAt?: string;
+  /** Persisted row ids in payload order after a wholesale save. */
+  moduleIds?: string[];
+  lessonIds?: string[];
+  blockIds?: string[];
+}
+
+export interface LivePatientProgramEnrollment {
+  enrollmentId: string;
+  programId: string;
+  programName: string;
+  status: LiveProgramEnrollmentStatus;
+  pinnedVersion: number | null;
+  pinnedVersionTitle: string | null;
+  enrolledAt: string;
+  startedAt: string | null;
+  expiresAt: string | null;
+  completedAt: string | null;
+  lastActivityAt: string | null;
+  progressCount: number;
+  lessonsCompleted: number;
+  lessonTotal: number;
+  needsReviewCount: number;
+}
+
+export interface LivePatientPrograms {
+  enrollments: LivePatientProgramEnrollment[];
+  generatedAt: string;
+}
+
+/**
+ * Versioned delivery DTO for the FUTURE AI Longevity Pro handoff.
+ *
+ * This is a contract definition only. Nothing in this repository calls AI
+ * Longevity Pro, transmits this DTO anywhere, or claims content reached the
+ * patient app. When a verified delivery integration exists it will consume
+ * exactly this shape, versioned so the mobile side can reject unknown
+ * revisions instead of guessing.
+ */
+export interface ProgramDeliveryV1 {
+  contract: "program-delivery";
+  contractVersion: 1;
+  organizationId: string;
+  programId: string;
+  /** The immutable published version the enrollment is pinned to. */
+  programVersionId: string;
+  programVersion: number;
+  enrollmentId: string;
+  patientId: string;
+  title: string | null;
+  summary: string | null;
+  disclaimer: string | null;
+  modules: LiveProgramModule[];
+  generatedAt: string;
+}

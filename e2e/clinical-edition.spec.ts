@@ -121,6 +121,22 @@ test("the today brief and protocol screen stay honest with a down backend", asyn
   expect(body).not.toContain("Active version");
 });
 
+test("the programs workspace stays honest with a down backend", async ({ page }) => {
+  // PHASE 3: /programs is a real workspace now. With the backend down it must
+  // refuse — never a synthetic library, and never a false "no programs yet"
+  // (an empty org and an unreachable backend are different claims).
+  await page.goto("/programs");
+  await page.waitForLoadState("networkidle");
+  const body = (await page.locator("body").innerText()).trim();
+  await expectNoFixtureData(body, "/programs with the backend down");
+  expect(
+    body,
+    `/programs must report itself unavailable. Got:\n${body.slice(0, 600)}`,
+  ).toMatch(/didn.t load|unavailable|not configured|cannot reach|couldn.t reach|try again|sign in/i);
+  expect(body).not.toContain("No programs yet");
+  expect(body).not.toContain("Enrollments:");
+});
+
 test("settings reports the clinical edition and its real configuration state", async ({ page }) => {
   await page.goto("/settings");
   await page.waitForLoadState("networkidle");
