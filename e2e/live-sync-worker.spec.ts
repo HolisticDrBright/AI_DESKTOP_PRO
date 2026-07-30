@@ -88,7 +88,7 @@ function workerEnv(overrides: Record<string, string> = {}) {
     NODE_ENV: "test",
   };
   for (const marker of DEPLOY_MARKERS) delete env[marker];
-  return { ...env, ...overrides };
+  return { ...env, ...overrides } as NodeJS.ProcessEnv;
 }
 
 /** Run the REAL worker entry point once and collect its exit code + output. */
@@ -472,8 +472,9 @@ test("13: the callback boundary verifies signatures BEFORE parsing; replay/overs
   });
   expect(wrongType.status()).toBe(415);
 
-  callbackWorker.kill();
-  await new Promise((resolve) => callbackWorker!.on("close", resolve));
+  const running = callbackWorker!;
+  running.kill();
+  await new Promise((resolve) => running.on("close", resolve));
   callbackWorker = null;
 });
 
