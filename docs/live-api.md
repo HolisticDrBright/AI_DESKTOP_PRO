@@ -93,6 +93,9 @@ event key, identifiers, and bounded scalar metadata.
 | `schedule.book` / `updateStatus` / `reschedule` | n/a (demo announces, never pretends to persist) | ✅ direct RPCs: scheduling-role authorization separated from chart writes, advisory overlap locks, status state machine, persisted rescheduling, and atomic audit |
 | `encounters.start` / `setStatus` / `get` / `forPatient` | honest live-only state | ✅ direct authenticated RPCs; bounded exact-shape reads, tenant checks, state machine, appointment-scoped idempotency, and database uniqueness for one active encounter per appointment |
 | `encounters.saveNote` / `getNote` / `markReady` / `signNote` / `addAddendum` / `markError` / `timeline` | honest live-only state | ✅ direct authenticated RPCs; optimistic concurrency, signed-note immutability, append-only addenda, provenance, bounded timeline, and atomic audit |
+| `lens` reads — `paradigms` / `domains` / `knowledgeSources` / `evaluation` / `answers` | n/a (lens is a live encounter surface) | ✅ bounded Desktop DTO RPCs (`list_desktop_lens_paradigms/domains/knowledge_sources`, `get_desktop_lens_evaluation`, `list_desktop_question_answers`); encounter-scoped worklist, registry unknowns stay `null` |
+| `lens` question lifecycle — `questionAction` / `dismiss` / `answer` / `correctAnswer` / `recordNoteUse` / `feedback` / `reviewSafetyBlock` | n/a | ✅ direct caller-authorized RPCs (migration 0024): validated transition map, versioned append-only answers, explicit audited add-to-note, safety-block review |
+| `lens.evaluate` / `lens.aiStatus` | n/a | transitional worker (by design): the rules/AI engine computes under the caller's RLS view and persists atomically via `run_lens_evaluation` |
 | `knowledge.pathways` / `createDraft` / `updateDraft` / `approve` | session registry | ✅ authenticated organization registry through role-gated RPCs; approved content is immutable |
 | `knowledge.imports` / `stageImport` / `reviewImportItem` | session import review | ✅ immutable, hashed import batches with no-PHI attestation; acceptance creates only a pathway draft or pending product label |
 | everything else | mock | mock |
@@ -129,11 +132,13 @@ reusing `runClinicalMutation` for writes and `ClinicalStates` for async UI.
 
 The clinical knowledge registry, practitioner identity/session lifecycle,
 organization selection and membership management, patient directory, labs
-workspace/review, review queue, audit log, and scheduling use the
-Desktop-owned boundary defined in ADR 0003. Their live adapters use
-`supabase-rest.server.ts`, with the publishable key and caller JWT confined to
-the Next.js server. Lab PDF ingestion remains worker-backed; other domains
-stay on transitional adapters until migrated in their own tested slices.
+workspace/review, review queue, audit log, scheduling, encounters/notes, and
+lens reads plus the question lifecycle use the Desktop-owned boundary defined
+in ADR 0003. Their live adapters use `supabase-rest.server.ts`, with the
+publishable key and caller JWT confined to the Next.js server. Lab PDF
+ingestion, scribe capture/transcription, and the lens evaluation engine remain
+worker-backed; those legs stay on transitional adapters until migrated in
+their own tested slices.
 
 ## Security assumptions
 
@@ -178,20 +183,40 @@ layer is verified separately (`supabase/tests/*.sql` via MCP). The gated live
 suite runs against it after a live-flag build: `E2E_LIVE=1 npm run test:e2e --
 e2e/live-tasks.spec.ts e2e/live-scribe.spec.ts e2e/live-lens.spec.ts`.
 
-## Verification (this change)
+## Verification (this change — Desktop-owned lens slice)
 
 | Layer | How | Result |
 | --- | --- | --- |
 | Static checks | `npm run typecheck`, `npm run lint`, demo + live production builds | green |
-| Unit adapters | `npm run test:unit` | **56/56** (auth, PostgREST errors, organizations, selected-org patient/lab/queue/audit/calendar reads, registered audit, review/task, and schedule mutations, dates, knowledge) |
-| Desktop identity DB boundary | rolled-back SQL against the clinical project — `supabase/tests/desktop_identity_directory.sql` | **6/6** (active memberships only, assigned-patient RLS, cross-tenant denial, anon execute denied, explicit grants) |
-| Desktop labs/queue DB boundary | rolled-back SQL against the clinical project — `supabase/tests/desktop_labs_review_queue.sql` | **12/12** (patient and org queue visibility, reference/provenance joins, cross-tenant and anonymous denial, minimum grants, atomic review/resolve/create) |
-| Desktop audit DB boundary | rolled-back SQL against the clinical project — `supabase/tests/desktop_audit_actions.sql` | **13/13** (registered wording, metadata allowlist, tenant and role visibility, anonymous and direct-table denial) |
-| Desktop scheduling DB boundary | rolled-back SQL against the clinical project — `supabase/tests/desktop_scheduling.sql` | **21/21** (role-scoped calendar, minimal patient picker, staff operations, practitioner assignment limits, overlap locks, cross-tenant and direct-table denial, idempotency, atomic audit) |
-| Scheduling regression DB suite | rolled-back SQL against the clinical project — `supabase/tests/scheduling.sql` | **20/20** |
-| Demo UI | production build + Playwright | **41/41** |
-| Full live contract fixture | live production build + Playwright (`live-tasks`, `live-scribe`, `live-lens`) | **32/32** (auth rotation/revocation/logout, organizations, patient isolation, labs, scheduling, EMR, scribe, lens, registered audit boundary) |
-| Dependency audit | `npm audit` after non-breaking remediation | safe patch updates applied; remaining reports are the Next/sharp and ESLint/minimatch toolchains whose automated remedies require breaking downgrades |
+| Unit adapters | `npm run test:unit` | **66/66** (adds 5 lens-boundary tests: RPC names, argument parity, DTO passthrough, null evaluation, 40003/55000 → conflict, transitional-legs-only tRPC) |
+| Desktop lens DB boundary | rolled-back SQL against the staging project — `supabase/tests/desktop_lens.sql` | **23/23** (anon+public execute denial across all 13 lens RPCs, authenticated grants, definer + pinned empty `search_path`, `can_access_patient` / `require_clinical_actor` gating, reference reads, exact evaluation and question DTO shapes, null evaluation, unknown paradigm, lifecycle transitions incl. `40003` refusal, versioned answer corrections, `55000` precondition, supersede semantics, cross-tenant read and mutation denial, anonymous denial, auth-gated reference policies, worker-ledger grant denial, 17/17 FK indexes) |
+| Prior Desktop DB boundaries | previously verified rolled-back staging suites (identity 6/6, labs/queue 12/12, audit 13/13, scheduling 21/21 + 20/20, encounters/notes 14/14) | unchanged by this slice |
+| Supabase advisors | security + performance, re-run after each DDL | **0 security ERRORs.** Lens tables cleared all 16 unindexed-FK findings and all 3 `auth_rls_initplan` WARNs; remaining lens notices are fresh-index `unused_index` INFO until staging traffic exercises them. The 5 new lens `authenticated_security_definer_function_executable` WARNs are accepted by design (each re-checks role and tenant in-body). `rls_enabled_no_policy` on `provider_callback_events` is the intended worker-only posture and is now also revoked at the grant level. |
+| Demo UI | production build + Playwright | **41/41** (two date-dependent Today tests were latent-flaky — they assumed the weekday's first schedule patient carries the curated clinical summary; now robust on every weekday) |
+| Full live contract fixture | live production build + Playwright (`live-tasks`, `live-scribe`, `live-lens`) | **20/20 + 8/8 + 5/5** — the lens suite now exercises the Desktop `/rest/v1/rpc` boundary for reads and the question lifecycle |
+
+Three migrations are applied to the synthetic-only staging project and their
+filenames match the recorded ledger versions: `20260730001350`
+(`desktop_owned_lens`), `20260730001742`
+(`desktop_lens_index_and_rls_hardening`), and `20260730002121`
+(`worker_callback_ledger_privileges`). Local history now matches remote
+history through `20260730002121`.
+
+Two advisor-driven fixes shipped with this slice. The lens reference-read
+policies (`clinical_paradigms`, `clinical_domains`,
+`clinical_knowledge_sources`) now wrap `auth.uid()` in a scalar subquery so it
+is evaluated once per statement instead of once per row — the predicate is
+unchanged and anonymous callers still see zero rows (asserted). And
+`provider_callback_events`, the worker-only callback ledger, still carried
+Supabase's default `anon`/`authenticated` table grants; RLS-with-no-policy was
+the only thing denying browser roles, so the grants are now revoked outright,
+mirroring what `desktop_audit_table_privileges` did for `audit_events`.
+
+Known pre-existing advisor findings **outside** this slice, deliberately left
+alone: 20 `auth_rls_initplan` WARNs and 90 `multiple_permissive_policies`
+WARNs across unrelated domains (supplements, assessments, reference catalogs),
+plus 461 unindexed-FK INFO notices schema-wide. These predate the lens work
+and warrant their own audited hardening slice rather than an untested sweep.
 
 The real signed-in staging browser gate remains an external deployment check;
 the database acceptance suite and committed contract fixture are supporting

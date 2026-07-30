@@ -28,6 +28,7 @@ function mapPostgrestError(status: number, serverCode?: string): AdapterErrorCod
       return "invalid";
     case "23505":
     case "40001":
+    case "40003":
     case "55000":
       return "conflict";
     default:

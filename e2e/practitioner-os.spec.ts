@@ -124,28 +124,46 @@ test("Today: patient name and Chart action open the complete patient record", as
   const patientCount = await patientLinks.count();
   expect(patientCount).toBeGreaterThan(0);
   await expect(patientFiles).toHaveCount(patientCount);
+  // The schedule (and therefore the first row's patient) rotates with the
+  // real weekday, so assert what every linked patient guarantees: the link
+  // opens that patient's consolidated record with the full tab system.
   const patientLink = patientLinks.first();
   const patientName = await patientLink.textContent();
   await patientLink.click();
   await expect(page).toHaveURL(/\/patients\/[^/]+\/overview$/);
   await expect(page.getByRole("heading", { name: patientName?.trim() ?? "" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Clinical overview" })).toBeVisible();
-  await expect(page.getByText("Health score", { exact: true })).toBeVisible();
-  await expect(page.getByText("Recent labs & biomarkers", { exact: true })).toBeVisible();
-  await expect(page.getByText("Wearables & recovery", { exact: true })).toBeVisible();
-  await expect(page.getByText("Active plan & experiments", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Patient profile & practice details" })).toBeVisible();
   await expect(page.getByRole("tab", { name: "Chart & Timeline" })).toBeVisible();
   await expect(page.getByRole("tab", { name: "Protocol" })).toBeVisible();
   await expect(page.getByRole("tab", { name: "Nutrition" })).toBeVisible();
   await expect(page.getByRole("tab", { name: "Supplements" })).toBeVisible();
   await expect(page.getByRole("link", { name: "Patients" })).toHaveAttribute("aria-current", "page");
+
+  // The concise clinical strip is curated data — assert it on the flagship
+  // record, which carries the complete handoff dataset every weekday.
+  await page.goto("/patients/p-78435/overview");
+  await expect(page.getByRole("heading", { name: "Clinical overview" })).toBeVisible();
+  await expect(page.getByText("Health score", { exact: true })).toBeVisible();
+  await expect(page.getByText("Recent labs & biomarkers", { exact: true })).toBeVisible();
+  await expect(page.getByText("Wearables & recovery", { exact: true })).toBeVisible();
+  await expect(page.getByText("Active plan & experiments", { exact: true })).toBeVisible();
 });
 
 test("Today: a newly linked schedule patient opens the matching patient file", async ({ page }) => {
   await page.goto("/today");
-  await page.getByRole("link", { name: "Open full patient record for Hannah Kim" }).first().click();
-  await expect(page).toHaveURL(/\/patients\/p-80518\/overview$/);
-  await expect(page.getByRole("heading", { name: "Hannah Kim", level: 1 })).toBeVisible();
+  // Which newly linked (p-805xx) patients appear rotates with the real
+  // weekday; every weekday schedules at least one. Whichever renders first
+  // must open its own patient file — these names used to dead-end.
+  const derivedLink = page
+    .getByRole("link", { name: /Open full patient record for/ })
+    .and(page.locator('a[href^="/patients/p-805"]'))
+    .first();
+  await expect(derivedLink).toBeVisible();
+  const patientName = (await derivedLink.textContent())?.trim() ?? "";
+  const href = await derivedLink.getAttribute("href");
+  await derivedLink.click();
+  await expect(page).toHaveURL(new RegExp(`${href}$`));
+  await expect(page.getByRole("heading", { name: patientName, level: 1 })).toBeVisible();
   await expect(page.getByRole("link", { name: "Patients" })).toHaveAttribute("aria-current", "page");
 });
 

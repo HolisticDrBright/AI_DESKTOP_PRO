@@ -116,6 +116,26 @@ Status legend: ✅ live path exists · 🟢 ready to wire (schema + pattern exis
   mock/server-AI concern. Generated content is always a draft and never signs,
   sends, orders, or publishes itself.
 
+## Lens / differential questions — ✅ reads + lifecycle Desktop-owned
+- **Surface:** encounter workspace lens panel (`LensPanel` via `/api/live/lens/*`)
+- **Adapter:** `lensLive.*` through `lens.live.ts`
+- **Desktop boundary:** bounded reads (`get_desktop_lens_evaluation`,
+  `list_desktop_question_answers`, `list_desktop_lens_paradigms/domains/
+  knowledge_sources`, migration `20260730001350_desktop_owned_lens.sql`, with
+  index/RLS hardening in `20260730001742`) plus
+  direct calls to the caller-authorized 0024 lifecycle RPCs
+  (`set_question_status`, `dismiss_question`, `answer_question`,
+  `correct_question_answer`, `record_question_note_use`,
+  `submit_question_feedback`, `review_safety_block`).
+- **Safety:** invariant core immutability, validated transition map (`40003`),
+  versioned append-only answers, stale/supersede semantics, reviewable safety
+  blocks, and explicit audited add-to-note stay database-enforced.
+- **Transitional (by design):** `evaluate` + `aiStatus` — the rules/AI engine
+  computes the invariant core and questions under the caller's RLS view on the
+  provider worker and persists atomically through `run_lens_evaluation`. It
+  migrates in its own slice (port the deterministic rules engine or keep it a
+  provider service behind a versioned contract).
+
 ## Audit Log — ✅ dual-mode
 - **Route:** `/audit-log` — demo (sessionStorage) vs live (`list_audit_events`
   RPC: own events, all if org-admin)
