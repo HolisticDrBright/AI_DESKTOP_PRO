@@ -1,4 +1,25 @@
 import type { NextConfig } from "next";
+import { resolveEdition, type AppEdition } from "./src/lib/edition.build";
+
+/**
+ * EDITION RESOLUTION AT BUILD TIME.
+ *
+ * The operator sets plain `APP_EDITION=demo|clinical`. Next.js only inlines
+ * `NEXT_PUBLIC_*` into the browser bundle, so the validated value is published
+ * as `NEXT_PUBLIC_APP_EDITION` here — that is what `src/lib/edition.ts` reads.
+ *
+ * `EDITION_LOCK` lets a single-edition distribution refuse to build as the
+ * other product: the demo repository sets `EDITION_LOCK=demo`, so
+ * `APP_EDITION=clinical` fails the build there instead of producing a demo
+ * binary aimed at real infrastructure.
+ *
+ * An invalid or locked-out edition throws here, which fails the build. That is
+ * deliberate: a build whose data boundary is ambiguous must not ship.
+ */
+const EDITION: AppEdition = resolveEdition(
+  process.env.APP_EDITION,
+  process.env.EDITION_LOCK,
+);
 
 /**
  * Recording/transcript no-tracker boundary (Milestone 1, req 9) — enforced
@@ -28,8 +49,45 @@ const RECORDING_CSP = [
   "base-uri 'self'",
 ].join("; ");
 
+/**
+ * DEMO EDITION EGRESS LOCK.
+ *
+ * The demo must never contact Supabase, Railway, Stripe, OpenAI, email, SMS,
+ * storage, lab vendors, or any clinical API. Its adapters are synthetic by
+ * construction, but "by construction" is a claim about code; this is the
+ * browser refusing on its own. `connect-src 'self'` means every route in a
+ * demo build can only reach its own origin, so an accidental live import, a
+ * copied fetch call, or an injected third-party script has nowhere to go.
+ *
+ * The clinical edition keeps its narrower per-route recording CSP below
+ * instead, since it legitimately talks to its configured backend.
+ */
+const DEMO_GLOBAL_CSP = [
+  "default-src 'self'",
+  "script-src 'self' 'unsafe-inline'", // Next.js inline runtime; no external scripts
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob:",
+  "font-src 'self' data:",
+  "connect-src 'self'",
+  "media-src 'self' blob:",
+  "worker-src 'self' blob:",
+  "object-src 'none'",
+  "frame-src 'none'",
+  "frame-ancestors 'none'",
+  "form-action 'self'",
+  "base-uri 'self'",
+].join("; ");
+
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  /**
+   * Publish the validated edition to the browser bundle. `src/lib/edition.ts`
+   * reads these two and nothing else.
+   */
+  env: {
+    NEXT_PUBLIC_APP_EDITION: EDITION,
+    NEXT_PUBLIC_EDITION_LOCK: (process.env.EDITION_LOCK ?? "").trim().toLowerCase(),
+  },
   async redirects() {
     // Route consolidation (practitioner-OS IA). Old URLs stay alive —
     // see docs/information-architecture.md. Mode-dependent redirects
@@ -47,6 +105,24 @@ const nextConfig: NextConfig = {
     ];
   },
   async headers() {
+    if (EDITION === "demo") {
+      // Whole-app egress lock: a demo build can only talk to its own origin.
+      return [
+        {
+          source: "/:path*",
+          headers: [
+            { key: "Content-Security-Policy", value: DEMO_GLOBAL_CSP },
+            { key: "Referrer-Policy", value: "no-referrer" },
+            { key: "X-Content-Type-Options", value: "nosniff" },
+            { key: "X-App-Edition", value: "demo" },
+            // The demo scribe walkthrough records locally so the workflow is
+            // real to click through. `connect-src 'self'` above means those
+            // bytes cannot leave the origin — no provider, no transcription.
+            { key: "Permissions-Policy", value: "microphone=(self), camera=(), geolocation=()" },
+          ],
+        },
+      ];
+    }
     return [
       {
         // Encounter workspace = recording + transcript surface.

@@ -11,7 +11,10 @@
     "typecheck": "tsc --noEmit",
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed",
-    "test:unit": "cross-env TZ=America/Los_Angeles vitest run"
+    "test:unit": "cross-env TZ=America/Los_Angeles vitest run",
+    "build:demo": "cross-env APP_EDITION=demo next build",
+    "build:clinical": "cross-env APP_EDITION=clinical next build",
+    "check:clinical-bundle": "node scripts/check-clinical-bundle.mjs"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.101.2",
