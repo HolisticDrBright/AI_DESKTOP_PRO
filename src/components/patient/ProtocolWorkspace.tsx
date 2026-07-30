@@ -613,6 +613,16 @@ function DraftEditor({
         .then((r) => {
           dirty.current = false;
           if (r.updatedAt) setToken(r.updatedAt);
+          // Adopt the ids the server just wrote. An autosave replaces items
+          // wholesale, so without this the form would hold stale ids and the
+          // practitioner's interaction review would have nothing to target.
+          if (r.itemIds) {
+            const ids = r.itemIds;
+            setForm((prev) => ({
+              ...prev,
+              items: prev.items.map((it, i) => ({ ...it, itemId: ids[i] ?? null })),
+            }));
+          }
           setSave({ kind: "saved", at: r.updatedAt ?? new Date().toISOString() });
           return true;
         })
@@ -666,7 +676,9 @@ function DraftEditor({
     <Card className="p-4" >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <CardTitle>Draft version {version.version}</CardTitle>
+          <CardTitle>
+            <span data-testid="pd-version-heading">Draft version {version.version}</span>
+          </CardTitle>
           <p className="m-0 mt-1 text-[11.5px] text-faint">
             Drafts are the only editable version. Approved and active versions are immutable.
           </p>

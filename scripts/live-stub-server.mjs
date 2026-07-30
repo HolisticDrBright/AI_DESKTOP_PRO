@@ -31,6 +31,9 @@ const PORT = Number(process.env.STUB_PORT ?? 3999);
 const PATIENTS = [
   { id: "aaaaaaaa-1111-2222-3333-444444444401", organization_id: "org-fixture", mrn: "FX-0001", first_name: "Fixture", last_name: "Patient", date_of_birth: "1990-04-12", sex: "female", status: "active" },
   { id: "aaaaaaaa-1111-2222-3333-444444444402", organization_id: "org-fixture", mrn: "FX-0002", first_name: "Sample", last_name: "Client", date_of_birth: "1984-09-03", sex: "male", status: "active" },
+  // Dedicated to the phase-2 front-desk walkthrough so that suite consumes its
+  // own appointment instead of the one the EMR suite drives.
+  { id: "aaaaaaaa-1111-2222-3333-444444444403", organization_id: "org-fixture", mrn: "FX-0003", first_name: "Frontdesk", last_name: "Walkthrough", date_of_birth: "1979-02-20", sex: "female", status: "active" },
 ];
 
 const now = Date.now();
@@ -923,7 +926,17 @@ function seedScheduleFor(fromIso) {
       patientId: PATIENTS[0].id, patientName: "Fixture Patient",
       practitionerUserId: PRACTITIONER_USER_ID, practitionerName: "Demo Practitioner",
       title: null, appointmentType: "follow-up", location: "Room 1", telehealthUrl: null,
-      status: "confirmed", startsAt: at(1, 15).toISOString(), endsAt: at(1, 15, 45).toISOString(),
+      status: "confirmed", version: 1,
+      startsAt: at(1, 15).toISOString(), endsAt: at(1, 15, 45).toISOString(),
+    },
+    {
+      id: "abababab-1111-2222-3333-444444444403",
+      organizationId: "org-fixture",
+      patientId: PATIENTS[2].id, patientName: "Frontdesk Walkthrough",
+      practitionerUserId: PRACTITIONER_USER_ID, practitionerName: "Demo Practitioner",
+      title: null, appointmentType: "follow-up", location: "Room 3", telehealthUrl: null,
+      status: "confirmed", version: 1,
+      startsAt: at(3, 10).toISOString(), endsAt: at(3, 10, 40).toISOString(),
     },
     {
       id: "abababab-1111-2222-3333-444444444402",
@@ -931,9 +944,257 @@ function seedScheduleFor(fromIso) {
       patientId: null, patientName: null,
       practitionerUserId: PRACTITIONER_USER_ID, practitionerName: "Demo Practitioner",
       title: "Admin block", appointmentType: "break", location: "Admin", telehealthUrl: null,
-      status: "scheduled", startsAt: at(2, 12).toISOString(), endsAt: at(2, 13).toISOString(),
+      status: "scheduled", version: 1,
+      startsAt: at(2, 12).toISOString(), endsAt: at(2, 13).toISOString(),
     },
   );
+}
+
+// ---------------------------------------------------- front-desk state machine
+// The same edges as private.appointment_transition_allowed. Terminal statuses
+// have NO outgoing edges: leaving one requires correct_appointment_status.
+const APPT_TRANSITIONS = {
+  scheduled: ["confirmed", "arrived", "cancelled", "no_show"],
+  confirmed: ["arrived", "cancelled", "no_show"],
+  arrived: ["in_encounter", "completed", "cancelled", "no_show"],
+  in_encounter: ["completed", "cancelled"],
+  completed: [],
+  cancelled: [],
+  no_show: [],
+};
+/** Replayed idempotency keys, as the unique partial index would hold them. */
+const apptTransitionKeys = new Set();
+
+// ------------------------------------------------------------ product catalog
+// Three deliberately different data-quality levels, so the UI must show all
+// three honest verification states rather than assuming everything is verified.
+const CATALOG = [
+  {
+    productId: "88888888-1111-2222-3333-000000000001",
+    name: "Fixture Curcumin Phytosome",
+    form: "capsule",
+    manufacturer: "Fixture Structured Labs",
+    productVersionId: "77777777-1111-2222-3333-000000000001",
+    labelVersion: "LBL-2026-A",
+    servingSize: "1 capsule",
+    effectiveFrom: "2026-01-01",
+    verificationStatus: "structured_verified",
+    structuredIngredientCount: 1,
+  },
+  {
+    productId: "88888888-1111-2222-3333-000000000002",
+    name: "Fixture Magnesium Glycinate",
+    form: "capsule",
+    manufacturer: "Fixture Label Only Labs",
+    productVersionId: "77777777-1111-2222-3333-000000000002",
+    labelVersion: "LBL-2026-B",
+    servingSize: "2 capsules",
+    effectiveFrom: "2026-01-01",
+    verificationStatus: "label_verified",
+    structuredIngredientCount: 0,
+  },
+  {
+    productId: "88888888-1111-2222-3333-000000000003",
+    name: "Fixture Unlabelled Blend",
+    form: "powder",
+    manufacturer: null,
+    productVersionId: null,
+    labelVersion: null,
+    servingSize: null,
+    effectiveFrom: null,
+    verificationStatus: "unverified",
+    structuredIngredientCount: 0,
+  },
+];
+/** Real interaction rows, keyed on a coded medication identifier. */
+const CATALOG_INTERACTIONS = [
+  {
+    productVersionId: "77777777-1111-2222-3333-000000000001",
+    ingredient: "Curcumin",
+    rxnorm: "855332",
+    severity: "moderate",
+    mechanism: "CYP-mediated; may potentiate anticoagulant effect",
+    source: "Fixture interaction source",
+  },
+];
+/** The fixture patient's active medications; one carries a coded identifier. */
+const PROTOCOL_MEDICATIONS = [
+  { name: "Warfarin", rxnorm: "855332" },
+  { name: "Uncoded supplement", rxnorm: null },
+];
+
+// ------------------------------------------------------------ protocol state
+const protocols = new Map();
+const protocolTemplates = new Map();
+const protocolVersions = new Map();
+let protocolSeq = 0;
+const pid = (tag) =>
+  `${tag === "prot" ? "a0a0a0a0" : tag === "tpl" ? "b0b0b0b0" : "c0c0c0c0"}-1111-2222-3333-${String(
+    500000000000 + ++protocolSeq,
+  )}`;
+
+/** Derived exactly as private.catalog_verification_status derives it. */
+function catalogVerification(productId, productVersionId) {
+  if (!productVersionId) return "unverified";
+  const hit = CATALOG.find((p) => p.productVersionId === productVersionId);
+  if (!hit) return "unverified";
+  if (productId && hit.productId !== productId) return "unverified";
+  return hit.verificationStatus;
+}
+
+function newProtocolVersion({
+  organizationId,
+  protocolId = null,
+  templateId = null,
+  patientId = null,
+  title,
+  seed = null,
+  sourceTemplateId = null,
+  supersedesVersionId = null,
+}) {
+  const siblings = [...protocolVersions.values()].filter((v) =>
+    protocolId ? v.protocolId === protocolId : v.templateId === templateId,
+  );
+  const version = {
+    id: pid("ver"),
+    organizationId,
+    protocolId,
+    templateId,
+    patientId,
+    version: siblings.reduce((max, v) => Math.max(max, v.version), 0) + 1,
+    status: "draft",
+    title,
+    summary: seed?.summary ?? null,
+    dietInstructions: seed?.dietInstructions ?? null,
+    lifestyleInstructions: seed?.lifestyleInstructions ?? null,
+    monitoringPlan: seed?.monitoringPlan ?? null,
+    followupPlan: seed?.followupPlan ?? null,
+    sourceTemplateId,
+    sourceTemplateVersion: seed && sourceTemplateId ? seed.version : null,
+    supersedesVersionId,
+    approvedAt: null,
+    activatedAt: null,
+    reviewNote: null,
+    updatedAt: nowIso(),
+    createdAt: nowIso(),
+    phases: [],
+    items: [],
+  };
+  // A copy is DETACHED: fresh ids everywhere, so editing it can never reach
+  // back into the version or template it came from.
+  if (seed) {
+    const phaseIdMap = new Map();
+    version.phases = seed.phases.map((p) => {
+      const copy = { ...p, id: pid("ver") };
+      phaseIdMap.set(p.id, copy.id);
+      return copy;
+    });
+    version.items = seed.items.map((it) => ({
+      ...it,
+      id: pid("ver"),
+      phaseId: it.phaseId ? (phaseIdMap.get(it.phaseId) ?? null) : null,
+      // A copied product entry needs its OWN interaction review.
+      interactionReviewState: "not_completed",
+    }));
+  }
+  protocolVersions.set(version.id, version);
+  return version;
+}
+
+function applyDraftPayload(version, payload) {
+  version.title = String(payload.title ?? "").trim() || version.title;
+  version.summary = payload.summary ?? null;
+  version.dietInstructions = payload.dietInstructions ?? null;
+  version.lifestyleInstructions = payload.lifestyleInstructions ?? null;
+  version.monitoringPlan = payload.monitoringPlan ?? null;
+  version.followupPlan = payload.followupPlan ?? null;
+  version.phases = (payload.phases ?? []).map((p, i) => ({
+    id: pid("ver"),
+    name: String(p.name ?? "").slice(0, 120),
+    position: i,
+    startsOn: p.startsOn ?? null,
+    endsOn: p.endsOn ?? null,
+    relativeStartDay: p.relativeStartDay ?? null,
+    relativeDurationDays: p.relativeDurationDays ?? null,
+    notes: p.notes ?? null,
+  }));
+  version.items = (payload.items ?? []).map((it, i) => {
+    const productId = it.catalogProductId ?? null;
+    const productVersionId = it.catalogProductVersionId ?? null;
+    const catalogHit = productVersionId
+      ? CATALOG.find((p) => p.productVersionId === productVersionId)
+      : null;
+    return {
+      id: pid("ver"),
+      phaseId:
+        it.phaseIndex == null ? null : (version.phases[it.phaseIndex]?.id ?? null),
+      kind: it.kind,
+      position: i,
+      label: String(it.label ?? "").slice(0, 240),
+      instructions: it.instructions ?? null,
+      catalogProductId: productId,
+      catalogProductVersionId: productVersionId,
+      // Identity comes from the catalog when a label version is pinned, never
+      // from client text — the same rule the RPC enforces.
+      manufacturer: catalogHit ? catalogHit.manufacturer : (it.manufacturer ?? null),
+      labelVersion: catalogHit ? catalogHit.labelVersion : (it.labelVersion ?? null),
+      dosageText: it.dosageText ?? null,
+      timingText: it.timingText ?? null,
+      route: it.route ?? null,
+      // DERIVED. A client cannot assert this.
+      verificationStatus: catalogVerification(productId, productVersionId),
+      interactionReviewState: "not_completed",
+      affiliateUrl: it.affiliateUrl ?? null,
+    };
+  });
+  version.updatedAt = nowIso();
+}
+
+function protocolProjection(patientId, organizationId) {
+  const protocol = [...protocols.values()].find(
+    (p) => p.patientId === patientId && p.organizationId === organizationId,
+  );
+  if (!protocol) {
+    return {
+      exists: false,
+      canAuthor: true,
+      protocol: null,
+      draft: null,
+      approved: null,
+      active: null,
+      history: [],
+      generatedAt: nowIso(),
+    };
+  }
+  const mine = [...protocolVersions.values()]
+    .filter((v) => v.protocolId === protocol.id)
+    .sort((a, b) => b.version - a.version);
+  const pick = (status) => mine.find((v) => v.status === status) ?? null;
+  return {
+    exists: true,
+    canAuthor: true,
+    protocol: {
+      id: protocol.id,
+      title: protocol.title,
+      status: protocol.status,
+      createdAt: protocol.createdAt,
+      updatedAt: protocol.updatedAt,
+    },
+    draft: pick("draft"),
+    approved: pick("approved"),
+    active: pick("active"),
+    history: mine.map((v) => ({
+      id: v.id,
+      version: v.version,
+      status: v.status,
+      title: v.title,
+      approvedAt: v.approvedAt,
+      activatedAt: v.activatedAt,
+      createdAt: v.createdAt,
+      supersedesVersionId: v.supersedesVersionId,
+    })),
+    generatedAt: nowIso(),
+  };
 }
 
 const auditEvents = [];
@@ -1447,6 +1708,562 @@ createServer(async (req, res) => {
       return json(res, 200, 0);
     }
 
+    // ==================================================== front-desk machine
+    // Mirrors private.appointment_transition_allowed + transition_appointment:
+    // legal transitions only, optimistic version check, idempotency replay.
+    if (url.pathname === "/rest/v1/rpc/transition_appointment" && req.method === "POST") {
+      const body = await readBody(req);
+      const appointment = scheduleAppointments.find((item) => item.id === body._appointment_id);
+      if (!appointment) {
+        return json(res, 404, { code: "P0002", message: "appointment not found" });
+      }
+      if (!memberOrgIds.includes(appointment.organizationId)) {
+        return json(res, 403, {
+          code: "42501",
+          message: "not authorized to manage this appointment",
+        });
+      }
+      const to = String(body._to_status ?? "");
+      const key = body._idempotency_key ? String(body._idempotency_key) : null;
+      // Replay before anything else: a retried request applies once.
+      if (key && apptTransitionKeys.has(`${appointment.id}:${key}`)) {
+        return json(res, 200, {
+          id: appointment.id,
+          status: appointment.status,
+          previous_status: appointment.status,
+          version: appointment.version ?? 1,
+          already_applied: true,
+        });
+      }
+      const from = appointment.status;
+      if (from === to) {
+        return json(res, 200, {
+          id: appointment.id,
+          status: from,
+          previous_status: from,
+          version: appointment.version ?? 1,
+          already_applied: true,
+        });
+      }
+      if (!(APPT_TRANSITIONS[from] ?? []).includes(to)) {
+        return json(res, 400, {
+          code: "22023",
+          message: `an appointment cannot move from ${from} to ${to}`,
+        });
+      }
+      const expected = body._expected_version;
+      if (expected != null && Number(expected) !== (appointment.version ?? 1)) {
+        return json(res, 409, {
+          code: "40001",
+          message: "this appointment changed since it was loaded",
+        });
+      }
+      appointment.status = to;
+      appointment.version = (appointment.version ?? 1) + 1;
+      if (key) apptTransitionKeys.add(`${appointment.id}:${key}`);
+      pushAudit(
+        "appointment.status",
+        "appointment",
+        appointment.id,
+        `Appointment ${to.replaceAll("_", "-")}`,
+        { previous_status: from, status: to },
+        appointment.patientId,
+        appointment.organizationId,
+      );
+      return json(res, 200, {
+        id: appointment.id,
+        status: to,
+        previous_status: from,
+        version: appointment.version,
+        already_applied: false,
+      });
+    }
+
+    // Correction is the ONLY route out of a terminal status. Admins only.
+    if (url.pathname === "/rest/v1/rpc/correct_appointment_status" && req.method === "POST") {
+      const body = await readBody(req);
+      const appointment = scheduleAppointments.find((item) => item.id === body._appointment_id);
+      if (!appointment) {
+        return json(res, 404, { code: "P0002", message: "appointment not found" });
+      }
+      // Same convention as the audit-log fixture: the default fixture actor is
+      // an org owner; a `--staff` bearer stands in for a non-admin member.
+      const isOrgAdmin =
+        appointment.organizationId === "org-fixture" && !bearerToken.endsWith("--staff");
+      if (!isOrgAdmin) {
+        return json(res, 403, {
+          code: "42501",
+          message: "an administrator is required to correct a settled appointment",
+        });
+      }
+      if (!String(body._reason ?? "").trim()) {
+        return json(res, 400, { code: "22023", message: "a correction reason is required" });
+      }
+      const from = appointment.status;
+      appointment.status = String(body._to_status);
+      appointment.version = (appointment.version ?? 1) + 1;
+      pushAudit(
+        "appointment.status_corrected",
+        "appointment",
+        appointment.id,
+        "Appointment status corrected by an administrator",
+        { previous_status: from, status: appointment.status, reason_provided: true },
+        appointment.patientId,
+        appointment.organizationId,
+      );
+      return json(res, 200, {
+        id: appointment.id,
+        status: appointment.status,
+        previous_status: from,
+        version: appointment.version,
+        already_applied: false,
+      });
+    }
+
+    // ================================================= versioned protocols
+    if (url.pathname === "/rest/v1/rpc/search_protocol_catalog" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!memberOrgIds.includes(String(body._organization_id ?? ""))) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const q = String(body._query ?? "").trim().toLowerCase();
+      return json(res, 200, {
+        products: CATALOG.filter(
+          (p) =>
+            !q ||
+            p.name.toLowerCase().includes(q) ||
+            (p.manufacturer ?? "").toLowerCase().includes(q),
+        ).slice(0, Math.min(Number(body._limit ?? 20) || 20, 50)),
+        query: q || null,
+        generatedAt: nowIso(),
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/get_patient_protocol" && req.method === "POST") {
+      const body = await readBody(req);
+      const organizationId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(organizationId)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      return json(res, 200, protocolProjection(String(body._patient_id ?? ""), organizationId));
+    }
+
+    if (url.pathname === "/rest/v1/rpc/list_protocol_templates" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!memberOrgIds.includes(String(body._organization_id ?? ""))) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      return json(
+        res,
+        200,
+        [...protocolTemplates.values()]
+          .filter((t) => (body._include_archived ? true : t.status !== "archived"))
+          .map((t) => ({
+            id: t.id,
+            name: t.name,
+            description: t.description,
+            status: t.status,
+            archivedAt: t.archivedAt,
+            approvedVersionId: t.approvedVersionId,
+            currentVersionId: t.currentVersionId,
+            approvedVersion: t.approvedVersion,
+            updatedAt: t.updatedAt,
+          })),
+      );
+    }
+
+    if (url.pathname === "/rest/v1/rpc/create_protocol_draft" && req.method === "POST") {
+      const body = await readBody(req);
+      const organizationId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(organizationId)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      if (!String(body._title ?? "").trim()) {
+        return json(res, 400, { code: "22023", message: "a protocol title is required" });
+      }
+      const patientId = String(body._patient_id ?? "");
+      let protocol = [...protocols.values()].find(
+        (p) => p.patientId === patientId && p.organizationId === organizationId,
+      );
+      if (!protocol) {
+        protocol = {
+          id: pid("prot"),
+          organizationId,
+          patientId,
+          title: String(body._title).trim(),
+          status: "draft",
+          activeVersionId: null,
+          createdAt: nowIso(),
+          updatedAt: nowIso(),
+        };
+        protocols.set(protocol.id, protocol);
+      }
+      if ([...protocolVersions.values()].some((v) => v.protocolId === protocol.id && v.status === "draft")) {
+        return json(res, 400, { code: "22023", message: "a draft version already exists" });
+      }
+      let seed = null;
+      if (body._from_template_id) {
+        const tpl = protocolTemplates.get(String(body._from_template_id));
+        if (!tpl) return json(res, 404, { code: "P0002", message: "template not found" });
+        if (tpl.status !== "approved" || !tpl.approvedVersionId) {
+          return json(res, 400, {
+            code: "22023",
+            message: "only approved templates can start a protocol",
+          });
+        }
+        seed = protocolVersions.get(tpl.approvedVersionId) ?? null;
+      }
+      const version = newProtocolVersion({
+        organizationId,
+        protocolId: protocol.id,
+        patientId,
+        title: String(body._title).trim(),
+        seed,
+        sourceTemplateId: body._from_template_id ? String(body._from_template_id) : null,
+      });
+      return json(res, 200, {
+        ok: true,
+        protocolId: protocol.id,
+        versionId: version.id,
+        version: version.version,
+        message: seed ? "Draft created from the approved template." : "Blank draft created.",
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/save_protocol_draft" && req.method === "POST") {
+      const body = await readBody(req);
+      const version = protocolVersions.get(String(body._version_id ?? ""));
+      if (!version) return json(res, 404, { code: "P0002", message: "protocol version not found" });
+      if (!memberOrgIds.includes(version.organizationId)) {
+        return json(res, 403, { code: "42501", message: "not authorized to edit this protocol" });
+      }
+      if (version.status !== "draft") {
+        return json(res, 400, {
+          code: "22023",
+          message: "only draft versions can be edited; create a new draft version",
+        });
+      }
+      const expected = body._expected_updated_at;
+      if (expected && Date.parse(expected) !== Date.parse(version.updatedAt)) {
+        return json(res, 409, {
+          code: "40001",
+          message: "this draft changed elsewhere since it was loaded",
+        });
+      }
+      applyDraftPayload(version, body._payload ?? {});
+      return json(res, 200, {
+        ok: true,
+        versionId: version.id,
+        updatedAt: version.updatedAt,
+        itemIds: version.items.map((it) => it.id),
+        message: "Draft saved.",
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/approve_protocol_version" && req.method === "POST") {
+      const body = await readBody(req);
+      const version = protocolVersions.get(String(body._version_id ?? ""));
+      if (!version) return json(res, 404, { code: "P0002", message: "protocol version not found" });
+      if (version.status !== "draft") {
+        return json(res, 400, { code: "22023", message: "only a draft version can be approved" });
+      }
+      version.status = "approved";
+      version.approvedAt = nowIso();
+      version.reviewNote = body._review_note ?? null;
+      pushAudit(
+        "protocol.version_approved",
+        "protocol_version",
+        version.id,
+        "Protocol version approved",
+        { version: version.version },
+        version.patientId,
+        version.organizationId,
+      );
+      return json(res, 200, {
+        ok: true,
+        versionId: version.id,
+        version: version.version,
+        status: "approved",
+        message: "Version approved and frozen. It is NOT active until you activate it.",
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/activate_protocol_version" && req.method === "POST") {
+      const body = await readBody(req);
+      const version = protocolVersions.get(String(body._version_id ?? ""));
+      if (!version) return json(res, 404, { code: "P0002", message: "protocol version not found" });
+      if (version.status !== "approved") {
+        return json(res, 400, {
+          code: "22023",
+          message: "only an approved version can be activated",
+        });
+      }
+      const protocol = protocols.get(version.protocolId);
+      for (const other of protocolVersions.values()) {
+        if (other.protocolId === version.protocolId && other.status === "active") {
+          other.status = "superseded";
+        }
+      }
+      version.status = "active";
+      version.activatedAt = nowIso();
+      if (protocol) {
+        protocol.status = "active";
+        protocol.activeVersionId = version.id;
+        protocol.updatedAt = nowIso();
+      }
+      pushAudit(
+        "protocol.version_activated",
+        "protocol_version",
+        version.id,
+        "Protocol version activated",
+        { version: version.version },
+        version.patientId,
+        version.organizationId,
+      );
+      return json(res, 200, {
+        ok: true,
+        versionId: version.id,
+        version: version.version,
+        status: "active",
+        message: "Version activated.",
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/revise_protocol_version" && req.method === "POST") {
+      const body = await readBody(req);
+      const source = protocolVersions.get(String(body._version_id ?? ""));
+      if (!source) return json(res, 404, { code: "P0002", message: "protocol version not found" });
+      if (!["approved", "active", "superseded"].includes(source.status)) {
+        return json(res, 400, { code: "22023", message: "only a frozen version can be revised" });
+      }
+      if ([...protocolVersions.values()].some((v) => v.protocolId === source.protocolId && v.status === "draft")) {
+        return json(res, 400, { code: "22023", message: "a draft version already exists" });
+      }
+      const draft = newProtocolVersion({
+        organizationId: source.organizationId,
+        protocolId: source.protocolId,
+        patientId: source.patientId,
+        title: source.title,
+        seed: source,
+        supersedesVersionId: source.id,
+      });
+      return json(res, 200, {
+        ok: true,
+        versionId: draft.id,
+        version: draft.version,
+        supersedesVersionId: source.id,
+        message: `New draft version ${draft.version} created. Version ${source.version} is unchanged.`,
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/set_protocol_lifecycle" && req.method === "POST") {
+      const body = await readBody(req);
+      const protocol = protocols.get(String(body._protocol_id ?? ""));
+      if (!protocol) return json(res, 404, { code: "P0002", message: "protocol not found" });
+      protocol.status = String(body._status);
+      protocol.updatedAt = nowIso();
+      pushAudit(
+        "protocol.lifecycle",
+        "protocol",
+        protocol.id,
+        `Protocol ${protocol.status}`,
+        { status: protocol.status },
+        protocol.patientId,
+        protocol.organizationId,
+      );
+      return json(res, 200, {
+        ok: true,
+        protocolId: protocol.id,
+        status: protocol.status,
+        message: `Protocol ${protocol.status}.`,
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/create_protocol_template" && req.method === "POST") {
+      const body = await readBody(req);
+      const organizationId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(organizationId)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      if (!String(body._name ?? "").trim()) {
+        return json(res, 400, { code: "22023", message: "a template name is required" });
+      }
+      const template = {
+        id: pid("tpl"),
+        organizationId,
+        name: String(body._name).trim(),
+        description: body._description ?? null,
+        status: "draft",
+        archivedAt: null,
+        approvedVersionId: null,
+        currentVersionId: null,
+        approvedVersion: null,
+        updatedAt: nowIso(),
+      };
+      protocolTemplates.set(template.id, template);
+      const seed = body._from_version_id
+        ? (protocolVersions.get(String(body._from_version_id)) ?? null)
+        : null;
+      const version = newProtocolVersion({
+        organizationId,
+        templateId: template.id,
+        title: template.name,
+        seed,
+      });
+      template.currentVersionId = version.id;
+      return json(res, 200, {
+        ok: true,
+        templateId: template.id,
+        versionId: version.id,
+        version: version.version,
+        message: seed
+          ? "Template created as a detached copy of that version."
+          : "Blank template created.",
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/approve_protocol_template_version" && req.method === "POST") {
+      const body = await readBody(req);
+      const version = protocolVersions.get(String(body._version_id ?? ""));
+      if (!version || !version.templateId) {
+        return json(res, 404, { code: "P0002", message: "template version not found" });
+      }
+      version.status = "approved";
+      version.approvedAt = nowIso();
+      const template = protocolTemplates.get(version.templateId);
+      if (template) {
+        template.status = "approved";
+        template.approvedVersionId = version.id;
+        template.approvedVersion = version.version;
+        template.updatedAt = nowIso();
+      }
+      return json(res, 200, {
+        ok: true,
+        versionId: version.id,
+        version: version.version,
+        message: "Template version approved.",
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/archive_protocol_template" && req.method === "POST") {
+      const body = await readBody(req);
+      const template = protocolTemplates.get(String(body._template_id ?? ""));
+      if (!template) return json(res, 404, { code: "P0002", message: "template not found" });
+      const archived = body._archived !== false;
+      template.status = archived ? "archived" : "approved";
+      template.archivedAt = archived ? nowIso() : null;
+      template.updatedAt = nowIso();
+      return json(res, 200, {
+        ok: true,
+        templateId: template.id,
+        archived,
+        message: archived
+          ? "Template archived. Protocols already created from it are untouched."
+          : "Template restored.",
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/check_protocol_interactions" && req.method === "POST") {
+      const body = await readBody(req);
+      const version = protocolVersions.get(String(body._version_id ?? ""));
+      if (!version) return json(res, 404, { code: "P0002", message: "protocol version not found" });
+      const coded = PROTOCOL_MEDICATIONS.filter((m) => m.rxnorm);
+      return json(res, 200, {
+        versionId: version.id,
+        items: version.items
+          .filter((it) => it.kind === "product")
+          .map((it) => {
+            const structured = it.verificationStatus === "structured_verified";
+            const findings =
+              structured && coded.length
+                ? CATALOG_INTERACTIONS.filter(
+                    (x) =>
+                      x.productVersionId === it.catalogProductVersionId &&
+                      coded.some((m) => m.rxnorm === x.rxnorm),
+                  ).map((x) => ({
+                    ingredient: x.ingredient,
+                    medication: coded.find((m) => m.rxnorm === x.rxnorm)?.name ?? null,
+                    severity: x.severity,
+                    mechanism: x.mechanism,
+                    notes: null,
+                    source: x.source,
+                    version: "v1",
+                  }))
+                : [];
+            return {
+              itemId: it.id,
+              label: it.label,
+              verificationStatus: it.verificationStatus,
+              interactionReviewState: it.interactionReviewState,
+              state: structured && coded.length ? "checked" : "not_completed",
+              reason: !structured
+                ? "This product has no structured ingredient data in the catalog, so no deterministic check can run."
+                : !coded.length
+                  ? "This patient's active medications carry no coded identifiers, so no deterministic check can run."
+                  : null,
+              findings,
+            };
+          }),
+        medicationsRecorded: PROTOCOL_MEDICATIONS.length,
+        medicationsCoded: coded.length,
+        disclaimer:
+          "A completed check reports only what the checked sources contain. It is not a determination that a product is interaction-free, and it does not replace practitioner review.",
+        generatedAt: nowIso(),
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/review_protocol_item_interactions" && req.method === "POST") {
+      const body = await readBody(req);
+      const itemId = String(body._item_id ?? "");
+      let found = null;
+      let owner = null;
+      for (const version of protocolVersions.values()) {
+        const item = version.items.find((it) => it.id === itemId);
+        if (item) {
+          found = item;
+          owner = version;
+          break;
+        }
+      }
+      if (!found || !owner) {
+        return json(res, 404, { code: "P0002", message: "protocol item not found" });
+      }
+      if (owner.status !== "draft") {
+        return json(res, 400, {
+          code: "22023",
+          message:
+            "only a draft version can be reviewed; revise the protocol to correct an approved version",
+        });
+      }
+      if (found.interactionReviewState === "reviewed_by_practitioner") {
+        return json(res, 200, {
+          ok: true,
+          itemId,
+          alreadyReviewed: true,
+          message: "Interaction review was already recorded for this item.",
+        });
+      }
+      found.interactionReviewState = "reviewed_by_practitioner";
+      if (body._note) {
+        found.instructions = `${found.instructions ? `${found.instructions}\n` : ""}Interaction review: ${body._note}`;
+      }
+      pushAudit(
+        "protocol.interaction_reviewed",
+        "protocol_item",
+        itemId,
+        "Practitioner recorded an interaction review for a protocol item",
+        { versionId: owner.id, verificationStatus: found.verificationStatus },
+        owner.patientId,
+        owner.organizationId,
+      );
+      return json(res, 200, {
+        ok: true,
+        itemId,
+        alreadyReviewed: false,
+        message: "Interaction review recorded.",
+      });
+    }
+
     if (url.pathname === "/rest/v1/rpc/get_desktop_calendar" && req.method === "POST") {
       const body = await readBody(req);
       const organizationId = String(body._organization_id ?? "");
@@ -1475,6 +2292,7 @@ createServer(async (req, res) => {
           location: appointment.location,
           telehealth_url: appointment.telehealthUrl,
           status: appointment.status,
+          version: appointment.version ?? 1,
           starts_at: appointment.startsAt,
           ends_at: appointment.endsAt,
         }));
@@ -1543,6 +2361,7 @@ createServer(async (req, res) => {
         location: body._location ?? null,
         telehealthUrl: body._telehealth_url ?? null,
         status: "scheduled",
+        version: 1,
         startsAt: body._starts_at,
         endsAt: body._ends_at,
       });

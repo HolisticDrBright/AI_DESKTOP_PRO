@@ -538,6 +538,13 @@ export interface LiveProtocolMutationResult {
   alreadySet?: boolean;
   /** Fresh autosave token after a successful save. */
   updatedAt?: string;
+  /**
+   * Ids of the item rows the save just wrote, in payload order. An autosave
+   * replaces items wholesale, so these are how the client addresses the row it
+   * just persisted (an interaction review targets a persisted item, never a
+   * form row).
+   */
+  itemIds?: string[];
 }
 
 /** One real catalog product with its exact identity, as the picker returns it. */

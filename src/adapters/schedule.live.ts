@@ -23,6 +23,8 @@ interface CalendarRpcAppointment {
   location: string | null;
   telehealth_url: string | null;
   status: string;
+  /** Optimistic-concurrency token for status transitions (migration 20260730042846). */
+  version: number | null;
   starts_at: string | null;
   ends_at: string | null;
 }
@@ -72,6 +74,10 @@ export const scheduleLive = {
         location: row.location,
         telehealthUrl: row.telehealth_url,
         status: row.status,
+        // Carried through so the drawer can send the version it actually
+        // rendered: without it a transition would either clobber a concurrent
+        // change or conflict against a token the client never saw.
+        version: typeof row.version === "number" ? row.version : undefined,
         startsAt: row.starts_at,
         endsAt: row.ends_at,
       })),

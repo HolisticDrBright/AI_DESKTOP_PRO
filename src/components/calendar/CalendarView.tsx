@@ -965,7 +965,11 @@ function DetailDrawer({
     effectiveStatus === "no-show";
   const isBooked = effectiveStatus === "scheduled" || effectiveStatus === "confirmed";
   const canArrive = isBooked;
-  const canBeginEncounter = effectiveStatus === "arrived";
+  // start_encounter accepts scheduled / confirmed / arrived and transitions the
+  // appointment to in_encounter itself, and re-opening an in-progress encounter
+  // is legitimate. So the gate here is exactly "not settled" — matching the
+  // server rather than being arbitrarily stricter than it.
+  const canOpenEncounter = !isSettled;
   const canComplete = effectiveStatus === "arrived" || effectiveStatus === "in-encounter";
   const canReschedule = isBooked;
   const canNoShow = isBooked || effectiveStatus === "arrived";
@@ -1175,12 +1179,12 @@ function DetailDrawer({
                   {working ? "Saving…" : "Arrive"}
                 </button>
               )}
-              {canBeginEncounter && appt.patientId && (
+              {canOpenEncounter && appt.patientId && (
                 <StartEncounterButton
                   patientId={appt.patientId}
                   appointmentId={appt.id}
                   visitType={appt.type === "telehealth" ? "telehealth" : "follow-up"}
-                  label="Begin encounter"
+                  label="Open encounter"
                 />
               )}
               {canComplete && (
