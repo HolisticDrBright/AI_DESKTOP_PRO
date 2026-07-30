@@ -35,7 +35,12 @@ import {
 } from "./review-state";
 import { executeLiveAction, type ActionContext, type ActionKind } from "./actions";
 import type { OptimalRange } from "./labs.types";
-import type { LiveAuditEvent, LiveBookInput } from "./live-types";
+import type {
+  LiveAppointmentStatus,
+  LiveAuditEvent,
+  LiveBookInput,
+  LiveProtocolDraftPayload,
+} from "./live-types";
 
 /** Context passed to lab marker mutations so the audit entry is meaningful. */
 interface LabMarkerCtx {
@@ -98,6 +103,85 @@ export const api = {
       liveClient.updateAppointmentStatus(appointmentId, status),
     reschedule: async (appointmentId: string, startsAtIso: string, endsAtIso: string) =>
       liveClient.rescheduleAppointment(appointmentId, startsAtIso, endsAtIso),
+    /**
+     * LIVE: the front-desk state machine. The database enforces which
+     * transitions are legal, checks the optimistic `expectedVersion`, and
+     * replays an `idempotencyKey` instead of transitioning twice. Rescheduling
+     * stays a separate operation above — moving a visit in time is not a
+     * status change.
+     */
+    transition: async (input: {
+      appointmentId: string;
+      toStatus: LiveAppointmentStatus;
+      expectedVersion?: number | null;
+      idempotencyKey?: string | null;
+      reason?: string | null;
+    }) => liveClient.transitionAppointment(input),
+    /**
+     * LIVE: the authorized correction workflow — the ONLY way a settled
+     * appointment leaves a terminal status. Org admins only, reason required.
+     */
+    correctStatus: async (input: {
+      appointmentId: string;
+      toStatus: LiveAppointmentStatus;
+      reason: string;
+      expectedVersion?: number | null;
+    }) => liveClient.correctAppointmentStatus(input),
+  },
+  protocols: {
+    /**
+     * LIVE: the patient's protocol — current draft, latest approved, active
+     * version, and append-only version history. `exists: false` is the honest
+     * empty state; nothing is synthesized to fill the screen.
+     */
+    getForPatient: async (patientId: string) => liveClient.patientProtocol(patientId),
+    /** LIVE: organization-owned templates (archived hidden unless asked). */
+    listTemplates: async (includeArchived = false) =>
+      liveClient.listProtocolTemplates(includeArchived),
+    /** LIVE: blank draft, or a detached copy of an APPROVED template version. */
+    createDraft: async (input: {
+      patientId: string;
+      title: string;
+      fromTemplateId?: string | null;
+    }) => liveClient.createProtocolDraft(input),
+    /**
+     * LIVE: autosave. `expectedUpdatedAt` is the concurrency token — a stale
+     * token returns a conflict rather than overwriting another editor.
+     */
+    saveDraft: async (input: {
+      versionId: string;
+      payload: LiveProtocolDraftPayload;
+      expectedUpdatedAt: string | null;
+    }) => liveClient.saveProtocolDraft(input),
+    /** LIVE: freeze a draft as approved. Does NOT activate it. */
+    approve: async (versionId: string, reviewNote?: string | null) =>
+      liveClient.protocolAction({ action: "approve", versionId, reviewNote: reviewNote ?? null }),
+    /** LIVE: put an approved version in effect — a separate, confirmed action. */
+    activate: async (versionId: string) =>
+      liveClient.protocolAction({ action: "activate", versionId }),
+    /** LIVE: copy an approved/active version into a NEW draft (never edit it). */
+    revise: async (versionId: string) =>
+      liveClient.protocolAction({ action: "revise", versionId }),
+    /** LIVE: pause / complete / discontinue the course. */
+    setLifecycle: async (
+      protocolId: string,
+      status: "active" | "paused" | "completed" | "discontinued",
+      reason?: string | null,
+    ) => liveClient.protocolAction({
+      action: "lifecycle", protocolId, status, reason: reason ?? null,
+    }),
+    templates: {
+      create: async (input: {
+        name: string;
+        description?: string | null;
+        fromVersionId?: string | null;
+      }) => liveClient.protocolTemplateAction({ action: "create", ...input }),
+      approve: async (versionId: string) =>
+        liveClient.protocolTemplateAction({ action: "approve", versionId }),
+      /** Archiving never touches protocols already created from the template. */
+      archive: async (templateId: string, archived = true) =>
+        liveClient.protocolTemplateAction({ action: "archive", templateId, archived }),
+    },
   },
   reasoning: {
     /**

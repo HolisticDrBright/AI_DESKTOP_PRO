@@ -25,6 +25,12 @@ import type {
   LivePatientOverview,
   LiveReasoningWorkspace,
   LiveHypothesisReviewResult,
+  LiveAppointmentStatus,
+  LiveTransitionResult,
+  LivePatientProtocol,
+  LiveProtocolDraftPayload,
+  LiveProtocolMutationResult,
+  LiveProtocolTemplate,
   ReviewDecision,
 } from "./live-types";
 
@@ -178,6 +184,66 @@ export const liveClient = {
       method: "POST",
       body: { hypothesisId, action, note },
     }),
+
+  /* ---------------------------------------------- front desk (phase 2) */
+  transitionAppointment: (input: {
+    appointmentId: string;
+    toStatus: LiveAppointmentStatus;
+    expectedVersion?: number | null;
+    idempotencyKey?: string | null;
+    reason?: string | null;
+  }) => liveFetch<LiveTransitionResult>("schedule/transition", { method: "POST", body: input }),
+
+  correctAppointmentStatus: (input: {
+    appointmentId: string;
+    toStatus: LiveAppointmentStatus;
+    reason: string;
+    expectedVersion?: number | null;
+  }) => liveFetch<LiveTransitionResult>("schedule/correct", { method: "POST", body: input }),
+
+  /* ---------------------------------------------- protocols (phase 2) */
+  patientProtocol: (patientId: string) =>
+    liveFetch<LivePatientProtocol>("protocols/patient", { method: "POST", body: { patientId } }),
+
+  listProtocolTemplates: (includeArchived = false) =>
+    liveFetch<LiveProtocolTemplate[]>("protocols/templates", {
+      method: "POST",
+      body: { includeArchived },
+    }),
+
+  createProtocolDraft: (input: {
+    patientId: string;
+    title: string;
+    fromTemplateId?: string | null;
+  }) => liveFetch<LiveProtocolMutationResult>("protocols/draft", { method: "POST", body: input }),
+
+  saveProtocolDraft: (input: {
+    versionId: string;
+    payload: LiveProtocolDraftPayload;
+    expectedUpdatedAt: string | null;
+  }) => liveFetch<LiveProtocolMutationResult>("protocols/save", { method: "POST", body: input }),
+
+  protocolAction: (input: {
+    action: "approve" | "activate" | "revise" | "lifecycle";
+    versionId?: string;
+    protocolId?: string;
+    reviewNote?: string | null;
+    status?: "active" | "paused" | "completed" | "discontinued";
+    reason?: string | null;
+  }) => liveFetch<LiveProtocolMutationResult>("protocols/action", { method: "POST", body: input }),
+
+  protocolTemplateAction: (input: {
+    action: "create" | "approve" | "archive";
+    name?: string;
+    description?: string | null;
+    fromVersionId?: string | null;
+    versionId?: string;
+    templateId?: string;
+    archived?: boolean;
+  }) => liveFetch<LiveProtocolMutationResult>("protocols/template-action", {
+    method: "POST",
+    body: input,
+  }),
 
   reviewKnowledgeImportItem: (
     itemId: string,

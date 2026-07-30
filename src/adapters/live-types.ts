@@ -355,3 +355,185 @@ export interface LiveHypothesisReviewResult {
   auditId: string;
   message: string;
 }
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * Front-desk appointment transitions (Phase 2 slice 1).
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/** The full appointment status vocabulary the state machine enforces. */
+export type LiveAppointmentStatus =
+  | "scheduled"
+  | "confirmed"
+  | "arrived"
+  | "in_encounter"
+  | "completed"
+  | "cancelled"
+  | "no_show";
+
+export interface LiveTransitionResult {
+  ok: true;
+  id: string;
+  status: LiveAppointmentStatus;
+  previous_status: LiveAppointmentStatus;
+  /** New optimistic-concurrency version to render with. */
+  version: number;
+  /** True when an idempotency-key replay (or a no-op) returned the stored outcome. */
+  already_applied: boolean;
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * Protocols + templates (Phase 2 slice 2).
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+export type LiveProtocolVersionStatus =
+  | "draft" | "approved" | "active" | "superseded" | "discontinued";
+export type LiveProtocolStatus =
+  | "draft" | "active" | "paused" | "completed" | "discontinued";
+export type LiveProtocolItemKind =
+  | "product" | "diet" | "lifestyle" | "monitoring" | "followup";
+
+export interface LiveProtocolPhase {
+  id: string;
+  name: string;
+  position: number;
+  /** Absolute dates OR relative offsets — never both, never inferred. */
+  startsOn: string | null;
+  endsOn: string | null;
+  relativeStartDay: number | null;
+  relativeDurationDays: number | null;
+  notes: string | null;
+}
+
+export interface LiveProtocolItem {
+  id: string;
+  phaseId: string | null;
+  kind: LiveProtocolItemKind;
+  position: number;
+  label: string;
+  instructions: string | null;
+  /** Exact catalog identity for product entries. */
+  catalogProductId: string | null;
+  catalogProductVersionId: string | null;
+  manufacturer: string | null;
+  labelVersion: string | null;
+  dosageText: string | null;
+  timingText: string | null;
+  route: string | null;
+  verificationStatus: "unverified" | "label_verified" | "structured_verified";
+  /** 'not_completed' MUST render as "Interaction review not completed". */
+  interactionReviewState: "not_completed" | "reviewed_by_practitioner";
+  /** Commercial metadata only — never clinical justification. */
+  affiliateUrl: string | null;
+}
+
+export interface LiveProtocolVersion {
+  id: string;
+  version: number;
+  status: LiveProtocolVersionStatus;
+  title: string;
+  summary: string | null;
+  dietInstructions: string | null;
+  lifestyleInstructions: string | null;
+  monitoringPlan: string | null;
+  followupPlan: string | null;
+  sourceTemplateId: string | null;
+  sourceTemplateVersion: number | null;
+  supersedesVersionId: string | null;
+  approvedAt: string | null;
+  activatedAt: string | null;
+  reviewNote: string | null;
+  /** Autosave optimistic-concurrency token. */
+  updatedAt: string;
+  createdAt: string;
+  phases: LiveProtocolPhase[];
+  items: LiveProtocolItem[];
+}
+
+export interface LiveProtocolHistoryEntry {
+  id: string;
+  version: number;
+  status: LiveProtocolVersionStatus;
+  title: string;
+  approvedAt: string | null;
+  activatedAt: string | null;
+  createdAt: string;
+  supersedesVersionId: string | null;
+}
+
+export interface LivePatientProtocol {
+  /** false = honest empty state; nothing is invented to fill the screen. */
+  exists: boolean;
+  canAuthor: boolean;
+  protocol: {
+    id: string;
+    title: string;
+    status: LiveProtocolStatus;
+    createdAt: string;
+    updatedAt: string;
+  } | null;
+  draft: LiveProtocolVersion | null;
+  approved: LiveProtocolVersion | null;
+  active: LiveProtocolVersion | null;
+  history: LiveProtocolHistoryEntry[];
+  generatedAt: string;
+}
+
+export interface LiveProtocolTemplate {
+  id: string;
+  name: string;
+  description: string | null;
+  status: "draft" | "approved" | "archived";
+  archivedAt: string | null;
+  approvedVersionId: string | null;
+  currentVersionId: string | null;
+  approvedVersion: number | null;
+  updatedAt: string;
+}
+
+/** Bounded autosave payload. `phaseIndex` refers to the phases array order. */
+export interface LiveProtocolDraftPayload {
+  title?: string;
+  summary?: string | null;
+  dietInstructions?: string | null;
+  lifestyleInstructions?: string | null;
+  monitoringPlan?: string | null;
+  followupPlan?: string | null;
+  phases?: {
+    name: string;
+    startsOn?: string | null;
+    endsOn?: string | null;
+    relativeStartDay?: number | null;
+    relativeDurationDays?: number | null;
+    notes?: string | null;
+  }[];
+  items?: {
+    kind: LiveProtocolItemKind;
+    label: string;
+    phaseIndex?: number | null;
+    instructions?: string | null;
+    catalogProductId?: string | null;
+    catalogProductVersionId?: string | null;
+    manufacturer?: string | null;
+    labelVersion?: string | null;
+    dosageText?: string | null;
+    timingText?: string | null;
+    route?: string | null;
+    verificationStatus?: string | null;
+    affiliateUrl?: string | null;
+  }[];
+}
+
+export interface LiveProtocolMutationResult {
+  ok: true;
+  message: string;
+  protocolId?: string;
+  versionId?: string;
+  version?: number;
+  status?: string;
+  templateId?: string;
+  supersedesVersionId?: string;
+  archived?: boolean;
+  alreadySet?: boolean;
+  /** Fresh autosave token after a successful save. */
+  updatedAt?: string;
+}
