@@ -1737,6 +1737,80 @@ function syncApplyDelivery(e, providerEventId, kind, errorSafe) {
   return { ok: true, duplicate: false, state: e.state };
 }
 
+// record_sync_inbound semantics shared by the __control provider stand-in and
+// the worker's service-role REST boundary: verified connection, consent scope,
+// idempotency, stale-version conflicts, urgent invariant, review tasks.
+function syncApplyInbound(conn, {
+  providerEventId, contractVersion, resourceType, payload, occurredAt,
+  externalResourceId, resourceVersion,
+}) {
+  if (conn.state === "revoked") {
+    return { status: 403, body: { code: "42501", message: "this connection is revoked; inbound writes are blocked" } };
+  }
+  if (conn.state === "paused") {
+    return { status: 400, body: { code: "22023", message: "this connection is paused; inbound writes are held" } };
+  }
+  if (conn.state !== "verified") {
+    return { status: 403, body: { code: "42501", message: "inbound data requires a verified connection" } };
+  }
+  if (contractVersion !== "patient-sync/1") {
+    return { status: 400, body: { code: "22023", message: `unsupported contract version ${contractVersion}` } };
+  }
+  if (!providerEventId) {
+    return { status: 400, body: { code: "22023", message: "a provider event id is required" } };
+  }
+  const scope = SYNC_IN_SCOPE[resourceType];
+  if (!scope) return { status: 400, body: { code: "22023", message: "unknown inbound resource type" } };
+  if (!syncScopeGranted(conn.id, scope)) {
+    return { status: 403, body: { code: "42501", message: `consent for the ${scope} scope is not granted; inbound data refused` } };
+  }
+  if ([...syncInbound.values()].some(
+    (i) => i.connectionId === conn.id && i.providerEventId === providerEventId,
+  )) {
+    return { status: 200, body: { ok: true, duplicate: true } };
+  }
+  let state = "processed";
+  if (["patient_message", "appointment_request", "symptom_report"].includes(resourceType)) {
+    state = "review_pending";
+  } else if (resourceVersion && externalResourceId
+    && [...syncInbound.values()].some((i) => i.connectionId === conn.id
+      && i.resourceType === resourceType && i.externalResourceId === externalResourceId
+      && i.resourceVersion >= resourceVersion)) {
+    state = "conflict";
+  }
+  const urgent = detectUrgentTerms(JSON.stringify(payload));
+  if (urgent.length > 0
+    && ["patient_message", "symptom_report", "checkin_response"].includes(resourceType)) {
+    state = "review_pending";
+  }
+  const row = {
+    id: syncId(), connectionId: conn.id, patientId: conn.patientId,
+    providerEventId, scope, resourceType, externalResourceId, resourceVersion,
+    occurredAt: occurredAt ?? nowIso(),
+    receivedAt: nowIso(), payload, state,
+    reviewedAt: null, reviewNote: null, rejectionReason: null,
+  };
+  syncInbound.set(row.id, row);
+  if (state === "conflict") {
+    const conflictId = syncId();
+    syncConflicts.set(conflictId, {
+      id: conflictId, connectionId: conn.id, patientId: conn.patientId, scope,
+      resourceType, resourceRef: externalResourceId ?? row.id,
+      inboundEventId: row.id, desktopVersion: null, externalVersion: resourceVersion,
+      reason: "stale or out-of-order submission version; newer data already recorded",
+      state: "open", resolutionNote: null, resolvedAt: null, version: 1, createdAt: nowIso(),
+    });
+    syncReviewTask(conn.patientId, conflictId, `Sync conflict: ${resourceType}`, "medium");
+  }
+  if (state === "review_pending") {
+    syncReviewTask(conn.patientId, row.id,
+      `Review inbound ${resourceType.replace(/_/g, " ")}`, urgent.length > 0 ? "high" : "medium");
+  }
+  syncEvent(conn.id, "inbound_received", resourceType, state, null);
+  return { status: 200, body: { ok: true, duplicate: false, eventId: row.id, state,
+    urgent: urgent.length > 0 } };
+}
+
 const syncOutboundRow = (e) => ({
   id: e.id, eventUid: e.eventUid, scope: e.scope, resourceType: e.resourceType,
   resourceId: e.resourceId, resourceVersion: e.resourceVersion, state: e.state,
@@ -1948,76 +2022,16 @@ createServer(async (req, res) => {
       ? syncConnections.get(String(body.connectionId))
       : [...syncConnections.values()].find((c) => c.state !== "revoked") ?? null;
     if (!conn) return json(res, 404, { code: "P0002", message: "connection not found" });
-    if (conn.state === "revoked") {
-      return json(res, 403, { code: "42501", message: "this connection is revoked; inbound writes are blocked" });
-    }
-    if (conn.state === "paused") {
-      return json(res, 400, { code: "22023", message: "this connection is paused; inbound writes are held" });
-    }
-    if (conn.state !== "verified") {
-      return json(res, 403, { code: "42501", message: "inbound data requires a verified connection" });
-    }
-    const contractVersion = String(body.contractVersion ?? "patient-sync/1");
-    if (contractVersion !== "patient-sync/1") {
-      return json(res, 400, { code: "22023", message: `unsupported contract version ${contractVersion}` });
-    }
-    const providerEventId = String(body.providerEventId ?? "");
-    if (!providerEventId) return json(res, 400, { code: "22023", message: "a provider event id is required" });
-    const resourceType = String(body.resourceType ?? "");
-    const scope = SYNC_IN_SCOPE[resourceType];
-    if (!scope) return json(res, 400, { code: "22023", message: "unknown inbound resource type" });
-    if (!syncScopeGranted(conn.id, scope)) {
-      return json(res, 403, { code: "42501", message: `consent for the ${scope} scope is not granted; inbound data refused` });
-    }
-    if ([...syncInbound.values()].some(
-      (i) => i.connectionId === conn.id && i.providerEventId === providerEventId,
-    )) {
-      return json(res, 200, { ok: true, duplicate: true });
-    }
-    const payload = body.payload ?? {};
-    const externalResourceId = body.externalResourceId ? String(body.externalResourceId) : null;
-    const resourceVersion = body.resourceVersion ? String(body.resourceVersion) : null;
-    let state = "processed";
-    let conflictId = null;
-    if (["patient_message", "appointment_request", "symptom_report"].includes(resourceType)) {
-      state = "review_pending";
-    } else if (resourceVersion && externalResourceId
-      && [...syncInbound.values()].some((i) => i.connectionId === conn.id
-        && i.resourceType === resourceType && i.externalResourceId === externalResourceId
-        && i.resourceVersion >= resourceVersion)) {
-      state = "conflict";
-    }
-    const urgent = detectUrgentTerms(JSON.stringify(payload));
-    if (urgent.length > 0
-      && ["patient_message", "symptom_report", "checkin_response"].includes(resourceType)) {
-      state = "review_pending";
-    }
-    const row = {
-      id: syncId(), connectionId: conn.id, patientId: conn.patientId,
-      providerEventId, scope, resourceType, externalResourceId, resourceVersion,
-      occurredAt: body.occurredAt ? String(body.occurredAt) : nowIso(),
-      receivedAt: nowIso(), payload, state,
-      reviewedAt: null, reviewNote: null, rejectionReason: null,
-    };
-    syncInbound.set(row.id, row);
-    if (state === "conflict") {
-      conflictId = syncId();
-      syncConflicts.set(conflictId, {
-        id: conflictId, connectionId: conn.id, patientId: conn.patientId, scope,
-        resourceType, resourceRef: externalResourceId ?? row.id,
-        inboundEventId: row.id, desktopVersion: null, externalVersion: resourceVersion,
-        reason: "stale or out-of-order submission version; newer data already recorded",
-        state: "open", resolutionNote: null, resolvedAt: null, version: 1, createdAt: nowIso(),
-      });
-      syncReviewTask(conn.patientId, conflictId, `Sync conflict: ${resourceType}`, "medium");
-    }
-    if (state === "review_pending") {
-      syncReviewTask(conn.patientId, row.id,
-        `Review inbound ${resourceType.replace(/_/g, " ")}`, urgent.length > 0 ? "high" : "medium");
-    }
-    syncEvent(conn.id, "inbound_received", resourceType, state, null);
-    return json(res, 200, { ok: true, duplicate: false, eventId: row.id, state,
-      urgent: urgent.length > 0 });
+    const r = syncApplyInbound(conn, {
+      providerEventId: String(body.providerEventId ?? ""),
+      contractVersion: String(body.contractVersion ?? "patient-sync/1"),
+      resourceType: String(body.resourceType ?? ""),
+      payload: body.payload ?? {},
+      occurredAt: body.occurredAt ? String(body.occurredAt) : null,
+      externalResourceId: body.externalResourceId ? String(body.externalResourceId) : null,
+      resourceVersion: body.resourceVersion ? String(body.resourceVersion) : null,
+    });
+    return json(res, r.status, r.body);
   }
 
   // Supabase Data API fixture for Desktop-owned identity and directory reads.
@@ -4305,11 +4319,20 @@ createServer(async (req, res) => {
         // record exists in the fixture stores (none are seeded).
         return json(res, 404, { code: "P0002", message: "no matching record of this patient exists" });
       }
-      const key = `${conn.id}:${resourceType}:${resourceId}:${rver}`;
+      let key = `${conn.id}:${resourceType}:${resourceId}:${rver}`;
       const existing = [...syncOutbound.values()].find((e) => e.idempotencyKey === key);
-      if (existing) {
+      if (existing && !["cancelled", "superseded"].includes(existing.state)) {
         return json(res, 200, { ok: true, alreadyQueued: true, eventId: existing.id,
           state: existing.state, message: "This resource version is already in the sync queue." });
+      }
+      if (existing) {
+        // Explicit re-share after cancellation/supersession: a NEW envelope
+        // generation with its own idempotency key — never a silent resend.
+        // Mirrors migration 20260730212353.
+        const generation = [...syncOutbound.values()].filter(
+          (e) => e.connectionId === conn.id && e.resourceType === resourceType
+            && e.resourceId === resourceId).length;
+        key = `${key}:r${generation}`;
       }
       for (const e of syncOutbound.values()) {
         if (e.connectionId === conn.id && e.resourceType === resourceType
@@ -4501,6 +4524,27 @@ createServer(async (req, res) => {
         updatedAt: nowIso(),
       };
       return json(res, 200, { ok: true, cycleId: syncId() });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/record_sync_inbound" && req.method === "POST") {
+      if (!isServiceRole) return json(res, 403, { code: "42501", message: "service role required" });
+      const body = await readBody(req);
+      const conn = syncConnections.get(String(body._connection_id ?? ""));
+      if (!conn) return json(res, 404, { code: "P0002", message: "connection not found" });
+      const payload = body._payload ?? {};
+      if (body._payload_hash && body._payload_hash !== sha256hex(JSON.stringify(payload))) {
+        return json(res, 400, { code: "22023", message: "payload hash mismatch" });
+      }
+      const r = syncApplyInbound(conn, {
+        providerEventId: String(body._provider_event_id ?? ""),
+        contractVersion: String(body._contract_version ?? "patient-sync/1"),
+        resourceType: String(body._resource_type ?? ""),
+        payload,
+        occurredAt: body._occurred_at ? String(body._occurred_at) : null,
+        externalResourceId: body._external_resource_id ? String(body._external_resource_id) : null,
+        resourceVersion: body._resource_version ? String(body._resource_version) : null,
+      });
+      return json(res, r.status, r.body);
     }
 
     if (url.pathname === "/rest/v1/rpc/register_sync_callback_nonce" && req.method === "POST") {
