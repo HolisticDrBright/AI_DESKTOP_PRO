@@ -259,6 +259,9 @@ export function InboxWorkspace({ initialThreadId }: { initialThreadId?: string }
     setSendOutcome(null);
     try {
       const res = await api.inbox.send({ messageId: draftMessageId });
+      // Refresh FIRST (loadThread resets the outcome line), then report the
+      // outcome so a refusal stays visible on screen.
+      if (selectedId) await loadThread(selectedId);
       if (res.ok === false) {
         setSendOutcome(res.message);
       } else {
@@ -267,7 +270,6 @@ export function InboxWorkspace({ initialThreadId }: { initialThreadId?: string }
         setDraftMessageId(null);
         draftVersionRef.current = null;
       }
-      if (selectedId) await loadThread(selectedId);
     } catch (e) {
       setSendOutcome(errText(e));
     } finally {
