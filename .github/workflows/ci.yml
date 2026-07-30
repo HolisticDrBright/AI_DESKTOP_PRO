@@ -5,6 +5,10 @@ on:
     branches: [main, "claude/**"]
   pull_request:
 
+# This repository builds the CLINICAL edition only. Every job that builds the
+# app does so with an explicit APP_EDITION=clinical, and the checks job proves
+# the two refusal gates (no edition / demo edition) still hold.
+
 jobs:
   checks:
     name: Typecheck, lint, unit, build
@@ -19,10 +23,27 @@ jobs:
       - run: npm run typecheck
       - run: npm run lint
       - run: npm run test:unit
-      - run: npm run build
+      - name: Mock-import graph (no production path to fixtures)
+        run: npm run check:mock-imports
+      - name: Build refuses without an explicit edition
+        run: |
+          if npm run build; then
+            echo "::error::npm run build must refuse when APP_EDITION is unset"
+            exit 1
+          fi
+      - name: Build refuses the demo edition
+        run: |
+          if APP_EDITION=demo npm run build; then
+            echo "::error::this distribution must refuse APP_EDITION=demo"
+            exit 1
+          fi
+      - name: Clinical production build
+        run: npm run build:clinical
+      - name: Strict client-bundle scan (no fixture identity)
+        run: npm run check:clinical-bundle
 
-  e2e-mock:
-    name: Browser suite (demo mode)
+  e2e-clinical-down:
+    name: Browser suite (clinical backend-down)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -32,8 +53,15 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx playwright install --with-deps chromium
-      - run: npm run build
-      - run: npm run test:e2e -- e2e/mock-app.spec.ts
+      - run: npm run build:clinical
+      - name: Honest refusals against a DOWN backend (no process started — that is the point)
+        run: |
+          E2E_CLINICAL_DOWN=1 \
+          APP_EDITION=clinical \
+          CLINICAL_SUPABASE_URL=http://127.0.0.1:59999 \
+          CLINICAL_SUPABASE_ANON_KEY=stub \
+          CLINICAL_ORG_ID=org-fixture \
+          npm run test:e2e -- clinical-edition
 
   e2e-live-fixture:
     name: Browser suite (live mode vs contract fixture)
@@ -46,19 +74,20 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx playwright install --with-deps chromium
-      - run: NEXT_PUBLIC_USE_LIVE_API=true npm run build
-      - name: Run gated live suite against the committed contract fixture
+      - run: npm run build:clinical
+      - name: Run every live suite against the committed contract fixture
         run: |
           node scripts/live-stub-server.mjs &
           sleep 2
           E2E_LIVE=1 \
+          APP_EDITION=clinical \
           TRPC_BASE_URL=http://127.0.0.1:3999/api/trpc \
           CLINICAL_SUPABASE_URL=http://127.0.0.1:3999 \
           CLINICAL_SUPABASE_ANON_KEY=stub \
           CLINICAL_DEMO_EMAIL=demo@local \
           CLINICAL_DEMO_PASSWORD=demo \
           CLINICAL_ORG_ID=org-fixture \
-          npm run test:e2e -- e2e/live-tasks.spec.ts
+          npm run test:e2e -- live-
 
   e2e-deployed:
     name: Browser suite (deployed backend — gated on secrets)
@@ -80,7 +109,7 @@ jobs:
       - if: steps.gate.outputs.run == 'true'
         run: npx playwright install --with-deps chromium
       - if: steps.gate.outputs.run == 'true'
-        run: NEXT_PUBLIC_USE_LIVE_API=true npm run build
+        run: npm run build:clinical
       - if: steps.gate.outputs.run == 'true'
         name: Run gated live suite against the DEPLOYED backend
         env:
@@ -90,6 +119,6 @@ jobs:
           CLINICAL_DEMO_EMAIL: ${{ secrets.DEPLOYED_CLINICAL_DEMO_EMAIL }}
           CLINICAL_DEMO_PASSWORD: ${{ secrets.DEPLOYED_CLINICAL_DEMO_PASSWORD }}
           CLINICAL_ORG_ID: ${{ secrets.DEPLOYED_CLINICAL_ORG_ID }}
-        run: E2E_LIVE=1 npm run test:e2e -- e2e/live-tasks.spec.ts
+        run: E2E_LIVE=1 APP_EDITION=clinical npm run test:e2e -- e2e/live-tasks.spec.ts
       - if: steps.gate.outputs.run != 'true'
         run: echo "Deployed-backend secrets not configured — job skipped (fixture suite still ran)."
