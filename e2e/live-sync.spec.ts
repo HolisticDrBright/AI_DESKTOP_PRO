@@ -52,6 +52,12 @@ test.skip(!process.env.E2E_LIVE, "live-mode suite: set E2E_LIVE=1 with a clinica
 test.describe.configure({ mode: "serial" });
 
 const STUB = "http://127.0.0.1:3999";
+
+// This suite is written against a pristine sync domain; reset it up front so
+// the battery is order-independent (other suites may have exercised sync).
+test.beforeAll(async () => {
+  await fetch(`${STUB}/__control/sync-reset`, { method: "POST" });
+});
 const PATIENT_1 = "aaaaaaaa-1111-2222-3333-444444444401";
 const SYNC_TAB = `/patients/${PATIENT_1}/app-sync`;
 const DEMO_FIXTURE_NAMES = ["Alexandra Morgan", "Michael Johnson", "Priya Sharma"];

@@ -1399,9 +1399,27 @@ export interface LiveSyncMutationResult {
   cancelledOutbound?: number;
 }
 
+export interface LiveSyncWorkerCycle {
+  provider: string;
+  contractVersion: string;
+  startedAt: string;
+  completedAt: string;
+  claimed: number;
+  succeeded: number;
+  retried: number;
+  deadLettered: number;
+  cancelled: number;
+  leaseReclaims: number;
+  circuitState: "closed" | "open" | "half_open";
+  errorClass: string | null;
+  maxQueueAgeSeconds: number | null;
+}
+
 export interface LiveOrgSyncOperations {
   providerConfigured: boolean;
   provider: string | null;
+  /** disabled | fixture (deterministic TEST provider) | approved */
+  posture: "disabled" | "fixture" | "approved";
   contractVersions: string[];
   connections: {
     verified: number;
@@ -1409,8 +1427,23 @@ export interface LiveOrgSyncOperations {
     paused: number;
     revoked: number;
   };
-  outbound: { queued: number; failed: number; deadLetter: number; delivered: number };
+  outbound: {
+    queued: number;
+    sending: number;
+    failed: number;
+    deadLetter: number;
+    delivered: number;
+  };
   inbound: { pendingReview: number; processed: number; conflicts: number };
+  maxQueueAgeSeconds: number;
+  lastWorkerCycle: LiveSyncWorkerCycle | null;
+  circuit: {
+    provider: string;
+    state: "closed" | "open" | "half_open";
+    failureCount: number;
+    openedAt: string | null;
+    updatedAt: string;
+  } | null;
   deadLetters: {
     eventId: string;
     reason: string;

@@ -2,7 +2,7 @@
   "name": "ai-desktop-pro",
   "version": "0.1.0",
   "private": true,
-  "description": "AI Longevity Pro — Clinical Intelligence. Desktop-first practitioner platform (Phase 1 front end).",
+  "description": "AI Longevity Pro \u2014 Clinical Intelligence. Desktop-first practitioner platform (Phase 1 front end).",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -14,7 +14,8 @@
     "test:unit": "cross-env TZ=America/Los_Angeles vitest run",
     "build:clinical": "cross-env APP_EDITION=clinical next build",
     "check:clinical-bundle": "node scripts/check-clinical-bundle.mjs",
-    "check:mock-imports": "node scripts/check-mock-imports.mjs"
+    "check:mock-imports": "node scripts/check-mock-imports.mjs",
+    "sync:worker": "node scripts/sync/worker.mjs"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.101.2",

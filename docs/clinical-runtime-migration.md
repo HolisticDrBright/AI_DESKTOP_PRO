@@ -180,6 +180,13 @@ Phase 5 found the ledger ending at `20260730185240` and appended:
 | `20260730195014` | desktop_patient_sync_schema | `patient_app_connections` (explicit linking — NEVER matched by email/name/phone/DOB; one live connection per patient AND per external subject via partial unique indexes), `patient_sync_invitations` (sha256 hash only, expiring, single-use, deny-all RLS), `sync_consent_scopes` (11 independent versioned scopes; artifact/jurisdiction/method/authority; research separate), `sync_outbound_events` / `sync_inbound_events` (append-only envelopes: contract version, server event uid, idempotency key, payload hash, provenance, correlation/causation; immutability triggers freeze content and block DELETE), `sync_inbound_corrections` (versioned overlays), `sync_delivery_attempts` / `sync_delivery_events` (provider evidence, unique `(connection, provider_event_id)` callback dedup), `sync_dead_letters`, `sync_cursors`, `sync_conflicts`, `sync_resource_acks`, `sync_connection_events`; RLS selects scoped to membership + patient access; ALL direct writes revoked |
 | `20260730201119` | desktop_patient_sync_rpcs | 13 caller RPCs (`get_patient_sync_overview`, `create_sync_invitation`, `pause/resume/revoke_sync_connection`, `set_sync_consent_scope`, `queue_sync_export` with SERVER-built minimum-necessary payloads, `withdraw_sync_resource`, `retry_sync_event` (reason required), `resolve_sync_conflict`, `review_sync_inbound`, `record_sync_inbound_correction`, `get_org_sync_operations`) + 4 service_role-only worker RPCs (`verify_sync_invitation`, `claim_sync_outbound`, `record_sync_delivery`, `record_sync_inbound`); `review_queue_items` gains lawful `sync_review` item type |
 
+Phase 6A found the ledger ending at `20260730201119` and appended:
+
+| Version | Name | What |
+| --- | --- | --- |
+| `20260730210813` | desktop_sync_worker_ops | lease columns (`lease_id`, `lease_expires_at`, `claimed_at`) + claimable/lease partial indexes on `sync_outbound_events`; `sync_worker_cycles` + `sync_circuit_states` (PHI-free, org-readable telemetry) and `sync_callback_nonces` (deny-all RLS); `private.sync_provider_posture` (disabled → fixture → approved precedence; `sync_contract_fixture` recognized as the TEST posture, `alp_patient_sync` as approved); `claim_sync_outbound` REPLACED as the single lease-aware overload (old `(uuid, integer)` signature dropped): expired-lease reclaim then `FOR UPDATE SKIP LOCKED` claim, returns lease id/expiry + `leaseReclaims` + `maxQueueAgeSeconds`; `recheck_sync_export` (consent/connection/supersession re-checked AT DELIVERY TIME; refusal is a durable cancel with an attempt row and a safe reason); `record_sync_worker_cycle` (validated circuit state, upserts the circuit row); `register_sync_callback_nonce` (unique-violation → `replay:true`, 7-day prune); `cancel_sync_event` (owner/admin/practitioner, reason required, queued/failed/dead_letter only, audited); `get_org_sync_operations` extended (posture, in-flight count, queue age, last worker cycle, circuit) |
+| `20260730212353` | desktop_sync_requeue_generation | `queue_sync_export` idempotency block only: a live envelope still answers `alreadyQueued`, but an explicit re-share after a CANCELLED or SUPERSEDED envelope mints a NEW envelope generation (`:rN` key suffix) instead of being blocked forever — and a consent re-grant alone never resurrects cancelled work |
+
 Local filenames match recorded versions. All function contracts: SECURITY
 DEFINER + `search_path=''` + explicit `auth.uid()` / `private.is_org_member` /
 `private.can_access_patient` gates + bounded DTOs + anon/public revoked + no
@@ -557,6 +564,137 @@ practitioner). Going live additionally needs the reviewed provider
 implementation, the `alp_patient_sync` connector registration, and the sync
 worker — three separate acts, none of them a flag.
 
+### Phase 6A: the patient sync worker & contract verification
+
+**AI Longevity Pro is not connected.** Nothing in this phase talks to a real
+patient application. The `sync_contract_fixture` provider is deterministic
+TEST infrastructure that proves the `patient-sync/1` contract end to end; it
+performs no network I/O, refuses every deployed environment, and every
+surface that shows it says so. The real receiver is Phase 6B and requires
+separate explicit authorization.
+
+**Worker architecture.** The worker is a separately runnable process —
+`node scripts/sync/worker.mjs` (`npm run sync:worker`) — living under
+`scripts/sync/` (plain `.mjs`), structurally outside every browser bundle and
+every Next.js import graph. Modules: `contract.mjs` (strict patient-sync/1
+DTO validation — unknown fields, wrong versions, malformed hashes, oversize
+payloads all fail closed as `contract` errors), `errors.mjs` (the failure
+taxonomy), `backoff.mjs` (bounded exponential backoff + jitter),
+`circuit.mjs` (closed/open/half-open breaker), `hmac.mjs` (callback
+signatures), `redact.mjs` (allowlist-only structured logging), `deploy-guard.mjs`
+(fixture refusal), `fixture-provider.mjs` (the labeled test provider),
+`supabase.mjs` (service-role RPC client that refuses browser contexts and
+missing credentials), `worker-core.mjs` (the cycle), `callback-server.mjs`
+(the signed inbound boundary), `worker.mjs` (entry point). 41 unit tests run
+in the standard vitest suite.
+
+**One worker cycle** (state authority stays in PostgreSQL; the worker holds
+nothing but the current batch, so restarts lose, duplicate, and falsely
+complete nothing):
+
+```
+claim_sync_outbound (lease + SKIP LOCKED, expired-lease reclaim)
+  └─ per envelope:
+       validate patient-sync/1 DTO ──contract violation──▶ rejected (dead letter)
+       recheck_sync_export (consent/connection/supersession AT DELIVERY TIME)
+         └─ refused ──▶ durable cancel by the DATABASE; provider never called
+       circuit breaker gate ──open──▶ skip; lease expires and is reclaimed later
+       provider.deliver(envelope) ──▶ evidence via record_sync_delivery ONLY
+         failures: retryable ──▶ failed (+ backoff, Retry-After honored)
+                   permanent/contract/security/consent ──▶ rejected, NEVER retried
+record_sync_worker_cycle (PHI-free counts + circuit state)
+```
+
+Only provider evidence can mark an envelope delivered or acknowledged — the
+worker cannot, the UI cannot, and a crash after delivery re-delivers into the
+database's `(connection, provider_event_id)` dedup because fixture evidence
+ids are deterministic per idempotency key.
+
+**Envelope states.** `queued → sending (leased) → delivered → acknowledged`,
+with `failed` (bounded backoff), `dead_letter` (threshold or terminal
+rejection; REAL review task), `superseded` (newer version existed before
+delivery), and `cancelled` (consent revoked, connection disabled, or a
+reasoned practitioner discard — `cancel_sync_event` requires an authorized
+role and a reason, and is audited). An explicit re-share after
+cancelled/superseded mints a NEW envelope generation (`:rN`); a consent
+re-grant alone never silently resends anything.
+
+**Callback security** (the worker's `--callback-port` boundary; the ONLY
+process holding these secrets): POST `/sync/callback`, `application/json`
+only (415), 64 KiB cap (413), HMAC-SHA256 over `v1:<timestamp>:<nonce>:` +
+the RAW bytes verified with a constant-time comparison BEFORE any parsing
+(401), key resolution by `x-sync-key-id` (rotation-ready), ±5 min timestamp
+tolerance, nonce replay refused durably via `register_sync_callback_nonce`
+(409), sanitized `{ok}`/`{error:{code}}` responses, and allowlisted logs that
+never carry bodies, payloads, tokens, or PHI. Delivery-evidence callbacks
+route to `record_sync_delivery`; inbound envelopes route to
+`record_sync_inbound` (hash-validated, consent-gated, review-not-chart).
+
+**Posture** (`get_org_sync_operations().posture`, shown in Integrations):
+`disabled` (no connector — queueing and claiming fail closed) → `fixture`
+(the `sync_contract_fixture` connector; every surface carries "Deterministic
+contract fixture — TEST behavior only. This is NOT a real AI Longevity Pro
+connection") → `approved` (`alp_patient_sync`, which takes precedence). The
+fixture can never run deployed: Railway, Fly, Vercel, Render, Heroku, Cloud
+Run/Functions, AWS/ECS, Azure, Kubernetes, generic `DEPLOYMENT_ENV`/
+`DEPLOY_ENV` markers, and `NODE_ENV=production` all refuse with
+`fixture_refused_deployed`, and there is deliberately NO override flag.
+`SYNC_PROVIDER=alp` (or anything but `none`/`fixture`) is refused by the
+entry point until Phase 6B is separately authorized.
+
+**Environment variables** (names only; worker process ONLY — none are read
+by the web application, none may ever appear as `NEXT_PUBLIC_*`, and the
+bundle scan greps built client chunks for service-role material):
+`SYNC_WORKER_SUPABASE_URL`, `SYNC_WORKER_SERVICE_ROLE_KEY`,
+`SYNC_WORKER_ORG_ID`, `SYNC_PROVIDER` (`none` | `fixture`),
+`SYNC_FIXTURE_SCENARIOS`, `SYNC_WORKER_BATCH`, `SYNC_WORKER_INTERVAL_MS`,
+`SYNC_WORKER_LEASE_SECONDS`, `SYNC_CALLBACK_SECRET`, `SYNC_CALLBACK_KEY_ID`.
+
+**Deployment topology.** The web application and the worker are separate
+processes with separate credentials: the app ships with anon-key access and
+RLS-guarded RPCs only; the worker (wherever it runs) holds the service-role
+key and is the only path to `claim_sync_outbound`, `recheck_sync_export`,
+`record_sync_delivery`, `record_sync_inbound`, `record_sync_worker_cycle`,
+and `register_sync_callback_nonce` (all EXECUTE-revoked from anon AND
+authenticated). `/api/health` answers `{ok:true}` from the app alone —
+worker absence never makes the web application unhealthy, and
+`SYNC_PROVIDER=none` exits idle by design.
+
+**Runbook.**
+- *Is the worker healthy?* Integrations → "Worker & circuit": last cycle
+  counts, lease reclaims, circuit state, oldest queued age. No cycle row +
+  growing queue age = the worker is not running.
+- *Circuit open?* The provider is failing repeatedly; envelopes stay leased
+  or queued and are reclaimed safely. Fix the provider side; the breaker
+  half-opens and closes on the next successes. Nothing needs manual state
+  surgery.
+- *Dead letters:* Integrations → dead-letter queue → reasoned Retry, or the
+  chart's Patient App tab → reasoned Retry / Discard. Both require a reason
+  and are audited.
+- *Replay/incident:* every delivery attempt, provider evidence row, worker
+  cycle, and connection event is append-only; reconcile from
+  `sync_delivery_events` (dedup key `(connection, provider_event_id)`) and
+  `sync_worker_cycles`. Nonce replays and signature refusals appear in worker
+  logs as `callback_replay_refused` / `callback_refused` with codes only.
+- *Stuck lease:* leases expire (`SYNC_WORKER_LEASE_SECONDS`, default 120s)
+  and the next claim reclaims them as fresh attempts — visible as
+  `leaseReclaims` in telemetry.
+
+**Phase 6B readiness checklist** (all still required before any real
+connection):
+1. Separate explicit authorization to modify AI Longevity Pro.
+2. A reviewed `alp` provider implementation (HTTP adapter satisfying the
+   fixture-proven `deliver`/evidence semantics) behind the same entry point
+   that today refuses `SYNC_PROVIDER=alp`.
+3. AI Longevity Pro implementing `patient-sync/1` per the Phase 5
+   implementation guide (verify-once tokens, at-least-once dedup, hash
+   validation, signed callbacks, withdrawal + consent honoring).
+4. The `alp_patient_sync` connector registration (database act, reviewed).
+5. Real callback secrets provisioned to the worker only, with key ids and a
+   rotation plan.
+6. Re-run: both DB acceptance suites, the full browser battery, advisors,
+   and the bundle scan — with the fixture suites left fully intact.
+
 ## Deprecations
 
 - `NEXT_PUBLIC_USE_LIVE_API` — constant `true`; not consulted anywhere.
@@ -569,19 +707,20 @@ worker — three separate acts, none of them a flag.
   protection. New code must call `api.schedule.transition`; delete the
   delegate once the last caller migrates.
 
-## Phase 6 recommendation
+## Phase 6B recommendation
 
-**The sync worker + ALP bridge activation.** Phase 5 finished every durable
-half of patient delivery; the single highest-value next step is the runtime
-half: a service_role sync worker (edge function or job runner) implementing
-the claim -> deliver -> evidence loop and the signed inbound callback path
-against a real AI Longevity Pro implementation of `patient-sync/1` — at which
-point linking, delivery, receipts, and inbound data all become
-provider-evidenced with zero further desktop changes. That work spans both
-repositories, so desktop-only alternatives in priority order: **billing &
-payments persistence** (invoices as rows behind an honest not-configured
-payment boundary, unlocking the `billing_links` scope), **nutrition
-persistence** (unlocking the `nutrition` scope and its already-defined
-envelope type), or **reports** (access-scoped aggregates over the seven real
-domains). The AI sync summary and inbox copilot both wait on a governed AI
-provider decision; their human-review gates are already live.
+Phase 6A finished the runtime half on the desktop side: the durable worker,
+the lease/recheck/evidence loop, the signed callback boundary, and the
+deterministic contract fixture that proves all of it without touching a real
+patient application. The single remaining step for live sync is **the AI
+Longevity Pro receiver itself** — a separately authorized Phase 6B spanning
+the other repository, per the readiness checklist above. Until then the
+desktop needs zero further changes for sync to go live.
+
+Desktop-only alternatives in priority order: **billing & payments
+persistence** (invoices as rows behind an honest not-configured payment
+boundary, unlocking the `billing_links` scope), **nutrition persistence**
+(unlocking the `nutrition` scope and its already-defined envelope type), or
+**reports** (access-scoped aggregates over the seven real domains). The AI
+sync summary and inbox copilot both wait on a governed AI provider decision;
+their human-review gates are already live.
