@@ -90,6 +90,8 @@ export interface LiveAppointment {
   status: string;
   startsAt: string | null;
   endsAt: string | null;
+  /** Optimistic-concurrency token for status transitions (phase 2). */
+  version?: number;
 }
 
 export interface LiveCalendarPractitioner {
