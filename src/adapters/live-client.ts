@@ -52,6 +52,11 @@ import type {
   LiveProgramTemplate,
   LivePatientPrograms,
   ReviewDecision,
+  LiveOrgSyncOperations,
+  LivePatientSync,
+  LiveSyncMutationResult,
+  LiveSyncOutboundResourceType,
+  LiveSyncScope,
 } from "./live-types";
 
 interface Envelope<T> {
@@ -482,4 +487,71 @@ export const liveClient = {
       status: string;
       startedAt: string | null;
     }[]>("inbox/encounters", { method: "POST", body: { patientId } }),
+
+  syncOverview: (patientId: string) =>
+    liveFetch<LivePatientSync>("sync/overview", { method: "POST", body: { patientId } }),
+
+  syncOrgOperations: () =>
+    liveFetch<LiveOrgSyncOperations>("sync/org", { method: "POST", body: {} }),
+
+  syncCreateInvitation: (patientId: string) =>
+    liveFetch<LiveSyncMutationResult>("sync/invite", { method: "POST", body: { patientId } }),
+
+  syncConnectionAction: (input: {
+    connectionId: string;
+    action: "pause" | "resume" | "revoke";
+    expectedVersion: number;
+    reason?: string | null;
+  }) => liveFetch<LiveSyncMutationResult>("sync/connection", { method: "POST", body: input }),
+
+  syncSetConsentScope: (input: {
+    connectionId: string;
+    scope: LiveSyncScope;
+    grant: boolean;
+    artifactTitle?: string | null;
+    artifactVersion?: string | null;
+    jurisdiction?: string | null;
+    method?: string;
+    authority?: string;
+  }) => liveFetch<LiveSyncMutationResult>("sync/consent", { method: "POST", body: input }),
+
+  syncQueueExport: (input: {
+    connectionId: string;
+    resourceType: LiveSyncOutboundResourceType;
+    resourceId: string;
+  }) => liveFetch<LiveSyncMutationResult>("sync/queue", { method: "POST", body: input }),
+
+  syncWithdrawResource: (input: {
+    connectionId: string;
+    resourceType: LiveSyncOutboundResourceType;
+    resourceId: string;
+    reason: string;
+  }) =>
+    liveFetch<LiveSyncMutationResult>("sync/queue", {
+      method: "POST",
+      body: { ...input, withdraw: true },
+    }),
+
+  syncRetryEvent: (eventId: string, reason: string) =>
+    liveFetch<LiveSyncMutationResult>("sync/retry", { method: "POST", body: { eventId, reason } }),
+
+  syncResolveConflict: (input: {
+    conflictId: string;
+    resolution:
+      | "resolved_keep_desktop"
+      | "resolved_keep_external"
+      | "resolved_manual"
+      | "dismissed";
+    note: string;
+    expectedVersion: number;
+  }) => liveFetch<LiveSyncMutationResult>("sync/conflict", { method: "POST", body: input }),
+
+  syncReviewInbound: (input: { eventId: string; action: "accept" | "reject"; note?: string | null }) =>
+    liveFetch<LiveSyncMutationResult>("sync/review", { method: "POST", body: input }),
+
+  syncRecordCorrection: (input: {
+    inboundEventId: string;
+    overlay: Record<string, unknown>;
+    reason: string;
+  }) => liveFetch<LiveSyncMutationResult>("sync/review", { method: "POST", body: input }),
 };

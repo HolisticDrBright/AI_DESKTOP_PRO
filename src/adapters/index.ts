@@ -40,6 +40,8 @@ import type {
   LiveAuditEvent,
   LiveBookInput,
   LiveInboxFilters,
+  LiveSyncOutboundResourceType,
+  LiveSyncScope,
   LiveMessageChannel,
   LiveThreadCategory,
   LiveThreadPriority,
@@ -430,6 +432,77 @@ export const api = {
      * this and always runs server-side.
      */
     copilotAI: notWired<[{ conversationId: string }], never>("The AI inbox copilot"),
+  },
+  sync: {
+    /**
+     * LIVE: the patient-app delivery & synchronization gateway (phase 5).
+     * Connections, consent scopes, envelopes, and evidence are persisted rows
+     * behind the Desktop-owned RPC boundary. FAIL-CLOSED: without a registered
+     * AI Longevity Pro provider, queueing refuses durably and NOTHING is ever
+     * marked delivered or acknowledged — those states only enter through the
+     * service_role worker boundary with provider evidence, which this client
+     * cannot reach.
+     */
+    forPatient: async (patientId: string) => liveClient.syncOverview(patientId),
+    orgOperations: async () => liveClient.syncOrgOperations(),
+    /** The one-time invitation token appears ONLY in this response. */
+    createInvitation: async (patientId: string) => liveClient.syncCreateInvitation(patientId),
+    connectionAction: async (input: {
+      connectionId: string;
+      action: "pause" | "resume" | "revoke";
+      expectedVersion: number;
+      reason?: string | null;
+    }) => liveClient.syncConnectionAction(input),
+    setConsentScope: async (input: {
+      connectionId: string;
+      scope: LiveSyncScope;
+      grant: boolean;
+      artifactTitle?: string | null;
+      artifactVersion?: string | null;
+      jurisdiction?: string | null;
+      method?: string;
+      authority?: string;
+    }) => liveClient.syncSetConsentScope(input),
+    queueExport: async (input: {
+      connectionId: string;
+      resourceType: LiveSyncOutboundResourceType;
+      resourceId: string;
+    }) => liveClient.syncQueueExport(input),
+    withdrawResource: async (input: {
+      connectionId: string;
+      resourceType: LiveSyncOutboundResourceType;
+      resourceId: string;
+      reason: string;
+    }) => liveClient.syncWithdrawResource(input),
+    retryEvent: async (eventId: string, reason: string) =>
+      liveClient.syncRetryEvent(eventId, reason),
+    resolveConflict: async (input: {
+      conflictId: string;
+      resolution:
+        | "resolved_keep_desktop"
+        | "resolved_keep_external"
+        | "resolved_manual"
+        | "dismissed";
+      note: string;
+      expectedVersion: number;
+    }) => liveClient.syncResolveConflict(input),
+    reviewInbound: async (input: {
+      eventId: string;
+      action: "accept" | "reject";
+      note?: string | null;
+    }) => liveClient.syncReviewInbound(input),
+    recordCorrection: async (input: {
+      inboundEventId: string;
+      overlay: Record<string, unknown>;
+      reason: string;
+    }) => liveClient.syncRecordCorrection(input),
+    /**
+     * UNAVAILABLE: the AI summary over inbound adherence/symptom/wearable/
+     * check-in data. The human review workflow above runs without it; with no
+     * approved provider it fails closed — "AI sync summary not configured" —
+     * and no fixture summary ever renders.
+     */
+    summaryAI: notWired<[{ connectionId: string }], never>("The AI sync summary"),
   },
   reasoning: {
     /**

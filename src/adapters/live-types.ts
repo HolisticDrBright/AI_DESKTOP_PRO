@@ -1194,3 +1194,288 @@ export interface AlpMessagingReadReceiptV1 {
   providerEventId: string;
   readAt: string;
 }
+
+/* ------------------------------------------------------------------ */
+/* Patient delivery & synchronization gateway (phase 5)                */
+/* ------------------------------------------------------------------ */
+
+export type LiveSyncScope =
+  | "programs"
+  | "protocols_supplements"
+  | "nutrition"
+  | "appointments"
+  | "messaging"
+  | "forms_checkins"
+  | "symptoms_adherence"
+  | "wearables"
+  | "lab_summaries"
+  | "billing_links"
+  | "research_n_of_1";
+
+export type LiveSyncConnectionState =
+  | "invitation_pending"
+  | "verified"
+  | "paused"
+  | "revoked"
+  | "failed";
+
+export type LiveSyncOutboundResourceType =
+  | "program_enrollment"
+  | "protocol_version"
+  | "nutrition_plan"
+  | "supplement_instructions"
+  | "appointment_summary"
+  | "message"
+  | "checkin_assignment"
+  | "lab_summary"
+  | "resource_withdrawal";
+
+export type LiveSyncOutboundState =
+  | "queued"
+  | "sending"
+  | "delivered"
+  | "acknowledged"
+  | "failed"
+  | "dead_letter"
+  | "superseded"
+  | "cancelled";
+
+export type LiveSyncInboundState =
+  | "received"
+  | "processed"
+  | "review_pending"
+  | "conflict"
+  | "rejected";
+
+export interface LiveSyncConnection {
+  id: string;
+  externalSystem: string;
+  state: LiveSyncConnectionState;
+  contractVersion: string;
+  verifiedAt: string | null;
+  pausedAt: string | null;
+  revokedAt: string | null;
+  version: number;
+  createdAt: string;
+}
+
+export interface LiveSyncConsentScope {
+  id: string;
+  scope: LiveSyncScope;
+  status: "granted" | "revoked";
+  artifactTitle: string;
+  artifactVersion: string;
+  jurisdiction: string | null;
+  method: string;
+  authority: string;
+  grantedAt: string;
+  revokedAt: string | null;
+  revokeSource: "practitioner" | "patient_app" | null;
+}
+
+export interface LiveSyncOutboundEvent {
+  id: string;
+  eventUid: string;
+  scope: LiveSyncScope;
+  resourceType: LiveSyncOutboundResourceType;
+  resourceId: string;
+  resourceVersion: string;
+  state: LiveSyncOutboundState;
+  attempts: number;
+  nextRetryAt: string | null;
+  lastError: string | null;
+  occurredAt: string;
+  deliveredAt: string | null;
+  acknowledgedAt: string | null;
+}
+
+export interface LiveSyncInboundCorrection {
+  version: number;
+  overlay: Record<string, unknown>;
+  reason: string;
+  createdAt: string;
+}
+
+export interface LiveSyncInboundEvent {
+  id: string;
+  scope: LiveSyncScope;
+  resourceType: string;
+  externalResourceId: string | null;
+  resourceVersion: string | null;
+  state: LiveSyncInboundState;
+  occurredAt: string;
+  receivedAt: string;
+  /** The ORIGINAL patient submission — immutable; corrections are overlays. */
+  payload: Record<string, unknown>;
+  corrections: LiveSyncInboundCorrection[];
+  reviewedAt: string | null;
+  reviewNote: string | null;
+  rejectionReason: string | null;
+  providerEventId: string;
+}
+
+export interface LiveSyncConflict {
+  id: string;
+  scope: LiveSyncScope;
+  resourceType: string;
+  resourceRef: string;
+  reason: string;
+  desktopVersion: string | null;
+  externalVersion: string | null;
+  state:
+    | "open"
+    | "resolved_keep_desktop"
+    | "resolved_keep_external"
+    | "resolved_manual"
+    | "dismissed";
+  resolutionNote: string | null;
+  resolvedAt: string | null;
+  version: number;
+  createdAt: string;
+}
+
+export interface LiveSyncResourceStatus {
+  resourceType: LiveSyncOutboundResourceType;
+  resourceId: string;
+  resourceVersion: string;
+  state: "pending" | "delivered" | "acknowledged" | "failed" | "withdrawn";
+  acknowledgedAt: string | null;
+  updatedAt: string;
+}
+
+export interface LiveSyncHistoryEntry {
+  kind: string;
+  fromValue: string | null;
+  toValue: string | null;
+  note: string | null;
+  createdAt: string;
+}
+
+export interface LivePatientSync {
+  providerConfigured: boolean;
+  connection: LiveSyncConnection | null;
+  invitation: {
+    id: string;
+    expiresAt: string;
+    createdAt: string;
+    usedAt: string | null;
+    expired: boolean;
+  } | null;
+  scopes: LiveSyncConsentScope[];
+  counts: {
+    pendingOutbound: number;
+    failedOutbound: number;
+    deadLetter: number;
+    inboundPendingReview: number;
+    openConflicts: number;
+  };
+  lastSuccessfulSyncAt: string | null;
+  resources: LiveSyncResourceStatus[];
+  outbound: LiveSyncOutboundEvent[];
+  inbound: LiveSyncInboundEvent[];
+  conflicts: LiveSyncConflict[];
+  history: LiveSyncHistoryEntry[];
+  generatedAt: string;
+}
+
+export interface LiveSyncMutationResult {
+  ok: boolean;
+  message: string;
+  refusal?: string;
+  connectionId?: string;
+  invitationId?: string;
+  /** Returned ONCE at creation; only its hash exists server-side. */
+  token?: string;
+  expiresAt?: string;
+  deliveryConfigured?: boolean;
+  eventId?: string;
+  eventUid?: string;
+  state?: string;
+  version?: number;
+  scope?: string;
+  status?: string;
+  alreadyApplied?: boolean;
+  alreadyQueued?: boolean;
+  cancelledOutbound?: number;
+}
+
+export interface LiveOrgSyncOperations {
+  providerConfigured: boolean;
+  provider: string | null;
+  contractVersions: string[];
+  connections: {
+    verified: number;
+    invitationPending: number;
+    paused: number;
+    revoked: number;
+  };
+  outbound: { queued: number; failed: number; deadLetter: number; delivered: number };
+  inbound: { pendingReview: number; processed: number; conflicts: number };
+  deadLetters: {
+    eventId: string;
+    reason: string;
+    enteredAt: string;
+    retriedAt: string | null;
+  }[];
+  generatedAt: string;
+}
+
+/**
+ * Versioned SYNC ENVELOPE contract for the FUTURE AI Longevity Pro bridge
+ * (contract "patient-sync", version 1).
+ *
+ * Contract definition ONLY. Nothing in this repository calls AI Longevity
+ * Pro, transmits these shapes anywhere, or claims content reached the
+ * patient app. The mobile side must reject unknown contract versions.
+ */
+export interface PatientSyncOutboundEnvelopeV1 {
+  contract: "patient-sync";
+  contractVersion: 1;
+  eventUid: string;
+  idempotencyKey: string;
+  organizationId: string;
+  connectionId: string;
+  scope: LiveSyncScope;
+  resourceType: LiveSyncOutboundResourceType;
+  resourceId: string;
+  resourceVersion: string;
+  occurredAt: string;
+  producer: "desktop";
+  provenance: Record<string, unknown>;
+  /** Minimum-necessary payload; sha256 hex of its canonical JSON text. */
+  payload: Record<string, unknown>;
+  payloadHash: string;
+  correlationId: string | null;
+  causationId: string | null;
+}
+
+export interface PatientSyncInboundEnvelopeV1 {
+  contract: "patient-sync";
+  contractVersion: 1;
+  /** Provider-unique event id — replays are refused per connection. */
+  providerEventId: string;
+  connectionId: string;
+  scope: LiveSyncScope;
+  resourceType:
+    | "program_progress"
+    | "quiz_response"
+    | "checkin_response"
+    | "protocol_adherence"
+    | "supplement_adherence"
+    | "symptom_report"
+    | "outcome_report"
+    | "wearable_summary"
+    | "patient_message"
+    | "appointment_request"
+    | "consent_change"
+    | "delivery_receipt"
+    | "read_receipt";
+  externalResourceId: string | null;
+  resourceVersion: string | null;
+  occurredAt: string;
+  payload: Record<string, unknown>;
+  payloadHash: string;
+  /** Key id of the signature the worker verified before recording. */
+  signatureKeyId: string | null;
+  correlationId: string | null;
+}
