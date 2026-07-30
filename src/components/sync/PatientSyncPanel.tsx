@@ -462,6 +462,11 @@ export function PatientSyncPanel({ patientId }: { patientId: string }) {
                   </span>
                   <StatePill state={e.state} />
                   <span className="text-[11px] text-faint">attempts {e.attempts}</span>
+                  {e.acknowledgedAt && (
+                    <span className="text-[10.5px] text-positive-deep" data-testid="sync-ack-evidence">
+                      ack {fmt(e.acknowledgedAt)}
+                    </span>
+                  )}
                   {e.lastError && <span className="text-[11px] text-critical">{e.lastError}</span>}
                   {(e.state === "failed" || e.state === "dead_letter") && (
                     <span className="flex items-center gap-1">
@@ -486,6 +491,21 @@ export function PatientSyncPanel({ patientId }: { patientId: string }) {
                         data-testid={`sync-retry-${e.id}`}
                       >
                         Retry
+                      </Btn>
+                      <Btn
+                        size="sm"
+                        variant="ghost"
+                        disabled={busy || !retryReason.trim()}
+                        onClick={() =>
+                          void run(async () => {
+                            const res = await api.sync.cancelEvent(e.id, retryReason.trim());
+                            setRetryReason("");
+                            return res;
+                          })
+                        }
+                        data-testid={`sync-cancel-${e.id}`}
+                      >
+                        Discard
                       </Btn>
                     </span>
                   )}

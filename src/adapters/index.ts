@@ -476,6 +476,8 @@ export const api = {
     }) => liveClient.syncWithdrawResource(input),
     retryEvent: async (eventId: string, reason: string) =>
       liveClient.syncRetryEvent(eventId, reason),
+    cancelEvent: async (eventId: string, reason: string) =>
+      liveClient.syncCancelEvent(eventId, reason),
     resolveConflict: async (input: {
       conflictId: string;
       resolution:

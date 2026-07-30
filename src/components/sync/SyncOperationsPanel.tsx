@@ -63,24 +63,36 @@ export function SyncOperationsPanel() {
           </CardTitle>
           <span
             className={`inline-flex h-[18px] items-center rounded-full px-2 text-[10px] font-bold ${
-              data.providerConfigured
+              data.posture === "approved"
                 ? "bg-positive-tint text-positive-deep"
-                : "bg-slate-tint text-slate-badge"
+                : data.posture === "fixture"
+                  ? "bg-warning-tint text-warning-deep"
+                  : "bg-slate-tint text-slate-badge"
             }`}
             data-testid="sync-ops-provider-state"
           >
-            {data.providerConfigured ? `connected (${data.provider})` : "not configured"}
+            {data.posture === "approved"
+              ? `Approved provider (${data.provider})`
+              : data.posture === "fixture"
+                ? "Fixture test"
+                : "not configured"}
           </span>
           <span className="text-[11.5px] text-subtle">
             contracts in use:{" "}
             {data.contractVersions.length > 0 ? data.contractVersions.join(", ") : "none"}
           </span>
         </div>
-        {!data.providerConfigured && (
+        {data.posture === "disabled" && (
           <p className="m-0 mt-2 text-[12px] text-subtle" data-testid="sync-ops-not-configured">
             AI Longevity Pro connection not configured. Registering a provider is a reviewed
             operational act (code change + database connector registration) — no environment flag
             enables it.
+          </p>
+        )}
+        {data.posture === "fixture" && (
+          <p className="m-0 mt-2 text-[12px] font-semibold text-warning-deep" data-testid="sync-ops-fixture-note">
+            Deterministic contract fixture — TEST behavior only. This is NOT a real AI Longevity
+            Pro connection; no patient data leaves this system.
           </p>
         )}
       </Card>
@@ -101,7 +113,9 @@ export function SyncOperationsPanel() {
           <p className="m-0 mt-1 text-[20px] font-bold text-body" data-testid="sync-ops-queued">
             {data.outbound.queued}
           </p>
-          <p className="m-0 text-[11.5px] text-subtle">{data.outbound.delivered} provider-confirmed</p>
+          <p className="m-0 text-[11.5px] text-subtle">
+            {data.outbound.sending} in flight · {data.outbound.delivered} provider-confirmed
+          </p>
         </Card>
         <Card className="px-4 py-3">
           <p className="m-0 text-[11px] font-bold tracking-[0.02em] text-subtle uppercase">Failed / dead-letter</p>
@@ -120,6 +134,42 @@ export function SyncOperationsPanel() {
           </p>
         </Card>
       </div>
+
+      <Card className="px-4 py-3" data-testid="sync-ops-worker">
+        <CardTitle className="mb-1">Worker &amp; circuit</CardTitle>
+        {data.lastWorkerCycle ? (
+          <p className="m-0 text-[12.5px] text-body" data-testid="sync-ops-last-cycle">
+            Last cycle {fmt(data.lastWorkerCycle.completedAt)} — claimed{" "}
+            {data.lastWorkerCycle.claimed}, succeeded {data.lastWorkerCycle.succeeded}, retried{" "}
+            {data.lastWorkerCycle.retried}, dead-lettered {data.lastWorkerCycle.deadLettered}
+            {data.lastWorkerCycle.leaseReclaims > 0
+              ? `, lease reclaims ${data.lastWorkerCycle.leaseReclaims}`
+              : ""}
+            {" · provider "}
+            {data.lastWorkerCycle.provider} ({data.lastWorkerCycle.contractVersion})
+          </p>
+        ) : (
+          <p className="m-0 text-[12px] text-faint" data-testid="sync-ops-no-cycle">
+            No worker cycle has run. The web application does not depend on the worker — its
+            absence is not an error.
+          </p>
+        )}
+        <p className="m-0 mt-1 text-[12px] text-subtle" data-testid="sync-ops-circuit">
+          Circuit:{" "}
+          <span
+            className={`font-bold ${
+              (data.circuit?.state ?? "closed") === "closed" ? "text-positive-deep" : "text-critical"
+            }`}
+          >
+            {data.circuit?.state ?? "closed"}
+          </span>
+          {data.circuit && data.circuit.failureCount > 0
+            ? ` (${data.circuit.failureCount} consecutive failures)`
+            : ""}
+          {" · oldest queued work "}
+          {data.maxQueueAgeSeconds}s
+        </p>
+      </Card>
 
       <Card className="px-4 py-3" data-testid="sync-ops-dead-letters">
         <CardTitle className="mb-2">Dead-letter queue</CardTitle>

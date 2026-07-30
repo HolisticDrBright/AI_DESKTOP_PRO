@@ -535,6 +535,12 @@ export const liveClient = {
   syncRetryEvent: (eventId: string, reason: string) =>
     liveFetch<LiveSyncMutationResult>("sync/retry", { method: "POST", body: { eventId, reason } }),
 
+  syncCancelEvent: (eventId: string, reason: string) =>
+    liveFetch<LiveSyncMutationResult>("sync/retry", {
+      method: "POST",
+      body: { eventId, reason, action: "cancel" },
+    }),
+
   syncResolveConflict: (input: {
     conflictId: string;
     resolution:

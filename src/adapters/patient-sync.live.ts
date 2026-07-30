@@ -174,6 +174,20 @@ export const patientSyncLive = {
     );
   },
 
+  /** Reasoned discard of queued/failed/dead-letter work; audited. */
+  async cancelEvent(
+    eventId: string,
+    reason: string,
+    sessionToken?: string | null,
+  ): Promise<LiveSyncMutationResult> {
+    const token = await getClinicalAccessToken(sessionToken);
+    return clinicalRpc<LiveSyncMutationResult>(
+      "cancel_sync_event",
+      { _event_id: eventId, _reason: reason },
+      token,
+    );
+  },
+
   /** Resolution decides direction; it never mutates either original. */
   async resolveConflict(
     input: {
