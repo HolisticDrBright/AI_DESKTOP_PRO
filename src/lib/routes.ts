@@ -17,6 +17,7 @@ export const PATIENT_TABS: { id: PatientTabId; label: string }[] = [
   { id: "messages", label: "Messages" },
   { id: "billing", label: "Billing" },
   { id: "files", label: "Files" },
+  { id: "app-sync", label: "Patient App" },
 ];
 
 // `care-plan` remains routable only so old bookmarks can be redirected.

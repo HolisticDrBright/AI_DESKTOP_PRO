@@ -155,6 +155,36 @@ test("the inbox stays honest with a down backend", async ({ page }) => {
   expect(body).not.toContain("sent (provider confirmed)");
 });
 
+test("the patient-sync surfaces stay honest with a down backend", async ({ page }) => {
+  // PHASE 5: the Patient App tab and Integrations sync operations are real
+  // surfaces now. With the backend down they must refuse — never a false
+  // "not linked" claim (an unlinked patient and an unreachable backend are
+  // different statements), and never fabricated counts.
+  await page.goto("/patients/11111111-2222-3333-4444-555555555555/app-sync");
+  await page.waitForLoadState("networkidle");
+  let body = (await page.locator("body").innerText()).trim();
+  await expectNoFixtureData(body, "the patient-sync tab with the backend down");
+  expect(
+    body,
+    `/app-sync must report itself unavailable. Got:\n${body.slice(0, 600)}`,
+  ).toMatch(/didn.t load|unavailable|not configured|cannot reach|couldn.t reach|try again|sign in/i);
+  expect(body).not.toContain("This patient's app is not linked");
+  expect(body).not.toContain("Create connection invitation");
+
+  await page.goto("/integrations");
+  await page.waitForLoadState("networkidle");
+  body = (await page.locator("body").innerText)
+    ? (await page.locator("body").innerText()).trim()
+    : "";
+  await expectNoFixtureData(body, "/integrations with the backend down");
+  expect(
+    body,
+    `/integrations must report sync operations unavailable. Got:\n${body.slice(0, 600)}`,
+  ).toMatch(/didn.t load|unavailable|not configured|cannot reach|couldn.t reach|try again|sign in/i);
+  // No fabricated operational counts on a dead screen.
+  expect(body).not.toContain("Connected patients");
+});
+
 test("settings reports the clinical edition and its real configuration state", async ({ page }) => {
   await page.goto("/settings");
   await page.waitForLoadState("networkidle");

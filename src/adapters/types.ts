@@ -62,7 +62,8 @@ export type PatientTabId =
   | "appointments"
   | "messages"
   | "billing"
-  | "files";
+  | "files"
+  | "app-sync";
 
 export interface PatientDirectoryEntry {
   /** Route slug, e.g. `p-78435`. */
