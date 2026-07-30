@@ -84,7 +84,8 @@ function fmtTimeInput(min: number): string {
 const STATUS_LABEL: Record<AppointmentStatus, string> = {
   scheduled: "Scheduled",
   confirmed: "Confirmed",
-  arrived: "In progress",
+  arrived: "Arrived",
+  "in-encounter": "In room",
   completed: "Completed",
   "no-show": "No-show",
   cancelled: "Cancelled",
@@ -107,10 +108,29 @@ const STATUS_FROM_DB: Record<string, AppointmentStatus> = {
   scheduled: "scheduled",
   confirmed: "confirmed",
   arrived: "arrived",
+  in_encounter: "in-encounter",
   completed: "completed",
   cancelled: "cancelled",
   no_show: "no-show",
 };
+
+/** Transition target (database vocabulary) → the client status label key. */
+const DB_TO_CLIENT_STATUS: Record<
+  "arrived" | "in_encounter" | "completed" | "cancelled" | "no_show",
+  AppointmentStatus
+> = {
+  arrived: "arrived",
+  in_encounter: "in-encounter",
+  completed: "completed",
+  cancelled: "cancelled",
+  no_show: "no-show",
+};
+
+/** Front-desk action button styling (shared by the drawer's transition row). */
+const FD_BTN =
+  "flex h-8 flex-1 items-center justify-center rounded-lg border border-line bg-card px-2 text-[12px] font-semibold text-body hover:border-line-hover focus-visible:outline-2 focus-visible:outline-action disabled:opacity-50";
+const FD_BTN_DANGER =
+  "flex h-8 flex-1 items-center justify-center rounded-lg border border-line bg-card px-2 text-[12px] font-semibold text-critical hover:border-line-hover focus-visible:outline-2 focus-visible:outline-action disabled:opacity-50";
 
 /**
  * Shape a live week (real, dated appointments) into the grid's CalendarData +
@@ -120,9 +140,12 @@ const STATUS_FROM_DB: Record<string, AppointmentStatus> = {
 function mapLiveWeek(live: LiveCalendar): {
   data: CalendarData;
   statusById: Map<string, AppointmentStatus>;
+  /** Optimistic-concurrency token per appointment, straight from the record. */
+  versionById: Map<string, number>;
   patients: LiveCalendar["patients"];
 } {
   const statusById = new Map<string, AppointmentStatus>();
+  const versionById = new Map<string, number>();
   const appointments: Appointment[] = [];
   let minStart = 8 * 60;
   let maxEnd = 18 * 60;
@@ -139,6 +162,7 @@ function mapLiveWeek(live: LiveCalendar): {
       : "follow-up";
 
     statusById.set(a.id, status);
+    versionById.set(a.id, typeof a.version === "number" ? a.version : 1);
     appointments.push({
       id: a.id,
       practitionerId: a.practitionerUserId ?? "unknown",
@@ -187,6 +211,7 @@ function mapLiveWeek(live: LiveCalendar): {
       dayEnd: Math.ceil(maxEnd / 60) * 60,
     },
     statusById,
+    versionById,
     patients: live.patients,
   };
 }
@@ -398,6 +423,7 @@ export function CalendarView({
         <DetailDrawer
           selection={selection}
           data={data}
+          version={liveWeek?.versionById.get(selection.appt.id) ?? null}
           onClose={() => setSelection(null)}
           onChanged={onChanged}
         />
@@ -910,11 +936,14 @@ function StatusPill({ status }: { status: AppointmentStatus }) {
 function DetailDrawer({
   selection,
   data,
+  version,
   onClose,
   onChanged,
 }: {
   selection: Selection;
   data: CalendarData;
+  /** Optimistic-concurrency token rendered with this appointment. */
+  version: number | null;
   onClose: () => void;
   onChanged: () => void;
 }) {
@@ -924,14 +953,34 @@ function DetailDrawer({
   const practitioner = data.practitioners.find((p) => p.id === appt.practitionerId);
   const end = appt.start + appt.durationMin;
   const [working, setWorking] = useState(false);
+  const [optimisticStatus, setOptimisticStatus] = useState<AppointmentStatus | null>(null);
   const [confirming, setConfirming] = useState<"cancelled" | "no_show" | null>(null);
   const [rescheduleOpen, setRescheduleOpen] = useState(false);
+  // The status actually on screen: the optimistic one while a transition is in
+  // flight, otherwise the record's.
+  const effectiveStatus: AppointmentStatus = optimisticStatus ?? status;
+  const isSettled =
+    effectiveStatus === "completed" ||
+    effectiveStatus === "cancelled" ||
+    effectiveStatus === "no-show";
+  const isBooked = effectiveStatus === "scheduled" || effectiveStatus === "confirmed";
+  const canArrive = isBooked;
+  // start_encounter accepts scheduled / confirmed / arrived and transitions the
+  // appointment to in_encounter itself, and re-opening an in-progress encounter
+  // is legitimate. So the gate here is exactly "not settled" — matching the
+  // server rather than being arbitrarily stricter than it.
+  const canOpenEncounter = !isSettled;
+  const canComplete = effectiveStatus === "arrived" || effectiveStatus === "in-encounter";
+  const canReschedule = isBooked;
+  const canNoShow = isBooked || effectiveStatus === "arrived";
+  const canCancel = !isSettled;
   const [rescheduleDate, setRescheduleDate] = useState(() => fmtDateInput(date));
   const [rescheduleTime, setRescheduleTime] = useState(() => fmtTimeInput(appt.start));
   const [rescheduleError, setRescheduleError] = useState("");
 
   useEffect(() => {
     setWorking(false);
+    setOptimisticStatus(null);
     setConfirming(null);
     setRescheduleOpen(false);
     setRescheduleDate(fmtDateInput(date));
@@ -945,20 +994,45 @@ function DetailDrawer({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  // LIVE: audited status transitions through the Desktop scheduling RPC.
-  const setLiveStatus = (target: "arrived" | "completed" | "cancelled" | "no_show") => {
+  // The front-desk state machine lives in the DATABASE. This sends the
+  // transition with the version we rendered (so a concurrent change is a
+  // conflict, not a silent clobber) and a stable idempotency key per
+  // appointment+target (so a double click or a retried request applies once).
+  // Optimistic status is shown immediately and rolled back on any failure.
+  const runTransition = (
+    target: "arrived" | "in_encounter" | "completed" | "cancelled" | "no_show",
+  ) => {
     if (working) return;
     setWorking(true);
     setConfirming(null);
+    setOptimisticStatus(DB_TO_CLIENT_STATUS[target]);
     api.schedule
-      .updateStatus(appt.id, target)
+      .transition({
+        appointmentId: appt.id,
+        toStatus: target,
+        expectedVersion: version,
+        idempotencyKey: `${appt.id}:${target}:${version ?? "nov"}`,
+      })
       .then((r) => {
-        announce(`${r.message} (saved to record + audit)`);
+        announce(
+          r.already_applied
+            ? `Already ${r.status.replace("_", " ")} — no change made.`
+            : `${STATUS_LABEL[DB_TO_CLIENT_STATUS[target]]} recorded. (saved to record + audit)`,
+        );
         onChanged();
       })
       .catch((e) => {
         setWorking(false);
-        announce(isAdapterError(e) ? e.safeMessage : "Could not update the appointment.");
+        setOptimisticStatus(null); // roll the optimistic UI back
+        if (isAdapterError(e)) {
+          announce(
+            e.code === "conflict"
+              ? "This appointment changed in another window. Reopen it to see the current status."
+              : e.safeMessage,
+          );
+        } else {
+          announce("Could not update the appointment. Nothing was saved.");
+        }
       });
   };
 
@@ -1023,7 +1097,7 @@ function DetailDrawer({
 
       <div className="flex-1 overflow-y-auto py-[6px]">
         <div className="flex items-center gap-2 px-4 py-[8px]">
-          <StatusPill status={status} />
+          <StatusPill status={effectiveStatus} />
         </div>
         <Row icon={<Clock size={14} strokeWidth={2} aria-hidden />}>
           {WEEKDAYS[isoWeekday(date) - 1]} {MONTHS[date.getMonth()].slice(0, 3)} {date.getDate()} ·{" "}
@@ -1048,17 +1122,7 @@ function DetailDrawer({
             Open chart & add to order →
           </Link>
         )}
-        {appt.patientId && (
-          <StartEncounterButton
-            patientId={appt.patientId}
-            appointmentId={appt.id}
-            visitType={appt.type === "telehealth" ? "telehealth" : "follow-up"}
-            label="Open encounter"
-          />
-        )}
-        {(
-          <>
-            {rescheduleOpen && (status === "scheduled" || status === "confirmed") && (
+            {rescheduleOpen && canReschedule && (
               <div className="rounded-lg border border-line bg-card p-3">
                 <div className="grid grid-cols-2 gap-2">
                   <label className="text-[10px] font-bold tracking-[0.04em] text-faint uppercase">
@@ -1100,55 +1164,77 @@ function DetailDrawer({
                 </div>
               </div>
             )}
+            {/* Context-sensitive actions: each button appears only when the
+                database would ACCEPT that transition from the current status.
+                The machine is authoritative — this list mirrors it, and an
+                invalid attempt would still be refused server-side. */}
             <div className="flex flex-wrap gap-2">
-              {(status === "scheduled" || status === "confirmed") && (
+              {canArrive && (
                 <button
-                  onClick={() => setLiveStatus("arrived")}
+                  onClick={() => runTransition("arrived")}
                   disabled={working}
-                  className="flex h-8 flex-1 items-center justify-center rounded-lg border border-line bg-card px-2 text-[12px] font-semibold text-body hover:border-line-hover focus-visible:outline-2 focus-visible:outline-action disabled:opacity-50"
+                  data-testid="appt-arrive"
+                  className={FD_BTN}
                 >
-                  {working ? "Saving…" : "Check in"}
+                  {working ? "Saving…" : "Arrive"}
                 </button>
               )}
-              {status === "arrived" && (
+              {canOpenEncounter && appt.patientId && (
+                <StartEncounterButton
+                  patientId={appt.patientId}
+                  appointmentId={appt.id}
+                  visitType={appt.type === "telehealth" ? "telehealth" : "follow-up"}
+                  label="Open encounter"
+                />
+              )}
+              {canComplete && (
                 <button
-                  onClick={() => setLiveStatus("completed")}
+                  onClick={() => runTransition("completed")}
                   disabled={working}
-                  className="flex h-8 flex-1 items-center justify-center rounded-lg border border-line bg-card px-2 text-[12px] font-semibold text-body hover:border-line-hover focus-visible:outline-2 focus-visible:outline-action disabled:opacity-50"
+                  data-testid="appt-complete"
+                  className={FD_BTN}
                 >
                   {working ? "Saving…" : "Complete"}
                 </button>
               )}
-              {(status === "scheduled" || status === "confirmed") && (
+              {canReschedule && (
                 <button
                   onClick={() => setRescheduleOpen((open) => !open)}
                   disabled={working}
-                  className="flex h-8 flex-1 items-center justify-center rounded-lg border border-line bg-card px-2 text-[12px] font-semibold text-body hover:border-line-hover focus-visible:outline-2 focus-visible:outline-action disabled:opacity-50"
+                  data-testid="appt-reschedule"
+                  className={FD_BTN}
                 >
                   Reschedule
                 </button>
               )}
-              {(status === "scheduled" || status === "confirmed") && (
+              {canNoShow && (
                 <button
                   onClick={() => setConfirming("no_show")}
                   disabled={working}
-                  className="flex h-8 flex-1 items-center justify-center rounded-lg border border-line bg-card px-2 text-[12px] font-semibold text-critical hover:border-line-hover focus-visible:outline-2 focus-visible:outline-action disabled:opacity-50"
+                  data-testid="appt-no-show"
+                  className={FD_BTN_DANGER}
                 >
                   No-show
                 </button>
               )}
-              {status !== "completed" && status !== "cancelled" && status !== "no-show" && (
+              {canCancel && (
                 <button
                   onClick={() => setConfirming("cancelled")}
                   disabled={working}
-                  className="flex h-8 flex-1 items-center justify-center rounded-lg border border-line bg-card px-2 text-[12px] font-semibold text-critical hover:border-line-hover focus-visible:outline-2 focus-visible:outline-action disabled:opacity-50"
+                  data-testid="appt-cancel"
+                  className={FD_BTN_DANGER}
                 >
                   Cancel appt
                 </button>
               )}
+              {isSettled && (
+                <p className="m-0 w-full text-[11px] leading-[1.5] text-faint">
+                  This appointment is settled ({STATUS_LABEL[effectiveStatus].toLowerCase()}).
+                  Changing it requires an administrator correction, which is recorded with a
+                  reason.
+                </p>
+              )}
             </div>
-          </>
-        )}
       </div>
 
       <ConfirmDialog
@@ -1157,7 +1243,7 @@ function DetailDrawer({
         body={`${appt.patientName} · ${fmtTime(appt.start)}. This updates the appointment record and is audited.`}
         confirmLabel={confirming === "no_show" ? "Mark no-show" : "Cancel appointment"}
         destructive
-        onConfirm={() => confirming && setLiveStatus(confirming)}
+        onConfirm={() => confirming && runTransition(confirming)}
         onCancel={() => setConfirming(null)}
       />
     </aside>

@@ -31,6 +31,7 @@ describe("scheduleLive Desktop Supabase boundary", () => {
         location: "Room 2",
         telehealth_url: null,
         status: "confirmed",
+        version: 3,
         starts_at: "2026-09-07T16:00:00Z",
         ends_at: "2026-09-07T16:45:00Z",
       }],
@@ -61,6 +62,10 @@ describe("scheduleLive Desktop Supabase boundary", () => {
         location: "Room 2",
         telehealthUrl: null,
         status: "confirmed",
+        // The optimistic-concurrency token MUST survive the mapping: without it
+        // the drawer sends a token it never rendered, and a transition either
+        // clobbers a concurrent change or conflicts against nothing.
+        version: 3,
         startsAt: "2026-09-07T16:00:00Z",
         endsAt: "2026-09-07T16:45:00Z",
       }],

@@ -95,6 +95,32 @@ test("the review queue and calendar stay honest with a down backend", async ({ p
   }
 });
 
+test("the today brief and protocol screen stay honest with a down backend", async ({ page }) => {
+  // PHASE 2: both screens gained real aggregations. With the backend down they
+  // must say so — never fall back to a template day or a template protocol.
+  await page.goto("/today");
+  await page.waitForLoadState("networkidle");
+  let body = (await page.locator("body").innerText()).trim();
+  await expectNoFixtureData(body, "/today with the backend down");
+  expect(body.length, "/today must explain itself rather than render blank").toBeGreaterThan(0);
+  expect(
+    body,
+    `/today must report the schedule as unavailable. Got:\n${body.slice(0, 600)}`,
+  ).toMatch(/didn.t load|unavailable|not configured|cannot reach|couldn.t reach|try again|sign in/i);
+  // An empty day and an unreachable backend are different claims. With the
+  // backend down the screen must NOT assert that nothing is scheduled.
+  expect(body).not.toContain("No appointments are scheduled for today");
+
+  await page.goto("/patients/11111111-2222-3333-4444-555555555555/protocol");
+  await page.waitForLoadState("networkidle");
+  body = (await page.locator("body").innerText()).trim();
+  await expectNoFixtureData(body, "a clinical protocol screen with the backend down");
+  // No fabricated plan, and no false claim that this patient simply has none.
+  expect(body).not.toContain("Interaction review not completed");
+  expect(body).not.toContain("This patient has no protocol on file");
+  expect(body).not.toContain("Active version");
+});
+
 test("settings reports the clinical edition and its real configuration state", async ({ page }) => {
   await page.goto("/settings");
   await page.waitForLoadState("networkidle");

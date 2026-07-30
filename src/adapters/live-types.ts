@@ -90,6 +90,8 @@ export interface LiveAppointment {
   status: string;
   startsAt: string | null;
   endsAt: string | null;
+  /** Optimistic-concurrency token for status transitions (phase 2). */
+  version?: number;
 }
 
 export interface LiveCalendarPractitioner {
@@ -353,5 +355,260 @@ export interface LiveHypothesisReviewResult {
   hypothesisId: string;
   state: "accepted" | "rejected" | "needs_data";
   auditId: string;
+  message: string;
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * Front-desk appointment transitions (Phase 2 slice 1).
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/** The full appointment status vocabulary the state machine enforces. */
+export type LiveAppointmentStatus =
+  | "scheduled"
+  | "confirmed"
+  | "arrived"
+  | "in_encounter"
+  | "completed"
+  | "cancelled"
+  | "no_show";
+
+export interface LiveTransitionResult {
+  ok: true;
+  id: string;
+  status: LiveAppointmentStatus;
+  previous_status: LiveAppointmentStatus;
+  /** New optimistic-concurrency version to render with. */
+  version: number;
+  /** True when an idempotency-key replay (or a no-op) returned the stored outcome. */
+  already_applied: boolean;
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * Protocols + templates (Phase 2 slice 2).
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+export type LiveProtocolVersionStatus =
+  | "draft" | "approved" | "active" | "superseded" | "discontinued";
+export type LiveProtocolStatus =
+  | "draft" | "active" | "paused" | "completed" | "discontinued";
+export type LiveProtocolItemKind =
+  | "product" | "diet" | "lifestyle" | "monitoring" | "followup";
+
+export interface LiveProtocolPhase {
+  id: string;
+  name: string;
+  position: number;
+  /** Absolute dates OR relative offsets — never both, never inferred. */
+  startsOn: string | null;
+  endsOn: string | null;
+  relativeStartDay: number | null;
+  relativeDurationDays: number | null;
+  notes: string | null;
+}
+
+export interface LiveProtocolItem {
+  id: string;
+  phaseId: string | null;
+  kind: LiveProtocolItemKind;
+  position: number;
+  label: string;
+  instructions: string | null;
+  /** Exact catalog identity for product entries. */
+  catalogProductId: string | null;
+  catalogProductVersionId: string | null;
+  manufacturer: string | null;
+  labelVersion: string | null;
+  dosageText: string | null;
+  timingText: string | null;
+  route: string | null;
+  verificationStatus: "unverified" | "label_verified" | "structured_verified";
+  /** 'not_completed' MUST render as "Interaction review not completed". */
+  interactionReviewState: "not_completed" | "reviewed_by_practitioner";
+  /** Commercial metadata only — never clinical justification. */
+  affiliateUrl: string | null;
+}
+
+export interface LiveProtocolVersion {
+  id: string;
+  version: number;
+  status: LiveProtocolVersionStatus;
+  title: string;
+  summary: string | null;
+  dietInstructions: string | null;
+  lifestyleInstructions: string | null;
+  monitoringPlan: string | null;
+  followupPlan: string | null;
+  sourceTemplateId: string | null;
+  sourceTemplateVersion: number | null;
+  supersedesVersionId: string | null;
+  approvedAt: string | null;
+  activatedAt: string | null;
+  reviewNote: string | null;
+  /** Autosave optimistic-concurrency token. */
+  updatedAt: string;
+  createdAt: string;
+  phases: LiveProtocolPhase[];
+  items: LiveProtocolItem[];
+}
+
+export interface LiveProtocolHistoryEntry {
+  id: string;
+  version: number;
+  status: LiveProtocolVersionStatus;
+  title: string;
+  approvedAt: string | null;
+  activatedAt: string | null;
+  createdAt: string;
+  supersedesVersionId: string | null;
+}
+
+export interface LivePatientProtocol {
+  /** false = honest empty state; nothing is invented to fill the screen. */
+  exists: boolean;
+  canAuthor: boolean;
+  protocol: {
+    id: string;
+    title: string;
+    status: LiveProtocolStatus;
+    createdAt: string;
+    updatedAt: string;
+  } | null;
+  draft: LiveProtocolVersion | null;
+  approved: LiveProtocolVersion | null;
+  active: LiveProtocolVersion | null;
+  history: LiveProtocolHistoryEntry[];
+  generatedAt: string;
+}
+
+export interface LiveProtocolTemplate {
+  id: string;
+  name: string;
+  description: string | null;
+  status: "draft" | "approved" | "archived";
+  archivedAt: string | null;
+  approvedVersionId: string | null;
+  currentVersionId: string | null;
+  approvedVersion: number | null;
+  updatedAt: string;
+}
+
+/** Bounded autosave payload. `phaseIndex` refers to the phases array order. */
+export interface LiveProtocolDraftPayload {
+  title?: string;
+  summary?: string | null;
+  dietInstructions?: string | null;
+  lifestyleInstructions?: string | null;
+  monitoringPlan?: string | null;
+  followupPlan?: string | null;
+  phases?: {
+    name: string;
+    startsOn?: string | null;
+    endsOn?: string | null;
+    relativeStartDay?: number | null;
+    relativeDurationDays?: number | null;
+    notes?: string | null;
+  }[];
+  items?: {
+    kind: LiveProtocolItemKind;
+    label: string;
+    phaseIndex?: number | null;
+    instructions?: string | null;
+    catalogProductId?: string | null;
+    catalogProductVersionId?: string | null;
+    manufacturer?: string | null;
+    labelVersion?: string | null;
+    dosageText?: string | null;
+    timingText?: string | null;
+    route?: string | null;
+    verificationStatus?: string | null;
+    affiliateUrl?: string | null;
+  }[];
+}
+
+export interface LiveProtocolMutationResult {
+  ok: true;
+  message: string;
+  protocolId?: string;
+  versionId?: string;
+  version?: number;
+  status?: string;
+  templateId?: string;
+  supersedesVersionId?: string;
+  archived?: boolean;
+  alreadySet?: boolean;
+  /** Fresh autosave token after a successful save. */
+  updatedAt?: string;
+  /**
+   * Ids of the item rows the save just wrote, in payload order. An autosave
+   * replaces items wholesale, so these are how the client addresses the row it
+   * just persisted (an interaction review targets a persisted item, never a
+   * form row).
+   */
+  itemIds?: string[];
+}
+
+/** One real catalog product with its exact identity, as the picker returns it. */
+export interface LiveCatalogProduct {
+  productId: string;
+  name: string;
+  form: string | null;
+  /** The catalog brand of record. Null stays null — never filled in. */
+  manufacturer: string | null;
+  productVersionId: string | null;
+  labelVersion: string | null;
+  servingSize: string | null;
+  effectiveFrom: string | null;
+  /** DERIVED from the catalog. Never asserted by the client. */
+  verificationStatus: "unverified" | "label_verified" | "structured_verified";
+  structuredIngredientCount: number;
+}
+
+export interface LiveCatalogSearch {
+  products: LiveCatalogProduct[];
+  query: string | null;
+  generatedAt: string;
+}
+
+/** One deterministic finding, always traceable to the source that stated it. */
+export interface LiveInteractionFinding {
+  ingredient: string | null;
+  medication: string | null;
+  severity: "minor" | "moderate" | "major" | null;
+  mechanism: string | null;
+  notes: string | null;
+  source: string | null;
+  version: string | null;
+}
+
+export interface LiveInteractionItem {
+  itemId: string;
+  label: string;
+  verificationStatus: "unverified" | "label_verified" | "structured_verified";
+  interactionReviewState: "not_completed" | "reviewed_by_practitioner";
+  /**
+   * 'not_completed' MUST render as "Interaction review not completed" with the
+   * reason. 'checked' means the deterministic comparison ran — an empty
+   * findings list means the checked sources contained nothing, NOT that the
+   * product is interaction-free.
+   */
+  state: "not_completed" | "checked";
+  reason: string | null;
+  findings: LiveInteractionFinding[];
+}
+
+export interface LiveInteractionCheck {
+  versionId: string;
+  items: LiveInteractionItem[];
+  medicationsRecorded: number;
+  medicationsCoded: number;
+  /** Verbatim server text. Must be displayed, never paraphrased away. */
+  disclaimer: string;
+  generatedAt: string;
+}
+
+export interface LiveInteractionReviewResult {
+  ok: true;
+  itemId: string;
+  alreadyReviewed: boolean;
   message: string;
 }

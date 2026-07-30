@@ -9,9 +9,10 @@ import { ClinicalEmpty } from "@/components/ui/ClinicalStates";
 import { PatientTimeline } from "@/components/encounter/PatientTimeline";
 import { PatientOverviewLive } from "@/components/patient/PatientOverviewLive";
 import { LabsHub } from "@/components/patient/LabsHub";
+import { ProtocolWorkspace } from "@/components/patient/ProtocolWorkspace";
 
 /** Tabs with live data sources; the rest state their demo-only status in live mode. */
-const LIVE_READY: Partial<Record<PatientTabId, true>> = { chart: true, labs: true };
+const LIVE_READY: Partial<Record<PatientTabId, true>> = { chart: true, labs: true, protocol: true };
 
 function LiveHold({ patientId, label }: { patientId: string; label: string }) {
   return (
@@ -75,11 +76,13 @@ export default async function PatientTabPage({
     return <LabsHub patientId={patientId} patientName={name} view={view} />;
   }
 
+  if (tab === "protocol") {
+    return <ProtocolWorkspace patientId={patientId} />;
+  }
+
   if (!LIVE_READY[tab]) {
     const label =
-      tab === "protocol"
-        ? "Protocol"
-        : tab === "nutrition"
+      tab === "nutrition"
           ? "Nutrition"
           : tab === "supplements"
             ? "Supplements"

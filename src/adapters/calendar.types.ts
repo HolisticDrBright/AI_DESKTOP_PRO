@@ -20,6 +20,7 @@ export type AppointmentStatus =
   | "scheduled"
   | "confirmed"
   | "arrived"
+  | "in-encounter"
   | "completed"
   | "no-show"
   | "cancelled";

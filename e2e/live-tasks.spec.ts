@@ -191,14 +191,16 @@ test("live calendar shows real appointments and check-in persists with audit", a
   const block = page.getByRole("button", { name: /Fixture Patient/ }).first();
   await block.waitFor();
   await block.click();
-  await page.getByRole("button", { name: "Check in" }).click();
-  await expect(page.getByText(/Appointment arrived/).first()).toBeVisible();
+  // Phase 2 renamed this to the front-desk vocabulary the state machine uses:
+  // "Check in" → "Arrive", and the resulting status reads "Arrived".
+  await page.getByTestId("appt-arrive").click();
+  await expect(page.getByText(/Arrived recorded/).first()).toBeVisible();
 
   // Fresh load: the status must come from the backend record, not UI state.
   await page.reload();
   await page.getByRole("button", { name: /Fixture Patient/ }).first().click();
   await expect(
-    page.getByRole("dialog", { name: "Appointment details" }).getByText("In progress"),
+    page.getByRole("dialog", { name: "Appointment details" }).getByText("Arrived"),
   ).toBeVisible();
 
   await page.goto("/audit-log");
@@ -238,7 +240,7 @@ test("booking, rescheduling, and no-show persist to the live week", async ({ pag
   // from the active calendar grid.
   await page.getByRole("button", { name: "No-show" }).click();
   await page.getByRole("button", { name: "Mark no-show" }).click();
-  await expect(page.getByText(/Appointment no-show/).first()).toBeVisible();
+  await expect(page.getByText(/No-show recorded/).first()).toBeVisible();
   await expect(page.getByRole("button", { name: /Sample Client/ })).toHaveCount(0);
   await page.reload();
   await expect(page.getByRole("button", { name: /Sample Client/ })).toHaveCount(0);

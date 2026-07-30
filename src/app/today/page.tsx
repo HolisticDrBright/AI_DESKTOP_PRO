@@ -3,6 +3,7 @@ import Link from "next/link";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Metric } from "@/components/ui/Metric";
 import { ClinicalNote } from "@/components/ui/ClinicalStates";
+import { TodayScheduleLive } from "@/components/today/TodayScheduleLive";
 
 export const metadata: Metadata = { title: "Today — AI Longevity Pro" };
 
@@ -19,10 +20,14 @@ function dateLine(): string {
 }
 
 /**
- * The daily entry point offers the real, org-scoped surfaces directly. The
- * aggregated daily brief (arrivals, messages, approvals, wearable alerts)
- * needs live backends for those domains first — until then this page links to
- * what IS real and says so, rather than fabricating a morning summary.
+ * The daily entry point offers the real, org-scoped surfaces directly.
+ *
+ * Phase 2 adds ONE real aggregation: today's appointments and their real
+ * front-desk statuses, straight from the Desktop-owned calendar RPC. Every
+ * other part of a "daily brief" (unread messages, approvals awaiting
+ * signature, wearable alerts, outstanding balances) still has no live backend,
+ * so this page names those as not configured instead of fabricating a morning
+ * summary.
  */
 export default function TodayPage() {
   return (
@@ -33,9 +38,13 @@ export default function TodayPage() {
         <Metric label="Review queue" value="Tasks" sub="Live review_queue_items" href="/tasks" />
         <Metric label="Patients" value="Directory" sub="Live patient_profiles" href="/patients" />
       </div>
+      <div className="mb-4">
+        <TodayScheduleLive />
+      </div>
       <ClinicalNote>
-        The aggregated daily brief (arrivals, unread messages, approvals, wearable alerts) is not
-        configured yet — those domains have no live backend. This page shows real surfaces only.{" "}
+        Unread patient messages, notes awaiting signature, wearable alerts, and outstanding balances
+        are <strong>not configured</strong> — those domains have no live backend yet, so no count is
+        shown for them. Today&apos;s appointment statuses above are real records.{" "}
         <Link href="/calendar" className="font-semibold text-action">
           Open the live calendar
         </Link>
