@@ -10,21 +10,14 @@ import {
   FilePenLine,
   Leaf,
   PackageCheck,
-  RotateCcw,
   Save,
   ShieldAlert,
 } from "lucide-react";
-import {
-  approveKnowledgeVersion,
-  duplicateKnowledgeVersion,
-  resetKnowledgeDemo,
-  updateKnowledgeDraft,
-  useKnowledgePathways,
-  type KnowledgePathway,
-  type KnowledgePathwayVersion,
-} from "@/adapters/clinical-knowledge.mock";
+import type {
+  KnowledgePathway,
+  KnowledgePathwayVersion,
+} from "@/adapters/clinical-knowledge.types";
 import { liveClient } from "@/adapters/live-client";
-import { USE_LIVE_API } from "@/adapters/mode";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { cn } from "@/lib/cn";
 
@@ -221,19 +214,14 @@ function VersionDetail({
 }
 
 export function ClinicalKnowledgeCenter() {
-  const mockPathways = useKnowledgePathways();
-  const [livePathways, setLivePathways] = useState<KnowledgePathway[]>([]);
-  const [loadState, setLoadState] = useState<"loading" | "ready" | "error">(
-    USE_LIVE_API ? "loading" : "ready",
-  );
-  const pathways = USE_LIVE_API ? livePathways : mockPathways;
+  const [pathways, setLivePathways] = useState<KnowledgePathway[]>([]);
+  const [loadState, setLoadState] = useState<"loading" | "ready" | "error">("loading");
   const [selectedPathwayId, setSelectedPathwayId] = useState(pathways[0]?.id ?? "");
   const selected = pathways.find((pathway) => pathway.id === selectedPathwayId) ?? pathways[0];
   const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null);
   const [approveTarget, setApproveTarget] = useState<KnowledgePathwayVersion | null>(null);
 
   const refresh = useCallback(async () => {
-    if (!USE_LIVE_API) return;
     setLoadState("loading");
     try {
       const rows = await liveClient.listKnowledgePathways();
@@ -260,10 +248,10 @@ export function ClinicalKnowledgeCenter() {
       ?? selected.versions[0];
   }, [selected, selectedVersionId]);
 
-  if (USE_LIVE_API && loadState === "loading") {
+  if (loadState === "loading") {
     return <div className="rounded border border-line bg-card px-5 py-10 text-center text-[12px] text-subtle">Loading governed pathways...</div>;
   }
-  if (USE_LIVE_API && loadState === "error") {
+  if (loadState === "error") {
     return (
       <div className="rounded border border-danger/25 bg-danger-tint px-5 py-8 text-center text-[12px] text-danger">
         The clinical registry could not be loaded. <button className="font-bold underline" onClick={() => void refresh()}>Try again</button>
@@ -325,15 +313,6 @@ export function ClinicalKnowledgeCenter() {
                 ))}
               </select>
             </div>
-            {!USE_LIVE_API && (
-              <button
-                onClick={resetKnowledgeDemo}
-                className="inline-flex h-8 items-center gap-1.5 rounded border border-line bg-card px-3 text-[11px] font-semibold text-subtle hover:text-ink"
-                title="Reset demo registry"
-              >
-                <RotateCcw size={13} aria-hidden /> Reset demo
-              </button>
-            )}
           </div>
           <VersionDetail
             key={version.id}
@@ -341,30 +320,21 @@ export function ClinicalKnowledgeCenter() {
             version={version}
             onApprove={() => setApproveTarget(version)}
             onDuplicate={async () => {
-              if (USE_LIVE_API) {
-                const created = await liveClient.createKnowledgeDraft({
-                  pathwayId: selected.id,
-                  content: version.content,
-                  sourceRefs: version.sourceRefs,
-                  changeSummary: `New draft from v${version.version}`,
-                });
-                await refresh();
-                setSelectedVersionId(created.versionId);
-              } else {
-                duplicateKnowledgeVersion(selected.id);
-                setSelectedVersionId(null);
-              }
+              const created = await liveClient.createKnowledgeDraft({
+                pathwayId: selected.id,
+                content: version.content,
+                sourceRefs: version.sourceRefs,
+                changeSummary: `New draft from v${version.version}`,
+              });
+              await refresh();
+              setSelectedVersionId(created.versionId);
             }}
             onSave={async (changes) => {
-              if (USE_LIVE_API) {
-                await liveClient.updateKnowledgeDraft({
-                  versionId: version.id,
-                  ...changes,
-                });
-                await refresh();
-              } else {
-                updateKnowledgeDraft(selected.id, version.id, changes);
-              }
+              await liveClient.updateKnowledgeDraft({
+                versionId: version.id,
+                ...changes,
+              });
+              await refresh();
             }}
           />
         </main>
@@ -380,12 +350,8 @@ export function ClinicalKnowledgeCenter() {
           const target = approveTarget;
           setApproveTarget(null);
           void (async () => {
-            if (USE_LIVE_API) {
-              await liveClient.approveKnowledgeVersion(target.id);
-              await refresh();
-            } else {
-              approveKnowledgeVersion(selected.id, target.id);
-            }
+            await liveClient.approveKnowledgeVersion(target.id);
+            await refresh();
             setSelectedVersionId(null);
           })();
         }}

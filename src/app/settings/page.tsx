@@ -14,10 +14,8 @@ import {
   UsersRound,
   type LucideIcon,
 } from "lucide-react";
-import { USE_LIVE_API } from "@/adapters/mode";
 import { AppearanceCard } from "@/components/settings/AppearanceCard";
 import { DataSourceCard } from "@/components/settings/DataSourceCard";
-import { NavModeCard } from "@/components/settings/NavModeCard";
 import { OrgMembersCard } from "@/components/settings/OrgMembersCard";
 import { PrivacyCard } from "@/components/settings/PrivacyCard";
 
@@ -111,9 +109,8 @@ export default function SettingsPage() {
 
       <div id="practice-preferences" className="mt-6">
         <AppearanceCard />
-        <NavModeCard />
         <DataSourceCard />
-        {USE_LIVE_API && <OrgMembersCard />}
+        <OrgMembersCard />
         <PrivacyCard />
       </div>
     </section>

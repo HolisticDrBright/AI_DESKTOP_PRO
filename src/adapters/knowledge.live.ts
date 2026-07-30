@@ -10,7 +10,7 @@ import type {
   KnowledgePathway,
   KnowledgePathwayContent,
   KnowledgePathwayVersion,
-} from "./clinical-knowledge.mock";
+} from "./clinical-knowledge.types";
 import { clinicalRpc, clinicalSelect } from "./supabase-rest.server";
 
 interface DatabasePathwayVersion {

@@ -9,7 +9,7 @@ import {
   type ActionContext,
   type ActionKind,
 } from "@/adapters/actions";
-import { useReviewOutcome, type ReviewOutcome } from "@/adapters/session-store";
+import { useReviewOutcome, type ReviewOutcome } from "@/adapters/review-state";
 import { actionIcons } from "@/components/icons";
 import { cn } from "@/lib/cn";
 import { useComposerOptional } from "@/lib/composer";
@@ -23,7 +23,7 @@ import { ConfirmDialog } from "./ConfirmDialog";
  *
  * - Confirm-required (destructive / patient-facing) actions open a ConfirmDialog.
  * - Outcomes are announced via the accessible feedback channel.
- * - Execution goes through the `api.actions.execute` façade — demo session
+ * - Execution goes through the `api.actions.execute` façade — live-routed
  *   audit by default; actions whose context carries a `liveRef` persist to the
  *   real backend in live mode. Pass `onAction` to override entirely.
  */

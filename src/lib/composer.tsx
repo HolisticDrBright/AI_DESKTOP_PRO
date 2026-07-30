@@ -12,8 +12,7 @@ import {
 } from "react";
 import { CircleAlert, FileText, Plus, RotateCw, Save, X } from "lucide-react";
 import { api } from "@/adapters";
-import type { ComposerContext } from "@/adapters/composer.mock";
-import { DRAFT_KINDS } from "@/adapters/composer.mock";
+import { DRAFT_KINDS, type ComposerContext } from "@/adapters/composer.types";
 import type { ComposerDraft, DraftKind, ProvenanceData } from "@/adapters/types";
 import { cn } from "@/lib/cn";
 import { useFeedback } from "@/lib/feedback";
@@ -52,12 +51,22 @@ export function ComposerProvider({ children }: { children: ReactNode }) {
     async (k: DraftKind, ctx: ComposerContext) => {
       setLoading(true);
       setApproved(false);
-      const d = await api.composer.generate(k, ctx);
-      setDraft(d);
-      setBodyText(d.body);
-      setLoading(false);
+      try {
+        // Draft generation has no live backend yet; the registry throws
+        // `unavailable` and the composer shows that honestly.
+        const d = (await api.composer.generate(k, ctx)) as ComposerDraft;
+        setDraft(d);
+        setBodyText(d.body);
+      } catch {
+        setDraft(null);
+        setBodyText("");
+        announce("Draft generation isn't configured yet — nothing was generated.");
+        setOpen(false);
+      } finally {
+        setLoading(false);
+      }
     },
-    [],
+    [announce],
   );
 
   const openComposer = useCallback(
@@ -102,8 +111,8 @@ export function ComposerProvider({ children }: { children: ReactNode }) {
     setConfirming(false);
     announce(
       draft?.patientFacing
-        ? `Approved for release — ${draft?.title}. (demo — not persisted)`
-        : `Draft approved — ${draft?.title}. (demo — not persisted)`,
+        ? `Approved for release — ${draft?.title}. (local draft only — nothing was saved to the record)`
+        : `Draft approved — ${draft?.title}. (local draft only — nothing was saved to the record)`,
     );
   };
 
@@ -283,7 +292,7 @@ export function ComposerProvider({ children }: { children: ReactNode }) {
               </button>
               <div className="flex-1" />
               <button
-                onClick={() => announce(`Draft saved — ${draft?.title}. (demo — not persisted)`)}
+                onClick={() => announce(`Draft saved locally — ${draft?.title}. Nothing was saved to the record.`)}
                 disabled={loading}
                 className="flex h-[30px] cursor-pointer items-center gap-[5px] rounded-lg border border-line bg-card px-[10px] text-[12px] font-semibold text-body hover:border-line-hover focus-visible:outline-2 focus-visible:outline-action disabled:opacity-50"
               >

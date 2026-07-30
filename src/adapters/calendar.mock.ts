@@ -1,4 +1,3 @@
-import type { Tone } from "./types";
 
 /**
  * MOCK calendar / scheduling data.
@@ -10,82 +9,29 @@ import type { Tone } from "./types";
  * upcoming ones as confirmed. Session/demo only — nothing is persisted.
  */
 
-export type AppointmentType =
-  | "initial"
-  | "follow-up"
-  | "lab-review"
-  | "supplement"
-  | "telehealth"
-  | "group"
-  | "break";
+export {
+  APPOINTMENT_TYPES,
+  APPOINTMENT_TYPE_META,
+  type Appointment,
+  type AppointmentStatus,
+  type AppointmentType,
+  type AppointmentTypeMeta,
+  type CalendarData,
+  type Practitioner,
+} from "./calendar.types";
+import {
+  type Appointment,
+  type AppointmentType,
+  type CalendarData,
+  type Practitioner,
+} from "./calendar.types";
 
-export type AppointmentStatus =
-  | "scheduled"
-  | "confirmed"
-  | "arrived"
-  | "completed"
-  | "no-show"
-  | "cancelled";
-
-export interface AppointmentTypeMeta {
-  type: AppointmentType;
-  label: string;
-  short: string;
-  tone: Tone;
-}
-
-/** The color key. Type → tone drives every appointment's color + the legend. */
-export const APPOINTMENT_TYPES: AppointmentTypeMeta[] = [
-  { type: "initial", label: "Initial consult", short: "Initial", tone: "action" },
-  { type: "follow-up", label: "Follow-up visit", short: "Follow-up", tone: "teal" },
-  { type: "lab-review", label: "Lab review", short: "Lab review", tone: "ai" },
-  { type: "supplement", label: "Supplement consult", short: "Supplement", tone: "positive" },
-  { type: "telehealth", label: "Telehealth", short: "Telehealth", tone: "navy" },
-  { type: "group", label: "Group session", short: "Group", tone: "warning" },
-  { type: "break", label: "Break / admin", short: "Admin", tone: "slate" },
-];
-
-export const APPOINTMENT_TYPE_META: Record<AppointmentType, AppointmentTypeMeta> =
-  Object.fromEntries(APPOINTMENT_TYPES.map((t) => [t.type, t])) as Record<
-    AppointmentType,
-    AppointmentTypeMeta
-  >;
-
-export interface Practitioner {
-  id: string;
-  name: string;
-  role: string;
-  initials: string;
-  tone: Tone;
-}
-
-export const PRACTITIONERS: Practitioner[] = [
+const PRACTITIONERS: Practitioner[] = [
   { id: "pr-sarah", name: "Dr. Sarah Mitchell", role: "Functional Medicine", initials: "SM", tone: "action" },
   { id: "pr-james", name: "Dr. James Okafor", role: "Integrative MD", initials: "JO", tone: "teal" },
   { id: "pr-rachel", name: "Rachel Nguyen, RD", role: "Dietitian", initials: "RN", tone: "positive" },
 ];
 
-export interface Appointment {
-  id: string;
-  practitionerId: string;
-  /** 1 = Monday … 7 = Sunday. */
-  weekday: number;
-  /** Minutes from midnight. */
-  start: number;
-  durationMin: number;
-  type: AppointmentType;
-  patientName: string;
-  patientId?: string;
-  location: string;
-}
-
-export interface CalendarData {
-  practitioners: Practitioner[];
-  appointments: Appointment[];
-  /** Working-hours window shown in the grid, in minutes from midnight. */
-  dayStart: number;
-  dayEnd: number;
-}
 
 const T = (h: number, m = 0) => h * 60 + m;
 

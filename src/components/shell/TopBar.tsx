@@ -1,12 +1,27 @@
 "use client";
 
 import Link from "next/link";
-import { Bell, ChevronDown, MessageCircle, Search, Sparkles } from "lucide-react";
+import { Bell, ChevronDown, MessageCircle, Search, Sparkles, UserRound } from "lucide-react";
 import { useShellUi } from "@/lib/providers";
-import { Popover, PopoverDemoNote, PopoverHeader } from "@/components/ui/Popover";
+import { Popover, PopoverHeader } from "@/components/ui/Popover";
+
+/**
+ * Top bar — CLINICAL.
+ *
+ * Nothing here is fabricated. The demo bar showed synthetic notifications
+ * (with a fixture patient's name), a fake unread-message badge, and a fixture
+ * practitioner identity — each of which would be a lie on real software. The
+ * clinical bar keeps the designed surfaces and states them honestly:
+ * notifications have no live feed yet (the review queue is the real inbox of
+ * work), messaging is not configured, and the signed-in identity lives in
+ * Settings, which reads the real session server-side.
+ */
 
 const menuLink =
   "flex items-center justify-between px-[13px] py-[9px] text-[12.5px] font-medium text-body-2 hover:bg-[rgba(37,99,199,0.06)] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-action";
+
+const menuNote =
+  "block border-t border-hairline px-[13px] py-[8px] text-[10.5px] leading-[1.45] text-faint";
 
 export function TopBar() {
   const { openCmd, toggleAi } = useShellUi();
@@ -36,7 +51,7 @@ export function TopBar() {
         Assistant
       </button>
 
-      {/* Notifications */}
+      {/* Notifications: no live feed yet — say so, point at the real queue. */}
       <Popover
         label="Notifications"
         trigger={({ open, toggle }) => (
@@ -53,53 +68,46 @@ export function TopBar() {
       >
         {({ close }) => (
           <>
-            <PopoverHeader title="Notifications" note="3 pending" />
-            <div className="flex flex-col">
-              <span className="px-[13px] py-[9px] text-[11.5px] leading-[1.4] text-body">
-                New lab results · Alexandra Morgan
-              </span>
-              <span className="px-[13px] py-[9px] text-[11.5px] leading-[1.4] text-body">
-                Reasoning updated · 3 await review
-              </span>
-              <Link href="/tasks" onClick={close} className={menuLink}>
-                Open review queue
-                <span className="text-faint" aria-hidden>→</span>
-              </Link>
-            </div>
-            <PopoverDemoNote>Demo notifications — routed to the review queue, not persisted.</PopoverDemoNote>
+            <PopoverHeader title="Notifications" note="Not configured" />
+            <Link href="/tasks" onClick={close} className={menuLink}>
+              Open the review queue
+              <span className="text-faint" aria-hidden>→</span>
+            </Link>
+            <span className={menuNote}>
+              Push notifications have no live feed yet. Open work lives in the review queue, which
+              is real and org-scoped.
+            </span>
           </>
         )}
       </Popover>
 
-      {/* Messages */}
+      {/* Messages: no backend — no fake unread badge. */}
       <Popover
         label="Messages"
         trigger={({ open, toggle }) => (
           <button
             onClick={toggle}
-            aria-label="Messages, 2 unread"
+            aria-label="Messages"
             aria-haspopup="menu"
             aria-expanded={open}
-            className="relative flex h-9 w-9 cursor-pointer items-center justify-center rounded-full border border-line bg-card text-body-2 hover:border-line-hover focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-action"
+            className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-full border border-line bg-card text-body-2 hover:border-line-hover focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-action"
           >
             <MessageCircle size={15} strokeWidth={1.75} aria-hidden />
-            <span className="absolute top-[2px] right-[2px] h-2 w-2 rounded-full border-[1.5px] border-white bg-critical" />
           </button>
         )}
       >
-        {({ close }) => (
+        {() => (
           <>
-            <PopoverHeader title="Messages" note="2 unread" />
-            <Link href="/messages" onClick={close} className={menuLink}>
-              Open messages
-              <span className="text-faint" aria-hidden>→</span>
-            </Link>
-            <PopoverDemoNote>Patient messaging is a demo surface — no messages are sent.</PopoverDemoNote>
+            <PopoverHeader title="Messages" note="Not configured" />
+            <span className={menuNote}>
+              Secure patient messaging has no live backend yet. No message can be sent or received
+              from this build.
+            </span>
           </>
         )}
       </Popover>
 
-      {/* Profile */}
+      {/* Account: the real identity is shown in Settings (server-read session). */}
       <Popover
         label="Account menu"
         trigger={({ open, toggle }) => (
@@ -112,13 +120,13 @@ export function TopBar() {
           >
             <span
               aria-hidden
-              className="flex h-8 w-8 items-center justify-center rounded-full bg-[linear-gradient(135deg,#2563C7,#5B8AD9)] text-[12px] font-bold text-white"
+              className="flex h-8 w-8 items-center justify-center rounded-full bg-[linear-gradient(135deg,#2563C7,#5B8AD9)] text-white"
             >
-              SM
+              <UserRound size={16} strokeWidth={2} />
             </span>
             <span className="text-left leading-[1.25]">
-              <span className="block text-[12.5px] font-semibold text-ink">Dr. Sarah Mitchell</span>
-              <span className="block text-[10.5px] text-subtle">Functional Medicine</span>
+              <span className="block text-[12.5px] font-semibold text-ink">Account</span>
+              <span className="block text-[10.5px] text-subtle">Signed-in practitioner</span>
             </span>
             <ChevronDown size={13} strokeWidth={2} className="text-faint" aria-hidden />
           </button>
@@ -126,11 +134,13 @@ export function TopBar() {
       >
         {({ close }) => (
           <>
-            <PopoverHeader title="Dr. Sarah Mitchell" note="Practitioner" />
-            <Link href="/settings" onClick={close} className={menuLink}>Settings</Link>
+            <PopoverHeader title="Account" note="Session & organization" />
+            <Link href="/settings" onClick={close} className={menuLink}>Settings &amp; session</Link>
             <Link href="/audit-log" onClick={close} className={menuLink}>Audit log</Link>
-            <Link href="/ai-safety" onClick={close} className={menuLink}>AI safety registry</Link>
-            <PopoverDemoNote>Signed-in practitioner is a demo identity in this build.</PopoverDemoNote>
+            <span className={menuNote}>
+              Your signed-in identity and active organization are shown in Settings, read from the
+              real session.
+            </span>
           </>
         )}
       </Popover>

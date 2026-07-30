@@ -33,10 +33,13 @@ test("root enters the real workspace: directory → patient → labs (no mock pa
   await page.getByRole("link", { name: "Fixture Patient" }).click();
   await page.waitForURL("**/patients/aaaaaaaa-1111-2222-3333-444444444401/overview");
   await expect(page.getByText("Fixture Patient").first()).toBeVisible();
-  await expect(page.getByText(/Summary panels aren't live yet/)).toBeVisible();
+  // Phase 1: the overview is LIVE — verified panels render real fixture-backend
+  // data, and ungoverned metrics say so instead of showing a score.
+  await expect(page.getByText("What changed since the last visit")).toBeVisible();
+  await expect(page.getByText("Not enough verified data").first()).toBeVisible();
 
   // Straight into the live labs workspace for the same real patient.
-  await page.getByRole("link", { name: "Open live labs" }).click();
+  await page.getByRole("link", { name: "Open labs & reasoning" }).click();
   await expect(page.getByRole("button", { name: "Select hs-CRP" })).toBeVisible();
 });
 

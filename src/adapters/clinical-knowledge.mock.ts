@@ -2,46 +2,18 @@
 
 import { createSessionStore } from "./session-kv";
 
-export type KnowledgeConcern =
-  | "thyroid"
-  | "digestive"
-  | "cardiometabolic"
-  | "adrenal"
-  | "autoimmune"
-  | "environmental";
-
-export type KnowledgeVersionStatus = "draft" | "approved" | "superseded" | "retired";
-
-export interface KnowledgePathwayContent {
-  differentiatingQuestions: string[];
-  labStrategy: { panel: string; vendor: string; purpose: string }[];
-  productCandidates: { name: string; brand: string; role: string }[];
-  nutrition: string[];
-  lifestyle: string[];
-  safetyStops: string[];
-}
-
-export interface KnowledgePathwayVersion {
-  id: string;
-  version: number;
-  status: KnowledgeVersionStatus;
-  changeSummary: string;
-  createdAt: string;
-  createdBy: string;
-  approvedAt?: string;
-  approvedBy?: string;
-  sourceRefs: string[];
-  content: KnowledgePathwayContent;
-}
-
-export interface KnowledgePathway {
-  id: string;
-  code: string;
-  name: string;
-  domain: string;
-  description: string;
-  versions: KnowledgePathwayVersion[];
-}
+export {
+  type KnowledgeConcern,
+  type KnowledgeVersionStatus,
+  type KnowledgePathwayContent,
+  type KnowledgePathwayVersion,
+  type KnowledgePathway,
+} from "./clinical-knowledge.types";
+import type {
+  KnowledgePathway,
+  KnowledgePathwayContent,
+  KnowledgePathwayVersion,
+} from "./clinical-knowledge.types";
 
 const today = "2026-07-27T17:00:00.000Z";
 

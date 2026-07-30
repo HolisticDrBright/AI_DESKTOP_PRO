@@ -12,19 +12,12 @@ import {
   ShieldCheck,
   X,
 } from "lucide-react";
-import {
-  resetMockKnowledgeImports,
-  reviewMockKnowledgeImportItem,
-  stageMockKnowledgeImport,
-  useMockKnowledgeImports,
-} from "@/adapters/clinical-import.mock";
 import type {
   KnowledgeImportBatch,
   KnowledgeImportBundle,
   KnowledgeImportItem,
 } from "@/adapters/clinical-import.types";
 import { liveClient } from "@/adapters/live-client";
-import { USE_LIVE_API } from "@/adapters/mode";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { cn } from "@/lib/cn";
 
@@ -55,15 +48,11 @@ function statusClass(item: KnowledgeImportItem) {
 }
 
 export function KnowledgeImportCenter() {
-  const mockBatches = useMockKnowledgeImports();
-  const [liveBatches, setLiveBatches] = useState<KnowledgeImportBatch[]>([]);
-  const batches = USE_LIVE_API ? liveBatches : mockBatches;
+  const [batches, setLiveBatches] = useState<KnowledgeImportBatch[]>([]);
   const [bundle, setBundle] = useState<KnowledgeImportBundle | null>(null);
   const [attested, setAttested] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [loadState, setLoadState] = useState<"ready" | "loading" | "error">(
-    USE_LIVE_API ? "loading" : "ready",
-  );
+  const [loadState, setLoadState] = useState<"ready" | "loading" | "error">("loading");
   const [message, setMessage] = useState("");
   const [query, setQuery] = useState("");
   const [entityFilter, setEntityFilter] = useState<"all" | "pathway" | "product_label">("all");
@@ -72,7 +61,6 @@ export function KnowledgeImportCenter() {
   const fileRef = useRef<HTMLInputElement>(null);
 
   const refresh = useCallback(async () => {
-    if (!USE_LIVE_API) return;
     setLoadState("loading");
     try {
       setLiveBatches(await liveClient.listKnowledgeImports());
@@ -129,18 +117,14 @@ export function KnowledgeImportCenter() {
         ...bundle,
         items: bundle.items.map((item) => ({ ...item, warnings: item.warnings.filter(Boolean) })),
       };
-      if (USE_LIVE_API) {
-        await liveClient.stageKnowledgeImport({
-          sourceName: cleanBundle.sourceName,
-          sourceRevision: cleanBundle.sourceRevision,
-          schemaVersion: cleanBundle.schemaVersion,
-          items: cleanBundle.items,
-          attestsNoPhi: true,
-        });
-        await refresh();
-      } else {
-        stageMockKnowledgeImport(cleanBundle);
-      }
+      await liveClient.stageKnowledgeImport({
+        sourceName: cleanBundle.sourceName,
+        sourceRevision: cleanBundle.sourceRevision,
+        schemaVersion: cleanBundle.schemaVersion,
+        items: cleanBundle.items,
+        attestsNoPhi: true,
+      });
+      await refresh();
       setBundle(null);
       setAttested(false);
       setMessage("Import staged for practitioner review. Nothing was approved or verified.");
@@ -156,18 +140,14 @@ export function KnowledgeImportCenter() {
     setBusy(true);
     setMessage("");
     try {
-      if (USE_LIVE_API) {
-        await liveClient.reviewKnowledgeImportItem(
-          action.item.id,
-          action.decision,
-          action.decision === "accept"
-            ? "Practitioner accepted into the non-approved review workflow"
-            : "Practitioner rejected source item",
-        );
-        await refresh();
-      } else {
-        reviewMockKnowledgeImportItem(action.batchId, action.item.id, action.decision);
-      }
+      await liveClient.reviewKnowledgeImportItem(
+        action.item.id,
+        action.decision,
+        action.decision === "accept"
+          ? "Practitioner accepted into the non-approved review workflow"
+          : "Practitioner rejected source item",
+      );
+      await refresh();
       setMessage(action.decision === "accept"
         ? "Item applied as a non-approved draft. Separate approval or label verification is still required."
         : "Item rejected. The immutable source record remains available for audit.");
@@ -325,18 +305,9 @@ export function KnowledgeImportCenter() {
                 <option value="rejected">Rejected</option>
                 <option value="all">All statuses</option>
               </select>
-              {USE_LIVE_API ? (
-                <button onClick={() => void refresh()} title="Refresh imports" className="grid h-8 w-8 place-items-center rounded border border-line bg-card text-subtle hover:text-ink">
-                  <RefreshCw size={14} aria-hidden />
-                </button>
-              ) : (
-                <button
-                  onClick={resetMockKnowledgeImports}
-                  className="inline-flex h-8 items-center gap-1.5 rounded border border-line bg-card px-3 text-[11px] font-semibold text-subtle hover:text-ink"
-                >
-                  <RefreshCw size={13} aria-hidden /> Reset demo
-                </button>
-              )}
+              <button onClick={() => void refresh()} title="Refresh imports" className="grid h-8 w-8 place-items-center rounded border border-line bg-card text-subtle hover:text-ink">
+                <RefreshCw size={14} aria-hidden />
+              </button>
             </div>
             <div className="max-h-[620px] overflow-auto">
               <table className="w-full min-w-[900px] border-collapse text-left">

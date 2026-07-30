@@ -2,23 +2,13 @@ import { notFound, redirect } from "next/navigation";
 import { FlaskConical } from "lucide-react";
 import Link from "next/link";
 import { api } from "@/adapters";
-import { USE_LIVE_API } from "@/adapters/mode";
 import { getRequestSession } from "@/server/session";
 import { isPatientTabId, LEGACY_PATIENT_TABS, patientPath } from "@/lib/routes";
 import type { PatientTabId } from "@/adapters/types";
 import { ClinicalEmpty } from "@/components/ui/ClinicalStates";
 import { PatientTimeline } from "@/components/encounter/PatientTimeline";
-import { ProfileOverview } from "@/components/patient/ProfileOverview";
-import { ChartWorkspace } from "@/components/patient/ChartWorkspace";
+import { PatientOverviewLive } from "@/components/patient/PatientOverviewLive";
 import { LabsHub } from "@/components/patient/LabsHub";
-import { ProtocolWorkspace } from "@/components/patient/ProtocolWorkspace";
-import { NutritionWorkspace } from "@/components/nutrition/NutritionWorkspace";
-import { SupplementsWorkspace } from "@/components/supplements/SupplementsWorkspace";
-import { TrackingTab } from "@/components/patient/TrackingTab";
-import { PatientAppointments } from "@/components/patient/PatientAppointments";
-import { PatientMessagesTab } from "@/components/patient/PatientMessagesTab";
-import { PatientBillingTab } from "@/components/patient/PatientBillingTab";
-import { PatientFilesTab } from "@/components/patient/PatientFilesTab";
 
 /** Tabs with live data sources; the rest state their demo-only status in live mode. */
 const LIVE_READY: Partial<Record<PatientTabId, true>> = { chart: true, labs: true };
@@ -29,7 +19,7 @@ function LiveHold({ patientId, label }: { patientId: string; label: string }) {
       <ClinicalEmpty
         icon={<FlaskConical size={20} strokeWidth={1.75} className="text-slate-badge" aria-hidden />}
         title={`${label} isn't live yet`}
-        message="This section is demo-only until its live data source exists. Labs, the chart timeline, Tasks, and the Calendar are live for this patient."
+        message="This section has no live data source yet. Labs, the chart timeline, the overview, Tasks, and the Calendar are live for this patient."
       />
       <p className="mt-3 text-center text-[12.5px]">
         <Link
@@ -53,7 +43,6 @@ export default async function PatientTabPage({
   const { patientId, tab } = await params;
   const sp = await searchParams;
   const view = typeof sp.view === "string" ? sp.view : undefined;
-  const section = typeof sp.tab === "string" ? sp.tab : undefined;
 
   // The former nested Care Plan is now three visible patient tabs. Preserve
   // old bookmarks, including the nested view query, without hiding content.
@@ -75,40 +64,18 @@ export default async function PatientTabPage({
   const name = patient.name;
 
   if (tab === "overview") {
-    if (USE_LIVE_API) {
-      // Live: header/tabs/labs/tasks are real; synthesized profile panels
-      // aren't. Keep the honest state (and the live e2e contract strings).
-      return (
-        <div className="pt-4">
-          <ClinicalEmpty
-            icon={<FlaskConical size={20} strokeWidth={1.75} className="text-slate-badge" aria-hidden />}
-            title="Summary panels aren't live yet"
-            message="Health-score, systems, and trend panels are demo-only until their live data sources exist. Labs, Tasks, and the Calendar are live for this patient."
-          />
-          <p className="mt-3 text-center text-[12.5px]">
-            <Link
-              href={patientPath(patientId, "labs")}
-              className="font-semibold text-action hover:underline focus-visible:outline-2 focus-visible:outline-action"
-            >
-              Open live labs →
-            </Link>
-          </p>
-        </div>
-      );
-    }
-    return <ProfileOverview patient={patient} />;
+    return <PatientOverviewLive patientId={patientId} />;
   }
 
   if (tab === "chart") {
-    if (USE_LIVE_API) return <PatientTimeline patientId={patientId} />;
-    return <ChartWorkspace patientId={patientId} patientName={name} />;
+    return <PatientTimeline patientId={patientId} />;
   }
 
   if (tab === "labs") {
     return <LabsHub patientId={patientId} patientName={name} view={view} />;
   }
 
-  if (USE_LIVE_API && !LIVE_READY[tab]) {
+  if (!LIVE_READY[tab]) {
     const label =
       tab === "protocol"
         ? "Protocol"
@@ -122,12 +89,6 @@ export default async function PatientTabPage({
     return <LiveHold patientId={patientId} label={label} />;
   }
 
-  if (tab === "protocol") return <ProtocolWorkspace patientId={patientId} patientName={name} />;
-  if (tab === "nutrition") return <NutritionWorkspace patientId={patientId} patientName={name} />;
-  if (tab === "supplements") return <SupplementsWorkspace patientId={patientId} patientName={name} initialTab={section} />;
-  if (tab === "tracking") return <TrackingTab patientId={patientId} patientName={name} view={view} />;
-  if (tab === "appointments") return <PatientAppointments patientId={patientId} patientName={name} />;
-  if (tab === "messages") return <PatientMessagesTab patientId={patientId} />;
-  if (tab === "billing") return <PatientBillingTab patientId={patientId} patientName={name} />;
-  return <PatientFilesTab patientId={patientId} patientName={name} />;
+  // Unreachable: every tab id is either live-ready or held above.
+  notFound();
 }

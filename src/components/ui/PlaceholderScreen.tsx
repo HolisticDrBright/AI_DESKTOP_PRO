@@ -1,8 +1,5 @@
 import Link from "next/link";
 import { PanelsTopLeft } from "lucide-react";
-import { DEFAULT_PATIENT_ID } from "@/adapters";
-import { USE_LIVE_API } from "@/adapters/mode";
-import { patientPath } from "@/lib/routes";
 
 /** Designed full-screen placeholder for sections queued in later phases. */
 export function PlaceholderScreen({ label }: { label: string }) {
@@ -20,10 +17,10 @@ export function PlaceholderScreen({ label }: { label: string }) {
         build list and will follow the same shell and design language.
       </p>
       <Link
-        href={USE_LIVE_API ? "/clients" : patientPath(DEFAULT_PATIENT_ID)}
+        href="/patients"
         className="mt-[6px] flex h-8 items-center rounded-lg border border-line-btn bg-card px-[14px] text-[12.5px] font-semibold text-action hover:border-line-hover-2 focus-visible:outline-2 focus-visible:outline-action"
       >
-        {USE_LIVE_API ? "Back to directory" : "Back to Overview"}
+        Back to directory
       </Link>
     </section>
   );

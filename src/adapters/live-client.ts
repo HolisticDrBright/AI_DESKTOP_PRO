@@ -7,9 +7,9 @@
  * AdapterError with a safe message.
  */
 import { AdapterError, codeFromHttpStatus, type AdapterErrorCode } from "./errors";
-import type { LabWorkspace } from "./labs.mock";
+import type { LabWorkspace } from "./labs.types";
 import type { KnowledgeImportBatch, KnowledgeImportSourceItem } from "./clinical-import.types";
-import type { KnowledgePathway, KnowledgePathwayContent } from "./clinical-knowledge.mock";
+import type { KnowledgePathway, KnowledgePathwayContent } from "./clinical-knowledge.types";
 import type {
   LiveAppointmentStatusResult,
   LiveAuditEvent,
@@ -22,6 +22,9 @@ import type {
   LiveReviewResult,
   LiveTaskResult,
   LiveUploadResult,
+  LivePatientOverview,
+  LiveReasoningWorkspace,
+  LiveHypothesisReviewResult,
   ReviewDecision,
 } from "./live-types";
 
@@ -163,6 +166,18 @@ export const liveClient = {
     method: "POST",
     body: input,
   }),
+
+  patientOverview: (patientId: string) =>
+    liveFetch<LivePatientOverview>("patients/overview", { method: "POST", body: { patientId } }),
+
+  reasoningWorkspace: (patientId: string) =>
+    liveFetch<LiveReasoningWorkspace>("reasoning/workspace", { method: "POST", body: { patientId } }),
+
+  reviewHypothesis: (hypothesisId: string, action: "accepted" | "rejected" | "needs_data", note?: string) =>
+    liveFetch<LiveHypothesisReviewResult>("reasoning/review", {
+      method: "POST",
+      body: { hypothesisId, action, note },
+    }),
 
   reviewKnowledgeImportItem: (
     itemId: string,
