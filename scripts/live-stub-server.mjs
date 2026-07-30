@@ -1523,6 +1523,14 @@ createServer(async (req, res) => {
     return json(res, 200, { ok: true });
   }
 
+  // Test control: undo a revocation so later suites in the same battery run
+  // with an intact session again.
+  if (url.pathname === "/__control/restore-memberships" && req.method === "POST") {
+    const body = await readBody(req);
+    revokedBearers.delete(String(body.bearer ?? ""));
+    return json(res, 200, { ok: true });
+  }
+
   // Supabase Data API fixture for Desktop-owned identity and directory reads.
   if (url.pathname.startsWith("/rest/v1/")) {
     const bearerToken = (req.headers.authorization ?? "").replace(/^Bearer /, "");

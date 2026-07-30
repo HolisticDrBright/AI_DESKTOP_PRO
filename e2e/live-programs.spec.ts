@@ -359,4 +359,9 @@ test("14: a revoked membership refuses the library without leaking program data"
   await page.goto("/programs");
   await expect(page.getByText("You don't have access to this record.")).toBeVisible();
   await expect(page.getByText("Metabolic Reset")).toHaveCount(0);
+
+  // Restore the membership so suites running after this one keep a live session.
+  await page.request.post("http://127.0.0.1:3999/__control/restore-memberships", {
+    data: { bearer: "fixture-access-token" },
+  });
 });
