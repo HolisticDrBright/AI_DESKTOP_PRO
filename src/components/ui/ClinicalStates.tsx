@@ -87,3 +87,14 @@ export function ClinicalError({
     </Card>
   );
 }
+
+/** Inline explanatory note for clinical screens — honest capability copy. */
+export function ClinicalNote({ children, className }: { children: React.ReactNode; className?: string }) {
+  return (
+    <p
+      className={`m-0 rounded-[10px] border border-hairline-2 bg-surface px-[13px] py-[10px] text-[12px] leading-[1.55] text-subtle ${className ?? ""}`}
+    >
+      {children}
+    </p>
+  );
+}

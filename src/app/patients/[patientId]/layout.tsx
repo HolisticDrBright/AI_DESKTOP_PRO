@@ -24,7 +24,7 @@ export default async function PatientLayout({
     >
       <div className="mb-2 flex items-center justify-between gap-3">
         <div className="text-[11.5px] font-semibold text-faint">Workspace / Patients / {patient.name}</div>
-        <PatientPicker currentId={patient.id} />
+        <PatientPicker />
       </div>
       <PatientHeaderCard patient={patient} />
       <div className="mt-1 min-w-0">

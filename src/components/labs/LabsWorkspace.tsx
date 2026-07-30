@@ -20,11 +20,10 @@ import {
   type MarkerStatus,
   type MarkerTrendKind,
   type OptimalRange,
-} from "@/adapters/labs.mock";
+} from "@/adapters/labs.types";
 import { isAdapterError } from "@/adapters/errors";
 import type { LiveUploadResult } from "@/adapters/live-types";
-import { USE_LIVE_API } from "@/adapters/mode";
-import { useReviewOutcome, type ReviewOutcome } from "@/adapters/session-store";
+import { useReviewOutcome, type ReviewOutcome } from "@/adapters/review-state";
 import type { ReviewState, Tone } from "@/adapters/types";
 import { ActionBar } from "@/components/ui/ActionBar";
 import { ClinicalEmpty, ClinicalError, ClinicalLoading } from "@/components/ui/ClinicalStates";
@@ -115,13 +114,13 @@ export function LabsWorkspace({
   const [configMarker, setConfigMarker] = useState<BiomarkerMarker | null>(null);
   const [overrides, setOverrides] = useState<Record<string, OptimalRange>>({});
 
-  // Real workspace read through the façade: mock in demo mode, the live
-  // biomarker_observations query (RLS-scoped) when NEXT_PUBLIC_USE_LIVE_API is on.
+  // Live workspace read through the registry: RLS-scoped
+  // biomarker_observations under the practitioner's session.
   useEffect(() => {
     let alive = true;
     setLoadState("loading");
     api.labs
-      .getWorkspace(patientId, patientName)
+      .getWorkspace(patientId)
       .then((w) => {
         if (!alive) return;
         setWs(w);
@@ -267,7 +266,7 @@ function WorkspaceHeader({ ws, onUpload }: { ws: LabWorkspace; onUpload: () => v
           <SlidersHorizontal size={13} strokeWidth={2} aria-hidden />
           Configure optimal ranges
         </button>
-        <button onClick={() => announce("Exported reviewed markers to CSV. (demo — not persisted)")} className={btn}>
+        <button onClick={() => announce("CSV export is not configured yet. Nothing was exported.")} className={btn}>
           <Download size={13} strokeWidth={2} aria-hidden />
           Export reviewed
         </button>
@@ -765,11 +764,7 @@ function UploadDrawer({
         </button>
       </div>
 
-      {USE_LIVE_API ? (
-        <LiveUploadBody patientId={patientId} onUploaded={onUploaded} />
-      ) : (
-        <DemoUploadBody patientName={patientName} onClose={onClose} />
-      )}
+      <LiveUploadBody patientId={patientId} onUploaded={onUploaded} />
     </aside>
   );
 }
@@ -889,71 +884,6 @@ function LiveUploadBody({ patientId, onUploaded }: { patientId: string; onUpload
   );
 }
 
-/** DEMO upload: unchanged behavior — no file leaves the browser. */
-function DemoUploadBody({ patientName, onClose }: { patientName: string; onClose: () => void }) {
-  const { announce } = useFeedback();
-  const [lab, setLab] = useState("Quest Diagnostics");
-  const steps = ["Upload received", "OCR / extraction", "Marker matching", "Confidence scoring", "Practitioner review queue"];
-
-  const queue = () =>
-    void api.labs
-      .queueUploadDemo({ source: "manual upload", lab, patientName })
-      .then((r) => {
-        announce(r.message);
-        onClose();
-      });
-
-  return (
-    <>
-      <div className="flex-1 overflow-y-auto px-4 py-[13px]">
-        <div className="flex flex-col items-center gap-[7px] rounded-[12px] border border-dashed border-line-btn bg-[rgba(247,250,252,0.6)] px-4 py-[26px] text-center">
-          <Upload size={22} strokeWidth={1.5} className="text-muted" aria-hidden />
-          <span className="text-[12.5px] font-semibold text-body">Drop a lab report or browse</span>
-          <span className="text-[11px] text-faint">PDF · Image · HL7 / FHIR · CSV</span>
-        </div>
-
-        <div className="mt-[13px]">
-          <label htmlFor="lab-select" className="mb-[5px] block text-[10px] font-bold tracking-[0.04em] text-faint uppercase">Provider / lab</label>
-          <select
-            id="lab-select"
-            value={lab}
-            onChange={(e) => setLab(e.target.value)}
-            className="h-9 w-full rounded-lg border border-line bg-card px-[10px] text-[12.5px] text-body outline-none focus-visible:border-action focus-visible:outline-2 focus-visible:outline-action"
-          >
-            {["Quest Diagnostics", "LabCorp", "OmegaQuant", "Boston Heart", "Other / manual"].map((l) => (
-              <option key={l}>{l}</option>
-            ))}
-          </select>
-        </div>
-
-        <div className="mt-[13px]">
-          <div className="mb-[6px] text-[10px] font-bold tracking-[0.04em] text-faint uppercase">Processing steps</div>
-          <ol className="m-0 flex list-none flex-col gap-[6px] p-0">
-            {steps.map((s, i) => (
-              <li key={s} className="flex items-center gap-[8px] text-[12px] text-body">
-                <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full bg-number-tint text-[10px] font-semibold text-muted">{i + 1}</span>
-                {s}
-              </li>
-            ))}
-          </ol>
-        </div>
-
-        <div className="mt-[13px] flex items-start gap-[7px] rounded-[9px] border border-[rgba(199,126,20,0.28)] bg-warning-tint px-[11px] py-[9px] text-[11px] leading-[1.45] text-warning-deep">
-          <TriangleAlert size={13} strokeWidth={2} className="mt-px shrink-0" aria-hidden />
-          No file is uploaded in this demo. Queuing records a demo audit event only — no file or PHI is stored.
-        </div>
-      </div>
-
-      <div className="shrink-0 border-t border-hairline bg-[rgba(247,250,252,0.7)] px-4 py-3">
-        <button onClick={queue} className="h-9 w-full cursor-pointer rounded-lg border-none bg-action text-[12.5px] font-semibold text-white hover:bg-action-deep focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink">
-          Queue for review (demo)
-        </button>
-      </div>
-    </>
-  );
-}
-
-/* --------------------------------------------------------- optimal-range modal */
 
 function OptimalRangeModal({
   marker,

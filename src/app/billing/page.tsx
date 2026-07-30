@@ -1,34 +1,20 @@
 import type { Metadata } from "next";
-import { USE_LIVE_API } from "@/adapters/mode";
-import { BillingWorkspace } from "@/components/billing/BillingWorkspace";
 import { ClinicalEmpty } from "@/components/ui/ClinicalStates";
 
 export const metadata: Metadata = { title: "Billing — AI Longevity Pro" };
 
-export default async function BillingPage({
-  searchParams,
-}: {
-  searchParams: Promise<Record<string, string | string[] | undefined>>;
-}) {
-  const sp = await searchParams;
-  const s = (k: string) => (typeof sp[k] === "string" ? (sp[k] as string) : undefined);
-
-  if (USE_LIVE_API) {
-    return (
-      <section data-screen-label="Billing" className="mx-auto max-w-[900px] px-6 pt-[22px] pb-6">
-        <ClinicalEmpty
-          title="Billing isn't live yet"
-          message="The POS and ledger are Stripe test-mode UI over demo data. They stay hidden in live mode until a real payments adapter exists — nothing pretends to charge."
-        />
-      </section>
-    );
-  }
+/**
+ * Billing: no live backend yet. The route (and its place in the navigation)
+ * stays, and it says so honestly — it never renders the demo workspace.
+ * Status: docs/clinical-runtime-migration.md.
+ */
+export default function BillingPage() {
   return (
-    <BillingWorkspace
-      tab={s("tab") ?? "overview"}
-      patientId={s("patient")}
-      apptId={s("appt")}
-      serviceId={s("service")}
-    />
+    <section data-screen-label="Billing" className="mx-auto max-w-[900px] px-6 pt-[22px] pb-6">
+      <ClinicalEmpty
+        title="Billing isn't configured yet"
+        message="Billing and payments have no live backend yet. Nothing is shown rather than synthetic invoices, and nothing can be charged from this screen."
+      />
+    </section>
   );
 }

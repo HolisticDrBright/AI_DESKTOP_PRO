@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo } from "react";
 import { usePathname } from "next/navigation";
 import {
   Activity,
@@ -21,13 +20,6 @@ import {
   UsersRound,
   type LucideIcon,
 } from "lucide-react";
-import { USE_LIVE_API } from "@/adapters/mode";
-import { getTaskQueue } from "@/adapters/tasks.mock";
-import { useReviewOutcomes, useSessionQueueItems } from "@/adapters/session-store";
-import { useUnreadThreadCount } from "@/adapters/inbox.mock";
-import { useNavMode } from "@/adapters/tracking.mock";
-import { DEFAULT_PATIENT_ID } from "@/adapters/patients.mock";
-import { patientPath } from "@/lib/routes";
 import { Popover, PopoverDemoNote, PopoverHeader } from "@/components/ui/Popover";
 import { cn } from "@/lib/cn";
 
@@ -85,28 +77,6 @@ const NAV_GROUPS: NavGroup[] = [
  * single-user shape — practice operations collapse, Tracking is central.
  * No entitlements; live mode always uses the practitioner navigation.
  */
-const BIOHACKER_GROUPS: NavGroup[] = [
-  {
-    label: "My health",
-    items: [
-      { id: "today", label: "Today", icon: Sun, href: "/today" },
-      { id: "patients", label: "My Data", icon: Users, href: patientPath(DEFAULT_PATIENT_ID) },
-      { id: "tracking", label: "Tracking & Experiments", icon: Activity, href: `${patientPath(DEFAULT_PATIENT_ID, "tracking")}?view=twin` },
-      { id: "calendar", label: "Schedule", icon: Calendar, href: "/calendar" },
-    ],
-  },
-  {
-    label: "Learning",
-    items: [{ id: "programs", label: "Programs", icon: Layers, href: "/programs" }],
-  },
-  {
-    label: "System",
-    items: [
-      { id: "billing", label: "Subscriptions", icon: CreditCard, href: "/billing?tab=subscriptions" },
-      { id: "settings", label: "Settings", icon: SlidersVertical, href: "/settings" },
-    ],
-  },
-];
 
 /** Longest-prefix route → nav id (patient chart highlights Patients). */
 function activeNavId(pathname: string): string {
@@ -128,27 +98,11 @@ function activeNavId(pathname: string): string {
 export function Sidebar() {
   const pathname = usePathname();
   const activeId = activeNavId(pathname);
-  const navMode = useNavMode();
-  const groups = !USE_LIVE_API && navMode === "biohacker" ? BIOHACKER_GROUPS : NAV_GROUPS;
+  const groups = NAV_GROUPS;
 
-  // Open review-queue badge from the same stores as /tasks so it matches the
-  // screen. Demo mode only — the live queue is fetched per screen, so no
-  // badge there rather than a possibly-stale number.
-  const sessionAdded = useSessionQueueItems();
-  const reviews = useReviewOutcomes();
-  const baseCount = useMemo(() => getTaskQueue().length, []);
-  const resolvedCount = Object.entries(reviews).filter(
-    ([key, outcome]) => key.startsWith("queue:") && outcome === "resolved",
-  ).length;
-  const openTasks = USE_LIVE_API
-    ? 0
-    : Math.max(0, baseCount + sessionAdded.length - resolvedCount);
-  const unreadThreads = useUnreadThreadCount();
-
-  const badges: Record<string, number> = {
-    review: openTasks,
-    inbox: USE_LIVE_API ? 0 : unreadThreads,
-  };
+  // No count badges: the live queue is fetched per screen, and a stale badge
+  // number would misstate the practitioner's real workload.
+  const badges: Record<string, number> = {};
 
   return (
     <nav

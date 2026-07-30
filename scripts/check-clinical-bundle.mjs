@@ -33,7 +33,10 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
-const STRICT = process.argv.includes("--strict");
+// Strict is now the DEFAULT: the presence gap closed in clinical-runtime
+// phase 1 (no production route imports *.mock, so nothing fixture-shaped is
+// bundled). --advisory keeps the old warn-only behavior for archaeology.
+const STRICT = !process.argv.includes("--advisory");
 const CLIENT_CHUNK_DIR = ".next/static";
 
 /** Synthetic identities from `src/adapters/*.mock.ts`. */

@@ -1,40 +1,28 @@
 /**
- * Data-source mode + practitioner context (client-safe).
+ * Data-source mode + practitioner context (client-safe) — CLINICAL-ONLY.
  *
- * THE EDITION IS THE AUTHORITY. `APP_EDITION` (see `src/lib/edition.ts`)
- * decides whether this build talks to the Desktop-owned clinical boundary or
- * to synthetic fixtures. This module derives the adapter-facing view of that
- * decision; it does not make its own.
+ * This repository ships the clinical product; `next.config.ts` hard-locks the
+ * edition and refuses to build anything else. The demo edition lives in
+ * `AI-DESKTOP-PRO-DEMO`. There is no mock mode here: every adapter either
+ * reaches the Desktop-owned boundary under the practitioner's session or
+ * reports an honest unavailable / not-configured state.
  *
- *   clinical edition -> live adapters, authenticated, RLS-scoped
- *   demo edition     -> mock/session adapters, no network, nothing persisted
- *
- * DEPRECATED: `NEXT_PUBLIC_USE_LIVE_API`.
- *
- * That flag used to be the top-level switch. It is no longer consulted for the
- * edition decision — a demo build cannot be turned live by setting it, which is
- * the entire point of the edition split. It survives only as a derived alias
- * (`USE_LIVE_API`) so the ~40 existing call sites and the current test suites
- * keep compiling while they migrate to `IS_CLINICAL` / `IS_DEMO`.
- *
- * Migration path for call sites: replace `USE_LIVE_API` with `IS_CLINICAL`
- * from `@/lib/edition`. Removal is tracked in `docs/app-editions.md`; the
- * alias goes away once no source file imports it.
+ * DEPRECATED: `USE_LIVE_API`. It was the mock/live switch, then a derived
+ * alias of the edition, and is now a constant `true` kept only so the few
+ * remaining imports compile during the migration recorded in
+ * `docs/clinical-runtime-migration.md`. New code must not import it — being
+ * "live" is not a mode of this product, it is the product.
  */
 
-import { APP_EDITION, IS_CLINICAL, IS_DEMO } from "@/lib/edition";
+import { APP_EDITION, IS_CLINICAL } from "@/lib/edition";
 
-export type ApiMode = "live" | "mock";
+export type ApiMode = "live";
 
-/**
- * @deprecated Derived from `APP_EDITION`. Use `IS_CLINICAL` from
- * `@/lib/edition` instead. Setting `NEXT_PUBLIC_USE_LIVE_API` no longer
- * affects this value.
- */
-export const USE_LIVE_API: boolean = IS_CLINICAL;
+/** @deprecated Always true in the clinical repository. Do not import in new code. */
+export const USE_LIVE_API = true as const;
 
 export function getApiMode(): ApiMode {
-  return IS_CLINICAL ? "live" : "mock";
+  return "live";
 }
 
 /**
@@ -45,9 +33,6 @@ export function getApiMode(): ApiMode {
  * authentication: the backend still enforces RLS against the practitioner's
  * actual session token. In production the practitioner id comes from the
  * authenticated session, never from these.
- *
- * The demo edition ignores them entirely — it has no live path to point at, so
- * an override cannot conjure one.
  */
 export interface DevContext {
   orgId?: string;
@@ -56,7 +41,7 @@ export interface DevContext {
 }
 
 export function getDevContext(): DevContext {
-  if (IS_DEMO) return {};
+  if (!IS_CLINICAL) return {};
   return {
     orgId: process.env.NEXT_PUBLIC_DEV_ORG_ID || undefined,
     patientId: process.env.NEXT_PUBLIC_DEV_PATIENT_ID || undefined,
@@ -76,7 +61,7 @@ export function hasDevOverrides(): boolean {
 export interface ModeStatus {
   edition: typeof APP_EDITION;
   mode: ApiMode;
-  live: boolean;
+  live: true;
   devOverrides: { orgId: boolean; patientId: boolean; practitionerId: boolean };
   anyDevOverride: boolean;
 }
@@ -85,8 +70,8 @@ export function describeMode(): ModeStatus {
   const c = getDevContext();
   return {
     edition: APP_EDITION,
-    mode: getApiMode(),
-    live: IS_CLINICAL,
+    mode: "live",
+    live: true,
     devOverrides: {
       orgId: Boolean(c.orgId),
       patientId: Boolean(c.patientId),

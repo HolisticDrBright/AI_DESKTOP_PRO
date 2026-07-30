@@ -1,14 +1,19 @@
 import type { Metadata } from "next";
-import { TemplateLibrary } from "@/components/templates/TemplateLibrary";
+import { ClinicalEmpty } from "@/components/ui/ClinicalStates";
 
-export const metadata: Metadata = { title: "Template library — AI Longevity Pro" };
+export const metadata: Metadata = { title: "Templates — AI Longevity Pro" };
 
-export default async function TemplatesPage({
-  searchParams,
-}: {
-  searchParams: Promise<Record<string, string | string[] | undefined>>;
-}) {
-  const sp = await searchParams;
-  const type = typeof sp.type === "string" ? sp.type : undefined;
-  return <TemplateLibrary initialType={type === "assessment" ? "assessment" : type} />;
+/**
+ * Templates: no live backend yet. The route stays in the navigation and says so
+ * honestly. Status: docs/clinical-runtime-migration.md.
+ */
+export default function TemplatesPage() {
+  return (
+    <section data-screen-label="Templates" className="mx-auto max-w-[900px] px-6 pt-[22px] pb-6">
+      <ClinicalEmpty
+        title="Templates aren't configured yet"
+        message="The versioned template library has no live backend yet. Nothing is shown rather than synthetic templates."
+      />
+    </section>
+  );
 }

@@ -1,69 +1,222 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useState } from "react";
+import Link from "next/link";
 import {
-  CircleCheck,
-  CircleX,
-  GitBranch,
+  AlertTriangle,
+  BrainCircuit,
+  Check,
+  CircleHelp,
+  Clock,
+  FileQuestion,
   ShieldAlert,
-  Sparkles,
-  TriangleAlert,
+  X,
 } from "lucide-react";
-import {
-  HYPOTHESIS_STATUS_META,
-  SOURCE_FILTERS,
-  getReasoningWorkspace,
-  type ReasoningSourceKind,
-  type ReasoningWorkspaceData,
-  type WorkspaceHypothesis,
-} from "@/adapters/reasoning.mock";
-import {
-  addSessionQueueItem,
-  useReviewOutcome,
-  type ReviewOutcome,
-} from "@/adapters/session-store";
-import type { Tone } from "@/adapters/types";
-import { ActionBar } from "@/components/ui/ActionBar";
-import { Provenance } from "@/components/ui/Provenance";
-import { Card } from "@/components/ui/bits";
-import { cn } from "@/lib/cn";
+import { api } from "@/adapters";
+import { isAdapterError } from "@/adapters/errors";
+import type {
+  LiveEvidenceItem,
+  LiveHypothesis,
+  LiveReasoningWorkspace,
+} from "@/adapters/live-types";
+import { Btn } from "@/components/ui/Btn";
+import { Card, CardTitle } from "@/components/ui/bits";
+import { ClinicalError, ClinicalLoading, ClinicalNote } from "@/components/ui/ClinicalStates";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { Pill } from "@/components/ui/Pill";
 import { useFeedback } from "@/lib/feedback";
-import { toneText, toneTint } from "@/lib/tones";
+import { patientPath } from "@/lib/routes";
 
-const OUTCOME_PILL: Partial<Record<ReviewOutcome, { label: string; tone: Tone }>> = {
-  accepted: { label: "Accepted this session", tone: "positive" },
-  approved: { label: "Approved this session", tone: "positive" },
-  rejected: { label: "Rejected this session", tone: "critical" },
-  flagged: { label: "Flagged this session", tone: "warning" },
-};
+/**
+ * Clinical Reasoning workspace — CLINICAL, real data only.
+ *
+ * Reads `get_reasoning_workspace` (practitioner JWT, RLS, membership + patient
+ * access enforced in the database). Guarantees encoded here:
+ *
+ *   * The snapshot header shows version + generated time, and a STALE banner
+ *     when source data changed after generation.
+ *   * Every hypothesis is labelled an INFERENCE — never a diagnosis.
+ *   * The internal evidence-strength wording from the record is shown
+ *     verbatim; it is never presented as a medical probability.
+ *   * Supporting, conflicting, and missing evidence render as separate lists;
+ *     every evidence item links to its source with its date.
+ *   * Review actions (accept / reject / request data) persist through one
+ *     atomic RPC (review row + hypothesis state + audit event). Accepting
+ *     does NOT insert anything into a note or care plan — adding to a note is
+ *     a separate, explicit practitioner action elsewhere.
+ *   * Urgent safety questions are lens-invariant and shown unconditionally.
+ *   * Unknown values render as "Unknown" — nothing is inferred client-side.
+ *   * AI generation is not configured; the header says so. No fixture output
+ *     is ever substituted.
+ */
 
-const CHANGE_META = {
-  new: { label: "New", tone: "action" as Tone },
-  strengthened: { label: "Stronger", tone: "warning" as Tone },
-  weakened: { label: "Weaker", tone: "positive" as Tone },
-  resolved: { label: "Resolved", tone: "positive" as Tone },
-};
+function fmtDateTime(iso: string | null | undefined): string {
+  if (!iso) return "Unknown";
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime())
+    ? "Unknown"
+    : d.toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
+}
 
-const HYPOTHESIS_ACTIONS = [
-  "accept_hypothesis",
-  "modify",
-  "reject",
-  "add_evidence",
-  "add_contradiction",
-  "request_data",
-  "convert_to_task",
-  "convert_to_experiment",
-  "add_to_note",
-] as const;
-
-function Pill({ tone, children }: { tone: Tone; children: React.ReactNode }) {
+function EvidenceList({
+  title,
+  tone,
+  items,
+  patientId,
+}: {
+  title: string;
+  tone: "positive" | "critical" | "slate";
+  items: LiveEvidenceItem[];
+  patientId: string;
+}) {
   return (
-    <span
-      className="rounded-full px-[7px] py-px text-[10px] font-semibold whitespace-nowrap"
-      style={{ color: toneText[tone], background: toneTint[tone] }}
-    >
-      {children}
-    </span>
+    <div>
+      <div className="mb-1 text-[10.5px] font-bold tracking-[0.04em] text-faint uppercase">{title}</div>
+      {items.length === 0 ? (
+        <p className="m-0 text-[11.5px] text-faint">None recorded.</p>
+      ) : (
+        <ul className="m-0 flex list-none flex-col gap-[4px] p-0">
+          {items.map((ev) => (
+            <li key={ev.id} className="flex items-baseline justify-between gap-2 text-[12px]">
+              <span className="min-w-0">
+                <Pill tone={tone}>{ev.factType.replace("_", " ")}</Pill>{" "}
+                <span className="font-medium text-body">{ev.label}</span>
+              </span>
+              {ev.source ? (
+                <Link
+                  href={
+                    ev.source.kind === "biomarker_observations"
+                      ? patientPath(patientId, "labs")
+                      : patientPath(patientId, "chart")
+                  }
+                  className="shrink-0 text-[10.5px] font-semibold text-action hover:underline"
+                >
+                  source · {fmtDateTime(ev.source.at)}
+                </Link>
+              ) : (
+                <span className="shrink-0 text-[10.5px] text-faint">
+                  {ev.observedAt ? fmtDateTime(ev.observedAt) : "Unknown"}
+                </span>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+const REVIEW_LABEL: Record<string, string> = {
+  unreviewed: "Unreviewed",
+  accepted: "Accepted (inference)",
+  rejected: "Rejected",
+  needs_data: "More data requested",
+};
+
+function HypothesisCard({
+  hyp,
+  patientId,
+  onReview,
+  busy,
+}: {
+  hyp: LiveHypothesis;
+  patientId: string;
+  onReview: (action: "accepted" | "rejected" | "needs_data", note?: string) => void;
+  busy: boolean;
+}) {
+  const [dataNote, setDataNote] = useState("");
+  const [askingData, setAskingData] = useState(false);
+  const reviewed = hyp.review.state !== "unreviewed";
+
+  return (
+    <Card className="px-4 py-[13px]">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="m-0 text-[13.5px] font-bold text-ink">{hyp.title}</h3>
+            <Pill tone="ai">Inference — not a diagnosis</Pill>
+            <Pill tone={hyp.review.state === "accepted" ? "positive" : hyp.review.state === "rejected" ? "slate" : hyp.review.state === "needs_data" ? "warning" : "navy"}>
+              {REVIEW_LABEL[hyp.review.state]}
+            </Pill>
+          </div>
+          <p className="m-0 mt-1 text-[11.5px] text-subtle">
+            {hyp.strengthLabel === "Unknown" ? (
+              <>Evidence weighting: <span className="font-semibold">Unknown</span></>
+            ) : (
+              hyp.strengthLabel
+            )}
+          </p>
+        </div>
+        <span className="text-[10.5px] text-faint">status: {hyp.status.replace("_", " ")}</span>
+      </div>
+
+      <div className="mt-3 grid gap-3 lg:grid-cols-3">
+        <EvidenceList title="Supporting" tone="positive" items={hyp.supporting} patientId={patientId} />
+        <EvidenceList title="Conflicting" tone="critical" items={hyp.conflicting} patientId={patientId} />
+        <div>
+          <div className="mb-1 text-[10.5px] font-bold tracking-[0.04em] text-faint uppercase">Missing</div>
+          {hyp.missing.length === 0 ? (
+            <p className="m-0 text-[11.5px] text-faint">None recorded.</p>
+          ) : (
+            <ul className="m-0 flex list-none flex-col gap-[4px] p-0">
+              {hyp.missing.map((m) => (
+                <li key={m.id} className="text-[12px]">
+                  <Pill tone="warning">missing</Pill>{" "}
+                  <span className="font-medium text-body">{m.label}</span>
+                  {m.recommendation && <span className="text-subtle"> — {m.recommendation}</span>}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+
+      {reviewed && (
+        <p className="m-0 mt-3 rounded-lg bg-sunken px-3 py-[7px] text-[11.5px] text-subtle">
+          Reviewed by <span className="font-semibold text-body">{hyp.review.reviewedBy ?? "Practitioner"}</span>{" "}
+          · {fmtDateTime(hyp.review.reviewedAt)}
+          {hyp.review.note && <> · “{hyp.review.note}”</>}
+        </p>
+      )}
+
+      <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-hairline pt-3">
+        <Btn size="sm" variant="primary" disabled={busy} onClick={() => onReview("accepted")}>
+          <Check size={12} aria-hidden /> Accept inference
+        </Btn>
+        <Btn size="sm" disabled={busy} onClick={() => onReview("rejected")}>
+          <X size={12} aria-hidden /> Reject
+        </Btn>
+        <Btn size="sm" disabled={busy} onClick={() => setAskingData((v) => !v)}>
+          <FileQuestion size={12} aria-hidden /> Request data
+        </Btn>
+        <span className="text-[10.5px] text-faint">
+          Accepting records your review — it never adds content to a note or care plan.
+        </span>
+      </div>
+
+      {askingData && (
+        <div className="mt-2 flex gap-2">
+          <input
+            value={dataNote}
+            onChange={(e) => setDataNote(e.target.value)}
+            placeholder="What data is needed? (saved as an open request)"
+            className="h-8 min-w-0 flex-1 rounded-lg border border-line bg-card px-[10px] text-[12px] text-body outline-none focus-visible:border-action"
+          />
+          <Btn
+            size="sm"
+            variant="primary"
+            disabled={busy || !dataNote.trim()}
+            onClick={() => {
+              onReview("needs_data", dataNote.trim());
+              setAskingData(false);
+              setDataNote("");
+            }}
+          >
+            Save request
+          </Btn>
+        </div>
+      )}
+    </Card>
   );
 }
 
@@ -74,360 +227,167 @@ export function ReasoningWorkspace({
   patientId: string;
   patientName: string;
 }) {
-  const [ws] = useState<ReasoningWorkspaceData>(() => getReasoningWorkspace(patientId));
-  const [sources, setSources] = useState<Set<ReasoningSourceKind>>(new Set());
-  const [selectedId, setSelectedId] = useState<string>(ws.hypotheses[0]?.id ?? "");
-
-  const selected = ws.hypotheses.find((h) => h.id === selectedId) ?? null;
-
-  const timeline = useMemo(
-    () =>
-      sources.size === 0
-        ? ws.timeline
-        : ws.timeline.filter((t) => sources.has(t.source)),
-    [ws.timeline, sources],
-  );
-
-  const toggleSource = (s: ReasoningSourceKind) =>
-    setSources((prev) => {
-      const next = new Set(prev);
-      if (next.has(s)) next.delete(s);
-      else next.add(s);
-      return next;
-    });
-
-  return (
-    <section data-screen-label="Clinical Reasoning Workspace" className="relative pb-6">
-      <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
-        <div>
-          <div className="flex items-center gap-[7px]">
-            <GitBranch size={17} strokeWidth={2} className="text-ai" aria-hidden />
-            <h1 className="m-0 text-[19px] font-bold tracking-[-0.015em]">Clinical Reasoning</h1>
-          </div>
-          <p className="mt-[3px] mb-0 text-[11.5px] text-subtle">
-            Updated {ws.updatedOn} · {ws.dateRange} · Strength = internal evidence weighting,
-            not a medical probability. AI-assembled; requires practitioner review.
-          </p>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-[220px_minmax(0,1fr)_330px] items-start gap-4">
-        {/* Left: filters + timeline + what changed */}
-        <div className="flex flex-col gap-3">
-          <Card className="p-[13px]">
-            <h2 className="m-0 mb-[8px] text-[12px] font-bold text-body-2">Date range</h2>
-            <div className="rounded-[8px] bg-sunken-2 px-[9px] py-[6px] text-[11px] font-semibold text-muted">
-              {ws.dateRange}
-            </div>
-            <h2 className="m-0 mt-[12px] mb-[7px] text-[12px] font-bold text-body-2">Sources</h2>
-            <div className="flex flex-col gap-[4px]" role="group" aria-label="Source filters">
-              {SOURCE_FILTERS.map((s) => {
-                const active = sources.has(s.id);
-                return (
-                  <button
-                    key={s.id}
-                    onClick={() => toggleSource(s.id)}
-                    aria-pressed={active}
-                    className={cn(
-                      "flex items-center justify-between rounded-[7px] border px-[9px] py-[5px] text-left text-[11.5px] font-semibold focus-visible:outline-2 focus-visible:outline-action",
-                      active
-                        ? "border-action bg-action-tint text-action-deep"
-                        : "border-transparent text-body-2 hover:bg-sunken",
-                    )}
-                  >
-                    {s.label}
-                    <span className="text-[10px] text-faint">
-                      {ws.timeline.filter((t) => t.source === s.id).length}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </Card>
-
-          <Card className="p-[13px]">
-            <h2 className="m-0 mb-[9px] text-[12px] font-bold text-body-2">Timeline</h2>
-            {timeline.length === 0 ? (
-              <p className="m-0 text-[11.5px] text-faint">
-                No events match the selected sources — clear a filter to see more.
-              </p>
-            ) : (
-              <ol className="m-0 flex list-none flex-col gap-[9px] p-0">
-                {timeline.map((t) => (
-                  <li key={t.id} className="flex gap-[8px]">
-                    <span className="w-[38px] shrink-0 text-[10px] font-bold text-faint">{t.date}</span>
-                    <span className="min-w-0">
-                      <span className="block text-[11.5px] leading-[1.4] text-body">{t.text}</span>
-                      <span className="text-[9.5px] text-faint capitalize">{t.source.replace("-", " ")}</span>
-                    </span>
-                  </li>
-                ))}
-              </ol>
-            )}
-          </Card>
-
-          <Card className="p-[13px]">
-            <h2 className="m-0 mb-[9px] text-[12px] font-bold text-body-2">What changed</h2>
-            <div className="flex flex-col gap-[8px]">
-              {ws.whatChanged.map((c) => (
-                <div key={c.text} className="flex items-start gap-[6px]">
-                  <span
-                    className="mt-px shrink-0 rounded-[4px] px-[5px] py-px text-[9px] font-bold"
-                    style={{ color: toneText[CHANGE_META[c.direction].tone], background: toneTint[CHANGE_META[c.direction].tone] }}
-                  >
-                    {CHANGE_META[c.direction].label}
-                  </span>
-                  <span className="text-[11px] leading-[1.4] text-body">{c.text}</span>
-                </div>
-              ))}
-            </div>
-          </Card>
-        </div>
-
-        {/* Center: hypothesis cards */}
-        <div className="flex flex-col gap-3">
-          <div className="flex items-center gap-[6px] px-1">
-            <Sparkles size={13} strokeWidth={2} className="text-ai" aria-hidden />
-            <span className="text-[11px] font-bold text-body-2">
-              Ranked hypotheses ({ws.hypotheses.length})
-            </span>
-            <span className="text-[10.5px] text-faint">
-              — internal evidence weighting, not a medical probability
-            </span>
-          </div>
-          {ws.hypotheses.map((h) => (
-            <HypothesisCard
-              key={h.id}
-              h={h}
-              patientId={patientId}
-              patientName={patientName}
-              selected={h.id === selectedId}
-              onSelect={() => setSelectedId(h.id)}
-            />
-          ))}
-        </div>
-
-        {/* Right: evidence inspector */}
-        <EvidenceInspector h={selected} patientId={patientId} />
-      </div>
-    </section>
-  );
-}
-
-function HypothesisCard({
-  h,
-  patientId,
-  patientName,
-  selected,
-  onSelect,
-}: {
-  h: WorkspaceHypothesis;
-  patientId: string;
-  patientName: string;
-  selected: boolean;
-  onSelect: () => void;
-}) {
-  const reviewKey = `hypo:${patientId}:${h.id}`;
-  const outcome = useReviewOutcome(reviewKey);
-  const status = HYPOTHESIS_STATUS_META[h.status];
-  const pill = outcome ? OUTCOME_PILL[outcome] : null;
-
-  return (
-    <Card
-      className={cn(
-        "p-[13px] transition-colors",
-        selected && "border-action shadow-[0_2px_10px_rgba(37,99,199,0.1)]",
-      )}
-    >
-      <div className="flex items-start gap-[10px]">
-        <button
-          onClick={onSelect}
-          aria-pressed={selected}
-          aria-label={`Inspect ${h.name}`}
-          className="min-w-0 flex-1 cursor-pointer text-left focus-visible:outline-2 focus-visible:outline-action"
-        >
-          <div className="flex flex-wrap items-center gap-[7px]">
-            <span className="text-[13.5px] font-bold text-ink">{h.name}</span>
-            <Pill tone={status.tone}>{status.label}</Pill>
-            {pill && <Pill tone={pill.tone}>{pill.label}</Pill>}
-          </div>
-          <p className="mt-[3px] mb-0 text-[11.5px] leading-[1.45] text-subtle">{h.summary}</p>
-        </button>
-        <span className="shrink-0 rounded-[7px] bg-ai-tint px-2 py-[3px] text-[12px] font-bold text-ai-deep">
-          {h.strength}
-          <span className="ml-[2px] text-[9px] font-semibold text-ai">wt</span>
-        </span>
-      </div>
-
-      <div className="mt-[8px] flex flex-wrap items-center gap-x-3 gap-y-1 text-[10.5px] text-subtle">
-        <span className="flex items-center gap-[4px]">
-          <CircleCheck size={11} strokeWidth={2} className="text-positive-bright" aria-hidden />
-          {h.evidenceFor.length} for
-        </span>
-        <span className="flex items-center gap-[4px]">
-          <CircleX size={11} strokeWidth={2} className="text-critical" aria-hidden />
-          {h.evidenceAgainst.length} against
-        </span>
-        <span className="flex items-center gap-[4px]">
-          <TriangleAlert size={11} strokeWidth={2} className="text-warning" aria-hidden />
-          {h.contradictions.length} contradiction{h.contradictions.length === 1 ? "" : "s"}
-        </span>
-        <span>{h.missingInformation.length} missing</span>
-        <span aria-hidden>·</span>
-        <span>Changed {h.lastChanged}</span>
-      </div>
-
-      <ActionBar
-        size="sm"
-        className="mt-[9px] border-t border-hairline-2 pt-[9px]"
-        actions={[...HYPOTHESIS_ACTIONS]}
-        context={{
-          subjectType: "hypothesis",
-          subjectLabel: h.name,
-          patientName,
-          seeds: h.seeds,
-          reviewKey,
-        }}
-        onExecuted={(kind) => {
-          if (kind === "convert_to_task") {
-            addSessionQueueItem({
-              title: `Review hypothesis: ${h.name}`,
-              patientName,
-              patientId,
-              category: "reasoning-review",
-              priority: "Medium",
-              seeds: h.seeds,
-            });
-          }
-        }}
-      />
-    </Card>
-  );
-}
-
-function EvidenceInspector({
-  h,
-  patientId,
-}: {
-  h: WorkspaceHypothesis | null;
-  patientId: string;
-}) {
   const { announce } = useFeedback();
-  const outcome = useReviewOutcome(h ? `hypo:${patientId}:${h.id}` : "");
+  const [data, setData] = useState<LiveReasoningWorkspace | null>(null);
+  const [error, setError] = useState<{ message: string; code?: string } | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const [confirmReject, setConfirmReject] = useState<LiveHypothesis | null>(null);
 
-  if (!h) {
+  useEffect(() => {
+    let alive = true;
+    setError(null);
+    api.reasoning
+      .getWorkspace(patientId)
+      .then((w) => {
+        if (alive) setData(w as LiveReasoningWorkspace);
+      })
+      .catch((e) => {
+        if (alive)
+          setError(
+            isAdapterError(e)
+              ? { message: e.safeMessage, code: e.code }
+              : { message: "Unable to load the reasoning workspace." },
+          );
+      });
+    return () => {
+      alive = false;
+    };
+  }, [patientId, reloadKey]);
+
+  const review = async (
+    hypothesisId: string,
+    action: "accepted" | "rejected" | "needs_data",
+    note?: string,
+  ) => {
+    setBusy(true);
+    try {
+      const r = await api.reasoning.reviewHypothesis({ hypothesisId, action, note });
+      announce(r.message);
+      setReloadKey((k) => k + 1);
+    } catch (e) {
+      announce(
+        isAdapterError(e) ? e.safeMessage : "The review could not be saved. Nothing was recorded.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (error) {
     return (
-      <Card className="px-5 py-[50px] text-center">
-        <p className="m-0 text-[12.5px] text-subtle">Select a hypothesis to inspect its evidence.</p>
-      </Card>
+      <div className="pt-4">
+        <ClinicalError message={error.message} onRetry={() => setReloadKey((k) => k + 1)} />
+      </div>
     );
   }
-
-  const Section = ({ title, children }: { title: string; children: React.ReactNode }) => (
-    <div className="border-t border-hairline-2 px-[14px] py-[11px] first:border-t-0">
-      <h3 className="m-0 mb-[7px] text-[10.5px] font-bold tracking-[0.04em] text-faint uppercase">{title}</h3>
-      {children}
-    </div>
-  );
-
-  const List = ({ items, empty }: { items: string[]; empty: string }) =>
-    items.length === 0 ? (
-      <p className="m-0 text-[11px] text-faint">{empty}</p>
-    ) : (
-      <ul className="m-0 flex list-none flex-col gap-[6px] p-0">
-        {items.map((t) => (
-          <li key={t} className="text-[11.5px] leading-[1.45] text-body">{t}</li>
-        ))}
-      </ul>
-    );
+  if (!data) return <ClinicalLoading label="Loading reasoning record…" />;
 
   return (
-    <Card className="sticky top-[6px] overflow-hidden">
-      <div className="border-b border-hairline px-[14px] pt-[12px] pb-[10px]">
-        <div className="flex items-start justify-between gap-2">
-          <h2 className="m-0 text-[13.5px] font-bold">{h.name}</h2>
-          <span className="shrink-0 rounded-[7px] bg-ai-tint px-2 py-[2px] text-[11px] font-bold text-ai-deep">
-            {h.strength} <span className="text-[9px] font-semibold text-ai">wt</span>
-          </span>
-        </div>
-        {outcome && OUTCOME_PILL[outcome] && (
-          <div className="mt-[6px]">
-            <Pill tone={OUTCOME_PILL[outcome]!.tone}>{OUTCOME_PILL[outcome]!.label}</Pill>
+    <section data-screen-label="Clinical reasoning (live)" className="flex flex-col gap-3 pt-3 pb-8">
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="flex items-center gap-2">
+            <BrainCircuit size={16} strokeWidth={2} className="text-ai" aria-hidden />
+            <h2 className="m-0 text-[16px] font-bold text-ink">Clinical reasoning</h2>
+            <Pill tone="ai">Inferences for review</Pill>
           </div>
-        )}
-        <div className="mt-[8px]">
-          <Provenance data={h.provenance} onOpenSource={() => announce("Opened source (demo — no document).")} />
+          <p className="m-0 mt-1 text-[11.5px] text-subtle">
+            {patientName} ·{" "}
+            {data.snapshot ? (
+              <>snapshot v{data.snapshot.version} · generated {fmtDateTime(data.snapshot.generatedAt)}</>
+            ) : (
+              "no reasoning snapshot on the record"
+            )}
+          </p>
         </div>
-      </div>
+      </header>
 
-      <div className="max-h-[560px] overflow-y-auto">
-        <Section title="Evidence for">
-          <ul className="m-0 flex list-none flex-col gap-[7px] p-0">
-            {h.evidenceFor.map((e) => (
-              <li key={e.text} className="flex items-start gap-[6px]">
-                <CircleCheck size={12} strokeWidth={2} className="mt-[2px] shrink-0 text-positive-bright" aria-hidden />
-                <span className="min-w-0">
-                  <span className="block text-[11.5px] leading-[1.4] text-body">{e.text}</span>
-                  <span className="text-[9.5px] text-faint">{e.source}</span>
-                </span>
+      {data.snapshot?.stale && (
+        <div className="flex items-start gap-2 rounded-[10px] border border-[rgba(199,126,20,0.3)] bg-warning-tint px-3 py-[9px]">
+          <Clock size={13} strokeWidth={2} className="mt-[1px] shrink-0 text-warning-deep" aria-hidden />
+          <p className="m-0 text-[12px] leading-[1.5] text-warning-deep">
+            <span className="font-bold">Stale:</span>{" "}
+            {data.snapshot.staleReason ?? "Source data changed after this snapshot was generated."}{" "}
+            Review the underlying record before acting on these inferences.
+          </p>
+        </div>
+      )}
+
+      <ClinicalNote>
+        {data.aiGeneration.message} The deterministic safety and lens layers operate independently
+        when their governed inputs are available.
+      </ClinicalNote>
+
+      {data.urgentQuestions.length > 0 && (
+        <Card className="border-[rgba(184,54,54,0.35)] px-4 py-[13px]">
+          <CardTitle className="mb-1">
+            <ShieldAlert size={13} strokeWidth={2} className="text-critical" aria-hidden />
+            Urgent safety questions (lens-invariant)
+          </CardTitle>
+          <ul className="m-0 flex list-none flex-col gap-[5px] p-0">
+            {data.urgentQuestions.map((q) => (
+              <li key={q.id} className="flex items-baseline justify-between gap-2 text-[12.5px]">
+                <span className="font-medium text-body">{q.text}</span>
+                <Pill tone="critical">{q.status}</Pill>
               </li>
             ))}
           </ul>
-        </Section>
-
-        <Section title="Evidence against">
-          {h.evidenceAgainst.length === 0 ? (
-            <p className="m-0 text-[11px] text-faint">None recorded.</p>
-          ) : (
-            <ul className="m-0 flex list-none flex-col gap-[7px] p-0">
-              {h.evidenceAgainst.map((e) => (
-                <li key={e.text} className="flex items-start gap-[6px]">
-                  <CircleX size={12} strokeWidth={2} className="mt-[2px] shrink-0 text-critical" aria-hidden />
-                  <span className="min-w-0">
-                    <span className="block text-[11.5px] leading-[1.4] text-body">{e.text}</span>
-                    <span className="text-[9.5px] text-faint">{e.source}</span>
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </Section>
-
-        <Section title="Contradictions">
-          <List items={h.contradictions} empty="No unresolved contradictions." />
-        </Section>
-
-        <Section title="Missing information">
-          <List items={h.missingInformation} empty="Nothing flagged." />
-        </Section>
-
-        <Section title="Safety considerations">
-          {h.safetyConsiderations.length === 0 ? (
-            <p className="m-0 text-[11px] text-faint">None flagged.</p>
-          ) : (
-            <ul className="m-0 flex list-none flex-col gap-[6px] p-0">
-              {h.safetyConsiderations.map((t) => (
-                <li key={t} className="flex items-start gap-[6px] text-[11.5px] leading-[1.45] text-body">
-                  <ShieldAlert size={12} strokeWidth={2} className="mt-[2px] shrink-0 text-critical" aria-hidden />
-                  {t}
-                </li>
-              ))}
-            </ul>
-          )}
-        </Section>
-
-        <Section title="Practitioner notes">
-          <List items={h.practitionerNotes} empty="No notes yet — use Add to note to draft one." />
-        </Section>
-
-        <Section title="Audit trail">
-          <p className="m-0 text-[11px] leading-[1.5] text-subtle">
-            Session actions on this hypothesis are recorded in the demo audit log
-            (see System → Audit Log). Live domain events appear through the
-            caller-authorized clinical database boundary.
+          <p className="m-0 mt-2 text-[10.5px] text-faint">
+            Urgent safety questions are identical under every clinical lens — a lens can reframe
+            terminology, never remove a safety concern.
           </p>
-        </Section>
-      </div>
-    </Card>
+        </Card>
+      )}
+
+      {data.hypotheses.length === 0 ? (
+        <Card className="px-5 py-8 text-center">
+          <CircleHelp size={18} strokeWidth={1.75} className="mx-auto mb-2 text-slate-badge" aria-hidden />
+          <p className="m-0 text-[13px] font-semibold text-body">No hypotheses on the record</p>
+          <p className="m-0 mt-1 text-[12px] text-subtle">
+            Hypotheses appear here once the reasoning engine (or a practitioner) records them with
+            their evidence. Nothing is generated on this screen.{" "}
+            <Link href={patientPath(patientId, "labs")} className="font-semibold text-action hover:underline">
+              Open labs →
+            </Link>
+          </p>
+        </Card>
+      ) : (
+        data.hypotheses.map((hyp) => (
+          <HypothesisCard
+            key={hyp.id}
+            hyp={hyp}
+            patientId={patientId}
+            busy={busy}
+            onReview={(action, note) => {
+              if (action === "rejected") {
+                setConfirmReject(hyp);
+                return;
+              }
+              void review(hyp.id, action, note);
+            }}
+          />
+        ))
+      )}
+
+      <ConfirmDialog
+        open={Boolean(confirmReject)}
+        title="Reject this hypothesis?"
+        body="Rejecting records your review decision with an audit trail. The hypothesis and its evidence remain on the record for reference."
+        confirmLabel="Reject hypothesis"
+        onCancel={() => setConfirmReject(null)}
+        onConfirm={() => {
+          const target = confirmReject;
+          setConfirmReject(null);
+          if (target) void review(target.id, "rejected");
+        }}
+      />
+
+      <p className="m-0 flex items-start gap-1.5 text-[10.5px] leading-[1.5] text-faint">
+        <AlertTriangle size={11} strokeWidth={2} className="mt-[1px] shrink-0" aria-hidden />
+        Evidence strength wording is the record’s internal weighting, never a medical probability.
+        Unknown values stay “Unknown”. Every review action persists with its audit event atomically.
+      </p>
+    </section>
   );
 }

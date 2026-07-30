@@ -1,84 +1,41 @@
 /**
- * Data adapter façade.
+ * CLINICAL ADAPTER REGISTRY.
  *
- * The UI consumes data exclusively through this `api` object, shaped as
- * async per-domain namespaces. Swapping a namespace from mock to live means
- * adding a flag branch here — components never change and never import
- * Supabase, tRPC, or live modules directly.
+ * The UI consumes clinical data exclusively through this `api` object — no
+ * component selects mock versus live behavior on its own, imports Supabase or
+ * tRPC directly, or reaches into a fixture module. This file is the one place
+ * that decides where each domain's data comes from, and in this repository
+ * there are exactly two answers:
  *
- * Live wiring status (NEXT_PUBLIC_USE_LIVE_API):
- *   - patients.list / patients.get  -> live (Desktop-owned Supabase boundary)
- *   - labs.getWorkspace / reviewMarker / flagMarker / createReviewTask -> live
- *     (client components -> /api/live/* -> Desktop-owned Supabase REST/RPC)
- *   - tasks.getQueue / resolve       -> live (Desktop-owned Supabase REST/RPC)
- *   - actions.listLiveAuditEvents   -> live (Desktop-owned Supabase RPC)
- *   - everything else               -> mock/demo session (see docs/live-api.md)
+ *   LIVE          The Desktop-owned Supabase boundary, called as the signed-in
+ *                  practitioner (JWT + RLS + org membership), through the
+ *                  server routes in `src/app/api/live/*`.
+ *   UNAVAILABLE   An `AdapterError("unavailable")` naming the surface, which
+ *                  the UI renders as an honest not-configured state. Never a
+ *                  fixture, never a fabricated row, never an empty screen that
+ *                  reads as "this patient has no data".
+ *
+ * There is no mock branch. Synthetic fixtures (`*.mock.ts`) exist for unit and
+ * browser tests only; the import-graph check (`scripts/check-mock-imports.mjs`)
+ * fails the build if any production route can reach one.
+ *
+ * Domain status is tracked in `docs/clinical-runtime-migration.md`. A domain
+ * moves from UNAVAILABLE to LIVE only with a real authenticated read/write —
+ * that is the whole migration, one domain at a time.
  */
 import { AdapterError } from "./errors";
-import {
-  DEFAULT_PATIENT_ID,
-  getPatient,
-  getPatientSummary,
-  listPatients,
-} from "./patients.mock";
-import { getAssistantSession } from "./assistant.mock";
-import { getCommandGroups } from "./commands.mock";
-import { generateDraft, type ComposerContext } from "./composer.mock";
-import { buildImportPlan, type ImportSourceId } from "./imports.mock";
-import { getTaskQueue } from "./tasks.mock";
+import { getCommandGroups } from "./commands";
 import { mapLiveQueueItem } from "./tasks.map";
-import { getCalendar } from "./calendar.mock";
-import { SEED_PRODUCTS, type InventoryProduct } from "./inventory.mock";
-import {
-  getLabCatalog,
-  getPanelById,
-  getRecommendedPanels,
-  type OrderEvent,
-} from "./labOrders.mock";
-import { getLabWorkspace, type OptimalRange } from "./labs.mock";
-import { getReasoningWorkspace } from "./reasoning.mock";
-import { getSupplementWorkspace } from "./supplements.mock";
-import { getHealthTwin } from "./twin.mock";
-import { getActiveExperiments, getCompletedExperiments } from "./experiments.mock";
-import { getConnectors } from "./integrations.mock";
-import { CAPABILITIES, ROLES } from "./permissions.mock";
-import { USE_LIVE_API } from "./config";
-import { IS_CLINICAL } from "@/lib/edition";
 import { liveClient } from "./live-client";
 import { runClinicalMutation, type MutationOutcome } from "./mutations";
 import {
-  executeAction,
-  type ActionContext,
-  type ActionKind,
-} from "./actions";
-import {
-  addSessionQueueItem,
-  adjustInventory,
-  clearAuditEntries,
-  getInventoryAdjustments,
-  getLabOrderDraft,
   getReviewOutcome,
-  listAuditEntries,
-  listCustomProducts,
-  listSales,
-  recordAuditEntry,
-  recordInventoryMovement,
-  recordSale,
   removeReviewOutcome,
   setReviewOutcome,
-  upsertCustomProduct,
-  updateLabOrderDraft,
-  type SaleLine,
-} from "./session-store";
-
-/** Build a demo order event. */
-const orderEvent = (label: string): OrderEvent => ({
-  id: `evt-${Date.now()}-${Math.round(Math.random() * 1e6)}`,
-  at: new Date().toISOString(),
-  label,
-});
+} from "./review-state";
+import { executeLiveAction, type ActionContext, type ActionKind } from "./actions";
+import type { OptimalRange } from "./labs.types";
 import type { LiveAuditEvent, LiveBookInput } from "./live-types";
-import type { DraftKind } from "./types";
 
 /** Context passed to lab marker mutations so the audit entry is meaningful. */
 interface LabMarkerCtx {
@@ -88,149 +45,101 @@ interface LabMarkerCtx {
 }
 
 /**
- * THE CLINICAL FIXTURE BARRIER.
- *
- * Some namespaces still have no live source. In the demo edition they serve
- * synthetic fixtures, which is the whole point. In the CLINICAL edition they
- * must refuse — a practitioner must never see a synthetic health score,
- * appointment, protocol, invoice, or stack presented as their patient's
- * record, and an empty screen would read as "this patient has no data" rather
- * than "this feature has no backend yet".
- *
- * So instead of returning fixtures, these throw `unavailable`, and the UI
- * renders the honest not-yet-available state through `ClinicalStates`. This is
- * a barrier, not a fallback: there is no code path from the clinical edition
- * into a mock module here.
- *
- * A namespace leaves this list only by gaining a real Desktop-owned live
- * implementation — see `docs/live-data-readiness.md`.
+ * A domain with no live source yet. The thrown error's message is the honest
+ * state the UI shows; the detail names the barrier for logs (no PHI).
  */
-function demoOnly<A extends unknown[], R>(
-  what: string,
-  fn: (...args: A) => R | Promise<R>,
-): (...args: A) => Promise<R> {
-  return async (...args: A): Promise<R> => {
-    assertNotClinical(what);
-    return fn(...args);
-  };
-}
-
-function assertNotClinical(what: string): void {
-  if (IS_CLINICAL) {
+function notWired<A extends unknown[], R>(what: string): (...args: A) => Promise<R> {
+  return async () => {
     throw new AdapterError(
       "unavailable",
-      `${what} is not available yet in the clinical edition. ` +
-        `This surface has no live data source, so nothing is shown rather ` +
-        `than synthetic data.`,
-      `demoOnly barrier: ${what}`,
+      `${what} is not configured yet. This surface has no live data source; ` +
+        `nothing is shown rather than synthetic data.`,
+      `clinical registry: ${what} not wired`,
     );
-  }
-}
-
-/**
- * Guard every method of a wholly-synthetic namespace at once. Preferred over
- * per-method wrapping for namespaces with no live counterpart: a method added
- * later is barred from the clinical edition by default rather than by whoever
- * remembers to wrap it.
- */
-function demoOnlyNamespace<T extends object>(what: string, ns: T): T {
-  const guarded: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(ns)) {
-    guarded[key] =
-      typeof value === "function"
-        ? async (...args: unknown[]) => {
-            assertNotClinical(what);
-            return (value as (...a: unknown[]) => unknown)(...args);
-          }
-        : value;
-  }
-  return guarded as T;
+  };
 }
 
 export const api = {
   patients: {
-    // When USE_LIVE_API is on, list/get read real patient_profiles rows through
-    // the Desktop-owned server boundary (RLS enforced). The live module is
-    // loaded lazily so the default mock build never pulls in server-only code.
-    // sessionToken: the cookie session's access token, passed by SERVER
-    // callers (src/server/session.ts). Client/demo callers omit it.
-    list: async (sessionToken?: string | null, orgId?: string | null) => {
-      if (USE_LIVE_API) return (await import("./patients.live")).patientsLive.list(sessionToken, orgId);
-      return listPatients();
-    },
-    get: async (id: string, sessionToken?: string | null, orgId?: string | null) => {
-      if (USE_LIVE_API) {
-        return (await import("./patients.live")).patientsLive.get(id, sessionToken, orgId);
-      }
-      return getPatient(id);
-    },
     /**
-     * Synthesized scores, system balance, biomarker trends, priorities. There
-     * is no database source for these yet, so the clinical edition shows the
-     * honest unavailable state instead of a fabricated health score.
+     * LIVE: patient_profiles through the Desktop-owned server boundary (RLS
+     * enforced). sessionToken/orgId are passed by SERVER callers
+     * (src/server/session.ts); client callers omit them and the API route
+     * reads the cookie session.
      */
-    summary: demoOnly("The clinical overview snapshot", (id: string) =>
-      getPatientSummary(id),
-    ),
+    list: async (sessionToken?: string | null, orgId?: string | null) =>
+      (await import("./patients.live")).patientsLive.list(sessionToken, orgId),
+    get: async (id: string, sessionToken?: string | null, orgId?: string | null) =>
+      (await import("./patients.live")).patientsLive.get(id, sessionToken, orgId),
+    /**
+     * LIVE: the bounded patient-overview aggregate (demographics, care team,
+     * allergies, medications, conditions, recent activity, latest labs, open
+     * tasks, missing-information indicators). Values without a governed
+     * source are absent — the UI says "Not enough verified data", it never
+     * invents a number.
+     */
+    overview: async (patientId: string) => liveClient.patientOverview(patientId),
+    /**
+     * The synthesized health-score/systems summary has NO governed source
+     * (algorithm, inputs, version, and review status are not defined), so it
+     * is not computed at all. See docs/clinical-runtime-migration.md.
+     */
+    summary: notWired("The clinical summary score"),
   },
   schedule: {
     /**
-     * LIVE ONLY namespace — the Desktop-owned calendar RPC returns a
-     * role-scoped schedule and minimal booking directory. Authorized RPC
-     * writes enforce overlap, transition, and tenant rules and append audit.
-     * The demo calendar keeps rendering the weekday-pattern mock directly
-     * (calendar.mock.getCalendar); these methods throw in demo mode instead
-     * of pretending to persist.
+     * LIVE: the Desktop-owned calendar RPC returns a role-scoped schedule and
+     * minimal booking directory. Authorized RPC writes enforce overlap,
+     * transition, and tenant rules and append audit.
      */
-    getWeek: async (fromIso: string, toIso: string) => {
-      if (!USE_LIVE_API) throw new AdapterError("invalid", "Demo mode does not load live schedule data.");
-      return liveClient.scheduleCalendar(fromIso, toIso);
-    },
-    book: async (input: LiveBookInput) => {
-      if (!USE_LIVE_API) throw new AdapterError("invalid", "Demo mode does not book appointments.");
-      return liveClient.bookAppointment(input);
-    },
-    updateStatus: async (appointmentId: string, status: string) => {
-      if (!USE_LIVE_API) throw new AdapterError("invalid", "Demo mode does not change appointment status.");
-      return liveClient.updateAppointmentStatus(appointmentId, status);
-    },
-    reschedule: async (appointmentId: string, startsAtIso: string, endsAtIso: string) => {
-      if (!USE_LIVE_API) throw new AdapterError("invalid", "Demo mode does not reschedule appointments.");
-      return liveClient.rescheduleAppointment(appointmentId, startsAtIso, endsAtIso);
-    },
+    getWeek: async (fromIso: string, toIso: string) => liveClient.scheduleCalendar(fromIso, toIso),
+    book: async (input: LiveBookInput) => liveClient.bookAppointment(input),
+    updateStatus: async (appointmentId: string, status: string) =>
+      liveClient.updateAppointmentStatus(appointmentId, status),
+    reschedule: async (appointmentId: string, startsAtIso: string, endsAtIso: string) =>
+      liveClient.rescheduleAppointment(appointmentId, startsAtIso, endsAtIso),
+  },
+  reasoning: {
+    /**
+     * LIVE: reasoning snapshot + hypotheses + evidence + open questions for a
+     * patient, read from the Desktop-owned boundary. Internal evidence
+     * strength wording is preserved verbatim — never a medical probability.
+     */
+    getWorkspace: async (patientId: string) => liveClient.reasoningWorkspace(patientId),
+    /**
+     * LIVE: practitioner review of a hypothesis (accept / reject /
+     * request-data). Persists the review and its audit event atomically via
+     * RPC. Accepting NEVER auto-inserts into a note or care plan.
+     */
+    reviewHypothesis: async (input: {
+      hypothesisId: string;
+      action: "accepted" | "rejected" | "needs_data";
+      note?: string;
+    }) => liveClient.reviewHypothesis(input.hypothesisId, input.action, input.note),
   },
   assistant: {
-    /** Synthetic assistant transcript about a synthetic patient. */
-    session: demoOnly("The clinical assistant session", () => getAssistantSession()),
+    session: notWired("The clinical assistant"),
   },
   commands: {
-    /** Navigation only — carries no patient data, so both editions use it. */
+    /** Navigation only — carries no patient data. */
     groups: async (patientId?: string) => getCommandGroups(patientId),
   },
   composer: {
-    /** MOCK draft generation. Replace with a server-side generation call. */
-    generate: demoOnly(
-      "Generated note and report drafts",
-      (kind: DraftKind, context: ComposerContext) => generateDraft(kind, context),
-    ),
+    generate: notWired("Draft generation"),
   },
   imports: {
-    /** MOCK import planning. Replace with a real parse + match pipeline. */
-    plan: demoOnly("Import planning", (sourceId: ImportSourceId) =>
-      buildImportPlan(sourceId),
-    ),
+    plan: notWired("Import planning"),
   },
   actions: {
     /**
-     * Execute a review action. MOCK: records to the demo session audit store
-     * and settles any linked review. LIVE: actions whose context carries a
-     * `liveRef` route to the real backend mutation — currently `resolve` on a
-     * review-queue item, which calls the `resolve_review_queue_item` RPC
-     * (migration 0014): status update + audit_events row, atomically,
-     * idempotent on retries. Demo mode never enters this branch.
+     * Execute a review action. Actions whose context carries a `liveRef`
+     * route to the real backend mutation — currently `resolve` on a
+     * review-queue item (RPC: status update + audit_events row, atomically,
+     * idempotent on retries). Everything else has no live executor yet and
+     * reports itself unavailable rather than pretending.
      */
     execute: async (kind: ActionKind, context: ActionContext, timestamp: string) => {
-      if (USE_LIVE_API && kind === "resolve" && context.liveRef?.kind === "queue-item") {
+      if (kind === "resolve" && context.liveRef?.kind === "queue-item") {
         const key = context.reviewKey;
         const prev = key ? getReviewOutcome(key) : undefined;
         const itemId = context.liveRef.id;
@@ -239,284 +148,79 @@ export const api = {
           rollback: () =>
             key && (prev ? setReviewOutcome(key, prev) : removeReviewOutcome(key)),
           live: () => liveClient.resolveQueueItem(itemId),
-          demo: () => {},
           liveMessage: `Resolved: ${context.subjectLabel}. (saved to record + audit)`,
-          demoMessage: "",
         });
         return { ok: outcome.ok, message: outcome.message };
       }
-      return executeAction(kind, context, timestamp);
+      void timestamp;
+      return executeLiveAction(kind, context);
     },
-    /** Demo session audit log (sessionStorage). Not backend persistence. */
-    listAuditEvents: () => listAuditEntries(),
-    /** Live append-only audit log through the caller-authorized DB function. */
+    /** LIVE: append-only audit log through the caller-authorized DB function. */
     listLiveAuditEvents: async (limit = 50): Promise<LiveAuditEvent[]> =>
-      USE_LIVE_API ? liveClient.listAuditEvents(limit) : [],
-    /** Clear the demo session audit log (demo reset). */
-    clearSessionAuditEvents: () => clearAuditEntries(),
+      liveClient.listAuditEvents(limit),
   },
   tasks: {
     /**
-     * Practitioner review queue. LIVE: real review_queue_items for the active
-     * org (RLS-scoped — the caller only sees patients they can access), mapped
-     * to the QueueItem shape with the row's settled status carried through so
-     * resolved items survive reload. MOCK: demo queue, unchanged.
+     * LIVE: real review_queue_items for the active org (RLS-scoped — the
+     * caller only sees patients they can access), mapped to the QueueItem
+     * shape with the row's settled status carried through so resolved items
+     * survive reload.
      */
-    getQueue: async () => {
-      if (USE_LIVE_API) return (await liveClient.listQueue()).map(mapLiveQueueItem);
-      return getTaskQueue();
-    },
+    getQueue: async () => (await liveClient.listQueue()).map(mapLiveQueueItem),
   },
   calendar: {
     /**
-     * MOCK weekday-pattern template. The clinical edition reads its real week
-     * through `schedule.getWeek` (the Desktop-owned calendar RPC); it must
-     * never render this synthetic template alongside real appointments.
+     * The demo weekday template is gone; the real week comes from
+     * `schedule.getWeek`. This alias exists so legacy callers fail loudly
+     * instead of silently rendering nothing.
      */
-    getSchedule: demoOnly("The demo calendar template", () => getCalendar()),
+    getSchedule: notWired("The demo calendar template (use schedule.getWeek)"),
   },
-  labOrders: demoOnlyNamespace("Lab ordering", {
-    /**
-     * MOCK lab ordering. DEMO ONLY — no lab order is ever submitted, no
-     * requisition is generated, no price is charged. Replace with a tRPC
-     * mutation over a real lab-vendor integration.
-     */
-    listCatalogPanels: async (patientId: string) => {
-      void patientId; // per-patient catalog filtering lands with the backend
-      return getLabCatalog();
-    },
-    listRecommendedPanels: async (patientId: string) => {
-      void patientId; // recommendations derive from this patient's record server-side
-      return getRecommendedPanels();
-    },
-    getDraftOrder: async (patientId: string) => getLabOrderDraft(patientId),
-    addPanelToDraft: async (patientId: string, panelId: string) => {
-      const panel = getPanelById(panelId);
-      updateLabOrderDraft(patientId, (d) =>
-        d.panelIds.includes(panelId)
-          ? d
-          : {
-              ...d,
-              status: "draft",
-              reviewed: false,
-              panelIds: [...d.panelIds, panelId],
-              events: [orderEvent(`Added panel: ${panel?.name ?? panelId}`), ...d.events],
-            },
-      );
-      recordAuditEntry({
-        kind: "order_panel_added",
-        subjectType: "lab order",
-        subjectLabel: panel?.name ?? panelId,
-        reviewed: true,
-      });
-      return { ok: true, message: `Added ${panel?.name ?? "panel"} to the order draft. (demo — not submitted)` };
-    },
-    removePanelFromDraft: async (patientId: string, panelId: string) => {
-      const panel = getPanelById(panelId);
-      updateLabOrderDraft(patientId, (d) => ({
-        ...d,
-        panelIds: d.panelIds.filter((id) => id !== panelId),
-        reviewed: false,
-        events: [orderEvent(`Removed panel: ${panel?.name ?? panelId}`), ...d.events],
-      }));
-      recordAuditEntry({
-        kind: "order_panel_removed",
-        subjectType: "lab order",
-        subjectLabel: panel?.name ?? panelId,
-        reviewed: true,
-      });
-      return { ok: true, message: `Removed ${panel?.name ?? "panel"} from the order draft. (demo)` };
-    },
-    prepareOrderDraft: async (patientId: string) => {
-      updateLabOrderDraft(patientId, (d) => ({
-        ...d,
-        status: "prepared",
-        events: [orderEvent("Order draft prepared"), ...d.events],
-      }));
-      recordAuditEntry({
-        kind: "order_prepared",
-        subjectType: "lab order",
-        subjectLabel: "Order draft",
-        reviewed: true,
-      });
-      return { ok: true, message: "Order draft prepared. (demo — no lab order is submitted)" };
-    },
-    markOrderReviewed: async (patientId: string) => {
-      updateLabOrderDraft(patientId, (d) => ({
-        ...d,
-        reviewed: true,
-        events: [orderEvent("Order reviewed by practitioner"), ...d.events],
-      }));
-      recordAuditEntry({
-        kind: "order_reviewed",
-        subjectType: "lab order",
-        subjectLabel: "Order draft",
-        reviewed: true,
-      });
-      return { ok: true, message: "Order marked reviewed. (demo — not persisted)" };
-    },
-    listOrderEvents: async (patientId: string) => getLabOrderDraft(patientId).events,
-  }),
-  inventory: demoOnlyNamespace("The dispensary and inventory", {
-    /**
-     * MOCK dispensary. Products with EFFECTIVE stock = seed + session movement,
-     * so selling counts stock down this session. Replace with a tRPC query over
-     * products_services + an inventory table; sales become invoice/line-item rows.
-     */
-    listProducts: async (): Promise<InventoryProduct[]> => {
-      const adj = getInventoryAdjustments();
-      const custom = listCustomProducts();
-      const editedIds = new Set(custom.map((p) => p.id));
-      const all = [...custom, ...SEED_PRODUCTS.filter((p) => !editedIds.has(p.id))];
-      return all.map((p) => ({ ...p, stock: Math.max(0, p.stock + (adj[p.id] ?? 0)) }));
-    },
-    /** Add a new product to inventory this session + audit. */
-    addProduct: async (product: InventoryProduct) => {
-      upsertCustomProduct(product);
-      recordAuditEntry({
-        kind: "receive_stock",
-        subjectType: "inventory",
-        subjectLabel: `Added ${product.name} (${product.stock} on hand)`,
-        reviewed: true,
-      });
-      return { ok: true, message: `Added ${product.name} to inventory. (demo — not persisted)` };
-    },
-    /** Edit catalog details while preserving historical invoice snapshots. */
-    updateProduct: async (product: InventoryProduct) => {
-      const movement = getInventoryAdjustments()[product.id] ?? 0;
-      upsertCustomProduct({ ...product, stock: Math.max(0, product.stock - movement) });
-      recordAuditEntry({
-        kind: "receive_stock",
-        subjectType: "inventory",
-        subjectLabel: `Updated ${product.name}`,
-        reviewed: true,
-      });
-      return { ok: true, message: `Updated ${product.name}. Existing invoices were not changed.` };
-    },
-    /** Receive (restock) units into inventory + audit. */
-    receiveStock: async (productId: string, qty: number, name: string) => {
-      const n = Math.max(1, Math.round(qty));
-      adjustInventory(productId, n);
-      recordInventoryMovement({
-        productId,
-        productName: name,
-        kind: "received",
-        delta: n,
-        note: "Stock received",
-      });
-      recordAuditEntry({
-        kind: "receive_stock",
-        subjectType: "inventory",
-        subjectLabel: `+${n} · ${name}`,
-        reviewed: true,
-      });
-      return { ok: true, message: `Received ${n} into stock: ${name}. (demo — not persisted)` };
-    },
-    /** Correct an on-hand count to an absolute value + audit. */
-    setStock: async (productId: string, current: number, target: number, name: string) => {
-      const t = Math.max(0, Math.round(target));
-      adjustInventory(productId, t - current);
-      recordInventoryMovement({
-        productId,
-        productName: name,
-        kind: "count-correction",
-        delta: t - current,
-        note: `On-hand count corrected to ${t}`,
-      });
-      recordAuditEntry({
-        kind: "receive_stock",
-        subjectType: "inventory",
-        subjectLabel: `Set ${name} → ${t}`,
-        reviewed: true,
-      });
-      return { ok: true, message: `Stock set to ${t}: ${name}. (demo — not persisted)` };
-    },
-    /**
-     * Complete a supplement sale for a patient: decrement each line's stock,
-     * record the sale, and write an audit entry. No PHI in the audit label.
-     */
-    recordSale: async (input: {
-      patientId: string;
-      patientName: string;
-      lines: SaleLine[];
-      subtotalMinor: number;
-      discountMinor: number;
-      taxMinor: number;
-      totalMinor: number;
-    }) => {
-      for (const l of input.lines) {
-        adjustInventory(l.productId, -Math.abs(l.qty));
-        recordInventoryMovement({
-          productId: l.productId,
-          productName: l.name,
-          kind: "sale",
-          delta: -Math.abs(l.qty),
-          note: "Patient sale",
-        });
-      }
-      const sale = recordSale(input);
-      const count = input.lines.reduce((n, l) => n + l.qty, 0);
-      recordAuditEntry({
-        kind: "record_sale",
-        subjectType: "supplement sale",
-        subjectLabel: `${count} item${count === 1 ? "" : "s"} · $${(input.totalMinor / 100).toFixed(2)}`,
-        patientName: input.patientName,
-        reviewed: true,
-      });
-      return { ok: true, sale, message: `Sale recorded for ${input.patientName}. (demo — not persisted)` };
-    },
-    /** Demo session sales log. */
-    listSales: async () => listSales(),
-  }),
-  reasoning: {
-    /** MOCK reasoning workspace (hypotheses, evidence). */
-    getWorkspace: demoOnly("The clinical reasoning workspace", (patientId: string) =>
-      getReasoningWorkspace(patientId),
-    ),
+  labOrders: {
+    listCatalogPanels: notWired("Lab ordering"),
+    listRecommendedPanels: notWired("Lab ordering"),
+    getDraftOrder: notWired("Lab ordering"),
+    addPanelToDraft: notWired("Lab ordering"),
+    removePanelFromDraft: notWired("Lab ordering"),
+    prepareOrderDraft: notWired("Lab ordering"),
+    markOrderReviewed: notWired("Lab ordering"),
+    listOrderEvents: notWired("Lab ordering"),
+  },
+  inventory: {
+    listProducts: notWired("The dispensary and inventory"),
+    addProduct: notWired("The dispensary and inventory"),
+    updateProduct: notWired("The dispensary and inventory"),
+    receiveStock: notWired("The dispensary and inventory"),
+    setStock: notWired("The dispensary and inventory"),
+    recordSale: notWired("The dispensary and inventory"),
+    listSales: notWired("The dispensary and inventory"),
   },
   supplements: {
-    /** MOCK supplement workspace (stack, safety audit). */
-    getWorkspace: demoOnly("The supplement workspace", (patientId: string) =>
-      getSupplementWorkspace(patientId),
-    ),
+    getWorkspace: notWired("The supplement workspace"),
   },
   healthTwin: {
-    /** MOCK health-twin system map (with snapshots). */
-    getMap: demoOnly("The longitudinal systems model", (patientId: string) =>
-      getHealthTwin(patientId),
-    ),
+    getMap: notWired("The longitudinal systems model"),
   },
   experiments: {
-    /** MOCK N-of-1 experiments. */
-    listActive: demoOnly("N-of-1 experiments", () => getActiveExperiments()),
-    listCompleted: demoOnly("N-of-1 experiments", () => getCompletedExperiments()),
+    listActive: notWired("N-of-1 experiments"),
+    listCompleted: notWired("N-of-1 experiments"),
   },
   integrations: {
-    /**
-     * Connector health is display-only in both editions and states plainly
-     * that no connector is configured — it never fabricates a live connection.
-     */
-    getConnectors: async () => getConnectors(),
+    getConnectors: notWired("External integrations"),
   },
   permissions: {
-    /** MOCK role/permission matrix (intended policy; DB enforces). */
-    getMatrix: async () => ({ roles: ROLES, capabilities: CAPABILITIES }),
+    getMatrix: notWired("The role/permission matrix"),
   },
   labs: {
     /**
-     * Labs workspace read. LIVE: real biomarker_observations through the
-     * Desktop-owned Supabase boundary (RLS-scoped, reference intervals
-     * preserved). MOCK: demo workspace.
+     * LIVE: real biomarker_observations through the Desktop-owned Supabase
+     * boundary (RLS-scoped, reference intervals preserved).
      */
-    getWorkspace: async (patientId: string, patientName?: string) => {
-      if (USE_LIVE_API) return liveClient.labsWorkspace(patientId);
-      return getLabWorkspace(patientId, patientName);
-    },
+    getWorkspace: async (patientId: string) => liveClient.labsWorkspace(patientId),
     /**
-     * Mark a marker reviewed. LIVE: `review_biomarker` RPC updates the review
-     * columns and appends an audit_events row atomically (migration 0013),
-     * stamping reviewer id server-side and preserving lab values/provenance.
-     * MOCK: session review state + session audit entry.
+     * LIVE: `review_biomarker` RPC updates the review columns and appends an
+     * audit_events row atomically, stamping reviewer id server-side and
+     * preserving lab values/provenance. Optimistic state is in-memory only.
      */
     reviewMarker: async (markerId: string, ctx: LabMarkerCtx): Promise<MutationOutcome> => {
       const key = `lab:${ctx.patientId}:${markerId}`;
@@ -525,20 +229,10 @@ export const api = {
         optimistic: () => setReviewOutcome(key, "reviewed"),
         rollback: () => (prev ? setReviewOutcome(key, prev) : removeReviewOutcome(key)),
         live: () => liveClient.reviewMarker(markerId, "accepted"),
-        demo: () =>
-          recordAuditEntry({
-            kind: "mark_reviewed",
-            subjectType: "lab marker",
-            subjectLabel: ctx.markerName,
-            patientName: ctx.patientName,
-            reviewed: true,
-            outcome: "reviewed",
-          }),
         liveMessage: `Marked reviewed: ${ctx.markerName}. (saved to record)`,
-        demoMessage: `Marked reviewed: ${ctx.markerName}. (demo — not persisted)`,
       });
     },
-    /** Flag a marker for further review. LIVE: review_biomarker(flagged) + audit. */
+    /** LIVE: review_biomarker(flagged) + audit. */
     flagMarker: async (markerId: string, ctx: LabMarkerCtx): Promise<MutationOutcome> => {
       const key = `lab:${ctx.patientId}:${markerId}`;
       const prev = getReviewOutcome(key);
@@ -546,24 +240,10 @@ export const api = {
         optimistic: () => setReviewOutcome(key, "flagged"),
         rollback: () => (prev ? setReviewOutcome(key, prev) : removeReviewOutcome(key)),
         live: () => liveClient.reviewMarker(markerId, "flagged"),
-        demo: () =>
-          recordAuditEntry({
-            kind: "flag",
-            subjectType: "lab marker",
-            subjectLabel: ctx.markerName,
-            patientName: ctx.patientName,
-            reviewed: false,
-            outcome: "flagged",
-          }),
         liveMessage: `Flagged for review: ${ctx.markerName}. (saved to record)`,
-        demoMessage: `Flagged for review: ${ctx.markerName}. (demo — not persisted)`,
       });
     },
-    /**
-     * Downstream link from a review: enqueue a follow-up review task. LIVE:
-     * `create_review_task` RPC (+ audit). MOCK: a session queue item that
-     * surfaces on the Tasks screen this session.
-     */
+    /** LIVE: `create_review_task` RPC (+ audit). */
     createReviewTask: async (input: {
       markerId: string;
       markerName: string;
@@ -581,66 +261,27 @@ export const api = {
             priority: priority.toLowerCase() as "low" | "medium" | "high",
             refId: input.markerId,
           }),
-        demo: () =>
-          addSessionQueueItem({
-            title: `Follow up: ${input.markerName}`,
-            patientName: input.patientName,
-            patientId: input.patientId,
-            category: "Lab review",
-            priority,
-            seeds: [`Lab marker ${input.markerName} flagged for follow-up.`],
-          }),
         liveMessage: `Follow-up task created for ${input.markerName}. (saved to queue)`,
-        demoMessage: `Follow-up task created for ${input.markerName}. (demo — session queue)`,
       });
     },
-    /** Configure the practice optimal range (never touches the lab reference interval). */
-    configureOptimalRange: async (markerId: string, range: OptimalRange, ctx: LabMarkerCtx) => {
-      recordAuditEntry({
-        kind: "configure_range",
-        subjectType: "optimal range",
-        subjectLabel: `${ctx.markerName} → ${range.min ?? "—"}–${range.max ?? "—"} ${range.unit}`,
-        patientName: ctx.patientName,
-        reviewed: true,
-      });
-      return { ok: true, message: `Optimal range updated: ${ctx.markerName}. (demo — not persisted)` };
-    },
+    /**
+     * Practice optimal ranges have no live table yet; refusing is honest,
+     * and the lab reference interval on each marker is never affected.
+     */
+    configureOptimalRange: notWired("Practice optimal ranges") as (
+      markerId: string,
+      range: OptimalRange,
+      ctx: LabMarkerCtx,
+    ) => Promise<{ ok: boolean; message: string }>,
     /**
      * LIVE ONLY: upload a lab PDF for real ingestion — storage + extraction +
      * observations + review-queue item + audit, all as the signed-in
      * practitioner (see labs.live.ts). A "failed" result is honest: the PDF
-     * is stored for manual review and the failure is audited. Demo mode uses
-     * queueUploadDemo instead (no file ever leaves the browser).
+     * is stored for manual review and the failure is audited.
      */
-    uploadDocument: async (patientId: string, file: File) => {
-      if (!USE_LIVE_API) {
-        throw new AdapterError("invalid", "Demo mode does not upload files.");
-      }
-      return liveClient.uploadLabDocument(patientId, file);
-    },
-    /** Queue a demo upload — no file is uploaded, no persistence. */
-    queueUploadDemo: async (input: { source: string; lab: string; patientName: string }) => {
-      recordAuditEntry({
-        kind: "order_lab",
-        subjectType: "lab upload",
-        subjectLabel: `${input.lab} · ${input.source}`,
-        patientName: input.patientName,
-        reviewed: false,
-      });
-      return {
-        ok: true,
-        steps: [
-          "Upload received",
-          "OCR / extraction",
-          "Marker matching",
-          "Confidence scoring",
-          "Practitioner review queue",
-        ],
-        message: "Upload queued for the review queue (demo — no file uploaded).",
-      };
-    },
+    uploadDocument: async (patientId: string, file: File) =>
+      liveClient.uploadLabDocument(patientId, file),
   },
 };
 
-export { DEFAULT_PATIENT_ID };
 export * from "./types";

@@ -1,6 +1,6 @@
 import { SegTabs } from "@/components/ui/SegTabs";
 import { LabsWorkspace } from "@/components/labs/LabsWorkspace";
-import { LabOrdersWorkspace } from "@/components/laborders/LabOrdersWorkspace";
+import { ClinicalEmpty } from "@/components/ui/ClinicalStates";
 import { ReasoningWorkspace } from "@/components/reasoning/ReasoningWorkspace";
 import { ClinicalCopilotWorkspace } from "@/components/patient/ClinicalCopilotWorkspace";
 import { patientPath } from "@/lib/routes";
@@ -40,7 +40,14 @@ export function LabsHub({
         ]}
       />
       {active === "results" && <LabsWorkspace patientId={patientId} patientName={patientName} />}
-      {active === "orders" && <LabOrdersWorkspace patientId={patientId} patientName={patientName} />}
+      {active === "orders" && (
+        <div className="pt-3">
+          <ClinicalEmpty
+            title="Lab ordering isn't configured yet"
+            message="Ordering needs a real lab-vendor integration. No requisition can be created from this screen, and no catalog is shown rather than a synthetic one."
+          />
+        </div>
+      )}
       {active === "reasoning" && <ReasoningWorkspace patientId={patientId} patientName={patientName} />}
       {active === "copilot" && <ClinicalCopilotWorkspace patientId={patientId} patientName={patientName} />}
     </div>

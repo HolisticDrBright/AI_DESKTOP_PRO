@@ -1,5 +1,3 @@
-import type { ActionKind } from "./actions";
-import type { Priority, ProvenanceData, Tone } from "./types";
 
 /**
  * MOCK practitioner review queue. Synthetic data only. Shaped like a future
@@ -8,78 +6,18 @@ import type { Priority, ProvenanceData, Tone } from "./types";
  * across a session without pretending to be backend persistence.
  */
 
-export type QueueCategory =
-  | "new-lab"
-  | "extraction-review"
-  | "reasoning-review"
-  | "safety-alert"
-  | "protocol-approval"
-  | "experiment-approval"
-  | "patient-message"
-  | "assessment-review"
-  | "overdue-followup"
-  | "low-adherence"
-  | "refill-request"
-  | "import-review";
+export {
+  QUEUE_CATEGORIES,
+  CATEGORY_LABEL,
+  CATEGORY_TONE,
+  type QueueCategory,
+  type QueueCategoryMeta,
+  type QueueItem,
+} from "./tasks.types";
+import type { QueueItem } from "./tasks.types";
 
-export interface QueueCategoryMeta {
-  id: QueueCategory;
-  label: string;
-  tone: Tone;
-}
-
-export const QUEUE_CATEGORIES: QueueCategoryMeta[] = [
-  { id: "safety-alert", label: "Safety alert", tone: "critical" },
-  { id: "new-lab", label: "New lab results", tone: "navy" },
-  { id: "extraction-review", label: "Extraction review", tone: "ai" },
-  { id: "reasoning-review", label: "Clinical reasoning", tone: "ai" },
-  { id: "protocol-approval", label: "Protocol approval", tone: "action" },
-  { id: "experiment-approval", label: "Experiment approval", tone: "teal" },
-  { id: "patient-message", label: "Patient messages", tone: "teal" },
-  { id: "assessment-review", label: "Assessment review", tone: "slate" },
-  { id: "overdue-followup", label: "Overdue follow-up", tone: "warning" },
-  { id: "low-adherence", label: "Low adherence", tone: "warning" },
-  { id: "refill-request", label: "Refill request", tone: "action" },
-  { id: "import-review", label: "Import review", tone: "warning" },
-];
-
-export const CATEGORY_LABEL = Object.fromEntries(
-  QUEUE_CATEGORIES.map((c) => [c.id, c.label]),
-) as Record<QueueCategory, string>;
-
-export const CATEGORY_TONE = Object.fromEntries(
-  QUEUE_CATEGORIES.map((c) => [c.id, c.tone]),
-) as Record<QueueCategory, Tone>;
-
+/** Fixture practitioner identity — test fixtures only, never clinical UI. */
 export const PRACTITIONER_SELF = "Dr. Sarah Mitchell";
-
-export interface QueueItem {
-  id: string;
-  category: QueueCategory;
-  title: string;
-  patientName: string;
-  patientId: string;
-  priority: Priority;
-  /** Human due/age label, e.g. "Due today", "2 days overdue". */
-  due: string;
-  /** Signed age in days (negative = overdue) for sorting/labels. */
-  dueInDays: number;
-  provenance: ProvenanceData;
-  /** Assigned practitioner; PRACTITIONER_SELF marks "my tasks". */
-  assignee: string;
-  /** Composer seeds when the item is converted to a note/report. */
-  seeds: string[];
-  /** Extra actions beyond the shared default set. */
-  extraActions?: ActionKind[];
-  /** True when this row came from the live backend (review_queue_items). */
-  live?: boolean;
-  /**
-   * Settled state carried by the LIVE row itself (status column), so a
-   * resolved/snoozed item still reads as settled after reload. Session
-   * outcomes take precedence for within-session optimistic updates.
-   */
-  settledOutcome?: "resolved" | "snoozed";
-}
 
 const QUEUE: QueueItem[] = [
   {

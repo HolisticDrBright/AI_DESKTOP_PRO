@@ -34,18 +34,34 @@ export function isEdition(value: string): value is AppEdition {
  *
  * Rules, in order:
  *   1. An invalid `lock` is a configuration error.
- *   2. Empty request falls back to the lock, then to the default (`demo`).
+ *   2. Empty request falls back to the lock, then to the default (`demo`) —
+ *      unless `requireExplicit` is set, in which case an empty request is
+ *      itself a configuration error.
  *   3. An invalid request is a configuration error — never coerced to default.
  *   4. A request that contradicts the lock is a configuration error.
+ *
+ * `requireExplicit` exists for the clinical repository: real patient software
+ * must be built by someone who SAID it is the clinical build. A deploy
+ * pipeline that forgot to set `APP_EDITION` gets a build failure, not a
+ * product whose data boundary was chosen by a default.
  *
  * Every failure throws. Nothing here silently picks a data boundary.
  */
 export function resolveEdition(
   raw: string | undefined,
   lock?: string | undefined,
+  opts?: { requireExplicit?: boolean },
 ): AppEdition {
   const requested = (raw ?? "").trim().toLowerCase();
   const locked = (lock ?? "").trim().toLowerCase();
+
+  if (opts?.requireExplicit && !requested) {
+    throw new EditionConfigError(
+      `APP_EDITION is not set. This repository builds the clinical product ` +
+        `and requires an explicit APP_EDITION=clinical — the edition of real ` +
+        `patient software is never chosen by a default.`,
+    );
+  }
 
   if (locked && !isEdition(locked)) {
     throw new EditionConfigError(

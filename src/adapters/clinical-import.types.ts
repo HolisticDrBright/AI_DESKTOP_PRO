@@ -1,4 +1,4 @@
-import type { KnowledgePathwayContent } from "./clinical-knowledge.mock";
+import type { KnowledgePathwayContent } from "./clinical-knowledge.types";
 
 export type KnowledgeImportEntityType = "pathway" | "product_label";
 export type KnowledgeImportItemStatus = "needs_review" | "applied" | "rejected";

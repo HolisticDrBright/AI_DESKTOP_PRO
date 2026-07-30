@@ -5,20 +5,14 @@ import Link from "next/link";
 import { Inbox, Search, X } from "lucide-react";
 import { api } from "@/adapters";
 import { isAdapterError } from "@/adapters/errors";
-import { USE_LIVE_API } from "@/adapters/mode";
 import {
   CATEGORY_LABEL,
   CATEGORY_TONE,
-  PRACTITIONER_SELF,
   QUEUE_CATEGORIES,
   type QueueCategory,
   type QueueItem,
-} from "@/adapters/tasks.mock";
-import {
-  useReviewOutcomes,
-  useSessionQueueItems,
-  type ReviewOutcome,
-} from "@/adapters/session-store";
+} from "@/adapters/tasks.types";
+import { useReviewOutcomes, type ReviewOutcome } from "@/adapters/review-state";
 import type { PatientTabId, Priority, Tone } from "@/adapters/types";
 import { ActionBar } from "@/components/ui/ActionBar";
 import { ClinicalError, ClinicalLoading } from "@/components/ui/ClinicalStates";
@@ -85,12 +79,11 @@ export function TasksQueue({
   initialCategory?: string;
   initialPriority?: string;
 }) {
-  // Queue read through the façade: demo mock by default, real
-  // review_queue_items (RLS-scoped) when NEXT_PUBLIC_USE_LIVE_API is on.
+  // Live queue read through the registry: real review_queue_items,
+  // RLS-scoped to the caller's organization and patient access.
   const [baseItems, setBaseItems] = useState<QueueItem[] | null>(null);
   const [loadError, setLoadError] = useState<{ message: string; code?: string } | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
-  const sessionAdded = useSessionQueueItems();
   const reviews = useReviewOutcomes();
 
   useEffect(() => {
@@ -114,30 +107,10 @@ export function TasksQueue({
     };
   }, [reloadKey]);
 
-  // Items converted-to-task this session (e.g. from the reasoning workspace)
-  // appear at the top, clearly session-scoped.
-  const items = useMemo<QueueItem[]>(() => {
-    const added: QueueItem[] = sessionAdded.map((s) => ({
-      id: s.id,
-      category: (QUEUE_CATEGORIES.some((c) => c.id === s.category)
-        ? s.category
-        : "reasoning-review") as QueueCategory,
-      title: s.title,
-      patientName: s.patientName,
-      patientId: s.patientId,
-      priority: s.priority,
-      due: "Added this session",
-      dueInDays: 0,
-      provenance: {
-        sourceType: "practitioner-confirmed",
-        sourceName: "Created from workspace (session)",
-        review: "awaiting-review",
-      },
-      assignee: PRACTITIONER_SELF,
-      seeds: s.seeds,
-    }));
-    return [...added, ...(baseItems ?? [])];
-  }, [baseItems, sessionAdded]);
+  // Live rows only. Items created from other workspaces land in the real
+  // queue via create_review_task and arrive on the next read — there is no
+  // session-scoped overlay to drift from the record.
+  const items = useMemo<QueueItem[]>(() => baseItems ?? [], [baseItems]);
 
   const [savedView, setSavedView] = useState<string | null>(null);
   const [overdueOnly, setOverdueOnly] = useState(false);
@@ -171,7 +144,7 @@ export function TasksQueue({
       if (cats.size > 0 && !cats.has(it.category)) return false;
       if (priority !== "All" && it.priority !== priority) return false;
       if (overdueOnly && it.dueInDays >= 0) return false;
-      if (scope === "mine" && it.assignee !== PRACTITIONER_SELF) return false;
+      if (scope === "mine" && it.assignee !== "You") return false;
       const settled = outcomeOf(it);
       if (status === "resolved" && settled !== "resolved") return false;
       if (status === "open" && settled === "resolved") return false;
@@ -248,9 +221,7 @@ export function TasksQueue({
           <h1 className="m-0 text-[21px] font-bold tracking-[-0.015em]">Tasks &amp; review queue</h1>
           <p className="mt-[4px] mb-0 text-[12.5px] text-subtle">
             {openCount} open · {items.length} total.{" "}
-            {USE_LIVE_API
-              ? "Live queue — resolving updates the record and writes a persistent audit event."
-              : "Resolving an item records a demo session audit event — not backend persistence."}
+            Live queue — resolving updates the record and writes a persistent audit event.
           </p>
         </div>
         <div className="flex items-center gap-2" role="group" aria-label="Task scope">

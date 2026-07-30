@@ -13,11 +13,7 @@
  *    keep them gated behind practitioner review.
  */
 import type { Tone } from "./types";
-import {
-  recordAuditEntry,
-  setReviewOutcome,
-  type ReviewOutcome,
-} from "./session-store";
+import type { ReviewOutcome } from "./review-state";
 
 export type ActionKind =
   | "approve"
@@ -222,35 +218,38 @@ export interface ActionResult {
 }
 
 /**
- * MOCK executor. Records the action to the demo session audit store, settles
- * any linked review, and returns an outcome message. Preserves
- * practitioner-review semantics: patient-facing actions are marked as requiring
- * review, never auto-finalized. Replace with `api.actions.execute` (tRPC).
+ * CLINICAL executor for actions without a dedicated live mutation.
+ *
+ * Actions that have a real backend route around this function (queue resolve,
+ * biomarker review, follow-up task creation) never reach here — the registry
+ * routes them to their RPCs, which persist the row and its audit event
+ * atomically. Everything else lands here, and the honest answer is that the
+ * action has no live executor yet: nothing is persisted, so nothing pretends
+ * to be. The returned failure names the surface so the toast is actionable.
+ *
+ * Kinds that are pure navigation (open_source, open_patient, view_audit) are
+ * client-side and succeed without persistence claims.
  */
-export async function executeAction(
+const NAVIGATION_KINDS: ReadonlySet<ActionKind> = new Set([
+  "open_source",
+  "open_patient",
+  "view_audit",
+]);
+
+export async function executeLiveAction(
   kind: ActionKind,
   ctx: ActionContext,
-  timestamp: string,
 ): Promise<ActionResult> {
   const d = ACTIONS[kind];
-  const outcome = ACTION_REVIEW_OUTCOME[kind];
 
-  recordAuditEntry({
-    at: timestamp,
-    kind,
-    subjectType: ctx.subjectType,
-    subjectLabel: ctx.subjectLabel,
-    patientName: ctx.patientName,
-    reviewed: !d.patientFacing,
-    outcome,
-  });
+  if (NAVIGATION_KINDS.has(kind)) {
+    return { ok: true, message: `${d.label}: ${ctx.subjectLabel}.` };
+  }
 
-  // Settle the visible review state when the action targets a reviewable subject.
-  if (ctx.reviewKey && outcome) setReviewOutcome(ctx.reviewKey, outcome);
-
-  const suffix = d.patientFacing ? " — queued for your review before it reaches the patient" : "";
   return {
-    ok: true,
-    message: `${d.label}: ${ctx.subjectType} “${ctx.subjectLabel}”${suffix}. (demo — not persisted)`,
+    ok: false,
+    message:
+      `${d.label} is not available yet: this action has no live backend. ` +
+      `Nothing was saved to the record.`,
   };
 }

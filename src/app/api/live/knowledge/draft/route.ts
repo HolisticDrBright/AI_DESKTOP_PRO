@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { AdapterError } from "@/adapters/errors";
-import type { KnowledgePathwayContent } from "@/adapters/clinical-knowledge.mock";
+import type { KnowledgePathwayContent } from "@/adapters/clinical-knowledge.types";
 import { knowledgeLive } from "@/adapters/knowledge.live";
 import { getRequestSession } from "@/server/session";
 import { liveGuard, runLive } from "../../route-helpers";

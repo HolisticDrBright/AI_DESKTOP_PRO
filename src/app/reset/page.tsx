@@ -1,4 +1,3 @@
-import { USE_LIVE_API } from "@/adapters/mode";
 import { ResetForm } from "@/components/auth/ResetForm";
 
 export default function ResetPage() {
@@ -9,11 +8,9 @@ export default function ResetPage() {
     >
       <h1 className="m-0 mb-1 text-[18px] font-bold tracking-[-0.01em]">Reset password</h1>
       <p className="m-0 mb-5 text-[12.5px] text-subtle">
-        {USE_LIVE_API
-          ? "Set a new password for your practitioner account."
-          : "Demo mode does not use sign-in — nothing to reset."}
+        Set a new password for your practitioner account.
       </p>
-      {USE_LIVE_API && <ResetForm />}
+      <ResetForm />
     </section>
   );
 }

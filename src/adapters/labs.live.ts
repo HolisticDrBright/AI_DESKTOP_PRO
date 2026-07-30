@@ -8,7 +8,7 @@ import {
   type LabDocumentRow,
   type LabObservationRow,
 } from "./labs.map";
-import type { LabWorkspace } from "./labs.mock";
+import type { LabWorkspace } from "./labs.types";
 import type { LiveReviewResult, LiveUploadResult, ReviewDecision } from "./live-types";
 import { getClinicalAccessToken } from "./session.server";
 import { clinicalRpc, clinicalSelect } from "./supabase-rest.server";

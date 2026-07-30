@@ -5,32 +5,34 @@ import {
 } from "./ai-assistance.mock";
 import { listThreads } from "./inbox.mock";
 
-describe("AI-aware workflow fixtures", () => {
-  it("labels inbox triage as workflow urgency and keeps the response as a draft", () => {
+/**
+ * In the clinical-only repository, the mode-aware gate inside the fixture
+ * module is the invariant worth pinning: with no approved production provider
+ * configured, every AI-assist brief must come back `not-configured`, with NO
+ * fabricated items or sources — never the demo fixture content. (The fixture
+ * behavior itself now lives, and is tested, in AI-DESKTOP-PRO-DEMO.)
+ */
+describe("AI assistance in the clinical runtime", () => {
+  it("inbox triage reports not-configured with no fabricated content", () => {
     const thread = listThreads().find((row) => row.id === "th-priya-labs");
     expect(thread).toBeDefined();
 
     const assist = buildInboxAiAssist(thread!);
-    expect(assist.status).toBe("fixture");
-    expect(assist.items[0]?.priority).toBe("now");
-    expect(assist.items[0]?.why).toContain("not a diagnosis or medical probability");
-    expect(assist.safetyNotice).toContain("editable draft");
-    expect(assist.safetyNotice).toContain("cannot send");
-    expect(assist.suggestedReply).toContain("seek urgent care");
-    expect(assist.missingInformation.length).toBeGreaterThan(0);
+    expect(assist.status).toBe("not-configured");
+    expect(assist.providerLabel).toBe("Not configured");
+    expect(assist.items).toHaveLength(0);
+    expect(assist.sources).toHaveLength(0);
+    expect(assist.summary).toContain("disabled in live mode");
+    // The reply is a safe generic acknowledgement, not a clinical draft.
+    expect(assist.suggestedReply).not.toContain("seek urgent care");
   });
 
-  it("builds the longitudinal patient brief from named source records", () => {
+  it("the patient change brief reports not-configured and invents nothing", () => {
     const brief = buildPatientChangeBrief("p-78435", "Alexandra Morgan");
 
-    expect(brief.status).toBe("fixture");
-    expect(brief.items.length).toBeGreaterThanOrEqual(3);
-    expect(brief.sources.some((source) => source.label === "Labs and biomarkers")).toBe(true);
-    expect(brief.sources.some((source) => source.label === "Wearable trend")).toBe(true);
-    expect(brief.sources.some((source) => source.label === "Active protocol")).toBe(true);
-    expect(brief.missingInformation).toContain(
-      "Medication, allergy, pregnancy, and outside-care changes still require direct confirmation.",
-    );
-    expect(brief.safetyNotice).toContain("verify every source");
+    expect(brief.status).toBe("not-configured");
+    expect(brief.items).toHaveLength(0);
+    expect(brief.sources).toHaveLength(0);
+    expect(brief.missingInformation).toHaveLength(0);
   });
 });

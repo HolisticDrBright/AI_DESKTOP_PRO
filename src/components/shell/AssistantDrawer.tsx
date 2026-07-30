@@ -1,30 +1,20 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
-import { CircleAlert, Send, Sparkles, X } from "lucide-react";
-import { api } from "@/adapters";
-import type { AssistantFact, ProvenanceSourceType } from "@/adapters/types";
-import { ProvenanceBadge } from "@/components/ui/Provenance";
-import { toneColor } from "@/lib/tones";
-import { useComposerOptional } from "@/lib/composer";
+import { Sparkles, X } from "lucide-react";
 import { useShellUi } from "@/lib/providers";
+import { ClinicalEmpty } from "@/components/ui/ClinicalStates";
 
-/* Assistant fact badge → shared provenance source type (reused component). */
-const FACT_SOURCE: Record<AssistantFact["badge"], ProvenanceSourceType> = {
-  Measured: "measured",
-  "Patient-reported": "patient-reported",
-  "AI inference": "ai-inference",
-};
-
+/**
+ * Clinical assistant drawer — CLINICAL.
+ *
+ * The assistant has no live backend: no governed model configuration, no
+ * grounding pipeline, no provenance chain. The drawer stays (the surface is
+ * part of the designed shell) and says exactly that — it never renders a
+ * synthetic transcript about a synthetic patient.
+ */
 export function AssistantDrawer() {
   const { aiOpen, closeAi } = useShellUi();
-  const composer = useComposerOptional();
-  const { data: session } = useQuery({
-    queryKey: ["assistant", "session"],
-    queryFn: () => api.assistant.session(),
-    enabled: aiOpen,
-  });
-  if (!aiOpen || !session) return null;
+  if (!aiOpen) return null;
 
   return (
     <aside
@@ -40,9 +30,7 @@ export function AssistantDrawer() {
         </span>
         <div className="flex-1">
           <div className="text-[14px] font-bold">Clinical Assistant</div>
-          <div className="text-[11px] text-subtle">
-            {session.patientName} · data through {session.dataThrough}
-          </div>
+          <div className="text-[11px] text-subtle">Not configured</div>
         </div>
         <button
           onClick={closeAi}
@@ -54,104 +42,10 @@ export function AssistantDrawer() {
       </div>
 
       <div className="flex-1 overflow-y-auto px-4 py-[14px]">
-        <div className="mb-[14px] flex flex-wrap gap-[6px]">
-          {session.chips.map((chip) => (
-            <button
-              key={chip}
-              className="cursor-pointer rounded-full border border-[rgba(116,97,201,0.3)] bg-[rgba(116,97,201,0.06)] px-[11px] py-[5px] text-[11.5px] font-semibold text-ai-deep hover:bg-[rgba(116,97,201,0.12)] focus-visible:outline-2 focus-visible:outline-ai"
-            >
-              {chip}
-            </button>
-          ))}
-        </div>
-
-        <div className="mb-2 text-[12px] font-bold text-ink">{session.question}</div>
-        <div className="rounded-xl border border-[#ECE9F8] bg-[rgba(116,97,201,0.04)] p-3">
-          <div className="flex flex-col gap-[9px]">
-            {session.facts.map((fact) => (
-              <div key={fact.text} className="flex items-baseline gap-2">
-                <span
-                  aria-hidden
-                  className="h-2 w-2 shrink-0 translate-y-px rounded-[3px]"
-                  style={{ background: toneColor[fact.tone] }}
-                />
-                <span className="flex-1 text-[12px] leading-[1.45] text-body">
-                  {fact.text}{" "}
-                  <span className="ml-[3px] inline-block align-[1px]">
-                    <ProvenanceBadge sourceType={FACT_SOURCE[fact.badge]} />
-                  </span>
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="mt-[14px]">
-          <div className="mb-[7px] text-[10.5px] font-bold tracking-[0.06em] text-faint uppercase">
-            Sources used
-          </div>
-          <div className="flex flex-wrap gap-[6px]">
-            {session.sources.map((source) => (
-              <span
-                key={source}
-                className="rounded-md bg-sunken-2 px-2 py-[3px] text-[11px] font-semibold text-muted"
-              >
-                {source}
-              </span>
-            ))}
-          </div>
-        </div>
-
-        <div className="mt-[14px]">
-          <div className="mb-[7px] text-[10.5px] font-bold tracking-[0.06em] text-faint uppercase">
-            Missing information
-          </div>
-          <div className="text-[12px] leading-normal text-muted">{session.missingInfo}</div>
-        </div>
-      </div>
-
-      <div className="border-t border-hairline bg-[rgba(247,250,252,0.7)] px-4 py-3">
-        <div className="mb-[10px] flex items-center gap-[7px]">
-          <CircleAlert size={12} strokeWidth={2} className="text-warning" aria-hidden />
-          <span className="text-[11px] font-semibold text-warning-deep">
-            {session.reviewNotice}
-          </span>
-        </div>
-        <div className="mb-[10px] flex gap-2">
-          <button
-            onClick={() =>
-              composer?.openComposer("reasoning-summary", {
-                patientName: session.patientName,
-                subjectType: "assistant answer",
-                subjectLabel: session.question,
-                seeds: session.facts.map((f) => f.text),
-              })
-            }
-            className="h-[30px] flex-1 cursor-pointer rounded-lg border border-line bg-card text-[12px] font-semibold text-body hover:border-line-hover focus-visible:outline-2 focus-visible:outline-ai"
-          >
-            Insert into note
-          </button>
-          <button className="h-[30px] flex-1 cursor-pointer rounded-lg border border-[rgba(116,97,201,0.35)] bg-[rgba(116,97,201,0.08)] text-[12px] font-semibold text-ai-deep hover:bg-[rgba(116,97,201,0.14)] focus-visible:outline-2 focus-visible:outline-ai">
-            Explain reasoning
-          </button>
-        </div>
-        <form
-          onSubmit={(e) => e.preventDefault()}
-          className="flex h-9 items-center gap-2 rounded-[10px] border border-line bg-card px-[10px]"
-        >
-          <input
-            placeholder="Ask about this patient…"
-            aria-label="Ask about this patient"
-            className="flex-1 border-none bg-transparent text-[12.5px] outline-none placeholder:text-faint"
-          />
-          <button
-            type="submit"
-            aria-label="Send question"
-            className="flex cursor-pointer items-center border-none bg-transparent p-0 focus-visible:outline-2 focus-visible:outline-ai"
-          >
-            <Send size={14} strokeWidth={2} className="text-ai" aria-hidden />
-          </button>
-        </form>
+        <ClinicalEmpty
+          title="The assistant isn't configured yet"
+          message="AI assistance requires a governed model configuration with grounded, provenance-linked patient context. Until that exists, this panel stays empty rather than fabricating an answer."
+        />
       </div>
     </aside>
   );
