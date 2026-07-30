@@ -1,19 +1,35 @@
 import type { Metadata } from "next";
+import { PageHeader } from "@/components/ui/PageHeader";
 import { ClinicalEmpty } from "@/components/ui/ClinicalStates";
+import { SyncOperationsPanel } from "@/components/sync/SyncOperationsPanel";
 
 export const metadata: Metadata = { title: "Integrations — AI Longevity Pro" };
 
+// Live, org-scoped operational state — never prerender at build time.
+export const dynamic = "force-dynamic";
+
 /**
- * Integrations: no live backend yet. The route stays in the navigation and says so
- * honestly. Status: docs/clinical-runtime-migration.md.
+ * Integrations (phase 5): the patient-app synchronization operations surface
+ * is REAL — provider posture, connected-patient counts, queues, dead letters,
+ * and contract versions, all persisted rows. Every other connector family
+ * (EHR, labs, wearables, automations, webhooks) still has no live backend and
+ * says so honestly.
  */
 export default function IntegrationsPage() {
   return (
-    <section data-screen-label="Integrations" className="mx-auto max-w-[900px] px-6 pt-[22px] pb-6">
-      <ClinicalEmpty
-        title="External integrations aren't configured yet"
-        message="Connector management (EHR, labs, wearables, automations, webhooks) has no live backend yet. No connection is shown because none exists — this screen never fakes a connector."
+    <section data-screen-label="Integrations" className="mx-auto max-w-[1100px] px-[22px] pt-[18px] pb-6">
+      <PageHeader
+        crumb="Workspace / Integrations"
+        title="Integrations"
+        sub="Patient-app synchronization operations and connector posture"
       />
+      <SyncOperationsPanel />
+      <div className="mt-4">
+        <ClinicalEmpty
+          title="Other connector families aren't configured yet"
+          message="EHR, lab-vendor, wearable, automation, and webhook connectors have no live backend yet. No connection is shown because none exists — this screen never fakes a connector."
+        />
+      </div>
     </section>
   );
 }
