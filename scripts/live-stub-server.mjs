@@ -1953,6 +1953,33 @@ createServer(async (req, res) => {
      envelope, idempotency, evidence, and conflict contracts. ---- */
 
   // Registering the provider mirrors the operational connector registration.
+  // Reset the sync domain to its pristine state. The sync suites are written
+  // against a fresh backend; each calls this in beforeAll so the battery is
+  // order-independent (every proof still runs, against exactly the state it
+  // was written for). Non-sync domains (patients, labs, schedule, inbox) are
+  // untouched.
+  if (url.pathname === "/__control/sync-reset" && req.method === "POST") {
+    syncConnections.clear();
+    syncInvitations.clear();
+    syncScopes.length = 0;
+    syncOutbound.clear();
+    syncInbound.clear();
+    syncCorrections.clear();
+    syncConflicts.clear();
+    syncDeadLetters.clear();
+    syncAcks.clear();
+    syncHistory.length = 0;
+    syncDeliveryEventIds.clear();
+    syncProviders.clear();
+    syncWorkerCycles.length = 0;
+    syncCircuit = null;
+    syncNonces.clear();
+    for (const [id, item] of queue) {
+      if (item.itemType === "sync_review") queue.delete(id);
+    }
+    return json(res, 200, { ok: true });
+  }
+
   if (url.pathname === "/__control/sync-register-provider" && req.method === "POST") {
     const body = await readBody(req);
     syncProviders.set(String(body.organizationId ?? "org-fixture"),

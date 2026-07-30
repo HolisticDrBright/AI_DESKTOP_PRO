@@ -125,6 +125,12 @@ function callbackHeaders(rawBody: Buffer, nonce: string, timestamp = Date.now())
 let connectionId = "";
 let callbackWorker: ChildProcess | null = null;
 
+// This suite is written against a pristine sync domain; reset it up front so
+// the battery is order-independent (other suites may have exercised sync).
+test.beforeAll(async () => {
+  await fetch(`${STUB}/__control/sync-reset`, { method: "POST" });
+});
+
 test.afterAll(() => {
   if (callbackWorker && !callbackWorker.killed) callbackWorker.kill();
 });
