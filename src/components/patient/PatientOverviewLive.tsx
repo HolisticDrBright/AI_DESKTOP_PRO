@@ -22,6 +22,7 @@ import type {
   OverviewSourceLink,
 } from "@/adapters/live-types";
 import { ClinicalError, ClinicalLoading } from "@/components/ui/ClinicalStates";
+import { PatientProgramsLive } from "@/components/programs/PatientProgramsLive";
 import { Card, CardTitle } from "@/components/ui/bits";
 import { Pill } from "@/components/ui/Pill";
 import { patientPath } from "@/lib/routes";
@@ -311,6 +312,9 @@ export function PatientOverviewLive({ patientId }: { patientId: string }) {
             )}
           </Card>
         </div>
+
+        {/* Programs: real enrollments pinned to published versions */}
+        <PatientProgramsLive patientId={patientId} />
 
         {/* Ungoverned metrics: explicit honesty, never a number */}
         <div className="grid gap-3 md:grid-cols-2">
