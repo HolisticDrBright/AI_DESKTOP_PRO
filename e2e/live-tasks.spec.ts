@@ -2,8 +2,9 @@ import { expect, test } from "@playwright/test";
 
 /**
  * LIVE-MODE Tasks slice coverage. Skipped unless E2E_LIVE=1, because it needs
- * a live-flag build plus a reachable backend speaking the clinical.* contract
- * (the deployed tRPC backend, or the committed contract fixture).
+ * a live-flag build plus the clinical Supabase/Data API contract (the real
+ * project or the committed contract fixture). Transitional domains still use
+ * the tRPC fixture routes from the same process.
  *
  * Full recipe (from the repo root):
  *   node scripts/live-stub-server.mjs &          # or a real backend
@@ -23,13 +24,14 @@ test("root enters the real workspace: directory → patient → labs (no mock pa
   // A root 404 (or a redirect to the synthetic demo patient) must FAIL here.
   const res = await page.goto("/");
   expect(res!.status()).toBe(200);
-  await page.waitForURL("**/clients");
+  await page.waitForURL("**/today");
+  await page.goto("/patients");
   expect(page.url()).not.toContain("p-78435");
   await expect(page.getByText("live record, scoped to your access")).toBeVisible();
 
   // Real directory row → real patient shell (header from patient_profiles).
   await page.getByRole("link", { name: "Fixture Patient" }).click();
-  await page.waitForURL("**/patients/aaaaaaaa-1111-2222-3333-444444444401/summary");
+  await page.waitForURL("**/patients/aaaaaaaa-1111-2222-3333-444444444401/overview");
   await expect(page.getByText("Fixture Patient").first()).toBeVisible();
   await expect(page.getByText(/Summary panels aren't live yet/)).toBeVisible();
 
@@ -74,10 +76,43 @@ test("resolve persists across reload and lands in the live audit log", async ({ 
   await expect(page.getByText("review_task.resolve").first()).toBeVisible();
 });
 
+test("registered audit events use database-owned wording and reject invented content", async ({ page }) => {
+  const accepted = await page.request.post("/api/live/actions/audit", {
+    data: {
+      eventType: "marker.view",
+      resourceId: "marker-audit-e2e",
+      patientId: "aaaaaaaa-1111-2222-3333-444444444401",
+    },
+  });
+  expect(accepted.status()).toBe(200);
+
+  const invented = await page.request.post("/api/live/actions/audit", {
+    data: {
+      eventType: "invented.clinical_claim",
+      resourceId: "claim-1",
+    },
+  });
+  expect(invented.status()).toBe(400);
+
+  const nestedMetadata = await page.request.post("/api/live/actions/audit", {
+    data: {
+      eventType: "report.exported",
+      resourceId: "report-1",
+      metadata: { format: { value: "pdf" } },
+    },
+  });
+  expect(nestedMetadata.status()).toBe(400);
+
+  await page.goto("/audit-log");
+  await expect(page.getByText("Marker viewed").first()).toBeVisible();
+  await expect(page.getByText("marker.view").first()).toBeVisible();
+  await expect(page.getByText("invented.clinical_claim")).toHaveCount(0);
+});
+
 test("live labs workspace loads markers and a review persists across reload", async ({ page }) => {
   await page.goto("/patients/aaaaaaaa-1111-2222-3333-444444444401/labs");
 
-  // Markers come from the fixture backend's clinical.labs.getWorkspace.
+  // Markers come from the fixture's Desktop-owned Supabase read boundary.
   await page.getByRole("button", { name: "Select hs-CRP" }).waitFor();
   await expect(page.getByRole("button", { name: "Select TSH" })).toBeVisible();
 
@@ -167,7 +202,7 @@ test("live calendar shows real appointments and check-in persists with audit", a
   await expect(page.getByText("appointment.status").first()).toBeVisible();
 });
 
-test("booking a new appointment persists to the live week", async ({ page }) => {
+test("booking, rescheduling, and no-show persist to the live week", async ({ page }) => {
   await page.goto("/calendar");
   await page.getByRole("button", { name: "New" }).click();
   const dialog = page.getByRole("dialog", { name: "New appointment" });
@@ -180,10 +215,35 @@ test("booking a new appointment persists to the live week", async ({ page }) => 
   await expect(page.getByRole("button", { name: /Sample Client/ }).first()).toBeVisible();
   // …and survives a reload (the record, not local state).
   await page.reload();
-  await expect(page.getByRole("button", { name: /Sample Client/ }).first()).toBeVisible();
+  const booked = page.getByRole("button", { name: /Sample Client/ }).first();
+  await expect(booked).toBeVisible();
+
+  // Rescheduling is a real backend mutation, not a session overlay.
+  await booked.click();
+  const details = page.getByRole("dialog", { name: "Appointment details" });
+  await details.getByRole("button", { name: "Reschedule" }).click();
+  await details.getByLabel("Reschedule start time").fill("21:00");
+  await details.getByRole("button", { name: "Save new time" }).click();
+  await expect(page.getByText(/Appointment rescheduled/).first()).toBeVisible();
+  await page.reload();
+  await page.getByRole("button", { name: /Sample Client/ }).first().click();
+  await expect(
+    page.getByRole("dialog", { name: "Appointment details" }).getByText(/9 PM – 9:45 PM/),
+  ).toBeVisible();
+
+  // No-show is explicitly confirmed, persists, and removes the settled slot
+  // from the active calendar grid.
+  await page.getByRole("button", { name: "No-show" }).click();
+  await page.getByRole("button", { name: "Mark no-show" }).click();
+  await expect(page.getByText(/Appointment no-show/).first()).toBeVisible();
+  await expect(page.getByRole("button", { name: /Sample Client/ })).toHaveCount(0);
+  await page.reload();
+  await expect(page.getByRole("button", { name: /Sample Client/ })).toHaveCount(0);
 
   await page.goto("/audit-log");
   await expect(page.getByText("appointment.book").first()).toBeVisible();
+  await expect(page.getByText("appointment.reschedule").first()).toBeVisible();
+  await expect(page.getByText("appointment.status").first()).toBeVisible();
 });
 
 const BASE = `http://localhost:${Number(process.env.E2E_PORT ?? 3114)}`;
@@ -290,7 +350,7 @@ test("practitioner sign-in and sign-out work via httpOnly cookie session", async
   expect(after?.data?.signedIn).toBe(false);
 });
 
-test("org members: roster, invite, honest guards, confirmed removal (admin-gated)", async ({ page }) => {
+test("org members: roster, account linking, honest guards, confirmed removal (admin-gated)", async ({ page }) => {
   // Member management is a cookie-session surface — sign in first.
   await page.goto("/login");
   await page.getByLabel("Email").fill("practitioner@fixture.local");
@@ -309,21 +369,25 @@ test("org members: roster, invite, honest guards, confirmed removal (admin-gated
   const colleagueRow = card.locator("li", { hasText: "colleague@fixture.local" });
   await expect(colleagueRow).toBeVisible();
 
-  // Invite a brand-new email → the stub's invite-email path; honest notice +
-  // the roster shows the pending state truthfully.
-  await card.getByLabel("Invite by email").fill("new-nurse@fixture.local");
-  await card.getByLabel("Role for the invitee").selectOption("staff");
-  await card.getByRole("button", { name: "Invite" }).click();
-  await expect(card.getByText("Invitation email sent to new-nurse@fixture.local.")).toBeVisible();
+  // Link an existing identity to the practice; account creation stays in the
+  // approved identity-admin path and this surface never pretends to send mail.
+  await card.getByLabel("Add member by email").fill("new-nurse@fixture.local");
+  await card.getByLabel("Role for the member").selectOption("staff");
+  await card.getByRole("button", { name: "Add" }).click();
+  await expect(
+    card.getByText(
+      "new-nurse@fixture.local has an account already — the practice appears on their next sign-in.",
+    ),
+  ).toBeVisible();
   const nurseRow = card.locator("li", { hasText: "new-nurse@fixture.local" });
   await expect(nurseRow.getByText("Invited — hasn't signed in yet")).toBeVisible();
 
-  // Duplicate invite → the server-owned guard message reaches the UI verbatim.
-  await card.getByLabel("Invite by email").fill("colleague@fixture.local");
-  await card.getByRole("button", { name: "Invite" }).click();
-  await expect(
-    card.getByText("That person is already a member of this organization."),
-  ).toBeVisible();
+  // Duplicate membership is rejected without leaking database detail.
+  await card.getByLabel("Add member by email").fill("colleague@fixture.local");
+  await card.getByRole("button", { name: "Add" }).click();
+  await expect(card.getByRole("alert")).toContainText(
+    "This record changed in another tab or session.",
+  );
 
   // Role change round-trips.
   await nurseRow.getByLabel("Role for new-nurse@fixture.local").selectOption("practitioner");
@@ -458,7 +522,17 @@ test("EMR: appointment → encounter → autosaved draft → recovery → sign �
 
   // 3. Create a SOAP draft; autosave must confirm from the SERVER before "Saved".
   await page.getByRole("button", { name: "Start", exact: true }).click();
+  const firstSave = page.waitForResponse(
+    (response) =>
+      response.url().includes("/api/live/emr/note") &&
+      response.request().method() === "POST" &&
+      response.ok(),
+  );
   await page.getByLabel("Subjective").fill("Fatigue for two weeks.");
+  const firstSavePayload = (await (await firstSave).json()) as {
+    data: { noteId: string };
+  };
+  const emrNoteId = firstSavePayload.data.noteId;
   await expect(page.getByTestId("save-state")).toHaveText(/Saved .*v1/, { timeout: 10_000 });
   await page.getByLabel("Objective").fill("BP 118/76. HR 64.");
   await expect(page.getByTestId("save-state")).toHaveText(/v2/, { timeout: 10_000 });
@@ -501,11 +575,18 @@ test("EMR: appointment → encounter → autosaved draft → recovery → sign �
   await expect(timeline.getByText("Addendum added").first()).toBeVisible();
 
   // 11 & 13. The audit log carries server-owned events — and exactly ONE
-  //          "Note signed" row (duplicate signing cannot duplicate audits;
-  //          idempotency itself is DB-proven).
+  //          signature event for THIS note (other suites may have signed
+  //          other notes; duplicate signing cannot duplicate this audit).
   await page.goto("/audit-log");
   await expect(page.getByText("Encounter started").first()).toBeVisible();
-  await expect(page.getByText("Note signed")).toHaveCount(1);
+  const audit = await page.evaluate(() =>
+    fetch("/api/live/actions/audit?limit=200").then((response) => response.json()),
+  ) as { data: Array<{ action: string; resourceId: string | null }> };
+  expect(
+    audit.data.filter(
+      (event) => event.action === "note.signed" && event.resourceId === emrNoteId,
+    ),
+  ).toHaveLength(1);
 
   // 12. A signed-in user outside the organization cannot open the encounter.
   await page.goto("/login");
@@ -514,7 +595,9 @@ test("EMR: appointment → encounter → autosaved draft → recovery → sign �
   await page.getByRole("button", { name: "Sign in" }).click();
   await page.waitForURL("**/");
   await page.goto(encounterUrl);
-  await expect(page.getByText(/isn't available|not available|access denied/i).first()).toBeVisible();
+  await expect(
+    page.getByText(/isn.t available|not available|access denied/i).first(),
+  ).toBeVisible();
   await expect(page.getByTestId("encounter-status")).toHaveCount(0);
   await expect(page.getByText("Fatigue for two weeks.")).toHaveCount(0);
 
@@ -523,17 +606,84 @@ test("EMR: appointment → encounter → autosaved draft → recovery → sign �
   await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
 });
 
+test("EMR conflict recovery saves local edits against the selected server version", async ({ page }) => {
+  const patientId = "aaaaaaaa-1111-2222-3333-444444444401";
+  const started = await page.request.post("/api/live/emr/encounter", {
+    data: { patientId, visitType: "follow-up" },
+  });
+  expect(started.status()).toBe(200);
+  const encounterId = ((await started.json()) as {
+    data: { encounterId: string };
+  }).data.encounterId;
+
+  const first = await page.request.post("/api/live/emr/note", {
+    data: {
+      encounterId,
+      noteType: "soap",
+      content: { S: "Original history.", O: "", A: "", P: "" },
+      expectedVersion: 0,
+      saveKind: "manual",
+      provenance: [],
+    },
+  });
+  expect(first.status()).toBe(200);
+  const noteId = ((await first.json()) as {
+    data: { noteId: string };
+  }).data.noteId;
+
+  await page.goto(`/patients/${patientId}/encounter/${encounterId}`);
+  await page.getByRole("button", { name: /SOAP.*draft.*v1/i }).click();
+  await expect(page.getByLabel("Subjective")).toHaveValue("Original history.");
+
+  // Another tab advances the authoritative note to v2 after this composer
+  // loaded v1.
+  const external = await page.request.post("/api/live/emr/note", {
+    data: {
+      encounterId,
+      noteId,
+      noteType: "soap",
+      content: { S: "Server-side edit.", O: "", A: "", P: "" },
+      expectedVersion: 1,
+      saveKind: "manual",
+      provenance: [],
+    },
+  });
+  expect(external.status()).toBe(200);
+
+  await page.getByLabel("Subjective").fill("Practitioner keeps this local edit.");
+  await expect(page.getByTestId("conflict-view")).toBeVisible({ timeout: 10_000 });
+  await page.getByRole("button", { name: "Keep my edits (save over v2)" }).click();
+  await expect(page.getByTestId("conflict-view")).toHaveCount(0);
+  await expect(page.getByTestId("save-state")).toHaveText(/Saved .*v3/, { timeout: 10_000 });
+
+  const authoritative = await page.request.get(`/api/live/emr/note?noteId=${noteId}`);
+  expect(authoritative.status()).toBe(200);
+  expect(((await authoritative.json()) as {
+    data: { content: { S: string }; contentVersion: number };
+  }).data).toMatchObject({
+    content: { S: "Practitioner keeps this local edit." },
+    contentVersion: 3,
+  });
+});
+
 test("no console errors in the live flow", async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   page.on("console", (m) => {
     if (m.type() === "error" && !/Failed to load resource/.test(m.text())) errors.push(m.text());
   });
-  await page.goto("/tasks", { waitUntil: "networkidle" });
-  await page.goto("/patients/aaaaaaaa-1111-2222-3333-444444444401/labs", { waitUntil: "networkidle" });
-  await page.goto("/calendar", { waitUntil: "networkidle" });
-  await page.goto("/patients/aaaaaaaa-1111-2222-3333-444444444401/timeline", { waitUntil: "networkidle" });
-  await page.goto("/audit-log", { waitUntil: "networkidle" });
-  await page.goto("/settings", { waitUntil: "networkidle" });
+  const routes = [
+    "/tasks",
+    "/patients/aaaaaaaa-1111-2222-3333-444444444401/labs",
+    "/calendar",
+    "/patients/aaaaaaaa-1111-2222-3333-444444444401/timeline",
+    "/audit-log",
+    "/settings",
+  ];
+  for (const route of routes) {
+    await page.goto(route, { waitUntil: "domcontentloaded" });
+    await expect(page.locator("main")).toBeVisible();
+    await page.waitForTimeout(150);
+  }
   expect(errors).toEqual([]);
 });

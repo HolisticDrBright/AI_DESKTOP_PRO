@@ -32,8 +32,10 @@ Evolves the empty 0004 placeholder tables in place — no parallel concepts:
   signature — no second signature row, no second audit row. A different
   version is a `40001` conflict.
 - **Optimistic concurrency**: every save carries `expected_version`; stale
-  saves fail with `40001` → tRPC `CONFLICT` → desktop `conflict` (409) and
-  the composer's side-by-side resolution view.
+  saves fail with `40001` → Desktop route `conflict` (409) and the composer's
+  side-by-side resolution view. Choosing "keep my edits" retries against the
+  displayed authoritative server version rather than looping on the stale
+  version.
 - **Tenant agreement**: appointment ↔ encounter ↔ patient ↔ organization must
   agree; `require_clinical_actor` demands an active practitioner/admin/owner
   membership AND `can_access_patient`, and re-checks patient ∈ organization.
@@ -71,9 +73,16 @@ Evolves the empty 0004 placeholder tables in place — no parallel concepts:
   audit), addendum preservation via content hash, staff-role refusal,
   dual-org/cross-tenant attacks, outsider RLS zero-visibility, direct-write
   refusal, clinical-only timeline. Migration 0021 applied.
-- **Backend:** `clinical.encounters.*` / `clinical.notes.*` procedures with
-  exact-RPC-argument vitest coverage incl. 40001→CONFLICT translation —
-  16 new tests, full suite 283/283, backend tsc clean.
+- **Current Desktop ownership:** migration
+  `20260729005221_desktop_owned_encounters_notes.sql` adds bounded, exact-shape
+  read RPCs for encounter, note, patient encounter list, and timeline data.
+  The Desktop adapter calls these plus the existing lifecycle RPCs directly
+  under the practitioner JWT; the obsolete fixture tRPC handlers were removed.
+- **Desktop boundary tests:** adapter tests assert RPC names, argument parity,
+  DTO mapping, and 40001→CONFLICT behavior. The rolled-back real-project
+  acceptance suite `desktop_encounters_notes.sql` verifies 14/14 read-shape,
+  grant, cross-tenant, idempotency, concurrency, signed-original, and addendum
+  checks.
 - **Desktop:** gated live e2e **18/18**, including the full acceptance
   workflow (appointment → encounter → autosaved SOAP → reload recovery →
   ready → sign+confirm → locked editor with original text intact →

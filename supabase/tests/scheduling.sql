@@ -205,20 +205,30 @@ set local role authenticated;
 select set_config('request.jwt.claims','{"sub":"22222222-2222-2222-2222-222222222227","role":"authenticated"}', true);
 insert into _v
 select 'unassigned member: break visible, patient rows hidden',
-       count(*) filter (where patient_id is null) = 1
-         and count(*) filter (where patient_id is not null) = 0,
-       'visible='||count(*)
-from public.appointments
-where organization_id='bbbbbbbb-0000-0000-0000-000000000017';
+       jsonb_array_length(result->'appointments') = 1
+         and result->'appointments'->0->>'patientId' is null,
+       'visible='||jsonb_array_length(result->'appointments')
+from (
+  select public.get_desktop_calendar(
+    'bbbbbbbb-0000-0000-0000-000000000017',
+    timestamptz '2026-08-01 00:00+00',
+    timestamptz '2026-08-08 00:00+00'
+  ) as result
+) calendar;
 
 select set_config('request.jwt.claims','{"sub":"11111111-1111-1111-1111-111111111117","role":"authenticated"}', true);
 insert into _v
 select 'assigned practitioner sees patient rows + break',
-       count(*) filter (where patient_id is not null) = 2
-         and count(*) filter (where patient_id is null) = 1,
-       'visible='||count(*)
-from public.appointments
-where organization_id='bbbbbbbb-0000-0000-0000-000000000017';
+       jsonb_array_length(result->'appointments') = 3
+         and jsonb_array_length(result->'patients') = 1,
+       'visible='||jsonb_array_length(result->'appointments')
+from (
+  select public.get_desktop_calendar(
+    'bbbbbbbb-0000-0000-0000-000000000017',
+    timestamptz '2026-08-01 00:00+00',
+    timestamptz '2026-08-08 00:00+00'
+  ) as result
+) calendar;
 reset role;
 
 -- F) grants ----------------------------------------------------------------------------

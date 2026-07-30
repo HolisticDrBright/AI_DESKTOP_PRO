@@ -51,16 +51,18 @@ export interface ProvenanceData {
 }
 
 export type PatientTabId =
-  | "summary"
-  | "twin"
-  | "timeline"
+  | "overview"
+  | "chart"
   | "labs"
-  | "lab-orders"
-  | "reasoning"
+  | "protocol"
+  | "nutrition"
   | "supplements"
-  | "nof1-lab"
-  | "protocols"
-  | "reports";
+  | "care-plan"
+  | "tracking"
+  | "appointments"
+  | "messages"
+  | "billing"
+  | "files";
 
 export interface PatientDirectoryEntry {
   /** Route slug, e.g. `p-78435`. */

@@ -11,7 +11,7 @@
     "typecheck": "tsc --noEmit",
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed",
-    "test:unit": "TZ=America/Los_Angeles vitest run"
+    "test:unit": "cross-env TZ=America/Los_Angeles vitest run"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.101.2",
@@ -27,6 +27,7 @@
     "@types/node": "^22.20.1",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
+    "cross-env": "^10.1.0",
     "eslint": "^9.39.5",
     "eslint-config-next": "^15.5.20",
     "playwright": "^1.61.1",

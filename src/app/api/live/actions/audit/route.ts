@@ -19,8 +19,8 @@ export async function GET(req: NextRequest) {
 /**
  * POST { eventType, patientId?, resourceId?, metadata? } -> append one
  * registry-validated audit event. The event's action, resource type, and
- * display text are server-owned (backend audit registry) — this route never
- * forwards free-form messages.
+ * display text are database-owned; this route never accepts free-form audit
+ * wording.
  */
 export async function POST(req: NextRequest) {
   const blocked = liveGuard();
@@ -32,23 +32,53 @@ export async function POST(req: NextRequest) {
       patientId?: unknown;
       metadata?: unknown;
     };
-    if (typeof body.eventType !== "string" || !body.eventType) {
+    const eventType = typeof body.eventType === "string"
+      ? body.eventType.trim()
+      : "";
+    if (!eventType || eventType.length > 64) {
       throw new AdapterError("invalid", "An audit event type is required.");
     }
-    const str = (v: unknown) => (typeof v === "string" ? v : undefined);
+
+    const optionalId = (value: unknown, label: string) => {
+      if (value === undefined || value === null) return undefined;
+      if (typeof value !== "string") {
+        throw new AdapterError("invalid", `${label} must be text.`);
+      }
+      const trimmed = value.trim();
+      if (!trimmed || trimmed.length > 128) {
+        throw new AdapterError("invalid", `${label} is invalid.`);
+      }
+      return trimmed;
+    };
+
     const metadata: Record<string, string | number | boolean> = {};
-    if (body.metadata && typeof body.metadata === "object") {
-      for (const [k, v] of Object.entries(body.metadata as Record<string, unknown>)) {
-        if (["string", "number", "boolean"].includes(typeof v)) {
-          metadata[k] = v as string | number | boolean;
+    if (body.metadata !== undefined) {
+      if (
+        body.metadata === null
+        || typeof body.metadata !== "object"
+        || Array.isArray(body.metadata)
+      ) {
+        throw new AdapterError("invalid", "Audit metadata must be an object.");
+      }
+      const entries = Object.entries(body.metadata as Record<string, unknown>);
+      if (entries.length > 16) {
+        throw new AdapterError("invalid", "Audit metadata has too many fields.");
+      }
+      for (const [key, value] of entries) {
+        const scalar = typeof value === "string"
+          || typeof value === "boolean"
+          || (typeof value === "number" && Number.isFinite(value));
+        if (!scalar) {
+          throw new AdapterError("invalid", "Audit metadata values must be simple fields.");
         }
+        metadata[key] = value as string | number | boolean;
       }
     }
     const session = await getRequestSession();
     return actionsLive.recordAudit({
-      eventType: body.eventType,
-      resourceId: str(body.resourceId),
-      patientId: str(body.patientId),
+      eventType,
+      resourceId: optionalId(body.resourceId, "Resource id"),
+      patientId: optionalId(body.patientId, "Patient id"),
       metadata,
       organizationId: session.orgId ?? undefined,
     }, session.token);

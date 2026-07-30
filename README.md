@@ -7,15 +7,56 @@ practice operations (review queue, tasks, appointments, team workload) and a
 differentiated AI layer (clinical reasoning snapshot, evidence for/against,
 contextual assistant, command palette).
 
-This repository contains the **desktop front end** plus the **clinical
-database schema** (`supabase/`). The UI renders from clearly isolated, typed
-mock adapters (`src/adapters/*`); the authenticated tRPC backend lives in the
-platform repo and one namespace (`patients`) is already flag-swappable to it
-(see [`docs/live-api.md`](docs/live-api.md)). Everything else still reads from
-mock adapters, and all mutable UI state (review outcomes, audit events) is
-**demo/session-only** — see [Demo persistence boundaries](#demo-persistence-boundaries).
+This repository owns the **desktop application**, its server-side clinical
+boundary, and the **clinical database schema** (`supabase/`). The UI renders
+through isolated, typed adapters (`src/adapters/*`) that support demo and live
+modes. The clinical knowledge registry is the first live slice routed through
+Desktop-owned server code to Supabase under the practitioner's JWT and RLS.
+AI Longevity Pro remains a separate repository; see
+[`ADR 0003`](docs/architecture-decisions/0003-desktop-backend-separation.md).
 
 ![Patient Overview](docs/screenshots/patient-overview.png)
+
+## Practitioner OS — information architecture (2026-07 overhaul)
+
+The app presents as a practice operating system. The sidebar carries
+**practice-level destinations only** — Today (default home), Calendar,
+Patients, Review Queue, Inbox, Programs, Billing, Reports, Integrations,
+Team, Settings — and everything patient-scoped lives in ONE local tab
+system inside the chart: Overview · Chart & Timeline · Labs & Reasoning ·
+Protocol · Nutrition · Supplements · Tracking & Experiments · Appointments · Messages · Billing ·
+Files. Old URLs (including `/clients`, `/messages`, `/practice`,
+`/audit-log`, `/ai-safety`, and every legacy patient tab) redirect to
+their new homes — see
+[`docs/information-architecture.md`](docs/information-architecture.md)
+for the full route map, redirect table, and mock/live boundary rules.
+
+Newly built mock-first surfaces (typed adapters + session stores, all
+synthetic): the Today daily brief, the appointment drawer (front-desk
+actions), the patient profile + longitudinal chart timeline, Care Plan
+with a Passio-shaped nutrition boundary (key server-side only), Tracking
+& Experiments (systems-model trajectories, N-of-1, wearables, Mind &
+Cognition, assessments), the three-pane Inbox (portal channel; SMS/email
+honestly unconfigured), Programs Studio with a review-gated AI Program
+Copilot, the Stripe **test-mode-labeled** POS + ledgers, the role-aware
+report catalog, and Integrations (connections / automations / webhooks /
+sync log — no connection is ever faked). Governance (AI registry + audit
+log) lives under **Settings → Security & Governance**; templates are a
+contextual versioned library at `/templates`.
+
+The patient **Labs & Reasoning → Clinical copilot** view adds a governed,
+deterministic prototype of adaptive intake → differentiating questions →
+confirming-lab candidates → exact-product protocol drafting. Product candidates
+cannot enter a protocol until core safety information is present, the
+practitioner marks the output reviewed, and the current manufacturer label is
+explicitly verified. Affiliate links remain hidden during clinical selection;
+all generated plans stay draft-only and session-only. The versioned pathway
+workflow lives at **Settings → Clinical Knowledge Center**; its preview and
+persistent database contract are documented in
+[`docs/clinical-knowledge-registry.md`](docs/clinical-knowledge-registry.md).
+The adjacent **Import review** view stages the de-identified practitioner
+authoring pack as reviewable pathway drafts and blocked product-label
+candidates; affiliate metadata never becomes clinical approval.
 
 ## Stack
 
@@ -32,34 +73,38 @@ npm run dev        # http://localhost:3000  (demo mode — no env needed)
 ```
 
 Other scripts: `npm run build` · `npm run start` · `npm run lint` ·
-`npm run typecheck`.
+`npm run typecheck` · `npm run test:unit`.
 
 **End-to-end tests (Playwright, mock app):**
 
 ```bash
 npx playwright install chromium   # once, downloads the test browser
 npm run build                     # the suite runs the production server
-npm run test:e2e                  # 13 tests: shell, review loop, labs, imports…
+npm run test:e2e                  # mock-app + practitioner-os suites (41 tests)
 npm run test:e2e:headed           # same, with a visible browser
 ```
 
-The suite lives in [`e2e/mock-app.spec.ts`](e2e/mock-app.spec.ts) and needs no
+The suites live in [`e2e/mock-app.spec.ts`](e2e/mock-app.spec.ts) and
+[`e2e/practitioner-os.spec.ts`](e2e/practitioner-os.spec.ts) and need no
 backend or env vars. In sandboxed CI images with a pre-installed browser, point
 `PW_CHROMIUM_PATH` at the Chromium binary instead of running `playwright install`.
 
 **Demo vs live.** With no env, the app runs entirely on mock/session adapters —
 nothing is persisted and no sign-in is needed. Setting
-`NEXT_PUBLIC_USE_LIVE_API=true` (plus the backend env in
-[`.env.example`](.env.example)) routes the wired slices — patient read, labs
-workspace + marker review, **lab PDF upload → extraction → review queue**,
-Tasks/Review queue + resolve, **calendar + booking/check-in/cancel**, and the
-append-only audit trail — through the authenticated backend under RLS, as the practitioner
-signed in at `/login` (httpOnly cookie session; see
+`NEXT_PUBLIC_USE_LIVE_API=true` (plus the server env in
+[`.env.example`](.env.example)) routes practitioner authentication,
+organization selection and membership management, and patient-directory reads
+through this app's Desktop-owned Supabase boundary under the practitioner's JWT
+and RLS. Labs, tasks, scheduling, encounters, notes, the patient timeline, and
+the append-only audit trail now use that same direct boundary. Scribe, lens, and
+other worker/coordinator domains retain the transitional tRPC transport while
+they are migrated. Practitioners sign in at `/login` through an httpOnly cookie session;
+see
 [`docs/live-auth-and-seeding.md`](docs/live-auth-and-seeding.md) for sign-in
 and demo-data seeding). See [`docs/live-api.md`](docs/live-api.md) for the
 architecture, the secure write path (migrations `0013`–`0015`), what's wired vs
 still mock, and security assumptions. Settings → **Data source & environment**
-shows the resolved mode, the practitioner session, and configured backend vars
+shows the resolved mode, the practitioner session, and configured data-source vars
 (presence only). [`docs/live-data-readiness.md`](docs/live-data-readiness.md)
 maps every domain (adapter → mock source → session state → live tables → first
 mutation) and the recommended wiring order.
@@ -72,7 +117,7 @@ width).
 | Area | Status |
 | --- | --- |
 | App shell — grouped sidebar (Workspace / Clinical / Operations / System), 58 px top bar with working notifications / messages / account popovers, glass/solid material, atmospheric background | ✅ Live |
-| Patient Overview (`/patients/:id/summary`) — header card with working actions, tabs, health score ring, system-balance radar, priorities, risk flags, biomarker trends, sleep & recovery, N-of-1 experiments, right rail | ✅ Live |
+| Patient Overview (`/patients/:id/overview`) — header card with working actions, tabs, health score ring, system-balance radar, priorities, risk flags, biomarker trends, sleep & recovery, N-of-1 experiments, right rail | ✅ Live |
 | **Review-to-action** — reusable `ActionBar` on cards / hypotheses / queue rows / lab markers; destructive & patient-facing actions confirm; outcomes announced and audited | ✅ Live |
 | **Provenance & confidence** — reusable `Provenance` / `ProvenanceBadge` (source type, range, completeness, conflicts, review state) across summary, reasoning, assistant, tasks, labs | ✅ Live |
 | **Clinical Reasoning Snapshot** — per-hypothesis provenance + actions, missing info, what-changed, safety considerations; **approve/reject updates the visible status in-session** and disables settled actions | ✅ Live (demo state) |
@@ -82,7 +127,7 @@ width).
 | **AI / decision-support safety registry** (`/ai-safety`) — per-feature classification with a no-regulatory-claims scope banner | ✅ Live |
 | **Audit Log** (`/audit-log`) — demo session audit viewer, **survives reloads via `sessionStorage`**, clears with the session | ✅ Live (session) |
 | System-of-record navigation + operational spec screens (Nutrition, Templates, Automations, Billing, Claims, Reports, Team) — honest workflow / permissions / next-action specs | ✅ Live |
-| Practice Dashboard (`/practice`), Command palette (⌘K), Clinical Assistant drawer | ✅ Live |
+| Today workspace (`/today`), Command palette (⌘K), Clinical Assistant drawer | ✅ Live |
 | Appearance & accessibility — solid/glass material, atmospheric background, **display scale (compact / default / large)** | ✅ Live |
 | Remaining sections (Health Twin, Timeline, Clinical Reasoning workspace, Supplements, N-of-1 Lab, Protocols, Reports tab, Wearables, Assessments, Quantum Mind, Messages, Integrations, Calendar, Program Builder) | 🔜 Placeholders — build from [`docs/design-handoff/product-spec.txt`](docs/design-handoff/product-spec.txt) |
 | **Labs Workspace** (`/patients/:id/labs`) — marker table (lab + optimal ranges, confidence, review), trend panel, source inspector, extraction review, upload demo, optimal-range config | ✅ Live (demo) |
@@ -94,9 +139,9 @@ stay coherent. **All health data is synthetic.**
 
 ## Demo persistence boundaries
 
-This build has **no backend persistence** for interactions. Two kinds of
-mutable state exist, both demo-only and isolated behind the adapter facade so
-they can become tRPC mutations later:
+Demo mode has no backend persistence. Its mutable state is isolated behind the
+adapter facade so each domain can move to the Desktop-owned live boundary
+without changing its components:
 
 - **Review outcomes** (approve / reject / accept hypothesis / resolve queue
   item / mark lab reviewed) and the **audit log** are stored in the browser's
@@ -104,25 +149,23 @@ they can become tRPC mutations later:
   reloads **within a browser session** and are **cleared when the session
   ends** — this is a demo, not a database. The Audit Log screen says so, and
   action toasts read "demo — not persisted".
-- **Everything read** (patients, labs, queue, reasoning, imports, composer
-  drafts) comes from typed mock adapters in `src/adapters/*`. The `patients`
-  namespace can be flag-swapped to the real backend
-  (`NEXT_PUBLIC_USE_LIVE_API`, see [`docs/live-api.md`](docs/live-api.md)); the
-  rest await their tRPC routers.
+- **Most demo reads** (patients, labs, queue, reasoning, composer drafts) come
+  from typed mock adapters in `src/adapters/*`. Wired domains can be switched
+  to live mode with `NEXT_PUBLIC_USE_LIVE_API`; the clinical knowledge registry
+  then persists pathways and governed import decisions through the
+  Desktop-owned Supabase boundary.
 
-Backend persistence — writing review actions, audit events, and lab reviews to
-the clinical Supabase project — still requires the tRPC mutations + `audit_events`
-table wiring described in [`docs/live-api.md`](docs/live-api.md). No UI copy
-implies real persistence.
+Each surface labels its actual persistence boundary. No demo UI copy implies
+real persistence.
 
 ## Architecture
 
 ```
 src/
-  adapters/        Typed mock data layer — THE swap point for tRPC later
+  adapters/        Typed demo/live data boundary
     types.ts         Domain interfaces shared with the UI
     *.mock.ts        Synthetic datasets (patients, practice, assistant, commands)
-    index.ts         `api` façade shaped like the future tRPC client
+    index.ts         `api` façade consumed by UI components
   app/             App Router routes (patient tabs, practice, placeholders)
   components/
     shell/           Sidebar, TopBar, CommandPalette, AssistantDrawer, AppShell
@@ -132,8 +175,9 @@ src/
   lib/             Routes, providers (material + shell UI state), tone maps
 ```
 
-See [`docs/architecture.md`](docs/architecture.md) for the route map, data
-flow, and the tRPC swap plan.
+See [`docs/architecture.md`](docs/architecture.md) for the route map and data
+flow, and [`docs/desktop-identity-directory.md`](docs/desktop-identity-directory.md)
+for the migrated identity and directory boundary.
 
 ### Design system notes
 
@@ -171,12 +215,9 @@ flow, and the tRPC swap plan.
 
 ## Roadmap
 
-The platform-level plan lives in [`docs/platform/`](docs/platform/):
-the original backend prompt (`backend-prompt.md`, targeting the
-`rork-ai-longevity-coach` repo that hosts the Expo app and shared backend)
-plus the enhancement addendum (`backend-addendum.md`) that adds billing &
-claims, telehealth and automations, an outcomes/population layer, migration
-importers, and a versioned connector framework.
+Historical platform prompts live in [`docs/platform/`](docs/platform/). ADR
+0003 supersedes their shared-backend assumption: Desktop features remain in
+this repository and AI Longevity Pro remains independent.
 
 Shipped since the handoff (see the status table): review-to-action,
 provenance, the Clinical Reasoning Snapshot upgrade, system-of-record
@@ -189,11 +230,10 @@ For this desktop repo, in order:
 1. **Remaining Phase 2+ screens** from `product-spec.txt` — Health Twin
    system map, three-pane Clinical Reasoning workspace, Supplement
    Intelligence, N-of-1 Lab, unified Timeline, Program / Assessment builders.
-2. **Backend integration** — replace `src/adapters/*` with tRPC queries
-   against the shared Hono/Supabase backend; the desktop app must share
-   domain schemas with the Expo patient app rather than duplicating them.
-   Blocked on the backend's Phase 1 (tenant isolation, patient access,
-   audit) landing in the platform repo first.
+2. **Desktop-owned live integration** — migrate transitional adapters to
+   same-origin Desktop server routes backed by the clinical Supabase project,
+   one tested vertical slice at a time. Share stable contracts with other
+   products without coupling their repositories or deployments.
 3. **Ops surfaces from the addendum** (after the corresponding backend
    routers exist): Billing (invoices, payments, packages), insurance claims
    status, Automations rules + run history, connector-health Integrations

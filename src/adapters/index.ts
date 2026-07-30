@@ -1,16 +1,17 @@
 /**
  * Data adapter façade.
  *
- * The UI consumes data exclusively through this `api` object, shaped the way
- * the future tRPC client will be (async, per-domain namespaces). Swapping a
- * namespace from mock to live means adding a flag branch here — components
- * never change, and never import Supabase/tRPC/live modules directly.
+ * The UI consumes data exclusively through this `api` object, shaped as
+ * async per-domain namespaces. Swapping a namespace from mock to live means
+ * adding a flag branch here — components never change and never import
+ * Supabase, tRPC, or live modules directly.
  *
  * Live wiring status (NEXT_PUBLIC_USE_LIVE_API):
- *   - patients.list / patients.get  -> live (server components, tRPC)
+ *   - patients.list / patients.get  -> live (Desktop-owned Supabase boundary)
  *   - labs.getWorkspace / reviewMarker / flagMarker / createReviewTask -> live
- *     (client components -> /api/live/* route handlers -> tRPC -> RPCs 0013)
- *   - actions.listLiveAuditEvents   -> live (dual-mode Audit Log)
+ *     (client components -> /api/live/* -> Desktop-owned Supabase REST/RPC)
+ *   - tasks.getQueue / resolve       -> live (Desktop-owned Supabase REST/RPC)
+ *   - actions.listLiveAuditEvents   -> live (Desktop-owned Supabase RPC)
  *   - everything else               -> mock/demo session (see docs/live-api.md)
  */
 import { AdapterError } from "./errors";
@@ -20,7 +21,6 @@ import {
   getPatientSummary,
   listPatients,
 } from "./patients.mock";
-import { getPracticeDashboard, getRightRail } from "./practice.mock";
 import { getAssistantSession } from "./assistant.mock";
 import { getCommandGroups } from "./commands.mock";
 import { generateDraft, type ComposerContext } from "./composer.mock";
@@ -40,8 +40,6 @@ import { getReasoningWorkspace } from "./reasoning.mock";
 import { getSupplementWorkspace } from "./supplements.mock";
 import { getHealthTwin } from "./twin.mock";
 import { getActiveExperiments, getCompletedExperiments } from "./experiments.mock";
-import { getClientRows } from "./clients.mock";
-import { getProgramTemplates } from "./programs.mock";
 import { getConnectors } from "./integrations.mock";
 import { CAPABILITIES, ROLES } from "./permissions.mock";
 import { USE_LIVE_API } from "./config";
@@ -53,7 +51,6 @@ import {
   type ActionKind,
 } from "./actions";
 import {
-  addCustomProduct,
   addSessionQueueItem,
   adjustInventory,
   clearAuditEntries,
@@ -64,10 +61,11 @@ import {
   listCustomProducts,
   listSales,
   recordAuditEntry,
+  recordInventoryMovement,
   recordSale,
   removeReviewOutcome,
-  setInventoryLevel,
   setReviewOutcome,
+  upsertCustomProduct,
   updateLabOrderDraft,
   type SaleLine,
 } from "./session-store";
@@ -91,28 +89,27 @@ interface LabMarkerCtx {
 export const api = {
   patients: {
     // When USE_LIVE_API is on, list/get read real patient_profiles rows through
-    // the authenticated tRPC backend (RLS enforced). The live module is loaded
-    // lazily so the default mock build never pulls in server-only code.
+    // the Desktop-owned server boundary (RLS enforced). The live module is
+    // loaded lazily so the default mock build never pulls in server-only code.
     // sessionToken: the cookie session's access token, passed by SERVER
     // callers (src/server/session.ts). Client/demo callers omit it.
     list: async (sessionToken?: string | null, orgId?: string | null) => {
       if (USE_LIVE_API) return (await import("./patients.live")).patientsLive.list(sessionToken, orgId);
       return listPatients();
     },
-    get: async (id: string, sessionToken?: string | null) => {
-      if (USE_LIVE_API) return (await import("./patients.live")).patientsLive.get(id, sessionToken);
+    get: async (id: string, sessionToken?: string | null, orgId?: string | null) => {
+      if (USE_LIVE_API) {
+        return (await import("./patients.live")).patientsLive.get(id, sessionToken, orgId);
+      }
       return getPatient(id);
     },
     summary: async (id: string) => getPatientSummary(id),
   },
-  practice: {
-    dashboard: async () => getPracticeDashboard(),
-    rightRail: async () => getRightRail(),
-  },
   schedule: {
     /**
-     * LIVE ONLY namespace — real appointments (RLS-scoped reads; 0017
-     * SECURITY DEFINER RPC writes with double-booking rejection + audit).
+     * LIVE ONLY namespace — the Desktop-owned calendar RPC returns a
+     * role-scoped schedule and minimal booking directory. Authorized RPC
+     * writes enforce overlap, transition, and tenant rules and append audit.
      * The demo calendar keeps rendering the weekday-pattern mock directly
      * (calendar.mock.getCalendar); these methods throw in demo mode instead
      * of pretending to persist.
@@ -128,6 +125,10 @@ export const api = {
     updateStatus: async (appointmentId: string, status: string) => {
       if (!USE_LIVE_API) throw new AdapterError("invalid", "Demo mode does not change appointment status.");
       return liveClient.updateAppointmentStatus(appointmentId, status);
+    },
+    reschedule: async (appointmentId: string, startsAtIso: string, endsAtIso: string) => {
+      if (!USE_LIVE_API) throw new AdapterError("invalid", "Demo mode does not reschedule appointments.");
+      return liveClient.rescheduleAppointment(appointmentId, startsAtIso, endsAtIso);
     },
   },
   assistant: {
@@ -174,7 +175,7 @@ export const api = {
     },
     /** Demo session audit log (sessionStorage). Not backend persistence. */
     listAuditEvents: () => listAuditEntries(),
-    /** Live append-only audit log for the caller's org (empty in mock mode). */
+    /** Live append-only audit log through the caller-authorized DB function. */
     listLiveAuditEvents: async (limit = 50): Promise<LiveAuditEvent[]> =>
       USE_LIVE_API ? liveClient.listAuditEvents(limit) : [],
     /** Clear the demo session audit log (demo reset). */
@@ -286,12 +287,14 @@ export const api = {
      */
     listProducts: async (): Promise<InventoryProduct[]> => {
       const adj = getInventoryAdjustments();
-      const all = [...listCustomProducts(), ...SEED_PRODUCTS];
+      const custom = listCustomProducts();
+      const editedIds = new Set(custom.map((p) => p.id));
+      const all = [...custom, ...SEED_PRODUCTS.filter((p) => !editedIds.has(p.id))];
       return all.map((p) => ({ ...p, stock: Math.max(0, p.stock + (adj[p.id] ?? 0)) }));
     },
     /** Add a new product to inventory this session + audit. */
     addProduct: async (product: InventoryProduct) => {
-      addCustomProduct(product);
+      upsertCustomProduct(product);
       recordAuditEntry({
         kind: "receive_stock",
         subjectType: "inventory",
@@ -300,10 +303,29 @@ export const api = {
       });
       return { ok: true, message: `Added ${product.name} to inventory. (demo — not persisted)` };
     },
+    /** Edit catalog details while preserving historical invoice snapshots. */
+    updateProduct: async (product: InventoryProduct) => {
+      const movement = getInventoryAdjustments()[product.id] ?? 0;
+      upsertCustomProduct({ ...product, stock: Math.max(0, product.stock - movement) });
+      recordAuditEntry({
+        kind: "receive_stock",
+        subjectType: "inventory",
+        subjectLabel: `Updated ${product.name}`,
+        reviewed: true,
+      });
+      return { ok: true, message: `Updated ${product.name}. Existing invoices were not changed.` };
+    },
     /** Receive (restock) units into inventory + audit. */
     receiveStock: async (productId: string, qty: number, name: string) => {
       const n = Math.max(1, Math.round(qty));
       adjustInventory(productId, n);
+      recordInventoryMovement({
+        productId,
+        productName: name,
+        kind: "received",
+        delta: n,
+        note: "Stock received",
+      });
       recordAuditEntry({
         kind: "receive_stock",
         subjectType: "inventory",
@@ -313,9 +335,16 @@ export const api = {
       return { ok: true, message: `Received ${n} into stock: ${name}. (demo — not persisted)` };
     },
     /** Correct an on-hand count to an absolute value + audit. */
-    setStock: async (productId: string, seed: number, target: number, name: string) => {
+    setStock: async (productId: string, current: number, target: number, name: string) => {
       const t = Math.max(0, Math.round(target));
-      setInventoryLevel(productId, seed, t);
+      adjustInventory(productId, t - current);
+      recordInventoryMovement({
+        productId,
+        productName: name,
+        kind: "count-correction",
+        delta: t - current,
+        note: `On-hand count corrected to ${t}`,
+      });
       recordAuditEntry({
         kind: "receive_stock",
         subjectType: "inventory",
@@ -337,7 +366,16 @@ export const api = {
       taxMinor: number;
       totalMinor: number;
     }) => {
-      for (const l of input.lines) adjustInventory(l.productId, -Math.abs(l.qty));
+      for (const l of input.lines) {
+        adjustInventory(l.productId, -Math.abs(l.qty));
+        recordInventoryMovement({
+          productId: l.productId,
+          productName: l.name,
+          kind: "sale",
+          delta: -Math.abs(l.qty),
+          note: "Patient sale",
+        });
+      }
       const sale = recordSale(input);
       const count = input.lines.reduce((n, l) => n + l.qty, 0);
       recordAuditEntry({
@@ -369,14 +407,6 @@ export const api = {
     listActive: async () => getActiveExperiments(),
     listCompleted: async () => getCompletedExperiments(),
   },
-  clients: {
-    /** MOCK client directory. Replace with a tRPC query. */
-    list: async () => getClientRows(),
-  },
-  programs: {
-    /** MOCK program templates. Replace with tRPC queries. */
-    listTemplates: async () => getProgramTemplates(),
-  },
   integrations: {
     /** MOCK connector health. Replace with a tRPC query. */
     getConnectors: async () => getConnectors(),
@@ -387,8 +417,9 @@ export const api = {
   },
   labs: {
     /**
-     * Labs workspace read. LIVE: real biomarker_observations via the tRPC
-     * backend (RLS-scoped, reference intervals preserved). MOCK: demo workspace.
+     * Labs workspace read. LIVE: real biomarker_observations through the
+     * Desktop-owned Supabase boundary (RLS-scoped, reference intervals
+     * preserved). MOCK: demo workspace.
      */
     getWorkspace: async (patientId: string, patientName?: string) => {
       if (USE_LIVE_API) return liveClient.labsWorkspace(patientId);

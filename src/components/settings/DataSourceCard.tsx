@@ -12,10 +12,10 @@ import { Card, CardTitle } from "@/components/ui/bits";
 /**
  * Data source & environment status (server component).
  *
- * Shows whether the app is running against the DEMO layer or the LIVE backend,
- * whether the live backend is configured (presence only — never values), and
- * warns clearly when dev-only identity overrides are active. This is the
- * env/status indicator for the vertical slice; details live in docs/live-api.md.
+ * Shows whether the app is running against the DEMO layer or live clinical
+ * services, whether each server boundary is configured (presence only —
+ * never values), and warns clearly when dev-only identity overrides are
+ * active. Details live in docs/live-api.md.
  */
 export async function DataSourceCard() {
   const mode = describeMode();
@@ -23,7 +23,7 @@ export async function DataSourceCard() {
   const session = mode.live ? readAuthSession(await cookies()) : null;
 
   // Organizations for the signed-in practitioner (tolerated failure: the row
-  // shows the honest state; backend reachability has its own rows below).
+  // shows the honest state; service configuration has its own rows below).
   let organizations: { organizationId: string; name: string | null; role: string }[] = [];
   if (mode.live && session?.signedIn && session.accessToken) {
     try {
@@ -80,11 +80,11 @@ export async function DataSourceCard() {
               mode.live ? "bg-positive-tint text-positive" : "bg-slate-tint text-slate-badge"
             }`}
           >
-            {mode.live ? "LIVE backend" : "DEMO (mock)"}
+            {mode.live ? "LIVE clinical data" : "DEMO (mock)"}
           </span>
           <span className="text-[11px] text-subtle">
             {mode.live
-              ? "Flag-enabled namespaces read/write the real clinical backend under RLS."
+              ? "Migrated namespaces use the Desktop clinical boundary under RLS; remaining live slices use the transitional service."
               : "All data is in-session demo data; nothing is persisted to a backend."}
           </span>
         </div>
@@ -133,7 +133,11 @@ export async function DataSourceCard() {
                 <span className="text-[12px] font-semibold text-faint">Sign in first</span>
               )}
             </div>
-            <StatusRow label="tRPC backend endpoint" ok={server.trpcConfigured} />
+            <StatusRow
+              label="Clinical Supabase boundary"
+              ok={server.clinicalSupabaseConfigured}
+            />
+            <StatusRow label="Transitional tRPC endpoint" ok={server.trpcConfigured} />
             <StatusRow
               label="Env fallback session (local/e2e only)"
               ok={server.demoSessionConfigured}
@@ -156,8 +160,8 @@ export async function DataSourceCard() {
         )}
 
         <p className="mt-[10px] mb-0 text-[10.5px] leading-[1.5] text-faint">
-          Backend access stays behind the adapter façade and the authenticated tRPC layer (ADR
-          0002). See{" "}
+          Clinical access stays behind the adapter façade. Migrated domains use the Desktop-owned
+          server boundary; transitional domains still use tRPC (ADR 0003). See{" "}
           <Link
             href="https://github.com/HolisticDrBright/AI_DESKTOP_PRO/blob/main/docs/live-api.md"
             className="font-semibold text-action hover:text-action-deep"

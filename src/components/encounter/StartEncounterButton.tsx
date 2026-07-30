@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Stethoscope } from "lucide-react";
+import { Mic, Stethoscope } from "lucide-react";
 
 /**
  * Starts (or idempotently resumes) an encounter and opens the workspace.
@@ -15,12 +15,14 @@ export function StartEncounterButton({
   visitType = "follow-up",
   label = "Start encounter",
   compact = false,
+  purpose = "encounter",
 }: {
   patientId: string;
   appointmentId?: string;
   visitType?: string;
   label?: string;
   compact?: boolean;
+  purpose?: "encounter" | "scribe";
 }) {
   const router = useRouter();
   const [working, setWorking] = useState(false);
@@ -61,7 +63,7 @@ export function StartEncounterButton({
           compact ? "h-7 px-2 text-[11.5px]" : "h-9 px-3 text-[12.5px]"
         }`}
       >
-        <Stethoscope size={compact ? 11 : 13} strokeWidth={2.2} aria-hidden />
+        {purpose === "scribe" ? <Mic size={compact ? 11 : 13} strokeWidth={2.2} aria-hidden /> : <Stethoscope size={compact ? 11 : 13} strokeWidth={2.2} aria-hidden />}
         {working ? "Opening…" : label}
       </button>
       {error && (

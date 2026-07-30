@@ -4,6 +4,8 @@ import { AdapterError } from "@/adapters/errors";
 import { getRequestSession } from "@/server/session";
 import { liveGuard, runLive } from "../../route-helpers";
 
+const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
+
 /**
  * GET ?patientId= → the longitudinal CLINICAL timeline (encounters, notes,
  * signatures, addenda, appointments). Security-audit events stay in
@@ -14,7 +16,9 @@ export async function GET(req: NextRequest) {
   if (blocked) return blocked;
   return runLive(async () => {
     const patientId = req.nextUrl.searchParams.get("patientId");
-    if (!patientId) throw new AdapterError("invalid", "A patient is required.");
+    if (!patientId || !UUID.test(patientId)) {
+      throw new AdapterError("invalid", "A valid patient is required.");
+    }
     const session = await getRequestSession();
     return encountersLive.timeline(patientId, session.token);
   });

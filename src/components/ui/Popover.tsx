@@ -15,6 +15,7 @@ export function Popover({
   side = "bottom",
   panelClassName,
   label,
+  panelRole = "menu",
 }: {
   trigger: (o: { open: boolean; toggle: () => void }) => ReactNode;
   children: (o: { close: () => void }) => ReactNode;
@@ -23,6 +24,8 @@ export function Popover({
   side?: "bottom" | "top";
   panelClassName?: string;
   label: string;
+  /** Use dialog when the panel contains form controls such as search. */
+  panelRole?: "menu" | "dialog";
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -48,7 +51,7 @@ export function Popover({
       {trigger({ open, toggle: () => setOpen((o) => !o) })}
       {open && (
         <div
-          role="menu"
+          role={panelRole}
           aria-label={label}
           className={cn(
             "glass-overlay animate-fade-up absolute z-[120] w-[260px] overflow-hidden rounded-[14px] border border-[rgba(255,255,255,0.7)] bg-[rgba(255,255,255,0.97)] shadow-[0_18px_48px_rgba(24,42,61,0.2)] outline-1 outline-[rgba(203,214,224,0.6)]",

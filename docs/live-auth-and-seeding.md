@@ -13,10 +13,14 @@ entirely server-side:
   grant against `CLINICAL_SUPABASE_URL/auth/v1/token` and stores the session
   in **httpOnly cookies** (`aidp_at/rt/exp/em`). Tokens never reach browser
   JavaScript and there is no Supabase client in the browser bundle.
-- Every `/api/live/*` call presents the cookie session's access token to the
-  tRPC backend as a bearer, so **RLS runs as the signed-in practitioner**.
+- Migrated server adapters and `/api/live/*` handlers present the cookie
+  session's access token to the clinical Data API as a bearer, so **RLS runs
+  as the signed-in practitioner**. Transitional domains present the same token
+  to the legacy tRPC transport.
 - `/api/auth/session` reports state and rotates near-expiry sessions
-  (Supabase refresh-token grant); `/api/auth/logout` clears the cookies.
+  (Supabase refresh-token grant) without losing the selected organization;
+  `/api/auth/logout` revokes the current provider session and always clears
+  the local cookies.
 - Signed-out or expired sessions surface as a distinct clinical-safe state
   with a **Sign in** action (`unauthenticated`) — different from
   `forbidden`, which means signed in but not permitted for that record.
@@ -29,8 +33,9 @@ the server uses them when no cookie session exists. This exists solely for
 the contract-fixture e2e suite and headless local runs — do **not** set these
 in a real deployment.
 
-Required env (live): `NEXT_PUBLIC_USE_LIVE_API=true`, `TRPC_BASE_URL`,
-`CLINICAL_SUPABASE_URL`, `CLINICAL_SUPABASE_ANON_KEY`. See `.env.example`.
+Required env (live): `NEXT_PUBLIC_USE_LIVE_API=true`,
+`CLINICAL_SUPABASE_URL`, `CLINICAL_SUPABASE_ANON_KEY`, plus
+`TRPC_BASE_URL` while any transitional domains remain. See `.env.example`.
 (`CLINICAL_ORG_ID` is now only a local/e2e fallback — see below.)
 
 ## Organization selection (authenticated, not env-based)
@@ -38,8 +43,9 @@ Required env (live): `NEXT_PUBLIC_USE_LIVE_API=true`, `TRPC_BASE_URL`,
 The active organization is a **per-session choice validated against the
 signed-in practitioner's real memberships**, not a deployment constant:
 
-- On sign-in, `/api/auth/login` fetches the practitioner's memberships
-  (`clinical.organizations.mine`, which reads `org_members` under RLS) and
+- On sign-in, `/api/auth/login` activates any caller-owned pending membership
+  and fetches active memberships through the Desktop-owned
+  `list_my_organizations()` RPC under RLS, then
   auto-selects the first one into an httpOnly `aidp_org` cookie.
 - `GET /api/auth/org` lists the caller's memberships + the active org;
   `POST /api/auth/org` switches — the server re-validates that the requested
@@ -48,9 +54,14 @@ signed-in practitioner's real memberships**, not a deployment constant:
 - Settings → **Data source & environment** shows the active organization
   (name + role) and, when the practitioner belongs to more than one org, an
   **organization switcher**.
-- Every live adapter call threads the session's org id through to the
-  backend, which re-enforces membership inside RLS and the SECURITY DEFINER
+- Every organization-scoped adapter call threads the session's org id through
+  to the data boundary, which re-enforces membership inside RLS and database
   RPCs — the cookie is a selector, never an authority.
+
+Membership management links **existing Supabase Auth identities** to a
+practice. It does not create users or promise invitation email delivery. New
+accounts must first be created through the approved identity-admin process,
+then an owner/admin can add that email in Settings.
 
 **Env fallback (local/e2e only):** `CLINICAL_ORG_ID` fills in when the
 session has no org cookie (contract-fixture runs, headless local). With it

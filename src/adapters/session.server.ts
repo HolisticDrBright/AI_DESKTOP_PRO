@@ -4,7 +4,7 @@ if (typeof window !== "undefined") {
 import { AdapterError } from "./errors";
 
 /**
- * Access-token source for the live tRPC path, in strict order:
+ * Access-token source for live clinical server adapters, in strict order:
  *
  *  1. The signed-in practitioner's session (httpOnly cookies set by
  *     /api/auth/login — real Supabase Auth). This is the product path.
@@ -14,7 +14,7 @@ import { AdapterError } from "./errors";
  *     these in a real deployment — the cookie session is the intended auth.
  *  3. Neither → AdapterError("unauthenticated"): the UI shows the signed-out
  *     state with a sign-in link (distinct from "forbidden" = signed in but
- *     not permitted, which RLS/the backend reports per-record).
+ *     not permitted, which RLS or a transitional backend reports per-record).
  *
  * Expired cookie sessions are refreshed by /api/auth/session (route-handler
  * scope owns cookie writes); here an expired session simply falls through.

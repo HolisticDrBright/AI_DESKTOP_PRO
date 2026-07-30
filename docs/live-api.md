@@ -18,50 +18,56 @@ or auth clients directly.
 `src/adapters/mode.ts` is the single source of truth for the flag and the
 dev-only identity overrides.
 
-## Architecture (ADR 0002)
+## Architecture (ADR 0002 + ADR 0003)
 
 ```
 client component
    └─ api.<domain>.*                 (src/adapters/index.ts — the only import UI uses)
         ├─ DEMO → mock module + session-store            (unchanged)
         └─ LIVE
-             ├─ reads in server components → *.live.ts → trpc.server → tRPC backend → Supabase (RLS)
-             └─ client-initiated calls  → live-client (fetch) → /api/live/* route handler
-                                                            → *.live.ts → trpc.server → tRPC backend → Supabase (RLS)
+             ├─ migrated domains → server component or same-origin route
+             │                    → *.live.ts → supabase-rest.server → Supabase (RLS/RPC)
+             └─ transitional domains → same-origin route/server component
+                                      → *.live.ts → trpc.server → legacy tRPC transport
 ```
 
-- The desktop **never** talks to Postgres/Supabase directly. Server-only
-  modules (`*.live.ts`, `trpc.server.ts`, `session.server.ts`,
-  `live-status.server.ts`) carry a `typeof window` guard and are only reached
-  from server components or `/api/live/*` route handlers — they never enter the
-  client bundle.
+- The browser **never** talks to Postgres/Supabase directly. Server-only
+  modules (`*.live.ts`, `supabase-rest.server.ts`, `trpc.server.ts`,
+  `session.server.ts`, `live-status.server.ts`) carry a browser guard and are
+  only reached from server components or `/api/live/*` route handlers.
 - Client components in live mode reach the backend through same-origin route
   handlers (`src/app/api/live/*`) via the client-safe `live-client.ts`. No
   credentials or server clients ship to the browser.
-- The backend is the one place that holds Supabase keys and calls the
-  **SECURITY DEFINER RPCs** below as the authenticated practitioner.
+- Desktop server code uses only the publishable key plus the signed-in
+  practitioner's JWT. It does not use a service-role key. The database's RLS
+  policies and role-gated **SECURITY DEFINER RPCs** remain authoritative.
 
-## The secure write path — migration `0013`
+## The secure write path
 
 `audit_events` is append-only (migration 0003): org-admin `SELECT`, and **no**
-insert/update/delete policy. Rather than hand the backend a service-role key
-(which would bypass every RLS check), migration `0013` adds four app-facing
-SECURITY DEFINER functions that run as owner but **authorize the caller
-explicitly** with the same `private.*` helpers RLS uses, and stamp actor ids
-from `auth.uid()` server-side:
+insert/update/delete policy. Rather than hand the server a service-role key
+(which would bypass every RLS check), app-facing SECURITY DEFINER functions
+run as owner but **authorize the caller explicitly** with the same `private.*`
+helpers RLS uses, and stamp actor ids from `auth.uid()`:
 
 | Function | Purpose |
 | --- | --- |
 | `review_biomarker(observation_id, decision, note?)` | Update review columns + append audit row, atomically. Never touches lab value / unit / reference interval / provenance / confidence. |
-| `record_audit_event(org, action, …)` | General append-only audit writer (PHI-safe metadata only). |
 | `list_audit_events(org, limit)` | Read the caller's own events (all events if org admin). |
 | `create_review_task(patient_id, title, …)` | Downstream link: enqueue a `review_queue_items` row + audit. |
 | `resolve_review_queue_item(item_id, note?)` — migration `0014` | Resolve a queue item + append audit row, atomically. Idempotent on already-resolved items; org-level (patient-null) items require a practitioner/admin role. |
+| `record_registered_audit_event(org, event, …)` — migration `20260728222649` | Append a generic Desktop UI event using database-owned action, resource type, wording, and per-event scalar metadata rules. |
 
 `search_path` is pinned empty and every object is schema-qualified. `EXECUTE`
-is revoked from `public` + `anon` and granted to `authenticated` only.
+is revoked from `public` + `anon` and granted to `authenticated` only. Migration
+`20260728222813` also revokes direct `audit_events` table privileges; reads and
+generic writes pass through the caller-authorized functions.
 
-> Advisor note: these four raise the expected
+The legacy `record_audit_event` function remains temporarily for older callers.
+The Desktop same-origin route does not expose it: it accepts only a registered
+event key, identifiers, and bounded scalar metadata.
+
+> Advisor note: these functions raise the expected
 > `authenticated_security_definer_function_executable` WARN. That is
 > **accepted by design** — they are the deliberate authenticated write path to
 > the append-only table; each authorizes the caller in-function. `SECURITY
@@ -71,18 +77,24 @@ is revoked from `public` + `anon` and granted to `authenticated` only.
 
 | Namespace / method | Demo | Live |
 | --- | --- | --- |
-| `patients.list` / `patients.get` | mock | ✅ real `patient_profiles` (server component → tRPC) |
+| `patients.list` / `patients.get` | mock | ✅ real `patient_profiles` through the Desktop-owned server boundary; selected-org filter + RLS |
+| `organizations.mine` / `claim` / member management | n/a | ✅ Desktop-owned REST/RPC boundary; active caller memberships only; database-enforced admin/owner guards |
+| practitioner sign-in / refresh / sign-out | n/a | ✅ server-only Supabase Auth; rotated refresh tokens, selected-org preservation, current-session revocation |
 | `patients.summary` | mock | mock (synthesized, no DB source) |
-| `labs.getWorkspace` | mock | ✅ real workspace via `clinical.labs.getWorkspace` |
-| `labs.reviewMarker` / `flagMarker` | session + session audit | ✅ `review_biomarker` RPC (persist + audit) |
-| `labs.createReviewTask` | session queue item | ✅ `create_review_task` RPC |
+| `labs.getWorkspace` | mock | ✅ Desktop-owned `list_patient_lab_observations` + RLS-scoped patient/document reads |
+| `labs.reviewMarker` / `flagMarker` | session + session audit | ✅ direct `review_biomarker` RPC (persist + audit) |
+| `labs.createReviewTask` | session queue item | ✅ direct `create_review_task` RPC |
 | `labs.uploadDocument` | n/a (demo keeps `queueUploadDemo`, no file leaves the browser) | ✅ real PDF ingestion: storage upload + deterministic extraction + `ingest_lab_extraction` RPC (migration `0016` — observations w/ verbatim originals + confidence, low-confidence review-queue item, audit, atomic); failures → `mark_lab_document_failed` (PDF stays stored, audited) |
-| `tasks.getQueue` | mock queue | ✅ real `review_queue_items` (RLS-scoped), settled status carried through reload |
-| `actions.execute` — `resolve` on a queue item | session outcome + session audit | ✅ `resolve_review_queue_item` RPC (migration `0014`): status + audit atomically, idempotent |
-| `actions.listLiveAuditEvents` | `[]` | ✅ `list_audit_events` RPC |
+| `tasks.getQueue` | mock queue | ✅ Desktop-owned `list_review_queue` (SECURITY INVOKER + RLS), settled status carried through reload |
+| `actions.execute` — `resolve` on a queue item | session outcome + session audit | ✅ direct `resolve_review_queue_item` RPC (migration `0014`): status + audit atomically, idempotent |
+| `actions.listLiveAuditEvents` / registered generic events | `[]` / session events | ✅ direct `list_audit_events` / `record_registered_audit_event` RPCs |
 | `actions.execute` — other kinds | session | session (wired per-domain as slices land) |
-| `schedule.getWeek` | n/a (demo calendar renders the weekday-pattern mock directly) | ✅ real `appointments` week read (RLS-scoped; patient-NULL breaks org-visible via migration `0017`) |
-| `schedule.book` / `updateStatus` | n/a (demo announces, never pretends to persist) | ✅ `book_appointment` / `update_appointment_status` RPCs (migration `0017`): validation + double-booking rejection (practitioner AND patient) + status-transition rules + audit, atomic. `reschedule_appointment` exists server-side; drag-to-reschedule UI is a later slice |
+| `schedule.getWeek` | n/a (demo calendar renders the weekday-pattern mock directly) | ✅ direct `get_desktop_calendar` RPC: caller-role schedule, schedulable practitioners, minimal patient picker; raw appointment-table access revoked |
+| `schedule.book` / `updateStatus` / `reschedule` | n/a (demo announces, never pretends to persist) | ✅ direct RPCs: scheduling-role authorization separated from chart writes, advisory overlap locks, status state machine, persisted rescheduling, and atomic audit |
+| `encounters.start` / `setStatus` / `get` / `forPatient` | honest live-only state | ✅ direct authenticated RPCs; bounded exact-shape reads, tenant checks, state machine, appointment-scoped idempotency, and database uniqueness for one active encounter per appointment |
+| `encounters.saveNote` / `getNote` / `markReady` / `signNote` / `addAddendum` / `markError` / `timeline` | honest live-only state | ✅ direct authenticated RPCs; optimistic concurrency, signed-note immutability, append-only addenda, provenance, bounded timeline, and atomic audit |
+| `knowledge.pathways` / `createDraft` / `updateDraft` / `approve` | session registry | ✅ authenticated organization registry through role-gated RPCs; approved content is immutable |
+| `knowledge.imports` / `stageImport` / `reviewImportItem` | session import review | ✅ immutable, hashed import batches with no-PHI attestation; acceptance creates only a pathway draft or pending product label |
 | everything else | mock | mock |
 
 `ActionBar` executes through `api.actions.execute`; an action whose context
@@ -102,21 +114,32 @@ All live mutations flow through the reusable `runClinicalMutation` helper
 | `src/adapters/mutations.ts` | `runClinicalMutation` (optimistic/rollback/audit) |
 | `src/adapters/live-client.ts` | client-safe bridge to `/api/live/*` |
 | `src/adapters/live-types.ts` | PHI-safe wire DTOs |
-| `src/adapters/*.live.ts` | server-only tRPC calls per domain |
+| `src/adapters/*.live.ts` | server-only Supabase or transitional tRPC calls per domain |
 | `src/adapters/trpc.server.ts` | dependency-free tRPC query/mutation client |
+| `src/adapters/supabase-rest.server.ts` | Desktop-owned, server-only clinical REST/RPC transport |
 | `src/app/api/live/*` | route handlers (client → server bridge) |
 | `src/components/ui/ClinicalStates.tsx` | shared loading / empty / error |
 | `src/components/settings/DataSourceCard.tsx` | env/status panel |
 
-**To wire a new domain live:** add `<domain>.live.ts` (tRPC calls) → add a
+**To wire a new domain live:** add `<domain>.live.ts` (Desktop-owned
+Supabase calls by default) → add a
 `/api/live/<domain>/*` route (client-initiated) or call it from a server
 component (reads) → add the live branch in `index.ts` behind `USE_LIVE_API`,
 reusing `runClinicalMutation` for writes and `ClinicalStates` for async UI.
 
+The clinical knowledge registry, practitioner identity/session lifecycle,
+organization selection and membership management, patient directory, labs
+workspace/review, review queue, audit log, and scheduling use the
+Desktop-owned boundary defined in ADR 0003. Their live adapters use
+`supabase-rest.server.ts`, with the publishable key and caller JWT confined to
+the Next.js server. Lab PDF ingestion remains worker-backed; other domains
+stay on transitional adapters until migrated in their own tested slices.
+
 ## Security assumptions
 
-- No PHI in console logs; audit metadata carries no raw lab values or note text
-  (enforced in `review_biomarker` and the app layer).
+- No PHI in console logs. Registered generic audit events allow only
+  database-approved scalar metadata and never accept display wording from the
+  browser; domain mutation functions govern their own metadata.
 - No client-side service-role key; no direct writes that bypass RLS.
 - `organization_id` / `patient_id` are never trusted from the client — every
   RPC re-checks access with `private.can_write_patient_data` /
@@ -135,9 +158,9 @@ npm run dev            # NEXT_PUBLIC_USE_LIVE_API unset → demo mode
 **Live:** set the env in `.env.local` (see `.env.example`):
 ```
 NEXT_PUBLIC_USE_LIVE_API=true
-TRPC_BASE_URL=…                 # reachable tRPC backend
+TRPC_BASE_URL=…                 # transitional domains only
 CLINICAL_ORG_ID=…               # or NEXT_PUBLIC_DEV_ORG_ID
-CLINICAL_SUPABASE_URL=… CLINICAL_SUPABASE_ANON_KEY=…   # auth token endpoint
+CLINICAL_SUPABASE_URL=… CLINICAL_SUPABASE_ANON_KEY=…   # auth + migrated Desktop domains
 ```
 Then `npm run dev` and **sign in at `/login`** (httpOnly cookie session; see
 [`live-auth-and-seeding.md`](live-auth-and-seeding.md)). `CLINICAL_DEMO_EMAIL/
@@ -152,33 +175,33 @@ UI where no backend is reachable, run the committed fixture —
 the header of `e2e/live-tasks.spec.ts`). It speaks the same wire contract with
 synthetic in-memory data; it is **not** the real backend, and the real data
 layer is verified separately (`supabase/tests/*.sql` via MCP). The gated live
-suite runs against it: `E2E_LIVE=1 npm run test:e2e -- e2e/live-tasks.spec.ts`
-after a live-flag build.
+suite runs against it after a live-flag build: `E2E_LIVE=1 npm run test:e2e --
+e2e/live-tasks.spec.ts e2e/live-scribe.spec.ts e2e/live-lens.spec.ts`.
 
 ## Verification (this change)
 
 | Layer | How | Result |
 | --- | --- | --- |
-| Typecheck / lint / build | `npm run typecheck && npm run lint && npm run build` | green (mock and live builds) |
-| DB write path (RPCs 0013) | live SQL vs the real project (MCP), simulated authenticated practitioner, rolled back — `supabase/tests/app_facing_functions.sql` | **16/16** (authorized review persists + audits; unauthorized → 42501; unauthenticated → 28000; invalid decision → 22023; lab values/provenance preserved; audit PHI-safe; anon cannot execute) |
-| Demo path (browser) | Playwright | **11/11** (async labs load; review → session audit; downstream task in queue; Settings shows DEMO; audit demo view) |
-| Live shell (browser) | Playwright, flag on + unreachable backend | **11/11** (LIVE badge + dev-override warning; clean retryable error state; no fake data; no misleading not-found; live append-only audit view) |
-| Live route handlers | `curl /api/live/*` | clean JSON envelopes — `503 unavailable` (backend down), `400 invalid` (bad input); never a crash or fake success |
+| Static checks | `npm run typecheck`, `npm run lint`, demo + live production builds | green |
+| Unit adapters | `npm run test:unit` | **56/56** (auth, PostgREST errors, organizations, selected-org patient/lab/queue/audit/calendar reads, registered audit, review/task, and schedule mutations, dates, knowledge) |
+| Desktop identity DB boundary | rolled-back SQL against the clinical project — `supabase/tests/desktop_identity_directory.sql` | **6/6** (active memberships only, assigned-patient RLS, cross-tenant denial, anon execute denied, explicit grants) |
+| Desktop labs/queue DB boundary | rolled-back SQL against the clinical project — `supabase/tests/desktop_labs_review_queue.sql` | **12/12** (patient and org queue visibility, reference/provenance joins, cross-tenant and anonymous denial, minimum grants, atomic review/resolve/create) |
+| Desktop audit DB boundary | rolled-back SQL against the clinical project — `supabase/tests/desktop_audit_actions.sql` | **13/13** (registered wording, metadata allowlist, tenant and role visibility, anonymous and direct-table denial) |
+| Desktop scheduling DB boundary | rolled-back SQL against the clinical project — `supabase/tests/desktop_scheduling.sql` | **21/21** (role-scoped calendar, minimal patient picker, staff operations, practitioner assignment limits, overlap locks, cross-tenant and direct-table denial, idempotency, atomic audit) |
+| Scheduling regression DB suite | rolled-back SQL against the clinical project — `supabase/tests/scheduling.sql` | **20/20** |
+| Demo UI | production build + Playwright | **41/41** |
+| Full live contract fixture | live production build + Playwright (`live-tasks`, `live-scribe`, `live-lens`) | **32/32** (auth rotation/revocation/logout, organizations, patient isolation, labs, scheduling, EMR, scribe, lens, registered audit boundary) |
+| Dependency audit | `npm audit` after non-breaking remediation | safe patch updates applied; remaining reports are the Next/sharp and ESLint/minimatch toolchains whose automated remedies require breaking downgrades |
 
-## The one hop not exercised here, and why
+The real signed-in staging browser gate remains an external deployment check;
+the database acceptance suite and committed contract fixture are supporting
+evidence, not substitutes for it.
 
-The final wire — **tRPC backend → real clinical Supabase over HTTP**, and the
-desktop reaching a deployed backend — could not be exercised from this sandbox:
-the egress proxy rejects `*.supabase.co` (`host not in allowlist`), and the
-shared tRPC backend is not deployed/reachable here. Both sides of that hop are
-verified independently (DB via MCP; desktop shell + route handlers + error
-states via Playwright/curl). In an environment where the backend can reach the
-project, the same calls complete end-to-end.
+## Repository boundary
 
-### Exact backend task remaining (in `rork-ai-longevity-coach`)
-
-Add the `clinical.labs.getWorkspace`, `clinical.labs.reviewMarker`,
-`clinical.actions.recordAudit`, `clinical.actions.listAuditEvents`, and
-`clinical.actions.createReviewTask` procedures that forward the practitioner's
-JWT and call the `0013` RPCs / read the workspace. The desktop already speaks
-this contract.
+AI Desktop Pro and AI Longevity Pro are separate products. New Desktop server
+work stays in this repository (or a future Desktop-owned API repository);
+Desktop feature branches and procedures are not added to
+`rork-ai-longevity-coach`. See ADR 0003. Legacy tRPC-backed slices are migrated
+to the Desktop-owned boundary one domain at a time, with a signed-in live
+browser gate before the old transport is removed.

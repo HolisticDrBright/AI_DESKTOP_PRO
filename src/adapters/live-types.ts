@@ -76,7 +76,7 @@ export interface LiveUploadResult {
 
 /* ---------------------------------------------------------------- schedule */
 
-/** One appointment row as clinical.schedule.getCalendar returns it. */
+/** One scheduling-safe appointment row returned by the Desktop calendar RPC. */
 export interface LiveAppointment {
   id: string;
   patientId: string | null;
@@ -99,9 +99,16 @@ export interface LiveCalendarPractitioner {
   specialty: string | null;
 }
 
+export interface LiveCalendarPatient {
+  id: string;
+  name: string;
+}
+
 export interface LiveCalendar {
   appointments: LiveAppointment[];
   practitioners: LiveCalendarPractitioner[];
+  /** Scheduling-safe picker fields only; no clinical chart data. */
+  patients: LiveCalendarPatient[];
 }
 
 export interface LiveBookResult {
@@ -119,6 +126,15 @@ export interface LiveAppointmentStatusResult {
   status: string;
   previousStatus: string;
   alreadySet: boolean;
+  message: string;
+}
+
+export interface LiveRescheduleResult {
+  ok: true;
+  id: string;
+  status: string;
+  startsAt: string;
+  endsAt: string;
   message: string;
 }
 

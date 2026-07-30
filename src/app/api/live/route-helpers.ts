@@ -4,8 +4,8 @@ import { AdapterError, HTTP_STATUS, toAdapterError } from "@/adapters/errors";
 
 /**
  * Shared plumbing for the `/api/live/*` route handlers — the server-side bridge
- * a client component uses to reach the authenticated tRPC backend without ever
- * importing server-only code into the browser bundle.
+ * a client component uses to reach authenticated clinical data services
+ * without importing server-only code into the browser bundle.
  *
  * Every response is `{ data }` on success or `{ error: { code, message } }` on
  * failure, with a matching HTTP status. Failures are logged with code + safe

@@ -6,46 +6,30 @@ import { usePathname } from "next/navigation";
 import {
   Activity,
   BarChart3,
+  Blocks,
   Calendar,
-  CheckSquare,
   ChevronDown,
   CircleHelp,
-  ClipboardList,
-  Clock,
+  ClipboardCheck,
   CreditCard,
-  FilePlus,
-  FileText,
-  FlaskConical,
-  GitBranch,
-  Home,
-  Import,
+  Inbox,
   Layers,
-  LayoutTemplate,
-  Link as LinkIcon,
-  MessageCircle,
-  Pill,
-  Receipt,
-  ScrollText,
-  ShieldCheck,
   SlidersVertical,
-  Sparkles,
-  TestTube,
+  Sun,
   User,
   Users,
   UsersRound,
-  Utensils,
-  Watch,
-  Zap,
   type LucideIcon,
 } from "lucide-react";
-import { DEFAULT_PATIENT_ID } from "@/adapters";
 import { USE_LIVE_API } from "@/adapters/mode";
 import { getTaskQueue } from "@/adapters/tasks.mock";
 import { useReviewOutcomes, useSessionQueueItems } from "@/adapters/session-store";
-import type { PatientTabId } from "@/adapters/types";
+import { useUnreadThreadCount } from "@/adapters/inbox.mock";
+import { useNavMode } from "@/adapters/tracking.mock";
+import { DEFAULT_PATIENT_ID } from "@/adapters/patients.mock";
+import { patientPath } from "@/lib/routes";
 import { Popover, PopoverDemoNote, PopoverHeader } from "@/components/ui/Popover";
 import { cn } from "@/lib/cn";
-import { parsePatientPath, patientPath } from "@/lib/routes";
 
 const footerMenuLink =
   "flex items-center justify-between px-[13px] py-[9px] text-[12.5px] font-medium text-body-2 hover:bg-[rgba(37,99,199,0.06)] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-action";
@@ -54,9 +38,7 @@ interface NavItem {
   id: string;
   label: string;
   icon: LucideIcon;
-  badge?: string;
-  /** Patient-scoped tab, or a standalone route. */
-  target: { tab: PatientTabId } | { href: string };
+  href: string;
 }
 
 interface NavGroup {
@@ -65,112 +47,93 @@ interface NavGroup {
 }
 
 /**
- * System-of-record navigation. Grouped so operational surfaces (billing,
- * claims, automations, audit) sit alongside clinical ones — the app presents
- * as a practice system, not a single patient view.
+ * Practice-level navigation ONLY (practitioner-OS IA). Patient-scoped
+ * destinations live exclusively in the patient chart's local tabs — the
+ * sidebar never duplicates them. Restrained three-group structure.
  */
 const NAV_GROUPS: NavGroup[] = [
   {
     label: "Workspace",
     items: [
-      { id: "overview", label: "Overview", icon: Home, target: { tab: "summary" } },
-      { id: "clients", label: "Clients", icon: Users, target: { href: "/clients" } },
-      { id: "calendar", label: "Calendar", icon: Calendar, target: { href: "/calendar" } },
-      // Tasks badge is computed live from the queue (base + session − resolved).
-      { id: "tasks", label: "Tasks", icon: CheckSquare, target: { href: "/tasks" } },
-      { id: "messages", label: "Messages", icon: MessageCircle, badge: "2", target: { href: "/messages" } },
+      { id: "today", label: "Today", icon: Sun, href: "/today" },
+      { id: "calendar", label: "Calendar", icon: Calendar, href: "/calendar" },
+      { id: "patients", label: "Patients", icon: Users, href: "/patients" },
+      { id: "review", label: "Review Queue", icon: ClipboardCheck, href: "/tasks" },
+      { id: "inbox", label: "Inbox", icon: Inbox, href: "/inbox" },
     ],
   },
   {
-    label: "Clinical",
+    label: "Business",
     items: [
-      { id: "twin", label: "Health Twin", icon: Activity, target: { tab: "twin" } },
-      { id: "timeline", label: "Timeline", icon: Clock, target: { tab: "timeline" } },
-      { id: "labs", label: "Labs & Biomarkers", icon: FlaskConical, target: { tab: "labs" } },
-      { id: "lab-orders", label: "Lab Orders", icon: FilePlus, target: { tab: "lab-orders" } },
-      { id: "reasoning", label: "Clinical Reasoning", icon: GitBranch, target: { tab: "reasoning" } },
-      { id: "protocols", label: "Protocols", icon: ClipboardList, target: { tab: "protocols" } },
-      { id: "supplements", label: "Supplements", icon: Pill, target: { tab: "supplements" } },
-      { id: "nof1", label: "N-of-1 Lab", icon: TestTube, target: { tab: "nof1-lab" } },
-      { id: "wearables", label: "Wearables", icon: Watch, target: { href: "/wearables" } },
-      { id: "assessments", label: "Assessments", icon: FileText, target: { href: "/assessments" } },
-      { id: "nutrition", label: "Nutrition", icon: Utensils, target: { href: "/nutrition" } },
-      { id: "quantum", label: "Quantum Mind", icon: Sparkles, target: { href: "/quantum-mind" } },
-    ],
-  },
-  {
-    label: "Operations",
-    items: [
-      { id: "programs", label: "Programs", icon: Layers, target: { href: "/programs" } },
-      { id: "templates", label: "Templates", icon: LayoutTemplate, target: { href: "/templates" } },
-      { id: "automations", label: "Automations", icon: Zap, target: { href: "/automations" } },
-      { id: "imports", label: "Imports", icon: Import, target: { href: "/imports" } },
-      { id: "billing", label: "Billing", icon: CreditCard, target: { href: "/billing" } },
-      { id: "claims", label: "Claims", icon: Receipt, target: { href: "/claims" } },
-      { id: "reports", label: "Reports", icon: BarChart3, target: { href: "/reports" } },
-      { id: "integrations", label: "Integrations", icon: LinkIcon, target: { href: "/integrations" } },
-      { id: "team", label: "Team", icon: UsersRound, target: { href: "/team" } },
+      { id: "programs", label: "Programs", icon: Layers, href: "/programs" },
+      { id: "billing", label: "Billing", icon: CreditCard, href: "/billing" },
+      { id: "reports", label: "Reports", icon: BarChart3, href: "/reports" },
     ],
   },
   {
     label: "System",
     items: [
-      { id: "ai-safety", label: "AI Safety", icon: ShieldCheck, target: { href: "/ai-safety" } },
-      { id: "audit", label: "Audit Log", icon: ScrollText, target: { href: "/audit-log" } },
-      { id: "settings", label: "Settings", icon: SlidersVertical, target: { href: "/settings" } },
+      { id: "integrations", label: "Integrations", icon: Blocks, href: "/integrations" },
+      { id: "team", label: "Team", icon: UsersRound, href: "/team" },
+      { id: "settings", label: "Settings", icon: SlidersVertical, href: "/settings" },
     ],
   },
 ];
 
-/** Patient tabs that map to a sidebar item (the Reports tab lives in the tab bar). */
-const TAB_TO_NAV: Partial<Record<PatientTabId, string>> = {
-  summary: "overview",
-  twin: "twin",
-  timeline: "timeline",
-  labs: "labs",
-  "lab-orders": "lab-orders",
-  reasoning: "reasoning",
-  supplements: "supplements",
-  "nof1-lab": "nof1",
-  protocols: "protocols",
-};
+/**
+ * Biohacker navigation variant (preview, Settings → Navigation mode): a
+ * single-user shape — practice operations collapse, Tracking is central.
+ * No entitlements; live mode always uses the practitioner navigation.
+ */
+const BIOHACKER_GROUPS: NavGroup[] = [
+  {
+    label: "My health",
+    items: [
+      { id: "today", label: "Today", icon: Sun, href: "/today" },
+      { id: "patients", label: "My Data", icon: Users, href: patientPath(DEFAULT_PATIENT_ID) },
+      { id: "tracking", label: "Tracking & Experiments", icon: Activity, href: `${patientPath(DEFAULT_PATIENT_ID, "tracking")}?view=twin` },
+      { id: "calendar", label: "Schedule", icon: Calendar, href: "/calendar" },
+    ],
+  },
+  {
+    label: "Learning",
+    items: [{ id: "programs", label: "Programs", icon: Layers, href: "/programs" }],
+  },
+  {
+    label: "System",
+    items: [
+      { id: "billing", label: "Subscriptions", icon: CreditCard, href: "/billing?tab=subscriptions" },
+      { id: "settings", label: "Settings", icon: SlidersVertical, href: "/settings" },
+    ],
+  },
+];
 
-const ROUTE_TO_NAV: Record<string, string> = {
-  "/clients": "clients",
-  "/practice": "clients",
-  "/calendar": "calendar",
-  "/tasks": "tasks",
-  "/messages": "messages",
-  "/wearables": "wearables",
-  "/assessments": "assessments",
-  "/nutrition": "nutrition",
-  "/quantum-mind": "quantum",
-  "/programs": "programs",
-  "/templates": "templates",
-  "/automations": "automations",
-  "/imports": "imports",
-  "/billing": "billing",
-  "/claims": "claims",
-  "/reports": "reports",
-  "/integrations": "integrations",
-  "/team": "team",
-  "/ai-safety": "ai-safety",
-  "/audit-log": "audit",
-  "/settings": "settings",
-};
+/** Longest-prefix route → nav id (patient chart highlights Patients). */
+function activeNavId(pathname: string): string {
+  if (pathname === "/today") return "today";
+  if (pathname.startsWith("/calendar")) return "calendar";
+  if (pathname.startsWith("/patients")) return "patients";
+  if (pathname.startsWith("/tasks")) return "review";
+  if (pathname.startsWith("/inbox")) return "inbox";
+  if (pathname.startsWith("/programs")) return "programs";
+  if (pathname.startsWith("/billing")) return "billing";
+  if (pathname.startsWith("/reports")) return "reports";
+  if (pathname.startsWith("/integrations")) return "integrations";
+  if (pathname.startsWith("/team")) return "team";
+  if (pathname.startsWith("/settings")) return "settings";
+  if (pathname.startsWith("/templates")) return "settings";
+  return "";
+}
 
 export function Sidebar() {
   const pathname = usePathname();
-  const patient = parsePatientPath(pathname);
-  // LIVE mode has no synthetic fallback patient: outside a patient route the
-  // clinical tabs route to the real directory to pick one. Demo keeps its
-  // showcase patient so the tour always lands somewhere.
-  const patientId = patient?.patientId ?? (USE_LIVE_API ? null : DEFAULT_PATIENT_ID);
-  const activeId = patient ? TAB_TO_NAV[patient.tab] : (ROUTE_TO_NAV[pathname] ?? "");
+  const activeId = activeNavId(pathname);
+  const navMode = useNavMode();
+  const groups = !USE_LIVE_API && navMode === "biohacker" ? BIOHACKER_GROUPS : NAV_GROUPS;
 
-  // Open-task badge from the same stores as /tasks so it matches the screen.
-  // Demo mode only — the live queue is fetched per screen, so no badge there
-  // rather than a possibly-stale number.
+  // Open review-queue badge from the same stores as /tasks so it matches the
+  // screen. Demo mode only — the live queue is fetched per screen, so no
+  // badge there rather than a possibly-stale number.
   const sessionAdded = useSessionQueueItems();
   const reviews = useReviewOutcomes();
   const baseCount = useMemo(() => getTaskQueue().length, []);
@@ -180,6 +143,12 @@ export function Sidebar() {
   const openTasks = USE_LIVE_API
     ? 0
     : Math.max(0, baseCount + sessionAdded.length - resolvedCount);
+  const unreadThreads = useUnreadThreadCount();
+
+  const badges: Record<string, number> = {
+    review: openTasks,
+    inbox: USE_LIVE_API ? 0 : unreadThreads,
+  };
 
   return (
     <nav
@@ -203,28 +172,21 @@ export function Sidebar() {
       </div>
 
       <div className="flex flex-1 flex-col gap-[10px] overflow-y-auto px-3 pt-[2px] pb-3">
-        {NAV_GROUPS.map((group) => (
+        {groups.map((group) => (
           <div key={group.label} className="flex flex-col gap-[2px]">
             <div className="px-[10px] pt-[6px] pb-[3px] text-[10px] font-bold tracking-[0.07em] text-faint uppercase">
               {group.label}
             </div>
             {group.items.map((item) => {
               const active = item.id === activeId;
-              const href =
-                "href" in item.target
-                  ? item.target.href
-                  : patientId
-                    ? patientPath(patientId, item.target.tab)
-                    : "/clients";
               const Icon = item.icon;
-              const badge =
-                item.id === "tasks" ? (openTasks > 0 ? String(openTasks) : undefined) : item.badge;
+              const badge = badges[item.id];
               return (
                 <Link
                   key={item.id}
-                  href={href}
+                  href={item.href}
                   className={cn(
-                    "flex w-full items-center gap-[11px] rounded-[9px] border px-[10px] py-2 text-left text-[13px] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-action",
+                    "flex w-full items-center gap-[11px] rounded-lg border px-[10px] py-2 text-left text-[13px] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-action",
                     active
                       ? "border-nav-active-line bg-nav-active font-semibold text-action-deep"
                       : "border-transparent font-medium text-body-2 hover:bg-[rgba(37,99,199,0.06)]",
@@ -233,11 +195,11 @@ export function Sidebar() {
                 >
                   <Icon size={17} strokeWidth={1.75} className="shrink-0 opacity-90" aria-hidden />
                   <span className="flex-1">{item.label}</span>
-                  {badge && (
+                  {badge ? (
                     <span className="rounded-full bg-[rgba(90,107,126,0.12)] px-[7px] py-px text-[11px] font-semibold text-muted">
                       {badge}
                     </span>
-                  )}
+                  ) : null}
                 </Link>
               );
             })}
@@ -276,6 +238,10 @@ export function Sidebar() {
                 See roles &amp; permissions
                 <span className="text-faint" aria-hidden>→</span>
               </Link>
+              <Link href="/settings" onClick={close} className={footerMenuLink}>
+                Navigation mode (Biohacker preview)
+                <span className="text-faint" aria-hidden>→</span>
+              </Link>
               <PopoverDemoNote>
                 Role switching arrives with real sign-in. Access is enforced by the backend, not
                 this label.
@@ -303,16 +269,16 @@ export function Sidebar() {
           {({ close }) => (
             <>
               <PopoverHeader title="Help" note="In-app references" />
-              <Link href="/ai-safety" onClick={close} className={footerMenuLink}>
-                AI safety registry
+              <Link href="/settings/governance?tab=ai" onClick={close} className={footerMenuLink}>
+                AI governance registry
                 <span className="text-faint" aria-hidden>→</span>
               </Link>
-              <Link href="/audit-log" onClick={close} className={footerMenuLink}>
+              <Link href="/settings/governance?tab=audit" onClick={close} className={footerMenuLink}>
                 Audit log
                 <span className="text-faint" aria-hidden>→</span>
               </Link>
-              <Link href="/settings" onClick={close} className={footerMenuLink}>
-                Settings &amp; data boundaries
+              <Link href="/settings/data" onClick={close} className={footerMenuLink}>
+                Data boundaries &amp; imports
                 <span className="text-faint" aria-hidden>→</span>
               </Link>
               <PopoverDemoNote>

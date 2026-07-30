@@ -4,6 +4,8 @@ import { AdapterError } from "@/adapters/errors";
 import { getRequestSession } from "@/server/session";
 import { liveGuard, runLive } from "../../../route-helpers";
 
+const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
+
 /**
  * POST { action, noteId, ... } — the note state machine's explicit actions:
  *   ready    {}                          draft → ready_for_review
@@ -19,7 +21,7 @@ export async function POST(req: NextRequest) {
     const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
     const action = typeof body.action === "string" ? body.action : "";
     const noteId = typeof body.noteId === "string" ? body.noteId : "";
-    if (!noteId) throw new AdapterError("invalid", "A note is required.");
+    if (!UUID.test(noteId)) throw new AdapterError("invalid", "A valid note is required.");
     const session = await getRequestSession();
 
     switch (action) {
@@ -37,11 +39,15 @@ export async function POST(req: NextRequest) {
         const content = typeof body.content === "string" ? body.content.trim() : "";
         if (!reason) throw new AdapterError("invalid", "A reason is required for an addendum.");
         if (!content) throw new AdapterError("invalid", "Addendum text is required.");
+        if (reason.length > 500 || content.length > 65_536) {
+          throw new AdapterError("invalid", "This addendum is too large.");
+        }
         return encountersLive.addAddendum({ noteId, reason, content }, session.token);
       }
       case "error": {
         const reason = typeof body.reason === "string" ? body.reason.trim() : "";
         if (!reason) throw new AdapterError("invalid", "A reason is required.");
+        if (reason.length > 500) throw new AdapterError("invalid", "This reason is too long.");
         return encountersLive.markNoteError({ noteId, reason }, session.token);
       }
       default:

@@ -22,6 +22,7 @@ export type ReviewOutcome =
   | "approved"
   | "accepted"
   | "rejected"
+  | "dismissed"
   | "flagged"
   | "reviewed"
   | "resolved"
@@ -280,11 +281,25 @@ export interface Sale {
 
 const INV_ADJ_KEY = "aidp:demo:inventory-adj";
 const SALES_KEY = "aidp:demo:sales";
+const INVENTORY_MOVEMENTS_KEY = "aidp:demo:inventory-movements";
 const EMPTY_ADJ: Readonly<Record<string, number>> = Object.freeze({});
 const EMPTY_SALES: readonly Sale[] = Object.freeze([]);
 
 let invAdjCache: Record<string, number> | null = null;
 let salesCache: Sale[] | null = null;
+
+export interface InventoryMovement {
+  id: string;
+  productId: string;
+  productName: string;
+  kind: "sale" | "received" | "count-correction";
+  delta: number;
+  at: string;
+  note: string;
+}
+
+const EMPTY_MOVEMENTS: readonly InventoryMovement[] = Object.freeze([]);
+let inventoryMovementsCache: InventoryMovement[] | null = null;
 
 function readInvAdj(): Record<string, number> {
   if (invAdjCache) return invAdjCache;
@@ -330,6 +345,54 @@ export function useInventoryAdjustments(): Record<string, number> {
     subscribe,
     getInventoryAdjustments,
     () => EMPTY_ADJ as Record<string, number>,
+  );
+}
+
+function readInventoryMovements(): InventoryMovement[] {
+  if (inventoryMovementsCache) return inventoryMovementsCache;
+  if (typeof window === "undefined") return (inventoryMovementsCache = []);
+  try {
+    inventoryMovementsCache = JSON.parse(
+      window.sessionStorage.getItem(INVENTORY_MOVEMENTS_KEY) ?? "[]",
+    );
+  } catch {
+    inventoryMovementsCache = [];
+  }
+  return inventoryMovementsCache!;
+}
+
+export function recordInventoryMovement(
+  movement: Omit<InventoryMovement, "id" | "at">,
+) {
+  const next: InventoryMovement = {
+    ...movement,
+    id: newId(),
+    at: new Date().toISOString(),
+  };
+  inventoryMovementsCache = [next, ...readInventoryMovements()];
+  if (typeof window !== "undefined") {
+    try {
+      window.sessionStorage.setItem(
+        INVENTORY_MOVEMENTS_KEY,
+        JSON.stringify(inventoryMovementsCache),
+      );
+    } catch {
+      /* ignore */
+    }
+  }
+  emit();
+  return next;
+}
+
+export function listInventoryMovements(): InventoryMovement[] {
+  return readInventoryMovements();
+}
+
+export function useInventoryMovements(): InventoryMovement[] {
+  return useSyncExternalStore(
+    subscribe,
+    listInventoryMovements,
+    () => EMPTY_MOVEMENTS as InventoryMovement[],
   );
 }
 
@@ -399,9 +462,12 @@ function persistCustomProducts(next: InventoryProduct[]) {
   emit();
 }
 
-/** Add a product to inventory this session (prepended, newest first). */
-export function addCustomProduct(product: InventoryProduct) {
-  persistCustomProducts([product, ...readCustomProducts()]);
+/** Add or snapshot-edit a product this session (newest version wins by id). */
+export function upsertCustomProduct(product: InventoryProduct) {
+  persistCustomProducts([
+    product,
+    ...readCustomProducts().filter((p) => p.id !== product.id),
+  ]);
 }
 
 export function listCustomProducts(): InventoryProduct[] {

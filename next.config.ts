@@ -30,6 +30,22 @@ const RECORDING_CSP = [
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  async redirects() {
+    // Route consolidation (practitioner-OS IA). Old URLs stay alive —
+    // see docs/information-architecture.md. Mode-dependent redirects
+    // (/, /wearables, /quantum-mind, /nutrition) live in their pages.
+    return [
+      { source: "/practice", destination: "/today", permanent: false },
+      { source: "/clients", destination: "/patients", permanent: false },
+      { source: "/messages", destination: "/inbox", permanent: false },
+      { source: "/automations", destination: "/integrations?tab=automations", permanent: false },
+      { source: "/imports", destination: "/settings/data?tab=imports", permanent: false },
+      { source: "/ai-safety", destination: "/settings/governance?tab=ai", permanent: false },
+      { source: "/audit-log", destination: "/settings/governance?tab=audit", permanent: false },
+      { source: "/claims", destination: "/billing?tab=claims", permanent: false },
+      { source: "/assessments", destination: "/templates?type=assessment", permanent: false },
+    ];
+  },
   async headers() {
     return [
       {

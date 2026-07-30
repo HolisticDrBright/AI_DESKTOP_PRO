@@ -3,8 +3,10 @@
 Per-domain guide for replacing mock/session data with the real backend. The
 architecture every domain follows is already proven by the labs vertical slice
 (see [`live-api.md`](live-api.md)): UI → `api.<domain>.*` façade → (live mode)
-route handler / server component → tRPC backend → clinical Supabase under RLS,
-with SECURITY DEFINER RPCs (migration `0013`) as the append-only write path.
+route handler / server component → Desktop-owned Supabase REST/RPC boundary
+under RLS. Transitional worker/coordinator domains still use the legacy tRPC
+service until they move in their own tested slice. SECURITY DEFINER RPCs remain
+the atomic, authorized write path.
 
 Shared assumptions for every domain:
 
@@ -43,6 +45,10 @@ Status legend: ✅ live path exists · 🟢 ready to wire (schema + pattern exis
 - **Live tables:** `biomarker_observations`, `biomarker_definitions`,
   `lab_panels`, `lab_documents`; RPCs `review_biomarker` (atomic review+audit)
   and `ingest_lab_extraction` / `mark_lab_document_failed` (migration `0016`)
+- **Desktop boundary:** `list_patient_lab_observations` SECURITY INVOKER read,
+  RLS-scoped patient/document selects, and direct `review_biomarker` /
+  `create_review_task` calls with the practitioner JWT. Missing confidence stays
+  unknown; ambiguous source flags are never assigned a direction.
 - **Ingestion:** Upload lab (live) → `lab-documents` storage bucket
   (path-scoped storage RLS) → backend deterministic extraction (alias-anchored
   parser, no AI) → observations with verbatim originals + per-marker
@@ -50,8 +56,8 @@ Status legend: ✅ live path exists · 🟢 ready to wire (schema + pattern exis
 - **Missing fields:** optimal ranges need `biomarker_optimal_ranges`
   (practice-scoped) — lab reference interval is never replaced; image-only
   (scanned) PDFs are not extracted yet (stored + honest `failed` status)
-- **First live mutation:** already defined — `review_biomarker` (backend
-  procedure `clinical.labs.reviewMarker` is the remaining hop)
+- **Transitional piece:** PDF upload/download still use the worker-backed
+  endpoint because Storage, extraction, and deletion are coordinated jobs.
 
 ## Tasks / Review queue — ✅ live path exists
 - **Route:** `/tasks` · **Adapter:** `api.tasks.getQueue` (live behind flag) +
@@ -59,28 +65,33 @@ Status legend: ✅ live path exists · 🟢 ready to wire (schema + pattern exis
 - **Mock:** `tasks.mock.ts` · **Session:** `queue:<id>` outcomes + session-added items
 - **Live tables:** `review_queue_items`; RPC `resolve_review_queue_item`
   (migration `0014`, atomic status+audit, idempotent) + `create_review_task`
+- **Desktop boundary:** `list_review_queue` SECURITY INVOKER read plus direct
+  `resolve_review_queue_item`; selected organization and patient RLS both apply.
 - **Reload persistence:** the row's settled status maps into the UI
   (`settledOutcome`), so resolve survives reload without sessionStorage
-- **Missing fields:** assignee display name needs a join (`assignee_user_id`);
-  seeds are title-only until sources are linked
-- **Remaining hop:** `clinical.tasks.getQueue` / `clinical.tasks.resolve`
-  procedures in the tRPC backend (desktop + DB sides verified; contract
-  fixture in `scripts/live-stub-server.mjs`)
+- **Missing fields:** non-caller assignee display names and structured source
+  links still need a governed directory/source join.
 
 ## Calendar / Scheduling — ✅ live path exists
-- **Route:** `/calendar` · **Adapter:** `api.schedule.getWeek/book/updateStatus`
+- **Route:** `/calendar` · **Adapter:**
+  `api.schedule.getWeek/book/updateStatus/reschedule`
   (live-only; the demo calendar renders the weekday-pattern mock directly)
-- **Live tables:** `appointments` (types/status vocab + patient-NULL breaks
-  org-visible via migration `0017`); RPCs `book_appointment` (double-booking
-  rejected for practitioner AND patient) / `update_appointment_status`
-  (transition rules, terminal idempotent) / `reschedule_appointment` — all
-  audited atomically
+- **Desktop boundary:** `get_desktop_calendar` returns only the caller's
+  role-scoped appointments, schedulable practitioners, and a minimal
+  id/name patient picker. Raw browser-role access to `appointments` is
+  revoked.
+- **Live writes:** `book_appointment` (practitioner and patient overlap
+  rejection), `update_appointment_status` (transition rules and idempotency),
+  and `reschedule_appointment`; each re-authorizes the caller, locks the
+  affected schedule, and appends audit atomically. Staff may operate the
+  schedule without gaining clinical-chart write access; practitioners remain
+  restricted to assigned patients.
 - **Live UI:** real week fetch per anchor, record statuses (never derived from
   the clock), booking drawer (patient/practitioner/type/time), check-in /
-  complete / cancel (confirm + audit)
+  complete / no-show / cancel, and date/time rescheduling (confirm + audit)
 - **Deferred (documented, not faked):** patient-facing online booking page,
-  reminders (email/SMS provider decision), external calendar sync,
-  drag-to-reschedule UI (RPC already exists)
+  reminders (email/SMS provider decision), external calendar sync, recurring
+  availability, and drag-to-reschedule interaction
 
 ## Clinical Reasoning — 🟡 needs backend shaping
 - **Route:** `/patients/:id/reasoning` (+ summary snapshot card)
@@ -91,15 +102,29 @@ Status legend: ✅ live path exists · 🟢 ready to wire (schema + pattern exis
 - **First live mutation:** hypothesis accept/reject → status column + audit
   (same shape as `review_biomarker`)
 
-## Composer / Notes / Reports — 🟡 needs generation endpoint
-- **Adapter:** `api.composer.generate` (mock templates)
-- **Live:** notes → `clinical_notes` (0004); generation is a server-side AI
-  endpoint with the same draft/review/sign gates; **drafts are never final**
-- **First live mutation:** save reviewed note → `INSERT clinical_notes` + audit
+## Encounters / Clinical Notes / Timeline — ✅ live path exists
+- **Adapter:** `api.encounters.*` through `encounters.live.ts`
+- **Desktop boundary:** bounded encounter, note-detail, patient-encounter, and
+  timeline reads use the narrow authenticated RPCs introduced in
+  `20260729005221_desktop_owned_encounters_notes.sql`. All lifecycle writes use
+  the existing authorized state-machine RPCs.
+- **Safety:** optimistic version checks, signed-note immutability, append-only
+  addenda, provenance, tenant agreement, and same-transaction audit remain
+  database-enforced. A same-appointment advisory lock plus a unique partial
+  index prevent duplicate active encounters.
+- **Composer generation:** `api.composer.generate` remains a separate
+  mock/server-AI concern. Generated content is always a draft and never signs,
+  sends, orders, or publishes itself.
 
 ## Audit Log — ✅ dual-mode
 - **Route:** `/audit-log` — demo (sessionStorage) vs live (`list_audit_events`
   RPC: own events, all if org-admin)
+- **Desktop boundary:** reads and registered generic UI events go directly
+  through `list_audit_events` / `record_registered_audit_event` with the
+  practitioner JWT. The private registry owns action names, resource types,
+  display wording, and allowed scalar metadata. Direct table access is revoked.
+- **Compatibility:** the older free-form `record_audit_event` function remains
+  for transitional legacy callers; the Desktop route does not expose it.
 - **Missing:** pagination + filters when volume grows
 
 ## Supplements — 🟢 reads ready · 🟡 stack writes
@@ -145,12 +170,10 @@ Status legend: ✅ live path exists · 🟢 ready to wire (schema + pattern exis
 
 ## Recommended wiring order
 
-1. ~~Tasks/Review queue~~ — ✅ done (RPC 0014, façade + UI live, gated e2e)
-2. **Backend procedures** (`clinical.tasks.*`, `clinical.labs.*`,
-   `clinical.actions.*` in the tRPC repo) — the single remaining hop that turns
-   both finished slices fully on; the committed contract fixture defines the
-   exact shapes
-3. Reasoning reads + accept/reject mutation (same liveRef pattern via ActionBar)
-4. Composer save-note (with sign-off gates)
-5. Dispensary sale → invoices (+ inventory table migration)
-6. Programs / N-of-1 / Twin / Imports as their pipelines land
+1. ~~Tasks/Review queue and labs read/review~~ — ✅ Desktop-owned boundary
+2. ~~Audit reads/registered generic writes~~ — ✅ Desktop-owned boundary
+3. ~~Scheduling/calendar~~ — ✅ Desktop-owned boundary
+4. Reasoning reads + accept/reject mutation (same liveRef pattern via ActionBar)
+5. Composer save-note (with sign-off gates)
+6. Dispensary sale → invoices (+ inventory table migration)
+7. Programs / N-of-1 / Twin / Imports as their pipelines land

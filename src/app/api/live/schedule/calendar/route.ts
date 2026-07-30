@@ -12,8 +12,13 @@ export async function POST(req: NextRequest) {
     const body = (await req.json().catch(() => ({}))) as { fromIso?: unknown; toIso?: unknown };
     const fromIso = typeof body.fromIso === "string" ? body.fromIso : "";
     const toIso = typeof body.toIso === "string" ? body.toIso : "";
-    if (!fromIso || !toIso || Number.isNaN(Date.parse(fromIso)) || Number.isNaN(Date.parse(toIso))) {
+    const from = Date.parse(fromIso);
+    const to = Date.parse(toIso);
+    if (!fromIso || !toIso || Number.isNaN(from) || Number.isNaN(to) || to <= from) {
       throw new AdapterError("invalid", "A valid date range is required.");
+    }
+    if (to - from > 42 * 24 * 60 * 60 * 1000) {
+      throw new AdapterError("invalid", "Calendar ranges are limited to 42 days.");
     }
     const session = await getRequestSession();
     return scheduleLive.getCalendar(fromIso, toIso, session.token, session.orgId);

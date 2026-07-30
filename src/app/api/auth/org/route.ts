@@ -11,8 +11,8 @@ const WEEK = 60 * 60 * 24 * 7;
 /**
  * GET → the caller's organizations + the active one.
  * POST { organizationId } → switch, after validating the id against the
- * caller's OWN memberships (the cookie only scopes the UI; the backend
- * re-authorizes every call regardless).
+ * caller's OWN memberships (the cookie only scopes the UI; database RLS and
+ * guarded RPCs re-authorize every call regardless).
  */
 export async function GET() {
   if (!USE_LIVE_API) {

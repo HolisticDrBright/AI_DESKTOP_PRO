@@ -18,8 +18,8 @@ import type { Tone } from "@/adapters/types";
 import { toneText, toneTint } from "@/lib/tones";
 
 /**
- * Detail fields the BACKEND audit table will carry. Typed now, empty in the
- * demo, so the drawer's shape survives the tRPC swap unchanged.
+ * Detail fields the persistent audit table can carry. Typed now and empty in
+ * the demo so transport changes do not reshape the drawer.
  */
 interface AuditBackendFields {
   actorId: string | null;
@@ -51,6 +51,7 @@ const OUTCOME_TONE: Record<ReviewOutcome, Tone> = {
   reviewed: "positive",
   resolved: "positive",
   rejected: "critical",
+  dismissed: "slate",
   flagged: "warning",
   snoozed: "slate",
 };
@@ -86,7 +87,8 @@ function timeAgo(iso: string): string {
 /**
  * Canonical dual-mode audit viewer. In demo mode it reads the sessionStorage
  * log; in live mode it reads the append-only audit_events table for the
- * caller's org through the façade (`list_audit_events` RPC via the tRPC layer).
+ * caller's org through the Desktop-owned `list_audit_events` database
+ * function.
  */
 export function AuditLogScreen() {
   return USE_LIVE_API ? <LiveAuditLog /> : <DemoAuditLog />;
@@ -227,9 +229,10 @@ function LiveAuditLog() {
       <div className="mb-4">
         <h1 className="m-0 text-[22px] font-bold tracking-[-0.015em]">Audit log</h1>
         <p className="mt-[5px] mb-0 max-w-[660px] text-[13px] leading-[1.5] text-subtle">
-          Append-only audit events for your organization, read from the backend under RLS.
-          Practitioners see the events they performed; org admins see all. Rows are stamped
-          server-side and cannot be edited or deleted.
+          Append-only audit events for your organization, read through a
+          caller-authorized database function. Practitioners see the events they
+          performed; org admins see all. Rows are stamped by the database and cannot
+          be edited or deleted.
         </p>
       </div>
 
@@ -329,8 +332,8 @@ function LiveAuditDrawer({ event, onClose }: { event: LiveAuditEvent; onClose: (
       </div>
 
       <div className="shrink-0 border-t border-hairline bg-[rgba(247,250,252,0.7)] px-4 py-[9px] text-[10.5px] leading-[1.45] text-faint">
-        Append-only audit_events row, RLS-enforced. Metadata is PHI-safe by construction (no raw
-        lab values or note text).
+        Append-only audit_events row, exposed through a caller-authorized database function.
+        Registered generic events reject raw lab values and note text.
       </div>
     </aside>
   );
