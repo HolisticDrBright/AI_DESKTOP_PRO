@@ -1,20 +1,34 @@
 import type { Metadata } from "next";
-import { ClinicalEmpty } from "@/components/ui/ClinicalStates";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { InboxWorkspace } from "@/components/inbox/InboxWorkspace";
 
 export const metadata: Metadata = { title: "Inbox — AI Longevity Pro" };
 
+// Live, org-scoped data — never prerender at build time.
+export const dynamic = "force-dynamic";
+
 /**
- * Inbox: no live backend yet. The route (and its place in the navigation)
- * stays, and it says so honestly — it never renders the demo workspace.
- * Status: docs/clinical-runtime-migration.md.
+ * Inbox (phase 4): the real org-scoped communication workspace. Threads,
+ * messages, drafts, assignments, and counts are persisted rows read and
+ * written exclusively through the Desktop-owned RPC boundary. Sending fails
+ * closed — no delivery provider is configured, so nothing on this screen can
+ * claim a message was sent, delivered, or read by the patient app.
  */
-export default function InboxPage() {
+export default async function InboxPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const sp = await searchParams;
+  const thread = typeof sp.thread === "string" ? sp.thread : undefined;
   return (
-    <section data-screen-label="Inbox" className="mx-auto max-w-[900px] px-6 pt-[22px] pb-6">
-      <ClinicalEmpty
-        title="Messaging isn't configured yet"
-        message="Secure patient messaging has no live backend yet. Nothing is shown rather than synthetic threads; no message can be sent from this screen."
+    <section data-screen-label="Inbox" className="mx-auto max-w-[1360px] px-[22px] pt-[18px] pb-6">
+      <PageHeader
+        crumb="Workspace / Inbox"
+        title="Inbox"
+        sub="Org-scoped patient communication — threads, drafts, triage, and workflow"
       />
+      <InboxWorkspace initialThreadId={thread} />
     </section>
   );
 }

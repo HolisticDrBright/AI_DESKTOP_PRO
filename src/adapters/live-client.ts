@@ -34,6 +34,15 @@ import type {
   LiveCatalogSearch,
   LiveInteractionCheck,
   LiveInteractionReviewResult,
+  LiveConversation,
+  LiveInbox,
+  LiveInboxFilters,
+  LiveInboxMutationResult,
+  LiveInboxTodaySummary,
+  LiveMessageChannel,
+  LivePatientMessages,
+  LiveThreadCategory,
+  LiveThreadPriority,
   LiveProgramDraftPayload,
   LiveProgramEnrollmentStatus,
   LiveProgramLibrary,
@@ -383,4 +392,94 @@ export const liveClient = {
 
   patientPrograms: (patientId: string) =>
     liveFetch<LivePatientPrograms>("programs/patient", { method: "POST", body: { patientId } }),
+
+  /* ---------------------------------------------- inbox (phase 4) */
+  inboxList: (filters: LiveInboxFilters) =>
+    liveFetch<LiveInbox>("inbox/list", { method: "POST", body: filters }),
+
+  inboxThread: (conversationId: string) =>
+    liveFetch<LiveConversation>("inbox/thread", { method: "POST", body: { conversationId } }),
+
+  inboxCreateThread: (input: {
+    patientId: string;
+    subject: string;
+    category?: LiveThreadCategory;
+    priority?: LiveThreadPriority;
+  }) => liveFetch<LiveInboxMutationResult>("inbox/create", { method: "POST", body: input }),
+
+  inboxSaveDraft: (input: {
+    conversationId: string;
+    body: string;
+    messageId?: string | null;
+    expectedVersion?: number | null;
+  }) => liveFetch<LiveInboxMutationResult>("inbox/draft", { method: "POST", body: input }),
+
+  inboxCancelDraft: (messageId: string) =>
+    liveFetch<LiveInboxMutationResult>("inbox/draft", {
+      method: "POST",
+      body: { cancel: true, messageId },
+    }),
+
+  inboxSend: (input: { messageId: string; channel?: LiveMessageChannel }) =>
+    liveFetch<LiveInboxMutationResult>("inbox/send", { method: "POST", body: input }),
+
+  inboxMarkRead: (conversationId: string) =>
+    liveFetch<LiveInboxMutationResult>("inbox/read", { method: "POST", body: { conversationId } }),
+
+  inboxWorkflow: (input: {
+    conversationId: string;
+    action: "assign" | "queue" | "priority" | "category" | "status" | "follow_up";
+    expectedVersion: number;
+    value?: string | null;
+    at?: string | null;
+    note?: string | null;
+  }) => liveFetch<LiveInboxMutationResult>("inbox/workflow", { method: "POST", body: input }),
+
+  inboxCreateTask: (input: {
+    messageId: string;
+    title?: string | null;
+    priority?: "low" | "medium" | "high";
+  }) => liveFetch<LiveInboxMutationResult>("inbox/task", { method: "POST", body: input }),
+
+  inboxAppendToNote: (input: { messageId: string; encounterId: string; section?: string }) =>
+    liveFetch<LiveInboxMutationResult>("inbox/note", { method: "POST", body: input }),
+
+  inboxSetPreferences: (input: {
+    patientId: string;
+    preferredChannel?: "in_app" | "email" | "sms" | "none";
+    emailOk?: boolean;
+    smsOk?: boolean;
+    pushOk?: boolean;
+    doNotContact?: boolean;
+    consentId?: string | null;
+    note?: string | null;
+  }) => liveFetch<LiveInboxMutationResult>("inbox/preferences", { method: "POST", body: input }),
+
+  inboxRegisterAttachment: (input: {
+    conversationId: string;
+    fileName: string;
+    contentType: string;
+    byteSize?: number | null;
+    messageId?: string | null;
+  }) => liveFetch<LiveInboxMutationResult>("inbox/attachment", { method: "POST", body: input }),
+
+  inboxReviewAiSuggestion: (reviewId: string, decision: "accept" | "dismiss") =>
+    liveFetch<LiveInboxMutationResult>("inbox/ai-review", {
+      method: "POST",
+      body: { reviewId, decision },
+    }),
+
+  inboxPatientMessages: (patientId: string) =>
+    liveFetch<LivePatientMessages>("inbox/patient", { method: "POST", body: { patientId } }),
+
+  inboxTodaySummary: () =>
+    liveFetch<LiveInboxTodaySummary>("inbox/today", { method: "POST", body: {} }),
+
+  inboxPatientEncounters: (patientId: string) =>
+    liveFetch<{
+      encounterId: string;
+      visitType: string | null;
+      status: string;
+      startedAt: string | null;
+    }[]>("inbox/encounters", { method: "POST", body: { patientId } }),
 };

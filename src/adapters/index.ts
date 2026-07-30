@@ -39,6 +39,10 @@ import type {
   LiveAppointmentStatus,
   LiveAuditEvent,
   LiveBookInput,
+  LiveInboxFilters,
+  LiveMessageChannel,
+  LiveThreadCategory,
+  LiveThreadPriority,
   LiveProgramDraftPayload,
   LiveProgramEnrollmentStatus,
   LiveProgramOfferPaymentMode,
@@ -328,6 +332,104 @@ export const api = {
     builderAI: notWired<[{ instruction: string; versionId: string }], never>(
       "AI program builder",
     ),
+  },
+  inbox: {
+    /**
+     * LIVE: the organization inbox. Threads, counts, and unread numbers are
+     * PERSISTED rows the caller can see — nothing is projected or invented.
+     */
+    list: async (filters: LiveInboxFilters = {}) => liveClient.inboxList(filters),
+    /** LIVE: one thread — messages, attachments, prefs, consents, AI reviews, history. */
+    thread: async (conversationId: string) => liveClient.inboxThread(conversationId),
+    /** LIVE: open a patient thread (urgent invariant runs on the subject). */
+    createThread: async (input: {
+      patientId: string;
+      subject: string;
+      category?: LiveThreadCategory;
+      priority?: LiveThreadPriority;
+    }) => liveClient.inboxCreateThread(input),
+    /**
+     * LIVE: versioned reply drafts. The sender is ALWAYS the authenticated
+     * caller (no sender parameter exists anywhere in the stack), and a stale
+     * `expectedVersion` returns a conflict rather than overwriting.
+     */
+    saveDraft: async (input: {
+      conversationId: string;
+      body: string;
+      messageId?: string | null;
+      expectedVersion?: number | null;
+    }) => liveClient.inboxSaveDraft(input),
+    cancelDraft: async (messageId: string) => liveClient.inboxCancelDraft(messageId),
+    /**
+     * LIVE, FAIL-CLOSED: with no registered messaging provider the database
+     * refuses ({ok:false, refusal:'provider_not_configured'}), keeps the
+     * draft, and records the refusal. Nothing is ever marked sent or
+     * delivered without provider acknowledgment.
+     */
+    send: async (input: { messageId: string; channel?: LiveMessageChannel }) =>
+      liveClient.inboxSend(input),
+    /** LIVE: read receipts on inbound messages (idempotent). */
+    markRead: async (conversationId: string) => liveClient.inboxMarkRead(conversationId),
+    /** LIVE: assignment/queue/priority/category/status machine/follow-up. */
+    workflow: async (input: {
+      conversationId: string;
+      action: "assign" | "queue" | "priority" | "category" | "status" | "follow_up";
+      expectedVersion: number;
+      value?: string | null;
+      at?: string | null;
+      note?: string | null;
+    }) => liveClient.inboxWorkflow(input),
+    /** LIVE: idempotent conversion into a real review-queue task. */
+    createTask: async (input: {
+      messageId: string;
+      title?: string | null;
+      priority?: "low" | "medium" | "high";
+    }) => liveClient.inboxCreateTask(input),
+    /** LIVE: quoted content into an UNSIGNED draft note; never signs. */
+    appendToNote: async (input: { messageId: string; encounterId: string; section?: string }) =>
+      liveClient.inboxAppendToNote(input),
+    /** LIVE: patient communication preferences + consent link. */
+    setPreferences: async (input: {
+      patientId: string;
+      preferredChannel?: "in_app" | "email" | "sms" | "none";
+      emailOk?: boolean;
+      smsOk?: boolean;
+      pushOk?: boolean;
+      doNotContact?: boolean;
+      consentId?: string | null;
+      note?: string | null;
+    }) => liveClient.inboxSetPreferences(input),
+    /** LIVE: attachment METADATA only — no bytes, no URLs, honest access state. */
+    registerAttachment: async (input: {
+      conversationId: string;
+      fileName: string;
+      contentType: string;
+      byteSize?: number | null;
+      messageId?: string | null;
+    }) => liveClient.inboxRegisterAttachment(input),
+    /**
+     * LIVE: the human gate on AI triage output — the ONLY path from a
+     * suggestion to an action, and it applies through the same guarded
+     * workflow RPCs a human uses directly.
+     */
+    reviewAiSuggestion: async (reviewId: string, decision: "accept" | "dismiss") =>
+      liveClient.inboxReviewAiSuggestion(reviewId, decision),
+    /** LIVE: the patient chart's Messages tab reads the same persisted threads. */
+    forPatient: async (patientId: string) => liveClient.inboxPatientMessages(patientId),
+    /** LIVE: Today's inbox summary — counts of persisted rows only. */
+    todaySummary: async () => liveClient.inboxTodaySummary(),
+    /** LIVE: real documentable encounters, so note conversion targets one. */
+    patientEncounters: async (patientId: string) => liveClient.inboxPatientEncounters(patientId),
+    /**
+     * UNAVAILABLE: the AI inbox copilot. The contract is provider-neutral
+     * (triage suggestions arrive through the service-role worker boundary and
+     * surface in `thread().aiReviews` for human review), but with no approved
+     * provider configured, requesting a NEW analysis fails closed — the UI
+     * shows "AI inbox copilot not configured" and never renders fixture AI
+     * output. The deterministic urgent-language invariant is independent of
+     * this and always runs server-side.
+     */
+    copilotAI: notWired<[{ conversationId: string }], never>("The AI inbox copilot"),
   },
   reasoning: {
     /**
