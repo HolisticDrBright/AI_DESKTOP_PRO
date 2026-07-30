@@ -17,8 +17,52 @@ const REQUIRED_FIELDS = [
   "scope", "resourceType", "resourceId", "resourceVersion", "occurredAt",
   "producer", "provenance", "payload", "payloadHash", "attempts",
 ];
-const OPTIONAL_FIELDS = ["correlationId", "leaseExpiresAt"];
+const OPTIONAL_FIELDS = ["correlationId", "leaseExpiresAt", "causationId", "organizationId"];
 const KNOWN_FIELDS = new Set([...REQUIRED_FIELDS, ...OPTIONAL_FIELDS]);
+
+/**
+ * Wire-DTO keys of PatientSyncOutboundEnvelopeV1 — what actually crosses
+ * the bridge to a provider. Worker-internal fields (eventId, attempts,
+ * leaseExpiresAt) never leave the process.
+ */
+export const WIRE_ENVELOPE_KEYS = [
+  "contractVersion", "eventUid", "idempotencyKey", "organizationId",
+  "connectionId", "scope", "resourceType", "resourceId", "resourceVersion",
+  "occurredAt", "producer", "provenance", "payload", "payloadHash",
+  "correlationId", "causationId",
+];
+
+/**
+ * Project a validated claimed envelope into the exact wire DTO. The
+ * organization id comes from the claim projection (the database), with the
+ * worker's own organization id as the only permitted fallback — the worker
+ * claims strictly per-organization, so they are the same value by
+ * construction; nothing is ever fabricated.
+ */
+export function toWireEnvelope(envelope, { organizationId }) {
+  const orgId = envelope.organizationId ?? organizationId;
+  if (!orgId) {
+    throw new SyncError("contract", "missing_organization", "wire envelope needs an organization id");
+  }
+  return {
+    contractVersion: envelope.contractVersion,
+    eventUid: envelope.eventUid,
+    idempotencyKey: envelope.idempotencyKey,
+    organizationId: orgId,
+    connectionId: envelope.connectionId,
+    scope: envelope.scope,
+    resourceType: envelope.resourceType,
+    resourceId: envelope.resourceId,
+    resourceVersion: envelope.resourceVersion,
+    occurredAt: envelope.occurredAt,
+    producer: envelope.producer,
+    provenance: envelope.provenance,
+    payload: envelope.payload,
+    payloadHash: envelope.payloadHash,
+    correlationId: envelope.correlationId ?? null,
+    causationId: envelope.causationId ?? null,
+  };
+}
 
 export function sha256Hex(text) {
   return createHash("sha256").update(text).digest("hex");
