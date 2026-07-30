@@ -15,7 +15,13 @@ threads with a database-enforced workflow, immutable messages with versioned
 drafts, a durable outbox whose sending FAILS CLOSED without a delivery
 provider, communication preferences and consent gates, a deterministic
 urgent-language invariant, and AI triage that is stored separately and acts
-only on explicit human acceptance.
+only on explicit human acceptance. Phase 5 built the Desktop side of the AI
+Longevity Pro patient delivery & synchronization gateway: explicit patient-app
+connections (opaque single-use invitations, verified subject binding),
+independent versioned consent scopes, versioned sync envelopes with a durable
+at-least-once engine (idempotency, dedup, bounded retry, dead letters,
+explicit conflicts), and a provider boundary that FAILS CLOSED — no delivery
+or acknowledgment claim exists without provider evidence.
 
 **The core rule.** A domain loses its mock runtime implementation only when it
 has (1) a real authenticated implementation, or (2) an honest unavailable /
@@ -66,6 +72,7 @@ fixtures), `scripts/live-stub-server.mjs` (contract-fixture e2e), and
 | **Protocol catalog + interaction review (Phase 2)** | protocol tab product picker | `protocols.live.ts` | `search_protocol_catalog`, `check_protocol_interactions`, `review_protocol_item_interactions`, `private.catalog_verification_status` over the 0007 supplement catalog | review action audited | desktop_protocol_catalog_interactions.sql (37) |
 | **Programs & Education (Phase 3)** | `/programs`, `/programs/[id]`, chart overview card, `/today` summary | `programs.live.ts` → `ProgramsWorkspace`, `ProgramStudio`, `PatientProgramsLive`, `TodayProgramsLive` | `programs`, `program_templates`, `program_versions`, `program_modules`, `program_lessons`, `program_blocks`, `program_offers`, `program_enrollments`, `program_progress`, `program_version_events`, `program_enrollment_events`; 20 RPCs (`list_programs`, `get_program_studio`, `list_program_templates`, `get_patient_programs`, `create_program`, `save_program_draft`, `submit/return/approve/publish/revise_program_version`, `archive_program`, `create/approve/archive` template RPCs, `upsert_program_offer`, `enroll_patient_in_program`, `set_program_enrollment_status`, `record_program_progress`, `review_program_progress`) | atomic; creation/lifecycle/offer/enrollment/progress each audited, PHI-safe (payloads never in audit rows) | desktop_owned_programs_phase3.sql (71) |
 | **Inbox, messaging & AI triage (Phase 4)** | `/inbox` (3-pane workspace), chart Messages tab, `/today` inbox card | `inbox.live.ts` → `InboxWorkspace`, `PatientMessagesLive`, `TodayInboxLive`; `messaging-provider.ts` (contract only) | `conversations` (extended), `messages` (extended), `message_draft_revisions`, `message_attachments`, `communication_preferences`, `message_outbox`, `message_delivery_events`, `conversation_events`, `message_ai_reviews`; 16 caller RPCs (`list_inbox`, `get_conversation`, `create_conversation`, `save_message_draft`, `cancel_message_draft`, `send_message`, `mark_conversation_read`, `update_conversation_workflow`, `create_task_from_message`, `append_message_to_note`, `set_communication_preferences`, `register_message_attachment`, `review_ai_suggestion`, `get_patient_messages`, `get_inbox_today_summary`) + 3 service_role-only worker RPCs (`record_inbound_message`, `record_delivery_callback`, `record_ai_suggestion`) | atomic; thread lifecycle, send refusals, AI decisions each audited; PHI-safe (message bodies never in audit rows or logs) | desktop_owned_inbox.sql (61) |
+| **Patient delivery & sync gateway (Phase 5)** | chart "Patient App" tab (`/patients/[id]/app-sync`), `/integrations` | `patient-sync.live.ts` -> `PatientSyncPanel`, `SyncOperationsPanel`; `patient-sync-provider.ts` (contract only) | `patient_app_connections`, `patient_sync_invitations`, `sync_consent_scopes`, `sync_outbound_events`, `sync_inbound_events`, `sync_inbound_corrections`, `sync_delivery_attempts`, `sync_delivery_events`, `sync_dead_letters`, `sync_cursors`, `sync_conflicts`, `sync_resource_acks`, `sync_connection_events`; 13 caller RPCs + 4 service_role worker RPCs (`verify_sync_invitation`, `claim_sync_outbound`, `record_sync_delivery`, `record_sync_inbound`) | atomic; every lifecycle/consent/queue/retry/review action audited PHI-safe; security-relevant history in `sync_connection_events` | desktop_patient_sync.sql (80) |
 | Encounters, notes, signatures, addenda, timeline | `/patients/[id]/chart`, encounter workspace | `encounters.live.ts` | `start_encounter`, `get_desktop_note`, `get_desktop_patient_timeline`, … | atomic; signed-note immutability | desktop_encounters_notes.sql |
 | Lens lifecycle + reference reads | encounter workspace | `lens.live.ts` | desktop lens RPCs | atomic | desktop_lens acceptance |
 | Clinical knowledge registry + imports | Settings → Knowledge | `knowledge.live.ts` | registry RPCs | atomic | clinical_knowledge_*.sql |
@@ -108,7 +115,10 @@ only act when a human accepts them).
 | N-of-1 experiments | chart Tracking tab | start experiment | schema ready (`experiments`) |
 | Wearables | chart Tracking tab | connect source | external integration |
 | Record imports | Settings → Data | approve import batch | parse+match pipeline |
-| External integrations | `/integrations` | connect connector | per-connector |
+| AI Longevity Pro sync provider | chart Patient App tab, `/integrations` | provider-acknowledged delivery | `PatientSyncProvider` implementation + `alp_patient_sync` connector registration + sync worker |
+| AI sync summary | Patient App tab AI panel | reviewable draft summary | governed AI config; human review already live |
+| Invitation delivery | Patient App tab | transmitted invitation | delivery provider (the one-time code is conveyed manually today) |
+| Other external integrations (EHR, lab vendors, wearables, automations, webhooks) | `/integrations` | connect connector | per-connector |
 | Telehealth | calendar drawer | join visit | external integration |
 | Reports | `/reports` | save report run | access-scoped aggregate queries |
 | Templates | `/templates` | publish template version | schema ready (`templates`) |
@@ -163,6 +173,13 @@ Phase 4 found the ledger ending at `20260730171151` and appended:
 | `20260730184914` | desktop_inbox_note_provenance_message | `note_provenance_refs.ref_type` check widened to include `message` |
 | `20260730185240` | desktop_inbox_send_refusal_outcome | `review_ai_suggestion` revoked from anon; `send_message` provider refusal became a durable RETURNED outcome (`{ok:false, sent:false, refusal:'provider_not_configured'}`, draft kept, `send_refused` event persists) instead of an exception that rolled its own trail back |
 
+Phase 5 found the ledger ending at `20260730185240` and appended:
+
+| Version | Name | What |
+| --- | --- | --- |
+| `20260730195014` | desktop_patient_sync_schema | `patient_app_connections` (explicit linking — NEVER matched by email/name/phone/DOB; one live connection per patient AND per external subject via partial unique indexes), `patient_sync_invitations` (sha256 hash only, expiring, single-use, deny-all RLS), `sync_consent_scopes` (11 independent versioned scopes; artifact/jurisdiction/method/authority; research separate), `sync_outbound_events` / `sync_inbound_events` (append-only envelopes: contract version, server event uid, idempotency key, payload hash, provenance, correlation/causation; immutability triggers freeze content and block DELETE), `sync_inbound_corrections` (versioned overlays), `sync_delivery_attempts` / `sync_delivery_events` (provider evidence, unique `(connection, provider_event_id)` callback dedup), `sync_dead_letters`, `sync_cursors`, `sync_conflicts`, `sync_resource_acks`, `sync_connection_events`; RLS selects scoped to membership + patient access; ALL direct writes revoked |
+| `20260730201119` | desktop_patient_sync_rpcs | 13 caller RPCs (`get_patient_sync_overview`, `create_sync_invitation`, `pause/resume/revoke_sync_connection`, `set_sync_consent_scope`, `queue_sync_export` with SERVER-built minimum-necessary payloads, `withdraw_sync_resource`, `retry_sync_event` (reason required), `resolve_sync_conflict`, `review_sync_inbound`, `record_sync_inbound_correction`, `get_org_sync_operations`) + 4 service_role-only worker RPCs (`verify_sync_invitation`, `claim_sync_outbound`, `record_sync_delivery`, `record_sync_inbound`); `review_queue_items` gains lawful `sync_review` item type |
+
 Local filenames match recorded versions. All function contracts: SECURITY
 DEFINER + `search_path=''` + explicit `auth.uid()` / `private.is_org_member` /
 `private.can_access_patient` gates + bounded DTOs + anon/public revoked + no
@@ -209,6 +226,16 @@ checks). Phase 4 introduced NO unindexed-FK, RLS-init-plan, or
 multiple-permissive-policy findings on the nine inbox tables; the only
 advisor entries naming them are `unused_index` INFOs, expected on a schema
 with no production traffic yet.
+
+**Advisor posture after phase 5 DDL.** Zero ERROR-level findings on phase-5
+objects. New entries: the standard gated-definer WARN per caller RPC (the
+deliberate architecture, every gate proven by the 80-check acceptance suite,
+worker RPCs correctly absent from the authenticated-executable list) and ONE
+deliberate `rls_enabled_no_policy` INFO on `patient_sync_invitations` — token
+hashes are never client-readable, mirroring `provider_callback_events`.
+Phase 5 introduced NO unindexed-FK, RLS-init-plan, or multiple-permissive
+findings on its thirteen tables; the only entries naming them are
+`unused_index` INFOs, expected on a schema with no production traffic yet.
 
 ### Phase 2 state machines and immutability rules
 
@@ -420,6 +447,116 @@ inbound → (terminal; read_at is the only mutable field)
   registration PLUS a worker for outbox claiming and callbacks — no
   configuration flag can shortcut it.
 
+### Phase 5: the patient delivery & synchronization gateway
+
+**Ownership map.**
+- *Desktop-owned now:* connection + invitation lifecycle, consent scopes,
+  envelope construction and queueing, the durable engine (idempotency, dedup,
+  bounded retry, dead letters, cursors, conflicts, acks), inbound event store
+  + review + correction overlays, all practitioner UI, all audit.
+- *Future AI Longevity Pro implementation:* authenticating against
+  `patient-sync/1`, invitation verification UX in the patient app, fetching/
+  acknowledging outbound envelopes, submitting signed inbound envelopes,
+  honoring `resource_withdrawal` and consent changes, rejecting unknown
+  contract versions.
+- *Future external provider work:* the service_role sync worker (claim loop,
+  signed-callback verification with constant-time comparison and a replay
+  window, key rotation via `signature_key_id`), invitation delivery.
+- *Explicitly unavailable:* any delivery/acknowledgment claim (fails closed:
+  "AI Longevity Pro connection not configured"), invitation delivery
+  ("Delivery provider not configured" — the one-time code is conveyed
+  manually), and the AI sync summary ("not configured", human review runs
+  without it).
+
+**Identity-linking lifecycle** (authoritative in Postgres):
+
+```
+(unlinked) -> invitation_pending -> verified <-> paused
+     any live state -> revoked (terminal; re-linking = NEW connection + invitation)
+```
+
+- Linking is NEVER by email, name, phone, DOB, or fuzzy matching. An opaque
+  256-bit token is returned ONCE by `create_sync_invitation`; only its sha256
+  is stored. Tokens expire (7 days), are single-use, org/patient scoped, and
+  superseded by any newer invitation. `verify_sync_invitation` (worker
+  boundary) binds the external system's authenticated subject; a partial
+  unique index refuses a subject already bound elsewhere (forgery/reuse) and
+  a second live connection per patient.
+- Revocation is immediate: pending invitations die, undelivered exports are
+  cancelled, `record_sync_inbound` refuses with `42501`, and history is
+  preserved — never deleted. Optimistic concurrency (`_expected_version`,
+  `40001`) guards every lifecycle action.
+
+**Consent scopes.** Eleven independent, versioned scopes (programs,
+protocols_supplements, nutrition, appointments, messaging, forms_checkins,
+symptoms_adherence, wearables, lab_summaries, billing_links,
+research_n_of_1). A grant records the presented artifact + version,
+jurisdiction where available, method, and representative authority. A
+revocation (practitioner or patient-app; the newest valid revocation wins
+immediately) cancels queued exports for THAT scope only and blocks future
+sync for it, while other scopes continue; nothing historical — signed notes,
+prior records, audit evidence — is ever deleted. `research_n_of_1` is fully
+separate from every care-delivery scope; nothing infers it.
+
+**Authority / conflict matrix** (enforced server-side):
+
+| Data | Authoritative side | On conflict |
+| --- | --- | --- |
+| Practitioner-approved programs / protocols / nutrition content | Desktop | newer version supersedes undelivered envelopes; withdrawal event revokes |
+| Patient adherence, symptoms, quiz/check-in responses | Patient app (original submission, immutable) | corrections are versioned overlays, never mutations |
+| Consent revocation | Newest valid revocation | applies immediately, both directions |
+| Appointment scheduling | Desktop scheduling system | app sends `appointment_request` for human review |
+| Delivery / read receipts | Receiving provider | forward-only projection; stale evidence recorded but never demotes |
+| AI summaries | Nobody (derived) | reviewable draft only; stale when sources change |
+| Stale/out-of-order inbound versions | — | explicit `sync_conflicts` row + review task; resolution requires a note and never overwrites either original |
+
+**Retry / dead-letter behavior.** Failures back off at `2^attempts` minutes
+capped at 24h; the 8-attempt threshold (or a provider `rejected`) dead-letters
+the envelope, records `sync_dead_letters`, and opens a REAL `sync_review`
+review-queue task. Manual retry requires an authorized role (owner/admin/
+practitioner), a reason, and is audited; the dead-letter row keeps the retry
+trail. Operator reconciliation: Integrations → dead-letter queue → reasoned
+retry (or withdraw the resource); conflicts and pending inbound reviews are
+worked from the chart's Patient App tab or `/tasks`.
+
+**Provider approval requirements.** An approved provider is (1) a reviewed
+`PatientSyncProvider` implementation in code AND (2) a CONNECTED
+`alp_patient_sync` connector row in the database. `resolvePatientSyncProvider()`
+returns null, there is no registry, and no environment variable is read —
+an env flag is never security or compliance approval (unit-proven). Without
+the connector, `queue_sync_export` refuses durably and even the service_role
+worker cannot claim.
+
+**AI Longevity Pro implementation guide.** Implement `patient-sync/1`
+(`PatientSyncOutboundEnvelopeV1` / `PatientSyncInboundEnvelopeV1` in
+`src/adapters/live-types.ts`): verify the invitation token exactly once and
+present the external subject; treat every envelope as at-least-once (dedupe
+on `eventUid`/`idempotencyKey`); validate `payloadHash`; acknowledge with
+provider-unique event ids; submit inbound envelopes signed (the worker
+verifies with constant-time comparison inside a replay window and records
+`signature_key_id`); apply `resource_withdrawal`; honor consent changes;
+reject unknown contract versions. **The AI Longevity Pro repository was not
+modified, called, branched, or committed to by this phase.** No real delivery
+is claimed until that application implements and authenticates against this
+contract.
+
+**Security & PHI-safe logging.** All the standing gates (auth.uid(), active
+membership, patient access, tenant agreement across every reference,
+anon/public revocation, direct-write revocation, pinned `search_path`, typed
+SQLSTATEs) plus: token hashes unreadable by clients (deny-all RLS), payload
+size limits (64 KiB inbound, 16 KiB overlays), evidence timestamp windows,
+attachment-by-reference only, no service-role key in any browser or request
+path (worker RPCs are unreachable from the app), audit `safe_message` never
+carries message bodies or payloads, and security-relevant connection history
+lives in `sync_connection_events` separately from clinical audit. No HIPAA,
+SOC 2, FDA, "validated", "encrypted", or BAA status is claimed anywhere.
+
+**Deployment.** Unchanged base requirements (`APP_EDITION=clinical`,
+`CLINICAL_SUPABASE_URL`/`CLINICAL_SUPABASE_ANON_KEY`, signed-in
+practitioner). Going live additionally needs the reviewed provider
+implementation, the `alp_patient_sync` connector registration, and the sync
+worker — three separate acts, none of them a flag.
+
 ## Deprecations
 
 - `NEXT_PUBLIC_USE_LIVE_API` — constant `true`; not consulted anywhere.
@@ -432,21 +569,19 @@ inbound → (terminal; read_at is the only mutable field)
   protection. New code must call `api.schedule.transition`; delete the
   delegate once the last caller migrates.
 
-## Phase 5 recommendation
+## Phase 6 recommendation
 
-**The AI Longevity Pro messaging bridge (delivery slice).** Phase 4 built the
-entire durable half of messaging — outbox, idempotency, callback dedup,
-receipt DTOs, the typed `MessagingProvider` contract — and left exactly one
-honest hole: no message can actually reach a patient. The highest-value next
-step is the first real delivery integration: implement `MessagingProvider`
-for ALP in-app messaging, register the `messaging` connector row, and build
-the worker that claims `message_outbox` rows and reports through
-`record_delivery_callback` / `record_inbound_message` — at which point sent/
-delivered/read become provider-evidenced states with zero desktop changes.
-That work lives partly outside this repository (the ALP side), so if a
-desktop-only phase is preferred instead: **billing & payments persistence**
-(invoices as rows with an honest not-configured payment boundary, mirroring
-how messaging held delivery) or **reports** (access-scoped aggregates over
-the now-substantial real domains). The AI inbox copilot should follow only
-after a governed AI provider decision, feeding `record_ai_suggestion` — the
-human-review gate is already live.
+**The sync worker + ALP bridge activation.** Phase 5 finished every durable
+half of patient delivery; the single highest-value next step is the runtime
+half: a service_role sync worker (edge function or job runner) implementing
+the claim -> deliver -> evidence loop and the signed inbound callback path
+against a real AI Longevity Pro implementation of `patient-sync/1` — at which
+point linking, delivery, receipts, and inbound data all become
+provider-evidenced with zero further desktop changes. That work spans both
+repositories, so desktop-only alternatives in priority order: **billing &
+payments persistence** (invoices as rows behind an honest not-configured
+payment boundary, unlocking the `billing_links` scope), **nutrition
+persistence** (unlocking the `nutrition` scope and its already-defined
+envelope type), or **reports** (access-scoped aggregates over the seven real
+domains). The AI sync summary and inbox copilot both wait on a governed AI
+provider decision; their human-review gates are already live.
