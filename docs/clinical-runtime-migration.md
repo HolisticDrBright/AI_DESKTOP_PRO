@@ -6,6 +6,11 @@ every phase. Phase 1 made the runtime clinical-only and shipped the first real
 vertical slice. Phase 2 made front-desk scheduling a database-enforced state
 machine and shipped versioned protocol + template persistence with a real
 product-catalog picker and a deterministic-or-honest interaction review.
+Phase 3 made Programs & Education real: org-owned programs with versioned
+curricula (modules → lessons → typed blocks), a review → approve → publish
+lifecycle with immutable published versions, offers that store commercial
+terms only, and enrollments pinned to exact published versions with
+append-only progress.
 
 **The core rule.** A domain loses its mock runtime implementation only when it
 has (1) a real authenticated implementation, or (2) an honest unavailable /
@@ -54,6 +59,7 @@ fixtures), `scripts/live-stub-server.mjs` (contract-fixture e2e), and
 | **Front-desk status machine (Phase 2)** | `/calendar` drawer, `/today` | `frontdesk.live.ts` → `CalendarView` drawer, `TodayScheduleLive` | `transition_appointment`, `correct_appointment_status`, `appointment_status_events`, `private.appointment_transition_allowed`; `start_encounter` extended to transition the linked appointment | atomic; corrections separately audited with reason | desktop_frontdesk_transitions.sql (29) |
 | **Protocols + templates (Phase 2)** | `/patients/[id]/protocol` | `protocols.live.ts` → `ProtocolWorkspace` | `protocols`, `protocol_templates`, `protocol_versions`, `protocol_phases`, `protocol_items`; `get_patient_protocol`, `create_protocol_draft`, `save_protocol_draft`, `approve_protocol_version`, `activate_protocol_version`, `set_protocol_lifecycle`, `revise_protocol_version`, `list/create/approve/archive` template RPCs | atomic; approval/activation/lifecycle each audited | desktop_owned_protocols.sql (36) |
 | **Protocol catalog + interaction review (Phase 2)** | protocol tab product picker | `protocols.live.ts` | `search_protocol_catalog`, `check_protocol_interactions`, `review_protocol_item_interactions`, `private.catalog_verification_status` over the 0007 supplement catalog | review action audited | desktop_protocol_catalog_interactions.sql (37) |
+| **Programs & Education (Phase 3)** | `/programs`, `/programs/[id]`, chart overview card, `/today` summary | `programs.live.ts` → `ProgramsWorkspace`, `ProgramStudio`, `PatientProgramsLive`, `TodayProgramsLive` | `programs`, `program_templates`, `program_versions`, `program_modules`, `program_lessons`, `program_blocks`, `program_offers`, `program_enrollments`, `program_progress`, `program_version_events`, `program_enrollment_events`; 20 RPCs (`list_programs`, `get_program_studio`, `list_program_templates`, `get_patient_programs`, `create_program`, `save_program_draft`, `submit/return/approve/publish/revise_program_version`, `archive_program`, `create/approve/archive` template RPCs, `upsert_program_offer`, `enroll_patient_in_program`, `set_program_enrollment_status`, `record_program_progress`, `review_program_progress`) | atomic; creation/lifecycle/offer/enrollment/progress each audited, PHI-safe (payloads never in audit rows) | desktop_owned_programs_phase3.sql (71) |
 | Encounters, notes, signatures, addenda, timeline | `/patients/[id]/chart`, encounter workspace | `encounters.live.ts` | `start_encounter`, `get_desktop_note`, `get_desktop_patient_timeline`, … | atomic; signed-note immutability | desktop_encounters_notes.sql |
 | Lens lifecycle + reference reads | encounter workspace | `lens.live.ts` | desktop lens RPCs | atomic | desktop_lens acceptance |
 | Clinical knowledge registry + imports | Settings → Knowledge | `knowledge.live.ts` | registry RPCs | atomic | clinical_knowledge_*.sql |
@@ -70,15 +76,15 @@ fixtures), `scripts/live-stub-server.mjs` (contract-fixture e2e), and
 
 ### Not configured (honest unavailable states; navigation preserved)
 
-The Today page now shows ONE real aggregation (today's appointments with their
-real statuses, counted from returned rows). Unread messages, notes awaiting
+The Today page now shows TWO real aggregations: today's appointments with
+their real statuses, and the Programs summary (published programs + enrollment
+counts summed from persisted enrollment rows). Unread messages, notes awaiting
 signature, wearable alerts, and balances are named as not configured on that
 page — no count is shown for a domain with no live backend.
 
 | Domain | Route | First real mutation when built | Needs |
 | --- | --- | --- | --- |
 | Inbox messaging | `/inbox`, chart Messages tab | send secure message | schema + comms integration |
-| Programs | `/programs` | publish program version | schema ready (`operations` tables) |
 | Billing & payments | `/billing`, chart Billing tab | create invoice | external integration (payments) |
 | Inventory writes / dispensary | Settings → Catalog | receive stock | schema ready (`products_services`) |
 | Nutrition persistence | chart Nutrition tab | save diet plan | schema ready |
@@ -122,6 +128,14 @@ Phase 2 found the ledger ending at `20260730034530` and appended:
 | `20260730050009` | desktop_protocol_draft_verification | `save_protocol_draft` replaced: verification derived server-side, catalog identity from the catalog, version-must-belong-to-product |
 | `20260730052613` | desktop_protocol_draft_item_ids | `save_protocol_draft` returns `itemIds` (payload order) so reviews can target persisted rows |
 
+Phase 3 found the ledger ending at `20260730052613` and appended:
+
+| Version | Name | What |
+| --- | --- | --- |
+| `20260730155911` | desktop_owned_programs | extends the 0009 program skeleton: versioned program/template curricula, offers, pinned enrollments, append-only progress + events, frozen-content triggers, single-policy RLS with all direct writes revoked, unique `(program_id, version)` / `(template_id, version)` |
+| `20260730161830` | desktop_program_rpcs | 4 private helpers + the 20 program RPCs |
+| `20260730171151` | desktop_program_fk_indexes | covering indexes for every remaining unindexed FK on the Desktop-owned program tables |
+
 Local filenames match recorded versions. All function contracts: SECURITY
 DEFINER + `search_path=''` + explicit `auth.uid()` / `private.is_org_member` /
 `private.can_access_patient` gates + bounded DTOs + anon/public revoked + no
@@ -147,6 +161,18 @@ matching "protocol" in the advisor output all sit on the pre-existing 0007
 `supplement_protocols` / `supplement_protocol_items` / `protocol_effectiveness`
 tables, which this phase does not touch. New unused-index INFOs on the phase-2
 tables are expected on a schema with no production traffic yet.
+
+**Advisor posture after phase 3 DDL.** Zero ERROR-level findings on phase-3
+objects. The 20 new security WARNs are the same generic gated-definer lint as
+above, one per new RPC — the deliberate architecture, with every gate proven
+by the 71-check acceptance suite. Phase 3 left NO unindexed foreign keys on
+the eleven Desktop-owned program tables (`desktop_program_fk_indexes` covers
+the keys that predated this phase but now sit on hot query/RLS paths), and no
+multiple-permissive or RLS-init-plan warnings exist on phase-3 tables (the
+remaining "program" matches sit on the legacy `program_steps` /
+`program_tasks` / `program_conditions` tables, untouched and without
+production callers). New unused-index INFOs on phase-3 tables are expected on
+a schema with no production traffic yet.
 
 ### Phase 2 state machines and immutability rules
 
@@ -210,6 +236,65 @@ protocol lifecycle: draft/active → paused ↔ active → completed | discontin
   sources contain — never that a product is interaction-free. Practitioner
   sign-off is its own audited action, drafts only.
 
+### Phase 3 state machines and boundaries
+
+**Program version lifecycle** (append-only; trigger-enforced):
+
+```
+draft → in_review → approved → published → superseded
+   ↑         │
+   └─ return ┘        (in_review can return to draft with a reviewer note)
+```
+
+- Drafts and in-review versions are editable via `save_program_draft` — a
+  WHOLESALE replace with per-kind block validation (text body; http(s) URL for
+  image/video/document/resource; 1–20 quiz questions with 2–8 options and an
+  in-range answer index; check-in prompt + response type) and `40001` on a
+  stale `_expected_updated_at`. Approved, published, and superseded versions
+  are immutable — RPC-level AND via `private.guard_frozen_program_version` /
+  `guard_frozen_program_content` triggers that also block direct SQL (DELETE
+  is blocked for every version row).
+- Approval freezes and explicitly does NOT publish. Publishing is a separate,
+  separately-confirmed RPC that supersedes the previously published version
+  WITHOUT touching enrollments pinned to it, and creates **no enrollment,
+  charge, invoice, message, protocol, order, task, or note** (proven by the
+  acceptance suite). Corrections go through `revise_program_version` (advisory
+  lock, refuses while a draft exists, detached copy).
+- Templates are org-owned and versioned; copies in BOTH directions (template →
+  program, program → template) are fully detached with fresh ids. Archiving a
+  template never cascades into programs created from it; archiving a program
+  preserves its published history and enrollments and only refuses new
+  enrollments.
+
+**Enrollment machine** (server-enforced):
+
+```
+invited → active | cancelled
+active  → paused | completed | cancelled | expired
+paused  → active | cancelled | expired
+completed / cancelled / expired → (terminal)
+```
+
+- Enrollment pins `program_version_id` to the exact published version at
+  enrollment time; later publishes never move it. Progress rows must belong
+  to the PINNED version (lesson/block checked server-side), only on active
+  enrollments, append-only (trigger), with practitioner review as the only
+  permitted update. Audit rows carry identifiers and kind — never payloads.
+
+**Commerce boundary.** `program_offers` stores terms only (`price_cents`,
+currency, duration, `payment_mode`). This application never processes a
+payment: a `stripe`-mode offer is stored intent that the UI renders as
+"Not configured" and `enroll_patient_in_program` refuses with an honest
+message. A `manual_comp` enrollment requires a reason; the authorizer is the
+authenticated caller recorded server-side with an audit event.
+
+**AI boundary.** `api.programs.builderAI` is the provider-neutral Program
+Builder AI contract; with no approved provider it fails closed as
+not configured, and no fixture AI output exists anywhere. The versioned
+`ProgramDeliveryV1` DTO (in `live-types.ts`) defines the FUTURE AI Longevity
+Pro handoff shape only — nothing in this repository calls AI Longevity Pro,
+transmits the DTO, or claims content reached the patient app.
+
 ## Deprecations
 
 - `NEXT_PUBLIC_USE_LIVE_API` — constant `true`; not consulted anywhere.
@@ -222,19 +307,16 @@ protocol lifecycle: draft/active → paused ↔ active → completed | discontin
   protection. New code must call `api.schedule.transition`; delete the
   delegate once the last caller migrates.
 
-## Phase 3 recommendation
+## Phase 4 recommendation
 
-**Programs, or inbox messaging.** Two candidates rank highest now that
-scheduling and protocols are real:
-
-1. **Programs** (`/programs`): schema ready (`operations` tables), no external
-   integration, and the protocol/template versioning pattern just built here
-   transfers almost verbatim (versioned program definitions, enrollments as
-   the first real mutation, immutable published versions).
-2. **Inbox messaging** would unlock the biggest honest-unavailable surface on
-   Today and the chart, but requires new schema plus a comms decision, so it
-   is a larger bite.
-
-Recommended: **Programs** as the next vertical slice — same
-tables-RPCs-acceptance-e2e recipe, no third party, and it converts one more
-"Not configured" row above into "Real & verified".
+**Inbox messaging.** With scheduling, protocols, and programs real, secure
+messaging is now the highest-value target: it unlocks the biggest remaining
+honest-unavailable surface (Today's unread count, the chart Messages tab,
+`/inbox`) and program/protocol work keeps generating reasons to message
+patients. It needs new schema (conversations, messages, read receipts,
+practitioner/patient participants under RLS) and a delivery-channel decision,
+so scope the first slice to INTERNAL persistence + read/unread honesty and
+keep external notification delivery behind an honest not-configured boundary,
+exactly as payments and AI are handled today. Alternative smaller bites:
+reports (access-scoped aggregates) or the team role matrix (read UI over the
+existing membership RPCs).
