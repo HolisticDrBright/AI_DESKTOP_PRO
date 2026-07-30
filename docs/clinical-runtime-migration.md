@@ -187,6 +187,12 @@ Phase 6A found the ledger ending at `20260730201119` and appended:
 | `20260730210813` | desktop_sync_worker_ops | lease columns (`lease_id`, `lease_expires_at`, `claimed_at`) + claimable/lease partial indexes on `sync_outbound_events`; `sync_worker_cycles` + `sync_circuit_states` (PHI-free, org-readable telemetry) and `sync_callback_nonces` (deny-all RLS); `private.sync_provider_posture` (disabled → fixture → approved precedence; `sync_contract_fixture` recognized as the TEST posture, `alp_patient_sync` as approved); `claim_sync_outbound` REPLACED as the single lease-aware overload (old `(uuid, integer)` signature dropped): expired-lease reclaim then `FOR UPDATE SKIP LOCKED` claim, returns lease id/expiry + `leaseReclaims` + `maxQueueAgeSeconds`; `recheck_sync_export` (consent/connection/supersession re-checked AT DELIVERY TIME; refusal is a durable cancel with an attempt row and a safe reason); `record_sync_worker_cycle` (validated circuit state, upserts the circuit row); `register_sync_callback_nonce` (unique-violation → `replay:true`, 7-day prune); `cancel_sync_event` (owner/admin/practitioner, reason required, queued/failed/dead_letter only, audited); `get_org_sync_operations` extended (posture, in-flight count, queue age, last worker cycle, circuit) |
 | `20260730212353` | desktop_sync_requeue_generation | `queue_sync_export` idempotency block only: a live envelope still answers `alreadyQueued`, but an explicit re-share after a CANCELLED or SUPERSEDED envelope mints a NEW envelope generation (`:rN` key suffix) instead of being blocked forever — and a consent re-grant alone never resurrects cancelled work |
 
+Phase 6B found the ledger ending at `20260730212353` and appended:
+
+| Version | Name | What |
+| --- | --- | --- |
+| `20260730231721` | desktop_sync_claim_wire_fields | `claim_sync_outbound`'s event projection now carries `organizationId` and `causationId` — the two PatientSyncOutboundEnvelopeV1 wire fields it omitted — so the real adapter emits them from the database instead of fabricating anything; claiming, leases, and reclaim verbatim |
+
 Local filenames match recorded versions. All function contracts: SECURITY
 DEFINER + `search_path=''` + explicit `auth.uid()` / `private.is_org_member` /
 `private.can_access_patient` gates + bounded DTOs + anon/public revoked + no
@@ -695,6 +701,60 @@ connection):
 6. Re-run: both DB acceptance suites, the full browser battery, advisors,
    and the bundle scan — with the fixture suites left fully intact.
 
+### Phase 6B: the real ALP bridge adapter (staging only)
+
+**Status: implemented and deterministically verified; the real staging
+round trip has NOT run.** The AI Longevity Pro receiver lives in
+`HolisticDrBright/rork-ai-longevity-coach` (branch
+`claude/phase6b-patient-sync-receiver`); its Supabase migration is
+committed there but unapplied — the ALP Supabase project is reachable only
+through that deployment's protected environment variables, not from the
+automation credentials that authored this phase. Until the synthetic
+staging gate in the ALP repository's `expo/docs/patient-sync.md` passes,
+**AI Longevity Pro is not connected**, and nothing in either repository
+claims otherwise.
+
+- **Adapter** (`scripts/sync/alp-provider.mjs`): projects the validated
+  claimed envelope into the exact PatientSyncOutboundEnvelopeV1 wire DTO
+  (worker-internal fields never cross), signs the raw bytes under the
+  shared v1 scheme with key ids, enforces a strict AbortController
+  timeout, and maps receiver answers into the Phase 6A failure taxonomy —
+  401/403 security, `connection_revoked` as consent (durably not
+  deliverable), 400/413/415/422 contract (dead-letter, never retried),
+  409 nonce collision and 429/5xx/timeout retryable with Retry-After
+  honored. The receiver's receipts are the only delivery evidence; a dead
+  receiver is a retryable failure, never fabricated evidence, and there
+  is **no fallback to the fixture** anywhere in the code path.
+- **Approval remains layered**: `SYNC_PROVIDER=alp` alone refuses
+  (`alp configuration incomplete`) without the complete
+  `SYNC_ALP_BASE_URL` / `SYNC_ALP_OUTBOUND_SECRET` / `SYNC_ALP_KEY_ID`
+  set; the database registry (the CONNECTED `alp_patient_sync` connector)
+  independently gates claiming; and the fixture keeps refusing every
+  deployed environment with no override. Disabled remains the default.
+- **Verification boundary**: the worker's callback server adds signed
+  `POST /sync/verify` — the patient app presents the one-time invitation
+  code plus its opaque auth subject id; the response carries connection
+  identifiers only (never the desktop patient id), and every failure is
+  the single typed `invitation_invalid` refusal.
+- **Worker semantics unchanged**: leases, SKIP LOCKED claiming,
+  idempotency, the `:rN` re-share generation, reasoned cancellation, the
+  delivery-time consent recheck, circuit breaker, and PHI-free telemetry
+  all carry over from Phase 6A untouched (both DB suites re-ran green
+  against the replaced claim function).
+- **Cross-repo round trip** (`scripts/sync/bridge-roundtrip.test.mjs`,
+  gated on `ALP_BRIDGE_DIR`): spawns the ALP repository's REAL receiver
+  and REAL outbox dispatcher and proves, over genuine signed HTTP between
+  both production code paths: delivery + receipts, duplicate idempotency,
+  tamper refusal, cross-organization refusal, withdrawal tombstone +
+  auto-ack, patient acknowledgment and adherence returning to the
+  desktop's real callback boundary, patient-side revocation as consent,
+  and dead-receiver honesty.
+- **Contract mapping decisions** (explicit, not silent): the wire version
+  identifier is the string `"patient-sync/1"` in both directions (exactly
+  what the database stores and `record_sync_inbound` requires); the wire
+  envelope carries the 16 PatientSyncOutboundEnvelopeV1 keys and nothing
+  else; both sides' parity tests pin these choices.
+
 ## Deprecations
 
 - `NEXT_PUBLIC_USE_LIVE_API` — constant `true`; not consulted anywhere.
@@ -707,20 +767,19 @@ connection):
   protection. New code must call `api.schedule.transition`; delete the
   delegate once the last caller migrates.
 
-## Phase 6B recommendation
+## Phase 7 recommendation
 
-Phase 6A finished the runtime half on the desktop side: the durable worker,
-the lease/recheck/evidence loop, the signed callback boundary, and the
-deterministic contract fixture that proves all of it without touching a real
-patient application. The single remaining step for live sync is **the AI
-Longevity Pro receiver itself** — a separately authorized Phase 6B spanning
-the other repository, per the readiness checklist above. Until then the
-desktop needs zero further changes for sync to go live.
-
-Desktop-only alternatives in priority order: **billing & payments
-persistence** (invoices as rows behind an honest not-configured payment
-boundary, unlocking the `billing_links` scope), **nutrition persistence**
-(unlocking the `nutrition` scope and its already-defined envelope type), or
-**reports** (access-scoped aggregates over the seven real domains). The AI
-sync summary and inbox copilot both wait on a governed AI provider decision;
+Phase 6B finished both halves of the bridge in code with deterministic
+cross-repo proof. What remains for live sync is **operational, not code**:
+apply the ALP migration to its staging Supabase project, provision the
+staging secrets on both sides, register the staging connector, and run the
+synthetic staging acceptance gate (documented in the ALP repository's
+`expo/docs/patient-sync.md`) — then Phase 7 can activate a first supervised
+staging cohort. Desktop-side alternatives while that gate waits on
+operators, in priority order: **billing & payments persistence** (invoices
+as rows behind an honest not-configured payment boundary, unlocking the
+`billing_links` scope), **nutrition persistence** (unlocking the
+`nutrition` scope and its already-defined envelope type), or **reports**
+(access-scoped aggregates over the seven real domains). The AI sync
+summary and inbox copilot both wait on a governed AI provider decision;
 their human-review gates are already live.
