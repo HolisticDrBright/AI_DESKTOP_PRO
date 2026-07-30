@@ -10,9 +10,15 @@ import { PatientTimeline } from "@/components/encounter/PatientTimeline";
 import { PatientOverviewLive } from "@/components/patient/PatientOverviewLive";
 import { LabsHub } from "@/components/patient/LabsHub";
 import { ProtocolWorkspace } from "@/components/patient/ProtocolWorkspace";
+import { PatientMessagesLive } from "@/components/inbox/PatientMessagesLive";
 
 /** Tabs with live data sources; the rest state their demo-only status in live mode. */
-const LIVE_READY: Partial<Record<PatientTabId, true>> = { chart: true, labs: true, protocol: true };
+const LIVE_READY: Partial<Record<PatientTabId, true>> = {
+  chart: true,
+  labs: true,
+  protocol: true,
+  messages: true,
+};
 
 function LiveHold({ patientId, label }: { patientId: string; label: string }) {
   return (
@@ -78,6 +84,10 @@ export default async function PatientTabPage({
 
   if (tab === "protocol") {
     return <ProtocolWorkspace patientId={patientId} />;
+  }
+
+  if (tab === "messages") {
+    return <PatientMessagesLive patientId={patientId} />;
   }
 
   if (!LIVE_READY[tab]) {

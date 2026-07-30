@@ -137,6 +137,24 @@ test("the programs workspace stays honest with a down backend", async ({ page })
   expect(body).not.toContain("Enrollments:");
 });
 
+test("the inbox stays honest with a down backend", async ({ page }) => {
+  // PHASE 4: /inbox is a real workspace now. With the backend down it must
+  // refuse — never synthetic threads, and never a false "Inbox empty" (an
+  // empty inbox and an unreachable backend are different claims).
+  await page.goto("/inbox");
+  await page.waitForLoadState("networkidle");
+  const body = (await page.locator("body").innerText()).trim();
+  await expectNoFixtureData(body, "/inbox with the backend down");
+  expect(
+    body,
+    `/inbox must report itself unavailable. Got:\n${body.slice(0, 600)}`,
+  ).toMatch(/didn.t load|unavailable|not configured|cannot reach|couldn.t reach|try again|sign in/i);
+  expect(body).not.toContain("Inbox empty");
+  expect(body).not.toContain("No patient conversations exist");
+  // And nothing on a dead screen may claim delivery.
+  expect(body).not.toContain("sent (provider confirmed)");
+});
+
 test("settings reports the clinical edition and its real configuration state", async ({ page }) => {
   await page.goto("/settings");
   await page.waitForLoadState("networkidle");

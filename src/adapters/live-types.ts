@@ -891,3 +891,306 @@ export interface ProgramDeliveryV1 {
   modules: LiveProgramModule[];
   generatedAt: string;
 }
+
+/* ------------------------------------------------------------------ */
+/* Inbox, messaging, and AI triage (phase 4)                           */
+/* ------------------------------------------------------------------ */
+
+export type LiveThreadCategory =
+  | "general"
+  | "clinical_question"
+  | "refill"
+  | "lab"
+  | "wearable_alert"
+  | "scheduling"
+  | "billing"
+  | "program_check_in"
+  | "protocol_adherence"
+  | "administrative";
+export type LiveThreadPriority = "low" | "normal" | "high" | "urgent";
+export type LiveThreadStatus = "open" | "snoozed" | "resolved";
+export type LiveThreadQueue = "practitioner" | "staff";
+export type LiveMessageStatus =
+  | "draft"
+  | "queued"
+  | "sent"
+  | "delivered"
+  | "failed"
+  | "inbound"
+  | "cancelled"
+  | "superseded";
+export type LiveMessageChannel = "in_app" | "alp_in_app" | "email" | "sms" | "push";
+
+export interface LiveInboxThread {
+  id: string;
+  subject: string | null;
+  category: LiveThreadCategory;
+  priority: LiveThreadPriority;
+  status: LiveThreadStatus;
+  assignedTo: string | null;
+  assignedQueue: LiveThreadQueue;
+  followUpAt: string | null;
+  snoozedUntil: string | null;
+  urgent: boolean;
+  /** Matched entries from the FIXED urgent-language dictionary — never message excerpts. */
+  urgentTerms: string[];
+  version: number;
+  lastMessageAt: string | null;
+  patientId: string;
+  patientName: string;
+  unreadCount: number;
+  messageCount: number;
+}
+
+export interface LiveInboxCounts {
+  open: number;
+  snoozed: number;
+  resolved: number;
+  urgent: number;
+  unread: number;
+  dueSoon: number;
+  mine: number;
+}
+
+export interface LiveInbox {
+  threads: LiveInboxThread[];
+  /** Counts of PERSISTED rows the caller can see; nothing projected. */
+  counts: LiveInboxCounts;
+  generatedAt: string;
+}
+
+export interface LiveInboxFilters {
+  query?: string | null;
+  category?: LiveThreadCategory | null;
+  priority?: LiveThreadPriority | null;
+  status?: LiveThreadStatus | null;
+  queue?: LiveThreadQueue | null;
+  assignedToMe?: boolean;
+  unreadOnly?: boolean;
+  dueOnly?: boolean;
+  limit?: number;
+}
+
+export interface LiveThreadMessage {
+  id: string;
+  body: string;
+  status: LiveMessageStatus;
+  channel: LiveMessageChannel;
+  isFromPatient: boolean;
+  senderUserId: string | null;
+  isMine: boolean;
+  version: number;
+  readAt: string | null;
+  sentAt: string | null;
+  deliveredAt: string | null;
+  failedReason: string | null;
+  createdAt: string;
+  updatedAt: string | null;
+}
+
+export interface LiveThreadAttachment {
+  id: string;
+  messageId: string | null;
+  fileName: string;
+  contentType: string;
+  byteSize: number | null;
+  storageProvider: "none" | "supabase_storage";
+  /** false = metadata only; no bytes exist and no URL is ever exposed. */
+  accessible: boolean;
+  createdAt: string;
+}
+
+export interface LiveCommunicationPreferences {
+  preferredChannel: "in_app" | "email" | "sms" | "none";
+  emailOk: boolean;
+  smsOk: boolean;
+  pushOk: boolean;
+  doNotContact: boolean;
+  consentId: string | null;
+  note: string | null;
+  updatedAt: string;
+}
+
+export interface LivePatientConsentSummary {
+  id: string;
+  type: string;
+  status: string;
+  grantedAt: string | null;
+  revokedAt: string | null;
+}
+
+export type LiveAiSuggestionKind =
+  | "category"
+  | "priority"
+  | "summary"
+  | "unanswered_questions"
+  | "routing"
+  | "draft_response"
+  | "task_suggestion"
+  | "note_suggestion";
+
+export interface LiveAiSuggestion {
+  id: string;
+  kind: LiveAiSuggestionKind;
+  content: Record<string, unknown>;
+  status: "suggested" | "accepted" | "dismissed";
+  provider: string;
+  model: string;
+  promptVersion: string;
+  schemaVersion: string;
+  createdAt: string;
+  reviewedAt: string | null;
+}
+
+export interface LiveThreadEvent {
+  kind: string;
+  fromValue: string | null;
+  toValue: string | null;
+  note: string | null;
+  createdAt: string;
+}
+
+export interface LiveThreadOutboxEntry {
+  messageId: string;
+  channel: LiveMessageChannel;
+  status: "queued" | "sending" | "sent" | "delivered" | "failed" | "cancelled";
+  attempts: number;
+  nextRetryAt: string | null;
+  lastError: string | null;
+}
+
+export interface LiveConversation {
+  conversation: {
+    id: string;
+    subject: string | null;
+    category: LiveThreadCategory;
+    priority: LiveThreadPriority;
+    status: LiveThreadStatus;
+    assignedTo: string | null;
+    assignedQueue: LiveThreadQueue;
+    followUpAt: string | null;
+    snoozedUntil: string | null;
+    urgent: boolean;
+    urgentTerms: string[];
+    version: number;
+    lastMessageAt: string | null;
+    createdAt: string;
+  };
+  patient: { id: string; name: string };
+  messages: LiveThreadMessage[];
+  attachments: LiveThreadAttachment[];
+  preferences: LiveCommunicationPreferences | null;
+  consents: LivePatientConsentSummary[];
+  aiReviews: LiveAiSuggestion[];
+  events: LiveThreadEvent[];
+  outbox: LiveThreadOutboxEntry[];
+  generatedAt: string;
+}
+
+export interface LiveInboxMutationResult {
+  ok: boolean;
+  message: string;
+  /** false with a refusal code when sending is lawfully refused (e.g. no provider). */
+  sent?: boolean;
+  refusal?: string;
+  conversationId?: string;
+  messageId?: string;
+  version?: number;
+  status?: string;
+  taskId?: string;
+  attachmentId?: string;
+  reviewId?: string;
+  markedRead?: number;
+  alreadyApplied?: boolean;
+  alreadyCreated?: boolean;
+  alreadyAppended?: boolean;
+  alreadyReviewed?: boolean;
+  decision?: string;
+}
+
+export interface LivePatientThreadSummary {
+  id: string;
+  subject: string | null;
+  category: LiveThreadCategory;
+  priority: LiveThreadPriority;
+  status: LiveThreadStatus;
+  urgent: boolean;
+  lastMessageAt: string | null;
+  createdAt: string;
+  unreadCount: number;
+  messageCount: number;
+}
+
+export interface LivePatientMessages {
+  threads: LivePatientThreadSummary[];
+  generatedAt: string;
+}
+
+export interface LiveInboxTodaySummary {
+  openThreads: number;
+  urgentOpen: number;
+  unreadInbound: number;
+  dueFollowUps: number;
+  myAssigned: number;
+  generatedAt: string;
+}
+
+/**
+ * Versioned delivery DTO for the FUTURE AI Longevity Pro messaging bridge.
+ *
+ * Contract definition ONLY. Nothing in this repository calls AI Longevity
+ * Pro, transmits these shapes anywhere, or claims a message reached the
+ * patient app. When a verified bridge exists it will exchange exactly these
+ * shapes, versioned so the mobile side can reject unknown revisions.
+ */
+export interface AlpMessagingThreadV1 {
+  contract: "alp-messaging-thread";
+  contractVersion: 1;
+  organizationId: string;
+  conversationId: string;
+  patientId: string;
+  subject: string | null;
+  category: LiveThreadCategory;
+  createdAt: string;
+}
+
+export interface AlpMessagingMessageV1 {
+  contract: "alp-messaging-message";
+  contractVersion: 1;
+  organizationId: string;
+  conversationId: string;
+  messageId: string;
+  direction: "outbound" | "inbound";
+  body: string;
+  attachments: {
+    attachmentId: string;
+    fileName: string;
+    contentType: string;
+    byteSize: number | null;
+    /** Opaque reference resolved through an authorized fetch — never a URL. */
+    storageRef: string | null;
+  }[];
+  consent: {
+    doNotContact: boolean;
+    preferredChannel: "in_app" | "email" | "sms" | "none";
+  };
+  createdAt: string;
+}
+
+export interface AlpMessagingDeliveryReceiptV1 {
+  contract: "alp-messaging-delivery-receipt";
+  contractVersion: 1;
+  messageId: string;
+  providerEventId: string;
+  kind: "provider_accepted" | "sent" | "delivered" | "failed" | "bounced";
+  occurredAt: string;
+  errorSafe: string | null;
+}
+
+export interface AlpMessagingReadReceiptV1 {
+  contract: "alp-messaging-read-receipt";
+  contractVersion: 1;
+  messageId: string;
+  providerEventId: string;
+  readAt: string;
+}
