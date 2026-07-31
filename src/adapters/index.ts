@@ -49,6 +49,13 @@ import type {
   LiveProgramEnrollmentStatus,
   LiveProgramOfferPaymentMode,
   LiveProtocolDraftPayload,
+  LiveBillingCatalogFilters,
+  LiveBillingProductKind,
+  LiveBillingWorkspaceFilters,
+  LiveInventoryAdjustmentKind,
+  LiveInventoryReturnCondition,
+  LiveInvoiceLineInput,
+  LiveManualPaymentMethod,
 } from "./live-types";
 
 /** Context passed to lab marker mutations so the audit entry is meaningful. */
@@ -593,14 +600,200 @@ export const api = {
     markOrderReviewed: notWired("Lab ordering"),
     listOrderEvents: notWired("Lab ordering"),
   },
+  billing: {
+    /**
+     * LIVE: the practice billing workspace — summary, invoices, payments, A/R
+     * aging, product sales, inventory valuation, and processor
+     * reconciliation. Every figure is summed from PERSISTED rows; nothing is
+     * projected, estimated, or invented.
+     */
+    workspace: async (filters: LiveBillingWorkspaceFilters = {}) =>
+      liveClient.billingWorkspace(filters),
+    /** LIVE: one invoice with its line snapshots, payments, refunds, history. */
+    invoice: async (invoiceId: string) => liveClient.billingInvoice(invoiceId),
+    /** LIVE: a patient's invoice ledger and credit balance. */
+    forPatient: async (patientId: string) => liveClient.billingPatient(patientId),
+    /**
+     * LIVE: open a checkout draft. With an appointment, the booked service
+     * joins the draft when its type matches an active catalog service by
+     * name — a deterministic rule, never a protocol-driven cart addition.
+     */
+    createDraft: async (input: {
+      patientId: string;
+      appointmentId?: string | null;
+      locationId?: string | null;
+    }) => liveClient.billingCreateDraft(input),
+    /**
+     * LIVE: replace a draft's lines. Tax is NOT an input — the database
+     * computes it from the organization's configured rates and snapshots it,
+     * so a client can never assert what tax is owed. A discount without a
+     * reason is refused.
+     */
+    saveDraft: async (input: {
+      invoiceId: string;
+      expectedVersion: number;
+      locationId?: string | null;
+      lines: LiveInvoiceLineInput[];
+    }) => liveClient.billingSaveDraft(input),
+    /**
+     * LIVE: finalize — assigns the sequential number and RESERVES tracked
+     * stock. A concurrent checkout that would oversell is refused as a
+     * conflict; stock never goes negative.
+     */
+    finalize: async (input: { invoiceId: string; expectedVersion: number }) =>
+      liveClient.billingFinalize(input),
+    /** LIVE: void an UNPAID invoice with a reason, releasing reservations. */
+    voidInvoice: async (input: {
+      invoiceId: string;
+      expectedVersion: number;
+      reason: string;
+    }) => liveClient.billingVoid(input),
+    /**
+     * LIVE: record a payment the practice already took by hand. Full
+     * settlement commits the inventory sale exactly once. An idempotency-key
+     * replay is refused as a conflict rather than charging twice.
+     */
+    recordPayment: async (input: {
+      invoiceId: string;
+      expectedVersion: number;
+      amountMinor: number;
+      method: LiveManualPaymentMethod;
+      reference?: string | null;
+      idempotencyKey?: string | null;
+    }) => liveClient.billingRecordPayment(input),
+    /** LIVE: grant patient credit (reason required). */
+    grantCredit: async (input: { patientId: string; amountMinor: number; reason: string }) =>
+      liveClient.billingGrantCredit(input),
+    /** LIVE: apply existing credit to an open invoice. */
+    applyCredit: async (input: {
+      invoiceId: string;
+      expectedVersion: number;
+      amountMinor: number;
+    }) => liveClient.billingApplyCredit(input),
+    /**
+     * LIVE: refund a manual payment with a reason. This NEVER restocks
+     * inventory — returning goods is a separate, explicit decision made
+     * through `inventory.returnStock` with a condition.
+     */
+    refund: async (input: {
+      paymentId: string;
+      amountMinor: number;
+      reason: string;
+      method?: string | null;
+    }) => liveClient.billingRefund(input),
+    /**
+     * LIVE (TEST-MODE ONLY): create a PENDING card payment row. No card data
+     * is collected, no processor is called from the browser, and the result
+     * cannot say a charge succeeded. Only the server-only processor webhook
+     * settles it — the UI must present this as started, never as paid.
+     */
+    startCardPayment: async (input: {
+      invoiceId: string;
+      expectedVersion: number;
+      idempotencyKey: string;
+    }) => liveClient.billingStartCardPayment(input),
+  },
   inventory: {
-    listProducts: notWired("The dispensary and inventory"),
-    addProduct: notWired("The dispensary and inventory"),
-    updateProduct: notWired("The dispensary and inventory"),
-    receiveStock: notWired("The dispensary and inventory"),
-    setStock: notWired("The dispensary and inventory"),
-    recordSale: notWired("The dispensary and inventory"),
-    listSales: notWired("The dispensary and inventory"),
+    /** LIVE: catalog products with per-location stock, suppliers, tax rates. */
+    listProducts: async (filters: LiveBillingCatalogFilters = {}) =>
+      liveClient.billingCatalog(filters),
+    /** LIVE: create a catalog product (financial role enforced by the DB). */
+    addProduct: async (input: {
+      name: string;
+      kind: LiveBillingProductKind;
+      amountMinor: number;
+      currency?: string | null;
+      sku?: string | null;
+      barcode?: string | null;
+      supplierId?: string | null;
+      costMinor?: number | null;
+      taxRateId?: string | null;
+      description?: string | null;
+      trackInventory?: boolean | null;
+      reorderThreshold?: number | null;
+    }) => liveClient.billingUpsertProduct(input),
+    /** LIVE: update a product under its expected version. */
+    updateProduct: async (input: {
+      id: string;
+      expectedVersion: number;
+      name?: string | null;
+      kind?: LiveBillingProductKind | null;
+      amountMinor?: number | null;
+      currency?: string | null;
+      sku?: string | null;
+      barcode?: string | null;
+      supplierId?: string | null;
+      costMinor?: number | null;
+      taxRateId?: string | null;
+      description?: string | null;
+      trackInventory?: boolean | null;
+      reorderThreshold?: number | null;
+    }) => liveClient.billingUpsertProduct(input),
+    /** LIVE: archive a product; past invoice line snapshots are preserved. */
+    archiveProduct: async (input: { id: string; expectedVersion: number }) =>
+      liveClient.billingArchiveProduct(input),
+    /** LIVE: create or update a location, supplier, or tax rate. */
+    upsertReference: async (input: {
+      entity: "location" | "supplier" | "taxRate";
+      id?: string | null;
+      name?: string | null;
+      contactEmail?: string | null;
+      phone?: string | null;
+      notes?: string | null;
+      rateBps?: number | null;
+      active?: boolean;
+      archive?: boolean;
+    }) => liveClient.billingUpsertReference(input),
+    /** LIVE: receive stock into a location; lands in the append-only ledger. */
+    receiveStock: async (input: {
+      locationId: string;
+      productId: string;
+      quantity: number;
+      unitCostMinor?: number | null;
+      supplierId?: string | null;
+      reference?: string | null;
+    }) => liveClient.billingReceiveStock(input),
+    /**
+     * LIVE: adjust stock with a REQUIRED reason. Damaged/expired can only
+     * remove. An adjustment below zero is refused as a conflict.
+     */
+    adjustStock: async (input: {
+      locationId: string;
+      productId: string;
+      delta: number;
+      kind: LiveInventoryAdjustmentKind;
+      reason: string;
+    }) => liveClient.billingAdjustStock(input),
+    /**
+     * LIVE: the ONLY restock path after a sale. The condition is required
+     * because only a resalable return re-enters sellable stock.
+     */
+    returnStock: async (input: {
+      locationId: string;
+      productId: string;
+      quantity: number;
+      condition: LiveInventoryReturnCondition;
+      reason: string;
+      invoiceId?: string | null;
+    }) => liveClient.billingReturnStock(input),
+    /** LIVE: the append-only movement ledger for one product. */
+    history: async (input: { productId: string; locationId?: string | null; limit?: number }) =>
+      liveClient.billingInventoryHistory(input),
+    /**
+     * UNAVAILABLE: there is no "set the number to X" write. Stock moves only
+     * through receipts, reasoned adjustments, sales, and returns, so the
+     * ledger always explains the current number.
+     */
+    setStock: notWired("Absolute stock overwrite (use receiveStock or adjustStock)"),
+    /**
+     * UNAVAILABLE: sales are not recorded directly. A sale is the settlement
+     * of a finalized invoice, which commits the inventory movement exactly
+     * once — see `billing.recordPayment`.
+     */
+    recordSale: notWired("Direct sale recording (use the checkout + payment flow)"),
+    /** LIVE: product sales come from the billing workspace projection. */
+    listSales: async (filters: LiveBillingWorkspaceFilters = {}) =>
+      liveClient.billingWorkspace(filters),
   },
   supplements: {
     getWorkspace: notWired("The supplement workspace"),

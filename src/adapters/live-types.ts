@@ -1512,3 +1512,387 @@ export interface PatientSyncInboundEnvelopeV1 {
   signatureKeyId: string | null;
   correlationId: string | null;
 }
+
+/* Billing, checkout, catalog & inventory (phase 8A) ---------------------- */
+
+export type LiveInvoiceStatus =
+  | "draft"
+  | "open"
+  | "partially_paid"
+  | "paid"
+  | "void"
+  | "refunded"
+  | "partially_refunded"
+  | "uncollectible";
+
+export type LiveInvoiceLineKind =
+  | "service"
+  | "product"
+  | "supplement"
+  | "lab"
+  | "program"
+  | "package"
+  | "adjustment";
+
+export type LiveBillingProductKind =
+  | "service"
+  | "visit"
+  | "program"
+  | "package"
+  | "lab"
+  | "product"
+  | "supplement"
+  | "adjustment"
+  | "other";
+
+/** Manual methods a practitioner may record. `card_test` is never manual. */
+export type LiveManualPaymentMethod = "cash" | "check" | "bank_transfer" | "external";
+
+export type LivePaymentMethod = LiveManualPaymentMethod | "card_test" | "credit";
+
+export type LivePaymentStatus = "pending" | "succeeded" | "failed" | "canceled" | "disputed";
+
+export type LiveInventoryMovementKind =
+  | "receipt"
+  | "adjustment"
+  | "reservation"
+  | "release"
+  | "sale"
+  | "return"
+  | "damaged"
+  | "expired";
+
+/** Adjustments a practitioner may make by hand; every one needs a reason. */
+export type LiveInventoryAdjustmentKind = "adjustment" | "damaged" | "expired";
+
+/** A return must declare its condition; only `resalable` restocks. */
+export type LiveInventoryReturnCondition = "resalable" | "damaged";
+
+export interface LiveInvoiceRefund {
+  id: string;
+  amountMinor: number;
+  reason: string | null;
+  status: string;
+  method: string;
+  createdAt: string;
+}
+
+export interface LiveInvoicePayment {
+  id: string;
+  amountMinor: number;
+  currency: string;
+  status: LivePaymentStatus;
+  method: LivePaymentMethod;
+  reference: string | null;
+  /** Only ever `"test"`: production card processing is not configured. */
+  environment: string | null;
+  processor: string | null;
+  failureCode: string | null;
+  paidAt: string | null;
+  createdAt: string;
+  refunds: LiveInvoiceRefund[];
+}
+
+export interface LiveInvoiceLine {
+  id: string;
+  kind: LiveInvoiceLineKind;
+  productId: string | null;
+  /** Snapshotted at save time — later catalog edits never rewrite history. */
+  name: string | null;
+  sku: string | null;
+  description: string | null;
+  quantity: number;
+  unitAmountMinor: number;
+  amountMinor: number;
+  discountMinor: number;
+  discountReason: string | null;
+  /** Server-computed from the configured tax rate; never client-supplied. */
+  taxRateBps: number;
+  taxMinor: number;
+  verification: string | null;
+}
+
+export interface LiveInvoiceEvent {
+  kind: string;
+  from: string | null;
+  to: string | null;
+  detail: string | null;
+  at: string;
+}
+
+export interface LiveInvoice {
+  id: string;
+  /** Assigned at finalize (`INV-00001`); null while the invoice is a draft. */
+  number: string | null;
+  status: LiveInvoiceStatus;
+  version: number;
+  currency: string;
+  patientId: string;
+  patientName: string | null;
+  appointmentId: string | null;
+  practitionerUserId: string | null;
+  locationId: string | null;
+  locationName: string | null;
+  subtotalMinor: number;
+  discountMinor: number;
+  taxMinor: number;
+  totalMinor: number;
+  paidMinor: number;
+  refundedMinor: number;
+  creditAppliedMinor: number;
+  balanceMinor: number;
+  finalizedAt: string | null;
+  voidedAt: string | null;
+  voidReason: string | null;
+  createdAt: string;
+  lines: LiveInvoiceLine[];
+  payments: LiveInvoicePayment[];
+  history: LiveInvoiceEvent[];
+}
+
+/** One line as the client proposes it. Tax is deliberately absent. */
+export interface LiveInvoiceLineInput {
+  productId: string;
+  quantity?: number;
+  unitAmountMinor?: number;
+  discountMinor?: number;
+  discountReason?: string | null;
+}
+
+export interface LiveBillingStockLevel {
+  locationId: string;
+  locationName: string | null;
+  onHand: number;
+  reserved: number;
+  available: number;
+  reorderThreshold: number;
+}
+
+export interface LiveBillingCommercialLink {
+  kind: "affiliate" | "wholesale" | "info";
+  label: string;
+  url: string | null;
+  disclosure: string | null;
+}
+
+export interface LiveBillingProduct {
+  id: string;
+  name: string;
+  kind: LiveBillingProductKind;
+  amountMinor: number;
+  currency: string;
+  sku: string | null;
+  barcode: string | null;
+  supplierId: string | null;
+  supplierName: string | null;
+  costMinor: number;
+  taxRateId: string | null;
+  taxRateBps: number | null;
+  taxRateName: string | null;
+  description: string | null;
+  trackInventory: boolean;
+  reorderThreshold: number;
+  catalogProductId: string | null;
+  /** Clinical verification of the linked catalog product, never a sales claim. */
+  verificationStatus: string | null;
+  commercialLinks: LiveBillingCommercialLink[];
+  archivedAt: string | null;
+  version: number;
+  stock: LiveBillingStockLevel[];
+}
+
+export interface LiveBillingSupplier {
+  id: string;
+  name: string;
+  contactEmail: string | null;
+  phone: string | null;
+  notes: string | null;
+  archivedAt: string | null;
+}
+
+export interface LiveBillingLocation {
+  id: string;
+  name: string;
+  archivedAt: string | null;
+}
+
+export interface LiveBillingTaxRate {
+  id: string;
+  name: string;
+  rateBps: number;
+  active: boolean;
+}
+
+export interface LiveBillingCatalog {
+  products: LiveBillingProduct[];
+  suppliers: LiveBillingSupplier[];
+  locations: LiveBillingLocation[];
+  taxRates: LiveBillingTaxRate[];
+}
+
+export interface LiveBillingCatalogFilters {
+  query?: string | null;
+  kind?: string | null;
+  supplierId?: string | null;
+  locationId?: string | null;
+  /** `"low"` at or below threshold, `"out"` nothing available. */
+  stockFilter?: "low" | "out" | null;
+  includeArchived?: boolean;
+  limit?: number;
+}
+
+export interface LiveInventoryMovement {
+  id: string;
+  kind: LiveInventoryMovementKind;
+  onHandDelta: number;
+  reservedDelta: number;
+  reason: string | null;
+  condition: string | null;
+  unitCostMinor: number | null;
+  locationId: string;
+  locationName: string | null;
+  refType: string | null;
+  refId: string | null;
+  at: string;
+}
+
+export interface LiveBillingSummary {
+  invoicedMinor: number;
+  collectedMinor: number;
+  outstandingMinor: number;
+  refundedMinor: number;
+  discountMinor: number;
+  taxMinor: number;
+}
+
+export interface LiveBillingInvoiceRow {
+  id: string;
+  number: string | null;
+  status: LiveInvoiceStatus;
+  patientId: string;
+  patientName: string | null;
+  totalMinor: number;
+  balanceMinor: number;
+  currency: string;
+  locationId: string | null;
+  practitionerUserId: string | null;
+  finalizedAt: string | null;
+  createdAt: string;
+  version: number;
+}
+
+export interface LiveBillingPaymentRow {
+  id: string;
+  invoiceId: string | null;
+  amountMinor: number;
+  currency: string;
+  status: LivePaymentStatus;
+  method: LivePaymentMethod;
+  environment: string | null;
+  reference: string | null;
+  createdAt: string;
+}
+
+export interface LiveBillingAging {
+  current: number;
+  days31to60: number;
+  days61to90: number;
+  over90: number;
+}
+
+export interface LiveBillingProductSale {
+  productId: string | null;
+  name: string | null;
+  kind: string | null;
+  quantity: number;
+  amountMinor: number;
+}
+
+export interface LiveBillingLowStock {
+  productId: string;
+  name: string;
+  locationId: string;
+  locationName: string | null;
+  onHand: number;
+  reserved: number;
+  available: number;
+  reorderThreshold: number;
+}
+
+export interface LiveBillingInventoryPanel {
+  valuationMinor: number;
+  lowStock: LiveBillingLowStock[];
+}
+
+export interface LiveBillingWebhookEvent {
+  eventId: string;
+  type: string;
+  /** A refusal is a RECORDED row, never a silent drop. */
+  outcome: "processed" | "duplicate" | "ignored" | "refused" | "out_of_order";
+  detail: string | null;
+  receivedAt: string;
+}
+
+export interface LiveBillingReconciliation {
+  pendingCardPayments: number;
+  webhookEvents: LiveBillingWebhookEvent[];
+}
+
+export interface LiveBillingWorkspace {
+  summary: LiveBillingSummary;
+  invoices: LiveBillingInvoiceRow[];
+  payments: LiveBillingPaymentRow[];
+  aging: LiveBillingAging;
+  productSales: LiveBillingProductSale[];
+  inventory: LiveBillingInventoryPanel;
+  reconciliation: LiveBillingReconciliation;
+}
+
+export interface LiveBillingWorkspaceFilters {
+  from?: string | null;
+  to?: string | null;
+  status?: string | null;
+  practitionerUserId?: string | null;
+  locationId?: string | null;
+  method?: string | null;
+}
+
+export interface LivePatientBillingInvoice {
+  id: string;
+  number: string | null;
+  status: LiveInvoiceStatus;
+  totalMinor: number;
+  paidMinor: number;
+  creditAppliedMinor: number;
+  refundedMinor: number;
+  balanceMinor: number;
+  currency: string;
+  appointmentId: string | null;
+  createdAt: string;
+  finalizedAt: string | null;
+  version: number;
+}
+
+export interface LivePatientBilling {
+  creditBalanceMinor: number;
+  invoices: LivePatientBillingInvoice[];
+}
+
+/** Simple acknowledgement shape for catalog/inventory writes. */
+export interface LiveBillingMutationResult {
+  id?: string;
+  version?: number;
+  ok?: boolean;
+  balanceMinor?: number;
+}
+
+/**
+ * A started card payment. There is deliberately no success field: the browser
+ * never asserts a charge — the server-only processor boundary attaches the
+ * intent and the webhook settles it.
+ */
+export interface LiveCardPaymentIntent {
+  paymentId: string;
+  amountMinor: number;
+  currency: string;
+}

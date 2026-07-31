@@ -52,8 +52,8 @@ describe("unwired namespaces refuse instead of returning fixtures", () => {
     ["healthTwin.getMap", (api) => api.healthTwin.getMap()],
     ["experiments.listActive", (api) => api.experiments.listActive()],
     ["experiments.listCompleted", (api) => api.experiments.listCompleted()],
-    ["inventory.listProducts", (api) => api.inventory.listProducts()],
-    ["inventory.listSales", (api) => api.inventory.listSales()],
+    ["inventory.setStock", (api) => api.inventory.setStock()],
+    ["inventory.recordSale", (api) => api.inventory.recordSale()],
     ["labOrders.getDraftOrder", (api) => api.labOrders.getDraftOrder()],
     ["labOrders.listCatalogPanels", (api) => api.labOrders.listCatalogPanels()],
     ["labOrders.prepareOrderDraft", (api) => api.labOrders.prepareOrderDraft()],
@@ -113,6 +113,25 @@ describe("live namespaces attempt real transport, never fixtures", () => {
     const err = await api.patients.overview("x").catch((e: unknown) => JSON.stringify(e));
     for (const name of FIXTURE_PATIENT_NAMES) {
       expect(err as string).not.toContain(name);
+    }
+  });
+
+  test("billing and inventory go to the live client, never the POS fixtures", async () => {
+    const api = await loadRegistry();
+    await expect(api.billing.workspace()).rejects.toBeInstanceOf(Error);
+    await expect(api.inventory.listProducts()).rejects.toBeInstanceOf(Error);
+    // billing.mock.ts / inventory.mock.ts seed a fixture POS. Nothing from it
+    // may surface through the live path, including on the error path.
+    const errors = JSON.stringify([
+      await api.billing.workspace().catch((e: unknown) => e),
+      await api.inventory.listProducts().catch((e: unknown) => e),
+      await api.billing.invoice("x").catch((e: unknown) => e),
+    ]);
+    for (const needle of [...FIXTURE_PATIENT_NAMES, ...FIXTURE_PATIENT_IDS]) {
+      expect(errors).not.toContain(needle);
+    }
+    for (const needle of ["INV-2", "Omega-3", "cardOnFile", "SEED_INVOICES"]) {
+      expect(errors).not.toContain(needle);
     }
   });
 });
