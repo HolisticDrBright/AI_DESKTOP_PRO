@@ -56,6 +56,9 @@ import type {
   LiveInventoryReturnCondition,
   LiveInvoiceLineInput,
   LiveManualPaymentMethod,
+  LiveMembershipAction,
+  LivePackageKind,
+  LivePlanType,
 } from "./live-types";
 
 /** Context passed to lab marker mutations so the audit entry is meaningful. */
@@ -692,6 +695,121 @@ export const api = {
       expectedVersion: number;
       idempotencyKey: string;
     }) => liveClient.billingStartCardPayment(input),
+  },
+  plans: {
+    /**
+     * LIVE: the org's package and membership offerings with every version.
+     * Commercial terms live on the VERSION, so a published version's terms are
+     * frozen and an accepted plan can never be rewritten under the patient.
+     */
+    library: async (includeArchived = false) => liveClient.plansLibrary(includeArchived),
+    /** LIVE: a patient's entitlements (with full ledger) and memberships. */
+    forPatient: async (patientId: string) => liveClient.plansPatient(patientId),
+    /** LIVE: create, rename, or archive a plan; archiving preserves history. */
+    upsert: async (input: {
+      planType: LivePlanType;
+      id?: string | null;
+      expectedVersion?: number | null;
+      name?: string | null;
+      description?: string | null;
+      kind?: LivePackageKind | null;
+      archive?: boolean;
+    }) => liveClient.plansUpsert(input),
+    /** LIVE: draft the next version's commercial terms. */
+    createVersion: async (
+      input: Record<string, unknown> & { planType: LivePlanType; planId: string; priceMinor: number },
+    ) => liveClient.plansCreateVersion(input),
+    /** LIVE: publish a draft version, freezing its terms permanently. */
+    publishVersion: async (input: { planType: LivePlanType; versionId: string }) =>
+      liveClient.plansPublishVersion(input),
+    /**
+     * LIVE: the org's explicit no-show / late-cancel credit policy. The rule
+     * is configuration; there is no implicit default buried in the UI.
+     */
+    setPolicy: async (input: {
+      noShowPolicy: string;
+      lateCancelPolicy: string;
+      lateCancelWindowHours: number;
+      consumeOn: string;
+    }) => liveClient.plansSetPolicy(input),
+    /**
+     * LIVE: sell a package. Drafts the purchase INVOICE only — entitlements
+     * follow when that invoice is paid, so an unpaid purchase confers nothing.
+     */
+    purchase: async (input: {
+      patientId: string;
+      packageVersionId: string;
+      acceptanceMethod?: string;
+    }) => liveClient.plansPurchase(input),
+    /** LIVE: grant what a PAID invoice bought. Idempotent by construction. */
+    grantForInvoice: async (invoiceId: string) => liveClient.plansGrantForInvoice(invoiceId),
+    /**
+     * LIVE: complimentary assignment. Needs the separate comp.assign
+     * permission and a reason, and records a zero-amount invoice so the gift
+     * is visible. It creates NO clinical order, note, or eligibility.
+     */
+    assignComplimentary: async (input: {
+      patientId: string;
+      planType: LivePlanType;
+      versionId: string;
+      reason: string;
+      expiresAt?: string | null;
+    }) => liveClient.plansAssignComplimentary(input),
+    /**
+     * LIVE: hold a credit for an appointment. A concurrent second reservation
+     * for the same appointment is refused by a unique index, not app logic.
+     */
+    reserveCredit: async (input: {
+      entitlementId: string;
+      appointmentId: string;
+      quantity?: number;
+    }) => liveClient.plansReserveCredit(input),
+    /** LIVE: settle a reserved credit per the ORGANIZATION'S policy. */
+    settleCredit: async (input: {
+      appointmentId: string;
+      outcome: string;
+      reason?: string | null;
+    }) => liveClient.plansSettleCredit(input),
+    /** LIVE: restore spent credit — refund authority plus a reason. */
+    restoreCredit: async (input: { entitlementId: string; quantity: number; reason: string }) =>
+      liveClient.plansRestoreCredit(input),
+    /** LIVE: sweep entitlements past their expiry. */
+    expireCredits: async () => liveClient.plansExpireCredits(),
+    /**
+     * LIVE: revoke UNSPENT credit after a refund. A visit already received is
+     * never clawed back, and a refund never silently recreates a benefit.
+     */
+    revokeForRefund: async (input: { invoiceId: string; reason: string }) =>
+      liveClient.plansRevokeForRefund(input),
+    /** LIVE: pause / resume / cancel / reactivate a patient membership. */
+    membershipLifecycle: async (input: {
+      patientMembershipId: string;
+      action: LiveMembershipAction;
+      expectedVersion: number;
+      reason?: string | null;
+    }) => liveClient.plansMembershipLifecycle(input),
+    /** LIVE: reconciliation exceptions and the processor event ledger. */
+    reconciliation: async (status: string | null = "open") =>
+      liveClient.plansReconciliation(status),
+    /** LIVE: resolve one exception with a required reason. */
+    resolveException: async (input: {
+      exceptionId: string;
+      resolution: "resolved" | "dismissed";
+      reason: string;
+      expectedVersion: number;
+    }) => liveClient.plansResolveException(input),
+    /**
+     * LIVE: the Stripe boundary's real state. `liveTransactionExecuted` is
+     * false until a Stripe API transaction has ACTUALLY run — configuration
+     * alone is never presented as proof the integration works.
+     */
+    stripeStatus: async () => liveClient.plansStripeStatus(),
+    /**
+     * UNAVAILABLE: no AI may price, refund, comp, cancel, alter an
+     * entitlement, or resolve reconciliation. Every such RPC requires
+     * auth.uid() and a human-held permission; there is no autonomous path.
+     */
+    autoResolveAI: notWired("Autonomous financial decisions (deliberately never built)"),
   },
   inventory: {
     /** LIVE: catalog products with per-location stock, suppliers, tax rates. */

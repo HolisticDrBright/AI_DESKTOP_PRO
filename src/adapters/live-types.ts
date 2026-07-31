@@ -1896,3 +1896,256 @@ export interface LiveCardPaymentIntent {
   amountMinor: number;
   currency: string;
 }
+
+/* Plans, memberships, entitlements & reconciliation (phase 8B) ----------- */
+
+export type LivePlanType = "package" | "membership";
+
+export type LivePackageKind =
+  | "visit_credits"
+  | "product_bundle"
+  | "lab_bundle"
+  | "program_bundle"
+  | "mixed";
+
+export type LivePlanStatus = "draft" | "active" | "archived";
+export type LivePlanVersionStatus = "draft" | "published" | "retired";
+
+export type LiveTransferPolicy = "non_transferable" | "household" | "org_discretion";
+export type LiveCreditMode = "single_use" | "multi_use";
+
+/** The subscription status machine. Mirrors the database check constraint. */
+export type LiveMembershipStatus =
+  | "incomplete"
+  | "incomplete_expired"
+  | "trialing"
+  | "active"
+  | "past_due"
+  | "unpaid"
+  | "paused"
+  | "canceled"
+  | "expired";
+
+export type LiveMembershipAction =
+  | "pause"
+  | "resume"
+  | "cancel_at_period_end"
+  | "cancel_now"
+  | "reactivate";
+
+/** Every movement the entitlement ledger can record. */
+export type LiveEntitlementLedgerKind =
+  | "grant"
+  | "reserve"
+  | "release"
+  | "consume"
+  | "expire"
+  | "refund_revoke"
+  | "manual_restore";
+
+export type LiveEntitlementStatus = "active" | "exhausted" | "expired" | "revoked";
+
+/** The granular financial permissions. Taking cash ≠ issuing a refund. */
+export type LiveFinancialPermission =
+  | "billing.view_summary"
+  | "billing.create_invoice"
+  | "billing.take_payment"
+  | "billing.issue_refund"
+  | "billing.adjust_price"
+  | "catalog.manage_products"
+  | "inventory.adjust"
+  | "plans.manage"
+  | "comp.assign"
+  | "reconciliation.resolve"
+  | "reports.view_org";
+
+export interface LivePackageVersion {
+  id: string;
+  versionNumber: number;
+  priceMinor: number;
+  currency: string;
+  creditQuantity: number;
+  creditMode: LiveCreditMode;
+  expiresAfterDays: number | null;
+  transferPolicy: LiveTransferPolicy;
+  status: LivePlanVersionStatus;
+  publishedAt: string | null;
+  termsSummary: string | null;
+}
+
+export interface LiveMembershipVersion {
+  id: string;
+  versionNumber: number;
+  priceMinor: number;
+  currency: string;
+  intervalUnit: "day" | "week" | "month" | "year";
+  intervalCount: number;
+  trialDays: number;
+  includedCredits: number;
+  minimumCommitmentPeriods: number;
+  gracePeriodDays: number;
+  status: LivePlanVersionStatus;
+  publishedAt: string | null;
+  termsSummary: string | null;
+}
+
+export interface LivePackagePlan {
+  id: string;
+  name: string;
+  description: string | null;
+  kind: LivePackageKind;
+  status: LivePlanStatus;
+  version: number;
+  archivedAt: string | null;
+  currentVersionId: string | null;
+  versions: LivePackageVersion[];
+}
+
+export interface LiveMembershipPlan {
+  id: string;
+  name: string;
+  description: string | null;
+  status: LivePlanStatus;
+  version: number;
+  archivedAt: string | null;
+  currentVersionId: string | null;
+  versions: LiveMembershipVersion[];
+}
+
+/** How an organization treats a reserved credit when a visit does not happen. */
+export interface LiveOrgBillingPolicy {
+  organization_id: string;
+  no_show_policy: "consume" | "release" | "review";
+  late_cancel_policy: "consume" | "release" | "review";
+  late_cancel_window_hours: number;
+  consume_on: "arrived" | "completed";
+}
+
+export interface LivePlanLibrary {
+  packages: LivePackagePlan[];
+  memberships: LiveMembershipPlan[];
+  /** null when the org has never set one — the documented defaults apply. */
+  policy: LiveOrgBillingPolicy | null;
+}
+
+export interface LiveEntitlementLedgerEntry {
+  kind: LiveEntitlementLedgerKind;
+  quantity: number;
+  refType: string | null;
+  refId: string | null;
+  reason: string | null;
+  at: string;
+}
+
+export interface LiveEntitlement {
+  id: string;
+  source: "package_purchase" | "membership_period" | "complimentary";
+  status: LiveEntitlementStatus;
+  /** granted = remaining + reserved + consumed + expired + refunded. */
+  grantedQuantity: number;
+  remainingQuantity: number;
+  reservedQuantity: number;
+  consumedQuantity: number;
+  expiredQuantity: number;
+  refundedQuantity: number;
+  creditMode: LiveCreditMode;
+  expiresAt: string | null;
+  transferPolicy: LiveTransferPolicy;
+  planName: string | null;
+  ledger: LiveEntitlementLedgerEntry[];
+}
+
+export interface LivePatientMembership {
+  id: string;
+  status: LiveMembershipStatus;
+  origin: "purchase" | "complimentary";
+  version: number;
+  membershipName: string | null;
+  currentPeriodEnd: string | null;
+  trialEnd: string | null;
+  cancelAtPeriodEnd: boolean;
+  canceledAt: string | null;
+  graceUntil: string | null;
+  complimentaryReason: string | null;
+  processorSubscriptionRef: string | null;
+}
+
+export interface LivePatientEntitlements {
+  entitlements: LiveEntitlement[];
+  memberships: LivePatientMembership[];
+}
+
+export type LiveReconciliationExceptionKind =
+  | "unmatched_internal_payment"
+  | "unmatched_provider_event"
+  | "amount_mismatch"
+  | "currency_mismatch"
+  | "duplicate_event"
+  | "delayed_webhook"
+  | "failed_webhook"
+  | "dispute"
+  | "refund_action_required";
+
+export interface LiveReconciliationException {
+  id: string;
+  kind: LiveReconciliationExceptionKind;
+  status: "open" | "resolved" | "dismissed";
+  version: number;
+  internalAmountMinor: number | null;
+  providerAmountMinor: number | null;
+  currency: string | null;
+  detail: string | null;
+  /**
+   * NULL means UNAVAILABLE — balance transactions and payouts are not fetched
+   * in this phase. A UI must not render absence as zero.
+   */
+  providerFeeMinor: number | null;
+  providerNetMinor: number | null;
+  providerSettlementStatus: string | null;
+  createdAt: string;
+  resolvedAt: string | null;
+  resolutionReason: string | null;
+}
+
+export interface LiveReconciliationWorkspace {
+  exceptions: LiveReconciliationException[];
+  /** false in this phase: fee/net/settlement columns are not populated. */
+  settlementFieldsAvailable: boolean;
+  webhookEvents: LiveBillingWebhookEvent[];
+}
+
+/** Acknowledgement shape for plan/entitlement writes. */
+export interface LivePlanMutationResult {
+  id?: string;
+  planId?: string;
+  version?: number;
+  versionNumber?: number;
+  status?: string;
+  ok?: boolean;
+  invoiceId?: string;
+  entitlementId?: string | null;
+  patientMembershipId?: string | null;
+  packageVersionId?: string;
+  complimentary?: boolean;
+  entitlementsCreated?: number;
+  revoked?: number;
+  expired?: number;
+  state?: string;
+  reviewRequired?: boolean;
+  policy?: string;
+}
+
+/**
+ * The Stripe boundary as the browser is allowed to see it: whether it is
+ * configured at all, and why not. Never a key, never a secret.
+ */
+export interface LiveStripeStatus {
+  mode: "disabled" | "test";
+  configured: boolean;
+  problems: string[];
+  /**
+   * Whether a real Stripe API transaction has EVER been executed by this
+   * deployment. False until one actually runs — never inferred from config.
+   */
+  liveTransactionExecuted: boolean;
+}

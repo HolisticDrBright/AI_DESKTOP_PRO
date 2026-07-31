@@ -202,6 +202,26 @@ export function verifyWebhookSignature(
 
 const API_BASE = "https://api.stripe.com/v1";
 
+/**
+ * Whether this process has actually completed a Stripe API transaction.
+ *
+ * Being CONFIGURED is not the same as having TRANSACTED. Every surface that
+ * reports Stripe state reads this, so a screen can say "configured, but no
+ * transaction has run" — which is the truth on a fresh deployment — instead of
+ * implying the integration is proven. It flips only in `stripeRequest`, after
+ * a real 2xx response from Stripe.
+ */
+let liveTransactionExecuted = false;
+
+export function hasExecutedLiveTransaction(): boolean {
+  return liveTransactionExecuted;
+}
+
+/** Test-only: reset the tracker between cases. */
+export function __resetTransactionTracker(): void {
+  liveTransactionExecuted = false;
+}
+
 async function stripeRequest<T>(
   path: string,
   body: Record<string, string>,
@@ -231,6 +251,8 @@ async function stripeRequest<T>(
   if (json.livemode === true) {
     throw new StripeRefusedError("Stripe returned a live-mode object; refusing it.");
   }
+  // A real, accepted test-mode transaction has now happened. Only here.
+  liveTransactionExecuted = true;
   return json as T;
 }
 
