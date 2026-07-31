@@ -278,8 +278,17 @@ test("13: a card payment reaches pending only — the UI never claims it is paid
   await expect(page.getByTestId("invoice-status")).not.toHaveText("Paid");
   await expect(page.getByTestId("invoice-payment-rows")).toContainText("awaiting settlement");
 
+  // The screen must disclose BOTH that this is test mode and that no
+  // processor is connected — "test mode" alone would still imply Stripe is
+  // wired up and operationally verified, which it is not.
   const body = await page.locator("body").innerText();
-  expect(body).toContain("TEST MODE");
+  expect(body).toMatch(/test.mode/i);
+  expect(body).toMatch(/no payment processor is connected/i);
+  // and it must never make an AFFIRMATIVE success claim. (A bare "charged"
+  // check would be wrong: the honest copy says "no card is charged".)
+  expect(body).not.toMatch(
+    /card (was |has been )?charged|payment (complete|successful|succeeded)|processed successfully|charge succeeded/i,
+  );
 
   const workspace = await fetch(`${STUB}/rest/v1/rpc/get_billing_workspace`, {
     method: "POST",

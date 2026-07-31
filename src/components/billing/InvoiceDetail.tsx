@@ -526,10 +526,11 @@ export function InvoiceDetail({ invoiceId }: { invoiceId: string }) {
 
           <div className="mt-[14px] border-t border-hairline pt-[12px]">
             <ClinicalNote>
-              Card payments run in Stripe TEST MODE. Starting one records a
-              pending payment and nothing more — no card is charged, and this
-              screen will never show it as paid. Settlement appears only after
-              the processor webhook confirms it.
+              No payment processor is connected. Starting a card payment
+              records a pending test-mode row and nothing more — no processor
+              is contacted, no card is charged, and this screen will never show
+              it as paid. Settlement appears only after a processor webhook
+              confirms it.
             </ClinicalNote>
             <div className="mt-[10px] flex flex-wrap items-center gap-2">
               <Btn
@@ -560,7 +561,7 @@ export function InvoiceDetail({ invoiceId }: { invoiceId: string }) {
                     .finally(() => setBusy(false));
                 }}
               >
-                Start test-mode card payment
+                Record pending card payment (test mode)
               </Btn>
               {cardStarted && (
                 <p

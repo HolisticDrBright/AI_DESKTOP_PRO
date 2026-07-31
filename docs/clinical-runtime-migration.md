@@ -26,7 +26,7 @@ money real: an org-scoped catalog with suppliers, locations, and tax rates;
 per-location inventory whose every movement is an append-only ledger row;
 appointment checkout into immutable finalized invoices with snapshotted lines
 and SERVER-PRICED tax; manual payments, patient credit, and refunds that never
-restock; Stripe TEST-MODE card payments that a browser can only ever start,
+restock; test-mode card payments that a browser can only ever start,
 settled solely by a server-side webhook with durable dedup; and an inventory
 accounting policy — reserve at finalize, commit the sale exactly once at
 settlement, release on void — that makes overselling a typed conflict rather
@@ -118,7 +118,7 @@ only act when a human accepts them).
 | --- | --- | --- | --- |
 | Message delivery (ALP in-app/email/SMS/push) | `/inbox` composer | provider-acknowledged send | `MessagingProvider` implementation + `messaging` connector registration + outbox worker |
 | AI inbox copilot | `/inbox` AI panel | recorded suggestion | governed AI config + worker calling `record_ai_suggestion` |
-| Production card processing | `/billing` checkout | a real (non-test) charge | a production processor account + PCI review; TEST MODE is live today |
+| Any live payment processor (incl. Stripe test mode) | `/billing` checkout | a processor-confirmed charge | **No processor is connected at all.** Phase 8A built the persistence and webhook-ingest boundary and verified it with deterministic fixtures; it made no Stripe API call and verified no signed webhook. Needs an account, SDK, key management, PCI review, and a signature-verifying receiver |
 | Insurance claims | `/billing?tab=claims` | submit claim | clearinghouse integration (deliberately out of phase 8A) |
 | Nutrition persistence | chart Nutrition tab | save diet plan | schema ready |
 | Health Twin | chart Tracking tab | approve snapshot | schema ready (`outcome_snapshots`) |
@@ -784,11 +784,22 @@ Stock has no "set the number to X" write. It moves only through receipts,
 reasoned adjustments, sales, and returns, so `inventory_ledger` always
 explains the current figure. Selling a tracked item requires a location.
 
+**What was actually exercised (read this before trusting any Stripe claim).**
+Phase 8A made **no Stripe API request and verified no signed webhook**. There
+is no `stripe` dependency, no call to `api.stripe.com`, and no signature
+verification anywhere in the tree. What shipped is the *persistence and
+ingest boundary*: the payment/refund/webhook-event tables, the settlement
+state machine, dedup and agreement rules, and the `service_role`-only RPCs —
+all verified with **deterministic fixtures**. That foundation is real and
+tested; an operational processor is not, and no screen may imply otherwise.
+Phase 8B adds the real signature-verifying, disabled-by-default adapter.
+
 **Payment boundary.** Manual methods (`cash`, `check`, `bank_transfer`,
 `external`) are recorded by a practitioner as money already taken; an
 idempotency-key replay is a typed conflict, not a second charge. Card
-payments are Stripe **TEST MODE** only (`environment` is check-constrained to
-`'test'`):
+payments are **test-mode only** (`environment` is check-constrained to
+`'test'`), and the flow below describes the boundary's contract, not a
+connected processor:
 
 1. the browser calls `start_card_payment`, which creates a **PENDING** row and
    refuses a second in-flight card payment for the invoice;

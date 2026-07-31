@@ -310,10 +310,11 @@ export function BillingWorkspace() {
       <Card className="p-[14px]" data-testid="billing-reconciliation">
         <CardTitle>Processor reconciliation</CardTitle>
         <ClinicalNote>
-          Card payments run in Stripe TEST MODE. A started payment is never a
-          completed charge: settlement is recorded only when the processor
-          webhook confirms it, and every refused or duplicate event is kept
-          below rather than dropped.
+          No payment processor is connected. Card payments record a pending
+          test-mode row locally and contact no processor, so a started payment
+          is never a completed charge. Settlement would be recorded only when a
+          processor webhook confirms it; every refused or duplicate event is
+          kept below rather than dropped.
         </ClinicalNote>
         <div className="mt-[10px]">
           <Metric
