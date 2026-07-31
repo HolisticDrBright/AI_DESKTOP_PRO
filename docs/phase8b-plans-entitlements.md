@@ -240,6 +240,21 @@ for zero.
   margin and valuation figures are labelled estimates.
 - **Patient-app billing delivery** — no billing document reaches the patient app.
 
+## Dependency audit (reported honestly)
+
+`npm audit --omit=dev` reports **2 high-severity** findings, both pre-existing
+and neither introduced by this phase:
+
+- `sharp` — inherited libvips advisories CVE-2026-33327, CVE-2026-33328,
+  CVE-2026-35590, CVE-2026-35591
+- `next` — high, *via* the same `sharp` dependency
+
+The only offered fix is `next@14.2.35`, a **semver-major downgrade** of the
+framework. That is a cross-cutting change well outside a billing phase and
+would need its own compatibility pass, so it is reported rather than applied.
+Neither advisory is reachable from the code this phase adds: the Stripe
+boundary and the plan/entitlement RPCs do no image processing.
+
 ## What is not built yet
 
 Recorded so the gap is visible rather than implied complete:
