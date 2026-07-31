@@ -62,6 +62,7 @@ export type PatientTabId =
   | "appointments"
   | "messages"
   | "billing"
+  | "plans"
   | "files"
   | "app-sync";
 

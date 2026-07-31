@@ -1831,6 +1831,13 @@ export interface LiveBillingWebhookEvent {
   outcome: "processed" | "duplicate" | "ignored" | "refused" | "out_of_order";
   detail: string | null;
   receivedAt: string;
+  /**
+   * Whether this event's signature was actually verified (phase 8B). An
+   * unverified event is never treated as proof of anything.
+   */
+  signatureVerified?: boolean;
+  /** Stripe's own livemode flag. A live event is refused by the boundary. */
+  livemode?: boolean | null;
 }
 
 export interface LiveBillingReconciliation {
