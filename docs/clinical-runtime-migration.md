@@ -211,12 +211,14 @@ DEFINER + `search_path=''` + explicit `auth.uid()` / `private.is_org_member` /
 `private.can_access_patient` gates + bounded DTOs + anon/public revoked + no
 PHI in error messages or audit `safe_message`.
 
-**Advisor posture after phase 8A DDL.** Zero ERROR-level findings. The 24 new
-security WARNs are the same generic
+**Advisor posture after phase 8A DDL.** Zero ERROR-level findings. Exactly 22
+new security WARNs — one per caller RPC — all the generic
 `authenticated_security_definer_function_executable` lint that fires for every
-desktop RPC — the deliberate gated-definer architecture (invoker cannot work:
-write privileges are revoked from `authenticated`), with each gate proven by
-`supabase/tests/desktop_owned_billing.sql`. One finding WAS real and was
+desktop RPC, i.e. the deliberate gated-definer architecture (invoker cannot
+work: write privileges are revoked from `authenticated`), with each gate
+proven by `supabase/tests/desktop_owned_billing.sql`. The two processor RPCs
+are correctly absent from that list, which is itself the evidence they are
+`service_role`-only. One finding WAS real and was
 fixed rather than documented: the five billing guard trigger functions were
 created in `public`, making them anon/authenticated-executable over PostgREST;
 migration `20260731170301` moved them to `private`. No new
