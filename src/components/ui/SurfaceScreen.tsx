@@ -8,6 +8,7 @@ const STATUS_TONE: Record<SurfaceStatus, Tone> = {
   Spec: "slate",
   "In design": "action",
   "Backend pending": "warning",
+  Live: "positive",
 };
 
 /**

@@ -29,6 +29,7 @@ import { Btn } from "@/components/ui/Btn";
 import { ClinicalError, ClinicalLoading } from "@/components/ui/ClinicalStates";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { StartEncounterButton } from "@/components/encounter/StartEncounterButton";
+import { CheckoutButton } from "@/components/billing/CheckoutButton";
 import { Card } from "@/components/ui/bits";
 import { cn } from "@/lib/cn";
 import { useFeedback } from "@/lib/feedback";
@@ -971,6 +972,12 @@ function DetailDrawer({
   // server rather than being arbitrarily stricter than it.
   const canOpenEncounter = !isSettled;
   const canComplete = effectiveStatus === "arrived" || effectiveStatus === "in-encounter";
+  // Checkout opens once the patient is actually here, and stays available
+  // after the visit so a missed checkout can still be completed.
+  const canCheckOut =
+    effectiveStatus === "arrived" ||
+    effectiveStatus === "in-encounter" ||
+    effectiveStatus === "completed";
   const canReschedule = isBooked;
   const canNoShow = isBooked || effectiveStatus === "arrived";
   const canCancel = !isSettled;
@@ -1196,6 +1203,13 @@ function DetailDrawer({
                 >
                   {working ? "Saving…" : "Complete"}
                 </button>
+              )}
+              {canCheckOut && appt.patientId && (
+                <CheckoutButton
+                  patientId={appt.patientId}
+                  appointmentId={appt.id}
+                  className={FD_BTN}
+                />
               )}
               {canReschedule && (
                 <button

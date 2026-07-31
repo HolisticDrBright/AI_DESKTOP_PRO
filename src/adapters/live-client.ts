@@ -38,6 +38,20 @@ import type {
   LiveInbox,
   LiveInboxFilters,
   LiveInboxMutationResult,
+  LiveBillingCatalog,
+  LiveBillingCatalogFilters,
+  LiveBillingMutationResult,
+  LiveBillingProductKind,
+  LiveBillingWorkspace,
+  LiveBillingWorkspaceFilters,
+  LiveCardPaymentIntent,
+  LiveInventoryAdjustmentKind,
+  LiveInventoryMovement,
+  LiveInventoryReturnCondition,
+  LiveInvoice,
+  LiveInvoiceLineInput,
+  LiveManualPaymentMethod,
+  LivePatientBilling,
   LiveInboxTodaySummary,
   LiveMessageChannel,
   LivePatientMessages,
@@ -560,4 +574,152 @@ export const liveClient = {
     overlay: Record<string, unknown>;
     reason: string;
   }) => liveFetch<LiveSyncMutationResult>("sync/review", { method: "POST", body: input }),
+
+  /* ------------------------------------------- billing (phase 8A) */
+  billingWorkspace: (filters: LiveBillingWorkspaceFilters) =>
+    liveFetch<LiveBillingWorkspace>("billing/workspace", { method: "POST", body: filters }),
+
+  billingInvoice: (invoiceId: string) =>
+    liveFetch<LiveInvoice>("billing/invoice", { method: "POST", body: { invoiceId } }),
+
+  billingPatient: (patientId: string) =>
+    liveFetch<LivePatientBilling>("billing/patient", { method: "POST", body: { patientId } }),
+
+  billingCatalog: (filters: LiveBillingCatalogFilters) =>
+    liveFetch<LiveBillingCatalog>("billing/catalog", { method: "POST", body: filters }),
+
+  billingInventoryHistory: (input: {
+    productId: string;
+    locationId?: string | null;
+    limit?: number;
+  }) => liveFetch<LiveInventoryMovement[]>("billing/inventory-history", {
+    method: "POST",
+    body: input,
+  }),
+
+  billingUpsertProduct: (input: {
+    id?: string | null;
+    expectedVersion?: number | null;
+    name?: string | null;
+    kind?: LiveBillingProductKind | null;
+    amountMinor?: number | null;
+    currency?: string | null;
+    sku?: string | null;
+    barcode?: string | null;
+    supplierId?: string | null;
+    costMinor?: number | null;
+    taxRateId?: string | null;
+    description?: string | null;
+    trackInventory?: boolean | null;
+    reorderThreshold?: number | null;
+  }) => liveFetch<LiveBillingMutationResult>("billing/product", { method: "POST", body: input }),
+
+  billingArchiveProduct: (input: { id: string; expectedVersion: number }) =>
+    liveFetch<LiveBillingMutationResult>("billing/product", {
+      method: "POST",
+      body: { action: "archive", ...input },
+    }),
+
+  billingUpsertReference: (input: {
+    entity: "location" | "supplier" | "taxRate";
+    id?: string | null;
+    name?: string | null;
+    contactEmail?: string | null;
+    phone?: string | null;
+    notes?: string | null;
+    rateBps?: number | null;
+    active?: boolean;
+    archive?: boolean;
+  }) => liveFetch<LiveBillingMutationResult>("billing/reference", { method: "POST", body: input }),
+
+  billingReceiveStock: (input: {
+    locationId: string;
+    productId: string;
+    quantity: number;
+    unitCostMinor?: number | null;
+    supplierId?: string | null;
+    reference?: string | null;
+  }) => liveFetch<LiveBillingMutationResult>("billing/inventory", {
+    method: "POST",
+    body: { action: "receive", ...input },
+  }),
+
+  billingAdjustStock: (input: {
+    locationId: string;
+    productId: string;
+    delta: number;
+    kind: LiveInventoryAdjustmentKind;
+    reason: string;
+  }) => liveFetch<LiveBillingMutationResult>("billing/inventory", {
+    method: "POST",
+    body: { action: "adjust", ...input },
+  }),
+
+  billingReturnStock: (input: {
+    locationId: string;
+    productId: string;
+    quantity: number;
+    condition: LiveInventoryReturnCondition;
+    reason: string;
+    invoiceId?: string | null;
+  }) => liveFetch<LiveBillingMutationResult>("billing/inventory", {
+    method: "POST",
+    body: { action: "return", ...input },
+  }),
+
+  billingCreateDraft: (input: {
+    patientId: string;
+    appointmentId?: string | null;
+    locationId?: string | null;
+  }) => liveFetch<LiveInvoice>("billing/draft", { method: "POST", body: input }),
+
+  billingSaveDraft: (input: {
+    invoiceId: string;
+    expectedVersion: number;
+    locationId?: string | null;
+    lines: LiveInvoiceLineInput[];
+  }) => liveFetch<LiveInvoice>("billing/save", { method: "POST", body: input }),
+
+  billingFinalize: (input: { invoiceId: string; expectedVersion: number }) =>
+    liveFetch<LiveInvoice>("billing/finalize", { method: "POST", body: input }),
+
+  billingVoid: (input: { invoiceId: string; expectedVersion: number; reason: string }) =>
+    liveFetch<LiveInvoice>("billing/void", { method: "POST", body: input }),
+
+  billingRecordPayment: (input: {
+    invoiceId: string;
+    expectedVersion: number;
+    amountMinor: number;
+    method: LiveManualPaymentMethod;
+    reference?: string | null;
+    idempotencyKey?: string | null;
+  }) => liveFetch<LiveInvoice>("billing/payment", { method: "POST", body: input }),
+
+  billingGrantCredit: (input: { patientId: string; amountMinor: number; reason: string }) =>
+    liveFetch<LiveBillingMutationResult>("billing/credit", {
+      method: "POST",
+      body: { action: "grant", ...input },
+    }),
+
+  billingApplyCredit: (input: {
+    invoiceId: string;
+    expectedVersion: number;
+    amountMinor: number;
+  }) => liveFetch<LiveInvoice>("billing/credit", {
+    method: "POST",
+    body: { action: "apply", ...input },
+  }),
+
+  billingRefund: (input: {
+    paymentId: string;
+    amountMinor: number;
+    reason: string;
+    method?: string | null;
+  }) => liveFetch<LiveInvoice>("billing/refund", { method: "POST", body: input }),
+
+  billingStartCardPayment: (input: {
+    invoiceId: string;
+    expectedVersion: number;
+    idempotencyKey: string;
+  }) => liveFetch<LiveCardPaymentIntent>("billing/card", { method: "POST", body: input }),
 };

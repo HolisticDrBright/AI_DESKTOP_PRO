@@ -21,7 +21,16 @@ connections (opaque single-use invitations, verified subject binding),
 independent versioned consent scopes, versioned sync envelopes with a durable
 at-least-once engine (idempotency, dedup, bounded retry, dead letters,
 explicit conflicts), and a provider boundary that FAILS CLOSED — no delivery
-or acknowledgment claim exists without provider evidence.
+or acknowledgment claim exists without provider evidence. Phase 8A made the
+money real: an org-scoped catalog with suppliers, locations, and tax rates;
+per-location inventory whose every movement is an append-only ledger row;
+appointment checkout into immutable finalized invoices with snapshotted lines
+and SERVER-PRICED tax; manual payments, patient credit, and refunds that never
+restock; test-mode card payments that a browser can only ever start,
+settled solely by a server-side webhook with durable dedup; and an inventory
+accounting policy — reserve at finalize, commit the sale exactly once at
+settlement, release on void — that makes overselling a typed conflict rather
+than a negative number.
 
 **The core rule.** A domain loses its mock runtime implementation only when it
 has (1) a real authenticated implementation, or (2) an honest unavailable /
@@ -73,6 +82,7 @@ fixtures), `scripts/live-stub-server.mjs` (contract-fixture e2e), and
 | **Programs & Education (Phase 3)** | `/programs`, `/programs/[id]`, chart overview card, `/today` summary | `programs.live.ts` → `ProgramsWorkspace`, `ProgramStudio`, `PatientProgramsLive`, `TodayProgramsLive` | `programs`, `program_templates`, `program_versions`, `program_modules`, `program_lessons`, `program_blocks`, `program_offers`, `program_enrollments`, `program_progress`, `program_version_events`, `program_enrollment_events`; 20 RPCs (`list_programs`, `get_program_studio`, `list_program_templates`, `get_patient_programs`, `create_program`, `save_program_draft`, `submit/return/approve/publish/revise_program_version`, `archive_program`, `create/approve/archive` template RPCs, `upsert_program_offer`, `enroll_patient_in_program`, `set_program_enrollment_status`, `record_program_progress`, `review_program_progress`) | atomic; creation/lifecycle/offer/enrollment/progress each audited, PHI-safe (payloads never in audit rows) | desktop_owned_programs_phase3.sql (71) |
 | **Inbox, messaging & AI triage (Phase 4)** | `/inbox` (3-pane workspace), chart Messages tab, `/today` inbox card | `inbox.live.ts` → `InboxWorkspace`, `PatientMessagesLive`, `TodayInboxLive`; `messaging-provider.ts` (contract only) | `conversations` (extended), `messages` (extended), `message_draft_revisions`, `message_attachments`, `communication_preferences`, `message_outbox`, `message_delivery_events`, `conversation_events`, `message_ai_reviews`; 16 caller RPCs (`list_inbox`, `get_conversation`, `create_conversation`, `save_message_draft`, `cancel_message_draft`, `send_message`, `mark_conversation_read`, `update_conversation_workflow`, `create_task_from_message`, `append_message_to_note`, `set_communication_preferences`, `register_message_attachment`, `review_ai_suggestion`, `get_patient_messages`, `get_inbox_today_summary`) + 3 service_role-only worker RPCs (`record_inbound_message`, `record_delivery_callback`, `record_ai_suggestion`) | atomic; thread lifecycle, send refusals, AI decisions each audited; PHI-safe (message bodies never in audit rows or logs) | desktop_owned_inbox.sql (61) |
 | **Patient delivery & sync gateway (Phase 5)** | chart "Patient App" tab (`/patients/[id]/app-sync`), `/integrations` | `patient-sync.live.ts` -> `PatientSyncPanel`, `SyncOperationsPanel`; `patient-sync-provider.ts` (contract only) | `patient_app_connections`, `patient_sync_invitations`, `sync_consent_scopes`, `sync_outbound_events`, `sync_inbound_events`, `sync_inbound_corrections`, `sync_delivery_attempts`, `sync_delivery_events`, `sync_dead_letters`, `sync_cursors`, `sync_conflicts`, `sync_resource_acks`, `sync_connection_events`; 13 caller RPCs + 4 service_role worker RPCs (`verify_sync_invitation`, `claim_sync_outbound`, `record_sync_delivery`, `record_sync_inbound`) | atomic; every lifecycle/consent/queue/retry/review action audited PHI-safe; security-relevant history in `sync_connection_events` | desktop_patient_sync.sql (80) |
+| **Billing, checkout, catalog & inventory (Phase 8A)** | `/billing`, `/billing/[invoiceId]`, `/settings/catalog`, chart Billing tab, calendar checkout | `billing.live.ts` → `BillingWorkspace`, `InvoiceDetail`, `CatalogWorkspace`, `PatientBillingLive`, `CheckoutButton` | `suppliers`, `locations`, `tax_rates`, `product_commercial_links`, `inventory_stock`, `inventory_ledger`, `invoice_events`, `payment_events`, `patient_credit_entries`, `billing_webhook_events` + extended `products_services`, `invoices`, `invoice_line_items`, `payments`, `refunds`; 22 caller RPCs (`upsert_billing_location/supplier/tax_rate/product`, `archive_billing_product`, `list_billing_catalog`, `receive/adjust/return_inventory_stock`, `get_inventory_history`, `create_invoice_draft`, `save_invoice_draft`, `finalize_invoice`, `void_invoice`, `record_manual_payment`, `grant/apply_patient_credit`, `refund_payment`, `start_card_payment`, `get_billing_invoice`, `get_patient_billing`, `get_billing_workspace`) + 2 service_role-only processor RPCs (`attach_payment_processor_ref`, `record_billing_webhook`) | atomic; product, stock, invoice, payment, credit, and refund actions each audited PHI-safe; append-only `invoice_events` / `payment_events` / `inventory_ledger` | desktop_owned_billing.sql (96) |
 | Encounters, notes, signatures, addenda, timeline | `/patients/[id]/chart`, encounter workspace | `encounters.live.ts` | `start_encounter`, `get_desktop_note`, `get_desktop_patient_timeline`, … | atomic; signed-note immutability | desktop_encounters_notes.sql |
 | Lens lifecycle + reference reads | encounter workspace | `lens.live.ts` | desktop lens RPCs | atomic | desktop_lens acceptance |
 | Clinical knowledge registry + imports | Settings → Knowledge | `knowledge.live.ts` | registry RPCs | atomic | clinical_knowledge_*.sql |
@@ -108,8 +118,8 @@ only act when a human accepts them).
 | --- | --- | --- | --- |
 | Message delivery (ALP in-app/email/SMS/push) | `/inbox` composer | provider-acknowledged send | `MessagingProvider` implementation + `messaging` connector registration + outbox worker |
 | AI inbox copilot | `/inbox` AI panel | recorded suggestion | governed AI config + worker calling `record_ai_suggestion` |
-| Billing & payments | `/billing`, chart Billing tab | create invoice | external integration (payments) |
-| Inventory writes / dispensary | Settings → Catalog | receive stock | schema ready (`products_services`) |
+| Any live payment processor (incl. Stripe test mode) | `/billing` checkout | a processor-confirmed charge | **No processor is connected at all.** Phase 8A built the persistence and webhook-ingest boundary and verified it with deterministic fixtures; it made no Stripe API call and verified no signed webhook. Needs an account, SDK, key management, PCI review, and a signature-verifying receiver |
+| Insurance claims | `/billing?tab=claims` | submit claim | clearinghouse integration (deliberately out of phase 8A) |
 | Nutrition persistence | chart Nutrition tab | save diet plan | schema ready |
 | Health Twin | chart Tracking tab | approve snapshot | schema ready (`outcome_snapshots`) |
 | N-of-1 experiments | chart Tracking tab | start experiment | schema ready (`experiments`) |
@@ -187,10 +197,45 @@ Phase 6A found the ledger ending at `20260730201119` and appended:
 | `20260730210813` | desktop_sync_worker_ops | lease columns (`lease_id`, `lease_expires_at`, `claimed_at`) + claimable/lease partial indexes on `sync_outbound_events`; `sync_worker_cycles` + `sync_circuit_states` (PHI-free, org-readable telemetry) and `sync_callback_nonces` (deny-all RLS); `private.sync_provider_posture` (disabled → fixture → approved precedence; `sync_contract_fixture` recognized as the TEST posture, `alp_patient_sync` as approved); `claim_sync_outbound` REPLACED as the single lease-aware overload (old `(uuid, integer)` signature dropped): expired-lease reclaim then `FOR UPDATE SKIP LOCKED` claim, returns lease id/expiry + `leaseReclaims` + `maxQueueAgeSeconds`; `recheck_sync_export` (consent/connection/supersession re-checked AT DELIVERY TIME; refusal is a durable cancel with an attempt row and a safe reason); `record_sync_worker_cycle` (validated circuit state, upserts the circuit row); `register_sync_callback_nonce` (unique-violation → `replay:true`, 7-day prune); `cancel_sync_event` (owner/admin/practitioner, reason required, queued/failed/dead_letter only, audited); `get_org_sync_operations` extended (posture, in-flight count, queue age, last worker cycle, circuit) |
 | `20260730212353` | desktop_sync_requeue_generation | `queue_sync_export` idempotency block only: a live envelope still answers `alreadyQueued`, but an explicit re-share after a CANCELLED or SUPERSEDED envelope mints a NEW envelope generation (`:rN` key suffix) instead of being blocked forever — and a consent re-grant alone never resurrects cancelled work |
 
+Phase 8A found the ledger ending at `20260730231721` and appended:
+
+| Version | Name | What |
+| --- | --- | --- |
+| `20260731163127` | desktop_billing_inventory_schema | EXTENDS the 0011 billing skeleton in place (all tables verified empty — no duplicate invoice/payment/catalog concepts). New: `suppliers`, `locations`, `tax_rates`, `product_commercial_links` (commercial/affiliate metadata kept APART from clinical eligibility), `inventory_stock` (per location/product, `on_hand`/`reserved` both `>= 0`), `inventory_ledger` (append-only movements, kind-checked, requires a non-zero delta), `invoice_events`, `payment_events`, `patient_credit_entries`, `billing_webhook_events` (`unique (provider, event_id)` — the dedup key; PHI-free and secret-free by construction). Extended: `products_services` (sku/barcode/supplier/cost/tax rate/track_inventory/reorder_threshold/catalog link/archive/version, widened kind check, org-unique SKU), `invoices` (appointment/practitioner/location, `number_int`, the seven money columns, version, finalize/void/reserve/commit timestamps, widened status check, per-org unique number), `invoice_line_items` (kind + name/sku/description SNAPSHOTS, discount + reason + authorizer, tax rate/amount, verification snapshot, sort), `payments` (status machine, method, environment `check (= 'test')` so test-mode is structurally the only allowed value, `failure_code_safe`, version, positive amount), `refunds` (status/method/authorizer/environment). Guards: `inventory_ledger_immutable`, `invoices_protect_finalized` (a finalized invoice's money is immutable; only the payment/credit/void machinery moves tracked columns), `invoice_lines_protect_finalized`, `invoice_events_immutable` (reused by refunds and credit entries), `payments_protect` (financial identity frozen at insert; no exit from a terminal state except succeeded → disputed). `review_queue_items.item_type` widened with `inventory_low_stock`. RLS: the 0011 broad FOR ALL policies REPLACED with 15 SELECT-only policies; all writes go through the definer RPCs; anon/authenticated write privileges revoked |
+| `20260731180518` | desktop_billing_rpcs | 9 `private.billing_*` helpers + 22 caller RPCs granted to `authenticated` + 2 processor RPCs granted to `service_role` ONLY. Enforces on every write: `auth.uid()` identity, active membership, the financial role gate (`private.can_manage_billing` — owner/admin/practitioner), tenant agreement on every referenced row, typed errors (28000/42501/P0002/22023/40001), expected-version concurrency, and atomic payment+inventory+audit work. Tax is computed ONLY from configured `tax_rates` and snapshotted; a client-supplied figure has no code path |
+| `20260731181018` | desktop_billing_guard_function_schema | moved the five guard trigger functions from `public` to `private` (`ALTER FUNCTION ... SET SCHEMA` preserves the OID, so triggers stay bound) and revoked EXECUTE from public/anon/authenticated. Advisors had flagged the public placement as anon-executable SECURITY DEFINER functions; this matches every other desktop-owned phase |
+| `20260731194520` | desktop_billing_stock_threshold_sync | defect fix found by the acceptance suite: `inventory_stock` rows were created with the DEFAULT `reorder_threshold` (0), so the product-level threshold never reached them and the low-stock watchdog could never fire. The product threshold is now the source of truth — new stock rows inherit it and `upsert_billing_product` propagates changes to existing rows |
+
+**Ledger note (recorded during the phase 8B preflight).** `apply_migration`
+assigns the version server-side, so the four phase-8A files were first
+committed under their authoring timestamps rather than their recorded ones.
+They have been renamed to the recorded versions — this is a correctness fix,
+not cosmetics: a `supabase db push` against filenames absent from the ledger
+would try to apply them a second time. Separately, `20260730231721`
+(`desktop_sync_claim_wire_fields`) is applied on staging but its file lives on
+the still-open Desktop-sync PR branch, not on `main`; that resolves when that
+PR merges and is deliberately untouched here.
+
 Local filenames match recorded versions. All function contracts: SECURITY
 DEFINER + `search_path=''` + explicit `auth.uid()` / `private.is_org_member` /
 `private.can_access_patient` gates + bounded DTOs + anon/public revoked + no
 PHI in error messages or audit `safe_message`.
+
+**Advisor posture after phase 8A DDL.** Zero ERROR-level findings. Exactly 22
+new security WARNs — one per caller RPC — all the generic
+`authenticated_security_definer_function_executable` lint that fires for every
+desktop RPC, i.e. the deliberate gated-definer architecture (invoker cannot
+work: write privileges are revoked from `authenticated`), with each gate
+proven by `supabase/tests/desktop_owned_billing.sql`. The two processor RPCs
+are correctly absent from that list, which is itself the evidence they are
+`service_role`-only. One finding WAS real and was
+fixed rather than documented: the five billing guard trigger functions were
+created in `public`, making them anon/authenticated-executable over PostgREST;
+migration `20260731170301` moved them to `private`. No new
+`rls_enabled_no_policy`, `auth_rls_initplan`, or `multiple_permissive_policy`
+findings were introduced. Pre-existing findings (1 leaked-password-protection
+WARN, 3 RLS-no-policy INFOs, and the standing unindexed-FK / unused-index
+INFOs) are unchanged and deliberately not swept in this slice.
 
 **Advisor posture after phase 1 DDL.** Introduced findings fixed (3 unindexed
 FKs). The 3 introduced security WARNs are the generic
@@ -694,6 +739,113 @@ connection):
    rotation plan.
 6. Re-run: both DB acceptance suites, the full browser battery, advisors,
    and the bundle scan — with the fixture suites left fully intact.
+
+### Phase 8A: billing, checkout, Stripe test-mode, catalog & inventory
+
+The Desktop-owned financial workflow: `appointment → checkout → invoice →
+payment → receipt → inventory movement → reconciliation → audit`. Production
+card processing is NOT enabled and insurance claims are deliberately out of
+scope.
+
+**Invoice state machine.**
+
+```
+draft ──finalize──▶ open ──payment/credit──▶ partially_paid ──▶ paid
+  │                   │                            │              │
+  └──void──▶ void ◀───┘ (unpaid only)              └──refund──▶ partially_refunded ──▶ refunded
+```
+
+A `draft` has no financial or inventory effect at all. Only an unpaid `draft`
+or `open` invoice can be voided; once money has moved the path is a refund.
+`uncollectible` exists in the check constraint for a future write-off flow and
+is not reachable from any RPC in this phase.
+
+**Money rules.**
+
+- Integer **minor units** end to end: `*_minor` columns, `*Minor` wire fields,
+  `src/lib/money.ts` helpers. No float ever holds an amount.
+- **Tax is never client-supplied.** `save_invoice_draft` reads the product's
+  configured `tax_rates` row, computes half-up on the discounted base, and
+  snapshots both `tax_rate_bps` and `tax_minor` onto the line. The wire
+  contract has no tax field, and `billing.live.ts` projects each line to the
+  fields a client may propose, so a stray amount is dropped at the adapter
+  rather than merely ignored by the database.
+- **The browser never asserts money moved.** `start_card_payment` returns
+  `{paymentId, amountMinor, currency}` — there is deliberately no success
+  field to render.
+- Discounts require a reason and are attributed to the authorizing user.
+- A finalized invoice's money and lines are immutable at trigger level; line
+  snapshots mean later catalog edits never rewrite history.
+
+**Inventory accounting policy.** (This is the policy the RPC migration header
+refers to.)
+
+| Event | Effect on stock |
+| --- | --- |
+| `draft` | none — a draft never touches inventory |
+| `finalize` → `open` | **RESERVE** tracked lines (`reserved += qty`); insufficient availability is a typed `40001`, never a negative number |
+| full settlement | **COMMIT** the sale exactly once (`on_hand -= qty`, `reserved -= qty`), guarded by `invoices.inventory_committed_at` |
+| `void` (unpaid) | **RELEASE** the reservations |
+| refund | **nothing** — a refund returns money, not goods |
+| `return_inventory_stock` | the ONLY restock path: reason AND condition required; only `resalable` re-enters sellable stock, `damaged` is ledgered without adding any |
+| services / non-tracked items | never touch stock |
+
+Stock has no "set the number to X" write. It moves only through receipts,
+reasoned adjustments, sales, and returns, so `inventory_ledger` always
+explains the current figure. Selling a tracked item requires a location.
+
+**What was actually exercised (read this before trusting any Stripe claim).**
+Phase 8A made **no Stripe API request and verified no signed webhook**. There
+is no `stripe` dependency, no call to `api.stripe.com`, and no signature
+verification anywhere in the tree. What shipped is the *persistence and
+ingest boundary*: the payment/refund/webhook-event tables, the settlement
+state machine, dedup and agreement rules, and the `service_role`-only RPCs —
+all verified with **deterministic fixtures**. That foundation is real and
+tested; an operational processor is not, and no screen may imply otherwise.
+Phase 8B adds the real signature-verifying, disabled-by-default adapter.
+
+**Payment boundary.** Manual methods (`cash`, `check`, `bank_transfer`,
+`external`) are recorded by a practitioner as money already taken; an
+idempotency-key replay is a typed conflict, not a second charge. Card
+payments are **test-mode only** (`environment` is check-constrained to
+`'test'`), and the flow below describes the boundary's contract, not a
+connected processor:
+
+1. the browser calls `start_card_payment`, which creates a **PENDING** row and
+   refuses a second in-flight card payment for the invoice;
+2. the server-only boundary attaches the processor reference
+   (`attach_payment_processor_ref`, `service_role` only, attach-once);
+3. `record_billing_webhook` (`service_role` only) settles it — dedup FIRST via
+   `unique (provider, event_id)`, then tenant/amount/currency agreement, then
+   the event-type state machine.
+
+**Refusals are recorded rows, not silent drops.** A replayed event answers
+`duplicate`, a mismatched amount `refused`, an event arriving after a terminal
+state `out_of_order`, an unknown type or unmatched reference `ignored` — every
+one persisted in `billing_webhook_events` and visible on the reconciliation
+panel. Neither processor RPC is reachable from any browser route or client
+module, which `src/adapters/payments-boundary.test.ts` proves from the outside.
+
+**Low-stock watchdog.** Crossing the reorder threshold opens exactly ONE open
+`inventory_low_stock` review task per product, naming the triggering location.
+It never purchases anything and never duplicates while one is open.
+
+**Permission matrix.** Reads require authentication + active membership (+
+patient access for patient-scoped reads), so front-desk **staff can read** the
+workspace and invoices. Every write additionally requires a financial role —
+owner, admin, or practitioner via `private.can_manage_billing` — so staff
+cannot alter the catalog, take payment, or move stock. Anonymous callers get
+`28000`; a wrong tenant or an insufficient role gets `42501`.
+
+**No clinical side effects.** Billing creates no note, message, protocol,
+appointment, enrollment, or conversation — asserted directly by the acceptance
+suite.
+
+**Deployment requirements.** Nothing beyond the standard clinical Supabase
+configuration: this phase adds no environment variable, no worker, and no
+outbound network call. A production processor (keys, PCI review, a live
+`environment` value, and a signed-webhook receiver) is required before any
+real charge and is deliberately absent here.
 
 ## Deprecations
 

@@ -1,4 +1,8 @@
-/** Money is integer cents ("minor units") everywhere in the mock ledger. */
+/**
+ * Money is integer cents ("minor units") everywhere: database columns
+ * (`*_minor`), wire DTOs (`*Minor`), and these helpers. Nothing rounds
+ * through a float, so a displayed total is exactly the recorded one.
+ */
 
 export function formatMinor(minor: number): string {
   const sign = minor < 0 ? "-" : "";
@@ -15,7 +19,11 @@ export function parseToMinor(input: string): number | null {
   return Math.round(parseFloat(cleaned) * 100);
 }
 
-/** Synthetic "Stripe test mode" card fee: 2.9% + 30¢, rounded. Demo math only. */
+/**
+ * Illustrative card fee (2.9% + 30¢). NOT a processor figure and never
+ * recorded: no fee is stored on any payment, so this must not be presented
+ * as an amount the practice was actually charged.
+ */
 export function testModeFeeMinor(amountMinor: number): number {
   if (amountMinor <= 0) return 0;
   return Math.round(amountMinor * 0.029) + 30;

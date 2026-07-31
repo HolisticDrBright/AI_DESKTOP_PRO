@@ -185,6 +185,50 @@ test("the patient-sync surfaces stay honest with a down backend", async ({ page 
   expect(body).not.toContain("Connected patients");
 });
 
+test("the billing, checkout, and catalog surfaces stay honest with a down backend", async ({ page }) => {
+  // PHASE 8A: money screens are the least forgiving place to guess. With the
+  // backend down every one of them must refuse — never a zeroed summary (an
+  // empty practice and an unreachable backend are different statements),
+  // never a stock number, and never a payment control that would imply a
+  // charge could be taken.
+  await page.goto("/billing");
+  await page.waitForLoadState("networkidle");
+  let body = (await page.locator("body").innerText()).trim();
+  await expectNoFixtureData(body, "/billing with the backend down");
+  expect(
+    body,
+    `/billing must report itself unavailable. Got:\n${body.slice(0, 600)}`,
+  ).toMatch(/didn.t load|unavailable|not configured|cannot reach|couldn.t reach|try again|sign in/i);
+  // A dead screen must not present a balance sheet of zeros.
+  expect(body).not.toContain("$0.00");
+  expect(body).not.toContain("Outstanding");
+  expect(body).not.toContain("Record payment");
+
+  await page.goto("/settings/catalog");
+  await page.waitForLoadState("networkidle");
+  body = (await page.locator("body").innerText()).trim();
+  await expectNoFixtureData(body, "/settings/catalog with the backend down");
+  expect(
+    body,
+    `/settings/catalog must report itself unavailable. Got:\n${body.slice(0, 600)}`,
+  ).toMatch(/didn.t load|unavailable|not configured|cannot reach|couldn.t reach|try again|sign in/i);
+  // No invented shelf: no stock counts and no receive control.
+  expect(body).not.toContain("Receive");
+  expect(body).not.toContain("on hand");
+
+  await page.goto("/patients/11111111-2222-3333-4444-555555555555/billing");
+  await page.waitForLoadState("networkidle");
+  body = (await page.locator("body").innerText()).trim();
+  await expectNoFixtureData(body, "the patient billing tab with the backend down");
+  expect(
+    body,
+    `the patient billing tab must report itself unavailable. Got:\n${body.slice(0, 600)}`,
+  ).toMatch(/didn.t load|unavailable|not configured|cannot reach|couldn.t reach|try again|sign in/i);
+  // "No invoices yet" would be a claim about this patient's finances.
+  expect(body).not.toContain("No invoices yet");
+  expect(body).not.toContain("Account credit");
+});
+
 test("settings reports the clinical edition and its real configuration state", async ({ page }) => {
   await page.goto("/settings");
   await page.waitForLoadState("networkidle");
