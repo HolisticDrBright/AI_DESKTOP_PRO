@@ -197,6 +197,23 @@ Phase 6A found the ledger ending at `20260730201119` and appended:
 | `20260730210813` | desktop_sync_worker_ops | lease columns (`lease_id`, `lease_expires_at`, `claimed_at`) + claimable/lease partial indexes on `sync_outbound_events`; `sync_worker_cycles` + `sync_circuit_states` (PHI-free, org-readable telemetry) and `sync_callback_nonces` (deny-all RLS); `private.sync_provider_posture` (disabled → fixture → approved precedence; `sync_contract_fixture` recognized as the TEST posture, `alp_patient_sync` as approved); `claim_sync_outbound` REPLACED as the single lease-aware overload (old `(uuid, integer)` signature dropped): expired-lease reclaim then `FOR UPDATE SKIP LOCKED` claim, returns lease id/expiry + `leaseReclaims` + `maxQueueAgeSeconds`; `recheck_sync_export` (consent/connection/supersession re-checked AT DELIVERY TIME; refusal is a durable cancel with an attempt row and a safe reason); `record_sync_worker_cycle` (validated circuit state, upserts the circuit row); `register_sync_callback_nonce` (unique-violation → `replay:true`, 7-day prune); `cancel_sync_event` (owner/admin/practitioner, reason required, queued/failed/dead_letter only, audited); `get_org_sync_operations` extended (posture, in-flight count, queue age, last worker cycle, circuit) |
 | `20260730212353` | desktop_sync_requeue_generation | `queue_sync_export` idempotency block only: a live envelope still answers `alreadyQueued`, but an explicit re-share after a CANCELLED or SUPERSEDED envelope mints a NEW envelope generation (`:rN` key suffix) instead of being blocked forever — and a consent re-grant alone never resurrects cancelled work |
 
+Phase 8B found the ledger ending at `20260731194520` and appended:
+
+| Version | Name | What |
+| --- | --- | --- |
+| `desktop_plans_entitlements_schema` | EXTENDS the 0011 `packages` / `memberships` / `package_redemptions` skeleton in place (all verified empty) rather than creating a second plan, purchase, invoice, payment, webhook, or reconciliation model. `public.subscriptions` (0011) is deliberately untouched — it is the organization's own SaaS seat licence, a different domain from a patient membership. New: `financial_permission_grants` + `private.has_financial_permission` (11 granular permissions replacing phase 8A's single blanket gate), `package_versions` / `membership_versions` (immutable published terms), `plan_acceptances` (patient acceptance of an exact version), `patient_memberships` + append-only `patient_membership_events`, `entitlements` + append-only `entitlement_ledger`, `org_billing_policies` (explicit no-show / late-cancel rules), `processor_customers` (identifiers only), `reconciliation_exceptions` + append-only `reconciliation_events`. Guards: append-only triggers, `plan_version_protect` (published terms frozen), `entitlement_protect` (identity and grant size frozen). The entitlement quantity identity (`granted = remaining + reserved + consumed + expired + refunded`) plus partial unique indexes make double-granting a renewal and double-reserving one appointment impossible at the storage layer. `review_queue_items.item_type` widened with 8 dunning types |
+| `desktop_plans_entitlements_rpcs` | 17 caller RPCs granted to `authenticated`, each enforcing `auth.uid()`, active membership, a SPECIFIC financial permission, tenant agreement, typed errors, and expected-version concurrency |
+
+**Advisor posture after phase 8B DDL.** Zero ERROR-level findings. Total moved
+169 → 186: exactly **+17**, one per new caller RPC, all the standard
+gated-definer lint. No new `rls_enabled_no_policy` findings, and the private
+helpers (`entitlement_move`, `upsert_financial_task`, the guard triggers) are
+correctly absent from the executable list.
+
+See `docs/phase8b-plans-entitlements.md` for the state machines, the
+entitlement accounting policy, the permission matrix, and the webhook /
+dunning runbooks.
+
 Phase 8A found the ledger ending at `20260730231721` and appended:
 
 | Version | Name | What |
