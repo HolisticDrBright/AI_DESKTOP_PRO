@@ -34,6 +34,9 @@ const PATIENTS = [
   // Dedicated to the phase-2 front-desk walkthrough so that suite consumes its
   // own appointment instead of the one the EMR suite drives.
   { id: "aaaaaaaa-1111-2222-3333-444444444403", organization_id: "org-fixture", mrn: "FX-0003", first_name: "Frontdesk", last_name: "Walkthrough", date_of_birth: "1979-02-20", sex: "female", status: "active" },
+  // Dedicated to the phase-8A billing walkthrough so that suite consumes its
+  // own appointment instead of the one the EMR/tasks suite drives.
+  { id: "aaaaaaaa-1111-2222-3333-444444444404", organization_id: "org-fixture", mrn: "FX-0004", first_name: "Billing", last_name: "Walkthrough", date_of_birth: "1988-11-07", sex: "male", status: "active" },
 ];
 
 const now = Date.now();
@@ -939,6 +942,15 @@ function seedScheduleFor(fromIso) {
       startsAt: at(3, 10).toISOString(), endsAt: at(3, 10, 40).toISOString(),
     },
     {
+      id: "abababab-1111-2222-3333-444444444404",
+      organizationId: "org-fixture",
+      patientId: PATIENTS[3].id, patientName: "Billing Walkthrough",
+      practitionerUserId: PRACTITIONER_USER_ID, practitionerName: "Demo Practitioner",
+      title: null, appointmentType: "follow-up", location: "Room 4", telehealthUrl: null,
+      status: "confirmed", version: 1,
+      startsAt: at(4, 9).toISOString(), endsAt: at(4, 9, 40).toISOString(),
+    },
+    {
       id: "abababab-1111-2222-3333-444444444402",
       organizationId: "org-fixture",
       patientId: null, patientName: null,
@@ -1827,6 +1839,244 @@ const syncInboundRow = (i) => ({
   rejectionReason: i.rejectionReason ?? null, providerEventId: i.providerEventId,
 });
 
+/* ---- billing, checkout, catalog & inventory fixtures (phase-8A semantics).
+   Money is integer minor units. The accounting rules the desktop depends on
+   are reproduced here EXACTLY as the RPCs enforce them: tax is computed from
+   configured rates and never accepted from the caller; finalize reserves
+   tracked stock; full settlement commits the sale exactly once; void releases
+   reservations; a refund never restocks; a card payment only ever reaches
+   PENDING from a browser call, and settles solely through the __control
+   webhook stand-in for the service_role processor boundary. */
+
+const BILLING_LOCATION_ID = "b1111111-0000-4000-8000-000000000001";
+const BILLING_SUPPLIER_ID = "b2222222-0000-4000-8000-000000000001";
+const BILLING_TAX_RATE_ID = "b3333333-0000-4000-8000-000000000001";
+const BILLING_SERVICE_ID = "b4444444-0000-4000-8000-000000000001";
+const BILLING_SUPPLEMENT_ID = "b4444444-0000-4000-8000-000000000002";
+const BILLING_UNTRACKED_ID = "b4444444-0000-4000-8000-000000000003";
+
+let billingLocations = [];
+let billingSuppliers = [];
+let billingTaxRates = [];
+let billingProducts = [];
+let billingStock = new Map();      // `${locationId}:${productId}` -> row
+let billingLedger = [];            // append-only movements
+let billingInvoices = new Map();
+let billingLines = new Map();      // invoiceId -> line[]
+let billingEvents = [];            // append-only invoice history
+let billingPayments = new Map();
+let billingRefunds = [];
+let billingCredits = [];           // patient credit entries
+let billingWebhookEvents = [];
+let billingSeq = 0;
+let billingInvoiceNumber = 0;
+
+const billingId = (prefix) => `${prefix}-${String(++billingSeq).padStart(6, "0")}`;
+const stockKey = (locationId, productId) => `${locationId}:${productId}`;
+
+function resetBillingFixtures() {
+  billingSeq = 0;
+  billingInvoiceNumber = 0;
+  billingStock = new Map();
+  billingLedger = [];
+  billingInvoices = new Map();
+  billingLines = new Map();
+  billingEvents = [];
+  billingPayments = new Map();
+  billingRefunds = [];
+  billingCredits = [];
+  billingWebhookEvents = [];
+  billingLocations = [
+    { id: BILLING_LOCATION_ID, organizationId: "org-fixture", name: "Main Clinic", archivedAt: null },
+  ];
+  billingSuppliers = [
+    { id: BILLING_SUPPLIER_ID, organizationId: "org-fixture", name: "NutriSupply",
+      contactEmail: null, phone: null, notes: null, archivedAt: null },
+  ];
+  billingTaxRates = [
+    { id: BILLING_TAX_RATE_ID, organizationId: "org-fixture", name: "Sales Tax",
+      rateBps: 800, active: true },
+  ];
+  billingProducts = [
+    { id: BILLING_SERVICE_ID, organizationId: "org-fixture", name: "Follow-up",
+      kind: "service", amountMinor: 15000, currency: "USD", sku: null, barcode: null,
+      supplierId: null, costMinor: 0, taxRateId: BILLING_TAX_RATE_ID, description: null,
+      trackInventory: false, reorderThreshold: 0, catalogProductId: null,
+      archivedAt: null, version: 1 },
+    { id: BILLING_SUPPLEMENT_ID, organizationId: "org-fixture", name: "Omega-3 Fish Oil",
+      kind: "supplement", amountMinor: 2500, currency: "USD", sku: "OM3-90", barcode: null,
+      supplierId: BILLING_SUPPLIER_ID, costMinor: 1200, taxRateId: BILLING_TAX_RATE_ID,
+      description: null, trackInventory: true, reorderThreshold: 2, catalogProductId: null,
+      archivedAt: null, version: 1 },
+    { id: BILLING_UNTRACKED_ID, organizationId: "org-fixture", name: "Consult Packet",
+      kind: "product", amountMinor: 500, currency: "USD", sku: null, barcode: null,
+      supplierId: null, costMinor: 100, taxRateId: null, description: null,
+      trackInventory: false, reorderThreshold: 0, catalogProductId: null,
+      archivedAt: null, version: 1 },
+  ];
+  // Opening stock, received exactly the way the UI would.
+  billingMoveStock(BILLING_LOCATION_ID, BILLING_SUPPLEMENT_ID, "receipt", 10, 0, {
+    reason: "opening stock", unitCostMinor: 1200, supplierId: BILLING_SUPPLIER_ID,
+  });
+  for (const [id, item] of queue) {
+    if (item.itemType === "inventory_low_stock") queue.delete(id);
+  }
+}
+
+function billingProduct(id) {
+  return billingProducts.find((p) => p.id === id) ?? null;
+}
+
+/** Apply one movement: stock row + append-only ledger. Throws on oversell. */
+function billingMoveStock(locationId, productId, kind, onHandDelta, reservedDelta, extra = {}) {
+  const key = stockKey(locationId, productId);
+  let row = billingStock.get(key);
+  if (!row) {
+    const product = billingProduct(productId);
+    row = {
+      locationId, productId, organizationId: "org-fixture",
+      onHand: 0, reserved: 0, reorderThreshold: product?.reorderThreshold ?? 0,
+    };
+    billingStock.set(key, row);
+  }
+  if (row.onHand + onHandDelta < 0 || row.reserved + reservedDelta < 0) {
+    const err = new Error("insufficient stock for this movement");
+    err.code = "40001";
+    throw err;
+  }
+  row.onHand += onHandDelta;
+  row.reserved += reservedDelta;
+  billingLedger.push({
+    id: billingId("mv"), organizationId: "org-fixture", locationId, productId, kind,
+    onHandDelta, reservedDelta,
+    reason: extra.reason ?? null, condition: extra.condition ?? null,
+    unitCostMinor: extra.unitCostMinor ?? null, supplierId: extra.supplierId ?? null,
+    refType: extra.refType ?? null, refId: extra.refId ?? null,
+    createdAt: new Date().toISOString(),
+  });
+  billingLowStockCheck(locationId, productId);
+}
+
+/** One open watchdog task per product, exactly like the RPC. */
+function billingLowStockCheck(locationId, productId) {
+  const row = billingStock.get(stockKey(locationId, productId));
+  if (!row) return;
+  if (row.onHand - row.reserved > row.reorderThreshold) return;
+  for (const item of queue.values()) {
+    if (item.itemType === "inventory_low_stock" && item.refId === productId &&
+        (item.status === "open" || item.status === "in_review")) {
+      return;
+    }
+  }
+  const product = billingProduct(productId);
+  const location = billingLocations.find((l) => l.id === locationId);
+  const id = billingId("task");
+  queue.set(id, {
+    id, organizationId: "org-fixture", itemType: "inventory_low_stock",
+    priority: "medium", status: "open", refId: productId,
+    title: `Low stock: ${product?.name ?? "product"} at ${location?.name ?? "location"} ` +
+      `(${row.onHand - row.reserved} available, threshold ${row.reorderThreshold})`,
+    patientId: null, patientName: null, createdAt: new Date().toISOString(),
+  });
+}
+
+function billingCreditBalance(patientId) {
+  return billingCredits
+    .filter((c) => c.patientId === patientId)
+    .reduce((sum, c) => sum + (c.kind === "apply" ? -c.amountMinor : c.amountMinor), 0);
+}
+
+/** Exactly-once sale commitment, guarded like invoices.inventory_committed_at. */
+function billingCommitInventory(invoice) {
+  if (invoice.inventoryCommittedAt) return;
+  if (invoice.inventoryReservedAt) {
+    for (const line of billingLines.get(invoice.id) ?? []) {
+      const product = billingProduct(line.productId);
+      if (!product?.trackInventory) continue;
+      billingMoveStock(invoice.locationId, line.productId, "sale", -line.quantity,
+        -line.quantity, { refType: "invoice", refId: invoice.id });
+    }
+  }
+  invoice.inventoryCommittedAt = new Date().toISOString();
+}
+
+/** Recompute paid state and transition, mirroring private.billing_settle_invoice. */
+function billingSettle(invoice, source) {
+  const payments = [...billingPayments.values()].filter((p) => p.invoiceId === invoice.id);
+  const paid = payments.filter((p) => p.status === "succeeded")
+    .reduce((sum, p) => sum + p.amountMinor, 0);
+  const refunded = billingRefunds
+    .filter((r) => payments.some((p) => p.id === r.paymentId) && r.status === "succeeded")
+    .reduce((sum, r) => sum + r.amountMinor, 0);
+  const settled = paid + invoice.creditAppliedMinor;
+  const from = invoice.status;
+  let to;
+  if (invoice.status === "void" || invoice.status === "draft") to = invoice.status;
+  else if (refunded > 0 && refunded >= paid && paid > 0) to = "refunded";
+  else if (refunded > 0) to = "partially_refunded";
+  else if (settled >= invoice.totalMinor && invoice.totalMinor > 0) to = "paid";
+  else if (settled > 0) to = "partially_paid";
+  else to = "open";
+
+  invoice.paidMinor = paid;
+  invoice.refundedMinor = refunded;
+  invoice.status = to;
+  invoice.version += 1;
+  if (from !== to) {
+    billingEvents.push({
+      invoiceId: invoice.id, kind: "status", from, to, detail: source,
+      createdAt: new Date().toISOString(),
+    });
+  }
+  if (to === "paid") billingCommitInventory(invoice);
+}
+
+/** The invoice projection, key-for-key as private.billing_invoice_json emits. */
+function billingInvoiceJson(invoice) {
+  const lines = billingLines.get(invoice.id) ?? [];
+  const payments = [...billingPayments.values()]
+    .filter((p) => p.invoiceId === invoice.id)
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  const patient = PATIENTS.find((p) => p.id === invoice.patientId);
+  const location = billingLocations.find((l) => l.id === invoice.locationId);
+  return {
+    id: invoice.id, number: invoice.number, status: invoice.status, version: invoice.version,
+    currency: invoice.currency, patientId: invoice.patientId,
+    patientName: patient ? `${patient.first_name} ${patient.last_name}` : null,
+    appointmentId: invoice.appointmentId, practitionerUserId: invoice.practitionerUserId,
+    locationId: invoice.locationId, locationName: location?.name ?? null,
+    subtotalMinor: invoice.subtotalMinor, discountMinor: invoice.discountMinor,
+    taxMinor: invoice.taxMinor, totalMinor: invoice.totalMinor,
+    paidMinor: invoice.paidMinor, refundedMinor: invoice.refundedMinor,
+    creditAppliedMinor: invoice.creditAppliedMinor,
+    balanceMinor: Math.max(invoice.totalMinor - invoice.paidMinor - invoice.creditAppliedMinor, 0),
+    finalizedAt: invoice.finalizedAt, voidedAt: invoice.voidedAt,
+    voidReason: invoice.voidReason, createdAt: invoice.createdAt,
+    lines: lines.map((l) => ({
+      id: l.id, kind: l.kind, productId: l.productId, name: l.nameSnapshot,
+      sku: l.skuSnapshot, description: null, quantity: l.quantity,
+      unitAmountMinor: l.unitAmountMinor, amountMinor: l.amountMinor,
+      discountMinor: l.discountMinor, discountReason: l.discountReason,
+      taxRateBps: l.taxRateBps, taxMinor: l.taxMinor, verification: null,
+    })),
+    payments: payments.map((p) => ({
+      id: p.id, amountMinor: p.amountMinor, currency: p.currency, status: p.status,
+      method: p.method, reference: p.reference, environment: p.environment,
+      processor: p.processor, failureCode: p.failureCodeSafe, paidAt: p.paidAt,
+      createdAt: p.createdAt,
+      refunds: billingRefunds.filter((r) => r.paymentId === p.id).map((r) => ({
+        id: r.id, amountMinor: r.amountMinor, reason: r.reason, status: r.status,
+        method: r.method, createdAt: r.createdAt,
+      })),
+    })),
+    history: billingEvents
+      .filter((e) => e.invoiceId === invoice.id)
+      .map((e) => ({ kind: e.kind, from: e.from, to: e.to, detail: e.detail, at: e.createdAt })),
+  };
+}
+
+resetBillingFixtures();
+
 /* --------------------------------------------------------------- wire utils */
 
 const json = (res, status, value) => {
@@ -1958,6 +2208,103 @@ createServer(async (req, res) => {
   // order-independent (every proof still runs, against exactly the state it
   // was written for). Non-sync domains (patients, labs, schedule, inbox) are
   // untouched.
+  // Reset the billing domain to its pristine state. The billing suite is
+  // written against a fresh backend; it calls this in beforeAll so the
+  // battery is order-independent. Non-billing domains are untouched.
+  if (url.pathname === "/__control/billing-reset" && req.method === "POST") {
+    resetBillingFixtures();
+    return json(res, 200, { ok: true });
+  }
+
+  // The service_role processor boundary, stood in for by test control so no
+  // browser-reachable route can settle a payment. Mirrors
+  // attach_payment_processor_ref + record_billing_webhook, including durable
+  // dedup, amount/currency agreement, and out-of-order safety.
+  if (url.pathname === "/__control/billing-attach-processor-ref" && req.method === "POST") {
+    const body = await readBody(req);
+    const payment = billingPayments.get(String(body.paymentId ?? ""));
+    if (!payment) return json(res, 404, { code: "P0002", message: "payment not found" });
+    if (payment.status !== "pending" || payment.method !== "card_test") {
+      return json(res, 403, { code: "42501", message: "only a pending card payment can attach" });
+    }
+    if (payment.processorRef && payment.processorRef !== String(body.processorRef)) {
+      return json(res, 409, { code: "40001", message: "a different reference is attached" });
+    }
+    payment.processorRef = String(body.processorRef ?? "");
+    return json(res, 200, { ok: true });
+  }
+
+  if (url.pathname === "/__control/billing-webhook" && req.method === "POST") {
+    const body = await readBody(req);
+    const eventId = String(body.eventId ?? "");
+    if (!eventId) return json(res, 400, { code: "22023", message: "event id required" });
+    if (billingWebhookEvents.some((e) => e.eventId === eventId)) {
+      return json(res, 200, { outcome: "duplicate" });
+    }
+    const eventType = String(body.eventType ?? "unknown");
+    const amountMinor = body.amountMinor == null ? null : Number(body.amountMinor);
+    const currency = body.currency == null ? null : String(body.currency);
+    const payment = [...billingPayments.values()].find(
+      (p) => p.processor === "stripe_test" && p.processorRef === String(body.processorRef ?? ""),
+    );
+
+    let outcome = "ignored";
+    let detail = "no matching payment";
+    if (!payment) {
+      // recorded as ignored
+    } else if (amountMinor != null && amountMinor !== payment.amountMinor) {
+      outcome = "refused"; detail = "amount mismatch";
+    } else if (currency != null && currency.toUpperCase() !== payment.currency.toUpperCase()) {
+      outcome = "refused"; detail = "currency mismatch";
+    } else if (eventType === "payment_intent.succeeded") {
+      if (payment.status === "pending") {
+        payment.status = "succeeded";
+        payment.paidAt = new Date().toISOString();
+        outcome = "processed"; detail = "payment succeeded";
+      } else if (payment.status === "succeeded") {
+        outcome = "duplicate"; detail = "already succeeded";
+      } else {
+        outcome = "out_of_order"; detail = `terminal state ${payment.status}`;
+      }
+    } else if (eventType === "payment_intent.payment_failed") {
+      if (payment.status === "pending") {
+        payment.status = "failed";
+        payment.failureCodeSafe = "card_declined";
+        outcome = "processed"; detail = "payment failed";
+      } else {
+        outcome = "out_of_order"; detail = `terminal state ${payment.status}`;
+      }
+    } else if (eventType === "charge.refunded") {
+      if (payment.status === "succeeded") {
+        const already = billingRefunds
+          .filter((r) => r.paymentId === payment.id && r.status === "succeeded")
+          .reduce((sum, r) => sum + r.amountMinor, 0);
+        if (!amountMinor || amountMinor <= 0 || already + amountMinor > payment.amountMinor) {
+          outcome = "refused"; detail = "refund amount invalid";
+        } else {
+          billingRefunds.push({
+            id: billingId("rf"), paymentId: payment.id, patientId: payment.patientId,
+            amountMinor, currency: payment.currency, reason: "processor refund",
+            status: "succeeded", method: "card_test", createdAt: new Date().toISOString(),
+          });
+          outcome = "processed"; detail = "refund recorded";
+        }
+      } else {
+        outcome = "out_of_order"; detail = "refund before success";
+      }
+    }
+
+    billingWebhookEvents.push({
+      eventId, eventType, outcome, detail,
+      receivedAt: new Date().toISOString(),
+    });
+    if (outcome === "processed" && payment?.invoiceId) {
+      const invoice = billingInvoices.get(payment.invoiceId);
+      if (invoice) billingSettle(invoice, "webhook");
+    }
+    return json(res, 200, { outcome, detail });
+  }
+
   if (url.pathname === "/__control/sync-reset" && req.method === "POST") {
     syncConnections.clear();
     syncInvitations.clear();
@@ -4701,6 +5048,786 @@ createServer(async (req, res) => {
       }
       return { c };
     };
+
+    /* ---- billing, checkout, catalog & inventory RPCs (phase 8A) ---- */
+
+    if (url.pathname === "/rest/v1/rpc/get_billing_workspace" && req.method === "POST") {
+      const body = await readBody(req);
+      const orgId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(orgId)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const all = [...billingInvoices.values()];
+      const finalized = all.filter((i) => i.finalizedAt);
+      const visible = body._status ? all.filter((i) => i.status === body._status) : all;
+      const outstanding = all.filter((i) => i.status === "open" || i.status === "partially_paid");
+      const sum = (rows, pick) => rows.reduce((total, row) => total + pick(row), 0);
+      const balance = (i) => Math.max(i.totalMinor - i.paidMinor - i.creditAppliedMinor, 0);
+      const lineRows = [...billingLines.values()].flat().filter((l) => {
+        const invoice = billingInvoices.get(l.invoiceId);
+        return invoice?.finalizedAt && invoice.status !== "void";
+      });
+      const sales = new Map();
+      for (const line of lineRows) {
+        const entry = sales.get(line.productId) ?? {
+          productId: line.productId, name: line.nameSnapshot, kind: line.kind,
+          quantity: 0, amountMinor: 0,
+        };
+        entry.quantity += line.quantity;
+        entry.amountMinor += line.amountMinor - line.discountMinor;
+        sales.set(line.productId, entry);
+      }
+      const lowStock = [...billingStock.values()]
+        .filter((row) => row.onHand - row.reserved <= row.reorderThreshold)
+        .map((row) => ({
+          productId: row.productId, name: billingProduct(row.productId)?.name ?? "",
+          locationId: row.locationId,
+          locationName: billingLocations.find((l) => l.id === row.locationId)?.name ?? null,
+          onHand: row.onHand, reserved: row.reserved,
+          available: row.onHand - row.reserved, reorderThreshold: row.reorderThreshold,
+        }));
+      return json(res, 200, {
+        summary: {
+          invoicedMinor: sum(finalized.filter((i) => i.status !== "void"), (i) => i.totalMinor),
+          collectedMinor: sum(finalized, (i) => i.paidMinor + i.creditAppliedMinor),
+          outstandingMinor: sum(outstanding, balance),
+          refundedMinor: sum(finalized, (i) => i.refundedMinor),
+          discountMinor: sum(finalized.filter((i) => i.status !== "void"), (i) => i.discountMinor),
+          taxMinor: sum(finalized.filter((i) => i.status !== "void"), (i) => i.taxMinor),
+        },
+        invoices: visible
+          .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+          .map((i) => {
+            const patient = PATIENTS.find((p) => p.id === i.patientId);
+            return {
+              id: i.id, number: i.number, status: i.status, patientId: i.patientId,
+              patientName: patient ? `${patient.first_name} ${patient.last_name}` : null,
+              totalMinor: i.totalMinor, balanceMinor: balance(i), currency: i.currency,
+              locationId: i.locationId, practitionerUserId: i.practitionerUserId,
+              finalizedAt: i.finalizedAt, createdAt: i.createdAt, version: i.version,
+            };
+          }),
+        payments: [...billingPayments.values()]
+          .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+          .map((p) => ({
+            id: p.id, invoiceId: p.invoiceId, amountMinor: p.amountMinor,
+            currency: p.currency, status: p.status, method: p.method,
+            environment: p.environment, reference: p.reference, createdAt: p.createdAt,
+          })),
+        aging: {
+          current: sum(outstanding, balance), days31to60: 0, days61to90: 0, over90: 0,
+        },
+        productSales: [...sales.values()].sort((a, b) => b.amountMinor - a.amountMinor),
+        inventory: {
+          valuationMinor: [...billingStock.values()].reduce(
+            (total, row) => total + row.onHand * (billingProduct(row.productId)?.costMinor ?? 0), 0),
+          lowStock,
+        },
+        reconciliation: {
+          pendingCardPayments: [...billingPayments.values()]
+            .filter((p) => p.status === "pending" && p.method === "card_test").length,
+          webhookEvents: [...billingWebhookEvents]
+            .sort((a, b) => b.receivedAt.localeCompare(a.receivedAt))
+            .map((e) => ({
+              eventId: e.eventId, type: e.eventType, outcome: e.outcome,
+              detail: e.detail, receivedAt: e.receivedAt,
+            })),
+        },
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/get_billing_invoice" && req.method === "POST") {
+      const body = await readBody(req);
+      const orgId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(orgId)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const invoice = billingInvoices.get(String(body._invoice_id ?? ""));
+      if (!invoice) return json(res, 404, { code: "P0002", message: "invoice not found" });
+      return json(res, 200, billingInvoiceJson(invoice));
+    }
+
+    if (url.pathname === "/rest/v1/rpc/get_patient_billing" && req.method === "POST") {
+      const body = await readBody(req);
+      const orgId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(orgId)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const patientId = String(body._patient_id ?? "");
+      return json(res, 200, {
+        creditBalanceMinor: billingCreditBalance(patientId),
+        invoices: [...billingInvoices.values()]
+          .filter((i) => i.patientId === patientId)
+          .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+          .map((i) => ({
+            id: i.id, number: i.number, status: i.status, totalMinor: i.totalMinor,
+            paidMinor: i.paidMinor, creditAppliedMinor: i.creditAppliedMinor,
+            refundedMinor: i.refundedMinor,
+            balanceMinor: Math.max(i.totalMinor - i.paidMinor - i.creditAppliedMinor, 0),
+            currency: i.currency, appointmentId: i.appointmentId,
+            createdAt: i.createdAt, finalizedAt: i.finalizedAt, version: i.version,
+          })),
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/list_billing_catalog" && req.method === "POST") {
+      const body = await readBody(req);
+      const orgId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(orgId)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const q = String(body._query ?? "").trim().toLowerCase();
+      const filter = body._stock_filter ? String(body._stock_filter) : null;
+      const products = billingProducts
+        .filter((p) => (body._include_archived ? true : !p.archivedAt))
+        .filter((p) => (body._kind ? p.kind === body._kind : true))
+        .filter((p) => !q || p.name.toLowerCase().includes(q) ||
+          (p.sku ?? "").toLowerCase().includes(q))
+        .filter((p) => {
+          if (!filter) return true;
+          if (!p.trackInventory) return false;
+          const rows = [...billingStock.values()].filter((r) => r.productId === p.id);
+          const available = rows.reduce((sum, r) => sum + (r.onHand - r.reserved), 0);
+          if (filter === "out") return available <= 0;
+          return rows.some((r) => r.onHand - r.reserved <= r.reorderThreshold);
+        })
+        .map((p) => {
+          const tax = billingTaxRates.find((t) => t.id === p.taxRateId);
+          return {
+            id: p.id, name: p.name, kind: p.kind, amountMinor: p.amountMinor,
+            currency: p.currency, sku: p.sku, barcode: p.barcode,
+            supplierId: p.supplierId,
+            supplierName: billingSuppliers.find((sup) => sup.id === p.supplierId)?.name ?? null,
+            costMinor: p.costMinor, taxRateId: p.taxRateId,
+            taxRateBps: tax?.rateBps ?? null, taxRateName: tax?.name ?? null,
+            description: p.description, trackInventory: p.trackInventory,
+            reorderThreshold: p.reorderThreshold, catalogProductId: p.catalogProductId,
+            verificationStatus: null, commercialLinks: [],
+            archivedAt: p.archivedAt, version: p.version,
+            stock: [...billingStock.values()]
+              .filter((r) => r.productId === p.id)
+              .filter((r) => (body._location_id ? r.locationId === body._location_id : true))
+              .map((r) => ({
+                locationId: r.locationId,
+                locationName: billingLocations.find((l) => l.id === r.locationId)?.name ?? null,
+                onHand: r.onHand, reserved: r.reserved,
+                available: r.onHand - r.reserved, reorderThreshold: r.reorderThreshold,
+              })),
+          };
+        })
+        .sort((a, b) => a.name.localeCompare(b.name));
+      return json(res, 200, {
+        products,
+        suppliers: billingSuppliers.map((sup) => ({
+          id: sup.id, name: sup.name, contactEmail: sup.contactEmail,
+          phone: sup.phone, notes: sup.notes, archivedAt: sup.archivedAt,
+        })),
+        locations: billingLocations.map((l) => ({
+          id: l.id, name: l.name, archivedAt: l.archivedAt,
+        })),
+        taxRates: billingTaxRates.map((t) => ({
+          id: t.id, name: t.name, rateBps: t.rateBps, active: t.active,
+        })),
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/get_inventory_history" && req.method === "POST") {
+      const body = await readBody(req);
+      const orgId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(orgId)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      return json(res, 200, billingLedger
+        .filter((m) => m.productId === String(body._product_id ?? ""))
+        .slice()
+        .reverse()
+        .map((m) => ({
+          id: m.id, kind: m.kind, onHandDelta: m.onHandDelta, reservedDelta: m.reservedDelta,
+          reason: m.reason, condition: m.condition, unitCostMinor: m.unitCostMinor,
+          locationId: m.locationId,
+          locationName: billingLocations.find((l) => l.id === m.locationId)?.name ?? null,
+          refType: m.refType, refId: m.refId, at: m.createdAt,
+        })));
+    }
+
+    if (url.pathname === "/rest/v1/rpc/upsert_billing_product" && req.method === "POST") {
+      const body = await readBody(req);
+      const orgId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(orgId)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const id = body._id ? String(body._id) : null;
+      if (!id) {
+        const name = String(body._name ?? "").trim();
+        if (!name) return json(res, 400, { code: "22023", message: "a product name is required" });
+        const amount = Number(body._amount_minor);
+        if (!Number.isFinite(amount) || amount < 0) {
+          return json(res, 400, { code: "22023", message: "a non-negative price is required" });
+        }
+        const product = {
+          id: billingId("prod"), organizationId: orgId, name, kind: String(body._kind ?? "product"),
+          amountMinor: amount, currency: "USD",
+          sku: body._sku ? String(body._sku) : null, barcode: null,
+          supplierId: body._supplier_id ? String(body._supplier_id) : null,
+          costMinor: Number(body._cost_minor ?? 0),
+          taxRateId: body._tax_rate_id ? String(body._tax_rate_id) : null,
+          description: null, trackInventory: body._track_inventory === true,
+          reorderThreshold: Number(body._reorder_threshold ?? 0),
+          catalogProductId: null, archivedAt: null, version: 1,
+        };
+        billingProducts.push(product);
+        return json(res, 200, { id: product.id, version: 1 });
+      }
+      const product = billingProduct(id);
+      if (!product) return json(res, 404, { code: "P0002", message: "product not found" });
+      if (Number(body._expected_version) !== product.version) {
+        return json(res, 409, { code: "40001", message: "the product changed since you loaded it" });
+      }
+      if (body._name) product.name = String(body._name).trim();
+      if (body._amount_minor != null) product.amountMinor = Number(body._amount_minor);
+      if (body._reorder_threshold != null) {
+        product.reorderThreshold = Number(body._reorder_threshold);
+        for (const row of billingStock.values()) {
+          if (row.productId === product.id) row.reorderThreshold = product.reorderThreshold;
+        }
+      }
+      product.version += 1;
+      return json(res, 200, { id: product.id, version: product.version });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/archive_billing_product" && req.method === "POST") {
+      const body = await readBody(req);
+      const orgId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(orgId)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const product = billingProduct(String(body._product_id ?? ""));
+      if (!product) return json(res, 404, { code: "P0002", message: "product not found" });
+      if (Number(body._expected_version) !== product.version) {
+        return json(res, 409, { code: "40001", message: "the product changed since you loaded it" });
+      }
+      product.archivedAt = new Date().toISOString();
+      product.version += 1;
+      return json(res, 200, { id: product.id, version: product.version });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/upsert_billing_location" && req.method === "POST") {
+      const body = await readBody(req);
+      const name = String(body._name ?? "").trim();
+      if (!name) return json(res, 400, { code: "22023", message: "a location name is required" });
+      const location = { id: billingId("loc"), organizationId: "org-fixture", name, archivedAt: null };
+      billingLocations.push(location);
+      return json(res, 200, { id: location.id });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/upsert_supplier" && req.method === "POST") {
+      const body = await readBody(req);
+      const name = String(body._name ?? "").trim();
+      if (!name) return json(res, 400, { code: "22023", message: "a supplier name is required" });
+      const supplier = {
+        id: billingId("sup"), organizationId: "org-fixture", name,
+        contactEmail: null, phone: null, notes: null, archivedAt: null,
+      };
+      billingSuppliers.push(supplier);
+      return json(res, 200, { id: supplier.id });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/upsert_tax_rate" && req.method === "POST") {
+      const body = await readBody(req);
+      const name = String(body._name ?? "").trim();
+      const rateBps = body._rate_bps == null ? null : Number(body._rate_bps);
+      if (!name || rateBps == null) {
+        return json(res, 400, { code: "22023", message: "tax rates need a name and a rate" });
+      }
+      const rate = {
+        id: billingId("tax"), organizationId: "org-fixture", name, rateBps, active: true,
+      };
+      billingTaxRates.push(rate);
+      return json(res, 200, { id: rate.id });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/receive_inventory_stock" && req.method === "POST") {
+      const body = await readBody(req);
+      const orgId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(orgId)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const quantity = Number(body._quantity);
+      if (!Number.isFinite(quantity) || quantity <= 0) {
+        return json(res, 400, { code: "22023", message: "received quantity must be positive" });
+      }
+      const product = billingProduct(String(body._product_id ?? ""));
+      if (!product?.trackInventory) {
+        return json(res, 400, { code: "22023", message: "not an inventory-tracked product" });
+      }
+      if (!billingLocations.some((l) => l.id === String(body._location_id ?? ""))) {
+        return json(res, 404, { code: "P0002", message: "location not found" });
+      }
+      billingMoveStock(String(body._location_id), product.id, "receipt", quantity, 0, {
+        reason: body._reference ? String(body._reference) : null,
+        unitCostMinor: body._unit_cost_minor == null ? null : Number(body._unit_cost_minor),
+        supplierId: body._supplier_id ? String(body._supplier_id) : null,
+        refType: "receipt",
+      });
+      return json(res, 200, { ok: true });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/adjust_inventory_stock" && req.method === "POST") {
+      const body = await readBody(req);
+      const orgId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(orgId)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const reason = String(body._reason ?? "").trim();
+      if (!reason) {
+        return json(res, 400, { code: "22023", message: "inventory adjustments require a reason" });
+      }
+      const delta = Number(body._delta);
+      if (!Number.isFinite(delta) || delta === 0) {
+        return json(res, 400, { code: "22023", message: "an adjustment must change the quantity" });
+      }
+      const kind = String(body._kind ?? "");
+      if (!["adjustment", "damaged", "expired"].includes(kind)) {
+        return json(res, 400, { code: "22023", message: "unknown adjustment kind" });
+      }
+      if ((kind === "damaged" || kind === "expired") && delta > 0) {
+        return json(res, 400, { code: "22023", message: "damaged/expired stock can only be removed" });
+      }
+      try {
+        billingMoveStock(String(body._location_id), String(body._product_id), kind, delta, 0, {
+          reason, refType: "adjustment",
+        });
+      } catch (e) {
+        return json(res, 409, { code: e.code ?? "40001", message: "insufficient stock" });
+      }
+      return json(res, 200, { ok: true });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/return_inventory_stock" && req.method === "POST") {
+      const body = await readBody(req);
+      const orgId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(orgId)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const quantity = Number(body._quantity);
+      if (!Number.isFinite(quantity) || quantity <= 0) {
+        return json(res, 400, { code: "22023", message: "returned quantity must be positive" });
+      }
+      const condition = String(body._condition ?? "");
+      if (!["resalable", "damaged"].includes(condition)) {
+        return json(res, 400, { code: "22023", message: "a return needs an explicit condition" });
+      }
+      const reason = String(body._reason ?? "").trim();
+      if (!reason) return json(res, 400, { code: "22023", message: "a return needs a reason" });
+      const locationId = String(body._location_id);
+      const productId = String(body._product_id);
+      billingMoveStock(locationId, productId, "return", quantity, 0, {
+        reason, condition, refType: "invoice",
+        refId: body._invoice_id ? String(body._invoice_id) : null,
+      });
+      if (condition === "damaged") {
+        // Recorded, but never re-enters sellable stock.
+        billingMoveStock(locationId, productId, "damaged", -quantity, 0, {
+          reason: `damaged return: ${reason}`, condition, refType: "invoice",
+          refId: body._invoice_id ? String(body._invoice_id) : null,
+        });
+      }
+      return json(res, 200, { ok: true });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/create_invoice_draft" && req.method === "POST") {
+      const body = await readBody(req);
+      const orgId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(orgId)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const patientId = String(body._patient_id ?? "");
+      const appointmentId = body._appointment_id ? String(body._appointment_id) : null;
+      if (appointmentId) {
+        const live = [...billingInvoices.values()].some(
+          (i) => i.appointmentId === appointmentId && i.status !== "void");
+        if (live) {
+          return json(res, 409, { code: "40001", message: "this appointment already has an invoice" });
+        }
+      }
+      const appointment = appointmentId
+        ? scheduleAppointments.find((a) => a.id === appointmentId)
+        : null;
+      const invoice = {
+        id: billingId("inv"), organizationId: orgId, patientId, appointmentId,
+        practitionerUserId: PRACTITIONER_USER_ID,
+        locationId: body._location_id ? String(body._location_id) : null,
+        number: null, status: "draft", currency: "USD", version: 1,
+        subtotalMinor: 0, discountMinor: 0, taxMinor: 0, totalMinor: 0,
+        paidMinor: 0, refundedMinor: 0, creditAppliedMinor: 0,
+        finalizedAt: null, voidedAt: null, voidReason: null,
+        inventoryReservedAt: null, inventoryCommittedAt: null,
+        createdAt: new Date().toISOString(),
+      };
+      billingInvoices.set(invoice.id, invoice);
+      billingLines.set(invoice.id, []);
+
+      // The booked service joins the draft when its type matches an active
+      // catalog service by name — deterministic, never protocol-driven.
+      if (appointment?.appointmentType) {
+        const service = billingProducts.find(
+          (p) => !p.archivedAt && ["service", "visit"].includes(p.kind) &&
+            p.name.toLowerCase() === String(appointment.appointmentType).toLowerCase());
+        if (service) {
+          const rate = billingTaxRates.find((t) => t.id === service.taxRateId && t.active);
+          const taxMinor = Math.floor((service.amountMinor * (rate?.rateBps ?? 0) + 5000) / 10000);
+          billingLines.get(invoice.id).push({
+            id: billingId("line"), invoiceId: invoice.id, productId: service.id,
+            kind: "service", nameSnapshot: service.name, skuSnapshot: service.sku,
+            quantity: 1, unitAmountMinor: service.amountMinor,
+            amountMinor: service.amountMinor, discountMinor: 0, discountReason: null,
+            taxRateBps: rate?.rateBps ?? 0, taxMinor,
+          });
+          invoice.subtotalMinor = service.amountMinor;
+          invoice.taxMinor = taxMinor;
+          invoice.totalMinor = service.amountMinor + taxMinor;
+        }
+      }
+      billingEvents.push({
+        invoiceId: invoice.id, kind: "created", from: null, to: "draft", detail: null,
+        createdAt: new Date().toISOString(),
+      });
+      return json(res, 200, billingInvoiceJson(invoice));
+    }
+
+    if (url.pathname === "/rest/v1/rpc/save_invoice_draft" && req.method === "POST") {
+      const body = await readBody(req);
+      const orgId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(orgId)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const invoice = billingInvoices.get(String(body._invoice_id ?? ""));
+      if (!invoice) return json(res, 404, { code: "P0002", message: "invoice not found" });
+      if (invoice.status !== "draft") {
+        return json(res, 403, { code: "42501", message: "only a draft invoice can be edited" });
+      }
+      if (Number(body._expected_version) !== invoice.version) {
+        return json(res, 409, { code: "40001", message: "the invoice changed since you loaded it" });
+      }
+      const inputLines = Array.isArray(body._lines) ? body._lines : [];
+      const rebuilt = [];
+      let subtotal = 0, discount = 0, tax = 0;
+      for (const raw of inputLines) {
+        const product = billingProduct(String(raw.productId ?? ""));
+        if (!product) {
+          return json(res, 403, { code: "42501", message: "a line references an unknown product" });
+        }
+        if (product.archivedAt) {
+          return json(res, 400, { code: "22023", message: "an archived product cannot join a new invoice" });
+        }
+        const quantity = Number(raw.quantity ?? 1);
+        if (quantity < 1 || quantity > 999) {
+          return json(res, 400, { code: "22023", message: "line quantity must be between 1 and 999" });
+        }
+        const unit = raw.unitAmountMinor == null ? product.amountMinor : Number(raw.unitAmountMinor);
+        const gross = unit * quantity;
+        const lineDiscount = Number(raw.discountMinor ?? 0);
+        const reason = raw.discountReason ? String(raw.discountReason).trim() : "";
+        if (lineDiscount < 0 || lineDiscount > gross) {
+          return json(res, 400, { code: "22023", message: "a discount cannot exceed the line amount" });
+        }
+        if (lineDiscount > 0 && !reason) {
+          return json(res, 400, { code: "22023", message: "discounts require a reason" });
+        }
+        // TAX IS NEVER CLIENT-SUPPLIED: computed from the configured rate.
+        const rate = billingTaxRates.find((t) => t.id === product.taxRateId && t.active);
+        const rateBps = rate?.rateBps ?? 0;
+        const lineTax = Math.floor(((gross - lineDiscount) * rateBps + 5000) / 10000);
+        rebuilt.push({
+          id: billingId("line"), invoiceId: invoice.id, productId: product.id,
+          kind: product.kind === "visit" ? "service" : product.kind === "other" ? "product" : product.kind,
+          nameSnapshot: product.name, skuSnapshot: product.sku,
+          quantity, unitAmountMinor: unit, amountMinor: gross,
+          discountMinor: lineDiscount, discountReason: reason || null,
+          taxRateBps: rateBps, taxMinor: lineTax,
+        });
+        subtotal += gross; discount += lineDiscount; tax += lineTax;
+      }
+      billingLines.set(invoice.id, rebuilt);
+      invoice.subtotalMinor = subtotal;
+      invoice.discountMinor = discount;
+      invoice.taxMinor = tax;
+      invoice.totalMinor = subtotal - discount + tax;
+      if (body._location_id) invoice.locationId = String(body._location_id);
+      invoice.version += 1;
+      return json(res, 200, billingInvoiceJson(invoice));
+    }
+
+    if (url.pathname === "/rest/v1/rpc/finalize_invoice" && req.method === "POST") {
+      const body = await readBody(req);
+      const orgId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(orgId)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const invoice = billingInvoices.get(String(body._invoice_id ?? ""));
+      if (!invoice) return json(res, 404, { code: "P0002", message: "invoice not found" });
+      if (invoice.status !== "draft") {
+        return json(res, 403, { code: "42501", message: "only a draft invoice can be finalized" });
+      }
+      if (Number(body._expected_version) !== invoice.version) {
+        return json(res, 409, { code: "40001", message: "the invoice changed since you loaded it" });
+      }
+      const lines = billingLines.get(invoice.id) ?? [];
+      if (lines.length === 0) {
+        return json(res, 400, { code: "22023", message: "an empty invoice cannot be finalized" });
+      }
+      const tracked = lines.filter((l) => billingProduct(l.productId)?.trackInventory);
+      if (tracked.length > 0 && !invoice.locationId) {
+        return json(res, 400, { code: "22023", message: "a location is required to sell tracked inventory" });
+      }
+      // Check availability BEFORE moving anything: an oversell reserves nothing.
+      for (const line of tracked) {
+        const row = billingStock.get(stockKey(invoice.locationId, line.productId));
+        const available = row ? row.onHand - row.reserved : 0;
+        if (available < line.quantity) {
+          return json(res, 409, { code: "40001", message: "insufficient stock to finalize this sale" });
+        }
+      }
+      for (const line of tracked) {
+        billingMoveStock(invoice.locationId, line.productId, "reservation", 0, line.quantity, {
+          refType: "invoice", refId: invoice.id,
+        });
+      }
+      invoice.status = "open";
+      invoice.number = `INV-${String(++billingInvoiceNumber).padStart(5, "0")}`;
+      invoice.finalizedAt = new Date().toISOString();
+      if (tracked.length > 0) invoice.inventoryReservedAt = invoice.finalizedAt;
+      invoice.version += 1;
+      billingEvents.push({
+        invoiceId: invoice.id, kind: "status", from: "draft", to: "open", detail: null,
+        createdAt: new Date().toISOString(),
+      });
+      return json(res, 200, billingInvoiceJson(invoice));
+    }
+
+    if (url.pathname === "/rest/v1/rpc/void_invoice" && req.method === "POST") {
+      const body = await readBody(req);
+      const orgId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(orgId)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const reason = String(body._reason ?? "").trim();
+      if (!reason) {
+        return json(res, 400, { code: "22023", message: "voiding an invoice requires a reason" });
+      }
+      const invoice = billingInvoices.get(String(body._invoice_id ?? ""));
+      if (!invoice) return json(res, 404, { code: "P0002", message: "invoice not found" });
+      if (Number(body._expected_version) !== invoice.version) {
+        return json(res, 409, { code: "40001", message: "the invoice changed since you loaded it" });
+      }
+      if (!["draft", "open"].includes(invoice.status) ||
+          invoice.paidMinor > 0 || invoice.creditAppliedMinor > 0) {
+        return json(res, 403, {
+          code: "42501",
+          message: "only an unpaid draft or open invoice can be voided; use refunds for paid invoices",
+        });
+      }
+      if (invoice.inventoryReservedAt && !invoice.inventoryCommittedAt) {
+        for (const line of billingLines.get(invoice.id) ?? []) {
+          if (!billingProduct(line.productId)?.trackInventory) continue;
+          billingMoveStock(invoice.locationId, line.productId, "release", 0, -line.quantity, {
+            reason: "invoice voided", refType: "invoice", refId: invoice.id,
+          });
+        }
+      }
+      const from = invoice.status;
+      invoice.status = "void";
+      invoice.voidedAt = new Date().toISOString();
+      invoice.voidReason = reason;
+      invoice.version += 1;
+      billingEvents.push({
+        invoiceId: invoice.id, kind: "status", from, to: "void", detail: reason,
+        createdAt: new Date().toISOString(),
+      });
+      return json(res, 200, billingInvoiceJson(invoice));
+    }
+
+    if (url.pathname === "/rest/v1/rpc/record_manual_payment" && req.method === "POST") {
+      const body = await readBody(req);
+      const orgId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(orgId)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const method = String(body._method ?? "");
+      if (!["cash", "check", "bank_transfer", "external"].includes(method)) {
+        return json(res, 400, { code: "22023", message: "manual payments accept cash, check, bank_transfer, or external" });
+      }
+      const amount = Number(body._amount_minor);
+      if (!Number.isFinite(amount) || amount <= 0) {
+        return json(res, 400, { code: "22023", message: "a payment amount must be positive" });
+      }
+      const invoice = billingInvoices.get(String(body._invoice_id ?? ""));
+      if (!invoice) return json(res, 404, { code: "P0002", message: "invoice not found" });
+      if (!["open", "partially_paid"].includes(invoice.status)) {
+        return json(res, 403, { code: "42501", message: "payments apply only to open invoices" });
+      }
+      if (Number(body._expected_version) !== invoice.version) {
+        return json(res, 409, { code: "40001", message: "the invoice changed since you loaded it" });
+      }
+      const balance = invoice.totalMinor - invoice.paidMinor - invoice.creditAppliedMinor;
+      if (amount > balance) {
+        return json(res, 400, { code: "22023", message: "a payment cannot exceed the outstanding balance" });
+      }
+      const key = body._idempotency_key ? String(body._idempotency_key) : billingId("idem");
+      if ([...billingPayments.values()].some((p) => p.idempotencyKey === key)) {
+        return json(res, 409, { code: "40001", message: "this payment was already recorded" });
+      }
+      const payment = {
+        id: billingId("pay"), organizationId: orgId, invoiceId: invoice.id,
+        patientId: invoice.patientId, amountMinor: amount, currency: invoice.currency,
+        status: "succeeded", method, reference: body._reference ? String(body._reference) : null,
+        environment: null, processor: "manual", processorRef: null, failureCodeSafe: null,
+        paidAt: new Date().toISOString(), idempotencyKey: key,
+        createdAt: new Date().toISOString(),
+      };
+      billingPayments.set(payment.id, payment);
+      billingSettle(invoice, "rpc");
+      return json(res, 200, billingInvoiceJson(invoice));
+    }
+
+    if (url.pathname === "/rest/v1/rpc/grant_patient_credit" && req.method === "POST") {
+      const body = await readBody(req);
+      const orgId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(orgId)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const amount = Number(body._amount_minor);
+      if (!Number.isFinite(amount) || amount <= 0) {
+        return json(res, 400, { code: "22023", message: "a credit amount must be positive" });
+      }
+      const reason = String(body._reason ?? "").trim();
+      if (!reason) {
+        return json(res, 400, { code: "22023", message: "granting credit requires a reason" });
+      }
+      const patientId = String(body._patient_id ?? "");
+      billingCredits.push({
+        id: billingId("cr"), patientId, kind: "grant", amountMinor: amount, reason,
+        createdAt: new Date().toISOString(),
+      });
+      return json(res, 200, { balanceMinor: billingCreditBalance(patientId) });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/apply_patient_credit" && req.method === "POST") {
+      const body = await readBody(req);
+      const orgId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(orgId)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const amount = Number(body._amount_minor);
+      if (!Number.isFinite(amount) || amount <= 0) {
+        return json(res, 400, { code: "22023", message: "a credit application must be positive" });
+      }
+      const invoice = billingInvoices.get(String(body._invoice_id ?? ""));
+      if (!invoice) return json(res, 404, { code: "P0002", message: "invoice not found" });
+      if (!["open", "partially_paid"].includes(invoice.status)) {
+        return json(res, 403, { code: "42501", message: "credit applies only to open invoices" });
+      }
+      if (Number(body._expected_version) !== invoice.version) {
+        return json(res, 409, { code: "40001", message: "the invoice changed since you loaded it" });
+      }
+      const credit = billingCreditBalance(invoice.patientId);
+      const balance = invoice.totalMinor - invoice.paidMinor - invoice.creditAppliedMinor;
+      if (amount > credit) {
+        return json(res, 400, { code: "22023", message: "not enough patient credit" });
+      }
+      if (amount > balance) {
+        return json(res, 400, { code: "22023", message: "credit cannot exceed the outstanding balance" });
+      }
+      billingCredits.push({
+        id: billingId("cr"), patientId: invoice.patientId, kind: "apply",
+        amountMinor: amount, invoiceId: invoice.id, reason: null,
+        createdAt: new Date().toISOString(),
+      });
+      invoice.creditAppliedMinor += amount;
+      billingSettle(invoice, "rpc");
+      return json(res, 200, billingInvoiceJson(invoice));
+    }
+
+    if (url.pathname === "/rest/v1/rpc/refund_payment" && req.method === "POST") {
+      const body = await readBody(req);
+      const orgId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(orgId)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const reason = String(body._reason ?? "").trim();
+      if (!reason) return json(res, 400, { code: "22023", message: "refunds require a reason" });
+      const amount = Number(body._amount_minor);
+      if (!Number.isFinite(amount) || amount <= 0) {
+        return json(res, 400, { code: "22023", message: "a refund amount must be positive" });
+      }
+      const payment = billingPayments.get(String(body._payment_id ?? ""));
+      if (!payment) return json(res, 404, { code: "P0002", message: "payment not found" });
+      if (payment.status !== "succeeded") {
+        return json(res, 403, { code: "42501", message: "only a succeeded payment can be refunded" });
+      }
+      if (payment.method === "card_test") {
+        return json(res, 400, {
+          code: "22023", message: "card refunds go through the payment processor workflow",
+        });
+      }
+      const already = billingRefunds
+        .filter((r) => r.paymentId === payment.id && r.status === "succeeded")
+        .reduce((sum, r) => sum + r.amountMinor, 0);
+      if (already + amount > payment.amountMinor) {
+        return json(res, 400, { code: "22023", message: "refunds cannot exceed the original payment" });
+      }
+      billingRefunds.push({
+        id: billingId("rf"), paymentId: payment.id, patientId: payment.patientId,
+        amountMinor: amount, currency: payment.currency, reason, status: "succeeded",
+        method: payment.method, createdAt: new Date().toISOString(),
+      });
+      // NOTE: no stock movement. A refund never restocks.
+      const invoice = payment.invoiceId ? billingInvoices.get(payment.invoiceId) : null;
+      if (invoice) {
+        billingSettle(invoice, "rpc");
+        return json(res, 200, billingInvoiceJson(invoice));
+      }
+      return json(res, 200, { id: billingRefunds[billingRefunds.length - 1].id });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/start_card_payment" && req.method === "POST") {
+      const body = await readBody(req);
+      const orgId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(orgId)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const key = String(body._idempotency_key ?? "").trim();
+      if (!key) return json(res, 400, { code: "22023", message: "an idempotency key is required" });
+      const invoice = billingInvoices.get(String(body._invoice_id ?? ""));
+      if (!invoice) return json(res, 404, { code: "P0002", message: "invoice not found" });
+      if (!["open", "partially_paid"].includes(invoice.status)) {
+        return json(res, 403, { code: "42501", message: "payments apply only to open invoices" });
+      }
+      if (Number(body._expected_version) !== invoice.version) {
+        return json(res, 409, { code: "40001", message: "the invoice changed since you loaded it" });
+      }
+      const balance = invoice.totalMinor - invoice.paidMinor - invoice.creditAppliedMinor;
+      if (balance <= 0) {
+        return json(res, 400, { code: "22023", message: "this invoice has no outstanding balance" });
+      }
+      const inFlight = [...billingPayments.values()].some(
+        (p) => p.invoiceId === invoice.id && p.status === "pending" && p.method === "card_test");
+      if (inFlight) {
+        return json(res, 409, { code: "40001", message: "a card payment is already in progress" });
+      }
+      const payment = {
+        id: billingId("pay"), organizationId: orgId, invoiceId: invoice.id,
+        patientId: invoice.patientId, amountMinor: balance, currency: invoice.currency,
+        status: "pending", method: "card_test", reference: null, environment: "test",
+        processor: "stripe_test", processorRef: null, failureCodeSafe: null,
+        paidAt: null, idempotencyKey: key, createdAt: new Date().toISOString(),
+      };
+      billingPayments.set(payment.id, payment);
+      // Deliberately no success field: the browser cannot assert a charge.
+      return json(res, 200, {
+        paymentId: payment.id, amountMinor: balance, currency: invoice.currency,
+      });
+    }
 
     if (url.pathname === "/rest/v1/rpc/list_inbox" && req.method === "POST") {
       const body = await readBody(req);

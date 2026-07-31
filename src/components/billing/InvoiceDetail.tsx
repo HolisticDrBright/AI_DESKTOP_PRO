@@ -156,6 +156,13 @@ export function InvoiceDetail({ invoiceId }: { invoiceId: string }) {
   const productById = new Map(products.map((p) => [p.id, p]));
 
   const saveDraft = () => {
+    // The database refuses a reasonless discount, but its message is dropped
+    // at the boundary (it may carry PHI), so the practitioner would only see
+    // generic copy. Name the problem here; the server stays authoritative.
+    if (lines.some((l) => l.discountMinor > 0 && !l.discountReason.trim())) {
+      announce("A discount needs a reason before this draft can be saved.");
+      return;
+    }
     const payload: LiveInvoiceLineInput[] = lines.map((l) => ({
       productId: l.productId,
       quantity: l.quantity,
