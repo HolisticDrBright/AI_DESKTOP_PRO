@@ -2210,6 +2210,74 @@ function nutritionPlanVersion(id) {
   return nutritionPlanVersions.find((v) => v.id === id) ?? null;
 }
 
+/* ------------------------------------------------- Phase 9B import pipeline
+ *
+ * A faithful stub rather than a stub that always says yes: it classifies rows,
+ * detects intra-batch conflicts, is idempotent on the source hash, and refuses
+ * to commit while anything is unresolved. The browser proofs are only worth
+ * anything if the stub can actually refuse.
+ */
+let importBatches = new Map();
+let importSeenHashes = new Map();
+let importState = new Map();
+
+function resetImportFixtures() {
+  importBatches = new Map();
+  importSeenHashes = new Map();
+  importState = new Map();
+}
+
+function stubHash(value) {
+  let h = 0n;
+  const text = JSON.stringify(value);
+  for (let i = 0; i < text.length; i += 1) {
+    h = (h * 31n + BigInt(text.charCodeAt(i))) % (2n ** 64n);
+  }
+  return h.toString(16).padStart(64, "0").slice(0, 64);
+}
+
+function stubDedupeKey(entityType, payload) {
+  const p = payload ?? {};
+  const lower = (v) => String(v ?? "").trim().toLowerCase();
+  switch (entityType) {
+    case "product_label": return lower(p.productCode) || null;
+    case "pathway": return lower(p.code) || null;
+    case "lab_suggestion":
+    case "intervention_class":
+    case "knowledge_claim": return lower(p.code) || null;
+    case "catalog_product":
+      return lower(p.sku) || lower(p.upc) || (lower(p.brand) + "|" + lower(p.name)).replace(/^\|$/, "") || null;
+    case "interpretation_rule": return (lower(p.biomarkerCode) + "|" + lower(p.name)) || null;
+    default: return null;
+  }
+}
+
+function stubValidationErrors(entityType, payload) {
+  const p = payload ?? {};
+  const errors = [];
+  const grade = String(p.evidenceClassification ?? "unclassified").toLowerCase();
+  if (["high", "moderate", "low", "very_low"].includes(grade)
+      && !String(p.referenceCode ?? "").trim()) {
+    errors.push(
+      "A graded evidence classification requires a governed reference; "
+      + "unreferenced practitioner content must be imported as practitioner_experience",
+    );
+  }
+  if (entityType === "product_label") {
+    if (!String(p.sourceUrl ?? "").trim()) {
+      errors.push("Current manufacturer label URL is required");
+    }
+    const label = p.exactLabel ?? {};
+    if (!String(label.ingredients ?? "").trim()) {
+      errors.push("Ingredient amounts and units are required");
+    }
+  }
+  if (entityType === "lab_suggestion" && !String(p.clinicalQuestion ?? "").trim()) {
+    errors.push("The clinical question this lab answers is required");
+  }
+  return errors;
+}
+
 function resetNutritionFixtures() {
   nutritionTemplates = [];
   nutritionTemplateVersions = [];
@@ -2479,6 +2547,11 @@ createServer(async (req, res) => {
   // written against a fresh backend; it calls this in beforeAll so the
   // battery is order-independent. Non-billing domains are untouched.
   // Reset the phase-8B plan domain so the suite is order-independent.
+  if (url.pathname === "/__control/import-reset" && req.method === "POST") {
+    resetImportFixtures();
+    return json(res, 200, { ok: true });
+  }
+
   if (url.pathname === "/__control/nutrition-reset" && req.method === "POST") {
     resetNutritionFixtures();
     return json(res, 200, { ok: true });
@@ -2781,6 +2854,282 @@ createServer(async (req, res) => {
     const memberOrgIds = memberOrgIdsForBearer(bearerToken);
 
     // Desktop-owned encounter + signed-note RPC boundary.
+    if (url.pathname === "/rest/v1/rpc/preview_knowledge_import" && req.method === "POST") {
+      const body = await readBody(req);
+      const org = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(org)) {
+        return json(res, 403, { code: "42501", message: "knowledge editor role required" });
+      }
+      if (body._attests_no_phi !== true) {
+        return json(res, 400, { code: "55000", message: "no-PHI attestation is required" });
+      }
+      const items = Array.isArray(body._items) ? body._items : [];
+      if (items.length < 1) {
+        return json(res, 400, { code: "22023", message: "an import batch must contain between 1 and 5000 items" });
+      }
+      const hash = stubHash(items);
+
+      // File-level idempotency: the same bytes never stage twice.
+      const existingId = importSeenHashes.get(org + ":" + hash);
+      if (existingId) {
+        const b = importBatches.get(existingId);
+        return json(res, 200, {
+          batchId: b.id, idempotent: true, status: b.status, itemCount: b.itemCount,
+          added: b.added, changed: b.changed, unchanged: b.unchanged,
+          conflicts: b.conflicts, removals: b.removals,
+          message: "This exact file was already imported. The existing batch is "
+            + "returned unchanged; nothing was staged a second time.",
+        });
+      }
+
+      const batchId = "batch-" + (importBatches.size + 1);
+      const seen = new Set();
+      const staged = [];
+      let added = 0, changed = 0, unchanged = 0, conflicts = 0;
+
+      items.forEach((raw, index) => {
+        const entityType = String(raw?.entityType ?? "");
+        const payload = raw?.payload ?? {};
+        const key = stubDedupeKey(entityType, payload);
+        const payloadHash = stubHash(payload);
+        const errors = stubValidationErrors(entityType, payload);
+        let changeKind;
+        let conflictWith = null;
+        const composite = entityType + "|" + key;
+
+        if (key && seen.has(composite)) {
+          changeKind = "conflict";
+          conflictWith = staged.find((i) => i.dedupeKey === key && i.entityType === entityType)?.id ?? null;
+          conflicts += 1;
+        } else {
+          if (key) seen.add(composite);
+          const prior = key ? importState.get(org + "|" + composite) : null;
+          if (!prior) { changeKind = "add"; added += 1; }
+          else if (prior.hash === payloadHash) { changeKind = "unchanged"; unchanged += 1; }
+          else { changeKind = "change"; changed += 1; }
+        }
+
+        staged.push({
+          id: batchId + "-item-" + (index + 1),
+          entityType,
+          displayName: String(raw?.displayName ?? "Unnamed import item"),
+          sourceSheet: raw?.sourceSheet ?? null,
+          sourceRowNumber: index + 1,
+          dedupeKey: key,
+          changeKind,
+          status: changeKind === "unchanged" || changeKind === "conflict" ? "skipped" : "needs_review",
+          payloadSha256: payloadHash,
+          existingRefType: null,
+          existingRefId: null,
+          conflictWithItemId: conflictWith,
+          conflictReason: changeKind === "conflict"
+            ? "Another row earlier in this file claims the same identity (" + key
+              + "). Resolve which row is correct before committing."
+            : null,
+          conflictResolution: null,
+          validationErrors: errors,
+          warnings: Array.isArray(raw?.warnings) ? raw.warnings : [],
+          reviewNote: null,
+          appliedRefType: null,
+          appliedRefId: null,
+          payload,
+        });
+      });
+
+      const sourceKind = body._source_kind ?? null;
+      let removals = 0;
+      if (sourceKind) {
+        for (const [k, v] of importState.entries()) {
+          if (!k.startsWith(org + "|") || v.sourceKind !== sourceKind) continue;
+          const composite = k.slice(org.length + 1);
+          if (!staged.some((i) => i.entityType + "|" + i.dedupeKey === composite)) removals += 1;
+        }
+      }
+
+      const batch = {
+        id: batchId, status: "preview",
+        sourceName: String(body._source_name ?? ""),
+        sourceKind,
+        sourceFilename: body._source_filename ?? null,
+        sourceByteSize: body._source_byte_size ?? null,
+        sourceSha256: hash,
+        schemaVersion: String(body._schema_version ?? ""),
+        itemCount: items.length,
+        added, changed, unchanged, conflicts, removals,
+        previewGeneratedAt: new Date().toISOString(),
+        committedAt: null,
+        createdAt: new Date().toISOString(),
+        organizationId: org,
+        items: staged,
+      };
+      importBatches.set(batchId, batch);
+      importSeenHashes.set(org + ":" + hash, batchId);
+
+      return json(res, 200, {
+        batchId, idempotent: false, status: "preview", itemCount: items.length,
+        added, changed, unchanged, conflicts, removals, sourceSha256: hash,
+        message: "Preview only. No governed record has been created or changed. "
+          + "Review every change and commit explicitly to apply.",
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/get_knowledge_import_preview" && req.method === "POST") {
+      const body = await readBody(req);
+      const b = importBatches.get(String(body._batch_id ?? ""));
+      if (!b) return json(res, 404, { code: "P0002", message: "import batch not found" });
+      const removals = [];
+      if (b.sourceKind) {
+        for (const [k, v] of importState.entries()) {
+          if (!k.startsWith(b.organizationId + "|") || v.sourceKind !== b.sourceKind) continue;
+          const composite = k.slice(b.organizationId.length + 1);
+          if (!b.items.some((i) => i.entityType + "|" + i.dedupeKey === composite)) {
+            removals.push({
+              entityType: composite.split("|")[0],
+              dedupeKey: composite.split("|").slice(1).join("|"),
+              refType: v.refType ?? null, refId: v.refId ?? null,
+            });
+          }
+        }
+      }
+      return json(res, 200, {
+        batch: {
+          id: b.id, status: b.status, sourceName: b.sourceName, sourceKind: b.sourceKind,
+          sourceFilename: b.sourceFilename, sourceByteSize: b.sourceByteSize,
+          sourceSha256: b.sourceSha256, schemaVersion: b.schemaVersion,
+          itemCount: b.itemCount, added: b.added, changed: b.changed,
+          unchanged: b.unchanged, conflicts: b.conflicts, removals: b.removals,
+          previewGeneratedAt: b.previewGeneratedAt, committedAt: b.committedAt,
+          createdAt: b.createdAt,
+        },
+        items: b.items.map(({ payload, ...rest }) => rest),
+        reportedRemovals: removals,
+        removalPolicy: "Removals are reported for review only. This pipeline "
+          + "never deletes governed clinical content; retire a record deliberately "
+          + "with its own action and reason.",
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/resolve_knowledge_import_conflict" && req.method === "POST") {
+      const body = await readBody(req);
+      const itemId = String(body._item_id ?? "");
+      const resolution = String(body._resolution ?? "");
+      const note = String(body._note ?? "").trim();
+      if (!note) return json(res, 400, { code: "22023", message: "a conflict resolution requires a reason" });
+      if (!["keep_existing", "take_incoming", "skip"].includes(resolution)) {
+        return json(res, 400, { code: "22023", message: "resolution must be keep_existing, take_incoming or skip" });
+      }
+      for (const b of importBatches.values()) {
+        const item = b.items.find((i) => i.id === itemId);
+        if (!item) continue;
+        if (item.changeKind !== "conflict") {
+          return json(res, 400, { code: "55000", message: "this item is not in conflict" });
+        }
+        if (resolution === "take_incoming") {
+          const superseded = b.items.find((i) => i.id === item.conflictWithItemId);
+          if (superseded) superseded.status = "skipped";
+          item.changeKind = "change";
+          item.status = "needs_review";
+        } else {
+          item.status = "skipped";
+        }
+        item.conflictResolution = resolution;
+        item.reviewNote = note;
+        b.conflicts = Math.max(b.conflicts - 1, 0);
+        return json(res, 200, { ok: true, itemId, resolution });
+      }
+      return json(res, 404, { code: "P0002", message: "import item not found" });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/commit_knowledge_import" && req.method === "POST") {
+      const body = await readBody(req);
+      const b = importBatches.get(String(body._batch_id ?? ""));
+      if (!b) return json(res, 404, { code: "P0002", message: "import batch not found" });
+      if (b.status === "committed" || b.status === "cancelled") {
+        return json(res, 400, { code: "55000", message: "only a previewed batch can be committed" });
+      }
+
+      const unresolved = b.items.filter((i) => i.changeKind === "conflict" && !i.conflictResolution);
+      if (unresolved.length) {
+        return json(res, 400, {
+          code: "55000",
+          message: "resolve all " + unresolved.length + " conflicting rows before committing",
+        });
+      }
+      const invalid = b.items.filter((i) => i.status === "needs_review" && i.validationErrors.length);
+      if (invalid.length) {
+        return json(res, 400, {
+          code: "55000",
+          message: invalid.length + " row(s) have validation errors; fix them in the source and re-import",
+        });
+      }
+      const expected = body._expected_counts;
+      if (expected && (expected.added !== b.added || expected.changed !== b.changed)) {
+        return json(res, 409, {
+          code: "40001",
+          message: "this preview changed since it was reviewed (staged add/change is "
+            + b.added + "/" + b.changed + "); reload and review again",
+        });
+      }
+
+      let applied = 0;
+      for (const item of b.items) {
+        if (item.status !== "needs_review") continue;
+        item.status = "applied";
+        item.appliedRefType = item.entityType;
+        item.appliedRefId = item.id + "-ref";
+        applied += 1;
+        if (item.dedupeKey) {
+          importState.set(b.organizationId + "|" + item.entityType + "|" + item.dedupeKey, {
+            hash: item.payloadSha256, sourceKind: b.sourceKind,
+            refType: item.appliedRefType, refId: item.appliedRefId,
+          });
+        }
+      }
+      b.status = "committed";
+      b.committedAt = new Date().toISOString();
+
+      return json(res, 200, {
+        ok: true, batchId: b.id, applied, skipped: 0, approvalState: "draft",
+        message: "Imported content is stored as NON-APPROVED drafts. Import is not "
+          + "review, and nothing here is approved for clinical use until a "
+          + "practitioner approves it.",
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/cancel_knowledge_import" && req.method === "POST") {
+      const body = await readBody(req);
+      const b = importBatches.get(String(body._batch_id ?? ""));
+      if (!b) return json(res, 404, { code: "P0002", message: "import batch not found" });
+      if (b.status === "committed") {
+        return json(res, 400, { code: "55000", message: "a committed batch cannot be cancelled" });
+      }
+      if (!String(body._reason ?? "").trim()) {
+        return json(res, 400, { code: "22023", message: "a cancellation reason is required" });
+      }
+      b.status = "cancelled";
+      return json(res, 200, { ok: true, batchId: b.id, status: "cancelled" });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/list_label_commercial_links" && req.method === "POST") {
+      const body = await readBody(req);
+      return json(res, 200, {
+        labelVersionId: String(body._label_version_id ?? ""),
+        links: [],
+        disclaimer: "Commercial information is recorded for disclosure only. It is "
+          + "not read by any clinical eligibility, ranking, safety or evidence path.",
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/list_protocol_commercial_links" && req.method === "POST") {
+      const body = await readBody(req);
+      return json(res, 200, {
+        protocolVersionId: String(body._version_id ?? ""),
+        links: [],
+        disclaimer: "Commercial information is recorded for disclosure only. It is "
+          + "not read by any clinical eligibility, ranking, safety or evidence path.",
+      });
+    }
+
     if (url.pathname === "/rest/v1/rpc/start_encounter" && req.method === "POST") {
       const body = await readBody(req);
       const organizationId = String(body._organization_id ?? "");

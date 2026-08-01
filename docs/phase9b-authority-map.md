@@ -14,7 +14,7 @@ Row counts are from the confirmed clinical Supabase project at ledger head
 | Object | Rows | Owner | Notes |
 | --- | --- | --- | --- |
 | `clinical_paradigms` | 6 | **platform** (no `organization_id`) | western_conventional, functional, naturopathic, tcm, biohacking, synergistic — exactly the lenses Part 10 names |
-| `clinical_domains` | 9 | **platform** | cardiometabolic, endocrine, gastrointestinal, inflammatory_immune, medication_supplement_safety, neurologic, reproductive, sleep, toxicologic_environmental |
+| `clinical_domains` | 9 → **31** | **platform** | 9 pre-existing (below) + **22 added by this phase**. See the count note under §4. |
 | `clinical_knowledge_sources` | 7 | **platform** | code/revision/citation/publisher/release_date/intended_purpose/validation_status/known_limitations/out_of_scope_uses — the registry `differential_questions.knowledge_source_ids` already points at |
 | `knowledge_sources` | 0 | ambiguous | a **second, parallel** registry — see defect 1 |
 | `evidence_items` | 0 | org | hypothesis-linked evidence with `citation` + `knowledge_ref` free text |
@@ -120,21 +120,64 @@ that. Co-locating them makes "an affiliate link must never influence clinical
 eligibility, ranking, safety, or evidence scoring" a matter of discipline rather
 than structure.
 
-**Status: OUTSTANDING.** Not fixed in this phase.
+**Status: FIXED**, along with a second instance the first pass missed and a
+regression the fix itself introduced. All three are recorded below because the
+sequence is the useful part.
 
-`product_label_versions` cannot simply lose the column, because
-`save_product_label_version` accepts an affiliate argument and writes it, and
-changing that signature would break the Phase-1 acceptance test. The migration
-path, for a later phase:
+**The fix, as delivered** (`desktop_commercial_data_separation`):
 
-1. add a `product_label_commercial_links` table keyed to the label version;
-2. change `save_product_label_version` to route its affiliate argument there;
-3. backfill (currently zero rows), then drop `affiliate_url`;
-4. keep the RPC signature stable throughout so no existing test changes.
+1. `product_label_commercial_links`, append-only, keyed to the label version;
+2. `save_product_label_version` routes its affiliate argument there instead —
+   **the signature is unchanged**, so no existing caller or test moved;
+3. history copied across before the column was dropped (zero rows today; the
+   migration is written to be correct against a populated database anyway);
+4. `affiliate_url` dropped.
 
-Meanwhile the catalog spine this phase actually builds on —
-`supplement_products` / `supplement_product_versions` — carries **no** commercial
-column at all, which the acceptance suite asserts.
+### CORRECTION — dropping the column broke a live RPC
+
+`review_clinical_knowledge_import_item` still **inserted** `affiliate_url`.
+plpgsql does not resolve a function body against the catalog until it runs, so
+the function kept its definition and would have failed the first time a reviewer
+accepted a product-label import.
+
+The separation proof that missed this searched function bodies for commercial
+**table** names. It could never have matched a bare **column** name. *A proof
+about tables does not prove anything about columns.* The acceptance suite now
+asserts that no function names `affiliate_url` except
+`save_product_label_version`, and there only as its parameter.
+
+### Defect 2b — the same defect, worse, on the protocol record
+
+`protocol_items.affiliate_url` was missed entirely by the original
+reconnaissance, which looked at the product tables and stopped. It was worse
+than the label case in three ways:
+
+- **copied forward** by `create_protocol_template`, `create_protocol_draft` and
+  `revise_protocol_version`, so it propagated into every new clinical version
+  automatically;
+- **served to the browser** by `private.protocol_version_json` as `affiliateUrl`,
+  beside the dosage — the clinical read path was emitting commercial data;
+- **accepted from the client** by `save_protocol_draft`.
+
+Fixed in `desktop_protocol_commercial_separation`: a `protocol_commercial_links`
+table keyed to the protocol **version** (not the item — a draft autosave deletes
+and reinserts every item, which would cascade the link away), removed from the
+copy-forward path, removed from the clinical payload, and still accepted from a
+draft payload but routed to the commercial model rather than silently dropped.
+
+The three copy-forward functions were rewritten mechanically with a guard that
+aborts unless exactly the two expected occurrences are present, rather than by
+retyping ~80 lines each and risking a silent unrelated edit.
+
+Meanwhile the catalog spine this phase builds on — `supplement_products` /
+`supplement_product_versions` — carries **no** commercial column at all.
+
+**What is asserted now:** no table outside the three commercial-link tables
+carries an affiliate, commission, payout or referral column; no clinical
+eligibility, safety, ranking or evidence function references a commercial table;
+and the protocol payload contains no affiliate field at all — which is what makes
+"an affiliate link cannot influence ranking" structural rather than a promise.
+There is nothing to rank by.
 
 ### Defect 3 — the label record cannot express a label
 
@@ -147,6 +190,27 @@ safety, and "unknown" cannot be distinguished from "not recorded".
 
 **Resolution:** add typed columns; keep `exact_label` for the verbatim short
 excerpt and structured summary only.
+
+## 3a. The domain count, reconciled
+
+Two figures were reported during this phase — "31 clinical domains delivered"
+and "22 domains created" — without the sentence connecting them. Both were
+correct, and the discrepancy was in the reporting rather than the data.
+
+**9 pre-existing (Phase 1)** — cardiometabolic, endocrine, gastrointestinal,
+inflammatory_immune, medication_supplement_safety, neurologic, reproductive,
+sleep, toxicologic_environmental.
+
+**22 added by this phase** — autoimmune, body_composition, bone_health, candida,
+cognitive_health, diabetes_insulin_resistance, emf_exposure, gallbladder_bile,
+h_pylori, heavy_metals, hormone_balance, hpa_axis, intestinal_permeability,
+longevity, lyme_tickborne, methylation, mitochondrial_energy, mold_mycotoxin,
+musculoskeletal_performance, parasites, thyroid, viral_ebv.
+
+**9 + 22 = 31 total.** The phase brief asked for 18 further domains; 22 were
+added because the brief's list resolved to 22 distinct codes once overlaps with
+the existing 9 were removed. Nothing was invented to reach a number — each is a
+domain code with a scope note, carrying no clinical claims of its own.
 
 ## 4. What is genuinely missing
 

@@ -13,11 +13,15 @@ Stated first, because it is the part that matters.
   components are therefore **zero**.
 - **No governed interaction reference is loaded.** The safety core reports
   *"Interaction review not completed"* and names the missing input.
-- **The protocol copilot is not built.** Parts 6, 7, 9, 11 and 12 are not
-  delivered — see the PR for the exact split.
-- **`product_label_versions.affiliate_url` is still a defect.** It is recorded
-  as outstanding in the authority map with a migration path, not silently
-  carried as fixed.
+- **No governed intervention class, lab suggestion, interpretation rule or
+  graph edge is loaded.** The tables and the pipeline that fills them exist and
+  are tested; the content does not, because no source was available.
+- **Four import entity types stage but do not apply yet** — `catalog_product`,
+  `knowledge_reference`, `knowledge_claim` and `protocol_template`. A row of
+  one of these is committed as `skipped` with a note naming the type, and stays
+  staged and visible. It is not silently swallowed.
+- **The protocol copilot is built but disabled by default**, and it produces
+  drafts only.
 
 ## Evidence classifications
 
@@ -97,17 +101,53 @@ The catalog spine this phase builds on — `supplement_products` and
 `supplement_product_versions` — carries **no commercial column at all**. The
 acceptance suite asserts this rather than assuming it.
 
-Commercial data lives in `product_commercial_links`, which hangs off the
-organization's `products_services` row: commerce beside commerce, never beside a
-label fact. It carries supplier, commission disclosure, last verification date
-and availability.
+Commercial data lives in three append-only link tables, each hanging off the
+thing it actually concerns:
 
-`evaluate_protocol_safety` reads no commercial table, and says so in its own
-output. Affiliate data cannot influence eligibility, ranking, safety or evidence
-scoring because the clinical path never joins to it.
+| Table | Subject | Written by |
+| --- | --- | --- |
+| `product_commercial_links` | `products_services` (inventory/billing) | Phase 8A |
+| `product_label_commercial_links` | a product **label version** | `save_product_label_version`, the importer |
+| `protocol_commercial_links` | a protocol **version** | `save_protocol_draft` |
 
-**Outstanding:** the legacy `product_label_versions.affiliate_url` column. See
-the authority map for why deletion was the wrong fix and what the right one is.
+An affiliate link with a URL **requires a commission disclosure** — a check
+constraint, not a convention. Undisclosed commission is the failure mode the
+whole separation exists to prevent.
+
+Append-only is right here: a commercial relationship is a historical fact about
+a point in time. Superseding one records a new row, so "what were we disclosing
+in March?" stays answerable.
+
+The protocol link is keyed to the protocol **version**, not the item, because a
+draft autosave deletes and reinserts every item — a link keyed to an item would
+be cascade-deleted on the next keystroke. The item label is carried as a human
+locator and is deliberately **not** a foreign key, so it cannot become a second
+path by which commercial data re-enters a clinical join.
+
+### What is asserted, not assumed
+
+1. **No clinical table carries a commercial column.** Nothing outside the three
+   tables above has an affiliate, commission, payout or referral column.
+2. **No function writes the dropped column.** plpgsql keeps a stale column
+   reference in a function body until the day it executes, so this is checked
+   against `pg_proc`, not inferred. `save_product_label_version` is the sole
+   match and only as its parameter `_affiliate_url` — which is how the RPC keeps
+   its Phase-1 signature while routing the value to the commercial model.
+3. **The clinical read path serves no commercial field.**
+   `private.protocol_version_json` no longer emits `affiliateUrl`. This is the
+   load-bearing one: an affiliate link cannot influence clinical ranking because
+   the clinical payload does not contain one to rank by.
+4. **No eligibility, safety, ranking or evidence function references a
+   commercial table** — `evaluate_protocol_safety`,
+   `check_protocol_interactions`, `search_protocol_catalog`,
+   `protocol_version_json`, `current_reference_status` and
+   `catalog_verification_status` are all checked by name.
+5. **The copilot cannot be influenced by commercial data** because its contract
+   has no field that can carry any, and it contains no scoring function.
+
+Reading commercial data is a separate call (`list_label_commercial_links`,
+`list_protocol_commercial_links`), and each returns the database's own
+disclaimer so a UI cannot soften it.
 
 ## The deterministic safety core
 
@@ -159,30 +199,115 @@ Before this phase, platform tables had a read policy and **no write policy** —
 writes were closed but nobody could curate. `platform_curators` is the missing
 half.
 
-## Import procedure
+## The import pipeline
 
-The importer is **not built** in this phase. The knowledge import tables
-(`clinical_knowledge_import_batches` / `_items`) exist from Phase 1 and are the
-intended home; the product importer is not yet written.
+**Nothing is inserted silently.**
 
-When it is built, the operator procedure must be: place source files outside the
-repository, hash each file, run a preview that writes nothing, review additions
-/ changes / conflicts / removals, then commit under a reviewer's name. Source
-files are never committed, and no credential or raw private document enters the
-repository or the database.
+```
+preview  →  review  →  resolve conflicts  →  commit  →  non-approved drafts
+   ↑                                                          ↓
+writes NOTHING governed                        approval is a separate act
+```
+
+`preview_knowledge_import` parses, hashes, validates, dedupes and classifies,
+writing only into the staging tables. The acceptance suite proves this by
+counting governed rows before and after the call rather than taking the
+function's word for it.
+
+`commit_knowledge_import` is the only path into governed tables. It refuses
+while any conflict is unresolved, while any applyable row carries a validation
+error, and when the counts the reviewer confirms do not match what is staged —
+that last one is what stops a stale preview being committed after it moved.
+
+**Idempotency works at two levels.** A unique index on
+`(organization_id, source_sha256)` means the same bytes cannot produce a second
+batch. `clinical_knowledge_import_state` remembers the last payload hash applied
+per `(organization, entity type, dedupe key)`, so a row that has not moved is
+classified `unchanged` and does nothing.
+
+**A removal is reported, never performed.** A key previously imported from the
+same kind of source and absent from the incoming file is surfaced for review.
+There is no delete path from this pipeline into governed content — discovering
+an absence in a spreadsheet is not consent to erase a clinical record. Scoping
+removal detection to the source kind matters: a protocol document must never
+appear to delete products because it does not mention any.
+
+**A conflict is a question, not a race.** Two source rows claiming one identity
+are both stored so a reviewer can see both, and each needs a written reason.
+`take_incoming` supersedes the earlier row; `keep_existing` and `skip` leave
+governed content alone.
+
+The full operator procedure — where files live, how they are hashed, what the
+manifest contains, and the order entity types must be loaded in — is in
+[`phase9b-operator-import.md`](./phase9b-operator-import.md). Source files never
+enter the repository: `private-import/` is excluded by a wildcard, and the
+exclusion is verified rather than assumed.
+
+## The protocol copilot
+
+Disabled unless `PROTOCOL_COPILOT_ENABLED` is set. When disabled it **throws**
+rather than returning an empty draft — an empty draft is indistinguishable from
+"nothing to suggest", and the API reports it as `unavailable` (503) rather than
+a fault.
+
+There is no model behind it and no outbound call. Every suggestion is assembled
+from records that already exist, deterministically, so the same inputs give the
+same draft and the output is reviewable rather than merely plausible.
+
+| It cannot | Because |
+| --- | --- |
+| write, approve, activate, order, send or charge | no function in the module has that shape, and it imports no adapter |
+| invent a dose | `proposedDose` is only ever copied from a source named in `doseSource`; an item with no recorded dose emits a null dose and an explicit `dose_unavailable` suggestion |
+| manufacture an interaction finding | every draft reports `interactionReviewState: "not_completed"` and names the specific missing input |
+| hide an allergy conflict | conflicts are raised as suggestions; the item is never silently removed |
+| favour an affiliate product | commercial data is not an input — the contract has no field that can carry one, and there is no scoring function |
+
+Ordering is by clinical position from the source template.
 
 ## Deployment and rollback
 
-Six migrations, all additive except two deliberate drops (`knowledge_sources`,
-verified as having no dependents) and one restore. No environment variable is
-added. No worker. No outbound call.
+Eleven migrations. Additive except three deliberate column drops
+(`knowledge_sources`, `product_label_versions.affiliate_url`,
+`protocol_items.affiliate_url` — each with its history copied across first), one
+restore, and two duplicate indexes removed.
+
+One environment variable is added: `PROTOCOL_COPILOT_ENABLED`, absent by
+default, which leaves the copilot off. No worker. No outbound call.
 
 Rollback: the new tables can be dropped without touching anything from earlier
 phases; the columns added to `clinical_knowledge_sources`,
-`supplement_products`, `supplement_product_versions` and
-`product_commercial_links` are nullable additions and can be dropped
-individually. The 22 new `clinical_domains` rows are additive and can be
+`supplement_products`, `supplement_product_versions`,
+`clinical_knowledge_import_batches`, `clinical_knowledge_import_items`,
+`differential_questions` and `protocol_items` are nullable additions and can be
+dropped individually. The 22 new `clinical_domains` rows are additive and can be
 deleted by code.
+
+The one irreversible step is the two `affiliate_url` drops. Both copy their rows
+into the commercial model first, so no data is lost, but restoring the columns
+would mean reversing that copy — which is the point: the separation is meant to
+be structural, and a structure you can casually undo is a convention.
+
+## What the tests actually run
+
+| Suite | Checks | Where |
+| --- | --- | --- |
+| `desktop_knowledge_catalog.sql` | 36 | governed references, claims, catalog, domains, safety core |
+| `desktop_knowledge_import_graph.sql` | 52 | commercial separation, import pipeline, graph integrity |
+| `clinical_knowledge_import_review.sql` | 10 | Phase-1 importer — the regression guard for the repaired RPC |
+| `desktop_owned_protocols.sql` | 36 | protocol lifecycle, including the rewritten copy-forward path |
+| `protocol-copilot.test.ts` | 22 | copilot boundary, including structural checks read from source |
+| `live-knowledge-import.spec.ts` | 10 | the pipeline in a browser, against a stub that can refuse |
+
+Three defects in this phase's own work were found by these tests rather than by
+inspection, and are worth naming because each was invisible from the code:
+
+1. the batch dedupe index made conflict resolution **impossible** — recording a
+   conflict requires storing both rows, and the index forbade the second one;
+2. the graph immutability trigger guarded UPDATE but not DELETE, so approved
+   knowledge could be erased rather than edited;
+3. platform-governed rows escaped uniqueness entirely, because two NULL
+   `organization_id` values are never equal in SQL — the rows that most need to
+   be unique were the ones the constraint did not police.
 
 ## npm audit
 
