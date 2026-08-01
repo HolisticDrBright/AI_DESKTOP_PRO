@@ -830,6 +830,46 @@ create trigger nutrition_grocery_content_protect
   for each row execute function private.nutrition_content_protect();
 
 /**
+ * Meals and meal items own no version column of their own — they reach their
+ * version through a meal day. Without this they would be the one editable
+ * seam in a frozen plan, so they get the same rule by traversal.
+ */
+create or replace function private.nutrition_meal_content_protect()
+returns trigger language plpgsql security definer set search_path = ''
+as $$
+declare _day uuid; _frozen boolean;
+begin
+  if tg_table_name = 'nutrition_meals' then
+    _day := coalesce(new.meal_day_id, old.meal_day_id);
+  else
+    select m.meal_day_id into _day from public.nutrition_meals m
+      where m.id = coalesce(new.meal_id, old.meal_id);
+  end if;
+
+  select coalesce(
+    (select pv.status in ('approved','active','paused','completed','discontinued','superseded')
+       from public.nutrition_plan_versions pv where pv.id = d.plan_version_id),
+    (select tv.status in ('published','superseded','archived')
+       from public.nutrition_template_versions tv where tv.id = d.template_version_id)
+  ) into _frozen
+  from public.nutrition_meal_days d where d.id = _day;
+
+  if coalesce(_frozen, false) then
+    raise exception 'the content of a frozen version cannot be changed'
+      using errcode = '42501';
+  end if;
+  return coalesce(new, old);
+end;
+$$;
+
+create trigger nutrition_meals_content_protect
+  before update or delete on public.nutrition_meals
+  for each row execute function private.nutrition_meal_content_protect();
+create trigger nutrition_meal_items_content_protect
+  before update or delete on public.nutrition_meal_items
+  for each row execute function private.nutrition_meal_content_protect();
+
+/**
  * `evidence_grade = 'governed_reference'` may be claimed ONLY when a governed
  * reference row actually backs it. A template is not "evidence-based" because
  * someone typed that it was.
@@ -944,6 +984,7 @@ revoke all on function private.nutrition_append_only() from public, anon, authen
 revoke all on function private.nutrition_template_version_protect() from public, anon, authenticated;
 revoke all on function private.nutrition_plan_version_protect() from public, anon, authenticated;
 revoke all on function private.nutrition_content_protect() from public, anon, authenticated;
+revoke all on function private.nutrition_meal_content_protect() from public, anon, authenticated;
 revoke all on function private.nutrition_evidence_guard() from public, anon, authenticated;
 revoke all on function private.can_author_nutrition(uuid) from public, anon;
 revoke all on function private.can_approve_nutrition(uuid) from public, anon;
