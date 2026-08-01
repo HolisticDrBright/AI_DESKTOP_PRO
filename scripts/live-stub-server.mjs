@@ -2210,6 +2210,178 @@ function nutritionPlanVersion(id) {
   return nutritionPlanVersions.find((v) => v.id === id) ?? null;
 }
 
+/* ------------------------------------------------- Phase 9B import pipeline
+ *
+ * A faithful stub rather than a stub that always says yes: it classifies rows,
+ * detects intra-batch conflicts, is idempotent on the source hash, and refuses
+ * to commit while anything is unresolved. The browser proofs are only worth
+ * anything if the stub can actually refuse.
+ */
+let importBatches = new Map();
+let importSeenHashes = new Map();
+let importState = new Map();
+
+function resetImportFixtures() {
+  importBatches = new Map();
+  importSeenHashes = new Map();
+  importState = new Map();
+}
+
+/* ------------------------------------------- Phase 9B catalog + templates
+ *
+ * Both start EMPTY, because that is the state the product is actually in and
+ * the honest-empty-state proofs have to be able to see it. Rows arrive only
+ * through the same calls a practitioner would make.
+ *
+ * The template fixture enforces the one rule worth enforcing here: publishing
+ * a version that carries a dose with no recorded source is REFUSED, with the
+ * offending item named. A stub that said yes would make the browser proof of
+ * that refusal worthless.
+ */
+let catalogLabels = new Map();
+let catalogCommercial = new Map();
+let templateSafety = [];
+let catalogSeq = 0;
+
+function resetCatalogFixtures() {
+  catalogLabels = new Map();
+  catalogCommercial = new Map();
+  templateSafety = [];
+  catalogSeq = 0;
+}
+
+/** Items carrying a dose with no recorded source, by label. */
+function unsourcedDoseLabels(versionId) {
+  const v = protocolVersions.get(versionId);
+  if (!v) return [];
+  return v.items
+    .filter((it) => it.kind === "product"
+      && String(it.dosageText ?? "").trim() !== ""
+      && !it.doseSourceKind)
+    .map((it) => it.label);
+}
+
+function templateDetailPayload(templateId) {
+  const t = protocolTemplates.get(templateId);
+  if (!t) return null;
+  const currentId = t.approvedVersionId ?? t.currentVersionId;
+  const current = currentId ? protocolVersions.get(currentId) : null;
+  const items = current ? current.items : [];
+  const unsourced = currentId ? unsourcedDoseLabels(currentId).length : 0;
+  return {
+    templateId: t.id,
+    name: t.name,
+    description: t.description,
+    status: t.status,
+    archivedAt: t.archivedAt ?? null,
+    supersededById: t.supersededById ?? null,
+    supersededAt: t.supersededAt ?? null,
+    supersededReason: t.supersededReason ?? null,
+    currentVersionId: currentId ?? null,
+    approvedVersionId: t.approvedVersionId ?? null,
+    versions: [...protocolVersions.values()]
+      .filter((v) => v.templateId === templateId)
+      .sort((a, b) => b.version - a.version)
+      .map((v) => ({
+        versionId: v.id, version: v.version, status: v.status,
+        title: v.title, approvedAt: v.approvedAt ?? null,
+        createdAt: v.createdAt, itemCount: v.items.length,
+      })),
+    items: items.map((it, i) => ({
+      itemId: it.id, label: it.label, kind: it.kind, position: i,
+      dosageText: it.dosageText ?? null, timingText: it.timingText ?? null,
+      route: it.route ?? null,
+      doseSourceKind: it.doseSourceKind ?? null,
+      doseSourceRef: it.doseSourceRef ?? null,
+      manufacturer: it.manufacturer ?? null, labelVersion: it.labelVersion ?? null,
+      productSku: it.productSku ?? null, productUpc: it.productUpc ?? null,
+      labelSha256: it.labelSha256 ?? null,
+      verificationStatus: it.verificationStatus ?? "unverified",
+      interventionClassCode: it.interventionClassCode ?? null,
+      monitoringRequirements: it.monitoringRequirements ?? [],
+      stoppingRules: it.stoppingRules ?? [],
+      contraindications: it.contraindications ?? [],
+      followupIntervalDays: it.followupIntervalDays ?? null,
+      jurisdictionSensitive: Boolean(it.jurisdictionSensitive),
+    })),
+    safetyReviews: templateSafety
+      .filter((s) => s.templateId === templateId)
+      .map((s) => ({ ...s })),
+    unsourcedDoseCount: unsourced,
+    patientInstructionPreview: items
+      .filter((it) => ["product", "diet", "lifestyle"].includes(it.kind))
+      .map((it) => ({
+        label: it.label, kind: it.kind,
+        instruction: it.instructions ?? null,
+        // No dose recorded means no dose shown. Never a plausible default.
+        dose: it.dosageText ?? null,
+        timing: it.timingText ?? null,
+        stopIf: it.stoppingRules ?? [],
+        doseIsSourced: Boolean(it.doseSourceKind),
+      })),
+    previewNotice:
+      "This preview is generated from the template as it stands right now. It "
+      + "is not stored and not sent anywhere. An item with no recorded dose "
+      + "shows no dose - nothing is filled in to make the sheet look complete.",
+    safetyNotice: unsourced > 0
+      ? unsourced + " item(s) carry a dose with no recorded source. "
+        + "Publication is blocked until each names an exact product label, a "
+        + "supplied practitioner protocol, or a governed reference."
+      : "Every recorded dose names its source.",
+  };
+}
+
+function stubHash(value) {
+  let h = 0n;
+  const text = JSON.stringify(value);
+  for (let i = 0; i < text.length; i += 1) {
+    h = (h * 31n + BigInt(text.charCodeAt(i))) % (2n ** 64n);
+  }
+  return h.toString(16).padStart(64, "0").slice(0, 64);
+}
+
+function stubDedupeKey(entityType, payload) {
+  const p = payload ?? {};
+  const lower = (v) => String(v ?? "").trim().toLowerCase();
+  switch (entityType) {
+    case "product_label": return lower(p.productCode) || null;
+    case "pathway": return lower(p.code) || null;
+    case "lab_suggestion":
+    case "intervention_class":
+    case "knowledge_claim": return lower(p.code) || null;
+    case "catalog_product":
+      return lower(p.sku) || lower(p.upc) || (lower(p.brand) + "|" + lower(p.name)).replace(/^\|$/, "") || null;
+    case "interpretation_rule": return (lower(p.biomarkerCode) + "|" + lower(p.name)) || null;
+    default: return null;
+  }
+}
+
+function stubValidationErrors(entityType, payload) {
+  const p = payload ?? {};
+  const errors = [];
+  const grade = String(p.evidenceClassification ?? "unclassified").toLowerCase();
+  if (["high", "moderate", "low", "very_low"].includes(grade)
+      && !String(p.referenceCode ?? "").trim()) {
+    errors.push(
+      "A graded evidence classification requires a governed reference; "
+      + "unreferenced practitioner content must be imported as practitioner_experience",
+    );
+  }
+  if (entityType === "product_label") {
+    if (!String(p.sourceUrl ?? "").trim()) {
+      errors.push("Current manufacturer label URL is required");
+    }
+    const label = p.exactLabel ?? {};
+    if (!String(label.ingredients ?? "").trim()) {
+      errors.push("Ingredient amounts and units are required");
+    }
+  }
+  if (entityType === "lab_suggestion" && !String(p.clinicalQuestion ?? "").trim()) {
+    errors.push("The clinical question this lab answers is required");
+  }
+  return errors;
+}
+
 function resetNutritionFixtures() {
   nutritionTemplates = [];
   nutritionTemplateVersions = [];
@@ -2343,6 +2515,124 @@ function entitlementJson(e) {
 }
 
 resetPlanFixtures();
+
+/* =====================================================================
+ * FIXTURE ISOLATION — one reset that covers every mutable domain.
+ *
+ * Before this existed, each suite reset only its own domain, so running the
+ * whole battery in one process left every later suite reading data an earlier
+ * one created. The visible symptom was always the same: the first "honest
+ * empty state" assertion of each later suite failed. That is a harness defect
+ * that looks exactly like a product defect, which is the worst kind.
+ *
+ * TWO MECHANISMS, because the state has two shapes:
+ *
+ *   1. Collections bound with `const` (Maps, Sets, arrays) are restored IN
+ *      PLACE from a deep snapshot taken once at module load, after all seeding
+ *      has run. This is why there is no second copy of the seed data anywhere:
+ *      the snapshot IS the seed, so the two cannot drift apart.
+ *
+ *   2. Bindings held with `let` — counters, and collections that their domain
+ *      reset reassigns wholesale — are re-initialised explicitly in
+ *      `resetAllFixtures`, because a snapshot cannot rebind them.
+ *
+ * `scripts/check-stub-reset-coverage.mjs` parses this file and fails if a
+ * mutable top-level declaration is missing from both mechanisms. A reset that
+ * has to be remembered is a reset that eventually is not.
+ * ===================================================================== */
+
+const SNAPSHOT_COLLECTIONS = {
+  revokedBearers, members, queue, labMarkers, labReports,
+  encounters, emrNotes,
+  scribeParticipants, scribeRecordings, scribeSessions, scribeTokens,
+  scribeTranscripts, scribeGenerations, scribeAccessLog,
+  lensEvaluations, lensQuestions, lensBlocks, lensFeedbackRows,
+  scheduleAppointments, apptTransitionKeys,
+  protocols, protocolTemplates, protocolVersions,
+  programs, programTemplates, programVersions, programOffers,
+  programEnrollments, programProgressRows, programEvents,
+  auditEvents,
+  conversations, inboxMessages, inboxAttachments, commPrefs, inboxOutbox,
+  inboxEvents, inboxAiReviews, inboxTaskByMessage, inboxNoteAppends,
+  syncConnections, syncInvitations, syncScopes, syncOutbound, syncInbound,
+  syncCorrections, syncConflicts, syncDeadLetters, syncAcks, syncHistory,
+  syncDeliveryEventIds, syncProviders, syncWorkerCycles, syncNonces,
+};
+
+const __fixtureSnapshots = new Map();
+
+function captureFixtureSnapshots() {
+  for (const [name, coll] of Object.entries(SNAPSHOT_COLLECTIONS)) {
+    const plain = coll instanceof Map
+      ? [...coll.entries()]
+      : coll instanceof Set
+        ? [...coll]
+        : coll;
+    __fixtureSnapshots.set(name, structuredClone(plain));
+  }
+}
+
+function restoreFixtureSnapshots() {
+  for (const [name, coll] of Object.entries(SNAPSHOT_COLLECTIONS)) {
+    // Cloned on the way OUT as well as in, so a test mutating a restored row
+    // cannot corrupt the snapshot for the next reset.
+    const snap = structuredClone(__fixtureSnapshots.get(name));
+    if (coll instanceof Map) {
+      coll.clear();
+      for (const [k, v] of snap) coll.set(k, v);
+    } else if (coll instanceof Set) {
+      coll.clear();
+      for (const v of snap) coll.add(v);
+    } else {
+      coll.length = 0;
+      coll.push(...snap);
+    }
+  }
+}
+
+/**
+ * Restore the entire backend to the state it had at process start.
+ *
+ * Every suite calls this in `beforeAll` via `e2e/support/backend.ts`, which is
+ * what makes the battery order-independent: a suite always runs against
+ * exactly the state it was written for, no matter what ran before it.
+ */
+function resetAllFixtures() {
+  restoreFixtureSnapshots();
+
+  // `let` bindings the snapshot cannot rebind.
+  memberSeq = 2;
+  emrSeq = 0;
+  scribeSeq = 0;
+  lensSeq = 0;
+  apptSeq = 0;
+  // Cleared rather than re-seeded: the schedule seeds lazily from the date the
+  // first request asks for, so it must be allowed to seed again.
+  scheduleSeeded = false;
+  protocolSeq = 0;
+  programSeq = 0;
+  auditSeq = 0;
+  hypothesisReview = null;
+  inboxSeq = 0;
+  syncSeq = 0;
+  syncCircuit = null;
+  fixtureRole = "owner";
+  nutritionRole = "practitioner";
+
+  // Domains whose reset reassigns their own collections and re-seeds them.
+  resetBillingFixtures();
+  resetPlanFixtures();
+  resetNutritionFixtures();
+  resetCatalogFixtures();
+  resetImportFixtures();
+
+  // NOT seedInboxFixtures() / seedLensFixtures(). Both ran before the snapshot
+  // was taken, so their output is already inside it. Calling them again would
+  // re-push every row of `inboxEvents` — the Map writes are keyed and would
+  // look harmless, which is exactly how that bug would have survived review.
+}
+
+captureFixtureSnapshots();
 
 /* --------------------------------------------------------------- wire utils */
 
@@ -2479,6 +2769,103 @@ createServer(async (req, res) => {
   // written against a fresh backend; it calls this in beforeAll so the
   // battery is order-independent. Non-billing domains are untouched.
   // Reset the phase-8B plan domain so the suite is order-independent.
+  // THE canonical isolation hook. Every spec calls this in beforeAll, which is
+  // what makes the one-process battery order-independent. Per-domain resets are
+  // kept for the tests that reset mid-run, but no suite depends on them for
+  // isolation any more.
+  if (url.pathname === "/__control/reset-all" && req.method === "POST") {
+    resetAllFixtures();
+    return json(res, 200, { ok: true });
+  }
+
+  if (url.pathname === "/__control/import-reset" && req.method === "POST") {
+    resetImportFixtures();
+    return json(res, 200, { ok: true });
+  }
+
+  /**
+   * TEST-ONLY. Seed a template version's items directly.
+   *
+   * Item editing lives in the protocol draft editor, not the template surface,
+   * so driving it through the UI would be testing a different screen. This
+   * sets up the state the template proofs are about — publication gating,
+   * comparison, the patient preview — without pretending a practitioner typed
+   * it. Nothing here reaches the real backend; it exists only in the fixture.
+   */
+  if (url.pathname === "/__control/seed-template-items" && req.method === "POST") {
+    const body = await readBody(req);
+    const version = protocolVersions.get(String(body.versionId ?? ""));
+    if (!version) return json(res, 404, { code: "P0002", message: "version not found" });
+    version.items = (Array.isArray(body.items) ? body.items : []).map((it, i) => ({
+      id: pid("item"),
+      versionId: version.id,
+      kind: String(it.kind ?? "product"),
+      position: i,
+      label: String(it.label ?? ""),
+      instructions: it.instructions ?? null,
+      dosageText: it.dosageText ?? null,
+      timingText: it.timingText ?? null,
+      route: it.route ?? null,
+      doseSourceKind: it.doseSourceKind ?? null,
+      doseSourceRef: it.doseSourceRef ?? null,
+      manufacturer: it.manufacturer ?? null,
+      labelVersion: it.labelVersion ?? null,
+      productSku: it.productSku ?? null,
+      productUpc: it.productUpc ?? null,
+      labelSha256: it.labelSha256 ?? null,
+      verificationStatus: it.verificationStatus ?? "unverified",
+      interventionClassCode: it.interventionClassCode ?? null,
+      monitoringRequirements: it.monitoringRequirements ?? [],
+      stoppingRules: it.stoppingRules ?? [],
+      contraindications: it.contraindications ?? [],
+      followupIntervalDays: it.followupIntervalDays ?? null,
+      jurisdictionSensitive: Boolean(it.jurisdictionSensitive),
+      interactionReviewState: "not_completed",
+    }));
+    return json(res, 200, { ok: true, itemCount: version.items.length });
+  }
+
+  /** TEST-ONLY. Record one governed label so the catalog has something real. */
+  if (url.pathname === "/__control/seed-catalog-label" && req.method === "POST") {
+    const body = await readBody(req);
+    catalogSeq += 1;
+    const id = `label-${catalogSeq}`;
+    const code = String(body.productCode ?? `seed-${catalogSeq}`);
+    catalogLabels.set(id, {
+      id,
+      productCode: code,
+      version: [...catalogLabels.values()].filter((h) => h.productCode === code).length + 1,
+      productName: String(body.productName ?? "Seeded product"),
+      brand: body.brand ?? null,
+      exactLabel: body.exactLabel ?? {},
+      labelSha256: stubHash(body.exactLabel ?? {}),
+      sourceUrl: body.sourceUrl ?? null,
+      status: "draft",
+      effectiveAt: null,
+      expiresAt: null,
+      verifiedAt: null,
+      verificationNote: null,
+      createdAt: nowIso(),
+      importHistory: [],
+    });
+    if (body.affiliateUrl) {
+      // Straight to the commercial store. It never touches the label row.
+      catalogCommercial.set(id, [{
+        id: `plcl-${catalogSeq}`,
+        kind: "affiliate",
+        url: String(body.affiliateUrl),
+        supplierName: null,
+        commissionDisclosure: body.commissionDisclosure ?? null,
+        availabilityStatus: null,
+        lastVerifiedAt: null,
+        revokedAt: null,
+        revokedReason: null,
+        recordedAt: nowIso(),
+      }]);
+    }
+    return json(res, 200, { ok: true, labelVersionId: id });
+  }
+
   if (url.pathname === "/__control/nutrition-reset" && req.method === "POST") {
     resetNutritionFixtures();
     return json(res, 200, { ok: true });
@@ -2781,6 +3168,617 @@ createServer(async (req, res) => {
     const memberOrgIds = memberOrgIdsForBearer(bearerToken);
 
     // Desktop-owned encounter + signed-note RPC boundary.
+    if (url.pathname === "/rest/v1/rpc/preview_knowledge_import" && req.method === "POST") {
+      const body = await readBody(req);
+      const org = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(org)) {
+        return json(res, 403, { code: "42501", message: "knowledge editor role required" });
+      }
+      if (body._attests_no_phi !== true) {
+        return json(res, 400, { code: "55000", message: "no-PHI attestation is required" });
+      }
+      const items = Array.isArray(body._items) ? body._items : [];
+      if (items.length < 1) {
+        return json(res, 400, { code: "22023", message: "an import batch must contain between 1 and 5000 items" });
+      }
+      const hash = stubHash(items);
+
+      // File-level idempotency: the same bytes never stage twice.
+      const existingId = importSeenHashes.get(org + ":" + hash);
+      if (existingId) {
+        const b = importBatches.get(existingId);
+        return json(res, 200, {
+          batchId: b.id, idempotent: true, status: b.status, itemCount: b.itemCount,
+          added: b.added, changed: b.changed, unchanged: b.unchanged,
+          conflicts: b.conflicts, removals: b.removals,
+          message: "This exact file was already imported. The existing batch is "
+            + "returned unchanged; nothing was staged a second time.",
+        });
+      }
+
+      const batchId = "batch-" + (importBatches.size + 1);
+      const seen = new Set();
+      const staged = [];
+      let added = 0, changed = 0, unchanged = 0, conflicts = 0;
+
+      items.forEach((raw, index) => {
+        const entityType = String(raw?.entityType ?? "");
+        const payload = raw?.payload ?? {};
+        const key = stubDedupeKey(entityType, payload);
+        const payloadHash = stubHash(payload);
+        const errors = stubValidationErrors(entityType, payload);
+        let changeKind;
+        let conflictWith = null;
+        const composite = entityType + "|" + key;
+
+        if (key && seen.has(composite)) {
+          changeKind = "conflict";
+          conflictWith = staged.find((i) => i.dedupeKey === key && i.entityType === entityType)?.id ?? null;
+          conflicts += 1;
+        } else {
+          if (key) seen.add(composite);
+          const prior = key ? importState.get(org + "|" + composite) : null;
+          if (!prior) { changeKind = "add"; added += 1; }
+          else if (prior.hash === payloadHash) { changeKind = "unchanged"; unchanged += 1; }
+          else { changeKind = "change"; changed += 1; }
+        }
+
+        staged.push({
+          id: batchId + "-item-" + (index + 1),
+          entityType,
+          displayName: String(raw?.displayName ?? "Unnamed import item"),
+          sourceSheet: raw?.sourceSheet ?? null,
+          sourceRowNumber: index + 1,
+          dedupeKey: key,
+          changeKind,
+          status: changeKind === "unchanged" || changeKind === "conflict" ? "skipped" : "needs_review",
+          payloadSha256: payloadHash,
+          existingRefType: null,
+          existingRefId: null,
+          conflictWithItemId: conflictWith,
+          conflictReason: changeKind === "conflict"
+            ? "Another row earlier in this file claims the same identity (" + key
+              + "). Resolve which row is correct before committing."
+            : null,
+          conflictResolution: null,
+          validationErrors: errors,
+          warnings: Array.isArray(raw?.warnings) ? raw.warnings : [],
+          reviewNote: null,
+          appliedRefType: null,
+          appliedRefId: null,
+          payload,
+        });
+      });
+
+      const sourceKind = body._source_kind ?? null;
+      let removals = 0;
+      if (sourceKind) {
+        for (const [k, v] of importState.entries()) {
+          if (!k.startsWith(org + "|") || v.sourceKind !== sourceKind) continue;
+          const composite = k.slice(org.length + 1);
+          if (!staged.some((i) => i.entityType + "|" + i.dedupeKey === composite)) removals += 1;
+        }
+      }
+
+      const batch = {
+        id: batchId, status: "preview",
+        sourceName: String(body._source_name ?? ""),
+        sourceKind,
+        sourceFilename: body._source_filename ?? null,
+        sourceByteSize: body._source_byte_size ?? null,
+        sourceSha256: hash,
+        schemaVersion: String(body._schema_version ?? ""),
+        itemCount: items.length,
+        added, changed, unchanged, conflicts, removals,
+        previewGeneratedAt: new Date().toISOString(),
+        committedAt: null,
+        createdAt: new Date().toISOString(),
+        organizationId: org,
+        items: staged,
+      };
+      importBatches.set(batchId, batch);
+      importSeenHashes.set(org + ":" + hash, batchId);
+
+      return json(res, 200, {
+        batchId, idempotent: false, status: "preview", itemCount: items.length,
+        added, changed, unchanged, conflicts, removals, sourceSha256: hash,
+        message: "Preview only. No governed record has been created or changed. "
+          + "Review every change and commit explicitly to apply.",
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/get_knowledge_import_preview" && req.method === "POST") {
+      const body = await readBody(req);
+      const b = importBatches.get(String(body._batch_id ?? ""));
+      if (!b) return json(res, 404, { code: "P0002", message: "import batch not found" });
+      const removals = [];
+      if (b.sourceKind) {
+        for (const [k, v] of importState.entries()) {
+          if (!k.startsWith(b.organizationId + "|") || v.sourceKind !== b.sourceKind) continue;
+          const composite = k.slice(b.organizationId.length + 1);
+          if (!b.items.some((i) => i.entityType + "|" + i.dedupeKey === composite)) {
+            removals.push({
+              entityType: composite.split("|")[0],
+              dedupeKey: composite.split("|").slice(1).join("|"),
+              refType: v.refType ?? null, refId: v.refId ?? null,
+            });
+          }
+        }
+      }
+      return json(res, 200, {
+        batch: {
+          id: b.id, status: b.status, sourceName: b.sourceName, sourceKind: b.sourceKind,
+          sourceFilename: b.sourceFilename, sourceByteSize: b.sourceByteSize,
+          sourceSha256: b.sourceSha256, schemaVersion: b.schemaVersion,
+          itemCount: b.itemCount, added: b.added, changed: b.changed,
+          unchanged: b.unchanged, conflicts: b.conflicts, removals: b.removals,
+          previewGeneratedAt: b.previewGeneratedAt, committedAt: b.committedAt,
+          createdAt: b.createdAt,
+        },
+        items: b.items.map(({ payload, ...rest }) => rest),
+        reportedRemovals: removals,
+        removalPolicy: "Removals are reported for review only. This pipeline "
+          + "never deletes governed clinical content; retire a record deliberately "
+          + "with its own action and reason.",
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/resolve_knowledge_import_conflict" && req.method === "POST") {
+      const body = await readBody(req);
+      const itemId = String(body._item_id ?? "");
+      const resolution = String(body._resolution ?? "");
+      const note = String(body._note ?? "").trim();
+      if (!note) return json(res, 400, { code: "22023", message: "a conflict resolution requires a reason" });
+      if (!["keep_existing", "take_incoming", "skip"].includes(resolution)) {
+        return json(res, 400, { code: "22023", message: "resolution must be keep_existing, take_incoming or skip" });
+      }
+      for (const b of importBatches.values()) {
+        const item = b.items.find((i) => i.id === itemId);
+        if (!item) continue;
+        if (item.changeKind !== "conflict") {
+          return json(res, 400, { code: "55000", message: "this item is not in conflict" });
+        }
+        if (resolution === "take_incoming") {
+          const superseded = b.items.find((i) => i.id === item.conflictWithItemId);
+          if (superseded) superseded.status = "skipped";
+          item.changeKind = "change";
+          item.status = "needs_review";
+        } else {
+          item.status = "skipped";
+        }
+        item.conflictResolution = resolution;
+        item.reviewNote = note;
+        b.conflicts = Math.max(b.conflicts - 1, 0);
+        return json(res, 200, { ok: true, itemId, resolution });
+      }
+      return json(res, 404, { code: "P0002", message: "import item not found" });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/commit_knowledge_import" && req.method === "POST") {
+      const body = await readBody(req);
+      const b = importBatches.get(String(body._batch_id ?? ""));
+      if (!b) return json(res, 404, { code: "P0002", message: "import batch not found" });
+      if (b.status === "committed" || b.status === "cancelled") {
+        return json(res, 400, { code: "55000", message: "only a previewed batch can be committed" });
+      }
+
+      const unresolved = b.items.filter((i) => i.changeKind === "conflict" && !i.conflictResolution);
+      if (unresolved.length) {
+        return json(res, 400, {
+          code: "55000",
+          message: "resolve all " + unresolved.length + " conflicting rows before committing",
+        });
+      }
+      const invalid = b.items.filter((i) => i.status === "needs_review" && i.validationErrors.length);
+      if (invalid.length) {
+        return json(res, 400, {
+          code: "55000",
+          message: invalid.length + " row(s) have validation errors; fix them in the source and re-import",
+        });
+      }
+      const expected = body._expected_counts;
+      if (expected && (expected.added !== b.added || expected.changed !== b.changed)) {
+        return json(res, 409, {
+          code: "40001",
+          message: "this preview changed since it was reviewed (staged add/change is "
+            + b.added + "/" + b.changed + "); reload and review again",
+        });
+      }
+
+      let applied = 0;
+      for (const item of b.items) {
+        if (item.status !== "needs_review") continue;
+        item.status = "applied";
+        item.appliedRefType = item.entityType;
+        item.appliedRefId = item.id + "-ref";
+        applied += 1;
+        if (item.dedupeKey) {
+          importState.set(b.organizationId + "|" + item.entityType + "|" + item.dedupeKey, {
+            hash: item.payloadSha256, sourceKind: b.sourceKind,
+            refType: item.appliedRefType, refId: item.appliedRefId,
+          });
+        }
+      }
+      b.status = "committed";
+      b.committedAt = new Date().toISOString();
+
+      return json(res, 200, {
+        ok: true, batchId: b.id, applied, skipped: 0, approvalState: "draft",
+        message: "Imported content is stored as NON-APPROVED drafts. Import is not "
+          + "review, and nothing here is approved for clinical use until a "
+          + "practitioner approves it.",
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/cancel_knowledge_import" && req.method === "POST") {
+      const body = await readBody(req);
+      const b = importBatches.get(String(body._batch_id ?? ""));
+      if (!b) return json(res, 404, { code: "P0002", message: "import batch not found" });
+      if (b.status === "committed") {
+        return json(res, 400, { code: "55000", message: "a committed batch cannot be cancelled" });
+      }
+      if (!String(body._reason ?? "").trim()) {
+        return json(res, 400, { code: "22023", message: "a cancellation reason is required" });
+      }
+      b.status = "cancelled";
+      return json(res, 200, { ok: true, batchId: b.id, status: "cancelled" });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/list_label_commercial_links" && req.method === "POST") {
+      const body = await readBody(req);
+      return json(res, 200, {
+        labelVersionId: String(body._label_version_id ?? ""),
+        links: [],
+        disclaimer: "Commercial information is recorded for disclosure only. It is "
+          + "not read by any clinical eligibility, ranking, safety or evidence path.",
+      });
+    }
+
+    /* ------------------------------- Phase 9B: the product catalog ------ */
+
+    if (url.pathname === "/rest/v1/rpc/get_product_catalog" && req.method === "POST") {
+      const body = await readBody(req);
+      const q = String(body._query ?? "").toLowerCase();
+      const status = body._status ?? null;
+      if (status !== null
+          && !["draft", "published", "superseded", "withdrawn"].includes(status)) {
+        return json(res, 400, { code: "22023", message: "unknown status filter" });
+      }
+      // Latest version per product code, exactly as the RPC does.
+      const latest = new Map();
+      for (const l of catalogLabels.values()) {
+        const prev = latest.get(l.productCode);
+        if (!prev || l.version > prev.version) latest.set(l.productCode, l);
+      }
+      const rows = [...latest.values()]
+        .filter((l) => status === null || l.status === status)
+        .filter((l) => !q
+          || l.productName.toLowerCase().includes(q)
+          || String(l.brand ?? "").toLowerCase().includes(q)
+          || l.productCode.toLowerCase().includes(q))
+        .sort((a, b) => a.productName.localeCompare(b.productName))
+        .map((l) => {
+          const links = (catalogCommercial.get(l.id) ?? []).filter((c) => !c.revokedAt);
+          return {
+            labelVersionId: l.id,
+            productCode: l.productCode,
+            productName: l.productName,
+            brand: l.brand,
+            version: l.version,
+            status: l.status,
+            labelSha256: l.labelSha256,
+            sourceUrl: l.sourceUrl,
+            effectiveAt: l.effectiveAt ?? null,
+            expiresAt: l.expiresAt ?? null,
+            verifiedAt: l.verifiedAt ?? null,
+            verificationState: l.verifiedAt ? "verified" : "unverified",
+            versionCount: [...catalogLabels.values()]
+              .filter((h) => h.productCode === l.productCode).length,
+            ingredientCount: (l.exactLabel?.ingredientRows ?? []).length,
+            hasWarnings: String(l.exactLabel?.warnings ?? "").trim() !== "",
+            // A COUNT only. No commercial URL reaches the list view.
+            commercialLinkCount: links.length,
+            commercialDisclosureComplete: !links.some(
+              (c) => c.kind === "affiliate" && c.url && !c.commissionDisclosure),
+          };
+        });
+      const all = [...catalogLabels.values()];
+      return json(res, 200, {
+        clinical: {
+          products: rows,
+          counts: {
+            total: all.length,
+            verified: all.filter((l) => l.verifiedAt).length,
+            unverified: all.filter((l) => !l.verifiedAt).length,
+            published: all.filter((l) => l.status === "published").length,
+            draft: all.filter((l) => l.status === "draft").length,
+          },
+        },
+        reviewQueue: [],
+        generatedAt: nowIso(),
+        emptyStateMessage:
+          "No governed product labels have been imported yet. This list stays "
+          + "empty until an operator imports exact labels - no example products "
+          + "are shown, because a placeholder is indistinguishable from a real "
+          + "product at a glance.",
+        commercialPolicy:
+          "Commercial links are recorded in a separate table and are never an "
+          + "input to eligibility, ranking, safety or evidence. This list can "
+          + "report that links exist; it cannot sort or filter by them.",
+        unknownPolicy:
+          "Only what was captured from an exact label is shown. Anything not "
+          + "recorded reads as Unknown. Nothing is inferred from a product name.",
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/get_product_label_detail" && req.method === "POST") {
+      const body = await readBody(req);
+      const l = catalogLabels.get(String(body._label_version_id ?? ""));
+      if (!l) return json(res, 404, { code: "P0002", message: "product label version not found" });
+      const links = catalogCommercial.get(l.id) ?? [];
+      const el = l.exactLabel ?? {};
+      return json(res, 200, {
+        clinical: {
+          labelVersionId: l.id,
+          productCode: l.productCode,
+          productName: l.productName,
+          brand: l.brand,
+          version: l.version,
+          status: l.status,
+          labelSha256: l.labelSha256,
+          sourceUrl: l.sourceUrl,
+          effectiveAt: l.effectiveAt ?? null,
+          expiresAt: l.expiresAt ?? null,
+          verifiedAt: l.verifiedAt ?? null,
+          verificationNote: l.verificationNote ?? null,
+          verificationState: l.verifiedAt ? "verified" : "unverified",
+          // Absent keys stay null so the UI renders "Unknown".
+          servingSize: el.servingSize ?? null,
+          servingsPerContainer: el.servingsPerContainer ?? null,
+          ingredients: el.ingredients ?? null,
+          ingredientRows: el.ingredientRows ?? [],
+          otherIngredients: el.otherIngredients ?? null,
+          allergens: el.allergens ?? null,
+          directions: el.directions ?? null,
+          warnings: el.warnings ?? null,
+          storage: el.storage ?? null,
+          jurisdiction: el.jurisdiction ?? null,
+          sku: el.sku ?? null,
+          upc: el.upc ?? null,
+          versions: [...catalogLabels.values()]
+            .filter((h) => h.productCode === l.productCode)
+            .sort((a, b) => b.version - a.version)
+            .map((h) => ({
+              labelVersionId: h.id, version: h.version, status: h.status,
+              labelSha256: h.labelSha256, effectiveAt: h.effectiveAt ?? null,
+              expiresAt: h.expiresAt ?? null, verifiedAt: h.verifiedAt ?? null,
+              verificationNote: h.verificationNote ?? null,
+              createdAt: h.createdAt,
+            })),
+          catalogMappings: [],
+          importHistory: l.importHistory ?? [],
+        },
+        commercial: {
+          links: links.map((c) => ({ ...c })),
+          disclosureComplete: !links.some(
+            (c) => !c.revokedAt && c.kind === "affiliate" && c.url
+              && !c.commissionDisclosure),
+          notice:
+            "Commercial information is stored separately from clinical data and "
+            + "has no effect on eligibility, ranking, safety or evidence. An "
+            + "affiliate link with no completed disclosure must not be shown to "
+            + "a patient.",
+        },
+        unknownPolicy:
+          "Fields that were not captured from the label are Unknown. They are not "
+          + "inferred from the product name, the brand, or any other product.",
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/verify_product_label_version" && req.method === "POST") {
+      const body = await readBody(req);
+      const l = catalogLabels.get(String(body._label_version_id ?? ""));
+      if (!l) return json(res, 404, { code: "P0002", message: "product label version not found" });
+      // The real RPC requires owner/admin. The fixture practitioner role is
+      // refused so the browser proof of that refusal is real.
+      if (fixtureRole !== "owner" && fixtureRole !== "admin") {
+        return json(res, 403, { code: "42501", message: "knowledge administrator role required" });
+      }
+      l.verifiedAt = nowIso();
+      l.verificationNote = String(body._verification_note ?? "");
+      return json(res, 200, null);
+    }
+
+    if (url.pathname === "/rest/v1/rpc/save_product_label_version" && req.method === "POST") {
+      const body = await readBody(req);
+      const code = String(body._product_code ?? "");
+      const version = [...catalogLabels.values()]
+        .filter((h) => h.productCode === code).length + 1;
+      catalogSeq += 1;
+      const id = `label-${catalogSeq}`;
+      const exactLabel = body._exact_label ?? {};
+      catalogLabels.set(id, {
+        id, productCode: code, version,
+        productName: String(body._product_name ?? ""),
+        brand: body._brand ?? null,
+        exactLabel,
+        labelSha256: stubHash(exactLabel),
+        sourceUrl: body._source_url ?? null,
+        status: "draft",
+        effectiveAt: null, expiresAt: null,
+        verifiedAt: null, verificationNote: null,
+        createdAt: nowIso(),
+        importHistory: [],
+      });
+      // An affiliate URL supplied here goes to the COMMERCIAL store, never
+      // onto the label row — the same split the database enforces.
+      const affiliate = body._affiliate_url ?? null;
+      if (affiliate) {
+        catalogCommercial.set(id, [{
+          id: `plcl-${catalogSeq}`,
+          kind: "affiliate",
+          url: String(affiliate),
+          supplierName: null,
+          commissionDisclosure:
+            "Recorded without explicit disclosure text. Review and complete "
+            + "the disclosure before this link is shown.",
+          availabilityStatus: null,
+          lastVerifiedAt: null,
+          revokedAt: null,
+          revokedReason: null,
+          recordedAt: nowIso(),
+        }]);
+      }
+      return json(res, 200, { labelVersionId: id, version });
+    }
+
+    /* ------------------------------- Phase 9B: template lifecycle ------- */
+
+    if (url.pathname === "/rest/v1/rpc/get_protocol_template_detail" && req.method === "POST") {
+      const body = await readBody(req);
+      const payload = templateDetailPayload(String(body._template_id ?? ""));
+      if (!payload) return json(res, 404, { code: "P0002", message: "template not found" });
+      return json(res, 200, payload);
+    }
+
+    if (url.pathname === "/rest/v1/rpc/compare_protocol_template_versions" && req.method === "POST") {
+      const body = await readBody(req);
+      const l = protocolVersions.get(String(body._left_version_id ?? ""));
+      const r = protocolVersions.get(String(body._right_version_id ?? ""));
+      if (!l) return json(res, 404, { code: "P0002", message: "left version not found" });
+      if (!r) return json(res, 404, { code: "P0002", message: "right version not found" });
+      const byLabel = (arr) => new Map(arr.map((it) => [it.label, it]));
+      const lm = byLabel(l.items);
+      const rm = byLabel(r.items);
+      const added = r.items.filter((it) => !lm.has(it.label)).map((it) => ({
+        label: it.label, kind: it.kind,
+        dosageText: it.dosageText ?? null,
+        doseSourceKind: it.doseSourceKind ?? null,
+      }));
+      const removed = l.items.filter((it) => !rm.has(it.label)).map((it) => ({
+        label: it.label, kind: it.kind,
+        dosageText: it.dosageText ?? null,
+        doseSourceKind: it.doseSourceKind ?? null,
+      }));
+      const changed = l.items
+        .filter((it) => rm.has(it.label))
+        .filter((it) => {
+          const o = rm.get(it.label);
+          return (it.dosageText ?? null) !== (o.dosageText ?? null)
+            || (it.timingText ?? null) !== (o.timingText ?? null)
+            || (it.doseSourceKind ?? null) !== (o.doseSourceKind ?? null);
+        })
+        .map((it) => {
+          const o = rm.get(it.label);
+          return {
+            label: it.label,
+            doseChanged: (it.dosageText ?? null) !== (o.dosageText ?? null),
+            from: { dosageText: it.dosageText ?? null, timingText: it.timingText ?? null,
+                    doseSourceKind: it.doseSourceKind ?? null,
+                    stoppingRules: it.stoppingRules ?? [],
+                    monitoringRequirements: it.monitoringRequirements ?? [] },
+            to: { dosageText: o.dosageText ?? null, timingText: o.timingText ?? null,
+                  doseSourceKind: o.doseSourceKind ?? null,
+                  stoppingRules: o.stoppingRules ?? [],
+                  monitoringRequirements: o.monitoringRequirements ?? [] },
+          };
+        });
+      return json(res, 200, {
+        sameTemplate: l.templateId === r.templateId,
+        left: { versionId: l.id, templateId: l.templateId, version: l.version,
+                status: l.status, title: l.title },
+        right: { versionId: r.id, templateId: r.templateId, version: r.version,
+                 status: r.status, title: r.title },
+        added, removed, changed,
+        doseChangeCount: changed.filter((c) => c.doseChanged).length,
+        matchNote:
+          "Items are matched by label. A renamed item therefore reads as one "
+          + "removal and one addition rather than as a change - check those pairs "
+          + "before assuming an item was replaced.",
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/record_protocol_template_safety_review" && req.method === "POST") {
+      const body = await readBody(req);
+      const v = protocolVersions.get(String(body._version_id ?? ""));
+      if (!v) return json(res, 404, { code: "P0002", message: "protocol version not found" });
+      const outcome = String(body._outcome ?? "");
+      if (!["passed", "concerns", "blocked"].includes(outcome)) {
+        return json(res, 400, { code: "22023",
+          message: "a safety review outcome must be passed, concerns or blocked" });
+      }
+      const note = String(body._note ?? "").trim();
+      if (!note) {
+        return json(res, 400, { code: "22023",
+          message: "a safety review needs a note saying what was checked" });
+      }
+      const unsourced = unsourcedDoseLabels(v.id).length;
+      templateSafety.unshift({
+        reviewId: `ptsr-${templateSafety.length + 1}`,
+        templateId: v.templateId, versionId: v.id, outcome, note,
+        itemsReviewed: v.items.length, unsourcedDoseCount: unsourced,
+        reviewedAt: nowIso(),
+      });
+      return json(res, 200, {
+        ok: true, reviewId: `ptsr-${templateSafety.length}`, outcome,
+        unsourcedDoseCount: unsourced,
+        message: unsourced > 0
+          ? `Review recorded. ${unsourced} item(s) carry a dose with no recorded `
+            + "source and will block publication until a source is named."
+          : "Review recorded.",
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/supersede_protocol_template" && req.method === "POST") {
+      const body = await readBody(req);
+      const t = protocolTemplates.get(String(body._template_id ?? ""));
+      if (!t) return json(res, 404, { code: "P0002", message: "template not found" });
+      const reason = String(body._reason ?? "").trim();
+      if (!reason) {
+        return json(res, 400, { code: "22023", message: "superseding a template needs a reason" });
+      }
+      if (t.supersededById) {
+        return json(res, 412, { code: "55000", message: "this template is already superseded" });
+      }
+      const successorId = String(body._successor_template_id ?? "");
+      if (successorId === t.id) {
+        return json(res, 400, { code: "22023", message: "a template cannot supersede itself" });
+      }
+      const succ = protocolTemplates.get(successorId);
+      if (!succ) return json(res, 404, { code: "P0002", message: "successor template not found" });
+      if (succ.status !== "approved") {
+        return json(res, 400, { code: "22023",
+          message: "only an approved template can supersede another" });
+      }
+      // Walk the chain: A->B->A is still a cycle.
+      let cursor = succ;
+      for (let i = 0; i < 64 && cursor; i += 1) {
+        if (cursor.id === t.id) {
+          return json(res, 400, { code: "22023", message: "that would create a supersession cycle" });
+        }
+        cursor = cursor.supersededById ? protocolTemplates.get(cursor.supersededById) : null;
+      }
+      t.supersededById = successorId;
+      t.supersededAt = nowIso();
+      t.supersededReason = reason;
+      return json(res, 200, {
+        ok: true, templateId: t.id, supersededBy: successorId,
+        message: "Superseded. The template is still readable - protocols already "
+          + "started from it must keep resolving - but it is no longer offered "
+          + "as a starting point.",
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/list_protocol_commercial_links" && req.method === "POST") {
+      const body = await readBody(req);
+      return json(res, 200, {
+        protocolVersionId: String(body._version_id ?? ""),
+        links: [],
+        disclaimer: "Commercial information is recorded for disclosure only. It is "
+          + "not read by any clinical eligibility, ranking, safety or evidence path.",
+      });
+    }
+
     if (url.pathname === "/rest/v1/rpc/start_encounter" && req.method === "POST") {
       const body = await readBody(req);
       const organizationId = String(body._organization_id ?? "");
@@ -3504,6 +4502,26 @@ createServer(async (req, res) => {
       const version = protocolVersions.get(String(body._version_id ?? ""));
       if (!version || !version.templateId) {
         return json(res, 404, { code: "P0002", message: "template version not found" });
+      }
+      // Phase 9B: a dose reaching a published template must name its source.
+      // Named, not counted — an operator has to know which item.
+      const missing = unsourcedDoseLabels(version.id);
+      if (missing.length) {
+        return json(res, 412, {
+          code: "55000",
+          message: "these items carry a dose with no recorded source: "
+            + missing.join(", ")
+            + ". A dose requires an exact product label, a supplied "
+            + "practitioner protocol, or a governed reference - record which "
+            + "one before approving.",
+        });
+      }
+      const owningTemplate = protocolTemplates.get(version.templateId);
+      if (owningTemplate?.supersededById) {
+        return json(res, 412, {
+          code: "55000",
+          message: "this template is superseded; publish on its successor instead",
+        });
       }
       version.status = "approved";
       version.approvedAt = nowIso();

@@ -25,6 +25,19 @@ test.skip(
 
 test.describe.configure({ mode: "serial" });
 
+/**
+ * Wordings that count as an honest "this did not load" state.
+ *
+ * An ALLOW-LIST, not a weakening: the surrounding assertions still require that
+ * no fixture patient appears and that no empty-state copy is shown. What this
+ * pattern decides is only whether the screen ADMITTED the failure. The app's
+ * real copy — "This didn't load" over "Unable to load the directory right
+ * now." — was not listed, so the suite failed on a screen that was behaving
+ * correctly. That is a defect in the list, not in the product.
+ */
+const HONEST_FAILURE =
+  /unavailable|not configured|cannot reach|couldn.t reach|couldn.t load|didn.t load|unable to load|could not be loaded|try again|retry|sign in|signed out|no organization|not authorized|unauthenticated|forbidden|error/i;
+
 /** Fixture identities that must never appear in clinical mode. */
 const FIXTURE_NAMES = ["Alexandra Morgan", "Michael Johnson", "Priya Sharma", "Marcus Webb"];
 const FIXTURE_IDS = ["p-78435", "p-64201", "p-59318"];
@@ -64,7 +77,7 @@ test("a down backend yields an honest state, never synthetic patients", async ({
     body,
     `Expected an unavailable, not-configured, or sign-in state. Got:\n${body.slice(0, 600)}`,
   ).toMatch(
-    /unavailable|not configured|cannot reach|couldn't reach|try again|sign in|signed in|no organization|not authorized|unauthenticated|forbidden|error/i,
+    HONEST_FAILURE,
   );
 });
 
@@ -106,7 +119,7 @@ test("the today brief and protocol screen stay honest with a down backend", asyn
   expect(
     body,
     `/today must report the schedule as unavailable. Got:\n${body.slice(0, 600)}`,
-  ).toMatch(/didn.t load|unavailable|not configured|cannot reach|couldn.t reach|try again|sign in/i);
+  ).toMatch(HONEST_FAILURE);
   // An empty day and an unreachable backend are different claims. With the
   // backend down the screen must NOT assert that nothing is scheduled.
   expect(body).not.toContain("No appointments are scheduled for today");
@@ -132,7 +145,7 @@ test("the programs workspace stays honest with a down backend", async ({ page })
   expect(
     body,
     `/programs must report itself unavailable. Got:\n${body.slice(0, 600)}`,
-  ).toMatch(/didn.t load|unavailable|not configured|cannot reach|couldn.t reach|try again|sign in/i);
+  ).toMatch(HONEST_FAILURE);
   expect(body).not.toContain("No programs yet");
   expect(body).not.toContain("Enrollments:");
 });
@@ -148,7 +161,7 @@ test("the inbox stays honest with a down backend", async ({ page }) => {
   expect(
     body,
     `/inbox must report itself unavailable. Got:\n${body.slice(0, 600)}`,
-  ).toMatch(/didn.t load|unavailable|not configured|cannot reach|couldn.t reach|try again|sign in/i);
+  ).toMatch(HONEST_FAILURE);
   expect(body).not.toContain("Inbox empty");
   expect(body).not.toContain("No patient conversations exist");
   // And nothing on a dead screen may claim delivery.
@@ -167,7 +180,7 @@ test("the patient-sync surfaces stay honest with a down backend", async ({ page 
   expect(
     body,
     `/app-sync must report itself unavailable. Got:\n${body.slice(0, 600)}`,
-  ).toMatch(/didn.t load|unavailable|not configured|cannot reach|couldn.t reach|try again|sign in/i);
+  ).toMatch(HONEST_FAILURE);
   expect(body).not.toContain("This patient's app is not linked");
   expect(body).not.toContain("Create connection invitation");
 
@@ -180,7 +193,7 @@ test("the patient-sync surfaces stay honest with a down backend", async ({ page 
   expect(
     body,
     `/integrations must report sync operations unavailable. Got:\n${body.slice(0, 600)}`,
-  ).toMatch(/didn.t load|unavailable|not configured|cannot reach|couldn.t reach|try again|sign in/i);
+  ).toMatch(HONEST_FAILURE);
   // No fabricated operational counts on a dead screen.
   expect(body).not.toContain("Connected patients");
 });
@@ -198,7 +211,7 @@ test("the billing, checkout, and catalog surfaces stay honest with a down backen
   expect(
     body,
     `/billing must report itself unavailable. Got:\n${body.slice(0, 600)}`,
-  ).toMatch(/didn.t load|unavailable|not configured|cannot reach|couldn.t reach|try again|sign in/i);
+  ).toMatch(HONEST_FAILURE);
   // A dead screen must not present a balance sheet of zeros.
   expect(body).not.toContain("$0.00");
   expect(body).not.toContain("Outstanding");
@@ -211,7 +224,7 @@ test("the billing, checkout, and catalog surfaces stay honest with a down backen
   expect(
     body,
     `/settings/catalog must report itself unavailable. Got:\n${body.slice(0, 600)}`,
-  ).toMatch(/didn.t load|unavailable|not configured|cannot reach|couldn.t reach|try again|sign in/i);
+  ).toMatch(HONEST_FAILURE);
   // No invented shelf: no stock counts and no receive control.
   expect(body).not.toContain("Receive");
   expect(body).not.toContain("on hand");
@@ -223,7 +236,7 @@ test("the billing, checkout, and catalog surfaces stay honest with a down backen
   expect(
     body,
     `the patient billing tab must report itself unavailable. Got:\n${body.slice(0, 600)}`,
-  ).toMatch(/didn.t load|unavailable|not configured|cannot reach|couldn.t reach|try again|sign in/i);
+  ).toMatch(HONEST_FAILURE);
   // "No invoices yet" would be a claim about this patient's finances.
   expect(body).not.toContain("No invoices yet");
   expect(body).not.toContain("Account credit");
@@ -241,7 +254,7 @@ test("the plans, reconciliation, and reporting surfaces stay honest with a down 
   expect(
     body,
     `/settings/plans must report itself unavailable. Got:\n${body.slice(0, 600)}`,
-  ).toMatch(/didn.t load|unavailable|not configured|cannot reach|couldn.t reach|try again|sign in/i);
+  ).toMatch(HONEST_FAILURE);
   // "No packages yet" would be a claim about what this practice sells.
   expect(body).not.toContain("No packages yet");
   expect(body).not.toContain("Assign complimentary");
@@ -253,7 +266,7 @@ test("the plans, reconciliation, and reporting surfaces stay honest with a down 
   expect(
     body,
     `/billing/reconciliation must report itself unavailable. Got:\n${body.slice(0, 600)}`,
-  ).toMatch(/didn.t load|unavailable|not configured|cannot reach|couldn.t reach|try again|sign in/i);
+  ).toMatch(HONEST_FAILURE);
   // A dead screen must not claim the books reconcile.
   expect(body).not.toContain("Nothing to reconcile");
   expect(body).not.toContain("Open exceptions");
@@ -265,7 +278,7 @@ test("the plans, reconciliation, and reporting surfaces stay honest with a down 
   expect(
     body,
     `/billing/reports must report itself unavailable. Got:\n${body.slice(0, 600)}`,
-  ).toMatch(/didn.t load|unavailable|not configured|cannot reach|couldn.t reach|try again|sign in/i);
+  ).toMatch(HONEST_FAILURE);
   // No balance sheet of zeros.
   expect(body).not.toContain("$0.00");
   expect(body).not.toContain("Gross charges");
@@ -277,10 +290,39 @@ test("the plans, reconciliation, and reporting surfaces stay honest with a down 
   expect(
     body,
     `the patient plans tab must report itself unavailable. Got:\n${body.slice(0, 600)}`,
-  ).toMatch(/didn.t load|unavailable|not configured|cannot reach|couldn.t reach|try again|sign in/i);
+  ).toMatch(HONEST_FAILURE);
   // "No credits" would be a claim about this patient's entitlements.
   expect(body).not.toContain("No credits");
   expect(body).not.toContain("Credits available");
+});
+
+test("the product catalog and template surfaces stay honest with a down backend", async ({
+  page,
+}) => {
+  // PHASE 9B: both surfaces have an honest EMPTY state and an honest FAILURE
+  // state, and they must not be the same words. "No governed products yet" is
+  // a claim about the registry; with the backend down it is a claim nobody is
+  // in a position to make.
+  //
+  // Asserted on the error element rather than a one-shot `innerText` read:
+  // the load is client-side, so reading the body once races the request and
+  // can catch the panel mid-flight.
+  await page.goto("/settings/knowledge");
+  await page.getByRole("tab", { name: "Product catalog" }).click();
+
+  await expect(page.getByTestId("catalog-error")).toContainText(HONEST_FAILURE);
+  let body = (await page.locator("body").innerText()).trim();
+  await expectNoFixtureData(body, "/settings/knowledge catalog with the backend down");
+  // The empty-state copy must NOT appear: it would assert an empty registry.
+  expect(body).not.toContain("No governed products yet");
+  expect(body).not.toContain("Nothing is waiting for review");
+
+  await page.getByRole("tab", { name: "Protocol templates" }).click();
+
+  await expect(page.getByTestId("template-error")).toContainText(HONEST_FAILURE);
+  body = (await page.locator("body").innerText()).trim();
+  await expectNoFixtureData(body, "/settings/knowledge templates with the backend down");
+  expect(body).not.toContain("No protocol templates yet");
 });
 
 test("settings reports the clinical edition and its real configuration state", async ({ page }) => {

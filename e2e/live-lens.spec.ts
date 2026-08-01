@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { resetBackend } from "./support/backend";
 
 /**
  * LIVE-MODE differential questions + clinical lens engine (Milestone 2).
@@ -28,6 +29,13 @@ import { expect, test, type Page } from "@playwright/test";
 test.skip(!process.env.E2E_LIVE, "live-mode suite: set E2E_LIVE=1 with a live-flag build + backend");
 
 test.describe.configure({ mode: "serial" });
+
+/**
+ * Isolation, not ordering. This restores the whole fixture backend so the
+ * suite runs against exactly the state it was written for, wherever it lands
+ * in the battery.
+ */
+test.beforeAll(resetBackend);
 
 const PATIENT_ID = "aaaaaaaa-1111-2222-3333-444444444401";
 const LENS_ENCOUNTER = `/patients/${PATIENT_ID}/encounter/eeeeeeee-2222-3333-4444-444444444777`;

@@ -19,6 +19,7 @@ import type {
 } from "@/adapters/clinical-import.types";
 import { liveClient } from "@/adapters/live-client";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { KnowledgeImportPreviewPanel } from "./KnowledgeImportPreviewPanel";
 import { cn } from "@/lib/cn";
 
 type ReviewAction = { batchId: string; item: KnowledgeImportItem; decision: "accept" | "reject" };
@@ -184,6 +185,15 @@ export function KnowledgeImportCenter() {
 
   return (
     <>
+      {/*
+        The governed preview/commit pipeline. It supersedes the per-item staging
+        below for new imports: it classifies every row, is idempotent on the
+        file hash, and refuses to commit while anything is unresolved. The
+        staging list is kept because batches created before this pipeline
+        existed still need reviewing, and hiding them would strand them.
+      */}
+      <KnowledgeImportPreviewPanel onCommitted={() => void refresh()} />
+
       <div className="overflow-hidden rounded border border-line bg-card">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-4">
           <div>

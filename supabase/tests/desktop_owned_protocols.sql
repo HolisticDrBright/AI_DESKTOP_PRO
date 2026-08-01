@@ -109,6 +109,15 @@ begin
   insert into _v values('a template draft saves phases and exact product identity',
     (_saved->>'ok')::boolean, _saved #>> '{}');
 
+  -- Phase 9B. The payload above still carries `affiliateUrl`, and it is still
+  -- accepted — but it no longer lands on the clinical item. It is recorded in
+  -- the commercial model, which is what makes "commercial data cannot influence
+  -- clinical ranking" a fact about the schema rather than a policy.
+  insert into _v values('affiliate data from a draft lands in the commercial model',
+    (select count(*)=1 from public.protocol_commercial_links
+     where protocol_version_id=(_t->>'versionId')::uuid
+       and url='https://example.test/aff/mag' and kind='affiliate'), null);
+
   begin
     perform public.create_protocol_draft(
       'bbbbbbbb-0000-0000-0000-000000000501','cccccccc-0000-0000-0000-000000000501',
@@ -149,6 +158,14 @@ begin
   insert into _v values('the draft records its template lineage',
     (select source_template_id from public.protocol_versions
      where id=(_d->>'versionId')::uuid) = (_t->>'templateId')::uuid, null);
+
+  -- Phase 9B. The clinical copy-forward path carries clinical content ONLY.
+  -- Before this phase the affiliate URL rode along automatically into every new
+  -- version; now a commercial relationship has to be recorded deliberately
+  -- against the version it actually applies to.
+  insert into _v values('commercial data is not copied into a new clinical version',
+    (select count(*)=0 from public.protocol_commercial_links
+     where protocol_version_id=(_d->>'versionId')::uuid), null);
 end $$;
 
 do $$

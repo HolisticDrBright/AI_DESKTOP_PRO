@@ -1,0 +1,35 @@
+{
+  "manifestVersion": "1",
+  "preparedBy": "REPLACE — operator name",
+  "preparedAt": "REPLACE — ISO 8601 timestamp",
+  "schemaVersion": "clinical-knowledge-import-v1",
+  "sources": [
+    {
+      "file": "REPLACE — filename as delivered",
+      "sha256": "REPLACE — shasum -a 256 <file>",
+      "byteSize": 0,
+      "sourceKind": "product_spreadsheet",
+      "sourceName": "REPLACE — human name for this source",
+      "sourceRevision": "REPLACE — the practitioner's own version, if any",
+      "sheets": [
+        {
+          "sheet": "REPLACE — sheet or section name",
+          "entityType": "catalog_product",
+          "identityColumns": ["REPLACE — the column(s) that identify a row"],
+          "columnMap": {
+            "name": "REPLACE — source column header",
+            "brand": "REPLACE — source column header"
+          }
+        }
+      ],
+      "excludedColumns": [
+        { "column": "REPLACE", "reason": "REPLACE — why this is not imported" }
+      ]
+    }
+  ],
+  "attestations": {
+    "noPhi": false,
+    "noCopiedSourceText": false,
+    "reviewedBy": "REPLACE — practitioner name"
+  }
+}

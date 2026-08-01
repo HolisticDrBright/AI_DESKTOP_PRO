@@ -219,7 +219,79 @@ export const api = {
       /** Archiving never touches protocols already created from the template. */
       archive: async (templateId: string, archived = true) =>
         liveClient.protocolTemplateAction({ action: "archive", templateId, archived }),
+      /**
+       * LIVE: one template in full — versions, items with their governance
+       * snapshot, the safety-review log, and a patient-instruction preview
+       * DERIVED on read. The preview is never stored: a saved copy drifts from
+       * the template it claims to describe, and the drift is invisible.
+       */
+      detail: async (templateId: string) =>
+        liveClient.protocolTemplateDetail({ templateId }),
+      /**
+       * LIVE: a structured diff of two template versions, with dose changes
+       * called out separately. The two need not share a template — comparing a
+       * duplicate against the template it came from is the commonest review.
+       */
+      compare: async (leftVersionId: string, rightVersionId: string) =>
+        liveClient.protocolTemplateCompare({ leftVersionId, rightVersionId }),
+      /**
+       * LIVE: append a safety review. Append, not set — the record is
+       * immutable, so a changed conclusion is a new review and the earlier one
+       * stays readable.
+       */
+      recordSafetyReview: async (
+        versionId: string,
+        outcome: "passed" | "concerns" | "blocked",
+        note: string,
+      ) => liveClient.protocolTemplateSafetyReview({ versionId, outcome, note }),
+      /**
+       * LIVE: point a template at its successor. Never a delete — protocols
+       * already started from it have to keep resolving.
+       */
+      supersede: async (
+        templateId: string,
+        successorTemplateId: string,
+        reason: string,
+      ) =>
+        liveClient.protocolTemplateSupersede({
+          templateId,
+          successorTemplateId,
+          reason,
+        }),
     },
+  },
+  /**
+   * The governed product catalog: exact labels, their version history, and the
+   * import review queue.
+   *
+   * `list` and `detail` return the server's `clinical` / `commercial` split
+   * unchanged. Nothing here merges them, and nothing clinical is computed from
+   * a commercial field — an affiliate link cannot influence eligibility,
+   * ranking, safety or evidence because there is no path along which it could.
+   */
+  productCatalog: {
+    /**
+     * LIVE: the catalog list, its counts, and the import review queue.
+     * An empty registry returns zero products and the database's own
+     * explanation of why — never sample content.
+     */
+    list: async (
+      input: { query?: string | null; status?: string | null; limit?: number } = {},
+    ) => liveClient.productCatalog(input),
+    /**
+     * LIVE: one label in full. Fields the label did not carry come back null
+     * and must render as "Unknown" — never as "None", which is a clinical
+     * claim about a product that nobody made.
+     */
+    detail: async (labelVersionId: string) =>
+      liveClient.productLabelDetail({ labelVersionId }),
+    /**
+     * LIVE: record that a named person checked this exact label. The database
+     * requires an owner or admin, so "verified" is always attributable; a
+     * practitioner alone is refused.
+     */
+    verify: async (labelVersionId: string, verificationNote: string) =>
+      liveClient.verifyProductLabel({ labelVersionId, verificationNote }),
   },
   programs: {
     /**

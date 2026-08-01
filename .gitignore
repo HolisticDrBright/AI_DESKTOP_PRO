@@ -31,3 +31,25 @@ next-env.d.ts
 
 # vercel
 .vercel
+
+# ---------------------------------------------------------------------------
+# Private operator source material for knowledge imports.
+#
+# Practitioner spreadsheets, protocol documents and Obsidian exports are the
+# practitioner's own material and third-party copyrighted content. They are
+# staged HERE, on the operator's machine, and never enter the repository.
+#
+# This is deliberately a wildcard directory rather than a list of filenames: a
+# rule that has to be updated every time someone adds a file is a rule that
+# eventually is not updated. Only the manifest, which contains hashes and
+# mappings but no source content, is committed — and only when the operator
+# copies it out to docs/ explicitly.
+/private-import/**
+# ...except the two files that carry no source content: the template operators
+# copy, and the instructions for using it.
+!/private-import/README.md
+!/private-import/manifest.example.json
+
+*.import-source.xlsx
+*.import-source.csv
+*.import-source.md

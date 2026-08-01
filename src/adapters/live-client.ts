@@ -86,6 +86,16 @@ import type {
   LiveSyncMutationResult,
   LiveSyncOutboundResourceType,
   LiveSyncScope,
+  LiveKnowledgeImportPreview,
+  LiveKnowledgeImportPreviewResult,
+  LiveKnowledgeImportCommitResult,
+  LiveCommercialDisclosure,
+  LiveProtocolCopilotDraft,
+  LiveProtocolCopilotStatus,
+  LiveProductCatalog,
+  LiveProductLabelDetail,
+  LiveProtocolTemplateDetail,
+  LiveTemplateComparison,
 } from "./live-types";
 
 interface Envelope<T> {
@@ -994,4 +1004,156 @@ export const liveClient = {
       method: "POST",
       body: {},
     }),
+
+  /* ------------------------- Phase 9B: governed import pipeline ------- */
+
+  /** Stage a preview. Writes nothing governed — the server proves this. */
+  knowledgeImportPreview: (input: {
+    sourceKind: string | null;
+    sourceName: string;
+    schemaVersion: string;
+    items: unknown[];
+    attestsNoPhi: boolean;
+    sourceFilename?: string | null;
+    sourceByteSize?: number | null;
+    sourceRevision?: string | null;
+  }) =>
+    liveFetch<LiveKnowledgeImportPreviewResult>("knowledge/import-preview", {
+      method: "POST",
+      body: input,
+    }),
+
+  knowledgeImportDetail: (batchId: string) =>
+    liveFetch<LiveKnowledgeImportPreview>("knowledge/import-detail", {
+      method: "POST",
+      body: { batchId },
+    }),
+
+  knowledgeImportResolve: (input: {
+    itemId: string;
+    resolution: "keep_existing" | "take_incoming" | "skip";
+    note: string;
+  }) =>
+    liveFetch<{ ok: true; itemId: string; resolution: string }>(
+      "knowledge/import-resolve",
+      { method: "POST", body: input },
+    ),
+
+  /**
+   * Commit a reviewed batch.
+   *
+   * `expectedCounts` carries the numbers the reviewer actually looked at, so a
+   * preview that changed underneath them fails rather than applying a
+   * different set of rows than the one on screen.
+   */
+  knowledgeImportCommit: (input: {
+    batchId: string;
+    expectedCounts?: { added: number; changed: number } | null;
+    note?: string | null;
+  }) =>
+    liveFetch<LiveKnowledgeImportCommitResult>("knowledge/import-commit", {
+      method: "POST",
+      body: input,
+    }),
+
+  knowledgeImportCancel: (input: { batchId: string; reason: string }) =>
+    liveFetch<{ ok: true; batchId: string; status: string }>(
+      "knowledge/import-cancel",
+      { method: "POST", body: input },
+    ),
+
+  /** A SEPARATE call. Commercial data never rides inside a clinical payload. */
+  commercialLinks: (
+    input: { labelVersionId: string } | { protocolVersionId: string },
+  ) =>
+    liveFetch<LiveCommercialDisclosure>("knowledge/commercial-links", {
+      method: "POST",
+      body: input,
+    }),
+
+  protocolCopilotStatus: () =>
+    liveFetch<LiveProtocolCopilotStatus>("knowledge/copilot-status", {
+      method: "POST",
+      body: {},
+    }),
+
+  protocolCopilotDraft: (input: { patientId: string; versionId: string }) =>
+    liveFetch<LiveProtocolCopilotDraft>("knowledge/copilot-draft", {
+      method: "POST",
+      body: input,
+    }),
+
+  /* ------------------- Phase 9B: the product catalog registry ---------- */
+
+  /**
+   * The catalog list. The response keeps the server's `clinical` /
+   * `commercial` split rather than flattening it, so a renderer has to reach
+   * across a named boundary to touch commercial data instead of finding it
+   * beside a clinical field.
+   */
+  productCatalog: (
+    input: { query?: string | null; status?: string | null; limit?: number } = {},
+  ) =>
+    liveFetch<LiveProductCatalog>("knowledge/catalog", {
+      method: "POST",
+      body: input,
+    }),
+
+  productLabelDetail: (input: { labelVersionId: string }) =>
+    liveFetch<LiveProductLabelDetail>("knowledge/catalog-detail", {
+      method: "POST",
+      body: input,
+    }),
+
+  /** Whether the caller may verify at all is decided by the database. */
+  verifyProductLabel: (input: {
+    labelVersionId: string;
+    verificationNote: string;
+  }) =>
+    liveFetch<{ ok: true }>("knowledge/catalog-verify", {
+      method: "POST",
+      body: input,
+    }),
+
+  /* ------------------- Phase 9B: template lifecycle -------------------- */
+
+  protocolTemplateDetail: (input: { templateId: string }) =>
+    liveFetch<LiveProtocolTemplateDetail>("protocols/template-detail", {
+      method: "POST",
+      body: input,
+    }),
+
+  protocolTemplateCompare: (input: {
+    leftVersionId: string;
+    rightVersionId: string;
+  }) =>
+    liveFetch<LiveTemplateComparison>("protocols/template-compare", {
+      method: "POST",
+      body: input,
+    }),
+
+  protocolTemplateSafetyReview: (input: {
+    versionId: string;
+    outcome: "passed" | "concerns" | "blocked";
+    note: string;
+  }) =>
+    liveFetch<{
+      ok: true;
+      reviewId: string;
+      outcome: string;
+      unsourcedDoseCount: number;
+      message: string;
+    }>("protocols/template-safety", { method: "POST", body: input }),
+
+  protocolTemplateSupersede: (input: {
+    templateId: string;
+    successorTemplateId: string;
+    reason: string;
+  }) =>
+    liveFetch<{
+      ok: true;
+      templateId: string;
+      supersededBy: string;
+      message: string;
+    }>("protocols/template-supersede", { method: "POST", body: input }),
 };
