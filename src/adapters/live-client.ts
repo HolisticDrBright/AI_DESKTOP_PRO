@@ -86,6 +86,12 @@ import type {
   LiveSyncMutationResult,
   LiveSyncOutboundResourceType,
   LiveSyncScope,
+  LiveKnowledgeImportPreview,
+  LiveKnowledgeImportPreviewResult,
+  LiveKnowledgeImportCommitResult,
+  LiveCommercialDisclosure,
+  LiveProtocolCopilotDraft,
+  LiveProtocolCopilotStatus,
 } from "./live-types";
 
 interface Envelope<T> {
@@ -993,5 +999,83 @@ export const liveClient = {
     liveFetch<LiveNutritionProviderStatus>("nutrition/provider-status", {
       method: "POST",
       body: {},
+    }),
+
+  /* ------------------------- Phase 9B: governed import pipeline ------- */
+
+  /** Stage a preview. Writes nothing governed — the server proves this. */
+  knowledgeImportPreview: (input: {
+    sourceKind: string | null;
+    sourceName: string;
+    schemaVersion: string;
+    items: unknown[];
+    attestsNoPhi: boolean;
+    sourceFilename?: string | null;
+    sourceByteSize?: number | null;
+    sourceRevision?: string | null;
+  }) =>
+    liveFetch<LiveKnowledgeImportPreviewResult>("knowledge/import-preview", {
+      method: "POST",
+      body: input,
+    }),
+
+  knowledgeImportDetail: (batchId: string) =>
+    liveFetch<LiveKnowledgeImportPreview>("knowledge/import-detail", {
+      method: "POST",
+      body: { batchId },
+    }),
+
+  knowledgeImportResolve: (input: {
+    itemId: string;
+    resolution: "keep_existing" | "take_incoming" | "skip";
+    note: string;
+  }) =>
+    liveFetch<{ ok: true; itemId: string; resolution: string }>(
+      "knowledge/import-resolve",
+      { method: "POST", body: input },
+    ),
+
+  /**
+   * Commit a reviewed batch.
+   *
+   * `expectedCounts` carries the numbers the reviewer actually looked at, so a
+   * preview that changed underneath them fails rather than applying a
+   * different set of rows than the one on screen.
+   */
+  knowledgeImportCommit: (input: {
+    batchId: string;
+    expectedCounts?: { added: number; changed: number } | null;
+    note?: string | null;
+  }) =>
+    liveFetch<LiveKnowledgeImportCommitResult>("knowledge/import-commit", {
+      method: "POST",
+      body: input,
+    }),
+
+  knowledgeImportCancel: (input: { batchId: string; reason: string }) =>
+    liveFetch<{ ok: true; batchId: string; status: string }>(
+      "knowledge/import-cancel",
+      { method: "POST", body: input },
+    ),
+
+  /** A SEPARATE call. Commercial data never rides inside a clinical payload. */
+  commercialLinks: (
+    input: { labelVersionId: string } | { protocolVersionId: string },
+  ) =>
+    liveFetch<LiveCommercialDisclosure>("knowledge/commercial-links", {
+      method: "POST",
+      body: input,
+    }),
+
+  protocolCopilotStatus: () =>
+    liveFetch<LiveProtocolCopilotStatus>("knowledge/copilot-status", {
+      method: "POST",
+      body: {},
+    }),
+
+  protocolCopilotDraft: (input: { patientId: string; versionId: string }) =>
+    liveFetch<LiveProtocolCopilotDraft>("knowledge/copilot-draft", {
+      method: "POST",
+      body: input,
     }),
 };
