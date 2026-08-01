@@ -13,15 +13,23 @@
 -- anything like it, coming back unnoticed. A migration fixes today; a test
 -- fixes every day after.
 --
--- WHAT IS DELIBERATELY *NOT* CLAIMED HERE. This suite proves the CATALOG is
--- free of demo content. It does not claim the clinical project is free of
--- synthetic data generally: two organizations named "(Demo)", patient profiles
--- named "Avery Demo" and "Jordan Sample", and two `@brightlongevity.test` seed
--- users are still present from the same Phase-2 seed. Removing organizations,
--- patients and users is destructive and outward-facing, so it is reported for a
--- human decision rather than done quietly here. Asserting their absence would
--- make this suite fail on a fact nobody has decided about yet, which is worse
--- than stating the limit plainly.
+-- THE RETAINED STAGING SEED, AND WHY IT IS NOT A FAILURE HERE.
+--
+-- `urcjiehlxoehievobezf` is formally designated a SYNTHETIC STAGING project and
+-- must never become the production project. Two organizations named "(Demo)",
+-- the patient profiles "Avery Demo" and "Jordan Sample", and two
+-- `@brightlongevity.test` auth users are RETAINED BY DECISION as that project's
+-- staging fixture. They are not a defect and this suite does not assert their
+-- absence.
+--
+-- What the suite does assert is the boundary that actually matters: none of
+-- that seed reaches the CLINICAL CATALOG. A synthetic patient in a staging
+-- project is a test fixture; a synthetic product in the protocol picker is a
+-- clinical recommendation nobody made, which is what checks 1-15 below exist to
+-- prevent.
+--
+-- Production is a DIFFERENT, EMPTY Supabase project: schema migrations only,
+-- with no seed import. See `docs/deployment-verification.md`.
 
 begin;
 
@@ -29,6 +37,14 @@ create temp table _r(n text, ok boolean) on commit drop;
 
 create or replace function _c(_n text, _ok boolean) returns void language sql as $fn$
   insert into _r(n, ok) values (_n, _ok);
+$fn$;
+
+create or replace function _raises(_sql text, _state text)
+returns boolean language plpgsql as $fn$
+begin
+  execute _sql; return false;
+exception when others then return sqlstate = _state;
+end;
 $fn$;
 
 /**
@@ -126,6 +142,40 @@ select _c('12. the empty catalog explains itself rather than looking broken', (
   select length(coalesce(
     public.get_product_catalog('fb000000-0000-4000-8000-000000000101')
     ->>'emptyStateMessage', '')) > 40));
+
+-- ==================================================== not merely invisible
+--
+-- The three axes are different claims, and only the third is conclusive. A row
+-- can be absent from search and still be ATTACHABLE by id, which is how a
+-- "hidden" record keeps reaching patients. Proved by trying it.
+
+insert into public.patient_profiles(id, organization_id, first_name, last_name)
+values ('fb000000-0000-4000-8000-000000000201',
+        'fb000000-0000-4000-8000-000000000101', 'Scan', 'Patient');
+insert into public.practitioner_patient_relationships
+  (organization_id, practitioner_user_id, patient_id, status)
+values ('fb000000-0000-4000-8000-000000000101',
+        'fb000000-0000-4000-8000-000000000001',
+        'fb000000-0000-4000-8000-000000000201', 'active');
+
+select _c('13. the removed product cannot be ATTACHED to a draft by id (P0002)', (
+  select _raises(format($q$select public.save_protocol_draft(%L, %L::jsonb)$q$,
+    (public.create_protocol_draft('fb000000-0000-4000-8000-000000000101',
+      'fb000000-0000-4000-8000-000000000201', 'Attach probe', null)->>'versionId')::uuid,
+    jsonb_build_object('items', jsonb_build_array(jsonb_build_object(
+      'kind', 'product', 'label', 'Attach probe',
+      'catalogProductId', 'a0000000-0000-4000-8000-000000000083')))::text),
+    'P0002')));
+
+select _c('14. no seed-derived legacy protocol item survives', (
+  select count(*) = 0 from public.supplement_protocol_items where source = 'seed'));
+
+-- The retained staging seed is INTACT. Asserted, not assumed: a later cleanup
+-- that quietly deleted it would be a decision reversed without anyone saying so.
+select _c('15. the retained staging seed is untouched', (
+  select (select count(*) from public.organizations where name ilike '%(Demo)%') = 2
+     and (select count(*) from auth.users
+          where email like '%@brightlongevity.test') = 2));
 
 -- ---------------------------------------------------------------- results
 

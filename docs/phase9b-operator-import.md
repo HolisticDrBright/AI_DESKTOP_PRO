@@ -24,6 +24,24 @@ system.
 
 ---
 
+## 0. Which project you are importing into
+
+`urcjiehlxoehievobezf` is a **synthetic staging project, permanently**. Import
+practitioner material there to rehearse the procedure and to check the preview
+and conflict screens against real files — never as the system of record.
+
+Production is a **different, empty Supabase project**: schema migrations only,
+no seed import. Its first governed content arrives through this same procedure,
+and until it does, every library legitimately reads zero.
+
+Two things that will bite if you assume otherwise:
+
+- Staging retains synthetic organizations, patients and auth users by decision
+  (`docs/deployment-verification.md`). Anything you import there sits beside
+  them, so counts from staging are not production counts.
+- No import may reach production by copying a staging snapshot. The retained
+  synthetic patients would come with it.
+
 ## 1. Where the files live
 
 ```

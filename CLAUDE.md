@@ -14,12 +14,39 @@ PR actually points at before pushing.
 
 ## The clinical database
 
-One project only: **`urcjiehlxoehievobezf`** (AI Desktop Pro clinical).
+One project only: **`urcjiehlxoehievobezf`** (AI Desktop Pro clinical). It is a
+synthetic **staging** project and **must never become production** — that is its
+permanent role, not a state awaiting cleanup.
 
 Before applying anything, read the migration ledger. `apply_migration` stamps
 its **own** version, which will not match the filename you wrote — rename the
 local file to the recorded version afterwards, or the repo and the database
 disagree about what ran.
+
+### Retained by decision — do not delete
+
+Two "(Demo)" organizations, the patients "Avery Demo" and "Jordan Sample", and
+two `@brightlongevity.test` auth users. A test asserts they are **still there**,
+so removing them fails loudly rather than quietly reversing a decision.
+
+### The catalog is a separate question, and it is enforced
+
+No demo-marked or seed-derived product may be **returned** by clinical product
+search, **selectable** in the picker, or **attachable** to a draft by id — see
+`supabase/tests/desktop_no_demo_catalog_content.sql`. Only the third axis is
+conclusive: a row can be absent from search and still be attachable, which is
+how a "hidden" record keeps reaching patients.
+
+The difference is the point:
+
+> A synthetic **patient** in a staging project is a test fixture.
+> A synthetic **product** in the protocol picker is a clinical recommendation
+> nobody made.
+
+### Production
+
+A new, empty project: migrations only, no seed import, and no restoring a
+staging snapshot into it. See `docs/deployment-verification.md`.
 
 ## Standing rules that tests enforce
 

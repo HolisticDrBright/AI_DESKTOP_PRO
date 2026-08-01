@@ -26,6 +26,58 @@ replaces this gate):
 - Backend vitest (389) including the deployed-environment fixture-refusal
   guard and the 11 adversarial lens evaluations.
 
+## `urcjiehlxoehievobezf` is a synthetic staging project — permanently
+
+**Formally designated, Phase 9B closeout.** This project is a SYNTHETIC STAGING
+project and **must never become the production project**. That is not a
+temporary state awaiting cleanup; it is the project's permanent role.
+
+### Retained by decision — do NOT delete
+
+| Retained | Detail |
+| --- | --- |
+| 2 organizations | "Bright Longevity Clinic (Demo)", "Second Practice (Demo)" |
+| 2 patient profiles | "Avery Demo", "Jordan Sample" |
+| 2 auth users | `p1.staging@brightlongevity.test`, `p2.staging@brightlongevity.test` |
+
+These are the staging fixture. A future cleanup that removes them because they
+"look like demo data" would be reversing a decision, not tidying up — the
+acceptance suite asserts they are **still present** (check 15 of
+`supabase/tests/desktop_no_demo_catalog_content.sql`) precisely so that
+reversal fails loudly rather than happening quietly.
+
+### What WAS removed, and why the distinction matters
+
+Phase 9B removed one seeded row — `St. John's Wort Extract (Demo)` from
+`supplement_products`, and the `source = 'seed'` protocol item that referenced
+it (migration `20260801170952`).
+
+The distinction is the whole point:
+
+> A synthetic **patient** in a staging project is a test fixture.
+> A synthetic **product** in the protocol picker is a clinical recommendation
+> nobody made.
+
+`search_protocol_catalog` filters on neither status nor provenance, so that row
+was returned for an empty query — and, being the only product in the table, it
+was the only thing a practitioner saw when they opened the product picker.
+Selectable and attachable to a patient's protocol.
+
+**The catalog guard is permanent.** `desktop_no_demo_catalog_content.sql`
+(15 checks) asserts that no demo-marked or seed-derived content reaches the
+clinical catalog, on all three axes that matter — **returned** by search,
+**selectable** in the picker, and **attachable** to a draft by id. Only the
+third is conclusive: a row can be absent from search and still be attachable,
+which is how a "hidden" record keeps reaching patients.
+
+### Production is a different project
+
+Production requires a **NEW, EMPTY Supabase project**: schema migrations only,
+**no seed import**, no synthetic users, no demo fixtures. See the hard
+requirements below. Pointing production at `urcjiehlxoehievobezf` — or copying
+its data into a new project — is prohibited, because it would carry the
+retained synthetic patients into a clinical environment.
+
 ## Deployment posture (fail closed — no fixtures when deployed)
 
 **Staging only, here.** The gate runs against the Railway STAGING
@@ -101,8 +153,10 @@ platform (`RAILWAY_*`, `FLY_APP_NAME`) or `DEPLOYED_ENVIRONMENT` is set:
 
 Production is a fully separate environment. It must receive:
 
-- A NEW Supabase project (never `urcjiehlxoehievobezf`, which is staging
-  forever).
+- A NEW, EMPTY Supabase project (never `urcjiehlxoehievobezf`, which is
+  staging forever — see the designation section above). Restoring a staging
+  snapshot into it is prohibited: that carries the retained synthetic patients
+  into a clinical environment. Schema migrations only.
 - A separate Railway production environment/service.
 - Separate storage buckets and separate secrets — nothing shared with
   staging.
