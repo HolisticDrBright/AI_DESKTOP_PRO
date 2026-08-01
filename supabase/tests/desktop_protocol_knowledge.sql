@@ -476,10 +476,16 @@ select _c('39. an anonymous caller is refused (28000)', _raises(
 
 -- ---------------------------------------------------------------- results
 
+-- `never_evaluated` counts checks whose expression came back NULL, usually a
+-- subquery that matched no row. Reporting those as neither passed nor failed
+-- is how a check silently stops testing anything.
+
 select count(*) filter (where ok) as passed,
-       count(*) filter (where not ok) as failed,
+       count(*) filter (where ok is false) as failed,
+       count(*) filter (where ok is null) as never_evaluated,
        count(*) as total,
-       coalesce(string_agg(n, ' | ') filter (where not ok), '(none)') as failures
+       coalesce(string_agg(n, ' | ') filter (where ok is not true), '(none)')
+         as problems
 from _r;
 
 rollback;
