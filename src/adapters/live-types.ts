@@ -2156,3 +2156,304 @@ export interface LiveStripeStatus {
    */
   liveTransactionExecuted: boolean;
 }
+
+/* ------------------------------------------------- nutrition (phase 9A) */
+
+export interface LiveNutritionTemplateVersion {
+  id: string;
+  versionNumber: number;
+  status: string;
+  purpose: string | null;
+  intendedUse: string | null;
+  requiresPractitionerReview: boolean;
+  cautionPopulations: string[];
+  prerequisites: string[];
+  missingInformationRequired: string[];
+  evidenceGrade: string | null;
+  evidenceSummary: string | null;
+  educationVsAdviceNote: string | null;
+  publishedAt: string | null;
+}
+
+export interface LiveNutritionTemplate {
+  id: string;
+  name: string;
+  pattern: string;
+  summary: string | null;
+  status: string;
+  isStarter: boolean;
+  version: number;
+  currentVersionId: string | null;
+  versions: LiveNutritionTemplateVersion[];
+}
+
+export interface LiveNutritionTemplateLibrary {
+  templates: LiveNutritionTemplate[];
+}
+
+export interface LiveNutritionFoodRule {
+  id: string;
+  phaseId: string | null;
+  disposition: string;
+  scope: string;
+  label: string;
+  canonicalSource: string | null;
+  canonicalId: string | null;
+  portionGuidance: string | null;
+  frequencyGuidance: string | null;
+  preparationGuidance: string | null;
+  substitutions: string[];
+  conditionNote: string | null;
+  rationale: string | null;
+  sortOrder: number;
+}
+
+export interface LiveNutritionMealItem {
+  id: string;
+  label: string;
+  quantity: number | null;
+  unit: string | null;
+  canonicalSource: string | null;
+  canonicalId: string | null;
+  /** Where a nutrient number came from. Never presented as our measurement. */
+  nutrientSource: string | null;
+  energyValue: number | null;
+  energyUnit: string | null;
+  proteinG: number | null;
+  carbohydrateG: number | null;
+  fatG: number | null;
+  fiberG: number | null;
+  preparationNote: string | null;
+  substitutions: string[];
+  sortOrder: number;
+}
+
+export interface LiveNutritionMeal {
+  id: string;
+  mealType: string;
+  name: string | null;
+  timeOfDay: string | null;
+  notes: string | null;
+  sortOrder: number;
+  items: LiveNutritionMealItem[];
+}
+
+export interface LiveNutritionMealDay {
+  id: string;
+  phaseId: string | null;
+  dayNumber: number;
+  label: string | null;
+  notes: string | null;
+  meals: LiveNutritionMeal[];
+}
+
+export interface LiveNutritionPhase {
+  id: string;
+  phaseNumber: number;
+  name: string;
+  description: string | null;
+  timingMode: string;
+  relativeStartDay: number | null;
+  relativeDurationDays: number | null;
+  absoluteStartDate: string | null;
+  absoluteEndDate: string | null;
+  reintroductionGuidance: string | null;
+}
+
+export interface LiveNutritionTarget {
+  id: string;
+  nutrient: string | null;
+  label: string | null;
+  targetValue: number | null;
+  minimumValue: number | null;
+  maximumValue: number | null;
+  /** Always present — an unlabelled nutrition number is a safety problem. */
+  unit: string;
+  period: string | null;
+  rationale: string | null;
+}
+
+export interface LiveNutritionVersionContent {
+  phases: LiveNutritionPhase[];
+  foodRules: LiveNutritionFoodRule[];
+  mealDays: LiveNutritionMealDay[];
+  recipes: Array<{
+    id: string;
+    name: string;
+    servings: number | null;
+    ingredients: string[];
+    method: string | null;
+    notes: string | null;
+  }>;
+  groceryItems: Array<{
+    id: string;
+    category: string;
+    label: string;
+    quantityNote: string | null;
+  }>;
+  targets: LiveNutritionTarget[];
+  provenance: Array<{
+    kind: string;
+    label: string;
+    referenceId: string | null;
+    detail: string | null;
+    recordedAt: string;
+  }>;
+}
+
+export interface LiveNutritionSafetyFlag {
+  id: string;
+  kind: string;
+  severity: "review" | "blocking";
+  detail: string;
+  status: "open" | "acknowledged" | "overridden" | "resolved";
+  evidenceRef: string | null;
+  overrideReason: string | null;
+  overriddenAt: string | null;
+}
+
+export interface LiveNutritionConstraint {
+  id: string;
+  kind: string;
+  label: string;
+  detail: string | null;
+  severity: string | null;
+  source: string;
+}
+
+export interface LiveNutritionPlanVersion {
+  id: string;
+  versionNumber: number;
+  status: string;
+  version: number;
+  goals: string[];
+  practitionerRationale: string | null;
+  patientInstructions: string | null;
+  mealTimingGuidance: string | null;
+  fastingInstructions: string | null;
+  energyTargetValue: number | null;
+  energyTargetUnit: string | null;
+  proteinG: number | null;
+  carbohydrateG: number | null;
+  fatG: number | null;
+  fiberG: number | null;
+  proteinPct: number | null;
+  carbohydratePct: number | null;
+  fatPct: number | null;
+  /** Snapshot, not a pointer: template edits never change a delivered plan. */
+  sourceTemplateName: string | null;
+  sourceTemplateVersion: number | null;
+  sourceTemplateVersionId: string | null;
+  detachedAt: string | null;
+  submittedAt: string | null;
+  approvedAt: string | null;
+  activatedAt: string | null;
+  discontinuedReason: string | null;
+  autosavedAt: string | null;
+  constraints: LiveNutritionConstraint[];
+  safetyFlags: LiveNutritionSafetyFlag[];
+  amendments: Array<{ number: number; body: string; reason: string; createdAt: string }>;
+  /** Whether safety review has actually been run for THIS version. */
+  safetyEvaluated: boolean;
+}
+
+export interface LiveNutritionPlan {
+  id: string;
+  title: string;
+  status: string;
+  version: number;
+  currentVersionId: string | null;
+  createdAt: string;
+  versions: LiveNutritionPlanVersion[];
+  events: Array<{
+    kind: string;
+    fromStatus: string | null;
+    toStatus: string | null;
+    detail: string | null;
+    createdAt: string;
+  }>;
+}
+
+export interface LiveNutritionCheckin {
+  id: string;
+  observedOn: string;
+  /** Required — adherence is reported, never inferred. */
+  source: string;
+  mealPlanAdherencePct: number | null;
+  dietAdherencePct: number | null;
+  hungerRating: number | null;
+  satietyRating: number | null;
+  energyRating: number | null;
+  digestiveTolerance: number | null;
+  symptoms: string[];
+  patientNote: string | null;
+  weightValue: number | null;
+  weightUnit: string | null;
+  reviewState: string;
+  planVersionId: string | null;
+}
+
+export interface LivePatientNutrition {
+  plans: LiveNutritionPlan[];
+  checkins: LiveNutritionCheckin[];
+}
+
+export interface LiveNutritionAdherenceSummary {
+  windowDays: number;
+  from: string;
+  to: string;
+  daysReported: number;
+  /** A day with no check-in is MISSING, never zero adherence. */
+  daysMissing: number;
+  meanMealPlanAdherencePct: number | null;
+  meanDietAdherencePct: number | null;
+  meanDigestiveTolerance: number | null;
+  needsFollowup: number;
+  unreviewed: number;
+}
+
+export interface LiveNutritionMutationResult {
+  id?: string;
+  planId?: string;
+  planVersionId?: string;
+  versionId?: string;
+  templateId?: string;
+  version?: number;
+  outcome?: string;
+  blocking?: number;
+  review?: number;
+  count?: number;
+  ok?: boolean;
+}
+
+/**
+ * The Passio boundary as the browser is allowed to see it: whether it is
+ * configured at all, and why not. Never a licence key.
+ */
+export interface LiveNutritionProviderStatus {
+  mode: "disabled" | "live";
+  configured: boolean;
+  problems: string[];
+  /**
+   * Whether a real Passio request has EVER been executed by this deployment.
+   * False until one actually runs — never inferred from configuration.
+   */
+  liveRequestExecuted: boolean;
+  copilotEnabled: boolean;
+  copilotProblems: string[];
+}
+
+/** A copilot draft as the browser sees it — labelled, unsaved, and unapplied. */
+export interface LiveNutritionCopilotDraft {
+  suggestions: Array<{
+    kind: string;
+    isDraft: true;
+    title: string;
+    rationale: string;
+    derivedFrom: string;
+    severity: "info" | "attention";
+    ruleLabel?: string;
+  }>;
+  provenanceKind: "copilot_draft";
+  disclaimer: string;
+}
