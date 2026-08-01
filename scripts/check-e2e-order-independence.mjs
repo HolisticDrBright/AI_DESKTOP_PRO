@@ -17,8 +17,9 @@
  * hiding will surface later as a product bug that is not one.
  */
 
-import { execFileSync } from "node:child_process";
-import { readdirSync } from "node:fs";
+import { execFileSync, spawn } from "node:child_process";
+import { openSync, readFileSync, readdirSync } from "node:fs";
+import { setTimeout as sleep } from "node:timers/promises";
 
 const specs = readdirSync("e2e")
   .filter((f) => f.endsWith(".spec.ts"))
@@ -27,6 +28,81 @@ const specs = readdirSync("e2e")
 if (specs.length === 0) {
   console.error("[e2e-order] FAIL — no spec files found");
   process.exit(1);
+}
+
+const STUB_BASE = process.env.E2E_STUB_BASE ?? "http://127.0.0.1:3999";
+
+/**
+ * This script owns the fixture backend's lifecycle.
+ *
+ * It has to: the whole point is that BOTH runs see an identical starting
+ * backend, and a stub left running from some earlier session would carry state
+ * into the first run and quietly invalidate the comparison. Starting it here
+ * also makes the proof a single reproducible command rather than a recipe
+ * someone has to assemble correctly.
+ */
+const STUB_LOG = "/tmp/e2e-order-stub.log";
+
+async function withStub(run) {
+  // Always start our own, even if something is already listening. A stub left
+  // over from an earlier run has an unknown history, and "the proof passed
+  // against a backend I did not start" is not a proof.
+  const strays = await fetch(`${STUB_BASE}/__control/reset-all`, { method: "POST" })
+    .then((r) => r.ok)
+    .catch(() => false);
+  if (strays) {
+    console.error(
+      `[e2e-order] FAIL — something is already listening on ${STUB_BASE}. ` +
+        `This proof must own the fixture backend end to end; a stray one ` +
+        `carries state this script cannot account for. Stop it and re-run.`,
+    );
+    process.exit(1);
+  }
+
+  console.log(`[e2e-order] starting the fixture backend on ${STUB_BASE}`);
+  const log = openSync(STUB_LOG, "w");
+  const owned = spawn("node", ["scripts/live-stub-server.mjs"], {
+    stdio: ["ignore", log, log],
+    detached: false,
+  });
+
+  // A crashed fixture backend used to look like a dozen unrelated suites
+  // failing in `beforeAll`. Name it at the moment it happens instead.
+  let died = null;
+  owned.on("exit", (code, signal) => {
+    if (died === null) died = { code, signal };
+  });
+
+  let ready = false;
+  for (let i = 0; i < 40 && !ready && died === null; i += 1) {
+    await sleep(250);
+    ready = await fetch(`${STUB_BASE}/__control/reset-all`, { method: "POST" })
+      .then((r) => r.ok)
+      .catch(() => false);
+  }
+  if (!ready) {
+    owned.kill("SIGKILL");
+    console.error(
+      `[e2e-order] FAIL — the fixture backend never became ready on ` +
+        `${STUB_BASE}. Its output is in ${STUB_LOG}:`,
+    );
+    console.error(readFileSync(STUB_LOG, "utf8").slice(-4000));
+    process.exit(1);
+  }
+
+  try {
+    return await run();
+  } finally {
+    if (died !== null) {
+      console.error(
+        `\n[e2e-order] the fixture backend DIED mid-run (code=${died.code} ` +
+          `signal=${died.signal}). Every suite after that point failed in ` +
+          `beforeAll for that reason and not their own. Its last output:`,
+      );
+      console.error(readFileSync(STUB_LOG, "utf8").slice(-4000));
+    }
+    owned.kill("SIGKILL");
+  }
 }
 
 function run(label, files) {
@@ -64,8 +140,10 @@ function run(label, files) {
   return result;
 }
 
-const forward = run("forward order", specs);
-const reverse = run("reverse order", [...specs].reverse());
+const { forward, reverse } = await withStub(async () => ({
+  forward: run("forward order", specs),
+  reverse: run("reverse order", [...specs].reverse()),
+}));
 
 const problems = [];
 if (forward.failed > 0) problems.push(`${forward.failed} failed in forward order`);
