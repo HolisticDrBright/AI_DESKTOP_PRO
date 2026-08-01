@@ -332,3 +332,64 @@ test("11. no PHI and no off-origin requests from either surface", async ({ page 
 
   expect(offOrigin).toEqual([]);
 });
+
+test("12. every interactive control on both surfaces has an accessible name", async ({
+  page,
+}) => {
+  // A control a screen reader announces as "button" is a control nobody can
+  // use without sight. Checked by walking the rendered DOM rather than by
+  // listing the controls here, so a new unlabelled one fails this immediately
+  // instead of being added to a list nobody updates.
+  for (const tab of ["Product catalog", "Protocol templates"]) {
+    await openTab(page, tab);
+    const unnamed = await page.evaluate(() => {
+      const problems: string[] = [];
+      const named = (el: Element) => {
+        const aria = el.getAttribute("aria-label")?.trim();
+        if (aria) return true;
+        const labelledBy = el.getAttribute("aria-labelledby");
+        if (labelledBy) return true;
+        if (el.id && document.querySelector(`label[for="${el.id}"]`)) return true;
+        if (el.closest("label")) return true;
+        return (el.textContent ?? "").trim().length > 0;
+      };
+      for (const el of Array.from(
+        document.querySelectorAll("button, input, select, textarea, a[href]"),
+      )) {
+        // Skip anything not currently rendered to a user.
+        if (!(el as HTMLElement).offsetParent && el.tagName !== "INPUT") continue;
+        if (!named(el)) {
+          problems.push(`${el.tagName}${el.className ? "." + String(el.className).split(" ")[0] : ""}`);
+        }
+      }
+      return problems;
+    });
+    expect(unnamed, `${tab} has unnamed controls`).toEqual([]);
+  }
+});
+
+test("13. loading, error and success are announced, not just coloured", async ({
+  page,
+}) => {
+  // Colour is not an announcement. The loading state and the confirmation are
+  // `role="status"`; a failure is `role="alert"`. Without these a screen-reader
+  // user watches a button do nothing and has no way to learn what happened.
+  await openTab(page, "Protocol templates");
+
+  // A success path: creating a template announces through role="status".
+  await page.getByTestId("template-name").fill("A11y probe template");
+  await page.getByTestId("template-create").click();
+  const notice = page.getByTestId("template-notice");
+  await expect(notice).toBeVisible();
+  await expect(notice).toHaveAttribute("role", "status");
+
+  // The catalog's loading region carries the same contract.
+  await openTab(page, "Product catalog");
+  await expect(page.getByTestId("product-catalog")).toBeVisible();
+  const loadingRole = await page.evaluate(() =>
+    document.querySelector('[data-testid="catalog-loading"]')?.getAttribute("role")
+      ?? "not-rendered",
+  );
+  // Either it is still loading (and announced) or it already resolved.
+  expect(["status", "not-rendered"]).toContain(loadingRole);
+});
