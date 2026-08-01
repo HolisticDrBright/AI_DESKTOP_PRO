@@ -79,6 +79,38 @@ one `differential_questions` already cites. Extend *it* with the Part 4 fields.
 Retire `knowledge_sources`, dropping `body` rather than carrying a
 copyright-shaped hole forward. It is empty, so nothing is lost.
 
+### CORRECTION — reconnaissance was wrong about `product_label_versions`
+
+The original draft of this map called `product_label_versions` an orphaned
+fourth registry and proposed retiring it. **That was wrong**, and acting on it
+briefly broke two live RPCs and an existing safety test.
+
+The recon query asked *"what foreign key points at this table?"* and got
+nothing back. But the table is reached by **RPC** — `save_product_label_version`
+and `verify_product_label_version` — and asserted by the Phase-1 acceptance test
+*"verified product label is immutable"*. **Absence of an inbound foreign key is
+not absence of a dependent.** Any future reconnaissance in this repository must
+check function bodies and test files, not just `pg_constraint`.
+
+The table was restored from its authoritative migration, including its guard
+trigger, and the original assertions pass again. Its `affiliate_url` column is a
+real defect, but deleting the table does not fix it — the defect is recorded as
+**outstanding** below, with the migration path stated.
+
+### CORRECTION — reference immutability was already stronger than assumed
+
+`clinical_knowledge_sources` has carried `private.forbid_mutation` since the
+Phase-1 registry: **any** update raises `22023`. Two triggers added early in
+this phase to enforce a draft to approved to superseded lifecycle could
+therefore never fire. An unreachable trigger reads like a guarantee while being
+none, which is worse than not having it.
+
+Resolution: keep the Phase-1 model, which is the better one — a reference row
+never changes, and a new edition is a new row (`code` + `revision` already
+support that). Lifecycle moved to an append-only state log,
+`clinical_knowledge_source_states`, and supersession marks dependent claims
+stale on insert rather than on update.
+
 ### Defect 2 — commercial data on the clinical record
 
 `product_label_versions.affiliate_url` places affiliate data on the same row as
@@ -88,9 +120,21 @@ that. Co-locating them makes "an affiliate link must never influence clinical
 eligibility, ranking, safety, or evidence scoring" a matter of discipline rather
 than structure.
 
-**Resolution:** drop `affiliate_url` from the label version. The table is empty,
-so no link is lost. Commercial data lives only in `product_commercial_links`,
-and the clinical read paths will not select from it.
+**Status: OUTSTANDING.** Not fixed in this phase.
+
+`product_label_versions` cannot simply lose the column, because
+`save_product_label_version` accepts an affiliate argument and writes it, and
+changing that signature would break the Phase-1 acceptance test. The migration
+path, for a later phase:
+
+1. add a `product_label_commercial_links` table keyed to the label version;
+2. change `save_product_label_version` to route its affiliate argument there;
+3. backfill (currently zero rows), then drop `affiliate_url`;
+4. keep the RPC signature stable throughout so no existing test changes.
+
+Meanwhile the catalog spine this phase actually builds on —
+`supplement_products` / `supplement_product_versions` — carries **no** commercial
+column at all, which the acceptance suite asserts.
 
 ### Defect 3 — the label record cannot express a label
 

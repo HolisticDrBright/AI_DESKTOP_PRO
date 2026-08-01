@@ -4,12 +4,15 @@
 -- `supplement_brands` → `supplement_products` → `supplement_product_versions`
 -- → `product_ingredient_amounts` — rather than starting a fourth registry.
 --
--- Reconnaissance found that `product_label_versions` IS a fourth registry: 18
--- columns, zero rows, referenced by no foreign key, and carrying an
--- `affiliate_url` on the same row as the clinical label. It retires here.
--- Commercial data lives in `product_commercial_links`, which hangs off the
--- organization's `products_services` row — commerce beside commerce, never
--- beside a label fact.
+-- Reconnaissance flagged `product_label_versions` as a fourth registry and
+-- proposed retiring it. That reading was WRONG and is corrected below: it has
+-- no inbound foreign key, but it is reached by RPC and asserted by an existing
+-- safety test, so it stays. Its `affiliate_url` column is a real defect and is
+-- recorded as outstanding rather than "fixed" by deletion.
+--
+-- Commercial data for this phase lives in `product_commercial_links`, which
+-- hangs off the organization's `products_services` row — commerce beside
+-- commerce, never beside a label fact.
 --
 -- THE RULE THIS MIGRATION EXISTS FOR: a product fact is either recorded from a
 -- real label or it is NULL. Nothing is inferred from a product name, and
@@ -269,12 +272,16 @@ from anon, authenticated;
 revoke all on function private.catalog_label_protect() from public, anon, authenticated;
 revoke all on function private.catalog_amounts_protect() from public, anon, authenticated;
 
--- ------------------------------------------------ retire the fourth registry
+-- ------------------------------------- product_label_versions is NOT dropped
 --
--- Orphaned (no foreign key points at it), empty, and carrying `affiliate_url`
--- beside the clinical label. Keeping it would leave commercial data one
--- careless join away from a safety decision.
-
-drop table if exists public.product_label_versions;
+-- Reconnaissance called it orphaned because no foreign key points at it. That
+-- was wrong: it is reached by RPC (`save_product_label_version`,
+-- `verify_product_label_version`) and asserted by an existing acceptance test.
+-- Absence of an inbound FK is not absence of a dependent.
+--
+-- Its `affiliate_url` column really does put commercial data on a clinical
+-- record, but deleting the table does not fix that — it breaks two live RPCs
+-- and a safety test. The defect is recorded as outstanding in the authority
+-- map, with the migration path stated there.
 
 commit;

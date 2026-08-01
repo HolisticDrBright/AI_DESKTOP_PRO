@@ -204,41 +204,11 @@ create trigger clinical_knowledge_events_append_only
   before update or delete on public.clinical_knowledge_events
   for each row execute function private.knowledge_append_only();
 
-/**
- * An APPROVED reference is frozen. Its identity, provenance and grading cannot
- * change; only its status may move onward to superseded, withdrawn or expired.
- * A reference that could be edited after approval would let every claim citing
- * it silently change meaning.
- */
-create or replace function private.knowledge_reference_protect()
-returns trigger language plpgsql security definer set search_path = ''
-as $$
-begin
-  if old.status in ('approved', 'superseded', 'withdrawn', 'expired') then
-    if new.citation is distinct from old.citation
-       or new.title is distinct from old.title
-       or new.authors_or_issuer is distinct from old.authors_or_issuer
-       or new.publisher is distinct from old.publisher
-       or new.doi is distinct from old.doi
-       or new.pmid is distinct from old.pmid
-       or new.content_hash is distinct from old.content_hash
-       or new.evidence_classification is distinct from old.evidence_classification
-       or new.reference_type is distinct from old.reference_type
-       or new.short_excerpt is distinct from old.short_excerpt then
-      raise exception 'an approved reference is immutable; supersede it instead'
-        using errcode = '42501';
-    end if;
-    if new.status = 'draft' then
-      raise exception 'an approved reference cannot return to draft' using errcode = '42501';
-    end if;
-  end if;
-  return new;
-end;
-$$;
-
-create trigger clinical_knowledge_sources_protect
-  before update on public.clinical_knowledge_sources
-  for each row execute function private.knowledge_reference_protect();
+-- NOTE: reference immutability is NOT enforced here. `clinical_knowledge_sources`
+-- already carries `private.forbid_mutation` from the Phase-1 registry, which
+-- raises on ANY update. A trigger added here would be unreachable — and an
+-- unreachable trigger reads like a guarantee while being none. The lifecycle
+-- that the append-only model needs arrives in a later migration as a state log.
 
 /** An approved claim is frozen for the same reason. */
 create or replace function private.knowledge_claim_protect()
@@ -267,30 +237,6 @@ create trigger clinical_knowledge_claims_protect
   before update on public.clinical_knowledge_claims
   for each row execute function private.knowledge_claim_protect();
 
-/**
- * When a reference is superseded, withdrawn or expired, every claim citing it
- * is marked STALE — not deleted, not edited. A practitioner keeps reading the
- * same words and additionally learns the ground moved.
- */
-create or replace function private.knowledge_cascade_stale()
-returns trigger language plpgsql security definer set search_path = ''
-as $$
-begin
-  if new.status in ('superseded', 'withdrawn', 'expired')
-     and old.status is distinct from new.status then
-    update public.clinical_knowledge_claims
-       set stale_at = now(),
-           stale_reason = 'The reference behind this claim became ' || new.status || '.'
-     where reference_id = new.id and stale_at is null;
-  end if;
-  return new;
-end;
-$$;
-
-create trigger clinical_knowledge_sources_cascade_stale
-  after update on public.clinical_knowledge_sources
-  for each row execute function private.knowledge_cascade_stale();
-
 -- ------------------------------------------------------------------- RLS
 
 alter table public.clinical_knowledge_claims enable row level security;
@@ -315,9 +261,7 @@ revoke insert, update, delete on
 from anon, authenticated;
 
 revoke all on function private.knowledge_append_only() from public, anon, authenticated;
-revoke all on function private.knowledge_reference_protect() from public, anon, authenticated;
 revoke all on function private.knowledge_claim_protect() from public, anon, authenticated;
-revoke all on function private.knowledge_cascade_stale() from public, anon, authenticated;
 
 -- --------------------------------------------------- retire the duplicate
 --
