@@ -2457,3 +2457,155 @@ export interface LiveNutritionCopilotDraft {
   provenanceKind: "copilot_draft";
   disclaimer: string;
 }
+
+/* ===================================================================== */
+/* PHASE 9B — governed knowledge, the import pipeline, and commercial     */
+/* disclosure. Commercial types are deliberately SEPARATE from every      */
+/* clinical type below: nothing clinical embeds a commercial field, so a  */
+/* renderer cannot accidentally place a price beside a dose.              */
+/* ===================================================================== */
+
+export type KnowledgeChangeKind =
+  | "add"
+  | "change"
+  | "unchanged"
+  | "conflict"
+  | "removal";
+
+export type KnowledgeImportItemStatus =
+  | "needs_review"
+  | "applied"
+  | "rejected"
+  | "skipped";
+
+export interface LiveKnowledgeImportItem {
+  id: string;
+  entityType: string;
+  displayName: string;
+  sourceSheet: string | null;
+  sourceRowNumber: number | null;
+  dedupeKey: string | null;
+  changeKind: KnowledgeChangeKind | null;
+  status: KnowledgeImportItemStatus;
+  payloadSha256: string;
+  existingRefType: string | null;
+  existingRefId: string | null;
+  conflictWithItemId: string | null;
+  conflictReason: string | null;
+  conflictResolution: "keep_existing" | "take_incoming" | "skip" | null;
+  validationErrors: string[];
+  warnings: string[];
+  reviewNote: string | null;
+  appliedRefType: string | null;
+  appliedRefId: string | null;
+}
+
+export interface LiveKnowledgeImportBatch {
+  id: string;
+  status: "preview" | "staged" | "in_review" | "committed" | "completed" | "cancelled";
+  sourceName: string;
+  sourceKind: string | null;
+  sourceFilename: string | null;
+  sourceByteSize: number | null;
+  sourceSha256: string;
+  schemaVersion: string;
+  itemCount: number;
+  added: number;
+  changed: number;
+  unchanged: number;
+  conflicts: number;
+  removals: number;
+  previewGeneratedAt: string | null;
+  committedAt: string | null;
+  createdAt: string;
+}
+
+export interface LiveKnowledgeImportPreview {
+  batch: LiveKnowledgeImportBatch;
+  items: LiveKnowledgeImportItem[];
+  /** Reported for review. This pipeline never deletes governed content. */
+  reportedRemovals: Array<{
+    entityType: string;
+    dedupeKey: string;
+    refType: string | null;
+    refId: string | null;
+  }>;
+  removalPolicy: string;
+}
+
+export interface LiveKnowledgeImportPreviewResult {
+  batchId: string;
+  /** True when the same bytes were already imported; nothing was staged again. */
+  idempotent: boolean;
+  status: string;
+  itemCount: number;
+  added: number;
+  changed: number;
+  unchanged: number;
+  conflicts: number;
+  removals: number;
+  sourceSha256?: string;
+  message: string;
+}
+
+export interface LiveKnowledgeImportCommitResult {
+  ok: true;
+  batchId: string;
+  applied: number;
+  skipped: number;
+  /** Always "draft". Import is not approval. */
+  approvalState: "draft";
+  message: string;
+}
+
+/**
+ * Commercial disclosure for a label version or protocol version.
+ *
+ * A SEPARATE read, never folded into a clinical payload. The disclaimer is
+ * carried from the database rather than written in the browser, so the UI
+ * cannot soften it.
+ */
+export interface LiveCommercialLink {
+  id: string;
+  kind: "affiliate" | "supplier" | "retailer" | "other";
+  url: string | null;
+  itemLabel?: string | null;
+  catalogProductVersionId?: string | null;
+  supplierName: string | null;
+  commissionDisclosure: string | null;
+  availabilityStatus: string | null;
+  lastVerifiedAt: string | null;
+  revokedAt: string | null;
+  recordedAt: string;
+}
+
+export interface LiveCommercialDisclosure {
+  labelVersionId?: string;
+  protocolVersionId?: string;
+  links: LiveCommercialLink[];
+  disclaimer: string;
+}
+
+/** A protocol copilot draft as the browser sees it — labelled and unsaved. */
+export interface LiveProtocolCopilotDraft {
+  suggestions: Array<{
+    kind: string;
+    isDraft: true;
+    title: string;
+    rationale: string;
+    derivedFrom: string;
+    severity: "info" | "attention";
+    itemLabel?: string;
+    proposedDose?: string | null;
+    doseSource?: string | null;
+  }>;
+  provenanceKind: "copilot_draft";
+  disclaimer: string;
+  interactionReviewState: "not_completed";
+  interactionReviewReason: string;
+}
+
+export interface LiveProtocolCopilotStatus {
+  enabled: boolean;
+  problems: string[];
+}
