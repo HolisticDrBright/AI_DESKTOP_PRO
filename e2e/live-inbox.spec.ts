@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { resetBackend } from "./support/backend";
 
 /**
  * PHASE 4, browser-level: Inbox, Messaging, and AI Triage against the
@@ -55,6 +56,13 @@ import { expect, test } from "@playwright/test";
 test.skip(!process.env.E2E_LIVE, "live-mode suite: set E2E_LIVE=1 with a clinical build + backend");
 
 test.describe.configure({ mode: "serial" });
+
+/**
+ * Isolation, not ordering. This restores the whole fixture backend so the
+ * suite runs against exactly the state it was written for, wherever it lands
+ * in the battery.
+ */
+test.beforeAll(resetBackend);
 
 const STUB = "http://127.0.0.1:3999";
 const PATIENT_1 = "aaaaaaaa-1111-2222-3333-444444444401";

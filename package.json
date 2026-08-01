@@ -15,7 +15,9 @@
     "build:clinical": "cross-env APP_EDITION=clinical next build",
     "check:clinical-bundle": "node scripts/check-clinical-bundle.mjs",
     "check:mock-imports": "node scripts/check-mock-imports.mjs",
-    "sync:worker": "node scripts/sync/worker.mjs"
+    "sync:worker": "node scripts/sync/worker.mjs",
+    "check:stub-reset": "node scripts/check-stub-reset-coverage.mjs",
+    "test:e2e:order": "node scripts/check-e2e-order-independence.mjs"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.101.2",

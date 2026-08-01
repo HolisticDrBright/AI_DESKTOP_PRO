@@ -2412,6 +2412,123 @@ function entitlementJson(e) {
 
 resetPlanFixtures();
 
+/* =====================================================================
+ * FIXTURE ISOLATION — one reset that covers every mutable domain.
+ *
+ * Before this existed, each suite reset only its own domain, so running the
+ * whole battery in one process left every later suite reading data an earlier
+ * one created. The visible symptom was always the same: the first "honest
+ * empty state" assertion of each later suite failed. That is a harness defect
+ * that looks exactly like a product defect, which is the worst kind.
+ *
+ * TWO MECHANISMS, because the state has two shapes:
+ *
+ *   1. Collections bound with `const` (Maps, Sets, arrays) are restored IN
+ *      PLACE from a deep snapshot taken once at module load, after all seeding
+ *      has run. This is why there is no second copy of the seed data anywhere:
+ *      the snapshot IS the seed, so the two cannot drift apart.
+ *
+ *   2. Bindings held with `let` — counters, and collections that their domain
+ *      reset reassigns wholesale — are re-initialised explicitly in
+ *      `resetAllFixtures`, because a snapshot cannot rebind them.
+ *
+ * `scripts/check-stub-reset-coverage.mjs` parses this file and fails if a
+ * mutable top-level declaration is missing from both mechanisms. A reset that
+ * has to be remembered is a reset that eventually is not.
+ * ===================================================================== */
+
+const SNAPSHOT_COLLECTIONS = {
+  revokedBearers, members, queue, labMarkers, labReports,
+  encounters, emrNotes,
+  scribeParticipants, scribeRecordings, scribeSessions, scribeTokens,
+  scribeTranscripts, scribeGenerations, scribeAccessLog,
+  lensEvaluations, lensQuestions, lensBlocks, lensFeedbackRows,
+  scheduleAppointments, apptTransitionKeys,
+  protocols, protocolTemplates, protocolVersions,
+  programs, programTemplates, programVersions, programOffers,
+  programEnrollments, programProgressRows, programEvents,
+  auditEvents,
+  conversations, inboxMessages, inboxAttachments, commPrefs, inboxOutbox,
+  inboxEvents, inboxAiReviews, inboxTaskByMessage, inboxNoteAppends,
+  syncConnections, syncInvitations, syncScopes, syncOutbound, syncInbound,
+  syncCorrections, syncConflicts, syncDeadLetters, syncAcks, syncHistory,
+  syncDeliveryEventIds, syncProviders, syncWorkerCycles, syncNonces,
+};
+
+const __fixtureSnapshots = new Map();
+
+function captureFixtureSnapshots() {
+  for (const [name, coll] of Object.entries(SNAPSHOT_COLLECTIONS)) {
+    const plain = coll instanceof Map
+      ? [...coll.entries()]
+      : coll instanceof Set
+        ? [...coll]
+        : coll;
+    __fixtureSnapshots.set(name, structuredClone(plain));
+  }
+}
+
+function restoreFixtureSnapshots() {
+  for (const [name, coll] of Object.entries(SNAPSHOT_COLLECTIONS)) {
+    // Cloned on the way OUT as well as in, so a test mutating a restored row
+    // cannot corrupt the snapshot for the next reset.
+    const snap = structuredClone(__fixtureSnapshots.get(name));
+    if (coll instanceof Map) {
+      coll.clear();
+      for (const [k, v] of snap) coll.set(k, v);
+    } else if (coll instanceof Set) {
+      coll.clear();
+      for (const v of snap) coll.add(v);
+    } else {
+      coll.length = 0;
+      coll.push(...snap);
+    }
+  }
+}
+
+/**
+ * Restore the entire backend to the state it had at process start.
+ *
+ * Every suite calls this in `beforeAll` via `e2e/support/backend.ts`, which is
+ * what makes the battery order-independent: a suite always runs against
+ * exactly the state it was written for, no matter what ran before it.
+ */
+function resetAllFixtures() {
+  restoreFixtureSnapshots();
+
+  // `let` bindings the snapshot cannot rebind.
+  memberSeq = 2;
+  emrSeq = 0;
+  scribeSeq = 0;
+  lensSeq = 0;
+  apptSeq = 0;
+  // Cleared rather than re-seeded: the schedule seeds lazily from the date the
+  // first request asks for, so it must be allowed to seed again.
+  scheduleSeeded = false;
+  protocolSeq = 0;
+  programSeq = 0;
+  auditSeq = 0;
+  hypothesisReview = null;
+  inboxSeq = 0;
+  syncSeq = 0;
+  syncCircuit = null;
+  fixtureRole = "owner";
+  nutritionRole = "practitioner";
+
+  // Domains whose reset reassigns their own collections and re-seeds them.
+  resetBillingFixtures();
+  resetPlanFixtures();
+  resetNutritionFixtures();
+  resetImportFixtures();
+
+  // NOT seedInboxFixtures() / seedLensFixtures(). Both ran before the snapshot
+  // was taken, so their output is already inside it. Calling them again would
+  // re-push every row of `inboxEvents` — the Map writes are keyed and would
+  // look harmless, which is exactly how that bug would have survived review.
+}
+
+captureFixtureSnapshots();
+
 /* --------------------------------------------------------------- wire utils */
 
 const json = (res, status, value) => {
@@ -2547,6 +2664,15 @@ createServer(async (req, res) => {
   // written against a fresh backend; it calls this in beforeAll so the
   // battery is order-independent. Non-billing domains are untouched.
   // Reset the phase-8B plan domain so the suite is order-independent.
+  // THE canonical isolation hook. Every spec calls this in beforeAll, which is
+  // what makes the one-process battery order-independent. Per-domain resets are
+  // kept for the tests that reset mid-run, but no suite depends on them for
+  // isolation any more.
+  if (url.pathname === "/__control/reset-all" && req.method === "POST") {
+    resetAllFixtures();
+    return json(res, 200, { ok: true });
+  }
+
   if (url.pathname === "/__control/import-reset" && req.method === "POST") {
     resetImportFixtures();
     return json(res, 200, { ok: true });
