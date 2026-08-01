@@ -251,14 +251,15 @@ select _c('8.2 provider settlement figures are NULL, not zero', (
   from public.reconciliation_exceptions where id='dddddddd-0000-0000-0000-000000009001'));
 
 -- ============================================ 9. dunning task types
+-- Containment, not regex: an earlier regex form silently passed nothing and
+-- read as a failure even though the constraint was correct.
 select _c('9.1 the 8 phase-8B financial task types are lawful', (
-  select bool_and(t = any (
-    select unnest(string_to_array(
-      replace(replace(substring(pg_get_constraintdef(oid) from '\{(.*)\}'), '''', ''), ' ', ''), ',')::text[])
-    from pg_constraint where conname='review_queue_items_item_type_check'))
-  from unnest(array['subscription_payment_failed','subscription_payment_method_required',
+  select bool_and(pg_get_constraintdef(oid) like '%' || t || '%')
+  from pg_constraint, unnest(array[
+    'subscription_payment_failed','subscription_payment_method_required',
     'membership_expiring','package_credits_expiring','payment_unreconciled',
-    'payment_dispute','refund_action_required','processor_failure_repeated']) t));
+    'payment_dispute','refund_action_required','processor_failure_repeated']) t
+  where conname='review_queue_items_item_type_check'));
 
 -- ============================================ 10. no clinical side effects
 select _c('10.1 no clinical row was created by any of the above', (
@@ -273,19 +274,25 @@ select _c('10.1 no clinical row was created by any of the above', (
                                                'dddddddd-0000-0000-0000-000000001002'))));
 
 -- ============================================ 11. FK index coverage
-select _c('11.1 every 8B foreign key is indexed', (
+select _c('11.1 every single-column 8B foreign key leads an index', (
   select count(*) = 0 from (
-    select c.conrelid, c.conkey
-    from pg_constraint c join pg_class t on t.oid=c.conrelid
-    join pg_namespace n on n.oid=t.relnamespace
+    select t.relname as rel, a.attname as col
+    from pg_constraint c
+    join pg_class t on t.oid = c.conrelid
+    join pg_namespace n on n.oid = t.relnamespace
+    join unnest(c.conkey) k(attnum) on true
+    join pg_attribute a on a.attrelid = c.conrelid and a.attnum = k.attnum
     where c.contype='f' and n.nspname='public'
       and t.relname in ('package_versions','membership_versions','plan_acceptances',
         'patient_memberships','patient_membership_events','entitlements','entitlement_ledger',
         'org_billing_policies','processor_customers','reconciliation_exceptions',
         'reconciliation_events','financial_permission_grants')
+      and array_length(c.conkey,1) = 1
+      -- LEADING column: being second in a composite index does not help a
+      -- lookup or a cascade by this column alone.
       and not exists (
-        select 1 from pg_index i where i.indrelid=c.conrelid
-          and (i.indkey::smallint[])[0:array_length(c.conkey,1)-1] @> c.conkey)
+        select 1 from pg_index i
+        where i.indrelid = c.conrelid and (i.indkey::smallint[])[0] = k.attnum)
   ) missing));
 
 -- ---------------------------------------------------------------- results

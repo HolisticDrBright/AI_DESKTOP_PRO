@@ -287,7 +287,7 @@ billing history that only exists once a processor has settled a period.
 
 | Gate | Result |
 | --- | --- |
-| DB acceptance (rolled back, staging) | **26/26**, zero residue |
+| DB acceptance (rolled back, staging) | **28/28**, zero residue |
 | Phase 8B browser proofs | **18/18** |
 | Full live battery, one pass | **156/156** (138 before this phase) |
 | Backend-down honesty | **11/11** |
@@ -295,6 +295,7 @@ billing history that only exists once a processor has settled a period.
 | Advisors | **0 ERRORs**; +17 WARNs, one per caller RPC |
 | Edition-lock refusals | both correctly fail |
 | Secret / card / PHI scan | clean |
+| Performance advisors on 8B tables | **0 unindexed foreign keys** after `desktop_plans_fk_indexes` |
 
 ## Still unavailable
 
