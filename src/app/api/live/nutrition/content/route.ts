@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { nutritionLive } from "@/adapters/nutrition.live";
+import { AdapterError } from "@/adapters/errors";
 import { getRequestSession } from "@/server/session";
 import { liveGuard, runLive } from "../../route-helpers";
 
@@ -12,7 +13,7 @@ export async function POST(req: NextRequest) {
     const templateVersionId = typeof b.templateVersionId === "string" ? b.templateVersionId : null;
     const planVersionId = typeof b.planVersionId === "string" ? b.planVersionId : null;
     if ((templateVersionId === null) === (planVersionId === null)) {
-      throw new Error("ask for exactly one of templateVersionId or planVersionId");
+      throw new AdapterError("invalid", "ask for exactly one of templateVersionId or planVersionId");
     }
     const session = await getRequestSession();
     return nutritionLive.getVersionContent(

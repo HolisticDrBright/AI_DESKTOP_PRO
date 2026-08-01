@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { nutritionLive } from "@/adapters/nutrition.live";
+import { AdapterError } from "@/adapters/errors";
 import { getRequestSession } from "@/server/session";
 import { liveGuard, runLive } from "../../route-helpers";
 
@@ -11,16 +12,16 @@ export async function POST(req: NextRequest) {
   if (blocked) return blocked;
   return runLive(async () => {
     const b = (await req.json().catch(() => ({}))) as Record<string, unknown>;
-    if (typeof b.patientId !== "string" || !b.patientId) throw new Error("patientId is required");
-    if (typeof b.observedOn !== "string" || !b.observedOn) throw new Error("observedOn is required");
+    if (typeof b.patientId !== "string" || !b.patientId) throw new AdapterError("invalid", "patientId is required");
+    if (typeof b.observedOn !== "string" || !b.observedOn) throw new AdapterError("invalid", "observedOn is required");
     // Adherence is always something someone reported. There is no path that
     // records a check-in with no stated origin.
     if (typeof b.source !== "string" || !SOURCES.includes(b.source)) {
-      throw new Error("a check-in must say where it came from");
+      throw new AdapterError("invalid", "a check-in must say where it came from");
     }
     const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
     if (num(b.weightValue) !== null && typeof b.weightUnit !== "string") {
-      throw new Error("a weight must carry a unit");
+      throw new AdapterError("invalid", "a weight must carry a unit");
     }
 
     const session = await getRequestSession();

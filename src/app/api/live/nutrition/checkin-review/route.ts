@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { nutritionLive } from "@/adapters/nutrition.live";
+import { AdapterError } from "@/adapters/errors";
 import { getRequestSession } from "@/server/session";
 import { liveGuard, runLive } from "../../route-helpers";
 
@@ -9,9 +10,9 @@ export async function POST(req: NextRequest) {
   if (blocked) return blocked;
   return runLive(async () => {
     const b = (await req.json().catch(() => ({}))) as Record<string, unknown>;
-    if (typeof b.checkinId !== "string" || !b.checkinId) throw new Error("checkinId is required");
+    if (typeof b.checkinId !== "string" || !b.checkinId) throw new AdapterError("invalid", "checkinId is required");
     if (b.state !== "reviewed" && b.state !== "needs_followup") {
-      throw new Error("state must be reviewed or needs_followup");
+      throw new AdapterError("invalid", "state must be reviewed or needs_followup");
     }
     const session = await getRequestSession();
     return nutritionLive.reviewCheckin(

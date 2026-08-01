@@ -130,6 +130,44 @@ export function PatientNutritionLive({ patientId }: { patientId: string }) {
     return all.find((v) => v.id === openVersionId) ?? null;
   }, [data, openVersionId]);
 
+  /**
+   * Why an approval was refused, in the phase's own terms.
+   *
+   * The adapter deliberately genericises server messages so a backend string
+   * can never carry PHI to the browser — but "this record changed in another
+   * tab" is the wrong sentence for a safety refusal, and a misleading one. The
+   * version's own state, which this screen already holds, says what actually
+   * happened. No PHI is involved: these are facts about the plan's workflow.
+   */
+  function approvalRefusal(v: LiveNutritionPlanVersion): string | null {
+    if (!v.safetyEvaluated) {
+      return "Approval refused: the safety review has not been run for this version.";
+    }
+    const blocking = v.safetyFlags.filter(
+      (f) => f.severity === "blocking" && (f.status === "open" || f.status === "acknowledged"),
+    );
+    if (blocking.length > 0) {
+      return `Approval refused: ${blocking.length} blocking safety flag${
+        blocking.length === 1 ? " is" : "s are"
+      } still unresolved. Resolve each, or override it with a reason.`;
+    }
+    return null;
+  }
+
+  async function approve(v: LiveNutritionPlanVersion) {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.nutrition.approve({ planVersionId: v.id });
+      announce("Approved");
+      await load();
+    } catch (e) {
+      setError(approvalRefusal(v) ?? errText(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function run(label: string, fn: () => Promise<unknown>) {
     setBusy(true);
     setError(null);
@@ -372,14 +410,7 @@ export function PatientNutritionLive({ patientId }: { patientId: string }) {
                         </>
                       ) : null}
                       {v.status === "in_review" ? (
-                        <Btn
-                          disabled={busy}
-                          onClick={() =>
-                            void run("Approved", () =>
-                              api.nutrition.approve({ planVersionId: v.id }),
-                            )
-                          }
-                        >
+                        <Btn disabled={busy} onClick={() => void approve(v)}>
                           Approve
                         </Btn>
                       ) : null}

@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { nutritionLive } from "@/adapters/nutrition.live";
+import { AdapterError } from "@/adapters/errors";
 import { getRequestSession } from "@/server/session";
 import { liveGuard, runLive } from "../../route-helpers";
 
@@ -10,10 +11,10 @@ export async function POST(req: NextRequest) {
   return runLive(async () => {
     const b = (await req.json().catch(() => ({}))) as Record<string, unknown>;
     if (typeof b.planVersionId !== "string" || !b.planVersionId) {
-      throw new Error("planVersionId is required");
+      throw new AdapterError("invalid", "planVersionId is required");
     }
     if (typeof b.expectedVersion !== "number") {
-      throw new Error("expectedVersion is required");
+      throw new AdapterError("invalid", "expectedVersion is required");
     }
     const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
     const str = (v: unknown) => (typeof v === "string" ? v : null);
@@ -22,7 +23,7 @@ export async function POST(req: NextRequest) {
     // sentence rather than a SQLSTATE. An unlabelled energy number is exactly
     // the ambiguity this phase exists to remove.
     if (num(b.energyTargetValue) !== null && !str(b.energyTargetUnit)) {
-      throw new Error("an energy target must carry a unit");
+      throw new AdapterError("invalid", "an energy target must carry a unit");
     }
 
     const session = await getRequestSession();
