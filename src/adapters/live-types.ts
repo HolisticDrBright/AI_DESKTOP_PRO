@@ -2609,3 +2609,257 @@ export interface LiveProtocolCopilotStatus {
   enabled: boolean;
   problems: string[];
 }
+
+/* ------------------------------------------------------------------------ *
+ * Phase 9B: the Product Catalog registry.
+ *
+ * The `clinical` / `commercial` split is the database's shape, carried
+ * through verbatim. It is not flattened here on purpose: a flat object is one
+ * careless spread away from a commercial field reaching a clinical renderer,
+ * and the whole point is that there is no such path.
+ * ------------------------------------------------------------------------ */
+
+/** Derived from whether a named person verified this exact label. */
+export type LiveLabelVerificationState = "verified" | "unverified";
+
+export interface LiveCatalogListEntry {
+  labelVersionId: string;
+  productCode: string;
+  productName: string;
+  brand: string | null;
+  version: number;
+  status: "draft" | "published" | "superseded" | "withdrawn";
+  labelSha256: string | null;
+  sourceUrl: string | null;
+  effectiveAt: string | null;
+  expiresAt: string | null;
+  verifiedAt: string | null;
+  verificationState: LiveLabelVerificationState;
+  versionCount: number;
+  ingredientCount: number;
+  hasWarnings: boolean;
+  /** A COUNT only. The list view never receives a commercial URL. */
+  commercialLinkCount: number;
+  commercialDisclosureComplete: boolean;
+}
+
+export interface LiveProductCatalog {
+  clinical: {
+    products: LiveCatalogListEntry[];
+    counts: {
+      total: number;
+      verified: number;
+      unverified: number;
+      published: number;
+      draft: number;
+    };
+  };
+  reviewQueue: Array<{
+    itemId: string;
+    displayName: string;
+    externalKey: string | null;
+    changeKind: string | null;
+    sourceName: string;
+    validationErrors: string[];
+    conflictReason: string | null;
+    createdAt: string;
+  }>;
+  generatedAt: string;
+  /** Rendered verbatim when the registry is empty. Never softened. */
+  emptyStateMessage: string;
+  commercialPolicy: string;
+  unknownPolicy: string;
+}
+
+/**
+ * One label in full.
+ *
+ * Every optional string is `string | null` rather than `string | undefined`:
+ * NULL is a value here, meaning "not captured from the label", and it must
+ * render as "Unknown" rather than disappearing.
+ */
+export interface LiveProductLabelDetail {
+  clinical: {
+    labelVersionId: string;
+    productCode: string;
+    productName: string;
+    brand: string | null;
+    version: number;
+    status: string;
+    labelSha256: string | null;
+    sourceUrl: string | null;
+    effectiveAt: string | null;
+    expiresAt: string | null;
+    verifiedAt: string | null;
+    verificationNote: string | null;
+    verificationState: LiveLabelVerificationState;
+    servingSize: string | null;
+    servingsPerContainer: string | null;
+    ingredients: string | null;
+    ingredientRows: Array<Record<string, unknown>>;
+    otherIngredients: string | null;
+    allergens: string | null;
+    directions: string | null;
+    warnings: string | null;
+    storage: string | null;
+    jurisdiction: string | null;
+    sku: string | null;
+    upc: string | null;
+    versions: Array<{
+      labelVersionId: string;
+      version: number;
+      status: string;
+      labelSha256: string | null;
+      effectiveAt: string | null;
+      expiresAt: string | null;
+      verifiedAt: string | null;
+      verificationNote: string | null;
+      createdAt: string;
+    }>;
+    catalogMappings: Array<{
+      productId: string;
+      name: string;
+      form: string | null;
+      sku: string | null;
+      upc: string | null;
+    }>;
+    importHistory: Array<{
+      itemId: string;
+      sourceName: string;
+      sourceFilename: string | null;
+      sourceSha256: string | null;
+      changeKind: string | null;
+      status: string;
+      reviewedAt: string | null;
+      importedAt: string | null;
+    }>;
+  };
+  commercial: {
+    links: Array<{
+      id: string;
+      kind: string;
+      url: string | null;
+      supplierName: string | null;
+      commissionDisclosure: string | null;
+      availabilityStatus: string | null;
+      lastVerifiedAt: string | null;
+      revokedAt: string | null;
+      revokedReason: string | null;
+      recordedAt: string;
+    }>;
+    disclosureComplete: boolean;
+    notice: string;
+  };
+  unknownPolicy: string;
+}
+
+/* ------------------------------------------------------------------------ *
+ * Phase 9B: protocol template lifecycle.
+ * ------------------------------------------------------------------------ */
+
+export type LiveTemplateSafetyOutcome = "passed" | "concerns" | "blocked";
+
+export interface LiveProtocolTemplateDetail {
+  templateId: string;
+  name: string;
+  description: string | null;
+  status: string;
+  archivedAt: string | null;
+  supersededById: string | null;
+  supersededAt: string | null;
+  supersededReason: string | null;
+  currentVersionId: string | null;
+  approvedVersionId: string | null;
+  versions: Array<{
+    versionId: string;
+    version: number;
+    status: string;
+    title: string;
+    approvedAt: string | null;
+    createdAt: string;
+    itemCount: number;
+  }>;
+  items: Array<{
+    itemId: string;
+    label: string;
+    kind: string;
+    position: number;
+    dosageText: string | null;
+    timingText: string | null;
+    route: string | null;
+    doseSourceKind: string | null;
+    doseSourceRef: string | null;
+    manufacturer: string | null;
+    labelVersion: string | null;
+    productSku: string | null;
+    productUpc: string | null;
+    labelSha256: string | null;
+    verificationStatus: string;
+    interventionClassCode: string | null;
+    monitoringRequirements: string[];
+    stoppingRules: string[];
+    contraindications: string[];
+    followupIntervalDays: number | null;
+    jurisdictionSensitive: boolean;
+  }>;
+  safetyReviews: Array<{
+    reviewId: string;
+    versionId: string;
+    outcome: LiveTemplateSafetyOutcome;
+    note: string;
+    itemsReviewed: number;
+    unsourcedDoseCount: number;
+    reviewedAt: string;
+  }>;
+  unsourcedDoseCount: number;
+  /** Derived on read, never stored. A stored copy drifts, invisibly. */
+  patientInstructionPreview: Array<{
+    label: string;
+    kind: string;
+    instruction: string | null;
+    dose: string | null;
+    timing: string | null;
+    stopIf: string[];
+    doseIsSourced: boolean;
+  }>;
+  previewNotice: string;
+  safetyNotice: string;
+}
+
+export interface LiveTemplateComparison {
+  sameTemplate: boolean;
+  left: {
+    versionId: string;
+    templateId: string;
+    version: number;
+    status: string;
+    title: string;
+  };
+  right: {
+    versionId: string;
+    templateId: string;
+    version: number;
+    status: string;
+    title: string;
+  };
+  added: Array<{
+    label: string;
+    kind: string;
+    dosageText: string | null;
+    doseSourceKind: string | null;
+  }>;
+  removed: Array<{
+    label: string;
+    kind: string;
+    dosageText: string | null;
+    doseSourceKind: string | null;
+  }>;
+  changed: Array<{
+    label: string;
+    doseChanged: boolean;
+    from: Record<string, unknown>;
+    to: Record<string, unknown>;
+  }>;
+  doseChangeCount: number;
+  matchNote: string;
+}

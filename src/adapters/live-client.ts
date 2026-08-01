@@ -92,6 +92,10 @@ import type {
   LiveCommercialDisclosure,
   LiveProtocolCopilotDraft,
   LiveProtocolCopilotStatus,
+  LiveProductCatalog,
+  LiveProductLabelDetail,
+  LiveProtocolTemplateDetail,
+  LiveTemplateComparison,
 } from "./live-types";
 
 interface Envelope<T> {
@@ -1078,4 +1082,78 @@ export const liveClient = {
       method: "POST",
       body: input,
     }),
+
+  /* ------------------- Phase 9B: the product catalog registry ---------- */
+
+  /**
+   * The catalog list. The response keeps the server's `clinical` /
+   * `commercial` split rather than flattening it, so a renderer has to reach
+   * across a named boundary to touch commercial data instead of finding it
+   * beside a clinical field.
+   */
+  productCatalog: (
+    input: { query?: string | null; status?: string | null; limit?: number } = {},
+  ) =>
+    liveFetch<LiveProductCatalog>("knowledge/catalog", {
+      method: "POST",
+      body: input,
+    }),
+
+  productLabelDetail: (input: { labelVersionId: string }) =>
+    liveFetch<LiveProductLabelDetail>("knowledge/catalog-detail", {
+      method: "POST",
+      body: input,
+    }),
+
+  /** Whether the caller may verify at all is decided by the database. */
+  verifyProductLabel: (input: {
+    labelVersionId: string;
+    verificationNote: string;
+  }) =>
+    liveFetch<{ ok: true }>("knowledge/catalog-verify", {
+      method: "POST",
+      body: input,
+    }),
+
+  /* ------------------- Phase 9B: template lifecycle -------------------- */
+
+  protocolTemplateDetail: (input: { templateId: string }) =>
+    liveFetch<LiveProtocolTemplateDetail>("protocols/template-detail", {
+      method: "POST",
+      body: input,
+    }),
+
+  protocolTemplateCompare: (input: {
+    leftVersionId: string;
+    rightVersionId: string;
+  }) =>
+    liveFetch<LiveTemplateComparison>("protocols/template-compare", {
+      method: "POST",
+      body: input,
+    }),
+
+  protocolTemplateSafetyReview: (input: {
+    versionId: string;
+    outcome: "passed" | "concerns" | "blocked";
+    note: string;
+  }) =>
+    liveFetch<{
+      ok: true;
+      reviewId: string;
+      outcome: string;
+      unsourcedDoseCount: number;
+      message: string;
+    }>("protocols/template-safety", { method: "POST", body: input }),
+
+  protocolTemplateSupersede: (input: {
+    templateId: string;
+    successorTemplateId: string;
+    reason: string;
+  }) =>
+    liveFetch<{
+      ok: true;
+      templateId: string;
+      supersededBy: string;
+      message: string;
+    }>("protocols/template-supersede", { method: "POST", body: input }),
 };
