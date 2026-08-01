@@ -229,6 +229,60 @@ test("the billing, checkout, and catalog surfaces stay honest with a down backen
   expect(body).not.toContain("Account credit");
 });
 
+test("the plans, reconciliation, and reporting surfaces stay honest with a down backend", async ({ page }) => {
+  // PHASE 8B: these screens describe money and entitlements. With the backend
+  // down they must refuse — never an empty plan list (which would read as "we
+  // sell nothing"), never a zeroed report, never a credit balance, and never a
+  // control that implies care could be given away.
+  await page.goto("/settings/plans");
+  await page.waitForLoadState("networkidle");
+  let body = (await page.locator("body").innerText()).trim();
+  await expectNoFixtureData(body, "/settings/plans with the backend down");
+  expect(
+    body,
+    `/settings/plans must report itself unavailable. Got:\n${body.slice(0, 600)}`,
+  ).toMatch(/didn.t load|unavailable|not configured|cannot reach|couldn.t reach|try again|sign in/i);
+  // "No packages yet" would be a claim about what this practice sells.
+  expect(body).not.toContain("No packages yet");
+  expect(body).not.toContain("Assign complimentary");
+
+  await page.goto("/billing/reconciliation");
+  await page.waitForLoadState("networkidle");
+  body = (await page.locator("body").innerText()).trim();
+  await expectNoFixtureData(body, "/billing/reconciliation with the backend down");
+  expect(
+    body,
+    `/billing/reconciliation must report itself unavailable. Got:\n${body.slice(0, 600)}`,
+  ).toMatch(/didn.t load|unavailable|not configured|cannot reach|couldn.t reach|try again|sign in/i);
+  // A dead screen must not claim the books reconcile.
+  expect(body).not.toContain("Nothing to reconcile");
+  expect(body).not.toContain("Open exceptions");
+
+  await page.goto("/billing/reports");
+  await page.waitForLoadState("networkidle");
+  body = (await page.locator("body").innerText()).trim();
+  await expectNoFixtureData(body, "/billing/reports with the backend down");
+  expect(
+    body,
+    `/billing/reports must report itself unavailable. Got:\n${body.slice(0, 600)}`,
+  ).toMatch(/didn.t load|unavailable|not configured|cannot reach|couldn.t reach|try again|sign in/i);
+  // No balance sheet of zeros.
+  expect(body).not.toContain("$0.00");
+  expect(body).not.toContain("Gross charges");
+
+  await page.goto("/patients/11111111-2222-3333-4444-555555555555/plans");
+  await page.waitForLoadState("networkidle");
+  body = (await page.locator("body").innerText()).trim();
+  await expectNoFixtureData(body, "the patient plans tab with the backend down");
+  expect(
+    body,
+    `the patient plans tab must report itself unavailable. Got:\n${body.slice(0, 600)}`,
+  ).toMatch(/didn.t load|unavailable|not configured|cannot reach|couldn.t reach|try again|sign in/i);
+  // "No credits" would be a claim about this patient's entitlements.
+  expect(body).not.toContain("No credits");
+  expect(body).not.toContain("Credits available");
+});
+
 test("settings reports the clinical edition and its real configuration state", async ({ page }) => {
   await page.goto("/settings");
   await page.waitForLoadState("networkidle");

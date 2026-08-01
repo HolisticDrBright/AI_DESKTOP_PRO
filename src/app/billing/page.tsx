@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { BillingWorkspace } from "@/components/billing/BillingWorkspace";
+import { BtnLink } from "@/components/ui/Btn";
 
 export const metadata: Metadata = { title: "Billing — AI Longevity Pro" };
 export const dynamic = "force-dynamic";
@@ -17,6 +18,13 @@ export default function BillingPage() {
         crumb="Business / Billing"
         title="Billing"
         sub="Invoices, payments, receivables, and stock valuation for the practice."
+        actions={
+          <>
+            <BtnLink href="/billing/reports">Reports</BtnLink>
+            <BtnLink href="/billing/reconciliation">Reconciliation</BtnLink>
+            <BtnLink href="/settings/plans">Plans</BtnLink>
+          </>
+        }
       />
       <BillingWorkspace />
     </section>

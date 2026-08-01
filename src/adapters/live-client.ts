@@ -52,6 +52,14 @@ import type {
   LiveInvoiceLineInput,
   LiveManualPaymentMethod,
   LivePatientBilling,
+  LiveMembershipAction,
+  LivePackageKind,
+  LivePatientEntitlements,
+  LivePlanLibrary,
+  LivePlanMutationResult,
+  LivePlanType,
+  LiveReconciliationWorkspace,
+  LiveStripeStatus,
   LiveInboxTodaySummary,
   LiveMessageChannel,
   LivePatientMessages,
@@ -722,4 +730,104 @@ export const liveClient = {
     expectedVersion: number;
     idempotencyKey: string;
   }) => liveFetch<LiveCardPaymentIntent>("billing/card", { method: "POST", body: input }),
+
+  /* ------------------------------------------- plans etc (phase 8B) */
+  plansLibrary: (includeArchived = false) =>
+    liveFetch<LivePlanLibrary>("plans/library", {
+      method: "POST",
+      body: { includeArchived },
+    }),
+
+  plansPatient: (patientId: string) =>
+    liveFetch<LivePatientEntitlements>("plans/patient", {
+      method: "POST",
+      body: { patientId },
+    }),
+
+  plansUpsert: (input: {
+    planType: LivePlanType;
+    id?: string | null;
+    expectedVersion?: number | null;
+    name?: string | null;
+    description?: string | null;
+    kind?: LivePackageKind | null;
+    archive?: boolean;
+  }) => liveFetch<LivePlanMutationResult>("plans/plan", { method: "POST", body: input }),
+
+  plansCreateVersion: (input: Record<string, unknown> & { planType: LivePlanType; planId: string; priceMinor: number }) =>
+    liveFetch<LivePlanMutationResult>("plans/version", { method: "POST", body: input }),
+
+  plansPublishVersion: (input: { planType: LivePlanType; versionId: string }) =>
+    liveFetch<LivePlanMutationResult>("plans/publish", { method: "POST", body: input }),
+
+  plansSetPolicy: (input: {
+    noShowPolicy: string;
+    lateCancelPolicy: string;
+    lateCancelWindowHours: number;
+    consumeOn: string;
+  }) => liveFetch<LivePlanMutationResult>("plans/policy", { method: "POST", body: input }),
+
+  plansPurchase: (input: {
+    patientId: string;
+    packageVersionId: string;
+    acceptanceMethod?: string;
+  }) => liveFetch<LivePlanMutationResult>("plans/purchase", { method: "POST", body: input }),
+
+  plansGrantForInvoice: (invoiceId: string) =>
+    liveFetch<LivePlanMutationResult>("plans/grant", { method: "POST", body: { invoiceId } }),
+
+  plansAssignComplimentary: (input: {
+    patientId: string;
+    planType: LivePlanType;
+    versionId: string;
+    reason: string;
+    expiresAt?: string | null;
+  }) => liveFetch<LivePlanMutationResult>("plans/complimentary", { method: "POST", body: input }),
+
+  plansReserveCredit: (input: {
+    entitlementId: string;
+    appointmentId: string;
+    quantity?: number;
+  }) => liveFetch<LivePlanMutationResult>("plans/reserve", { method: "POST", body: input }),
+
+  plansSettleCredit: (input: {
+    appointmentId: string;
+    outcome: string;
+    reason?: string | null;
+  }) => liveFetch<LivePlanMutationResult>("plans/settle", { method: "POST", body: input }),
+
+  plansRestoreCredit: (input: { entitlementId: string; quantity: number; reason: string }) =>
+    liveFetch<LivePlanMutationResult>("plans/restore", { method: "POST", body: input }),
+
+  plansExpireCredits: () =>
+    liveFetch<LivePlanMutationResult>("plans/expire", { method: "POST", body: {} }),
+
+  plansRevokeForRefund: (input: { invoiceId: string; reason: string }) =>
+    liveFetch<LivePlanMutationResult>("plans/revoke", { method: "POST", body: input }),
+
+  plansMembershipLifecycle: (input: {
+    patientMembershipId: string;
+    action: LiveMembershipAction;
+    expectedVersion: number;
+    reason?: string | null;
+  }) => liveFetch<LivePlanMutationResult>("plans/membership", { method: "POST", body: input }),
+
+  plansReconciliation: (status: string | null = "open") =>
+    liveFetch<LiveReconciliationWorkspace>("plans/reconciliation", {
+      method: "POST",
+      body: { status },
+    }),
+
+  plansResolveException: (input: {
+    exceptionId: string;
+    resolution: "resolved" | "dismissed";
+    reason: string;
+    expectedVersion: number;
+  }) => liveFetch<LivePlanMutationResult>("plans/reconciliation", {
+    method: "POST",
+    body: { action: "resolve", ...input },
+  }),
+
+  plansStripeStatus: () =>
+    liveFetch<LiveStripeStatus>("plans/stripe-status", { method: "POST", body: {} }),
 };
