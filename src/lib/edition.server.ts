@@ -40,6 +40,8 @@ const FORBIDDEN_DEMO_ENV = [
   "CLINICAL_DEMO_PASSWORD",
   "STRIPE_SECRET_KEY",
   "OPENAI_API_KEY",
+  "PASSIO_LICENSE_KEY",
+  "PASSIO_CUSTOMER_ID",
 ] as const;
 
 export interface EditionConfigReport {

@@ -37,7 +37,16 @@ const PATIENTS = [
   // Dedicated to the phase-8A billing walkthrough so that suite consumes its
   // own appointment instead of the one the EMR/tasks suite drives.
   { id: "aaaaaaaa-1111-2222-3333-444444444404", organization_id: "org-fixture", mrn: "FX-0004", first_name: "Billing", last_name: "Walkthrough", date_of_birth: "1988-11-07", sex: "male", status: "active" },
+  // Dedicated to the phase-9A nutrition walkthrough. Carries a recorded peanut
+  // allergy, because the approval gate is only worth proving against a plan
+  // that actually collides with the chart.
+  { id: "aaaaaaaa-1111-2222-3333-444444444405", organization_id: "org-fixture", mrn: "FX-0005", first_name: "Nutrition", last_name: "Walkthrough", date_of_birth: "1986-06-15", sex: "female", status: "active" },
 ];
+
+/** Chart allergies the nutrition safety evaluator reads. */
+const NUTRITION_ALLERGIES = {
+  "aaaaaaaa-1111-2222-3333-444444444405": ["Peanut"],
+};
 
 const now = Date.now();
 const iso = (msAgo) => new Date(now - msAgo).toISOString();
@@ -2155,6 +2164,62 @@ function requireFinancial(res, permission) {
   return true;
 }
 
+/* ------------------------------------------------ phase 9A: nutrition state
+
+   Reproduces the RPC contract EXACTLY as the database enforces it, including
+   the approval gate (safety must have been evaluated, and no blocking flag may
+   be open or merely acknowledged), the per-version freeze, the template
+   snapshot, revision-without-overwrite, and the documented-override rule. */
+
+let nutritionTemplates = [];
+let nutritionTemplateVersions = [];
+let nutritionPlans = [];
+let nutritionPlanVersions = [];
+let nutritionCheckins = [];
+let nutritionSeq = 0;
+/** The signed-in fixture practitioner's clinical role for nutrition. */
+let nutritionRole = "practitioner";
+
+const NUTRITION_AUTHORS = ["owner", "admin", "practitioner"];
+const FROZEN_PLAN = ["approved", "active", "paused", "completed", "discontinued", "superseded"];
+
+function nutritionId(prefix) {
+  nutritionSeq += 1;
+  return `${prefix}-${String(nutritionSeq).padStart(4, "0")}`;
+}
+
+function requireNutritionRole(res) {
+  if (!NUTRITION_AUTHORS.includes(nutritionRole)) {
+    json(res, 403, {
+      code: "42501",
+      message: "authoring a nutrition plan requires a clinical role",
+    });
+    return false;
+  }
+  return true;
+}
+
+function emptyNutritionContent() {
+  return {
+    phases: [], foodRules: [], mealDays: [], recipes: [],
+    groceryItems: [], targets: [], provenance: [],
+  };
+}
+
+function nutritionPlanVersion(id) {
+  return nutritionPlanVersions.find((v) => v.id === id) ?? null;
+}
+
+function resetNutritionFixtures() {
+  nutritionTemplates = [];
+  nutritionTemplateVersions = [];
+  nutritionPlans = [];
+  nutritionPlanVersions = [];
+  nutritionCheckins = [];
+  nutritionSeq = 0;
+  nutritionRole = "practitioner";
+}
+
 function resetPlanFixtures() {
   planPackages = [];
   planMemberships = [];
@@ -2414,6 +2479,17 @@ createServer(async (req, res) => {
   // written against a fresh backend; it calls this in beforeAll so the
   // battery is order-independent. Non-billing domains are untouched.
   // Reset the phase-8B plan domain so the suite is order-independent.
+  if (url.pathname === "/__control/nutrition-reset" && req.method === "POST") {
+    resetNutritionFixtures();
+    return json(res, 200, { ok: true });
+  }
+
+  if (url.pathname === "/__control/nutrition-set-role" && req.method === "POST") {
+    const body = await readBody(req);
+    nutritionRole = String(body.role ?? "practitioner");
+    return json(res, 200, { ok: true, role: nutritionRole });
+  }
+
   if (url.pathname === "/__control/plans-reset" && req.method === "POST") {
     resetPlanFixtures();
     return json(res, 200, { ok: true });
@@ -7553,6 +7629,631 @@ createServer(async (req, res) => {
       b.reviewedBy = PRACTITIONER_USER_ID;
       b.resolution = body._resolution;
       return json(res, 200, null);
+    }
+
+    /* ------------------------------------------------ phase 9A: nutrition */
+
+    if (url.pathname === "/rest/v1/rpc/list_nutrition_templates" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!memberOrgIds.includes(String(body._organization_id ?? ""))) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const includeArchived = body._include_archived === true;
+      return json(res, 200, {
+        templates: nutritionTemplates
+          .filter((t) => includeArchived || t.status !== "archived")
+          .sort((a, b) => (b.isStarter ? 1 : 0) - (a.isStarter ? 1 : 0) || a.name.localeCompare(b.name))
+          .map((t) => ({
+            id: t.id, name: t.name, pattern: t.pattern, summary: t.summary,
+            status: t.status, isStarter: t.isStarter, version: t.version,
+            currentVersionId: t.currentVersionId,
+            versions: nutritionTemplateVersions
+              .filter((v) => v.templateId === t.id)
+              .sort((a, b) => b.versionNumber - a.versionNumber)
+              .map((v) => ({
+                id: v.id, versionNumber: v.versionNumber, status: v.status,
+                purpose: v.purpose, intendedUse: v.intendedUse,
+                requiresPractitionerReview: v.requiresPractitionerReview,
+                cautionPopulations: v.cautionPopulations,
+                prerequisites: v.prerequisites,
+                missingInformationRequired: v.missingInformationRequired,
+                evidenceGrade: v.evidenceGrade, evidenceSummary: v.evidenceSummary,
+                educationVsAdviceNote: v.educationVsAdviceNote,
+                publishedAt: v.publishedAt,
+              })),
+          })),
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/install_nutrition_starter_template" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!requireNutritionRole(res)) return;
+      const slug = String(body._slug ?? "");
+      const hash = String(body._content_hash ?? "");
+      const meta = body._meta ?? {};
+      if (meta.requiresPractitionerReview !== true) {
+        return json(res, 400, {
+          code: "22023", message: "a starter template must require practitioner review",
+        });
+      }
+      let template = nutritionTemplates.find((t) => t.starterSlug === slug);
+      if (template) {
+        // Idempotent on content: an unchanged re-install mints no new version.
+        const existing = nutritionTemplateVersions.find(
+          (v) => v.templateId === template.id && v.status === "published" && v.contentHash === hash);
+        if (existing) {
+          return json(res, 200, {
+            templateId: template.id, versionId: existing.id, outcome: "unchanged" });
+        }
+      } else {
+        template = {
+          id: nutritionId("ntpl"), name: String(body._name ?? ""),
+          pattern: String(body._pattern ?? "custom"), summary: body._summary ?? null,
+          status: "draft", isStarter: true, starterSlug: slug, version: 1,
+          currentVersionId: null,
+        };
+        nutritionTemplates.push(template);
+      }
+      const versionNumber = nutritionTemplateVersions
+        .filter((v) => v.templateId === template.id).length + 1;
+      const content = emptyNutritionContent();
+      const src = body._content ?? {};
+      content.phases = (src.phases ?? []).map((p, i) => ({ id: nutritionId("nph"), ...p, phaseNumber: p.phaseNumber ?? i + 1 }));
+      content.foodRules = (src.foodRules ?? []).map((r) => ({
+        id: nutritionId("nfr"), phaseId: null, scope: r.scope ?? "category",
+        canonicalSource: null, canonicalId: null, portionGuidance: r.portionGuidance ?? null,
+        frequencyGuidance: r.frequencyGuidance ?? null, preparationGuidance: r.preparationGuidance ?? null,
+        substitutions: r.substitutions ?? [], conditionNote: r.conditionNote ?? null,
+        rationale: r.rationale ?? null, sortOrder: r.sortOrder ?? 0,
+        disposition: r.disposition, label: r.label,
+      }));
+      content.mealDays = (src.mealDays ?? []).map((d) => ({
+        id: nutritionId("nmd"), phaseId: null, dayNumber: d.dayNumber,
+        label: d.label ?? null, notes: d.notes ?? null,
+        meals: (d.meals ?? []).map((m) => ({
+          id: nutritionId("nml"), mealType: m.mealType, name: m.name ?? null,
+          timeOfDay: null, notes: m.notes ?? null, sortOrder: m.sortOrder ?? 0,
+          items: (m.items ?? []).map((it) => ({
+            id: nutritionId("nmi"), label: it.label, quantity: null, unit: null,
+            canonicalSource: null, canonicalId: null, nutrientSource: null,
+            energyValue: null, energyUnit: null, proteinG: null, carbohydrateG: null,
+            fatG: null, fiberG: null, preparationNote: it.preparationNote ?? null,
+            substitutions: it.substitutions ?? [], sortOrder: it.sortOrder ?? 0,
+          })),
+        })),
+      }));
+      content.recipes = (src.recipes ?? []).map((r) => ({
+        id: nutritionId("nrc"), name: r.name, servings: r.servings ?? null,
+        ingredients: r.ingredients ?? [], method: r.method ?? null, notes: r.notes ?? null }));
+      content.groceryItems = (src.groceryItems ?? []).map((g) => ({
+        id: nutritionId("ngi"), category: g.category, label: g.label,
+        quantityNote: g.quantityNote ?? null }));
+
+      const version = {
+        id: nutritionId("ntv"), templateId: template.id, versionNumber,
+        status: "published", publishedAt: nowIso(), contentHash: hash,
+        purpose: meta.purpose ?? null, intendedUse: meta.intendedUse ?? null,
+        // Always true. There is no install path that turns review off.
+        requiresPractitionerReview: true,
+        cautionPopulations: meta.cautionPopulations ?? [],
+        prerequisites: meta.prerequisites ?? [],
+        missingInformationRequired: meta.missingInformationRequired ?? [],
+        evidenceGrade: meta.evidenceGrade ?? null,
+        evidenceSummary: meta.evidenceSummary ?? null,
+        educationVsAdviceNote: meta.educationVsAdviceNote ?? null,
+        content,
+      };
+      nutritionTemplateVersions
+        .filter((v) => v.templateId === template.id && v.status === "published")
+        .forEach((v) => { v.status = "superseded"; });
+      nutritionTemplateVersions.push(version);
+      template.currentVersionId = version.id;
+      template.status = "active";
+      return json(res, 200, {
+        templateId: template.id, versionId: version.id,
+        outcome: versionNumber === 1 ? "installed" : "updated" });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/upsert_nutrition_template" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!requireNutritionRole(res)) return;
+      const name = String(body._name ?? "").trim();
+      if (!name) return json(res, 400, { code: "22023", message: "a template needs a name" });
+      if (!body._template_id) {
+        const row = {
+          id: nutritionId("ntpl"), name, pattern: String(body._pattern ?? "custom"),
+          summary: body._summary ?? null, status: "draft", isStarter: false,
+          starterSlug: null, version: 1, currentVersionId: null,
+        };
+        nutritionTemplates.push(row);
+        return json(res, 200, row.id);
+      }
+      const row = nutritionTemplates.find((t) => t.id === String(body._template_id));
+      if (!row) return json(res, 404, { code: "P0002", message: "record not found" });
+      row.name = name;
+      row.version += 1;
+      return json(res, 200, row.id);
+    }
+
+    if (url.pathname === "/rest/v1/rpc/get_nutrition_version_content" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!memberOrgIds.includes(String(body._organization_id ?? ""))) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const tv = body._template_version_id ? String(body._template_version_id) : null;
+      const pv = body._plan_version_id ? String(body._plan_version_id) : null;
+      if ((tv === null) === (pv === null)) {
+        return json(res, 400, { code: "22023", message: "ask for exactly one version" });
+      }
+      const owner = tv
+        ? nutritionTemplateVersions.find((v) => v.id === tv)
+        : nutritionPlanVersion(pv);
+      if (!owner) return json(res, 404, { code: "P0002", message: "record not found" });
+      return json(res, 200, owner.content ?? emptyNutritionContent());
+    }
+
+    if (url.pathname === "/rest/v1/rpc/create_nutrition_plan" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!requireNutritionRole(res)) return;
+      const patientId = String(body._patient_id ?? "");
+      const title = String(body._title ?? "").trim();
+      if (!title) return json(res, 400, { code: "22023", message: "a plan needs a title" });
+      const sourceId = body._source_template_version_id
+        ? String(body._source_template_version_id) : null;
+      let source = null;
+      if (sourceId) {
+        source = nutritionTemplateVersions.find((v) => v.id === sourceId);
+        if (!source) return json(res, 404, { code: "P0002", message: "record not found" });
+        if (source.status !== "published") {
+          return json(res, 409, {
+            code: "40001",
+            message: "only a published template version can start a patient plan",
+          });
+        }
+      }
+      const plan = {
+        id: nutritionId("nplan"), patientId, title, status: "draft", version: 1,
+        currentVersionId: null, createdAt: nowIso(), events: [],
+      };
+      const template = source
+        ? nutritionTemplates.find((t) => t.id === source.templateId) : null;
+      const version = {
+        id: nutritionId("npv"), planId: plan.id, patientId, versionNumber: 1,
+        status: "draft", version: 1,
+        // A SNAPSHOT, not a pointer: editing the template later changes nothing.
+        sourceTemplateId: template?.id ?? null,
+        sourceTemplateVersionId: source?.id ?? null,
+        sourceTemplateName: template?.name ?? null,
+        sourceTemplateVersion: source?.versionNumber ?? null,
+        detachedAt: nowIso(),
+        goals: [], practitionerRationale: null, patientInstructions: null,
+        mealTimingGuidance: null, fastingInstructions: null,
+        energyTargetValue: null, energyTargetUnit: null,
+        proteinG: null, carbohydrateG: null, fatG: null, fiberG: null,
+        proteinPct: null, carbohydratePct: null, fatPct: null,
+        submittedAt: null, approvedAt: null, activatedAt: null,
+        discontinuedReason: null, autosavedAt: null,
+        constraints: [], safetyFlags: [], amendments: [], safetyEvaluated: false,
+        content: source
+          ? JSON.parse(JSON.stringify(source.content ?? emptyNutritionContent()))
+          : emptyNutritionContent(),
+      };
+      plan.currentVersionId = version.id;
+      plan.events.push({ kind: "created", fromStatus: null, toStatus: "draft",
+        detail: null, createdAt: nowIso() });
+      nutritionPlans.push(plan);
+      nutritionPlanVersions.push(version);
+      return json(res, 200, { planId: plan.id, planVersionId: version.id });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/save_nutrition_plan_version" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!requireNutritionRole(res)) return;
+      const v = nutritionPlanVersion(String(body._plan_version_id ?? ""));
+      if (!v) return json(res, 404, { code: "P0002", message: "record not found" });
+      if (FROZEN_PLAN.includes(v.status)) {
+        return json(res, 409, {
+          code: "40001",
+          message: "an approved plan version cannot be edited; revise it into a new draft",
+        });
+      }
+      if (Number(body._expected_version) !== v.version) {
+        return json(res, 409, { code: "40001", message: "this plan changed since it was loaded" });
+      }
+      if (body._energy_target_value != null && !body._energy_target_unit) {
+        return json(res, 400, { code: "22023", message: "an energy target must carry a unit" });
+      }
+      for (const [key, col] of [
+        ["_patient_instructions", "patientInstructions"],
+        ["_practitioner_rationale", "practitionerRationale"],
+        ["_energy_target_value", "energyTargetValue"],
+        ["_energy_target_unit", "energyTargetUnit"],
+        ["_protein_g", "proteinG"], ["_carbohydrate_g", "carbohydrateG"], ["_fat_g", "fatG"],
+      ]) {
+        if (body[key] != null) v[col] = body[key];
+      }
+      v.version += 1;
+      return json(res, 200, v.version);
+    }
+
+    if (url.pathname === "/rest/v1/rpc/set_nutrition_plan_constraints" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!requireNutritionRole(res)) return;
+      const v = nutritionPlanVersion(String(body._plan_version_id ?? ""));
+      if (!v) return json(res, 404, { code: "P0002", message: "record not found" });
+      if (FROZEN_PLAN.includes(v.status)) {
+        return json(res, 409, { code: "40001", message: "constraints belong to a draft version" });
+      }
+      v.constraints = (body._constraints ?? []).map((c) => ({
+        id: nutritionId("ncon"), kind: c.kind, label: c.label,
+        detail: c.detail ?? null, severity: c.severity ?? null,
+        source: c.source ?? "practitioner_entered",
+      }));
+      return json(res, 200, v.constraints.length);
+    }
+
+    if (url.pathname === "/rest/v1/rpc/evaluate_nutrition_plan_safety" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!requireNutritionRole(res)) return;
+      const v = nutritionPlanVersion(String(body._plan_version_id ?? ""));
+      if (!v) return json(res, 404, { code: "P0002", message: "record not found" });
+      if (FROZEN_PLAN.includes(v.status)) {
+        return json(res, 409, { code: "40001", message: "safety review runs on a draft version" });
+      }
+      // Decisions a practitioner already recorded survive a re-run.
+      v.safetyFlags = v.safetyFlags.filter((f) => f.status !== "open");
+
+      const allergens = NUTRITION_ALLERGIES[v.patientId] ?? [];
+      const eaten = [
+        ...(v.content.foodRules ?? [])
+          .filter((r) => r.disposition === "emphasize" || r.disposition === "include")
+          .map((r) => r.label),
+        ...(v.content.mealDays ?? []).flatMap((d) =>
+          (d.meals ?? []).flatMap((m) => (m.items ?? []).map((i) => i.label))),
+      ].map((l) => String(l).toLowerCase());
+
+      let blocking = 0;
+      let review = 0;
+      for (const allergen of allergens) {
+        const collides = eaten.some((l) => l.includes(allergen.toLowerCase()));
+        v.safetyFlags.push({
+          id: nutritionId("nsf"), kind: "recorded_allergy",
+          severity: collides ? "blocking" : "review",
+          detail: collides
+            ? "A recorded allergen appears in food this plan tells the patient to eat."
+            : "An allergy is recorded in the chart. Confirm this plan accounts for it.",
+          status: "open", evidenceRef: "allergies",
+          overrideReason: null, overriddenAt: null,
+        });
+        if (collides) blocking += 1; else review += 1;
+      }
+      if (v.constraints.length === 0) {
+        v.safetyFlags.push({
+          id: nutritionId("nsf"), kind: "missing_safety_information", severity: "review",
+          detail: "No allergies, intolerances, access or cooking constraints are recorded "
+            + "against this plan. Confirm the assessment was completed.",
+          status: "open", evidenceRef: null, overrideReason: null, overriddenAt: null,
+        });
+        review += 1;
+      }
+      v.safetyEvaluated = true;
+      const plan = nutritionPlans.find((p) => p.id === v.planId);
+      plan?.events.push({ kind: "safety_evaluated", fromStatus: null, toStatus: null,
+        detail: `${blocking} blocking, ${review} review`, createdAt: nowIso() });
+      return json(res, 200, { blocking, review });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/resolve_nutrition_safety_flag" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!requireNutritionRole(res)) return;
+      const action = String(body._action ?? "");
+      const reason = String(body._reason ?? "").trim();
+      if (!["acknowledge", "override", "resolve"].includes(action)) {
+        return json(res, 400, { code: "22023", message: "unknown action" });
+      }
+      // An undocumented override is worse than none.
+      if (action === "override" && !reason) {
+        return json(res, 400, {
+          code: "22023", message: "overriding a safety flag requires a reason" });
+      }
+      const flagId = String(body._flag_id ?? "");
+      const version = nutritionPlanVersions.find((v) => v.safetyFlags.some((f) => f.id === flagId));
+      const flag = version?.safetyFlags.find((f) => f.id === flagId);
+      if (!flag) return json(res, 404, { code: "P0002", message: "record not found" });
+      flag.status = action === "acknowledge" ? "acknowledged"
+        : action === "override" ? "overridden" : "resolved";
+      if (action === "override") {
+        flag.overrideReason = reason;
+        flag.overriddenAt = nowIso();
+      }
+      return json(res, 200, null);
+    }
+
+    if (url.pathname === "/rest/v1/rpc/submit_nutrition_plan_version" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!requireNutritionRole(res)) return;
+      const v = nutritionPlanVersion(String(body._plan_version_id ?? ""));
+      if (!v) return json(res, 404, { code: "P0002", message: "record not found" });
+      if (v.status !== "draft") {
+        return json(res, 409, { code: "40001", message: "only a draft version can be submitted" });
+      }
+      v.status = "in_review";
+      v.submittedAt = nowIso();
+      v.version += 1;
+      const plan = nutritionPlans.find((p) => p.id === v.planId);
+      if (plan) {
+        plan.status = "in_review";
+        plan.events.push({ kind: "submitted", fromStatus: "draft", toStatus: "in_review",
+          detail: null, createdAt: nowIso() });
+      }
+      return json(res, 200, null);
+    }
+
+    if (url.pathname === "/rest/v1/rpc/approve_nutrition_plan_version" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!requireNutritionRole(res)) return;
+      const v = nutritionPlanVersion(String(body._plan_version_id ?? ""));
+      if (!v) return json(res, 404, { code: "P0002", message: "record not found" });
+      if (v.status !== "in_review") {
+        return json(res, 409, { code: "40001", message: "only a version in review can be approved" });
+      }
+      // THE GATE. Skipping the safety screen in the browser changes nothing.
+      if (!v.safetyEvaluated) {
+        return json(res, 409, {
+          code: "40001", message: "safety review has not been run for this version" });
+      }
+      const blocking = v.safetyFlags.filter(
+        (f) => f.severity === "blocking" && (f.status === "open" || f.status === "acknowledged"));
+      if (blocking.length > 0) {
+        return json(res, 409, {
+          code: "40001",
+          message: `this version has ${blocking.length} unresolved blocking safety flag(s)`,
+        });
+      }
+      v.status = "approved";
+      v.approvedAt = nowIso();
+      v.version += 1;
+      const plan = nutritionPlans.find((p) => p.id === v.planId);
+      if (plan) {
+        plan.status = "approved";
+        plan.events.push({ kind: "approved", fromStatus: "in_review", toStatus: "approved",
+          detail: body._note ?? null, createdAt: nowIso() });
+      }
+      return json(res, 200, null);
+    }
+
+    if (url.pathname === "/rest/v1/rpc/activate_nutrition_plan_version" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!requireNutritionRole(res)) return;
+      const v = nutritionPlanVersion(String(body._plan_version_id ?? ""));
+      if (!v) return json(res, 404, { code: "P0002", message: "record not found" });
+      if (v.status !== "approved") {
+        return json(res, 409, { code: "40001", message: "only an approved version can be activated" });
+      }
+      // Two live diets for one patient is a clinical hazard, so the older plan
+      // is superseded rather than left to collide.
+      for (const other of nutritionPlans) {
+        if (other.patientId === v.patientId && other.status === "active" && other.id !== v.planId) {
+          nutritionPlanVersions
+            .filter((x) => x.planId === other.id && x.status === "active")
+            .forEach((x) => { x.status = "superseded"; });
+          other.status = "completed";
+          other.events.push({ kind: "superseded", fromStatus: "active", toStatus: "completed",
+            detail: "superseded by a newer active plan", createdAt: nowIso() });
+        }
+      }
+      nutritionPlanVersions
+        .filter((x) => x.planId === v.planId && x.status === "active" && x.id !== v.id)
+        .forEach((x) => { x.status = "superseded"; });
+      v.status = "active";
+      v.activatedAt = nowIso();
+      const plan = nutritionPlans.find((p) => p.id === v.planId);
+      if (plan) {
+        plan.status = "active";
+        plan.currentVersionId = v.id;
+        plan.version += 1;
+        plan.events.push({ kind: "activated", fromStatus: "approved", toStatus: "active",
+          detail: null, createdAt: nowIso() });
+      }
+      return json(res, 200, null);
+    }
+
+    if (url.pathname === "/rest/v1/rpc/set_nutrition_plan_lifecycle" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!requireNutritionRole(res)) return;
+      const plan = nutritionPlans.find((p) => p.id === String(body._plan_id ?? ""));
+      if (!plan) return json(res, 404, { code: "P0002", message: "record not found" });
+      const action = String(body._action ?? "");
+      const to = { pause: "paused", resume: "active", complete: "completed",
+        discontinue: "discontinued" }[action];
+      if (!to) return json(res, 400, { code: "22023", message: "unknown action" });
+      if (action === "discontinue" && !String(body._reason ?? "").trim()) {
+        return json(res, 400, {
+          code: "22023", message: "discontinuing a plan requires a reason" });
+      }
+      if (action === "pause" && plan.status !== "active") {
+        return json(res, 409, { code: "40001", message: "only an active plan can be paused" });
+      }
+      const from = plan.status;
+      plan.status = to;
+      plan.version += 1;
+      const current = nutritionPlanVersion(plan.currentVersionId);
+      if (current) {
+        current.status = to;
+        if (action === "discontinue") current.discontinuedReason = String(body._reason);
+      }
+      plan.events.push({ kind: action, fromStatus: from, toStatus: to,
+        detail: body._reason ?? null, createdAt: nowIso() });
+      return json(res, 200, null);
+    }
+
+    if (url.pathname === "/rest/v1/rpc/revise_nutrition_plan_version" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!requireNutritionRole(res)) return;
+      const v = nutritionPlanVersion(String(body._plan_version_id ?? ""));
+      if (!v) return json(res, 404, { code: "P0002", message: "record not found" });
+      if (!["approved", "active", "paused"].includes(v.status)) {
+        return json(res, 409, {
+          code: "40001", message: "only an approved or active version can be revised" });
+      }
+      const reason = String(body._reason ?? "").trim();
+      if (!reason) return json(res, 400, { code: "22023", message: "a revision needs a reason" });
+      if (nutritionPlanVersions.some(
+        (x) => x.planId === v.planId && (x.status === "draft" || x.status === "in_review"))) {
+        return json(res, 409, { code: "40001", message: "this plan already has an open draft" });
+      }
+      const next = nutritionPlanVersions.filter((x) => x.planId === v.planId).length + 1;
+      // A COPY. The version being revised is not touched at all, which is why
+      // the plan the patient was given stays readable exactly as it was.
+      const copy = {
+        ...JSON.parse(JSON.stringify(v)),
+        id: nutritionId("npv"), versionNumber: next, status: "draft", version: 1,
+        submittedAt: null, approvedAt: null, activatedAt: null,
+        safetyEvaluated: false, safetyFlags: [], amendments: [],
+      };
+      nutritionPlanVersions.push(copy);
+      const plan = nutritionPlans.find((p) => p.id === v.planId);
+      plan?.events.push({ kind: "revised", fromStatus: null, toStatus: "draft",
+        detail: reason, createdAt: nowIso() });
+      return json(res, 200, copy.id);
+    }
+
+    if (url.pathname === "/rest/v1/rpc/add_nutrition_amendment" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!requireNutritionRole(res)) return;
+      const v = nutritionPlanVersion(String(body._plan_version_id ?? ""));
+      if (!v) return json(res, 404, { code: "P0002", message: "record not found" });
+      const bodyText = String(body._body ?? "").trim();
+      const reason = String(body._reason ?? "").trim();
+      if (!bodyText || !reason) {
+        return json(res, 400, {
+          code: "22023", message: "an amendment needs a body and a reason" });
+      }
+      const id = nutritionId("nam");
+      v.amendments.push({ number: v.amendments.length + 1, body: bodyText, reason,
+        createdAt: nowIso() });
+      return json(res, 200, id);
+    }
+
+    if (url.pathname === "/rest/v1/rpc/record_nutrition_checkin" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!memberOrgIds.includes(String(body._organization_id ?? ""))) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const source = String(body._source ?? "");
+      // Adherence is always something someone REPORTED.
+      if (!["patient_reported", "practitioner_recorded", "imported_device", "imported_app"]
+        .includes(source)) {
+        return json(res, 400, {
+          code: "22023", message: "a check-in must say where it came from" });
+      }
+      const observedOn = String(body._observed_on ?? "");
+      const patientId = String(body._patient_id ?? "");
+      const existing = nutritionCheckins.find(
+        (c) => c.patientId === patientId && c.observedOn === observedOn && c.source === source);
+      const row = existing ?? {
+        id: nutritionId("nck"), patientId, observedOn, source, reviewState: "unreviewed" };
+      row.planVersionId = body._plan_version_id ?? null;
+      // null and 0 are different claims: not reported is not zero adherence.
+      row.mealPlanAdherencePct = body._meal_plan_adherence_pct ?? null;
+      row.dietAdherencePct = body._diet_adherence_pct ?? null;
+      row.hungerRating = body._hunger_rating ?? null;
+      row.satietyRating = body._satiety_rating ?? null;
+      row.energyRating = body._energy_rating ?? null;
+      row.digestiveTolerance = body._digestive_tolerance ?? null;
+      row.symptoms = body._symptoms ?? [];
+      row.patientNote = body._patient_note ?? null;
+      row.weightValue = body._weight_value ?? null;
+      row.weightUnit = body._weight_unit ?? null;
+      row.reviewState = "unreviewed";
+      if (!existing) nutritionCheckins.push(row);
+      return json(res, 200, row.id);
+    }
+
+    if (url.pathname === "/rest/v1/rpc/review_nutrition_checkin" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!requireNutritionRole(res)) return;
+      const state = String(body._state ?? "");
+      if (!["reviewed", "needs_followup"].includes(state)) {
+        return json(res, 400, { code: "22023", message: "unknown review state" });
+      }
+      const row = nutritionCheckins.find((c) => c.id === String(body._checkin_id ?? ""));
+      if (!row) return json(res, 404, { code: "P0002", message: "record not found" });
+      row.reviewState = state;
+      return json(res, 200, null);
+    }
+
+    if (url.pathname === "/rest/v1/rpc/get_patient_nutrition" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!memberOrgIds.includes(String(body._organization_id ?? ""))) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const patientId = String(body._patient_id ?? "");
+      return json(res, 200, {
+        plans: nutritionPlans
+          .filter((p) => p.patientId === patientId)
+          .map((p) => ({
+            id: p.id, title: p.title, status: p.status, version: p.version,
+            currentVersionId: p.currentVersionId, createdAt: p.createdAt,
+            versions: nutritionPlanVersions
+              .filter((v) => v.planId === p.id)
+              .sort((a, b) => b.versionNumber - a.versionNumber)
+              .map((v) => ({
+                id: v.id, versionNumber: v.versionNumber, status: v.status, version: v.version,
+                goals: v.goals, practitionerRationale: v.practitionerRationale,
+                patientInstructions: v.patientInstructions,
+                mealTimingGuidance: v.mealTimingGuidance,
+                fastingInstructions: v.fastingInstructions,
+                energyTargetValue: v.energyTargetValue, energyTargetUnit: v.energyTargetUnit,
+                proteinG: v.proteinG, carbohydrateG: v.carbohydrateG, fatG: v.fatG,
+                fiberG: v.fiberG, proteinPct: v.proteinPct,
+                carbohydratePct: v.carbohydratePct, fatPct: v.fatPct,
+                sourceTemplateName: v.sourceTemplateName,
+                sourceTemplateVersion: v.sourceTemplateVersion,
+                sourceTemplateVersionId: v.sourceTemplateVersionId,
+                detachedAt: v.detachedAt, submittedAt: v.submittedAt,
+                approvedAt: v.approvedAt, activatedAt: v.activatedAt,
+                discontinuedReason: v.discontinuedReason, autosavedAt: v.autosavedAt,
+                constraints: v.constraints, safetyFlags: v.safetyFlags,
+                amendments: v.amendments, safetyEvaluated: v.safetyEvaluated,
+              })),
+            events: [...p.events].reverse(),
+          })),
+        checkins: nutritionCheckins
+          .filter((c) => c.patientId === patientId)
+          .sort((a, b) => (a.observedOn < b.observedOn ? 1 : -1)),
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/get_nutrition_adherence_summary" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!memberOrgIds.includes(String(body._organization_id ?? ""))) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const patientId = String(body._patient_id ?? "");
+      const days = Number(body._days ?? 30);
+      const rows = nutritionCheckins.filter((c) => c.patientId === patientId);
+      const mean = (key) => {
+        const vals = rows.map((r) => r[key]).filter((n) => typeof n === "number");
+        return vals.length === 0
+          ? null
+          : Math.round((vals.reduce((a, b) => a + b, 0) / vals.length) * 10) / 10;
+      };
+      // DAYS covered, not rows: two sources on one day is still one day.
+      const reported = new Set(rows.map((r) => r.observedOn)).size;
+      return json(res, 200, {
+        windowDays: days,
+        from: new Date(Date.now() - (days - 1) * 86400000).toISOString().slice(0, 10),
+        to: new Date().toISOString().slice(0, 10),
+        daysReported: reported,
+        // A day with no check-in is MISSING, never zero adherence.
+        daysMissing: days - Math.min(reported, days),
+        meanMealPlanAdherencePct: mean("mealPlanAdherencePct"),
+        meanDietAdherencePct: mean("dietAdherencePct"),
+        meanDigestiveTolerance: mean("digestiveTolerance"),
+        needsFollowup: rows.filter((r) => r.reviewState === "needs_followup").length,
+        unreviewed: rows.filter((r) => r.reviewState === "unreviewed").length,
+      });
     }
 
     if (url.pathname === "/rest/v1/patient_profiles" && req.method === "GET") {

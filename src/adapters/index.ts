@@ -811,6 +811,130 @@ export const api = {
      */
     autoResolveAI: notWired("Autonomous financial decisions (deliberately never built)"),
   },
+  nutrition: {
+    /** LIVE: the org's diet template library with every version. */
+    templates: async (includeArchived = false) => liveClient.nutritionTemplates(includeArchived),
+    /** LIVE: the content of exactly one template version OR one plan version. */
+    versionContent: async (input: {
+      templateVersionId?: string | null;
+      planVersionId?: string | null;
+    }) => liveClient.nutritionVersionContent(input),
+    /** LIVE: a patient's plans, versions, safety flags, amendments, check-ins. */
+    forPatient: async (patientId: string) => liveClient.nutritionForPatient(patientId),
+    /**
+     * LIVE: adherence over a window. A day with no check-in is reported as
+     * MISSING, never as zero adherence — silence is not a clinical finding.
+     */
+    adherence: async (patientId: string, days = 30) =>
+      liveClient.nutritionAdherence(patientId, days),
+    /** LIVE: install the eight starter templates. Idempotent on content. */
+    installStarters: async () => liveClient.nutritionInstallStarters(),
+    /** LIVE: create or rename a template. */
+    upsertTemplate: async (input: Record<string, unknown> & { name: string }) =>
+      liveClient.nutritionUpsertTemplate(input),
+    /**
+     * LIVE: draft the next template version. `requiresPractitionerReview` is
+     * not a caller option — a template is review-gated, full stop.
+     */
+    createTemplateVersion: async (input: Record<string, unknown> & { templateId: string }) =>
+      liveClient.nutritionCreateTemplateVersion(input),
+    /** LIVE: replace a draft template version's content. */
+    saveTemplateContent: async (input: { templateVersionId: string; content: unknown }) =>
+      liveClient.nutritionSaveTemplateContent(input),
+    /** LIVE: publish a template version, freezing its content permanently. */
+    publishTemplateVersion: async (templateVersionId: string) =>
+      liveClient.nutritionPublishTemplateVersion(templateVersionId),
+    /** LIVE: archive a template. Every version stays readable. */
+    archiveTemplate: async (input: { templateId: string; reason: string }) =>
+      liveClient.nutritionArchiveTemplate(input),
+    /**
+     * LIVE: start a patient plan. A source template is SNAPSHOTTED, so editing
+     * that template later never rewrites a plan the patient already has.
+     */
+    createPlan: async (input: {
+      patientId: string;
+      title: string;
+      sourceTemplateVersionId?: string | null;
+    }) => liveClient.nutritionCreatePlan(input),
+    /** LIVE: save a draft version under optimistic concurrency. */
+    savePlanVersion: async (
+      input: Record<string, unknown> & { planVersionId: string; expectedVersion: number },
+    ) => liveClient.nutritionSavePlanVersion(input),
+    /** LIVE: replace the assessment constraints on a draft version. */
+    setConstraints: async (input: { planVersionId: string; constraints: unknown[] }) =>
+      liveClient.nutritionSetConstraints(input),
+    /** LIVE: run the safety review. Approval is refused until this has run. */
+    evaluateSafety: async (planVersionId: string) =>
+      liveClient.nutritionEvaluateSafety(planVersionId),
+    /** LIVE: raise a flag the evaluator cannot derive honestly on its own. */
+    raiseSafetyFlag: async (input: {
+      planVersionId: string;
+      kind: string;
+      severity: "review" | "blocking";
+      detail: string;
+    }) => liveClient.nutritionRaiseSafetyFlag(input),
+    /**
+     * LIVE: acknowledge, override or resolve a flag. An override needs a
+     * reason, and the database records who gave it and when.
+     */
+    resolveSafetyFlag: async (input: {
+      flagId: string;
+      action: "acknowledge" | "override" | "resolve";
+      reason?: string | null;
+    }) => liveClient.nutritionResolveSafetyFlag(input),
+    /** LIVE: submit a draft for review. */
+    submit: async (planVersionId: string) => liveClient.nutritionSubmit(planVersionId),
+    /**
+     * LIVE: approve. The database refuses unless safety has been evaluated and
+     * every blocking flag is resolved or overridden — skipping the safety
+     * screen in the browser changes nothing.
+     */
+    approve: async (input: { planVersionId: string; note?: string | null }) =>
+      liveClient.nutritionApprove(input),
+    /** LIVE: activate. Any other live plan for this patient is superseded. */
+    activate: async (planVersionId: string) => liveClient.nutritionActivate(planVersionId),
+    /** LIVE: pause, resume, complete or discontinue. */
+    lifecycle: async (input: {
+      planId: string;
+      action: "pause" | "resume" | "complete" | "discontinue";
+      reason?: string | null;
+    }) => liveClient.nutritionLifecycle(input),
+    /**
+     * LIVE: revise into a NEW draft. The version being revised is not touched,
+     * so the plan the patient was given stays readable exactly as it was.
+     */
+    revise: async (input: { planVersionId: string; reason: string }) =>
+      liveClient.nutritionRevise(input),
+    /** LIVE: append an amendment beside a frozen version. */
+    addAmendment: async (input: { planVersionId: string; body: string; reason: string }) =>
+      liveClient.nutritionAddAmendment(input),
+    /** LIVE: record a check-in. The source is required, never inferred. */
+    recordCheckin: async (
+      input: Record<string, unknown> & { patientId: string; observedOn: string; source: string },
+    ) => liveClient.nutritionRecordCheckin(input),
+    /** LIVE: mark a check-in reviewed or needing follow-up. */
+    reviewCheckin: async (input: { checkinId: string; state: "reviewed" | "needs_followup" }) =>
+      liveClient.nutritionReviewCheckin(input),
+    /**
+     * LIVE: draft suggestions assembled from the plan's own template and the
+     * patient's recorded constraints. Draft only — it writes nothing, and an
+     * allergy conflict is raised rather than silently removed.
+     */
+    copilotDraft: async (input: { planVersionId: string; patientId: string }) =>
+      liveClient.nutritionCopilotDraft(input),
+    /**
+     * LIVE: the Passio and copilot boundaries' real state.
+     * `liveRequestExecuted` is false until a Passio request has ACTUALLY run —
+     * configuration alone is never presented as proof the integration works.
+     */
+    providerStatus: async () => liveClient.nutritionProviderStatus(),
+    /**
+     * UNAVAILABLE: no AI approves, activates, or amends a nutrition plan, and
+     * none writes a food rule. Every write RPC requires auth.uid() and a
+     * clinical role; there is no autonomous path.
+     */
+    autoApproveAI: notWired("Autonomous nutrition approval (deliberately never built)"),
+  },
   inventory: {
     /** LIVE: catalog products with per-location stock, suppliers, tax rates. */
     listProducts: async (filters: LiveBillingCatalogFilters = {}) =>

@@ -60,6 +60,13 @@ import type {
   LivePlanType,
   LiveReconciliationWorkspace,
   LiveStripeStatus,
+  LiveNutritionAdherenceSummary,
+  LiveNutritionCopilotDraft,
+  LiveNutritionMutationResult,
+  LiveNutritionProviderStatus,
+  LiveNutritionTemplateLibrary,
+  LiveNutritionVersionContent,
+  LivePatientNutrition,
   LiveInboxTodaySummary,
   LiveMessageChannel,
   LivePatientMessages,
@@ -830,4 +837,161 @@ export const liveClient = {
 
   plansStripeStatus: () =>
     liveFetch<LiveStripeStatus>("plans/stripe-status", { method: "POST", body: {} }),
+
+  /* ------------------------------------------------ nutrition (phase 9A) */
+
+  nutritionTemplates: (includeArchived = false) =>
+    liveFetch<LiveNutritionTemplateLibrary>("nutrition/templates", {
+      method: "POST",
+      body: { includeArchived },
+    }),
+
+  nutritionVersionContent: (input: {
+    templateVersionId?: string | null;
+    planVersionId?: string | null;
+  }) =>
+    liveFetch<LiveNutritionVersionContent>("nutrition/content", {
+      method: "POST",
+      body: input,
+    }),
+
+  nutritionForPatient: (patientId: string) =>
+    liveFetch<LivePatientNutrition>("nutrition/patient", {
+      method: "POST",
+      body: { patientId },
+    }),
+
+  nutritionAdherence: (patientId: string, days = 30) =>
+    liveFetch<LiveNutritionAdherenceSummary>("nutrition/adherence", {
+      method: "POST",
+      body: { patientId, days },
+    }),
+
+  nutritionUpsertTemplate: (input: Record<string, unknown> & { name: string }) =>
+    liveFetch<LiveNutritionMutationResult>("nutrition/template", { method: "POST", body: input }),
+
+  nutritionCreateTemplateVersion: (input: Record<string, unknown> & { templateId: string }) =>
+    liveFetch<LiveNutritionMutationResult>("nutrition/template-version", {
+      method: "POST",
+      body: input,
+    }),
+
+  nutritionSaveTemplateContent: (input: { templateVersionId: string; content: unknown }) =>
+    liveFetch<LiveNutritionMutationResult>("nutrition/template-content", {
+      method: "POST",
+      body: input,
+    }),
+
+  nutritionPublishTemplateVersion: (templateVersionId: string) =>
+    liveFetch<LiveNutritionMutationResult>("nutrition/template-publish", {
+      method: "POST",
+      body: { templateVersionId },
+    }),
+
+  nutritionArchiveTemplate: (input: { templateId: string; reason: string }) =>
+    liveFetch<LiveNutritionMutationResult>("nutrition/template-archive", {
+      method: "POST",
+      body: input,
+    }),
+
+  nutritionInstallStarters: () =>
+    liveFetch<{ installed: Array<{ slug: string; outcome: string }> }>(
+      "nutrition/starter-install",
+      { method: "POST", body: {} },
+    ),
+
+  nutritionCreatePlan: (input: {
+    patientId: string;
+    title: string;
+    sourceTemplateVersionId?: string | null;
+  }) => liveFetch<LiveNutritionMutationResult>("nutrition/plan", { method: "POST", body: input }),
+
+  nutritionSavePlanVersion: (
+    input: Record<string, unknown> & { planVersionId: string; expectedVersion: number },
+  ) => liveFetch<LiveNutritionMutationResult>("nutrition/plan-save", { method: "POST", body: input }),
+
+  nutritionSetConstraints: (input: { planVersionId: string; constraints: unknown[] }) =>
+    liveFetch<LiveNutritionMutationResult>("nutrition/constraints", {
+      method: "POST",
+      body: input,
+    }),
+
+  nutritionEvaluateSafety: (planVersionId: string) =>
+    liveFetch<LiveNutritionMutationResult>("nutrition/safety-evaluate", {
+      method: "POST",
+      body: { planVersionId },
+    }),
+
+  nutritionRaiseSafetyFlag: (input: {
+    planVersionId: string;
+    kind: string;
+    severity: "review" | "blocking";
+    detail: string;
+  }) => liveFetch<LiveNutritionMutationResult>("nutrition/safety-raise", {
+    method: "POST",
+    body: input,
+  }),
+
+  nutritionResolveSafetyFlag: (input: {
+    flagId: string;
+    action: "acknowledge" | "override" | "resolve";
+    reason?: string | null;
+  }) => liveFetch<LiveNutritionMutationResult>("nutrition/safety-resolve", {
+    method: "POST",
+    body: input,
+  }),
+
+  nutritionSubmit: (planVersionId: string) =>
+    liveFetch<LiveNutritionMutationResult>("nutrition/submit", {
+      method: "POST",
+      body: { planVersionId },
+    }),
+
+  nutritionApprove: (input: { planVersionId: string; note?: string | null }) =>
+    liveFetch<LiveNutritionMutationResult>("nutrition/approve", { method: "POST", body: input }),
+
+  nutritionActivate: (planVersionId: string) =>
+    liveFetch<LiveNutritionMutationResult>("nutrition/activate", {
+      method: "POST",
+      body: { planVersionId },
+    }),
+
+  nutritionLifecycle: (input: {
+    planId: string;
+    action: "pause" | "resume" | "complete" | "discontinue";
+    reason?: string | null;
+  }) => liveFetch<LiveNutritionMutationResult>("nutrition/lifecycle", {
+    method: "POST",
+    body: input,
+  }),
+
+  nutritionRevise: (input: { planVersionId: string; reason: string }) =>
+    liveFetch<LiveNutritionMutationResult>("nutrition/revise", { method: "POST", body: input }),
+
+  nutritionAddAmendment: (input: { planVersionId: string; body: string; reason: string }) =>
+    liveFetch<LiveNutritionMutationResult>("nutrition/amendment", { method: "POST", body: input }),
+
+  nutritionRecordCheckin: (
+    input: Record<string, unknown> & { patientId: string; observedOn: string; source: string },
+  ) => liveFetch<LiveNutritionMutationResult>("nutrition/checkin", { method: "POST", body: input }),
+
+  nutritionReviewCheckin: (input: {
+    checkinId: string;
+    state: "reviewed" | "needs_followup";
+  }) => liveFetch<LiveNutritionMutationResult>("nutrition/checkin-review", {
+    method: "POST",
+    body: input,
+  }),
+
+  nutritionCopilotDraft: (input: { planVersionId: string; patientId: string }) =>
+    liveFetch<LiveNutritionCopilotDraft>("nutrition/copilot-draft", {
+      method: "POST",
+      body: input,
+    }),
+
+  nutritionProviderStatus: () =>
+    liveFetch<LiveNutritionProviderStatus>("nutrition/provider-status", {
+      method: "POST",
+      body: {},
+    }),
 };
