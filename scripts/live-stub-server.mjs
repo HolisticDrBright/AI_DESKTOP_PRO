@@ -950,6 +950,35 @@ function seedScheduleFor(fromIso) {
       status: "confirmed", version: 1,
       startsAt: at(4, 9).toISOString(), endsAt: at(4, 9, 40).toISOString(),
     },
+    // Dedicated to the phase-8B plans walkthrough: credit redemption needs
+    // several appointments for ONE patient (reserve, release, race).
+    {
+      id: "abababab-1111-2222-3333-444444444405",
+      organizationId: "org-fixture",
+      patientId: PATIENTS[3].id, patientName: "Billing Walkthrough",
+      practitionerUserId: PRACTITIONER_USER_ID, practitionerName: "Demo Practitioner",
+      title: null, appointmentType: "follow-up", location: "Room 4", telehealthUrl: null,
+      status: "confirmed", version: 1,
+      startsAt: at(5, 9).toISOString(), endsAt: at(5, 9, 40).toISOString(),
+    },
+    {
+      id: "abababab-1111-2222-3333-444444444406",
+      organizationId: "org-fixture",
+      patientId: PATIENTS[3].id, patientName: "Billing Walkthrough",
+      practitionerUserId: PRACTITIONER_USER_ID, practitionerName: "Demo Practitioner",
+      title: null, appointmentType: "follow-up", location: "Room 4", telehealthUrl: null,
+      status: "confirmed", version: 1,
+      startsAt: at(6, 9).toISOString(), endsAt: at(6, 9, 40).toISOString(),
+    },
+    {
+      id: "abababab-1111-2222-3333-444444444407",
+      organizationId: "org-fixture",
+      patientId: PATIENTS[3].id, patientName: "Billing Walkthrough",
+      practitionerUserId: PRACTITIONER_USER_ID, practitionerName: "Demo Practitioner",
+      title: null, appointmentType: "follow-up", location: "Room 4", telehealthUrl: null,
+      status: "confirmed", version: 1,
+      startsAt: at(7, 9).toISOString(), endsAt: at(7, 9, 40).toISOString(),
+    },
     {
       id: "abababab-1111-2222-3333-444444444402",
       organizationId: "org-fixture",
@@ -2077,6 +2106,179 @@ function billingInvoiceJson(invoice) {
 
 resetBillingFixtures();
 
+/* ---- phase 8B: plans, entitlements, memberships & reconciliation.
+   Reproduces the accounting policy EXACTLY as the RPCs enforce it, including
+   the identity granted = remaining + reserved + consumed + expired + refunded,
+   exactly-once granting, one-reservation-per-appointment, published-terms
+   immutability, and the granular financial permission model. */
+
+let planPackages = [];
+let planMemberships = [];
+let packageVersions = [];
+let membershipVersions = [];
+let planAcceptances = [];
+let patientMemberships = [];
+let patientMembershipEvents = [];
+let entitlements = new Map();
+let entitlementLedger = [];
+let packageRedemptions = [];
+let orgBillingPolicy = null;
+let reconciliationExceptions = [];
+let reconciliationEvents = [];
+let financialPermissionGrants = [];
+/** The signed-in fixture practitioner's role. Suites flip it to test refusal. */
+let fixtureRole = "owner";
+
+const DEFAULT_PERMS = {
+  owner: "*",
+  admin: "*",
+  practitioner: ["billing.view_summary", "billing.create_invoice", "billing.take_payment",
+    "billing.adjust_price", "catalog.manage_products", "inventory.adjust", "plans.manage"],
+  staff: ["billing.view_summary", "billing.create_invoice", "billing.take_payment"],
+};
+
+function hasFinancialPermission(permission) {
+  const explicit = financialPermissionGrants.find(
+    (g) => g.role === fixtureRole && g.permission === permission);
+  if (explicit) return explicit.granted;
+  const d = DEFAULT_PERMS[fixtureRole];
+  if (d === "*") return true;
+  return Array.isArray(d) && d.includes(permission);
+}
+
+/** Typed refusal matching the RPC contract. */
+function requireFinancial(res, permission) {
+  if (!hasFinancialPermission(permission)) {
+    json(res, 403, { code: "42501", message: `this action requires the ${permission} permission` });
+    return false;
+  }
+  return true;
+}
+
+function resetPlanFixtures() {
+  planPackages = [];
+  planMemberships = [];
+  packageVersions = [];
+  membershipVersions = [];
+  planAcceptances = [];
+  patientMemberships = [];
+  patientMembershipEvents = [];
+  entitlements = new Map();
+  entitlementLedger = [];
+  packageRedemptions = [];
+  orgBillingPolicy = null;
+  reconciliationExceptions = [];
+  reconciliationEvents = [];
+  financialPermissionGrants = [];
+  fixtureRole = "owner";
+  for (const [id, item] of queue) {
+    if (String(item.itemType || "").startsWith("subscription_") ||
+        ["membership_expiring", "package_credits_expiring", "payment_unreconciled",
+         "payment_dispute", "refund_action_required", "processor_failure_repeated"]
+          .includes(item.itemType)) {
+      queue.delete(id);
+    }
+  }
+}
+
+/** Apply one entitlement movement + ledger row, enforcing the identity. */
+function entitlementMove(entId, kind, quantity, refType, refId, reason, source = "rpc") {
+  const e = entitlements.get(entId);
+  if (!e) { const err = new Error("entitlement not found"); err.code = "P0002"; throw err; }
+  if (quantity <= 0) { const err = new Error("quantity must be positive"); err.code = "22023"; throw err; }
+  const fail = (msg, code = "40001") => { const err = new Error(msg); err.code = code; throw err; };
+
+  if (kind === "grant") {
+    e.remainingQuantity += quantity; e.grantedQuantity += quantity;
+  } else if (kind === "reserve") {
+    if (e.status !== "active") fail("this entitlement is not active");
+    if (e.expiresAt && new Date(e.expiresAt) <= new Date()) fail("this entitlement has expired");
+    if (e.remainingQuantity < quantity) fail("not enough remaining credit");
+    // one live reservation per (entitlement, appointment) — the unique index
+    if (refType === "appointment" && entitlementLedger.some(
+      (l) => l.entitlementId === entId && l.kind === "reserve" && l.refId === refId)) {
+      fail("a credit is already reserved for this appointment");
+    }
+    e.remainingQuantity -= quantity; e.reservedQuantity += quantity;
+  } else if (kind === "release") {
+    if (e.reservedQuantity < quantity) fail("not that much is reserved");
+    e.reservedQuantity -= quantity; e.remainingQuantity += quantity;
+  } else if (kind === "consume") {
+    if (e.reservedQuantity < quantity) fail("not that much is reserved");
+    e.reservedQuantity -= quantity; e.consumedQuantity += quantity;
+  } else if (kind === "expire") {
+    if (e.remainingQuantity < quantity) fail("not that much remains to expire");
+    e.remainingQuantity -= quantity; e.expiredQuantity += quantity;
+  } else if (kind === "refund_revoke") {
+    if (e.remainingQuantity < quantity) fail("only unspent credit can be revoked");
+    e.remainingQuantity -= quantity; e.refundedQuantity += quantity;
+  } else if (kind === "manual_restore") {
+    if (!reason || !String(reason).trim()) fail("a manual restoration requires a reason", "22023");
+    if (e.consumedQuantity >= quantity) { e.consumedQuantity -= quantity; e.remainingQuantity += quantity; }
+    else if (e.expiredQuantity >= quantity) { e.expiredQuantity -= quantity; e.remainingQuantity += quantity; }
+    else fail("there is not that much consumed or expired credit to restore");
+  } else {
+    fail("unknown entitlement movement", "22023");
+  }
+
+  // the identity the database enforces as a check constraint
+  const sum = e.remainingQuantity + e.reservedQuantity + e.consumedQuantity
+            + e.expiredQuantity + e.refundedQuantity;
+  if (sum !== e.grantedQuantity) {
+    const err = new Error("entitlement accounting identity violated"); err.code = "23514"; throw err;
+  }
+
+  entitlementLedger.push({
+    id: billingId("el"), organizationId: e.organizationId, entitlementId: entId, kind,
+    quantity, refType: refType ?? null, refId: refId ?? null, reason: reason ?? null,
+    source, createdAt: new Date().toISOString(),
+  });
+
+  if (e.status !== "revoked") {
+    if (e.expiresAt && new Date(e.expiresAt) <= new Date()
+        && e.remainingQuantity === 0 && e.reservedQuantity === 0) e.status = "expired";
+    else if (e.remainingQuantity === 0 && e.reservedQuantity === 0
+        && (e.consumedQuantity > 0 || e.refundedQuantity > 0 || e.expiredQuantity > 0)) e.status = "exhausted";
+    else e.status = "active";
+  }
+}
+
+/** One open financial task per (type, ref), exactly like the RPC. */
+function upsertFinancialTask(itemType, refId, title, patientId, priority = "medium") {
+  for (const item of queue.values()) {
+    if (item.itemType === itemType && item.refId === refId &&
+        (item.status === "open" || item.status === "in_review")) return item.id;
+  }
+  const id = billingId("task");
+  queue.set(id, {
+    id, organizationId: "org-fixture", itemType, priority, status: "open",
+    refId, title, patientId: patientId ?? null, patientName: null,
+    createdAt: new Date().toISOString(),
+  });
+  return id;
+}
+
+function entitlementJson(e) {
+  const pv = packageVersions.find((v) => v.id === e.packageVersionId);
+  const pkg = pv ? planPackages.find((p) => p.id === pv.packageId) : null;
+  const sub = patientMemberships.find((m) => m.id === e.patientMembershipId);
+  const mem = sub ? planMemberships.find((m) => m.id === sub.membershipId) : null;
+  return {
+    id: e.id, source: e.source, status: e.status,
+    grantedQuantity: e.grantedQuantity, remainingQuantity: e.remainingQuantity,
+    reservedQuantity: e.reservedQuantity, consumedQuantity: e.consumedQuantity,
+    expiredQuantity: e.expiredQuantity, refundedQuantity: e.refundedQuantity,
+    creditMode: e.creditMode, expiresAt: e.expiresAt, transferPolicy: e.transferPolicy,
+    planName: pkg?.name ?? mem?.name ?? null,
+    ledger: entitlementLedger.filter((l) => l.entitlementId === e.id)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .map((l) => ({ kind: l.kind, quantity: l.quantity, refType: l.refType,
+        refId: l.refId, reason: l.reason, at: l.createdAt })),
+  };
+}
+
+resetPlanFixtures();
+
 /* --------------------------------------------------------------- wire utils */
 
 const json = (res, status, value) => {
@@ -2211,6 +2413,92 @@ createServer(async (req, res) => {
   // Reset the billing domain to its pristine state. The billing suite is
   // written against a fresh backend; it calls this in beforeAll so the
   // battery is order-independent. Non-billing domains are untouched.
+  // Reset the phase-8B plan domain so the suite is order-independent.
+  if (url.pathname === "/__control/plans-reset" && req.method === "POST") {
+    resetPlanFixtures();
+    return json(res, 200, { ok: true });
+  }
+
+  // Flip the signed-in fixture practitioner's role, so the suite can prove a
+  // permission refusal is REAL rather than a UI affordance being hidden.
+  if (url.pathname === "/__control/plans-set-role" && req.method === "POST") {
+    const body = await readBody(req);
+    fixtureRole = String(body.role ?? "owner");
+    return json(res, 200, { ok: true, role: fixtureRole });
+  }
+
+  // Stand-in for the service_role processor: raise a reconciliation exception.
+  if (url.pathname === "/__control/plans-raise-exception" && req.method === "POST") {
+    const body = await readBody(req);
+    const x = {
+      id: billingId("rx"), organizationId: "org-fixture",
+      kind: String(body.kind ?? "amount_mismatch"), status: "open",
+      internalAmountMinor: body.internalAmountMinor ?? null,
+      providerAmountMinor: body.providerAmountMinor ?? null,
+      currency: body.currency ?? "USD", detail: body.detail ?? null,
+      // deliberately null: settlement figures are not fetched in this phase
+      providerFeeMinor: null, providerNetMinor: null, providerSettlementStatus: null,
+      version: 1, createdAt: new Date().toISOString(),
+      resolvedAt: null, resolvedBy: null, resolutionReason: null,
+    };
+    reconciliationExceptions.push(x);
+    upsertFinancialTask("payment_unreconciled", x.id,
+      `Unreconciled payment: ${x.kind.replace("_", " ")}`, null, "high");
+    return json(res, 200, { id: x.id });
+  }
+
+  // Stand-in for a failed subscription payment arriving from the processor.
+  if (url.pathname === "/__control/plans-payment-failed" && req.method === "POST") {
+    const body = await readBody(req);
+    const sub = patientMemberships.find((m) => m.id === String(body.patientMembershipId ?? ""));
+    if (!sub) return json(res, 404, { code: "P0002", message: "membership not found" });
+    const from = sub.status;
+    sub.status = "past_due";
+    sub.version += 1;
+    patientMembershipEvents.push({
+      organizationId: "org-fixture", patientMembershipId: sub.id, kind: "payment_failed",
+      fromStatus: from, toStatus: "past_due", detail: "processor reported a failed payment",
+      source: "webhook", createdAt: new Date().toISOString(),
+    });
+    upsertFinancialTask("subscription_payment_failed", sub.id,
+      "Subscription payment failed — payment method needs updating", sub.patientId, "high");
+    return json(res, 200, { ok: true, status: sub.status });
+  }
+
+  // Stand-in for a RECOVERED subscription payment. Recovery is processor
+  // driven — there is deliberately no practitioner action that moves a
+  // past_due subscription back to active without money actually arriving.
+  if (url.pathname === "/__control/plans-payment-recovered" && req.method === "POST") {
+    const body = await readBody(req);
+    const sub = patientMemberships.find((m) => m.id === String(body.patientMembershipId ?? ""));
+    if (!sub) return json(res, 404, { code: "P0002", message: "membership not found" });
+    const from = sub.status;
+    sub.status = "active";
+    sub.version += 1;
+    patientMembershipEvents.push({
+      organizationId: "org-fixture", patientMembershipId: sub.id, kind: "payment_recovered",
+      fromStatus: from, toStatus: "active", detail: "processor reported a successful retry",
+      source: "webhook", createdAt: new Date().toISOString(),
+    });
+    for (const [id, item] of queue) {
+      if (item.itemType === "subscription_payment_failed" && item.refId === sub.id) queue.delete(id);
+    }
+    return json(res, 200, { ok: true, status: sub.status });
+  }
+
+  // Mark a package purchase invoice PAID, the way settlement would.
+  if (url.pathname === "/__control/plans-mark-invoice-paid" && req.method === "POST") {
+    const body = await readBody(req);
+    const invoice = billingInvoices.get(String(body.invoiceId ?? ""));
+    if (!invoice) return json(res, 404, { code: "P0002", message: "invoice not found" });
+    invoice.status = "paid";
+    invoice.paidMinor = invoice.totalMinor;
+    invoice.finalizedAt = invoice.finalizedAt ?? new Date().toISOString();
+    invoice.number = invoice.number ?? `INV-${String(++billingInvoiceNumber).padStart(5, "0")}`;
+    invoice.version += 1;
+    return json(res, 200, { ok: true });
+  }
+
   if (url.pathname === "/__control/billing-reset" && req.method === "POST") {
     resetBillingFixtures();
     return json(res, 200, { ok: true });
@@ -5050,6 +5338,545 @@ createServer(async (req, res) => {
     };
 
     /* ---- billing, checkout, catalog & inventory RPCs (phase 8A) ---- */
+
+    /* ---- phase 8B: plans, entitlements, memberships, reconciliation ---- */
+
+    if (url.pathname === "/rest/v1/rpc/list_plans" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!memberOrgIds.includes(String(body._organization_id ?? ""))) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      if (!requireFinancial(res, "billing.view_summary")) return;
+      const includeArchived = body._include_archived === true;
+      return json(res, 200, {
+        packages: planPackages
+          .filter((p) => includeArchived || p.status !== "archived")
+          .sort((a, b) => a.name.localeCompare(b.name))
+          .map((p) => ({
+            id: p.id, name: p.name, description: p.description, kind: p.kind,
+            status: p.status, version: p.version, archivedAt: p.archivedAt,
+            currentVersionId: p.currentVersionId,
+            versions: packageVersions.filter((v) => v.packageId === p.id)
+              .sort((a, b) => b.versionNumber - a.versionNumber)
+              .map((v) => ({
+                id: v.id, versionNumber: v.versionNumber, priceMinor: v.priceMinor,
+                currency: v.currency, creditQuantity: v.creditQuantity, creditMode: v.creditMode,
+                expiresAfterDays: v.expiresAfterDays, transferPolicy: v.transferPolicy,
+                status: v.status, publishedAt: v.publishedAt, termsSummary: v.termsSummary })),
+          })),
+        memberships: planMemberships
+          .filter((m) => includeArchived || m.status !== "archived")
+          .sort((a, b) => a.name.localeCompare(b.name))
+          .map((m) => ({
+            id: m.id, name: m.name, description: m.description, status: m.status,
+            version: m.version, archivedAt: m.archivedAt, currentVersionId: m.currentVersionId,
+            versions: membershipVersions.filter((v) => v.membershipId === m.id)
+              .sort((a, b) => b.versionNumber - a.versionNumber)
+              .map((v) => ({
+                id: v.id, versionNumber: v.versionNumber, priceMinor: v.priceMinor,
+                currency: v.currency, intervalUnit: v.intervalUnit, intervalCount: v.intervalCount,
+                trialDays: v.trialDays, includedCredits: v.includedCredits,
+                minimumCommitmentPeriods: v.minimumCommitmentPeriods,
+                gracePeriodDays: v.gracePeriodDays, status: v.status,
+                publishedAt: v.publishedAt, termsSummary: v.termsSummary })),
+          })),
+        policy: orgBillingPolicy,
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/upsert_plan" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!requireFinancial(res, "plans.manage")) return;
+      const type = String(body._plan_type ?? "");
+      const list = type === "package" ? planPackages : planMemberships;
+      if (!body._id) {
+        const name = String(body._name ?? "").trim();
+        if (!name) return json(res, 400, { code: "22023", message: "a plan needs a name" });
+        const row = {
+          id: billingId(type === "package" ? "pkg" : "mem"), organizationId: "org-fixture",
+          name, description: body._description ?? null,
+          kind: type === "package" ? String(body._kind ?? "visit_credits") : null,
+          status: "draft", currentVersionId: null, archivedAt: null, version: 1,
+        };
+        list.push(row);
+        return json(res, 200, { id: row.id, version: 1 });
+      }
+      const row = list.find((r) => r.id === String(body._id));
+      if (!row) return json(res, 404, { code: "P0002", message: "plan not found" });
+      if (Number(body._expected_version) !== row.version) {
+        return json(res, 409, { code: "40001", message: "this plan changed since you loaded it" });
+      }
+      if (body._name) row.name = String(body._name).trim();
+      if (body._archive === true) { row.status = "archived"; row.archivedAt = new Date().toISOString(); }
+      row.version += 1;
+      return json(res, 200, { id: row.id, version: row.version });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/create_plan_version" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!requireFinancial(res, "plans.manage")) return;
+      const type = String(body._plan_type ?? "");
+      const planId = String(body._plan_id ?? "");
+      const price = Number(body._price_minor);
+      if (!Number.isFinite(price) || price < 0) {
+        return json(res, 400, { code: "22023", message: "a price cannot be negative" });
+      }
+      if (type === "package") {
+        if (!planPackages.some((p) => p.id === planId)) {
+          return json(res, 404, { code: "P0002", message: "plan not found" });
+        }
+        const n = packageVersions.filter((v) => v.packageId === planId).length + 1;
+        const v = {
+          id: billingId("pv"), organizationId: "org-fixture", packageId: planId,
+          versionNumber: n, priceMinor: price, currency: String(body._currency ?? "USD"),
+          creditQuantity: Number(body._credit_quantity ?? 0),
+          creditMode: String(body._credit_mode ?? "single_use"),
+          expiresAfterDays: body._expires_after_days == null ? null : Number(body._expires_after_days),
+          eligiblePractitionerIds: body._eligible_practitioner_ids ?? [],
+          transferPolicy: String(body._transfer_policy ?? "non_transferable"),
+          termsSummary: body._terms_summary ?? null, status: "draft", publishedAt: null,
+        };
+        packageVersions.push(v);
+        return json(res, 200, { id: v.id, versionNumber: n });
+      }
+      if (!planMemberships.some((m) => m.id === planId)) {
+        return json(res, 404, { code: "P0002", message: "plan not found" });
+      }
+      const n = membershipVersions.filter((v) => v.membershipId === planId).length + 1;
+      const v = {
+        id: billingId("mv"), organizationId: "org-fixture", membershipId: planId,
+        versionNumber: n, priceMinor: price, currency: String(body._currency ?? "USD"),
+        intervalUnit: String(body._interval_unit ?? "month"),
+        intervalCount: Number(body._interval_count ?? 1),
+        trialDays: Number(body._trial_days ?? 0),
+        includedCredits: Number(body._included_credits ?? 0),
+        minimumCommitmentPeriods: Number(body._minimum_commitment_periods ?? 0),
+        gracePeriodDays: Number(body._grace_period_days ?? 0),
+        termsSummary: body._terms_summary ?? null, status: "draft", publishedAt: null,
+      };
+      membershipVersions.push(v);
+      return json(res, 200, { id: v.id, versionNumber: n });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/publish_plan_version" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!requireFinancial(res, "plans.manage")) return;
+      const type = String(body._plan_type ?? "");
+      const vid = String(body._version_id ?? "");
+      const versions = type === "package" ? packageVersions : membershipVersions;
+      const plans = type === "package" ? planPackages : planMemberships;
+      const v = versions.find((x) => x.id === vid);
+      if (!v) return json(res, 404, { code: "P0002", message: "plan version not found" });
+      if (v.status !== "draft") {
+        return json(res, 403, { code: "42501", message: "only a draft version can be published" });
+      }
+      v.status = "published";
+      v.publishedAt = new Date().toISOString();
+      const plan = plans.find((p) => p.id === (v.packageId ?? v.membershipId));
+      if (plan) { plan.currentVersionId = v.id; plan.status = "active"; plan.version += 1; }
+      return json(res, 200, { id: v.id, planId: plan?.id, status: "published" });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/set_org_billing_policy" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!requireFinancial(res, "plans.manage")) return;
+      orgBillingPolicy = {
+        organization_id: "org-fixture",
+        no_show_policy: String(body._no_show_policy ?? "consume"),
+        late_cancel_policy: String(body._late_cancel_policy ?? "release"),
+        late_cancel_window_hours: Number(body._late_cancel_window_hours ?? 24),
+        consume_on: String(body._consume_on ?? "completed"),
+      };
+      return json(res, 200, { ok: true });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/purchase_package" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!requireFinancial(res, "billing.create_invoice")) return;
+      const pv = packageVersions.find((v) => v.id === String(body._package_version_id ?? ""));
+      if (!pv) return json(res, 404, { code: "P0002", message: "plan version not found" });
+      if (pv.status !== "published") {
+        return json(res, 403, { code: "42501", message: "only a published plan version can be sold" });
+      }
+      const pkg = planPackages.find((p) => p.id === pv.packageId);
+      const patientId = String(body._patient_id ?? "");
+      const invoice = {
+        id: billingId("inv"), organizationId: "org-fixture", patientId, appointmentId: null,
+        practitionerUserId: PRACTITIONER_USER_ID, locationId: null, number: null,
+        status: "draft", currency: pv.currency, version: 1,
+        subtotalMinor: pv.priceMinor, discountMinor: 0, taxMinor: 0, totalMinor: pv.priceMinor,
+        paidMinor: 0, refundedMinor: 0, creditAppliedMinor: 0,
+        finalizedAt: null, voidedAt: null, voidReason: null,
+        inventoryReservedAt: null, inventoryCommittedAt: null,
+        createdAt: new Date().toISOString(),
+      };
+      billingInvoices.set(invoice.id, invoice);
+      billingLines.set(invoice.id, [{
+        id: billingId("line"), invoiceId: invoice.id, productId: null, kind: "package",
+        nameSnapshot: `${pkg?.name ?? "Package"} (v${pv.versionNumber})`, skuSnapshot: null,
+        quantity: 1, unitAmountMinor: pv.priceMinor, amountMinor: pv.priceMinor,
+        discountMinor: 0, discountReason: null, taxRateBps: 0, taxMinor: 0,
+      }]);
+      planAcceptances.push({
+        id: billingId("pa"), organizationId: "org-fixture", patientId,
+        packageVersionId: pv.id, membershipVersionId: null,
+        method: String(body._acceptance_method ?? "in_person"),
+        acceptedAt: new Date().toISOString(),
+      });
+      return json(res, 200, { invoiceId: invoice.id, packageVersionId: pv.id });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/grant_entitlements_for_invoice" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!requireFinancial(res, "billing.create_invoice")) return;
+      const invoice = billingInvoices.get(String(body._invoice_id ?? ""));
+      if (!invoice) return json(res, 404, { code: "P0002", message: "invoice not found" });
+      if (invoice.status !== "paid") {
+        return json(res, 403, {
+          code: "42501", message: "entitlements are granted only for a paid invoice" });
+      }
+      let created = 0;
+      for (const pa of planAcceptances.filter((a) => a.patientId === invoice.patientId && a.packageVersionId)) {
+        const pv = packageVersions.find((v) => v.id === pa.packageVersionId);
+        if (!pv) continue;
+        // exactly-once: one entitlement per (invoice, package version)
+        const exists = [...entitlements.values()].some(
+          (e) => e.sourceInvoiceId === invoice.id && e.packageVersionId === pv.id);
+        if (exists) continue;
+        const ent = {
+          id: billingId("ent"), organizationId: "org-fixture", patientId: invoice.patientId,
+          packageVersionId: pv.id, patientMembershipId: null, source: "package_purchase",
+          creditMode: pv.creditMode, grantedQuantity: 0, remainingQuantity: 0,
+          reservedQuantity: 0, consumedQuantity: 0, expiredQuantity: 0, refundedQuantity: 0,
+          eligiblePractitionerIds: pv.eligiblePractitionerIds ?? [],
+          expiresAt: pv.expiresAfterDays == null ? null
+            : new Date(Date.now() + pv.expiresAfterDays * 864e5).toISOString(),
+          sourceInvoiceId: invoice.id, periodKey: null,
+          transferPolicy: pv.transferPolicy, status: "active",
+          createdAt: new Date().toISOString(),
+        };
+        entitlements.set(ent.id, ent);
+        entitlementMove(ent.id, "grant", pv.creditQuantity, "invoice", invoice.id, "package purchase paid");
+        created += 1;
+      }
+      return json(res, 200, { entitlementsCreated: created });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/assign_complimentary_plan" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!requireFinancial(res, "comp.assign")) return;
+      const reason = String(body._reason ?? "").trim();
+      if (!reason) {
+        return json(res, 400, { code: "22023", message: "a complimentary assignment requires a reason" });
+      }
+      const patientId = String(body._patient_id ?? "");
+      const type = String(body._plan_type ?? "");
+      const vid = String(body._version_id ?? "");
+      const invoice = {
+        id: billingId("inv"), organizationId: "org-fixture", patientId, appointmentId: null,
+        practitionerUserId: PRACTITIONER_USER_ID, locationId: null, number: null,
+        status: "draft", currency: "USD", version: 1,
+        subtotalMinor: 0, discountMinor: 0, taxMinor: 0, totalMinor: 0,
+        paidMinor: 0, refundedMinor: 0, creditAppliedMinor: 0,
+        finalizedAt: null, voidedAt: null, voidReason: null,
+        inventoryReservedAt: null, inventoryCommittedAt: null,
+        createdAt: new Date().toISOString(),
+      };
+      billingInvoices.set(invoice.id, invoice);
+      let entId = null; let subId = null;
+
+      if (type === "package") {
+        const pv = packageVersions.find((v) => v.id === vid);
+        if (!pv) return json(res, 404, { code: "P0002", message: "plan version not found" });
+        const pkg = planPackages.find((p) => p.id === pv.packageId);
+        billingLines.set(invoice.id, [{
+          id: billingId("line"), invoiceId: invoice.id, productId: null, kind: "package",
+          nameSnapshot: `Complimentary: ${pkg?.name ?? "Package"}`, skuSnapshot: null,
+          quantity: 1, unitAmountMinor: 0, amountMinor: 0,
+          discountMinor: 0, discountReason: reason, taxRateBps: 0, taxMinor: 0,
+        }]);
+        const ent = {
+          id: billingId("ent"), organizationId: "org-fixture", patientId,
+          packageVersionId: pv.id, patientMembershipId: null, source: "complimentary",
+          creditMode: pv.creditMode, grantedQuantity: 0, remainingQuantity: 0,
+          reservedQuantity: 0, consumedQuantity: 0, expiredQuantity: 0, refundedQuantity: 0,
+          eligiblePractitionerIds: pv.eligiblePractitionerIds ?? [],
+          expiresAt: body._expires_at ?? (pv.expiresAfterDays == null ? null
+            : new Date(Date.now() + pv.expiresAfterDays * 864e5).toISOString()),
+          sourceInvoiceId: invoice.id, periodKey: null,
+          transferPolicy: pv.transferPolicy, status: "active",
+          createdAt: new Date().toISOString(),
+        };
+        entitlements.set(ent.id, ent);
+        entitlementMove(ent.id, "grant", pv.creditQuantity, "invoice", invoice.id, `complimentary: ${reason}`);
+        entId = ent.id;
+      } else {
+        const mv = membershipVersions.find((v) => v.id === vid);
+        if (!mv) return json(res, 404, { code: "P0002", message: "plan version not found" });
+        const sub = {
+          id: billingId("sub"), organizationId: "org-fixture", patientId,
+          membershipId: mv.membershipId, membershipVersionId: mv.id, status: "active",
+          origin: "complimentary", complimentaryReason: reason,
+          startedAt: new Date().toISOString(), currentPeriodStart: new Date().toISOString(),
+          currentPeriodEnd: new Date(Date.now() + 30 * 864e5).toISOString(),
+          trialEnd: null, cancelAtPeriodEnd: false, canceledAt: null, cancelReason: null,
+          pausedAt: null, endsAt: body._expires_at ?? null, graceUntil: null,
+          processorSubscriptionRef: null, version: 1, createdAt: new Date().toISOString(),
+        };
+        patientMemberships.push(sub);
+        patientMembershipEvents.push({
+          organizationId: "org-fixture", patientMembershipId: sub.id,
+          kind: "complimentary_assigned", fromStatus: null, toStatus: "active",
+          detail: reason, source: "rpc", createdAt: new Date().toISOString(),
+        });
+        subId = sub.id;
+        if (mv.includedCredits > 0) {
+          const ent = {
+            id: billingId("ent"), organizationId: "org-fixture", patientId,
+            packageVersionId: null, patientMembershipId: sub.id, source: "complimentary",
+            creditMode: "single_use", grantedQuantity: 0, remainingQuantity: 0,
+            reservedQuantity: 0, consumedQuantity: 0, expiredQuantity: 0, refundedQuantity: 0,
+            eligiblePractitionerIds: [], expiresAt: body._expires_at ?? null,
+            sourceInvoiceId: invoice.id, periodKey: new Date().toISOString().slice(0, 7),
+            transferPolicy: "non_transferable", status: "active",
+            createdAt: new Date().toISOString(),
+          };
+          entitlements.set(ent.id, ent);
+          entitlementMove(ent.id, "grant", mv.includedCredits, "invoice", invoice.id, `complimentary: ${reason}`);
+          entId = ent.id;
+        }
+      }
+      return json(res, 200, {
+        invoiceId: invoice.id, entitlementId: entId,
+        patientMembershipId: subId, complimentary: true });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/get_patient_entitlements" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!memberOrgIds.includes(String(body._organization_id ?? ""))) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      if (!requireFinancial(res, "billing.view_summary")) return;
+      const patientId = String(body._patient_id ?? "");
+      return json(res, 200, {
+        entitlements: [...entitlements.values()]
+          .filter((e) => e.patientId === patientId)
+          .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+          .map(entitlementJson),
+        memberships: patientMemberships
+          .filter((m) => m.patientId === patientId)
+          .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+          .map((m) => ({
+            id: m.id, status: m.status, origin: m.origin, version: m.version,
+            membershipName: planMemberships.find((x) => x.id === m.membershipId)?.name ?? null,
+            currentPeriodEnd: m.currentPeriodEnd, trialEnd: m.trialEnd,
+            cancelAtPeriodEnd: m.cancelAtPeriodEnd, canceledAt: m.canceledAt,
+            graceUntil: m.graceUntil, complimentaryReason: m.complimentaryReason,
+            processorSubscriptionRef: m.processorSubscriptionRef })),
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/reserve_entitlement_for_appointment" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!requireFinancial(res, "billing.create_invoice")) return;
+      // The schedule seeds lazily on the first calendar read. A suite that
+      // redeems a credit without opening the calendar still needs the
+      // appointments to exist, so seed them here too.
+      seedScheduleFor(new Date().toISOString());
+      const entId = String(body._entitlement_id ?? "");
+      const apptId = String(body._appointment_id ?? "");
+      const e = entitlements.get(entId);
+      if (!e) return json(res, 404, { code: "P0002", message: "entitlement not found" });
+      const appt = scheduleAppointments.find((a) => a.id === apptId);
+      if (!appt) return json(res, 404, { code: "P0002", message: "appointment not found" });
+      if (appt.patientId !== e.patientId) {
+        return json(res, 403, { code: "42501", message: "that appointment belongs to a different patient" });
+      }
+      try {
+        entitlementMove(entId, "reserve", Number(body._quantity ?? 1), "appointment", apptId, null);
+      } catch (err) {
+        return json(res, err.code === "22023" ? 400 : 409,
+          { code: err.code ?? "40001", message: err.message });
+      }
+      packageRedemptions.push({
+        id: billingId("pr"), organizationId: "org-fixture", patientId: e.patientId,
+        entitlementId: entId, appointmentId: apptId, quantity: Number(body._quantity ?? 1),
+        state: "reserved", releasedReason: null, redeemedAt: null,
+      });
+      return json(res, 200, { entitlementId: entId, state: "reserved" });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/settle_entitlement_for_appointment" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!requireFinancial(res, "billing.take_payment")) return;
+      const apptId = String(body._appointment_id ?? "");
+      const outcome = String(body._outcome ?? "");
+      const policy = orgBillingPolicy ?? {
+        no_show_policy: "consume", late_cancel_policy: "release",
+        late_cancel_window_hours: 24, consume_on: "completed" };
+      const r = packageRedemptions.find((x) => x.appointmentId === apptId && x.state === "reserved");
+      if (!r) return json(res, 404, { code: "P0002", message: "no reserved credit for that appointment" });
+
+      let action = null;
+      if (outcome === "completed") action = "consume";
+      else if (outcome === "arrived") action = policy.consume_on === "arrived" ? "consume" : "hold";
+      else if (outcome === "no_show") action = policy.no_show_policy === "consume" ? "consume"
+        : policy.no_show_policy === "release" ? "release" : "review";
+      else if (outcome === "late_cancel") action = policy.late_cancel_policy === "consume" ? "consume"
+        : policy.late_cancel_policy === "release" ? "release" : "review";
+      else if (outcome === "cancelled") action = "release";
+      if (!action) return json(res, 400, { code: "22023", message: "unknown appointment outcome" });
+      if (action === "hold") return json(res, 200, { state: "reserved", policy: policy.consume_on });
+      if (action === "review") {
+        upsertFinancialTask("refund_action_required", r.entitlementId,
+          `Credit decision needed after a ${outcome}`, r.patientId);
+        return json(res, 200, { state: "reserved", reviewRequired: true });
+      }
+      try {
+        entitlementMove(r.entitlementId, action, r.quantity, "appointment", apptId, body._reason ?? null);
+      } catch (err) {
+        return json(res, 409, { code: err.code ?? "40001", message: err.message });
+      }
+      r.state = action === "consume" ? "consumed" : "released";
+      r.releasedReason = action === "release" ? (body._reason ?? outcome) : null;
+      r.redeemedAt = new Date().toISOString();
+      return json(res, 200, { state: r.state });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/restore_entitlement" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!requireFinancial(res, "billing.issue_refund")) return;
+      const reason = String(body._reason ?? "").trim();
+      if (!reason) return json(res, 400, { code: "22023", message: "a manual restoration requires a reason" });
+      try {
+        entitlementMove(String(body._entitlement_id ?? ""), "manual_restore",
+          Number(body._quantity ?? 1), "manual", null, reason);
+      } catch (err) {
+        return json(res, err.code === "P0002" ? 404 : 409,
+          { code: err.code ?? "40001", message: err.message });
+      }
+      return json(res, 200, { ok: true });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/expire_entitlements" && req.method === "POST") {
+      if (!requireFinancial(res, "plans.manage")) return;
+      let n = 0;
+      for (const e of entitlements.values()) {
+        if (e.status === "active" && e.expiresAt && new Date(e.expiresAt) <= new Date()
+            && e.remainingQuantity > 0) {
+          entitlementMove(e.id, "expire", e.remainingQuantity, "manual", null, "past expiry", "system");
+          n += 1;
+        }
+      }
+      return json(res, 200, { expired: n });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/revoke_entitlements_for_refund" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!requireFinancial(res, "billing.issue_refund")) return;
+      const reason = String(body._reason ?? "").trim();
+      if (!reason) return json(res, 400, { code: "22023", message: "a revocation requires a reason" });
+      const invoiceId = String(body._invoice_id ?? "");
+      let n = 0;
+      for (const e of entitlements.values()) {
+        if (e.sourceInvoiceId === invoiceId && e.remainingQuantity > 0) {
+          entitlementMove(e.id, "refund_revoke", e.remainingQuantity, "invoice", invoiceId, reason);
+          n += 1;
+        }
+      }
+      return json(res, 200, { revoked: n });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/set_membership_lifecycle" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!requireFinancial(res, "plans.manage")) return;
+      const sub = patientMemberships.find((m) => m.id === String(body._patient_membership_id ?? ""));
+      if (!sub) return json(res, 404, { code: "P0002", message: "membership not found" });
+      if (Number(body._expected_version) !== sub.version) {
+        return json(res, 409, { code: "40001", message: "this membership changed since you loaded it" });
+      }
+      const action = String(body._action ?? "");
+      const reason = body._reason ? String(body._reason).trim() : "";
+      if (action === "pause" && !["active", "trialing"].includes(sub.status)) {
+        return json(res, 403, { code: "42501", message: "only an active membership can be paused" });
+      }
+      if (action === "resume" && sub.status !== "paused") {
+        return json(res, 403, { code: "42501", message: "only a paused membership can be resumed" });
+      }
+      if (action === "reactivate" && !["canceled", "expired"].includes(sub.status)) {
+        return json(res, 403, { code: "42501", message: "only a canceled or expired membership can be reactivated" });
+      }
+      if (["cancel_now", "cancel_at_period_end"].includes(action) && !reason) {
+        return json(res, 400, { code: "22023", message: "cancelling a membership requires a reason" });
+      }
+      const from = sub.status;
+      if (action === "pause") { sub.status = "paused"; sub.pausedAt = new Date().toISOString(); }
+      else if (action === "resume") { sub.status = "active"; sub.pausedAt = null; }
+      else if (action === "cancel_now") { sub.status = "canceled"; sub.canceledAt = new Date().toISOString(); }
+      else if (action === "cancel_at_period_end") { sub.cancelAtPeriodEnd = true; }
+      else if (action === "reactivate") { sub.status = "active"; sub.cancelAtPeriodEnd = false; }
+      if (reason) sub.cancelReason = reason;
+      sub.version += 1;
+      patientMembershipEvents.push({
+        organizationId: "org-fixture", patientMembershipId: sub.id, kind: action,
+        fromStatus: from, toStatus: sub.status, detail: reason || null,
+        source: "rpc", createdAt: new Date().toISOString(),
+      });
+      return json(res, 200, { id: sub.id, status: sub.status, version: sub.version });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/get_reconciliation_workspace" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!memberOrgIds.includes(String(body._organization_id ?? ""))) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      if (!requireFinancial(res, "billing.view_summary")) return;
+      const status = body._status == null ? null : String(body._status);
+      return json(res, 200, {
+        exceptions: reconciliationExceptions
+          .filter((x) => !status || x.status === status)
+          .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+        // deliberately false: settlement figures are not fetched in this phase
+        settlementFieldsAvailable: false,
+        webhookEvents: [...billingWebhookEvents]
+          .sort((a, b) => b.receivedAt.localeCompare(a.receivedAt))
+          .map((e) => ({
+            eventId: e.eventId, type: e.eventType, outcome: e.outcome, detail: e.detail,
+            receivedAt: e.receivedAt, signatureVerified: e.signatureVerified ?? false,
+            livemode: e.livemode ?? null })),
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/resolve_reconciliation_exception" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!requireFinancial(res, "reconciliation.resolve")) return;
+      const reason = String(body._reason ?? "").trim();
+      if (!reason) return json(res, 400, { code: "22023", message: "resolving an exception requires a reason" });
+      const resolution = String(body._resolution ?? "");
+      if (!["resolved", "dismissed"].includes(resolution)) {
+        return json(res, 400, { code: "22023", message: "unknown resolution" });
+      }
+      const x = reconciliationExceptions.find((r) => r.id === String(body._exception_id ?? ""));
+      if (!x) return json(res, 404, { code: "P0002", message: "exception not found" });
+      if (x.status !== "open") {
+        return json(res, 403, { code: "42501", message: "this exception is already closed" });
+      }
+      if (Number(body._expected_version) !== x.version) {
+        return json(res, 409, { code: "40001", message: "this exception changed since you loaded it" });
+      }
+      x.status = resolution;
+      x.resolvedAt = new Date().toISOString();
+      x.resolutionReason = reason;
+      x.version += 1;
+      reconciliationEvents.push({
+        id: billingId("re"), organizationId: "org-fixture", exceptionId: x.id,
+        kind: resolution, detail: reason, createdAt: new Date().toISOString(),
+      });
+      for (const [id, item] of queue) {
+        if (item.itemType === "payment_unreconciled" && item.refId === x.id) queue.delete(id);
+      }
+      return json(res, 200, { id: x.id, status: resolution, version: x.version });
+    }
 
     if (url.pathname === "/rest/v1/rpc/get_billing_workspace" && req.method === "POST") {
       const body = await readBody(req);
