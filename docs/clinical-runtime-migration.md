@@ -867,6 +867,47 @@ outbound network call. A production processor (keys, PCI review, a live
 `environment` value, and a signed-webhook receiver) is required before any
 real charge and is deliberately absent here.
 
+## Phase 9A — nutrition (live)
+
+`nutrition` is no longer a hold. The patient Nutrition tab is a real workspace
+and the organization has a diet template library at `/nutrition`. Nineteen new
+tables, 27 caller RPCs, and the full path from assessment to adherence. Detail
+lives in [`phase9a-nutrition.md`](./phase9a-nutrition.md); the load-bearing
+facts:
+
+**The approval gate is in the database.** A plan version cannot be approved
+until safety has actually been evaluated for it and no blocking flag is still
+open or merely acknowledged. A client that skips the safety screen gains
+nothing. Acknowledging is deliberately not deciding.
+
+**Revision never overwrites.** Approved and active versions are frozen against
+insert, update and delete — content, assessment and all — so revising is always
+a new draft and the plan a patient was handed stays readable exactly as it was.
+
+**A plan snapshots its template.** Editing a template afterwards never reaches a
+delivered plan.
+
+**Units are never implied.** Energy targets carry kcal/kJ, `nutrition_targets`
+requires a unit at the column level, and an unset target reads "Not set" rather
+than zero.
+
+**Adherence is reported, never inferred.** Every check-in carries a required
+source, and a day with no check-in is reported missing rather than as zero.
+
+**Nothing is called evidence-based without a citation.** No governed nutrition
+reference set is loaded, so every starter template is graded
+`practitioner_experience`; publishing a version graded `governed_reference`
+without a real reference row is refused.
+
+**Passio and the copilot are disabled by default, with no fixture fallback.**
+No real Passio request has been executed by this build, and the status surface
+reports *configured* and *transacted* as separate facts. The copilot is
+deterministic rather than generative and cannot write, approve or activate.
+
+**Deployment requirements.** Nothing beyond the standard clinical Supabase
+configuration. `PASSIO_ENABLED` and `NUTRITION_COPILOT_ENABLED` are opt-in;
+unset is a supported, fully honest configuration.
+
 ## Deprecations
 
 - `NEXT_PUBLIC_USE_LIVE_API` — constant `true`; not consulted anywhere.
