@@ -5,9 +5,11 @@ The financial continuation of Phase 8A:
 payment/subscription → entitlement ledger → appointment redemption →
 renewal/failure/cancellation → reconciliation → reporting`.
 
-**Status: partial.** The database layer and the Stripe boundary are built,
-applied to staging, and verified. The application layer (adapter, routes, UI,
-browser proofs) is not yet built — see "What is not built yet" at the end.
+**Status: complete for this phase.** Database, Stripe boundary, adapter,
+routes, webhook receiver, UI, and proofs are all built and verified. What
+remains genuinely unavailable is listed at the end — chiefly that no real
+Stripe API transaction has been executed, because no test credentials exist in
+this environment.
 
 ---
 
@@ -255,16 +257,57 @@ would need its own compatibility pass, so it is reported rather than applied.
 Neither advisory is reachable from the code this phase adds: the Stripe
 boundary and the plan/entitlement RPCs do no image processing.
 
-## What is not built yet
+## Application surfaces
 
-Recorded so the gap is visible rather than implied complete:
+| Surface | Route | What it does |
+| --- | --- | --- |
+| Plans workspace | `/settings/plans` | Create offerings, draft and publish versions, set the credit policy. Every version's state is visible so freeze-on-publish is legible |
+| Patient plans & credits | chart tab `Plans & Credits` | Memberships with lifecycle controls, entitlement balances, the full ledger, selling, and complimentary assignment |
+| Reconciliation | `/billing/reconciliation` | Exceptions with reasoned resolution; the processor event ledger showing whether each signature was verified |
+| Financial reports | `/billing/reports` | Charges, collections, receivables, aging, sales, period-over-period |
+| Stripe webhook | `POST /api/live/stripe/webhook` | The only path by which a subscription may settle |
 
-- Server adapter, API routes, registry namespaces over the 17 RPCs
-- UI: plan management, purchase / complimentary assignment, entitlement views,
-  dunning queue, reconciliation workspace, financial reporting (including the
-  required table/text equivalent for every chart)
-- The webhook route wiring the verified boundary to `record_billing_webhook`
-- The full 28-scenario acceptance suite — 6 core invariants are proven on
-  staging; the remainder are not yet written
-- Browser proofs, backend-down proofs for the new surfaces, stub fixtures
-- `npm audit` and secret/PHI/card scans over the new surface
+### Accessibility of reporting
+
+Every chart is a `ShareBar` that carries (1) an `aria-label` naming each
+segment and its value, (2) per-segment **text** labels with figures and
+percentages, and (3) a table of the same numbers beneath. Colour is never the
+only signal, and a monochrome print or a screen reader gets identical
+information.
+
+### Honest reporting language
+
+Estimates are labelled `ESTIMATES` in the heading and carry an explicit note
+that they are **not** recognized revenue, **not** profit, and **not**
+accounting-certified. Membership recurring revenue is deliberately **omitted**
+rather than estimated from plan prices, because it needs real subscription
+billing history that only exists once a processor has settled a period.
+
+## Verification results
+
+| Gate | Result |
+| --- | --- |
+| DB acceptance (rolled back, staging) | **26/26**, zero residue |
+| Phase 8B browser proofs | **18/18** |
+| Full live battery, one pass | **156/156** (138 before this phase) |
+| Backend-down honesty | **11/11** |
+| Unit (incl. 20 Stripe boundary tests) | **190/190** |
+| Advisors | **0 ERRORs**; +17 WARNs, one per caller RPC |
+| Edition-lock refusals | both correctly fail |
+| Secret / card / PHI scan | clean |
+
+## Still unavailable
+
+- **No real Stripe API transaction has been executed.** No test credentials
+  exist in this environment, so scenarios 13-17 (test subscription creation,
+  signed webhook verification, tamper/replay refusal, duplicate renewal
+  idempotency, out-of-order events) are proven **deterministically** in
+  `src/server/stripe-boundary.test.ts` against a real HMAC rather than against
+  Stripe's servers. `liveTransactionExecuted` is `false` and every surface says
+  so. When credentials are supplied, set the three variables above and the
+  boundary activates without further code changes.
+- **Live Stripe** remains refused by design; see the deferred list below.
+- **Provider settlement figures** (fee, net, payout status) are not fetched, so
+  they read `unavailable` rather than zero.
+- **Membership recurring-revenue reporting** awaits real subscription billing
+  history.
