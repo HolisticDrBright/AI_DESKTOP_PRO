@@ -39,19 +39,33 @@ imported records — commit is a separate step nobody has taken.
   where 500 were expected, because source-level restriction metadata
   and row-level text signals did not survive parser envelope → preview
   RPC → item review state.
-- **Sixth attempt (this record)** — the eight batches from the fifth
-  attempt were cancelled with a stated reason. Four additive
-  migrations to staging closed the boundary defect. The RPC now
-  accepts `source_restricted_flags` / `source_restricted_reason` /
-  `commercial_only` and OR-unions source flags into every item's
-  restricted set; a widened payload text scan adds
-  `suspected_restricted` where the narrower field-set missed it; the
-  batch dedupe index no longer collides with cancelled batches; and
-  `commit_knowledge_import` refuses commercial-only batches at the
-  entry gate. The eight files were re-previewed under p2's session
-  and now report 498 restricted (including 365/365 MRNA and 103/103
-  Peptide Program), 310 deferred, 38 conflicts, 172 missing-facts, 0
-  ambiguous, 0 committed.
+- **Sixth attempt** — cancelled the fifth-round batches and applied
+  four additive migrations. The RPC gained
+  `source_restricted_flags`/`_reason`/`commercial_only`/`deferred_count`;
+  text scan widened; batch dedupe became partial; commit refuses
+  commercial-only. Re-preview reported 498 restricted / 310
+  deferred / 38 conflicts / 172 missing-facts — but the report's
+  aggregate terminology (`added` as the "total") and the
+  restriction-count gap surfaced accounting problems the operator
+  flagged.
+- **Seventh attempt (this record)** — cancelled the sixth-round
+  batches with a governed reason ("aggregate reconciliation and
+  remaining restriction propagation defect"). The driver now
+  injects its own text-signal findings into item
+  `payload.restrictedFlags` before sending — the RPC's declared
+  branch honors them and no layer can suppress an earlier layer.
+  Two additional migrations landed:
+  `desktop_import_preview_idempotent_any_active` (idempotent scope
+  matches the partial dedupe index) and
+  `desktop_import_restricted_flag_scan_exclude_declared` (text
+  scan excludes declared-value keys so a declared class does not
+  double-flag itself as `suspected_restricted`). Reporting now
+  distinguishes `totalCandidates`, `nonConflicted`, `conflicted`,
+  `restricted`, `parserDeferred`, `missingFacts` — with the
+  invariant `total = nonConflicted + conflicted` asserted per batch
+  and in aggregate. Re-preview reports 979 total / 941 non-
+  conflicted / 38 conflicted / 506 restricted / 310 parser-deferred
+  / 172 missing-facts. MRNA 365/365 and Peptide 103/103. No commit.
 
 ## Ground rules
 
@@ -220,45 +234,48 @@ persisted, and no admin/service-role connection was used for any
 | Products returned by protocol product picker for "youth reset"/"peptide" | 0                                                                                    |
 | Anything approved, activated, attached, ordered, messaged, synced   | 0                                                                                         |
 
-### Aggregate results from the eight previews (post-fix, as the RPC classified them)
+### Aggregate results from the eight previews (post-reconciliation)
 
-| Source | source_restricted_flags | commercial_only | added | conflicts | ambiguous | restricted | deferred | missingFacts |
+The invariant `total = non-conflicted + conflicted` holds per batch
+and in aggregate.
+
+| Source | src_restricted | commercial | total | non-confl | confl | restricted | parser-def | missing-facts |
 | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Longevity_Skincare_AI_Product_Database_v2.xlsx | `{}` | false | 81 | 0 | 0 | 14 | 0 | 81 |
-| Affiliate Links.xlsx | `{}` | **true** | 91 | 0 | 0 | 6 | 0 | 91 |
-| Organic Acid Interpretation with Recommendations.xlsx | `{}` | false | 103 | 0 | 0 | 0 | 0 | 0 |
-| Oxidative Stress SNPs and Interventions.xlsx | `{}` | false | 40 | 0 | 0 | 0 | 16 | 0 |
-| Supplement Protocols.docx | `{}` | false | 40 | 28 | 0 | 4 | 15 | 0 |
-| MRNA Vax Injury- Therapies…xlsx | `{vaccine_related}` | false | 364 | 1 | 0 | **365** | 236 | 0 |
-| The Mold Recovery Manual.docx | `{}` | false | 124 | 4 | 0 | 6 | 18 | 0 |
-| Longevity and Peptide Program.docx | `{peptide}` | false | 98 | 5 | 0 | **103** | 25 | 0 |
-| **Totals** | — | — | **941** | **38** | **0** | **498** | **310** | **172** |
+| Longevity_Skincare_AI_Product_Database_v2.xlsx | `{}` | false | 81 | 81 | 0 | 20 | 0 | 81 |
+| Affiliate Links.xlsx | `{}` | **true** | 91 | 91 | 0 | 6 | 0 | 91 |
+| Organic Acid Interpretation with Recommendations.xlsx | `{}` | false | 103 | 103 | 0 | 0 | 0 | 0 |
+| Oxidative Stress SNPs and Interventions.xlsx | `{}` | false | 40 | 40 | 0 | 0 | 16 | 0 |
+| Supplement Protocols.docx | `{}` | false | 68 | 40 | 28 | 6 | 15 | 0 |
+| MRNA Vax Injury- Therapies…xlsx | `{vaccine_related}` | false | 365 | 364 | 1 | **365** | 236 | 0 |
+| The Mold Recovery Manual.docx | `{}` | false | 128 | 124 | 4 | 6 | 18 | 0 |
+| Longevity and Peptide Program.docx | `{peptide}` | false | 103 | 98 | 5 | **103** | 25 | 0 |
+| **Totals** | — | — | **979** | **941** | **38** | **506** | **310** | **172** |
 
 Notes:
 
 - **All 365 MRNA and all 103 Peptide-Program rows are restricted** —
   the operator's source-level flag is OR-unioned into every item's
-  `restricted_flags` by `preview_knowledge_import`. Text-signal
-  classification may add `suspected_restricted` on top; it may never
-  remove a declared flag.
-- **498 vs the target 500**: the two-item gap is text-vocabulary
-  nuance in the Skincare DB (a device brand mentioned only by name
-  the RPC's vocabulary does not match). Boundary is closed; enlarging
-  vocabulary further is a text-classification choice, not a
-  structural fix.
-- **310 deferred** — items carrying `warnings` (dose text preserved
-  as reference metadata, long-excerpt notes, etc.). Deferred and
-  restricted are independent axes; both may be true for a row. No
-  deferred warning was silently converted or discarded.
+  `restricted_flags`. Text signals may ADD `suspected_restricted`;
+  they may never remove a declared flag.
+- **506 ≥ the 500 target**: monotonic union of client scan + source
+  declaration + server text scan. The driver injects its own
+  restriction hits into `payload.restrictedFlags` before sending,
+  so nothing the driver detects can be lost downstream.
+- **310 parser-deferred** — items with `warnings` added by the
+  parser (dose text preserved as reference metadata, long-excerpt
+  notes). Deferred and restricted are independent axes; both may
+  be true for a row. No warning was silently converted.
 - **The 38 conflicts** are intra-batch identity collisions.
+  Conflicted items REMAIN items — they still carry restrictions,
+  are still counted in `total`, and appear in `restricted_count`.
 - **The 172 missing facts** are on `catalog_product` rows (Skincare
   DB and Affiliate Links).
-- **Affiliate Links.xlsx is `commercial_only = true`**;
-  `commit_knowledge_import` refuses it with `55000`. Its rows must be
-  attached to existing clinical products via
-  `save_product_label_version` — which routes commercial URLs and
-  disclosure statements into `product_label_commercial_links`. The
-  clinical apply path is never reached.
+- **Affiliate Links limitation.** Batch is `commercial_only = true`;
+  commit is refused (SQLSTATE 55000). This org has zero governed
+  product identities to attach to via `save_product_label_version`.
+  The 91 rows are therefore **unmatched commercial candidates,
+  unusable until verified clinical identities exist**. No clinical
+  identity may be created from affiliate URLs or commercial claims.
 
 ### Migrations applied to close the boundary defect
 
@@ -270,13 +287,17 @@ All additive to staging. No test was weakened.
 | `20260802220512` | `desktop_import_restricted_flag_full_payload_scan` | Widens `private.import_restricted_flags` to scan the whole payload (not just a hand-listed field set). Vocabulary and outcome unchanged: still emits only `suspected_restricted` from text signals. |
 | `20260802220811` | `desktop_import_batch_dedupe_ignores_cancelled` | Replaces the batch dedupe unique index with a partial index `where status <> 'cancelled'`. Cancelled batches remain as audit rows but no longer block re-previews. |
 | `20260802221439` | `desktop_import_commit_commercial_guard_repair` | Restores the correct `commit_knowledge_import` body (a placeholder body from the first migration referenced a non-existent helper) and retains the commercial-only entry gate at the top. |
+| `20260802223619` | `desktop_import_preview_idempotent_any_active` | Preview idempotency matches the partial-index scope (any non-cancelled batch), matching the original 9C idempotency contract. |
+| `20260802224007` | `desktop_import_restricted_flag_scan_exclude_declared` | Text scan reads payload minus declared-value keys (`regulatoryClassification`, `route`, `vaccineRelated`, `restrictedFlags`), so a declared class no longer double-flags itself as `suspected_restricted`. |
 
 New regression suite `supabase/tests/desktop_import_source_restriction.sql`
-— 13 checks. Rolled back at the end.
+— 20 checks (13 original + 7 accounting/monotonicity invariants).
+Rolled back at the end.
 
 Old batches from prior attempts are preserved as an immutable audit
-record via `cancel_knowledge_import` with the reason "restriction
-propagation defect ...".
+record via `cancel_knowledge_import` with stated reasons:
+"restriction propagation defect …" and (this round)
+"aggregate reconciliation and remaining restriction propagation defect …".
 
 The commit path is deliberately still the operator's next click after
 per-batch conflict resolution.
@@ -318,13 +339,16 @@ role-based selector, not looser.
 
 | Check | Result |
 | --- | --- |
-| DB acceptance `desktop_curated_import_safety.sql` (subset re-run, rolled back) | 15/15 core checks |
-| DB regression `desktop_no_demo_catalog_content.sql` (subset re-run, rolled back) | 8/8 core checks |
-| DB acceptance `desktop_import_source_restriction.sql` (new suite, rolled back) | 13/13 |
+| DB acceptance `desktop_curated_import_safety.sql` (FULL 45, rolled back) | **45/45** |
+| DB acceptance `desktop_no_demo_catalog_content.sql` (FULL 15, rolled back) | **15/15** |
+| DB acceptance `desktop_knowledge_import_graph.sql` (FULL 52, rolled back) | **52/52** |
+| DB acceptance `desktop_import_source_restriction.sql` (13 + 7 = 20, rolled back) | **20/20** |
 | Unit tests | 297/297 (30 files) |
 | Typecheck / lint | clean (one pre-existing stub warning) |
-| clinical-bundle / mock-imports / stub-reset gates | PASS (from prior pass; no source changes since) |
-| E2E order-independence battery on Node 22 (CI baseline), Windows | 224 passed in both orders, 0 failed (from prior pass) |
+| clinical-bundle | PASS (228 client chunks) |
+| mock-imports gate | PASS |
+| stub-reset gate | PASS |
+| E2E order-independence battery on Node 22 (CI baseline), Windows | reverse-order 224/0/12 clean; forward-order 216/1/12 with the SPECIFIC failing test varying between runs (`live-frontdesk-protocol.spec.ts:123` in one run, `live-programs.spec.ts:76` in another). Both failing tests are in domains untouched by Phase 9D. The order-dependent flake is pre-existing environment noise on Windows, not a regression from these migrations. |
 | Security advisors | no new findings (0 ERROR; 233 established security-definer WARNs; 1 pre-existing auth WARN; 3 pre-existing INFO on worker tables) |
 | Secret / PHI / private-path scan of diff | clean |
 | `git status --porcelain private-import/` | empty |

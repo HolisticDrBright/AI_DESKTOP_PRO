@@ -278,6 +278,103 @@ values ('9d000000-0000-4000-8000-000000000301', 'Restricted probe', 'RP-1', 'act
 select _c('13. an active product with a restricted flag is NOT selectable', (
   select not private.catalog_product_is_selectable('9d000000-0000-4000-8000-000000000301'::uuid)));
 
+-- ================================== 14-20 aggregate + monotonic invariants
+--
+-- The user's spec adds accounting invariants that must hold end-to-end:
+--   * received = added + changed + unchanged + conflict + ambiguous + removals
+--   * conflicted items REMAIN candidates and REMAIN restricted
+--   * restrictions from any layer (client-declared, source-level, server text)
+--     compose via UNION — no layer can suppress an earlier layer's finding
+--   * parser-deferred warnings survive under item identity and are counted
+--     separately from missing-facts / conflict / restriction
+
+-- Fixture batch: 5 items, one restricted on client-declared flags,
+-- one already conflicting on identity, one carrying a parser warning,
+-- one with a suspected-name text signal, one clean.
+select public.preview_knowledge_import(
+  '9d000000-0000-4000-8000-000000000101'::uuid, 'product_spreadsheet',
+  'Invariants sheet', '9d.1',
+  jsonb_build_array(
+    -- 1: client-declared restrictedFlags (via payload.restrictedFlags)
+    jsonb_build_object('entityType', 'catalog_product', 'displayName', 'Injected client flag',
+      'payload', jsonb_build_object('name', 'Injected client flag', 'brand', 'X', 'sku', 'INV-1',
+        'restrictedFlags', jsonb_build_array('suspected_restricted'))),
+    -- 2: conflict — same dedupe key as #3
+    jsonb_build_object('entityType', 'catalog_product', 'displayName', 'Duplicate first',
+      'payload', jsonb_build_object('name', 'Duplicate identity', 'brand', 'X', 'sku', 'INV-DUP',
+        'regulatoryClassification', 'peptide')),
+    -- 3: conflict pair with #2 — SAME sku, DIFFERENT name; must also be restricted
+    jsonb_build_object('entityType', 'catalog_product', 'displayName', 'Duplicate second',
+      'payload', jsonb_build_object('name', 'Duplicate identity alt', 'brand', 'X', 'sku', 'INV-DUP',
+        'regulatoryClassification', 'peptide')),
+    -- 4: parser-deferred warning
+    jsonb_build_object('entityType', 'knowledge_reference', 'displayName', 'Warning row',
+      'payload', jsonb_build_object('code', 'inv-warn', 'title', 'Warning row', 'referenceType', 'row'),
+      'warnings', jsonb_build_array('Suggested-dose text preserved as reference metadata.')),
+    -- 5: clean
+    jsonb_build_object('entityType', 'catalog_product', 'displayName', 'Clean row',
+      'payload', jsonb_build_object('name', 'Clean row', 'brand', 'X', 'sku', 'INV-CLEAN'))),
+  true, 'invariants.xlsx', 1024, null,
+  array['peptide']::text[],
+  'source declared restricted-by-default (peptide program probe)',
+  false);
+
+select _c('14. received = added + changed + unchanged + conflict + ambiguous', (
+  select item_count = (added_count + changed_count + unchanged_count + conflict_count + ambiguous_count)
+  from public.clinical_knowledge_import_batches
+  where source_name = 'Invariants sheet'));
+
+select _c('15. total items row-count matches item_count', (
+  select b.item_count = (select count(*) from public.clinical_knowledge_import_items i where i.batch_id = b.id)
+  from public.clinical_knowledge_import_batches b
+  where b.source_name = 'Invariants sheet'));
+
+-- Conflicted items remain items with restrictions. If a downstream layer
+-- silently drops a conflict from restricted-count, the count breaks.
+select _c('16. conflicted items retain their restricted_flags (source-level union)', (
+  select bool_and('peptide' = any(i.restricted_flags))
+  from public.clinical_knowledge_import_items i
+  join public.clinical_knowledge_import_batches b on b.id = i.batch_id
+  where b.source_name = 'Invariants sheet'
+    and i.change_kind = 'conflict'));
+
+-- Monotonic union: client-declared flags + declared regulatoryClassification +
+-- source-level flag + text scan hits — nothing suppresses anything.
+select _c('17. client-declared restrictedFlags survive to the item row', (
+  select i.restricted_flags @> array['suspected_restricted', 'peptide']::text[]
+  from public.clinical_knowledge_import_items i
+  join public.clinical_knowledge_import_batches b on b.id = i.batch_id
+  where b.source_name = 'Invariants sheet'
+    and (i.payload ->> 'sku') = 'INV-1'));
+
+-- restricted_count on the batch must count every distinct restricted item,
+-- INCLUDING those with change_kind='conflict'. If the counter skipped
+-- conflicts, this test would fail.
+select _c('18. batch restricted_count includes conflicted items', (
+  select restricted_count = (
+    select count(*) from public.clinical_knowledge_import_items i
+    where i.batch_id = b.id and i.restricted_flags <> '{}')
+  from public.clinical_knowledge_import_batches b
+  where b.source_name = 'Invariants sheet'));
+
+-- Parser-deferred: warnings survive item identity intact.
+select _c('19. parser-deferred warning survives on the row it started on', (
+  select jsonb_array_length(i.warnings) = 1
+     and i.warnings::text ilike '%reference metadata%'
+  from public.clinical_knowledge_import_items i
+  join public.clinical_knowledge_import_batches b on b.id = i.batch_id
+  where b.source_name = 'Invariants sheet'
+    and (i.payload ->> 'code') = 'inv-warn'));
+
+-- deferred_count is DISTINCT from restricted_count and missing_facts. The
+-- batch above has exactly one warning-bearing item.
+select _c('20. batch deferred_count counts warning-bearing items only', (
+  select deferred_count = (
+    select count(*) from public.clinical_knowledge_import_items i
+    where i.batch_id = b.id and jsonb_array_length(i.warnings) > 0)
+  from public.clinical_knowledge_import_batches b
+  where b.source_name = 'Invariants sheet'));
+
 -- ---------------------------------------------------------------- results
 
 select count(*) filter (where ok) as passed,
