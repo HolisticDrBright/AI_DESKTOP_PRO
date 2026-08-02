@@ -124,7 +124,7 @@ acceptance suite and the 20 browser proofs re-run below.
 | Unit tests | 288/288 (30 files) |
 | Typecheck / lint | clean (one pre-existing stub warning) |
 | clinical-bundle / mock-imports / stub-reset gates | PASS |
-| E2E battery (forward + reverse, self-provisioned) | see PR #27 for the run recorded at this head |
+| E2E battery (forward + reverse, self-provisioned) | 224 passed in both orders, 0 failed |
 | Security advisors | no new findings (233 security-definer WARNs = established pattern; 1 pre-existing auth WARN; 3 pre-existing INFO on worker tables); no DDL was applied this phase |
 | Secret/PHI/private-path scan over the diff | clean |
 | `git status --porcelain private-import/` | empty |
