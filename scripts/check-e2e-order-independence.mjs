@@ -31,6 +31,21 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { setTimeout as sleep } from "node:timers/promises";
 
+/**
+ * Where to find the `next` and `playwright` JS entry points.
+ *
+ * Reasoning we did not use the `node_modules/.bin` shims: on Windows those
+ * are `.cmd` files that need `cmd.exe` to interpret them, and adding
+ * `shell: true` around a spawn call triggers Node 24's DEP0190 arg-escape
+ * deprecation. Locating the raw JS entry and handing it to `process.execPath`
+ * is cross-platform, avoids the shell entirely, and pins the tool to the
+ * same Node that ran this driver.
+ */
+const NEXT_ENTRY = join(process.cwd(), "node_modules", "next", "dist", "bin", "next");
+const PLAYWRIGHT_ENTRY = join(
+  process.cwd(), "node_modules", "@playwright", "test", "cli.js",
+);
+
 const specs = readdirSync("e2e")
   .filter((f) => f.endsWith(".spec.ts"))
   .sort();
@@ -200,10 +215,9 @@ function provisionBuild() {
     `[e2e-order] building the clinical live bundle (${built ? "sources changed" : "no build present"})`,
   );
   try {
-    execFileSync("npx", ["next", "build"], {
+    execFileSync(process.execPath, [NEXT_ENTRY, "build"], {
       stdio: ["ignore", "inherit", "inherit"],
       env: process.env,
-      shell: process.platform === "win32",
     });
   } catch {
     configFailure(
@@ -311,13 +325,12 @@ function run(label, files) {
   let out = "";
   try {
     out = execFileSync(
-      "npx",
-      ["playwright", "test", ...files.map((f) => `e2e/${f}`)],
+      process.execPath,
+      [PLAYWRIGHT_ENTRY, "test", ...files.map((f) => `e2e/${f}`)],
       {
         encoding: "utf8",
         stdio: ["ignore", "pipe", "pipe"],
         env: process.env,
-        shell: process.platform === "win32",
       },
     );
   } catch (e) {

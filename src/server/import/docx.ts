@@ -38,6 +38,25 @@ export interface DocxParagraph {
   sectionPath: string[];
   /** True when the paragraph is a cell in a table. */
   inTable: boolean;
+  /** 1-based index of the table this paragraph belongs to (undefined when not in a table). */
+  tableIndex?: number;
+  /** 1-based row index inside its table. */
+  tableRowIndex?: number;
+  /** 1-based cell index inside its table row. */
+  tableCellIndex?: number;
+  /**
+   * True when every non-empty text run in this paragraph carried `<w:b/>`.
+   *
+   * A signal, not a claim: normalisation may use it to detect a paragraph the
+   * author formatted as a subheading, but a clinical fact is never derived
+   * from formatting alone. Paragraphs with no text are `false`.
+   */
+  boldRun: boolean;
+  /**
+   * The raw pStyle id, if any. Kept for reference-record provenance so a
+   * reviewer can see the style the author actually applied.
+   */
+  styleId?: string;
 }
 
 export interface DocxDocument {
@@ -96,25 +115,79 @@ export function parseDocx(bytes: Buffer): DocxDocument {
   let parts: string[] = [];
   let styleId: string | undefined;
   let tableDepth = 0;
+  // The 1-based table index only advances when a new table opens at
+  // outer-most depth. Nested tables share the outer table's number so a
+  // reviewer chasing "row 7 of table 3" always sees the same three.
+  let tableCounter = 0;
+  let currentTable: number | undefined;
+  let currentTableRow = 0;
+  let currentTableCell = 0;
   // Depth counters rather than booleans: Word nests these, and a boolean
   // reset by the first close tag would let the rest of a deleted run through.
   let deletedDepth = 0;
   let fieldDepth = 0;
   let inTextRun = false;
 
+  // Formatting is captured PER RUN because a paragraph may mix bold and
+  // non-bold text — treating the whole paragraph as bold when only the
+  // first word was would let a formatting cue promote an ordinary line to
+  // a section label. `boldRun` becomes true only if every non-empty run
+  // was bold, and only counted runs that contributed visible characters.
+  let inRunProps = false;
+  let currentRunIsBold = false;
+  let inRun = false;
+  let paragraphHasVisibleRun = false;
+  let paragraphAllRunsBold = true;
+
   scanXml(documentXml, {
     onOpen: (tag) => {
       switch (tag.name) {
         case "tbl":
           tableDepth += 1;
+          if (tableDepth === 1) {
+            tableCounter += 1;
+            currentTable = tableCounter;
+            currentTableRow = 0;
+            currentTableCell = 0;
+          }
+          return;
+        case "tr":
+          if (tableDepth > 0) {
+            currentTableRow += 1;
+            currentTableCell = 0;
+          }
+          return;
+        case "tc":
+          if (tableDepth > 0) currentTableCell += 1;
           return;
         case "p":
           inParagraph = true;
           parts = [];
           styleId = undefined;
+          paragraphHasVisibleRun = false;
+          paragraphAllRunsBold = true;
           return;
         case "pStyle":
           if (inParagraph) styleId = tag.attrs["w:val"] ?? tag.attrs.val;
+          return;
+        case "r":
+          if (inParagraph) {
+            inRun = true;
+            currentRunIsBold = false;
+          }
+          return;
+        case "rPr":
+          if (inRun) inRunProps = true;
+          return;
+        case "b":
+          if (inRun && inRunProps) {
+            // `<w:b/>` sets bold on; `<w:b w:val="0"/>` explicitly turns it
+            // off. Word emits both, and treating the second as bold would
+            // turn a paragraph containing a "not bold" run into a bold
+            // paragraph.
+            const val = tag.attrs["w:val"] ?? tag.attrs.val;
+            currentRunIsBold = val !== "0" && val !== "false";
+          }
           return;
         case "del":
           deletedDepth += 1;
@@ -143,12 +216,23 @@ export function parseDocx(bytes: Buffer): DocxDocument {
       }
     },
     onText: (text) => {
-      if (inTextRun) parts.push(text);
+      if (inTextRun) {
+        parts.push(text);
+        if (inRun && text.trim().length > 0) {
+          paragraphHasVisibleRun = true;
+          if (!currentRunIsBold) paragraphAllRunsBold = false;
+        }
+      }
     },
     onClose: (name) => {
       switch (name) {
         case "tbl":
           tableDepth = Math.max(0, tableDepth - 1);
+          if (tableDepth === 0) {
+            currentTable = undefined;
+            currentTableRow = 0;
+            currentTableCell = 0;
+          }
           return;
         case "del":
           deletedDepth = Math.max(0, deletedDepth - 1);
@@ -159,6 +243,13 @@ export function parseDocx(bytes: Buffer): DocxDocument {
           return;
         case "t":
           inTextRun = false;
+          return;
+        case "rPr":
+          inRunProps = false;
+          return;
+        case "r":
+          inRun = false;
+          currentRunIsBold = false;
           return;
         case "p": {
           if (!inParagraph) return;
@@ -180,12 +271,18 @@ export function parseDocx(bytes: Buffer): DocxDocument {
           }
           if (text.length === 0) return;
 
+          const inTable = tableDepth > 0;
           paragraphs.push({
             index: paragraphs.length + 1,
             headingLevel,
             text,
             sectionPath: sectionStack.filter((s) => s.length > 0),
-            inTable: tableDepth > 0,
+            inTable,
+            tableIndex: inTable ? currentTable : undefined,
+            tableRowIndex: inTable && currentTableRow > 0 ? currentTableRow : undefined,
+            tableCellIndex: inTable && currentTableCell > 0 ? currentTableCell : undefined,
+            boldRun: paragraphHasVisibleRun && paragraphAllRunsBold,
+            styleId,
           });
           return;
         }

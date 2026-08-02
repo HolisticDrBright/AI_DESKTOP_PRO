@@ -59,7 +59,11 @@ export function ClinicalError({
 }) {
   return (
     <Card className="px-6 py-[56px]">
-      <div className="flex flex-col items-center gap-[10px] text-center" role="alert">
+      <div
+        className="flex flex-col items-center gap-[10px] text-center"
+        role="alert"
+        data-testid="clinical-error"
+      >
         <span className="flex h-11 w-11 items-center justify-center rounded-[13px] bg-warning-tint">
           <AlertTriangle size={20} strokeWidth={1.9} className="text-warning-deep" aria-hidden />
         </span>
