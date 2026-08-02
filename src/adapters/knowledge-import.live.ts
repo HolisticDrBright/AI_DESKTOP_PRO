@@ -56,6 +56,22 @@ export const knowledgeImportLive = {
       sourceFilename?: string | null;
       sourceByteSize?: number | null;
       sourceRevision?: string | null;
+      /**
+       * Flags the operator declares on the whole source (e.g.
+       * `["vaccine_related"]`, `["peptide"]`). The RPC OR-unions these
+       * into every item's `restricted_flags`. Text-signal classification
+       * may add `suspected_restricted`; it may never remove one of these.
+       */
+      sourceRestrictedFlags?: string[] | null;
+      sourceRestrictedReason?: string | null;
+      /**
+       * True when the entire source is commercial metadata. The RPC still
+       * previews the rows so the operator can inspect them, but
+       * `commit_knowledge_import` refuses commercial-only batches at the
+       * entry (SQLSTATE 55000) — commercial data must be attached to
+       * existing clinical products via `save_product_label_version`.
+       */
+      commercialOnly?: boolean | null;
     },
     organizationId?: string | null,
     sessionToken?: string | null,
@@ -73,6 +89,9 @@ export const knowledgeImportLive = {
         _source_filename: input.sourceFilename ?? null,
         _source_byte_size: input.sourceByteSize ?? null,
         _source_revision: input.sourceRevision ?? null,
+        _source_restricted_flags: input.sourceRestrictedFlags ?? [],
+        _source_restricted_reason: input.sourceRestrictedReason ?? null,
+        _commercial_only: input.commercialOnly ?? false,
       },
       token,
     );
