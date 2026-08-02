@@ -5,13 +5,13 @@ pipeline, and the Import Review Workspace. Phase 9D put real practitioner
 material through it, then extended the parser where the material demanded
 it, and repaired the Windows-side test failure that surfaced on the way.
 
-**Outcome so far:** all eight authorized sources are reachable and
-hashed. The extended parser reads 431 rows imported cleanly, 48 deferred
-with reviewer warnings, 500 restricted for clinician review, 594 ignored
-(no identifying value), zero refused for PHI/credentials or container
-safety. Nothing has been staged into a governed batch — the RPC's no-PHI
-attestation is deliberately the operator's signed-in click, not the
-driver's.
+**Outcome so far:** after the operator's explicit no-PHI attestation,
+eight preview batches now exist in the governed pipeline — all
+`status=preview`, none committed, none applied. The RPC's classifier
+reports 941 new items, 38 intra-file conflicts, 49 `suspected_restricted`
+name-based signals across the eight batches. The catalog review queue,
+the protocol product picker, and the provenance surface all show zero
+imported records — commit is a separate step nobody has taken.
 
 ## History
 
@@ -24,11 +24,18 @@ driver's.
   workstation. All eight authorized paths resolved on the first check;
   0 PHI/credential trips; inventory rows moved to `available` with real
   hashes and byte sizes; local envelopes produced.
-- **Fourth attempt (this record)** — extended the parser to cover the
-  real column headers and DOCX structural patterns the operator's files
-  actually use, fixed the Node 24 Windows worker teardown, re-ran the
-  full battery in both spec orders, produced the pre-import report and
+- **Fourth attempt** — extended the parser to cover the real column
+  headers and DOCX structural patterns the operator's files actually
+  use, fixed the Node 24 Windows worker teardown, re-ran the full
+  battery in both spec orders, produced the pre-import report and
   stopped at the attestation checkpoint.
+- **Fifth attempt (this record)** — the operator attested no PHI in
+  writing, signed in as `p2.staging` in a dedicated Edge browser
+  launched with `--remote-debugging-port=9222`, and this session
+  attached Playwright over CDP to that existing browser. The eight
+  previews ran under p2's httpOnly session via `/api/live/knowledge/*`
+  — no admin, no service role, no cookie was read/logged/persisted.
+  All eight batches are `preview`. No commit.
 
 ## Ground rules
 
@@ -173,7 +180,16 @@ identifying value).
 | Longevity and Peptide Program.docx                                  | 0        | 0        | 103        | 52      | Whole file is `restricted_review` on stage — peptide-program declaration. |
 | **Totals**                                                          | **431**  | **48**   | **500**    | **594** |                                                                                                                     |
 
-## Pipeline staging — deliberate stop at attestation checkpoint
+## Pipeline staging — preview batches created under p2's session
+
+The operator attested no PHI in writing, signed into a dedicated Edge
+browser at `--remote-debugging-port=9222` as
+`p2.staging@brightlongevity.test`, and the session driver attached
+Playwright over CDP to that browser and called the app's own
+`/api/live/knowledge/*` endpoints — each request carried p2's httpOnly
+session cookie automatically. No cookie was read, logged, or
+persisted, and no admin/service-role connection was used for any
+`preview_knowledge_import` call.
 
 | Step                                                                | State                                                                                     |
 | ---                                                                 | ---                                                                                       |
@@ -181,15 +197,54 @@ identifying value).
 | Local envelopes produced for operator review                        | 8/8 written (git-ignored `private-import/staged-envelopes/*.envelope.json`)               |
 | Automated PHI/credential/private-path scan                          | 0 refusals across 8 files                                                                 |
 | Aggregate pre-import report                                         | `private-import/pre-import-report.md` (git-ignored)                                       |
-| Governed batch created (`preview_knowledge_import`)                 | **0 — deliberately awaiting operator attestation**                                        |
+| Governed preview batch created (`preview_knowledge_import`)         | **8/8, all `status=preview`**                                                             |
 | Batch items applied to `supplement_products` (draft)                | 0                                                                                         |
 | Provenance rows written                                             | 0                                                                                         |
+| Products in the catalog review queue                                | 0                                                                                         |
+| Products returned by protocol product picker for "youth reset"/"peptide" | 0                                                                                    |
 | Anything approved, activated, attached, ordered, messaged, synced   | 0                                                                                         |
 
-The batch-creation click is deliberately the operator's: the RPC
-requires `attests_no_phi = true` from a signed-in practitioner, and
-the workspace runs the same parser this session ran, over the same
-bytes, producing the same envelopes.
+### Aggregate results from the eight previews (as the RPC classified them)
+
+| Source                                                              | added | conflicts | ambiguous | restricted | missingFacts | changeKind |
+| ---                                                                 | ---:  | ---:      | ---:      | ---:       | ---:         | ---        |
+| Longevity_Skincare_AI_Product_Database_v2.xlsx                      | 81    | 0         | 0         | 10         | 81           | all `add`  |
+| Affiliate Links.xlsx                                                | 91    | 0         | 0         | 0          | 91           | all `add`  |
+| Organic Acid Interpretation with Recommendations.xlsx               | 103   | 0         | 0         | 0          | 0            | all `add`  |
+| Oxidative Stress SNPs and Interventions.xlsx                        | 40    | 0         | 0         | 0          | 0            | all `add`  |
+| Supplement Protocols.docx                                           | 40    | 28        | 0         | 0          | 0            | 40 add + 28 conflict |
+| MRNA Vax Injury- Therapies based on Mechanism and Phenotype.xlsx    | 364   | 1         | 0         | 35         | 0            | 364 add + 1 conflict |
+| The Mold Recovery Manual.docx                                       | 124   | 4         | 0         | 0          | 0            | 124 add + 4 conflict |
+| Longevity and Peptide Program.docx                                  | 98    | 5         | 0         | 4          | 0            | 98 add + 5 conflict |
+| **Totals**                                                          | **941** | **38**  | **0**     | **49**     | **172**      |            |
+
+Notes on interpretation:
+
+- **All 49 `restricted` are `suspected_restricted`** — a text signal on a
+  name/heading, not a declared regulatory class or route. Per the Phase 9C
+  inference boundary this cannot grant capability, only add review. No
+  declared `regulatoryClassification` / `route` / `vaccineRelated` values
+  were present on any row in the incoming payloads, so the classifier
+  raised no authoritative flag.
+- **The 38 conflicts** are intra-batch identity collisions (two rows/
+  sections in the same file claiming the same identity), predominantly
+  duplicate section titles in the docx files. `commit_knowledge_import`
+  refuses while any conflict is unresolved.
+- **The 172 missing facts** are on `catalog_product` rows (Skincare DB
+  and Affiliate Links). They record which of `dose form`, `serving size`,
+  `ingredient amounts and units`, and `regulatory classification` the
+  source did not supply, per the "unknown stays Unknown" rule. Every
+  such product will land `incomplete` on commit.
+- **Reference-mode sheets** (Organic Acid, Oxidative Stress, MRNA Vax,
+  and each of the three docx documents) produce `knowledge_reference`
+  items, which do not carry the product-facts audit and do not appear in
+  the catalog review queue.
+- **Ambiguous = 0** because no similar-product prior state exists yet
+  in this staging org; ambiguity emerges on subsequent imports that
+  look like near-duplicates of already-present products.
+
+The commit path is deliberately still the operator's next click after
+per-batch conflict resolution.
 
 ## Windows Node 24 teardown fix
 
@@ -242,17 +297,23 @@ role-based selector, not looser.
 
 ## Remaining practitioner work
 
-1. Review `private-import/pre-import-report.md` and the per-file
-   `private-import/staged-envelopes/*.envelope.json`. Confirm no PHI
-   is present in any cell.
-2. In `/settings/imports`, for each of the eight files: stage through
-   the workspace with the no-PHI attestation checkbox ticked.
-3. Resolve any conflicts/ambiguities and commit; everything lands
-   non-approved.
-4. Work the **Catalog review** queue. Peptide, vaccine-related, and
-   device-tagged items require clinician sign-off; label-identity
-   verification is required before any imported product can reach an
-   APPROVED protocol.
+1. On the **Review batch** panel in `/settings/imports`, resolve the
+   38 intra-batch conflicts across four batches (28 in Supplement
+   Protocols, 5 in Peptide Program, 4 in Mold Recovery, 1 in MRNA
+   Vax). `commit_knowledge_import` refuses while any conflict is
+   unresolved.
+2. Decide whether to keep or cancel each of the eight preview batches
+   — the app's cancel path is `knowledge/import-cancel` and requires a
+   stated reason.
+3. On commit, every row will land as a NON-APPROVED draft. Then work
+   the **Catalog review** queue. Suspected-restricted items (10 in
+   Skincare DB, 35 in MRNA Vax, 4 in Peptide Program) require
+   clinician sign-off; the label-identity gate must be satisfied
+   before any imported product can reach an APPROVED protocol.
+4. Missing-facts items (81 in Skincare DB, 91 in Affiliate Links) will
+   land `incomplete` on commit and cannot become selectable until the
+   missing product facts are recorded (dose form, serving size,
+   ingredient amounts, regulatory classification).
 
 ## Recommended next phase
 
