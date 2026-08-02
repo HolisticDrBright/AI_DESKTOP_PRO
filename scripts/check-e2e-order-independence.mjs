@@ -28,6 +28,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { setTimeout as sleep } from "node:timers/promises";
 
 const specs = readdirSync("e2e")
@@ -202,6 +203,7 @@ function provisionBuild() {
     execFileSync("npx", ["next", "build"], {
       stdio: ["ignore", "inherit", "inherit"],
       env: process.env,
+      shell: process.platform === "win32",
     });
   } catch {
     configFailure(
@@ -240,7 +242,7 @@ async function assertAppPortFree() {
  * also makes the proof a single reproducible command rather than a recipe
  * someone has to assemble correctly.
  */
-const STUB_LOG = "/tmp/e2e-order-stub.log";
+const STUB_LOG = join(tmpdir(), "e2e-order-stub.log");
 
 async function withStub(run) {
   // Always start our own, even if something is already listening. A stub left
@@ -311,7 +313,12 @@ function run(label, files) {
     out = execFileSync(
       "npx",
       ["playwright", "test", ...files.map((f) => `e2e/${f}`)],
-      { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: process.env },
+      {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+        env: process.env,
+        shell: process.platform === "win32",
+      },
     );
   } catch (e) {
     out = `${e.stdout ?? ""}${e.stderr ?? ""}`;
