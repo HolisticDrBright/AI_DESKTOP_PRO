@@ -160,6 +160,7 @@ silently satisfy the other.
 | `20260801224354_desktop_curated_import_apply_paths` | Missing facts, candidate matching, preview and commit rewritten, the `catalog_product` apply path, provenance writes |
 | `20260801224508_desktop_imported_product_approval_gate` | Routes both approval paths through the label-identity gate |
 | `20260801225514_desktop_curated_import_fk_indexes` | Leading indexes on the attribution FKs |
+| `20260801232118_desktop_import_review_reads` | The review-surface reads: verbatim rows, flags, missing facts and candidates through the preview; field-level diffs; the append-only provenance read; the catalog review queue (whose `blockReason` IS the attach refusal); and `complete_catalog_product_review`, which refuses `incomplete` outright |
 
 ### The defect the probe found, and the argument for probes
 
@@ -175,9 +176,13 @@ refusal that has never been triggered is a comment, not a control.
 
 ## Verification
 
-`supabase/tests/desktop_curated_import_safety.sql` — 35 checks, rolled back at
-the end. Run on `urcjiehlxoehievobezf`: **35 passed, 0 failed, 0 never
-evaluated.**
+`supabase/tests/desktop_curated_import_safety.sql` — 45 checks, rolled back at
+the end. Run on `urcjiehlxoehievobezf`: **45 passed, 0 failed, 0 never
+evaluated.** Checks 36-45 cover the review-surface reads: the verbatim source
+row and flags travelling through the preview, the queue's block reason being
+literally the attach refusal, the hand-entered-product exclusion, the
+`incomplete` refusal on review completion, and outsider denial on every new
+read.
 
 Regressions run against the same project after the change:
 
@@ -193,12 +198,95 @@ check, which is the established pattern here. The three `rls_enabled_no_policy`
 INFO findings are pre-existing and unrelated (`patient_sync_invitations`,
 `provider_callback_events`, `sync_callback_nonces`).
 
-## Not done in this phase
+## The parsers (server-only)
 
-* Parsers and normalisers for `.xlsx` / `.docx` (server-only). The pipeline
-  accepts a normalised envelope with an optional `sourceRaw` object; nothing yet
-  produces one from a real file.
-* The Import Review Workspace surface — ambiguity resolution, restriction
-  clearance and the source inventory currently have RPCs and no screen.
-* No content has been imported. This phase is the set of refusals that make
-  importing content survivable, and nothing more.
+`src/server/import/` reads `.xlsx` and `.docx` into the import envelope. The
+design constraint is stated in `index.ts` and enforced by tests: **bytes in,
+a reviewable envelope out, nothing written anywhere.**
+
+What the parsers refuse, each with a unit test and a browser proof:
+
+* **DOCTYPE / ENTITY declarations** — refused outright. There is no DTD support
+  to misconfigure, so XXE and entity-expansion attacks fail at the first tag.
+* **Macros and embedded objects** (`vbaProject.bin`, macrosheets, OLE) —
+  refused by entry name before any decompression.
+* **Path traversal in archive entries, ZIP64, compression-ratio bombs** — the
+  ZIP reader parses the central directory itself, never writes to disk, and
+  bounds every inflation (per-entry, cumulative, and ratio).
+* **Formulas are never evaluated and never read.** The cached `<v>` value is
+  taken; a formula with no cached value is reported as an *uncalculated cell*
+  and the cell reads as empty — "Unknown" is the honest answer.
+* **Word field codes** (`INCLUDETEXT`, `DDEAUTO`, `HYPERLINK`) are counted and
+  discarded; tracked-change deletions are dropped; hyperlink targets never
+  survive.
+* **File type is decided by magic bytes, not by name.** A `.doc`/`.xls` gets a
+  message naming the fix ("save as .docx/.xlsx"); a CSV renamed `.xlsx` is
+  refused as not an Office container.
+* **Paths never survive.** `toFileNameOnly` strips them before the envelope
+  exists, and the E2E proof uploads a file named with a full private path and
+  asserts it never reaches the screen or the database.
+
+Limits live in `limits.ts` and are refusals, not preferences: 25 MB per file,
+5000 rows per sheet (matching the batch cap), 128 columns, 32 sheets, bounded
+XML depth, bounded shared strings.
+
+Normalisation (`normalize.ts`) is deliberately separate from parsing: the
+header map is an explicit synonym list (unmapped columns are *reported*, and
+kept only in `sourceRaw`), a URL cell that is not http(s) is kept as raw and
+refused as a value, ingredient cells are split conservatively (an amount is
+taken only when the cell states one), and a document section becomes a
+`knowledge_reference` — never a protocol, never a dose.
+
+Test fixtures are **built from code** (`test-fixtures.ts`), not committed
+binaries, so a reviewer can read exactly what each hostile file contains.
+
+## The Import Review Workspace
+
+`/settings/imports` — five panels: source files, read-a-file, review batch,
+catalog review, provenance. Loading, empty, permission-denied and failure are
+four distinct states on every panel; permission denial gets its own copy
+because "you cannot see this" and "the service is down" call for different
+actions. The commit button is disabled while any conflict or ambiguity is
+unresolved, and an `incomplete` product's "Complete review" is disabled with
+the missing facts named beside it (the surface explains from structured data;
+the database refusal remains the backstop).
+
+## The E2E proofs
+
+`e2e/live-curated-import.spec.ts` — 20 numbered proofs covering the actual
+parser → preview → review → commit chain with deterministic built fixtures,
+including the hostile ones (macro workbook, XXE, zip-bomb class handled at
+unit level, non-Office bytes), the three axes on a committed product, the
+gate OPENING after review completion, ambiguity resolution restricted to
+raised candidates, append-only provenance on screen, backend-down honesty,
+and a no-leak sweep. The whole battery: **224 passed in forward and reverse
+order, 0 failed**, via the now self-provisioning `npm run test:e2e:order`
+(it sets the clinical live environment, finds the pre-installed Chromium,
+builds when sources changed, owns the fixture backend, and fails with one
+precise configuration error otherwise).
+
+## Live content status
+
+**No practitioner files were available in this environment, and none were
+invented.** `private-import/` contains only the README and the manifest
+template; the git-ignore rules are intact and verified. Every live count is
+zero, and the source-file inventory is where that fact is recorded the day
+the files exist.
+
+## Remaining operator steps
+
+1. Place the real spreadsheets/documents in `private-import/` (never
+   committed; verify with `git status --porcelain private-import/`).
+2. In `/settings/imports`, declare each file on the **Source files** tab —
+   including any file that cannot be read, with the reason.
+3. Read each file on the **Read a file** tab, review the parse report
+   (skipped rows, unmapped columns, uncalculated formulas), confirm the
+   no-PHI attestation, and stage.
+4. Resolve every conflict and ambiguity on the **Review batch** tab, then
+   commit. Everything lands as a non-approved draft.
+5. Work the **Catalog review** queue: record missing label facts, clear
+   restrictions with a stated reason where appropriate, complete reviews.
+   A product still cannot reach an APPROVED protocol until its exact label
+   identity is verified against the manufacturer.
+6. Copy the updated manifest into `docs/` if an auditable record of the run
+   is wanted; the provenance ledger records the rest.

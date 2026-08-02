@@ -2470,7 +2470,13 @@ export type KnowledgeChangeKind =
   | "change"
   | "unchanged"
   | "conflict"
-  | "removal";
+  | "removal"
+  /**
+   * Phase 9C. A row that matches no governed identity but resembles one
+   * closely enough that applying it blind would either duplicate a product or
+   * overwrite the wrong one. Neither an add nor a change.
+   */
+  | "ambiguous";
 
 export type KnowledgeImportItemStatus =
   | "needs_review"
@@ -2498,6 +2504,35 @@ export interface LiveKnowledgeImportItem {
   reviewNote: string | null;
   appliedRefType: string | null;
   appliedRefId: string | null;
+
+  /* --------------------------------------------- Phase 9C review fields */
+
+  /** The verbatim source row. Absent normalisation is `{}`, never the payload. */
+  sourceRaw?: Record<string, unknown>;
+  restrictedFlags?: string[];
+  restrictedReason?: string | null;
+  /** Facts the source did not supply. Absence recorded as absence. */
+  missingFacts?: string[];
+  /** Governed products this row resembles without sharing an identity. */
+  candidateMatches?: LiveImportCandidateMatch[];
+  /** Field-level differences against the governed row, for a `change`. */
+  fieldDiffs?: LiveImportFieldDiff[];
+}
+
+export interface LiveImportCandidateMatch {
+  productId: string;
+  name: string;
+  brand: string | null;
+  sku: string | null;
+  upc: string | null;
+  status: string;
+  why: string;
+}
+
+export interface LiveImportFieldDiff {
+  field: string;
+  current: string | null;
+  incoming: string | null;
 }
 
 export interface LiveKnowledgeImportBatch {
@@ -2515,6 +2550,10 @@ export interface LiveKnowledgeImportBatch {
   unchanged: number;
   conflicts: number;
   removals: number;
+  /** Phase 9C. Rows resembling a governed product without sharing its identity. */
+  ambiguous?: number;
+  /** Phase 9C. Rows carrying a restricted flag. */
+  restricted?: number;
   previewGeneratedAt: string | null;
   committedAt: string | null;
   createdAt: string;
@@ -2544,8 +2583,83 @@ export interface LiveKnowledgeImportPreviewResult {
   unchanged: number;
   conflicts: number;
   removals: number;
+  ambiguous?: number;
+  restricted?: number;
   sourceSha256?: string;
   message: string;
+}
+
+/* ------------------------------------------- Phase 9C: the review surface */
+
+export interface LiveImportSourceFile {
+  id: string;
+  /** A file NAME. A path never reaches this field. */
+  declaredName: string;
+  sourceKind: string | null;
+  availability: "available" | "unavailable";
+  contentSha256: string | null;
+  byteSize: number | null;
+  /** Required when unavailable. "Not found" and "withheld" differ. */
+  unavailableReason: string | null;
+  declaredAt: string;
+  lastCheckedAt: string;
+  batchCount: number;
+}
+
+export interface LiveImportSourceInventory {
+  files: LiveImportSourceFile[];
+  counts: { declared: number; available: number; unavailable: number };
+  emptyStateMessage: string;
+}
+
+export interface LiveCatalogReviewProduct {
+  productId: string;
+  name: string;
+  brand: string | null;
+  sku: string | null;
+  upc: string | null;
+  status: string;
+  restrictedFlags: string[];
+  restrictedClearedAt: string | null;
+  restrictedClearanceNote: string | null;
+  selectable: boolean;
+  /** The same sentence the attach refusal raises. One answer, two surfaces. */
+  blockReason: string | null;
+  missingFacts: string[];
+  sourceFileName: string | null;
+}
+
+export interface LiveCatalogReviewQueue {
+  products: LiveCatalogReviewProduct[];
+  counts: { total: number; restricted: number; notSelectable: number };
+  emptyStateMessage: string;
+}
+
+export interface LiveImportProvenanceRecord {
+  id: string;
+  refType: string;
+  refId: string;
+  batchId: string;
+  itemId: string;
+  sourceFileName: string | null;
+  sourceFileSha256: string | null;
+  sourceSheet: string | null;
+  sourceRowNumber: number | null;
+  payloadSha256: string;
+  rawValues: Record<string, unknown>;
+  normalizedValues: Record<string, unknown>;
+  missingFacts: string[];
+  restrictedFlags: string[];
+  importedAt: string;
+  batchSourceName: string;
+}
+
+export interface LiveImportProvenanceHistory {
+  records: LiveImportProvenanceRecord[];
+  total: number;
+  /** Always true. The table refuses update and delete at the trigger. */
+  immutable: boolean;
+  emptyStateMessage: string;
 }
 
 export interface LiveKnowledgeImportCommitResult {
@@ -2862,4 +2976,38 @@ export interface LiveTemplateComparison {
   }>;
   doseChangeCount: number;
   matchNote: string;
+}
+
+/**
+ * What the parser returns. NOTHING IS WRITTEN to produce this — it is the
+ * operator's evidence for deciding whether to stage the file at all.
+ */
+export interface LiveParsedImportEnvelope {
+  schemaVersion: string;
+  sourceKind: "product_spreadsheet" | "protocol_document";
+  /** A file NAME. The parser strips any path before this object exists. */
+  sourceFilename: string;
+  sourceName: string;
+  sourceByteSize: number;
+  sourceSha256: string;
+  items: Array<{
+    entityType: string;
+    displayName: string;
+    externalKey?: string;
+    sourceSheet?: string;
+    payload: Record<string, unknown>;
+    sourceRaw: Record<string, unknown>;
+    warnings?: string[];
+  }>;
+  report: {
+    itemCount: number;
+    sheetsRead: string[];
+    unmappedColumns: string[];
+    skippedRows: Array<{ sheet: string; rowNumber: number; why: string }>;
+    ignoredParts: string[];
+    uncachedFormulaCells: number;
+    discardedFieldCodes: number;
+    truncated: boolean;
+    notices: string[];
+  };
 }

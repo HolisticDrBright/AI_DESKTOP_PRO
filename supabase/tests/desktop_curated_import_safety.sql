@@ -403,6 +403,95 @@ select _c('35. every new RPC is security definer with an empty search_path', (
     ('record_import_source_file', 'get_import_source_inventory',
      'clear_catalog_product_restriction', 'resolve_knowledge_import_ambiguity')));
 
+-- ================================= 36-45 the review surface (Phase 9C reads)
+--
+-- The safety layer refuses. A reviewer cannot act on a refusal they cannot
+-- see, so these assert that the reads put the refusal, its reason and the
+-- evidence on one screen — and that the one write which lifts a refusal
+-- refuses in exactly the case where lifting it would be wrong.
+
+select _c('36. the preview returns the verbatim source row beside the payload', (
+  select i ->> 'sourceRaw' is not null
+     and (i -> 'sourceRaw' ->> 'Product Name') = ' Curcumin Complex '
+  from jsonb_array_elements(
+    public.get_knowledge_import_preview(
+      (select id from public.clinical_knowledge_import_batches
+       where source_name = 'Operator product sheet')) -> 'items') i
+  where i ->> 'displayName' = 'Curcumin Complex'));
+
+select _c('37. the preview names the restricted flags and the missing facts', (
+  select (i -> 'restrictedFlags') @> '["parenteral_therapy"]'::jsonb
+     and (i -> 'missingFacts') @> '["serving size"]'::jsonb
+     and length(coalesce(i ->> 'restrictedReason', '')) > 20
+  from jsonb_array_elements(
+    public.get_knowledge_import_preview(
+      (select id from public.clinical_knowledge_import_batches
+       where source_name = 'Operator product sheet')) -> 'items') i
+  where i ->> 'displayName' = 'Glutathione Push'));
+
+select _c('38. the ambiguous row carries its candidates through the preview read', (
+  select jsonb_array_length(i -> 'candidateMatches') = 1
+  from jsonb_array_elements(
+    public.get_knowledge_import_preview(
+      (select id from public.clinical_knowledge_import_batches
+       where source_name = 'Second operator sheet')) -> 'items') i
+  where i ->> 'changeKind' = 'ambiguous'));
+
+-- By this point check 29 has completed AC-100's review (it is `active` with no
+-- flags, so it has left the queue) and check 24 cleared AC-200's restriction
+-- without completing its review. One product is still waiting, which is the
+-- state the queue exists to show.
+select _c('39. the review queue lists only import-derived products, with a block reason', (
+  select (q -> 'counts' ->> 'total')::int = 1
+     and (q -> 'products' -> 0 ->> 'sku') = 'AC-200'
+     and length(coalesce(q -> 'products' -> 0 ->> 'blockReason', '')) > 20
+  from public.get_catalog_review_queue('c9000000-0000-4000-8000-000000000101') q));
+
+select _c('40. the queue''s block reason IS the attach refusal, not a paraphrase', (
+  select (e ->> 'blockReason')
+       = private.catalog_product_block_reason((e ->> 'productId')::uuid)
+  from public.get_catalog_review_queue('c9000000-0000-4000-8000-000000000101') q,
+       jsonb_array_elements(q -> 'products') e
+  where e ->> 'sku' = 'AC-200'));
+
+select _c('41. a hand-entered product never appears in the review queue', (
+  select not exists (
+    select 1 from public.get_catalog_review_queue(
+      'c9000000-0000-4000-8000-000000000101') q,
+      jsonb_array_elements(q -> 'products') e
+    where e ->> 'productId' = 'c9000000-0000-4000-8000-000000000301')));
+
+select _c('42. completing a review requires a stated reason (22023)',
+  _raises(format($q$
+    select public.complete_catalog_product_review(%L::uuid, '   ')
+  $q$, (select id from public.supplement_products where sku = 'AC-200')), '22023'));
+
+-- The refusal that matters most: an `incomplete` product must not become
+-- selectable because someone typed a sentence. It names what the source
+-- omitted rather than saying "invalid".
+select _c('43. an INCOMPLETE product cannot complete its review (55000)',
+  _raises(format($q$
+    select public.complete_catalog_product_review(%L::uuid, 'looks fine')
+  $q$, (select id from public.supplement_products where sku = 'AC-200')), '55000'));
+
+select _c('44. provenance is readable, and reports itself as immutable', (
+  select (p ->> 'immutable')::boolean
+     and (p ->> 'total')::int = 2
+     and (select bool_and(length(coalesce(r ->> 'sourceFileName', '')) > 0)
+          from jsonb_array_elements(p -> 'records') r)
+  from public.get_import_provenance('c9000000-0000-4000-8000-000000000101') p));
+
+select _c('45. an outsider can read none of the Phase 9C review surface', (
+  select _raises($q$
+    select public.get_catalog_review_queue('00000000-0000-4000-8000-0000000000ff')
+  $q$, '42501')
+     and _raises($q$
+    select public.get_import_provenance('00000000-0000-4000-8000-0000000000ff')
+  $q$, '42501')
+     and _raises($q$
+    select public.get_import_source_inventory('00000000-0000-4000-8000-0000000000ff')
+  $q$, '42501')));
+
 -- ---------------------------------------------------------------- results
 
 select count(*) filter (where ok) as passed,
