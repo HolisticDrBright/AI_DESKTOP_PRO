@@ -89,6 +89,10 @@ import type {
   LiveKnowledgeImportPreview,
   LiveKnowledgeImportPreviewResult,
   LiveKnowledgeImportCommitResult,
+  LiveImportSourceInventory,
+  LiveCatalogReviewQueue,
+  LiveImportProvenanceHistory,
+  LiveParsedImportEnvelope,
   LiveCommercialDisclosure,
   LiveProtocolCopilotDraft,
   LiveProtocolCopilotStatus,
@@ -1061,6 +1065,85 @@ export const liveClient = {
       "knowledge/import-cancel",
       { method: "POST", body: input },
     ),
+
+  /* --------------------- Phase 9C: parse, review, provenance ---------- */
+
+  /**
+   * Parse a spreadsheet or document into a reviewable envelope.
+   *
+   * Multipart rather than JSON, so the bytes are streamed instead of being
+   * base64'd through a JSON body. NOTHING IS WRITTEN by this call: the
+   * envelope it returns is inert until the operator reads the report and
+   * stages it deliberately.
+   */
+  knowledgeImportParse: async (input: {
+    file: File;
+    sourceKind: "product_spreadsheet" | "protocol_document";
+    sourceName?: string;
+    sheetName?: string;
+  }): Promise<LiveParsedImportEnvelope> => {
+    const form = new FormData();
+    form.append("file", input.file);
+    form.append("sourceKind", input.sourceKind);
+    if (input.sourceName) form.append("sourceName", input.sourceName);
+    if (input.sheetName) form.append("sheetName", input.sheetName);
+    return liveFetch<LiveParsedImportEnvelope>("knowledge/import-parse", {
+      method: "POST",
+      form,
+    });
+  },
+
+  importSourceInventory: () =>
+    liveFetch<LiveImportSourceInventory>("knowledge/source-files", { method: "GET" }),
+
+  recordImportSourceFile: (input: {
+    declaredName: string;
+    sourceKind?: string | null;
+    availability: "available" | "unavailable";
+    contentSha256?: string | null;
+    byteSize?: number | null;
+    unavailableReason?: string | null;
+  }) =>
+    liveFetch<{ ok: true; sourceFileId: string; availability: string }>(
+      "knowledge/source-files",
+      { method: "POST", body: input },
+    ),
+
+  knowledgeImportResolveAmbiguity: (input: {
+    itemId: string;
+    resolution: "new_product" | "same_as_existing" | "skip";
+    note: string;
+    existingProductId?: string | null;
+  }) =>
+    liveFetch<{ ok: true; itemId: string; resolution: string }>(
+      "knowledge/import-ambiguity",
+      { method: "POST", body: input },
+    ),
+
+  catalogReviewQueue: () =>
+    liveFetch<LiveCatalogReviewQueue>("knowledge/catalog-review", { method: "GET" }),
+
+  catalogReviewAction: (input: {
+    productId: string;
+    action: "clear_restriction" | "complete_review";
+    note: string;
+  }) =>
+    liveFetch<{ ok: true; productId: string; message: string }>(
+      "knowledge/catalog-review",
+      { method: "POST", body: input },
+    ),
+
+  importProvenance: (input: { refType?: string; refId?: string; limit?: number } = {}) => {
+    const params = new URLSearchParams();
+    if (input.refType) params.set("refType", input.refType);
+    if (input.refId) params.set("refId", input.refId);
+    if (input.limit) params.set("limit", String(input.limit));
+    const query = params.toString();
+    return liveFetch<LiveImportProvenanceHistory>(
+      `knowledge/provenance${query ? `?${query}` : ""}`,
+      { method: "GET" },
+    );
+  },
 
   /** A SEPARATE call. Commercial data never rides inside a clinical payload. */
   commercialLinks: (

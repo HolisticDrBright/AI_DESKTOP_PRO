@@ -18,7 +18,16 @@
  */
 
 import { execFileSync, spawn } from "node:child_process";
-import { openSync, readFileSync, readdirSync } from "node:fs";
+import { createHash } from "node:crypto";
+import {
+  existsSync,
+  openSync,
+  readFileSync,
+  readdirSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
 const specs = readdirSync("e2e")
@@ -31,6 +40,196 @@ if (specs.length === 0) {
 }
 
 const STUB_BASE = process.env.E2E_STUB_BASE ?? "http://127.0.0.1:3999";
+const APP_PORT = Number(process.env.E2E_PORT ?? 3114);
+
+/**
+ * ONE precise configuration error, and then stop.
+ *
+ * The failure mode this replaces: the battery reported `0 passed, 216 skipped`
+ * and exited non-zero, which reads as "the tests are broken" when the truth was
+ * "you did not set E2E_LIVE". A proof whose setup is a recipe held somewhere
+ * else is a proof that silently stops running.
+ */
+function configFailure(what, fix) {
+  console.error(`\n[e2e-order] CONFIGURATION ERROR — ${what}\n\n  ${fix}\n`);
+  process.exit(2);
+}
+
+/* ------------------------------------------------------------ provisioning */
+
+/**
+ * Everything the battery needs, set here rather than expected from the shell.
+ *
+ * An explicitly-set variable always wins: an operator pointing the suite at a
+ * real backend must not have it silently redirected to the fixture.
+ */
+function provisionEnv() {
+  const defaults = {
+    APP_EDITION: "clinical",
+    E2E_LIVE: "1",
+    NEXT_PUBLIC_USE_LIVE_API: "true",
+    TRPC_BASE_URL: `${STUB_BASE}/api/trpc`,
+    CLINICAL_SUPABASE_URL: STUB_BASE,
+    CLINICAL_SUPABASE_ANON_KEY: "stub",
+    CLINICAL_DEMO_EMAIL: "demo@local",
+    CLINICAL_DEMO_PASSWORD: "demo",
+    CLINICAL_ORG_ID: "org-fixture",
+    E2E_PORT: String(APP_PORT),
+  };
+  const applied = [];
+  for (const [key, value] of Object.entries(defaults)) {
+    if (process.env[key] === undefined || process.env[key] === "") {
+      process.env[key] = value;
+      applied.push(key);
+    }
+  }
+  if (process.env.APP_EDITION !== "clinical") {
+    configFailure(
+      `APP_EDITION is "${process.env.APP_EDITION}", but this battery only runs against the clinical edition.`,
+      "Unset APP_EDITION and re-run, or set APP_EDITION=clinical.",
+    );
+  }
+  return applied;
+}
+
+/**
+ * Find a Chromium that already exists. Never download one.
+ *
+ * A proof that reaches the network to install a browser fails differently on a
+ * machine with no network, which is exactly the machine where a clear message
+ * matters most.
+ */
+function provisionBrowser() {
+  if (process.env.PW_CHROMIUM_PATH) {
+    if (!existsSync(process.env.PW_CHROMIUM_PATH)) {
+      configFailure(
+        `PW_CHROMIUM_PATH points at ${process.env.PW_CHROMIUM_PATH}, which does not exist.`,
+        "Unset it to use the default Playwright browser, or point it at a real Chromium binary.",
+      );
+    }
+    return process.env.PW_CHROMIUM_PATH;
+  }
+  const candidates = [
+    process.env.PLAYWRIGHT_BROWSERS_PATH
+      ? join(process.env.PLAYWRIGHT_BROWSERS_PATH, "chromium")
+      : null,
+    "/opt/pw-browsers/chromium",
+  ].filter(Boolean);
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      process.env.PW_CHROMIUM_PATH = candidate;
+      return candidate;
+    }
+  }
+  // Fall through to Playwright's own resolution; it fails with its own clear
+  // "install" message if no browser is present.
+  return null;
+}
+
+/**
+ * A build signature over the sources the running server is made of.
+ *
+ * Path + size + mtime rather than content: this runs on every invocation, and
+ * hashing the whole tree would cost more than it saves. It catches every edit
+ * that matters and errs towards rebuilding.
+ */
+function sourceSignature() {
+  const hash = createHash("sha256");
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) =>
+      a.name.localeCompare(b.name),
+    )) {
+      if (entry.name === "node_modules" || entry.name.startsWith(".")) continue;
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else {
+        const st = statSync(full);
+        hash.update(`${full}:${st.size}:${Math.floor(st.mtimeMs)}`);
+      }
+    }
+  };
+  walk("src");
+  for (const file of ["next.config.ts", "package.json", "postcss.config.mjs"]) {
+    if (existsSync(file)) {
+      const st = statSync(file);
+      hash.update(`${file}:${st.size}:${Math.floor(st.mtimeMs)}`);
+    }
+  }
+  hash.update(`edition=${process.env.APP_EDITION}`);
+  hash.update(`live=${process.env.NEXT_PUBLIC_USE_LIVE_API}`);
+  return hash.digest("hex");
+}
+
+const STAMP = ".next/.e2e-provision.json";
+
+/**
+ * Build if there is no build, or if the build does not match these sources.
+ *
+ * `E2E_REUSE_BUILD=1` skips the check for an operator who knows their build is
+ * current and does not want to wait. Nothing else skips it: a battery that
+ * silently tests a stale bundle is worse than one that takes two minutes.
+ */
+function provisionBuild() {
+  const signature = sourceSignature();
+  const built = existsSync(".next/BUILD_ID");
+  let stamped = null;
+  try {
+    stamped = JSON.parse(readFileSync(STAMP, "utf8")).signature;
+  } catch {
+    stamped = null;
+  }
+
+  if (process.env.E2E_REUSE_BUILD === "1") {
+    if (!built) {
+      configFailure(
+        "E2E_REUSE_BUILD=1 was set, but there is no build in .next to reuse.",
+        "Unset E2E_REUSE_BUILD so this script builds, or run the build yourself first.",
+      );
+    }
+    console.log("[e2e-order] reusing the existing build (E2E_REUSE_BUILD=1)");
+    return;
+  }
+
+  if (built && stamped === signature) {
+    console.log("[e2e-order] the existing build matches these sources");
+    return;
+  }
+
+  console.log(
+    `[e2e-order] building the clinical live bundle (${built ? "sources changed" : "no build present"})`,
+  );
+  try {
+    execFileSync("npx", ["next", "build"], {
+      stdio: ["ignore", "inherit", "inherit"],
+      env: process.env,
+    });
+  } catch {
+    configFailure(
+      "the clinical live build failed.",
+      "Fix the build error above, then re-run. The battery cannot prove anything about a bundle that does not exist.",
+    );
+  }
+  writeFileSync(STAMP, JSON.stringify({ signature, builtAt: new Date().toISOString() }, null, 2));
+}
+
+/**
+ * The app port must be ours, for the same reason the stub must be.
+ *
+ * `playwright.config.ts` sets `reuseExistingServer: true`, so a server left
+ * over from a demo-edition build would be silently reused and the battery
+ * would report on a bundle nobody in this run produced.
+ */
+async function assertAppPortFree() {
+  const reachable = await fetch(`http://127.0.0.1:${APP_PORT}/api/health`)
+    .then(() => true)
+    .catch(() => false);
+  if (reachable) {
+    configFailure(
+      `something is already listening on port ${APP_PORT}, and Playwright would reuse it.`,
+      `Stop it and re-run, or set E2E_PORT to a free port.`,
+    );
+  }
+}
 
 /**
  * This script owns the fixture backend's lifecycle.
@@ -139,6 +338,21 @@ function run(label, files) {
   }
   return result;
 }
+
+/* ------------------------------------------------------------------ run */
+
+const appliedDefaults = provisionEnv();
+const chromium = provisionBrowser();
+console.log(
+  `[e2e-order] configuration: edition=${process.env.APP_EDITION} live=1 ` +
+    `stub=${STUB_BASE} port=${APP_PORT}` +
+    (chromium ? ` chromium=${chromium}` : " chromium=playwright default"),
+);
+if (appliedDefaults.length > 0) {
+  console.log(`[e2e-order] provisioned by this script: ${appliedDefaults.join(", ")}`);
+}
+await assertAppPortFree();
+provisionBuild();
 
 const { forward, reverse } = await withStub(async () => ({
   forward: run("forward order", specs),

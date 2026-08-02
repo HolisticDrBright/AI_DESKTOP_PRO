@@ -924,10 +924,30 @@ const scheduleAppointments = [];
 function seedScheduleFor(fromIso) {
   if (scheduleSeeded) return;
   scheduleSeeded = true;
-  const from = new Date(fromIso);
+
+  // NORMALISED TO THE MONDAY OF THE REQUESTED WEEK, not to the raw date.
+  //
+  // Three different entry points seed this fixture: the calendar (which asks
+  // for a week boundary), booking (which asks for an appointment time), and
+  // the Today page (which asks for `now`). Whichever fires first decided where
+  // the appointments landed, and offsets counted forward from a mid-week date
+  // pushed them into the FOLLOWING week — so on a Sunday, with a Monday-start
+  // calendar, the visible week was empty and the calendar suite failed with
+  // "no appointment found". A date-dependent fixture is a test that passes
+  // depending on what day it is run, which is not a test.
+  //
+  // Anchoring to the week start means every entry point seeds the same week,
+  // and day offsets 1-7 are Monday through Sunday OF THAT WEEK.
+  const requested = new Date(fromIso);
+  const weekStart = new Date(requested);
+  // getDay(): 0 = Sunday. Monday-start weeks put Sunday six days after Monday.
+  const daysSinceMonday = (weekStart.getDay() + 6) % 7;
+  weekStart.setDate(weekStart.getDate() - daysSinceMonday);
+  weekStart.setHours(0, 0, 0, 0);
+
   const at = (dayOffset, h, m = 0) => {
-    const d = new Date(from);
-    d.setDate(d.getDate() + dayOffset);
+    const d = new Date(weekStart);
+    d.setDate(d.getDate() + (dayOffset - 1));
     d.setHours(h, m, 0, 0);
     return d;
   };
@@ -2220,11 +2240,19 @@ function nutritionPlanVersion(id) {
 let importBatches = new Map();
 let importSeenHashes = new Map();
 let importState = new Map();
+// Phase 9C: declared source files, imported catalog products, and the
+// append-only provenance ledger.
+let importSourceFiles = new Map();
+let catalogReviewProducts = new Map();
+let importProvenance = [];
 
 function resetImportFixtures() {
   importBatches = new Map();
   importSeenHashes = new Map();
   importState = new Map();
+  importSourceFiles = new Map();
+  catalogReviewProducts = new Map();
+  importProvenance = [];
 }
 
 /* ------------------------------------------- Phase 9B catalog + templates
@@ -3168,6 +3196,102 @@ createServer(async (req, res) => {
     const memberOrgIds = memberOrgIdsForBearer(bearerToken);
 
     // Desktop-owned encounter + signed-note RPC boundary.
+    /* ------------------------------------------- Phase 9C helpers ------ */
+
+    // Mirrors `private.import_restricted_flags`. The inference boundary is the
+    // point: a DECLARED value becomes its own flag; a text signal can only ever
+    // add `suspected_restricted`, never a regulatory class.
+    const stubRestrictedFlags = (payload) => {
+      const flags = new Set();
+      const declared = String(payload?.regulatoryClassification ?? "").trim().toLowerCase();
+      if (["prescription", "peptide", "device"].includes(declared)) flags.add(declared);
+      const route = String(payload?.route ?? "").trim().toLowerCase();
+      if (["iv", "intravenous", "infusion", "im", "intramuscular", "subcutaneous", "injection"].includes(route)) {
+        flags.add("parenteral_therapy");
+      }
+      if (payload?.vaccineRelated === true) flags.add("vaccine_related");
+      if (Array.isArray(payload?.restrictedFlags)) {
+        for (const f of payload.restrictedFlags) {
+          if (String(f).trim()) flags.add(String(f).trim().toLowerCase());
+        }
+      }
+      const text = [
+        payload?.name, payload?.productName, payload?.description, payload?.statement,
+        payload?.proposition, payload?.title, payload?.category, payload?.form,
+      ].filter(Boolean).join(" ").toLowerCase();
+      if (/(peptide|bpc-?157|tb-?500|semaglutide|tirzepatide|ipamorelin|sermorelin)/.test(text)
+        || /(intravenous|\biv\b|infusion|injectable|injection)/.test(text)
+        || /(vaccine|vax|mrna|spike protein)/.test(text)
+        || /(prescription|\brx\b|schedule ii|controlled substance)/.test(text)
+        || /(chelation|ozone therapy|stem cell|exosome)/.test(text)) {
+        flags.add("suspected_restricted");
+      }
+      return [...flags].sort();
+    };
+
+    // Mirrors `private.import_missing_facts`. Absence recorded as absence.
+    const stubMissingFacts = (entityType, payload) => {
+      if (entityType !== "catalog_product") return [];
+      const missing = [];
+      if (!String(payload?.brand ?? "").trim()) missing.push("manufacturer or brand");
+      if (!String(payload?.form ?? "").trim()) missing.push("dose form");
+      if (!String(payload?.servingSize ?? "").trim()) missing.push("serving size");
+      if (!Array.isArray(payload?.ingredients) || payload.ingredients.length === 0) {
+        missing.push("ingredient amounts and units");
+      }
+      if (!String(payload?.sourceUrl ?? "").trim()) missing.push("manufacturer label reference");
+      if (!String(payload?.regulatoryClassification ?? "").trim()) {
+        missing.push("regulatory classification");
+      }
+      return missing;
+    };
+
+    const stubReviewState = (missing) =>
+      missing.includes("serving size") || missing.includes("ingredient amounts and units")
+        ? "incomplete"
+        : "needs_review";
+
+    // Mirrors `private.import_product_candidates`: same name (and brand, when
+    // the row states one) but a DIFFERENT identity.
+    const stubCandidates = (payload) => {
+      const name = String(payload?.name ?? "").trim().toLowerCase();
+      if (!name) return [];
+      const brand = String(payload?.brand ?? "").trim().toLowerCase();
+      const sku = String(payload?.sku ?? "").trim().toLowerCase();
+      const out = [];
+      for (const p of catalogReviewProducts.values()) {
+        if (String(p.name).toLowerCase() !== name) continue;
+        if (brand && String(p.brand ?? "").toLowerCase() !== brand) continue;
+        if (sku && String(p.sku ?? "").toLowerCase() === sku) continue;
+        out.push({
+          productId: p.productId, name: p.name, brand: p.brand ?? null,
+          sku: p.sku ?? null, upc: p.upc ?? null, status: p.status,
+          why: "same product name and brand",
+        });
+      }
+      return out;
+    };
+
+    // Mirrors `private.catalog_product_block_reason` — ONE sentence, so the
+    // screen and the refusal cannot disagree.
+    const stubBlockReason = (p) => {
+      if (!p) return null;
+      if (p.status !== "active") {
+        return 'the catalog product "' + p.name + '" is in review state "' + p.status
+          + '". An imported product is a claim about a label nobody here has verified; '
+          + "complete its review before using it in a protocol.";
+      }
+      if (p.restrictedFlags.length > 0 && !p.restrictedClearedAt) {
+        return 'the catalog product "' + p.name + '" is flagged as restricted ('
+          + p.restrictedFlags.join(", ") + ") and has not been cleared by a reviewer. "
+          + "Restricted items are jurisdiction-sensitive and require a named clinical decision.";
+      }
+      return null;
+    };
+
+    const stubSelectable = (p) =>
+      !!p && p.status === "active" && (p.restrictedFlags.length === 0 || !!p.restrictedClearedAt);
+
     if (url.pathname === "/rest/v1/rpc/preview_knowledge_import" && req.method === "POST") {
       const body = await readBody(req);
       const org = String(body._organization_id ?? "");
@@ -3191,6 +3315,7 @@ createServer(async (req, res) => {
           batchId: b.id, idempotent: true, status: b.status, itemCount: b.itemCount,
           added: b.added, changed: b.changed, unchanged: b.unchanged,
           conflicts: b.conflicts, removals: b.removals,
+          ambiguous: b.ambiguous ?? 0, restricted: b.restricted ?? 0,
           message: "This exact file was already imported. The existing batch is "
             + "returned unchanged; nothing was staged a second time.",
         });
@@ -3200,6 +3325,7 @@ createServer(async (req, res) => {
       const seen = new Set();
       const staged = [];
       let added = 0, changed = 0, unchanged = 0, conflicts = 0;
+      let ambiguous = 0, restricted = 0;
 
       items.forEach((raw, index) => {
         const entityType = String(raw?.entityType ?? "");
@@ -3207,8 +3333,13 @@ createServer(async (req, res) => {
         const key = stubDedupeKey(entityType, payload);
         const payloadHash = stubHash(payload);
         const errors = stubValidationErrors(entityType, payload);
+        const flags = stubRestrictedFlags(payload);
+        const missingFacts = stubMissingFacts(entityType, payload);
+        let candidates = [];
         let changeKind;
         let conflictWith = null;
+        let existingRefType = null;
+        let existingRefId = null;
         const composite = entityType + "|" + key;
 
         if (key && seen.has(composite)) {
@@ -3220,8 +3351,20 @@ createServer(async (req, res) => {
           const prior = key ? importState.get(org + "|" + composite) : null;
           if (!prior) { changeKind = "add"; added += 1; }
           else if (prior.hash === payloadHash) { changeKind = "unchanged"; unchanged += 1; }
-          else { changeKind = "change"; changed += 1; }
+          else {
+            changeKind = "change"; changed += 1;
+            existingRefType = prior.refType ?? null;
+            existingRefId = prior.refId ?? null;
+          }
+
+          // Only an `add` can be ambiguous. A row that matched a governed
+          // identity is a change and needs no candidates.
+          if (changeKind === "add" && entityType === "catalog_product") {
+            candidates = stubCandidates(payload);
+            if (candidates.length > 0) { changeKind = "ambiguous"; added -= 1; ambiguous += 1; }
+          }
         }
+        if (flags.length > 0) restricted += 1;
 
         staged.push({
           id: batchId + "-item-" + (index + 1),
@@ -3231,15 +3374,19 @@ createServer(async (req, res) => {
           sourceRowNumber: index + 1,
           dedupeKey: key,
           changeKind,
-          status: changeKind === "unchanged" || changeKind === "conflict" ? "skipped" : "needs_review",
+          status: ["unchanged", "conflict", "ambiguous"].includes(changeKind) ? "skipped" : "needs_review",
           payloadSha256: payloadHash,
-          existingRefType: null,
-          existingRefId: null,
+          existingRefType,
+          existingRefId,
           conflictWithItemId: conflictWith,
           conflictReason: changeKind === "conflict"
             ? "Another row earlier in this file claims the same identity (" + key
               + "). Resolve which row is correct before committing."
-            : null,
+            : changeKind === "ambiguous"
+              ? "This row matches no governed identity but closely resembles "
+                + candidates.length + " existing product(s). Applying it would either "
+                + "duplicate one or overwrite the wrong one. Confirm which before committing."
+              : null,
           conflictResolution: null,
           validationErrors: errors,
           warnings: Array.isArray(raw?.warnings) ? raw.warnings : [],
@@ -3247,6 +3394,14 @@ createServer(async (req, res) => {
           appliedRefType: null,
           appliedRefId: null,
           payload,
+          sourceRaw: raw?.sourceRaw && typeof raw.sourceRaw === "object" ? raw.sourceRaw : {},
+          restrictedFlags: flags,
+          restrictedReason: flags.length
+            ? "Flagged as restricted (" + flags.join(", ") + "). A restricted item is not "
+              + "usable until a named reviewer clears it."
+            : null,
+          missingFacts,
+          candidateMatches: candidates,
         });
       });
 
@@ -3269,7 +3424,7 @@ createServer(async (req, res) => {
         sourceSha256: hash,
         schemaVersion: String(body._schema_version ?? ""),
         itemCount: items.length,
-        added, changed, unchanged, conflicts, removals,
+        added, changed, unchanged, conflicts, removals, ambiguous, restricted,
         previewGeneratedAt: new Date().toISOString(),
         committedAt: null,
         createdAt: new Date().toISOString(),
@@ -3281,7 +3436,8 @@ createServer(async (req, res) => {
 
       return json(res, 200, {
         batchId, idempotent: false, status: "preview", itemCount: items.length,
-        added, changed, unchanged, conflicts, removals, sourceSha256: hash,
+        added, changed, unchanged, conflicts, removals, ambiguous, restricted,
+        sourceSha256: hash,
         message: "Preview only. No governed record has been created or changed. "
           + "Review every change and commit explicitly to apply.",
       });
@@ -3312,10 +3468,30 @@ createServer(async (req, res) => {
           sourceSha256: b.sourceSha256, schemaVersion: b.schemaVersion,
           itemCount: b.itemCount, added: b.added, changed: b.changed,
           unchanged: b.unchanged, conflicts: b.conflicts, removals: b.removals,
+          ambiguous: b.ambiguous ?? 0, restricted: b.restricted ?? 0,
           previewGeneratedAt: b.previewGeneratedAt, committedAt: b.committedAt,
           createdAt: b.createdAt,
         },
-        items: b.items.map(({ payload, ...rest }) => rest),
+        items: b.items.map(({ payload, ...rest }) => ({
+          ...rest,
+          // Field-level diffs, mirroring `private.import_item_field_diffs`. A
+          // field the source does not mention is SILENCE, never a deletion.
+          fieldDiffs: (() => {
+            if (rest.entityType !== "catalog_product" || !rest.existingRefId) return [];
+            const current = catalogReviewProducts.get(rest.existingRefId);
+            if (!current) return [];
+            const fields = ["name", "brand", "form", "sku", "upc", "category",
+              "regulatoryClassification", "jurisdiction", "description"];
+            return fields
+              .filter((f) => payload?.[f] !== undefined
+                && String(payload[f] ?? "").trim() !== String(current[f] ?? "").trim())
+              .map((f) => ({
+                field: f,
+                current: current[f] ?? null,
+                incoming: payload[f] ?? null,
+              }));
+          })(),
+        })),
         reportedRemovals: removals,
         removalPolicy: "Removals are reported for review only. This pipeline "
           + "never deletes governed clinical content; retire a record deliberately "
@@ -3369,6 +3545,15 @@ createServer(async (req, res) => {
           message: "resolve all " + unresolved.length + " conflicting rows before committing",
         });
       }
+      const stillAmbiguous = b.items.filter((i) => i.changeKind === "ambiguous");
+      if (stillAmbiguous.length) {
+        return json(res, 400, {
+          code: "55000",
+          message: "resolve all " + stillAmbiguous.length + " ambiguous rows before committing; "
+            + "each one resembles an existing product closely enough that applying it blind "
+            + "would duplicate or overwrite it",
+        });
+      }
       const invalid = b.items.filter((i) => i.status === "needs_review" && i.validationErrors.length);
       if (invalid.length) {
         return json(res, 400, {
@@ -3386,11 +3571,66 @@ createServer(async (req, res) => {
       }
 
       let applied = 0;
+      let restrictedApplied = 0;
       for (const item of b.items) {
         if (item.status !== "needs_review") continue;
         item.status = "applied";
-        item.appliedRefType = item.entityType;
-        item.appliedRefId = item.id + "-ref";
+
+        if (item.entityType === "catalog_product") {
+          // The Phase 9C apply path: NEVER `active`, always carrying its flags
+          // and the facts the source did not supply.
+          const productId = item.existingRefId ?? item.id + "-product";
+          const reviewState = stubReviewState(item.missingFacts ?? []);
+          catalogReviewProducts.set(productId, {
+            productId,
+            name: item.payload?.name ?? item.displayName,
+            brand: item.payload?.brand ?? null,
+            sku: item.payload?.sku ?? null,
+            upc: item.payload?.upc ?? null,
+            form: item.payload?.form ?? null,
+            category: item.payload?.category ?? null,
+            regulatoryClassification: item.payload?.regulatoryClassification ?? null,
+            jurisdiction: item.payload?.jurisdiction ?? null,
+            description: item.payload?.description ?? null,
+            status: reviewState,
+            restrictedFlags: item.restrictedFlags ?? [],
+            // A changed source row re-enters review, and any clearance is dropped.
+            restrictedClearedAt: null,
+            restrictedClearanceNote: null,
+            missingFacts: item.missingFacts ?? [],
+            organizationId: b.organizationId,
+            sourceFileName: b.sourceFilename ?? null,
+          });
+          item.appliedRefType = "supplement_product";
+          item.appliedRefId = productId;
+          if ((item.restrictedFlags ?? []).length > 0) restrictedApplied += 1;
+        } else {
+          item.appliedRefType = item.entityType;
+          item.appliedRefId = item.id + "-ref";
+        }
+
+        // Append-only: a second commit of the same item never rewrites it.
+        if (!importProvenance.some((r) => r.itemId === item.id && r.refId === item.appliedRefId)) {
+          importProvenance.push({
+            id: "prov-" + (importProvenance.length + 1),
+            organizationId: b.organizationId,
+            refType: item.appliedRefType,
+            refId: item.appliedRefId,
+            batchId: b.id,
+            itemId: item.id,
+            sourceFileName: b.sourceFilename ?? null,
+            sourceFileSha256: b.sourceSha256,
+            sourceSheet: item.sourceSheet ?? null,
+            sourceRowNumber: item.sourceRowNumber ?? null,
+            payloadSha256: item.payloadSha256,
+            rawValues: item.sourceRaw ?? {},
+            normalizedValues: item.payload ?? {},
+            missingFacts: item.missingFacts ?? [],
+            restrictedFlags: item.restrictedFlags ?? [],
+            importedAt: new Date().toISOString(),
+            batchSourceName: b.sourceName,
+          });
+        }
         applied += 1;
         if (item.dedupeKey) {
           importState.set(b.organizationId + "|" + item.entityType + "|" + item.dedupeKey, {
@@ -3403,10 +3643,256 @@ createServer(async (req, res) => {
       b.committedAt = new Date().toISOString();
 
       return json(res, 200, {
-        ok: true, batchId: b.id, applied, skipped: 0, approvalState: "draft",
+        ok: true, batchId: b.id, applied, skipped: 0, restricted: restrictedApplied,
+        approvalState: "draft",
         message: "Imported content is stored as NON-APPROVED drafts. Import is not "
           + "review, and nothing here is approved for clinical use until a "
-          + "practitioner approves it.",
+          + "practitioner approves it. Imported products are NOT selectable in the "
+          + "protocol picker until their review state is completed.",
+      });
+    }
+
+    /* ------------------------------- Phase 9C: the review surface ------ */
+
+    if (url.pathname === "/rest/v1/rpc/record_import_source_file" && req.method === "POST") {
+      const body = await readBody(req);
+      const org = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(org)) {
+        return json(res, 403, { code: "42501", message: "knowledge editor role required" });
+      }
+      const name = String(body._declared_name ?? "").trim();
+      const availability = String(body._availability ?? "unavailable");
+      if (!name) {
+        return json(res, 400, { code: "22023", message: "a source file needs a declared name" });
+      }
+      // A file NAME, never a path. Where the operator keeps their material is
+      // not this system's business.
+      if (name.includes("/") || name.includes("\\") || /^[A-Za-z]:/.test(name) || name.startsWith("~")) {
+        return json(res, 400, {
+          code: "23514",
+          message: "a declared source file is recorded by NAME, never by path",
+        });
+      }
+      if (!["available", "unavailable"].includes(availability)) {
+        return json(res, 400, { code: "22023", message: "availability must be available or unavailable" });
+      }
+      const digest = String(body._content_sha256 ?? "");
+      if (availability === "available" && !/^[0-9a-f]{64}$/.test(digest)) {
+        return json(res, 400, {
+          code: "22023",
+          message: "a file recorded as available must carry its sha256 digest; an inventory "
+            + "that can be filled in without reading the file proves nothing",
+        });
+      }
+      const reason = String(body._unavailable_reason ?? "").trim();
+      if (availability === "unavailable" && !reason) {
+        return json(res, 400, {
+          code: "22023",
+          message: 'a file recorded as unavailable must say why; "not found" and "withheld" '
+            + "are different facts",
+        });
+      }
+      const key = org + "|" + name;
+      const existing = importSourceFiles.get(key);
+      const record = {
+        id: existing?.id ?? "src-" + (importSourceFiles.size + 1),
+        organizationId: org,
+        declaredName: name,
+        sourceKind: body._source_kind ?? existing?.sourceKind ?? null,
+        availability,
+        contentSha256: availability === "available" ? digest : null,
+        byteSize: availability === "available" ? (body._byte_size ?? 0) : null,
+        unavailableReason: availability === "unavailable" ? reason : null,
+        declaredAt: existing?.declaredAt ?? new Date().toISOString(),
+        lastCheckedAt: new Date().toISOString(),
+      };
+      importSourceFiles.set(key, record);
+      return json(res, 200, { ok: true, sourceFileId: record.id, availability });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/get_import_source_inventory" && req.method === "POST") {
+      const body = await readBody(req);
+      const org = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(org)) {
+        return json(res, 403, { code: "42501", message: "active organization membership required" });
+      }
+      const files = [...importSourceFiles.values()]
+        .filter((f) => f.organizationId === org)
+        .sort((a, b2) => a.declaredName.localeCompare(b2.declaredName))
+        .map((f) => ({
+          id: f.id, declaredName: f.declaredName, sourceKind: f.sourceKind,
+          availability: f.availability, contentSha256: f.contentSha256,
+          byteSize: f.byteSize, unavailableReason: f.unavailableReason,
+          declaredAt: f.declaredAt, lastCheckedAt: f.lastCheckedAt,
+          batchCount: [...importBatches.values()].filter(
+            (b) => b.organizationId === org && b.sourceSha256 === f.contentSha256).length,
+        }));
+      return json(res, 200, {
+        files,
+        counts: {
+          declared: files.length,
+          available: files.filter((f) => f.availability === "available").length,
+          unavailable: files.filter((f) => f.availability === "unavailable").length,
+        },
+        emptyStateMessage: "No source files have been declared for this organization. "
+          + "Declaring a file records what was looked for, including files that could not be "
+          + "read — an inventory with nothing in it is not the same as an import that found nothing.",
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/resolve_knowledge_import_ambiguity" && req.method === "POST") {
+      const body = await readBody(req);
+      const itemId = String(body._item_id ?? "");
+      const resolution = String(body._resolution ?? "");
+      const note = String(body._note ?? "").trim();
+      if (!["new_product", "same_as_existing", "skip"].includes(resolution)) {
+        return json(res, 400, {
+          code: "22023",
+          message: "resolution must be new_product, same_as_existing or skip",
+        });
+      }
+      if (!note) {
+        return json(res, 400, { code: "22023", message: "resolving an ambiguity requires a stated reason" });
+      }
+      for (const b of importBatches.values()) {
+        const item = b.items.find((i) => i.id === itemId);
+        if (!item) continue;
+        if (item.changeKind !== "ambiguous") {
+          return json(res, 400, { code: "55000", message: "this item is not ambiguous" });
+        }
+        if (resolution === "same_as_existing") {
+          const productId = String(body._existing_product_id ?? "");
+          if (!productId) {
+            return json(res, 400, { code: "22023", message: "name the existing product this row refers to" });
+          }
+          // Only a candidate the row itself raised. An arbitrary id would point
+          // the row at a product nobody compared it against.
+          if (!(item.candidateMatches ?? []).some((c) => c.productId === productId)) {
+            return json(res, 400, {
+              code: "22023",
+              message: "that product is not among this row's candidates",
+            });
+          }
+          item.changeKind = "change";
+          item.status = "needs_review";
+          item.existingRefType = "supplement_product";
+          item.existingRefId = productId;
+          b.changed += 1;
+        } else if (resolution === "new_product") {
+          item.changeKind = "add";
+          item.status = "needs_review";
+          b.added += 1;
+        } else {
+          item.status = "skipped";
+        }
+        item.reviewNote = note;
+        b.ambiguous = Math.max((b.ambiguous ?? 0) - 1, 0);
+        return json(res, 200, { ok: true, itemId, resolution });
+      }
+      return json(res, 404, { code: "P0002", message: "import item not found" });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/get_catalog_review_queue" && req.method === "POST") {
+      const body = await readBody(req);
+      const org = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(org)) {
+        return json(res, 403, { code: "42501", message: "active organization membership required" });
+      }
+      const products = [...catalogReviewProducts.values()]
+        .filter((p) => p.organizationId === org
+          && (p.status !== "active" || p.restrictedFlags.length > 0))
+        .sort((a, b2) => String(a.name).localeCompare(String(b2.name)))
+        .map((p) => ({
+          productId: p.productId, name: p.name, brand: p.brand, sku: p.sku, upc: p.upc,
+          status: p.status, restrictedFlags: p.restrictedFlags,
+          restrictedClearedAt: p.restrictedClearedAt,
+          restrictedClearanceNote: p.restrictedClearanceNote,
+          selectable: stubSelectable(p),
+          blockReason: stubBlockReason(p),
+          missingFacts: p.missingFacts ?? [],
+          sourceFileName: p.sourceFileName ?? null,
+        }));
+      return json(res, 200, {
+        products,
+        counts: {
+          total: products.length,
+          restricted: products.filter((p) => p.restrictedFlags.length > 0).length,
+          notSelectable: products.filter((p) => !p.selectable).length,
+        },
+        emptyStateMessage: "No imported product is waiting for review. Products entered by "
+          + "hand are not listed here — this queue is for records that arrived in a file.",
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/clear_catalog_product_restriction" && req.method === "POST") {
+      const body = await readBody(req);
+      const p = catalogReviewProducts.get(String(body._product_id ?? ""));
+      if (!p) return json(res, 404, { code: "P0002", message: "catalog product not found" });
+      const note = String(body._note ?? "").trim();
+      if (!note) {
+        return json(res, 400, { code: "22023", message: "clearing a restriction requires a stated reason" });
+      }
+      if (p.restrictedFlags.length === 0) {
+        return json(res, 400, { code: "55000", message: "this product is not flagged as restricted" });
+      }
+      p.restrictedClearedAt = new Date().toISOString();
+      p.restrictedClearanceNote = note;
+      return json(res, 200, {
+        ok: true, productId: p.productId,
+        message: "Restriction cleared. The product remains subject to its review state; "
+          + "clearance is not approval.",
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/complete_catalog_product_review" && req.method === "POST") {
+      const body = await readBody(req);
+      const p = catalogReviewProducts.get(String(body._product_id ?? ""));
+      if (!p) return json(res, 404, { code: "P0002", message: "catalog product not found" });
+      const note = String(body._note ?? "").trim();
+      if (!note) {
+        return json(res, 400, { code: "22023", message: "completing a review requires a stated reason" });
+      }
+      if (!["draft", "incomplete", "needs_review"].includes(p.status)) {
+        return json(res, 400, { code: "55000", message: "this product is not in a review state" });
+      }
+      // `incomplete` is refused, and the refusal NAMES what the source omitted.
+      if (p.status === "incomplete") {
+        return json(res, 400, {
+          code: "55000",
+          message: "this product is incomplete: the source did not supply "
+            + ((p.missingFacts ?? []).join(", ") || "required label detail")
+            + ". Record the missing facts against the product before completing its review.",
+        });
+      }
+      p.status = "active";
+      return json(res, 200, {
+        ok: true, productId: p.productId, status: "active",
+        message: "Review complete. The product is now selectable. It still cannot reach an "
+          + "APPROVED protocol until a reviewer verifies its exact label identity against "
+          + "the manufacturer.",
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/get_import_provenance" && req.method === "POST") {
+      const body = await readBody(req);
+      const org = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(org)) {
+        return json(res, 403, { code: "42501", message: "active organization membership required" });
+      }
+      const refType = body._ref_type ?? null;
+      const refId = body._ref_id ?? null;
+      const limit = Math.min(Math.max(Number(body._limit ?? 50), 1), 200);
+      const all = importProvenance.filter((r) => r.organizationId === org);
+      const records = all
+        .filter((r) => (!refType || r.refType === refType) && (!refId || r.refId === refId))
+        .slice(0, limit)
+        .map(({ organizationId, ...rest }) => rest);
+      return json(res, 200, {
+        records,
+        total: all.length,
+        immutable: true,
+        emptyStateMessage: "No governed record in this organization was created by an import. "
+          + "That is a statement about the import history, not about the catalog.",
       });
     }
 
@@ -4202,13 +4688,36 @@ createServer(async (req, res) => {
         return json(res, 403, { code: "42501", message: "not a member of this organization" });
       }
       const q = String(body._query ?? "").trim().toLowerCase();
+      // Imported products join the picker ONLY once they are selectable —
+      // mirroring `private.catalog_product_is_selectable` in the WHERE clause
+      // of the real `search_protocol_catalog`. An imported row that is still in
+      // review must be invisible here, and must become visible the moment its
+      // review is completed; a stub that never showed it either way would prove
+      // neither half.
+      const importedSelectable = [...catalogReviewProducts.values()]
+        .filter((p) => stubSelectable(p))
+        .map((p) => ({
+          productId: p.productId,
+          name: p.name,
+          form: p.form ?? null,
+          manufacturer: p.brand ?? null,
+          productVersionId: null,
+          labelVersion: null,
+          servingSize: null,
+          effectiveFrom: null,
+          verificationStatus: "unverified",
+          structuredIngredientCount: 0,
+        }));
       return json(res, 200, {
-        products: CATALOG.filter(
-          (p) =>
-            !q ||
-            p.name.toLowerCase().includes(q) ||
-            (p.manufacturer ?? "").toLowerCase().includes(q),
-        ).slice(0, Math.min(Number(body._limit ?? 20) || 20, 50)),
+        products: [...CATALOG, ...importedSelectable]
+          .filter(
+            (p) =>
+              !q ||
+              p.name.toLowerCase().includes(q) ||
+              (p.manufacturer ?? "").toLowerCase().includes(q),
+          )
+          .sort((a, b2) => a.name.localeCompare(b2.name))
+          .slice(0, Math.min(Number(body._limit ?? 20) || 20, 50)),
         query: q || null,
         generatedAt: nowIso(),
       });

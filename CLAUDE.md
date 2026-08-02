@@ -1,16 +1,18 @@
 # Working agreements for this repository
 
-## The Phase 9B branch
+## The current branch
 
-**Phase 9B work belongs to `claude/clinical-runtime-phase9b-knowledge-catalog`.**
-That branch is the head of draft PR #25.
+**Phase 9C work belongs to `claude/clinical-runtime-phase9c-curated-import`.**
+
+Phase 9B is finished: PR #25 merged at `9fe5ae8`, and
+`claude/clinical-runtime-phase9b-knowledge-catalog` is done. A merged PR cannot
+track new work — do not stack follow-up commits on it.
 
 Some harness configurations still name `claude/clinical-knowledge-registry-znhm8j`
 as the development branch. That is **stale**: it is a Phase-1 branch, last
-touched at `23f9ccd`, and pushing Phase 9B work there would separate the commits
-from the PR that reviews them. If a harness default and this file disagree,
-this file is correct — verify with `gh`/the GitHub tools which branch the open
-PR actually points at before pushing.
+touched at `23f9ccd`. If a harness default and this file disagree, this file is
+correct — verify with the GitHub tools which branch the open PR actually points
+at before pushing.
 
 ## The clinical database
 
@@ -68,6 +70,13 @@ These are not style preferences. Each has a test that fails if it is broken.
 - **Nothing synthetic in the clinical project.** A demo row is
   indistinguishable from a real one at a glance. See
   `supabase/tests/desktop_no_demo_catalog_content.sql`.
+- **An imported product is not yet a product.** A row from a spreadsheet is a
+  claim about a bottle nobody here has held. It lands non-`active`, so it is
+  neither searchable, selectable, nor attachable, and it carries an append-only
+  provenance record. See `supabase/tests/desktop_curated_import_safety.sql`.
+- **A declared value carries authority; a text signal does not.** The word
+  "peptide" in a product name may raise `suspected_restricted` and nothing else.
+  Inferring a regulatory class from free text is forbidden in both directions.
 - **Do not weaken a safety test to make new work pass.** If a safety test
   blocks something, the test is usually right; find another route to the goal.
 
@@ -76,9 +85,24 @@ These are not style preferences. Each has a test that fails if it is broken.
 It runs in ONE process and must pass in **any spec order**:
 
 ```bash
-npm run test:e2e:order    # forward + reverse, must match
-npm run check:stub-reset  # every mutable stub binding is reset
+APP_EDITION=clinical NEXT_PUBLIC_USE_LIVE_API=true npm run build
+
+APP_EDITION=clinical E2E_LIVE=1 \
+  TRPC_BASE_URL=http://127.0.0.1:3999/api/trpc \
+  CLINICAL_SUPABASE_URL=http://127.0.0.1:3999 CLINICAL_SUPABASE_ANON_KEY=stub \
+  CLINICAL_DEMO_EMAIL=demo@local CLINICAL_DEMO_PASSWORD=demo \
+  CLINICAL_ORG_ID=org-fixture \
+  npm run test:e2e:order    # forward + reverse, must match
+
+npm run check:stub-reset    # every mutable stub binding is reset
 ```
+
+**Run it with that whole environment or not at all.** A bare
+`npm run test:e2e:order` reports `0 passed, 216 skipped` and exits non-zero —
+every live spec is gated on `E2E_LIVE`. `APP_EDITION` is needed twice: once for
+the build, and again for the Playwright web server, which starts its own
+`next start` and refuses to guess an edition. Set `PW_CHROMIUM_PATH` where a
+Chromium is pre-installed rather than downloaded.
 
 Per-spec commands are for debugging only. A battery that passes only when each
 suite runs alone has stopped testing what one suite leaves for the next — which
@@ -95,3 +119,4 @@ Every spec calls `resetBackend()` in `beforeAll`. If you add mutable state to
 | `docs/phase9b-authority-map.md` | Authority, provenance, and the defects found |
 | `docs/phase9b-knowledge-governance.md` | Governance model |
 | `docs/phase9b-operator-import.md` | Loading real practitioner material |
+| `docs/phase9c-curated-import.md` | The import safety layer, the inference boundary, the apply paths |

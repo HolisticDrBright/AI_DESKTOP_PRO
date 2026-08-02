@@ -13,6 +13,7 @@ import {
   ShieldCheck,
   UsersRound,
   type LucideIcon,
+  FileSearch,
 } from "lucide-react";
 import { AppearanceCard } from "@/components/settings/AppearanceCard";
 import { DataSourceCard } from "@/components/settings/DataSourceCard";
@@ -32,6 +33,7 @@ const GROUPS: {
       { label: "Scheduling & online booking", detail: "Visit types, availability, wait list, and calendar", href: "/calendar", icon: CalendarDays },
       { label: "Forms & chart templates", detail: "Reusable intake, charting, and care-plan structures", href: "/templates", icon: ClipboardList },
       { label: "Clinical Knowledge Center", detail: "Versioned protocols, lab logic, products, and safety rules", href: "/settings/knowledge", icon: LibraryBig },
+      { label: "Import Review", detail: "Read practitioner files, review every row, and decide what becomes governed content", href: "/settings/imports", icon: FileSearch },
     ],
   },
   {
