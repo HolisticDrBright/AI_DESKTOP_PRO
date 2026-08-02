@@ -73,6 +73,15 @@ No sha256 digests exist for any of them — a hash requires reading the file,
 and the inventory's own constraint (`cisf_available_is_evidenced`) makes it
 impossible to claim `available` without one.
 
+A **second access attempt** was made later the same day by a session that was
+intended to run locally on the operator's Windows workstation but executed in
+the same remote Linux container. All eight locations were absent again (exact
+paths only; nothing crawled), `private-import/` still contained no source
+files, and the governed inventory's `last_checked_at` was bumped for all
+eight rows. Zero items were imported; nothing was fabricated. The import
+still requires a session with genuine local file access, or the files copied
+into `private-import/`.
+
 ## Part 4 — pre-import privacy and safety scan
 
 Not runnable: a scan reads bytes, and no bytes were readable. Zero sources
