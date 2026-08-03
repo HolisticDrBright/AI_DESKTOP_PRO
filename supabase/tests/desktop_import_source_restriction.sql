@@ -375,6 +375,62 @@ select _c('20. batch deferred_count counts warning-bearing items only', (
   from public.clinical_knowledge_import_batches b
   where b.source_name = 'Invariants sheet'));
 
+-- ---------------------- 21-24 intersection invariants (Bonferroni-style)
+--
+-- Reason for existence: it is possible to report `restricted=X` and
+-- `deferred=Y` and then compute `restricted ∩ deferred` in a way that
+-- CONTRADICTS the file-level totals. Specifically: on a file whose source
+-- was declared restricted-by-default (like the peptide-program probe
+-- above), EVERY item must carry the source-level flag, so restricted =
+-- item_count and every deferred item must also be restricted. If a
+-- downstream reporter subtracts a conflict from restricted-and-deferred
+-- without also subtracting it from deferred, the arithmetic breaks.
+
+-- 21. source-restricted file → restricted_count = item_count (100%)
+select _c('21. source-restricted-by-default: restricted = total', (
+  select restricted_count = item_count
+  from public.clinical_knowledge_import_batches
+  where source_name = 'Invariants sheet'));
+
+-- 22. source-restricted file → every warning-bearing item is also restricted
+--     (restricted ∩ deferred = deferred_count, exactly).
+select _c('22. source-restricted-by-default: deferred ⊆ restricted', (
+  select count(*) filter (
+    where jsonb_array_length(i.warnings) > 0
+      and i.restricted_flags = '{}') = 0
+  from public.clinical_knowledge_import_items i
+  join public.clinical_knowledge_import_batches b on b.id = i.batch_id
+  where b.source_name = 'Invariants sheet'));
+
+-- 23. Universal Bonferroni ceiling: restricted ∩ deferred ≤ min(restricted, deferred).
+--     Reported overlap can never exceed either individual count. Any report
+--     that does so is a lie about item-level truth.
+select _c('23. |restricted ∩ deferred| ≤ min(restricted, deferred)', (
+  with x as (
+    select
+      (select count(*) from public.clinical_knowledge_import_items i where i.batch_id = b.id
+        and i.restricted_flags <> '{}' and jsonb_array_length(i.warnings) > 0) as inter,
+      b.restricted_count as r,
+      b.deferred_count as d
+    from public.clinical_knowledge_import_batches b
+    where b.source_name = 'Invariants sheet')
+  select inter <= least(r, d) from x));
+
+-- 24. Universal Bonferroni floor: restricted + deferred - inter ≤ item_count.
+--     Equivalently: inter ≥ max(0, restricted + deferred - item_count).
+--     A reporter that under-counts the intersection would violate this.
+select _c('24. |restricted ∩ deferred| ≥ max(0, restricted + deferred − total)', (
+  with x as (
+    select
+      (select count(*) from public.clinical_knowledge_import_items i where i.batch_id = b.id
+        and i.restricted_flags <> '{}' and jsonb_array_length(i.warnings) > 0) as inter,
+      b.restricted_count as r,
+      b.deferred_count as d,
+      b.item_count as n
+    from public.clinical_knowledge_import_batches b
+    where b.source_name = 'Invariants sheet')
+  select inter >= greatest(0, r + d - n) from x));
+
 -- ---------------------------------------------------------------- results
 
 select count(*) filter (where ok) as passed,

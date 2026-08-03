@@ -48,24 +48,36 @@ imported records — commit is a separate step nobody has taken.
   aggregate terminology (`added` as the "total") and the
   restriction-count gap surfaced accounting problems the operator
   flagged.
-- **Seventh attempt (this record)** — cancelled the sixth-round
-  batches with a governed reason ("aggregate reconciliation and
-  remaining restriction propagation defect"). The driver now
-  injects its own text-signal findings into item
-  `payload.restrictedFlags` before sending — the RPC's declared
-  branch honors them and no layer can suppress an earlier layer.
-  Two additional migrations landed:
+- **Seventh attempt** — cancelled the sixth-round batches with a
+  governed reason ("aggregate reconciliation and remaining
+  restriction propagation defect"). The driver now injects its own
+  text-signal findings into item `payload.restrictedFlags` before
+  sending — the RPC's declared branch honors them and no layer can
+  suppress an earlier layer. Two additional migrations landed:
   `desktop_import_preview_idempotent_any_active` (idempotent scope
   matches the partial dedupe index) and
-  `desktop_import_restricted_flag_scan_exclude_declared` (text
-  scan excludes declared-value keys so a declared class does not
-  double-flag itself as `suspected_restricted`). Reporting now
-  distinguishes `totalCandidates`, `nonConflicted`, `conflicted`,
-  `restricted`, `parserDeferred`, `missingFacts` — with the
-  invariant `total = nonConflicted + conflicted` asserted per batch
-  and in aggregate. Re-preview reports 979 total / 941 non-
-  conflicted / 38 conflicted / 506 restricted / 310 parser-deferred
-  / 172 missing-facts. MRNA 365/365 and Peptide 103/103. No commit.
+  `desktop_import_restricted_flag_scan_exclude_declared` (text scan
+  excludes declared-value keys so a declared class does not
+  double-flag itself as `suspected_restricted`). Re-preview reports
+  979 total / 941 non-conflicted / 38 conflicted / 506 restricted /
+  310 parser-deferred / 172 missing-facts. MRNA 365/365 and Peptide
+  103/103. No commit.
+- **Eighth attempt (this record)** — the seventh-attempt aggregate
+  had two count contradictions the operator caught: `restricted ∩
+  deferred` was reported as 235 for MRNA (should be 236 including the
+  1 conflict), and "48 outside restricted files" was actually 49
+  (the raw parser count in commit `e3747e4` covered only 4 files,
+  which the 8-file staging changed). Item-level truth was
+  re-derived directly from the DB: 979 total, 941 add + 38 conflict,
+  506 restricted (365 MRNA + 103 Peptide + 38 row-level), 310
+  warning-bearing, 263 restricted∩deferred (236 MRNA + 25 Peptide +
+  2 Supplement RDC), 47 warning-bearing-not-restricted, 49
+  warning-bearing-in-non-source-restricted-files. Batch history
+  reconciled: 32 cancelled across four waves (waves 1–2 of 8 each,
+  waves 3a and 3b of 8 each — 16 in wave 3, not 12). The suite gains
+  four new intersection invariants (`21–24`) that would have failed
+  against the seventh-attempt reporter. No new SQL migration; no
+  additional preview; no commit.
 
 ## Ground rules
 
@@ -291,13 +303,23 @@ All additive to staging. No test was weakened.
 | `20260802224007` | `desktop_import_restricted_flag_scan_exclude_declared` | Text scan reads payload minus declared-value keys (`regulatoryClassification`, `route`, `vaccineRelated`, `restrictedFlags`), so a declared class no longer double-flags itself as `suspected_restricted`. |
 
 New regression suite `supabase/tests/desktop_import_source_restriction.sql`
-— 20 checks (13 original + 7 accounting/monotonicity invariants).
+— **24 checks** (13 original + 7 accounting/monotonicity invariants +
+4 intersection invariants added in the eighth attempt). Checks
+`21–24` fail against any reporter that (a) skips the
+"source-restricted-by-default → restricted=total" identity, (b)
+allows a deferred item in a source-restricted file to be missing
+its source flag, (c) reports `|R ∩ D|` above `min(R, D)`, or (d)
+reports `|R ∩ D|` below the Bonferroni floor `max(0, R + D − N)`.
 Rolled back at the end.
 
 Old batches from prior attempts are preserved as an immutable audit
-record via `cancel_knowledge_import` with stated reasons:
-"restriction propagation defect …" and (this round)
-"aggregate reconciliation and remaining restriction propagation defect …".
+record via `cancel_knowledge_import` with stated reasons. **32
+cancelled batches total across four creation waves**: wave 1 at
+21:26 UTC (8), wave 2 at 22:03 UTC (8), wave 3a at 22:08 UTC (8),
+wave 3b at 22:10 UTC (8). Wave 3 created 16 batches — not the 12
+earlier claimed — because two consecutive schema migrations
+(`20260802220512`, `20260802220811`, `20260802221439`) landed
+between the two sub-waves and each forced a re-preview.
 
 The commit path is deliberately still the operator's next click after
 per-batch conflict resolution.
@@ -342,13 +364,13 @@ role-based selector, not looser.
 | DB acceptance `desktop_curated_import_safety.sql` (FULL 45, rolled back) | **45/45** |
 | DB acceptance `desktop_no_demo_catalog_content.sql` (FULL 15, rolled back) | **15/15** |
 | DB acceptance `desktop_knowledge_import_graph.sql` (FULL 52, rolled back) | **52/52** |
-| DB acceptance `desktop_import_source_restriction.sql` (13 + 7 = 20, rolled back) | **20/20** |
+| DB acceptance `desktop_import_source_restriction.sql` (13 + 7 + 4 = 24, rolled back) | **24/24** |
 | Unit tests | 297/297 (30 files) |
 | Typecheck / lint | clean (one pre-existing stub warning) |
 | clinical-bundle | PASS (228 client chunks) |
 | mock-imports gate | PASS |
 | stub-reset gate | PASS |
-| E2E order-independence battery on Node 22 (CI baseline), Windows | reverse-order 224/0/12 clean; forward-order 216/1/12 with the SPECIFIC failing test varying between runs (`live-frontdesk-protocol.spec.ts:123` in one run, `live-programs.spec.ts:76` in another). Both failing tests are in domains untouched by Phase 9D. The order-dependent flake is pre-existing environment noise on Windows, not a regression from these migrations. |
+| E2E order-independence battery on Node 22 (CI baseline), Windows | Reverse-order **224/0/12 clean across all three runs** (deterministic). Forward-order has a **1-test intermittent flake that rotates** between specs: run 1 `live-frontdesk-protocol.spec.ts:123`, run 2 `live-programs.spec.ts:76`, run 3 `live-tasks.spec.ts:480` (multi-org sign-in). All three failing tests are in domains Phase 9D did not touch (scheduling, programs, tasks/multi-org auth). Because the failing test rotates rather than repeats and the same tests pass reliably when the battery runs from a fresh state (reverse order, where they run first), the flake is a Windows-specific timing/resource-pressure issue that pre-dates this branch. **This means the final push does NOT satisfy the operator's "3 consecutive clean forward+reverse on the final tree" requirement locally on Windows.** CI runs on Linux and the flake has not been observed there; the pushed head still needs the CI signal to close the requirement. |
 | Security advisors | no new findings (0 ERROR; 233 established security-definer WARNs; 1 pre-existing auth WARN; 3 pre-existing INFO on worker tables) |
 | Secret / PHI / private-path scan of diff | clean |
 | `git status --porcelain private-import/` | empty |
