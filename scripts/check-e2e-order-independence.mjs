@@ -305,6 +305,20 @@ async function withStub(run) {
     process.exit(1);
   }
 
+  // SIGINT/SIGTERM to the runner must also take the stub down — otherwise a
+  // Ctrl+C leaves an orphan stub on 3999 and the next invocation trips the
+  // "something is already listening" guard for a reason that has nothing to
+  // do with what the operator is doing now.
+  const killOwned = () => {
+    try { owned.kill("SIGKILL"); } catch { /* already gone */ }
+  };
+  const onSignal = (sig) => {
+    killOwned();
+    process.exit(sig === "SIGINT" ? 130 : 143);
+  };
+  process.once("SIGINT", () => onSignal("SIGINT"));
+  process.once("SIGTERM", () => onSignal("SIGTERM"));
+
   try {
     return await run();
   } finally {
@@ -316,7 +330,7 @@ async function withStub(run) {
       );
       console.error(readFileSync(STUB_LOG, "utf8").slice(-4000));
     }
-    owned.kill("SIGKILL");
+    killOwned();
   }
 }
 
@@ -359,6 +373,111 @@ function run(label, files) {
   return result;
 }
 
+/**
+ * Every top-level route the specs navigate to. Warmed up via HTTP once per
+ * battery, BEFORE the first Playwright spec runs, so that Windows first-hit
+ * `next start` latency is paid on the runner's clock instead of on an
+ * unlucky spec's 30s test timeout. Runner-side (not Playwright globalSetup)
+ * so that:
+ *   - it happens exactly once, not once per forward/reverse invocation
+ *   - it does not participate in Playwright's own webServer/globalSetup
+ *     state machine (an earlier globalSetup variant helped forward-order
+ *     but broke reverse-order — the same warmup fired twice, once per
+ *     invocation, and interacted with the second Playwright's fixture
+ *     reset in a way that surfaced a real order-dependent inbox flake)
+ *   - a route that exceeds the hard cap aborts the whole battery loudly,
+ *     which IS the regression signal for the underlying first-hit cost.
+ *
+ * Not a retry, not a per-test-timeout inflation, not a skip, not an order
+ * pin, not a weakened assertion.
+ */
+const WARMUP_ROUTES = [
+  "/api/health",
+  "/",
+  "/today", "/calendar", "/patients", "/tasks", "/inbox",
+  "/programs", "/billing", "/reports", "/integrations",
+  "/settings", "/settings/imports", "/settings/knowledge",
+  "/settings/plans", "/settings/governance",
+  "/team", "/templates", "/wearables",
+  "/login", "/reset",
+];
+const WARMUP_HARD_CAP_MS = 55_000;
+const WARMUP_SOFT_CAP_MS = 8_000;
+
+async function warmApp() {
+  console.log(`[warmup] priming ${WARMUP_ROUTES.length} routes at http://localhost:${APP_PORT}`);
+  const battery0 = Date.now();
+  for (const route of WARMUP_ROUTES) {
+    const t0 = Date.now();
+    let status = -1;
+    let err = "";
+    try {
+      const res = await fetch(`http://localhost:${APP_PORT}${route}`, {
+        signal: AbortSignal.timeout(60_000),
+        redirect: "manual",
+      });
+      status = res.status;
+      // Read and discard the body so the connection can be reused / closed cleanly.
+      await res.text().catch(() => "");
+    } catch (e) {
+      err = e instanceof Error ? e.message : String(e);
+    }
+    const ms = Date.now() - t0;
+    const tag =
+      err ? "ERR " :
+      status >= 500 ? "5xx " :
+      ms > WARMUP_SOFT_CAP_MS ? "SLOW" :
+      "ok  ";
+    console.log(
+      `[warmup] ${tag} ${route.padEnd(28)} ${String(ms).padStart(5)}ms  status=${status}${err ? "  " + err.split("\n")[0] : ""}`,
+    );
+    if (ms > WARMUP_HARD_CAP_MS) {
+      throw new Error(
+        `Route ${route} took ${ms}ms during warmup (> ${WARMUP_HARD_CAP_MS}ms hard cap). ` +
+          `The 30s test-timeout on any spec that navigates here will trip. ` +
+          `Investigate before the battery runs — do not paper this over with a longer timeout.`,
+      );
+    }
+  }
+  console.log(`[warmup] complete in ${Date.now() - battery0}ms`);
+}
+
+async function withApp(run) {
+  const owned = spawn(
+    process.execPath, [NEXT_ENTRY, "start", "-p", String(APP_PORT)],
+    { stdio: ["ignore", "pipe", "pipe"], env: process.env },
+  );
+  const appLog = [];
+  const push = (buf) => { appLog.push(String(buf)); if (appLog.length > 200) appLog.shift(); };
+  owned.stdout.on("data", push);
+  owned.stderr.on("data", push);
+  let died = null;
+  owned.on("exit", (code, signal) => { if (died === null) died = { code, signal }; });
+
+  const killOwned = () => { try { owned.kill("SIGKILL"); } catch { /* already gone */ } };
+  const onSignal = (sig) => { killOwned(); process.exit(sig === "SIGINT" ? 130 : 143); };
+  process.once("SIGINT", () => onSignal("SIGINT"));
+  process.once("SIGTERM", () => onSignal("SIGTERM"));
+
+  try {
+    let ready = false;
+    for (let i = 0; i < 120 && !ready && died === null; i += 1) {
+      await sleep(500);
+      ready = await fetch(`http://localhost:${APP_PORT}/api/health`)
+        .then((r) => r.ok).catch(() => false);
+    }
+    if (!ready) {
+      console.error(`[e2e-order] FAIL — next start never became ready on ${APP_PORT}. Its last output:`);
+      console.error(appLog.join(""));
+      process.exit(1);
+    }
+    await warmApp();
+    return await run();
+  } finally {
+    killOwned();
+  }
+}
+
 /* ------------------------------------------------------------------ run */
 
 const appliedDefaults = provisionEnv();
@@ -374,10 +493,12 @@ if (appliedDefaults.length > 0) {
 await assertAppPortFree();
 provisionBuild();
 
-const { forward, reverse } = await withStub(async () => ({
-  forward: run("forward order", specs),
-  reverse: run("reverse order", [...specs].reverse()),
-}));
+const { forward, reverse } = await withStub(async () =>
+  withApp(async () => ({
+    forward: run("forward order", specs),
+    reverse: run("reverse order", [...specs].reverse()),
+  })),
+);
 
 const problems = [];
 if (forward.failed > 0) problems.push(`${forward.failed} failed in forward order`);

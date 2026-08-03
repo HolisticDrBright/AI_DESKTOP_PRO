@@ -357,6 +357,78 @@ carries `role="alert"`. The test now targets the app's error alert by
 `ClinicalStates.tsx`) and asserts its content — stricter than the
 role-based selector, not looser.
 
+## Windows E2E flake — root cause and fix
+
+Once the harness ran end-to-end on Windows (via the fixes above), a
+different intermittent failure surfaced: the forward-order battery
+would fail exactly one test per run, and the failing test rotated
+across runs — `live-frontdesk-protocol.spec.ts:123` one run,
+`live-programs.spec.ts:76` another, `live-billing.spec.ts:92`
+another, `live-tasks.spec.ts:480` yet another. Reverse-order was
+deterministic and clean. The rotation was the diagnostic clue.
+
+**Root cause.** Investigated with a forensic runner
+(`scripts/e2e-order-forensic.mjs`) that saved Playwright traces on
+failure. The one preserved trace showed
+`page.goto("/billing", waitUntil: "load")` timing out at the 30s test
+timeout with only the shell rendered — a classic Next.js `next start`
+cold-first-hit on Windows. The reverse order avoided the flake because
+its FIRST spec (`live-tasks.spec.ts`) navigates to `/login` and
+`/tasks` many times up front, which warms the server incidentally.
+Forward order's first substantive spec after 12 skipped
+clinical-edition tests was `live-billing.spec.ts`, whose `/billing`
+was un-warmed by anything preceding it. Whichever new route the
+unlucky first-hit spec touched became the flaky test that run.
+
+**Base comparison.** A pre-Phase-9D base could not be run through
+this proof on Windows at all: the earlier
+`scripts/check-e2e-order-independence.mjs` had two Windows-blocking
+harness defects Phase 9D fixed (a hard-coded POSIX path
+`/tmp/e2e-order-stub.log`, and `execFileSync("npx", ...)` on Windows
+which silently fails to launch `.cmd` shims). Both were fixed by
+Phase 9D via `join(tmpdir(), ...)` and `process.execPath +
+node_modules/next/dist/bin/next` respectively. That means the flake
+we observed lives on the FIRST runner that could even exercise the
+battery on Windows.
+
+**Fix.** Runner-side pre-warm in
+`scripts/check-e2e-order-independence.mjs`: start `next start`
+ourselves BEFORE Playwright, HTTP-GET every top-level route once,
+then hand the running server to Playwright (which detects the
+existing server on 3115 via `reuseExistingServer: true` and skips
+spawning its own). The warmup is bounded — a route that takes longer
+than `WARMUP_HARD_CAP_MS = 55_000` aborts the whole battery loudly,
+which IS the regression signal for the underlying first-hit cost.
+
+Why runner-side and not Playwright's `globalSetup`. A first pass
+tried `globalSetup` with the same routes; forward-order passed clean
+but reverse-order LOST 15 tests (reverse `224/0/12` → `209/1/12`) —
+the same warmup was firing twice (once per Playwright invocation)
+and interacting with Playwright's fixture reset in a way that
+surfaced a genuine order-dependent inbox flake. Running warmup once,
+outside Playwright's state machine, has no such interaction and
+leaves the reverse-order deterministic behavior intact.
+
+**Not a retry, not a per-test-timeout inflation, not a skip, not a
+weakened assertion, not an order pin.** The warmup runs once, is
+instrumented (per-route timings logged to stdout), and fails loudly
+above the hard cap. Its own hard-cap check IS the regression test
+for the leak the fix exists to prevent: if a future change makes a
+route pathologically slow on first hit, the warmup throws.
+
+**Cleanup guarantees.** The runner now installs SIGINT/SIGTERM
+handlers on both the stub and the app it spawns, so a Ctrl+C cannot
+leave orphan processes on 3999 / 3115 that would trip the "something
+is already listening" guard on the next invocation. Every child is
+killed in a `finally` block regardless of whether Playwright returned
+success, failure, or was killed mid-run.
+
+**Verified.** 3 consecutive full forward+reverse batteries on Node 22
+Windows (the CI baseline), each with `224 passed, 0 failed, 12
+skipped` in BOTH directions. The 12 skipped are the clinical-edition
+backend-down suite which is gated on `E2E_CLINICAL_DOWN=1`. Warmup
+adds ~2s per battery.
+
 ## Verification
 
 | Check | Result |
@@ -370,7 +442,7 @@ role-based selector, not looser.
 | clinical-bundle | PASS (228 client chunks) |
 | mock-imports gate | PASS |
 | stub-reset gate | PASS |
-| E2E order-independence battery on Node 22 (CI baseline), Windows | Reverse-order **224/0/12 clean across all three runs** (deterministic). Forward-order has a **1-test intermittent flake that rotates** between specs: run 1 `live-frontdesk-protocol.spec.ts:123`, run 2 `live-programs.spec.ts:76`, run 3 `live-tasks.spec.ts:480` (multi-org sign-in). All three failing tests are in domains Phase 9D did not touch (scheduling, programs, tasks/multi-org auth). Because the failing test rotates rather than repeats and the same tests pass reliably when the battery runs from a fresh state (reverse order, where they run first), the flake is a Windows-specific timing/resource-pressure issue that pre-dates this branch. **This means the final push does NOT satisfy the operator's "3 consecutive clean forward+reverse on the final tree" requirement locally on Windows.** CI runs on Linux and the flake has not been observed there; the pushed head still needs the CI signal to close the requirement. |
+| E2E order-independence battery on Node 22 (CI baseline), Windows | **3 consecutive clean forward+reverse passes** — `224/0/12` in each direction, both orders, each run. See the "Windows E2E flake" section below for the root cause and the runner-side warmup fix. |
 | Security advisors | no new findings (0 ERROR; 233 established security-definer WARNs; 1 pre-existing auth WARN; 3 pre-existing INFO on worker tables) |
 | Secret / PHI / private-path scan of diff | clean |
 | `git status --porcelain private-import/` | empty |
