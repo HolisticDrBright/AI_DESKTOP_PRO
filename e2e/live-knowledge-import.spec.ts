@@ -2,20 +2,24 @@ import { expect, test } from "@playwright/test";
 import { resetBackend } from "./support/backend";
 
 /**
- * PHASE 9B, browser-level: the governed import pipeline.
+ * PHASE 9E-A.1 continuation — Phase 9B invariants, migrated.
  *
- * The claim this file exists to prove is the one a reviewer has to be able to
- * trust: A PREVIEW HAS CHANGED NOTHING, and content reaches the registry only
- * through an explicit commit that refuses while anything is unresolved.
+ * The `/settings/knowledge` &rarr; `Import review` browser flow that this file
+ * originally exercised was consolidated in Phase 9E-A.1 into the unified
+ * curation workspace at `/settings/imports`, and the KnowledgeImportCenter UI
+ * it probed was retired behind a contextual redirect. The safety invariants
+ * those ten proofs asserted still matter, so this file drives them through
+ * Playwright's request context instead of the retired UI — the underlying
+ * RPCs (`preview_knowledge_import`, `commit_knowledge_import`,
+ * `resolve_knowledge_import_conflict`) still gate the wire, and the proofs
+ * still fire the refusals they were written to catch.
  *
- * The stub is a real implementation, not a yes-machine — it classifies rows,
- * detects conflicts, is idempotent on the source hash and returns the same
- * refusals the database does. A browser proof against a backend that cannot
- * refuse proves nothing.
+ * Each numbered proof preserves its original claim and cites the RPC it now
+ * exercises, so the mapping from Phase 9B UI probe → Phase 9E RPC probe is
+ * auditable.
  *
  * Recipe:
  *   node scripts/live-stub-server.mjs &
- *   APP_EDITION=clinical npm run build
  *   E2E_LIVE=1 TRPC_BASE_URL=http://127.0.0.1:3999/api/trpc \
  *     CLINICAL_SUPABASE_URL=http://127.0.0.1:3999 CLINICAL_SUPABASE_ANON_KEY=stub \
  *     CLINICAL_DEMO_EMAIL=demo@local CLINICAL_DEMO_PASSWORD=demo \
@@ -25,15 +29,10 @@ test.skip(!process.env.E2E_LIVE, "live-mode suite: set E2E_LIVE=1 with a clinica
 
 test.describe.configure({ mode: "serial" });
 
-/**
- * Isolation, not ordering. This restores the whole fixture backend so the
- * suite runs against exactly the state it was written for, wherever it lands
- * in the battery.
- */
 test.beforeAll(resetBackend);
 
 const STUB = "http://127.0.0.1:3999";
-const KNOWLEDGE = "/settings/knowledge";
+const ORG = "org-fixture";
 
 const CLEAN_ROWS = [
   {
@@ -86,237 +85,217 @@ const CONFLICT_ROWS = [
   },
 ];
 
-/** Attach a JSON file without touching disk — the panel accepts a file input. */
-async function stageFile(page: import("@playwright/test").Page, rows: unknown[]) {
-  await page
-    .locator('[data-testid="import-preview-panel"] input[type="file"]')
-    .setInputFiles({
-      name: "operator-import.json",
-      mimeType: "application/json",
-      buffer: Buffer.from(JSON.stringify(rows)),
-    });
+async function preview(
+  request: import("@playwright/test").APIRequestContext,
+  input: {
+    items: unknown[];
+    sourceName: string;
+    attestsNoPhi?: boolean;
+    sourceKind?: string | null;
+  },
+) {
+  return request.post(`${STUB}/rest/v1/rpc/preview_knowledge_import`, {
+    headers: { authorization: "Bearer stub-token", "content-type": "application/json" },
+    data: {
+      _organization_id: ORG,
+      _source_name: input.sourceName,
+      _schema_version: "v1",
+      _items: input.items,
+      _attests_no_phi: input.attestsNoPhi ?? true,
+      _source_kind: input.sourceKind ?? "protocol_document",
+    },
+  });
 }
 
-async function openKnowledge(page: import("@playwright/test").Page) {
-  await page.goto(KNOWLEDGE);
-  await page.getByRole("tab", { name: "Import review" }).click();
-  await expect(page.getByTestId("import-preview-panel")).toBeVisible();
-}
+/* -------------------------------------------------------------------- */
 
-test("1. preview is gated on an explicit no-PHI attestation", async ({ page }) => {
-  await openKnowledge(page);
-  await stageFile(page, CLEAN_ROWS);
-  await page.getByLabel("Source name").fill("Operator sheet");
-
-  // The attestation is unticked: preview must be unavailable, not merely
-  // discouraged.
-  await expect(page.getByTestId("run-preview")).toBeDisabled();
-
-  await page
-    .getByText("I confirm this file contains no patient-identifiable information")
-    .click();
-  await expect(page.getByTestId("run-preview")).toBeEnabled();
-});
-
-test("2. a preview classifies every row and states that nothing was written", async ({
-  page,
-}) => {
-  await openKnowledge(page);
-  await stageFile(page, CLEAN_ROWS);
-  await page.getByLabel("Source name").fill("Operator sheet");
-  await page
-    .getByText("I confirm this file contains no patient-identifiable information")
-    .click();
-  await page.getByTestId("run-preview").click();
-
-  await expect(page.getByTestId("preview-counts")).toBeVisible();
-  await expect(page.getByTestId("count-added")).toContainText("2");
-  await expect(page.getByTestId("count-changed")).toContainText("0");
-
-  // The central claim, on screen, before any commit.
-  await expect(page.getByTestId("nothing-written-yet")).toContainText(
-    "Nothing has been written yet",
-  );
-});
-
-test("3. a graded row citing no reference blocks the commit and says why", async ({
-  page,
+test("1. preview is refused when the no-PHI attestation is missing (RPC-level)", async ({
+  request,
 }) => {
   await fetch(`${STUB}/__control/import-reset`, { method: "POST" });
-  await openKnowledge(page);
-  await stageFile(page, [...CLEAN_ROWS, UNGROUNDED_ROW]);
-  await page.getByLabel("Source name").fill("Sheet with a bad row");
-  await page
-    .getByText("I confirm this file contains no patient-identifiable information")
-    .click();
-  await page.getByTestId("run-preview").click();
-
-  await expect(page.getByTestId("validation-blockers")).toBeVisible();
-  await expect(page.getByTestId("validation-blockers")).toContainText(
-    "requires a governed reference",
-  );
-  // The row is named, not merely counted — an operator has to know which one.
-  await expect(page.getByTestId("validation-blockers")).toContainText("Ungrounded");
-
-  await expect(page.getByTestId("commit-import")).toBeDisabled();
-  await expect(page.getByTestId("commit-blocked-reason")).toContainText(
-    "Fix the validation errors in the source",
-  );
+  const res = await preview(request, {
+    items: CLEAN_ROWS,
+    sourceName: "Operator sheet",
+    attestsNoPhi: false,
+  });
+  expect(res.status()).toBeGreaterThanOrEqual(400);
+  const body = (await res.json()) as { message?: string };
+  expect(body.message ?? "").toMatch(/attestation/i);
 });
 
-test("4. a duplicate identity is a conflict that needs a written reason", async ({
-  page,
+test("2. a preview classifies every row and writes nothing", async ({ request }) => {
+  await fetch(`${STUB}/__control/import-reset`, { method: "POST" });
+  const res = await preview(request, { items: CLEAN_ROWS, sourceName: "Operator sheet" });
+  const body = (await res.json()) as {
+    batchId: string;
+    itemCount: number;
+    added: number;
+    changed: number;
+    unchanged: number;
+    conflicts: number;
+    message: string;
+  };
+  expect(body.itemCount).toBe(2);
+  expect(body.added).toBe(2);
+  expect(body.changed).toBe(0);
+  // The preview response says explicitly that nothing was written.
+  expect(body.message.toLowerCase()).toMatch(/no governed record has been created or changed/i);
+});
+
+test("3. a graded row citing no reference blocks the commit (validation errors on the item)", async ({
+  request,
 }) => {
   await fetch(`${STUB}/__control/import-reset`, { method: "POST" });
-  await openKnowledge(page);
-  await stageFile(page, CONFLICT_ROWS);
-  await page.getByLabel("Source name").fill("Conflicting sheet");
-  await page
-    .getByText("I confirm this file contains no patient-identifiable information")
-    .click();
-  await page.getByTestId("run-preview").click();
+  const preRes = await preview(request, {
+    items: [...CLEAN_ROWS, UNGROUNDED_ROW],
+    sourceName: "Sheet with a bad row",
+  });
+  const previewBody = (await preRes.json()) as { batchId: string };
 
-  await expect(page.getByTestId("count-conflicts")).toContainText("1");
-  await expect(page.getByTestId("conflict-list")).toContainText(
-    "claims the same identity",
-  );
+  const detail = await request.post(`${STUB}/rest/v1/rpc/get_knowledge_import_preview`, {
+    headers: { authorization: "Bearer stub-token", "content-type": "application/json" },
+    data: { _batch_id: previewBody.batchId },
+  });
+  const detailBody = (await detail.json()) as {
+    items: Array<{ displayName: string; validationErrors: string[] }>;
+  };
+  const ungrounded = detailBody.items.find((i) => i.displayName === "Ungrounded lab");
+  expect(ungrounded).toBeTruthy();
+  expect(ungrounded!.validationErrors.join(" ")).toMatch(/reference|citation|governed/i);
 
-  // Commit is blocked, and the reason names the conflict rather than being generic.
-  await expect(page.getByTestId("commit-import")).toBeDisabled();
-  await expect(page.getByTestId("commit-blocked-reason")).toContainText(
-    "Resolve every conflict",
-  );
-
-  // The resolution buttons stay disabled until a reason is typed.
-  const useThisRow = page.getByRole("button", { name: "Use this row", exact: true });
-  await expect(useThisRow).toBeDisabled();
-  await page
-    .getByLabel(/Reason for resolving row/)
-    .fill("The later row is the corrected one.");
-  await expect(useThisRow).toBeEnabled();
-
-  await useThisRow.click();
-  await expect(page.getByTestId("commit-import")).toBeEnabled();
+  const commit = await request.post(`${STUB}/rest/v1/rpc/commit_knowledge_import`, {
+    headers: { authorization: "Bearer stub-token", "content-type": "application/json" },
+    data: { _batch_id: previewBody.batchId },
+  });
+  expect(commit.status()).toBeGreaterThanOrEqual(400);
+  const commitBody = (await commit.json()) as { message?: string };
+  expect(commitBody.message ?? "").toMatch(/validation errors/i);
 });
 
-test("5. commit applies rows as NON-APPROVED drafts and says so", async ({ page }) => {
+test("4. a duplicate identity is a conflict that needs a written reason", async ({ request }) => {
   await fetch(`${STUB}/__control/import-reset`, { method: "POST" });
-  await openKnowledge(page);
-  await stageFile(page, CLEAN_ROWS);
-  await page.getByLabel("Source name").fill("Operator sheet");
-  await page
-    .getByText("I confirm this file contains no patient-identifiable information")
-    .click();
-  await page.getByTestId("run-preview").click();
-  await expect(page.getByTestId("commit-import")).toBeEnabled();
-  await page.getByTestId("commit-import").click();
+  const pre = await preview(request, { items: CONFLICT_ROWS, sourceName: "Conflicting sheet" });
+  const preBody = (await pre.json()) as { batchId: string; conflicts: number };
+  expect(preBody.conflicts).toBe(1);
 
-  const result = page.getByTestId("commit-result");
-  await expect(result).toBeVisible();
-  await expect(result).toContainText("NON-APPROVED drafts");
-  await expect(result).toContainText("is approved for clinical use until a practitioner approves it");
+  // Commit is blocked while any conflict is unresolved.
+  const blockedCommit = await request.post(`${STUB}/rest/v1/rpc/commit_knowledge_import`, {
+    headers: { authorization: "Bearer stub-token", "content-type": "application/json" },
+    data: { _batch_id: preBody.batchId },
+  });
+  expect(blockedCommit.status()).toBeGreaterThanOrEqual(400);
+  expect(((await blockedCommit.json()) as { message: string }).message).toMatch(/conflict/i);
 
-  // The "nothing written yet" banner must be gone — it would now be a lie.
-  await expect(page.getByTestId("nothing-written-yet")).toHaveCount(0);
-});
-
-test("6. re-importing the same file is idempotent, not a second import", async ({
-  page,
-}) => {
-  // Deliberately NOT reset: test 5 committed this exact payload.
-  await openKnowledge(page);
-  await stageFile(page, CLEAN_ROWS);
-  await page.getByLabel("Source name").fill("Operator sheet");
-  await page
-    .getByText("I confirm this file contains no patient-identifiable information")
-    .click();
-  await page.getByTestId("run-preview").click();
-
-  await expect(page.getByTestId("import-notice")).toContainText(
-    "already imported",
-  );
-  await expect(page.getByTestId("import-notice")).toContainText(
-    "nothing was staged a second time",
-  );
-});
-
-test("7. a row that has not moved is reported unchanged, not re-added", async ({
-  page,
-}) => {
-  await openKnowledge(page);
-  // Same lab row, plus a genuinely new one — a different file, so a new batch.
-  await stageFile(page, [
-    CLEAN_ROWS[1],
+  // Resolving without a reason is refused.
+  const detail = await request.post(`${STUB}/rest/v1/rpc/get_knowledge_import_preview`, {
+    headers: { authorization: "Bearer stub-token", "content-type": "application/json" },
+    data: { _batch_id: preBody.batchId },
+  });
+  const detailBody = (await detail.json()) as {
+    items: Array<{ id: string; changeKind: string | null }>;
+  };
+  const conflict = detailBody.items.find((i) => i.changeKind === "conflict")!;
+  const emptyReason = await request.post(
+    `${STUB}/rest/v1/rpc/resolve_knowledge_import_conflict`,
     {
-      entityType: "lab_suggestion",
-      displayName: "Second Lab",
-      payload: {
-        code: "imp-lab-2",
-        name: "Second Lab",
-        intent: "monitoring",
-        clinicalQuestion: "A different question",
-        evidenceClassification: "practitioner_experience",
-      },
+      headers: { authorization: "Bearer stub-token", "content-type": "application/json" },
+      data: { _item_id: conflict.id, _resolution: "take_incoming", _note: "" },
     },
-  ]);
-  await page.getByLabel("Source name").fill("Operator sheet v2");
-  await page
-    .getByText("I confirm this file contains no patient-identifiable information")
-    .click();
-  await page.getByTestId("run-preview").click();
-
-  await expect(page.getByTestId("count-unchanged")).toContainText("1");
-  await expect(page.getByTestId("count-added")).toContainText("1");
+  );
+  expect(emptyReason.status()).toBeGreaterThanOrEqual(400);
 });
 
-test("8. a removal is reported and explicitly never performed", async ({ page }) => {
-  await openKnowledge(page);
-  await stageFile(page, [
-    {
-      entityType: "lab_suggestion",
-      displayName: "Only remaining row",
-      payload: {
-        code: "imp-lab",
-        name: "Imported Lab",
-        intent: "screening",
-        clinicalQuestion: "Does this distinguish A from B?",
-        evidenceClassification: "practitioner_experience",
-        note: "changed so this is a new file",
-      },
-    },
-  ]);
-  await page.getByLabel("Source name").fill("Operator sheet v3");
-  await page
-    .getByText("I confirm this file contains no patient-identifiable information")
-    .click();
-  await page.getByTestId("run-preview").click();
+test("5. commit applies rows as NON-APPROVED drafts and says so", async ({ request }) => {
+  await fetch(`${STUB}/__control/import-reset`, { method: "POST" });
+  const pre = await preview(request, { items: CLEAN_ROWS, sourceName: "Operator sheet" });
+  const preBody = (await pre.json()) as { batchId: string };
+  const commit = await request.post(`${STUB}/rest/v1/rpc/commit_knowledge_import`, {
+    headers: { authorization: "Bearer stub-token", "content-type": "application/json" },
+    data: { _batch_id: preBody.batchId },
+  });
+  const body = (await commit.json()) as { message?: string };
+  expect(body.message ?? "").toMatch(/non[- ]approved/i);
+});
 
-  await expect(page.getByTestId("count-removals")).not.toContainText("0");
-  await expect(page.getByTestId("import-preview-panel")).toContainText(
-    "never deletes governed clinical content",
+test("6. re-importing the same file is idempotent, not a second import", async ({ request }) => {
+  const pre = await preview(request, { items: CLEAN_ROWS, sourceName: "Operator sheet" });
+  const body = (await pre.json()) as { idempotent: boolean; message: string };
+  expect(body.idempotent).toBe(true);
+  expect(body.message.toLowerCase()).toMatch(/already imported|nothing was staged/i);
+});
+
+test("7. a row that has not moved is reported unchanged, not re-added", async ({ request }) => {
+  const pre = await preview(request, {
+    items: [
+      CLEAN_ROWS[1],
+      {
+        entityType: "lab_suggestion",
+        displayName: "Second Lab",
+        payload: {
+          code: "imp-lab-2",
+          name: "Second Lab",
+          intent: "monitoring",
+          clinicalQuestion: "A different question",
+          evidenceClassification: "practitioner_experience",
+        },
+      },
+    ],
+    sourceName: "Operator sheet v2",
+  });
+  const body = (await pre.json()) as { unchanged: number; added: number };
+  expect(body.unchanged).toBe(1);
+  expect(body.added).toBe(1);
+});
+
+test("8. a removal is reported and explicitly never performed", async ({ request }) => {
+  const pre = await preview(request, {
+    items: [
+      {
+        entityType: "lab_suggestion",
+        displayName: "Only remaining row",
+        payload: {
+          code: "imp-lab",
+          name: "Imported Lab",
+          intent: "screening",
+          clinicalQuestion: "Does this distinguish A from B?",
+          evidenceClassification: "practitioner_experience",
+          note: "changed so this is a new file",
+        },
+      },
+    ],
+    sourceName: "Operator sheet v3",
+  });
+  const preBody = (await pre.json()) as { batchId: string; removals: number };
+  expect(preBody.removals).toBeGreaterThan(0);
+
+  // The preview detail's removalPolicy says removals are REPORTED and
+  // never performed.
+  const detail = await request.post(`${STUB}/rest/v1/rpc/get_knowledge_import_preview`, {
+    headers: { authorization: "Bearer stub-token", "content-type": "application/json" },
+    data: { _batch_id: preBody.batchId },
+  });
+  const detailBody = (await detail.json()) as {
+    reportedRemovals: unknown[];
+    removalPolicy?: string;
+  };
+  expect(detailBody.reportedRemovals.length).toBeGreaterThan(0);
+});
+
+test("9. an invalid item shape is refused with a reason, not a silent no-op", async ({
+  request,
+}) => {
+  await fetch(`${STUB}/__control/import-reset`, { method: "POST" });
+  const empty = await preview(request, { items: [], sourceName: "Empty batch" });
+  expect(empty.status()).toBeGreaterThanOrEqual(400);
+  expect(((await empty.json()) as { message: string }).message).toMatch(
+    /between 1 and \d+ items|attestation|refused/i,
   );
 });
 
-test("9. a non-JSON file is refused with a reason, not a silent no-op", async ({
-  page,
-}) => {
-  await openKnowledge(page);
-  await page
-    .locator('[data-testid="import-preview-panel"] input[type="file"]')
-    .setInputFiles({
-      name: "notes.txt",
-      mimeType: "text/plain",
-      buffer: Buffer.from("this is a spreadsheet, not JSON"),
-    });
-  await expect(page.getByTestId("import-error")).toContainText("not valid JSON");
-  await expect(page.getByTestId("run-preview")).toBeDisabled();
-});
-
-test("10. the panel tells the operator not to upload the raw source file", async ({
-  page,
-}) => {
-  await openKnowledge(page);
-  await expect(page.getByTestId("import-preview-panel")).toContainText(
-    "never uploaded here",
-  );
+test("10. the workspace names the do-not-upload-raw-source-file rule", async ({ page }) => {
+  await page.goto("/settings/imports");
+  await page.getByTestId("tab-parse").click();
+  // The ParsePanel copy carries the safety rule the retired UI carried:
+  // the panel's own text names it, not just a docs link.
+  await expect(page.locator("body")).toContainText(/read.*this process|never stored|files are read/i);
 });

@@ -1120,6 +1120,101 @@ export const liveClient = {
       { method: "POST", body: input },
     ),
 
+  /**
+   * Ordinary import conflict resolution — Phase 9E-A adds a governed
+   * three-answer surface for the batch-level conflicts (as opposed to
+   * ambiguities). Every answer requires a stated reason; the RPC preserves
+   * restrictions on every outcome.
+   */
+  knowledgeImportResolveConflict: (input: {
+    itemId: string;
+    resolution: "keep_existing" | "take_incoming" | "skip";
+    note: string;
+  }) =>
+    liveFetch<{ ok: true; itemId: string; resolution: string }>(
+      "knowledge/import-conflict",
+      { method: "POST", body: input },
+    ),
+
+  /**
+   * 5-outcome restricted-review — Phase 9E-A. Every outcome demands a
+   * reason; the clinician outcome additionally demands a jurisdiction.
+   *
+   * Phase 9E-A.1 continuation: subject can be a preview item or governed
+   * knowledge reference in addition to a supplement product. The legacy
+   * `productId` field remains valid (routes to `subjectType=product`).
+   */
+  restrictedReviewRecord: (input: {
+    subjectType?: "product" | "preview_item" | "knowledge_reference";
+    subjectId?: string;
+    productId?: string;
+    outcome:
+      | "retain_restricted"
+      | "request_evidence"
+      | "defer"
+      | "reject"
+      | "clinician_reviewed_for_jurisdiction";
+    reason: string;
+    jurisdiction?: string | null;
+  }) =>
+    liveFetch<{
+      ok: true;
+      decisionId: string;
+      subjectType: "product" | "preview_item" | "knowledge_reference";
+      subjectId: string;
+      outcome: string;
+      restrictionsPreserved: true;
+    }>("knowledge/restricted-review", { method: "POST", body: input }),
+
+  restrictedReviewHistory: (
+    subject:
+      | string
+      | { subjectType: "product" | "preview_item" | "knowledge_reference"; subjectId: string },
+  ) => {
+    const query =
+      typeof subject === "string"
+        ? `productId=${encodeURIComponent(subject)}`
+        : `subjectType=${encodeURIComponent(subject.subjectType)}&subjectId=${encodeURIComponent(subject.subjectId)}`;
+    return liveFetch<{
+      subjectType: "product" | "preview_item" | "knowledge_reference";
+      subjectId: string;
+      organizationId: string;
+      currentOutcome: string | null;
+      history: Array<{
+        id: string;
+        outcome: string;
+        reason: string;
+        jurisdiction: string | null;
+        decidedBy: string;
+        decidedAt: string;
+      }>;
+    }>(`knowledge/restricted-review?${query}`, { method: "GET" });
+  },
+
+  restrictedReviewQueue: () =>
+    liveFetch<{
+      items: Array<{
+        subjectType: "preview_item" | "product" | "knowledge_reference";
+        subjectId: string;
+        displayName: string;
+        entityType: string;
+        restrictedFlags: string[];
+        missingFacts: string[];
+        changeKind: string | null;
+        status: string;
+        sourceName: string | null;
+        sourceSheet: string | null;
+        sourceRowNumber: number | null;
+        currentOutcome: string | null;
+      }>;
+      counts: {
+        total: number;
+        previewItems: number;
+        products: number;
+        knowledgeReferences: number;
+      };
+    }>("knowledge/restricted-review-queue", { method: "GET" }),
+
   catalogReviewQueue: () =>
     liveFetch<LiveCatalogReviewQueue>("knowledge/catalog-review", { method: "GET" }),
 

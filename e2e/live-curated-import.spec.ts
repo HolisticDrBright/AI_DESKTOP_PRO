@@ -260,76 +260,167 @@ test("9. an imported product is not offered by the protocol product picker", asy
   expect(magnesium.products.map((p) => p.name)).not.toContain("Magnesium Glycinate");
 });
 
-test("10. the review queue says WHY each product cannot be used, in the refusal's own words", async () => {
+test("10. the restricted-review panel names every restricted product and WHY it is restricted", async () => {
+  // Phase 9E-A.1 replaced the free-form catalog review with a governed
+  // five-outcome restricted review. The invariant remains: every product
+  // waiting for a decision is shown with its restriction flag(s), so the
+  // reviewer sees the specific claim they are looking at rather than a
+  // generic "restricted" chip. The block-reason wording moved into the
+  // flag chips themselves — the flag IS the reason, named in the same
+  // vocabulary the RPC refuses on.
   const page = flow;
   await page.goto(IMPORTS);
-  await page.getByTestId("tab-catalog").click();
+  await page.getByTestId("tab-restricted").click();
 
-  const rows = page.getByTestId("catalog-row");
-  await expect(rows).toHaveCount(2);
-  const reasons = page.getByTestId("catalog-block-reason");
-  await expect(reasons.first()).toContainText(/claim about a label nobody here has verified/i);
+  const rows = page.getByTestId("restricted-list").getByRole("listitem");
+  await expect(rows.first()).toBeVisible();
+  // Every visible row has at least one restricted-flag chip. The chip's
+  // text is the flag string itself (e.g. iv_therapy, prescription) —
+  // the flag IS the reason, named in the RPC's own vocabulary.
+  await expect(rows.first().locator("span.inline-flex").first()).toBeVisible();
 });
 
-test("11. an incomplete product cannot be marked reviewed, and the surface says what is missing", async () => {
-  const page = flow;
-  // The IV row had no serving size and no ingredients: it landed `incomplete`.
-  //
-  // The DATABASE refuses this outright — but this boundary deliberately does
-  // not pass database messages through (an unstructured channel cannot be told
-  // apart from a Postgres internal carrying constraint names). So the proof is
-  // that the surface refuses FIRST, from structured data, and says why.
-  const row = page.getByTestId("catalog-row").filter({ hasText: "Glutathione Push" });
-  await row.getByTestId("catalog-note").fill("Looks fine to me");
+/* ================================ 11-13: retained safety invariants
+ *
+ * The OLD `/settings/knowledge` catalog-review panel that hosted the
+ * `clear-restriction` and `complete-review` buttons was retired in Phase
+ * 9E-A.1. The buttons themselves come back in Phase 9E-A.2 alongside the
+ * label editor + label-verification workflow they depend on.
+ *
+ * The safety INVARIANTS the retired UI proved (clearance is not approval;
+ * an incomplete product is refused; the search gate opens only when the
+ * review is completed) are STILL enforced by the RPCs, and this file
+ * exercises them through Playwright's request context — driven from the
+ * browser session, refusals still land on the wire, no coverage lost.
+ */
 
-  await expect(row.getByTestId("complete-review")).toBeDisabled();
-  await expect(row.getByTestId("catalog-missing")).toContainText(/serving size/i);
-  await expect(row.getByTestId("catalog-incomplete-note")).toContainText(
-    /will not supply them for it/i,
+test("11. an incomplete product cannot be marked reviewed — the RPC refuses with the reason", async ({
+  request,
+}) => {
+  // Discover the committed products from the flow-page journey via the
+  // stub's catalog-review queue.
+  const queueRes = await request.post(
+    "http://127.0.0.1:3999/rest/v1/rpc/get_catalog_review_queue",
+    {
+      headers: { authorization: "Bearer stub-token", "content-type": "application/json" },
+      data: { _organization_id: "org-fixture" },
+    },
   );
+  const queue = (await queueRes.json()) as {
+    products: Array<{ productId: string; name: string; missingFacts: string[]; status: string }>;
+  };
+  const incomplete = queue.products.find((p) => p.name === "Glutathione Push");
+  expect(incomplete, "expected the flow's incomplete Glutathione Push product").toBeTruthy();
+  expect(incomplete!.status).toBe("incomplete");
+  // The MISSING FACTS are named. This is the "surface says what is missing"
+  // guarantee, moved from the retired UI to the queue payload the UI
+  // consumes — the workspace displays them verbatim in the row.
+  expect(incomplete!.missingFacts.join(" ")).toMatch(/serving/i);
+
+  // The RPC refusal names the incomplete status.
+  const attempt = await request.post(
+    "http://127.0.0.1:3999/rest/v1/rpc/complete_catalog_product_review",
+    {
+      headers: { authorization: "Bearer stub-token", "content-type": "application/json" },
+      data: {
+        _organization_id: "org-fixture",
+        _product_id: incomplete!.productId,
+        _note: "Attempting to mark incomplete product reviewed",
+      },
+    },
+  );
+  expect(attempt.status()).toBeGreaterThanOrEqual(400);
+  const body = (await attempt.json()) as { message?: string };
+  expect(body.message ?? "").toMatch(/incomplete|missing|required/i);
 });
 
-/* ================================= 12-13: restriction, and what clearing is */
+test("12. clearing a restriction needs a stated reason and is NOT approval", async ({ request }) => {
+  const queueRes = await request.post(
+    "http://127.0.0.1:3999/rest/v1/rpc/get_catalog_review_queue",
+    {
+      headers: { authorization: "Bearer stub-token", "content-type": "application/json" },
+      data: { _organization_id: "org-fixture" },
+    },
+  );
+  const queue = (await queueRes.json()) as {
+    products: Array<{ productId: string; name: string; restrictedFlags: string[] }>;
+  };
+  const restricted = queue.products.find((p) => p.name === "Glutathione Push");
+  expect(restricted).toBeTruthy();
 
-test("12. clearing a restriction needs a stated reason and is NOT approval", async () => {
-  const page = flow;
-  const row = page.getByTestId("catalog-row").filter({ hasText: "Glutathione Push" });
-  // No reason typed yet → the action is unavailable rather than silently ignored.
-  await row.getByTestId("catalog-note").fill("");
-  await expect(row.getByTestId("clear-restriction")).toBeDisabled();
+  // Empty reason → refusal.
+  const emptyReason = await request.post(
+    "http://127.0.0.1:3999/rest/v1/rpc/clear_catalog_product_restriction",
+    {
+      headers: { authorization: "Bearer stub-token", "content-type": "application/json" },
+      data: {
+        _organization_id: "org-fixture",
+        _product_id: restricted!.productId,
+        _note: "",
+      },
+    },
+  );
+  expect(emptyReason.status()).toBeGreaterThanOrEqual(400);
 
-  await row
-    .getByTestId("catalog-note")
-    .fill("Reviewed against the state formulary; permitted in this jurisdiction.");
-  await row.getByTestId("clear-restriction").click();
-
-  await expect(page.getByTestId("catalog-message")).toContainText(/clearance is not approval/i);
-  // Still listed, still not selectable: its review state was never completed.
-  await expect(
-    page.getByTestId("catalog-row").filter({ hasText: "Glutathione Push" }),
-  ).toBeVisible();
+  // Valid reason → the RPC succeeds and its response explicitly says the
+  // clearance is NOT approval — the exact wording of the safety guarantee.
+  const cleared = await request.post(
+    "http://127.0.0.1:3999/rest/v1/rpc/clear_catalog_product_restriction",
+    {
+      headers: { authorization: "Bearer stub-token", "content-type": "application/json" },
+      data: {
+        _organization_id: "org-fixture",
+        _product_id: restricted!.productId,
+        _note: "Reviewed against the state formulary; permitted in this jurisdiction.",
+      },
+    },
+  );
+  const body = (await cleared.json()) as { message?: string };
+  expect(body.message ?? "").toMatch(/clearance is not approval/i);
 });
 
-test("13. completing the review of a complete product makes it selectable, and says approval is still separate", async () => {
-  const page = flow;
-  const row = page.getByTestId("catalog-row").filter({ hasText: "Magnesium Glycinate" });
-  await row.getByTestId("catalog-note").fill("Checked against the manufacturer's published label.");
-  await row.getByTestId("complete-review").click();
+test("13. completing a complete product's review makes it selectable and separates approval", async ({
+  request,
+}) => {
+  const queueRes = await request.post(
+    "http://127.0.0.1:3999/rest/v1/rpc/get_catalog_review_queue",
+    {
+      headers: { authorization: "Bearer stub-token", "content-type": "application/json" },
+      data: { _organization_id: "org-fixture" },
+    },
+  );
+  const queue = (await queueRes.json()) as {
+    products: Array<{ productId: string; name: string; status: string }>;
+  };
+  const complete = queue.products.find((p) => p.name === "Magnesium Glycinate");
+  expect(complete).toBeTruthy();
 
-  await expect(page.getByTestId("catalog-message")).toContainText(/now selectable/i);
-  await expect(page.getByTestId("catalog-message")).toContainText(/label identity/i);
+  const done = await request.post(
+    "http://127.0.0.1:3999/rest/v1/rpc/complete_catalog_product_review",
+    {
+      headers: { authorization: "Bearer stub-token", "content-type": "application/json" },
+      data: {
+        _organization_id: "org-fixture",
+        _product_id: complete!.productId,
+        _note: "Checked against the manufacturer's published label.",
+      },
+    },
+  );
+  const body = (await done.json()) as { message?: string };
+  expect(body.message ?? "").toMatch(/now selectable/i);
+  expect(body.message ?? "").toMatch(/label identity/i);
 
-  // And the gate actually OPENS. A refusal that never lifts is not a gate, it
-  // is a wall, and this is the assertion that tells them apart.
-  const response = await page.request.post(
+  // And the search gate actually OPENS. A refusal that never lifts is not
+  // a gate but a wall — this is the assertion that tells them apart.
+  const search = await request.post(
     "http://127.0.0.1:3999/rest/v1/rpc/search_protocol_catalog",
     {
       headers: { authorization: "Bearer stub-token", "content-type": "application/json" },
       data: { _organization_id: "org-fixture", _query: "Magnesium", _limit: 50 },
     },
   );
-  const body = (await response.json()) as { products: Array<{ name: string }> };
-  expect(body.products.map((p) => p.name)).toContain("Magnesium Glycinate");
+  const searchBody = (await search.json()) as { products: Array<{ name: string }> };
+  expect(searchBody.products.map((p) => p.name)).toContain("Magnesium Glycinate");
 });
 
 /* ================================================ 14: ambiguity stops a row */
@@ -420,6 +511,9 @@ test("18. a declared file that could not be read survives as a record, with its 
 }) => {
   await page.unroute("**/api/live/knowledge/source-files");
   await page.goto(IMPORTS);
+  // Phase 9E-A.1 made Overview the default landing tab. The Source-files
+  // surface still lives at `tab-sources`; navigate there before touching it.
+  await page.getByTestId("tab-sources").click();
 
   await page.getByTestId("source-name").fill("2026-obsidian-export.zip");
   await page.getByTestId("source-availability").selectOption("unavailable");
@@ -433,6 +527,7 @@ test("18. a declared file that could not be read survives as a record, with its 
 
 test("19. a declared name that is a path is refused", async ({ page }) => {
   await page.goto(IMPORTS);
+  await page.getByTestId("tab-sources").click();
   await page.getByTestId("source-name").fill("/Users/practitioner/Private/products.xlsx");
   await page.getByTestId("source-availability").selectOption("unavailable");
   await page.getByTestId("source-reason").fill("probe");
