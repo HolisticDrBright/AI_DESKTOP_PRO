@@ -115,3 +115,68 @@ attachment, recommendation, message, protocol, or sync event.
 
 Those actions are the operator's, from within the workspace this PR
 delivers.
+
+## Scope split — Phase 9E-A.1 (this PR) vs Phase 9E-A.2 (next authorized slice)
+
+The 9E-A slice is delivered in two authorized PRs. This is a scope
+split, not a reduction of the requirements — every section is still
+in-scope for 9E-A overall; A.1 lands the governed database RPCs and
+the primary workflow UI, A.2 lands the three heavier authoring
+surfaces (label editor, commercial-matching queue, reference
+curation) on top of the RPCs A.1 delivers.
+
+### Phase 9E-A.1 — delivered
+
+- **Database**
+  - Five-outcome restricted-review RPC
+    (`record_restricted_review_outcome` + `get_restricted_review_history`)
+    with append-only history, role gate, jurisdiction requirement on
+    `clinician_reviewed_for_jurisdiction`, and preserved restrictions
+    on every outcome.
+  - Governed commercial-matching RPCs
+    (`attach_commercial_link_to_verified_product` +
+    `revoke_commercial_link`) with exact SKU/UPC/manufacturer+name
+    match, verified-only, stated-reason required, isolation from
+    clinical read paths.
+  - Ordinary conflict resolution RPC
+    (`resolve_knowledge_import_conflict`) covering keep_existing,
+    take_incoming, and skip.
+- **Acceptance suite**
+  `supabase/tests/desktop_curation_governance.sql` — 18 checks,
+  all passing.
+- **Unified workspace at `/settings/imports`** (five working sections
+  + one entry-point tab + three deferred placeholders + provenance):
+  - Overview (composite counts, five-stage workflow pointer)
+  - Source files (unchanged)
+  - Read a file (unchanged)
+  - Preview batches (renders the batch review surface)
+  - Conflicts (side-by-side diff, three governed decisions, reason
+    required, restrictions preserved)
+  - Restricted review (five outcomes, seven category filters,
+    per-item append-only history)
+  - Product labels — placeholder, states precisely what remains
+  - Knowledge references — placeholder, states precisely what remains
+  - Commercial matching — placeholder, states precisely what remains
+  - Provenance & history (unchanged)
+- **Retire the duplicate `/settings/knowledge` import-review tab**
+  through a clear contextual redirect that names where the workflow
+  now lives.
+- **Preserve all eight real preview batches** unchanged. Rolled-back
+  DB fixtures and deterministic contract fixtures back every test.
+- **No dead buttons**; every deferred section names precisely what is
+  not yet available and what remains for A.2.
+
+### Phase 9E-A.2 — next authorized slice
+
+Mandatory follow-up work; not to be started in the 9E-A.1 session.
+
+- Product Label versioned editor (writes on top of the versioned
+  label tables and the existing verify/approve RPCs).
+- Commercial-matching practitioner UI (writes on top of the A.1
+  attach/revoke RPCs; queue view, exact-match affirmation, disclosure
+  edit, revoke via supersede).
+- Knowledge Reference curation (evidence grade, citation, jurisdiction,
+  reviewer identity, warnings, restricted flags, practitioner-experience
+  labelling for uncitated material).
+- Migrate the three E2E specs that this PR left `.skip`-labelled
+  (11–13) onto the A.2 surfaces they exercise.

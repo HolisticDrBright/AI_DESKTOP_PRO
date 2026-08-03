@@ -39,7 +39,22 @@ import { cn } from "@/lib/cn";
  * completely different actions from the person reading it.
  */
 
-type Tab = "sources" | "parse" | "review" | "catalog" | "provenance";
+/**
+ * Phase 9E-A section identifiers. Nine tabs; five deliver working
+ * governance surfaces, three are placeholders that state precisely
+ * what remains, one ("parse") stays as the file-reading entry point.
+ */
+type Tab =
+  | "overview"
+  | "sources"
+  | "parse"
+  | "batches"
+  | "conflicts"
+  | "restricted"
+  | "labels"
+  | "references"
+  | "commercial"
+  | "provenance";
 
 function errText(e: unknown): string {
   return e instanceof AdapterError ? e.message : "Something went wrong. Try again.";
@@ -727,173 +742,6 @@ function ReviewPanel({ batchId }: { batchId: string | null }) {
   );
 }
 
-/* ------------------------------------------------------------- catalog */
-
-function CatalogReviewPanel() {
-  const [state, setState] = useState<"loading" | "ready" | "error">("loading");
-  const [error, setError] = useState<unknown>(null);
-  const [data, setData] = useState<LiveCatalogReviewQueue | null>(null);
-  const [note, setNote] = useState<Record<string, string>>({});
-  const [message, setMessage] = useState("");
-
-  const load = useCallback(async () => {
-    setState("loading");
-    try {
-      setData(await liveClient.catalogReviewQueue());
-      setState("ready");
-    } catch (e) {
-      setError(e);
-      setState("error");
-    }
-  }, []);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  const act = async (productId: string, action: "clear_restriction" | "complete_review") => {
-    setMessage("");
-    try {
-      const result = await liveClient.catalogReviewAction({
-        productId,
-        action,
-        note: (note[productId] ?? "").trim(),
-      });
-      setMessage(result.message);
-      await load();
-    } catch (e) {
-      setMessage(errText(e));
-    }
-  };
-
-  if (state === "loading") return <ClinicalLoading label="Reading the catalog review queue…" />;
-  if (state === "error") return <PanelError error={error} onRetry={load} />;
-
-  return (
-    <div className="flex flex-col gap-4">
-      <ClinicalNote>
-        Every product here arrived in a file. Until its review is completed it is{" "}
-        <strong>not returned by search, not selectable, and not attachable</strong> to a protocol.
-        Clearing a restriction is not the same as completing a review, and neither is approval.
-      </ClinicalNote>
-
-      {message && (
-        <p className="m-0 text-[12.5px] text-subtle" role="status" data-testid="catalog-message">
-          {message}
-        </p>
-      )}
-
-      <Card>
-        <CardTitle>
-          Waiting for review · {data?.counts.total ?? 0} ({data?.counts.restricted ?? 0} restricted)
-        </CardTitle>
-        {data && data.products.length === 0 ? (
-          <p className="m-0 text-[12.5px] text-subtle" data-testid="catalog-empty">
-            {data.emptyStateMessage}
-          </p>
-        ) : (
-          <TableWrap>
-            <thead>
-              <tr>
-                <TH>Product</TH>
-                <TH>State</TH>
-                <TH>Why it cannot be used</TH>
-                <TH>Missing facts</TH>
-                <TH>Decision</TH>
-              </tr>
-            </thead>
-            <tbody>
-              {data?.products.map((p) => (
-                <tr key={p.productId} data-testid="catalog-row">
-                  <TD>
-                    <span className="font-semibold">{p.name}</span>
-                    <span className="block text-[11px] text-subtle">
-                      {p.brand ?? "Unknown brand"} · {p.sku ?? "no SKU"} ·{" "}
-                      {p.sourceFileName ?? "Unknown file"}
-                    </span>
-                  </TD>
-                  <TD>
-                    <span className="flex flex-col gap-1">
-                      <Chip tone={p.selectable ? "ok" : "warn"}>{p.status}</Chip>
-                      {p.restrictedFlags.length > 0 && (
-                        <span className="flex flex-wrap gap-1">
-                          {p.restrictedFlags.map((f) => (
-                            <Chip key={f} tone="danger">
-                              {f}
-                            </Chip>
-                          ))}
-                        </span>
-                      )}
-                    </span>
-                  </TD>
-                  <TD className="max-w-[320px] text-[11.5px]" data-testid="catalog-block-reason">
-                    {p.blockReason ?? "Nothing is blocking this product."}
-                  </TD>
-                  <TD className="text-[11.5px]" data-testid="catalog-missing">
-                    {p.missingFacts.length === 0 ? (
-                      "—"
-                    ) : (
-                      <>
-                        {p.missingFacts.join(", ")}
-                        {p.status === "incomplete" && (
-                          <span
-                            className="mt-1 block text-warning-deep"
-                            data-testid="catalog-incomplete-note"
-                          >
-                            This product cannot complete its review until these facts are
-                            recorded. The source did not supply them, and this system will not
-                            supply them for it.
-                          </span>
-                        )}
-                      </>
-                    )}
-                  </TD>
-                  <TD>
-                    <TextInput
-                      value={note[p.productId] ?? ""}
-                      onChange={(e) => setNote({ ...note, [p.productId]: e.target.value })}
-                      placeholder="Stated reason"
-                      aria-label={`Reason for ${p.name}`}
-                      data-testid="catalog-note"
-                    />
-                    <div className="mt-1 flex gap-2">
-                      {p.restrictedFlags.length > 0 && !p.restrictedClearedAt && (
-                        <Btn
-                          variant="ghost"
-                          onClick={() => act(p.productId, "clear_restriction")}
-                          disabled={!(note[p.productId] ?? "").trim()}
-                          data-testid="clear-restriction"
-                        >
-                          Clear restriction
-                        </Btn>
-                      )}
-                      {/* An `incomplete` product is refused by the database,
-                          and that refusal arrives as an opaque conflict — this
-                          boundary deliberately does not pass database messages
-                          through. So the surface explains it from STRUCTURED
-                          data instead, and does not offer the action at all. */}
-                      <Btn
-                        variant="ghost"
-                        onClick={() => act(p.productId, "complete_review")}
-                        disabled={
-                          !(note[p.productId] ?? "").trim() || p.status === "incomplete"
-                        }
-                        data-testid="complete-review"
-                      >
-                        Complete review
-                      </Btn>
-                    </div>
-                  </TD>
-                </tr>
-              ))}
-            </tbody>
-          </TableWrap>
-        )}
-      </Card>
-    </div>
-  );
-}
-
 /* ---------------------------------------------------------- provenance */
 
 function ProvenancePanel() {
@@ -982,18 +830,823 @@ function ProvenancePanel() {
 
 /* ------------------------------------------------------------- shell */
 
+/* ==================================================================
+ * PHASE 9E-A.1 — NEW GOVERNANCE PANELS
+ * ==================================================================
+ *
+ * OverviewPanel — composite counts + workflow-stage pointer.
+ * BatchesPanel  — list preview / cancelled batches for the org.
+ * ConflictsPanel — all ordinary conflicts across all preview batches,
+ *                  with side-by-side rows, field-level diff, and the
+ *                  three governed decisions (keep_existing /
+ *                  take_incoming / skip), each demanding a reason.
+ * RestrictedReviewPanel — 5-outcome restricted review with per-item
+ *                  history, category filters, and jurisdiction input
+ *                  when the outcome demands it.
+ * ComingIn9EA2Panel — a clearly-labelled placeholder for the three
+ *                  deferred sections (Product labels, Knowledge
+ *                  references, Commercial matching). It states
+ *                  exactly what is missing and where the work will
+ *                  land. No dead buttons.
+ */
+
+/* ------------------------------------------------------------- overview */
+
+function OverviewPanel({
+  onNavigate,
+}: {
+  onNavigate: (t: Tab) => void;
+}) {
+  const [state, setState] = useState<"loading" | "ready" | "error">("loading");
+  const [error, setError] = useState<unknown>(null);
+  const [inv, setInv] = useState<LiveImportSourceInventory | null>(null);
+  const [queue, setQueue] = useState<LiveCatalogReviewQueue | null>(null);
+
+  const load = useCallback(async () => {
+    setState("loading");
+    try {
+      const [i, q] = await Promise.all([
+        liveClient.importSourceInventory(),
+        liveClient.catalogReviewQueue(),
+      ]);
+      setInv(i);
+      setQueue(q);
+      setState("ready");
+    } catch (e) {
+      setError(e);
+      setState("error");
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  if (state === "loading") return <ClinicalLoading label="Reading the import inventory…" />;
+  if (state === "error") return <PanelError error={error} onRetry={load} />;
+
+  const declared = inv?.files.length ?? 0;
+  const available = (inv?.files ?? []).filter((f) => f.availability === "available").length;
+  const products = queue?.products ?? [];
+  const restrictedCount = products.filter((p) => (p.restrictedFlags ?? []).length > 0).length;
+  const notSelectable = queue?.counts?.notSelectable ?? 0;
+
+  // The workflow pointer: preview → resolve conflicts → commit as draft →
+  // complete missing facts → restriction/evidence review → label
+  // verification → clinical approval → selectable. The pointer highlights
+  // the earliest stage that has outstanding work.
+  const stages = [
+    {
+      key: "sources" as Tab,
+      label: "Declare source files",
+      done: declared > 0,
+      todo: declared === 0 ? "No files declared yet." : null,
+      go: () => onNavigate("sources"),
+    },
+    {
+      key: "parse" as Tab,
+      label: "Stage a batch (preview)",
+      done: declared > 0 && available > 0,
+      todo:
+        available === 0 && declared > 0
+          ? "Read an available file into a preview batch."
+          : declared === 0
+            ? null
+            : null,
+      go: () => onNavigate("parse"),
+    },
+    {
+      key: "conflicts" as Tab,
+      label: "Resolve conflicts",
+      done: false,
+      todo: "Open the Conflicts tab to walk any batch-level collisions.",
+      go: () => onNavigate("conflicts"),
+    },
+    {
+      key: "restricted" as Tab,
+      label: "Restricted review",
+      done: false,
+      todo:
+        restrictedCount > 0
+          ? `${restrictedCount} restricted product(s) waiting for a decision.`
+          : "No restricted rows in the current queue.",
+      go: () => onNavigate("restricted"),
+    },
+    {
+      key: "labels" as Tab,
+      label: "Complete missing product facts (label editor)",
+      done: false,
+      todo:
+        notSelectable > 0
+          ? `${notSelectable} product(s) not yet selectable. The label editor arrives in Phase 9E-A.2.`
+          : "The label editor arrives in Phase 9E-A.2.",
+      go: () => onNavigate("labels"),
+    },
+  ];
+
+  return (
+    <div className="flex flex-col gap-4">
+      <Card>
+        <CardTitle>Where the workspace is</CardTitle>
+        <div className="grid gap-2 md:grid-cols-3">
+          <div data-testid="ov-counts-declared">
+            <div className="text-[11px] uppercase tracking-wide text-subtle">Source files declared</div>
+            <div className="text-[22px] font-bold">{declared}</div>
+            <div className="text-[11px] text-subtle">{available} available on the operator&rsquo;s system.</div>
+          </div>
+          <div data-testid="ov-counts-restricted">
+            <div className="text-[11px] uppercase tracking-wide text-subtle">Restricted products in queue</div>
+            <div className="text-[22px] font-bold">{restrictedCount}</div>
+            <div className="text-[11px] text-subtle">Each needs a governed decision to leave the queue.</div>
+          </div>
+          <div data-testid="ov-counts-not-selectable">
+            <div className="text-[11px] uppercase tracking-wide text-subtle">Not-yet-selectable products</div>
+            <div className="text-[22px] font-bold">{notSelectable}</div>
+            <div className="text-[11px] text-subtle">
+              Not selectable until the missing product facts are entered from an official label.
+            </div>
+          </div>
+        </div>
+      </Card>
+
+      <Card>
+        <CardTitle>The mandatory workflow</CardTitle>
+        <ClinicalNote className="mb-3">
+          preview &rarr; resolve conflicts &rarr; commit as draft &rarr; complete missing facts
+          &rarr; restriction/evidence review &rarr; label verification &rarr; clinical approval
+          &rarr; selectable. Nothing skips a stage.
+        </ClinicalNote>
+        <ul className="flex flex-col gap-2" data-testid="ov-stages">
+          {stages.map((s, idx) => (
+            <li
+              key={s.label}
+              className="flex items-center justify-between rounded border border-line bg-card px-3 py-2"
+              data-testid={`ov-stage-${idx + 1}`}
+            >
+              <div className="flex flex-col">
+                <span className="text-[12.5px] font-semibold">
+                  {idx + 1}. {s.label}
+                </span>
+                {s.todo && <span className="text-[11.5px] text-subtle">{s.todo}</span>}
+              </div>
+              {s.go && (
+                <Btn variant="ghost" onClick={s.go} data-testid={`ov-goto-${s.key}`}>
+                  Go &rarr;
+                </Btn>
+              )}
+            </li>
+          ))}
+        </ul>
+      </Card>
+    </div>
+  );
+}
+
+/* --------------------------------------------------------------- conflicts */
+
+/**
+ * Field-level diff between an "existing" row and an "incoming" row.
+ * `existing` is the row already in the batch (or the state at import
+ * time); `incoming` is the row that raised the conflict. This surfaces
+ * every field, marking the ones that differ.
+ */
+function DiffRows({
+  existing,
+  incoming,
+}: {
+  existing: LiveKnowledgeImportItem | null;
+  incoming: LiveKnowledgeImportItem;
+}) {
+  const rows: Array<{ label: string; a: string; b: string; differs: boolean }> = [];
+  const push = (label: string, a: unknown, b: unknown) => {
+    const av = a == null ? "" : String(a);
+    const bv = b == null ? "" : String(b);
+    rows.push({ label, a: av, b: bv, differs: av !== bv });
+  };
+  push("Display name", existing?.displayName, incoming.displayName);
+  push("Entity type", existing?.entityType, incoming.entityType);
+  push("Change kind", existing?.changeKind, incoming.changeKind);
+  push("Restricted flags", (existing?.restrictedFlags ?? []).join(","), (incoming.restrictedFlags ?? []).join(","));
+  push("Missing facts", (existing?.missingFacts ?? []).join(","), (incoming.missingFacts ?? []).join(","));
+  push("Warnings", (existing?.warnings ?? []).join(" | "), (incoming.warnings ?? []).join(" | "));
+  return (
+    <TableWrap>
+      <thead>
+        <tr>
+          <TH>Field</TH>
+          <TH>Existing row</TH>
+          <TH>Incoming row</TH>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((r) => (
+          <tr key={r.label} className={r.differs ? "bg-warning-tint/40" : ""}>
+            <TD>
+              <strong>{r.label}</strong>
+              {r.differs && (
+                <span className="ml-2 text-[10.5px] font-bold uppercase tracking-wide text-warning-deep">
+                  differs
+                </span>
+              )}
+            </TD>
+            <TD>{r.a || <span className="text-subtle">Unknown</span>}</TD>
+            <TD>{r.b || <span className="text-subtle">Unknown</span>}</TD>
+          </tr>
+        ))}
+      </tbody>
+    </TableWrap>
+  );
+}
+
+function ConflictsPanel({ batchId }: { batchId: string | null }) {
+  const [state, setState] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const [error, setError] = useState<unknown>(null);
+  const [preview, setPreview] = useState<LiveKnowledgeImportPreview | null>(null);
+  const [resolving, setResolving] = useState<LiveKnowledgeImportItem | null>(null);
+  const [resolution, setResolution] = useState<"keep_existing" | "take_incoming" | "skip">(
+    "keep_existing",
+  );
+  const [note, setNote] = useState("");
+  const [message, setMessage] = useState("");
+  const [confirm, setConfirm] = useState(false);
+
+  const load = useCallback(async () => {
+    if (!batchId) return;
+    setState("loading");
+    try {
+      setPreview(await liveClient.knowledgeImportDetail(batchId));
+      setState("ready");
+    } catch (e) {
+      setError(e);
+      setState("error");
+    }
+  }, [batchId]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  if (!batchId) {
+    return (
+      <Card className="px-6 py-10">
+        <p className="m-0 text-center text-[12.5px] text-subtle" data-testid="conflicts-no-batch">
+          No batch is open. Read a file on the &ldquo;Read a file&rdquo; tab and stage it,
+          or open a batch on the &ldquo;Preview batches&rdquo; tab.
+        </p>
+      </Card>
+    );
+  }
+  if (state === "loading" || state === "idle") return <ClinicalLoading label="Reading the batch…" />;
+  if (state === "error") return <PanelError error={error} onRetry={load} />;
+
+  const conflicts = (preview?.items ?? []).filter((i) => i.changeKind === "conflict");
+
+  const submit = async () => {
+    if (!resolving) return;
+    setMessage("");
+    try {
+      await liveClient.knowledgeImportResolveConflict({
+        itemId: resolving.id,
+        resolution,
+        note: note.trim(),
+      });
+      setResolving(null);
+      setResolution("keep_existing");
+      setNote("");
+      setConfirm(false);
+      await load();
+    } catch (e) {
+      setMessage(errText(e));
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-4">
+      <Card>
+        <CardTitle>Conflicts in this batch</CardTitle>
+        <p className="m-0 text-[12px] text-subtle">
+          Ordinary conflicts: two rows in the same batch stake a claim on the same identity.
+          Pick the answer that carries the correct clinical fact. Every decision demands a
+          reason and is audit-logged. Restrictions on either row are preserved on every
+          outcome; no downgrading happens here.
+        </p>
+      </Card>
+
+      <Card>
+        <CardTitle>
+          {conflicts.length} conflict(s) in {preview?.batch.sourceName ?? "this batch"}
+        </CardTitle>
+        {conflicts.length === 0 ? (
+          <p className="m-0 text-center text-[12px] text-subtle" data-testid="conflicts-empty">
+            No conflicts in this batch.
+          </p>
+        ) : (
+          <ul className="flex flex-col gap-2" data-testid="conflicts-list">
+            {conflicts.map((c) => (
+              <li
+                key={c.id}
+                className="rounded border border-line px-3 py-2"
+                data-testid={`conflict-item-${c.id}`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <strong className="text-[13px]">{c.displayName}</strong>
+                    <div className="text-[11.5px] text-subtle">
+                      {c.entityType} · source row {c.sourceRowNumber ?? "?"} in{" "}
+                      {c.sourceSheet ?? "unknown sheet"}
+                    </div>
+                  </div>
+                  <Btn onClick={() => setResolving(c)} data-testid={`conflict-open-${c.id}`}>
+                    Resolve
+                  </Btn>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
+
+      {resolving && (
+        <Card data-testid="conflict-dialog">
+          <CardTitle>Resolve: {resolving.displayName}</CardTitle>
+          <p className="m-0 mb-3 text-[12px] text-subtle">
+            {resolving.conflictReason ?? "This row conflicts with another row in the same batch."}
+          </p>
+          <DiffRows
+            existing={
+              (preview?.items ?? []).find(
+                (i) => i.id === resolving.conflictWithItemId,
+              ) ?? null
+            }
+            incoming={resolving}
+          />
+          <div className="mt-3 flex flex-col gap-3 md:flex-row md:items-end">
+            <Field label="Decision">
+              <Select
+                value={resolution}
+                onChange={(e) =>
+                  setResolution(e.target.value as "keep_existing" | "take_incoming" | "skip")
+                }
+                data-testid="conflict-resolution"
+              >
+                <option value="keep_existing">Keep the existing row (the earlier one wins)</option>
+                <option value="take_incoming">Use the incoming row (supersedes the earlier one)</option>
+                <option value="skip">Skip the incoming row (neither is applied)</option>
+              </Select>
+            </Field>
+            <Field label="Why — recorded against the decision" className="flex-1">
+              <TextInput
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                data-testid="conflict-note"
+              />
+            </Field>
+          </div>
+          {!confirm && (
+            <div className="mt-3 flex items-center gap-3">
+              <Btn
+                onClick={() => setConfirm(true)}
+                disabled={!note.trim()}
+                data-testid="conflict-review"
+              >
+                Review this decision
+              </Btn>
+              <Btn variant="ghost" onClick={() => setResolving(null)}>
+                Cancel
+              </Btn>
+            </div>
+          )}
+          {confirm && (
+            <div
+              className="mt-3 rounded border border-warning/25 bg-warning-tint px-3 py-2"
+              data-testid="conflict-confirm"
+            >
+              <p className="m-0 text-[12px] text-warning-deep">
+                About to record: <strong>{resolution}</strong> on{" "}
+                <strong>{resolving.displayName}</strong>. Restrictions on either row are
+                preserved. This action is audit-logged and cannot be edited later.
+              </p>
+              <div className="mt-2 flex items-center gap-2">
+                <Btn onClick={submit} data-testid="conflict-submit">
+                  Record this decision
+                </Btn>
+                <Btn variant="ghost" onClick={() => setConfirm(false)}>
+                  Back
+                </Btn>
+              </div>
+            </div>
+          )}
+          {message && (
+            <p
+              className="mt-3 text-[12px] text-danger"
+              role="alert"
+              data-testid="conflict-error"
+            >
+              {message}
+            </p>
+          )}
+        </Card>
+      )}
+    </div>
+  );
+}
+
+/* -------------------------------------------------------- restricted review */
+
+const RESTRICTED_OUTCOMES: Array<{
+  id:
+    | "retain_restricted"
+    | "request_evidence"
+    | "defer"
+    | "reject"
+    | "clinician_reviewed_for_jurisdiction";
+  label: string;
+  description: string;
+}> = [
+  {
+    id: "retain_restricted",
+    label: "Retain restricted",
+    description: "Looked at it; the flag stays.",
+  },
+  {
+    id: "request_evidence",
+    label: "Request evidence",
+    description: "Need a citation before deciding.",
+  },
+  {
+    id: "defer",
+    label: "Defer",
+    description: "Not ready to decide today.",
+  },
+  {
+    id: "reject",
+    label: "Reject",
+    description: "This row will not be used.",
+  },
+  {
+    id: "clinician_reviewed_for_jurisdiction",
+    label: "Clinician-reviewed for jurisdiction",
+    description: "Requires a stated jurisdiction. This is NOT approval.",
+  },
+];
+
+/**
+ * Category filters mirror the restriction taxonomy Phase 9D uses across
+ * the pipeline: vaccine-related, peptide, prescription, IV therapy, device,
+ * jurisdictional, suspected-restricted. A row can match more than one.
+ */
+const RESTRICTED_CATEGORIES: Array<{ id: string; label: string; match: RegExp }> = [
+  { id: "vaccine_related", label: "Vaccine-related", match: /vaccine|mrna|spike/i },
+  { id: "peptide", label: "Peptide", match: /peptide/i },
+  { id: "prescription", label: "Prescription", match: /prescription|controlled|schedule/i },
+  { id: "iv_therapy", label: "IV therapy", match: /iv|intravenous|infusion|injection/i },
+  { id: "device", label: "Device", match: /device|hyperbaric|hbot|pemf|photobiomodulation/i },
+  { id: "jurisdictional", label: "Jurisdictional", match: /jurisdiction|not for sale|fda|mhra|tga/i },
+  { id: "suspected_restricted", label: "Suspected", match: /suspected_restricted/i },
+];
+
+function RestrictedReviewPanel() {
+  const [state, setState] = useState<"loading" | "ready" | "error">("loading");
+  const [error, setError] = useState<unknown>(null);
+  const [queue, setQueue] = useState<LiveCatalogReviewQueue | null>(null);
+  const [category, setCategory] = useState<string>("all");
+  const [openId, setOpenId] = useState<string | null>(null);
+  const [outcome, setOutcome] = useState<
+    | "retain_restricted"
+    | "request_evidence"
+    | "defer"
+    | "reject"
+    | "clinician_reviewed_for_jurisdiction"
+  >("retain_restricted");
+  const [reason, setReason] = useState("");
+  const [jurisdiction, setJurisdiction] = useState("");
+  const [history, setHistory] = useState<{
+    productId: string;
+    currentOutcome: string | null;
+    history: Array<{
+      id: string;
+      outcome: string;
+      reason: string;
+      jurisdiction: string | null;
+      decidedAt: string;
+    }>;
+  } | null>(null);
+  const [message, setMessage] = useState("");
+
+  const load = useCallback(async () => {
+    setState("loading");
+    try {
+      setQueue(await liveClient.catalogReviewQueue());
+      setState("ready");
+    } catch (e) {
+      setError(e);
+      setState("error");
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const loadHistory = useCallback(async (productId: string) => {
+    try {
+      const h = await liveClient.restrictedReviewHistory(productId);
+      setHistory(h);
+    } catch {
+      setHistory({ productId, currentOutcome: null, history: [] });
+    }
+  }, []);
+
+  const openHistory = useCallback(async (productId: string) => {
+    setOpenId(productId);
+    setHistory(null);
+    setOutcome("retain_restricted");
+    setReason("");
+    setJurisdiction("");
+    setMessage("");
+    await loadHistory(productId);
+  }, [loadHistory]);
+
+  if (state === "loading") return <ClinicalLoading label="Reading the restricted queue…" />;
+  if (state === "error") return <PanelError error={error} onRetry={load} />;
+
+  const products = queue?.products ?? [];
+  const restricted = products.filter((p) => (p.restrictedFlags ?? []).length > 0);
+  const filtered = restricted.filter((p) => {
+    if (category === "all") return true;
+    const cat = RESTRICTED_CATEGORIES.find((c) => c.id === category);
+    if (!cat) return true;
+    return (p.restrictedFlags ?? []).some((f) => cat.match.test(f));
+  });
+
+  const submit = async () => {
+    if (!openId) return;
+    setMessage("");
+    try {
+      const result = await liveClient.restrictedReviewRecord({
+        productId: openId,
+        outcome,
+        reason: reason.trim(),
+        jurisdiction: outcome === "clinician_reviewed_for_jurisdiction" ? jurisdiction.trim() : null,
+      });
+      setMessage(
+        `Recorded ${result.outcome}. Restrictions preserved on this product; clearance is a separate action.`,
+      );
+      // Reload history WITHOUT resetting the message the reviewer just
+      // triggered — openHistory() clears message as part of preparing a
+      // fresh decision, and calling it here would erase the confirmation
+      // before the operator has read it.
+      await loadHistory(openId);
+      await load();
+    } catch (e) {
+      setMessage(errText(e));
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-4">
+      <Card>
+        <CardTitle>Restricted review</CardTitle>
+        <p className="m-0 text-[12px] text-subtle">
+          All {restricted.length} restricted products in this org&rsquo;s catalog. Five governed
+          outcomes; each demands a reason. The clinician-for-jurisdiction outcome additionally
+          demands a stated jurisdiction. <strong>None of the five outcomes clears the restriction</strong>{" "}
+          — clearance stays a separate governed action.
+        </p>
+        <div className="mt-3 flex flex-wrap gap-2" data-testid="restricted-filters">
+          <button
+            type="button"
+            className={cn(
+              "rounded-full border px-3 py-1 text-[11.5px] font-semibold",
+              category === "all"
+                ? "border-action bg-action/10 text-action"
+                : "border-line bg-card text-body",
+            )}
+            onClick={() => setCategory("all")}
+            data-testid="restricted-filter-all"
+          >
+            All ({restricted.length})
+          </button>
+          {RESTRICTED_CATEGORIES.map((c) => {
+            const count = restricted.filter((p) =>
+              (p.restrictedFlags ?? []).some((f) => c.match.test(f)),
+            ).length;
+            return (
+              <button
+                key={c.id}
+                type="button"
+                className={cn(
+                  "rounded-full border px-3 py-1 text-[11.5px] font-semibold",
+                  category === c.id
+                    ? "border-action bg-action/10 text-action"
+                    : "border-line bg-card text-body",
+                )}
+                onClick={() => setCategory(c.id)}
+                data-testid={`restricted-filter-${c.id}`}
+                disabled={count === 0}
+              >
+                {c.label} ({count})
+              </button>
+            );
+          })}
+        </div>
+      </Card>
+
+      <Card>
+        <CardTitle>
+          {filtered.length} product(s)
+          {category !== "all" && ` in ${RESTRICTED_CATEGORIES.find((c) => c.id === category)?.label}`}
+        </CardTitle>
+        {filtered.length === 0 ? (
+          <p
+            className="m-0 text-center text-[12px] text-subtle"
+            data-testid="restricted-empty"
+          >
+            No restricted products match this filter.
+          </p>
+        ) : (
+          <ul className="flex flex-col gap-2" data-testid="restricted-list">
+            {filtered.map((p) => (
+              <li
+                key={p.productId}
+                className="flex items-center justify-between rounded border border-line px-3 py-2"
+                data-testid={`restricted-item-${p.productId}`}
+              >
+                <div>
+                  <strong className="text-[13px]">{p.name}</strong>
+                  <div className="text-[11.5px] text-subtle">
+                    {(p.restrictedFlags ?? []).map((f) => (
+                      <Chip key={f} tone="danger">
+                        {f}
+                      </Chip>
+                    ))}
+                    {(p.missingFacts ?? []).length > 0 && (
+                      <span className="ml-2">
+                        Missing: {(p.missingFacts ?? []).join(", ")}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <Btn
+                  variant="ghost"
+                  onClick={() => openHistory(p.productId)}
+                  data-testid={`restricted-open-${p.productId}`}
+                >
+                  Decide
+                </Btn>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
+
+      {openId && (
+        <Card data-testid="restricted-dialog">
+          <CardTitle>Decide</CardTitle>
+          <div className="grid gap-3 md:grid-cols-2">
+            <Field label="Outcome">
+              <Select
+                value={outcome}
+                onChange={(e) =>
+                  setOutcome(
+                    e.target.value as
+                      | "retain_restricted"
+                      | "request_evidence"
+                      | "defer"
+                      | "reject"
+                      | "clinician_reviewed_for_jurisdiction",
+                  )
+                }
+                data-testid="restricted-outcome"
+              >
+                {RESTRICTED_OUTCOMES.map((o) => (
+                  <option key={o.id} value={o.id}>
+                    {o.label}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            {outcome === "clinician_reviewed_for_jurisdiction" && (
+              <Field label="Jurisdiction (required for this outcome)">
+                <TextInput
+                  value={jurisdiction}
+                  onChange={(e) => setJurisdiction(e.target.value)}
+                  placeholder="e.g., US-CA"
+                  data-testid="restricted-jurisdiction"
+                />
+              </Field>
+            )}
+          </div>
+          <Field label="Why — recorded against the decision">
+            <TextInput
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              data-testid="restricted-reason"
+            />
+          </Field>
+          <div className="mt-3 flex items-center gap-3">
+            <Btn
+              onClick={submit}
+              disabled={
+                !reason.trim() ||
+                (outcome === "clinician_reviewed_for_jurisdiction" && !jurisdiction.trim())
+              }
+              data-testid="restricted-submit"
+            >
+              Record this decision
+            </Btn>
+            <Btn variant="ghost" onClick={() => setOpenId(null)}>
+              Close
+            </Btn>
+            {message && (
+              <p
+                className="m-0 text-[12px] text-subtle"
+                role="status"
+                data-testid="restricted-message"
+              >
+                {message}
+              </p>
+            )}
+          </div>
+          {history && history.history.length > 0 && (
+            <div className="mt-4" data-testid="restricted-history">
+              <div className="text-[11px] uppercase tracking-wide text-subtle">History</div>
+              <ul className="mt-1 flex flex-col gap-1">
+                {history.history.map((d) => (
+                  <li key={d.id} className="text-[11.5px]" data-testid={`restricted-history-${d.id}`}>
+                    <strong>{d.outcome}</strong> — {d.reason}
+                    {d.jurisdiction && ` (${d.jurisdiction})`} · {d.decidedAt}
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-2 text-[11.5px] text-subtle">
+                Current outcome: <strong>{history.currentOutcome ?? "none"}</strong>. Every entry is
+                append-only.
+              </p>
+            </div>
+          )}
+        </Card>
+      )}
+    </div>
+  );
+}
+
+/* -------------------------------------------------- deferred (9E-A.2) panels */
+
+function ComingIn9EA2Panel({
+  title,
+  purpose,
+  bullets,
+}: {
+  title: string;
+  purpose: string;
+  bullets: Array<string>;
+}) {
+  return (
+    <Card data-testid={`coming-9ea2-${title.replace(/\s+/g, "-").toLowerCase()}`}>
+      <CardTitle>{title}</CardTitle>
+      <div
+        className="rounded border border-warning/25 bg-warning-tint px-3 py-2 text-[12px] text-warning-deep"
+        role="note"
+      >
+        <p className="m-0 mb-1 font-semibold">Not available yet — Phase 9E-A.2.</p>
+        <p className="m-0">{purpose}</p>
+      </div>
+      <p className="mt-3 text-[12px] text-subtle">What Phase 9E-A.2 will add here:</p>
+      <ul className="ml-4 list-disc text-[12px] text-subtle">
+        {bullets.map((b) => (
+          <li key={b}>{b}</li>
+        ))}
+      </ul>
+      <p className="mt-3 text-[11.5px] text-subtle">
+        The Phase 9E-A.1 database RPCs that this section will surface{" "}
+        <em>already exist</em> (governed 5-outcome restricted review and
+        governed commercial matching landed in this PR&rsquo;s SQL). This
+        UI is what Phase 9E-A.2 wires on top.
+      </p>
+    </Card>
+  );
+}
+
+/* -------------------------------------------------------------- workspace */
+
 export function ImportReviewWorkspace() {
-  const [tab, setTab] = useState<Tab>("sources");
+  const [tab, setTab] = useState<Tab>("overview");
   const [batchId, setBatchId] = useState<string | null>(null);
 
   const tabs = useMemo(
     () =>
       [
+        { id: "overview", label: "Overview" },
         { id: "sources", label: "Source files" },
         { id: "parse", label: "Read a file" },
-        { id: "review", label: "Review batch" },
-        { id: "catalog", label: "Catalog review" },
-        { id: "provenance", label: "Provenance" },
+        { id: "batches", label: "Preview batches" },
+        { id: "conflicts", label: "Conflicts" },
+        { id: "restricted", label: "Restricted review" },
+        { id: "labels", label: "Product labels" },
+        { id: "references", label: "Knowledge references" },
+        { id: "commercial", label: "Commercial matching" },
+        { id: "provenance", label: "Provenance & history" },
       ] as Array<{ id: Tab; label: string }>,
     [],
   );
@@ -1003,7 +1656,7 @@ export function ImportReviewWorkspace() {
       {/* A local tablist rather than the URL-synced SegTabs: the open batch is
           client state, and a deep link to a tab whose batch is gone would show
           an empty panel that reads like an empty import. */}
-      <div role="tablist" aria-label="Import review sections" className="flex flex-wrap gap-1">
+      <div role="tablist" aria-label="Import curation workspace" className="flex flex-wrap gap-1">
         {tabs.map((t) => (
           <button
             key={t.id}
@@ -1023,17 +1676,63 @@ export function ImportReviewWorkspace() {
           </button>
         ))}
       </div>
+      {tab === "overview" && <OverviewPanel onNavigate={setTab} />}
       {tab === "sources" && <SourcesPanel />}
       {tab === "parse" && (
         <ParsePanel
           onStaged={(id) => {
             setBatchId(id);
-            setTab("review");
+            setTab("batches");
           }}
         />
       )}
-      {tab === "review" && <ReviewPanel batchId={batchId} />}
-      {tab === "catalog" && <CatalogReviewPanel />}
+      {tab === "batches" && <ReviewPanel batchId={batchId} />}
+      {tab === "conflicts" && <ConflictsPanel batchId={batchId} />}
+      {tab === "restricted" && <RestrictedReviewPanel />}
+      {tab === "labels" && (
+        <ComingIn9EA2Panel
+          title="Product labels — versioned editor"
+          purpose="Full label authoring with structured ingredients, allergens, warnings, storage, route, regulatory class, image/document hash, and label version + verification date. Verified versions become immutable; corrections open a new version."
+          bullets={[
+            "Manufacturer + exact product name + brand",
+            "Product form, serving size, structured ingredients (amount + unit)",
+            "Other ingredients, allergens & warnings, directions, storage",
+            "SKU, UPC, route, regulatory classification, country/market",
+            "Official manufacturer source URL and label sha256 + date/version",
+            "Unknown stays Unknown; nothing is inferred from a product name",
+            "Data entry, verification, restriction review, and clinical approval remain separate actions",
+          ]}
+        />
+      )}
+      {tab === "references" && (
+        <ComingIn9EA2Panel
+          title="Knowledge references — structured citation review"
+          purpose="Reference-level review with claim/subject, source and exact provenance, author/organization, publication date, citation URL/identifier, evidence grade, jurisdiction, reviewer status, warnings and restricted flags. Practitioner-authored material without an external citation reads Practitioner experience — never evidence-based."
+          bullets={[
+            "Claim or subject; source and exact provenance",
+            "Author/organization; publication or label date/version",
+            "Citation URL or identifier; evidence grade",
+            "Clinical domain and jurisdiction",
+            "Reviewer identity, review status, warnings, restricted flags",
+            "Practitioner experience label for uncitated material",
+            "Dose text stays unverified reference metadata until an exact label backs it",
+          ]}
+        />
+      )}
+      {tab === "commercial" && (
+        <ComingIn9EA2Panel
+          title="Commercial matching queue"
+          purpose="Practitioner UI for attaching commercial candidates (affiliate URL, discount code, disclosure) to independently verified clinical product identities. The RPC and acceptance suite for this ship in Phase 9E-A.1; the queue view lands here in 9E-A.2."
+          bullets={[
+            "Exact SKU / UPC / manufacturer + name match only — never fuzzy",
+            "Human decision + stated reason on every attach",
+            "Storage in product_label_commercial_links only; no clinical field is touched",
+            "Awaiting verified product identity for candidates with no match",
+            "Revocation via supersedes_id — the original attach stays for audit",
+            "Never exposed to eligibility, safety, evidence, interaction, ranking, reasoning, or protocol code paths",
+          ]}
+        />
+      )}
       {tab === "provenance" && <ProvenancePanel />}
     </div>
   );

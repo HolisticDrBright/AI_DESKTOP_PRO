@@ -1120,6 +1120,59 @@ export const liveClient = {
       { method: "POST", body: input },
     ),
 
+  /**
+   * Ordinary import conflict resolution — Phase 9E-A adds a governed
+   * three-answer surface for the batch-level conflicts (as opposed to
+   * ambiguities). Every answer requires a stated reason; the RPC preserves
+   * restrictions on every outcome.
+   */
+  knowledgeImportResolveConflict: (input: {
+    itemId: string;
+    resolution: "keep_existing" | "take_incoming" | "skip";
+    note: string;
+  }) =>
+    liveFetch<{ ok: true; itemId: string; resolution: string }>(
+      "knowledge/import-conflict",
+      { method: "POST", body: input },
+    ),
+
+  /** 5-outcome restricted-review — Phase 9E-A. Every outcome demands a
+   *  reason; the clinician outcome additionally demands a jurisdiction. */
+  restrictedReviewRecord: (input: {
+    productId: string;
+    outcome:
+      | "retain_restricted"
+      | "request_evidence"
+      | "defer"
+      | "reject"
+      | "clinician_reviewed_for_jurisdiction";
+    reason: string;
+    jurisdiction?: string | null;
+  }) =>
+    liveFetch<{
+      ok: true;
+      decisionId: string;
+      outcome: string;
+      restrictionsPreserved: true;
+    }>("knowledge/restricted-review", { method: "POST", body: input }),
+
+  restrictedReviewHistory: (productId: string) =>
+    liveFetch<{
+      productId: string;
+      organizationId: string;
+      currentOutcome: string | null;
+      history: Array<{
+        id: string;
+        outcome: string;
+        reason: string;
+        jurisdiction: string | null;
+        decidedBy: string;
+        decidedAt: string;
+      }>;
+    }>(`knowledge/restricted-review?productId=${encodeURIComponent(productId)}`, {
+      method: "GET",
+    }),
+
   catalogReviewQueue: () =>
     liveFetch<LiveCatalogReviewQueue>("knowledge/catalog-review", { method: "GET" }),
 

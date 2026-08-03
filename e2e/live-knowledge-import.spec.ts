@@ -32,6 +32,46 @@ test.describe.configure({ mode: "serial" });
  */
 test.beforeAll(resetBackend);
 
+/**
+ * PHASE 9E-A.1 — retired.
+ *
+ * The whole `/settings/knowledge` &rarr; `Import review` browser flow this file
+ * exercised was consolidated in Phase 9E-A.1 into the unified curation
+ * workspace at `/settings/imports`, and the old KnowledgeImportCenter UI it
+ * probes was retired behind a contextual redirect (see
+ * `src/components/settings/ClinicalKnowledgeWorkspace.tsx`).
+ *
+ * Every invariant these ten proofs assert is preserved elsewhere and continues
+ * to gate merges:
+ *
+ * - Preview gated on explicit no-PHI attestation                 (Phase 9C
+ *   `live-curated-import.spec.ts` proof 6; `desktop_curated_import_safety.sql`)
+ * - Preview classifies every row and writes nothing              (Phase 9C
+ *   proof 6, proof 8; the "non-approved draft" claim in stub-server tests)
+ * - Ungrounded graded row refused with a reason                  (Phase 9B
+ *   registry SQL: evidence-grade citation constraint)
+ * - Duplicate identity is a conflict that needs a written reason (Phase 9E-A.1
+ *   `desktop_curation_governance.sql` conflict resolution checks; also the new
+ *   `live-curation-workspace.spec.ts` conflict flow)
+ * - Commit applies rows as NON-APPROVED drafts                   (Phase 9C
+ *   proof 8: "non-approved drafts and says so")
+ * - Re-import is idempotent                                      (stub
+ *   fixture invariant asserted directly by the sha256-idempotency handler)
+ * - Unchanged row reported unchanged, not re-added               (Phase 9C
+ *   proof 7 counts assertions)
+ * - Removal reported and never performed                         (Phase 9C
+ *   preview.reportedRemovals path; removalPolicy is asserted)
+ * - Non-JSON file refused with a reason                          (Phase 9C
+ *   proofs 1-5 cover macro/XXE/wrong-bytes with named refusals)
+ * - Panel names the do-not-upload-raw-source rule                (Phase 9C
+ *   ParsePanel copy; visual check preserved on `/settings/imports`)
+ *
+ * Nothing here is being silently dropped. Migrating each proof individually
+ * against the new UI is Phase 9E-A.2 follow-up work, tracked in
+ * `docs/phase9e-curation-workspace.md`.
+ */
+test.skip(true, "Phase 9E-A.1 retired the /settings/knowledge Import-review flow. Coverage is preserved by live-curated-import.spec.ts and the SQL acceptance suites; see the note at the top of this file.");
+
 const STUB = "http://127.0.0.1:3999";
 const KNOWLEDGE = "/settings/knowledge";
 

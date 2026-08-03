@@ -2245,6 +2245,11 @@ let importState = new Map();
 let importSourceFiles = new Map();
 let catalogReviewProducts = new Map();
 let importProvenance = [];
+// Phase 9E-A: append-only log of 5-outcome restricted-review decisions, keyed
+// by productId. Never removed; a later decision supersedes an earlier one but
+// the earlier one is not deleted. resetImportFixtures() clears the log — the
+// browser proofs of the workspace need a deterministic empty state.
+let catalogRestrictedReviewDecisions = new Map();
 
 function resetImportFixtures() {
   importBatches = new Map();
@@ -2253,6 +2258,7 @@ function resetImportFixtures() {
   importSourceFiles = new Map();
   catalogReviewProducts = new Map();
   importProvenance = [];
+  catalogRestrictedReviewDecisions = new Map();
 }
 
 /* ------------------------------------------- Phase 9B catalog + templates
@@ -2892,6 +2898,39 @@ createServer(async (req, res) => {
       }]);
     }
     return json(res, 200, { ok: true, labelVersionId: id });
+  }
+
+  // Phase 9E-A.1 — seed a restricted catalog-review product without walking
+  // the whole parse/preview/commit journey. The A.1 workspace tests need a
+  // known restricted row visible in the queue on a fresh backend; without a
+  // seeder they would have to run inside the ordered flow that owns the
+  // pipeline, which couples them to test 6+ in the curated-import file.
+  if (url.pathname === "/__control/seed-restricted-product" && req.method === "POST") {
+    const body = await readBody(req);
+    catalogSeq += 1;
+    const productId = String(body.productId ?? `seed-restricted-${catalogSeq}`);
+    catalogReviewProducts.set(productId, {
+      productId,
+      name: String(body.name ?? "Seeded Restricted Product"),
+      brand: body.brand ?? null,
+      sku: body.sku ?? null,
+      upc: body.upc ?? null,
+      form: body.form ?? null,
+      category: body.category ?? null,
+      regulatoryClassification: body.regulatoryClassification ?? null,
+      jurisdiction: body.jurisdiction ?? null,
+      description: body.description ?? null,
+      status: String(body.status ?? "pending"),
+      restrictedFlags: Array.isArray(body.restrictedFlags) && body.restrictedFlags.length > 0
+        ? body.restrictedFlags
+        : ["iv_therapy"],
+      restrictedClearedAt: null,
+      restrictedClearanceNote: null,
+      missingFacts: Array.isArray(body.missingFacts) ? body.missingFacts : [],
+      organizationId: String(body.organizationId ?? "org-fixture"),
+      sourceFileName: body.sourceFileName ?? "seeded-fixture.xlsx",
+    });
+    return json(res, 200, { ok: true, productId });
   }
 
   if (url.pathname === "/__control/nutrition-reset" && req.method === "POST") {
@@ -3870,6 +3909,87 @@ createServer(async (req, res) => {
         message: "Review complete. The product is now selectable. It still cannot reach an "
           + "APPROVED protocol until a reviewer verifies its exact label identity against "
           + "the manufacturer.",
+      });
+    }
+
+    // Phase 9E-A: 5-outcome restricted review. record_restricted_review_outcome
+    // enforces role gating (member-only), a required reason, and jurisdiction
+    // on the clinician outcome. None of the outcomes clears the restriction —
+    // clearance stays on `clear_catalog_product_restriction`.
+    if (url.pathname === "/rest/v1/rpc/record_restricted_review_outcome" && req.method === "POST") {
+      const body = await readBody(req);
+      const org = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(org)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const productId = String(body._product_id ?? "");
+      const outcome = String(body._outcome ?? "");
+      const reason = String(body._reason ?? "").trim();
+      const jurisdiction = body._jurisdiction == null ? null : String(body._jurisdiction).trim();
+      const validOutcomes = new Set([
+        "retain_restricted",
+        "request_evidence",
+        "defer",
+        "reject",
+        "clinician_reviewed_for_jurisdiction",
+      ]);
+      if (!validOutcomes.has(outcome)) {
+        return json(res, 400, { code: "22023", message: "unknown outcome" });
+      }
+      if (!reason) {
+        return json(res, 400, { code: "22023", message: "a restricted-review decision requires a reason" });
+      }
+      if (outcome === "clinician_reviewed_for_jurisdiction" && !jurisdiction) {
+        return json(res, 400, {
+          code: "22023",
+          message: "clinician_reviewed_for_jurisdiction requires a jurisdiction",
+        });
+      }
+      const p = catalogReviewProducts.get(productId);
+      if (!p) return json(res, 404, { code: "P0002", message: "product not found" });
+      const decisionId = "rrd-" + productId + "-" + (catalogRestrictedReviewDecisions.size + 1);
+      // Wall-clock timestamp so multiple decisions in one browser test still
+      // sort strictly newest-first when the read helper picks currentOutcome.
+      const decidedAt = new Date().toISOString();
+      const record = {
+        id: decisionId,
+        organizationId: org,
+        productId,
+        outcome,
+        reason,
+        jurisdiction: jurisdiction || null,
+        decidedBy: "practitioner",
+        decidedAt,
+      };
+      const bucket = catalogRestrictedReviewDecisions.get(productId) ?? [];
+      bucket.push(record);
+      catalogRestrictedReviewDecisions.set(productId, bucket);
+      // The restriction ITSELF is not touched — none of the five outcomes
+      // clears it. That guarantee is what the workspace surfaces on screen.
+      return json(res, 200, {
+        ok: true,
+        decisionId,
+        outcome,
+        restrictionsPreserved: true,
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/get_restricted_review_history" && req.method === "POST") {
+      const body = await readBody(req);
+      const org = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(org)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const productId = String(body._product_id ?? "");
+      const history = (catalogRestrictedReviewDecisions.get(productId) ?? [])
+        .filter((d) => d.organizationId === org)
+        .slice()
+        .sort((a, b) => (a.decidedAt < b.decidedAt ? 1 : -1));
+      return json(res, 200, {
+        productId,
+        organizationId: org,
+        currentOutcome: history[0]?.outcome ?? null,
+        history,
       });
     }
 

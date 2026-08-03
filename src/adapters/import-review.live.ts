@@ -146,6 +146,121 @@ export const importReviewLive = {
     );
   },
 
+  /* ------------------------------------------------------- conflict resolution */
+
+  /**
+   * Ordinary conflict resolution. Distinct from ambiguity: an ambiguity is
+   * "this row might be an existing product"; a conflict is "two rows in the
+   * same file claim the same identity, pick one." Three governed answers,
+   * each demands a reason.
+   */
+  async resolveConflict(
+    input: {
+      itemId: string;
+      resolution: "keep_existing" | "take_incoming" | "skip";
+      note: string;
+    },
+    sessionToken?: string | null,
+  ): Promise<{ ok: true; itemId: string; resolution: string }> {
+    const token = await getClinicalAccessToken(sessionToken);
+    return clinicalRpc<{ ok: true; itemId: string; resolution: string }>(
+      "resolve_knowledge_import_conflict",
+      {
+        _item_id: input.itemId,
+        _resolution: input.resolution,
+        _note: input.note,
+      },
+      token,
+    );
+  },
+
+  /* ---------------------------------------------- 5-outcome restricted review */
+
+  /**
+   * Phase 9E-A: five discrete outcomes with a required reason. The
+   * clinician-for-jurisdiction outcome additionally requires a jurisdiction.
+   * NONE of these outcomes clears the restriction — clearance stays a
+   * separate action (`clearRestriction`).
+   */
+  async recordRestrictedReviewOutcome(
+    input: {
+      productId: string;
+      outcome:
+        | "retain_restricted"
+        | "request_evidence"
+        | "defer"
+        | "reject"
+        | "clinician_reviewed_for_jurisdiction";
+      reason: string;
+      jurisdiction?: string | null;
+    },
+    organizationId?: string | null,
+    sessionToken?: string | null,
+  ): Promise<{
+    ok: true;
+    decisionId: string;
+    outcome: string;
+    restrictionsPreserved: true;
+  }> {
+    const token = await getClinicalAccessToken(sessionToken);
+    return clinicalRpc<{
+      ok: true;
+      decisionId: string;
+      outcome: string;
+      restrictionsPreserved: true;
+    }>(
+      "record_restricted_review_outcome",
+      {
+        _organization_id: resolveOrgId(organizationId),
+        _product_id: input.productId,
+        _outcome: input.outcome,
+        _reason: input.reason,
+        _jurisdiction: input.jurisdiction ?? null,
+      },
+      token,
+    );
+  },
+
+  async restrictedReviewHistory(
+    productId: string,
+    organizationId?: string | null,
+    sessionToken?: string | null,
+  ): Promise<{
+    productId: string;
+    organizationId: string;
+    currentOutcome: string | null;
+    history: Array<{
+      id: string;
+      outcome: string;
+      reason: string;
+      jurisdiction: string | null;
+      decidedBy: string;
+      decidedAt: string;
+    }>;
+  }> {
+    const token = await getClinicalAccessToken(sessionToken);
+    return clinicalRpc<{
+      productId: string;
+      organizationId: string;
+      currentOutcome: string | null;
+      history: Array<{
+        id: string;
+        outcome: string;
+        reason: string;
+        jurisdiction: string | null;
+        decidedBy: string;
+        decidedAt: string;
+      }>;
+    }>(
+      "get_restricted_review_history",
+      {
+        _organization_id: resolveOrgId(organizationId),
+        _product_id: productId,
+      },
+      token,
+    );
+  },
+
   /* --------------------------------------------------- provenance */
 
   async provenance(
