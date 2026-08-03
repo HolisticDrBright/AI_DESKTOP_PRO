@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "description": "AI Longevity Pro \u2014 Clinical Intelligence. Desktop-first practitioner platform (Phase 1 front end).",
+  "engines": {
+    "node": ">=22.0.0"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",

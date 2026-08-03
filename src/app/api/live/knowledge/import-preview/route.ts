@@ -35,6 +35,26 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Source-level restriction flags: optional, but if present must be an
+    // array of strings. Validation lives here so a malformed client cannot
+    // send a shape the RPC would silently ignore.
+    let sourceRestrictedFlags: string[] | null = null;
+    if (b.sourceRestrictedFlags !== undefined && b.sourceRestrictedFlags !== null) {
+      if (
+        !Array.isArray(b.sourceRestrictedFlags)
+        || !b.sourceRestrictedFlags.every((f): f is string => typeof f === "string")
+      ) {
+        throw new AdapterError(
+          "invalid",
+          "sourceRestrictedFlags must be an array of strings if supplied.",
+        );
+      }
+      sourceRestrictedFlags = b.sourceRestrictedFlags.map((f) => f.trim()).filter(Boolean);
+    }
+
+    const commercialOnly =
+      b.commercialOnly === true ? true : b.commercialOnly === false ? false : null;
+
     const session = await getRequestSession();
     return knowledgeImportLive.preview(
       {
@@ -46,6 +66,10 @@ export async function POST(req: NextRequest) {
         sourceFilename: typeof b.sourceFilename === "string" ? b.sourceFilename : null,
         sourceByteSize: typeof b.sourceByteSize === "number" ? b.sourceByteSize : null,
         sourceRevision: typeof b.sourceRevision === "string" ? b.sourceRevision : null,
+        sourceRestrictedFlags,
+        sourceRestrictedReason:
+          typeof b.sourceRestrictedReason === "string" ? b.sourceRestrictedReason : null,
+        commercialOnly,
       },
       session.orgId,
       session.token,

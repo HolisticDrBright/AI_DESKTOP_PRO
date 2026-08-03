@@ -211,22 +211,55 @@ export interface DocxParagraphSpec {
   deleted?: boolean;
   /** Emit as an `w:instrText` field code instead of body text. */
   fieldCode?: boolean;
+  /** Wrap the run in `<w:rPr><w:b/></w:rPr>`. */
+  bold?: boolean;
 }
 
-export function buildDocx(paragraphs: DocxParagraphSpec[], extra: Entry[] = []): Buffer {
-  const body = paragraphs
-    .map((p) => {
-      const escaped = p.text
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;");
-      const style = p.heading ? `<w:pPr><w:pStyle w:val="Heading${p.heading}"/></w:pPr>` : "";
-      if (p.fieldCode) {
-        return `<w:p>${style}<w:r><w:instrText>${escaped}</w:instrText></w:r></w:p>`;
-      }
-      const run = `<w:r><w:t>${escaped}</w:t></w:r>`;
-      return `<w:p>${style}${p.deleted ? `<w:del>${run}</w:del>` : run}</w:p>`;
+/**
+ * Table with rows of cells. Each cell is one paragraph inside `<w:tc>`.
+ * Cell paragraphs may be `bold` for header-row styling. Everything else is
+ * exercised by regular paragraph specs above.
+ */
+export interface DocxTableSpec {
+  rows: Array<{
+    cells: Array<{ text: string; bold?: boolean }>;
+  }>;
+}
+
+export type DocxBodyElement = DocxParagraphSpec | { table: DocxTableSpec };
+
+function renderParagraph(p: DocxParagraphSpec): string {
+  const escaped = p.text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+  const style = p.heading ? `<w:pPr><w:pStyle w:val="Heading${p.heading}"/></w:pPr>` : "";
+  if (p.fieldCode) {
+    return `<w:p>${style}<w:r><w:instrText>${escaped}</w:instrText></w:r></w:p>`;
+  }
+  const rPr = p.bold ? "<w:rPr><w:b/></w:rPr>" : "";
+  const run = `<w:r>${rPr}<w:t>${escaped}</w:t></w:r>`;
+  return `<w:p>${style}${p.deleted ? `<w:del>${run}</w:del>` : run}</w:p>`;
+}
+
+function renderTable(table: DocxTableSpec): string {
+  const rows = table.rows
+    .map((r) => {
+      const cells = r.cells
+        .map((c) => `<w:tc>${renderParagraph({ text: c.text, bold: c.bold })}</w:tc>`)
+        .join("");
+      return `<w:tr>${cells}</w:tr>`;
     })
+    .join("");
+  return `<w:tbl>${rows}</w:tbl>`;
+}
+
+export function buildDocx(
+  body: Array<DocxParagraphSpec> | Array<DocxBodyElement>,
+  extra: Entry[] = [],
+): Buffer {
+  const rendered = (body as DocxBodyElement[])
+    .map((el) => ("table" in el ? renderTable(el.table) : renderParagraph(el)))
     .join("");
 
   return buildZip([
@@ -234,7 +267,7 @@ export function buildDocx(paragraphs: DocxParagraphSpec[], extra: Entry[] = []):
     {
       name: "word/document.xml",
       data: text(`<?xml version="1.0" encoding="UTF-8"?>
-<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>${body}</w:body></w:document>`),
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>${rendered}</w:body></w:document>`),
     },
     ...extra,
   ]);

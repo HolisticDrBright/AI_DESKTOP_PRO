@@ -402,7 +402,13 @@ test("17. a backend that cannot be reached is a FAILURE, never an empty inventor
   await page.route("**/api/live/knowledge/source-files", (route) => route.abort());
   await page.goto(IMPORTS);
 
-  await expect(page.getByRole("alert")).toBeVisible();
+  // `getByRole('alert')` used to be enough, but Next's `__next-route-announcer__`
+  // also carries `role="alert"` — under some timings both elements resolve and
+  // strict mode fires. Targeting the ClinicalError test-id is stricter, not
+  // weaker: it names the alert this test is actually about.
+  const failure = page.getByTestId("clinical-error");
+  await expect(failure).toBeVisible();
+  await expect(failure).toContainText(/didn.?t load/i);
   // "No files declared" is a claim about the inventory. With the backend down,
   // nobody is in a position to make it.
   await expect(page.getByTestId("sources-empty")).toHaveCount(0);

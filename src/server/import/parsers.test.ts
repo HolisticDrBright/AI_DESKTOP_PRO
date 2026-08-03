@@ -374,4 +374,211 @@ describe("parseImportFile — the envelope", () => {
     expect(envelope.items).toHaveLength(0);
     expect(envelope.report.skippedRows[0].why).toMatch(/no headings/i);
   });
+
+  it("splits sections on a `Chapter N:` prefix when no Heading style is used", () => {
+    const envelope = parseImportFile({
+      bytes: buildDocx([
+        { text: "Chapter 1: Introduction" },
+        { text: "The introduction body text." },
+        { text: "Chapter 2: Detoxification" },
+        { text: "Detoxification body text." },
+      ]),
+      filename: "manual.docx",
+      sourceKind: "protocol_document",
+    });
+    expect(envelope.items).toHaveLength(2);
+    expect(envelope.items[0].displayName).toMatch(/^Chapter 1: /);
+    expect(envelope.items[0].payload.detectionReason).toBe("numbered:chapter");
+    expect(envelope.items[1].displayName).toMatch(/^Chapter 2: /);
+  });
+
+  it("splits sections on a numbered `N)` prefix", () => {
+    const envelope = parseImportFile({
+      bytes: buildDocx([
+        { text: "1) Foundation stack" },
+        { text: "Base layer notes." },
+        { text: "2) Metabolic add-ons" },
+        { text: "Add-on notes." },
+      ]),
+      filename: "protocols.docx",
+      sourceKind: "protocol_document",
+    });
+    expect(envelope.items).toHaveLength(2);
+    expect(envelope.items[0].payload.detectionReason).toBe("numbered:numbered_paren");
+  });
+
+  it("splits sections on a bold-only short paragraph", () => {
+    const envelope = parseImportFile({
+      bytes: buildDocx([
+        { text: "Foundation stack", bold: true },
+        { text: "Body prose that is not bold." },
+        { text: "Metabolic add-ons", bold: true },
+        { text: "More body prose." },
+      ]),
+      filename: "protocols.docx",
+      sourceKind: "protocol_document",
+    });
+    expect(envelope.items).toHaveLength(2);
+    expect(envelope.items[0].payload.detectionReason).toBe("bold:short");
+  });
+
+  it("splits sections on a short `Label:` line", () => {
+    const envelope = parseImportFile({
+      bytes: buildDocx([
+        { text: "Prompt:" },
+        { text: "The full prompt text goes here." },
+        { text: "Response:" },
+        { text: "The response body." },
+      ]),
+      filename: "protocols.docx",
+      sourceKind: "protocol_document",
+    });
+    expect(envelope.items).toHaveLength(2);
+    expect(envelope.items[0].payload.detectionReason).toBe("label:colon");
+  });
+
+  it("does NOT promote a body sentence that happens to end in a colon", () => {
+    // A sentence longer than 80 characters is prose, not a label — even with
+    // a trailing colon. Inferring a section here would fragment paragraphs
+    // the author intended as one thought.
+    const long = "a".repeat(85) + ":";
+    const envelope = parseImportFile({
+      bytes: buildDocx([
+        { text: "Heading", heading: 1 },
+        { text: long },
+        { text: "More body text." },
+      ]),
+      filename: "protocols.docx",
+      sourceKind: "protocol_document",
+    });
+    expect(envelope.items).toHaveLength(1);
+    expect(envelope.items[0].payload.detectionReason).toBe("heading_style:1");
+  });
+
+  it("does NOT promote a mixed bold/plain paragraph", () => {
+    // Only paragraphs where EVERY visible run is bold count as a bold
+    // subheading. A run of "not bold" text inside would let ordinary prose
+    // sentences with a bold emphasis word acquire section-label status.
+    const envelope = parseImportFile({
+      bytes: buildDocx([
+        { text: "Section one", heading: 1 },
+        // Two runs on the same paragraph — one bold, one plain.
+        {
+          text: "This paragraph mixes bold and plain and is not a heading.",
+          bold: false,
+        },
+      ]),
+      filename: "protocols.docx",
+      sourceKind: "protocol_document",
+    });
+    expect(envelope.items).toHaveLength(1);
+    expect(envelope.items[0].payload.detectionReason).toBe("heading_style:1");
+  });
+
+  it("emits a knowledge_reference for every non-header table row, with row and cell provenance", () => {
+    const envelope = parseImportFile({
+      bytes: buildDocx([
+        { text: "Phenotype 1: Neurologic", heading: 1 },
+        { text: "Intro prose." },
+        {
+          table: {
+            rows: [
+              {
+                cells: [
+                  { text: "Nutrient", bold: true },
+                  { text: "Mechanism", bold: true },
+                  { text: "Suggested Dose", bold: true },
+                ],
+              },
+              {
+                cells: [
+                  { text: "CoQ10" },
+                  { text: "Electron transport support" },
+                  { text: "200-400 mg/day" },
+                ],
+              },
+              {
+                cells: [
+                  { text: "L-Carnitine" },
+                  { text: "Mitochondrial support" },
+                  { text: "1000 mg/day" },
+                ],
+              },
+            ],
+          },
+        },
+      ]),
+      filename: "phenotypes.docx",
+      sourceKind: "protocol_document",
+    });
+    // One section reference + two table-row references.
+    expect(envelope.items).toHaveLength(3);
+    const rows = envelope.items.filter(
+      (i) => i.payload.referenceType === "practitioner_document_table_row",
+    );
+    expect(rows).toHaveLength(2);
+    expect(rows[0].payload.subjectLabel).toBe("CoQ10");
+    expect(rows[0].payload.suggestedDose).toBe("200-400 mg/day");
+    expect(rows[0].payload.tableIndex).toBe(1);
+    expect(rows[0].payload.tableRowIndex).toBe(2);
+    // The warning is emitted whenever a dose text is captured, because a
+    // dose only becomes a governed recommendation when it names an exact
+    // product label — not when a table cell says so.
+    expect(rows[0].warnings?.join(" ")).toMatch(/dose only becomes a governed/i);
+    // A dose text is preserved as reference metadata; it is not a governed
+    // `dose` or `servingSize` field.
+    expect(Object.keys(rows[0].payload)).not.toContain("dose");
+    expect(Object.keys(rows[0].payload)).not.toContain("servingSize");
+  });
+
+  it("reads a reference-style spreadsheet as knowledge_reference rows, not products", () => {
+    // Header row is `Metabolite | Clinical Symptoms | Supplements | Suggested Dose`.
+    // There is no product-name column, so the sheet is a REFERENCE, not a
+    // catalog. Every row lands as `knowledge_reference` with the metabolite
+    // as its subject label and no dose claim on the payload.
+    const envelope = parseImportFile({
+      bytes: buildXlsx([{
+        name: "Organic Acids",
+        rows: [
+          ["Organic Acid Interpretation"],
+          ["Metabolite", "Clinical Symptoms/Diagnosis to Consider", "Supplements", "Suggested Dose"],
+          ["High Lactic Acid", "Mitochondrial dysfunction", "CoQ10, magnesium", "See references"],
+          ["Low Ascorbic Acid", "Vitamin C deficiency", "Vitamin C", ""],
+        ],
+      }]),
+      filename: "organic-acids.xlsx",
+      sourceKind: "product_spreadsheet",
+    });
+    expect(envelope.items).toHaveLength(2);
+    expect(envelope.items.every((i) => i.entityType === "knowledge_reference")).toBe(true);
+    expect(envelope.items[0].payload.subjectLabel).toBe("High Lactic Acid");
+    expect(envelope.items[0].payload.suggestedDose).toBe("See references");
+    expect(envelope.items[1].payload.suggestedDose).toBeUndefined();
+    // No product ends up in the catalog under an interpretation heading.
+    expect(envelope.items.some((i) => i.entityType === "catalog_product")).toBe(false);
+  });
+
+  it("routes an affiliate sheet's Supplement/Company/Link columns without duplicating a discount code as a SKU", () => {
+    const envelope = parseImportFile({
+      bytes: buildXlsx([{
+        name: "Sheet1",
+        rows: [
+          ["Best for", "Supplement", "Company", "Link", "Code"],
+          ["Blood Sugar", "Ignite +", "Healthgevity", "https://example.test/ignite", "PROMO10"],
+        ],
+      }]),
+      filename: "affiliate-links.xlsx",
+      sourceKind: "product_spreadsheet",
+    });
+    expect(envelope.items).toHaveLength(1);
+    const item = envelope.items[0];
+    expect(item.entityType).toBe("catalog_product");
+    expect(item.payload.name).toBe("Ignite +");
+    expect(item.payload.brand).toBe("Healthgevity");
+    expect(item.payload.sourceUrl).toBe("https://example.test/ignite");
+    // A discount code is commercial data — never a SKU.
+    expect(item.payload.sku).toBeUndefined();
+    expect(item.payload.discountCode).toBe("PROMO10");
+    expect(item.payload.bestFor).toBe("Blood Sugar");
+  });
 });

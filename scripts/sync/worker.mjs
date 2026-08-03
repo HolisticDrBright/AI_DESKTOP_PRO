@@ -125,10 +125,17 @@ async function main() {
   return 0;
 }
 
+// Set the exit code and let Node exit naturally. Calling `process.exit()` here
+// races the runtime's async-handle teardown on Windows/Node 24 (libuv fires
+// `!(handle->flags & UV_HANDLE_CLOSING)` at src\win\async.c line 94 when the
+// forced exit interrupts undici's connection-pool cleanup). Node 22 tolerates
+// the race and Linux does not observe it, but the honest fix is not to force
+// exit at all: drain the loop by returning, and the process leaves with its
+// intended code once no handles remain.
 main().then(
-  (code) => process.exit(code),
+  (code) => { process.exitCode = code; },
   (e) => {
     logger.log("worker_crashed", { errorClass: e.errorClass ?? "unknown", errorCode: e.code ?? "unknown" });
-    process.exit(1);
+    process.exitCode = 1;
   },
 );
