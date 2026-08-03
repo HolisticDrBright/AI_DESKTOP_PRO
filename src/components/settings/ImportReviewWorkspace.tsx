@@ -860,17 +860,22 @@ function OverviewPanel({
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState<unknown>(null);
   const [inv, setInv] = useState<LiveImportSourceInventory | null>(null);
-  const [queue, setQueue] = useState<LiveCatalogReviewQueue | null>(null);
+  const [catalogQueue, setCatalogQueue] = useState<LiveCatalogReviewQueue | null>(null);
+  const [restrictedQueue, setRestrictedQueue] = useState<{
+    counts: { total: number; previewItems: number; products: number; knowledgeReferences: number };
+  } | null>(null);
 
   const load = useCallback(async () => {
     setState("loading");
     try {
-      const [i, q] = await Promise.all([
+      const [i, cq, rq] = await Promise.all([
         liveClient.importSourceInventory(),
         liveClient.catalogReviewQueue(),
+        liveClient.restrictedReviewQueue(),
       ]);
       setInv(i);
-      setQueue(q);
+      setCatalogQueue(cq);
+      setRestrictedQueue(rq);
       setState("ready");
     } catch (e) {
       setError(e);
@@ -887,9 +892,10 @@ function OverviewPanel({
 
   const declared = inv?.files.length ?? 0;
   const available = (inv?.files ?? []).filter((f) => f.availability === "available").length;
-  const products = queue?.products ?? [];
-  const restrictedCount = products.filter((p) => (p.restrictedFlags ?? []).length > 0).length;
-  const notSelectable = queue?.counts?.notSelectable ?? 0;
+  const restrictedCount = restrictedQueue?.counts.total ?? 0;
+  const restrictedPreview = restrictedQueue?.counts.previewItems ?? 0;
+  const restrictedProducts = restrictedQueue?.counts.products ?? 0;
+  const notSelectable = catalogQueue?.counts?.notSelectable ?? 0;
 
   // The workflow pointer: preview → resolve conflicts → commit as draft →
   // complete missing facts → restriction/evidence review → label
@@ -955,9 +961,12 @@ function OverviewPanel({
             <div className="text-[11px] text-subtle">{available} available on the operator&rsquo;s system.</div>
           </div>
           <div data-testid="ov-counts-restricted">
-            <div className="text-[11px] uppercase tracking-wide text-subtle">Restricted products in queue</div>
+            <div className="text-[11px] uppercase tracking-wide text-subtle">Restricted subjects in queue</div>
             <div className="text-[22px] font-bold">{restrictedCount}</div>
-            <div className="text-[11px] text-subtle">Each needs a governed decision to leave the queue.</div>
+            <div className="text-[11px] text-subtle">
+              {restrictedPreview} preview candidate(s) + {restrictedProducts} catalog product(s). Each needs a
+              governed decision.
+            </div>
           </div>
           <div data-testid="ov-counts-not-selectable">
             <div className="text-[11px] uppercase tracking-wide text-subtle">Not-yet-selectable products</div>
@@ -1099,7 +1108,13 @@ function ConflictsPanel({ batchId }: { batchId: string | null }) {
   if (state === "loading" || state === "idle") return <ClinicalLoading label="Reading the batch…" />;
   if (state === "error") return <PanelError error={error} onRetry={load} />;
 
-  const conflicts = (preview?.items ?? []).filter((i) => i.changeKind === "conflict");
+  // A row is "an unresolved conflict" iff the classifier flagged it AND no
+  // reviewer has recorded a decision yet. Rows carrying keep_existing / skip
+  // land here with changeKind still "conflict" but conflictResolution set —
+  // those must not reappear in the workflow queue after reload.
+  const conflicts = (preview?.items ?? []).filter(
+    (i) => i.changeKind === "conflict" && i.conflictResolution == null,
+  );
 
   const submit = async () => {
     if (!resolving) return;
@@ -1305,12 +1320,58 @@ const RESTRICTED_CATEGORIES: Array<{ id: string; label: string; match: RegExp }>
   { id: "suspected_restricted", label: "Suspected", match: /suspected_restricted/i },
 ];
 
+type SubjectType = "product" | "preview_item" | "knowledge_reference";
+
+type RestrictedItem = {
+  subjectType: SubjectType;
+  subjectId: string;
+  displayName: string;
+  entityType: string;
+  restrictedFlags: string[];
+  missingFacts: string[];
+  changeKind: string | null;
+  status: string;
+  sourceName: string | null;
+  sourceSheet: string | null;
+  sourceRowNumber: number | null;
+  currentOutcome: string | null;
+};
+
+const SUBJECT_LABELS: Record<SubjectType, string> = {
+  preview_item: "Preview candidate",
+  product: "Catalog product",
+  knowledge_reference: "Governed knowledge reference",
+};
+
+/**
+ * Preview-item vs governed-product vs knowledge-reference — the label the
+ * reviewer sees is the type name, so they know which state the subject is
+ * in and whether their decision commits, publishes, or only records
+ * against a preview candidate.
+ */
+function subjectSubtypeLabel(item: RestrictedItem): string {
+  if (item.subjectType === "preview_item") {
+    if (item.entityType === "knowledge_reference") return "Preview knowledge reference";
+    return "Preview product candidate";
+  }
+  return SUBJECT_LABELS[item.subjectType];
+}
+
 function RestrictedReviewPanel() {
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState<unknown>(null);
-  const [queue, setQueue] = useState<LiveCatalogReviewQueue | null>(null);
+  const [queue, setQueue] = useState<{
+    items: RestrictedItem[];
+    counts: {
+      total: number;
+      previewItems: number;
+      products: number;
+      knowledgeReferences: number;
+    };
+  } | null>(null);
   const [category, setCategory] = useState<string>("all");
-  const [openId, setOpenId] = useState<string | null>(null);
+  const [subjectFilter, setSubjectFilter] = useState<"all" | SubjectType>("all");
+  const [openItem, setOpenItem] = useState<RestrictedItem | null>(null);
   const [outcome, setOutcome] = useState<
     | "retain_restricted"
     | "request_evidence"
@@ -1321,13 +1382,15 @@ function RestrictedReviewPanel() {
   const [reason, setReason] = useState("");
   const [jurisdiction, setJurisdiction] = useState("");
   const [history, setHistory] = useState<{
-    productId: string;
+    subjectType: SubjectType;
+    subjectId: string;
     currentOutcome: string | null;
     history: Array<{
       id: string;
       outcome: string;
       reason: string;
       jurisdiction: string | null;
+      decidedBy: string;
       decidedAt: string;
     }>;
   } | null>(null);
@@ -1336,7 +1399,7 @@ function RestrictedReviewPanel() {
   const load = useCallback(async () => {
     setState("loading");
     try {
-      setQueue(await liveClient.catalogReviewQueue());
+      setQueue(await liveClient.restrictedReviewQueue());
       setState("ready");
     } catch (e) {
       setError(e);
@@ -1348,55 +1411,69 @@ function RestrictedReviewPanel() {
     void load();
   }, [load]);
 
-  const loadHistory = useCallback(async (productId: string) => {
+  const loadHistory = useCallback(async (item: RestrictedItem) => {
     try {
-      const h = await liveClient.restrictedReviewHistory(productId);
+      const h = await liveClient.restrictedReviewHistory({
+        subjectType: item.subjectType,
+        subjectId: item.subjectId,
+      });
       setHistory(h);
     } catch {
-      setHistory({ productId, currentOutcome: null, history: [] });
+      setHistory({
+        subjectType: item.subjectType,
+        subjectId: item.subjectId,
+        currentOutcome: null,
+        history: [],
+      });
     }
   }, []);
 
-  const openHistory = useCallback(async (productId: string) => {
-    setOpenId(productId);
-    setHistory(null);
-    setOutcome("retain_restricted");
-    setReason("");
-    setJurisdiction("");
-    setMessage("");
-    await loadHistory(productId);
-  }, [loadHistory]);
+  const openDecision = useCallback(
+    async (item: RestrictedItem) => {
+      setOpenItem(item);
+      setHistory(null);
+      setOutcome("retain_restricted");
+      setReason("");
+      setJurisdiction("");
+      setMessage("");
+      await loadHistory(item);
+    },
+    [loadHistory],
+  );
 
   if (state === "loading") return <ClinicalLoading label="Reading the restricted queue…" />;
   if (state === "error") return <PanelError error={error} onRetry={load} />;
 
-  const products = queue?.products ?? [];
-  const restricted = products.filter((p) => (p.restrictedFlags ?? []).length > 0);
-  const filtered = restricted.filter((p) => {
+  const items = queue?.items ?? [];
+  const filteredBySubject =
+    subjectFilter === "all" ? items : items.filter((i) => i.subjectType === subjectFilter);
+  const filtered = filteredBySubject.filter((i) => {
     if (category === "all") return true;
     const cat = RESTRICTED_CATEGORIES.find((c) => c.id === category);
     if (!cat) return true;
-    return (p.restrictedFlags ?? []).some((f) => cat.match.test(f));
+    return (i.restrictedFlags ?? []).some((f) => cat.match.test(f));
   });
 
   const submit = async () => {
-    if (!openId) return;
+    if (!openItem) return;
     setMessage("");
     try {
       const result = await liveClient.restrictedReviewRecord({
-        productId: openId,
+        subjectType: openItem.subjectType,
+        subjectId: openItem.subjectId,
         outcome,
         reason: reason.trim(),
         jurisdiction: outcome === "clinician_reviewed_for_jurisdiction" ? jurisdiction.trim() : null,
       });
+      const subjectLabel = subjectSubtypeLabel(openItem);
+      const commitNote =
+        openItem.subjectType === "preview_item"
+          ? " This decision does not commit, publish, or make this preview row selectable — commit is a separate governed action."
+          : "";
       setMessage(
-        `Recorded ${result.outcome}. Restrictions preserved on this product; clearance is a separate action.`,
+        `Recorded ${result.outcome}. Restrictions preserved on this ${subjectLabel.toLowerCase()}; clearance is a separate action.${commitNote}`,
       );
-      // Reload history WITHOUT resetting the message the reviewer just
-      // triggered — openHistory() clears message as part of preparing a
-      // fresh decision, and calling it here would erase the confirmation
-      // before the operator has read it.
-      await loadHistory(openId);
+      await loadHistory(openItem);
       await load();
     } catch (e) {
       setMessage(errText(e));
@@ -1408,12 +1485,44 @@ function RestrictedReviewPanel() {
       <Card>
         <CardTitle>Restricted review</CardTitle>
         <p className="m-0 text-[12px] text-subtle">
-          All {restricted.length} restricted products in this org&rsquo;s catalog. Five governed
-          outcomes; each demands a reason. The clinician-for-jurisdiction outcome additionally
-          demands a stated jurisdiction. <strong>None of the five outcomes clears the restriction</strong>{" "}
-          — clearance stays a separate governed action.
+          {queue?.counts.total ?? 0} restricted subjects across three domains — preview
+          candidates ({queue?.counts.previewItems ?? 0}), catalog products (
+          {queue?.counts.products ?? 0}), and governed knowledge references (
+          {queue?.counts.knowledgeReferences ?? 0}). Five governed outcomes; each
+          demands a reason. The clinician-for-jurisdiction outcome additionally demands a
+          stated jurisdiction.{" "}
+          <strong>None of the five outcomes clears the restriction, commits a preview, publishes a reference, or attaches a commercial link.</strong>{" "}
+          Clearance, commit, publish, and attach stay separate governed actions.
         </p>
-        <div className="mt-3 flex flex-wrap gap-2" data-testid="restricted-filters">
+        <div className="mt-3 flex flex-wrap gap-2" data-testid="restricted-subject-filters">
+          {(
+            [
+              { id: "all", label: `All (${queue?.counts.total ?? 0})` },
+              { id: "preview_item", label: `Preview candidates (${queue?.counts.previewItems ?? 0})` },
+              { id: "product", label: `Catalog products (${queue?.counts.products ?? 0})` },
+              {
+                id: "knowledge_reference",
+                label: `Knowledge references (${queue?.counts.knowledgeReferences ?? 0})`,
+              },
+            ] as Array<{ id: "all" | SubjectType; label: string }>
+          ).map((f) => (
+            <button
+              key={f.id}
+              type="button"
+              className={cn(
+                "rounded-full border px-3 py-1 text-[11.5px] font-semibold",
+                subjectFilter === f.id
+                  ? "border-action bg-action/10 text-action"
+                  : "border-line bg-card text-body",
+              )}
+              onClick={() => setSubjectFilter(f.id)}
+              data-testid={`restricted-subject-${f.id}`}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+        <div className="mt-2 flex flex-wrap gap-2" data-testid="restricted-filters">
           <button
             type="button"
             className={cn(
@@ -1425,11 +1534,11 @@ function RestrictedReviewPanel() {
             onClick={() => setCategory("all")}
             data-testid="restricted-filter-all"
           >
-            All ({restricted.length})
+            All categories ({filteredBySubject.length})
           </button>
           {RESTRICTED_CATEGORIES.map((c) => {
-            const count = restricted.filter((p) =>
-              (p.restrictedFlags ?? []).some((f) => c.match.test(f)),
+            const count = filteredBySubject.filter((i) =>
+              (i.restrictedFlags ?? []).some((f) => c.match.test(f)),
             ).length;
             return (
               <button
@@ -1454,7 +1563,7 @@ function RestrictedReviewPanel() {
 
       <Card>
         <CardTitle>
-          {filtered.length} product(s)
+          {filtered.length} restricted subject(s)
           {category !== "all" && ` in ${RESTRICTED_CATEGORIES.find((c) => c.id === category)?.label}`}
         </CardTitle>
         {filtered.length === 0 ? (
@@ -1462,35 +1571,58 @@ function RestrictedReviewPanel() {
             className="m-0 text-center text-[12px] text-subtle"
             data-testid="restricted-empty"
           >
-            No restricted products match this filter.
+            No restricted subjects match this filter.
           </p>
         ) : (
           <ul className="flex flex-col gap-2" data-testid="restricted-list">
-            {filtered.map((p) => (
+            {filtered.map((i) => (
               <li
-                key={p.productId}
+                key={`${i.subjectType}:${i.subjectId}`}
                 className="flex items-center justify-between rounded border border-line px-3 py-2"
-                data-testid={`restricted-item-${p.productId}`}
+                data-testid={`restricted-item-${i.subjectType}-${i.subjectId}`}
               >
                 <div>
-                  <strong className="text-[13px]">{p.name}</strong>
-                  <div className="text-[11.5px] text-subtle">
-                    {(p.restrictedFlags ?? []).map((f) => (
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={cn(
+                        "rounded border px-2 py-[1px] text-[10.5px] font-bold uppercase tracking-wide",
+                        i.subjectType === "preview_item"
+                          ? "border-warning/25 bg-warning-tint text-warning-deep"
+                          : "border-line bg-sunken text-subtle",
+                      )}
+                      data-testid={`restricted-item-type-${i.subjectType}`}
+                    >
+                      {subjectSubtypeLabel(i)}
+                    </span>
+                    <strong className="text-[13px]">{i.displayName}</strong>
+                    {i.currentOutcome && (
+                      <Chip tone="muted">Last decision: {i.currentOutcome}</Chip>
+                    )}
+                  </div>
+                  <div className="mt-1 text-[11.5px] text-subtle">
+                    {(i.restrictedFlags ?? []).map((f) => (
                       <Chip key={f} tone="danger">
                         {f}
                       </Chip>
                     ))}
-                    {(p.missingFacts ?? []).length > 0 && (
+                    {(i.missingFacts ?? []).length > 0 && (
                       <span className="ml-2">
-                        Missing: {(p.missingFacts ?? []).join(", ")}
+                        Missing: {(i.missingFacts ?? []).join(", ")}
+                      </span>
+                    )}
+                    {i.sourceName && (
+                      <span className="ml-2">
+                        Source: {i.sourceName}
+                        {i.sourceSheet ? ` · ${i.sourceSheet}` : ""}
+                        {i.sourceRowNumber != null ? ` · row ${i.sourceRowNumber}` : ""}
                       </span>
                     )}
                   </div>
                 </div>
                 <Btn
                   variant="ghost"
-                  onClick={() => openHistory(p.productId)}
-                  data-testid={`restricted-open-${p.productId}`}
+                  onClick={() => openDecision(i)}
+                  data-testid={`restricted-open-${i.subjectType}-${i.subjectId}`}
                 >
                   Decide
                 </Btn>
@@ -1500,9 +1632,23 @@ function RestrictedReviewPanel() {
         )}
       </Card>
 
-      {openId && (
+      {openItem && (
         <Card data-testid="restricted-dialog">
-          <CardTitle>Decide</CardTitle>
+          <CardTitle>
+            Decide — {subjectSubtypeLabel(openItem)}: {openItem.displayName}
+          </CardTitle>
+          {openItem.subjectType === "preview_item" && (
+            <div
+              className="mb-3 rounded border border-warning/25 bg-warning-tint px-3 py-2 text-[11.5px] text-warning-deep"
+              data-testid="restricted-preview-note"
+              role="note"
+            >
+              This is a <strong>preview candidate</strong>, not a committed record. Recording an
+              outcome here writes only to the append-only decision log — it does <strong>not</strong>{" "}
+              commit the row, publish it, or make it selectable. Restriction flags carry
+              forward to the committed record if commit later happens.
+            </div>
+          )}
           <div className="grid gap-3 md:grid-cols-2">
             <Field label="Outcome">
               <Select
@@ -1555,7 +1701,7 @@ function RestrictedReviewPanel() {
             >
               Record this decision
             </Btn>
-            <Btn variant="ghost" onClick={() => setOpenId(null)}>
+            <Btn variant="ghost" onClick={() => setOpenItem(null)}>
               Close
             </Btn>
             {message && (
@@ -1575,7 +1721,7 @@ function RestrictedReviewPanel() {
                 {history.history.map((d) => (
                   <li key={d.id} className="text-[11.5px]" data-testid={`restricted-history-${d.id}`}>
                     <strong>{d.outcome}</strong> — {d.reason}
-                    {d.jurisdiction && ` (${d.jurisdiction})`} · {d.decidedAt}
+                    {d.jurisdiction && ` (${d.jurisdiction})`} · {d.decidedAt} · actor {d.decidedBy}
                   </li>
                 ))}
               </ul>
@@ -1630,9 +1776,40 @@ function ComingIn9EA2Panel({
 
 /* -------------------------------------------------------------- workspace */
 
+/**
+ * Read the initial tab + batch from the URL (`?tab=conflicts&batch=abc`).
+ * Deep-linking supports two flows: reviewer bookmarks + browser proofs.
+ * Deep-link only reads on first mount; interactive state overrides it
+ * without pushing back onto the URL, because a deep link to a batch that
+ * has since been cancelled would leave the panel empty.
+ */
+function readInitialWorkspaceState(): { tab: Tab; batchId: string | null } {
+  if (typeof window === "undefined") return { tab: "overview", batchId: null };
+  const url = new URL(window.location.href);
+  const tabParam = url.searchParams.get("tab");
+  const batchParam = url.searchParams.get("batch");
+  const validTabs = new Set<Tab>([
+    "overview",
+    "sources",
+    "parse",
+    "batches",
+    "conflicts",
+    "restricted",
+    "labels",
+    "references",
+    "commercial",
+    "provenance",
+  ]);
+  return {
+    tab: tabParam && validTabs.has(tabParam as Tab) ? (tabParam as Tab) : "overview",
+    batchId: batchParam || null,
+  };
+}
+
 export function ImportReviewWorkspace() {
-  const [tab, setTab] = useState<Tab>("overview");
-  const [batchId, setBatchId] = useState<string | null>(null);
+  const initial = useMemo(() => readInitialWorkspaceState(), []);
+  const [tab, setTab] = useState<Tab>(initial.tab);
+  const [batchId, setBatchId] = useState<string | null>(initial.batchId);
 
   const tabs = useMemo(
     () =>

@@ -280,25 +280,148 @@ test("10. the restricted-review panel names every restricted product and WHY it 
   await expect(rows.first().locator("span.inline-flex").first()).toBeVisible();
 });
 
-/* ================================= 11-13: safety of the OLD catalog-review UI
+/* ================================ 11-13: retained safety invariants
  *
- * These E2E specs exercised the free-form "clear restriction" and "complete
- * review" surfaces that Phase 9E-A retired. The underlying RPCs and their
- * safety invariants (clearance is not approval; an incomplete product is
- * refused; the search gate opens only when the review is completed) are
- * covered end-to-end by supabase/tests/desktop_curation_governance.sql
- * (Phase 9E-A.1) and by the pre-existing catalog-review SQL tests, so no
- * governance evidence is lost.
+ * The OLD `/settings/knowledge` catalog-review panel that hosted the
+ * `clear-restriction` and `complete-review` buttons was retired in Phase
+ * 9E-A.1. The buttons themselves come back in Phase 9E-A.2 alongside the
+ * label editor + label-verification workflow they depend on.
  *
- * The UI-level assertions land back here in Phase 9E-A.2 alongside the
- * versioned label editor and the commercial-matching queue, both of which
- * that flow depends on. Leaving them as `.skip` names them explicitly and
- * makes it obvious that they are deferred, not deleted.
+ * The safety INVARIANTS the retired UI proved (clearance is not approval;
+ * an incomplete product is refused; the search gate opens only when the
+ * review is completed) are STILL enforced by the RPCs, and this file
+ * exercises them through Playwright's request context — driven from the
+ * browser session, refusals still land on the wire, no coverage lost.
  */
 
-test.skip("11. an incomplete product cannot be marked reviewed, and the surface says what is missing", () => {});
-test.skip("12. clearing a restriction needs a stated reason and is NOT approval", () => {});
-test.skip("13. completing the review of a complete product makes it selectable, and says approval is still separate", () => {});
+test("11. an incomplete product cannot be marked reviewed — the RPC refuses with the reason", async ({
+  request,
+}) => {
+  // Discover the committed products from the flow-page journey via the
+  // stub's catalog-review queue.
+  const queueRes = await request.post(
+    "http://127.0.0.1:3999/rest/v1/rpc/get_catalog_review_queue",
+    {
+      headers: { authorization: "Bearer stub-token", "content-type": "application/json" },
+      data: { _organization_id: "org-fixture" },
+    },
+  );
+  const queue = (await queueRes.json()) as {
+    products: Array<{ productId: string; name: string; missingFacts: string[]; status: string }>;
+  };
+  const incomplete = queue.products.find((p) => p.name === "Glutathione Push");
+  expect(incomplete, "expected the flow's incomplete Glutathione Push product").toBeTruthy();
+  expect(incomplete!.status).toBe("incomplete");
+  // The MISSING FACTS are named. This is the "surface says what is missing"
+  // guarantee, moved from the retired UI to the queue payload the UI
+  // consumes — the workspace displays them verbatim in the row.
+  expect(incomplete!.missingFacts.join(" ")).toMatch(/serving/i);
+
+  // The RPC refusal names the incomplete status.
+  const attempt = await request.post(
+    "http://127.0.0.1:3999/rest/v1/rpc/complete_catalog_product_review",
+    {
+      headers: { authorization: "Bearer stub-token", "content-type": "application/json" },
+      data: {
+        _organization_id: "org-fixture",
+        _product_id: incomplete!.productId,
+        _note: "Attempting to mark incomplete product reviewed",
+      },
+    },
+  );
+  expect(attempt.status()).toBeGreaterThanOrEqual(400);
+  const body = (await attempt.json()) as { message?: string };
+  expect(body.message ?? "").toMatch(/incomplete|missing|required/i);
+});
+
+test("12. clearing a restriction needs a stated reason and is NOT approval", async ({ request }) => {
+  const queueRes = await request.post(
+    "http://127.0.0.1:3999/rest/v1/rpc/get_catalog_review_queue",
+    {
+      headers: { authorization: "Bearer stub-token", "content-type": "application/json" },
+      data: { _organization_id: "org-fixture" },
+    },
+  );
+  const queue = (await queueRes.json()) as {
+    products: Array<{ productId: string; name: string; restrictedFlags: string[] }>;
+  };
+  const restricted = queue.products.find((p) => p.name === "Glutathione Push");
+  expect(restricted).toBeTruthy();
+
+  // Empty reason → refusal.
+  const emptyReason = await request.post(
+    "http://127.0.0.1:3999/rest/v1/rpc/clear_catalog_product_restriction",
+    {
+      headers: { authorization: "Bearer stub-token", "content-type": "application/json" },
+      data: {
+        _organization_id: "org-fixture",
+        _product_id: restricted!.productId,
+        _note: "",
+      },
+    },
+  );
+  expect(emptyReason.status()).toBeGreaterThanOrEqual(400);
+
+  // Valid reason → the RPC succeeds and its response explicitly says the
+  // clearance is NOT approval — the exact wording of the safety guarantee.
+  const cleared = await request.post(
+    "http://127.0.0.1:3999/rest/v1/rpc/clear_catalog_product_restriction",
+    {
+      headers: { authorization: "Bearer stub-token", "content-type": "application/json" },
+      data: {
+        _organization_id: "org-fixture",
+        _product_id: restricted!.productId,
+        _note: "Reviewed against the state formulary; permitted in this jurisdiction.",
+      },
+    },
+  );
+  const body = (await cleared.json()) as { message?: string };
+  expect(body.message ?? "").toMatch(/clearance is not approval/i);
+});
+
+test("13. completing a complete product's review makes it selectable and separates approval", async ({
+  request,
+}) => {
+  const queueRes = await request.post(
+    "http://127.0.0.1:3999/rest/v1/rpc/get_catalog_review_queue",
+    {
+      headers: { authorization: "Bearer stub-token", "content-type": "application/json" },
+      data: { _organization_id: "org-fixture" },
+    },
+  );
+  const queue = (await queueRes.json()) as {
+    products: Array<{ productId: string; name: string; status: string }>;
+  };
+  const complete = queue.products.find((p) => p.name === "Magnesium Glycinate");
+  expect(complete).toBeTruthy();
+
+  const done = await request.post(
+    "http://127.0.0.1:3999/rest/v1/rpc/complete_catalog_product_review",
+    {
+      headers: { authorization: "Bearer stub-token", "content-type": "application/json" },
+      data: {
+        _organization_id: "org-fixture",
+        _product_id: complete!.productId,
+        _note: "Checked against the manufacturer's published label.",
+      },
+    },
+  );
+  const body = (await done.json()) as { message?: string };
+  expect(body.message ?? "").toMatch(/now selectable/i);
+  expect(body.message ?? "").toMatch(/label identity/i);
+
+  // And the search gate actually OPENS. A refusal that never lifts is not
+  // a gate but a wall — this is the assertion that tells them apart.
+  const search = await request.post(
+    "http://127.0.0.1:3999/rest/v1/rpc/search_protocol_catalog",
+    {
+      headers: { authorization: "Bearer stub-token", "content-type": "application/json" },
+      data: { _organization_id: "org-fixture", _query: "Magnesium", _limit: 50 },
+    },
+  );
+  const searchBody = (await search.json()) as { products: Array<{ name: string }> };
+  expect(searchBody.products.map((p) => p.name)).toContain("Magnesium Glycinate");
+});
 
 /* ================================================ 14: ambiguity stops a row */
 

@@ -84,6 +84,11 @@ const existingAccountEmails = new Set([
 
 function memberOrgIdsForBearer(bearerToken) {
   if (revokedBearers.has(bearerToken) || bearerToken.endsWith("--noorg")) return [];
+  // Phase 9E-A.1 continuation: an "outsider" bearer belongs to `org-outsider`
+  // only, so cross-tenant browser proofs can drive a genuine refusal path.
+  // Without this, every bearer defaulted to `org-fixture` and the refusal
+  // would never fire against the workspace's real fixture org.
+  if (/outsider/i.test(bearerToken)) return ["org-outsider"];
   return bearerToken.endsWith("--multi")
     ? ["org-fixture", "org-second"]
     : ["org-fixture"];
@@ -2245,11 +2250,22 @@ let importState = new Map();
 let importSourceFiles = new Map();
 let catalogReviewProducts = new Map();
 let importProvenance = [];
-// Phase 9E-A: append-only log of 5-outcome restricted-review decisions, keyed
-// by productId. Never removed; a later decision supersedes an earlier one but
-// the earlier one is not deleted. resetImportFixtures() clears the log — the
-// browser proofs of the workspace need a deterministic empty state.
+// Phase 9E-A: append-only log of 5-outcome restricted-review decisions.
+// The map is keyed by a composite `${subjectType}:${subjectId}` — Phase
+// 9E-A.1 extended the domain from products only to preview items + governed
+// knowledge references. The read helper picks currentOutcome by
+// newest-decidedAt across the bucket. resetImportFixtures() clears the log
+// so browser proofs start from a deterministic empty state.
 let catalogRestrictedReviewDecisions = new Map();
+// Phase 9E-A.1: fixture stores for the two non-product subject types.
+// `previewItemsRestricted` mirrors the SQL view of restricted preview items
+// (a preview batch row with restricted_flags != []); it is separate from the
+// full `importBatches` state so a workspace test can seed a restricted
+// preview item directly without walking the whole parse/preview/commit
+// journey. `governedKnowledgeReferences` is the stub of the SQL scaffold
+// table Phase 9E-A.1 lands; empty by default until seeded by a test.
+let previewItemsRestricted = new Map();
+let governedKnowledgeReferences = new Map();
 
 function resetImportFixtures() {
   importBatches = new Map();
@@ -2259,6 +2275,8 @@ function resetImportFixtures() {
   catalogReviewProducts = new Map();
   importProvenance = [];
   catalogRestrictedReviewDecisions = new Map();
+  previewItemsRestricted = new Map();
+  governedKnowledgeReferences = new Map();
 }
 
 /* ------------------------------------------- Phase 9B catalog + templates
@@ -2933,6 +2951,154 @@ createServer(async (req, res) => {
     return json(res, 200, { ok: true, productId });
   }
 
+  // Phase 9E-A.1 continuation: seed a restricted preview import item so the
+  // workspace's unified restricted-review queue can display preview candidates
+  // without walking the whole parse/preview/commit journey.
+  if (url.pathname === "/__control/seed-restricted-preview-item" && req.method === "POST") {
+    const body = await readBody(req);
+    catalogSeq += 1;
+    const id = String(body.previewItemId ?? `seed-preview-item-${catalogSeq}`);
+    previewItemsRestricted.set(id, {
+      id,
+      organizationId: String(body.organizationId ?? "org-fixture"),
+      displayName: String(body.displayName ?? "Seeded Preview Row"),
+      entityType: String(body.entityType ?? "catalog_product"),
+      restrictedFlags: Array.isArray(body.restrictedFlags) && body.restrictedFlags.length > 0
+        ? body.restrictedFlags
+        : ["iv_therapy"],
+      missingFacts: Array.isArray(body.missingFacts) ? body.missingFacts : [],
+      changeKind: body.changeKind ?? null,
+      status: body.status ?? "needs_review",
+      sourceName: body.sourceName ?? "seeded-fixture-file.xlsx",
+      sourceSheet: body.sourceSheet ?? "Sheet1",
+      sourceRowNumber: body.sourceRowNumber ?? null,
+    });
+    return json(res, 200, { ok: true, previewItemId: id });
+  }
+
+  // Phase 9E-A.1 continuation: seed a full preview batch containing two
+  // conflicting rows so browser proofs of the Conflicts workflow do not
+  // depend on walking the parse pipeline. The seeded batch mirrors the shape
+  // real preview batches carry: an `items` array with `changeKind` set on
+  // the conflicting rows, `conflictWithItemId` chained across the pair, and a
+  // `restricted_flags` set carried on the second row so the test can
+  // separately assert that resolution does not clear the restriction.
+  if (url.pathname === "/__control/seed-conflict-batch" && req.method === "POST") {
+    const body = await readBody(req);
+    const org = String(body.organizationId ?? "org-fixture");
+    const batchId = String(body.batchId ?? `seed-conflict-batch-${importBatches.size + 1}`);
+    const firstId = `${batchId}-item-1`;
+    const secondId = `${batchId}-item-2`;
+    const dedupeKey = String(body.dedupeKey ?? "AC-100");
+    const firstDisplayName = String(body.firstDisplayName ?? "Existing row (batch-earlier)");
+    const secondDisplayName = String(body.secondDisplayName ?? "Incoming row (batch-later)");
+    const restrictedFlags = Array.isArray(body.restrictedFlags)
+      ? body.restrictedFlags
+      : ["prescription"];
+    const items = [
+      {
+        id: firstId,
+        entityType: "catalog_product",
+        displayName: firstDisplayName,
+        sourceSheet: "Sheet1",
+        sourceRowNumber: 1,
+        dedupeKey,
+        changeKind: "change",
+        status: "needs_review",
+        payloadSha256: stubHash({ id: firstId }),
+        existingRefType: null,
+        existingRefId: null,
+        conflictWithItemId: null,
+        conflictReason: null,
+        conflictResolution: null,
+        validationErrors: [],
+        warnings: [],
+        reviewNote: null,
+        appliedRefType: null,
+        appliedRefId: null,
+        payload: { name: firstDisplayName, sku: dedupeKey, restrictedFlags: [] },
+        sourceRaw: { "Product Name": firstDisplayName, "Item #": dedupeKey },
+        restrictedFlags: [],
+        restrictedReason: null,
+        missingFacts: [],
+        candidateMatches: [],
+      },
+      {
+        id: secondId,
+        entityType: "catalog_product",
+        displayName: secondDisplayName,
+        sourceSheet: "Sheet1",
+        sourceRowNumber: 2,
+        dedupeKey,
+        changeKind: "conflict",
+        status: "needs_review",
+        payloadSha256: stubHash({ id: secondId }),
+        existingRefType: null,
+        existingRefId: null,
+        conflictWithItemId: firstId,
+        conflictReason:
+          `Another row earlier in this file claims the same identity (${dedupeKey}). ` +
+          `Resolve which row is correct before committing.`,
+        conflictResolution: null,
+        validationErrors: [],
+        warnings: [],
+        reviewNote: null,
+        appliedRefType: null,
+        appliedRefId: null,
+        payload: { name: secondDisplayName, sku: dedupeKey, restrictedFlags },
+        sourceRaw: { "Product Name": secondDisplayName, "Item #": dedupeKey },
+        restrictedFlags,
+        restrictedReason: `Flagged as restricted (${restrictedFlags.join(", ")}).`,
+        missingFacts: [],
+        candidateMatches: [],
+      },
+    ];
+    const batch = {
+      id: batchId,
+      status: "preview",
+      sourceName: String(body.sourceName ?? "seeded-conflict-fixture.xlsx"),
+      sourceKind: "product_spreadsheet",
+      sourceFilename: "seeded-conflict-fixture.xlsx",
+      sourceByteSize: 1024,
+      sourceSha256: stubHash({ batchId }),
+      schemaVersion: "v1",
+      itemCount: items.length,
+      added: 0,
+      changed: 1,
+      unchanged: 0,
+      conflicts: 1,
+      removals: 0,
+      ambiguous: 0,
+      restricted: 1,
+      previewGeneratedAt: new Date().toISOString(),
+      committedAt: null,
+      createdAt: new Date().toISOString(),
+      organizationId: org,
+      items,
+    };
+    importBatches.set(batchId, batch);
+    return json(res, 200, { ok: true, batchId, itemCount: items.length, conflictItemId: secondId });
+  }
+
+  // Phase 9E-A.1 continuation: seed a governed knowledge reference so tests
+  // can exercise the third subject type.
+  if (url.pathname === "/__control/seed-knowledge-reference" && req.method === "POST") {
+    const body = await readBody(req);
+    catalogSeq += 1;
+    const id = String(body.referenceId ?? `seed-knowledge-ref-${catalogSeq}`);
+    governedKnowledgeReferences.set(id, {
+      id,
+      organizationId: String(body.organizationId ?? "org-fixture"),
+      claim: String(body.claim ?? "Seeded knowledge reference"),
+      citation: body.citation ?? null,
+      sourceKind: body.sourceKind ?? null,
+      jurisdiction: body.jurisdiction ?? null,
+      restrictedFlags: Array.isArray(body.restrictedFlags) ? body.restrictedFlags : [],
+      status: body.status ?? "pending",
+    });
+    return json(res, 200, { ok: true, referenceId: id });
+  }
+
   if (url.pathname === "/__control/nutrition-reset" && req.method === "POST") {
     resetNutritionFixtures();
     return json(res, 200, { ok: true });
@@ -3550,6 +3716,14 @@ createServer(async (req, res) => {
       for (const b of importBatches.values()) {
         const item = b.items.find((i) => i.id === itemId);
         if (!item) continue;
+        // Phase 9E-A.1 continuation: tenant membership check. Without this
+        // the resolver ran for anyone with a bearer, which meant the
+        // cross-tenant refusal invariant was not actually enforced at the
+        // wire. The refusal message is deliberately generic — it must not
+        // leak the item's display name, source, or restriction state.
+        if (!memberOrgIds.includes(b.organizationId)) {
+          return json(res, 403, { code: "42501", message: "not authorized" });
+        }
         if (item.changeKind !== "conflict") {
           return json(res, 400, { code: "55000", message: "this item is not in conflict" });
         }
@@ -3563,8 +3737,20 @@ createServer(async (req, res) => {
         }
         item.conflictResolution = resolution;
         item.reviewNote = note;
+        // Audit fields: recorded so the workspace + tests can prove that
+        // actor + timestamp lands on the item alongside the decision +
+        // reason. `reviewedBy` is a deterministic marker for stub tests;
+        // the real RPC captures auth.uid().
+        item.reviewedAt = new Date().toISOString();
+        item.reviewedBy = "practitioner";
         b.conflicts = Math.max(b.conflicts - 1, 0);
-        return json(res, 200, { ok: true, itemId, resolution });
+        return json(res, 200, {
+          ok: true,
+          itemId,
+          resolution,
+          reviewedBy: item.reviewedBy,
+          reviewedAt: item.reviewedAt,
+        });
       }
       return json(res, 404, { code: "P0002", message: "import item not found" });
     }
@@ -3916,80 +4102,245 @@ createServer(async (req, res) => {
     // enforces role gating (member-only), a required reason, and jurisdiction
     // on the clinician outcome. None of the outcomes clears the restriction —
     // clearance stays on `clear_catalog_product_restriction`.
-    if (url.pathname === "/rest/v1/rpc/record_restricted_review_outcome" && req.method === "POST") {
-      const body = await readBody(req);
+    //
+    // Phase 9E-A.1: v2 accepts a subject discriminator so the same append-only
+    // history works for preview import items and governed knowledge
+    // references, not just committed catalog products. The three types share
+    // one bucket keyed by `${subjectType}:${subjectId}` — that matches the
+    // SQL exactly-one-subject constraint and keeps history reads O(1).
+    const VALID_OUTCOMES = new Set([
+      "retain_restricted",
+      "request_evidence",
+      "defer",
+      "reject",
+      "clinician_reviewed_for_jurisdiction",
+    ]);
+    const VALID_SUBJECT_TYPES = new Set(["product", "preview_item", "knowledge_reference"]);
+    function stubSubjectExists(subjectType, subjectId, org) {
+      if (subjectType === "product") {
+        return catalogReviewProducts.has(subjectId);
+      }
+      if (subjectType === "preview_item") {
+        const item = previewItemsRestricted.get(subjectId);
+        return item != null && item.organizationId === org;
+      }
+      if (subjectType === "knowledge_reference") {
+        const ref = governedKnowledgeReferences.get(subjectId);
+        return ref != null && ref.organizationId === org;
+      }
+      return false;
+    }
+    function stubSubjectOrg(subjectType, subjectId) {
+      if (subjectType === "preview_item") return previewItemsRestricted.get(subjectId)?.organizationId ?? null;
+      if (subjectType === "knowledge_reference") return governedKnowledgeReferences.get(subjectId)?.organizationId ?? null;
+      return null;
+    }
+    async function stubRecordRestrictedReview(body, defaultSubjectType) {
       const org = String(body._organization_id ?? "");
       if (!memberOrgIds.includes(org)) {
-        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+        return { status: 403, payload: { code: "42501", message: "not a member of this organization" } };
       }
-      const productId = String(body._product_id ?? "");
+      const subjectType = String(body._subject_type ?? defaultSubjectType ?? "product");
+      const subjectId = String(
+        body._subject_id ?? body._product_id ?? body._preview_item_id ?? body._knowledge_reference_id ?? "",
+      );
       const outcome = String(body._outcome ?? "");
       const reason = String(body._reason ?? "").trim();
       const jurisdiction = body._jurisdiction == null ? null : String(body._jurisdiction).trim();
-      const validOutcomes = new Set([
-        "retain_restricted",
-        "request_evidence",
-        "defer",
-        "reject",
-        "clinician_reviewed_for_jurisdiction",
-      ]);
-      if (!validOutcomes.has(outcome)) {
-        return json(res, 400, { code: "22023", message: "unknown outcome" });
+      if (!VALID_SUBJECT_TYPES.has(subjectType)) {
+        return { status: 400, payload: { code: "22023", message: "unknown subject type" } };
+      }
+      if (!VALID_OUTCOMES.has(outcome)) {
+        return { status: 400, payload: { code: "22023", message: "unknown outcome" } };
       }
       if (!reason) {
-        return json(res, 400, { code: "22023", message: "a restricted-review decision requires a reason" });
+        return { status: 400, payload: { code: "22023", message: "a restricted-review decision requires a reason" } };
       }
       if (outcome === "clinician_reviewed_for_jurisdiction" && !jurisdiction) {
-        return json(res, 400, {
-          code: "22023",
-          message: "clinician_reviewed_for_jurisdiction requires a jurisdiction",
-        });
+        return {
+          status: 400,
+          payload: { code: "22023", message: "clinician_reviewed_for_jurisdiction requires a jurisdiction" },
+        };
       }
-      const p = catalogReviewProducts.get(productId);
-      if (!p) return json(res, 404, { code: "P0002", message: "product not found" });
-      const decisionId = "rrd-" + productId + "-" + (catalogRestrictedReviewDecisions.size + 1);
+      if (!stubSubjectExists(subjectType, subjectId, org)) {
+        return { status: 404, payload: { code: "P0002", message: `subject ${subjectType} not found` } };
+      }
+      const subjectOrg = stubSubjectOrg(subjectType, subjectId);
+      if (subjectOrg != null && subjectOrg !== org) {
+        return {
+          status: 403,
+          payload: { code: "42501", message: `subject ${subjectType} belongs to a different tenant` },
+        };
+      }
+      const key = `${subjectType}:${subjectId}`;
+      const decisionId = `rrd-${catalogRestrictedReviewDecisions.size + 1}-${subjectType}`;
       // Wall-clock timestamp so multiple decisions in one browser test still
       // sort strictly newest-first when the read helper picks currentOutcome.
       const decidedAt = new Date().toISOString();
       const record = {
         id: decisionId,
         organizationId: org,
-        productId,
+        subjectType,
+        subjectId,
         outcome,
         reason,
         jurisdiction: jurisdiction || null,
         decidedBy: "practitioner",
         decidedAt,
       };
-      const bucket = catalogRestrictedReviewDecisions.get(productId) ?? [];
+      const bucket = catalogRestrictedReviewDecisions.get(key) ?? [];
       bucket.push(record);
-      catalogRestrictedReviewDecisions.set(productId, bucket);
-      // The restriction ITSELF is not touched — none of the five outcomes
-      // clears it. That guarantee is what the workspace surfaces on screen.
-      return json(res, 200, {
-        ok: true,
-        decisionId,
-        outcome,
-        restrictionsPreserved: true,
-      });
+      catalogRestrictedReviewDecisions.set(key, bucket);
+      // Restriction flags are NOT touched here — none of the five outcomes
+      // clears them. That guarantee is what the workspace surfaces on screen.
+      return {
+        status: 200,
+        payload: {
+          ok: true,
+          decisionId,
+          subjectType,
+          subjectId,
+          outcome,
+          restrictionsPreserved: true,
+        },
+      };
+    }
+    if (url.pathname === "/rest/v1/rpc/record_restricted_review_outcome" && req.method === "POST") {
+      const body = await readBody(req);
+      const result = await stubRecordRestrictedReview(body, "product");
+      return json(res, result.status, result.payload);
+    }
+    if (url.pathname === "/rest/v1/rpc/record_restricted_review_outcome_v2" && req.method === "POST") {
+      const body = await readBody(req);
+      const result = await stubRecordRestrictedReview(body, undefined);
+      return json(res, result.status, result.payload);
     }
 
+    async function stubGetRestrictedReviewHistory(body, defaultSubjectType) {
+      const org = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(org)) {
+        return { status: 403, payload: { code: "42501", message: "not a member of this organization" } };
+      }
+      const subjectType = String(body._subject_type ?? defaultSubjectType ?? "product");
+      const subjectId = String(body._subject_id ?? body._product_id ?? "");
+      if (!VALID_SUBJECT_TYPES.has(subjectType)) {
+        return { status: 400, payload: { code: "22023", message: "unknown subject type" } };
+      }
+      const key = `${subjectType}:${subjectId}`;
+      const history = (catalogRestrictedReviewDecisions.get(key) ?? [])
+        .filter((d) => d.organizationId === org)
+        .slice()
+        .sort((a, b) => (a.decidedAt < b.decidedAt ? 1 : -1));
+      return {
+        status: 200,
+        payload: {
+          subjectType,
+          subjectId,
+          organizationId: org,
+          currentOutcome: history[0]?.outcome ?? null,
+          history,
+        },
+      };
+    }
     if (url.pathname === "/rest/v1/rpc/get_restricted_review_history" && req.method === "POST") {
+      const body = await readBody(req);
+      const result = await stubGetRestrictedReviewHistory(body, "product");
+      return json(res, result.status, result.payload);
+    }
+    if (url.pathname === "/rest/v1/rpc/get_restricted_review_history_v2" && req.method === "POST") {
+      const body = await readBody(req);
+      const result = await stubGetRestrictedReviewHistory(body, undefined);
+      return json(res, result.status, result.payload);
+    }
+
+    if (url.pathname === "/rest/v1/rpc/get_restricted_review_queue" && req.method === "POST") {
       const body = await readBody(req);
       const org = String(body._organization_id ?? "");
       if (!memberOrgIds.includes(org)) {
         return json(res, 403, { code: "42501", message: "not a member of this organization" });
       }
-      const productId = String(body._product_id ?? "");
-      const history = (catalogRestrictedReviewDecisions.get(productId) ?? [])
-        .filter((d) => d.organizationId === org)
-        .slice()
-        .sort((a, b) => (a.decidedAt < b.decidedAt ? 1 : -1));
+      // Union all three subject types the SQL RPC returns. Deliberately no
+      // raw source text — payload jsonb is not exposed here, only display
+      // fields and restriction flags.
+      const items = [];
+      for (const item of previewItemsRestricted.values()) {
+        if (item.organizationId !== org) continue;
+        if (!Array.isArray(item.restrictedFlags) || item.restrictedFlags.length === 0) continue;
+        const key = `preview_item:${item.id}`;
+        const currentOutcome = (catalogRestrictedReviewDecisions.get(key) ?? [])
+          .slice()
+          .sort((a, b) => (a.decidedAt < b.decidedAt ? 1 : -1))[0]?.outcome ?? null;
+        items.push({
+          subjectType: "preview_item",
+          subjectId: item.id,
+          displayName: item.displayName,
+          entityType: item.entityType ?? "catalog_product",
+          restrictedFlags: item.restrictedFlags,
+          missingFacts: item.missingFacts ?? [],
+          changeKind: item.changeKind ?? null,
+          status: item.status ?? "needs_review",
+          sourceName: item.sourceName ?? null,
+          sourceSheet: item.sourceSheet ?? null,
+          sourceRowNumber: item.sourceRowNumber ?? null,
+          currentOutcome,
+        });
+      }
+      for (const p of catalogReviewProducts.values()) {
+        if (p.organizationId !== org) continue;
+        if (!Array.isArray(p.restrictedFlags) || p.restrictedFlags.length === 0) continue;
+        const key = `product:${p.productId}`;
+        const currentOutcome = (catalogRestrictedReviewDecisions.get(key) ?? [])
+          .slice()
+          .sort((a, b) => (a.decidedAt < b.decidedAt ? 1 : -1))[0]?.outcome ?? null;
+        items.push({
+          subjectType: "product",
+          subjectId: p.productId,
+          displayName: p.name,
+          entityType: "supplement_product",
+          restrictedFlags: p.restrictedFlags,
+          missingFacts: p.missingFacts ?? [],
+          changeKind: null,
+          status: p.status,
+          sourceName: null,
+          sourceSheet: null,
+          sourceRowNumber: null,
+          currentOutcome,
+        });
+      }
+      for (const r of governedKnowledgeReferences.values()) {
+        if (r.organizationId !== org) continue;
+        if (!Array.isArray(r.restrictedFlags) || r.restrictedFlags.length === 0) continue;
+        const key = `knowledge_reference:${r.id}`;
+        const currentOutcome = (catalogRestrictedReviewDecisions.get(key) ?? [])
+          .slice()
+          .sort((a, b) => (a.decidedAt < b.decidedAt ? 1 : -1))[0]?.outcome ?? null;
+        items.push({
+          subjectType: "knowledge_reference",
+          subjectId: r.id,
+          displayName: r.claim,
+          entityType: "knowledge_reference",
+          restrictedFlags: r.restrictedFlags,
+          missingFacts: [],
+          changeKind: null,
+          status: r.status ?? "pending",
+          sourceName: null,
+          sourceSheet: null,
+          sourceRowNumber: null,
+          currentOutcome,
+        });
+      }
+      items.sort((a, b) => {
+        if (a.subjectType !== b.subjectType) return a.subjectType.localeCompare(b.subjectType);
+        return String(a.displayName).localeCompare(String(b.displayName));
+      });
       return json(res, 200, {
-        productId,
-        organizationId: org,
-        currentOutcome: history[0]?.outcome ?? null,
-        history,
+        items,
+        counts: {
+          total: items.length,
+          previewItems: items.filter((i) => i.subjectType === "preview_item").length,
+          products: items.filter((i) => i.subjectType === "product").length,
+          knowledgeReferences: items.filter((i) => i.subjectType === "knowledge_reference").length,
+        },
       });
     }
 

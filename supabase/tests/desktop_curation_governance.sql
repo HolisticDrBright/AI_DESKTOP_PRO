@@ -1,13 +1,21 @@
--- Acceptance: Phase 9E-A governance — 5-outcome restricted review and
--- governed commercial matching.
+-- Acceptance: Phase 9E-A governance — 5-outcome restricted review, governed
+-- commercial matching, and the Phase 9E-A.1 continuation that extends the
+-- restricted-review domain to preview items and knowledge references.
 --
 -- Rolled back at the end.
 --
--- 18 checks. Proves the two new RPCs enforce what the workspace claims:
--- role gating, required reasons, jurisdiction requirement on the clinician
--- outcome, no silent clearance of source-declared restrictions, exact-only
--- commercial matching, verified-only attach, append-only decisions,
+-- Original 18 checks (1-18) prove the shipping RPCs enforce what the workspace
+-- claims: role gating, required reasons, jurisdiction requirement on the
+-- clinician outcome, no silent clearance of source-declared restrictions,
+-- exact-only commercial matching, verified-only attach, append-only decisions,
 -- append-via-supersede revocation, and commercial-clinical separation.
+--
+-- Continuation checks (19-34) prove the three-subject-type extension: a
+-- preview import item and a governed knowledge reference are first-class
+-- subjects alongside supplement products, the typed subject FKs enforce
+-- exactly-one presence, invalid / unknown / cross-tenant subject ids are
+-- refused with typed error codes, the queue RPC requires auth + membership,
+-- and audit metadata NEVER carries the raw reason or jurisdiction prose.
 
 begin;
 
@@ -262,6 +270,245 @@ select _c('18. no clinical function body references commercial link tables', (
       'protocol_version_json', 'current_reference_status',
       'catalog_verification_status', 'get_patient_protocol')
     and p.prosrc ~ '(product_label_commercial_links|protocol_commercial_links|public\.product_commercial_links)'));
+
+-- =========================== 19-30 three-subject-type extension (A.1 cont.)
+
+-- Fixtures for the extended domain: a preview batch + item, a governed
+-- knowledge reference, and a second org so cross-tenant probes have a target.
+
+insert into public.organizations(id, name, slug) values
+  ('9e100000-0000-4000-8000-000000000102', 'Curation Org B', 'p9e-org-b');
+
+insert into auth.users(id, email) values
+  ('9e100000-0000-4000-8000-000000000003', 'p9e-editor-b@verify.local'),
+  ('9e100000-0000-4000-8000-000000000004', 'p9e-anon@verify.local');
+
+insert into public.organization_memberships(organization_id, user_id, role, status)
+values ('9e100000-0000-4000-8000-000000000102',
+        '9e100000-0000-4000-8000-000000000003', 'owner', 'active');
+
+insert into public.clinical_knowledge_import_batches
+  (id, organization_id, source_name, schema_version, source_sha256, status,
+   item_count, no_phi_attested_by, no_phi_attested_at, created_by,
+   added_count, changed_count, unchanged_count, conflict_count,
+   removed_count, ambiguous_count, restricted_count, deferred_count,
+   source_restricted_flags, commercial_only)
+values
+  ('9e100000-0000-4000-8000-000000000501',
+   '9e100000-0000-4000-8000-000000000101',
+   'test-source-a.xlsx', 'v1', repeat('e',64), 'preview',
+   1, '9e100000-0000-4000-8000-000000000001', now(),
+   '9e100000-0000-4000-8000-000000000001',
+   0, 0, 0, 0, 0, 0, 1, 0,
+   array[]::text[], false),
+  ('9e100000-0000-4000-8000-000000000502',
+   '9e100000-0000-4000-8000-000000000102',
+   'other-tenant.xlsx', 'v1', repeat('f',64), 'preview',
+   1, '9e100000-0000-4000-8000-000000000003', now(),
+   '9e100000-0000-4000-8000-000000000003',
+   0, 0, 0, 0, 0, 0, 1, 0,
+   array[]::text[], false);
+
+insert into public.clinical_knowledge_import_items
+  (id, batch_id, organization_id, entity_type, external_key, display_name,
+   payload, payload_sha256, warnings, validation_errors, status,
+   source_raw, restricted_flags, missing_facts, candidate_matches)
+values
+  ('9e100000-0000-4000-8000-000000000601',
+   '9e100000-0000-4000-8000-000000000501',
+   '9e100000-0000-4000-8000-000000000101',
+   'catalog_product', 'PREV-1', 'Preview Row Restricted',
+   '{"name":"Preview Row Restricted"}'::jsonb, repeat('1',64),
+   '[]'::jsonb, '[]'::jsonb, 'needs_review',
+   '{}'::jsonb, array['iv_therapy']::text[], '[]'::jsonb, '[]'::jsonb),
+  ('9e100000-0000-4000-8000-000000000602',
+   '9e100000-0000-4000-8000-000000000502',
+   '9e100000-0000-4000-8000-000000000102',
+   'catalog_product', 'OTHER-1', 'Other Tenant Preview Row',
+   '{"name":"Other Tenant Preview Row"}'::jsonb, repeat('2',64),
+   '[]'::jsonb, '[]'::jsonb, 'needs_review',
+   '{}'::jsonb, array['peptide']::text[], '[]'::jsonb, '[]'::jsonb);
+
+insert into public.governed_knowledge_references
+  (id, organization_id, claim, citation, restricted_flags, status, created_by)
+values
+  ('9e100000-0000-4000-8000-000000000701',
+   '9e100000-0000-4000-8000-000000000101',
+   'Vaccine-related claim in this tenant', 'example.invalid/vac',
+   array['vaccine_related']::text[], 'pending',
+   '9e100000-0000-4000-8000-000000000001'),
+  ('9e100000-0000-4000-8000-000000000702',
+   '9e100000-0000-4000-8000-000000000102',
+   'Reference in other tenant', 'example.invalid/other',
+   array['prescription']::text[], 'pending',
+   '9e100000-0000-4000-8000-000000000003');
+
+-- Editor in org A
+select set_config('request.jwt.claims',
+  '{"sub":"9e100000-0000-4000-8000-000000000001","role":"authenticated"}', true);
+
+-- ------------------------------------------------- preview_item outcomes
+
+select public.record_restricted_review_outcome_v2(
+  '9e100000-0000-4000-8000-000000000101'::uuid,
+  'preview_item',
+  '9e100000-0000-4000-8000-000000000601'::uuid,
+  'retain_restricted'::public.catalog_restricted_review_outcome,
+  'preview looked at; keeps its flag');
+select _c('19. preview_item outcome landed with correct subject FK', (
+  select preview_item_id = '9e100000-0000-4000-8000-000000000601'
+    and product_id is null
+    and knowledge_reference_id is null
+  from public.catalog_restricted_review_decisions
+  where preview_item_id = '9e100000-0000-4000-8000-000000000601'));
+
+select _c('20. preview_item decision does NOT commit or apply the preview row', (
+  select status = 'needs_review'
+    and applied_ref_type is null
+    and applied_ref_id is null
+    and cardinality(restricted_flags) > 0
+  from public.clinical_knowledge_import_items
+  where id = '9e100000-0000-4000-8000-000000000601'));
+
+-- ------------------------------------------------- knowledge_reference outcomes
+
+select public.record_restricted_review_outcome_v2(
+  '9e100000-0000-4000-8000-000000000101'::uuid,
+  'knowledge_reference',
+  '9e100000-0000-4000-8000-000000000701'::uuid,
+  'clinician_reviewed_for_jurisdiction'::public.catalog_restricted_review_outcome,
+  'reviewed the citation for CA', 'US-CA');
+select _c('21. knowledge_reference outcome landed with jurisdiction', (
+  select knowledge_reference_id = '9e100000-0000-4000-8000-000000000701'
+    and jurisdiction = 'US-CA'
+  from public.catalog_restricted_review_decisions
+  where knowledge_reference_id = '9e100000-0000-4000-8000-000000000701'));
+
+select _c('22. knowledge_reference decision does NOT flip status to verified', (
+  select status = 'pending'
+  from public.governed_knowledge_references
+  where id = '9e100000-0000-4000-8000-000000000701'));
+
+-- ------------------------------------------------- exactly-one CHECK
+
+select _c('23. a decision with TWO subjects is refused (23514 check)', _raises($q$
+  insert into public.catalog_restricted_review_decisions
+    (organization_id, product_id, preview_item_id,
+     outcome, reason, decided_by)
+  values
+    ('9e100000-0000-4000-8000-000000000101',
+     '9e100000-0000-4000-8000-000000000301',
+     '9e100000-0000-4000-8000-000000000601',
+     'retain_restricted', 'two subjects', '9e100000-0000-4000-8000-000000000001')
+$q$, '23514'));
+
+select _c('24. a decision with ZERO subjects is refused (23514 check)', _raises($q$
+  insert into public.catalog_restricted_review_decisions
+    (organization_id, outcome, reason, decided_by)
+  values
+    ('9e100000-0000-4000-8000-000000000101',
+     'retain_restricted', 'no subject', '9e100000-0000-4000-8000-000000000001')
+$q$, '23514'));
+
+-- ------------------------------------------------- invalid / not-found ids
+
+select _c('25. invalid subject_type is refused (22023)', _raises($q$
+  select public.record_restricted_review_outcome_v2(
+    '9e100000-0000-4000-8000-000000000101'::uuid,
+    'garbage_type',
+    '9e100000-0000-4000-8000-000000000601'::uuid,
+    'retain_restricted'::public.catalog_restricted_review_outcome,
+    'looked')
+$q$, '22023'));
+
+select _c('26. unknown preview_item id is refused (P0002)', _raises($q$
+  select public.record_restricted_review_outcome_v2(
+    '9e100000-0000-4000-8000-000000000101'::uuid,
+    'preview_item',
+    '9e100000-0000-4000-8000-000000000999'::uuid,
+    'retain_restricted'::public.catalog_restricted_review_outcome,
+    'looked')
+$q$, 'P0002'));
+
+select _c('27. unknown knowledge_reference id is refused (P0002)', _raises($q$
+  select public.record_restricted_review_outcome_v2(
+    '9e100000-0000-4000-8000-000000000101'::uuid,
+    'knowledge_reference',
+    '9e100000-0000-4000-8000-000000000888'::uuid,
+    'retain_restricted'::public.catalog_restricted_review_outcome,
+    'looked')
+$q$, 'P0002'));
+
+-- ------------------------------------------------- cross-tenant refusal
+
+select _c('28. a member of org A cannot review a preview item that belongs to org B', _raises($q$
+  select public.record_restricted_review_outcome_v2(
+    '9e100000-0000-4000-8000-000000000101'::uuid,
+    'preview_item',
+    '9e100000-0000-4000-8000-000000000602'::uuid,
+    'retain_restricted'::public.catalog_restricted_review_outcome,
+    'trying cross-tenant')
+$q$, '42501'));
+
+select _c('29. a member of org A cannot review a knowledge reference that belongs to org B', _raises($q$
+  select public.record_restricted_review_outcome_v2(
+    '9e100000-0000-4000-8000-000000000101'::uuid,
+    'knowledge_reference',
+    '9e100000-0000-4000-8000-000000000702'::uuid,
+    'retain_restricted'::public.catalog_restricted_review_outcome,
+    'trying cross-tenant')
+$q$, '42501'));
+
+-- ------------------------------------------------- anonymous + non-editor
+
+select set_config('request.jwt.claims', null, true);
+select _c('30. an anonymous caller cannot read the queue (RPC requires auth)', _raises($q$
+  select public.get_restricted_review_queue('9e100000-0000-4000-8000-000000000101'::uuid)
+$q$, '28000'));
+
+select set_config('request.jwt.claims',
+  '{"sub":"9e100000-0000-4000-8000-000000000004","role":"authenticated"}', true);
+select _c('31. a non-member cannot read the queue (42501)', _raises($q$
+  select public.get_restricted_review_queue('9e100000-0000-4000-8000-000000000101'::uuid)
+$q$, '42501'));
+
+-- ------------------------------------------------- unified queue: all three types visible
+
+select set_config('request.jwt.claims',
+  '{"sub":"9e100000-0000-4000-8000-000000000001","role":"authenticated"}', true);
+
+select _c('32. unified queue includes preview_item, product, and knowledge_reference rows', (
+  with q as (select public.get_restricted_review_queue(
+    '9e100000-0000-4000-8000-000000000101'::uuid) as j)
+  select
+    (select count(*) from jsonb_array_elements((select j from q) -> 'items') e
+      where e ->> 'subjectType' = 'preview_item') >= 1
+    and (select count(*) from jsonb_array_elements((select j from q) -> 'items') e
+      where e ->> 'subjectType' = 'product') >= 1
+    and (select count(*) from jsonb_array_elements((select j from q) -> 'items') e
+      where e ->> 'subjectType' = 'knowledge_reference') >= 1));
+
+-- ------------------------------------------------- audit metadata is PHI-clean
+
+select _c('33. audit_events for restricted-review NEVER carry the raw reason or jurisdiction text', (
+  select count(*) = 0
+  from public.audit_events e
+  where e.action = 'catalog.restricted_review_recorded'
+    and e.organization_id = '9e100000-0000-4000-8000-000000000101'
+    and (
+      e.metadata::text ilike '%reviewed the citation for CA%'
+      or e.metadata::text ilike '%preview looked at%'
+      or e.safe_message ilike '%reviewed the citation for CA%'
+    )));
+
+select _c('34. audit_events for restricted-review carry outcome + subjectType + jurisdiction-presence flag only', (
+  select bool_and(
+    e.metadata ? 'outcome'
+    and e.metadata ? 'subjectType'
+    and e.metadata ? 'has_jurisdiction')
+  from public.audit_events e
+  where e.action = 'catalog.restricted_review_recorded'
+    and e.organization_id = '9e100000-0000-4000-8000-000000000101'));
 
 -- ---------------------------------------------------------------- results
 

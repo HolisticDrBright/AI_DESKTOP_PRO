@@ -184,7 +184,16 @@ export const importReviewLive = {
    */
   async recordRestrictedReviewOutcome(
     input: {
-      productId: string;
+      /**
+       * Phase 9E-A.1: the subject can now be a preview import item or a
+       * governed knowledge reference in addition to a supplement product.
+       * The client passes `subjectType` + `subjectId`; when omitted, the
+       * legacy `productId` path routes to `subjectType = "product"` for
+       * backwards compatibility.
+       */
+      subjectType?: "product" | "preview_item" | "knowledge_reference";
+      subjectId?: string;
+      productId?: string;
       outcome:
         | "retain_restricted"
         | "request_evidence"
@@ -199,20 +208,27 @@ export const importReviewLive = {
   ): Promise<{
     ok: true;
     decisionId: string;
+    subjectType: "product" | "preview_item" | "knowledge_reference";
+    subjectId: string;
     outcome: string;
     restrictionsPreserved: true;
   }> {
     const token = await getClinicalAccessToken(sessionToken);
+    const subjectType = input.subjectType ?? "product";
+    const subjectId = input.subjectId ?? input.productId ?? "";
     return clinicalRpc<{
       ok: true;
       decisionId: string;
+      subjectType: "product" | "preview_item" | "knowledge_reference";
+      subjectId: string;
       outcome: string;
       restrictionsPreserved: true;
     }>(
-      "record_restricted_review_outcome",
+      "record_restricted_review_outcome_v2",
       {
         _organization_id: resolveOrgId(organizationId),
-        _product_id: input.productId,
+        _subject_type: subjectType,
+        _subject_id: subjectId,
         _outcome: input.outcome,
         _reason: input.reason,
         _jurisdiction: input.jurisdiction ?? null,
@@ -222,11 +238,14 @@ export const importReviewLive = {
   },
 
   async restrictedReviewHistory(
-    productId: string,
+    input:
+      | string
+      | { subjectType: "product" | "preview_item" | "knowledge_reference"; subjectId: string },
     organizationId?: string | null,
     sessionToken?: string | null,
   ): Promise<{
-    productId: string;
+    subjectType: "product" | "preview_item" | "knowledge_reference";
+    subjectId: string;
     organizationId: string;
     currentOutcome: string | null;
     history: Array<{
@@ -239,8 +258,12 @@ export const importReviewLive = {
     }>;
   }> {
     const token = await getClinicalAccessToken(sessionToken);
+    const subjectType: "product" | "preview_item" | "knowledge_reference" =
+      typeof input === "string" ? "product" : input.subjectType;
+    const subjectId = typeof input === "string" ? input : input.subjectId;
     return clinicalRpc<{
-      productId: string;
+      subjectType: "product" | "preview_item" | "knowledge_reference";
+      subjectId: string;
       organizationId: string;
       currentOutcome: string | null;
       history: Array<{
@@ -252,11 +275,50 @@ export const importReviewLive = {
         decidedAt: string;
       }>;
     }>(
-      "get_restricted_review_history",
+      "get_restricted_review_history_v2",
       {
         _organization_id: resolveOrgId(organizationId),
-        _product_id: productId,
+        _subject_type: subjectType,
+        _subject_id: subjectId,
       },
+      token,
+    );
+  },
+
+  /**
+   * Phase 9E-A.1: unified restricted-review queue across preview items,
+   * committed catalog products, and governed knowledge references. Returned
+   * rows carry a `subjectType` discriminator so the UI can label them.
+   */
+  async restrictedReviewQueue(
+    organizationId?: string | null,
+    sessionToken?: string | null,
+  ): Promise<{
+    items: Array<{
+      subjectType: "preview_item" | "product" | "knowledge_reference";
+      subjectId: string;
+      displayName: string;
+      entityType: string;
+      restrictedFlags: string[];
+      missingFacts: string[];
+      changeKind: string | null;
+      status: string;
+      sourceName: string | null;
+      sourceSheet: string | null;
+      sourceRowNumber: number | null;
+      currentOutcome: string | null;
+    }>;
+    counts: {
+      total: number;
+      previewItems: number;
+      products: number;
+      knowledgeReferences: number;
+    };
+  }> {
+    const token = await getClinicalAccessToken(sessionToken);
+    return clinicalRpc(
+      "get_restricted_review_queue",
+      { _organization_id: resolveOrgId(organizationId) },
       token,
     );
   },

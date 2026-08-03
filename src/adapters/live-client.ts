@@ -1136,10 +1136,18 @@ export const liveClient = {
       { method: "POST", body: input },
     ),
 
-  /** 5-outcome restricted-review — Phase 9E-A. Every outcome demands a
-   *  reason; the clinician outcome additionally demands a jurisdiction. */
+  /**
+   * 5-outcome restricted-review — Phase 9E-A. Every outcome demands a
+   * reason; the clinician outcome additionally demands a jurisdiction.
+   *
+   * Phase 9E-A.1 continuation: subject can be a preview item or governed
+   * knowledge reference in addition to a supplement product. The legacy
+   * `productId` field remains valid (routes to `subjectType=product`).
+   */
   restrictedReviewRecord: (input: {
-    productId: string;
+    subjectType?: "product" | "preview_item" | "knowledge_reference";
+    subjectId?: string;
+    productId?: string;
     outcome:
       | "retain_restricted"
       | "request_evidence"
@@ -1152,13 +1160,24 @@ export const liveClient = {
     liveFetch<{
       ok: true;
       decisionId: string;
+      subjectType: "product" | "preview_item" | "knowledge_reference";
+      subjectId: string;
       outcome: string;
       restrictionsPreserved: true;
     }>("knowledge/restricted-review", { method: "POST", body: input }),
 
-  restrictedReviewHistory: (productId: string) =>
-    liveFetch<{
-      productId: string;
+  restrictedReviewHistory: (
+    subject:
+      | string
+      | { subjectType: "product" | "preview_item" | "knowledge_reference"; subjectId: string },
+  ) => {
+    const query =
+      typeof subject === "string"
+        ? `productId=${encodeURIComponent(subject)}`
+        : `subjectType=${encodeURIComponent(subject.subjectType)}&subjectId=${encodeURIComponent(subject.subjectId)}`;
+    return liveFetch<{
+      subjectType: "product" | "preview_item" | "knowledge_reference";
+      subjectId: string;
       organizationId: string;
       currentOutcome: string | null;
       history: Array<{
@@ -1169,9 +1188,32 @@ export const liveClient = {
         decidedBy: string;
         decidedAt: string;
       }>;
-    }>(`knowledge/restricted-review?productId=${encodeURIComponent(productId)}`, {
-      method: "GET",
-    }),
+    }>(`knowledge/restricted-review?${query}`, { method: "GET" });
+  },
+
+  restrictedReviewQueue: () =>
+    liveFetch<{
+      items: Array<{
+        subjectType: "preview_item" | "product" | "knowledge_reference";
+        subjectId: string;
+        displayName: string;
+        entityType: string;
+        restrictedFlags: string[];
+        missingFacts: string[];
+        changeKind: string | null;
+        status: string;
+        sourceName: string | null;
+        sourceSheet: string | null;
+        sourceRowNumber: number | null;
+        currentOutcome: string | null;
+      }>;
+      counts: {
+        total: number;
+        previewItems: number;
+        products: number;
+        knowledgeReferences: number;
+      };
+    }>("knowledge/restricted-review-queue", { method: "GET" }),
 
   catalogReviewQueue: () =>
     liveFetch<LiveCatalogReviewQueue>("knowledge/catalog-review", { method: "GET" }),
