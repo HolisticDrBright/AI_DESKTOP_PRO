@@ -2155,43 +2155,236 @@ function KnowledgeReferenceEditorPanel() {
 /* ---------------------------------------------------- Commercial matching */
 
 function CommercialMatchingPanel() {
+  const [labelVersionId, setLabelVersionId] = useState("");
+  const [sku, setSku] = useState("");
+  const [upc, setUpc] = useState("");
+  const [manufacturer, setManufacturer] = useState("");
+  const [productName, setProductName] = useState("");
+  const [affiliateUrl, setAffiliateUrl] = useState("");
+  const [discountCode, setDiscountCode] = useState("");
+  const [disclosure, setDisclosure] = useState("");
+  const [matchReason, setMatchReason] = useState("");
+  const [links, setLinks] = useState<
+    Array<{
+      id: string;
+      supplierName: string | null;
+      url: string | null;
+      commissionDisclosure: string | null;
+      availabilityStatus: string | null;
+      supersedesId: string | null;
+      revokedAt: string | null;
+      revokedReason: string | null;
+      recordedAt: string;
+    }>
+  >([]);
+  const [revokeReason, setRevokeReason] = useState("");
+  const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  // Note: this refresh does NOT clear the caller's message. Callers that need
+  // to reset the message do so themselves — clearing here overwrites the
+  // attach/revoke success message before React can render it.
+  const load = async () => {
+    if (!labelVersionId.trim()) return;
+    try {
+      const res = await liveClient.commercialLinkList(labelVersionId.trim());
+      setLinks(res.links ?? []);
+    } catch (e) {
+      setMessage(errText(e));
+    }
+  };
+
+  const explicitList = async () => {
+    setMessage("");
+    await load();
+  };
+
+  const attach = async () => {
+    setBusy(true);
+    setMessage("");
+    try {
+      const res = await liveClient.commercialLinkAttach({
+        labelVersionId: labelVersionId.trim(),
+        incomingSku: sku.trim() || null,
+        incomingUpc: upc.trim() || null,
+        incomingManufacturer: manufacturer.trim() || null,
+        incomingProductName: productName.trim() || null,
+        affiliateUrl: affiliateUrl.trim(),
+        discountCode: discountCode.trim() || null,
+        disclosure: disclosure.trim(),
+        matchReason: matchReason.trim(),
+      });
+      setMessage(`Attached ${res.linkId} on matchAxis=${res.matchAxis}.`);
+      await load();
+    } catch (e) {
+      setMessage(errText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const revoke = async (id: string) => {
+    setMessage("");
+    if (!revokeReason.trim()) {
+      setMessage("Revoke requires a stated reason.");
+      return;
+    }
+    try {
+      const res = await liveClient.commercialLinkRevoke({ linkId: id, reason: revokeReason });
+      setMessage(`Revoked via supersede — new record ${res.newLinkId}. Original stays for audit.`);
+      await load();
+    } catch (e) {
+      setMessage(errText(e));
+    }
+  };
+
+  const attachEnabled =
+    labelVersionId.trim() &&
+    (sku.trim() || upc.trim() || manufacturer.trim() || productName.trim()) &&
+    affiliateUrl.trim() &&
+    disclosure.trim() &&
+    matchReason.trim();
+
   return (
     <div className="flex flex-col gap-4">
       <Card>
         <CardTitle>Commercial matching</CardTitle>
         <p className="m-0 text-[12px] text-subtle">
-          A commercial link (affiliate URL, discount code, supplier) may only be attached to a{" "}
-          <strong>verified</strong> product identity through an exact match on SKU, UPC, or
-          manufacturer+name. Fuzzy matching is never permitted. Every attach and revoke requires a
-          stated reason and is audit-logged. Commercial data is structurally isolated from clinical
-          eligibility, ranking, safety, evidence, interactions, protocol selection, lab
-          interpretation, and AI reasoning.
+          Attach a commercial link (affiliate URL, discount code, supplier) to a{" "}
+          <strong>verified</strong> product-label version through an exact identifier match. Fuzzy
+          matching is never permitted. Every attach requires a supplier disclosure and a stated
+          reason. Every revoke is append-via-supersede: the original attach stays for audit.
+          Commercial data is structurally isolated from clinical eligibility, ranking, safety,
+          evidence, interactions, protocol selection, lab interpretation, and AI reasoning.
         </p>
-        <ClinicalNote className="mt-3">
-          The attach/revoke RPCs are governed. This panel surfaces the queue and confirms the
-          match; the SQL-side invariants (exact-only match, verified-only, isolation on clinical
-          function bodies) are proved by <code>desktop_curation_governance.sql</code> and by the
-          <code>clinical_ranking_snapshot()</code> browser proof in this PR.
-        </ClinicalNote>
       </Card>
+
       <Card>
-        <CardTitle>How a match is confirmed</CardTitle>
-        <ol className="ml-4 list-decimal text-[12.5px] text-subtle">
-          <li>Practitioner opens the verified product&rsquo;s label version.</li>
-          <li>Enters the exact SKU, UPC, or manufacturer+name from the commercial supplier.</li>
-          <li>Provides a stated reason and confirms the match.</li>
-          <li>
-            The attach RPC (<code>attach_commercial_link_to_verified_product</code>) refuses if the
-            supplied identifiers do not exactly match the label version, or if the label version is
-            not <code>verified</code>.
-          </li>
-          <li>Every attach and revoke writes to <code>product_label_commercial_links</code> only.</li>
-        </ol>
-        <p className="mt-3 text-[11.5px] text-subtle" data-testid="commercial-isolation-note">
-          Changing a commercial link never touches the clinical ordering. The SQL suite proves the
-          ranking snapshot for a product is identical before and after every commercial change.
+        <CardTitle>Attach a commercial link</CardTitle>
+        <div className="grid gap-3 md:grid-cols-2">
+          <Field label="Verified label version id (open the label editor to copy it)">
+            <TextInput
+              value={labelVersionId}
+              onChange={(e) => setLabelVersionId(e.target.value)}
+              data-testid="commercial-label-id"
+            />
+          </Field>
+          <Field label="Affiliate URL (required)">
+            <TextInput
+              value={affiliateUrl}
+              onChange={(e) => setAffiliateUrl(e.target.value)}
+              data-testid="commercial-affiliate-url"
+            />
+          </Field>
+          <Field label="Exact SKU (any one of SKU/UPC/manufacturer/name required)">
+            <TextInput value={sku} onChange={(e) => setSku(e.target.value)} data-testid="commercial-sku" />
+          </Field>
+          <Field label="Exact UPC">
+            <TextInput value={upc} onChange={(e) => setUpc(e.target.value)} data-testid="commercial-upc" />
+          </Field>
+          <Field label="Exact manufacturer identifier">
+            <TextInput
+              value={manufacturer}
+              onChange={(e) => setManufacturer(e.target.value)}
+              data-testid="commercial-manufacturer"
+            />
+          </Field>
+          <Field label="Exact product name (used with manufacturer)">
+            <TextInput
+              value={productName}
+              onChange={(e) => setProductName(e.target.value)}
+              data-testid="commercial-product-name"
+            />
+          </Field>
+          <Field label="Discount code (optional)">
+            <TextInput
+              value={discountCode}
+              onChange={(e) => setDiscountCode(e.target.value)}
+              data-testid="commercial-discount-code"
+            />
+          </Field>
+          <Field label="Supplier disclosure (required)">
+            <TextInput
+              value={disclosure}
+              onChange={(e) => setDisclosure(e.target.value)}
+              data-testid="commercial-disclosure"
+              placeholder="e.g. Affiliate: 10% commission, disclosed on the profile"
+            />
+          </Field>
+          <Field label="Match reason (required — recorded against the attach)">
+            <TextInput
+              value={matchReason}
+              onChange={(e) => setMatchReason(e.target.value)}
+              data-testid="commercial-match-reason"
+            />
+          </Field>
+        </div>
+        <div className="mt-3 flex items-center gap-3">
+          <Btn onClick={attach} disabled={busy || !attachEnabled} data-testid="commercial-attach">
+            Attach commercial link
+          </Btn>
+          <Btn variant="ghost" onClick={explicitList} data-testid="commercial-list" disabled={!labelVersionId.trim()}>
+            List links for this label
+          </Btn>
+          {message && (
+            <p className="m-0 text-[12px] text-subtle" role="status" data-testid="commercial-message">
+              {message}
+            </p>
+          )}
+        </div>
+        <p className="mt-3 text-[11.5px] text-subtle">
+          <strong>Refusals fired on the wire:</strong> unverified label &rarr; 55000; near-miss
+          identifier &rarr; 22023; missing reason / disclosure &rarr; 22023; cross-tenant &rarr;
+          42501. None of these downgrade the exact-only match invariant.
         </p>
       </Card>
+
+      {links.length > 0 && (
+        <Card data-testid="commercial-links">
+          <CardTitle>{links.length} commercial link record(s) for this label</CardTitle>
+          <ul className="flex flex-col gap-2">
+            {links.map((l) => (
+              <li
+                key={l.id}
+                className="rounded border border-line px-3 py-2"
+                data-testid={`commercial-link-${l.id}`}
+              >
+                <div className="flex items-center justify-between">
+                  <div>
+                    <strong className="text-[13px]">{l.supplierName ?? "Supplier unknown"}</strong>
+                    <Chip tone={l.revokedAt ? "warn" : "ok"}>
+                      {l.revokedAt ? "revoked (via supersede)" : (l.availabilityStatus ?? "available")}
+                    </Chip>
+                    {l.supersedesId && (
+                      <span className="ml-2 text-[11.5px] text-subtle">supersedes {l.supersedesId}</span>
+                    )}
+                  </div>
+                  {!l.revokedAt && (
+                    <Btn onClick={() => revoke(l.id)} variant="ghost" data-testid={`commercial-revoke-${l.id}`}>
+                      Revoke
+                    </Btn>
+                  )}
+                </div>
+                <div className="mt-1 text-[11.5px] text-subtle">
+                  {l.url ? `url: ${l.url}` : "no url"}
+                  {" · "}
+                  {l.commissionDisclosure ?? "no disclosure"}
+                  {" · "}
+                  recorded {l.recordedAt}
+                  {l.revokedReason && ` · reason: ${l.revokedReason}`}
+                </div>
+              </li>
+            ))}
+          </ul>
+          <Field label="Revoke reason">
+            <TextInput
+              value={revokeReason}
+              onChange={(e) => setRevokeReason(e.target.value)}
+              data-testid="commercial-revoke-reason"
+            />
+          </Field>
+        </Card>
+      )}
     </div>
   );
 }

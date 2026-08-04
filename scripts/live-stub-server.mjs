@@ -4767,11 +4767,131 @@ createServer(async (req, res) => {
 
     if (url.pathname === "/rest/v1/rpc/list_label_commercial_links" && req.method === "POST") {
       const body = await readBody(req);
+      const labelVersionId = String(body._label_version_id ?? "");
+      const rows = catalogCommercial.get(labelVersionId) ?? [];
       return json(res, 200, {
-        labelVersionId: String(body._label_version_id ?? ""),
-        links: [],
+        labelVersionId,
+        links: rows,
         disclaimer: "Commercial information is recorded for disclosure only. It is "
           + "not read by any clinical eligibility, ranking, safety or evidence path.",
+      });
+    }
+
+    // Phase 9E-A.2 continuation: the real attach + revoke handlers. The
+    // matching table is `catalogCommercial` (keyed by label_version_id) which
+    // also backs the older `/__control/seed-catalog-label` seeder. Both the
+    // Phase 9E-A.2 `productLabelVersions` store and the legacy catalog store
+    // are checked for the label version.
+    if (url.pathname === "/rest/v1/rpc/attach_commercial_link_to_verified_product"
+        && req.method === "POST") {
+      const body = await readBody(req);
+      const org = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(org))
+        return json(res, 403, { code: "42501", message: "not a member" });
+      const labelVersionId = String(body._label_version_id ?? "");
+      const affiliateUrl = String(body._affiliate_url ?? "").trim();
+      const disclosure = String(body._disclosure ?? "").trim();
+      const matchReason = String(body._match_reason ?? "").trim();
+      if (!affiliateUrl)
+        return json(res, 400, { code: "22023", message: "affiliate_url is required" });
+      if (!disclosure)
+        return json(res, 400, { code: "22023", message: "disclosure is required" });
+      if (!matchReason)
+        return json(res, 400, { code: "22023", message: "match_reason is required" });
+
+      // Find the label in either store.
+      const a2 = productLabelVersions.get(labelVersionId);
+      const legacy = catalogLabels.get(labelVersionId);
+      const label = a2 ?? legacy;
+      if (!label)
+        return json(res, 404, { code: "P0002", message: "label version not found" });
+      // Verified only.
+      const isVerified = a2 ? a2.status === "verified" : legacy && legacy.status === "verified";
+      if (!isVerified)
+        return json(res, 400, { code: "55000", message: "label version is not verified" });
+
+      // Exact match on any one axis. The stub compares against the label's
+      // exact_label fields OR the labelversion's top-level identifiers.
+      const wantSku = String(body._incoming_sku ?? "").trim();
+      const wantUpc = String(body._incoming_upc ?? "").trim();
+      const wantMfg = String(body._incoming_manufacturer ?? "").trim();
+      const wantName = String(body._incoming_product_name ?? "").trim();
+      const labelSku = a2 ? (a2.exactLabel?.sku ?? "") : (legacy?.exactLabel?.sku ?? "");
+      const labelUpc = a2 ? (a2.exactLabel?.upc ?? "") : (legacy?.exactLabel?.upc ?? "");
+      const labelMfg = a2 ? (a2.exactLabel?.manufacturerIdentifier ?? "") : (legacy?.exactLabel?.manufacturerIdentifier ?? "");
+      const labelName = a2 ? a2.productName : legacy?.productName;
+
+      let matchAxis = null;
+      if (wantSku && String(labelSku).trim() === wantSku) matchAxis = "sku";
+      else if (wantUpc && String(labelUpc).trim() === wantUpc) matchAxis = "upc";
+      else if (wantMfg && String(labelMfg).trim() === wantMfg && wantName === String(labelName).trim())
+        matchAxis = "manufacturer_and_name";
+
+      if (!matchAxis) {
+        return json(res, 400, {
+          code: "22023",
+          message: "no exact match on sku / upc / manufacturer+name — fuzzy matching is refused",
+        });
+      }
+
+      const linkId = `plcl-${(catalogCommercial.get(labelVersionId)?.length ?? 0) + 1}-${labelVersionId}`;
+      const record = {
+        id: linkId,
+        kind: "affiliate",
+        url: affiliateUrl,
+        supplierName: null,
+        commissionDisclosure: disclosure,
+        availabilityStatus: "available",
+        lastVerifiedAt: null,
+        supersedesId: null,
+        revokedAt: null,
+        revokedReason: null,
+        recordedAt: new Date().toISOString(),
+        recordedBy: "practitioner",
+      };
+      const existing = catalogCommercial.get(labelVersionId) ?? [];
+      existing.push(record);
+      catalogCommercial.set(labelVersionId, existing);
+      return json(res, 200, {
+        ok: true, linkId, matchAxis,
+        restrictionsPreserved: true,
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/revoke_commercial_link" && req.method === "POST") {
+      const body = await readBody(req);
+      const org = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(org))
+        return json(res, 403, { code: "42501", message: "not a member" });
+      const linkId = String(body._link_id ?? "");
+      const reason = String(body._reason ?? "").trim();
+      if (!reason)
+        return json(res, 400, { code: "22023", message: "revoke requires a stated reason" });
+      // Find which label owns this link.
+      let target = null;
+      let owningLabel = null;
+      for (const [lv, arr] of catalogCommercial.entries()) {
+        const hit = arr.find((l) => l.id === linkId);
+        if (hit) { target = hit; owningLabel = lv; break; }
+      }
+      if (!target) return json(res, 404, { code: "P0002", message: "commercial link not found" });
+      if (target.revokedAt)
+        return json(res, 400, { code: "55000", message: "already revoked" });
+
+      const newId = `plcl-r-${(catalogCommercial.get(owningLabel)?.length ?? 0) + 1}`;
+      const superseding = {
+        ...target,
+        id: newId,
+        supersedesId: target.id,
+        availabilityStatus: "discontinued",
+        revokedAt: new Date().toISOString(),
+        revokedReason: reason,
+        recordedAt: new Date().toISOString(),
+        recordedBy: "practitioner",
+      };
+      catalogCommercial.get(owningLabel).push(superseding);
+      return json(res, 200, {
+        ok: true, supersedesId: target.id, newLinkId: newId,
       });
     }
 

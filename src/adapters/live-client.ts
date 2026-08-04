@@ -1292,6 +1292,47 @@ export const liveClient = {
       references: Array<Record<string, unknown>>;
     }>("knowledge/knowledge-reference", { method: "GET" }),
 
+  /* ================================ Phase 9E-A.2 commercial matching */
+  commercialLinkAttach: (input: {
+    labelVersionId: string;
+    incomingSku?: string | null;
+    incomingUpc?: string | null;
+    incomingManufacturer?: string | null;
+    incomingProductName?: string | null;
+    affiliateUrl: string;
+    discountCode?: string | null;
+    disclosure: string;
+    matchReason: string;
+  }) =>
+    liveFetch<{ ok: true; linkId: string; matchAxis: string }>(
+      "knowledge/commercial-link",
+      { method: "POST", body: { action: "attach", ...input } },
+    ),
+
+  commercialLinkRevoke: (input: { linkId: string; reason: string }) =>
+    liveFetch<{ ok: true; supersedesId: string; newLinkId: string }>(
+      "knowledge/commercial-link",
+      { method: "POST", body: { action: "revoke", ...input } },
+    ),
+
+  commercialLinkList: (labelVersionId: string) =>
+    liveFetch<{
+      labelVersionId: string;
+      links: Array<{
+        id: string;
+        supplierName: string | null;
+        url: string | null;
+        commissionDisclosure: string | null;
+        availabilityStatus: string | null;
+        supersedesId: string | null;
+        revokedAt: string | null;
+        revokedReason: string | null;
+        recordedAt: string;
+      }>;
+    }>(`knowledge/commercial-link?labelVersionId=${encodeURIComponent(labelVersionId)}`, {
+      method: "GET",
+    }),
+
   /* ================================ Phase 9E-A.2 warnings */
   warningResolutionRecord: (input: {
     subjectType: "preview_item" | "product" | "knowledge_reference";

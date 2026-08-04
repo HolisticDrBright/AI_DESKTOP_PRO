@@ -444,7 +444,7 @@ test("A.1 · the deferred sections have shipped in A.2 (labels + references + co
 
   await page.getByTestId("tab-commercial").click();
   await expect(page.locator("body")).toContainText(/Commercial matching/i);
-  await expect(page.locator("body")).toContainText(/exact match|never fuzzy/i);
+  await expect(page.locator("body")).toContainText(/exact identifier match|fuzzy matching is never permitted/i);
 });
 
 test("A.1 · the /settings/knowledge Import-review tab redirects to /settings/imports", async ({

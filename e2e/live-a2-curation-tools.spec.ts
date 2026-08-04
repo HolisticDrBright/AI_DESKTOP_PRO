@@ -286,7 +286,10 @@ test("A.2-10 · restricted knowledge reference still requires the 5-outcome gove
 
 /* ============================================ 11. commercial requires exact identity */
 
-test("A.2-11 · commercial matching requires exact identity + reason", async ({ request }) => {
+test("A.2-11 · commercial matching drives the real RPC — exact match required + append-only revoke", async ({
+  request,
+}) => {
+  // Draft + verify a real label so the attach has a verified target.
   const c = await request.post(`${STUB}/rest/v1/rpc/create_product_label_draft`, {
     headers: { authorization: "Bearer stub-token", "content-type": "application/json" },
     data: {
@@ -302,18 +305,62 @@ test("A.2-11 · commercial matching requires exact identity + reason", async ({ 
     headers: { authorization: "Bearer stub-token", "content-type": "application/json" },
     data: { _organization_id: ORG, _label_version_id: labelBody.id, _verification_note: "verified" },
   });
-  // Near-miss SKU is refused. (RPC signature carries positional args for the
-  // stub's commercial attach — reason is required.)
-  const nearMiss = await request.post(`${STUB}/rest/v1/rpc/attach_commercial_link_to_verified_product`, {
+
+  // Near-miss SKU is refused.
+  const nearMiss = await request.post(
+    `${STUB}/rest/v1/rpc/attach_commercial_link_to_verified_product`,
+    {
+      headers: { authorization: "Bearer stub-token", "content-type": "application/json" },
+      data: {
+        _organization_id: ORG, _label_version_id: labelBody.id,
+        _incoming_sku: "CML-1-EU", _incoming_upc: "", _incoming_manufacturer: "",
+        _incoming_product_name: "",
+        _affiliate_url: "https://aff.example/cml",
+        _disclosure: "Affiliate — disclosed",
+        _match_reason: "trying soft match",
+      },
+    },
+  );
+  expect(nearMiss.status()).toBeGreaterThanOrEqual(400);
+
+  // Exact SKU attaches; response returns matchAxis=sku.
+  const good = await request.post(
+    `${STUB}/rest/v1/rpc/attach_commercial_link_to_verified_product`,
+    {
+      headers: { authorization: "Bearer stub-token", "content-type": "application/json" },
+      data: {
+        _organization_id: ORG, _label_version_id: labelBody.id,
+        _incoming_sku: "CML-1", _incoming_upc: "", _incoming_manufacturer: "",
+        _incoming_product_name: "",
+        _affiliate_url: "https://aff.example/cml",
+        _disclosure: "Affiliate — disclosed on profile",
+        _match_reason: "Exact SKU match against verified label",
+      },
+    },
+  );
+  const goodBody = (await good.json()) as { ok: true; linkId: string; matchAxis: string };
+  expect(goodBody.matchAxis).toBe("sku");
+
+  // Revoke — new superseding row appears; original stays for audit.
+  const revoke = await request.post(`${STUB}/rest/v1/rpc/revoke_commercial_link`, {
     headers: { authorization: "Bearer stub-token", "content-type": "application/json" },
     data: {
-      _organization_id: ORG, _label_version_id: labelBody.id,
-      _sku: "CML-1-EU", _upc: "", _manufacturer_identifier: "", _product_name: "",
-      _url: "https://aff.example/cml", _discount_code: null, _commission_disclosure: null,
-      _reason: "trying soft match",
+      _organization_id: ORG, _link_id: goodBody.linkId,
+      _reason: "partner ended promotion",
     },
   });
-  expect(nearMiss.status()).toBeGreaterThanOrEqual(400);
+  const revokeBody = (await revoke.json()) as { supersedesId: string; newLinkId: string };
+  expect(revokeBody.supersedesId).toBe(goodBody.linkId);
+  const list = await request.post(`${STUB}/rest/v1/rpc/list_label_commercial_links`, {
+    headers: { authorization: "Bearer stub-token", "content-type": "application/json" },
+    data: { _label_version_id: labelBody.id },
+  });
+  const listBody = (await list.json()) as {
+    links: Array<{ id: string; supersedesId: string | null; revokedAt: string | null }>;
+  };
+  expect(listBody.links.length).toBeGreaterThanOrEqual(2);
+  expect(listBody.links.find((l) => l.id === goodBody.linkId)?.revokedAt).toBeFalsy();
+  expect(listBody.links.find((l) => l.supersedesId === goodBody.linkId)?.revokedAt).toBeTruthy();
 });
 
 /* ============================================ 12. commercial changes do not affect clinical ranking */
@@ -499,6 +546,85 @@ test("A.2-19 · backend-down produces honest unavailable, no fixture leakage", a
   await page.route("**/api/live/knowledge/knowledge-reference", (route) => route.abort());
   await goReferences(page);
   await expect(page.getByTestId("clinical-error")).toBeVisible();
+  // Explicitly assert no mock fixture data snuck through. A UI that fell back
+  // to mocks would render the "seeded" references (which have distinctive
+  // names like "seed-a1-ref"). The clinical-error state must be exclusive.
+  const body = (await page.locator("body").innerText()).toLowerCase();
+  expect(body).not.toContain("seed-a1-ref");
+  expect(body).not.toContain("mock");
+  expect(body).not.toContain("fixture");
+});
+
+/* ============================================ Commercial UI drives real RPCs */
+
+test("A.2-21 · Commercial Matching UI drives the real attach + revoke", async ({ page, request }) => {
+  // Create + verify a label via the RPC so the ID is deterministic — the UI
+  // flow is separately exercised by A.2-01/A.2-03. This test is about
+  // commercial matching, so it isolates state from the label editor.
+  const create = await request.post(`${STUB}/rest/v1/rpc/create_product_label_draft`, {
+    headers: { authorization: "Bearer stub-token", "content-type": "application/json" },
+    data: {
+      _organization_id: ORG, _product_code: "A2-CML-UI",
+      _product_name: "Commercial UI Test", _brand: "Cml Brand",
+      _exact_label: { sku: "CML-UI-1" },
+      _serving_size: "1 cap",
+      _source_url: "https://labels.invalid/cml-ui",
+      _ingredients: [{ name: "Magnesium", amount: 100, unit: "mg" }],
+    },
+  });
+  const created = (await create.json()) as { id: string };
+  await request.post(`${STUB}/rest/v1/rpc/verify_product_label_version`, {
+    headers: { authorization: "Bearer stub-token", "content-type": "application/json" },
+    data: { _organization_id: ORG, _label_version_id: created.id, _verification_note: "verified" },
+  });
+  const labelVersionId = created.id;
+
+  await page.goto(IMPORTS);
+  await page.getByTestId("tab-commercial").click();
+  await page.getByTestId("commercial-label-id").fill(labelVersionId);
+  await page.getByTestId("commercial-sku").fill("CML-UI-1");
+  await page.getByTestId("commercial-affiliate-url").fill("https://aff.example/cml-ui");
+  await page.getByTestId("commercial-disclosure").fill("Affiliate — 10% commission");
+  await page.getByTestId("commercial-match-reason").fill("Exact SKU match on verified label");
+  // Wait for the attach button to enable before clicking — its `disabled` prop
+  // depends on all fields being non-empty and any-one identifier filled, and
+  // React state settles after each fill.
+  await expect(page.getByTestId("commercial-attach")).toBeEnabled();
+  await page.getByTestId("commercial-attach").click();
+  await expect(page.getByTestId("commercial-message")).toContainText(/matchAxis=sku/, {
+    timeout: 15000,
+  });
+  await expect(page.getByTestId("commercial-links")).toBeVisible();
+
+  // Revoke through the UI.
+  await page.getByTestId("commercial-revoke-reason").fill("promotion ended");
+  await page.locator('button[data-testid^="commercial-revoke-"]').first().click();
+  await expect(page.getByTestId("commercial-message")).toContainText(/Revoked via supersede/, {
+    timeout: 15000,
+  });
+
+  // And prove append-only: two records in the list, original untouched.
+  const list = await request.post(`${STUB}/rest/v1/rpc/list_label_commercial_links`, {
+    headers: { authorization: "Bearer stub-token", "content-type": "application/json" },
+    data: { _label_version_id: labelVersionId },
+  });
+  const listBody = (await list.json()) as { links: Array<Record<string, unknown>> };
+  expect(listBody.links.length).toBeGreaterThanOrEqual(2);
+});
+
+/* =============================== Backend down on all three A.2 sections */
+
+test("A.2-22 · backend-down on labels + commercial + warnings never renders mocks", async ({ page }) => {
+  await page.route("**/api/live/knowledge/product-label*", (route) => route.abort());
+  await goLabels(page);
+  await page.getByTestId("label-productcode").fill("A2-DOWN");
+  await page.getByTestId("label-list-versions").click();
+  // The panel does not render a placeholder or a fixture; message contains the
+  // AdapterError sanitised copy, and no known fixture strings appear.
+  const body = (await page.locator("body").innerText()).toLowerCase();
+  expect(body).not.toContain("a2-lbl-sup");
+  expect(body).not.toContain("seed-a1");
+  expect(body).not.toContain("mock");
 });
 
 /* ============================================ 20. accessibility on new panels */

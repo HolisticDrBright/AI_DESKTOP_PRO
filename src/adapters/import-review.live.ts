@@ -504,6 +504,91 @@ export const importReviewLive = {
     );
   },
 
+  /* ================================== Phase 9E-A.2 commercial matching */
+
+  async attachCommercialLink(
+    input: {
+      labelVersionId: string;
+      incomingSku?: string | null;
+      incomingUpc?: string | null;
+      incomingManufacturer?: string | null;
+      incomingProductName?: string | null;
+      affiliateUrl: string;
+      discountCode?: string | null;
+      disclosure: string;
+      matchReason: string;
+    },
+    organizationId?: string | null,
+    sessionToken?: string | null,
+  ) {
+    const token = await getClinicalAccessToken(sessionToken);
+    return clinicalRpc<{
+      ok: true;
+      linkId: string;
+      matchAxis: string;
+    }>(
+      "attach_commercial_link_to_verified_product",
+      {
+        _organization_id: resolveOrgId(organizationId),
+        _label_version_id: input.labelVersionId,
+        _incoming_sku: input.incomingSku ?? "",
+        _incoming_upc: input.incomingUpc ?? "",
+        _incoming_manufacturer: input.incomingManufacturer ?? "",
+        _incoming_product_name: input.incomingProductName ?? "",
+        _affiliate_url: input.affiliateUrl,
+        _discount_code: input.discountCode ?? null,
+        _disclosure: input.disclosure,
+        _match_reason: input.matchReason,
+      },
+      token,
+    );
+  },
+
+  async revokeCommercialLink(
+    input: { linkId: string; reason: string },
+    organizationId?: string | null,
+    sessionToken?: string | null,
+  ) {
+    const token = await getClinicalAccessToken(sessionToken);
+    return clinicalRpc<{ ok: true; supersedesId: string; newLinkId: string }>(
+      "revoke_commercial_link",
+      {
+        _organization_id: resolveOrgId(organizationId),
+        _link_id: input.linkId,
+        _reason: input.reason,
+      },
+      token,
+    );
+  },
+
+  async listCommercialLinks(
+    labelVersionId: string,
+    _organizationId?: string | null,
+    sessionToken?: string | null,
+  ) {
+    const token = await getClinicalAccessToken(sessionToken);
+    // Uses the existing Phase 9E-A read helper. Only requires
+    // label_version_id — the RPC enforces tenant membership internally.
+    return clinicalRpc<{
+      labelVersionId: string;
+      links: Array<{
+        id: string;
+        supplierName: string | null;
+        url: string | null;
+        commissionDisclosure: string | null;
+        availabilityStatus: string | null;
+        supersedesId: string | null;
+        revokedAt: string | null;
+        revokedReason: string | null;
+        recordedAt: string;
+      }>;
+    }>(
+      "list_label_commercial_links",
+      { _label_version_id: labelVersionId },
+      token,
+    );
+  },
+
   /* ================================== Phase 9E-A.2 warning resolutions */
 
   async recordWarningResolution(
