@@ -51,6 +51,7 @@ type Tab =
   | "batches"
   | "conflicts"
   | "restricted"
+  | "warnings"
   | "labels"
   | "references"
   | "commercial"
@@ -1737,44 +1738,852 @@ function RestrictedReviewPanel() {
   );
 }
 
-/* -------------------------------------------------- deferred (9E-A.2) panels */
+/* -------------------------------------------------------------- workspace */
 
-function ComingIn9EA2Panel({
-  title,
-  purpose,
-  bullets,
-}: {
-  title: string;
-  purpose: string;
-  bullets: Array<string>;
-}) {
+/* ============================================================================
+ * PHASE 9E-A.2 PANELS
+ *
+ * Product-label editor, knowledge-reference curation, commercial matching,
+ * warnings/missing-facts queue, and safe bulk operations. Each panel keeps
+ * the same governance guarantees the workspace has claimed since A.1: no
+ * dead buttons, honest states, refusal explains what to do, unknown stays
+ * unknown, and PHI never lands in audit metadata.
+ * ==========================================================================*/
+
+function ProductLabelEditorPanel() {
+  const [productCode, setProductCode] = useState("");
+  const [productName, setProductName] = useState("");
+  const [brand, setBrand] = useState("");
+  const [sku, setSku] = useState("");
+  const [upc, setUpc] = useState("");
+  const [sourceUrl, setSourceUrl] = useState("");
+  const [servingSize, setServingSize] = useState("");
+  const [ingredientsText, setIngredientsText] = useState("");
+  const [allergens, setAllergens] = useState("");
+  const [contraindications, setContraindications] = useState("");
+  const [warningsText, setWarningsText] = useState("");
+  const [storage, setStorage] = useState("");
+  const [note, setNote] = useState("");
+  const [message, setMessage] = useState("");
+  const [openCode, setOpenCode] = useState<string | null>(null);
+  const [versions, setVersions] = useState<Array<Record<string, unknown>>>([]);
+  const [busy, setBusy] = useState(false);
+
+  const parseIngredients = () =>
+    ingredientsText
+      .split("\n")
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .map((line) => {
+        const [name, amount, unit] = line.split("|").map((x) => (x ?? "").trim());
+        return { name: name ?? line, amount: amount ?? null, unit: unit ?? null };
+      });
+
+  const load = useCallback(async (code: string) => {
+    try {
+      const res = await liveClient.productLabelList(code);
+      setVersions(res.versions ?? []);
+      setOpenCode(code);
+    } catch (e) {
+      setMessage(errText(e));
+    }
+  }, []);
+
+  const submitDraft = async () => {
+    setBusy(true);
+    setMessage("");
+    try {
+      const exactLabel: Record<string, unknown> = {
+        productCode, productName, brand,
+        sku: sku || null, upc: upc || null,
+      };
+      const res = await liveClient.productLabelCreateDraft({
+        productCode, productName, brand,
+        exactLabel,
+        sourceUrl: sourceUrl || null,
+        servingSize: servingSize || null,
+        ingredients: parseIngredients(),
+        allergens: allergens || null,
+        contraindications: contraindications || null,
+        warningsText: warningsText || null,
+        storageInstructions: storage || null,
+      });
+      setMessage(`Draft v${res.version} created (${res.id}).`);
+      await load(productCode);
+    } catch (e) {
+      setMessage(errText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const verify = async (id: string) => {
+    setMessage("");
+    if (!note.trim()) {
+      setMessage("A verification note is required.");
+      return;
+    }
+    try {
+      await liveClient.productLabelVerify({ labelVersionId: id, verificationNote: note });
+      setMessage(`Verified ${id}. This version is now immutable — edits open a new draft.`);
+      if (openCode) await load(openCode);
+    } catch (e) {
+      setMessage(errText(e));
+    }
+  };
+
+  const supersede = async (id: string) => {
+    setMessage("");
+    if (!note.trim()) {
+      setMessage("Supersede requires a stated reason (use the note field).");
+      return;
+    }
+    try {
+      const res = await liveClient.productLabelSupersede({
+        supersedesId: id,
+        exactLabel: { productCode, productName, brand, sku, upc },
+        reason: note,
+        servingSize: servingSize || null,
+        ingredients: parseIngredients().length ? parseIngredients() : undefined,
+      });
+      setMessage(`New draft v${res.version} supersedes ${id}. Verified original is preserved.`);
+      if (openCode) await load(openCode);
+    } catch (e) {
+      setMessage(errText(e));
+    }
+  };
+
   return (
-    <Card data-testid={`coming-9ea2-${title.replace(/\s+/g, "-").toLowerCase()}`}>
-      <CardTitle>{title}</CardTitle>
-      <div
-        className="rounded border border-warning/25 bg-warning-tint px-3 py-2 text-[12px] text-warning-deep"
-        role="note"
-      >
-        <p className="m-0 mb-1 font-semibold">Not available yet — Phase 9E-A.2.</p>
-        <p className="m-0">{purpose}</p>
-      </div>
-      <p className="mt-3 text-[12px] text-subtle">What Phase 9E-A.2 will add here:</p>
-      <ul className="ml-4 list-disc text-[12px] text-subtle">
-        {bullets.map((b) => (
-          <li key={b}>{b}</li>
-        ))}
-      </ul>
-      <p className="mt-3 text-[11.5px] text-subtle">
-        The Phase 9E-A.1 database RPCs that this section will surface{" "}
-        <em>already exist</em> (governed 5-outcome restricted review and
-        governed commercial matching landed in this PR&rsquo;s SQL). This
-        UI is what Phase 9E-A.2 wires on top.
-      </p>
-    </Card>
+    <div className="flex flex-col gap-4">
+      <Card>
+        <CardTitle>Product label editor</CardTitle>
+        <p className="m-0 text-[12px] text-subtle">
+          Governed versioned editor. A verified label is <strong>immutable</strong> — edits open a
+          new draft via supersede. Verification requires exact identity plus at least serving size,
+          one ingredient, and a source URL or label image reference. Unknown stays unknown; nothing
+          is inferred from a name.
+        </p>
+      </Card>
+
+      <Card>
+        <CardTitle>New draft</CardTitle>
+        <div className="grid gap-3 md:grid-cols-2">
+          <Field label="Product code">
+            <TextInput value={productCode} onChange={(e) => setProductCode(e.target.value)} data-testid="label-productcode" />
+          </Field>
+          <Field label="Product name">
+            <TextInput value={productName} onChange={(e) => setProductName(e.target.value)} data-testid="label-productname" />
+          </Field>
+          <Field label="Brand">
+            <TextInput value={brand} onChange={(e) => setBrand(e.target.value)} data-testid="label-brand" />
+          </Field>
+          <Field label="SKU (optional)">
+            <TextInput value={sku} onChange={(e) => setSku(e.target.value)} data-testid="label-sku" />
+          </Field>
+          <Field label="UPC (optional)">
+            <TextInput value={upc} onChange={(e) => setUpc(e.target.value)} data-testid="label-upc" />
+          </Field>
+          <Field label="Serving size (required for verification)">
+            <TextInput value={servingSize} onChange={(e) => setServingSize(e.target.value)} data-testid="label-servingsize" />
+          </Field>
+          <Field label="Source URL (required for verification unless image ref given)">
+            <TextInput value={sourceUrl} onChange={(e) => setSourceUrl(e.target.value)} data-testid="label-sourceurl" />
+          </Field>
+          <Field label="Ingredients (one per line, name|amount|unit)">
+            <TextInput value={ingredientsText} onChange={(e) => setIngredientsText(e.target.value)} data-testid="label-ingredients" placeholder="Magnesium|200|mg" />
+          </Field>
+          <Field label="Allergens">
+            <TextInput value={allergens} onChange={(e) => setAllergens(e.target.value)} data-testid="label-allergens" />
+          </Field>
+          <Field label="Contraindications">
+            <TextInput value={contraindications} onChange={(e) => setContraindications(e.target.value)} data-testid="label-contraindications" />
+          </Field>
+          <Field label="Warnings">
+            <TextInput value={warningsText} onChange={(e) => setWarningsText(e.target.value)} data-testid="label-warnings" />
+          </Field>
+          <Field label="Storage instructions">
+            <TextInput value={storage} onChange={(e) => setStorage(e.target.value)} data-testid="label-storage" />
+          </Field>
+        </div>
+        <div className="mt-3 flex items-center gap-3">
+          <Btn onClick={submitDraft} disabled={busy || !productCode || !productName || !brand} data-testid="label-create-draft">
+            Create draft
+          </Btn>
+          <Btn variant="ghost" onClick={() => productCode && load(productCode)} data-testid="label-list-versions">
+            List versions for this code
+          </Btn>
+          {message && (
+            <p className="m-0 text-[12px] text-subtle" role="status" data-testid="label-message">
+              {message}
+            </p>
+          )}
+        </div>
+      </Card>
+
+      {openCode && (
+        <Card data-testid="label-versions">
+          <CardTitle>{versions.length} version(s) of {openCode}</CardTitle>
+          {versions.length === 0 ? (
+            <p className="m-0 text-[12px] text-subtle">No versions yet.</p>
+          ) : (
+            <ul className="flex flex-col gap-2">
+              {versions.map((v) => (
+                <li
+                  key={String(v.id)}
+                  className="rounded border border-line px-3 py-2"
+                  data-testid={`label-version-${v.id}`}
+                >
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <strong className="text-[13px]">v{String(v.version)}</strong>
+                      <Chip tone={v.status === "verified" ? "ok" : "warn"}>{String(v.status)}</Chip>
+                      {v.supersedesId ? (
+                        <span className="ml-2 text-[11.5px] text-subtle">
+                          supersedes {String(v.supersedesId)}
+                        </span>
+                      ) : null}
+                    </div>
+                    <div className="flex gap-2">
+                      {v.status === "pending" && (
+                        <Btn onClick={() => verify(String(v.id))} data-testid={`label-verify-${v.id}`}>
+                          Verify
+                        </Btn>
+                      )}
+                      {v.status === "verified" && (
+                        <Btn variant="ghost" onClick={() => supersede(String(v.id))} data-testid={`label-supersede-${v.id}`}>
+                          Supersede
+                        </Btn>
+                      )}
+                    </div>
+                  </div>
+                  <div className="mt-1 text-[11.5px] text-subtle">
+                    {v.servingSize ? `serving: ${String(v.servingSize)}` : "serving: Unknown"}
+                    {" · "}
+                    {Array.isArray(v.ingredients) && v.ingredients.length > 0
+                      ? `${v.ingredients.length} ingredient(s)`
+                      : "ingredients: Unknown"}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+          <Field label="Verification note / supersede reason">
+            <TextInput value={note} onChange={(e) => setNote(e.target.value)} data-testid="label-note" />
+          </Field>
+        </Card>
+      )}
+    </div>
   );
 }
 
-/* -------------------------------------------------------------- workspace */
+/* ------------------------------------------------- Knowledge Reference Panel */
+
+function KnowledgeReferenceEditorPanel() {
+  const [state, setState] = useState<"loading" | "ready" | "error">("loading");
+  const [error, setError] = useState<unknown>(null);
+  const [refs, setRefs] = useState<Array<Record<string, unknown>>>([]);
+  const [claim, setClaim] = useState("");
+  const [refType, setRefType] = useState("");
+  const [domain, setDomain] = useState("");
+  const [pop, setPop] = useState("");
+  const [interv, setInterv] = useState("");
+  const [outc, setOutc] = useState("");
+  const [grade, setGrade] = useState("");
+  const [citation, setCitation] = useState("");
+  const [jurisdiction, setJurisdiction] = useState("");
+  const [restrictedText, setRestrictedText] = useState("");
+  const [reason, setReason] = useState("");
+  const [message, setMessage] = useState("");
+
+  const load = useCallback(async () => {
+    setState("loading");
+    try {
+      const r = await liveClient.knowledgeReferenceList();
+      setRefs(r.references ?? []);
+      setState("ready");
+    } catch (e) {
+      setError(e);
+      setState("error");
+    }
+  }, []);
+
+  useEffect(() => { void load(); }, [load]);
+
+  if (state === "loading") return <ClinicalLoading label="Reading references…" />;
+  if (state === "error") return <PanelError error={error} onRetry={load} />;
+
+  const submit = async () => {
+    setMessage("");
+    if (!claim.trim()) { setMessage("Claim is required."); return; }
+    try {
+      const res = await liveClient.knowledgeReferenceCreateDraft({
+        claim,
+        referenceType: refType || null,
+        clinicalDomain: domain || null,
+        population: pop || null,
+        intervention: interv || null,
+        outcomeField: outc || null,
+        evidenceGrade: grade || null,
+        citation: citation || null,
+        jurisdiction: jurisdiction || null,
+        restrictedFlags: restrictedText.split(",").map((s) => s.trim()).filter(Boolean),
+      });
+      setMessage(`Draft ${res.id} created.`);
+      await load();
+    } catch (e) {
+      setMessage(errText(e));
+    }
+  };
+
+  const approve = async (id: string) => {
+    setMessage("");
+    if (!reason.trim()) { setMessage("Approval requires a stated reason (use reason field)."); return; }
+    try {
+      await liveClient.knowledgeReferenceApprove({ referenceId: id, verificationReason: reason });
+      setMessage("Approved.");
+      await load();
+    } catch (e) {
+      setMessage(errText(e));
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-4">
+      <Card>
+        <CardTitle>Knowledge reference curation</CardTitle>
+        <p className="m-0 text-[12px] text-subtle">
+          Structured governance: reference type, clinical domain, PICO fields, evidence grade,
+          citation, jurisdiction, limitations, contradictions. A <strong>graded</strong> reference
+          (A/B/C/expert_consensus) must have a citation before approval. Practitioner experience
+          is the only grade that may be approved without one — and it is <em>never</em> the same
+          as evidence-based.
+        </p>
+      </Card>
+
+      <Card>
+        <CardTitle>New draft</CardTitle>
+        <div className="grid gap-3 md:grid-cols-2">
+          <Field label="Claim (required)">
+            <TextInput value={claim} onChange={(e) => setClaim(e.target.value)} data-testid="ref-claim" />
+          </Field>
+          <Field label="Reference type (guideline / RCT / systematic_review / expert / experience)">
+            <TextInput value={refType} onChange={(e) => setRefType(e.target.value)} data-testid="ref-type" />
+          </Field>
+          <Field label="Clinical domain">
+            <TextInput value={domain} onChange={(e) => setDomain(e.target.value)} data-testid="ref-domain" />
+          </Field>
+          <Field label="Population">
+            <TextInput value={pop} onChange={(e) => setPop(e.target.value)} data-testid="ref-population" />
+          </Field>
+          <Field label="Intervention / exposure">
+            <TextInput value={interv} onChange={(e) => setInterv(e.target.value)} data-testid="ref-intervention" />
+          </Field>
+          <Field label="Outcome">
+            <TextInput value={outc} onChange={(e) => setOutc(e.target.value)} data-testid="ref-outcome" />
+          </Field>
+          <Field label="Evidence grade (A / B / C / expert_consensus / practitioner_experience)">
+            <Select value={grade} onChange={(e) => setGrade(e.target.value)} data-testid="ref-grade">
+              <option value="">Unclassified</option>
+              <option value="A">A</option>
+              <option value="B">B</option>
+              <option value="C">C</option>
+              <option value="expert_consensus">expert_consensus</option>
+              <option value="practitioner_experience">practitioner_experience</option>
+            </Select>
+          </Field>
+          <Field label="Citation (required for graded references)">
+            <TextInput value={citation} onChange={(e) => setCitation(e.target.value)} data-testid="ref-citation" />
+          </Field>
+          <Field label="Jurisdiction (optional)">
+            <TextInput value={jurisdiction} onChange={(e) => setJurisdiction(e.target.value)} data-testid="ref-jurisdiction" />
+          </Field>
+          <Field label="Restricted flags (comma-separated, optional)">
+            <TextInput value={restrictedText} onChange={(e) => setRestrictedText(e.target.value)} data-testid="ref-restricted" />
+          </Field>
+        </div>
+        <div className="mt-3 flex items-center gap-3">
+          <Btn onClick={submit} disabled={!claim.trim()} data-testid="ref-create-draft">
+            Create draft
+          </Btn>
+          {message && <p className="m-0 text-[12px] text-subtle" role="status" data-testid="ref-message">{message}</p>}
+        </div>
+      </Card>
+
+      <Card>
+        <CardTitle>{refs.length} reference(s)</CardTitle>
+        {refs.length === 0 ? (
+          <p className="m-0 text-[12px] text-subtle" data-testid="ref-empty">No references yet.</p>
+        ) : (
+          <ul className="flex flex-col gap-2" data-testid="ref-list">
+            {refs.map((r) => (
+              <li
+                key={String(r.id)}
+                className="rounded border border-line px-3 py-2"
+                data-testid={`ref-item-${r.id}`}
+              >
+                <div className="flex items-center justify-between">
+                  <div>
+                    <strong className="text-[13px]">{String(r.claim)}</strong>
+                    <Chip tone={r.reviewerState === "approved" ? "ok" : "warn"}>
+                      {String(r.reviewerState)}
+                    </Chip>
+                    {r.evidenceGrade ? <Chip tone="muted">grade {String(r.evidenceGrade)}</Chip> : null}
+                    {r.citation ? null : <Chip tone="danger">no citation</Chip>}
+                  </div>
+                  {r.reviewerState === "draft" && (
+                    <Btn onClick={() => approve(String(r.id))} data-testid={`ref-approve-${r.id}`}>
+                      Approve
+                    </Btn>
+                  )}
+                </div>
+                <div className="mt-1 text-[11.5px] text-subtle">
+                  {r.clinicalDomain ? `domain: ${String(r.clinicalDomain)} · ` : ""}
+                  {r.jurisdiction ? `jurisdiction: ${String(r.jurisdiction)}` : ""}
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+        <Field label="Approval / supersede reason">
+          <TextInput value={reason} onChange={(e) => setReason(e.target.value)} data-testid="ref-reason" />
+        </Field>
+      </Card>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------- Commercial matching */
+
+function CommercialMatchingPanel() {
+  const [labelVersionId, setLabelVersionId] = useState("");
+  const [sku, setSku] = useState("");
+  const [upc, setUpc] = useState("");
+  const [manufacturer, setManufacturer] = useState("");
+  const [productName, setProductName] = useState("");
+  const [affiliateUrl, setAffiliateUrl] = useState("");
+  const [discountCode, setDiscountCode] = useState("");
+  const [disclosure, setDisclosure] = useState("");
+  const [matchReason, setMatchReason] = useState("");
+  const [links, setLinks] = useState<
+    Array<{
+      id: string;
+      supplierName: string | null;
+      url: string | null;
+      commissionDisclosure: string | null;
+      availabilityStatus: string | null;
+      supersedesId: string | null;
+      revokedAt: string | null;
+      revokedReason: string | null;
+      recordedAt: string;
+    }>
+  >([]);
+  const [revokeReason, setRevokeReason] = useState("");
+  const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  // Note: this refresh does NOT clear the caller's message. Callers that need
+  // to reset the message do so themselves — clearing here overwrites the
+  // attach/revoke success message before React can render it.
+  const load = async () => {
+    if (!labelVersionId.trim()) return;
+    try {
+      const res = await liveClient.commercialLinkList(labelVersionId.trim());
+      setLinks(res.links ?? []);
+    } catch (e) {
+      setMessage(errText(e));
+    }
+  };
+
+  const explicitList = async () => {
+    setMessage("");
+    await load();
+  };
+
+  const attach = async () => {
+    setBusy(true);
+    setMessage("");
+    try {
+      const res = await liveClient.commercialLinkAttach({
+        labelVersionId: labelVersionId.trim(),
+        incomingSku: sku.trim() || null,
+        incomingUpc: upc.trim() || null,
+        incomingManufacturer: manufacturer.trim() || null,
+        incomingProductName: productName.trim() || null,
+        affiliateUrl: affiliateUrl.trim(),
+        discountCode: discountCode.trim() || null,
+        disclosure: disclosure.trim(),
+        matchReason: matchReason.trim(),
+      });
+      setMessage(`Attached ${res.linkId} on matchAxis=${res.matchAxis}.`);
+      await load();
+    } catch (e) {
+      setMessage(errText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const revoke = async (id: string) => {
+    setMessage("");
+    if (!revokeReason.trim()) {
+      setMessage("Revoke requires a stated reason.");
+      return;
+    }
+    try {
+      const res = await liveClient.commercialLinkRevoke({ linkId: id, reason: revokeReason });
+      setMessage(`Revoked via supersede — new record ${res.newLinkId}. Original stays for audit.`);
+      await load();
+    } catch (e) {
+      setMessage(errText(e));
+    }
+  };
+
+  const attachEnabled =
+    labelVersionId.trim() &&
+    (sku.trim() || upc.trim() || manufacturer.trim() || productName.trim()) &&
+    affiliateUrl.trim() &&
+    disclosure.trim() &&
+    matchReason.trim();
+
+  return (
+    <div className="flex flex-col gap-4">
+      <Card>
+        <CardTitle>Commercial matching</CardTitle>
+        <p className="m-0 text-[12px] text-subtle">
+          Attach a commercial link (affiliate URL, discount code, supplier) to a{" "}
+          <strong>verified</strong> product-label version through an exact identifier match. Fuzzy
+          matching is never permitted. Every attach requires a supplier disclosure and a stated
+          reason. Every revoke is append-via-supersede: the original attach stays for audit.
+          Commercial data is structurally isolated from clinical eligibility, ranking, safety,
+          evidence, interactions, protocol selection, lab interpretation, and AI reasoning.
+        </p>
+      </Card>
+
+      <Card>
+        <CardTitle>Attach a commercial link</CardTitle>
+        <div className="grid gap-3 md:grid-cols-2">
+          <Field label="Verified label version id (open the label editor to copy it)">
+            <TextInput
+              value={labelVersionId}
+              onChange={(e) => setLabelVersionId(e.target.value)}
+              data-testid="commercial-label-id"
+            />
+          </Field>
+          <Field label="Affiliate URL (required)">
+            <TextInput
+              value={affiliateUrl}
+              onChange={(e) => setAffiliateUrl(e.target.value)}
+              data-testid="commercial-affiliate-url"
+            />
+          </Field>
+          <Field label="Exact SKU (any one of SKU/UPC/manufacturer/name required)">
+            <TextInput value={sku} onChange={(e) => setSku(e.target.value)} data-testid="commercial-sku" />
+          </Field>
+          <Field label="Exact UPC">
+            <TextInput value={upc} onChange={(e) => setUpc(e.target.value)} data-testid="commercial-upc" />
+          </Field>
+          <Field label="Exact manufacturer identifier">
+            <TextInput
+              value={manufacturer}
+              onChange={(e) => setManufacturer(e.target.value)}
+              data-testid="commercial-manufacturer"
+            />
+          </Field>
+          <Field label="Exact product name (used with manufacturer)">
+            <TextInput
+              value={productName}
+              onChange={(e) => setProductName(e.target.value)}
+              data-testid="commercial-product-name"
+            />
+          </Field>
+          <Field label="Discount code (optional)">
+            <TextInput
+              value={discountCode}
+              onChange={(e) => setDiscountCode(e.target.value)}
+              data-testid="commercial-discount-code"
+            />
+          </Field>
+          <Field label="Supplier disclosure (required)">
+            <TextInput
+              value={disclosure}
+              onChange={(e) => setDisclosure(e.target.value)}
+              data-testid="commercial-disclosure"
+              placeholder="e.g. Affiliate: 10% commission, disclosed on the profile"
+            />
+          </Field>
+          <Field label="Match reason (required — recorded against the attach)">
+            <TextInput
+              value={matchReason}
+              onChange={(e) => setMatchReason(e.target.value)}
+              data-testid="commercial-match-reason"
+            />
+          </Field>
+        </div>
+        <div className="mt-3 flex items-center gap-3">
+          <Btn onClick={attach} disabled={busy || !attachEnabled} data-testid="commercial-attach">
+            Attach commercial link
+          </Btn>
+          <Btn variant="ghost" onClick={explicitList} data-testid="commercial-list" disabled={!labelVersionId.trim()}>
+            List links for this label
+          </Btn>
+          {message && (
+            <p className="m-0 text-[12px] text-subtle" role="status" data-testid="commercial-message">
+              {message}
+            </p>
+          )}
+        </div>
+        <p className="mt-3 text-[11.5px] text-subtle">
+          <strong>Refusals fired on the wire:</strong> unverified label &rarr; 55000; near-miss
+          identifier &rarr; 22023; missing reason / disclosure &rarr; 22023; cross-tenant &rarr;
+          42501. None of these downgrade the exact-only match invariant.
+        </p>
+      </Card>
+
+      {links.length > 0 && (
+        <Card data-testid="commercial-links">
+          <CardTitle>{links.length} commercial link record(s) for this label</CardTitle>
+          <ul className="flex flex-col gap-2">
+            {links.map((l) => (
+              <li
+                key={l.id}
+                className="rounded border border-line px-3 py-2"
+                data-testid={`commercial-link-${l.id}`}
+              >
+                <div className="flex items-center justify-between">
+                  <div>
+                    <strong className="text-[13px]">{l.supplierName ?? "Supplier unknown"}</strong>
+                    <Chip tone={l.revokedAt ? "warn" : "ok"}>
+                      {l.revokedAt ? "revoked (via supersede)" : (l.availabilityStatus ?? "available")}
+                    </Chip>
+                    {l.supersedesId && (
+                      <span className="ml-2 text-[11.5px] text-subtle">supersedes {l.supersedesId}</span>
+                    )}
+                  </div>
+                  {!l.revokedAt && (
+                    <Btn onClick={() => revoke(l.id)} variant="ghost" data-testid={`commercial-revoke-${l.id}`}>
+                      Revoke
+                    </Btn>
+                  )}
+                </div>
+                <div className="mt-1 text-[11.5px] text-subtle">
+                  {l.url ? `url: ${l.url}` : "no url"}
+                  {" · "}
+                  {l.commissionDisclosure ?? "no disclosure"}
+                  {" · "}
+                  recorded {l.recordedAt}
+                  {l.revokedReason && ` · reason: ${l.revokedReason}`}
+                </div>
+              </li>
+            ))}
+          </ul>
+          <Field label="Revoke reason">
+            <TextInput
+              value={revokeReason}
+              onChange={(e) => setRevokeReason(e.target.value)}
+              data-testid="commercial-revoke-reason"
+            />
+          </Field>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+/* ---------------------------------------------------- Warnings queue */
+
+function WarningsQueuePanel() {
+  const [state, setState] = useState<"loading" | "ready" | "error">("loading");
+  const [error, setError] = useState<unknown>(null);
+  const [queue, setQueue] = useState<{
+    items: Array<{
+      subjectType: "preview_item" | "product" | "knowledge_reference";
+      subjectId: string;
+      displayName: string;
+      restrictedFlags: string[];
+      missingFacts: string[];
+      currentOutcome: string | null;
+    }>;
+  } | null>(null);
+  const [openSubject, setOpenSubject] = useState<
+    | { subjectType: "preview_item" | "product" | "knowledge_reference"; subjectId: string; displayName: string }
+    | null
+  >(null);
+  const [disposition, setDisposition] = useState<"resolved" | "superseded" | "accepted_risk" | "not_applicable">(
+    "resolved",
+  );
+  const [warningKey, setWarningKey] = useState("");
+  const [reason, setReason] = useState("");
+  const [message, setMessage] = useState("");
+  const [resolutions, setResolutions] = useState<
+    Array<{ id: string; warningKey: string; disposition: string; reason: string; decidedBy: string; decidedAt: string }>
+  >([]);
+
+  const load = useCallback(async () => {
+    setState("loading");
+    try {
+      const q = await liveClient.restrictedReviewQueue();
+      setQueue({ items: q.items });
+      setState("ready");
+    } catch (e) {
+      setError(e);
+      setState("error");
+    }
+  }, []);
+
+  useEffect(() => { void load(); }, [load]);
+
+  if (state === "loading") return <ClinicalLoading label="Reading warnings queue…" />;
+  if (state === "error") return <PanelError error={error} onRetry={load} />;
+
+  const withWarnings = (queue?.items ?? []).filter(
+    (i) => (i.restrictedFlags ?? []).length > 0 || (i.missingFacts ?? []).length > 0,
+  );
+
+  const openHistory = async (subject: {
+    subjectType: "preview_item" | "product" | "knowledge_reference";
+    subjectId: string;
+    displayName: string;
+  }) => {
+    setOpenSubject(subject);
+    setMessage("");
+    setResolutions([]);
+    try {
+      const r = await liveClient.warningResolutionList({
+        subjectType: subject.subjectType,
+        subjectId: subject.subjectId,
+      });
+      setResolutions(r.resolutions);
+    } catch (e) {
+      setMessage(errText(e));
+    }
+  };
+
+  const submit = async () => {
+    if (!openSubject) return;
+    setMessage("");
+    try {
+      await liveClient.warningResolutionRecord({
+        subjectType: openSubject.subjectType,
+        subjectId: openSubject.subjectId,
+        warningKey,
+        disposition,
+        reason,
+      });
+      setMessage(`Recorded ${disposition}. Original warning stays on the record; the resolution is append-only.`);
+      const r = await liveClient.warningResolutionList({
+        subjectType: openSubject.subjectType,
+        subjectId: openSubject.subjectId,
+      });
+      setResolutions(r.resolutions);
+    } catch (e) {
+      setMessage(errText(e));
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-4">
+      <Card>
+        <CardTitle>Missing facts & warnings queue</CardTitle>
+        <p className="m-0 text-[12px] text-subtle">
+          Every warning stays on its record. Recording a disposition (resolved / superseded /
+          accepted risk / not applicable) writes an <strong>append-only</strong> resolution alongside the
+          original warning. Dispositions never overwrite the warning itself and always require a
+          stated reason.
+        </p>
+      </Card>
+
+      <Card>
+        <CardTitle>{withWarnings.length} record(s) with warnings or missing facts</CardTitle>
+        {withWarnings.length === 0 ? (
+          <p className="m-0 text-[12px] text-subtle" data-testid="warnings-empty">
+            No records with warnings or missing facts.
+          </p>
+        ) : (
+          <ul className="flex flex-col gap-2" data-testid="warnings-list">
+            {withWarnings.map((i) => (
+              <li
+                key={`${i.subjectType}:${i.subjectId}`}
+                className="rounded border border-line px-3 py-2"
+                data-testid={`warning-item-${i.subjectType}-${i.subjectId}`}
+              >
+                <div className="flex items-center justify-between">
+                  <div>
+                    <strong className="text-[13px]">{i.displayName}</strong>
+                    <div className="text-[11.5px] text-subtle">
+                      {(i.restrictedFlags ?? []).map((f) => (
+                        <Chip key={f} tone="danger">{f}</Chip>
+                      ))}
+                      {(i.missingFacts ?? []).length > 0 && (
+                        <span className="ml-2">Missing: {(i.missingFacts ?? []).join(", ")}</span>
+                      )}
+                    </div>
+                  </div>
+                  <Btn
+                    variant="ghost"
+                    onClick={() =>
+                      openHistory({
+                        subjectType: i.subjectType,
+                        subjectId: i.subjectId,
+                        displayName: i.displayName,
+                      })
+                    }
+                    data-testid={`warning-open-${i.subjectType}-${i.subjectId}`}
+                  >
+                    Record disposition
+                  </Btn>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
+
+      {openSubject && (
+        <Card data-testid="warning-dialog">
+          <CardTitle>Disposition for {openSubject.displayName}</CardTitle>
+          <div className="grid gap-3 md:grid-cols-2">
+            <Field label="Warning key (e.g. restricted:iv_therapy, missing:serving_size)">
+              <TextInput value={warningKey} onChange={(e) => setWarningKey(e.target.value)} data-testid="warning-key" />
+            </Field>
+            <Field label="Disposition">
+              <Select value={disposition} onChange={(e) => setDisposition(e.target.value as typeof disposition)} data-testid="warning-disposition">
+                <option value="resolved">Resolved</option>
+                <option value="superseded">Superseded</option>
+                <option value="accepted_risk">Accepted risk</option>
+                <option value="not_applicable">Not applicable</option>
+              </Select>
+            </Field>
+          </div>
+          <Field label="Reason (required — stored on the append-only resolution)">
+            <TextInput value={reason} onChange={(e) => setReason(e.target.value)} data-testid="warning-reason" />
+          </Field>
+          <div className="mt-3 flex items-center gap-3">
+            <Btn
+              onClick={submit}
+              disabled={!warningKey.trim() || !reason.trim()}
+              data-testid="warning-submit"
+            >
+              Record disposition
+            </Btn>
+            {message && <p className="m-0 text-[12px] text-subtle" role="status" data-testid="warning-message">{message}</p>}
+          </div>
+          {resolutions.length > 0 && (
+            <div className="mt-3" data-testid="warning-history">
+              <div className="text-[11px] uppercase tracking-wide text-subtle">History (append-only)</div>
+              <ul className="mt-1 flex flex-col gap-1">
+                {resolutions.map((r) => (
+                  <li key={r.id} className="text-[11.5px]">
+                    <strong>{r.disposition}</strong> — {r.reason} · {r.warningKey} · {r.decidedAt}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </Card>
+      )}
+    </div>
+  );
+}
 
 /**
  * Read the initial tab + batch from the URL (`?tab=conflicts&batch=abc`).
@@ -1795,6 +2604,7 @@ function readInitialWorkspaceState(): { tab: Tab; batchId: string | null } {
     "batches",
     "conflicts",
     "restricted",
+    "warnings",
     "labels",
     "references",
     "commercial",
@@ -1820,6 +2630,7 @@ export function ImportReviewWorkspace() {
         { id: "batches", label: "Preview batches" },
         { id: "conflicts", label: "Conflicts" },
         { id: "restricted", label: "Restricted review" },
+        { id: "warnings", label: "Warnings & missing facts" },
         { id: "labels", label: "Product labels" },
         { id: "references", label: "Knowledge references" },
         { id: "commercial", label: "Commercial matching" },
@@ -1866,50 +2677,10 @@ export function ImportReviewWorkspace() {
       {tab === "batches" && <ReviewPanel batchId={batchId} />}
       {tab === "conflicts" && <ConflictsPanel batchId={batchId} />}
       {tab === "restricted" && <RestrictedReviewPanel />}
-      {tab === "labels" && (
-        <ComingIn9EA2Panel
-          title="Product labels — versioned editor"
-          purpose="Full label authoring with structured ingredients, allergens, warnings, storage, route, regulatory class, image/document hash, and label version + verification date. Verified versions become immutable; corrections open a new version."
-          bullets={[
-            "Manufacturer + exact product name + brand",
-            "Product form, serving size, structured ingredients (amount + unit)",
-            "Other ingredients, allergens & warnings, directions, storage",
-            "SKU, UPC, route, regulatory classification, country/market",
-            "Official manufacturer source URL and label sha256 + date/version",
-            "Unknown stays Unknown; nothing is inferred from a product name",
-            "Data entry, verification, restriction review, and clinical approval remain separate actions",
-          ]}
-        />
-      )}
-      {tab === "references" && (
-        <ComingIn9EA2Panel
-          title="Knowledge references — structured citation review"
-          purpose="Reference-level review with claim/subject, source and exact provenance, author/organization, publication date, citation URL/identifier, evidence grade, jurisdiction, reviewer status, warnings and restricted flags. Practitioner-authored material without an external citation reads Practitioner experience — never evidence-based."
-          bullets={[
-            "Claim or subject; source and exact provenance",
-            "Author/organization; publication or label date/version",
-            "Citation URL or identifier; evidence grade",
-            "Clinical domain and jurisdiction",
-            "Reviewer identity, review status, warnings, restricted flags",
-            "Practitioner experience label for uncitated material",
-            "Dose text stays unverified reference metadata until an exact label backs it",
-          ]}
-        />
-      )}
-      {tab === "commercial" && (
-        <ComingIn9EA2Panel
-          title="Commercial matching queue"
-          purpose="Practitioner UI for attaching commercial candidates (affiliate URL, discount code, disclosure) to independently verified clinical product identities. The RPC and acceptance suite for this ship in Phase 9E-A.1; the queue view lands here in 9E-A.2."
-          bullets={[
-            "Exact SKU / UPC / manufacturer + name match only — never fuzzy",
-            "Human decision + stated reason on every attach",
-            "Storage in product_label_commercial_links only; no clinical field is touched",
-            "Awaiting verified product identity for candidates with no match",
-            "Revocation via supersedes_id — the original attach stays for audit",
-            "Never exposed to eligibility, safety, evidence, interaction, ranking, reasoning, or protocol code paths",
-          ]}
-        />
-      )}
+      {tab === "warnings" && <WarningsQueuePanel />}
+      {tab === "labels" && <ProductLabelEditorPanel />}
+      {tab === "references" && <KnowledgeReferenceEditorPanel />}
+      {tab === "commercial" && <CommercialMatchingPanel />}
       {tab === "provenance" && <ProvenancePanel />}
     </div>
   );

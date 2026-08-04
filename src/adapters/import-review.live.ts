@@ -285,6 +285,422 @@ export const importReviewLive = {
     );
   },
 
+  /* ============================================ Phase 9E-A.2 label editor */
+
+  async createProductLabelDraft(
+    input: {
+      productCode: string;
+      productName: string;
+      brand: string;
+      exactLabel: Record<string, unknown>;
+      sourceUrl?: string | null;
+      servingSize?: string | null;
+      ingredients?: Array<Record<string, unknown>>;
+      otherIngredients?: string | null;
+      allergens?: string | null;
+      contraindications?: string | null;
+      warningsText?: string | null;
+      storageInstructions?: string | null;
+      observedDate?: string | null;
+      jurisdiction?: string | null;
+      labelImageRef?: string | null;
+    },
+    organizationId?: string | null,
+    sessionToken?: string | null,
+  ) {
+    const token = await getClinicalAccessToken(sessionToken);
+    return clinicalRpc<{ ok: true; id: string; version: number; status: string }>(
+      "create_product_label_draft",
+      {
+        _organization_id: resolveOrgId(organizationId),
+        _product_code: input.productCode,
+        _product_name: input.productName,
+        _brand: input.brand,
+        _exact_label: input.exactLabel,
+        _source_url: input.sourceUrl ?? null,
+        _serving_size: input.servingSize ?? null,
+        _ingredients: input.ingredients ?? [],
+        _other_ingredients: input.otherIngredients ?? null,
+        _allergens: input.allergens ?? null,
+        _contraindications: input.contraindications ?? null,
+        _warnings_text: input.warningsText ?? null,
+        _storage_instructions: input.storageInstructions ?? null,
+        _observed_date: input.observedDate ?? null,
+        _jurisdiction: input.jurisdiction ?? null,
+        _label_image_ref: input.labelImageRef ?? null,
+      },
+      token,
+    );
+  },
+
+  async verifyProductLabelVersion(
+    input: { labelVersionId: string; verificationNote: string },
+    organizationId?: string | null,
+    sessionToken?: string | null,
+  ) {
+    const token = await getClinicalAccessToken(sessionToken);
+    return clinicalRpc<{ ok: true; id: string; status: string }>(
+      "verify_product_label_version",
+      {
+        _organization_id: resolveOrgId(organizationId),
+        _label_version_id: input.labelVersionId,
+        _verification_note: input.verificationNote,
+      },
+      token,
+    );
+  },
+
+  async supersedeProductLabelVersion(
+    input: {
+      supersedesId: string;
+      exactLabel: Record<string, unknown>;
+      reason: string;
+      servingSize?: string | null;
+      ingredients?: Array<Record<string, unknown>>;
+      otherIngredients?: string | null;
+      allergens?: string | null;
+      contraindications?: string | null;
+      warningsText?: string | null;
+      storageInstructions?: string | null;
+      sourceUrl?: string | null;
+      observedDate?: string | null;
+    },
+    organizationId?: string | null,
+    sessionToken?: string | null,
+  ) {
+    const token = await getClinicalAccessToken(sessionToken);
+    return clinicalRpc<{ ok: true; id: string; version: number; supersedesId: string; status: string }>(
+      "supersede_product_label_version",
+      {
+        _organization_id: resolveOrgId(organizationId),
+        _supersedes_id: input.supersedesId,
+        _exact_label: input.exactLabel,
+        _reason: input.reason,
+        _serving_size: input.servingSize ?? null,
+        _ingredients: input.ingredients ?? [],
+        _other_ingredients: input.otherIngredients ?? null,
+        _allergens: input.allergens ?? null,
+        _contraindications: input.contraindications ?? null,
+        _warnings_text: input.warningsText ?? null,
+        _storage_instructions: input.storageInstructions ?? null,
+        _source_url: input.sourceUrl ?? null,
+        _observed_date: input.observedDate ?? null,
+      },
+      token,
+    );
+  },
+
+  async listProductLabelVersions(
+    productCode: string,
+    organizationId?: string | null,
+    sessionToken?: string | null,
+  ) {
+    const token = await getClinicalAccessToken(sessionToken);
+    return clinicalRpc<{
+      productCode: string;
+      organizationId: string;
+      versions: Array<Record<string, unknown>>;
+    }>(
+      "list_product_label_versions",
+      {
+        _organization_id: resolveOrgId(organizationId),
+        _product_code: productCode,
+      },
+      token,
+    );
+  },
+
+  /* ================================== Phase 9E-A.2 knowledge references */
+
+  async createKnowledgeReferenceDraft(
+    input: {
+      claim: string;
+      referenceType?: string | null;
+      clinicalDomain?: string | null;
+      structuredClaim?: Record<string, unknown>;
+      population?: string | null;
+      intervention?: string | null;
+      outcomeField?: string | null;
+      evidenceGrade?: string | null;
+      citation?: string | null;
+      sourceKind?: string | null;
+      sourceVersion?: string | null;
+      publicationDate?: string | null;
+      jurisdiction?: string | null;
+      limitations?: string[];
+      contradictions?: string[];
+      restrictedFlags?: string[];
+    },
+    organizationId?: string | null,
+    sessionToken?: string | null,
+  ) {
+    const token = await getClinicalAccessToken(sessionToken);
+    return clinicalRpc<{ ok: true; id: string; reviewerState: string }>(
+      "create_knowledge_reference_draft",
+      {
+        _organization_id: resolveOrgId(organizationId),
+        _claim: input.claim,
+        _reference_type: input.referenceType ?? null,
+        _clinical_domain: input.clinicalDomain ?? null,
+        _structured_claim: input.structuredClaim ?? {},
+        _population: input.population ?? null,
+        _intervention: input.intervention ?? null,
+        _outcome_field: input.outcomeField ?? null,
+        _evidence_grade: input.evidenceGrade ?? null,
+        _citation: input.citation ?? null,
+        _source_kind: input.sourceKind ?? null,
+        _source_version: input.sourceVersion ?? null,
+        _publication_date: input.publicationDate ?? null,
+        _jurisdiction: input.jurisdiction ?? null,
+        _limitations: input.limitations ?? [],
+        _contradictions: input.contradictions ?? [],
+        _restricted_flags: input.restrictedFlags ?? [],
+      },
+      token,
+    );
+  },
+
+  async approveKnowledgeReference(
+    input: { referenceId: string; verificationReason: string },
+    organizationId?: string | null,
+    sessionToken?: string | null,
+  ) {
+    const token = await getClinicalAccessToken(sessionToken);
+    return clinicalRpc<{ ok: true; id: string; reviewerState: string }>(
+      "approve_knowledge_reference",
+      {
+        _organization_id: resolveOrgId(organizationId),
+        _reference_id: input.referenceId,
+        _verification_reason: input.verificationReason,
+      },
+      token,
+    );
+  },
+
+  async supersedeKnowledgeReference(
+    input: { supersedesId: string; newClaim: string; reason: string },
+    organizationId?: string | null,
+    sessionToken?: string | null,
+  ) {
+    const token = await getClinicalAccessToken(sessionToken);
+    return clinicalRpc<{ ok: true; id: string; supersedesId: string; reviewerState: string }>(
+      "supersede_knowledge_reference",
+      {
+        _organization_id: resolveOrgId(organizationId),
+        _supersedes_id: input.supersedesId,
+        _new_claim: input.newClaim,
+        _reason: input.reason,
+      },
+      token,
+    );
+  },
+
+  async listKnowledgeReferences(organizationId?: string | null, sessionToken?: string | null) {
+    const token = await getClinicalAccessToken(sessionToken);
+    return clinicalRpc<{ organizationId: string; references: Array<Record<string, unknown>> }>(
+      "list_knowledge_references",
+      { _organization_id: resolveOrgId(organizationId) },
+      token,
+    );
+  },
+
+  /* ================================== Phase 9E-A.2 commercial matching */
+
+  async attachCommercialLink(
+    input: {
+      labelVersionId: string;
+      incomingSku?: string | null;
+      incomingUpc?: string | null;
+      incomingManufacturer?: string | null;
+      incomingProductName?: string | null;
+      affiliateUrl: string;
+      discountCode?: string | null;
+      disclosure: string;
+      matchReason: string;
+    },
+    organizationId?: string | null,
+    sessionToken?: string | null,
+  ) {
+    const token = await getClinicalAccessToken(sessionToken);
+    return clinicalRpc<{
+      ok: true;
+      linkId: string;
+      matchAxis: string;
+    }>(
+      "attach_commercial_link_to_verified_product",
+      {
+        _organization_id: resolveOrgId(organizationId),
+        _label_version_id: input.labelVersionId,
+        _incoming_sku: input.incomingSku ?? "",
+        _incoming_upc: input.incomingUpc ?? "",
+        _incoming_manufacturer: input.incomingManufacturer ?? "",
+        _incoming_product_name: input.incomingProductName ?? "",
+        _affiliate_url: input.affiliateUrl,
+        _discount_code: input.discountCode ?? null,
+        _disclosure: input.disclosure,
+        _match_reason: input.matchReason,
+      },
+      token,
+    );
+  },
+
+  async revokeCommercialLink(
+    input: { linkId: string; reason: string },
+    organizationId?: string | null,
+    sessionToken?: string | null,
+  ) {
+    const token = await getClinicalAccessToken(sessionToken);
+    return clinicalRpc<{ ok: true; supersedesId: string; newLinkId: string }>(
+      "revoke_commercial_link",
+      {
+        _organization_id: resolveOrgId(organizationId),
+        _link_id: input.linkId,
+        _reason: input.reason,
+      },
+      token,
+    );
+  },
+
+  async listCommercialLinks(
+    labelVersionId: string,
+    _organizationId?: string | null,
+    sessionToken?: string | null,
+  ) {
+    const token = await getClinicalAccessToken(sessionToken);
+    // Uses the existing Phase 9E-A read helper. Only requires
+    // label_version_id — the RPC enforces tenant membership internally.
+    return clinicalRpc<{
+      labelVersionId: string;
+      links: Array<{
+        id: string;
+        supplierName: string | null;
+        url: string | null;
+        commissionDisclosure: string | null;
+        availabilityStatus: string | null;
+        supersedesId: string | null;
+        revokedAt: string | null;
+        revokedReason: string | null;
+        recordedAt: string;
+      }>;
+    }>(
+      "list_label_commercial_links",
+      { _label_version_id: labelVersionId },
+      token,
+    );
+  },
+
+  /* ================================== Phase 9E-A.2 warning resolutions */
+
+  async recordWarningResolution(
+    input: {
+      subjectType: "preview_item" | "product" | "knowledge_reference";
+      subjectId: string;
+      warningKey: string;
+      disposition: "resolved" | "superseded" | "accepted_risk" | "not_applicable";
+      reason: string;
+    },
+    organizationId?: string | null,
+    sessionToken?: string | null,
+  ) {
+    const token = await getClinicalAccessToken(sessionToken);
+    return clinicalRpc<{ ok: true; id: string; subjectType: string; disposition: string }>(
+      "record_warning_resolution",
+      {
+        _organization_id: resolveOrgId(organizationId),
+        _subject_type: input.subjectType,
+        _subject_id: input.subjectId,
+        _warning_key: input.warningKey,
+        _disposition: input.disposition,
+        _reason: input.reason,
+      },
+      token,
+    );
+  },
+
+  async listWarningResolutions(
+    input: { subjectType: "preview_item" | "product" | "knowledge_reference"; subjectId: string },
+    organizationId?: string | null,
+    sessionToken?: string | null,
+  ) {
+    const token = await getClinicalAccessToken(sessionToken);
+    return clinicalRpc<{
+      subjectType: string;
+      subjectId: string;
+      resolutions: Array<{
+        id: string;
+        warningKey: string;
+        disposition: string;
+        reason: string;
+        decidedBy: string;
+        decidedAt: string;
+      }>;
+    }>(
+      "list_warning_resolutions",
+      {
+        _organization_id: resolveOrgId(organizationId),
+        _subject_type: input.subjectType,
+        _subject_id: input.subjectId,
+      },
+      token,
+    );
+  },
+
+  /* ================================== Phase 9E-A.2 safe bulk ops */
+
+  async bulkAssignReviewer(
+    input: { itemIds: string[]; assignee: string; reason: string },
+    organizationId?: string | null,
+    sessionToken?: string | null,
+  ) {
+    const token = await getClinicalAccessToken(sessionToken);
+    return clinicalRpc<{ ok: true; itemsUpdated: number }>(
+      "bulk_assign_reviewer",
+      {
+        _organization_id: resolveOrgId(organizationId),
+        _item_ids: input.itemIds,
+        _assignee: input.assignee,
+        _reason: input.reason,
+      },
+      token,
+    );
+  },
+
+  async bulkApplyOrgTag(
+    input: { itemIds: string[]; tag: string; reason: string },
+    organizationId?: string | null,
+    sessionToken?: string | null,
+  ) {
+    const token = await getClinicalAccessToken(sessionToken);
+    return clinicalRpc<{ ok: true; itemsUpdated: number }>(
+      "bulk_apply_org_tag",
+      {
+        _organization_id: resolveOrgId(organizationId),
+        _item_ids: input.itemIds,
+        _tag: input.tag,
+        _reason: input.reason,
+      },
+      token,
+    );
+  },
+
+  async bulkMarkDuplicate(
+    input: { itemIds: string[]; duplicateOfItemId: string; reason: string },
+    organizationId?: string | null,
+    sessionToken?: string | null,
+  ) {
+    const token = await getClinicalAccessToken(sessionToken);
+    return clinicalRpc<{ ok: true; itemsUpdated: number }>(
+      "bulk_mark_duplicate",
+      {
+        _organization_id: resolveOrgId(organizationId),
+        _item_ids: input.itemIds,
+        _duplicate_of_item_id: input.duplicateOfItemId,
+        _reason: input.reason,
+      },
+      token,
+    );
+  },
+
   /**
    * Phase 9E-A.1: unified restricted-review queue across preview items,
    * committed catalog products, and governed knowledge references. Returned

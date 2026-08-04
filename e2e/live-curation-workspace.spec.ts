@@ -430,21 +430,21 @@ test("Conflicts (8) · a cross-tenant conflict resolution attempt is refused, no
 
 /* --------------------------------------------------------- deferred sections */
 
-test("A.1 · the deferred sections say precisely what is not yet available and what remains", async ({
+test("A.1 · the deferred sections have shipped in A.2 (labels + references + commercial editors visible)", async ({
   page,
 }) => {
   await page.goto(IMPORTS);
   await page.getByTestId("tab-labels").click();
-  await expect(page.locator("body")).toContainText(/Not available yet — Phase 9E-A\.2/i);
-  await expect(page.locator("body")).toContainText(/versioned editor/i);
+  await expect(page.locator("body")).toContainText(/Product label editor/i);
+  await expect(page.locator("body")).toContainText(/Governed versioned editor|verified label is immutable/i);
 
   await page.getByTestId("tab-references").click();
-  await expect(page.locator("body")).toContainText(/Not available yet — Phase 9E-A\.2/i);
-  await expect(page.locator("body")).toContainText(/citation review/i);
+  await expect(page.locator("body")).toContainText(/Knowledge reference curation/i);
+  await expect(page.locator("body")).toContainText(/Structured governance|Evidence grade/i);
 
   await page.getByTestId("tab-commercial").click();
-  await expect(page.locator("body")).toContainText(/Not available yet — Phase 9E-A\.2/i);
-  await expect(page.locator("body")).toContainText(/never fuzzy/i);
+  await expect(page.locator("body")).toContainText(/Commercial matching/i);
+  await expect(page.locator("body")).toContainText(/exact identifier match|fuzzy matching is never permitted/i);
 });
 
 test("A.1 · the /settings/knowledge Import-review tab redirects to /settings/imports", async ({
