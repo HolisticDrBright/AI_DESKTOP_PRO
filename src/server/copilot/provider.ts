@@ -127,3 +127,109 @@ export async function selectProvider(): Promise<CopilotProvider> {
   if (mode === "live") return liveProvider;
   return disabledProvider;
 }
+
+/**
+ * Governed provider selection.
+ *
+ * The difference from `selectProvider()` is the source of authority. That
+ * function reads an ENV FLAG, which is why it refuses fixture mode in a
+ * deployed runtime: an env var is not evidence of anything, and a deployed
+ * process must not be able to opt itself back into synthetic content.
+ *
+ * This function reads GOVERNED RECORDS instead — the provider registry row
+ * and the organization's activation row, both of which a platform admin
+ * had to write through an audited RPC. The `approved_for_synthetic` state
+ * exists in the schema precisely to name "this organization has agreed to
+ * evaluate the copilot against deterministic synthetic content".
+ *
+ * The synthetic path is therefore permitted in a deployed runtime, but
+ * only under all four conditions together:
+ *
+ *   1. the process-level mode is `live` (never `disabled`);
+ *   2. the registered provider kind is literally `synthetic_fixture`;
+ *   3. the organization's activation state is `approved_for_synthetic`;
+ *   4. the input carries no PHI.
+ *
+ * Any of those missing falls through to `liveProvider`, which refuses.
+ * There is no path here that produces synthetic content for an
+ * organization that did not record the decision to accept it, and no
+ * path that lets synthetic content stand in for a failed live call —
+ * `approved_for_synthetic` and `approved_for_phi` are different states and
+ * the second never selects the fixture.
+ */
+export async function selectGovernedProvider(input: {
+  registryKind: string | null;
+  registryName?: string | null;
+  activationState: string | null;
+  containsPHI: boolean;
+  mode?: CopilotMode;
+}): Promise<CopilotProvider> {
+  const mode = input.mode ?? resolveCopilotMode();
+  if (mode === "disabled") return disabledProvider;
+  if (mode === "fixture") return loadFixtureProvider();
+
+  const syntheticApproved =
+    input.registryKind === "synthetic_fixture" &&
+    input.activationState === "approved_for_synthetic" &&
+    input.containsPHI === false;
+
+  if (syntheticApproved) {
+    const mod = await import("./provider.fixture");
+    if (input.registryName === ADVERSARIAL_SYNTHETIC_NAME) {
+      return adversarialSyntheticProvider(mod.fixtureProvider);
+    }
+    return {
+      ...mod.fixtureProvider,
+      // Named for what it is on every run row and every screen, so a
+      // synthetic draft can never be mistaken for a live one in the audit
+      // trail.
+      name: "fixture:governed-synthetic",
+    };
+  }
+  return liveProvider;
+}
+
+/**
+ * The registry `provider_name` that selects the adversarial synthetic
+ * provider. It is a governed identity like any other: a platform admin has
+ * to register it, and the organization has to be in
+ * `approved_for_synthetic` for it to be reachable at all.
+ */
+export const ADVERSARIAL_SYNTHETIC_NAME = "synthetic_fixture_adversarial";
+
+/**
+ * A synthetic provider that deliberately emits one citation OUTSIDE the
+ * governed retrieval envelope.
+ *
+ * This exists so the hallucinated-citation guard is provable through the
+ * real UI and the real persistence path, not only in a unit test. The
+ * ordinary fixture provider cites only from the allowed set by
+ * construction, which means the rejection branch — the one that actually
+ * matters — would otherwise never execute in a browser run.
+ *
+ * It is bounded the same way as the ordinary synthetic provider: reachable
+ * only under `approved_for_synthetic`, only with no PHI present, and
+ * labelled distinctly on the run row.
+ */
+function adversarialSyntheticProvider(base: CopilotProvider): CopilotProvider {
+  return {
+    name: "fixture:governed-synthetic-adversarial",
+    model: base.model,
+    async draft(args) {
+      const out = await base.draft(args);
+      return {
+        ...out,
+        providerName: "fixture:governed-synthetic-adversarial",
+        citations: [
+          ...out.citations,
+          {
+            citationType: "knowledge_reference" as const,
+            // Not in any retrieval envelope, by construction.
+            refId: "hallucinated-reference-not-in-envelope",
+            version: null,
+          },
+        ],
+      };
+    },
+  };
+}

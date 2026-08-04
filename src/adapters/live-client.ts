@@ -1596,4 +1596,38 @@ export const liveClient = {
         disposition: string | null;
       }>;
     }>(`copilot/history?patientId=${encodeURIComponent(patientId)}`, { method: "GET" }),
+
+  /* ============================ Phase 10B.1 provider posture */
+  copilotProviderStatus: () =>
+    liveFetch<{
+      posture: {
+        state:
+          | "disabled"
+          | "configured_unapproved"
+          | "approved_never_transacted"
+          | "fixture_test_mode"
+          | "live_unavailable"
+          | "live_failed"
+          | "live_transacted";
+        label: string;
+        detail: string;
+        configured: boolean;
+        transacted: boolean;
+        approved: boolean;
+        gates: Array<{
+          name: string;
+          label: string;
+          status: "approved" | "not_approved" | "not_run";
+          reference: string | null;
+        }>;
+        providerName: string | null;
+        providerKind: string | null;
+        retentionMode: string | null;
+        processingRegion: string | null;
+        supervisedRunsRequired: number | null;
+        supervisedRunsCompleted: number | null;
+        lastFailureCategory: string | null;
+      };
+      refusal: string | null;
+    }>("copilot/provider-status", { method: "GET" }),
 };
