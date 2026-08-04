@@ -1528,4 +1528,42 @@ export const liveClient = {
       supersededBy: string;
       message: string;
     }>("protocols/template-supersede", { method: "POST", body: input }),
+
+  /* ================================ Phase 10A copilot */
+  copilotRun: (input: {
+    runType:
+      | "longitudinal_brief"
+      | "differential_questions"
+      | "lab_suggestions"
+      | "protocol_draft"
+      | "practitioner_brief";
+    lens: "western" | "functional" | "naturopathy" | "tcm" | "biohacking" | "synergistic";
+    approvedKnowledgeReferenceIds?: string[];
+    verifiedLabelIds?: string[];
+    approvedProtocolTemplateIds?: string[];
+    approvedDietTemplateIds?: string[];
+  }) =>
+    liveFetch<{
+      status: "completed" | "unavailable" | "failed";
+      runType: string;
+      lens: string;
+      providerName: string;
+      providerModel: string | null;
+      safetyItems: Array<{
+        category: string;
+        severity: "urgent" | "important" | "info";
+        message: string;
+        pinned: boolean;
+      }>;
+      draft: {
+        runType: string;
+        content: Record<string, unknown>;
+        citations: Array<{ citationType: string; refId: string; version: string | null }>;
+        contentSha256: string;
+      } | null;
+      rejectedCitations: string[];
+      inputSnapshotHash: string;
+      outputHash: string | null;
+      message: string;
+    }>("copilot/run", { method: "POST", body: input }),
 };
