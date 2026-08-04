@@ -2,7 +2,7 @@
 -- Rolled back at the end, zero residue.
 -- Every assertion uses PL/pgSQL DO blocks (with BEGIN/EXCEPTION captures) or
 -- direct _raises(...) — no unreferenced CTE is trusted to execute its side
--- effect. All 44 assertions pass on staging under the current shape.
+-- effect. All 45 assertions pass on staging under the current shape.
 -- 1-18: baseline governance (auth, tenant isolation, lifecycle, PHI-clean audit).
 -- 19-25: identity-and-input-snapshot are IMMUTABLE FROM CREATION, not only
 -- after completion.
@@ -11,6 +11,10 @@
 -- 32-44: the three practitioner-action RPCs write to draft surfaces only
 -- (unsigned note version, draft protocol version, open review task) with
 -- no signing / activation / ordering / messaging side effects.
+-- 45: grant-level defense-in-depth — every copilot RPC's EXECUTE grant set
+-- is exactly {postgres, authenticated, service_role}; anon + PUBLIC are
+-- revoked. Function bodies still refuse anonymous (28000), but the grant
+-- shape must not depend on that.
 
 begin;
 
@@ -567,6 +571,28 @@ select _c('P10A.SQL.44 disposition=accepted on the source run', (
   select practitioner_disposition = 'accepted'
     from public.clinical_copilot_runs
    where id = current_setting('_test.run_id')::uuid));
+
+-- ---------------------------------------------------------------------------
+-- 45: Grant-level defense-in-depth. Every copilot RPC's EXECUTE grants are
+-- exactly {postgres, authenticated, service_role} — anon and PUBLIC are
+-- revoked. This is asserted independently of the function bodies (which
+-- also refuse anonymous callers with SQLSTATE 28000).
+-- ---------------------------------------------------------------------------
+select _c('P10A.SQL.45 no copilot RPC grants anon or PUBLIC EXECUTE', (
+  select count(*) = 0
+  from pg_proc p
+  join pg_namespace n on n.oid = p.pronamespace
+  join information_schema.routine_privileges g
+    on g.routine_schema = n.nspname and g.routine_name = p.proname
+  where n.nspname = 'public'
+    and p.proname in (
+      'create_copilot_run','finalize_copilot_run','mark_copilot_run_stale',
+      'record_copilot_disposition','get_copilot_runs_for_patient',
+      'build_copilot_input_snapshot','fetch_copilot_governed_retrieval',
+      'apply_copilot_run_to_note','apply_copilot_run_to_protocol_draft',
+      'create_copilot_review_task')
+    and g.grantee in ('PUBLIC','anon')
+    and g.privilege_type = 'EXECUTE'));
 
 select count(*) filter(where ok) as passed,
        count(*) filter(where ok is false) as failed,
