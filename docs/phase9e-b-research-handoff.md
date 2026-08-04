@@ -315,6 +315,78 @@ preview batch exists in the org. The next-step wording points at this
 document and at the "Read a file" tab where the signed-in practitioner
 uploads the package.
 
+## Preview batch verification round 3 — operator reported three uploads
+
+**Operator statement:** "I created three preview batches through the normal
+signed-in P2 practitioner UI: `product-label-enrichment.jsonl`,
+`commercial-links.jsonl` marked `commercial_only=true`, and
+`evidence-sources.jsonl`."
+
+**Verification result on the connected Supabase project (`urcjiehlxoehievobezf`),
+read-only via MCP at head `811123a`:**
+
+| Query | Value | Expected if uploads landed |
+|---|---|---|
+| Batches with `source_kind='research_handoff'` | **0** | ≥ 3 |
+| Batches with source filename containing `product-label-enrichment` | **0** | ≥ 1 |
+| Batches with source filename containing `commercial-links` | **0** | ≥ 1 |
+| Batches with source filename containing `evidence-sources` | **0** | ≥ 1 |
+| Batches whose `source_sha256` matches any handoff-manifest hash | **0** | ≥ 1 |
+| Batches carrying a `manifest_sha256` | **0** | ≥ 1 |
+| Import items created since 2026-08-04 00:00 UTC | **0** | ≥ 164 + 172 + 433 |
+| Batches created since 2026-08-04 00:00 UTC | **0** | 3 |
+| Latest batch created on this project | **2026-08-02 22:29:02 UTC** | ≥ 2026-08-04 |
+| Total preview batches on this project | **8** (unchanged) | 8 + 3 = 11 |
+| Total cancelled batches | **32** (unchanged) | 32 |
+| Total committed batches | **0** (unchanged) | 0 |
+
+**Every check returns zero.** The most recent batch on the connected staging
+project was created on 2026-08-02 22:29 UTC — over 46 hours before the
+operator's stated upload. Staging aggregates match the pilot baseline
+exactly.
+
+**No batch identifiers can be recorded** because none exist on this project.
+Fabricating identifiers would violate the operator's rule against changing
+source data and the Phase 9 governance principle that "an empty state and a
+failure are different claims" — an empty result on staging is the honest
+answer.
+
+### Possible explanations for the operator
+
+The upload was reported but did not reach `urcjiehlxoehievobezf`. Possible
+reasons, none actionable from this side:
+
+1. The upload was made to a **different Supabase project**. This session
+   is bound to `urcjiehlxoehievobezf` (the AI Desktop Pro clinical staging
+   project per CLAUDE.md, the only clinical project).
+2. The `preview_knowledge_import` RPC was **refused** (permission-denied,
+   RLS, no-PHI attestation flow interrupted, or an error the UI surfaced)
+   and no batch was persisted.
+3. The `Read a file` tab **parsed the JSONL client-side** but the operator
+   did not click through to the persistence step — nothing left the
+   browser.
+4. The upload path used a different file format than the three
+   authoritative JSONL files.
+5. The session had no active knowledge-editor membership in the target
+   organization, so every write was refused before it touched the batch
+   table.
+
+### What the operator can do next to unblock verification
+
+Sign in again, open a fresh preview attempt on the `product-label-enrichment.jsonl`
+file only, and — before uploading — capture the exact HTTP request URL and
+response status the browser network panel shows for the preview call. If
+the request succeeded (HTTP 2xx), the batch id from the response should
+match a `clinical_knowledge_import_batches.id` on this project. If the
+request failed or was never sent, the browser will show the exact failure
+category. Neither piece of evidence needs to include any package content
+or session material.
+
+Until at least one Product Research Handoff preview batch is persisted on
+this project, the `Research handoff` tab renders its honest-empty state
+and the aggregate reconciliation below is limited to the local package
+integrity check.
+
 ## How to create the preview batch (operator action)
 
 **Only the signed-in practitioner can create the preview batch.** No
