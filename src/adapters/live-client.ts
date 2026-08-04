@@ -1191,6 +1191,159 @@ export const liveClient = {
     }>(`knowledge/restricted-review?${query}`, { method: "GET" });
   },
 
+  /* ================================ Phase 9E-A.2 label editor */
+  productLabelCreateDraft: (input: {
+    productCode: string;
+    productName: string;
+    brand: string;
+    exactLabel: Record<string, unknown>;
+    sourceUrl?: string | null;
+    servingSize?: string | null;
+    ingredients?: Array<Record<string, unknown>>;
+    otherIngredients?: string | null;
+    allergens?: string | null;
+    contraindications?: string | null;
+    warningsText?: string | null;
+    storageInstructions?: string | null;
+    observedDate?: string | null;
+    jurisdiction?: string | null;
+    labelImageRef?: string | null;
+  }) =>
+    liveFetch<{ ok: true; id: string; version: number; status: string }>(
+      "knowledge/product-label",
+      { method: "POST", body: { action: "create_draft", ...input } },
+    ),
+
+  productLabelVerify: (input: { labelVersionId: string; verificationNote: string }) =>
+    liveFetch<{ ok: true; id: string; status: string }>(
+      "knowledge/product-label",
+      { method: "POST", body: { action: "verify", ...input } },
+    ),
+
+  productLabelSupersede: (input: {
+    supersedesId: string;
+    exactLabel: Record<string, unknown>;
+    reason: string;
+    servingSize?: string | null;
+    ingredients?: Array<Record<string, unknown>>;
+    otherIngredients?: string | null;
+    allergens?: string | null;
+    contraindications?: string | null;
+    warningsText?: string | null;
+    storageInstructions?: string | null;
+    sourceUrl?: string | null;
+    observedDate?: string | null;
+  }) =>
+    liveFetch<{ ok: true; id: string; version: number; supersedesId: string; status: string }>(
+      "knowledge/product-label",
+      { method: "POST", body: { action: "supersede", ...input } },
+    ),
+
+  productLabelList: (productCode: string) =>
+    liveFetch<{
+      productCode: string;
+      organizationId: string;
+      versions: Array<Record<string, unknown>>;
+    }>(`knowledge/product-label?productCode=${encodeURIComponent(productCode)}`, { method: "GET" }),
+
+  /* ============================ Phase 9E-A.2 knowledge references */
+  knowledgeReferenceCreateDraft: (input: {
+    claim: string;
+    referenceType?: string | null;
+    clinicalDomain?: string | null;
+    structuredClaim?: Record<string, unknown>;
+    population?: string | null;
+    intervention?: string | null;
+    outcomeField?: string | null;
+    evidenceGrade?: string | null;
+    citation?: string | null;
+    sourceKind?: string | null;
+    sourceVersion?: string | null;
+    publicationDate?: string | null;
+    jurisdiction?: string | null;
+    limitations?: string[];
+    contradictions?: string[];
+    restrictedFlags?: string[];
+  }) =>
+    liveFetch<{ ok: true; id: string; reviewerState: string }>(
+      "knowledge/knowledge-reference",
+      { method: "POST", body: { action: "create_draft", ...input } },
+    ),
+
+  knowledgeReferenceApprove: (input: { referenceId: string; verificationReason: string }) =>
+    liveFetch<{ ok: true; id: string; reviewerState: string }>(
+      "knowledge/knowledge-reference",
+      { method: "POST", body: { action: "approve", ...input } },
+    ),
+
+  knowledgeReferenceSupersede: (input: {
+    supersedesId: string;
+    newClaim: string;
+    reason: string;
+  }) =>
+    liveFetch<{ ok: true; id: string; supersedesId: string; reviewerState: string }>(
+      "knowledge/knowledge-reference",
+      { method: "POST", body: { action: "supersede", ...input } },
+    ),
+
+  knowledgeReferenceList: () =>
+    liveFetch<{
+      organizationId: string;
+      references: Array<Record<string, unknown>>;
+    }>("knowledge/knowledge-reference", { method: "GET" }),
+
+  /* ================================ Phase 9E-A.2 warnings */
+  warningResolutionRecord: (input: {
+    subjectType: "preview_item" | "product" | "knowledge_reference";
+    subjectId: string;
+    warningKey: string;
+    disposition: "resolved" | "superseded" | "accepted_risk" | "not_applicable";
+    reason: string;
+  }) =>
+    liveFetch<{ ok: true; id: string; subjectType: string; disposition: string }>(
+      "knowledge/warning-resolution",
+      { method: "POST", body: input },
+    ),
+
+  warningResolutionList: (input: {
+    subjectType: "preview_item" | "product" | "knowledge_reference";
+    subjectId: string;
+  }) =>
+    liveFetch<{
+      subjectType: string;
+      subjectId: string;
+      resolutions: Array<{
+        id: string;
+        warningKey: string;
+        disposition: string;
+        reason: string;
+        decidedBy: string;
+        decidedAt: string;
+      }>;
+    }>(
+      `knowledge/warning-resolution?subjectType=${encodeURIComponent(input.subjectType)}&subjectId=${encodeURIComponent(input.subjectId)}`,
+      { method: "GET" },
+    ),
+
+  /* ================================ Phase 9E-A.2 bulk ops */
+  bulkAssignReviewer: (input: { itemIds: string[]; assignee: string; reason: string }) =>
+    liveFetch<{ ok: true; itemsUpdated: number }>(
+      "knowledge/bulk",
+      { method: "POST", body: { action: "assign_reviewer", ...input } },
+    ),
+
+  bulkApplyOrgTag: (input: { itemIds: string[]; tag: string; reason: string }) =>
+    liveFetch<{ ok: true; itemsUpdated: number }>(
+      "knowledge/bulk",
+      { method: "POST", body: { action: "apply_org_tag", ...input } },
+    ),
+
+  bulkMarkDuplicate: (input: { itemIds: string[]; duplicateOfItemId: string; reason: string }) =>
+    liveFetch<{ ok: true; itemsUpdated: number }>(
+      "knowledge/bulk",
+      { method: "POST", body: { action: "mark_duplicate", ...input } },
+    ),
+
   restrictedReviewQueue: () =>
     liveFetch<{
       items: Array<{

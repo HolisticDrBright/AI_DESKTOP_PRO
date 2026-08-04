@@ -2266,6 +2266,10 @@ let catalogRestrictedReviewDecisions = new Map();
 // table Phase 9E-A.1 lands; empty by default until seeded by a test.
 let previewItemsRestricted = new Map();
 let governedKnowledgeReferences = new Map();
+// Phase 9E-A.2: label versions, warning resolutions, bulk state.
+let productLabelVersions = new Map();
+let curationWarningResolutions = [];
+let bulkItemState = new Map(); // itemId -> {assigneeId, orgTag, duplicateOfItemId}
 
 function resetImportFixtures() {
   importBatches = new Map();
@@ -2277,6 +2281,9 @@ function resetImportFixtures() {
   catalogRestrictedReviewDecisions = new Map();
   previewItemsRestricted = new Map();
   governedKnowledgeReferences = new Map();
+  productLabelVersions = new Map();
+  curationWarningResolutions = [];
+  bulkItemState = new Map();
 }
 
 /* ------------------------------------------- Phase 9B catalog + templates
@@ -4251,6 +4258,383 @@ createServer(async (req, res) => {
       const body = await readBody(req);
       const result = await stubGetRestrictedReviewHistory(body, undefined);
       return json(res, result.status, result.payload);
+    }
+
+    // ============================================ Phase 9E-A.2 label editor
+    if (url.pathname === "/rest/v1/rpc/create_product_label_draft" && req.method === "POST") {
+      const body = await readBody(req);
+      const org = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(org)) return json(res, 403, { code: "42501", message: "not a member" });
+      const productCode = String(body._product_code ?? "").trim();
+      const productName = String(body._product_name ?? "").trim();
+      const brand = String(body._brand ?? "").trim();
+      if (!productCode) return json(res, 400, { code: "22023", message: "product_code is required" });
+      if (!productName) return json(res, 400, { code: "22023", message: "product_name is required" });
+      if (!brand) return json(res, 400, { code: "22023", message: "brand is required" });
+      const versionsForCode = [...productLabelVersions.values()].filter(
+        (v) => v.organizationId === org && v.productCode === productCode,
+      );
+      const nextVersion = (versionsForCode.reduce((m, v) => Math.max(m, v.version), 0) || 0) + 1;
+      const id = `plv-${productLabelVersions.size + 1}`;
+      productLabelVersions.set(id, {
+        id,
+        organizationId: org,
+        productCode,
+        productName,
+        brand,
+        version: nextVersion,
+        exactLabel: body._exact_label ?? {},
+        labelSha256: stubHash(body._exact_label ?? {}),
+        sourceUrl: body._source_url ? String(body._source_url).trim() : null,
+        servingSize: body._serving_size ? String(body._serving_size).trim() : null,
+        ingredients: Array.isArray(body._ingredients) ? body._ingredients : [],
+        otherIngredients: body._other_ingredients ? String(body._other_ingredients).trim() : null,
+        allergens: body._allergens ? String(body._allergens).trim() : null,
+        contraindications: body._contraindications ? String(body._contraindications).trim() : null,
+        warningsText: body._warnings_text ? String(body._warnings_text).trim() : null,
+        storageInstructions: body._storage_instructions ? String(body._storage_instructions).trim() : null,
+        observedDate: body._observed_date ?? null,
+        jurisdiction: body._jurisdiction ? String(body._jurisdiction).trim() : null,
+        labelImageRef: body._label_image_ref ? String(body._label_image_ref).trim() : null,
+        supersedesId: null,
+        status: "pending",
+        verifiedAt: null,
+        verifiedBy: null,
+        verificationNote: null,
+        createdAt: new Date().toISOString(),
+        createdBy: "practitioner",
+      });
+      return json(res, 200, { ok: true, id, version: nextVersion, status: "pending" });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/verify_product_label_version" && req.method === "POST") {
+      const body = await readBody(req);
+      const isA2 = productLabelVersions.has(String(body._label_version_id ?? ""));
+      // If the ID lives in the OLD catalog-labels store, forward the parsed
+      // body to the old handler inline so it can use it without re-consuming
+      // the stream.
+      if (!isA2) {
+        // Fall through inline: replicate the old handler's behavior right
+        // here so we don't re-await readBody (which would return empty).
+        const l = catalogLabels.get(String(body._label_version_id ?? ""));
+        if (!l) return json(res, 404, { code: "P0002", message: "product label version not found" });
+        if (fixtureRole !== "owner" && fixtureRole !== "admin") {
+          return json(res, 403, { code: "42501", message: "knowledge administrator role required" });
+        }
+        l.verifiedAt = nowIso();
+        l.verificationNote = String(body._verification_note ?? "");
+        return json(res, 200, null);
+      } else {
+      const org = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(org)) return json(res, 403, { code: "42501", message: "not a member" });
+      const note = String(body._verification_note ?? "").trim();
+      if (!note) return json(res, 400, { code: "22023", message: "verification requires a stated note" });
+      const row = productLabelVersions.get(String(body._label_version_id ?? ""));
+      if (!row) return json(res, 404, { code: "P0002", message: "label version not found" });
+      if (row.organizationId !== org)
+        return json(res, 403, { code: "42501", message: "label version belongs to a different tenant" });
+      if (row.status !== "pending")
+        return json(res, 400, { code: "55000", message: "only pending drafts can be verified" });
+      if (!row.servingSize)
+        return json(res, 400, { code: "22023", message: "serving_size is required for verification" });
+      if (!Array.isArray(row.ingredients) || row.ingredients.length === 0)
+        return json(res, 400, { code: "22023", message: "at least one ingredient is required for verification" });
+      if (!row.sourceUrl && !row.labelImageRef)
+        return json(res, 400, { code: "22023", message: "a label source URL or label image reference is required for verification" });
+      row.status = "verified";
+      row.verifiedAt = new Date().toISOString();
+      row.verifiedBy = "practitioner";
+      row.verificationNote = note;
+      return json(res, 200, { ok: true, id: row.id, status: "verified" });
+      }  // end else block for Phase 9E-A.2 verify handler
+    }
+
+    if (url.pathname === "/rest/v1/rpc/supersede_product_label_version" && req.method === "POST") {
+      const body = await readBody(req);
+      // See verify_product_label_version for why we defer to the older handler
+      // when the ID lives in the OLD store.
+      if (!productLabelVersions.has(String(body._supersedes_id ?? ""))) {
+        // Fall through.
+      } else {
+      const org = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(org)) return json(res, 403, { code: "42501", message: "not a member" });
+      const reason = String(body._reason ?? "").trim();
+      if (!reason) return json(res, 400, { code: "22023", message: "supersede requires a stated reason" });
+      const prior = productLabelVersions.get(String(body._supersedes_id ?? ""));
+      if (!prior) return json(res, 404, { code: "P0002", message: "prior label version not found" });
+      if (prior.organizationId !== org)
+        return json(res, 403, { code: "42501", message: "prior label version belongs to a different tenant" });
+      const versionsForCode = [...productLabelVersions.values()].filter(
+        (v) => v.organizationId === org && v.productCode === prior.productCode,
+      );
+      const nextVersion = versionsForCode.reduce((m, v) => Math.max(m, v.version), 0) + 1;
+      const id = `plv-${productLabelVersions.size + 1}`;
+      productLabelVersions.set(id, {
+        ...prior,
+        id,
+        version: nextVersion,
+        exactLabel: body._exact_label ?? {},
+        labelSha256: stubHash(body._exact_label ?? {}),
+        sourceUrl: body._source_url ? String(body._source_url).trim() : prior.sourceUrl,
+        servingSize: body._serving_size ? String(body._serving_size).trim() : prior.servingSize,
+        ingredients: Array.isArray(body._ingredients) && body._ingredients.length ? body._ingredients : prior.ingredients,
+        otherIngredients: body._other_ingredients ? String(body._other_ingredients).trim() : prior.otherIngredients,
+        allergens: body._allergens ? String(body._allergens).trim() : prior.allergens,
+        contraindications: body._contraindications ? String(body._contraindications).trim() : prior.contraindications,
+        warningsText: body._warnings_text ? String(body._warnings_text).trim() : prior.warningsText,
+        storageInstructions: body._storage_instructions ? String(body._storage_instructions).trim() : prior.storageInstructions,
+        observedDate: body._observed_date ?? prior.observedDate,
+        supersedesId: prior.id,
+        status: "pending",
+        verifiedAt: null,
+        verifiedBy: null,
+        verificationNote: null,
+        createdAt: new Date().toISOString(),
+        createdBy: "practitioner",
+      });
+      return json(res, 200, {
+        ok: true, id, version: nextVersion, supersedesId: prior.id, status: "pending",
+      });
+      }  // end else block for Phase 9E-A.2 supersede handler
+    }
+
+    if (url.pathname === "/rest/v1/rpc/list_product_label_versions" && req.method === "POST") {
+      const body = await readBody(req);
+      const org = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(org)) return json(res, 403, { code: "42501", message: "not a member" });
+      const productCode = String(body._product_code ?? "");
+      const versions = [...productLabelVersions.values()]
+        .filter((v) => v.organizationId === org && v.productCode === productCode)
+        .sort((a, b) => b.version - a.version);
+      return json(res, 200, { productCode, organizationId: org, versions });
+    }
+
+    // ============================================ Phase 9E-A.2 knowledge references
+    if (url.pathname === "/rest/v1/rpc/create_knowledge_reference_draft" && req.method === "POST") {
+      const body = await readBody(req);
+      const org = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(org)) return json(res, 403, { code: "42501", message: "not a member" });
+      const claim = String(body._claim ?? "").trim();
+      if (!claim) return json(res, 400, { code: "22023", message: "claim is required" });
+      const grade = body._evidence_grade ? String(body._evidence_grade).trim() : null;
+      if (grade && !["A", "B", "C", "expert_consensus", "practitioner_experience", "unclassified"].includes(grade)) {
+        return json(res, 400, { code: "23514", message: "invalid evidence grade" });
+      }
+      const id = `gkr-${governedKnowledgeReferences.size + 1}`;
+      governedKnowledgeReferences.set(id, {
+        id,
+        organizationId: org,
+        claim,
+        citation: body._citation ? String(body._citation).trim() : null,
+        referenceType: body._reference_type ? String(body._reference_type).trim() : null,
+        clinicalDomain: body._clinical_domain ? String(body._clinical_domain).trim() : null,
+        structuredClaim: body._structured_claim ?? {},
+        population: body._population ? String(body._population).trim() : null,
+        intervention: body._intervention ? String(body._intervention).trim() : null,
+        outcomeField: body._outcome_field ? String(body._outcome_field).trim() : null,
+        evidenceGrade: grade,
+        sourceKind: body._source_kind ? String(body._source_kind).trim() : null,
+        sourceVersion: body._source_version ? String(body._source_version).trim() : null,
+        publicationDate: body._publication_date ?? null,
+        jurisdiction: body._jurisdiction ? String(body._jurisdiction).trim() : null,
+        limitations: Array.isArray(body._limitations) ? body._limitations : [],
+        contradictions: Array.isArray(body._contradictions) ? body._contradictions : [],
+        restrictedFlags: Array.isArray(body._restricted_flags) ? body._restricted_flags : [],
+        reviewerState: "draft",
+        status: "pending",
+        verifiedAt: null,
+        verifiedBy: null,
+        verificationReason: null,
+        supersededBy: null,
+        createdAt: new Date().toISOString(),
+        createdBy: "practitioner",
+      });
+      return json(res, 200, { ok: true, id, reviewerState: "draft" });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/approve_knowledge_reference" && req.method === "POST") {
+      const body = await readBody(req);
+      const org = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(org)) return json(res, 403, { code: "42501", message: "not a member" });
+      const reason = String(body._verification_reason ?? "").trim();
+      if (!reason) return json(res, 400, { code: "22023", message: "approval requires a stated reason" });
+      const row = governedKnowledgeReferences.get(String(body._reference_id ?? ""));
+      if (!row) return json(res, 404, { code: "P0002", message: "reference not found" });
+      if (row.organizationId !== org)
+        return json(res, 403, { code: "42501", message: "reference belongs to a different tenant" });
+      if (!["draft", "in_review"].includes(row.reviewerState))
+        return json(res, 400, { code: "55000", message: "only draft or in_review references can be approved" });
+      if (["A", "B", "C", "expert_consensus"].includes(row.evidenceGrade) && !row.citation) {
+        return json(res, 400, { code: "22023", message: `a graded reference (${row.evidenceGrade}) must have a citation before approval` });
+      }
+      row.reviewerState = "approved";
+      row.status = "verified";
+      row.verifiedAt = new Date().toISOString();
+      row.verifiedBy = "practitioner";
+      row.verificationReason = reason;
+      return json(res, 200, { ok: true, id: row.id, reviewerState: "approved" });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/supersede_knowledge_reference" && req.method === "POST") {
+      const body = await readBody(req);
+      const org = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(org)) return json(res, 403, { code: "42501", message: "not a member" });
+      const reason = String(body._reason ?? "").trim();
+      const claim = String(body._new_claim ?? "").trim();
+      if (!reason) return json(res, 400, { code: "22023", message: "supersede requires a stated reason" });
+      if (!claim) return json(res, 400, { code: "22023", message: "a new claim text is required" });
+      const prior = governedKnowledgeReferences.get(String(body._supersedes_id ?? ""));
+      if (!prior) return json(res, 404, { code: "P0002", message: "prior reference not found" });
+      if (prior.organizationId !== org)
+        return json(res, 403, { code: "42501", message: "prior reference belongs to a different tenant" });
+      const id = `gkr-${governedKnowledgeReferences.size + 1}`;
+      governedKnowledgeReferences.set(id, {
+        ...prior,
+        id,
+        claim,
+        reviewerState: "draft",
+        status: "pending",
+        verifiedAt: null,
+        verifiedBy: null,
+        verificationReason: null,
+        supersededBy: null,
+        createdAt: new Date().toISOString(),
+      });
+      prior.reviewerState = "superseded";
+      prior.supersededBy = id;
+      return json(res, 200, { ok: true, id, supersedesId: prior.id, reviewerState: "draft" });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/list_knowledge_references" && req.method === "POST") {
+      const body = await readBody(req);
+      const org = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(org)) return json(res, 403, { code: "42501", message: "not a member" });
+      const references = [...governedKnowledgeReferences.values()]
+        .filter((r) => r.organizationId === org)
+        .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+      return json(res, 200, { organizationId: org, references });
+    }
+
+    // ============================================ Phase 9E-A.2 warning resolutions
+    if (url.pathname === "/rest/v1/rpc/record_warning_resolution" && req.method === "POST") {
+      const body = await readBody(req);
+      const org = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(org)) return json(res, 403, { code: "42501", message: "not a member" });
+      const subjectType = String(body._subject_type ?? "");
+      if (!["preview_item", "product", "knowledge_reference"].includes(subjectType)) {
+        return json(res, 400, { code: "22023", message: "unknown subject_type" });
+      }
+      const disposition = String(body._disposition ?? "");
+      if (!["resolved", "superseded", "accepted_risk", "not_applicable"].includes(disposition)) {
+        return json(res, 400, { code: "22023", message: "unknown disposition" });
+      }
+      const reason = String(body._reason ?? "").trim();
+      const warningKey = String(body._warning_key ?? "").trim();
+      if (!reason) return json(res, 400, { code: "22023", message: "a warning resolution requires a stated reason" });
+      if (!warningKey) return json(res, 400, { code: "22023", message: "warning_key is required" });
+      const subjectId = String(body._subject_id ?? "");
+      // Verify subject exists + belongs to tenant.
+      if (subjectType === "preview_item") {
+        const item = previewItemsRestricted.get(subjectId);
+        if (!item) return json(res, 404, { code: "P0002", message: "preview item not found" });
+        if (item.organizationId !== org)
+          return json(res, 403, { code: "42501", message: "subject belongs to a different tenant" });
+      } else if (subjectType === "product") {
+        if (!catalogReviewProducts.has(subjectId))
+          return json(res, 404, { code: "P0002", message: "product not found" });
+      } else {
+        const ref = governedKnowledgeReferences.get(subjectId);
+        if (!ref) return json(res, 404, { code: "P0002", message: "reference not found" });
+        if (ref.organizationId !== org)
+          return json(res, 403, { code: "42501", message: "subject belongs to a different tenant" });
+      }
+      const id = `cwr-${curationWarningResolutions.length + 1}`;
+      curationWarningResolutions.push({
+        id, organizationId: org, subjectType, subjectId,
+        warningKey, disposition, reason,
+        decidedBy: "practitioner", decidedAt: new Date().toISOString(),
+      });
+      return json(res, 200, { ok: true, id, subjectType, disposition });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/list_warning_resolutions" && req.method === "POST") {
+      const body = await readBody(req);
+      const org = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(org)) return json(res, 403, { code: "42501", message: "not a member" });
+      const subjectType = String(body._subject_type ?? "");
+      const subjectId = String(body._subject_id ?? "");
+      const resolutions = curationWarningResolutions
+        .filter((r) => r.organizationId === org && r.subjectType === subjectType && r.subjectId === subjectId)
+        .sort((a, b) => (a.decidedAt < b.decidedAt ? 1 : -1));
+      return json(res, 200, { subjectType, subjectId, resolutions });
+    }
+
+    // ============================================ Phase 9E-A.2 bulk ops
+    if (url.pathname === "/rest/v1/rpc/bulk_assign_reviewer" && req.method === "POST") {
+      const body = await readBody(req);
+      const org = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(org)) return json(res, 403, { code: "42501", message: "not a member" });
+      const items = Array.isArray(body._item_ids) ? body._item_ids : [];
+      if (items.length === 0) return json(res, 400, { code: "22023", message: "no items selected" });
+      if (items.length > 500) return json(res, 400, { code: "22023", message: "bulk operation upper bound is 500 items" });
+      const reason = String(body._reason ?? "").trim();
+      if (!reason) return json(res, 400, { code: "22023", message: "a bulk-assign action requires a stated reason" });
+      let updated = 0;
+      for (const id of items) {
+        const s = bulkItemState.get(String(id)) ?? {};
+        s.assigneeId = String(body._assignee ?? "");
+        bulkItemState.set(String(id), s);
+        updated += 1;
+      }
+      return json(res, 200, { ok: true, itemsUpdated: updated });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/bulk_apply_org_tag" && req.method === "POST") {
+      const body = await readBody(req);
+      const org = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(org)) return json(res, 403, { code: "42501", message: "not a member" });
+      const items = Array.isArray(body._item_ids) ? body._item_ids : [];
+      if (items.length === 0) return json(res, 400, { code: "22023", message: "no items selected" });
+      if (items.length > 500) return json(res, 400, { code: "22023", message: "bulk operation upper bound is 500 items" });
+      const tag = String(body._tag ?? "").trim();
+      const reason = String(body._reason ?? "").trim();
+      if (!tag) return json(res, 400, { code: "22023", message: "tag is required" });
+      if (!reason) return json(res, 400, { code: "22023", message: "a bulk-tag action requires a stated reason" });
+      if (/approved|verified|cleared|activated|published|selectable|attached/i.test(tag)) {
+        return json(res, 400, {
+          code: "22023",
+          message: "this tag looks like a clinical review outcome; use the dedicated governed action instead",
+        });
+      }
+      let updated = 0;
+      for (const id of items) {
+        const s = bulkItemState.get(String(id)) ?? {};
+        s.orgTag = tag;
+        bulkItemState.set(String(id), s);
+        updated += 1;
+      }
+      return json(res, 200, { ok: true, itemsUpdated: updated });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/bulk_mark_duplicate" && req.method === "POST") {
+      const body = await readBody(req);
+      const org = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(org)) return json(res, 403, { code: "42501", message: "not a member" });
+      const items = Array.isArray(body._item_ids) ? body._item_ids : [];
+      if (items.length === 0) return json(res, 400, { code: "22023", message: "no items selected" });
+      if (items.length > 500) return json(res, 400, { code: "22023", message: "bulk operation upper bound is 500 items" });
+      const canonical = String(body._duplicate_of_item_id ?? "");
+      const reason = String(body._reason ?? "").trim();
+      if (!reason) return json(res, 400, { code: "22023", message: "a bulk-mark-duplicate action requires a stated reason" });
+      let updated = 0;
+      for (const id of items) {
+        if (id === canonical) continue;
+        const s = bulkItemState.get(String(id)) ?? {};
+        s.duplicateOfItemId = canonical;
+        bulkItemState.set(String(id), s);
+        updated += 1;
+      }
+      return json(res, 200, { ok: true, itemsUpdated: updated });
     }
 
     if (url.pathname === "/rest/v1/rpc/get_restricted_review_queue" && req.method === "POST") {
