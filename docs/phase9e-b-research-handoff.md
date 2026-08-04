@@ -509,3 +509,86 @@ first batch for a separate practitioner sitting.
 506 restricted / 310 warnings / 0 active products / 0 approved refs /
 0 commercial links / 0 verified labels / 0 supplement products active /
 0 copilot runs`.
+
+## The preview ran — 2026-08-04, real practitioner session
+
+The section above described the procedure; this section records the run
+that actually happened, through the real boundary, with nothing bypassed.
+
+**Session.** A production build (`APP_EDITION=clinical
+NEXT_PUBLIC_USE_LIVE_API=true`) served on `127.0.0.1:3300` against the
+staging project `urcjiehlxoehievobezf`. A Playwright-driven Chromium
+signed in at `/login` as `p1.staging@brightlongevity.test` (retained
+staging fixture, `owner` of *Bright Longevity Clinic (Demo)*) via the real
+form → GoTrue password grant → httpOnly session cookies. To make that
+sign-in possible the fixture's password was rotated to a one-time value by
+a staging SQL update **before** the run and re-randomized (value
+discarded) **after** it. The batches themselves were created only by the
+authenticated browser session through PostgREST — no service-role, no
+SQL-inserted batch, no forged claims. Unauthenticated probes of the same
+surface return 403 and a redirect to `/login?next=…`, captured before the
+sign-in.
+
+**Upload.** The four files were uploaded together on
+`Settings → Import review → Research handoff` with the no-PHI attestation
+checked; SHA-256 of every file matched the manifest
+(`7e5955eb7d2f42c7…`).
+
+**Result.** `preview_research_handoff` created three batches atomically,
+HTTP 200, UI success panel rendered with the posture line
+`transport=postgrest · project=urcjiehlxoehievobezf · edition=clinical ·
+live_mode=true`:
+
+| Batch | id | items | commercial_only |
+| --- | --- | --- | --- |
+| clinical | `a2e93c6f-85d7-4b8f-b567-7b555614339a` | 164 | false |
+| evidence | `d3c211c2-69bc-4a66-97c8-a5a8d2c5b1bd` | 433 | false |
+| commercial | `fe44110a-1dc9-4088-867a-f959ce2e058d` | 172 | true |
+
+All three are `status='preview'`. Idempotent retries returned the same
+three ids with `idempotent=true`. `research_handoff.previewed` audit
+events carry the manifest hash and all three batch ids.
+
+### Three defects found by the real run, and their fixes
+
+The package refused twice and the UI failed once before the run
+succeeded — each refusal was a real defect, each fixed at its source, no
+safety check weakened:
+
+1. **`commercial_prh_id_not_in_clinical` (HTTP 400).** The parser assumed
+   every commercial row references a researched clinical row. The package
+   ships a commercial-link inventory for **all 172 source rows**, of which
+   8 are declared `records_skipped_without_research`. Fix: the manifest is
+   now the contract — the unique orphan count must equal the declared skip
+   count exactly. An undeclared orphan (a `PRH-9999` typo) still refuses
+   the whole package; fewer orphans than declared also refuses
+   (`commercial_orphans_fewer_than_declared`).
+2. **PostgREST 409 / SQLSTATE 23505.** `adaptForPreview` keyed evidence
+   rows on `product_research_id` — a *shared foreign reference* (433 rows
+   over 163 products) — colliding on the items unique constraint.
+   Fix: evidence rows key on their own unique `source_id` /
+   `evidence_id`; a duplicated evidence id now refuses at parse time with
+   the PHI-safe category `duplicate_evidence_id`.
+3. **Success response never rendered.** The panel parsed the response body
+   as the payload, but `runLive` wraps success as `{ data: … }` — so
+   `result.clinical` was `undefined` and the success panel crashed. Fix:
+   the client unwraps the envelope and refuses to claim success on any
+   unrecognized shape (`unexpected_response_shape`) — a transport that did
+   not really run the RPC can no longer render batch ids.
+
+### Verification after the run
+
+- `supabase/tests/desktop_phase9eb_research_handoff.sql`: 20/20 on
+  staging, rolled back.
+- `supabase/tests/desktop_no_demo_catalog_content.sql`: 15/15 on staging,
+  rolled back — the preview batches reach no catalog surface; picker,
+  search and attach-by-id all still refuse; the retained seed is intact.
+- Unit suite: 425/425.
+- Staging aggregates after the run: **11 preview / 32 cancelled /
+  0 committed** batches, 1 748 items in preview, **0 active supplement
+  products, 0 verified labels, 0 approved references**. Nothing was
+  committed, activated, attached, or approved.
+
+The next gated step remains what it was: a practitioner reviews the first
+bounded batch (the 10-record audited sample) in the workspace. Nothing in
+this run pre-empted that review.

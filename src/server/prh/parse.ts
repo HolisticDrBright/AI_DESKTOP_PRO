@@ -14,8 +14,12 @@
  *     values matching /^PRH-\d{4}$/, `clinically_approved:false`,
  *     `imported:false`, no `affiliate_url` / `commercial_url` /
  *     `discount_code` / `price`.
- *   - `commercial-links.jsonl`: 172 records, every one has a
- *     `product_research_id` also present in the clinical set.
+ *   - `commercial-links.jsonl`: 172 records, every one has a well-shaped
+ *     `product_research_id`. Ids absent from the clinical set are allowed
+ *     ONLY as the researcher's declared skipped-without-research rows: the
+ *     unique orphan count must equal the manifest's
+ *     `counts.records_skipped_without_research` exactly. An undeclared
+ *     orphan (a typo like PRH-9999) still refuses the whole package.
  *   - `evidence-sources.jsonl`: 433 records, every one URL-only with
  *     `sha256:null` (unarchived).
  *   - Each JSONL's declared filename, byte size, and SHA-256 hash must
@@ -94,6 +98,7 @@ export type HandoffParseResult = {
     labelVerificationCandidateCount: number;
     unresolvedResearched: number;
     unresolvedTotal: number;
+    commercialOrphanPrhIds: string[];
   };
 };
 
@@ -174,7 +179,10 @@ function parseManifest(bytes: Uint8Array): HandoffManifest {
   }
   const c = m.counts as HandoffManifest["counts"] | undefined;
   if (!c || typeof c.records_researched !== "number" || typeof c.commercial_link_records !== "number"
-      || typeof c.evidence_source_records !== "number") {
+      || typeof c.evidence_source_records !== "number"
+      || typeof c.records_skipped_without_research !== "number"
+      || !Number.isInteger(c.records_skipped_without_research)
+      || c.records_skipped_without_research < 0) {
     throw new HandoffPackageError("manifest_bad_counts");
   }
   const g = m.governance as HandoffManifest["governance"] | undefined;
@@ -234,21 +242,56 @@ function assertPrhIdShapeAndUniqueness(items: unknown[]): Set<string> {
   return seen;
 }
 
-function assertCrossFileReferences(commercialItems: unknown[], clinicalIds: Set<string>): void {
+/**
+ * A commercial row may reference a product the researcher skipped without
+ * research — the package ships a link inventory for ALL source rows, while
+ * clinical enrichment covers only the researched subset. The manifest is
+ * the contract for how many such orphans are legitimate: the unique orphan
+ * count must equal `counts.records_skipped_without_research` exactly, so a
+ * single mistyped id still refuses the whole package.
+ */
+function assertCrossFileReferences(
+  commercialItems: unknown[],
+  clinicalIds: Set<string>,
+  declaredSkippedWithoutResearch: number,
+): string[] {
+  const orphans = new Set<string>();
   for (const item of commercialItems) {
     const r = item as Record<string, unknown>;
     const id = r.product_research_id;
     if (typeof id !== "string") throw new HandoffPackageError("commercial_missing_prh_id");
-    if (!clinicalIds.has(id)) throw new HandoffPackageError("commercial_prh_id_not_in_clinical");
+    if (!/^PRH-\d{4}$/.test(id)) throw new HandoffPackageError("bad_prh_id_shape_commercial");
+    if (!clinicalIds.has(id)) orphans.add(id);
   }
+  if (orphans.size > declaredSkippedWithoutResearch)
+    throw new HandoffPackageError("commercial_prh_id_not_in_clinical");
+  if (orphans.size < declaredSkippedWithoutResearch)
+    throw new HandoffPackageError("commercial_orphans_fewer_than_declared");
+  return [...orphans].sort();
 }
 
 function assertEvidenceRepresentation(items: unknown[]): void {
+  const seenIds = new Set<string>();
   for (const item of items) {
     const r = item as Record<string, unknown>;
     if (typeof r.url !== "string" || r.url.length === 0) throw new HandoffPackageError("evidence_missing_url");
     if (r.sha256 !== null && r.sha256 !== undefined) throw new HandoffPackageError("evidence_archived_sha256_not_allowed");
+    // Evidence rows are keyed by their own id (source_id / evidence_id) —
+    // many evidence rows share one product_research_id, so a duplicated
+    // evidence id would collide inside the preview batch at the database's
+    // unique constraint. Catch it here with a PHI-safe category instead.
+    const id = evidenceExternalId(r);
+    if (id !== null) {
+      if (seenIds.has(id)) throw new HandoffPackageError("duplicate_evidence_id");
+      seenIds.add(id);
+    }
   }
+}
+
+function evidenceExternalId(r: Record<string, unknown>): string | null {
+  if (typeof r.source_id === "string" && r.source_id.length > 0) return r.source_id;
+  if (typeof r.evidence_id === "string" && r.evidence_id.length > 0) return r.evidence_id;
+  return null;
 }
 
 export function parseHandoffPackage(input: HandoffPackageInput): HandoffParseResult {
@@ -295,7 +338,8 @@ export function parseHandoffPackage(input: HandoffPackageInput): HandoffParseRes
   assertGovernanceOk(clinicalItems, "clinical");
   const clinicalIds = assertPrhIdShapeAndUniqueness(clinicalItems);
   assertCommercialIsolation(commercialItems);
-  assertCrossFileReferences(commercialItems, clinicalIds);
+  const commercialOrphanPrhIds = assertCrossFileReferences(
+    commercialItems, clinicalIds, manifest.counts.records_skipped_without_research);
   assertEvidenceRepresentation(evidenceItems);
 
   // 7. Aggregate the sanitized numbers.
@@ -344,6 +388,7 @@ export function parseHandoffPackage(input: HandoffPackageInput): HandoffParseRes
       labelVerificationCandidateCount,
       unresolvedResearched,
       unresolvedTotal: unresolvedResearched + manifest.counts.records_skipped_without_research,
+      commercialOrphanPrhIds,
     },
   };
 }
@@ -352,8 +397,10 @@ export function parseHandoffPackage(input: HandoffPackageInput): HandoffParseRes
  * Adapt a parsed clinical/evidence/commercial item to the `_items` array
  * shape `preview_knowledge_import` expects (`{entityType, payload, sourceRaw,
  * externalKey, displayName, sourceSheet}`). Never invents fields; never
- * writes ingredient text into an externalKey slot; product_research_id is
- * the external key.
+ * writes ingredient text into an externalKey slot. Clinical and commercial
+ * rows key on product_research_id; evidence rows key on their own
+ * source_id / evidence_id (product_research_id is a shared foreign
+ * reference there, not an identity).
  */
 export function adaptForPreview(
   which: "clinical" | "evidence" | "commercial",
@@ -365,9 +412,15 @@ export function adaptForPreview(
     "product_label_commercial_link";
   return items.map((raw, index) => {
     const r = raw as Record<string, unknown>;
+    // Evidence rows key on their OWN id — many evidence rows share one
+    // product_research_id, which is a foreign reference there, not an
+    // identity. Clinical and commercial rows key on product_research_id.
     const id =
-      typeof r.product_research_id === "string" ? r.product_research_id :
-      typeof r.evidence_id === "string" ? r.evidence_id : `row-${index + 1}`;
+      which === "evidence"
+        ? evidenceExternalId(r) ?? `row-${index + 1}`
+        : typeof r.product_research_id === "string"
+        ? r.product_research_id
+        : `row-${index + 1}`;
     const displayName =
       typeof r.official_product_name === "string" && r.official_product_name.length > 0
         ? r.official_product_name

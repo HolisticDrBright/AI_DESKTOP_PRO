@@ -69,7 +69,16 @@ export function ResearchHandoffFiltersPanel() {
         setState("failed");
         return;
       }
-      const parsed = JSON.parse(text) as PreviewResult;
+      // runLive wraps every success payload as { data: ... } — unwrap it
+      // and refuse to claim success on a shape we don't recognize, so a
+      // transport that didn't really run the RPC can't render batch IDs.
+      const envelope = JSON.parse(text) as { data?: PreviewResult };
+      const parsed = envelope.data;
+      if (!parsed || parsed.ok !== true || !parsed.clinical?.batchId) {
+        setError("unexpected_response_shape");
+        setState("failed");
+        return;
+      }
       setResult(parsed);
       setState("success");
     } catch (e) {

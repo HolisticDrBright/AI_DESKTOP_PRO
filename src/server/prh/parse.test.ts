@@ -101,10 +101,10 @@ function buildFixture(overrides: Partial<{
       { file: "README.md", sha256: hash(Buffer.from("x3")) },
     ],
     counts: {
-      total_source_rows: clinical.length + 8,
+      total_source_rows: clinical.length,
       records_researched: clinical.length,
-      records_skipped_without_research: 8,
-      unresolved_records: clinical.filter((r) => Array.isArray(r.unresolved_reasons) && (r.unresolved_reasons as unknown[]).length > 0).length + 8,
+      records_skipped_without_research: 0,
+      unresolved_records: clinical.filter((r) => Array.isArray(r.unresolved_reasons) && (r.unresolved_reasons as unknown[]).length > 0).length,
       commercial_link_records: commercial.length,
       evidence_source_records: evidence.length,
       records_with_complete_supplement_facts: 1,
@@ -147,7 +147,8 @@ describe("Phase 9E-B — Product Research Handoff parser", () => {
     expect(parsed.aggregates.supplementFactsCompleteCount).toBe(1);
     expect(parsed.aggregates.labelVerificationCandidateCount).toBe(1);
     expect(parsed.aggregates.unresolvedResearched).toBe(1);
-    expect(parsed.aggregates.unresolvedTotal).toBe(1 + 8);
+    expect(parsed.aggregates.unresolvedTotal).toBe(1);
+    expect(parsed.aggregates.commercialOrphanPrhIds).toEqual([]);
     expect(parsed.manifestSha256).toMatch(/^[0-9a-f]{64}$/);
   });
 
@@ -198,13 +199,82 @@ describe("Phase 9E-B — Product Research Handoff parser", () => {
     expect(() => parse(fx)).toThrow(/duplicate_prh_id_PRH-0001/);
   });
 
-  test("cross-file reference: commercial row references an unknown PRH id rejects", () => {
+  test("cross-file reference: an UNDECLARED orphan PRH id rejects (typo case)", () => {
     const fx = buildFixture({
       mutateCommercialItem: (item, i) => {
         if (i === 0) item.product_research_id = "PRH-9999";
       },
     });
     expect(() => parse(fx)).toThrow(/commercial_prh_id_not_in_clinical/);
+  });
+
+  test("declared skipped-without-research commercial rows are accepted and surfaced", () => {
+    // The package ships a commercial-link inventory for ALL source rows;
+    // clinical enrichment covers only the researched subset. One extra
+    // commercial row whose id has no clinical counterpart is legal when
+    // the manifest declares exactly one skipped-without-research record.
+    const fx = buildFixture({
+      commercialCount: 4,
+      mutateCommercialItem: (item, i) => {
+        if (i === 3) item.product_research_id = "PRH-0099";
+      },
+      mutateManifest: (m) => {
+        const counts = m.counts as Record<string, unknown>;
+        counts.records_skipped_without_research = 1;
+        counts.total_source_rows = 4;
+      },
+    });
+    const parsed = parse(fx);
+    expect(parsed.aggregates.commercialCount).toBe(4);
+    expect(parsed.aggregates.commercialOrphanPrhIds).toEqual(["PRH-0099"]);
+  });
+
+  test("fewer orphans than the manifest declares rejects (declaration mismatch)", () => {
+    const fx = buildFixture({
+      mutateManifest: (m) => {
+        (m.counts as Record<string, unknown>).records_skipped_without_research = 8;
+      },
+    });
+    expect(() => parse(fx)).toThrow(/commercial_orphans_fewer_than_declared/);
+  });
+
+  test("evidence rows key on their own id, never the shared product_research_id", () => {
+    // The real package's evidence rows carry BOTH a unique source_id and a
+    // product_research_id shared by several rows. Keying on the latter
+    // collides at the database's unique constraint (the observed
+    // PostgREST 409 / SQLSTATE 23505). The adapter must prefer the row's
+    // own id.
+    const fx = buildFixture({
+      mutateEvidenceItem: (item, i) => {
+        delete item.evidence_id;
+        item.source_id = `EV-${String(1 + i).padStart(5, "0")}`;
+        item.product_research_id = "PRH-0001"; // shared across all rows
+      },
+    });
+    const parsed = parse(fx);
+    const adapted = adaptForPreview("evidence", parsed.evidence.items);
+    expect(adapted.map((a) => a.externalKey)).toEqual(["EV-00001", "EV-00002", "EV-00003"]);
+  });
+
+  test("duplicated evidence id rejects with a PHI-safe category", () => {
+    const fx = buildFixture({
+      mutateEvidenceItem: (item) => {
+        item.source_id = "EV-00001";
+      },
+    });
+    expect(() => parse(fx)).toThrow(/duplicate_evidence_id/);
+  });
+
+  test("badly shaped commercial PRH id rejects even when orphans are declared", () => {
+    const fx = buildFixture({
+      mutateCommercialItem: (item, i) => {
+        if (i === 0) item.product_research_id = "PRH-99";
+      },
+      mutateManifest: (m) => {
+        (m.counts as Record<string, unknown>).records_skipped_without_research = 1;
+      },
+    });
+    expect(() => parse(fx)).toThrow(/bad_prh_id_shape_commercial/);
   });
 
   test("commercial isolation: any clinical field in a commercial row rejects", () => {
