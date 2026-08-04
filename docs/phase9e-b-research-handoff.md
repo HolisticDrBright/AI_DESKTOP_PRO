@@ -315,6 +315,66 @@ preview batch exists in the org. The next-step wording points at this
 document and at the "Read a file" tab where the signed-in practitioner
 uploads the package.
 
+## Preview batch verification round 5 — three batch IDs seen in UI, none observed on staging
+
+**Operator statement:** "The Product Research Handoff preview completed
+through the signed-in P2 practitioner UI. Three batch IDs appeared."
+
+**Verification result on `urcjiehlxoehievobezf`, read-only via Supabase MCP:**
+
+| Query | Value | Expected if uploads landed |
+|---|---|---|
+| Batches with `source_kind='research_handoff'` | **0** | 3 |
+| Batches with source filename matching any of the three JSONL files | **0** | ≥ 1 |
+| Batches carrying `manifest_sha256` at all | **0** | ≥ 1 |
+| Batches with `item_count` in `{164, 172, 433, 769}` | **0** | ≥ 1 |
+| Audit events with `action='research_handoff.previewed'` | **0** | 1 |
+| Audit events of any kind in the last 6 hours | **0** | ≥ 1 (preview run alone would write ≥ 4 audit rows) |
+| Latest batch on this project | **2026-08-02 22:29 UTC** (unchanged) | ≥ today |
+| Total preview batches on this project | **8** (unchanged) | 8 + 3 = 11 |
+
+Same result as round 3. Zero write activity in `~48` hours. The three
+batch IDs the operator saw did **not** persist to this Supabase project.
+`.env.local` in this repo points at `CLINICAL_SUPABASE_URL=https://urcjiehlxoehievobezf.supabase.co`,
+which is the same project I am reading.
+
+**No batch identifiers are recorded** because none exist on this project.
+Fabricating identifiers would violate the operator's rule against changing
+source data.
+
+### Possible explanations — cannot resolve from this side
+
+1. The dev server the operator used was configured to a **different Supabase
+   project**. Check the exact `CLINICAL_SUPABASE_URL` in the environment
+   the dev server was launched with.
+2. The API route succeeded at the parser stage but the RPC call was silently
+   rewritten by an intermediary (proxy, service worker, browser extension).
+3. The response body the operator saw was returned from a cached / mocked
+   layer (e.g. Playwright fixture, service worker) rather than the real
+   endpoint. The batch IDs shown would then be from a stubbed response,
+   not real staging batches.
+4. The three batch IDs came from an in-flight response that was rolled back
+   after the operator screenshotted (rare — my wrapper is transactional
+   and the audit event only fires on success).
+
+### What the operator can share to unblock verification (no session material required)
+
+- The three batch IDs shown in the UI. Batch IDs are UUIDs — sharing them
+  is safe. I will look them up across all orgs on this project.
+- The browser DevTools **Network → Response** panel for the `POST
+  /api/live/knowledge/research-handoff` request: exact response body
+  (which contains no session material, only batch metadata) and the
+  `Content-Type`.
+- The **Request URL** shown in the Network panel — confirms which host
+  answered the request.
+
+Until the discrepancy is resolved, the `Research handoff` tab renders its
+honest-empty state and the aggregates below remain limited to the
+manifest-level counts. **No batch is committed, no product is verified,
+no reference is approved, no restriction is cleared, no warning is
+resolved, no commercial link is attached, and no product becomes active,
+selectable, patient-attached, or copilot-available.**
+
 ## Preview batch verification round 3 — operator reported three uploads
 
 **Operator statement:** "I created three preview batches through the normal
