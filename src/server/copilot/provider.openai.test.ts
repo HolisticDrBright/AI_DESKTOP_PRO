@@ -17,6 +17,11 @@ function baseApproval(overrides: Partial<OpenAIProviderApproval> = {}): OpenAIPr
     retentionMode: "modified",
     processingRegion: "us-east-1",
     keyOwnership: "platform_governed",
+    organizationId: "org-1",
+    providerRegistryId: "prov-1",
+    providerSecretRef: "arn:aws:secretsmanager:us-east-1:123456789012:secret:openai-hipaa-live",
+    organizationHeader: null,
+    projectHeader: null,
     activationDate: null,
     expirationDate: null,
     revocationState: "not_revoked",
@@ -118,21 +123,23 @@ describe("OpenAI adapter — Phase 10B.1 makes NO external request", () => {
     ).rejects.toBeInstanceOf(CopilotUnavailable);
   });
 
-  test("adapter never issues an external fetch in this PR", async () => {
-    let fetchCalls = 0;
-    const spyFetch: typeof globalThis.fetch = async () => {
-      fetchCalls += 1;
-      return new Response("", { status: 200 });
-    };
+  test("adapter with default (refusal) transport never sends", async () => {
+    // The default transport is refusalTransport. Every path must throw
+    // CopilotUnavailable before any network call would happen.
+    const { SecretResolver } = await import("./secrets");
     const adapter = createOpenAIAdapter({
       approval: baseApproval(),
       model: "gpt-4o-2024-08-06",
       containsPHI: false,
-      secretResolver: async () => "resolved-secret",
-      fetch: spyFetch,
+      secretResolver: new SecretResolver({
+        client: {
+          async getSecret() {
+            return { secretString: "TEST_FAKE_BEARER_abcdefghijklmnop1234", versionId: "v1" };
+          },
+        },
+      }),
+      // No transport → refusalTransport is the default.
     });
-    // Phase 10B.1 refuses even with a resolver, because the request body
-    // path throws before any network call.
     await expect(
       adapter.draft({
         runType: "practitioner_brief",
@@ -141,6 +148,5 @@ describe("OpenAI adapter — Phase 10B.1 makes NO external request", () => {
         allowedCitationIds: new Set<string>(),
       }),
     ).rejects.toBeInstanceOf(CopilotUnavailable);
-    expect(fetchCalls, "adapter must NOT hit fetch in Phase 10B.1").toBe(0);
   });
 });

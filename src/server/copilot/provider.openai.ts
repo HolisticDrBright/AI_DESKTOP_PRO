@@ -1,27 +1,37 @@
 /**
  * Phase 10B.1 — OpenAI provider adapter.
  *
- * SERVER-ONLY. Never bundled into the client. Never contacts OpenAI in
- * this PR — the adapter evaluates the approval gates and refuses. The
- * scaffold below is what the Phase 10B.2 supervised activation will
- * replace once every gate below is satisfied and recorded:
+ * SERVER-ONLY. Composes: approval gate → secret resolver → request
+ * builder → transport (with retry + timeout) → response validator.
  *
- *   - executed OpenAI BAA (registry.baa_status_reference is not null)
- *   - Modified Retention posture (registry.retention_mode in ('zero','modified'))
- *   - per-org state = approved_for_synthetic OR approved_for_phi
- *   - PHI only allowed on approved_for_phi
- *   - active (not revoked, not expired, not suspended)
- *   - platform_governed OR org_byok key ref, RESOLVED FROM SECRET MANAGER
+ * Nothing calls `fetch` directly. In this PR the transport is
+ * `refusalTransport` by default, and the secret resolver is undefined by
+ * default — either condition alone forces `CopilotUnavailable` before
+ * any network attempt.
  *
- * If ANY gate fails, the adapter raises `CopilotUnavailable`. Consumer
- * ChatGPT (chat.openai.com) is REJECTED unconditionally — a governed
- * clinical provider is never the consumer product.
+ * Consumer ChatGPT (`chatgpt` provider_name) is REJECTED unconditionally.
  */
 if (typeof window !== "undefined") {
   throw new Error("copilot/provider.openai is server-only.");
 }
 
-import { CopilotUnavailable, type CopilotDraftOutput, type CopilotProvider, type CopilotRunType } from "./provider";
+import {
+  CopilotUnavailable,
+  type CopilotDraftOutput,
+  type CopilotProvider,
+  type CopilotRunType,
+} from "./provider";
+import type { MinimizedEnvelope } from "./data-minimizer";
+import { buildOpenAIRequest, parseAndValidateOpenAIResponse } from "./provider.openai.request";
+import { refusalTransport, type Transport } from "./http-transport";
+import {
+  classifyProviderError,
+  DEFAULT_RETRY_POLICY,
+  withRetry,
+  type FailureCategory,
+  type RetryPolicy,
+} from "./retry";
+import type { SecretResolver, SecretResolverContext } from "./secrets";
 
 export type OpenAIProviderApproval = {
   providerName: string;
@@ -43,13 +53,13 @@ export type OpenAIProviderApproval = {
     | "suspended"
     | "revoked";
   containsPHI: boolean;
+  organizationId: string;
+  providerRegistryId: string;
+  providerSecretRef: string | null;
+  organizationHeader: string | null;
+  projectHeader: string | null;
 };
 
-/**
- * Deterministic pre-flight refusal decision. Runs BEFORE any secret
- * resolution and BEFORE any network attempt. The reasons returned are
- * PHI-safe categories, never raw error text.
- */
 export function evaluateOpenAIApproval(approval: OpenAIProviderApproval): {
   activated: boolean;
   refusalCategory:
@@ -95,40 +105,33 @@ export function evaluateOpenAIApproval(approval: OpenAIProviderApproval): {
   return { activated: true, refusalCategory: null };
 }
 
-/**
- * Look up whether the approval names a model on its allowlist. Never
- * falls back to a "close" model; unknown model → refuse.
- */
 export function isModelApproved(approval: OpenAIProviderApproval, model: string): boolean {
   return approval.approvedModelAllowlist.includes(model);
 }
 
-/**
- * Factory. Never invokes OpenAI in this PR. The `secretResolver` is
- * called ONLY after every approval gate has passed. In Phase 10B.1 the
- * resolver is not wired to a real secret manager, so the adapter
- * intentionally refuses.
- */
 export type OpenAIAdapterOptions = {
   approval: OpenAIProviderApproval;
   model: string;
   containsPHI: boolean;
-  // Provided by Phase 10B.2. In 10B.1 this is always `undefined` and the
-  // adapter refuses with `CopilotUnavailable`.
-  secretResolver?: (secretRef: string) => Promise<string>;
-  // Optional injected `fetch` for future testability. Not used in this PR
-  // (no request is made).
-  fetch?: typeof globalThis.fetch;
+  envelope?: MinimizedEnvelope;
+  transport?: Transport;
+  secretResolver?: SecretResolver;
+  retryPolicy?: RetryPolicy;
 };
 
+/**
+ * Compose the full adapter. Every branch below evaluates the approval
+ * gate BEFORE any I/O, and the transport is refusal-only by default.
+ */
 export function createOpenAIAdapter(options: OpenAIAdapterOptions): CopilotProvider {
-  const { approval, model, containsPHI, secretResolver } = options;
+  const { approval, model, containsPHI, envelope, secretResolver, retryPolicy } = options;
+  const transport = options.transport ?? refusalTransport;
   const decision = evaluateOpenAIApproval({ ...approval, containsPHI });
 
   return {
     name: `openai:${approval.providerKind}`,
     model,
-    async draft(_input: {
+    async draft(input: {
       runType: CopilotRunType;
       lens: string;
       inputSnapshot: Record<string, unknown>;
@@ -145,24 +148,97 @@ export function createOpenAIAdapter(options: OpenAIAdapterOptions): CopilotProvi
         );
       }
       if (!secretResolver) {
-        // Phase 10B.1: no secret resolver is wired. Phase 10B.2 supplies
-        // one after Modified Retention + BAA are verified. Until then,
-        // we refuse.
         throw new CopilotUnavailable(
           "OpenAI provider not activated (secret_resolver_missing). No external request was made.",
         );
       }
-      // Phase 10B.2 will implement:
-      //   1. `const secret = await secretResolver(approval.providerSecretRef);`
-      //   2. build the OpenAI Responses API request from the minimized envelope
-      //   3. call OpenAI with an explicit endpoint + timeout + no retries on
-      //      policy / auth / safety failures
-      //   4. validate the response schema and citation ids
-      //   5. return CopilotDraftOutput
-      // In this PR we never reach that path.
-      throw new CopilotUnavailable(
-        "OpenAI provider not activated in Phase 10B.1. Phase 10B.2 supervised activation required.",
+      if (!envelope) {
+        throw new CopilotUnavailable(
+          "OpenAI provider not activated (envelope_missing). No external request was made.",
+        );
+      }
+      if (!approval.providerSecretRef) {
+        throw new CopilotUnavailable(
+          "OpenAI provider not activated (provider_secret_ref_missing). No external request was made.",
+        );
+      }
+      if (transport === refusalTransport) {
+        // Phase 10B.1: default transport refuses. Phase 10B.2 replaces
+        // this with the AWS-Secrets-Manager + fetch transport once the
+        // BAA + Modified Retention posture are recorded on the row.
+        throw new CopilotUnavailable(
+          "OpenAI provider not activated (transport_refused). No external request was made.",
+        );
+      }
+      const resolverCtx: SecretResolverContext = {
+        organizationId: approval.organizationId,
+        providerRegistryId: approval.providerRegistryId,
+        providerSecretRef: approval.providerSecretRef,
+      };
+      const resolved = await secretResolver.resolve(resolverCtx);
+      const request = buildOpenAIRequest({
+        envelope,
+        model,
+        apiKey: resolved.bearer,
+        organizationHeader: approval.organizationHeader,
+        projectHeader: approval.projectHeader,
+      });
+      const policy = retryPolicy ?? DEFAULT_RETRY_POLICY;
+      const raw = await withRetry(
+        async () => {
+          const res = await transport.send({
+            endpoint: request.endpoint,
+            method: request.method,
+            headers: request.headers,
+            body: request.body,
+          });
+          if (res.status < 200 || res.status >= 300) {
+            const err = new Error("http_status_" + res.status) as Error & {
+              httpStatus: number;
+              providerCode?: string;
+            };
+            err.httpStatus = res.status;
+            try {
+              const parsed = JSON.parse(res.bodyText);
+              const code = parsed?.error?.code ?? parsed?.error?.type;
+              if (typeof code === "string") err.providerCode = code;
+            } catch {
+              /* body may not be JSON */
+            }
+            throw err;
+          }
+          return res.bodyText;
+        },
+        (err) => {
+          const errAny = err as { httpStatus?: number; providerCode?: string; message?: string; category?: FailureCategory };
+          if (errAny.category) return errAny.category;
+          return classifyProviderError({
+            httpStatus: errAny.httpStatus,
+            providerCode: errAny.providerCode,
+            parseError: errAny.message,
+          });
+        },
+        { policy },
       );
+      let parsedJson: unknown;
+      try {
+        parsedJson = JSON.parse(raw);
+      } catch {
+        throw new CopilotUnavailable("openai_malformed_output");
+      }
+      const parsed = parseAndValidateOpenAIResponse({
+        raw: parsedJson,
+        allowedCitationIds: input.allowedCitationIds,
+        expectedModelPrefix: model.split("-")[0],
+      });
+      return {
+        runType: parsed.runType as CopilotRunType,
+        content: parsed.content as unknown as Record<string, unknown>,
+        citations: parsed.citations,
+        contentSha256: parsed.contentSha256,
+        providerName: `openai:${approval.providerKind}`,
+        providerModel: parsed.providerModel,
+      };
     },
   };
 }
