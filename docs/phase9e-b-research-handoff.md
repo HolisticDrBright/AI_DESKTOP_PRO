@@ -584,6 +584,8 @@ safety check weakened:
   rolled back — the preview batches reach no catalog surface; picker,
   search and attach-by-id all still refuse; the retained seed is intact.
 - Unit suite: 425/425.
+- E2E order-independence battery: **261 passed forward, 261 passed
+  reverse, 0 failed** (12 skipped in both orders) — `[e2e-order] PASS`.
 - Staging aggregates after the run: **11 preview / 32 cancelled /
   0 committed** batches, 1 748 items in preview, **0 active supplement
   products, 0 verified labels, 0 approved references**. Nothing was
