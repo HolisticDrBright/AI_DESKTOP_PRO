@@ -97,7 +97,19 @@ export const COPILOT_OUTPUT_SCHEMA = {
  * unit tests and the local fake transport, the URL is used only as an
  * identifier; the transport does not open a socket.
  */
-const DEFAULT_ENDPOINT = new URL("https://api.openai.com/v1/responses");
+export const OPENAI_API_ORIGIN = "https://api.openai.com";
+export const OPENAI_RESPONSES_PATH = "/v1/responses";
+
+const DEFAULT_ENDPOINT = new URL(OPENAI_RESPONSES_PATH, OPENAI_API_ORIGIN);
+
+/**
+ * The one endpoint this adapter may call. Exposed so the transport
+ * allowlist and the request builder cannot drift apart: both derive from
+ * this constant rather than repeating a literal.
+ */
+export function openAIResponsesEndpoint(): URL {
+  return new URL(DEFAULT_ENDPOINT.toString());
+}
 
 const SYSTEM_INSTRUCTION_HEADER =
   "You are a governed clinical copilot. Reply ONLY with the required JSON. " +
@@ -123,6 +135,12 @@ export function buildOpenAIRequest(input: {
   const endpoint = input.endpoint ?? DEFAULT_ENDPOINT;
   if (endpoint.protocol !== "https:") {
     throw new Error("openai_endpoint_not_https");
+  }
+  // A caller-supplied endpoint is checked against the pinned origin AND
+  // path, not merely against the scheme. `https://evil.example/v1/responses`
+  // is https, and would otherwise have been accepted.
+  if (endpoint.origin !== OPENAI_API_ORIGIN || endpoint.pathname !== OPENAI_RESPONSES_PATH) {
+    throw new Error("openai_endpoint_not_allowlisted");
   }
   if (!input.apiKey || input.apiKey.length < 20) {
     throw new Error("openai_key_shape_invalid");

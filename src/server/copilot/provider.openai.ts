@@ -31,7 +31,12 @@ import {
   type FailureCategory,
   type RetryPolicy,
 } from "./retry";
-import type { SecretResolver, SecretResolverContext } from "./secrets";
+import {
+  publicSecretCategory,
+  SecretResolutionError,
+  type SecretResolver,
+  type SecretResolverContext,
+} from "./secrets";
 
 export type OpenAIProviderApproval = {
   providerName: string;
@@ -163,9 +168,11 @@ export function createOpenAIAdapter(options: OpenAIAdapterOptions): CopilotProvi
         );
       }
       if (transport === refusalTransport) {
-        // Phase 10B.1: default transport refuses. Phase 10B.2 replaces
-        // this with the AWS-Secrets-Manager + fetch transport once the
-        // BAA + Modified Retention posture are recorded on the row.
+        // The DEFAULT transport refuses. A real bounded HTTPS transport
+        // exists (`provider.runtime.ts::createOpenAITransport`) and is used
+        // when the runtime builds a live path, but an adapter that was
+        // handed no transport must never reach a socket — "forgot to wire
+        // the gate" has to fail closed.
         throw new CopilotUnavailable(
           "OpenAI provider not activated (transport_refused). No external request was made.",
         );
@@ -175,13 +182,28 @@ export function createOpenAIAdapter(options: OpenAIAdapterOptions): CopilotProvi
         providerRegistryId: approval.providerRegistryId,
         providerSecretRef: approval.providerSecretRef,
       };
-      const resolved = await secretResolver.resolve(resolverCtx);
+      let resolved;
+      try {
+        resolved = await secretResolver.resolve(resolverCtx);
+      } catch (err) {
+        // The secret layer's category is already PHI-safe, but whether a
+        // particular secret EXISTS is still not the caller's business.
+        const category =
+          err instanceof SecretResolutionError
+            ? publicSecretCategory(err.category)
+            : "provider_credential_unavailable_or_denied";
+        throw new CopilotUnavailable(
+          `OpenAI provider not activated (${category}). No external request was made.`,
+        );
+      }
       const request = buildOpenAIRequest({
         envelope,
         model,
         apiKey: resolved.bearer,
-        organizationHeader: approval.organizationHeader,
-        projectHeader: approval.projectHeader,
+        // The registry row wins; a JSON secret payload may supply routing
+        // headers only where the row left them unset.
+        organizationHeader: approval.organizationHeader ?? resolved.organizationHeader,
+        projectHeader: approval.projectHeader ?? resolved.projectHeader,
       });
       const policy = retryPolicy ?? DEFAULT_RETRY_POLICY;
       const raw = await withRetry(

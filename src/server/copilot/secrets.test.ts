@@ -1,5 +1,11 @@
 import { describe, expect, test } from "vitest";
-import { SecretResolver, type SecretsManagerClient } from "./secrets";
+import {
+  publicSecretCategory,
+  SecretResolutionError,
+  SecretResolver,
+  type SecretFailureCategory,
+  type SecretsManagerClient,
+} from "./secrets";
 
 function makeClient(map: Record<string, { secretString: string; versionId: string }>): SecretsManagerClient {
   return {
@@ -94,7 +100,7 @@ describe("SecretResolver", () => {
     ).rejects.toThrow(/secret_expired/);
   });
 
-  test("collapses unknown client failures to secret_resolution_failed", async () => {
+  test("maps a transient backend failure to secret_unavailable", async () => {
     const client: SecretsManagerClient = {
       async getSecret() {
         throw new Error("InternalServiceError");
@@ -107,7 +113,148 @@ describe("SecretResolver", () => {
         providerRegistryId: "prov-1",
         providerSecretRef: ARN,
       }),
-    ).rejects.toThrow(/secret_resolution_failed/);
+    ).rejects.toThrow(/secret_unavailable/);
+  });
+
+  test("maps a not-found secret to secret_missing", async () => {
+    const client = makeClient({});
+    const r = new SecretResolver({ client });
+    await expect(
+      r.resolve({
+        organizationId: "org-1",
+        providerRegistryId: "prov-1",
+        providerSecretRef: ARN,
+      }),
+    ).rejects.toThrow(/secret_missing/);
+  });
+
+  test("the five failure categories are distinct server-side", async () => {
+    const cases: Array<[string, SecretFailureCategory]> = [
+      ["ResourceNotFoundException", "secret_missing"],
+      ["AccessDeniedException", "secret_access_denied"],
+      ["DecryptionFailure", "secret_malformed"],
+      ["ThrottlingException", "secret_unavailable"],
+      ["SecretMarkedForDeletion expired", "secret_expired"],
+    ];
+    const seen = new Set<SecretFailureCategory>();
+    for (const [thrown, expected] of cases) {
+      const client: SecretsManagerClient = {
+        async getSecret() {
+          throw new Error(thrown);
+        },
+      };
+      const r = new SecretResolver({ client });
+      const err = await r
+        .resolve({ organizationId: "o", providerRegistryId: "p", providerSecretRef: ARN })
+        .catch((e) => e);
+      expect(err).toBeInstanceOf(SecretResolutionError);
+      expect((err as SecretResolutionError).category).toBe(expected);
+      seen.add((err as SecretResolutionError).category);
+    }
+    expect(seen.size).toBe(5);
+  });
+
+  test("existence is not leaked to the caller-visible category", () => {
+    // Missing and denied MUST collapse in anything a caller can observe:
+    // distinguishing them tells an attacker which ARNs are real.
+    expect(publicSecretCategory("secret_missing")).toBe(
+      publicSecretCategory("secret_access_denied"),
+    );
+    // Expired is safe to distinguish — it is about the operator's own key.
+    expect(publicSecretCategory("secret_expired")).not.toBe(
+      publicSecretCategory("secret_missing"),
+    );
+  });
+
+  test("accepts a strict JSON payload and carries routing headers", async () => {
+    const client = makeClient({
+      [ARN]: {
+        secretString: JSON.stringify({
+          apiKey: "TEST_FAKE_BEARER_abcdefghijklmnop1234",
+          organization: "org_TEST",
+          project: "proj_TEST",
+        }),
+        versionId: "v9",
+      },
+    });
+    const r = new SecretResolver({ client });
+    const res = await r.resolve({
+      organizationId: "org-1",
+      providerRegistryId: "prov-1",
+      providerSecretRef: ARN,
+    });
+    expect(res.bearer).toBe("TEST_FAKE_BEARER_abcdefghijklmnop1234");
+    expect(res.organizationHeader).toBe("org_TEST");
+    expect(res.projectHeader).toBe("proj_TEST");
+  });
+
+  test("refuses malformed secret JSON", async () => {
+    const client = makeClient({ [ARN]: { secretString: '{"apiKey": "TEST_FAKE', versionId: "v1" } });
+    const r = new SecretResolver({ client });
+    await expect(
+      r.resolve({ organizationId: "o", providerRegistryId: "p", providerSecretRef: ARN }),
+    ).rejects.toThrow(/secret_malformed/);
+  });
+
+  test("refuses unexpected fields in a JSON secret payload", async () => {
+    // A payload that grew a field this reader does not understand is a
+    // payload this reader is no longer the right consumer for.
+    const client = makeClient({
+      [ARN]: {
+        secretString: JSON.stringify({
+          apiKey: "TEST_FAKE_BEARER_abcdefghijklmnop1234",
+          exfiltrate_to: "https://evil.example",
+        }),
+        versionId: "v1",
+      },
+    });
+    const r = new SecretResolver({ client });
+    await expect(
+      r.resolve({ organizationId: "o", providerRegistryId: "p", providerSecretRef: ARN }),
+    ).rejects.toThrow(/secret_malformed/);
+  });
+
+  test("refuses an oversized secret payload before parsing it", async () => {
+    const client = makeClient({
+      [ARN]: { secretString: "x".repeat(9000), versionId: "v1" },
+    });
+    const r = new SecretResolver({ client });
+    await expect(
+      r.resolve({ organizationId: "o", providerRegistryId: "p", providerSecretRef: ARN }),
+    ).rejects.toThrow(/secret_malformed/);
+  });
+
+  test("a failed refresh does not fall back to the expired cached bearer", async () => {
+    let now = 1_000_000;
+    let calls = 0;
+    const client: SecretsManagerClient = {
+      async getSecret() {
+        calls += 1;
+        if (calls > 1) throw new Error("AccessDeniedException");
+        return { secretString: "TEST_FAKE_BEARER_abcdefghijklmnop1234", versionId: "v1" };
+      },
+    };
+    const r = new SecretResolver({ client, clock: () => now, ttlMs: 100 });
+    const ctx = { organizationId: "o", providerRegistryId: "p", providerSecretRef: ARN };
+    await r.resolve(ctx);
+    now += 500; // past TTL — the key was revoked in the meantime
+    await expect(r.resolve(ctx)).rejects.toThrow(/secret_access_denied/);
+    // and the stale entry is gone rather than lingering for the next call
+    expect(r.size()).toBe(0);
+  });
+
+  test("no secret material appears in any thrown error", async () => {
+    const BEARER = "TEST_FAKE_BEARER_supersecretvalue999";
+    const client = makeClient({
+      [ARN]: { secretString: JSON.stringify({ apiKey: BEARER, nope: 1 }), versionId: "v1" },
+    });
+    const r = new SecretResolver({ client });
+    const err = await r
+      .resolve({ organizationId: "o", providerRegistryId: "p", providerSecretRef: ARN })
+      .catch((e: Error) => e);
+    const serialized = `${(err as Error).message}|${(err as Error).stack ?? ""}`;
+    expect(serialized).not.toContain(BEARER);
+    expect(serialized).not.toContain("supersecret");
   });
 
   test("refuses malformed short bearer value", async () => {
