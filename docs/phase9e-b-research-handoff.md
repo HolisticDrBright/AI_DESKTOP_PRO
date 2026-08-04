@@ -69,6 +69,20 @@ and credential pattern returned zero hits (`SSN`, `DOB`, `AWS AKIA`,
 `work/qa-report.txt` reports 26 PASS, 1 WARN (5 ambiguous records leaving
 variant-dependent fields null — informational), 0 FAILURES.
 
+### Aggregate reconciliation (round 2 — operator's checkpoint prompt)
+
+Distinctions the operator asked to be documented explicitly:
+
+- **`unresolved_records: 131` = 123 researched-clinical rows carrying at
+  least one `unresolved_reasons` entry + 8 rows skipped without research.**
+  Recomputed locally: 123 + 8 = 131. Exact match to the manifest.
+- **Product-level source-authority tiers = 106 / 56 / 2** (per-record
+  `source_authority_tier` on the 164 researched rows). Sum: 164.
+- **Evidence-row source-authority tiers = 170 / 253 / 10** (per-evidence
+  `authority_tier` on the 433 evidence records). Sum: 433.
+- These two triples are **different entities** (a product vs an evidence
+  row) and are never presented as conflicting counts.
+
 ### 52 vs 59 reconciliation (documented, not silently chosen)
 
 - **`supplement_facts_complete: 59`** — per-record boolean flag on the JSONL.
@@ -280,14 +294,54 @@ in their signed-in practitioner session:
 The preview itself must execute **under the practitioner's signed-in JWT**,
 not through an administrative or service-role connection.
 
-## Part 7 — Curation workspace (follow-up)
+## Part 7 — Curation workspace
 
-The `/settings/imports` filter panel extension (source-package /
-Product-Research-ID / identity outcome / candidate / completeness / missing /
-conflicting / restricted / evidence-not-archived / physical-label-required /
-commercial-match-pending) lands in a follow-up PR before the practitioner
-begins the first bounded review batch. The backend schema already carries
-every required column — no additional migration is needed for the filters.
+`/settings/imports` now carries a **Research handoff** tab that renders
+the Product Research Handoff filter surface. Filter chips (17 of them,
+matching the operator brief exactly): source_package, Product Research
+ID, identity-exact, identity-probable, identity-ambiguous,
+identity-unmatched, strong-identifier-present, strong-identifier-absent,
+candidate, supplement-facts-complete, missing-facts, conflicting-fields,
+restricted, evidence-not-archived, physical-label-required,
+commercial-match-pending, audited-sample. Status legend distinguishes six
+practitioner-visible statuses: Previewed / Unresolved / Candidate for
+review / Practitioner verified / Clinically approved / Commercially
+matched — never conflated. Bulk verification / approval / restriction
+clearance / commercial attachment / conflict resolution are structurally
+refused on this surface.
+
+The tab renders an honest-empty state until a Product Research Handoff
+preview batch exists in the org. The next-step wording points at this
+document and at the "Read a file" tab where the signed-in practitioner
+uploads the package.
+
+## How to create the preview batch (operator action)
+
+**Only the signed-in practitioner can create the preview batch.** No
+administrative, service-role, or forged-JWT path is used. Exact steps:
+
+1. Start the app locally: `APP_EDITION=clinical NEXT_PUBLIC_USE_LIVE_API=true npm run dev`.
+2. Open `http://127.0.0.1:3000` and sign in as the P2 knowledge-editor
+   practitioner.
+3. Navigate to `Settings → Import review → Read a file`.
+4. When prompted for the no-PHI attestation, repeat verbatim:
+
+   > *"I attest that the Product Research Handoff package I am about to
+   > preview contains no patient health information, no patient
+   > identifiers, and no data that could re-identify a patient. It
+   > contains only public product-label research and public
+   > commercial-link data."*
+
+5. Upload the three authoritative JSONL files from the package
+   (`product-label-enrichment.jsonl`, `commercial-links.jsonl`,
+   `evidence-sources.jsonl`) as separate previews. The `commercial-links`
+   preview is marked `commercial_only=true` at upload.
+6. Do **not** run `commit_knowledge_import` or any equivalent commit /
+   apply / publish / approve operation.
+
+After the preview is created, the `Research handoff` tab will list the
+batches with counts. The operator then narrows to the first bounded
+review batch (the 10-record audited sample) via the filter chips.
 
 ## Recommended first bounded practitioner-review batch
 

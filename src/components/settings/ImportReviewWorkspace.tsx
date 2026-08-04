@@ -18,6 +18,7 @@ import { TableWrap, TD, TH } from "@/components/ui/Table";
 import { Field, Select, TextInput } from "@/components/ui/Field";
 import { ClinicalError, ClinicalLoading, ClinicalNote } from "@/components/ui/ClinicalStates";
 import { cn } from "@/lib/cn";
+import { ResearchHandoffFiltersPanel } from "@/components/settings/ResearchHandoffFiltersPanel";
 
 /**
  * The Import Review Workspace.
@@ -55,7 +56,8 @@ type Tab =
   | "labels"
   | "references"
   | "commercial"
-  | "provenance";
+  | "provenance"
+  | "research_handoff";
 
 function errText(e: unknown): string {
   return e instanceof AdapterError ? e.message : "Something went wrong. Try again.";
@@ -2609,6 +2611,7 @@ function readInitialWorkspaceState(): { tab: Tab; batchId: string | null } {
     "references",
     "commercial",
     "provenance",
+    "research_handoff",
   ]);
   return {
     tab: tabParam && validTabs.has(tabParam as Tab) ? (tabParam as Tab) : "overview",
@@ -2635,6 +2638,7 @@ export function ImportReviewWorkspace() {
         { id: "references", label: "Knowledge references" },
         { id: "commercial", label: "Commercial matching" },
         { id: "provenance", label: "Provenance & history" },
+        { id: "research_handoff", label: "Research handoff" },
       ] as Array<{ id: Tab; label: string }>,
     [],
   );
@@ -2682,6 +2686,7 @@ export function ImportReviewWorkspace() {
       {tab === "references" && <KnowledgeReferenceEditorPanel />}
       {tab === "commercial" && <CommercialMatchingPanel />}
       {tab === "provenance" && <ProvenancePanel />}
+      {tab === "research_handoff" && <ResearchHandoffFiltersPanel />}
     </div>
   );
 }
