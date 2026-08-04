@@ -150,7 +150,7 @@ function LiveClinicalRegistryPreview() {
  */
 type RunEnvelope = Awaited<ReturnType<typeof liveClient.copilotRun>>;
 
-function CopilotRunPanel() {
+function CopilotRunPanel(props: { patientId: string }) {
   const [runType, setRunType] =
     useState<Parameters<typeof liveClient.copilotRun>[0]["runType"]>("practitioner_brief");
   const [lens, setLens] =
@@ -158,17 +158,32 @@ function CopilotRunPanel() {
   const [envelope, setEnvelope] = useState<RunEnvelope | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>("");
+  const [dispositionMsg, setDispositionMsg] = useState<string>("");
 
   const run = async () => {
     setBusy(true);
     setError("");
+    setDispositionMsg("");
     try {
-      const res = await liveClient.copilotRun({ runType, lens });
+      const res = await liveClient.copilotRun({ patientId: props.patientId, runType, lens });
       setEnvelope(res);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Something went wrong.");
     } finally {
       setBusy(false);
+    }
+  };
+
+  const disposition = async (choice: "accepted" | "dismissed" | "info_requested" | "superseded") => {
+    if (!envelope?.runId) return;
+    setDispositionMsg("");
+    try {
+      await liveClient.copilotDisposition({ runId: envelope.runId, disposition: choice });
+      setDispositionMsg(
+        `Disposition recorded (${choice}). No note was signed, protocol activated, lab ordered, prescription created, or message sent.`,
+      );
+    } catch (e) {
+      setDispositionMsg(e instanceof Error ? e.message : "Could not record disposition.");
     }
   };
 
@@ -281,6 +296,27 @@ function CopilotRunPanel() {
             lab, prescribe, bill, message, or publish. Every accepted item goes to the practitioner
             review queue.
           </p>
+          {envelope.runId && (
+            <div className="mt-2 flex flex-wrap items-center gap-2" data-testid="copilot-dispositions">
+              <span className="text-[10.5px] text-subtle">Practitioner disposition:</span>
+              {(["accepted", "dismissed", "info_requested"] as const).map((d) => (
+                <button
+                  key={d}
+                  type="button"
+                  onClick={() => disposition(d)}
+                  data-testid={`copilot-disposition-${d}`}
+                  className="rounded border border-line px-2 py-0.5 text-[11px] hover:bg-sunken"
+                >
+                  {d}
+                </button>
+              ))}
+              {dispositionMsg && (
+                <span className="text-[10.5px] text-subtle" data-testid="copilot-disposition-message">
+                  {dispositionMsg}
+                </span>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -296,11 +332,10 @@ function CopilotRunPanel() {
  * deployed environment.
  */
 export function ClinicalCopilotWorkspace(props: { patientId: string; patientName: string }) {
-  void props;
   return (
     <>
       <LiveClinicalRegistryPreview />
-      <CopilotRunPanel />
+      <CopilotRunPanel patientId={props.patientId} />
     </>
   );
 }

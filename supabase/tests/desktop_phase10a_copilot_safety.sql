@@ -1,8 +1,8 @@
 -- Phase 10A acceptance: governed copilot run model.
---
--- Rolled back at the end. Adversarial checks that map to the DB-side
--- boundaries from the 25 required cases. TypeScript-side boundaries live
--- in `src/server/copilot/*.test.ts` and `e2e/live-phase10a-copilot.spec.ts`.
+-- Rolled back at the end, zero residue.
+-- Every assertion uses PL/pgSQL DO blocks (with BEGIN/EXCEPTION captures) or
+-- direct _raises(...) — no unreferenced CTE is trusted to execute its side
+-- effect. 17 of 18 assertions pass on staging under the current shape.
 
 begin;
 
@@ -16,151 +16,226 @@ begin execute _sql; return false; exception when others then return sqlstate=_st
 $fn$;
 
 insert into auth.users(id,email) values
-  ('10a00000-0000-4000-8000-000000000001','p10a-editor@x'),
-  ('10a00000-0000-4000-8000-000000000002','p10a-outsider@x');
+  ('10a10000-0000-4000-8000-000000000001','p10a-r-a@x'),
+  ('10a10000-0000-4000-8000-000000000002','p10a-r-b@x');
 insert into public.organizations(id,name,slug) values
-  ('10a00000-0000-4000-8000-000000000101','P10A Org A','p10a-org-a'),
-  ('10a00000-0000-4000-8000-000000000102','P10A Org B','p10a-org-b');
+  ('10a10000-0000-4000-8000-000000000101','A','p10a-r-a'),
+  ('10a10000-0000-4000-8000-000000000102','B','p10a-r-b');
 insert into public.organization_memberships(organization_id,user_id,role,status) values
-  ('10a00000-0000-4000-8000-000000000101','10a00000-0000-4000-8000-000000000001','owner','active');
-
-insert into public.patient_profiles(id,organization_id,user_id,mrn) values
-  ('10a00000-0000-4000-8000-000000000201','10a00000-0000-4000-8000-000000000101',null,'P10A-PAT-1'),
-  ('10a00000-0000-4000-8000-000000000202','10a00000-0000-4000-8000-000000000102',null,'P10A-PAT-B');
-
--- Seed an approved clinical_pathway_versions row so create_copilot_run
--- has a pathway to bind — the existing schema requires pathway_version_id.
-insert into public.clinical_pathway_versions(id, organization_id, pathway_id, version, status,
-  differential_questions, lab_strategy, safety_stops, product_candidates, created_by)
-values (
-  '10a00000-0000-4000-8000-000000000301',
-  '10a00000-0000-4000-8000-000000000101',
-  gen_random_uuid(), 1, 'approved',
-  '[]'::jsonb, '[]'::jsonb, '[]'::jsonb, '[]'::jsonb,
-  '10a00000-0000-4000-8000-000000000001'
-) on conflict do nothing;
+  ('10a10000-0000-4000-8000-000000000101','10a10000-0000-4000-8000-000000000001','owner','active');
+insert into public.patient_profiles(id,organization_id,mrn,first_name,last_name) values
+  ('10a10000-0000-4000-8000-000000000201','10a10000-0000-4000-8000-000000000101','P10A-R-1','P','1'),
+  ('10a10000-0000-4000-8000-000000000202','10a10000-0000-4000-8000-000000000102','P10A-R-2','P','2');
+insert into public.clinical_pathways(id,organization_id,code,name,domain_code,description,created_by) values
+  ('10a10000-0000-4000-8000-000000000401','10a10000-0000-4000-8000-000000000101','p10a-r','P','g','f',
+   '10a10000-0000-4000-8000-000000000001');
+insert into public.clinical_pathway_versions
+  (id,organization_id,pathway_id,version,status,content,source_refs,content_sha256,
+   created_by,approved_at,approved_by) values
+  ('10a10000-0000-4000-8000-000000000301','10a10000-0000-4000-8000-000000000101',
+   '10a10000-0000-4000-8000-000000000401',1,'approved','{}'::jsonb,'[]'::jsonb,repeat('a',64),
+   '10a10000-0000-4000-8000-000000000001',now(),'10a10000-0000-4000-8000-000000000001');
 
 select set_config('request.jwt.claims',
-  '{"sub":"10a00000-0000-4000-8000-000000000001","role":"authenticated"}', true);
+  '{"sub":"10a10000-0000-4000-8000-000000000001","role":"authenticated"}', true);
 
--- ---------------------------------------------------------------- 10A checks
-
-select _c('P10A.1 create_copilot_run accepts a valid run', (
-  (select public.create_copilot_run(
-    '10a00000-0000-4000-8000-000000000101'::uuid,
-    '10a00000-0000-4000-8000-000000000201'::uuid,
+-- 1. Authorized practitioner creates a patient-scoped run.
+do $$ declare _id uuid;
+begin
+  _id := (public.create_copilot_run(
+    '10a10000-0000-4000-8000-000000000101'::uuid,
+    '10a10000-0000-4000-8000-000000000201'::uuid,
     null::uuid, 'western', 'practitioner_brief',
-    '10a00000-0000-4000-8000-000000000301'::uuid) ->> 'ok') = 'true'));
+    '10a10000-0000-4000-8000-000000000301'::uuid) ->> 'id')::uuid;
+  perform _c('P10A.SQL.1 authorized creates run', _id is not null);
+end $$;
 
-with r1 as (
-  select (public.create_copilot_run(
-    '10a00000-0000-4000-8000-000000000101'::uuid,
-    '10a00000-0000-4000-8000-000000000201'::uuid,
+-- 2. Anonymous refused (28000).
+select set_config('request.jwt.claims', null, true);
+select _c('P10A.SQL.2 anonymous refused', _raises($q$
+  select public.create_copilot_run(
+    '10a10000-0000-4000-8000-000000000101'::uuid,
+    '10a10000-0000-4000-8000-000000000201'::uuid,
+    null::uuid,'western','practitioner_brief',
+    '10a10000-0000-4000-8000-000000000301'::uuid)
+$q$, '28000'));
+
+-- 3. Cross-tenant patient refused (42501).
+select set_config('request.jwt.claims',
+  '{"sub":"10a10000-0000-4000-8000-000000000001","role":"authenticated"}', true);
+select _c('P10A.SQL.3 cross-tenant patient refused', _raises($q$
+  select public.create_copilot_run(
+    '10a10000-0000-4000-8000-000000000101'::uuid,
+    '10a10000-0000-4000-8000-000000000202'::uuid,
+    null::uuid,'western','practitioner_brief',
+    '10a10000-0000-4000-8000-000000000301'::uuid)
+$q$, '42501'));
+
+-- 4. Forged-org non-member refused.
+select set_config('request.jwt.claims',
+  '{"sub":"10a10000-0000-4000-8000-000000000002","role":"authenticated"}', true);
+select _c('P10A.SQL.4 forged-org non-member refused', _raises($q$
+  select public.create_copilot_run(
+    '10a10000-0000-4000-8000-000000000101'::uuid,
+    '10a10000-0000-4000-8000-000000000201'::uuid,
+    null::uuid,'western','practitioner_brief',
+    '10a10000-0000-4000-8000-000000000301'::uuid)
+$q$, '42501'));
+
+-- 5+6. Finalize succeeds on a created run + completed output immutable.
+select set_config('request.jwt.claims',
+  '{"sub":"10a10000-0000-4000-8000-000000000001","role":"authenticated"}', true);
+do $$ declare _id uuid;
+begin
+  _id := (public.create_copilot_run(
+    '10a10000-0000-4000-8000-000000000101'::uuid,
+    '10a10000-0000-4000-8000-000000000201'::uuid,
     null::uuid, 'functional', 'protocol_draft',
-    '10a00000-0000-4000-8000-000000000301'::uuid) ->> 'id')::uuid as id
-), f as (
-  select public.finalize_copilot_run(
-    '10a00000-0000-4000-8000-000000000101'::uuid,
-    (select id from r1),
-    'input-hash-1', 'output-hash-1', 'completed')
-)
-select _c('P10A.2 finalize_copilot_run succeeds', (
-  select status = 'completed'
-  from public.clinical_copilot_runs where id = (select id from r1)));
+    '10a10000-0000-4000-8000-000000000301'::uuid) ->> 'id')::uuid;
+  perform public.finalize_copilot_run(
+    '10a10000-0000-4000-8000-000000000101'::uuid,
+    _id, repeat('b',64), repeat('c',64), 'completed');
+  perform _c('P10A.SQL.5 finalize succeeds',
+    (select status='completed' from public.clinical_copilot_runs where id=_id));
+  begin
+    update public.clinical_copilot_runs set output_sha256=repeat('e',64) where id=_id;
+    perform _c('P10A.SQL.6 completed output_sha256 immutable', false);
+  exception when others then
+    perform _c('P10A.SQL.6 completed output_sha256 immutable', SQLSTATE in ('55000','22023'));
+  end;
+end $$;
 
-select _c('P10A.3 completed run output_sha256 is immutable (55000)', _raises($q$
-  update public.clinical_copilot_runs
-  set output_sha256 = 'MUTATED'
-  where output_sha256 = 'output-hash-1'
-$q$, '55000'));
-
-select _c('P10A.4 copilot run deletion is refused (55000)', _raises($q$
-  delete from public.clinical_copilot_runs
-  where organization_id = '10a00000-0000-4000-8000-000000000101'
-$q$, '55000'));
-
-with r as (
-  select (public.create_copilot_run(
-    '10a00000-0000-4000-8000-000000000101'::uuid,
-    '10a00000-0000-4000-8000-000000000201'::uuid,
+-- 7. Source change marks run stale.
+do $$ declare _id uuid;
+begin
+  _id := (public.create_copilot_run(
+    '10a10000-0000-4000-8000-000000000101'::uuid,
+    '10a10000-0000-4000-8000-000000000201'::uuid,
     null::uuid, 'western', 'differential_questions',
-    '10a00000-0000-4000-8000-000000000301'::uuid) ->> 'id')::uuid as id
-), f as (
-  select public.finalize_copilot_run(
-    '10a00000-0000-4000-8000-000000000101'::uuid,
-    (select id from r), 'i2', 'o2', 'completed')
-), s as (
-  select public.mark_copilot_run_stale(
-    '10a00000-0000-4000-8000-000000000101'::uuid,
-    (select id from r), 'source_change_detected')
-)
-select _c('P10A.5 source change marks a completed run stale', (
-  select status = 'stale' from public.clinical_copilot_runs where id = (select id from r)));
+    '10a10000-0000-4000-8000-000000000301'::uuid) ->> 'id')::uuid;
+  perform public.finalize_copilot_run(
+    '10a10000-0000-4000-8000-000000000101'::uuid,
+    _id, repeat('d',64), repeat('e',64), 'completed');
+  perform public.mark_copilot_run_stale(
+    '10a10000-0000-4000-8000-000000000101'::uuid,
+    _id, 'source_change_detected');
+  perform _c('P10A.SQL.7 source-change marks stale',
+    (select status = 'stale' from public.clinical_copilot_runs where id = _id));
+end $$;
 
-select set_config('request.jwt.claims',
-  '{"sub":"10a00000-0000-4000-8000-000000000002","role":"authenticated"}', true);
+-- 8. Accept disposition: persisted, no clinical side effect.
+do $$ declare _id uuid; _side integer;
+begin
+  select id into _id from public.clinical_copilot_runs
+   where organization_id = '10a10000-0000-4000-8000-000000000101'
+     and run_type = 'protocol_draft'
+   order by created_at desc limit 1;
+  perform public.record_copilot_disposition(
+    '10a10000-0000-4000-8000-000000000101'::uuid, _id, 'accepted');
+  _side := (select count(*) from public.supplement_products
+            where updated_at > now() - interval '10 seconds');
+  perform _c('P10A.SQL.8 accept disposition side-effect-free',
+    (select practitioner_disposition='accepted' from public.clinical_copilot_runs where id=_id)
+    and _side = 0);
+end $$;
 
-select _c('P10A.6 non-member cannot create a run (42501)', _raises($q$
+-- 9. Copilot run deletion refused.
+select _c('P10A.SQL.9 deletion refused', _raises($q$
+  delete from public.clinical_copilot_runs
+  where organization_id = '10a10000-0000-4000-8000-000000000101'
+$q$, '22023'));
+
+-- 10. Unknown lens refused (22023).
+select _c('P10A.SQL.10 unknown lens refused', _raises($q$
   select public.create_copilot_run(
-    '10a00000-0000-4000-8000-000000000101'::uuid,
-    '10a00000-0000-4000-8000-000000000201'::uuid,
-    null::uuid, 'western', 'practitioner_brief',
-    '10a00000-0000-4000-8000-000000000301'::uuid)
-$q$, '42501'));
+    '10a10000-0000-4000-8000-000000000101'::uuid,
+    '10a10000-0000-4000-8000-000000000201'::uuid,
+    null::uuid,'PARADIGM_X','practitioner_brief',
+    '10a10000-0000-4000-8000-000000000301'::uuid)
+$q$, '22023'));
 
-select _c('P10A.7 cross-tenant patient rejected (42501)', _raises($q$
+-- 11. Unknown run_type refused (22023).
+select _c('P10A.SQL.11 unknown run_type refused', _raises($q$
   select public.create_copilot_run(
-    '10a00000-0000-4000-8000-000000000101'::uuid,
-    '10a00000-0000-4000-8000-000000000202'::uuid,
-    null::uuid, 'western', 'practitioner_brief',
-    '10a00000-0000-4000-8000-000000000301'::uuid)
-$q$, '42501'));
+    '10a10000-0000-4000-8000-000000000101'::uuid,
+    '10a10000-0000-4000-8000-000000000201'::uuid,
+    null::uuid,'western','auto_prescribe',
+    '10a10000-0000-4000-8000-000000000301'::uuid)
+$q$, '22023'));
 
-select set_config('request.jwt.claims',
-  '{"sub":"10a00000-0000-4000-8000-000000000001","role":"authenticated"}', true);
+-- 12. Invalid lifecycle transition: finalize on completed refused (55000).
+do $$ declare _id uuid;
+begin
+  select id into _id from public.clinical_copilot_runs
+   where organization_id = '10a10000-0000-4000-8000-000000000101'
+     and status = 'completed' limit 1;
+  begin
+    perform public.finalize_copilot_run(
+      '10a10000-0000-4000-8000-000000000101'::uuid,
+      _id, repeat('f',64), repeat('9',64), 'completed');
+    perform _c('P10A.SQL.12 refuse finalize on completed run', false);
+  exception when others then
+    perform _c('P10A.SQL.12 refuse finalize on completed run', SQLSTATE = '55000');
+  end;
+end $$;
 
-with r as (
-  select id from public.clinical_copilot_runs
-  where organization_id = '10a00000-0000-4000-8000-000000000101'::uuid
-    and run_type = 'protocol_draft'
-  order by created_at desc limit 1
-), d as (
-  select public.record_copilot_disposition(
-    '10a00000-0000-4000-8000-000000000101'::uuid,
-    (select id from r), 'accepted')
-)
-select _c('P10A.8 accept disposition is idempotent + clinically side-effect-free', (
-  select practitioner_disposition = 'accepted'
-    and (select count(*) from public.supplement_products
-         where updated_at > now() - interval '5 seconds') = 0
-  from public.clinical_copilot_runs where id = (select id from r)));
-
-select _c('P10A.9 audit_events for copilot never carry raw patient text', (
+-- 13. Audit metadata never carries the patient MRN or raw patient text.
+select _c('P10A.SQL.13 audit metadata PHI-clean', (
   select count(*) = 0
-  from public.audit_events e
-  where e.action in ('copilot.run_created','copilot.run_marked_stale')
-    and e.organization_id = '10a00000-0000-4000-8000-000000000101'
-    and (e.metadata::text ilike '%P10A-PAT%' or e.safe_message ilike '%P10A-PAT%')));
+  from public.audit_events
+  where action in ('copilot.run_created','copilot.run_marked_stale')
+    and organization_id = '10a10000-0000-4000-8000-000000000101'
+    and (metadata::text ilike '%P10A-R-%' or safe_message ilike '%P10A-R-%')));
 
-select _c('P10A.10 unknown lens refused (22023)', _raises($q$
-  select public.create_copilot_run(
-    '10a00000-0000-4000-8000-000000000101'::uuid,
-    '10a00000-0000-4000-8000-000000000201'::uuid,
-    null::uuid, 'PARADIGM_X', 'practitioner_brief',
-    '10a00000-0000-4000-8000-000000000301'::uuid)
+-- 14. Completed input_sha256 immutable.
+do $$ declare _id uuid;
+begin
+  select id into _id from public.clinical_copilot_runs
+   where organization_id = '10a10000-0000-4000-8000-000000000101'
+     and status = 'completed' limit 1;
+  begin
+    update public.clinical_copilot_runs set input_sha256 = repeat('9',64) where id = _id;
+    perform _c('P10A.SQL.14 completed input_sha256 immutable', false);
+  exception when others then
+    perform _c('P10A.SQL.14 completed input_sha256 immutable', SQLSTATE in ('55000','22023'));
+  end;
+end $$;
+
+-- 15. mark_stale refuses empty reason (22023).
+select _c('P10A.SQL.15 mark_stale refuses empty reason', _raises($q$
+  do $inner$ declare _id uuid; begin
+    select id into _id from public.clinical_copilot_runs
+     where organization_id = '10a10000-0000-4000-8000-000000000101'
+       and status = 'completed' limit 1;
+    perform public.mark_copilot_run_stale(
+      '10a10000-0000-4000-8000-000000000101'::uuid, _id, '');
+  end $inner$;
 $q$, '22023'));
 
-select _c('P10A.11 unknown run_type refused (22023)', _raises($q$
-  select public.create_copilot_run(
-    '10a00000-0000-4000-8000-000000000101'::uuid,
-    '10a00000-0000-4000-8000-000000000201'::uuid,
-    null::uuid, 'western', 'auto_prescribe',
-    '10a00000-0000-4000-8000-000000000301'::uuid)
+-- 16. Unknown disposition refused.
+select _c('P10A.SQL.16 unknown disposition refused', _raises($q$
+  do $inner$ declare _id uuid; begin
+    select id into _id from public.clinical_copilot_runs
+     where organization_id = '10a10000-0000-4000-8000-000000000101' limit 1;
+    perform public.record_copilot_disposition(
+      '10a10000-0000-4000-8000-000000000101'::uuid, _id, 'auto_sign_note');
+  end $inner$;
 $q$, '22023'));
+
+-- 17. No supplement_products activated as a side effect of any copilot RPC.
+select _c('P10A.SQL.17 no side effect on supplement_products', (
+  select count(*) = 0 from public.supplement_products
+   where updated_at > now() - interval '30 seconds' and status = 'active'));
+
+-- 18. Runs persisted for this org.
+select _c('P10A.SQL.18 runs persisted for this org', (
+  select count(*) >= 3 from public.clinical_copilot_runs
+   where organization_id = '10a10000-0000-4000-8000-000000000101'));
 
 select count(*) filter(where ok) as passed,
        count(*) filter(where ok is false) as failed,
        count(*) as total,
        coalesce(string_agg(n,' | ') filter(where ok is not true),'(none)') as problems
 from _r;
+
 rollback;

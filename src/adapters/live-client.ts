@@ -1531,6 +1531,9 @@ export const liveClient = {
 
   /* ================================ Phase 10A copilot */
   copilotRun: (input: {
+    patientId: string;
+    encounterId?: string;
+    pathwayVersionId?: string;
     runType:
       | "longitudinal_brief"
       | "differential_questions"
@@ -1538,12 +1541,9 @@ export const liveClient = {
       | "protocol_draft"
       | "practitioner_brief";
     lens: "western" | "functional" | "naturopathy" | "tcm" | "biohacking" | "synergistic";
-    approvedKnowledgeReferenceIds?: string[];
-    verifiedLabelIds?: string[];
-    approvedProtocolTemplateIds?: string[];
-    approvedDietTemplateIds?: string[];
   }) =>
     liveFetch<{
+      runId?: string;
       status: "completed" | "unavailable" | "failed";
       runType: string;
       lens: string;
@@ -1566,4 +1566,34 @@ export const liveClient = {
       outputHash: string | null;
       message: string;
     }>("copilot/run", { method: "POST", body: input }),
+
+  copilotDisposition: (input: {
+    runId: string;
+    disposition: "accepted" | "dismissed" | "info_requested" | "superseded";
+  }) =>
+    liveFetch<{ ok: true; id: string; disposition: string }>(
+      "copilot/disposition",
+      { method: "POST", body: input },
+    ),
+
+  copilotHistory: (patientId: string) =>
+    liveFetch<{
+      patientId: string;
+      runs: Array<{
+        id: string;
+        lens: string;
+        runType: string;
+        status: string;
+        providerName: string;
+        providerModel: string | null;
+        inputSnapshotHash: string;
+        outputHash: string | null;
+        createdAt: string;
+        completedAt: string | null;
+        failedAt: string | null;
+        reviewedAt: string | null;
+        staleAt: string | null;
+        disposition: string | null;
+      }>;
+    }>(`copilot/history?patientId=${encodeURIComponent(patientId)}`, { method: "GET" }),
 };

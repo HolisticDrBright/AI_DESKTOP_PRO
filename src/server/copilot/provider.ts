@@ -7,6 +7,9 @@ if (typeof window !== "undefined") {
   throw new Error("copilot/provider is server-only and must not run in the browser.");
 }
 
+import { isDeployedRuntime } from "../runtime/deployedRuntime";
+export { isDeployedRuntime as isDeployedEnvironment };
+
 export type CopilotMode = "disabled" | "fixture" | "live";
 
 export type CopilotRunType =
@@ -52,9 +55,11 @@ export interface CopilotProvider {
 export function resolveCopilotMode(): CopilotMode {
   const raw = (process.env.CLINICAL_COPILOT_MODE ?? "disabled").toLowerCase();
   const mode: CopilotMode = raw === "fixture" ? "fixture" : raw === "live" ? "live" : "disabled";
-  if (mode === "fixture" && isDeployedEnvironment()) {
+  if (mode === "fixture" && isDeployedRuntime()) {
     // Deployed environments REFUSE fixture mode — no exception; the process
-    // must be reconfigured. This is the only place the flag is validated.
+    // must be reconfigured. An env flag alone can never opt a deployed
+    // process back in. See src/server/runtime/deployedRuntime.ts for the
+    // shared multi-platform posture detector.
     throw new Error(
       "CLINICAL_COPILOT_MODE=fixture is refused in a deployed environment. " +
         "Fixture mode is for local + CI tests only.",
@@ -63,11 +68,6 @@ export function resolveCopilotMode(): CopilotMode {
   return mode;
 }
 
-export function isDeployedEnvironment(): boolean {
-  const app = (process.env.NEXT_PUBLIC_APP_ENV ?? "").toLowerCase();
-  const vercel = (process.env.VERCEL_ENV ?? "").toLowerCase();
-  return app === "production" || app === "preview" || vercel === "production" || vercel === "preview";
-}
 
 /**
  * Disabled provider — the default. Every call returns an "unavailable"
@@ -86,7 +86,7 @@ export const disabledProvider: CopilotProvider = {
 };
 
 export class CopilotUnavailable extends Error {
-  readonly kind: "unavailable" = "unavailable";
+  readonly kind = "unavailable" as const;
   constructor(message = "copilot unavailable") {
     super(message);
     this.name = "CopilotUnavailable";
@@ -98,7 +98,7 @@ export class CopilotUnavailable extends Error {
  * production bundle. Tests select it explicitly via CLINICAL_COPILOT_MODE.
  */
 async function loadFixtureProvider(): Promise<CopilotProvider> {
-  if (isDeployedEnvironment()) {
+  if (isDeployedRuntime()) {
     throw new Error("fixture provider refused in a deployed environment");
   }
   const mod = await import("./provider.fixture");
