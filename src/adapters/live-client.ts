@@ -1528,4 +1528,72 @@ export const liveClient = {
       supersededBy: string;
       message: string;
     }>("protocols/template-supersede", { method: "POST", body: input }),
+
+  /* ================================ Phase 10A copilot */
+  copilotRun: (input: {
+    patientId: string;
+    encounterId?: string;
+    pathwayVersionId?: string;
+    runType:
+      | "longitudinal_brief"
+      | "differential_questions"
+      | "lab_suggestions"
+      | "protocol_draft"
+      | "practitioner_brief";
+    lens: "western" | "functional" | "naturopathy" | "tcm" | "biohacking" | "synergistic";
+  }) =>
+    liveFetch<{
+      runId?: string;
+      status: "completed" | "unavailable" | "failed";
+      runType: string;
+      lens: string;
+      providerName: string;
+      providerModel: string | null;
+      safetyItems: Array<{
+        category: string;
+        severity: "urgent" | "important" | "info";
+        message: string;
+        pinned: boolean;
+      }>;
+      draft: {
+        runType: string;
+        content: Record<string, unknown>;
+        citations: Array<{ citationType: string; refId: string; version: string | null }>;
+        contentSha256: string;
+      } | null;
+      rejectedCitations: string[];
+      inputSnapshotHash: string;
+      outputHash: string | null;
+      message: string;
+    }>("copilot/run", { method: "POST", body: input }),
+
+  copilotDisposition: (input: {
+    runId: string;
+    disposition: "accepted" | "dismissed" | "info_requested" | "superseded";
+  }) =>
+    liveFetch<{ ok: true; id: string; disposition: string }>(
+      "copilot/disposition",
+      { method: "POST", body: input },
+    ),
+
+  copilotHistory: (patientId: string) =>
+    liveFetch<{
+      patientId: string;
+      runs: Array<{
+        id: string;
+        lens: string;
+        runType: string;
+        status: string;
+        providerName: string;
+        providerModel: string | null;
+        inputSnapshotHash: string;
+        outputHash: string | null;
+        createdAt: string;
+        completedAt: string | null;
+        failedAt: string | null;
+        reviewedAt: string | null;
+        staleAt: string | null;
+        disposition: string | null;
+      }>;
+    }>(`copilot/history?patientId=${encodeURIComponent(patientId)}`, { method: "GET" }),
 };
