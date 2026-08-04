@@ -199,6 +199,20 @@ export function ResearchHandoffFiltersPanel() {
               <li>
                 Manifest sha256: <code>{result.manifestSha256.slice(0, 12)}…</code>
               </li>
+              {result.posture && (
+                <li data-testid="prh-preview-posture">
+                  Server posture: transport=<code>{result.posture.transport}</code> · project=
+                  <code>{result.posture.supabase_project_ref ?? "(unknown)"}</code> · edition=
+                  <code>{result.posture.app_edition ?? "(unset)"}</code> · live_mode=
+                  <code>{String(result.posture.live_mode)}</code>
+                  {result.posture.transport !== "postgrest" && (
+                    <span className="ml-2 rounded border border-critical/25 bg-critical-tint px-2 py-0.5 text-critical-deep">
+                      Warning: response did NOT come from a real Supabase PostgREST endpoint. The batch
+                      IDs shown above will not persist to staging.
+                    </span>
+                  )}
+                </li>
+              )}
             </ul>
             <div className="mt-1 text-[10.5px] text-subtle">
               Identity: exact {result.aggregates.identityCounts.exact ?? 0} / probable{" "}
@@ -296,6 +310,14 @@ type PreviewResult = {
     labelVerificationCandidateCount: number;
     unresolvedResearched: number;
     unresolvedTotal: number;
+  };
+  posture?: {
+    supabase_project_ref: string | null;
+    supabase_host: string | null;
+    app_edition: string | null;
+    live_mode: boolean;
+    node_env: string | null;
+    transport: "postgrest" | "fixture" | "unknown";
   };
 };
 

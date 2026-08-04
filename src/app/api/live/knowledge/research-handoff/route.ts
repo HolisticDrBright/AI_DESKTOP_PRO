@@ -6,6 +6,7 @@ import { clinicalRpc } from "@/adapters/supabase-rest.server";
 import { getClinicalAccessToken } from "@/adapters/session.server";
 import { resolveOrgId } from "@/adapters/config";
 import { adaptForPreview, HandoffPackageError, parseHandoffPackage } from "@/server/prh/parse";
+import { describeRuntimePosture } from "@/server/runtime/posture";
 
 /**
  * POST — Research Handoff preview upload.
@@ -110,6 +111,11 @@ export async function POST(req: NextRequest) {
       evidence: result.evidence,
       commercial: result.commercial,
       aggregates: parsed.aggregates,
+      // Runtime posture proves the response came from the real PostgREST
+      // RPC on the expected project — never the anon key, JWT, cookie, or
+      // practitioner identity. If `transport` is not `postgrest`, the batch
+      // IDs shown by the UI did NOT persist to real staging.
+      posture: describeRuntimePosture(),
       message:
         "Research Handoff preview complete. Nothing has been verified, approved, activated, or attached.",
     };
