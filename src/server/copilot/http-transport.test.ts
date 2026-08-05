@@ -93,11 +93,10 @@ describe("createHttpsTransport — origin pinning", () => {
 
 describe("createHttpsTransport — redirects", () => {
   test("requests manual redirect handling", async () => {
-    const fetchImpl = vi.fn(async (_url: string, _init: RequestInit) => jsonResponse("{}"));
-    const t = createHttpsTransport({ allowedOrigins: [OPENAI], fetchImpl: fetchImpl as never });
+    const fetchImpl = vi.fn<typeof fetch>(async () => jsonResponse("{}"));
+    const t = createHttpsTransport({ allowedOrigins: [OPENAI], fetchImpl });
     await t.send(req());
-    const init = fetchImpl.mock.calls[0]![1];
-    expect(init.redirect).toBe("manual");
+    expect(fetchImpl.mock.calls[0]![1]!.redirect).toBe("manual");
   });
 
   test("refuses a 3xx rather than following it", async () => {
@@ -219,20 +218,15 @@ describe("createHttpsTransport — cancellation and timeout", () => {
   });
 
   test("passes an AbortSignal to fetch and reports a timeout", async () => {
-    const fetchImpl = vi.fn(async (_url: string, init: RequestInit) => {
+    const fetchImpl = vi.fn<typeof fetch>(async (_input, init) => {
       // Never resolves on its own — only the transport's own timeout ends it.
       return await new Promise<Response>((_resolve, reject) => {
-        init.signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+        init?.signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
       });
     });
-    const t = createHttpsTransport({
-      allowedOrigins: [OPENAI],
-      timeoutMs: 25,
-      fetchImpl: fetchImpl as never,
-    });
+    const t = createHttpsTransport({ allowedOrigins: [OPENAI], timeoutMs: 25, fetchImpl });
     await expect(t.send(req())).rejects.toMatchObject({ category: "transport_timeout" });
-    const init = fetchImpl.mock.calls[0]![1] as RequestInit;
-    expect(init.signal).toBeInstanceOf(AbortSignal);
+    expect(fetchImpl.mock.calls[0]![1]!.signal).toBeInstanceOf(AbortSignal);
   });
 });
 
