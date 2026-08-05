@@ -19,6 +19,7 @@ import { Field, Select, TextInput } from "@/components/ui/Field";
 import { ClinicalError, ClinicalLoading, ClinicalNote } from "@/components/ui/ClinicalStates";
 import { cn } from "@/lib/cn";
 import { ResearchHandoffFiltersPanel } from "@/components/settings/ResearchHandoffFiltersPanel";
+import { ResearchHandoffReviewWorkspace } from "@/components/settings/ResearchHandoffReviewWorkspace";
 
 /**
  * The Import Review Workspace.
@@ -2686,7 +2687,12 @@ export function ImportReviewWorkspace() {
       {tab === "references" && <KnowledgeReferenceEditorPanel />}
       {tab === "commercial" && <CommercialMatchingPanel />}
       {tab === "provenance" && <ProvenancePanel />}
-      {tab === "research_handoff" && <ResearchHandoffFiltersPanel />}
+      {tab === "research_handoff" && (
+        <>
+          <ResearchHandoffFiltersPanel />
+          <ResearchHandoffReviewWorkspace />
+        </>
+      )}
     </div>
   );
 }

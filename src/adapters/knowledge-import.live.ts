@@ -195,4 +195,76 @@ export const knowledgeImportLive = {
       token,
     );
   },
+
+  /**
+   * Bounded research-handoff review read: at most 50 caller-supplied PRH
+   * ids. Clinical, evidence and commercial slices come back under separate
+   * top-level keys; the commercial slice is quarantined data rendered
+   * separately, never merged into a clinical view.
+   */
+  async researchHandoffReview(
+    orgId: string | null | undefined,
+    prhIds: string[],
+    sessionToken?: string | null,
+  ): Promise<LiveResearchHandoffReview> {
+    const token = await getClinicalAccessToken(sessionToken);
+    return clinicalRpc<LiveResearchHandoffReview>(
+      "get_research_handoff_review",
+      { _organization_id: resolveOrgId(orgId), _prh_ids: prhIds },
+      token,
+    );
+  },
+
+  /**
+   * Record ONE practitioner verdict on ONE research-handoff item. The RPC
+   * keeps the item's status at 'needs_review' — a verdict is a recorded
+   * claim, not an apply — and requires a substantive note.
+   */
+  async recordResearchHandoffReview(
+    itemId: string,
+    verdict: "verified" | "blocked",
+    note: string,
+    sessionToken?: string | null,
+  ): Promise<{ ok: true; itemId: string; externalKey: string; verdict: string; status: string }> {
+    const token = await getClinicalAccessToken(sessionToken);
+    return clinicalRpc<{ ok: true; itemId: string; externalKey: string; verdict: string; status: string }>(
+      "record_research_handoff_item_review",
+      { _item_id: itemId, _verdict: verdict, _note: note },
+      token,
+    );
+  },
 };
+
+export interface LiveResearchHandoffReview {
+  batches: Array<{
+    id: string;
+    sourceName: string;
+    status: string;
+    itemCount: number;
+    commercialOnly: boolean;
+    manifestSha256: string | null;
+  }>;
+  records: Array<{
+    id: string;
+    externalKey: string;
+    displayName: string;
+    status: string;
+    verdict: "verified" | "blocked" | null;
+    reviewNote: string | null;
+    reviewedAt: string | null;
+    warnings: string[];
+    payload: Record<string, unknown>;
+  }>;
+  evidence: Array<{
+    id: string;
+    externalKey: string;
+    productResearchId: string | null;
+    payload: Record<string, unknown>;
+  }>;
+  commercial: Array<{
+    id: string;
+    externalKey: string;
+    payload: Record<string, unknown>;
+  }>;
+  boundary: string;
+}
