@@ -659,6 +659,14 @@ Acceptance: `supabase/tests/desktop_phase9eb_practitioner_review.sql` —
 17/17 on staging, rolled back. After the suite: the three real preview
 batches still hold 769 items, all `needs_review`, zero verdicts.
 
+Full battery at `987d7ba`: unit suite 431/431; clinical live build clean;
+E2E order-independence **261 passed forward, 261 passed reverse, 0 failed**
+(12 skipped both orders); stub-reset coverage 127/127. One run of the
+battery was killed by a container restart mid-flight and reported
+`0 passed` — the orchestrator correctly treats zero-passed as FAIL, so the
+kill could not have been mistaken for success; the clean re-run above is
+the recorded result.
+
 ### Operator procedure (run on your own machine)
 
 This session's remote container cannot show you a browser, so the
