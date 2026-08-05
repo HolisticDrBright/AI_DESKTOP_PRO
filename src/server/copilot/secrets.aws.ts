@@ -1,294 +1,219 @@
 /**
  * Phase 10B.1 — production AWS Secrets Manager client.
  *
- * SERVER-ONLY. Implements `SecretsManagerClient` against the Secrets
- * Manager JSON API (`secretsmanager.GetSecretValue`) using SigV4 request
- * signing over the SAME bounded HTTPS transport the provider adapter uses.
+ * SERVER-ONLY. Implements `SecretsVaultClient` against the official
+ * modular AWS SDK (`@aws-sdk/client-secrets-manager`) using the standard
+ * AWS credential provider chain.
  *
- * WHY NO AWS SDK. This repository ships five runtime dependencies and no
- * vendor SDKs — the OpenAI request is likewise hand-built against the
- * published wire contract (`provider.openai.request.ts`). Adding
- * `@aws-sdk/client-secrets-manager` would pull roughly fifty transitive
- * packages into a clinical application to make one signed POST, widening
- * the supply-chain surface far more than the call justifies. The signing
- * below is HMAC-SHA256 over a documented canonical string using Node's
- * built-in `node:crypto` — no novel cryptography, and no overlapping
- * secrets library is introduced. If a future phase adopts the SDK, it
- * implements this same `SecretsManagerClient` interface and nothing above
- * it changes.
+ * WHY THE SDK RATHER THAN HAND-ROLLED SIGV4. An earlier revision signed
+ * requests by hand with `node:crypto` to avoid the SDK's transitive
+ * dependency footprint. That trade was rejected, correctly: request
+ * signing is security-critical code with a long tail of details —
+ * credential refresh, session tokens, SSO and IMDS sourcing, clock skew,
+ * regional endpoint resolution, retry classification — and none of it is
+ * this repository's job to maintain. The SDK is the audited path.
+ *
+ * WHY THE SDK IS LOADED WITH A DYNAMIC `import()`. There is no static
+ * `@aws-sdk` import anywhere in this file, and that is load-bearing three
+ * times over:
+ *
+ *   1. Disabled mode must not merely skip *constructing* an AWS client —
+ *      it must not pull the SDK into the process at all. `import()` inside
+ *      the send path is what makes that true; `provider.runtime.ts` returns
+ *      on the disabled branch long before anything here is called.
+ *   2. Nothing under `@aws-sdk` can be reached from a client bundle, since
+ *      the only reference is behind a server-only module guard and a lazy
+ *      edge. `scripts/check-clinical-bundle.mjs` asserts the outcome.
+ *   3. A static import put the SDK's whole module graph in front of every
+ *      Vitest worker that transitively imports this file, which is a real
+ *      cost paid on every test run for a dependency almost none of them
+ *      touch.
+ *
+ * Credentials come from the DEFAULT PROVIDER CHAIN. This module never
+ * reads a credential out of the environment itself, and the environment
+ * never carries the provider secret — only the AWS region, and the secret
+ * ARN on the governed registry row.
  *
  * Discipline enforced here:
- *   - the regional Secrets Manager origin is pinned and allowlisted;
- *   - credentials are read from the server process environment only, and
- *     the ENV NEVER carries the provider secret itself — only the AWS
- *     identity used to fetch it, plus the region and the ARN;
- *   - nothing is logged: no ARN, no payload, no signature, no header;
- *   - AWS error shapes map to PHI-safe `SecretFailureCategory` values.
+ *   - bounded: explicit connection/request timeouts and a hard attempt cap;
+ *   - nothing is logged: no ARN, no payload, no credential, no header;
+ *   - AWS error shapes map to PHI-safe `SecretFailureCategory` values, read
+ *     from the error's TYPE only — the AWS message is never read;
+ *   - the client is constructed lazily and never in disabled mode (see
+ *     `provider.runtime.ts`, which returns before calling this module).
  */
 if (typeof window !== "undefined") {
   throw new Error("copilot/secrets.aws is server-only.");
 }
 
-import { createHash, createHmac, timingSafeEqual } from "node:crypto";
-import { createHttpsTransport, TransportError, type Transport } from "./http-transport";
 import {
   SecretResolutionError,
   SecretResolver,
   type SecretFailureCategory,
-  type SecretsManagerClient,
+  type SecretsVaultClient,
 } from "./secrets";
 
-const SERVICE = "secretsmanager";
-const AMZ_TARGET = "secretsmanager.GetSecretValue";
-const AMZ_JSON_CONTENT_TYPE = "application/x-amz-json-1.1";
 const REGION_PATTERN = /^[a-z]{2}(-gov)?-[a-z]+-\d$/;
 
-export type AwsCredentials = {
-  accessKeyId: string;
-  secretAccessKey: string;
-  sessionToken?: string | null;
+/** Bounded by construction. A vault lookup is small and must be quick. */
+const CONNECTION_TIMEOUT_MS = 3_000;
+const REQUEST_TIMEOUT_MS = 5_000;
+const MAX_ATTEMPTS = 2;
+
+/** The shape of a `GetSecretValue` response this module reads. */
+export type AwsSecretValueResponse = {
+  SecretString?: string;
+  SecretBinary?: unknown;
+  VersionId?: string;
 };
 
-export type AwsSecretsManagerClientOptions = {
+/**
+ * The narrow send seam.
+ *
+ * It takes the REQUEST SHAPE rather than an SDK `Command` instance on
+ * purpose: a seam typed against an SDK class would drag the SDK back into
+ * this module's static type graph, and every test fake would have to
+ * construct one. Production wraps the real client so the command object is
+ * built on the far side of the lazy edge.
+ */
+export type AwsSecretsSend = {
+  send(input: { SecretId: string }): Promise<AwsSecretValueResponse>;
+};
+
+/**
+ * The slice of `@aws-sdk/client-secrets-manager` used here. Structural, so
+ * the real module satisfies it and a test double can too.
+ */
+export type AwsSecretsSdkModule = {
+  SecretsManagerClient: new (config: Record<string, unknown>) => {
+    send(command: unknown): Promise<AwsSecretValueResponse>;
+  };
+  GetSecretValueCommand: new (input: { SecretId: string }) => unknown;
+};
+
+export type AwsSdkLoader = () => Promise<AwsSecretsSdkModule>;
+
+/**
+ * The lazy edge. This is the ONLY reference to the SDK in the repository's
+ * first-party source, and it is evaluated on the first successful send —
+ * never at import time, never in disabled mode.
+ */
+const defaultSdkLoader: AwsSdkLoader = () =>
+  import("@aws-sdk/client-secrets-manager") as unknown as Promise<AwsSecretsSdkModule>;
+
+export type AwsSecretsManagerOptions = {
   region: string;
-  credentials: AwsCredentials;
-  /** Injected in tests. Production builds a pinned bounded HTTPS transport. */
-  transport?: Transport;
-  /** Injected in tests so the SigV4 date is deterministic. */
-  clock?: () => Date;
-  timeoutMs?: number;
+  /** Injected in tests. Omitted in production so the SDK is constructed here. */
+  client?: AwsSecretsSend;
+  /** Injected in tests to exercise the real construction path without the SDK. */
+  sdkLoader?: AwsSdkLoader;
 };
 
-export function secretsManagerOrigin(region: string): string {
-  return `https://${SERVICE}.${region}.amazonaws.com`;
+export function secretsManagerEndpointRegion(region: string): string {
+  return region;
 }
 
 /**
- * Build a Secrets Manager client. Constructing this does NOT perform any
- * network call — the first call happens on `getSecret`.
+ * Build the vault client. Constructing this loads NO module, performs NO
+ * network call, and resolves NO credential — the SDK import, the client
+ * construction, and the provider chain all run on the first `getSecret`.
  */
 export function createAwsSecretsManagerClient(
-  options: AwsSecretsManagerClientOptions,
-): SecretsManagerClient {
+  options: AwsSecretsManagerOptions,
+): SecretsVaultClient {
   if (!REGION_PATTERN.test(options.region)) {
     throw new SecretResolutionError("secret_reference_shape_invalid");
   }
-  if (!options.credentials?.accessKeyId || !options.credentials?.secretAccessKey) {
-    throw new SecretResolutionError("secret_access_denied");
-  }
-  const origin = secretsManagerOrigin(options.region);
-  const endpoint = new URL("/", origin);
-  const transport =
-    options.transport ??
-    createHttpsTransport({
-      allowedOrigins: [origin],
-      timeoutMs: options.timeoutMs ?? 5_000,
-      // A GetSecretValue request is a few hundred bytes and the response is
-      // a single key. These ceilings are generous by an order of magnitude.
-      maxRequestBytes: 8 * 1024,
-      maxResponseBytes: 64 * 1024,
-    });
-  const clock = options.clock ?? (() => new Date());
+
+  // Memoised across calls, so the SDK is imported and the client built at
+  // most once per vault client. A failed load is NOT memoised — a transient
+  // module-resolution failure should not permanently poison the resolver.
+  let pending: Promise<AwsSecretsSend> | null = null;
+  const getSend = (): Promise<AwsSecretsSend> => {
+    if (options.client) return Promise.resolve(options.client);
+    if (!pending) {
+      pending = buildSdkSend(options).catch((err) => {
+        pending = null;
+        throw err;
+      });
+    }
+    return pending;
+  };
 
   return {
     async getSecret({ arn }) {
-      const body = JSON.stringify({ SecretId: arn });
-      const headers = signRequest({
-        region: options.region,
-        credentials: options.credentials,
-        host: endpoint.host,
-        path: "/",
-        body,
-        now: clock(),
-      });
-
-      let res;
+      let out: AwsSecretValueResponse;
       try {
-        res = await transport.send({ endpoint, method: "POST", headers, body });
+        out = await (await getSend()).send({ SecretId: arn });
       } catch (err) {
-        throw new SecretResolutionError(mapTransportFailure(err));
+        throw new SecretResolutionError(mapAwsFailure(err));
       }
-
-      if (res.status < 200 || res.status >= 300) {
-        throw new SecretResolutionError(mapAwsHttpFailure(res.status, res.bodyText, res.headers));
-      }
-
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(res.bodyText);
-      } catch {
-        throw new SecretResolutionError("secret_malformed");
-      }
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-        throw new SecretResolutionError("secret_malformed");
-      }
-      const obj = parsed as Record<string, unknown>;
-      const secretString = obj.SecretString;
-      if (typeof secretString !== "string") {
+      if (typeof out?.SecretString !== "string") {
         // A binary-only secret is not a bearer token. Refuse rather than
         // guess an encoding.
         throw new SecretResolutionError("secret_malformed");
       }
-      const versionId = typeof obj.VersionId === "string" ? obj.VersionId : "unknown";
-      return { secretString, versionId };
+      return {
+        secretString: out.SecretString,
+        versionId: typeof out.VersionId === "string" ? out.VersionId : "unknown",
+      };
     },
   };
 }
 
-/* ----------------------------------------------------------------- SigV4 */
-
-function sha256Hex(input: string): string {
-  return createHash("sha256").update(input, "utf8").digest("hex");
-}
-
-function hmac(key: Buffer | string, data: string): Buffer {
-  return createHmac("sha256", key).update(data, "utf8").digest();
-}
-
 /**
- * AWS Signature Version 4 for a Secrets Manager JSON POST.
+ * Cross the lazy edge: import the SDK, construct a bounded client, and
+ * return it wrapped in the narrow send seam.
  *
- * Returns the complete header set. The payload hash is taken over the
- * exact `body` string that the transport will send — the transport passes
- * a string body through byte-for-byte, which is what keeps the signature
- * valid.
+ * `credentials` is intentionally absent from the config. Passing anything
+ * there would replace the default provider chain, which is what supplies
+ * SSO, IMDS, ECS task-role, and web-identity credentials in a real
+ * deployment.
  */
-export function signRequest(input: {
-  region: string;
-  credentials: AwsCredentials;
-  host: string;
-  path: string;
-  body: string;
-  now: Date;
-}): Record<string, string> {
-  const amzDate = input.now.toISOString().replace(/[:-]|\.\d{3}/g, "");
-  const dateStamp = amzDate.slice(0, 8);
-  const payloadHash = sha256Hex(input.body);
-
-  const baseHeaders: Record<string, string> = {
-    "content-type": AMZ_JSON_CONTENT_TYPE,
-    host: input.host,
-    "x-amz-content-sha256": payloadHash,
-    "x-amz-date": amzDate,
-    "x-amz-target": AMZ_TARGET,
-  };
-  if (input.credentials.sessionToken) {
-    baseHeaders["x-amz-security-token"] = input.credentials.sessionToken;
-  }
-
-  const signedHeaderNames = Object.keys(baseHeaders).sort();
-  const canonicalHeaders = signedHeaderNames
-    .map((name) => `${name}:${baseHeaders[name]!.trim().replace(/\s+/g, " ")}\n`)
-    .join("");
-  const signedHeaders = signedHeaderNames.join(";");
-
-  const canonicalRequest = [
-    "POST",
-    input.path,
-    "", // no query string
-    canonicalHeaders,
-    signedHeaders,
-    payloadHash,
-  ].join("\n");
-
-  const scope = `${dateStamp}/${input.region}/${SERVICE}/aws4_request`;
-  const stringToSign = [
-    "AWS4-HMAC-SHA256",
-    amzDate,
-    scope,
-    sha256Hex(canonicalRequest),
-  ].join("\n");
-
-  const kDate = hmac(`AWS4${input.credentials.secretAccessKey}`, dateStamp);
-  const kRegion = hmac(kDate, input.region);
-  const kService = hmac(kRegion, SERVICE);
-  const kSigning = hmac(kService, "aws4_request");
-  const signature = createHmac("sha256", kSigning).update(stringToSign, "utf8").digest("hex");
-
+async function buildSdkSend(options: AwsSecretsManagerOptions): Promise<AwsSecretsSend> {
+  const load = options.sdkLoader ?? defaultSdkLoader;
+  const { SecretsManagerClient, GetSecretValueCommand } = await load();
+  const client = new SecretsManagerClient({
+    region: options.region,
+    maxAttempts: MAX_ATTEMPTS,
+    requestHandler: {
+      connectionTimeout: CONNECTION_TIMEOUT_MS,
+      requestTimeout: REQUEST_TIMEOUT_MS,
+    },
+  });
   return {
-    ...toHeaderCase(baseHeaders),
-    Authorization:
-      `AWS4-HMAC-SHA256 Credential=${input.credentials.accessKeyId}/${scope}, ` +
-      `SignedHeaders=${signedHeaders}, Signature=${signature}`,
+    send: (input) => client.send(new GetSecretValueCommand(input)),
   };
 }
 
 /**
- * `host` is set by the fetch layer itself and must not be sent explicitly;
- * it is part of the signature but not of the outgoing header list.
- */
-function toHeaderCase(headers: Record<string, string>): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [k, v] of Object.entries(headers)) {
-    if (k === "host") continue;
-    out[k] = v;
-  }
-  return out;
-}
-
-/* ------------------------------------------------------- failure mapping */
-
-function mapTransportFailure(err: unknown): SecretFailureCategory {
-  if (err instanceof SecretResolutionError) return err.category;
-  if (err instanceof TransportError) {
-    switch (err.category) {
-      case "transport_timeout":
-      case "transport_network":
-      case "transport_cancelled":
-        return "secret_unavailable";
-      case "transport_content_type_invalid":
-      case "transport_response_too_large":
-      case "transport_request_too_large":
-        return "secret_malformed";
-      case "transport_origin_refused":
-      case "transport_scheme_refused":
-      case "transport_redirect_refused":
-        return "secret_access_denied";
-      default:
-        return "secret_unavailable";
-    }
-  }
-  return "secret_unavailable";
-}
-
-/**
- * Map an AWS error response to a PHI-safe category.
+ * Map an SDK error to a PHI-safe category.
  *
- * The error TYPE is read from `x-amzn-errortype` or the `__type` field —
- * both are AWS control-plane identifiers, never secret material and never
- * patient data. The error *message* is deliberately never read.
+ * Only the error TYPE and the HTTP status are read. Both are AWS
+ * control-plane identifiers; the error MESSAGE is deliberately never read,
+ * because a misconfigured secret name can appear in it.
  */
-function mapAwsHttpFailure(
-  status: number,
-  bodyText: string,
-  headers: Record<string, string>,
-): SecretFailureCategory {
-  let errorType = headers["x-amzn-errortype"] ?? "";
-  if (!errorType) {
-    try {
-      const parsed = JSON.parse(bodyText) as Record<string, unknown>;
-      const t = parsed.__type ?? parsed.code;
-      if (typeof t === "string") errorType = t;
-    } catch {
-      /* a non-JSON error body tells us nothing; fall through to status */
-    }
-  }
-  // Strip the `com.amazonaws...#` prefix AWS sometimes prepends.
-  const shortType = errorType.split("#").pop() ?? "";
+function mapAwsFailure(err: unknown): SecretFailureCategory {
+  if (err instanceof SecretResolutionError) return err.category;
 
-  if (/ResourceNotFoundException/i.test(shortType)) return "secret_missing";
-  if (/AccessDenied|UnrecognizedClientException|InvalidSignatureException|MissingAuthentication/i.test(shortType)) {
+  const name = String((err as { name?: unknown })?.name ?? "");
+  const status = Number(
+    (err as { $metadata?: { httpStatusCode?: number } })?.$metadata?.httpStatusCode ?? 0,
+  );
+
+  if (/^ResourceNotFoundException$/.test(name)) return "secret_missing";
+  if (/AccessDenied|UnrecognizedClientException|InvalidSignatureException|CredentialsProviderError|NotAuthorized/i.test(name)) {
     return "secret_access_denied";
   }
-  if (/InvalidRequestException/i.test(shortType)) {
-    // Secrets Manager returns InvalidRequestException for a secret that is
-    // scheduled for deletion or otherwise no longer retrievable.
+  if (/^InvalidRequestException$/.test(name)) {
+    // Returned for a secret scheduled for deletion or otherwise no longer
+    // retrievable.
     return "secret_expired";
   }
-  if (/DecryptionFailure|InvalidParameterException|SerializationException/i.test(shortType)) {
+  if (/DecryptionFailure|InvalidParameterException|SerializationException/i.test(name)) {
     return "secret_malformed";
   }
-  if (/ThrottlingException|InternalServiceError|ServiceUnavailable/i.test(shortType)) {
+  if (/ThrottlingException|InternalServiceError|ServiceUnavailable|TimeoutError|NetworkingError|AbortError/i.test(name)) {
     return "secret_unavailable";
   }
   if (status === 401 || status === 403) return "secret_access_denied";
@@ -302,55 +227,39 @@ function mapAwsHttpFailure(
 export type ProductionResolverEnv = {
   CLINICAL_COPILOT_AWS_REGION?: string;
   AWS_REGION?: string;
-  AWS_ACCESS_KEY_ID?: string;
-  AWS_SECRET_ACCESS_KEY?: string;
-  AWS_SESSION_TOKEN?: string;
 };
 
 /**
  * Build the production resolver from the server environment.
  *
- * Returns `null` when the environment cannot supply an AWS identity. A
- * null resolver makes the adapter refuse — it never degrades to reading a
- * key out of the environment, because an environment variable holding a
- * provider secret is exactly the posture this module exists to remove.
+ * Returns `null` when no AWS region is configured. A null resolver makes
+ * the adapter refuse; it never degrades to reading a provider key out of
+ * the environment, because an environment variable holding a provider
+ * secret is exactly the posture this module exists to remove.
+ *
+ * Credentials are NOT checked here — the standard provider chain resolves
+ * them on first use, and a chain that cannot produce one surfaces as
+ * `secret_access_denied`. Checking for `AWS_ACCESS_KEY_ID` would have
+ * quietly excluded every credential source that is not a static env key
+ * (SSO, IMDS, ECS task role, web identity), which are the sources a real
+ * deployment should prefer.
  *
  * IMPORTANT: the caller must have already established that the copilot is
- * NOT in disabled mode. `createProductionSecretResolver` is never reached
- * on the disabled path, which is what makes "no AWS client is constructed
- * in disabled mode" true rather than merely intended. See
- * `provider.openai.ts::resolveProviderRuntime`.
+ * NOT disabled. This function is never reached on the disabled path, which
+ * is what makes "no AWS module is even loaded in disabled mode" true rather
+ * than merely intended. See `provider.runtime.ts`.
  */
 export function createProductionSecretResolver(
   env: ProductionResolverEnv = process.env as ProductionResolverEnv,
-  overrides: { transport?: Transport; clock?: () => Date; ttlMs?: number } = {},
+  overrides: { client?: AwsSecretsSend; sdkLoader?: AwsSdkLoader; ttlMs?: number } = {},
 ): SecretResolver | null {
   const region = env.CLINICAL_COPILOT_AWS_REGION ?? env.AWS_REGION ?? "";
   if (!REGION_PATTERN.test(region)) return null;
-  const accessKeyId = env.AWS_ACCESS_KEY_ID ?? "";
-  const secretAccessKey = env.AWS_SECRET_ACCESS_KEY ?? "";
-  if (!accessKeyId || !secretAccessKey) return null;
 
   const client = createAwsSecretsManagerClient({
     region,
-    credentials: {
-      accessKeyId,
-      secretAccessKey,
-      sessionToken: env.AWS_SESSION_TOKEN ?? null,
-    },
-    transport: overrides.transport,
-    clock: overrides.clock,
+    client: overrides.client,
+    sdkLoader: overrides.sdkLoader,
   });
   return new SecretResolver({ client, ttlMs: overrides.ttlMs });
-}
-
-/**
- * Constant-time comparison helper for any future callers that need to
- * compare secret-adjacent values. Exported so nobody reaches for `===`.
- */
-export function safeEquals(a: string, b: string): boolean {
-  const ab = Buffer.from(a, "utf8");
-  const bb = Buffer.from(b, "utf8");
-  if (ab.length !== bb.length) return false;
-  return timingSafeEqual(ab, bb);
 }

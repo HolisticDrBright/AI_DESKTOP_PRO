@@ -4,8 +4,8 @@
  * SERVER-ONLY. Never runs on a client. The registry stores only a
  * reference; this module resolves that reference to the actual bearer
  * value via an INJECTED client. The production client is
- * `secrets.aws.ts::createAwsSecretsManagerClient`, which talks to AWS
- * Secrets Manager over the same bounded HTTPS transport the provider uses.
+ * `secrets.aws.ts::createAwsSecretsManagerClient`, which uses the official
+ * AWS SDK and the standard credential provider chain.
  *
  * Contract:
  *   - The registry-stored `provider_secret_ref` is the ONLY input. A
@@ -72,7 +72,16 @@ export function publicSecretCategory(category: SecretFailureCategory): string {
   }
 }
 
-export type SecretsManagerClient = {
+/**
+ * The vault contract this resolver depends on.
+ *
+ * Deliberately NOT named `SecretsManagerClient`: that is the AWS SDK's own
+ * class name, and having both in scope invites importing the wrong one.
+ * The production implementation is
+ * `secrets.aws.ts::createAwsSecretsManagerClient`; unit and browser tests
+ * inject a deterministic fake through the same shape.
+ */
+export type SecretsVaultClient = {
   /**
    * Resolve the current version of the named secret. Throws
    * `SecretResolutionError` (or any Error, which is mapped below) on
@@ -98,7 +107,7 @@ export type SecretResolverResult = {
 };
 
 export type SecretResolverOptions = {
-  client: SecretsManagerClient;
+  client: SecretsVaultClient;
   clock?: () => number;
   ttlMs?: number;
   maxEntries?: number;
@@ -117,7 +126,7 @@ const ALLOWED_PAYLOAD_KEYS = new Set(["apiKey", "organization", "project"]);
 
 export class SecretResolver {
   private cache = new Map<string, SecretResolverResult>();
-  private readonly client: SecretsManagerClient;
+  private readonly client: SecretsVaultClient;
   private readonly clock: () => number;
   private readonly ttlMs: number;
   private readonly maxEntries: number;

@@ -3,7 +3,7 @@ import { CopilotUnavailable } from "./provider";
 import { buildEmptySnapshot } from "./input-builder";
 import { assembleRetrieval } from "./retrieval";
 import { buildMinimizedEnvelope } from "./data-minimizer";
-import { SecretResolver, type SecretsManagerClient } from "./secrets";
+import { SecretResolver, type SecretsVaultClient } from "./secrets";
 import type { Transport, TransportRequest, TransportResponse } from "./http-transport";
 import { createOpenAIAdapter, type OpenAIProviderApproval } from "./provider.openai";
 
@@ -33,7 +33,7 @@ function approval(over: Partial<OpenAIProviderApproval> = {}): OpenAIProviderApp
   };
 }
 
-function fakeSecrets(): SecretsManagerClient {
+function fakeSecrets(): SecretsVaultClient {
   return {
     async getSecret() {
       return { secretString: "TEST_FAKE_BEARER_abcdefghijklmnop1234", versionId: "v1" };

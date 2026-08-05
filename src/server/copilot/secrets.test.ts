@@ -4,10 +4,10 @@ import {
   SecretResolutionError,
   SecretResolver,
   type SecretFailureCategory,
-  type SecretsManagerClient,
+  type SecretsVaultClient,
 } from "./secrets";
 
-function makeClient(map: Record<string, { secretString: string; versionId: string }>): SecretsManagerClient {
+function makeClient(map: Record<string, { secretString: string; versionId: string }>): SecretsVaultClient {
   return {
     async getSecret({ arn }) {
       const hit = map[arn];
@@ -69,7 +69,7 @@ describe("SecretResolver", () => {
   });
 
   test("fails closed on access denied without leaking existence", async () => {
-    const client: SecretsManagerClient = {
+    const client: SecretsVaultClient = {
       async getSecret() {
         throw new Error("AccessDeniedException: user is not authorized");
       },
@@ -85,7 +85,7 @@ describe("SecretResolver", () => {
   });
 
   test("fails closed on expired secret", async () => {
-    const client: SecretsManagerClient = {
+    const client: SecretsVaultClient = {
       async getSecret() {
         throw new Error("SecretExpired");
       },
@@ -101,7 +101,7 @@ describe("SecretResolver", () => {
   });
 
   test("maps a transient backend failure to secret_unavailable", async () => {
-    const client: SecretsManagerClient = {
+    const client: SecretsVaultClient = {
       async getSecret() {
         throw new Error("InternalServiceError");
       },
@@ -138,7 +138,7 @@ describe("SecretResolver", () => {
     ];
     const seen = new Set<SecretFailureCategory>();
     for (const [thrown, expected] of cases) {
-      const client: SecretsManagerClient = {
+      const client: SecretsVaultClient = {
         async getSecret() {
           throw new Error(thrown);
         },
@@ -227,7 +227,7 @@ describe("SecretResolver", () => {
   test("a failed refresh does not fall back to the expired cached bearer", async () => {
     let now = 1_000_000;
     let calls = 0;
-    const client: SecretsManagerClient = {
+    const client: SecretsVaultClient = {
       async getSecret() {
         calls += 1;
         if (calls > 1) throw new Error("AccessDeniedException");
@@ -272,7 +272,7 @@ describe("SecretResolver", () => {
   test("caches within TTL and refreshes past TTL", async () => {
     let now = 1_000_000;
     let calls = 0;
-    const client: SecretsManagerClient = {
+    const client: SecretsVaultClient = {
       async getSecret() {
         calls += 1;
         return { secretString: "TEST_FAKE_BEARER_abcdefghijklmnop1234", versionId: "v" + calls };
