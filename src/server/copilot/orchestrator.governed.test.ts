@@ -14,7 +14,9 @@ const RETRIEVAL_IDS = {
   approvedDietTemplateIds: [],
 };
 
-function base(governed: Record<string, unknown>) {
+type GovernedFacts = NonNullable<Parameters<typeof orchestrateRun>[0]["governed"]>;
+
+function base(governed: GovernedFacts) {
   return {
     runType: "practitioner_brief" as const,
     lens: "western",

@@ -282,9 +282,22 @@ export function computeProviderPosture(input: PostureInput): ProviderPosture {
     );
   }
   if (!configured) {
+    // The process is capable of live, but this organization has registered
+    // no provider. "Not configured" is the honest phrase — the org's
+    // external AI is off, and saying "unavailable" would imply something
+    // exists that is temporarily out of reach.
     return make(
-      "live_unavailable",
-      "Live mode was requested but no approved provider is registered for this organization. Nothing was sent.",
+      "disabled",
+      "Not configured. No AI provider is registered for this organization. No provider was contacted and no secret was requested.",
+    );
+  }
+  if (input.activation?.state === "approved_for_synthetic") {
+    // The organization opted in to deterministic synthetic evaluation.
+    // That is a real, recorded state — and it is emphatically NOT a live
+    // claim, so it is reported before the approval roll-up.
+    return make(
+      "fixture_test_mode",
+      "Fixture test mode. This organization is approved for synthetic evaluation only. Content is deterministic and generated in-process; no external AI provider was contacted and no PHI was transmitted.",
     );
   }
   if (!approved) {

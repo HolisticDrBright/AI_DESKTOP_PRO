@@ -89,6 +89,72 @@ jobs:
           CLINICAL_ORG_ID=org-fixture \
           npm run test:e2e -- live-
 
+  # Phase 10B.1. The copilot's process-level mode is fixed when the server
+  # boots, so one server cannot show both the default-off posture and the
+  # live state machine. The spec file is the same in all three jobs; each
+  # job runs the describe block whose posture it is about, and together
+  # they cover every required browser proof. Nothing is skipped in CI —
+  # the guards select a posture, they do not avoid running.
+  e2e-copilot-readiness:
+    name: Browser suite (copilot provider readiness — live state machine)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run build:clinical
+      - name: Live state machine against governed records
+        run: |
+          node scripts/live-stub-server.mjs &
+          sleep 2
+          E2E_LIVE=1 \
+          APP_EDITION=clinical \
+          CLINICAL_COPILOT_MODE=live \
+          TRPC_BASE_URL=http://127.0.0.1:3999/api/trpc \
+          CLINICAL_SUPABASE_URL=http://127.0.0.1:3999 \
+          CLINICAL_SUPABASE_ANON_KEY=stub \
+          CLINICAL_DEMO_EMAIL=demo@local \
+          CLINICAL_DEMO_PASSWORD=demo \
+          CLINICAL_ORG_ID=org-fixture \
+          npm run test:e2e -- live-copilot-provider-readiness
+
+  e2e-copilot-fixture-refusal:
+    name: Browser suite (copilot fixture refused in a deployed runtime)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run build:clinical
+      # CLINICAL_COPILOT_MODE=fixture plus THREE deployed-runtime markers.
+      # The point of the job is that none of them — including the
+      # client-shipped NEXT_PUBLIC_* one — can re-open the fixture path.
+      - name: Fixture mode must refuse, and must not fall back to fixture content
+        run: |
+          node scripts/live-stub-server.mjs &
+          sleep 2
+          E2E_LIVE=1 \
+          APP_EDITION=clinical \
+          CLINICAL_COPILOT_MODE=fixture \
+          APP_RUNTIME_ENV=production \
+          NEXT_PUBLIC_APP_ENV=production \
+          VERCEL_ENV=production \
+          TRPC_BASE_URL=http://127.0.0.1:3999/api/trpc \
+          CLINICAL_SUPABASE_URL=http://127.0.0.1:3999 \
+          CLINICAL_SUPABASE_ANON_KEY=stub \
+          CLINICAL_DEMO_EMAIL=demo@local \
+          CLINICAL_DEMO_PASSWORD=demo \
+          CLINICAL_ORG_ID=org-fixture \
+          npm run test:e2e -- live-copilot-provider-readiness
+
   e2e-deployed:
     name: Browser suite (deployed backend — gated on secrets)
     runs-on: ubuntu-latest

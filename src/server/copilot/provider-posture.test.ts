@@ -62,8 +62,22 @@ describe("the seven states are all reachable and distinct", () => {
     expect(computeProviderPosture(input({ mode: "fixture" })).state).toBe("fixture_test_mode");
   });
 
-  test("live_unavailable when nothing is registered", () => {
-    expect(computeProviderPosture(input({ registry: null })).state).toBe("live_unavailable");
+  test("an org with no registered provider reads Not configured, not unavailable", () => {
+    // "Unavailable" would imply something exists that is temporarily out of
+    // reach. Nothing exists, so the honest word is "not configured".
+    const p = computeProviderPosture(input({ registry: null }));
+    expect(p.state).toBe("disabled");
+    expect(p.detail).toMatch(/^Not configured\./);
+    expect(p.detail).toMatch(/no secret was requested/i);
+  });
+
+  test("approved_for_synthetic reads as fixture test mode, never as live", () => {
+    const p = computeProviderPosture(
+      input({ activation: { ...ACTIVATION, state: "approved_for_synthetic" } }),
+    );
+    expect(p.state).toBe("fixture_test_mode");
+    expect(p.detail).toMatch(/no PHI was transmitted/i);
+    expect(p.transacted).toBe(false);
   });
 
   test("configured_unapproved when a provider exists but approvals do not", () => {
@@ -122,7 +136,7 @@ describe("the seven states are all reachable and distinct", () => {
         [
           input({ mode: "disabled" }),
           input({ mode: "fixture" }),
-          input({ registry: null }),
+          input({ activation: { ...ACTIVATION, state: "approved_for_synthetic" } }),
           input({ activation: null }),
           input({ runtimeAvailable: false }),
           input({

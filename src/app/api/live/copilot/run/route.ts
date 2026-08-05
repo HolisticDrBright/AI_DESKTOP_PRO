@@ -129,7 +129,12 @@ export async function POST(req: NextRequest) {
         _organization_id: orgId,
         _run_id: runId,
         _input_snapshot_hash: inputSnapshotHash,
-        _output_hash: envelope.outputHash ?? inputSnapshotHash,
+        // A failed run has no output. Previously this sent the INPUT hash
+        // as a stand-in to keep the argument non-null; the RPC ignores it
+        // for non-completed rows, but sending it at all meant the wire
+        // carried a value that would read as an output hash if anything
+        // downstream ever started trusting it.
+        _output_hash: envelope.outputHash,
         _status: finalizeStatus,
       },
       token,
