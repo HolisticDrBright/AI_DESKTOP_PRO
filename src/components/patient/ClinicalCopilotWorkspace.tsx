@@ -370,8 +370,21 @@ function CopilotRunPanel(props: { patientId: string }) {
       <div className="flex items-center gap-2">
         <BrainCircuit size={16} className="text-ai" aria-hidden />
         <h2 className="m-0 text-[14px] font-bold text-ink">Governed copilot run (draft only)</h2>
-        <Pill tone="ai">Phase 10A</Pill>
+        <Pill tone="ai">Phase 10B.2</Pill>
       </div>
+      {/*
+        The phase statement, stated on the PATIENT surface and not only on
+        the operator one. A practitioner looking at this panel has to be
+        able to tell, without leaving the chart, that nothing here is
+        approved for real patient care yet.
+      */}
+      <p
+        className="m-0 rounded border border-warn/30 bg-warn-tint px-2.5 py-2 text-[11.5px] font-bold leading-[1.5] text-ink"
+        data-testid="copilot-phase-notice"
+      >
+        Synthetic staging verification only. Real patient activation is not available. Nothing on
+        this panel may be used for the care of a real patient.
+      </p>
       <p className="m-0 text-[11.5px] text-subtle">
         Runs against the disabled provider by default. Fixture mode is refused in deployed
         environments. Every drafted item is a <strong>draft</strong>; accepting does not sign,

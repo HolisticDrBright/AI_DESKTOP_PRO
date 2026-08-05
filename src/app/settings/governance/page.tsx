@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { AiSafetyScreen } from "@/components/ai-safety/AiSafetyScreen";
+import { CopilotActivationScreen } from "@/components/ai-safety/CopilotActivationScreen";
 import { AuditLogScreen } from "@/components/audit/AuditLogScreen";
 import { SegTabs } from "@/components/ui/SegTabs";
 import { PageHeader } from "@/components/ui/PageHeader";
@@ -19,7 +20,8 @@ export default async function GovernancePage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const sp = await searchParams;
-  const tab = sp.tab === "audit" ? "audit" : "ai";
+  const tab =
+    sp.tab === "audit" ? "audit" : sp.tab === "activation" ? "activation" : "ai";
   return (
     <section data-screen-label="Security & Governance" className="mx-auto max-w-[1180px] px-6 pt-[18px] pb-8">
       <PageHeader
@@ -33,10 +35,17 @@ export default async function GovernancePage({
         ariaLabel="Governance sections"
         options={[
           { id: "ai", label: "AI governance" },
+          { id: "activation", label: "Provider activation" },
           { id: "audit", label: "Audit log" },
         ]}
       />
-      {tab === "ai" ? <AiSafetyScreen /> : <AuditLogScreen />}
+      {tab === "ai" ? (
+        <AiSafetyScreen />
+      ) : tab === "activation" ? (
+        <CopilotActivationScreen />
+      ) : (
+        <AuditLogScreen />
+      )}
     </section>
   );
 }
