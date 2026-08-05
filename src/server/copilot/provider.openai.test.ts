@@ -11,7 +11,7 @@ function baseApproval(overrides: Partial<OpenAIProviderApproval> = {}): OpenAIPr
   return {
     providerName: "openai",
     providerKind: "openai_hipaa",
-    approvedModelAllowlist: ["gpt-4o-2024-08-06"],
+    approvedModelAllowlist: ["gpt-5.6-sol"],
     approvalReference: "REF-1",
     baaStatusReference: "BAA-1",
     retentionMode: "modified",
@@ -99,8 +99,8 @@ describe("OpenAI provider — model allowlist", () => {
   });
 
   test("only listed models accepted", () => {
-    const a = baseApproval({ approvedModelAllowlist: ["gpt-4o-2024-08-06"] });
-    expect(isModelApproved(a, "gpt-4o-2024-08-06")).toBe(true);
+    const a = baseApproval({ approvedModelAllowlist: ["gpt-5.6-sol"] });
+    expect(isModelApproved(a, "gpt-5.6-sol")).toBe(true);
     expect(isModelApproved(a, "gpt-4o")).toBe(false);
   });
 });
@@ -109,7 +109,7 @@ describe("OpenAI adapter — Phase 10B.1 makes NO external request", () => {
   test("adapter with approved gates but no secret resolver refuses (secret_resolver_missing)", async () => {
     const adapter = createOpenAIAdapter({
       approval: baseApproval(),
-      model: "gpt-4o-2024-08-06",
+      model: "gpt-5.6-sol",
       containsPHI: false,
       // no secretResolver: Phase 10B.1 default
     });
@@ -129,7 +129,7 @@ describe("OpenAI adapter — Phase 10B.1 makes NO external request", () => {
     const { SecretResolver } = await import("./secrets");
     const adapter = createOpenAIAdapter({
       approval: baseApproval(),
-      model: "gpt-4o-2024-08-06",
+      model: "gpt-5.6-sol",
       containsPHI: false,
       secretResolver: new SecretResolver({
         client: {
