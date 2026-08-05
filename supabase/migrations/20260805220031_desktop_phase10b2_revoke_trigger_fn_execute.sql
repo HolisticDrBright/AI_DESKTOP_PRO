@@ -1,0 +1,11 @@
+-- The append-only TRIGGER function inherited the default PUBLIC EXECUTE
+-- grant, which PostgREST exposes as /rest/v1/rpc/... to anon. Calling it
+-- only ever raises, so nothing was reachable through it -- but a
+-- SECURITY DEFINER function callable by anon is a finding regardless of
+-- what its body does, and this repository's rule is grant-level
+-- defence-in-depth on every function it adds. A trigger function has no
+-- caller other than the trigger.
+--
+-- Found by `get_advisors(security)` as `anon_security_definer_function_executable`
+-- immediately after 20260805212042 added the trigger.
+revoke all on function public.copilot_activation_history_append_only() from public, anon, authenticated;
