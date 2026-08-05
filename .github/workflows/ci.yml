@@ -89,12 +89,12 @@ jobs:
           CLINICAL_ORG_ID=org-fixture \
           npm run test:e2e -- live-
 
-  # Phase 10B.1. The copilot's process-level mode is fixed when the server
-  # boots, so one server cannot show both the default-off posture and the
-  # live state machine. The spec file is the same in all three jobs; each
-  # job runs the describe block whose posture it is about, and together
-  # they cover every required browser proof. Nothing is skipped in CI —
-  # the guards select a posture, they do not avoid running.
+  # Phase 10B.1. The copilot's process-level mode AND the runtime's
+  # deployment posture are both fixed when the server boots, so one server
+  # cannot show all of them. The spec file is the same in all four jobs;
+  # each declares its block via E2E_COPILOT_POSTURE, and together they
+  # cover every required browser proof. Nothing is skipped in CI — the
+  # guards select a posture, they do not avoid running.
   e2e-copilot-readiness:
     name: Browser suite (copilot provider readiness — live state machine)
     runs-on: ubuntu-latest
@@ -106,14 +106,25 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx playwright install --with-deps chromium
-      - run: npm run build:clinical
-      - name: Live state machine against governed records
+      # This job runs `next dev` (E2E_DEV_SERVER=1), not `next start`.
+      # `next start` forces NODE_ENV=production, which the deployed-runtime
+      # detector treats as a deployment signal, and a deployed runtime is
+      # categorically refused the deterministic provider. Weakening that
+      # refusal to obtain coverage is the trade this repository will not
+      # make, so the suite moves to a runtime where the local contract
+      # fixture is legitimately permitted. The deployed half of the
+      # behaviour is proven by e2e-copilot-deployed-live below.
+      - name: Live state machine against governed records (local contract fixture)
         run: |
           node scripts/live-stub-server.mjs &
           sleep 2
           E2E_LIVE=1 \
+          E2E_DEV_SERVER=1 \
+          E2E_COPILOT_POSTURE=live_local \
           APP_EDITION=clinical \
+          NEXT_PUBLIC_USE_LIVE_API=true \
           CLINICAL_COPILOT_MODE=live \
+          CLINICAL_CONTRACT_FIXTURE=1 \
           TRPC_BASE_URL=http://127.0.0.1:3999/api/trpc \
           CLINICAL_SUPABASE_URL=http://127.0.0.1:3999 \
           CLINICAL_SUPABASE_ANON_KEY=stub \
@@ -134,18 +145,58 @@ jobs:
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       - run: npm run build:clinical
-      # CLINICAL_COPILOT_MODE=fixture plus THREE deployed-runtime markers.
-      # The point of the job is that none of them — including the
-      # client-shipped NEXT_PUBLIC_* one — can re-open the fixture path.
+      # CLINICAL_COPILOT_MODE=fixture plus THREE deployed-runtime markers,
+      # AND CLINICAL_CONTRACT_FIXTURE=1. The point of the job is that none
+      # of them — not the client-shipped NEXT_PUBLIC_* one, and not the
+      # contract-fixture opt-in either — can re-open the fixture path.
       - name: Fixture mode must refuse, and must not fall back to fixture content
         run: |
           node scripts/live-stub-server.mjs &
           sleep 2
           E2E_LIVE=1 \
+          E2E_COPILOT_POSTURE=deployed_fixture \
           APP_EDITION=clinical \
           CLINICAL_COPILOT_MODE=fixture \
+          CLINICAL_CONTRACT_FIXTURE=1 \
           APP_RUNTIME_ENV=production \
           NEXT_PUBLIC_APP_ENV=production \
+          VERCEL_ENV=production \
+          TRPC_BASE_URL=http://127.0.0.1:3999/api/trpc \
+          CLINICAL_SUPABASE_URL=http://127.0.0.1:3999 \
+          CLINICAL_SUPABASE_ANON_KEY=stub \
+          CLINICAL_DEMO_EMAIL=demo@local \
+          CLINICAL_DEMO_PASSWORD=demo \
+          CLINICAL_ORG_ID=org-fixture \
+          npm run test:e2e -- live-copilot-provider-readiness
+
+  e2e-copilot-deployed-live:
+    name: Browser suite (governed synthetic refused in a deployed runtime)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run build:clinical
+      # The counterpart to e2e-copilot-readiness. Identical governed
+      # records — registry kind `synthetic_fixture`, activation
+      # `approved_for_synthetic`, no PHI, CLINICAL_COPILOT_MODE=live,
+      # CLINICAL_CONTRACT_FIXTURE=1 — but a deployed runtime. An audited
+      # activation row is not a reason for synthetic clinical content to
+      # exist in a deployed process, so the run must produce nothing.
+      - name: approved_for_synthetic must produce nothing in a deployed runtime
+        run: |
+          node scripts/live-stub-server.mjs &
+          sleep 2
+          E2E_LIVE=1 \
+          E2E_COPILOT_POSTURE=deployed_live \
+          APP_EDITION=clinical \
+          CLINICAL_COPILOT_MODE=live \
+          CLINICAL_CONTRACT_FIXTURE=1 \
+          APP_RUNTIME_ENV=production \
           VERCEL_ENV=production \
           TRPC_BASE_URL=http://127.0.0.1:3999/api/trpc \
           CLINICAL_SUPABASE_URL=http://127.0.0.1:3999 \

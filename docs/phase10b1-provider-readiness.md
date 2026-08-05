@@ -60,6 +60,19 @@ sight if `providerName='chatgpt'` or if the resolved endpoint is
 
 The first checkpoint of this phase left three gaps. All are now closed.
 
+A second pass then reversed two decisions this document had previously
+argued for. Both had been flagged in the PR body as needing review, and
+both were overruled:
+
+1. **The governed synthetic capability is removed from every deployed
+   runtime.** `approved_for_synthetic` no longer activates a fixture or
+   synthetic provider when `isDeployedRuntime()` is true, under any
+   circumstances. See *Where a synthetic provider is allowed to exist*.
+2. **Hand-written SigV4 is replaced by
+   `@aws-sdk/client-secrets-manager`** and the standard AWS credential
+   provider chain. Security and maintainability take priority over
+   minimizing transitive dependencies. See *Production `SecretResolver`*.
+
 ### Bounded HTTPS transport (`http-transport.ts`)
 
 `createHttpsTransport` is a real transport, not a placeholder:
@@ -89,14 +102,44 @@ ignored. The cache is bounded with a short TTL, and a stale entry is
 dropped **before** the refetch so a failed refresh can never fall back to
 a revoked bearer.
 
-**No AWS SDK dependency was added.** This repository ships five runtime
-dependencies and no vendor SDKs — the OpenAI request is likewise
-hand-built against the published wire contract. `@aws-sdk/client-secrets-manager`
-would pull roughly fifty transitive packages into a clinical application
-to make one signed POST. Signing is HMAC-SHA256 via `node:crypto` against
-the documented SigV4 canonical string. If a later phase adopts the SDK it
-implements the same `SecretsManagerClient` interface and nothing above it
-changes. `package.json` is unchanged from the base commit.
+**The official AWS SDK, not hand-rolled SigV4.** The first revision signed
+requests by hand with `node:crypto` to avoid roughly fifty transitive
+packages. That trade was reviewed and reversed: security and
+maintainability outrank dependency count here. Request signing has a long
+tail of details — credential refresh, session tokens, SSO and IMDS
+sourcing, clock skew, regional endpoint resolution, retry classification —
+and none of it is this repository's job to maintain.
+`@aws-sdk/client-secrets-manager` is now a runtime dependency and
+credentials come from the **standard AWS credential provider chain**;
+`credentials` is deliberately absent from the client config, because
+passing it would replace the chain and exclude SSO, IMDS, ECS task roles,
+and web identity — the sources a real deployment should prefer over a
+static env key. `npm audit --omit=dev` attributes **zero** findings to the
+SDK or any of its transitive packages.
+
+**The SDK is loaded behind a dynamic `import()`, never statically.** There
+is no `@aws-sdk` import at module scope anywhere in first-party source; a
+test asserts that structurally, and asserts exactly one dynamic edge
+exists. Three things depend on it:
+
+- disabled mode does not merely skip *constructing* an AWS client, it does
+  not pull the SDK into the process at all;
+- nothing under `@aws-sdk` can reach a client bundle —
+  `scripts/check-clinical-bundle.mjs` now fails hard (never advisory) on
+  nine server-only markers including `@aws-sdk/client-secrets-manager`,
+  `GetSecretValueCommand`, the secret-resolver categories, and the copilot
+  system prompt;
+- a static import put the SDK's whole module graph in front of every
+  Vitest worker that transitively imports the resolver. It was not a
+  theoretical cost: the unit suite went from ~4s to a 2,649s run that
+  failed with worker start-up timeouts. Lazily loaded, it is 4.9s again.
+
+The injection seam is `AwsSecretsSend`, typed against the plain request
+shape `{ SecretId }` rather than an SDK `Command` class, so the seam
+itself does not reintroduce the static dependency. A second seam,
+`sdkLoader`, lets tests exercise the real construction path — bounded
+timeouts, `maxAttempts`, no `credentials` key — without the real SDK
+entering the test's module graph.
 
 ### Disabled mode constructs nothing (`provider.runtime.ts`)
 
@@ -125,23 +168,72 @@ Nine approval gates are derived from governed records only.
 moves. Placeholder references (`TBD`, `pending`, `n/a`, `none`, `test`)
 are refused rather than trusted.
 
-## Why the synthetic provider is governed, not env-driven
+## Where a synthetic provider is allowed to exist: nowhere deployed
 
-The e2e server runs `next start`, so `NODE_ENV=production` and the
-deployed-runtime detector correctly refuses `CLINICAL_COPILOT_MODE=fixture`.
-Weakening that refusal to obtain browser coverage was not acceptable, so
-`selectGovernedProvider` reaches the deterministic provider through the
-governed record the schema already models. All four conditions must hold
-together: process mode `live`, registry kind `synthetic_fixture`,
-organization activation `approved_for_synthetic`, and **no PHI** in the
-snapshot. `approved_for_phi` does **not** select the fixture — a failed
-live call never degrades to fabricated output.
+An earlier revision of this reconciliation treated `approved_for_synthetic`
+as authority enough to run a fixture inside a deployed runtime, reasoning
+that an audited database row outranks an environment flag. That was
+reviewed and rejected, and rightly. A row in a table is not a reason for
+synthetic clinical content to exist in a deployed process at all; the
+blast radius of one mis-set activation row is a patient chart showing
+invented content that looks real.
+
+So the Phase 10A deployed refusal is **categorical and comes first**. A
+governed record is now NECESSARY but not SUFFICIENT. All six conditions
+must hold together:
+
+1. process mode is `live` (never `disabled`);
+2. `isDeployedRuntime()` is **false** — no governed record overrides this;
+3. the isolated local contract-fixture boundary allows it;
+4. registry kind is literally `synthetic_fixture`;
+5. organization activation is `approved_for_synthetic`;
+6. the snapshot carries **no PHI**.
+
+`approved_for_phi` does **not** select the fixture — a failed live call
+never degrades to fabricated output.
+
+The posture surface follows the same rule. `computeProviderPosture` takes
+a required `syntheticPermitted` flag (required, not defaulting to true, so
+a caller that forgets it cannot make the false claim). Where synthetic is
+refused, an `approved_for_synthetic` organization reads `live_unavailable`
+with "Synthetic evaluation is not available in this runtime… no example
+content is shown" — never "Fixture test mode", which would promise
+deterministic content the run path is about to refuse.
+
+### The local contract-fixture boundary (`src/server/runtime/contractFixture.ts`)
+
+A separate module from `deployedRuntime.ts` and a separate concept from
+`resolveCopilotMode()`. Those answer "is this deployed?" and "what did the
+operator ask for?". This answers a narrower question with a higher bar:
+*is this unambiguously a local test harness, talking to a loopback backend
+that is definitely not the clinical project?* Five ordered rules, each
+refusing on its own and naming which one failed:
+
+1. `CLINICAL_CONTRACT_FIXTURE=1` set explicitly — there is no default-on path;
+2. `isDeployedRuntime()` is false — the same categorical Phase 10A detector,
+   reused rather than reimplemented, including its `NODE_ENV=production`
+   last-resort signal;
+3. a clinical backend URL is configured at all;
+4. it is not the clinical project `urcjiehlxoehievobezf` and not any hosted
+   Supabase project — checked **by identity**, so a tunnel or hosts-file
+   entry that makes the project look local is still refused;
+5. the host is loopback.
+
+No `NEXT_PUBLIC_*` value is consulted, so nothing client-shipped can open it.
+
+### The consequence for browser coverage
+
+`next start` forces `NODE_ENV=production`, which rule 2 refuses. Rather
+than weaken the refusal, the live state-machine job runs against
+`next dev` (`E2E_DEV_SERVER=1`), where the fixture is legitimately
+permitted, and a fourth CI job proves the other half: identical governed
+records plus deployment markers produce **nothing**.
 
 A governed *adversarial* synthetic identity
 (`synthetic_fixture_adversarial`) exists so the hallucinated-citation
 branch is provable through the real UI rather than only in a unit test.
-It is reachable only under `approved_for_synthetic` and is labelled
-distinctly on every run row.
+It is bounded exactly as the ordinary synthetic provider is — never in a
+deployed runtime — and is labelled distinctly on every run row.
 
 ## Hallucinated citations fail closed
 
@@ -153,17 +245,38 @@ never contained. It now returns `failed` with `draft: null` and category
 
 ## Browser coverage
 
-`e2e/live-copilot-provider-readiness.spec.ts` runs in **three CI jobs**,
-one per runtime posture, because the copilot's mode is fixed when the
-server boots and one server cannot show all three. The guards select a
-posture; they do not avoid running.
+`e2e/live-copilot-provider-readiness.spec.ts` runs in **four CI jobs**, one
+per runtime posture, because the copilot's mode *and* the runtime's
+deployment posture are both fixed when the server boots and one server
+cannot show all of them. Each job declares its block with
+`E2E_COPILOT_POSTURE`; a value outside the four throws rather than
+silently running nothing. The guards select a posture; they do not avoid
+running.
 
-| Job | `CLINICAL_COPILOT_MODE` | Proofs |
-| --- | --- | --- |
-| `e2e-live-fixture` | unset (disabled) | 1, 1b, 2, 9, 19, 20 |
-| `e2e-copilot-readiness` | `live` | 3, 6–17, 19, 20 |
-| `e2e-copilot-fixture-refusal` | `fixture` + 3 deployed markers | 4, 5 |
-| `e2e-clinical-down` | n/a, backend down | 18 |
+| Job | `E2E_COPILOT_POSTURE` | Server | Env | Proofs |
+| --- | --- | --- | --- | --- |
+| `e2e-live-fixture` | `default` | `next start` | mode unset | 1, 1b, 2, 9, 19, 20 |
+| `e2e-copilot-readiness` | `live_local` | `next dev` | `live` + `CLINICAL_CONTRACT_FIXTURE=1` | 3, 6–17, 19, 20 |
+| `e2e-copilot-fixture-refusal` | `deployed_fixture` | `next start` | `fixture` + fixture flag + 3 deployed markers | 4, 5 |
+| `e2e-copilot-deployed-live` | `deployed_live` | `next start` | `live` + fixture flag + 2 deployed markers | 4b, 4c, 19 |
+| `e2e-clinical-down` | n/a | `next start`, backend down | — | 18 |
+
+Why the readiness job uses a dev server is explained above: `next start`
+is a deployed runtime by rule, and the alternative was to weaken that rule
+for the sake of coverage. The dev server's only accommodations are a
+route warm-up in `beforeAll` and longer *webServer/test* timeouts for
+on-demand compilation. `retries` stays 0 and no assertion is relaxed.
+
+**Proof 19 is split by artifact, not by strictness.** Its RUNTIME half —
+the rendered DOM and the copilot API response bodies — runs in every
+posture. Its SHIPPED half — every loaded script body — runs wherever the
+server is a production build (three of the four jobs), plus the static
+`check:clinical-bundle` scan in `checks`. The split exists because
+`next dev` serves unminified modules with source *comments* intact: a
+comment in `src/adapters/index.ts` mentioning "the `service_role` worker
+boundary" appears in a dev chunk and in no production chunk. Scanning dev
+chunks measures the wrong artifact — it fails on prose that is never
+shipped while proving nothing about what is.
 
 Every test runs under `assertNoExternalTraffic`, which fails if the page
 requests any host other than the local app and the local fixture backend.

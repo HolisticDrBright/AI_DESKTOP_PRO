@@ -13,29 +13,41 @@ import { resetBackend, STUB_BASE } from "./support/backend";
  * conclusion drawn at the time — that the fixture backend could not
  * support these proofs — was wrong.
  *
- * TWO RUNTIME POSTURES, BOTH EXERCISED IN CI
+ * FOUR RUNTIME POSTURES, ALL EXERCISED IN CI
  * ------------------------------------------
- * The copilot's process-level mode is an environment posture that is fixed
- * when the server boots, so one server cannot show both the default-off
- * posture and the live state machine. CI therefore runs this file twice:
+ * The copilot's process-level mode and the runtime's deployment posture are
+ * both fixed when the server boots, so one server cannot show all of them.
+ * CI therefore runs this file four times, each job declaring which block it
+ * is about via `E2E_COPILOT_POSTURE`:
  *
- *   - job `e2e-live-fixture`      — default env (no CLINICAL_COPILOT_MODE).
- *                                   Runs the "default disabled posture" block.
- *   - job `e2e-copilot-readiness` — CLINICAL_COPILOT_MODE=live.
- *                                   Runs the "live state machine" block.
+ *   default          job `e2e-live-fixture`             — no CLINICAL_COPILOT_MODE.
+ *   live_local       job `e2e-copilot-readiness`        — mode=live, dev server,
+ *                                                         contract fixture allowed.
+ *   deployed_fixture job `e2e-copilot-fixture-refusal`  — mode=fixture + deployed markers.
+ *   deployed_live    job `e2e-copilot-deployed-live`    — mode=live + deployed markers,
+ *                                                         org approved_for_synthetic.
  *
- * Neither block is skipped in CI; each runs in the job whose posture it is
+ * No block is skipped in CI; each runs in the job whose posture it is
  * about, and the union covers every required proof. The guard below is a
- * posture selector, not a way to avoid running.
+ * posture selector, not a way to avoid running. The posture is declared by
+ * the job rather than inferred from CLINICAL_COPILOT_MODE, because two of
+ * the four jobs share a mode and differ only in deployment markers the
+ * browser cannot see.
  *
- * WHY THE SYNTHETIC PROVIDER IS GOVERNED, NOT ENV-DRIVEN
- * ------------------------------------------------------
- * The e2e server runs `next start`, so NODE_ENV=production and the
- * deployed-runtime detector correctly refuses CLINICAL_COPILOT_MODE=fixture.
- * Rather than weaken that refusal to obtain browser coverage, the
- * deterministic provider is reached through the governed record the schema
- * already models: registry kind `synthetic_fixture` plus organization
- * activation `approved_for_synthetic`, with no PHI in the snapshot.
+ * WHERE THE DETERMINISTIC PROVIDER IS ALLOWED TO EXIST
+ * ----------------------------------------------------
+ * Nowhere deployed. A governed record (`synthetic_fixture` +
+ * `approved_for_synthetic`, no PHI) is NECESSARY but not SUFFICIENT: the
+ * runtime must also pass the isolated local contract-fixture boundary in
+ * `src/server/runtime/contractFixture.ts` — explicit opt-in, a loopback
+ * backend, not the clinical project, and not a deployed runtime.
+ *
+ * `next start` forces NODE_ENV=production and so counts as deployed. Rather
+ * than weaken that categorical refusal for the sake of coverage, the
+ * live_local job runs against `next dev` (E2E_DEV_SERVER=1), where the
+ * fixture is legitimately permitted. The deployed_live job then proves the
+ * other half: the same governed record produces NOTHING once a deployment
+ * marker is present.
  *
  * ZERO EXTERNAL REQUESTS. Every test runs under `assertNoExternalTraffic`,
  * which fails the test if the browser attempts any host other than the
@@ -46,15 +58,28 @@ test.skip(!process.env.E2E_LIVE, "live-mode suite: set E2E_LIVE=1 with a live-fl
 test.describe.configure({ mode: "serial" });
 
 /**
- * The three postures are mutually exclusive, so exactly one describe block
+ * The four postures are mutually exclusive, so exactly one describe block
  * runs per CI job. An earlier version keyed only on "is it live", which
  * meant the fixture job also ran the default-posture block and failed on a
- * screen that was behaving correctly.
+ * screen that was behaving correctly. Deriving it from the mode is no
+ * longer possible either: `live_local` and `deployed_live` share
+ * CLINICAL_COPILOT_MODE=live and differ only in server-side deployment
+ * markers, which the browser cannot observe. The job declares its posture.
  */
-const COPILOT_MODE = (process.env.CLINICAL_COPILOT_MODE ?? "disabled").toLowerCase();
-const LIVE_MODE = COPILOT_MODE === "live";
-const FIXTURE_MODE = COPILOT_MODE === "fixture";
-const DEFAULT_MODE = !LIVE_MODE && !FIXTURE_MODE;
+const POSTURE = (process.env.E2E_COPILOT_POSTURE ?? "default").toLowerCase();
+const DEFAULT_MODE = POSTURE === "default";
+const LIVE_MODE = POSTURE === "live_local";
+const FIXTURE_MODE = POSTURE === "deployed_fixture";
+const DEPLOYED_LIVE_MODE = POSTURE === "deployed_live";
+
+if (![DEFAULT_MODE, LIVE_MODE, FIXTURE_MODE, DEPLOYED_LIVE_MODE].some(Boolean)) {
+  // A typo in a job's env must fail loudly rather than silently running
+  // nothing and reporting green.
+  throw new Error(
+    `E2E_COPILOT_POSTURE="${POSTURE}" is not one of ` +
+      `default | live_local | deployed_fixture | deployed_live.`,
+  );
+}
 
 const PATIENT_ID = "aaaaaaaa-1111-2222-3333-444444444401";
 const COPILOT_URL = `/patients/${PATIENT_ID}/labs?view=copilot`;
@@ -140,7 +165,35 @@ async function runOnce(page: Page) {
   await expect(page.getByTestId("copilot-run-identity")).toContainText(`attempt ${next}`);
 }
 
-test.beforeAll(resetBackend);
+/**
+ * Compile the routes this suite drives before the first assertion runs.
+ *
+ * `next dev` compiles a route the first time it is requested, and the
+ * provider-status API is fetched by the panel a moment after the page
+ * mounts — so the very first test would otherwise race a cold compile and
+ * read "Reading provider posture…".
+ *
+ * This is a warm-up, not a relaxation: no timeout is raised and no
+ * assertion is weakened. Under `next start` the routes are already built
+ * and this costs one no-op request each. A failure to warm is ignored on
+ * purpose — the tests themselves are the thing that must fail if a route
+ * is broken, not this helper.
+ */
+async function warmRoutes(): Promise<void> {
+  const base = `http://localhost:${process.env.E2E_PORT ?? 3114}`;
+  for (const path of [COPILOT_URL, "/api/live/copilot/provider-status"]) {
+    try {
+      await fetch(`${base}${path}`);
+    } catch {
+      /* the suite's own assertions report a genuinely broken route */
+    }
+  }
+}
+
+test.beforeAll(async () => {
+  await resetBackend();
+  await warmRoutes();
+});
 
 /* ===================================================================== */
 /* DEFAULT DISABLED POSTURE — runs in the default-env CI job              */
@@ -525,24 +578,133 @@ test.describe(
   },
 );
 
-/**
- * PROOF 19 helper — nothing secret-shaped is reachable from the page.
- *
- * Checks the rendered DOM, every loaded script body, and the serialized
- * client payload. A single grep over `body` text would miss a key that was
- * inlined into a chunk, which is the way this actually leaks.
- */
-async function assertBundleIsClean(page: Page): Promise<void> {
-  const FORBIDDEN: Array<[string, RegExp]> = [
-    ["OpenAI key", /\bsk-[A-Za-z0-9_-]{16,}/],
-    ["bearer header", /Authorization:\s*Bearer\s+\S+/i],
-    ["secrets ARN value", /arn:aws:secretsmanager:[a-z0-9-]+:\d{12}:secret:/],
-    ["AWS access key", /\bAKIA[0-9A-Z]{16}\b/],
-    ["AWS signature", /AWS4-HMAC-SHA256/],
-    ["service role key", /service_role/],
-    ["system prompt body", /You are a governed clinical copilot/],
-  ];
+/* ===================================================================== */
+/* DEPLOYED + LIVE + approved_for_synthetic — the categorical refusal      */
+/* ===================================================================== */
 
+test.describe(
+  DEPLOYED_LIVE_MODE
+    ? "governed synthetic refused in a deployed runtime"
+    : "skip: deployed governed-synthetic refusal (other jobs)",
+  () => {
+    test.skip(!DEPLOYED_LIVE_MODE, "covered by the e2e-copilot-deployed-live CI job");
+
+    test("PROOF 4b — approved_for_synthetic produces nothing in a deployed runtime", async ({
+      page,
+    }) => {
+      // The organization has the governed record. The registry row is
+      // `synthetic_fixture`, the activation is `approved_for_synthetic`, the
+      // snapshot carries no PHI, and the mode is `live` — every condition
+      // that makes the synthetic provider reachable locally. The ONLY
+      // difference from the passing live_local job is that this server
+      // carries deployment markers, and that alone must be decisive.
+      const traffic = assertNoExternalTraffic(page);
+      await setScenario("approved_synthetic");
+      await openCopilot(page);
+
+      // The banner does not announce fixture test mode for content that
+      // will never be produced.
+      await expect(page.getByTestId("copilot-posture-state")).not.toHaveText("fixture_test_mode");
+      const detail = (await page.getByTestId("copilot-posture-detail").textContent()) ?? "";
+      expect(detail).toMatch(/not available in this runtime/i);
+      expect(detail).toMatch(/no example content is shown/i);
+
+      await runOnce(page);
+      await expect(page.getByTestId("copilot-status")).toContainText("unavailable");
+
+      // Nothing synthetic reached the screen, under any label.
+      const body = (await page.textContent("body")) ?? "";
+      expect(body).not.toContain("fixture-copilot-v1");
+      expect(body).not.toContain("fixture:governed-synthetic");
+      await expect(page.getByText("Draft (JSON, structural only)")).toHaveCount(0);
+
+      // Nothing synthetic was persisted either.
+      const after = await effects();
+      expect(after.runs.every((r) => r.status !== "completed")).toBe(true);
+      expect(after.runs.every((r) => r.outputHash === null)).toBe(true);
+      expect(traffic.external).toEqual([]);
+    });
+
+    test("PROOF 4c — the adversarial synthetic identity is equally unreachable", async ({
+      page,
+    }) => {
+      // A distinctly-named registry row is still just a row. The refusal is
+      // about the runtime, so it cannot be routed around by registering a
+      // different synthetic provider.
+      await setScenario("approved_synthetic_adversarial");
+      await openCopilot(page);
+      await runOnce(page);
+      await expect(page.getByTestId("copilot-status")).toContainText("unavailable");
+      const body = (await page.textContent("body")) ?? "";
+      expect(body).not.toContain("fixture:governed-synthetic-adversarial");
+      expect(body).not.toContain("hallucinated-reference-not-in-envelope");
+    });
+
+    test("PROOF 19 — no secret, ARN, auth header, or prompt reaches the browser", async ({
+      page,
+    }) => {
+      await setScenario("approved_synthetic");
+      await openCopilot(page);
+      await runOnce(page);
+      await assertBundleIsClean(page);
+    });
+  },
+);
+
+/**
+ * PROOF 19 — nothing secret-shaped is reachable from the browser.
+ *
+ * The proof has two halves, and they are about two different artifacts:
+ *
+ *   RUNTIME  — what this application PRODUCED for this page: the rendered
+ *              DOM and the copilot API response bodies. Checked in every
+ *              posture, including the dev-server job.
+ *   SHIPPED  — what the build EMITTED: every loaded script body. Checked
+ *              wherever the server is a production build, which is three
+ *              of the four CI jobs, and independently by
+ *              `npm run check:clinical-bundle` in the `checks` job.
+ *
+ * The split is not a relaxation. `next dev` serves unminified modules with
+ * their source COMMENTS intact, so a comment in `src/adapters/index.ts`
+ * that merely mentions the words "service_role worker boundary" appears in
+ * a dev chunk and in no production chunk. Scanning dev chunks therefore
+ * measures the wrong artifact: it fails on prose that is never shipped
+ * while proving nothing about what is. The shipped half runs against the
+ * build it is actually about.
+ */
+const FORBIDDEN: Array<[string, RegExp]> = [
+  ["OpenAI key", /\bsk-[A-Za-z0-9_-]{16,}/],
+  ["bearer header", /Authorization:\s*Bearer\s+\S+/i],
+  ["secrets ARN value", /arn:aws:secretsmanager:[a-z0-9-]+:\d{12}:secret:/],
+  ["AWS access key", /\bAKIA[0-9A-Z]{16}\b/],
+  ["AWS signature", /AWS4-HMAC-SHA256/],
+  ["service role key", /service_role/],
+  ["system prompt body", /You are a governed clinical copilot/],
+];
+
+/** True unless this job deliberately runs `next dev`. */
+const PRODUCTION_BUILD = process.env.E2E_DEV_SERVER !== "1";
+
+async function assertBundleIsClean(page: Page): Promise<void> {
+  // --- RUNTIME half: what the application produced, in every posture.
+  const rendered = await page.evaluate(() => document.body.innerText);
+  const apiBody = await page.evaluate(async () => {
+    try {
+      return await (await fetch("/api/live/copilot/provider-status")).text();
+    } catch {
+      return "";
+    }
+  });
+  for (const [label, pattern] of FORBIDDEN) {
+    expect(
+      `${rendered}\n${apiBody}`,
+      `${label} must not appear in the rendered page or an API response`,
+    ).not.toMatch(pattern);
+  }
+
+  if (!PRODUCTION_BUILD) return;
+
+  // --- SHIPPED half: what the build emitted.
   const html = await page.content();
   const scriptBodies = await page.evaluate(async () => {
     const srcs = Array.from(document.querySelectorAll("script[src]"))

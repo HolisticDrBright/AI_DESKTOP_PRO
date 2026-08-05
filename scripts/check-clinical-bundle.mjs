@@ -65,6 +65,34 @@ const DEMO_ONLY_COPY = [
   "Demo mode does not",
 ];
 
+/**
+ * SERVER-ONLY MARKERS (Phase 10B.1) — a HARD failure, never advisory.
+ *
+ * The fixture-presence gap above is dead code in the bundle. These are a
+ * different class of problem: if any of them appears in a client chunk,
+ * something that must never leave the server has been code-split into the
+ * browser. There is no "unreachable dead code" reading that makes an AWS
+ * Secrets Manager client or a system prompt acceptable to ship.
+ *
+ * Each entry is a marker that only the server-side modules produce:
+ *   - `@aws-sdk/client-secrets-manager` and the SigV4 / Secrets Manager
+ *     wire identifiers the SDK emits;
+ *   - the secret-resolver's own category vocabulary, which appears nowhere
+ *     else;
+ *   - the copilot system prompt and provider auth-header construction.
+ */
+const SERVER_ONLY_MARKERS = [
+  "@aws-sdk/client-secrets-manager",
+  "GetSecretValueCommand",
+  "SecretsManagerClient",
+  "secretsmanager.amazonaws.com",
+  "AWS4-HMAC-SHA256",
+  "secret_reference_shape_invalid",
+  "provider_credential_unavailable_or_denied",
+  "You are a governed clinical copilot",
+  "openai_transport_refused_by_default",
+];
+
 function walk(dir) {
   const out = [];
   let entries;
@@ -92,6 +120,8 @@ if (chunks.length === 0) {
 }
 
 const presence = new Map();
+/** marker -> [files]. Always fatal, never advisory. */
+const serverOnly = new Map();
 
 for (const file of chunks) {
   const source = readFileSync(file, "utf8");
@@ -100,12 +130,35 @@ for (const file of chunks) {
       presence.set(needle, (presence.get(needle) ?? 0) + 1);
     }
   }
+  for (const needle of SERVER_ONLY_MARKERS) {
+    if (source.includes(needle)) {
+      serverOnly.set(needle, [...(serverOnly.get(needle) ?? []), file]);
+    }
+  }
+}
+
+if (serverOnly.size > 0) {
+  console.error(
+    `[clinical-bundle] FAIL — server-only code reached the CLIENT bundle. ` +
+      `This is not a presence gap; it is a leak:`,
+  );
+  for (const [needle, files] of serverOnly) {
+    console.error(`  ${JSON.stringify(needle)} in ${files.join(", ")}`);
+  }
+  console.error(
+    `\nThe AWS Secrets Manager client, the secret resolver, the bounded HTTPS ` +
+      `transport, and the copilot system prompt are all server-only and are ` +
+      `guarded at module scope. A hit here means an import edge from a client ` +
+      `component reached one of them — find the edge; do not add an exclusion.`,
+  );
+  process.exit(1);
 }
 
 if (presence.size === 0) {
   console.log(
     `[clinical-bundle] PASS — ${chunks.length} client chunks carry no synthetic ` +
-      `identity and no demo-only copy. The presence gap is closed.`,
+      `identity, no demo-only copy, and none of the ${SERVER_ONLY_MARKERS.length} ` +
+      `server-only markers (AWS SDK, secret resolver, transport, system prompt).`,
   );
   process.exit(0);
 }
