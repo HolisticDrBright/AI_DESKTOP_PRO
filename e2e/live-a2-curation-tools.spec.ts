@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { resetBackend } from "./support/backend";
+import { STUB_BASE, resetBackend } from "./support/backend";
 
 /**
  * PHASE 9E-A.2 — Product labels, knowledge references, commercial matching,
@@ -18,7 +18,7 @@ test.describe.configure({ mode: "serial" });
 test.beforeAll(resetBackend);
 
 const IMPORTS = "/settings/imports";
-const STUB = "http://127.0.0.1:3999";
+const STUB = STUB_BASE;
 const ORG = "org-fixture";
 
 async function goLabels(page: import("@playwright/test").Page) {

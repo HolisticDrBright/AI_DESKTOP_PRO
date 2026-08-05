@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { resetBackend } from "./support/backend";
+import { STUB_BASE, resetBackend } from "./support/backend";
 
 /**
  * LIVE-MODE Tasks slice coverage. Skipped unless E2E_LIVE=1, because it needs
@@ -510,7 +510,7 @@ test("multi-org: auto-select, validated switch clears org data, tabs agree, mid-
   await tab2.close();
 
   // Membership revoked while the app is open → the very next read is refused.
-  await page.request.post("http://127.0.0.1:3999/__control/revoke-memberships", {
+  await page.request.post(`${STUB_BASE}/__control/revoke-memberships`, {
     data: { bearer: "fixture-access-token--multi" },
   });
   await page.goto("/tasks");

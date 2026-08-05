@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { resetBackend } from "./support/backend";
+import { STUB_BASE, resetBackend } from "./support/backend";
 
 /**
  * LIVE-MODE differential questions + clinical lens engine (Milestone 2).
@@ -41,7 +41,7 @@ const PATIENT_ID = "aaaaaaaa-1111-2222-3333-444444444401";
 const LENS_ENCOUNTER = `/patients/${PATIENT_ID}/encounter/eeeeeeee-2222-3333-4444-444444444777`;
 const INJECTED_ENCOUNTER = `/patients/${PATIENT_ID}/encounter/eeeeeeee-2222-3333-4444-444444444778`;
 const OTHER_ORG_ENCOUNTER = `/patients/${PATIENT_ID}/encounter/eeeeeeee-2222-3333-4444-444444444888`;
-const STUB_ORIGIN = (process.env.TRPC_BASE_URL ?? "http://127.0.0.1:3999/api/trpc").replace(/\/api\/trpc\/?$/, "");
+const STUB_ORIGIN = (process.env.TRPC_BASE_URL ?? `${STUB_BASE}/api/trpc`).replace(/\/api\/trpc\/?$/, "");
 
 const panel = (page: Page) => page.getByTestId("lens-panel");
 const card = (page: Page, text: string | RegExp) =>

@@ -12,7 +12,7 @@ import { TransportError } from "./http-transport";
 
 const ARN = "arn:aws:secretsmanager:us-east-1:123456789012:secret:openai-hipaa-live";
 const CREDS = {
-  accessKeyId: "AKIAIOSFODNN7EXAMPLE",
+  accessKeyId: "TESTFAKEAWSACCESSKEY",
   secretAccessKey: "TEST_FAKE_AWS_SECRET_wJalrXUtnFEMI/K7MDENG",
 };
 const FIXED_CLOCK = () => new Date("2026-08-04T12:00:00.000Z");
@@ -62,7 +62,7 @@ describe("SigV4 signing", () => {
       body: JSON.stringify({ SecretId: ARN }),
       now: FIXED_CLOCK(),
     });
-    expect(headers.Authorization).toMatch(/^AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE\//);
+    expect(headers.Authorization).toMatch(/^AWS4-HMAC-SHA256 Credential=TESTFAKEAWSACCESSKEY\//);
     expect(headers.Authorization).toContain("/us-east-1/secretsmanager/aws4_request");
     expect(headers.Authorization).toMatch(/SignedHeaders=[a-z0-9;-]+/);
     expect(headers.Authorization).toMatch(/Signature=[0-9a-f]{64}$/);

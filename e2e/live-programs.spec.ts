@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { resetBackend } from "./support/backend";
+import { STUB_BASE, resetBackend } from "./support/backend";
 
 /**
  * PHASE 3, browser-level: the Programs & Education workspace against the
@@ -361,7 +361,7 @@ test("14: a revoked membership refuses the library without leaking program data"
   // Warm the session, then revoke the bearer's memberships mid-session.
   await page.goto("/programs");
   await expect(page.getByTestId("program-list")).toBeVisible();
-  await page.request.post("http://127.0.0.1:3999/__control/revoke-memberships", {
+  await page.request.post(`${STUB_BASE}/__control/revoke-memberships`, {
     data: { bearer: "fixture-access-token" },
   });
   await page.goto("/programs");
@@ -369,7 +369,7 @@ test("14: a revoked membership refuses the library without leaking program data"
   await expect(page.getByText("Metabolic Reset")).toHaveCount(0);
 
   // Restore the membership so suites running after this one keep a live session.
-  await page.request.post("http://127.0.0.1:3999/__control/restore-memberships", {
+  await page.request.post(`${STUB_BASE}/__control/restore-memberships`, {
     data: { bearer: "fixture-access-token" },
   });
 });
