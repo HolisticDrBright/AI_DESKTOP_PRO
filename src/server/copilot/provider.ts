@@ -8,6 +8,7 @@ if (typeof window !== "undefined") {
 }
 
 import { isDeployedRuntime } from "../runtime/deployedRuntime";
+import { isContractFixtureAllowed } from "../runtime/contractFixture";
 export { isDeployedRuntime as isDeployedEnvironment };
 
 export type CopilotMode = "disabled" | "fixture" | "live";
@@ -131,31 +132,37 @@ export async function selectProvider(): Promise<CopilotProvider> {
 /**
  * Governed provider selection.
  *
- * The difference from `selectProvider()` is the source of authority. That
- * function reads an ENV FLAG, which is why it refuses fixture mode in a
- * deployed runtime: an env var is not evidence of anything, and a deployed
- * process must not be able to opt itself back into synthetic content.
+ * A governed record is necessary for the synthetic path but NOT sufficient.
+ * An earlier revision treated `approved_for_synthetic` as authority enough
+ * to run a fixture inside a deployed runtime, on the reasoning that an
+ * audited DB row outranks an env flag. That was rejected, and rightly: a
+ * row in a table is not a reason for synthetic clinical content to exist
+ * in a deployed process at all. The blast radius of a mis-set activation
+ * row is a patient chart showing invented content that looks real.
  *
- * This function reads GOVERNED RECORDS instead — the provider registry row
- * and the organization's activation row, both of which a platform admin
- * had to write through an audited RPC. The `approved_for_synthetic` state
- * exists in the schema precisely to name "this organization has agreed to
- * evaluate the copilot against deterministic synthetic content".
+ * So the deployed refusal is CATEGORICAL and comes first, matching Phase
+ * 10A exactly. On top of it, the synthetic path additionally requires the
+ * isolated local contract-fixture boundary to pass — explicit opt-in, a
+ * loopback backend, and not the clinical project.
  *
- * The synthetic path is therefore permitted in a deployed runtime, but
- * only under all four conditions together:
+ * All six conditions must hold together:
  *
  *   1. the process-level mode is `live` (never `disabled`);
- *   2. the registered provider kind is literally `synthetic_fixture`;
- *   3. the organization's activation state is `approved_for_synthetic`;
- *   4. the input carries no PHI.
+ *   2. `isDeployedRuntime()` is FALSE — no exceptions, no governed record
+ *      can override it;
+ *   3. the contract-fixture boundary allows (see
+ *      `runtime/contractFixture.ts`);
+ *   4. the registered provider kind is literally `synthetic_fixture`;
+ *   5. the organization's activation state is `approved_for_synthetic`;
+ *   6. the input carries no PHI.
  *
  * Any of those missing falls through to `liveProvider`, which refuses.
- * There is no path here that produces synthetic content for an
- * organization that did not record the decision to accept it, and no
- * path that lets synthetic content stand in for a failed live call —
- * `approved_for_synthetic` and `approved_for_phi` are different states and
- * the second never selects the fixture.
+ * There is no path that produces synthetic content for an organization
+ * that did not record the decision to accept it, no path that produces it
+ * in a deployed runtime at all, and no path that lets synthetic content
+ * stand in for a failed live call — `approved_for_synthetic` and
+ * `approved_for_phi` are different states and the second never selects a
+ * fixture.
  */
 export async function selectGovernedProvider(input: {
   registryKind: string | null;
@@ -168,7 +175,13 @@ export async function selectGovernedProvider(input: {
   if (mode === "disabled") return disabledProvider;
   if (mode === "fixture") return loadFixtureProvider();
 
+  // A deployed runtime never gets a synthetic provider, whatever the
+  // governed records say. This check is first so no later condition can be
+  // read as an exception to it.
+  const syntheticPermittedHere = !isDeployedRuntime() && isContractFixtureAllowed();
+
   const syntheticApproved =
+    syntheticPermittedHere &&
     input.registryKind === "synthetic_fixture" &&
     input.activationState === "approved_for_synthetic" &&
     input.containsPHI === false;
@@ -207,9 +220,10 @@ export const ADVERSARIAL_SYNTHETIC_NAME = "synthetic_fixture_adversarial";
  * construction, which means the rejection branch — the one that actually
  * matters — would otherwise never execute in a browser run.
  *
- * It is bounded the same way as the ordinary synthetic provider: reachable
- * only under `approved_for_synthetic`, only with no PHI present, and
- * labelled distinctly on the run row.
+ * It is bounded exactly as the ordinary synthetic provider is: never in a
+ * deployed runtime, only behind the local contract-fixture boundary, only
+ * under `approved_for_synthetic`, only with no PHI present, and labelled
+ * distinctly on the run row.
  */
 function adversarialSyntheticProvider(base: CopilotProvider): CopilotProvider {
   return {

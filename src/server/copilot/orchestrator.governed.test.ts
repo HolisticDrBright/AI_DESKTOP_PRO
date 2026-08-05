@@ -1,8 +1,21 @@
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { orchestrateRun } from "./orchestrator";
 import { ADVERSARIAL_SYNTHETIC_NAME } from "./provider";
 
 const SAVED = { ...process.env };
+
+/** The synthetic path requires a genuinely local harness posture. */
+function localHarness() {
+  (process.env as Record<string, string>).NODE_ENV = "development";
+  process.env.CLINICAL_CONTRACT_FIXTURE = "1";
+  process.env.CLINICAL_SUPABASE_URL = "http://127.0.0.1:3920";
+}
+
+beforeEach(() => {
+  process.env = { ...SAVED };
+  localHarness();
+});
+
 afterEach(() => {
   process.env = { ...SAVED };
 });
@@ -137,6 +150,22 @@ describe("governed refusals produce unavailable, never fabricated content", () =
         registryKind: "openai_hipaa",
         registryName: "openai",
         activationState: "readiness_review",
+        containsPHI: false,
+      }),
+    );
+    expect(env.status).toBe("unavailable");
+    expect(env.draft).toBeNull();
+    expect(env.outputHash).toBeNull();
+  });
+
+  test("a deployed runtime produces no synthetic draft, whatever the records say", async () => {
+    process.env.CLINICAL_COPILOT_MODE = "live";
+    process.env.VERCEL_ENV = "production";
+    const env = await orchestrateRun(
+      base({
+        registryKind: "synthetic_fixture",
+        registryName: "synthetic_fixture",
+        activationState: "approved_for_synthetic",
         containsPHI: false,
       }),
     );

@@ -104,6 +104,17 @@ export type PostureInput = {
   mode: "disabled" | "fixture" | "live";
   /** Whether the runtime could build a live path at all. */
   runtimeAvailable: boolean;
+  /**
+   * Whether THIS runtime is allowed to produce synthetic content at all —
+   * `!isDeployedRuntime() && isContractFixtureAllowed()`.
+   *
+   * Required, not optional-defaulting-to-true. An organization approved for
+   * synthetic evaluation still gets nothing in a deployed runtime, and the
+   * posture must say so rather than announcing "fixture test mode" for
+   * content that will never be produced. A default would let a caller that
+   * forgot the field make exactly that false claim.
+   */
+  syntheticPermitted: boolean;
   registry: RegistryFacts | null;
   activation: ActivationFacts | null;
   transactions: TransactionFacts;
@@ -295,6 +306,21 @@ export function computeProviderPosture(input: PostureInput): ProviderPosture {
     // The organization opted in to deterministic synthetic evaluation.
     // That is a real, recorded state — and it is emphatically NOT a live
     // claim, so it is reported before the approval roll-up.
+    //
+    // But the record only describes what the ORGANIZATION accepted. Whether
+    // this RUNTIME may produce synthetic content is a separate question
+    // answered categorically elsewhere: a deployed process never may, and
+    // no governed row is an exception to that. Announcing "fixture test
+    // mode" here would promise deterministic content that the provider
+    // layer is about to refuse.
+    if (!input.syntheticPermitted) {
+      return make(
+        "live_unavailable",
+        "Synthetic evaluation is not available in this runtime. This organization is approved for " +
+          "synthetic evaluation only, and synthetic content is never produced in a deployed runtime. " +
+          "Nothing was sent, and no example content is shown.",
+      );
+    }
     return make(
       "fixture_test_mode",
       "Fixture test mode. This organization is approved for synthetic evaluation only. Content is deterministic and generated in-process; no external AI provider was contacted and no PHI was transmitted.",
@@ -342,6 +368,7 @@ export function unavailablePosture(reason: string): ProviderPosture {
     gates: deriveApprovalGates({
       mode: "live",
       runtimeAvailable: false,
+      syntheticPermitted: false,
       registry: null,
       activation: null,
       transactions: { everTransacted: false, lastRunStatus: null, lastRunAt: null, lastFailureCategory: null },

@@ -43,6 +43,9 @@ function input(over: Partial<PostureInput> = {}): PostureInput {
   return {
     mode: "live",
     runtimeAvailable: true,
+    // The default matches a local harness. Every test that cares about the
+    // deployed case sets it to false explicitly.
+    syntheticPermitted: true,
     registry: REGISTRY,
     activation: ACTIVATION,
     transactions: { ...NO_TX },
@@ -78,6 +81,25 @@ describe("the seven states are all reachable and distinct", () => {
     expect(p.state).toBe("fixture_test_mode");
     expect(p.detail).toMatch(/no PHI was transmitted/i);
     expect(p.transacted).toBe(false);
+  });
+
+  test("approved_for_synthetic does NOT read as fixture test mode where synthetic is refused", () => {
+    // The governed row records what the ORGANIZATION accepted. It does not
+    // grant a deployed runtime permission to generate synthetic content, so
+    // the banner must not announce content that will never appear.
+    const p = computeProviderPosture(
+      input({
+        activation: { ...ACTIVATION, state: "approved_for_synthetic" },
+        syntheticPermitted: false,
+      }),
+    );
+    expect(p.state).toBe("live_unavailable");
+    expect(p.detail).toMatch(/not available in this runtime/i);
+    expect(p.detail).toMatch(/no example content is shown/i);
+    // And it still makes no live claim.
+    expect(p.transacted).toBe(false);
+    expect(p.detail.toLowerCase()).not.toContain("hipaa-ready");
+    expect(p.detail.toLowerCase()).not.toMatch(/\bconnected\b/);
   });
 
   test("configured_unapproved when a provider exists but approvals do not", () => {
@@ -322,6 +344,10 @@ describe("honest claims", () => {
       }),
       input({
         transactions: { everTransacted: true, lastRunStatus: "failed", lastRunAt: "x", lastFailureCategory: "c" },
+      }),
+      input({
+        activation: { ...ACTIVATION, state: "approved_for_synthetic" },
+        syntheticPermitted: false,
       }),
     ];
     for (const i of inputs) {

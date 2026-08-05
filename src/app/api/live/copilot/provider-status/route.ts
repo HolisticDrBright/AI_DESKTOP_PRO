@@ -6,6 +6,8 @@ import { getClinicalAccessToken } from "@/adapters/session.server";
 import { resolveOrgId } from "@/adapters/config";
 import { resolveCopilotMode } from "@/server/copilot/provider";
 import { resolveProviderRuntime } from "@/server/copilot/provider.runtime";
+import { isDeployedRuntime } from "@/server/runtime/deployedRuntime";
+import { isContractFixtureAllowed } from "@/server/runtime/contractFixture";
 import {
   computeProviderPosture,
   type ActivationFacts,
@@ -62,6 +64,7 @@ export async function GET() {
         posture: computeProviderPosture({
           mode: "disabled",
           runtimeAvailable: false,
+          syntheticPermitted: false,
           registry: null,
           activation: null,
           transactions: noTransactions,
@@ -104,6 +107,10 @@ export async function GET() {
       posture: computeProviderPosture({
         mode,
         runtimeAvailable: runtime.kind === "live" || mode === "fixture",
+        // The SAME predicate the provider layer uses to decide whether a
+        // synthetic provider may be selected, so the banner cannot promise
+        // deterministic content that the run path will refuse to produce.
+        syntheticPermitted: !isDeployedRuntime() && isContractFixtureAllowed(),
         registry: row ? toRegistryFacts(row) : null,
         activation,
         // Phase 10B.1 is readiness-only: no live transaction has been
