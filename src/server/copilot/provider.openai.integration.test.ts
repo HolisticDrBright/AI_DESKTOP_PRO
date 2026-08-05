@@ -13,7 +13,7 @@ function approval(over: Partial<OpenAIProviderApproval> = {}): OpenAIProviderApp
   return {
     providerName: "openai",
     providerKind: "openai_hipaa",
-    approvedModelAllowlist: ["gpt-4o-2024-08-06"],
+    approvedModelAllowlist: ["gpt-5.6-sol"],
     approvalReference: "REF-1",
     baaStatusReference: "BAA-1",
     retentionMode: "modified",
@@ -69,7 +69,7 @@ function baseEnvelope() {
 
 const validResponseBody = JSON.stringify({
   id: "resp_abc123",
-  model: "gpt-4o-2024-08-06",
+  model: "gpt-5.6-sol",
   output: [
     {
       type: "message",
@@ -92,7 +92,7 @@ describe("OpenAI adapter — integration path via injected transport", () => {
     const env = baseEnvelope();
     const adapter = createOpenAIAdapter({
       approval: approval(),
-      model: "gpt-4o-2024-08-06",
+      model: "gpt-5.6-sol",
       containsPHI: false,
       envelope: env,
       secretResolver: new SecretResolver({ client: fakeSecrets() }),
@@ -113,7 +113,7 @@ describe("OpenAI adapter — integration path via injected transport", () => {
     let secretCalls = 0;
     const adapter = createOpenAIAdapter({
       approval: approval(),
-      model: "gpt-4o-2024-08-06",
+      model: "gpt-5.6-sol",
       containsPHI: false,
       secretResolver: new SecretResolver({
         client: {
@@ -139,7 +139,7 @@ describe("OpenAI adapter — integration path via injected transport", () => {
   test("hallucinated citation → refuses", async () => {
     const body = JSON.stringify({
       id: "resp_h",
-      model: "gpt-4o-2024-08-06",
+      model: "gpt-5.6-sol",
       output: [
         {
           type: "message",
@@ -158,7 +158,7 @@ describe("OpenAI adapter — integration path via injected transport", () => {
     });
     const adapter = createOpenAIAdapter({
       approval: approval(),
-      model: "gpt-4o-2024-08-06",
+      model: "gpt-5.6-sol",
       containsPHI: false,
       envelope: baseEnvelope(),
       secretResolver: new SecretResolver({ client: fakeSecrets() }),
@@ -177,7 +177,7 @@ describe("OpenAI adapter — integration path via injected transport", () => {
   test("HTTP 429 exhausts retries → throws (no synthetic completed)", async () => {
     const adapter = createOpenAIAdapter({
       approval: approval(),
-      model: "gpt-4o-2024-08-06",
+      model: "gpt-5.6-sol",
       containsPHI: false,
       envelope: baseEnvelope(),
       secretResolver: new SecretResolver({ client: fakeSecrets() }),
@@ -198,7 +198,7 @@ describe("OpenAI adapter — integration path via injected transport", () => {
     let calls = 0;
     const adapter = createOpenAIAdapter({
       approval: approval(),
-      model: "gpt-4o-2024-08-06",
+      model: "gpt-5.6-sol",
       containsPHI: false,
       envelope: baseEnvelope(),
       secretResolver: new SecretResolver({ client: fakeSecrets() }),
@@ -226,7 +226,7 @@ describe("OpenAI adapter — integration path via injected transport", () => {
     let calls = 0;
     const adapter = createOpenAIAdapter({
       approval: approval(),
-      model: "gpt-4o-2024-08-06",
+      model: "gpt-5.6-sol",
       containsPHI: false,
       envelope: baseEnvelope(),
       secretResolver: new SecretResolver({ client: fakeSecrets() }),
@@ -259,7 +259,7 @@ describe("OpenAI adapter — integration path via injected transport", () => {
     const env = baseEnvelope();
     const adapter = createOpenAIAdapter({
       approval: approval(),
-      model: "gpt-4o-2024-08-06",
+      model: "gpt-5.6-sol",
       containsPHI: false,
       envelope: env,
       secretResolver: new SecretResolver({ client: fakeSecrets() }),

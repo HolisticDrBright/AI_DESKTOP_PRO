@@ -2613,6 +2613,53 @@ let copilotScenario = "unconfigured";
  */
 let copilotForceStale = false;
 
+/**
+ * Phase 10B.2 activation scope, kill switch, budget, and history.
+ *
+ * Defaults are the REFUSING values: no environment, no approved use, no
+ * model, kill switch clear but nothing approved to run, and both legal
+ * posture fields `unknown`. A fixture that defaulted to "verified" would
+ * make the operator screen look green in every test, which is the one
+ * thing this surface must never do by accident.
+ */
+const copilotStagingScope = {
+  environment: "unset",
+  approvedUse: "none",
+  approvedModel: null,
+  killSwitchEngaged: false,
+  killSwitchReason: null,
+  killSwitchAt: null,
+  baaStatus: "unknown",
+  zdrMamStatus: "unknown",
+};
+const copilotBudget = {
+  maxCalls: 10,
+  usedCalls: 0,
+  maxTokens: 50000,
+  usedTokens: 0,
+  maxCostCents: 500,
+  usedCostCents: 0,
+};
+const copilotActivationHistory = [];
+
+function copilotResetStagingScope() {
+  copilotStagingScope.environment = "unset";
+  copilotStagingScope.approvedUse = "none";
+  copilotStagingScope.approvedModel = null;
+  copilotStagingScope.killSwitchEngaged = false;
+  copilotStagingScope.killSwitchReason = null;
+  copilotStagingScope.killSwitchAt = null;
+  copilotStagingScope.baaStatus = "unknown";
+  copilotStagingScope.zdrMamStatus = "unknown";
+  copilotBudget.maxCalls = 10;
+  copilotBudget.usedCalls = 0;
+  copilotBudget.maxTokens = 50000;
+  copilotBudget.usedTokens = 0;
+  copilotBudget.maxCostCents = 500;
+  copilotBudget.usedCostCents = 0;
+  copilotActivationHistory.length = 0;
+}
+
 const copilotId = (tag) =>
   `${tag}-1111-2222-3333-${String(600000000000 + ++copilotSeq)}`;
 
@@ -2638,6 +2685,7 @@ function copilotApplyScenario(name) {
   copilotProtocolDrafts.length = 0;
   copilotSupervisedReviews.length = 0;
   copilotForceStale = false;
+  copilotResetStagingScope();
 
   // No provider registered at all — the honest "Not configured" posture.
   if (name === "unconfigured") return;
@@ -2775,7 +2823,7 @@ const SNAPSHOT_COLLECTIONS = {
   syncDeliveryEventIds, syncProviders, syncWorkerCycles, syncNonces,
   copilotRuns, copilotDispositions, copilotProviderRegistry, copilotActivations,
   copilotReviewTasks, copilotNoteAppends, copilotProtocolDrafts,
-  copilotSupervisedReviews, copilotRequestLog,
+  copilotSupervisedReviews, copilotRequestLog, copilotActivationHistory,
 };
 
 const __fixtureSnapshots = new Map();
@@ -10963,6 +11011,88 @@ createServer(async (req, res) => {
       // RLS on the real table is `select to authenticated using (true)`.
       // The secret REFERENCE is stored here; the value never is.
       return json(res, 200, copilotProviderRegistry.map((r) => ({ ...r })));
+    }
+
+    /* ------------------------------------- Phase 10B.2 staging activation */
+
+    if (url.pathname === "/rest/v1/rpc/get_copilot_governance_view" && req.method === "POST") {
+      const body = await readBody(req);
+      copilotRequestLog.push({ path: "get_copilot_governance_view", at: Date.now() });
+      const orgId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(orgId)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const reg = copilotProviderRegistry[0] ?? null;
+      const act = reg ? copilotActivations.get(`${orgId}::${reg.id}`) : null;
+      const budget = reg ? copilotBudget : null;
+      return json(res, 200, {
+        providerId: reg ? reg.id : null,
+        providerRegistered: !!reg,
+        providerName: reg ? reg.provider_name : null,
+        providerKind: reg ? reg.provider_kind : null,
+        // Presence only — the reference value never leaves the server, and
+        // the fixture models that rather than returning a fake ARN.
+        hasSecretRef: !!(reg && reg.provider_secret_ref),
+        activationState: act ? act.state : "disabled",
+        environment: copilotStagingScope.environment,
+        approvedUse: copilotStagingScope.approvedUse,
+        approvedModel: copilotStagingScope.approvedModel,
+        scopeExpiresAt: null,
+        killSwitchEngaged: copilotStagingScope.killSwitchEngaged,
+        killSwitchReason: copilotStagingScope.killSwitchReason,
+        killSwitchAt: copilotStagingScope.killSwitchAt,
+        // Honest defaults. Nothing in the fixture claims a verified BAA.
+        baaStatus: copilotStagingScope.baaStatus,
+        baaVerifiedAt: null,
+        zdrMamStatus: copilotStagingScope.zdrMamStatus,
+        zdrMamVerifiedAt: null,
+        approvedOpenaiOrganization: null,
+        approvedOpenaiProject: null,
+        eligibleEndpoint: null,
+        eligibleModel: null,
+        reviewerReference: null,
+        reviewedAt: null,
+        maxCalls: budget ? budget.maxCalls : null,
+        usedCalls: budget ? budget.usedCalls : null,
+        maxTokens: budget ? budget.maxTokens : null,
+        usedTokens: budget ? budget.usedTokens : null,
+        maxCostCents: budget ? budget.maxCostCents : null,
+        usedCostCents: budget ? budget.usedCostCents : null,
+        lastSuccessfulVerificationAt: null,
+        lastFailureCategory: null,
+        history: copilotActivationHistory.map((h) => ({ ...h })),
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/set_copilot_kill_switch" && req.method === "POST") {
+      const body = await readBody(req);
+      copilotRequestLog.push({ path: "set_copilot_kill_switch", at: Date.now() });
+      const orgId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(orgId)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const reason = String(body._reason ?? "").trim();
+      // A reason is required in BOTH directions, matching the RPC.
+      if (reason.length < 3) {
+        return json(res, 400, { code: "22023", message: "a reason is required" });
+      }
+      const was = copilotStagingScope.killSwitchEngaged;
+      copilotStagingScope.killSwitchEngaged = body._engaged === true;
+      copilotStagingScope.killSwitchReason = reason;
+      copilotStagingScope.killSwitchAt = new Date().toISOString();
+      copilotActivationHistory.unshift({
+        changeKind: copilotStagingScope.killSwitchEngaged
+          ? "kill_switch_engaged"
+          : "kill_switch_released",
+        reason,
+        recordedAt: copilotStagingScope.killSwitchAt,
+        fromState: { kill_switch_engaged: was },
+        toState: { kill_switch_engaged: copilotStagingScope.killSwitchEngaged },
+      });
+      return json(res, 200, {
+        kill_switch_engaged: copilotStagingScope.killSwitchEngaged,
+        kill_switch_at: copilotStagingScope.killSwitchAt,
+      });
     }
 
     if (url.pathname === "/rest/v1/rpc/get_copilot_activation" && req.method === "POST") {

@@ -20,7 +20,9 @@
     "check:mock-imports": "node scripts/check-mock-imports.mjs",
     "sync:worker": "node scripts/sync/worker.mjs",
     "check:stub-reset": "node scripts/check-stub-reset-coverage.mjs",
-    "test:e2e:order": "node scripts/check-e2e-order-independence.mjs"
+    "test:e2e:order": "node scripts/check-e2e-order-independence.mjs",
+    "preflight:copilot": "node scripts/copilot-preflight.mjs",
+    "gate:copilot-synthetic": "node scripts/copilot-synthetic-gate.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-secrets-manager": "^3.1103.0",
