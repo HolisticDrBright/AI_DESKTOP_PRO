@@ -141,6 +141,163 @@ function LiveClinicalRegistryPreview() {
 }
 
 /**
+ * Phase 10B.1 — provider posture panel.
+ *
+ * Renders the seven-state vocabulary computed server-side by
+ * `provider-posture.ts`. Two rules this panel exists to keep visible:
+ *
+ *   - "Configured" and "Transacted" are shown as SEPARATE facts. Having a
+ *     key and having sent something are different claims.
+ *   - An approval is only ever shown as approved when a governed record
+ *     reference backs it. Everything else reads NOT RUN or NOT APPROVED,
+ *     including when an API key is present.
+ *
+ * A backend that cannot be reached renders an explicit unavailable state.
+ * It never renders fixture content and never implies "no provider" — those
+ * are different claims and nobody is in a position to make the second one
+ * while the backend is down.
+ */
+type PostureEnvelope = Awaited<ReturnType<typeof liveClient.copilotProviderStatus>>;
+
+const GATE_TEXT: Record<string, string> = {
+  approved: "APPROVED",
+  not_approved: "NOT APPROVED",
+  not_run: "NOT RUN",
+};
+
+function ProviderPosturePanel() {
+  const [envelope, setEnvelope] = useState<PostureEnvelope | null>(null);
+  const [state, setState] = useState<"loading" | "ready" | "error">("loading");
+  const [errorMessage, setErrorMessage] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await liveClient.copilotProviderStatus();
+        if (!cancelled) {
+          setEnvelope(res);
+          setState("ready");
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setErrorMessage(e instanceof Error ? e.message : "The provider status could not be read.");
+          setState("error");
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (state === "loading") {
+    return (
+      <div className="rounded border border-line px-3 py-2 text-[11.5px] text-subtle" data-testid="copilot-posture-loading">
+        Reading provider posture…
+      </div>
+    );
+  }
+
+  if (state === "error" || !envelope) {
+    return (
+      <div
+        className="rounded border border-critical/30 bg-critical-tint px-3 py-3"
+        data-testid="copilot-posture-unavailable"
+        role="alert"
+      >
+        <div className="text-[12px] font-bold text-critical" data-testid="copilot-posture-label">
+          Provider status unavailable
+        </div>
+        <p className="m-0 mt-1 text-[11.5px] leading-[1.5] text-body" data-testid="copilot-posture-detail">
+          The clinical backend could not be reached, so this screen cannot say whether a provider is
+          configured or approved. Nothing was sent, and no example content is shown in its place.
+        </p>
+        <p className="m-0 mt-1 text-[10.5px] text-subtle">{errorMessage}</p>
+      </div>
+    );
+  }
+
+  const p = envelope.posture;
+  const tone =
+    p.state === "live_transacted"
+      ? "border-ai/30 bg-ai-tint"
+      : p.state === "live_failed"
+        ? "border-critical/30 bg-critical-tint"
+        : "border-line bg-sunken";
+
+  return (
+    <div className={cn("rounded border px-3 py-3", tone)} data-testid="copilot-provider-posture">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-[11px] uppercase tracking-wide text-faint">External AI provider</span>
+        <span className="text-[12.5px] font-bold text-ink" data-testid="copilot-posture-label">
+          {p.state === "disabled" ? "Not configured" : p.label}
+        </span>
+        {/* The machine-readable state, so a test asserts the contract and
+            not an adjective. */}
+        <span className="sr-only" data-testid="copilot-posture-state">
+          {p.state}
+        </span>
+      </div>
+
+      <p className="m-0 mt-1 text-[11.5px] leading-[1.5] text-body" data-testid="copilot-posture-detail">
+        {p.detail}
+      </p>
+
+      {/* Two separate facts, never collapsed into one badge. */}
+      <div className="mt-2 flex flex-wrap gap-4 text-[11px]">
+        <span data-testid="copilot-posture-configured">
+          Configured: <strong>{p.configured ? "yes" : "no"}</strong>
+        </span>
+        <span data-testid="copilot-posture-transacted">
+          Transacted: <strong>{p.transacted ? "yes" : "never"}</strong>
+        </span>
+        {p.providerName && (
+          <span data-testid="copilot-posture-provider">
+            Provider: <strong>{p.providerName}</strong>
+          </span>
+        )}
+        {p.retentionMode && (
+          <span data-testid="copilot-posture-retention">
+            Retention: <strong>{p.retentionMode}</strong>
+          </span>
+        )}
+      </div>
+
+      <details className="mt-2">
+        <summary className="cursor-pointer text-[11px] text-subtle" data-testid="copilot-gates-toggle">
+          Activation record ({p.gates.filter((g) => g.status === "approved").length} of {p.gates.length} approved)
+        </summary>
+        <ul className="mt-1 mb-0 grid gap-1 pl-0" data-testid="copilot-gates">
+          {p.gates.map((g) => (
+            <li
+              key={g.name}
+              className="flex flex-wrap items-baseline justify-between gap-2 text-[11px]"
+              data-testid={`copilot-gate-${g.name}`}
+              data-status={g.status}
+            >
+              <span className="text-body">{g.label}</span>
+              <span
+                className={cn(
+                  "font-bold",
+                  g.status === "approved" ? "text-ok" : "text-warning-deep",
+                )}
+              >
+                {GATE_TEXT[g.status] ?? g.status}
+              </span>
+            </li>
+          ))}
+        </ul>
+        <p className="m-0 mt-2 text-[10.5px] leading-[1.5] text-subtle" data-testid="copilot-approval-note">
+          An approval is recorded here only when a governed record supplies a reference. An
+          environment variable, an API key, a model name, or a passing fixture test is not approval.
+        </p>
+      </details>
+    </div>
+  );
+}
+
+/**
  * Phase 10A — governed copilot run panel.
  *
  * Draft-only outputs. The provider is DISABLED by default; even in
@@ -149,6 +306,18 @@ function LiveClinicalRegistryPreview() {
  * and it never activates, prescribes, orders, publishes, or signs.
  */
 type RunEnvelope = Awaited<ReturnType<typeof liveClient.copilotRun>>;
+
+/**
+ * Pull the PHI-safe category out of an orchestrator failure message.
+ *
+ * The orchestrator already refuses to put provider prose in `message`;
+ * this is the second line of defence, so a future change upstream that
+ * loosened that could not silently surface raw provider text on screen.
+ */
+function extractFailureCategory(message: string): string {
+  const match = /Category:\s*([a-z0-9_]+)/i.exec(message);
+  return match?.[1] ?? "unknown_failure";
+}
 
 function CopilotRunPanel(props: { patientId: string }) {
   const [runType, setRunType] =
@@ -159,14 +328,22 @@ function CopilotRunPanel(props: { patientId: string }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>("");
   const [dispositionMsg, setDispositionMsg] = useState<string>("");
+  // A disposition is a practitioner's recorded judgement, not a toggle.
+  // Once one lands, the buttons close so a double-click cannot write a
+  // second one — the server refuses it too, but the screen should not
+  // invite the attempt.
+  const [dispositionRecorded, setDispositionRecorded] = useState<string | null>(null);
+  const [runCount, setRunCount] = useState(0);
 
   const run = async () => {
     setBusy(true);
     setError("");
     setDispositionMsg("");
+    setDispositionRecorded(null);
     try {
       const res = await liveClient.copilotRun({ patientId: props.patientId, runType, lens });
       setEnvelope(res);
+      setRunCount((n) => n + 1);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Something went wrong.");
     } finally {
@@ -175,10 +352,11 @@ function CopilotRunPanel(props: { patientId: string }) {
   };
 
   const disposition = async (choice: "accepted" | "dismissed" | "info_requested" | "superseded") => {
-    if (!envelope?.runId) return;
+    if (!envelope?.runId || dispositionRecorded) return;
     setDispositionMsg("");
     try {
       await liveClient.copilotDisposition({ runId: envelope.runId, disposition: choice });
+      setDispositionRecorded(choice);
       setDispositionMsg(
         `Disposition recorded (${choice}). No note was signed, protocol activated, lab ordered, prescription created, or message sent.`,
       );
@@ -200,6 +378,8 @@ function CopilotRunPanel(props: { patientId: string }) {
         publish, activate, prescribe, order, or message. Safety items are pinned and identical
         across every lens.
       </p>
+
+      <ProviderPosturePanel />
       <div className="flex flex-wrap items-center gap-3">
         <label className="text-[11.5px] text-body">
           Lens{" "}
@@ -260,6 +440,17 @@ function CopilotRunPanel(props: { patientId: string }) {
           <p className="mt-1 text-[11.5px] text-subtle" data-testid="copilot-message">
             {envelope.message}
           </p>
+          {envelope.status === "failed" && (
+            // A failure reports a category, never the provider's own words.
+            // Provider prose is untrusted data and may echo chart content.
+            <p className="mt-1 text-[11.5px] text-critical" data-testid="copilot-failure-category">
+              Failure category: {extractFailureCategory(envelope.message)}. No draft content was
+              produced and nothing was fabricated in its place.
+            </p>
+          )}
+          <p className="mt-1 text-[10.5px] text-subtle" data-testid="copilot-run-identity">
+            run {envelope.runId ?? "(not persisted)"} · attempt {runCount} · input {envelope.inputSnapshotHash.slice(0, 12)}
+          </p>
           {envelope.safetyItems.length > 0 && (
             <div className="mt-2" data-testid="copilot-safety">
               <div className="text-[11px] uppercase tracking-wide text-subtle">
@@ -304,12 +495,18 @@ function CopilotRunPanel(props: { patientId: string }) {
                   key={d}
                   type="button"
                   onClick={() => disposition(d)}
+                  disabled={dispositionRecorded !== null}
                   data-testid={`copilot-disposition-${d}`}
-                  className="rounded border border-line px-2 py-0.5 text-[11px] hover:bg-sunken"
+                  className="rounded border border-line px-2 py-0.5 text-[11px] hover:bg-sunken disabled:opacity-40"
                 >
                   {d}
                 </button>
               ))}
+              {dispositionRecorded && (
+                <span className="text-[10.5px] font-semibold text-ok" data-testid="copilot-disposition-final">
+                  recorded: {dispositionRecorded}
+                </span>
+              )}
               {dispositionMsg && (
                 <span className="text-[10.5px] text-subtle" data-testid="copilot-disposition-message">
                   {dispositionMsg}

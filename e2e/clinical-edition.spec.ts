@@ -81,6 +81,31 @@ test("a down backend yields an honest state, never synthetic patients", async ({
   );
 });
 
+test("the governed copilot stays honest with a down backend", async ({ page }) => {
+  // Phase 10B.1 proof 18. With no backend, nobody is in a position to say
+  // whether a provider is configured or approved — and the one thing the
+  // screen must never do is fill the gap with deterministic fixture
+  // content, which would look exactly like a real answer.
+  await page.goto("/patients/11111111-2222-3333-4444-555555555555/labs?view=copilot");
+  await page.waitForLoadState("networkidle");
+
+  const body = (await page.locator("body").innerText()).trim();
+  expect(body.length, "the copilot must explain itself rather than render blank").toBeGreaterThan(0);
+  expect(
+    body,
+    `Expected an honest unavailable state on the copilot tab. Got:\n${body.slice(0, 600)}`,
+  ).toMatch(HONEST_FAILURE);
+
+  // No fixture provider identity, no fixture draft body, no invented
+  // approval. "Approved" must not appear as a gate verdict when the
+  // records that would back it were never read.
+  expect(body).not.toContain("fixture-copilot-v1");
+  expect(body).not.toContain("fixture:governed-synthetic");
+  expect(body).not.toContain("Live transacted");
+  expect(body).not.toMatch(/\bHIPAA-ready\b/i);
+  await expectNoFixtureData(body, "the copilot tab with the backend down");
+});
+
 test("a patient chart with a down backend refuses rather than inventing a record", async ({ page }) => {
   // A real-looking UUID: it must not resolve to a fixture patient.
   await page.goto("/patients/11111111-2222-3333-4444-555555555555/overview");

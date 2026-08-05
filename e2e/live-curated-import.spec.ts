@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { resetBackend } from "./support/backend";
+import { STUB_BASE, resetBackend } from "./support/backend";
 import {
   buildDocx,
   buildFormulaXlsx,
@@ -244,7 +244,7 @@ test("9. an imported product is not offered by the protocol product picker", asy
   // the newly imported rows are absent from it, not that nothing exists.
   const search = async (query: string) => {
     const response = await page.request.post(
-      "http://127.0.0.1:3999/rest/v1/rpc/search_protocol_catalog",
+      `${STUB_BASE}/rest/v1/rpc/search_protocol_catalog`,
       {
         headers: { authorization: "Bearer stub-token", "content-type": "application/json" },
         data: { _organization_id: "org-fixture", _query: query, _limit: 50 },
@@ -300,7 +300,7 @@ test("11. an incomplete product cannot be marked reviewed — the RPC refuses wi
   // Discover the committed products from the flow-page journey via the
   // stub's catalog-review queue.
   const queueRes = await request.post(
-    "http://127.0.0.1:3999/rest/v1/rpc/get_catalog_review_queue",
+    `${STUB_BASE}/rest/v1/rpc/get_catalog_review_queue`,
     {
       headers: { authorization: "Bearer stub-token", "content-type": "application/json" },
       data: { _organization_id: "org-fixture" },
@@ -319,7 +319,7 @@ test("11. an incomplete product cannot be marked reviewed — the RPC refuses wi
 
   // The RPC refusal names the incomplete status.
   const attempt = await request.post(
-    "http://127.0.0.1:3999/rest/v1/rpc/complete_catalog_product_review",
+    `${STUB_BASE}/rest/v1/rpc/complete_catalog_product_review`,
     {
       headers: { authorization: "Bearer stub-token", "content-type": "application/json" },
       data: {
@@ -336,7 +336,7 @@ test("11. an incomplete product cannot be marked reviewed — the RPC refuses wi
 
 test("12. clearing a restriction needs a stated reason and is NOT approval", async ({ request }) => {
   const queueRes = await request.post(
-    "http://127.0.0.1:3999/rest/v1/rpc/get_catalog_review_queue",
+    `${STUB_BASE}/rest/v1/rpc/get_catalog_review_queue`,
     {
       headers: { authorization: "Bearer stub-token", "content-type": "application/json" },
       data: { _organization_id: "org-fixture" },
@@ -350,7 +350,7 @@ test("12. clearing a restriction needs a stated reason and is NOT approval", asy
 
   // Empty reason → refusal.
   const emptyReason = await request.post(
-    "http://127.0.0.1:3999/rest/v1/rpc/clear_catalog_product_restriction",
+    `${STUB_BASE}/rest/v1/rpc/clear_catalog_product_restriction`,
     {
       headers: { authorization: "Bearer stub-token", "content-type": "application/json" },
       data: {
@@ -365,7 +365,7 @@ test("12. clearing a restriction needs a stated reason and is NOT approval", asy
   // Valid reason → the RPC succeeds and its response explicitly says the
   // clearance is NOT approval — the exact wording of the safety guarantee.
   const cleared = await request.post(
-    "http://127.0.0.1:3999/rest/v1/rpc/clear_catalog_product_restriction",
+    `${STUB_BASE}/rest/v1/rpc/clear_catalog_product_restriction`,
     {
       headers: { authorization: "Bearer stub-token", "content-type": "application/json" },
       data: {
@@ -383,7 +383,7 @@ test("13. completing a complete product's review makes it selectable and separat
   request,
 }) => {
   const queueRes = await request.post(
-    "http://127.0.0.1:3999/rest/v1/rpc/get_catalog_review_queue",
+    `${STUB_BASE}/rest/v1/rpc/get_catalog_review_queue`,
     {
       headers: { authorization: "Bearer stub-token", "content-type": "application/json" },
       data: { _organization_id: "org-fixture" },
@@ -396,7 +396,7 @@ test("13. completing a complete product's review makes it selectable and separat
   expect(complete).toBeTruthy();
 
   const done = await request.post(
-    "http://127.0.0.1:3999/rest/v1/rpc/complete_catalog_product_review",
+    `${STUB_BASE}/rest/v1/rpc/complete_catalog_product_review`,
     {
       headers: { authorization: "Bearer stub-token", "content-type": "application/json" },
       data: {
@@ -413,7 +413,7 @@ test("13. completing a complete product's review makes it selectable and separat
   // And the search gate actually OPENS. A refusal that never lifts is not
   // a gate but a wall — this is the assertion that tells them apart.
   const search = await request.post(
-    "http://127.0.0.1:3999/rest/v1/rpc/search_protocol_catalog",
+    `${STUB_BASE}/rest/v1/rpc/search_protocol_catalog`,
     {
       headers: { authorization: "Bearer stub-token", "content-type": "application/json" },
       data: { _organization_id: "org-fixture", _query: "Magnesium", _limit: 50 },

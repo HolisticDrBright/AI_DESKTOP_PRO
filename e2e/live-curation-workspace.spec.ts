@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { resetBackend } from "./support/backend";
+import { STUB_BASE, resetBackend } from "./support/backend";
 
 /**
  * PHASE 9E-A.1 — the unified curation workspace at /settings/imports.
@@ -26,7 +26,7 @@ test.describe.configure({ mode: "serial" });
 test.beforeAll(resetBackend);
 
 const IMPORTS = "/settings/imports";
-const STUB = "http://127.0.0.1:3999";
+const STUB = STUB_BASE;
 
 async function seedRestrictedProduct(overrides: Record<string, unknown> = {}) {
   const res = await fetch(`${STUB}/__control/seed-restricted-product`, {
@@ -275,7 +275,7 @@ test("Conflicts (4) · restricted flags on either row are preserved on every out
 }) => {
   const seed = await seedConflictBatch({ batchId: "seed-conflict-batch-preserve" });
   const before = await request.post(
-    "http://127.0.0.1:3999/rest/v1/rpc/get_knowledge_import_preview",
+    `${STUB_BASE}/rest/v1/rpc/get_knowledge_import_preview`,
     {
       headers: { authorization: "Bearer stub-token", "content-type": "application/json" },
       data: { _batch_id: seed.batchId },
@@ -303,7 +303,7 @@ test("Conflicts (4) · restricted flags on either row are preserved on every out
 
   // Reload state and assert the restriction is still on the incoming row.
   const after = await request.post(
-    "http://127.0.0.1:3999/rest/v1/rpc/get_knowledge_import_preview",
+    `${STUB_BASE}/rest/v1/rpc/get_knowledge_import_preview`,
     {
       headers: { authorization: "Bearer stub-token", "content-type": "application/json" },
       data: { _batch_id: seed.batchId },
@@ -367,7 +367,7 @@ test("Conflicts (6) · the decision writes an audit record with actor, timestamp
 
   // The audit is on the item itself: change_kind, review_note, resolution.
   const after = await request.post(
-    "http://127.0.0.1:3999/rest/v1/rpc/get_knowledge_import_preview",
+    `${STUB_BASE}/rest/v1/rpc/get_knowledge_import_preview`,
     {
       headers: { authorization: "Bearer stub-token", "content-type": "application/json" },
       data: { _batch_id: batchId },
@@ -405,7 +405,7 @@ test("Conflicts (8) · a cross-tenant conflict resolution attempt is refused, no
   // belongs to `org-fixture`. The stub server refuses at membership check.
   const { conflictItemId } = await seedConflictBatch({ batchId: "seed-conflict-batch-crosstenant" });
   const res = await request.post(
-    "http://127.0.0.1:3999/rest/v1/rpc/resolve_knowledge_import_conflict",
+    `${STUB_BASE}/rest/v1/rpc/resolve_knowledge_import_conflict`,
     {
       headers: {
         authorization: "Bearer outsider-token",

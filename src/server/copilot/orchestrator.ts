@@ -21,6 +21,7 @@ import { createHash } from "node:crypto";
 import {
   CopilotUnavailable,
   resolveCopilotMode,
+  selectGovernedProvider,
   selectProvider,
   type CopilotDraftOutput,
   type CopilotRunType,
@@ -55,6 +56,17 @@ export type OrchestrateInput = {
   verifiedLabelIds?: string[];
   approvedProtocolTemplateIds?: string[];
   approvedDietTemplateIds?: string[];
+  /**
+   * Governed provider facts read from the registry + activation rows. When
+   * present, provider selection is driven by those records rather than by
+   * the env flag alone. Absent, behaviour is unchanged from Phase 10A.
+   */
+  governed?: {
+    registryKind: string | null;
+    registryName?: string | null;
+    activationState: string | null;
+    containsPHI: boolean;
+  };
 };
 
 export async function orchestrateRun(input: OrchestrateInput): Promise<CopilotRunEnvelope> {
@@ -90,7 +102,9 @@ export async function orchestrateRun(input: OrchestrateInput): Promise<CopilotRu
   }
 
   try {
-    const provider = await selectProvider();
+    const provider = input.governed
+      ? await selectGovernedProvider(input.governed)
+      : await selectProvider();
     const draft = await provider.draft({
       runType: input.runType,
       lens: input.lens,
@@ -114,6 +128,28 @@ export async function orchestrateRun(input: OrchestrateInput): Promise<CopilotRu
       };
     }
     const validated = validateCitations(draft.citations, retrieval.allowedCitationIds);
+    if (validated.rejected.length > 0) {
+      // Fail CLOSED. Dropping the bad citation and keeping the draft would
+      // publish a body whose claims were partly sourced from something the
+      // governed envelope never contained — and the practitioner would see
+      // a clean draft with a quiet footnote. A model that cited outside the
+      // envelope is not trustworthy for the rest of the answer either, and
+      // the OpenAI adapter already refuses on this condition; the
+      // orchestrator now agrees with it.
+      return {
+        status: "failed",
+        runType: input.runType,
+        lens: input.lens,
+        providerName: provider.name,
+        providerModel: provider.model,
+        safetyItems: postSafety,
+        draft: null,
+        rejectedCitations: validated.rejected,
+        inputSnapshotHash,
+        outputHash: null,
+        message: `Copilot run failed. Category: citation_validation. ${validated.rejected.length} citation(s) were not in the governed retrieval envelope; no draft was kept.`,
+      };
+    }
     const acceptedDraft: CopilotDraftOutput = {
       ...draft,
       citations: validated.accepted as CopilotDraftOutput["citations"],
@@ -129,9 +165,7 @@ export async function orchestrateRun(input: OrchestrateInput): Promise<CopilotRu
       rejectedCitations: validated.rejected,
       inputSnapshotHash,
       outputHash: hashOutput(acceptedDraft),
-      message: validated.rejected.length
-        ? `Draft accepted; ${validated.rejected.length} hallucinated citation(s) rejected.`
-        : "Draft accepted.",
+      message: "Draft accepted.",
     };
   } catch (e) {
     if (e instanceof CopilotUnavailable) {

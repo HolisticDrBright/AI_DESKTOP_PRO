@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { resetBackend } from "./support/backend";
+import { STUB_BASE, resetBackend } from "./support/backend";
 
 /**
  * PHASE 9E-A.1 continuation — Phase 9B invariants, migrated.
@@ -31,7 +31,7 @@ test.describe.configure({ mode: "serial" });
 
 test.beforeAll(resetBackend);
 
-const STUB = "http://127.0.0.1:3999";
+const STUB = STUB_BASE;
 const ORG = "org-fixture";
 
 const CLEAN_ROWS = [

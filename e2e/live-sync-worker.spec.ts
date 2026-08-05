@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { resetBackend } from "./support/backend";
+import { STUB_BASE, resetBackend } from "./support/backend";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash, createHmac, randomUUID } from "node:crypto";
 import path from "node:path";
@@ -66,7 +66,7 @@ test.describe.configure({ mode: "serial" });
  */
 test.beforeAll(resetBackend);
 
-const STUB = "http://127.0.0.1:3999";
+const STUB = STUB_BASE;
 const PATIENT_1 = "aaaaaaaa-1111-2222-3333-444444444401";
 const SYNC_TAB = `/patients/${PATIENT_1}/app-sync`;
 const APPOINTMENT_1 = "abababab-1111-2222-3333-444444444401";
