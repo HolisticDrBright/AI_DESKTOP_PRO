@@ -5,7 +5,7 @@ import { liveGuard, runLive } from "../../route-helpers";
 import { orchestrateRun } from "@/server/copilot/orchestrator";
 import { buildPatientSnapshot, hashInputSnapshot } from "@/server/copilot/input-builder";
 import { fetchGovernedRetrieval } from "@/server/copilot/retrieval";
-import { clinicalRpc } from "@/adapters/supabase-rest.server";
+import { clinicalRpc, clinicalSelect } from "@/adapters/supabase-rest.server";
 import { getClinicalAccessToken } from "@/adapters/session.server";
 import { resolveOrgId } from "@/adapters/config";
 import { resolveCopilotMode } from "@/server/copilot/provider";
@@ -74,6 +74,14 @@ export async function POST(req: NextRequest) {
 
     const inputSnapshotHash = hashInputSnapshot(bundle.snapshot, bundle.records);
 
+    // 2b. Read the governed provider facts. These come from the registry
+    //     and activation rows — audited records, not the environment — and
+    //     they are what decides whether a synthetic-fixture provider is
+    //     permitted for this organization. A failure to read them is NOT
+    //     fatal: the run proceeds and the live provider refuses, which is
+    //     the same honest outcome as having no approval at all.
+    const governed = await readGovernedProviderFacts(orgId, token);
+
     // 3. Persist the run header with the real input snapshot + hash. The
     //    identity + input fields are locked from creation by the trigger.
     const created = await clinicalRpc<{ ok: true; id: string }>(
@@ -103,6 +111,12 @@ export async function POST(req: NextRequest) {
       snapshot: bundle.snapshot,
       records: bundle.records,
       retrieval,
+      governed: {
+        registryKind: governed.registryKind,
+        registryName: governed.registryName,
+        activationState: governed.activationState,
+        containsPHI: snapshotContainsPHI(bundle),
+      },
     });
 
     // 5. Finalize with the SAME input hash as create — this proves the
@@ -115,7 +129,12 @@ export async function POST(req: NextRequest) {
         _organization_id: orgId,
         _run_id: runId,
         _input_snapshot_hash: inputSnapshotHash,
-        _output_hash: envelope.outputHash ?? inputSnapshotHash,
+        // A failed run has no output. Previously this sent the INPUT hash
+        // as a stand-in to keep the argument non-null; the RPC ignores it
+        // for non-completed rows, but sending it at all meant the wire
+        // carried a value that would read as an output hash if anything
+        // downstream ever started trusting it.
+        _output_hash: envelope.outputHash,
         _status: finalizeStatus,
       },
       token,
@@ -123,4 +142,62 @@ export async function POST(req: NextRequest) {
 
     return { ...envelope, runId };
   });
+}
+
+/**
+ * Read the governed provider facts for this organization.
+ *
+ * Returns nulls rather than throwing when the registry is empty or
+ * unreadable: "we could not confirm an approval" and "there is no
+ * approval" lead to the same refusal, and a run that fails here would
+ * hide that with an error banner instead of an honest unavailable state.
+ */
+async function readGovernedProviderFacts(
+  orgId: string,
+  token: string | null,
+): Promise<{ registryKind: string | null; registryName: string | null; activationState: string | null }> {
+  const none = { registryKind: null, registryName: null, activationState: null };
+  try {
+    const rows = await clinicalSelect<Array<{ id: string; provider_kind: string; provider_name: string }>>(
+      "clinical_copilot_provider_registry",
+      new URLSearchParams({
+        select: "id,provider_kind,provider_name",
+        order: "created_at.desc",
+        limit: "1",
+      }),
+      token,
+    );
+    const row = Array.isArray(rows) ? rows[0] : undefined;
+    if (!row?.id) return none;
+    const activation = await clinicalRpc<{ state?: string }>(
+      "get_copilot_activation",
+      { _organization_id: orgId, _provider_id: row.id },
+      token,
+    );
+    return {
+      registryKind: row.provider_kind ?? null,
+      registryName: row.provider_name ?? null,
+      activationState: activation?.state ?? null,
+    };
+  } catch {
+    return none;
+  }
+}
+
+/**
+ * Whether the input snapshot carries anything that counts as PHI.
+ *
+ * Deliberately conservative: any demographic value, any clinical record,
+ * or any dated observation makes this true. The synthetic-fixture provider
+ * is only reachable when this is false, so a false negative here would be
+ * the serious failure — an empty snapshot is the only thing treated as
+ * PHI-free.
+ */
+function snapshotContainsPHI(bundle: {
+  snapshot: { demographics?: Record<string, unknown> };
+  records: unknown[];
+}): boolean {
+  if (bundle.records.length > 0) return true;
+  const demo = bundle.snapshot.demographics ?? {};
+  return Object.values(demo).some((v) => v !== null && v !== undefined);
 }

@@ -2576,6 +2576,163 @@ function entitlementJson(e) {
 resetPlanFixtures();
 
 /* =====================================================================
+ * PHASE 10B.1 — governed copilot fixtures.
+ *
+ * Backs the provider-readiness browser suite. Everything here is
+ * deterministic and in-process: no handler in this section contacts an AI
+ * provider, a secret manager, or any external host. That is the point —
+ * the suite proves the application's refusal behaviour, and a fixture that
+ * reached out would be proving the opposite.
+ *
+ * Scenarios are selected with POST /__control/copilot-scenario. Each one
+ * writes a governed provider-registry row and an organization activation
+ * row, because approval in this product comes from records, never from
+ * configuration. A scenario cannot approve anything the real state
+ * machine would not.
+ * ===================================================================== */
+
+const COPILOT_PROVIDER_ID = "eeeeeeee-1111-2222-3333-444444444401";
+const COPILOT_ORG = "org-fixture";
+
+const copilotRuns = new Map();
+const copilotDispositions = new Map();
+const copilotProviderRegistry = [];
+const copilotActivations = new Map();
+const copilotReviewTasks = [];
+const copilotNoteAppends = [];
+const copilotProtocolDrafts = [];
+const copilotSupervisedReviews = [];
+/** Every copilot-related stub call, so a test can assert what was NOT asked. */
+const copilotRequestLog = [];
+let copilotSeq = 0;
+let copilotScenario = "unconfigured";
+/**
+ * When true the next create records an input hash that no longer matches
+ * the chart, so finalize must refuse. This models the chart changing
+ * underneath a run in flight.
+ */
+let copilotForceStale = false;
+
+const copilotId = (tag) =>
+  `${tag}-1111-2222-3333-${String(600000000000 + ++copilotSeq)}`;
+
+/** The governed retrieval envelope every scenario shares. */
+const COPILOT_ALLOWED_CITATIONS = ["kr-fixture-001", "kr-fixture-002"];
+
+function copilotAllRefs(act) {
+  act.legalRef = "LEGAL-FIXTURE-001";
+  act.privacyRef = "PRIVACY-FIXTURE-001";
+  act.clinicalRef = "CLINICAL-FIXTURE-001";
+  act.infraRef = "INFRA-FIXTURE-001";
+  return act;
+}
+
+function copilotApplyScenario(name) {
+  copilotScenario = name;
+  copilotProviderRegistry.length = 0;
+  copilotActivations.clear();
+  copilotRuns.clear();
+  copilotDispositions.clear();
+  copilotReviewTasks.length = 0;
+  copilotNoteAppends.length = 0;
+  copilotProtocolDrafts.length = 0;
+  copilotSupervisedReviews.length = 0;
+  copilotForceStale = false;
+
+  // No provider registered at all — the honest "Not configured" posture.
+  if (name === "unconfigured") return;
+
+  const reg = {
+    id: COPILOT_PROVIDER_ID,
+    provider_name: "openai",
+    provider_kind: "openai_hipaa",
+    approved_model_allowlist: ["gpt-test-model"],
+    approval_reference: "APPROVAL-FIXTURE-001",
+    baa_status_reference: null,
+    retention_mode: "unspecified",
+    processing_region: "us",
+    // A reference, never a key. The real column refuses secret-shaped values.
+    provider_secret_ref: "arn:aws:secretsmanager:us-east-1:123456789012:secret:fixture-openai",
+    revocation_state: "not_revoked",
+    expiration_date: null,
+    created_at: new Date().toISOString(),
+  };
+  const act = {
+    state: "disabled",
+    legalRef: null,
+    privacyRef: null,
+    clinicalRef: null,
+    infraRef: null,
+    retentionPosture: "unspecified",
+    supervisedRunsRequired: 25,
+    supervisedRunsCompleted: 0,
+  };
+
+  switch (name) {
+    // A key exists and nothing else does.
+    case "configured_unapproved":
+      act.state = "readiness_review";
+      break;
+
+    // Everything the vendor side needs, but the ORGANIZATION never opted in.
+    case "configured_no_org_approval":
+      reg.baa_status_reference = "BAA-FIXTURE-001";
+      reg.retention_mode = "zero";
+      copilotAllRefs(act);
+      act.state = "readiness_review";
+      act.retentionPosture = "zero";
+      break;
+
+    // Every sign-off recorded, PHI approved by the org — but NO BAA on the
+    // provider row. The one missing record still refuses.
+    case "approved_no_baa":
+      reg.baa_status_reference = null;
+      reg.retention_mode = "zero";
+      copilotAllRefs(act);
+      act.state = "approved_for_phi";
+      act.retentionPosture = "zero";
+      break;
+
+    // Approved for deterministic synthetic evaluation only.
+    case "approved_synthetic":
+      reg.provider_name = "synthetic_fixture";
+      reg.provider_kind = "synthetic_fixture";
+      reg.baa_status_reference = "BAA-FIXTURE-SYNTHETIC";
+      reg.retention_mode = "zero";
+      copilotAllRefs(act);
+      act.state = "approved_for_synthetic";
+      act.retentionPosture = "zero";
+      break;
+
+    // Same, but the registered identity emits a citation outside the
+    // governed envelope so the fail-closed path is exercised for real.
+    case "approved_synthetic_adversarial":
+      reg.provider_name = "synthetic_fixture_adversarial";
+      reg.provider_kind = "synthetic_fixture";
+      reg.baa_status_reference = "BAA-FIXTURE-SYNTHETIC";
+      reg.retention_mode = "zero";
+      copilotAllRefs(act);
+      act.state = "approved_for_synthetic";
+      act.retentionPosture = "zero";
+      break;
+
+    default:
+      throw new Error(`unknown copilot scenario: ${name}`);
+  }
+
+  copilotProviderRegistry.push(reg);
+  copilotActivations.set(`${COPILOT_ORG}::${reg.id}`, act);
+}
+
+function resetCopilotFixtures() {
+  copilotRequestLog.length = 0;
+  copilotSeq = 0;
+  copilotApplyScenario("unconfigured");
+}
+
+resetCopilotFixtures();
+
+/* =====================================================================
  * FIXTURE ISOLATION — one reset that covers every mutable domain.
  *
  * Before this existed, each suite reset only its own domain, so running the
@@ -2616,6 +2773,9 @@ const SNAPSHOT_COLLECTIONS = {
   syncConnections, syncInvitations, syncScopes, syncOutbound, syncInbound,
   syncCorrections, syncConflicts, syncDeadLetters, syncAcks, syncHistory,
   syncDeliveryEventIds, syncProviders, syncWorkerCycles, syncNonces,
+  copilotRuns, copilotDispositions, copilotProviderRegistry, copilotActivations,
+  copilotReviewTasks, copilotNoteAppends, copilotProtocolDrafts,
+  copilotSupervisedReviews, copilotRequestLog,
 };
 
 const __fixtureSnapshots = new Map();
@@ -2684,6 +2844,7 @@ function resetAllFixtures() {
   resetNutritionFixtures();
   resetCatalogFixtures();
   resetImportFixtures();
+  resetCopilotFixtures();
 
   // NOT seedInboxFixtures() / seedLensFixtures(). Both ran before the snapshot
   // was taken, so their output is already inside it. Calling them again would
@@ -2840,6 +3001,34 @@ createServer(async (req, res) => {
   if (url.pathname === "/__control/import-reset" && req.method === "POST") {
     resetImportFixtures();
     return json(res, 200, { ok: true });
+  }
+
+  /**
+   * TEST-ONLY. Select a governed copilot scenario.
+   *
+   * Each scenario writes provider-registry + activation rows, which is the
+   * only way approval is expressed in this product. There is no scenario
+   * that approves something the real state machine would refuse.
+   */
+  if (url.pathname === "/__control/copilot-scenario" && req.method === "POST") {
+    const body = await readBody(req);
+    try {
+      copilotApplyScenario(String(body.scenario ?? "unconfigured"));
+    } catch (e) {
+      return json(res, 400, { code: "22023", message: String(e.message ?? e) });
+    }
+    return json(res, 200, { ok: true, scenario: copilotScenario });
+  }
+
+  /** TEST-ONLY. Make the next run's stored input hash go stale. */
+  if (url.pathname === "/__control/copilot-force-stale" && req.method === "POST") {
+    copilotForceStale = true;
+    return json(res, 200, { ok: true });
+  }
+
+  /** TEST-ONLY. What the application actually asked this backend for. */
+  if (url.pathname === "/__control/copilot-request-log" && req.method === "GET") {
+    return json(res, 200, { scenario: copilotScenario, calls: [...copilotRequestLog] });
   }
 
   /**
@@ -10755,6 +10944,357 @@ createServer(async (req, res) => {
         meanDigestiveTolerance: mean("digestiveTolerance"),
         needsFollowup: rows.filter((r) => r.reviewState === "needs_followup").length,
         unreviewed: rows.filter((r) => r.reviewState === "unreviewed").length,
+      });
+    }
+
+    /* ============================================ Phase 10B.1 copilot RPCs
+     *
+     * Faithful to the SECURITY DEFINER contracts in
+     * supabase/migrations/*phase10b1*.sql and the Phase 10A run tables:
+     * org membership is re-checked on every call, the input snapshot and
+     * its hash are locked from creation, finalize refuses a mismatched
+     * hash, and the three practitioner actions stay bounded to drafts.
+     *
+     * Nothing below contacts an AI provider or a secret manager.
+     */
+
+    if (url.pathname === "/rest/v1/clinical_copilot_provider_registry" && req.method === "GET") {
+      copilotRequestLog.push({ path: "provider_registry", at: Date.now() });
+      // RLS on the real table is `select to authenticated using (true)`.
+      // The secret REFERENCE is stored here; the value never is.
+      return json(res, 200, copilotProviderRegistry.map((r) => ({ ...r })));
+    }
+
+    if (url.pathname === "/rest/v1/rpc/get_copilot_activation" && req.method === "POST") {
+      const body = await readBody(req);
+      copilotRequestLog.push({ path: "get_copilot_activation", at: Date.now() });
+      const orgId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(orgId)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const hit = copilotActivations.get(`${orgId}::${String(body._provider_id ?? "")}`);
+      if (!hit) {
+        return json(res, 200, {
+          state: "disabled",
+          supervisedRunsRequired: 25,
+          supervisedRunsCompleted: 0,
+        });
+      }
+      return json(res, 200, { id: `act-${COPILOT_PROVIDER_ID}`, ...hit });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/build_copilot_input_snapshot" && req.method === "POST") {
+      const body = await readBody(req);
+      copilotRequestLog.push({ path: "build_copilot_input_snapshot", at: Date.now() });
+      const orgId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(orgId)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const patient = PATIENTS.find(
+        (p) => p.id === String(body._patient_id ?? "") && p.organization_id === orgId,
+      );
+      if (!patient) {
+        // Cross-tenant or unknown patient is refused BEFORE any run row
+        // exists, exactly as the real RPC does.
+        return json(res, 403, { code: "42501", message: "patient not in this organization" });
+      }
+      // Deterministic and PHI-FREE. Every clinical table is empty for this
+      // org in the fixture backend, and the demographics stay null so
+      // `snapshotContainsPHI` is false — which is what keeps the governed
+      // synthetic provider reachable. Unknown stays unknown; nothing here
+      // invents an age, a sex, a lab, or a medication.
+      return json(res, 200, {
+        snapshot: {
+          demographics: {
+            ageYears: null,
+            sex: null,
+            isPregnant: null,
+            isLactating: null,
+            isPediatric: null,
+          },
+          medications: [],
+          allergies: [],
+          labs: [],
+          currentProtocols: [],
+          transcriptRevisions: [],
+          interactionReferences: [],
+          restrictedFlagsPresent: [],
+          sourceStaleness: { lastImportAt: null, lastEncounterAt: null, lastLabAt: null },
+          productLabelsInUse: [],
+          dosageMentions: [],
+        },
+        records: [],
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/fetch_copilot_governed_retrieval" && req.method === "POST") {
+      const body = await readBody(req);
+      copilotRequestLog.push({ path: "fetch_copilot_governed_retrieval", at: Date.now() });
+      if (!memberOrgIds.includes(String(body._organization_id ?? ""))) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      // Approved governed sources only. No commercial row can appear here.
+      return json(res, 200, {
+        approvedKnowledgeReferenceIds: [...COPILOT_ALLOWED_CITATIONS],
+        verifiedLabelIds: [],
+        approvedProtocolTemplateIds: [],
+        approvedDietTemplateIds: [],
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/create_copilot_run" && req.method === "POST") {
+      const body = await readBody(req);
+      copilotRequestLog.push({ path: "create_copilot_run", at: Date.now() });
+      const orgId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(orgId)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const id = copilotId("f0f0f0f0");
+      const suppliedHash = String(body._input_snapshot_hash ?? "");
+      copilotRuns.set(id, {
+        id,
+        organizationId: orgId,
+        patientId: String(body._patient_id ?? ""),
+        encounterId: body._encounter_id ?? null,
+        lens: String(body._lens ?? ""),
+        runType: String(body._run_type ?? ""),
+        pathwayVersionId: body._pathway_version_id ?? null,
+        ruleSetVersion: String(body._rule_set_version ?? "v1"),
+        promptVersion: String(body._prompt_version ?? "v1"),
+        jsonSchemaVersion: String(body._json_schema_version ?? "v1"),
+        providerName: String(body._provider_name ?? "disabled"),
+        // Locked from creation. `_forced_stale` models the chart changing
+        // under a run in flight: the stored hash no longer matches what
+        // finalize will present, so finalize must refuse.
+        inputSnapshotHash: copilotForceStale ? `${suppliedHash}-CHANGED` : suppliedHash,
+        inputSnapshot: body._input_snapshot ?? null,
+        status: "running",
+        outputHash: null,
+        failureCategory: null,
+        disposition: null,
+        staleAt: copilotForceStale ? new Date().toISOString() : null,
+        createdAt: new Date().toISOString(),
+        completedAt: null,
+        failedAt: null,
+        reviewedAt: null,
+        history: [{ at: new Date().toISOString(), event: "created" }],
+      });
+      copilotForceStale = false;
+      return json(res, 200, { ok: true, id });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/finalize_copilot_run" && req.method === "POST") {
+      const body = await readBody(req);
+      copilotRequestLog.push({ path: "finalize_copilot_run", at: Date.now() });
+      const orgId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(orgId)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const run = copilotRuns.get(String(body._run_id ?? ""));
+      if (!run || run.organizationId !== orgId) {
+        return json(res, 404, { code: "P0002", message: "run not found" });
+      }
+      if (run.status !== "running") {
+        // A completed run is never finalized twice. Retrying produces a NEW
+        // run, it does not mutate this one.
+        return json(res, 400, { code: "55000", message: "run already finalized" });
+      }
+      if (String(body._input_snapshot_hash ?? "") !== run.inputSnapshotHash) {
+        // The chart moved underneath the run. Refusing here is the whole
+        // point: silently finalizing would attach an answer computed from
+        // one snapshot to a patient who now looks different.
+        run.status = "stale";
+        run.staleAt = new Date().toISOString();
+        run.history.push({ at: run.staleAt, event: "stale_input_refused" });
+        return json(res, 400, {
+          code: "55000",
+          message: "input snapshot hash mismatch — the patient record changed after this run started",
+        });
+      }
+      const status = String(body._status ?? "failed");
+      run.status = status;
+      // Faithful to the real RPC:
+      //   output_sha256 = case when _status='completed' then _output_hash else output_sha256 end
+      // A failed run has no output, so it must not acquire a hash — a hash
+      // on a failed row would later read as "something was produced".
+      if (status === "completed") run.outputHash = body._output_hash ?? null;
+      if (status === "completed") run.completedAt = new Date().toISOString();
+      else run.failedAt = new Date().toISOString();
+      run.history.push({ at: new Date().toISOString(), event: `finalized_${status}` });
+      return json(res, 200, { ok: true, id: run.id, status });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/get_copilot_runs_for_patient" && req.method === "POST") {
+      const body = await readBody(req);
+      const orgId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(orgId)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const patientId = String(body._patient_id ?? "");
+      const runs = [...copilotRuns.values()]
+        .filter((r) => r.organizationId === orgId && r.patientId === patientId)
+        .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
+        .map((r) => ({
+          id: r.id,
+          lens: r.lens,
+          runType: r.runType,
+          status: r.status,
+          providerName: r.providerName,
+          providerModel: null,
+          inputSnapshotHash: r.inputSnapshotHash,
+          outputHash: r.outputHash,
+          createdAt: r.createdAt,
+          completedAt: r.completedAt,
+          failedAt: r.failedAt,
+          reviewedAt: r.reviewedAt,
+          staleAt: r.staleAt,
+          disposition: r.disposition,
+        }));
+      return json(res, 200, { patientId, runs });
+    }
+
+    if (
+      (url.pathname === "/rest/v1/rpc/record_copilot_disposition" ||
+        url.pathname === "/rest/v1/rpc/record_copilot_disposition_extended") &&
+      req.method === "POST"
+    ) {
+      const body = await readBody(req);
+      const orgId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(orgId)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const run = copilotRuns.get(String(body._run_id ?? ""));
+      if (!run || run.organizationId !== orgId) {
+        return json(res, 404, { code: "P0002", message: "run not found" });
+      }
+      if (copilotDispositions.has(run.id)) {
+        // Append-only: a practitioner's recorded judgement is not editable
+        // by repeating the call.
+        return json(res, 400, {
+          code: "55000",
+          message: "a disposition is already recorded for this run",
+        });
+      }
+      const row = {
+        id: copilotId("d0d0d0d0"),
+        runId: run.id,
+        disposition: String(body._disposition ?? ""),
+        note: body._note ?? null,
+        practitionerId: "dddddddd-1111-2222-3333-444444444401",
+        recordedAt: new Date().toISOString(),
+      };
+      copilotDispositions.set(run.id, row);
+      run.disposition = row.disposition;
+      run.reviewedAt = row.recordedAt;
+      run.history.push({ at: row.recordedAt, event: `disposition_${row.disposition}` });
+      return json(res, 200, { ok: true, id: row.id, disposition: row.disposition });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/apply_copilot_run_to_note" && req.method === "POST") {
+      const body = await readBody(req);
+      const orgId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(orgId)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const run = copilotRuns.get(String(body._run_id ?? ""));
+      if (!run || run.organizationId !== orgId) {
+        return json(res, 404, { code: "P0002", message: "run not found" });
+      }
+      const row = {
+        id: copilotId("a1a1a1a1"),
+        runId: run.id,
+        // The bounded action: an append to an UNSIGNED draft. Never a
+        // signature, and the stub records the fact explicitly so a test
+        // can assert it rather than infer it.
+        noteStatus: "draft_unsigned",
+        signed: false,
+        appendedAt: new Date().toISOString(),
+      };
+      copilotNoteAppends.push(row);
+      run.history.push({ at: row.appendedAt, event: "appended_to_unsigned_note_draft" });
+      return json(res, 200, { ok: true, id: row.id, noteStatus: row.noteStatus, signed: false });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/apply_copilot_run_to_protocol_draft" && req.method === "POST") {
+      const body = await readBody(req);
+      const orgId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(orgId)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const run = copilotRuns.get(String(body._run_id ?? ""));
+      if (!run || run.organizationId !== orgId) {
+        return json(res, 404, { code: "P0002", message: "run not found" });
+      }
+      const row = {
+        id: copilotId("b1b1b1b1"),
+        runId: run.id,
+        // A DRAFT version. Never activated, never published.
+        status: "draft",
+        active: false,
+        createdAt: new Date().toISOString(),
+      };
+      copilotProtocolDrafts.push(row);
+      run.history.push({ at: row.createdAt, event: "created_draft_protocol_version" });
+      return json(res, 200, { ok: true, id: row.id, status: "draft", active: false });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/create_copilot_review_task" && req.method === "POST") {
+      const body = await readBody(req);
+      const orgId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(orgId)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const run = copilotRuns.get(String(body._run_id ?? ""));
+      if (!run || run.organizationId !== orgId) {
+        return json(res, 404, { code: "P0002", message: "run not found" });
+      }
+      const row = {
+        id: copilotId("c1c1c1c1"),
+        runId: run.id,
+        status: "open",
+        createdAt: new Date().toISOString(),
+      };
+      copilotReviewTasks.push(row);
+      run.history.push({ at: row.createdAt, event: "created_open_review_task" });
+      return json(res, 200, { ok: true, id: row.id, status: "open" });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/approve_supervised_copilot_run" && req.method === "POST") {
+      const body = await readBody(req);
+      const orgId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(orgId)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const run = copilotRuns.get(String(body._run_id ?? ""));
+      if (!run || run.organizationId !== orgId) {
+        return json(res, 404, { code: "P0002", message: "run not found" });
+      }
+      const row = {
+        id: copilotId("e1e1e1e1"),
+        runId: run.id,
+        reviewerId: "dddddddd-1111-2222-3333-444444444402",
+        draftAction: String(body._draft_action ?? ""),
+        approvedAt: new Date().toISOString(),
+      };
+      copilotSupervisedReviews.push(row);
+      return json(res, 200, { ok: true, id: row.id });
+    }
+
+    /** TEST-ONLY read-back of what the bounded actions actually wrote. */
+    if (url.pathname === "/rest/v1/rpc/__copilot_effects" && req.method === "POST") {
+      return json(res, 200, {
+        noteAppends: copilotNoteAppends.map((r) => ({ ...r })),
+        protocolDrafts: copilotProtocolDrafts.map((r) => ({ ...r })),
+        reviewTasks: copilotReviewTasks.map((r) => ({ ...r })),
+        supervisedReviews: copilotSupervisedReviews.map((r) => ({ ...r })),
+        runs: [...copilotRuns.values()].map((r) => ({
+          id: r.id,
+          status: r.status,
+          disposition: r.disposition,
+          outputHash: r.outputHash,
+          inputSnapshotHash: r.inputSnapshotHash,
+          history: r.history,
+        })),
       });
     }
 
