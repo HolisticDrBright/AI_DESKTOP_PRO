@@ -136,6 +136,95 @@ function parse(fx: ReturnType<typeof buildFixture>) {
   });
 }
 
+function buildPhase9fFixture() {
+  const v1 = buildFixture();
+  const decodeRows = (bytes: Uint8Array) => new TextDecoder().decode(bytes)
+    .trim().split(/\r?\n/).map((line) => JSON.parse(line) as Record<string, unknown>);
+  const clinical = decodeRows(v1.bytes.clinical).map((row) => ({
+    ...row, practitioner_verified: false, phase: "9F",
+  }));
+  const commercial = decodeRows(v1.bytes.commercial);
+  const evidence: Record<string, unknown>[] = decodeRows(v1.bytes.evidence).map((row, index) => ({
+    ...row,
+    source_id: `EV9F-${String(index + 1).padStart(5, "0")}`,
+    archived: true,
+    artifact_relative_path: `evidence/PRH-000${index + 1}/artifact-${index + 1}.json`,
+    sha256: String(index + 1).repeat(64),
+    url_only_evidence: false,
+  }));
+  const artifacts = evidence.map((row, index) => ({
+    artifact_id: `ART-${String(index + 1).padStart(5, "0")}`,
+    product_research_id: `PRH-000${index + 1}`,
+    relative_path: row.artifact_relative_path,
+    filename: `artifact-${index + 1}.json`,
+    extension: "json",
+    bytes: 100 + index,
+    sha256: row.sha256,
+    source_id: row.source_id,
+    source_url: row.url,
+    authority_tier: 1,
+    supports_fields: ["identity"],
+    archived_utc: "2026-08-04T00:00:00Z",
+  }));
+  const conflicts = clinical.slice(0, 2).map((row: Record<string, unknown>, index) => ({
+    conflict_id: `CP-${String(index + 1).padStart(5, "0")}`,
+    product_research_id: row.product_research_id,
+    exact_product_identity: {},
+    field: "serving_size",
+    existing_value: "one",
+    incoming_value: "two",
+    existing_source: "source-a",
+    incoming_source: "source-b",
+    practitioner_decision_required: true,
+    resolved_by_research: false,
+  }));
+  const jsonl = (rows: unknown[]) => new Uint8Array(Buffer.from(
+    rows.map((row) => JSON.stringify(row)).join("\n") + "\n",
+  ));
+  const bytes = {
+    clinical: jsonl(clinical), commercial: jsonl(commercial), evidence: jsonl(evidence),
+    artifacts: jsonl(artifacts), conflicts: jsonl(conflicts), manifest: new Uint8Array(),
+  };
+  const names = {
+    manifest: "handoff-manifest-v2.json",
+    clinical: "product-label-enrichment-v2.jsonl",
+    commercial: "commercial-links-v2.jsonl",
+    evidence: "evidence-sources-v2.jsonl",
+    artifacts: "evidence-artifact-index.jsonl",
+    conflicts: "conflict-resolution-packets.jsonl",
+  };
+  const hash = (value: Uint8Array) => createHash("sha256").update(value).digest("hex");
+  const manifest = JSON.parse(new TextDecoder().decode(v1.bytes.manifest));
+  manifest.phase = "9F";
+  manifest.version = "2.0";
+  manifest.governance.practitioner_verified = false;
+  manifest.counts.total_records = clinical.length;
+  manifest.counts.commercial_records = commercial.length;
+  manifest.counts.evidence_artifacts = artifacts.length;
+  manifest.counts.conflict_packets = conflicts.length;
+  manifest.output_files = [
+    { file: names.clinical, sha256: hash(bytes.clinical) },
+    { file: names.commercial, sha256: hash(bytes.commercial) },
+    { file: names.evidence, sha256: hash(bytes.evidence) },
+    { file: names.artifacts, sha256: hash(bytes.artifacts) },
+    { file: names.conflicts, sha256: hash(bytes.conflicts) },
+    { file: "qa-report-v2.txt", sha256: "a".repeat(64) },
+  ];
+  bytes.manifest = new Uint8Array(Buffer.from(JSON.stringify(manifest)));
+  return { bytes, names };
+}
+
+function parsePhase9f(fx: ReturnType<typeof buildPhase9fFixture>) {
+  return parseHandoffPackage({
+    manifest: { filename: fx.names.manifest, bytes: fx.bytes.manifest },
+    clinical: { filename: fx.names.clinical, bytes: fx.bytes.clinical },
+    commercial: { filename: fx.names.commercial, bytes: fx.bytes.commercial },
+    evidence: { filename: fx.names.evidence, bytes: fx.bytes.evidence },
+    artifacts: { filename: fx.names.artifacts, bytes: fx.bytes.artifacts },
+    conflicts: { filename: fx.names.conflicts, bytes: fx.bytes.conflicts },
+  });
+}
+
 describe("Phase 9E-B — Product Research Handoff parser", () => {
   test("happy path: valid package parses and emits aggregates", () => {
     const fx = buildFixture();
@@ -349,5 +438,52 @@ describe("Phase 9E-B — Product Research Handoff parser", () => {
       expect(typeof row.displayName).toBe("string");
       expect(row.payload).toBeTypeOf("object");
     }
+  });
+});
+
+describe("Phase 9F — supplemental research package parser", () => {
+  test("parses five governed preview streams and preserves supplemental identities", () => {
+    const parsed = parsePhase9f(buildPhase9fFixture());
+    expect(parsed.aggregates).toMatchObject({ artifactCount: 3, conflictCount: 2 });
+    expect(adaptForPreview("artifacts", parsed.artifacts!.items)[0]).toMatchObject({
+      entityType: "product_label_evidence_artifact", externalKey: "ART-00001",
+    });
+    expect(adaptForPreview("conflicts", parsed.conflicts!.items)[0]).toMatchObject({
+      entityType: "product_label_conflict_packet", externalKey: "CP-00001",
+    });
+  });
+
+  test("refuses Phase 9F when either supplemental file is omitted", () => {
+    const fx = buildPhase9fFixture();
+    expect(() => parseHandoffPackage({
+      manifest: { filename: fx.names.manifest, bytes: fx.bytes.manifest },
+      clinical: { filename: fx.names.clinical, bytes: fx.bytes.clinical },
+      commercial: { filename: fx.names.commercial, bytes: fx.bytes.commercial },
+      evidence: { filename: fx.names.evidence, bytes: fx.bytes.evidence },
+    })).toThrow(/phase9f_supplemental_files_required/);
+  });
+
+  test("refuses a conflict packet that is not explicitly practitioner-gated", () => {
+    const fx = buildPhase9fFixture();
+    const rows = new TextDecoder().decode(fx.bytes.conflicts).trim().split("\n").map((line) => JSON.parse(line));
+    rows[0].practitioner_decision_required = false;
+    fx.bytes.conflicts = new Uint8Array(Buffer.from(rows.map((row) => JSON.stringify(row)).join("\n") + "\n"));
+    const manifest = JSON.parse(new TextDecoder().decode(fx.bytes.manifest));
+    manifest.output_files.find((entry: { file: string }) => entry.file === fx.names.conflicts).sha256 =
+      createHash("sha256").update(fx.bytes.conflicts).digest("hex");
+    fx.bytes.manifest = new Uint8Array(Buffer.from(JSON.stringify(manifest)));
+    expect(() => parsePhase9f(fx)).toThrow(/conflict_practitioner_decision_required/);
+  });
+
+  test("refuses artifact paths that escape the package", () => {
+    const fx = buildPhase9fFixture();
+    const rows = new TextDecoder().decode(fx.bytes.artifacts).trim().split("\n").map((line) => JSON.parse(line));
+    rows[0].relative_path = "../outside.json";
+    fx.bytes.artifacts = new Uint8Array(Buffer.from(rows.map((row) => JSON.stringify(row)).join("\n") + "\n"));
+    const manifest = JSON.parse(new TextDecoder().decode(fx.bytes.manifest));
+    manifest.output_files.find((entry: { file: string }) => entry.file === fx.names.artifacts).sha256 =
+      createHash("sha256").update(fx.bytes.artifacts).digest("hex");
+    fx.bytes.manifest = new Uint8Array(Buffer.from(JSON.stringify(manifest)));
+    expect(() => parsePhase9f(fx)).toThrow(/unsafe_artifact_relative_path/);
   });
 });

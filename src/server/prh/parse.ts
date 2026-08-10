@@ -1,8 +1,9 @@
 /**
  * Phase 9E-B — Product Research Handoff package parser.
  *
- * SERVER-ONLY. Reads only the four files the caller explicitly hands us
- * (manifest + three JSONL). Never crawls a directory. Never logs raw
+ * SERVER-ONLY. Reads only the files the caller explicitly hands us
+ * (manifest + three Phase 9E-B JSONL files, plus the Phase 9F artifact
+ * index and conflict packets when the manifest declares them). Never crawls a directory. Never logs raw
  * content. Never writes to disk. Never uploads to any external service.
  *
  * Contract:
@@ -39,26 +40,36 @@ export const BOUNDS = {
   clinicalMaxBytes: 8 * 1024 * 1024,
   evidenceMaxBytes: 4 * 1024 * 1024,
   commercialMaxBytes: 2 * 1024 * 1024,
+  artifactsMaxBytes: 4 * 1024 * 1024,
+  conflictsMaxBytes: 4 * 1024 * 1024,
   maxLineBytes: 128 * 1024,
   maxLinesClinical: 200,
-  maxLinesEvidence: 600,
+  maxLinesEvidence: 700,
   maxLinesCommercial: 220,
+  maxLinesArtifacts: 700,
+  maxLinesConflicts: 250,
 } as const;
 
 export type ManifestOutputEntry = { file: string; sha256: string };
 export type ManifestSourceEntry = { path: string; sha256: string };
 export type HandoffManifest = {
   package: string;
+  phase?: string;
+  version?: string;
   created_utc: string;
   source_files: ManifestSourceEntry[];
   output_files: ManifestOutputEntry[];
   counts: {
-    total_source_rows: number;
-    records_researched: number;
-    records_skipped_without_research: number;
-    unresolved_records: number;
-    commercial_link_records: number;
+    total_source_rows?: number;
+    records_researched?: number;
+    records_skipped_without_research?: number;
+    unresolved_records?: number;
+    commercial_link_records?: number;
+    total_records?: number;
+    commercial_records?: number;
     evidence_source_records: number;
+    evidence_artifacts?: number;
+    conflict_packets?: number;
     records_with_complete_supplement_facts: number;
     supplement_facts_complete: number;
     label_verification_candidates: number;
@@ -67,6 +78,7 @@ export type HandoffManifest = {
   };
   governance: {
     clinically_approved: boolean;
+    practitioner_verified?: boolean;
     labels_verified: boolean;
     imported_anywhere: boolean;
   };
@@ -80,6 +92,8 @@ export type HandoffPackageInput = {
   clinical: { filename: string; bytes: Uint8Array };
   commercial: { filename: string; bytes: Uint8Array };
   evidence: { filename: string; bytes: Uint8Array };
+  artifacts?: { filename: string; bytes: Uint8Array };
+  conflicts?: { filename: string; bytes: Uint8Array };
 };
 
 export type HandoffParseResult = {
@@ -88,10 +102,14 @@ export type HandoffParseResult = {
   clinical: { sha256: string; items: unknown[]; source_name: string; source_filename: string; source_byte_size: number };
   evidence: { sha256: string; items: unknown[]; source_name: string; source_filename: string; source_byte_size: number };
   commercial: { sha256: string; items: unknown[]; source_name: string; source_filename: string; source_byte_size: number };
+  artifacts?: { sha256: string; items: unknown[]; source_name: string; source_filename: string; source_byte_size: number };
+  conflicts?: { sha256: string; items: unknown[]; source_name: string; source_filename: string; source_byte_size: number };
   aggregates: {
     clinicalCount: number;
     commercialCount: number;
     evidenceCount: number;
+    artifactCount: number;
+    conflictCount: number;
     uniquePrhIds: number;
     identityCounts: Record<string, number>;
     supplementFactsCompleteCount: number;
@@ -165,7 +183,7 @@ function parseManifest(bytes: Uint8Array): HandoffManifest {
   const m = obj as Partial<HandoffManifest>;
   if (typeof m.package !== "string" || typeof m.created_utc !== "string")
     throw new HandoffPackageError("manifest_missing_fields");
-  if (!Array.isArray(m.source_files) || m.source_files.length !== 2)
+  if (!Array.isArray(m.source_files) || m.source_files.length < 1)
     throw new HandoffPackageError("manifest_bad_source_files");
   if (!Array.isArray(m.output_files) || m.output_files.length < 6)
     throw new HandoffPackageError("manifest_bad_output_files");
@@ -178,15 +196,17 @@ function parseManifest(bytes: Uint8Array): HandoffManifest {
       throw new HandoffPackageError("manifest_bad_output_hash");
   }
   const c = m.counts as HandoffManifest["counts"] | undefined;
-  if (!c || typeof c.records_researched !== "number" || typeof c.commercial_link_records !== "number"
+  const clinicalCount = c?.records_researched ?? c?.total_records;
+  const commercialCount = c?.commercial_link_records ?? c?.commercial_records;
+  const skippedCount = c?.records_skipped_without_research ?? 0;
+  if (!c || typeof clinicalCount !== "number" || typeof commercialCount !== "number"
       || typeof c.evidence_source_records !== "number"
-      || typeof c.records_skipped_without_research !== "number"
-      || !Number.isInteger(c.records_skipped_without_research)
-      || c.records_skipped_without_research < 0) {
+      || !Number.isInteger(skippedCount) || skippedCount < 0) {
     throw new HandoffPackageError("manifest_bad_counts");
   }
   const g = m.governance as HandoffManifest["governance"] | undefined;
-  if (!g || g.clinically_approved !== false || g.labels_verified !== false || g.imported_anywhere !== false) {
+  if (!g || g.clinically_approved !== false || g.labels_verified !== false || g.imported_anywhere !== false
+      || ("practitioner_verified" in g && g.practitioner_verified !== false)) {
     throw new HandoffPackageError("manifest_governance_not_draft");
   }
   return m as HandoffManifest;
@@ -205,6 +225,8 @@ function assertGovernanceOk(items: unknown[], whichFile: "clinical"): void {
       throw new HandoffPackageError(`clinically_approved_must_be_false_${whichFile}`);
     if ("imported" in r && r.imported !== false)
       throw new HandoffPackageError(`imported_must_be_false_${whichFile}`);
+    if ("practitioner_verified" in r && r.practitioner_verified !== false)
+      throw new HandoffPackageError(`practitioner_verified_must_be_false_${whichFile}`);
     for (const banned of ["affiliate_url", "commercial_url", "discount_code", "price"] as const) {
       if (banned in r) throw new HandoffPackageError(`clinical_carries_${banned}`);
     }
@@ -270,12 +292,26 @@ function assertCrossFileReferences(
   return [...orphans].sort();
 }
 
-function assertEvidenceRepresentation(items: unknown[]): void {
+function assertEvidenceRepresentation(items: unknown[], allowArchived: boolean): Set<string> {
   const seenIds = new Set<string>();
   for (const item of items) {
     const r = item as Record<string, unknown>;
     if (typeof r.url !== "string" || r.url.length === 0) throw new HandoffPackageError("evidence_missing_url");
-    if (r.sha256 !== null && r.sha256 !== undefined) throw new HandoffPackageError("evidence_archived_sha256_not_allowed");
+    if (!allowArchived && r.sha256 !== null && r.sha256 !== undefined)
+      throw new HandoffPackageError("evidence_archived_sha256_not_allowed");
+    if (allowArchived) {
+      if (r.archived === true) {
+        if (typeof r.sha256 !== "string" || !/^[0-9a-f]{64}$/.test(r.sha256))
+          throw new HandoffPackageError("archived_evidence_missing_sha256");
+        if (typeof r.artifact_relative_path !== "string" || r.artifact_relative_path.length === 0)
+          throw new HandoffPackageError("archived_evidence_missing_artifact_path");
+      } else if (r.archived === false) {
+        if (r.sha256 !== null || r.artifact_relative_path !== null || r.url_only_evidence !== true)
+          throw new HandoffPackageError("url_only_evidence_misrepresented");
+      } else {
+        throw new HandoffPackageError("evidence_archived_flag_required");
+      }
+    }
     // Evidence rows are keyed by their own id (source_id / evidence_id) —
     // many evidence rows share one product_research_id, so a duplicated
     // evidence id would collide inside the preview batch at the database's
@@ -286,6 +322,7 @@ function assertEvidenceRepresentation(items: unknown[]): void {
       seenIds.add(id);
     }
   }
+  return seenIds;
 }
 
 function evidenceExternalId(r: Record<string, unknown>): string | null {
@@ -294,21 +331,85 @@ function evidenceExternalId(r: Record<string, unknown>): string | null {
   return null;
 }
 
+function isSafeRelativeArtifactPath(value: unknown): value is string {
+  return typeof value === "string"
+    && value.length > 0
+    && !/^[a-z]:[\\/]/i.test(value)
+    && !value.startsWith("/")
+    && !value.startsWith("\\")
+    && !value.split(/[\\/]/).includes("..");
+}
+
+function assertPhase9fSupplementalRecords(
+  artifacts: unknown[],
+  conflicts: unknown[],
+  clinicalIds: Set<string>,
+  evidenceIds: Set<string>,
+): void {
+  const artifactIds = new Set<string>();
+  for (const item of artifacts) {
+    const r = item as Record<string, unknown>;
+    const id = r.artifact_id;
+    if (typeof id !== "string" || !/^ART-\d{5}$/.test(id))
+      throw new HandoffPackageError("bad_artifact_id_shape");
+    if (artifactIds.has(id)) throw new HandoffPackageError("duplicate_artifact_id");
+    artifactIds.add(id);
+    if (typeof r.product_research_id !== "string" || !clinicalIds.has(r.product_research_id))
+      throw new HandoffPackageError("artifact_prh_id_not_in_clinical");
+    if (typeof r.source_id !== "string" || !evidenceIds.has(r.source_id))
+      throw new HandoffPackageError("artifact_source_id_not_in_evidence");
+    if (!isSafeRelativeArtifactPath(r.relative_path))
+      throw new HandoffPackageError("unsafe_artifact_relative_path");
+    if (typeof r.sha256 !== "string" || !/^[0-9a-f]{64}$/.test(r.sha256))
+      throw new HandoffPackageError("bad_artifact_sha256");
+    if (!Number.isInteger(r.bytes) || (r.bytes as number) <= 0)
+      throw new HandoffPackageError("bad_artifact_byte_size");
+    if (!Array.isArray(r.supports_fields))
+      throw new HandoffPackageError("artifact_supports_fields_not_array");
+  }
+
+  const conflictIds = new Set<string>();
+  for (const item of conflicts) {
+    const r = item as Record<string, unknown>;
+    const id = r.conflict_id;
+    if (typeof id !== "string" || !/^CP-\d{5}$/.test(id))
+      throw new HandoffPackageError("bad_conflict_id_shape");
+    if (conflictIds.has(id)) throw new HandoffPackageError("duplicate_conflict_id");
+    conflictIds.add(id);
+    if (typeof r.product_research_id !== "string" || !clinicalIds.has(r.product_research_id))
+      throw new HandoffPackageError("conflict_prh_id_not_in_clinical");
+    if (r.practitioner_decision_required !== true)
+      throw new HandoffPackageError("conflict_practitioner_decision_required");
+    if (typeof r.field !== "string" || r.field.length === 0)
+      throw new HandoffPackageError("conflict_field_required");
+  }
+}
+
 export function parseHandoffPackage(input: HandoffPackageInput): HandoffParseResult {
   // 1. Manifest first.
   const manifest = parseManifest(input.manifest.bytes);
   const manifestSha256 = sha256Hex(input.manifest.bytes);
+  const phase9f = manifest.phase === "9F";
 
-  // 2. Refuse if the manifest itself doesn't declare all three JSONL files.
-  const clinicalDecl = findManifestOutput(manifest, "product-label-enrichment.jsonl");
-  const evidenceDecl = findManifestOutput(manifest, "evidence-sources.jsonl");
-  const commercialDecl = findManifestOutput(manifest, "commercial-links.jsonl");
+  if (phase9f && (!input.artifacts || !input.conflicts)) {
+    throw new HandoffPackageError("phase9f_supplemental_files_required");
+  }
+
+  // 2. Refuse if the manifest itself doesn't declare the files for its phase.
+  const clinicalName = phase9f ? "product-label-enrichment-v2.jsonl" : "product-label-enrichment.jsonl";
+  const evidenceName = phase9f ? "evidence-sources-v2.jsonl" : "evidence-sources.jsonl";
+  const commercialName = phase9f ? "commercial-links-v2.jsonl" : "commercial-links.jsonl";
+  const clinicalDecl = findManifestOutput(manifest, clinicalName);
+  const evidenceDecl = findManifestOutput(manifest, evidenceName);
+  const commercialDecl = findManifestOutput(manifest, commercialName);
+  const artifactsDecl = phase9f ? findManifestOutput(manifest, "evidence-artifact-index.jsonl") : null;
+  const conflictsDecl = phase9f ? findManifestOutput(manifest, "conflict-resolution-packets.jsonl") : null;
 
   // 3. Verify each JSONL's filename + byte size + sha256 against the manifest.
   const checkFile = (
     file: { filename: string; bytes: Uint8Array },
     decl: ManifestOutputEntry,
-    which: "clinical" | "evidence" | "commercial",
+    which: "clinical" | "evidence" | "commercial" | "artifacts" | "conflicts",
     maxBytes: number,
   ) => {
     if (file.filename !== decl.file) throw new HandoffPackageError(`filename_mismatch_${which}`);
@@ -320,27 +421,49 @@ export function parseHandoffPackage(input: HandoffPackageInput): HandoffParseRes
   const clinicalSha256 = checkFile(input.clinical, clinicalDecl, "clinical", BOUNDS.clinicalMaxBytes);
   const evidenceSha256 = checkFile(input.evidence, evidenceDecl, "evidence", BOUNDS.evidenceMaxBytes);
   const commercialSha256 = checkFile(input.commercial, commercialDecl, "commercial", BOUNDS.commercialMaxBytes);
+  const artifactsSha256 = phase9f
+    ? checkFile(input.artifacts!, artifactsDecl!, "artifacts", BOUNDS.artifactsMaxBytes)
+    : null;
+  const conflictsSha256 = phase9f
+    ? checkFile(input.conflicts!, conflictsDecl!, "conflicts", BOUNDS.conflictsMaxBytes)
+    : null;
 
   // 4. Parse JSONL into items.
   const clinicalItems = parseJsonl(decodeUtf8Strict(input.clinical.bytes, "clinical"), "clinical", BOUNDS.maxLinesClinical);
   const evidenceItems = parseJsonl(decodeUtf8Strict(input.evidence.bytes, "evidence"), "evidence", BOUNDS.maxLinesEvidence);
   const commercialItems = parseJsonl(decodeUtf8Strict(input.commercial.bytes, "commercial"), "commercial", BOUNDS.maxLinesCommercial);
+  const artifactItems = phase9f
+    ? parseJsonl(decodeUtf8Strict(input.artifacts!.bytes, "artifacts"), "artifacts", BOUNDS.maxLinesArtifacts)
+    : [];
+  const conflictItems = phase9f
+    ? parseJsonl(decodeUtf8Strict(input.conflicts!.bytes, "conflicts"), "conflicts", BOUNDS.maxLinesConflicts)
+    : [];
 
   // 5. Line-count reconciliation against the manifest.
-  if (clinicalItems.length !== manifest.counts.records_researched)
+  const expectedClinical = manifest.counts.records_researched ?? manifest.counts.total_records;
+  const expectedCommercial = manifest.counts.commercial_link_records ?? manifest.counts.commercial_records;
+  const declaredSkipped = manifest.counts.records_skipped_without_research ?? 0;
+  if (clinicalItems.length !== expectedClinical)
     throw new HandoffPackageError("clinical_count_mismatch");
   if (evidenceItems.length !== manifest.counts.evidence_source_records)
     throw new HandoffPackageError("evidence_count_mismatch");
-  if (commercialItems.length !== manifest.counts.commercial_link_records)
+  if (commercialItems.length !== expectedCommercial)
     throw new HandoffPackageError("commercial_count_mismatch");
+  if (phase9f && artifactItems.length !== manifest.counts.evidence_artifacts)
+    throw new HandoffPackageError("artifact_count_mismatch");
+  if (phase9f && conflictItems.length !== manifest.counts.conflict_packets)
+    throw new HandoffPackageError("conflict_count_mismatch");
 
   // 6. Governance + isolation + uniqueness.
   assertGovernanceOk(clinicalItems, "clinical");
   const clinicalIds = assertPrhIdShapeAndUniqueness(clinicalItems);
   assertCommercialIsolation(commercialItems);
   const commercialOrphanPrhIds = assertCrossFileReferences(
-    commercialItems, clinicalIds, manifest.counts.records_skipped_without_research);
-  assertEvidenceRepresentation(evidenceItems);
+    commercialItems, clinicalIds, declaredSkipped);
+  const evidenceIds = assertEvidenceRepresentation(evidenceItems, phase9f);
+  if (phase9f) {
+    assertPhase9fSupplementalRecords(artifactItems, conflictItems, clinicalIds, evidenceIds);
+  }
 
   // 7. Aggregate the sanitized numbers.
   const identityCounts: Record<string, number> = {};
@@ -349,10 +472,15 @@ export function parseHandoffPackage(input: HandoffPackageInput): HandoffParseRes
   let unresolvedResearched = 0;
   for (const item of clinicalItems) {
     const r = item as Record<string, unknown>;
-    const ic = typeof r.identity_confidence === "string" ? r.identity_confidence : "unknown";
+    const ic = typeof r.identity_confidence === "string"
+      ? r.identity_confidence
+      : typeof r.research_disposition === "string"
+      ? r.research_disposition
+      : "unknown";
     identityCounts[ic] = (identityCounts[ic] ?? 0) + 1;
     if (r.supplement_facts_complete === true) supplementFactsCompleteCount += 1;
-    if (r.label_verification_candidate === true) labelVerificationCandidateCount += 1;
+    if (r.label_verification_candidate === true || r.research_disposition === "exact_identity_candidate")
+      labelVerificationCandidateCount += 1;
     const ur = r.unresolved_reasons;
     if (Array.isArray(ur) && ur.length > 0) unresolvedResearched += 1;
   }
@@ -378,16 +506,32 @@ export function parseHandoffPackage(input: HandoffPackageInput): HandoffParseRes
       source_filename: input.commercial.filename,
       source_byte_size: input.commercial.bytes.byteLength,
     },
+    ...(phase9f ? {
+      artifacts: {
+        sha256: artifactsSha256!, items: artifactItems,
+        source_name: "Product Research Handoff — evidence-artifact-index",
+        source_filename: input.artifacts!.filename,
+        source_byte_size: input.artifacts!.bytes.byteLength,
+      },
+      conflicts: {
+        sha256: conflictsSha256!, items: conflictItems,
+        source_name: "Product Research Handoff — conflict-resolution-packets",
+        source_filename: input.conflicts!.filename,
+        source_byte_size: input.conflicts!.bytes.byteLength,
+      },
+    } : {}),
     aggregates: {
       clinicalCount: clinicalItems.length,
       commercialCount: commercialItems.length,
       evidenceCount: evidenceItems.length,
+      artifactCount: artifactItems.length,
+      conflictCount: conflictItems.length,
       uniquePrhIds: clinicalIds.size,
       identityCounts,
       supplementFactsCompleteCount,
       labelVerificationCandidateCount,
       unresolvedResearched,
-      unresolvedTotal: unresolvedResearched + manifest.counts.records_skipped_without_research,
+      unresolvedTotal: unresolvedResearched + declaredSkipped,
       commercialOrphanPrhIds,
     },
   };
@@ -403,13 +547,15 @@ export function parseHandoffPackage(input: HandoffPackageInput): HandoffParseRes
  * reference there, not an identity).
  */
 export function adaptForPreview(
-  which: "clinical" | "evidence" | "commercial",
+  which: "clinical" | "evidence" | "commercial" | "artifacts" | "conflicts",
   items: unknown[],
 ): Array<Record<string, unknown>> {
   const entityType =
     which === "clinical" ? "product_label_research" :
     which === "evidence" ? "product_label_evidence" :
-    "product_label_commercial_link";
+    which === "commercial" ? "product_label_commercial_link" :
+    which === "artifacts" ? "product_label_evidence_artifact" :
+    "product_label_conflict_packet";
   return items.map((raw, index) => {
     const r = raw as Record<string, unknown>;
     // Evidence rows key on their OWN id — many evidence rows share one
@@ -418,11 +564,19 @@ export function adaptForPreview(
     const id =
       which === "evidence"
         ? evidenceExternalId(r) ?? `row-${index + 1}`
+        : which === "artifacts" && typeof r.artifact_id === "string"
+        ? r.artifact_id
+        : which === "conflicts" && typeof r.conflict_id === "string"
+        ? r.conflict_id
         : typeof r.product_research_id === "string"
         ? r.product_research_id
         : `row-${index + 1}`;
     const displayName =
-      typeof r.official_product_name === "string" && r.official_product_name.length > 0
+      which === "artifacts" && typeof r.filename === "string"
+        ? r.filename
+        : which === "conflicts" && typeof r.field === "string"
+        ? `${id}: ${r.field}`
+        : typeof r.official_product_name === "string" && r.official_product_name.length > 0
         ? r.official_product_name
         : typeof r.original_product_name === "string"
         ? r.original_product_name

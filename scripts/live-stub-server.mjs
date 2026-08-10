@@ -3693,6 +3693,99 @@ createServer(async (req, res) => {
     const stubSelectable = (p) =>
       !!p && p.status === "active" && (p.restrictedFlags.length === 0 || !!p.restrictedClearedAt);
 
+    if (url.pathname === "/rest/v1/rpc/preview_research_handoff_v2" && req.method === "POST") {
+      const body = await readBody(req);
+      const org = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(org)) {
+        return json(res, 403, { code: "42501", message: "knowledge editor role required" });
+      }
+      if (body._attests_no_phi !== true) {
+        return json(res, 400, { code: "55000", message: "no-PHI attestation is required" });
+      }
+      if (body._schema_version !== "phase9f-v2") {
+        return json(res, 400, { code: "22023", message: "Phase 9F schema version must be phase9f-v2" });
+      }
+      const manifestSha256 = String(body._manifest_sha256 ?? "");
+      if (!/^[0-9a-f]{64}$/.test(manifestSha256)) {
+        return json(res, 400, { code: "22023", message: "manifest_sha256 must be lowercase sha256 hex" });
+      }
+
+      const streams = [
+        ["clinical", "_clinical_items", "product_label_research", "_clinical_source_name", "_clinical_source_filename", "_clinical_source_byte_size"],
+        ["evidence", "_evidence_items", "product_label_evidence", "_evidence_source_name", "_evidence_source_filename", "_evidence_source_byte_size"],
+        ["commercial", "_commercial_items", "product_label_commercial_link", "_commercial_source_name", "_commercial_source_filename", "_commercial_source_byte_size"],
+        ["artifacts", "_artifact_items", "product_label_evidence_artifact", "_artifact_source_name", "_artifact_source_filename", "_artifact_source_byte_size"],
+        ["conflicts", "_conflict_items", "product_label_conflict_packet", "_conflict_source_name", "_conflict_source_filename", "_conflict_source_byte_size"],
+      ];
+      for (const [, field, entityType] of streams) {
+        const items = body[field];
+        if (!Array.isArray(items) || items.length === 0 || items.some((item) => item?.entityType !== entityType)) {
+          return json(res, 400, { code: "22023", message: "all five correctly typed item arrays are required" });
+        }
+      }
+      if (body._clinical_items.some((item) => item?.payload?.clinically_approved === true
+        || item?.payload?.practitioner_verified === true || item?.payload?.imported === true)) {
+        return json(res, 400, { code: "55000", message: "clinical rows must remain draft" });
+      }
+      if (body._conflict_items.some((item) => item?.payload?.practitioner_decision_required !== true)) {
+        return json(res, 400, { code: "55000", message: "every conflict requires a practitioner decision" });
+      }
+
+      const result = { ok: true, manifestSha256 };
+      for (const [kind, field, , sourceNameField, filenameField, byteSizeField] of streams) {
+        const key = `${org}:phase9f:${manifestSha256}:${kind}`;
+        const priorId = importSeenHashes.get(key);
+        if (priorId) {
+          result[kind] = {
+            batchId: priorId,
+            itemCount: importBatches.get(priorId).itemCount,
+            idempotent: true,
+          };
+          continue;
+        }
+
+        const batchId = `phase9f-${kind}-${importBatches.size + 1}`;
+        const items = body[field].map((item, index) => ({
+          id: `${batchId}-item-${index + 1}`,
+          entityType: item.entityType,
+          displayName: String(item.displayName ?? item.externalKey ?? `row-${index + 1}`),
+          externalKey: item.externalKey ?? null,
+          status: "needs_review",
+          payload: item.payload ?? {},
+          validationErrors: [],
+          warnings: [],
+          restrictedFlags: [],
+        }));
+        importBatches.set(batchId, {
+          id: batchId,
+          organizationId: org,
+          status: "preview",
+          sourceName: String(body[sourceNameField] ?? ""),
+          sourceFilename: String(body[filenameField] ?? ""),
+          sourceByteSize: Number(body[byteSizeField] ?? 0),
+          sourceSha256: stubHash(items),
+          schemaVersion: "phase9f-v2",
+          manifestSha256,
+          itemCount: items.length,
+          added: items.length,
+          changed: 0,
+          unchanged: 0,
+          conflicts: kind === "conflicts" ? items.length : 0,
+          removals: 0,
+          ambiguous: 0,
+          restricted: 0,
+          previewGeneratedAt: new Date().toISOString(),
+          committedAt: null,
+          commercialOnly: kind === "commercial",
+          items,
+        });
+        importSeenHashes.set(key, batchId);
+        result[kind] = { batchId, itemCount: items.length, idempotent: false };
+      }
+      result.message = "Phase 9F preview complete. Nothing was verified, committed, approved, activated, attached, or conflict-resolved.";
+      return json(res, 200, result);
+    }
+
     if (url.pathname === "/rest/v1/rpc/preview_knowledge_import" && req.method === "POST") {
       const body = await readBody(req);
       const org = String(body._organization_id ?? "");
@@ -3957,6 +4050,15 @@ createServer(async (req, res) => {
       if (!b) return json(res, 404, { code: "P0002", message: "import batch not found" });
       if (b.status === "committed" || b.status === "cancelled") {
         return json(res, 400, { code: "55000", message: "only a previewed batch can be committed" });
+      }
+      if (b.items.some((item) => [
+        "product_label_evidence_artifact",
+        "product_label_conflict_packet",
+      ].includes(item.entityType))) {
+        return json(res, 400, {
+          code: "55000",
+          message: "Phase 9F artifact metadata and conflict packets are preview-only",
+        });
       }
 
       const unresolved = b.items.filter((i) => i.changeKind === "conflict" && !i.conflictResolution);

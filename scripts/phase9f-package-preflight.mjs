@@ -39,7 +39,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join, isAbsolute } from "node:path";
 
 const pkgDir = process.argv[2] ?? process.env.PHASE9F_PACKAGE_DIR ?? "";

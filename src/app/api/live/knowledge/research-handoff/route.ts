@@ -11,11 +11,12 @@ import { describeRuntimePosture } from "@/server/runtime/posture";
 /**
  * POST — Research Handoff preview upload.
  *
- * Reads only the four files the practitioner explicitly selected in the
- * form: manifest + 3 JSONLs. Validates them against the manifest's
+ * Reads only the files the practitioner explicitly selected in the
+ * form: manifest + 3 core JSONLs, plus the Phase 9F artifact index and
+ * conflict packets when declared. Validates them against the manifest's
  * declared hashes, counts, and shape. Refuses the entire package on any
- * mismatch. Delegates the atomic 3-batch creation to the
- * `preview_research_handoff` RPC under the caller's practitioner JWT.
+ * mismatch. Delegates atomic batch creation to the phase-appropriate
+ * research-handoff RPC under the caller's practitioner JWT.
  *
  * Never invokes an external service. Never writes raw content to disk.
  * Never logs prompts, PHI, or file bodies. Failure envelopes carry only
@@ -44,13 +45,19 @@ export async function POST(req: NextRequest) {
     const clinicalFile = readFile("clinical");
     const commercialFile = readFile("commercial");
     const evidenceFile = readFile("evidence");
+    const artifactsValue = form.get("artifacts");
+    const conflictsValue = form.get("conflicts");
+    const artifactsFile = artifactsValue instanceof File ? artifactsValue : undefined;
+    const conflictsFile = conflictsValue instanceof File ? conflictsValue : undefined;
 
     const toBytes = async (f: File) => new Uint8Array(await f.arrayBuffer());
-    const [mbytes, cbytes, xbytes, ebytes] = await Promise.all([
+    const [mbytes, cbytes, xbytes, ebytes, abytes, pbytes] = await Promise.all([
       toBytes(manifestFile),
       toBytes(clinicalFile),
       toBytes(commercialFile),
       toBytes(evidenceFile),
+      artifactsFile ? toBytes(artifactsFile) : Promise.resolve(undefined),
+      conflictsFile ? toBytes(conflictsFile) : Promise.resolve(undefined),
     ]);
 
     let parsed;
@@ -60,6 +67,12 @@ export async function POST(req: NextRequest) {
         clinical: { filename: clinicalFile.name, bytes: cbytes },
         commercial: { filename: commercialFile.name, bytes: xbytes },
         evidence: { filename: evidenceFile.name, bytes: ebytes },
+        ...(artifactsFile && abytes
+          ? { artifacts: { filename: artifactsFile.name, bytes: abytes } }
+          : {}),
+        ...(conflictsFile && pbytes
+          ? { conflicts: { filename: conflictsFile.name, bytes: pbytes } }
+          : {}),
       });
     } catch (e) {
       if (e instanceof HandoffPackageError) {
@@ -75,16 +88,20 @@ export async function POST(req: NextRequest) {
     const clinicalItems = adaptForPreview("clinical", parsed.clinical.items);
     const evidenceItems = adaptForPreview("evidence", parsed.evidence.items);
     const commercialItems = adaptForPreview("commercial", parsed.commercial.items);
+    const artifactItems = parsed.artifacts ? adaptForPreview("artifacts", parsed.artifacts.items) : null;
+    const conflictItems = parsed.conflicts ? adaptForPreview("conflicts", parsed.conflicts.items) : null;
 
-    const result = await clinicalRpc<{
+    type PreviewResult = {
       ok: true;
       manifestSha256: string;
       clinical: { batchId: string; itemCount: number; idempotent: boolean };
       evidence: { batchId: string; itemCount: number; idempotent: boolean };
       commercial: { batchId: string; itemCount: number; idempotent: boolean };
-    }>(
-      "preview_research_handoff",
-      {
+      artifacts?: { batchId: string; itemCount: number; idempotent: boolean };
+      conflicts?: { batchId: string; itemCount: number; idempotent: boolean };
+    };
+
+    const commonArgs = {
         _organization_id: orgId,
         _attests_no_phi: true,
         _manifest_sha256: parsed.manifestSha256,
@@ -100,9 +117,25 @@ export async function POST(req: NextRequest) {
         _commercial_source_filename: parsed.commercial.source_filename,
         _commercial_source_byte_size: parsed.commercial.source_byte_size,
         _commercial_items: commercialItems,
-      },
-      token,
-    );
+    };
+    const result = parsed.artifacts && parsed.conflicts && artifactItems && conflictItems
+      ? await clinicalRpc<PreviewResult>(
+          "preview_research_handoff_v2",
+          {
+            ...commonArgs,
+            _schema_version: "phase9f-v2",
+            _artifact_source_name: parsed.artifacts.source_name,
+            _artifact_source_filename: parsed.artifacts.source_filename,
+            _artifact_source_byte_size: parsed.artifacts.source_byte_size,
+            _artifact_items: artifactItems,
+            _conflict_source_name: parsed.conflicts.source_name,
+            _conflict_source_filename: parsed.conflicts.source_filename,
+            _conflict_source_byte_size: parsed.conflicts.source_byte_size,
+            _conflict_items: conflictItems,
+          },
+          token,
+        )
+      : await clinicalRpc<PreviewResult>("preview_research_handoff", commonArgs, token);
 
     return {
       ok: true,
@@ -110,6 +143,8 @@ export async function POST(req: NextRequest) {
       clinical: result.clinical,
       evidence: result.evidence,
       commercial: result.commercial,
+      ...(result.artifacts ? { artifacts: result.artifacts } : {}),
+      ...(result.conflicts ? { conflicts: result.conflicts } : {}),
       aggregates: parsed.aggregates,
       // Runtime posture proves the response came from the real PostgREST
       // RPC on the expected project — never the anon key, JWT, cookie, or
@@ -117,7 +152,7 @@ export async function POST(req: NextRequest) {
       // IDs shown by the UI did NOT persist to real staging.
       posture: describeRuntimePosture(),
       message:
-        "Research Handoff preview complete. Nothing has been verified, approved, activated, or attached.",
+        "Research Handoff preview complete. Nothing has been verified, approved, activated, attached, or conflict-resolved.",
     };
   });
 }
