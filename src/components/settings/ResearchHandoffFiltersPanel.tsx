@@ -11,12 +11,13 @@ import {
 /**
  * Phase 9E-B — Product Research Handoff filters + upload panel.
  *
- * The panel offers a bounded four-file upload (manifest + 3 JSONLs) that
+ * The panel offers a bounded upload (manifest + 3 core JSONLs, plus the
+ * Phase 9F artifact index and conflict packets) that
  * hits the /api/live/knowledge/research-handoff route under the caller's
  * signed-in practitioner session. The no-PHI attestation is a required
  * checkbox — never defaulted, never synthesized.
  *
- * On success the panel displays the three batch identifiers + safe
+ * On success the panel displays the created batch identifiers + safe
  * aggregate counts. On refusal (any category returned by the server) the
  * panel shows an honest error with the PHI-safe category and no raw
  * content.
@@ -32,13 +33,17 @@ export function ResearchHandoffFiltersPanel() {
   const [clinicalFile, setClinicalFile] = useState<File | null>(null);
   const [commercialFile, setCommercialFile] = useState<File | null>(null);
   const [evidenceFile, setEvidenceFile] = useState<File | null>(null);
+  const [artifactsFile, setArtifactsFile] = useState<File | null>(null);
+  const [conflictsFile, setConflictsFile] = useState<File | null>(null);
   const [attest, setAttest] = useState(false);
   const [state, setState] = useState<"idle" | "submitting" | "success" | "failed">("idle");
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<null | PreviewResult>(null);
 
-  const canSubmit =
-    !!manifestFile && !!clinicalFile && !!commercialFile && !!evidenceFile && attest && state !== "submitting";
+  const phase9fSelected = manifestFile?.name === "handoff-manifest-v2.json";
+  const supplementalReady = !phase9fSelected || (!!artifactsFile && !!conflictsFile);
+  const canSubmit = !!manifestFile && !!clinicalFile && !!commercialFile && !!evidenceFile
+    && supplementalReady && attest && state !== "submitting";
 
   const submit = async () => {
     setState("submitting");
@@ -50,6 +55,8 @@ export function ResearchHandoffFiltersPanel() {
       form.set("clinical", clinicalFile!);
       form.set("commercial", commercialFile!);
       form.set("evidence", evidenceFile!);
+      if (artifactsFile) form.set("artifacts", artifactsFile);
+      if (conflictsFile) form.set("conflicts", conflictsFile);
       const res = await fetch("/api/live/knowledge/research-handoff", {
         method: "POST",
         body: form,
@@ -92,14 +99,15 @@ export function ResearchHandoffFiltersPanel() {
       <Card className="px-4 py-3">
         <h2 className="m-0 text-[14.5px] font-bold text-ink">Product Research Handoff</h2>
         <p className="mt-1 text-[11.5px] text-subtle">
-          Preview a Product Research Handoff package (manifest + three authoritative JSONL files).
+          Preview a Product Research Handoff package. Phase 9F uses one manifest and five
+          authoritative JSONL files; the older Phase 9E-B package remains supported.
           The upload validates the package against the manifest before any batch is created, and
-          the three previews are atomic — either all three are created or none.
+          the previews are atomic — either every declared batch is created or none.
         </p>
       </Card>
 
       <Card className="px-4 py-3">
-        <h3 className="m-0 text-[12.5px] font-bold text-ink">1. Select the four files</h3>
+        <h3 className="m-0 text-[12.5px] font-bold text-ink">1. Select the package files</h3>
         <p className="mt-1 text-[10.5px] text-subtle">
           Only the files you explicitly pick here are read. Nothing else on your disk is inspected.
         </p>
@@ -132,6 +140,25 @@ export function ResearchHandoffFiltersPanel() {
             file={evidenceFile}
             onChange={setEvidenceFile}
           />
+          <PrhFileField
+            id="prh-artifacts"
+            label="evidence-artifact-index.jsonl (Phase 9F)"
+            accept=".jsonl,application/jsonl,application/x-ndjson"
+            file={artifactsFile}
+            onChange={setArtifactsFile}
+          />
+          <PrhFileField
+            id="prh-conflicts"
+            label="conflict-resolution-packets.jsonl (Phase 9F)"
+            accept=".jsonl,application/jsonl,application/x-ndjson"
+            file={conflictsFile}
+            onChange={setConflictsFile}
+          />
+          {phase9fSelected && !supplementalReady && (
+            <p role="status" className="m-0 text-[10.5px] text-critical-deep">
+              Phase 9F requires both the evidence artifact index and conflict packets.
+            </p>
+          )}
         </div>
       </Card>
 
@@ -205,6 +232,20 @@ export function ResearchHandoffFiltersPanel() {
                 {result.commercial.itemCount} items (commercial_only=true){" "}
                 {result.commercial.idempotent && "(existing — idempotent retry)"}
               </li>
+              {result.artifacts && (
+                <li>
+                  Artifact-index batch: <code data-testid="prh-batch-artifacts">{result.artifacts.batchId}</code> —{" "}
+                  {result.artifacts.itemCount} metadata-only records{" "}
+                  {result.artifacts.idempotent && "(existing — idempotent retry)"}
+                </li>
+              )}
+              {result.conflicts && (
+                <li>
+                  Conflict-packet batch: <code data-testid="prh-batch-conflicts">{result.conflicts.batchId}</code> —{" "}
+                  {result.conflicts.itemCount} practitioner decisions required{" "}
+                  {result.conflicts.idempotent && "(existing — idempotent retry)"}
+                </li>
+              )}
               <li>
                 Manifest sha256: <code>{result.manifestSha256.slice(0, 12)}…</code>
               </li>
@@ -230,7 +271,8 @@ export function ResearchHandoffFiltersPanel() {
               {result.aggregates.identityCounts.unmatched ?? 0}. Candidates{" "}
               {result.aggregates.labelVerificationCandidateCount}. Supplement-Facts complete{" "}
               {result.aggregates.supplementFactsCompleteCount}. Unresolved{" "}
-              {result.aggregates.unresolvedTotal}.
+              {result.aggregates.unresolvedTotal}. Archived artifact references{" "}
+              {result.aggregates.artifactCount}. Conflict packets {result.aggregates.conflictCount}.
             </div>
           </div>
         )}
@@ -310,10 +352,14 @@ type PreviewResult = {
   clinical: { batchId: string; itemCount: number; idempotent: boolean };
   evidence: { batchId: string; itemCount: number; idempotent: boolean };
   commercial: { batchId: string; itemCount: number; idempotent: boolean };
+  artifacts?: { batchId: string; itemCount: number; idempotent: boolean };
+  conflicts?: { batchId: string; itemCount: number; idempotent: boolean };
   aggregates: {
     clinicalCount: number;
     commercialCount: number;
     evidenceCount: number;
+    artifactCount: number;
+    conflictCount: number;
     identityCounts: Record<string, number>;
     supplementFactsCompleteCount: number;
     labelVerificationCandidateCount: number;
