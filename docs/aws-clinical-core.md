@@ -80,8 +80,18 @@ an exact server-side allowlist. An HTTPS URL alone is not sufficient.
 8. Reconcile counts, hashes, consent, audit events, restore behavior, and tenant
    isolation domain by domain before any real-patient cutover.
 
+The first deployable slice is the synthetic-only CloudFormation stack in
+`infra/aws-clinical-core/template.json`. Its operator procedure is documented
+in `docs/aws-synthetic-staging-runbook.md`. It exposes only a posture endpoint,
+has no database ingress, and cannot be parameterized for production or PHI.
+
 ## Launch gate
 
 No real PHI enters the AWS environment until the BAA, vendor inventory, risk
 analysis, access review, backup/restore exercise, incident-response exercise,
 logging exclusions, and synthetic end-to-end acceptance gate are complete.
+
+AWS endpoint environment variables are descriptive only. They do not activate
+the runtime: the application also requires a durable, server-read
+`production-clinical` approval record. The synthetic stack never creates that
+record.

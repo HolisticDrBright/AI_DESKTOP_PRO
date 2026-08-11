@@ -40,6 +40,18 @@ describe("AWS clinical-core foundation", () => {
       awsRegion: "us-east-2",
       apiOrigin: "https://api.clinical.example",
       allowedApiHosts: ["api.clinical.example"],
+    })).toMatchObject({ available: false, reason: "aws_runtime_not_approved" });
+    expect(evaluateClinicalCorePosture({
+      dataPlane: "aws",
+      deployment: true,
+      awsRegion: "us-east-2",
+      apiOrigin: "https://api.clinical.example",
+      allowedApiHosts: ["api.clinical.example"],
+      awsRuntimeApproval: {
+        status: "approved",
+        reference: "registry:clinical-runtime-1",
+        environment: "production-clinical",
+      },
     })).toEqual({ available: true, dataPlane: "aws" });
   });
 

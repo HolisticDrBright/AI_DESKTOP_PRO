@@ -30,6 +30,11 @@ export interface ClinicalCoreRuntimeInput {
   awsRegion?: string;
   apiOrigin?: string;
   allowedApiHosts?: readonly string[];
+  awsRuntimeApproval?: {
+    status: "approved";
+    reference: string;
+    environment: "production-clinical";
+  };
 }
 
 export type ClinicalCorePosture =
@@ -42,7 +47,8 @@ export type ClinicalCorePosture =
         | "supabase_is_staging_only"
         | "aws_region_missing"
         | "aws_api_origin_invalid"
-        | "aws_api_origin_unapproved";
+        | "aws_api_origin_unapproved"
+        | "aws_runtime_not_approved";
     };
 
 export function evaluateClinicalCorePosture(input: ClinicalCoreRuntimeInput): ClinicalCorePosture {
@@ -66,6 +72,13 @@ export function evaluateClinicalCorePosture(input: ClinicalCoreRuntimeInput): Cl
   } catch {
     return { available: false, dataPlane: "aws", reason: "aws_api_origin_invalid" };
   }
+  if (
+    input.awsRuntimeApproval?.status !== "approved"
+    || input.awsRuntimeApproval.environment !== "production-clinical"
+    || !input.awsRuntimeApproval.reference.trim()
+  ) {
+    return { available: false, dataPlane: "aws", reason: "aws_runtime_not_approved" };
+  }
   return { available: true, dataPlane: "aws" };
 }
 
@@ -79,6 +92,9 @@ export function evaluateClinicalCoreEnvironment(deployment: boolean): ClinicalCo
       .split(",")
       .map((host) => host.trim().toLowerCase())
       .filter(Boolean),
+    // Environment variables can describe a target but cannot approve it.
+    // The future AWS adapter must supply the durable registry decision.
+    awsRuntimeApproval: undefined,
   });
 }
 

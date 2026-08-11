@@ -53,3 +53,6 @@ next-env.d.ts
 *.import-source.xlsx
 *.import-source.csv
 *.import-source.md
+
+# Reviewed AWS deployment manifests contain account and operator identifiers.
+/infra/aws-clinical-core/deployment-manifest.json

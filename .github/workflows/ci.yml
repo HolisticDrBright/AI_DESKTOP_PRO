@@ -23,6 +23,8 @@ jobs:
       - run: npm run typecheck
       - run: npm run lint
       - run: npm run test:unit
+      - name: AWS clinical-core synthetic safety gate
+        run: npm run check:aws-clinical-core
       - name: Mock-import graph (no production path to fixtures)
         run: npm run check:mock-imports
       - name: Build refuses without an explicit edition
