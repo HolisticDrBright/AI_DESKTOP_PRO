@@ -25,6 +25,8 @@ jobs:
       - run: npm run test:unit
       - name: AWS clinical-core synthetic safety gate
         run: npm run check:aws-clinical-core
+      - name: AWS identity, invitation, and consent safety gate
+        run: npm run check:aws-identity-consent
       - name: Mock-import graph (no production path to fixtures)
         run: npm run check:mock-imports
       - name: Build refuses without an explicit edition

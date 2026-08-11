@@ -1,0 +1,9 @@
+{
+  "contract_version": "clinical-core-migrations/1",
+  "migrations": [
+    {
+      "version": "20260812010000",
+      "file": "20260812010000_synthetic_identity_consent.sql"
+    }
+  ]
+}

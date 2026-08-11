@@ -127,7 +127,28 @@ adapter must present a durable `production-clinical` runtime approval record.
 
 ## Next engineering slice
 
-The next slice adds a synthetic schema migrator and the first authenticated
-vertical contract: stable person identity, explicit practice invitation, and
-versioned consent. Only after its tenant-isolation, backup/restore, audit, and
-cross-product tests pass should Junction or Passio secrets be created.
+The repository now contains the prepared synthetic schema migrator and first
+authenticated vertical contract: stable person identity, explicit practice
+invitation, and versioned consent. It is not applied by the baseline stack.
+
+After the CloudFormation acceptance checks pass:
+
+1. Choose and review an in-network migration transport for the private Aurora
+   cluster. Do not add public database ingress for convenience.
+2. Implement `ClinicalCoreDatabase` with short-lived workload credentials and
+   TLS verification; never place the managed master secret in either app.
+3. Run `npm run check:aws-identity-consent` and load the ordered migration
+   manifest through `applyClinicalCoreMigrations`.
+4. Create only clearly labelled synthetic organizations, people, identities,
+   memberships, patient records, and approved test consent artifacts.
+5. Exercise workforce invitation issuance, consumer claim, consent grant, and
+   consent revocation. Confirm token plaintext appears in no database row,
+   log, trace, or browser bundle.
+6. Prove cross-organization denial, expired/reused-token refusal, append-only
+   consent history, and audit-event completeness directly against Aurora.
+7. Take a backup, restore it into a second synthetic environment, and repeat
+   the identity/consent acceptance gate.
+
+Only then should an authenticated API Lambda and Cognito JWT authorizer be
+added. Junction and Passio remain later slices; no vendor secret or real
+patient payload belongs in this environment.

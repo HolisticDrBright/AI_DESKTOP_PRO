@@ -91,6 +91,9 @@ const SERVER_ONLY_MARKERS = [
   "provider_credential_unavailable_or_denied",
   "You are a governed clinical copilot",
   "openai_transport_refused_by_default",
+  "clinical-core/aws-identity-consent is server-only",
+  "clinical_core.issue_connection_invitation",
+  "clinical_private.set_request_context",
 ];
 
 function walk(dir) {

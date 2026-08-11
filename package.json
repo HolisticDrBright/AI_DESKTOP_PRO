@@ -22,6 +22,7 @@
     "check:stub-reset": "node scripts/check-stub-reset-coverage.mjs",
     "test:e2e:order": "node scripts/check-e2e-order-independence.mjs",
     "check:aws-clinical-core": "node scripts/check-aws-clinical-core.mjs",
+    "check:aws-identity-consent": "node scripts/check-aws-identity-consent.mjs",
     "preflight:aws-synthetic": "node scripts/preflight-aws-synthetic.mjs"
   },
   "dependencies": {

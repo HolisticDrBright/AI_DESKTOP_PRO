@@ -10,6 +10,8 @@ contextual assistant, command palette).
 The shared AWS clinical-core target and its synthetic-only deployment baseline
 are documented in [`docs/aws-clinical-core.md`](docs/aws-clinical-core.md) and
 [`docs/aws-synthetic-staging-runbook.md`](docs/aws-synthetic-staging-runbook.md).
+The prepared synthetic identity, invitation, and consent boundary is described
+in [`docs/aws-identity-consent.md`](docs/aws-identity-consent.md).
 
 This repository owns the **desktop application**, its server-side clinical
 boundary, and the **clinical database schema** (`supabase/`). The UI renders

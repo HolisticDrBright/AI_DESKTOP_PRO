@@ -95,3 +95,30 @@ AWS endpoint environment variables are descriptive only. They do not activate
 the runtime: the application also requires a durable, server-read
 `production-clinical` approval record. The synthetic stack never creates that
 record.
+
+## Synthetic identity and consent contract
+
+The first Aurora-portable domain migration lives under
+`infra/aws-clinical-core/migrations`. It establishes only synthetic identity,
+practice membership, opaque patient records, explicit app connections,
+hash-only invitations, approved consent artifacts, append-only consent
+versions, and PHI-safe audit events.
+
+The contract intentionally contains no email, name, phone, birth date, or
+demographic matching field. A Cognito subject binds to a stable internal
+person, and a patient connection binds only when that consumer presents an
+expiring 256-bit invitation token. Aurora stores the SHA-256 digest, never the
+token.
+
+`src/server/clinical-core/aws-identity-consent.ts` is the first server-only
+adapter. It is driver-neutral and accepts only a transactional database seam;
+there is no browser or direct-database client. Every transaction sets and then
+database-validates actor, organization, identity-pool, Cognito subject,
+purpose, environment, and data-classification claims before invoking a
+governed function. Production, PHI, and real-patient contexts are refused
+before a transaction opens.
+
+The migration is prepared but cannot be applied until the private Aurora
+stack exists and a reviewed in-network migration transport is available.
+Neither the current Supabase routes nor either app is switched to it by this
+slice.
