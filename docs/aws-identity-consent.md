@@ -51,7 +51,8 @@ part of the domain contract.
 - No Aurora connection or migration apply has run.
 - No Cognito users, organizations, patient records, or consent artifacts have
   been created.
-- No authenticated API Lambda or app route invokes this adapter.
+- The authenticated API Lambda and Aurora Data API transport are prepared in
+  source but have not been deployed or called against AWS.
 - No production/PHI mode exists in this schema or adapter.
 - No Junction or Passio secret or payload is involved.
 

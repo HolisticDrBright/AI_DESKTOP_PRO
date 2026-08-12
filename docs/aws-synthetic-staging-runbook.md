@@ -4,8 +4,10 @@
 
 This stack is the first deployable AWS clinical-core slice shared by AI
 Desktop Pro and AI Longevity Pro V2. It is intentionally unable to accept PHI
-or real-patient data. Its only HTTP route is `GET /posture`, which reports that
-the environment is synthetic staging and not configured for clinical use.
+or real-patient data. The foundation's only HTTP route is `GET /posture`, which
+reports that the environment is synthetic staging and not configured for
+clinical use. An authenticated API is prepared as a separate extension and
+remains undeployed until its migration and acceptance prerequisites pass.
 
 AI Longevity Pro V1 is outside this work and remains unchanged.
 
@@ -149,6 +151,9 @@ After the CloudFormation acceptance checks pass:
 7. Take a backup, restore it into a second synthetic environment, and repeat
    the identity/consent acceptance gate.
 
-Only then should an authenticated API Lambda and Cognito JWT authorizer be
-added. Junction and Passio remain later slices; no vendor secret or real
-patient payload belongs in this environment.
+The authenticated API Lambda, Cognito JWT authorizers, and Aurora Data API
+adapter are now prepared in source. Follow
+`docs/aws-authenticated-synthetic-api.md`; its deployment script refuses to run
+without explicit confirmation that the synthetic migration ledger exists.
+Junction and Passio remain later slices; no vendor secret or real-patient
+payload belongs in this environment.

@@ -118,7 +118,8 @@ purpose, environment, and data-classification claims before invoking a
 governed function. Production, PHI, and real-patient contexts are refused
 before a transaction opens.
 
-The migration is prepared but cannot be applied until the private Aurora
-stack exists and a reviewed in-network migration transport is available.
-Neither the current Supabase routes nor either app is switched to it by this
-slice.
+The migration and a separate authenticated synthetic API extension are now
+prepared. The extension uses Cognito JWT authorizers and the Aurora Data API,
+so it adds no NAT Gateway or public database ingress. Its deployment remains
+blocked on foundation acceptance and a confirmed synthetic migration ledger.
+Neither the current Supabase routes nor either app is switched to it.
