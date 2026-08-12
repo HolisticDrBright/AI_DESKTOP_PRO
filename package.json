@@ -25,6 +25,8 @@
     "check:aws-identity-consent": "node scripts/check-aws-identity-consent.mjs",
     "check:aws-authenticated-api": "node scripts/check-aws-authenticated-api.mjs",
     "build:aws-authenticated-api": "node scripts/build-aws-authenticated-api.mjs",
+    "build:aws-deployment-tools": "node scripts/build-aws-deployment-tools.mjs",
+    "check:aws-deployment-acceptance": "node scripts/check-aws-deployment-acceptance.mjs",
     "preflight:aws-synthetic": "node scripts/preflight-aws-synthetic.mjs"
   },
   "dependencies": {
