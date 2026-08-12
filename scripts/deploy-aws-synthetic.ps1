@@ -5,7 +5,7 @@ param(
 $ErrorActionPreference = "Stop"
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $templatePath = (Resolve-Path (Join-Path $repoRoot "infra/aws-clinical-core/template.json")).Path
-$templateUri = "file:///" + ($templatePath -replace "\\", "/")
+$templateUri = "file://" + ($templatePath -replace "\\", "/")
 $manifestFullPath = (Resolve-Path (Join-Path $repoRoot $ManifestPath)).Path
 
 node (Join-Path $repoRoot "scripts/preflight-aws-synthetic.mjs") $manifestFullPath

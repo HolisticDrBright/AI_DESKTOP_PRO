@@ -45,7 +45,10 @@ These actions cannot be performed by source code:
 
 1. Create or select the dedicated synthetic-staging AWS account. Do not deploy
    this stack into a production or personal catch-all account.
-2. Accept the AWS BAA in AWS Artifact for the organization or intended account.
+2. Record the AWS BAA status. A pending BAA is permitted only because this
+   stack is structurally synthetic-only and cannot accept PHI. Do not enable
+   real-patient data, vendor PHI, or a production clinical runtime until AWS
+   Artifact shows the applicable BAA as active.
 3. Confirm `us-east-2` as the reviewed staging region.
 4. Install and authenticate AWS CLI with a short-lived administrative role.
    Do not create a long-lived access key for this deployment.
@@ -77,6 +80,22 @@ it carries the AWS account id and reviewer identities. It must continue to say:
   "vendor_phi_enabled": false
 }
 ```
+
+While the AWS support case is open, also keep:
+
+```json
+{
+  "aws_baa_status": "pending-organization-acceptance"
+}
+```
+
+The preflight reports `baa_activation_pending: true` while AWS Support resolves
+the agreement. It reports `phi_activation_blocked: true` in both pending and
+accepted BAA states because this stack is permanently synthetic-only. This does
+not claim HIPAA readiness; it permits only the non-PHI synthetic foundation.
+After AWS confirms the organization agreement is active, change the ignored
+manifest to `accepted` and rerun the same acceptance checks. The stack remains
+synthetic-only either way.
 
 Run the local checks:
 

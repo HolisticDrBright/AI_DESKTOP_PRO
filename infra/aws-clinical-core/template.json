@@ -280,7 +280,7 @@
     "AuditLogGroup": {
       "Type": "AWS::Logs::LogGroup",
       "Properties": {
-        "LogGroupName": { "Fn::Sub": "/${ProjectName}/${EnvironmentName}/cloudtrail" },
+        "LogGroupName": { "Fn::Sub": "/${ProjectName}/${EnvironmentName}/cloudtrail-v2" },
         "KmsKeyId": { "Fn::GetAtt": ["ClinicalCoreKey", "Arn"] },
         "RetentionInDays": 30
       },
@@ -309,7 +309,7 @@
                 {
                   "Effect": "Allow",
                   "Action": ["logs:CreateLogStream", "logs:PutLogEvents"],
-                  "Resource": { "Fn::Sub": "${AuditLogGroup.Arn}:*" }
+                  "Resource": { "Fn::GetAtt": ["AuditLogGroup", "Arn"] }
                 }
               ]
             }
@@ -324,7 +324,7 @@
         "TrailName": { "Fn::Sub": "${ProjectName}-${EnvironmentName}" },
         "S3BucketName": { "Ref": "AuditBucket" },
         "KMSKeyId": { "Fn::GetAtt": ["ClinicalCoreKey", "Arn"] },
-        "CloudWatchLogsLogGroupArn": { "Fn::Sub": "${AuditLogGroup.Arn}:*" },
+        "CloudWatchLogsLogGroupArn": { "Fn::GetAtt": ["AuditLogGroup", "Arn"] },
         "CloudWatchLogsRoleArn": { "Fn::GetAtt": ["CloudTrailLogsRole", "Arn"] },
         "EnableLogFileValidation": true,
         "IncludeGlobalServiceEvents": true,
@@ -630,14 +630,19 @@
           "Version": "2012-10-17",
           "Statement": [
             {
-              "Sid": "DenyInsecureTransport",
+              "Sid": "DenyInsecureTransportEvents",
               "Effect": "Deny",
               "Principal": "*",
               "Action": "sqs:*",
-              "Resource": [
-                { "Fn::GetAtt": ["ClinicalEventsQueue", "Arn"] },
-                { "Fn::GetAtt": ["ClinicalDeadLetterQueue", "Arn"] }
-              ],
+              "Resource": { "Fn::GetAtt": ["ClinicalEventsQueue", "Arn"] },
+              "Condition": { "Bool": { "aws:SecureTransport": "false" } }
+            },
+            {
+              "Sid": "DenyInsecureTransportDeadLetter",
+              "Effect": "Deny",
+              "Principal": "*",
+              "Action": "sqs:*",
+              "Resource": { "Fn::GetAtt": ["ClinicalDeadLetterQueue", "Arn"] },
               "Condition": { "Bool": { "aws:SecureTransport": "false" } }
             }
           ]
@@ -710,7 +715,6 @@
         "Role": { "Fn::GetAtt": ["PostureFunctionRole", "Arn"] },
         "MemorySize": 128,
         "Timeout": 5,
-        "ReservedConcurrentExecutions": 2,
         "Environment": {
           "Variables": {
             "CLINICAL_CORE_CONTRACT_VERSION": "clinical-core/1",
@@ -780,7 +784,9 @@
         "StageName": "$default",
         "AutoDeploy": true,
         "AccessLogSettings": {
-          "DestinationArn": { "Fn::GetAtt": ["ClinicalApiAccessLogGroup", "Arn"] },
+          "DestinationArn": {
+            "Fn::Sub": "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/${ProjectName}/${EnvironmentName}/api-access"
+          },
           "Format": "{\"requestId\":\"$context.requestId\",\"routeKey\":\"$context.routeKey\",\"status\":\"$context.status\",\"responseLength\":\"$context.responseLength\"}"
         },
         "DefaultRouteSettings": {

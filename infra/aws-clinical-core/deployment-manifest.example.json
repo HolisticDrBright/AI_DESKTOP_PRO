@@ -5,7 +5,7 @@
   "contains_phi": false,
   "real_patient_data_allowed": false,
   "vendor_phi_enabled": false,
-  "aws_baa_status": "replace-after-acceptance",
+  "aws_baa_status": "pending-organization-acceptance",
   "aws_account_id": "000000000000",
   "aws_region": "us-east-2",
   "budget_alert_email": "replace@example.com",

@@ -16,7 +16,10 @@ export function validateSyntheticManifest(manifest) {
   require(manifest?.contains_phi === false, "contains_phi must be false");
   require(manifest?.real_patient_data_allowed === false, "real_patient_data_allowed must be false");
   require(manifest?.vendor_phi_enabled === false, "vendor_phi_enabled must be false");
-  require(manifest?.aws_baa_status === "accepted", "AWS BAA must be accepted before deployment");
+  require(
+    ["pending-organization-acceptance", "accepted"].includes(manifest?.aws_baa_status),
+    "aws_baa_status must be pending-organization-acceptance or accepted",
+  );
   require(/^\d{12}$/.test(manifest?.aws_account_id ?? "") && !/^0{12}$/.test(manifest.aws_account_id), "aws_account_id must be the intended 12-digit account");
   require(manifest?.aws_region === "us-east-2", "aws_region must be the reviewed us-east-2 region");
   require(/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(manifest?.budget_alert_email ?? ""), "budget_alert_email must be valid");
@@ -58,6 +61,9 @@ function run() {
     environment: manifest.environment,
     data_classification: manifest.data_classification,
     contains_phi: manifest.contains_phi,
+    aws_baa_status: manifest.aws_baa_status,
+    baa_activation_pending: manifest.aws_baa_status !== "accepted",
+    phi_activation_blocked: true,
     aws_account_id: manifest.aws_account_id,
     aws_region: manifest.aws_region,
   }));

@@ -8,6 +8,7 @@ const repoRoot = process.cwd();
 const templatePath = path.join(repoRoot, "infra", "aws-clinical-core", "template.json");
 const checkPath = path.join(repoRoot, "scripts", "check-aws-clinical-core.mjs");
 const preflightPath = path.join(repoRoot, "scripts", "preflight-aws-synthetic.mjs");
+const deployScriptPath = path.join(repoRoot, "scripts", "deploy-aws-synthetic.ps1");
 const temporaryDirectories: string[] = [];
 
 type CloudFormationResource = {
@@ -30,7 +31,7 @@ function writeManifest(overrides: Record<string, unknown> = {}) {
     contains_phi: false,
     real_patient_data_allowed: false,
     vendor_phi_enabled: false,
-    aws_baa_status: "accepted",
+    aws_baa_status: "pending-organization-acceptance",
     aws_account_id: "123456789012",
     aws_region: "us-east-2",
     budget_alert_email: "security@example.test",
@@ -56,6 +57,12 @@ describe("AWS synthetic clinical-core infrastructure", () => {
   test("the structural safety gate passes the committed template", () => {
     expect(execFileSync(process.execPath, [checkPath], { cwd: repoRoot, encoding: "utf8" }))
       .toContain("synthetic-only, encrypted, private, audited, and budget-bounded");
+  });
+
+  test("the Windows deployment script passes a valid AWS CLI file URI", () => {
+    const script = readFileSync(deployScriptPath, "utf8");
+    expect(script).toContain('$templateUri = "file://" + ($templatePath -replace "\\\\", "/")');
+    expect(script).not.toContain('$templateUri = "file:///"');
   });
 
   test("production and PHI are not parameter choices", () => {
@@ -93,11 +100,26 @@ describe("AWS synthetic clinical-core infrastructure", () => {
     expect(resources.DatabaseSecurityGroup.Properties).not.toHaveProperty("SecurityGroupIngress");
     expect(resources.ClinicalDocumentsBucket.Properties.PublicAccessBlockConfiguration)
       .toEqual({ BlockPublicAcls: true, BlockPublicPolicy: true, IgnorePublicAcls: true, RestrictPublicBuckets: true });
+    expect(resources.ClinicalQueuePolicy.Properties.PolicyDocument.Statement).toEqual([
+      expect.objectContaining({
+        Sid: "DenyInsecureTransportEvents",
+        Resource: { "Fn::GetAtt": ["ClinicalEventsQueue", "Arn"] },
+      }),
+      expect.objectContaining({
+        Sid: "DenyInsecureTransportDeadLetter",
+        Resource: { "Fn::GetAtt": ["ClinicalDeadLetterQueue", "Arn"] },
+      }),
+    ]);
     expect(resources.AuditTrail.Properties).toMatchObject({
       EnableLogFileValidation: true,
       IsLogging: true,
       IsMultiRegionTrail: true,
+      CloudWatchLogsLogGroupArn: { "Fn::GetAtt": ["AuditLogGroup", "Arn"] },
     });
+    expect(resources.AuditLogGroup.Properties.LogGroupName)
+      .toEqual({ "Fn::Sub": "/${ProjectName}/${EnvironmentName}/cloudtrail-v2" });
+    expect(resources.CloudTrailLogsRole.Properties.Policies[0].PolicyDocument.Statement[0].Resource)
+      .toEqual({ "Fn::GetAtt": ["AuditLogGroup", "Arn"] });
   });
 
   test("the only deployed handler is a non-clinical posture endpoint", () => {
@@ -106,6 +128,14 @@ describe("AWS synthetic clinical-core infrastructure", () => {
       .filter((resource) => resource.Type === "AWS::Lambda::Function");
     expect(functions).toHaveLength(1);
     expect(resources.PostureRoute.Properties.RouteKey).toBe("GET /posture");
+    expect(resources.PostureFunction.Properties).not.toHaveProperty("ReservedConcurrentExecutions");
+    expect(resources.ClinicalApiStage.Properties.DefaultRouteSettings).toMatchObject({
+      ThrottlingBurstLimit: 20,
+      ThrottlingRateLimit: 10,
+    });
+    expect(resources.ClinicalApiStage.Properties.AccessLogSettings.DestinationArn).toEqual({
+      "Fn::Sub": "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/${ProjectName}/${EnvironmentName}/api-access",
+    });
     expect(resources.PostureFunction.Properties.Environment.Variables.CLINICAL_CORE_PHI_ALLOWED).toBe("false");
     expect(resources.PostureFunction.Properties.Code.ZipFile).toContain("synthetic_staging_not_configured");
   });
@@ -120,6 +150,9 @@ describe("AWS synthetic clinical-core infrastructure", () => {
       environment: "synthetic-staging",
       data_classification: "synthetic_only",
       contains_phi: false,
+      aws_baa_status: "pending-organization-acceptance",
+      baa_activation_pending: true,
+      phi_activation_blocked: true,
       aws_account_id: "123456789012",
       aws_region: "us-east-2",
     });
@@ -130,7 +163,7 @@ describe("AWS synthetic clinical-core infrastructure", () => {
     ["production environment", { environment: "production" }, "environment must be synthetic-staging"],
     ["real-patient enablement", { real_patient_data_allowed: true }, "real_patient_data_allowed must be false"],
     ["connector PHI", { vendor_phi_enabled: true }, "vendor_phi_enabled must be false"],
-    ["missing BAA", { aws_baa_status: "pending" }, "AWS BAA must be accepted"],
+    ["unknown BAA state", { aws_baa_status: "unknown" }, "aws_baa_status must be pending-organization-acceptance or accepted"],
     ["wrong account", { aws_account_id: "000000000000" }, "aws_account_id must be the intended"],
     ["wrong region", { aws_region: "us-west-1" }, "aws_region must be the reviewed us-east-2"],
     ["unapproved origin", { allowed_client_origins: ["http://clinical.example"] }, "unapproved client origin"],
@@ -141,5 +174,18 @@ describe("AWS synthetic clinical-core infrastructure", () => {
     });
     expect(result.status).toBe(1);
     expect(result.stderr).toContain(expectedError);
+  });
+
+  test("records an accepted BAA without weakening the synthetic-only boundary", () => {
+    const result = execFileSync(process.execPath, [preflightPath, writeManifest({ aws_baa_status: "accepted" })], {
+      cwd: repoRoot,
+      encoding: "utf8",
+    });
+    expect(JSON.parse(result)).toMatchObject({
+      contains_phi: false,
+      aws_baa_status: "accepted",
+      baa_activation_pending: false,
+      phi_activation_blocked: true,
+    });
   });
 });

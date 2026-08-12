@@ -2,14 +2,41 @@
 
 ## Status
 
-Prepared and locally verified. **Not run against AWS.** This workstation has no
-AWS CLI and no authenticated AWS account, so no CloudFormation stack, Aurora
-database, Cognito pool, Lambda, secret, log group, or API was created or changed.
+The baseline foundation was deployed on 2026-08-12 to dedicated member account
+`588966314750` in `us-east-2`. The authenticated API, migrations, and fixtures
+described below remain **not deployed**. The organization BAA support case is
+still open, so this checkpoint is explicitly non-PHI and synthetic-only.
 
 This phase remains synthetic-only. It is not permission to store PHI or real
 patient data. Production requires a separate reviewed infrastructure change,
 accepted AWS BAA posture, security review, backup/restore exercise, incident
 response exercise, and an explicit production data-classification migration.
+
+## Baseline foundation evidence
+
+- CloudFormation stack `ai-clinical-core-synthetic-staging` is
+  `UPDATE_COMPLETE` and drift detection reports `IN_SYNC`.
+- `GET /posture` returns `synthetic-staging`, `synthetic_only`,
+  `phiAllowed: false`, and `synthetic_staging_not_configured`.
+- The clinical document bucket has all four public-access blocks enabled and
+  uses the rotating clinical-core KMS key with bucket keys enabled.
+- CloudTrail is multi-region, logging, KMS encrypted, and has log-file
+  validation enabled with no S3 or CloudWatch delivery error.
+- Workforce Cognito MFA is `ON` with software-token MFA enabled; both user
+  pools have deletion protection active.
+- Aurora is encrypted, IAM database authentication is enabled, the writer is
+  not public, deletion protection is on, and its security group has no ingress.
+- Both SQS queues use the clinical-core KMS key and refuse insecure transport.
+- The monthly budget is USD 100 with forecasted 80% and actual 100% alerts.
+
+The ignored manifest records `pending-organization-acceptance`; preflight
+reports `baa_activation_pending: true` and `phi_activation_blocked: true`.
+Deployment validation exposed and fixed Windows AWS CLI file URI construction,
+Lambda reserved concurrency on a new-account quota, CloudTrail log-group ARN
+shape, and SQS's one-resource-per-policy-statement requirement. Empty resources
+from failed synthetic attempts were removed; three unused KMS keys are scheduled
+for deletion after the seven-day recovery window. No patient data, PHI,
+application users, fixtures, or vendor credentials were loaded.
 
 ## What this phase closes
 
