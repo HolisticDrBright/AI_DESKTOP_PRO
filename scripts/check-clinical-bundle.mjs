@@ -94,6 +94,11 @@ const SERVER_ONLY_MARKERS = [
   "clinical-core/aws-identity-consent is server-only",
   "clinical_core.issue_connection_invitation",
   "clinical_private.set_request_context",
+  "@aws-sdk/client-rds-data",
+  "BeginTransactionCommand",
+  "RDSDataClient",
+  "clinical-core/rds-data-database is server-only",
+  "clinical-core/aws-identity-api is server-only",
 ];
 
 function walk(dir) {

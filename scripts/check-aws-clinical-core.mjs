@@ -50,6 +50,12 @@ export function validateClinicalCoreTemplate(template) {
   assert(errors, workforce?.DeletionProtection === "ACTIVE" && consumer?.DeletionProtection === "ACTIVE", "both user pools must enable deletion protection");
   assert(errors, resources.WorkforceUserPoolClient?.Properties?.GenerateSecret === false, "workforce public client must not carry a client secret");
   assert(errors, resources.ConsumerUserPoolClient?.Properties?.GenerateSecret === false, "consumer public client must not carry a client secret");
+  for (const [name, pool] of [["workforce", workforce], ["consumer", consumer]]) {
+    for (const attribute of ["person_id", "organization_id", "synthetic_attested"]) {
+      const schema = pool?.Schema?.find((entry) => entry.Name === attribute);
+      assert(errors, schema?.Mutable === false && schema?.Required === false, `${name} ${attribute} must be immutable and operator-assigned`);
+    }
+  }
 
   const database = resources.ClinicalDatabaseCluster?.Properties;
   const databaseWriter = resources.ClinicalDatabaseWriter?.Properties;
@@ -57,6 +63,7 @@ export function validateClinicalCoreTemplate(template) {
   assert(errors, database?.ManageMasterUserPassword === true, "Aurora credentials must be managed by Secrets Manager");
   assert(errors, database?.DeletionProtection === true, "Aurora deletion protection must be enabled");
   assert(errors, database?.EnableIAMDatabaseAuthentication === true, "Aurora IAM authentication must be enabled");
+  assert(errors, database?.EnableHttpEndpoint === true, "Aurora Data API must be enabled for the no-NAT authenticated API");
   assert(errors, database?.ServerlessV2ScalingConfiguration?.MinCapacity === 0, "Aurora must be able to auto-pause at zero ACUs");
   assert(errors, database?.ServerlessV2ScalingConfiguration?.SecondsUntilAutoPause >= 300, "Aurora auto-pause must be configured");
   assert(errors, databaseWriter?.PubliclyAccessible === false, "Aurora must not be public");

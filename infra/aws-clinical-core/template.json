@@ -358,6 +358,29 @@
         "AutoVerifiedAttributes": ["email"],
         "MfaConfiguration": "ON",
         "EnabledMfas": ["SOFTWARE_TOKEN_MFA"],
+        "Schema": [
+          {
+            "Name": "person_id",
+            "AttributeDataType": "String",
+            "Mutable": false,
+            "Required": false,
+            "StringAttributeConstraints": { "MinLength": "36", "MaxLength": "36" }
+          },
+          {
+            "Name": "organization_id",
+            "AttributeDataType": "String",
+            "Mutable": false,
+            "Required": false,
+            "StringAttributeConstraints": { "MinLength": "36", "MaxLength": "36" }
+          },
+          {
+            "Name": "synthetic_attested",
+            "AttributeDataType": "String",
+            "Mutable": false,
+            "Required": false,
+            "StringAttributeConstraints": { "MinLength": "4", "MaxLength": "4" }
+          }
+        ],
         "AccountRecoverySetting": {
           "RecoveryMechanisms": [{ "Name": "verified_email", "Priority": 1 }]
         },
@@ -404,6 +427,29 @@
         "AutoVerifiedAttributes": ["email"],
         "MfaConfiguration": "OPTIONAL",
         "EnabledMfas": ["SOFTWARE_TOKEN_MFA"],
+        "Schema": [
+          {
+            "Name": "person_id",
+            "AttributeDataType": "String",
+            "Mutable": false,
+            "Required": false,
+            "StringAttributeConstraints": { "MinLength": "36", "MaxLength": "36" }
+          },
+          {
+            "Name": "organization_id",
+            "AttributeDataType": "String",
+            "Mutable": false,
+            "Required": false,
+            "StringAttributeConstraints": { "MinLength": "36", "MaxLength": "36" }
+          },
+          {
+            "Name": "synthetic_attested",
+            "AttributeDataType": "String",
+            "Mutable": false,
+            "Required": false,
+            "StringAttributeConstraints": { "MinLength": "4", "MaxLength": "4" }
+          }
+        ],
         "AccountRecoverySetting": {
           "RecoveryMechanisms": [{ "Name": "verified_email", "Priority": 1 }]
         },
@@ -511,7 +557,7 @@
         "BackupRetentionPeriod": 7,
         "CopyTagsToSnapshot": true,
         "DeletionProtection": true,
-        "EnableHttpEndpoint": false,
+        "EnableHttpEndpoint": true,
         "EnableIAMDatabaseAuthentication": true,
         "StorageEncrypted": true,
         "KmsKeyId": { "Fn::GetAtt": ["ClinicalCoreKey", "Arn"] },
@@ -812,11 +858,15 @@
     "PhiAllowed": { "Value": "false" },
     "ApiOrigin": { "Value": { "Fn::Sub": "https://${ClinicalApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}" } },
     "PostureUrl": { "Value": { "Fn::Sub": "https://${ClinicalApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}/posture" } },
+    "ClinicalApiId": { "Value": { "Ref": "ClinicalApi" } },
     "WorkforceUserPoolId": { "Value": { "Ref": "WorkforceUserPool" } },
     "WorkforceUserPoolClientId": { "Value": { "Ref": "WorkforceUserPoolClient" } },
     "ConsumerUserPoolId": { "Value": { "Ref": "ConsumerUserPool" } },
     "ConsumerUserPoolClientId": { "Value": { "Ref": "ConsumerUserPoolClient" } },
     "DatabaseSecretArn": { "Value": { "Fn::GetAtt": ["ClinicalDatabaseCluster", "MasterUserSecret.SecretArn"] } },
+    "DatabaseClusterArn": { "Value": { "Fn::Sub": "arn:${AWS::Partition}:rds:${AWS::Region}:${AWS::AccountId}:cluster:${ClinicalDatabaseCluster}" } },
+    "DatabaseName": { "Value": { "Ref": "DatabaseName" } },
+    "ClinicalCoreKeyArn": { "Value": { "Fn::GetAtt": ["ClinicalCoreKey", "Arn"] } },
     "ClinicalDocumentsBucketName": { "Value": { "Ref": "ClinicalDocumentsBucket" } },
     "ClinicalEventsQueueUrl": { "Value": { "Ref": "ClinicalEventsQueue" } },
     "ClinicalEventBusArn": { "Value": { "Fn::GetAtt": ["ClinicalEventBus", "Arn"] } },
