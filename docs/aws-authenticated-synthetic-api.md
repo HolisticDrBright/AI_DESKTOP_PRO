@@ -1,5 +1,9 @@
 # AWS authenticated synthetic API
 
+Deployment migration, synthetic fixture provisioning, and the direct
+Cognito-to-Aurora acceptance gate are documented in
+`docs/aws-synthetic-deployment-acceptance.md`.
+
 ## Purpose
 
 This phase adds the first authenticated HTTP boundary for the shared AWS
