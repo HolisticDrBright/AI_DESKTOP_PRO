@@ -1,6 +1,11 @@
 import { describe, expect, test } from "vitest";
 import { ClinicalCoreDatabaseRejection } from "./database";
-import { bindParameters, createRdsDataClinicalCoreDatabase, RdsDataDatabaseError } from "./rds-data-database";
+import {
+  bindParameters,
+  createRdsDataAdministrativeDatabase,
+  createRdsDataClinicalCoreDatabase,
+  RdsDataDatabaseError,
+} from "./rds-data-database";
 
 const CONFIG = {
   clusterArn: "arn:aws:rds:us-east-2:123456789012:cluster:clinical-core",
@@ -40,6 +45,14 @@ describe("Aurora RDS Data API transaction adapter", () => {
     });
   });
 
+  test("does not reinterpret PostgreSQL function arguments in unparameterized migration SQL", () => {
+    expect(bindParameters("create function f(text) returns text as $$ select $1 $$ language sql", []))
+      .toEqual({
+        sql: "create function f(text) returns text as $$ select $1 $$ language sql",
+        parameters: [],
+      });
+  });
+
   test("refuses unbound and unsupported parameter values", () => {
     expect(() => bindParameters("select $2", ["only-one"])).toThrowError(RdsDataDatabaseError);
     expect(() => bindParameters("select $1", [{ not: "scalar" }])).toThrow(/query_failed/);
@@ -65,6 +78,21 @@ describe("Aurora RDS Data API transaction adapter", () => {
     ]);
     expect(mock.calls[1]!.input.sql).toBe("set local role clinical_core_api");
     expect(mock.calls[2]!.input).toMatchObject({ transactionId: "tx-safe", sql: "select :p1 as id, :p2 as active" });
+  });
+
+  test("administrative migration transactions do not assume the request role", async () => {
+    const mock = client();
+    const database = createRdsDataAdministrativeDatabase(
+      CONFIG,
+      { purpose: "reviewed_synthetic_migration" },
+      mock.value,
+    );
+    await database.transaction((tx) => tx.query("select 1"));
+    expect(mock.calls.map((call) => [call.name, call.input.sql])).toEqual([
+      ["BeginTransactionCommand", undefined],
+      ["ExecuteStatementCommand", "select 1"],
+      ["CommitTransactionCommand", undefined],
+    ]);
   });
 
   test("rolls back failed work and never returns raw AWS errors", async () => {

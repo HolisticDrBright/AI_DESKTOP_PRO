@@ -7,6 +7,7 @@ import {
   ClinicalCoreMigrationError,
   applyClinicalCoreMigrations,
   loadClinicalCoreMigrations,
+  splitPostgresStatements,
 } from "./migrations";
 
 const temporaryDirectories: string[] = [];
@@ -60,6 +61,8 @@ describe("AWS clinical-core migration runner", () => {
     expect(db.calls[0]!.sql).toContain("pg_advisory_xact_lock");
     expect(db.calls.some((call) => call.sql.includes("create table clinical_core.persons"))).toBe(true);
     expect(db.calls.at(-1)!.sql).toContain("insert into clinical_core.schema_migrations");
+    expect(db.calls.some((call) => call.sql === loadClinicalCoreMigrations()[0]!.sql)).toBe(false);
+    expect(db.calls.filter((call) => call.sql.startsWith("create table clinical_core.")).length).toBeGreaterThan(5);
   });
 
   test("does not reapply a migration whose recorded hash matches", async () => {
@@ -69,7 +72,7 @@ describe("AWS clinical-core migration runner", () => {
       applied: [],
       alreadyApplied: [migration.version],
     });
-    expect(db.calls.some((call) => call.sql === migration.sql)).toBe(false);
+    expect(db.calls.some((call) => call.sql.includes("create table clinical_core.persons"))).toBe(false);
   });
 
   test("refuses rewritten migration history", async () => {
@@ -100,5 +103,30 @@ describe("AWS clinical-core migration runner", () => {
       "utf8",
     );
     expect(sql).not.toMatch(/^\s*(begin|commit|rollback)\s*;/gim);
+  });
+
+  test("splits PostgreSQL while preserving function bodies, quotes, and nested comments", () => {
+    const statements = splitPostgresStatements(`
+      -- semicolon ; in a comment
+      create table demo(value text default 'a;''b');
+      select E'escaped\\';semicolon';
+      create function demo_fn() returns text language plpgsql as $body$
+      begin
+        /* nested ; /* still ; */ done */
+        return 'inside;function';
+      end
+      $body$;
+      select "semi;colon" from demo;
+    `);
+    expect(statements).toHaveLength(4);
+    expect(statements[0]).toContain("'a;''b'");
+    expect(statements[1]).toContain("escaped");
+    expect(statements[2]).toContain("return 'inside;function';");
+    expect(statements[3]).toContain('"semi;colon"');
+  });
+
+  test("refuses unterminated quoted migration source", () => {
+    expect(() => splitPostgresStatements("select $body$ unfinished"))
+      .toThrowError(ClinicalCoreMigrationError);
   });
 });

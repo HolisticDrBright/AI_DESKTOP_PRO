@@ -62,6 +62,123 @@ export function loadClinicalCoreMigrations(
   });
 }
 
+/** Split PostgreSQL source without breaking quoted text, comments, or dollar-quoted function bodies. */
+export function splitPostgresStatements(sql: string): string[] {
+  const statements: string[] = [];
+  let start = 0;
+  let index = 0;
+  let state: "normal" | "single" | "double" | "line_comment" | "block_comment" | "dollar" = "normal";
+  let blockDepth = 0;
+  let dollarTag = "";
+
+  while (index < sql.length) {
+    const current = sql[index]!;
+    const next = sql[index + 1];
+
+    if (state === "normal") {
+      if (current === "'") {
+        state = "single";
+        index += 1;
+        continue;
+      }
+      if (current === '"') {
+        state = "double";
+        index += 1;
+        continue;
+      }
+      if (current === "-" && next === "-") {
+        state = "line_comment";
+        index += 2;
+        continue;
+      }
+      if (current === "/" && next === "*") {
+        state = "block_comment";
+        blockDepth = 1;
+        index += 2;
+        continue;
+      }
+      if (current === "$") {
+        const tag = sql.slice(index).match(/^\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$/)?.[0];
+        if (tag) {
+          state = "dollar";
+          dollarTag = tag;
+          index += tag.length;
+          continue;
+        }
+      }
+      if (current === ";") {
+        const statement = sql.slice(start, index).trim();
+        if (statement) statements.push(statement);
+        start = index + 1;
+      }
+      index += 1;
+      continue;
+    }
+
+    if (state === "single") {
+      if (current === "\\" && next !== undefined) {
+        index += 2;
+      } else if (current === "'" && next === "'") {
+        index += 2;
+      } else if (current === "'") {
+        state = "normal";
+        index += 1;
+      } else {
+        index += 1;
+      }
+      continue;
+    }
+
+    if (state === "double") {
+      if (current === '"' && next === '"') {
+        index += 2;
+      } else if (current === '"') {
+        state = "normal";
+        index += 1;
+      } else {
+        index += 1;
+      }
+      continue;
+    }
+
+    if (state === "line_comment") {
+      if (current === "\n" || current === "\r") state = "normal";
+      index += 1;
+      continue;
+    }
+
+    if (state === "block_comment") {
+      if (current === "/" && next === "*") {
+        blockDepth += 1;
+        index += 2;
+      } else if (current === "*" && next === "/") {
+        blockDepth -= 1;
+        index += 2;
+        if (blockDepth === 0) state = "normal";
+      } else {
+        index += 1;
+      }
+      continue;
+    }
+
+    if (state === "dollar") {
+      if (sql.startsWith(dollarTag, index)) {
+        index += dollarTag.length;
+        state = "normal";
+      } else {
+        index += 1;
+      }
+    }
+  }
+
+  if (state !== "normal" && state !== "line_comment") {
+    throw new ClinicalCoreMigrationError("manifest_invalid");
+  }
+  const remainder = sql.slice(start).trim();
+  if (remainder) statements.push(remainder);
+  return statements;
+}
+
 /** Apply ordered migrations atomically and refuse rewritten history. */
 export async function applyClinicalCoreMigrations(
   database: ClinicalCoreDatabase,
@@ -70,15 +187,13 @@ export async function applyClinicalCoreMigrations(
   try {
     return await database.transaction(async (tx) => {
       await tx.query("select pg_advisory_xact_lock(hashtext($1))", ["ai-desktop-pro:clinical-core-migrations"]);
-      await tx.query(`
-        create schema if not exists clinical_core;
-        create table if not exists clinical_core.schema_migrations (
-          version text primary key,
-          name text not null,
-          sha256 text not null check (sha256 ~ '^[0-9a-f]{64}$'),
-          applied_at timestamptz not null default clock_timestamp()
-        )
-      `);
+      await tx.query("create schema if not exists clinical_core");
+      await tx.query(`create table if not exists clinical_core.schema_migrations (
+        version text primary key,
+        name text not null,
+        sha256 text not null check (sha256 ~ '^[0-9a-f]{64}$'),
+        applied_at timestamptz not null default clock_timestamp()
+      )`);
 
       const existing = await tx.query<{ version: string; sha256: string }>(
         "select version, sha256 from clinical_core.schema_migrations order by version",
@@ -96,7 +211,9 @@ export async function applyClinicalCoreMigrations(
           alreadyApplied.push(migration.version);
           continue;
         }
-        await tx.query(migration.sql);
+        const statements = splitPostgresStatements(migration.sql);
+        if (statements.length === 0) throw new ClinicalCoreMigrationError("manifest_invalid");
+        for (const statement of statements) await tx.query(statement);
         await tx.query(
           "insert into clinical_core.schema_migrations (version, name, sha256) values ($1, $2, $3)",
           [migration.version, migration.name, migration.sha256],

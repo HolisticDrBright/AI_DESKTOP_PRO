@@ -39,6 +39,26 @@ export function createRdsDataClinicalCoreDatabase(
   configuration: RdsDataConfiguration,
   client: RdsDataCommandClient = new RDSDataClient({ region: configuration.region }),
 ): ClinicalCoreDatabase {
+  return createRdsDataDatabase(configuration, client, "clinical_core_api");
+}
+
+/** Administrative access is reserved for the reviewed synthetic migration/fixture operator path. */
+export function createRdsDataAdministrativeDatabase(
+  configuration: RdsDataConfiguration,
+  authorization: { purpose: "reviewed_synthetic_migration" },
+  client: RdsDataCommandClient = new RDSDataClient({ region: configuration.region }),
+): ClinicalCoreDatabase {
+  if (authorization.purpose !== "reviewed_synthetic_migration") {
+    throw new RdsDataDatabaseError("configuration_invalid");
+  }
+  return createRdsDataDatabase(configuration, client);
+}
+
+function createRdsDataDatabase(
+  configuration: RdsDataConfiguration,
+  client: RdsDataCommandClient,
+  assumeRole?: "clinical_core_api",
+): ClinicalCoreDatabase {
   assertConfiguration(configuration);
   const common = {
     resourceArn: configuration.clusterArn,
@@ -54,11 +74,13 @@ export function createRdsDataClinicalCoreDatabase(
         transactionId = stringProperty(begun, "transactionId");
         if (!transactionId) throw new RdsDataDatabaseError("transaction_failed");
 
-        await client.send(new ExecuteStatementCommand({
-          ...common,
-          transactionId,
-          sql: "set local role clinical_core_api",
-        }));
+        if (assumeRole) {
+          await client.send(new ExecuteStatementCommand({
+            ...common,
+            transactionId,
+            sql: `set local role ${assumeRole}`,
+          }));
+        }
 
         const tx: ClinicalCoreTransaction = {
           query: <Row extends Record<string, unknown>>(sql: string, parameters: readonly unknown[] = []) =>
@@ -118,6 +140,7 @@ async function execute<Row extends Record<string, unknown>>(
 }
 
 export function bindParameters(sql: string, values: readonly unknown[]): { sql: string; parameters: SqlParameter[] } {
+  if (values.length === 0) return { sql, parameters: [] };
   const referenced = [...sql.matchAll(/\$(\d+)/g)].map((match) => Number(match[1]));
   if (referenced.some((index) => index < 1 || index > values.length)) {
     throw new RdsDataDatabaseError("query_failed");
