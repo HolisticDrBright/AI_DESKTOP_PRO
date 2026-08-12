@@ -99,7 +99,6 @@
     },
     "IdentityApiFunction": {
       "Type": "AWS::Lambda::Function",
-      "DependsOn": "IdentityApiLogGroup",
       "Properties": {
         "FunctionName": { "Fn::Sub": "${ClinicalApiId}-synthetic-identity" },
         "Runtime": "nodejs22.x",
