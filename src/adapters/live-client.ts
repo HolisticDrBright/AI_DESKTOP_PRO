@@ -1630,4 +1630,76 @@ export const liveClient = {
       };
       refusal: string | null;
     }>("copilot/provider-status", { method: "GET" }),
+
+  /* ========================= Phase 10B.2 staging activation governance */
+  copilotGovernance: () => liveFetch<LiveCopilotGovernance>("copilot/governance", { method: "GET" }),
+
+  copilotKillSwitch: (input: { providerId: string; engaged: boolean; reason: string }) =>
+    liveFetch<{ kill_switch_engaged: boolean; kill_switch_at: string | null }>(
+      "copilot/governance",
+      { method: "POST", body: input },
+    ),
+};
+
+/**
+ * The AI Governance operator view.
+ *
+ * Note what is NOT here: no secret, no ARN value, no OpenAI key, no
+ * prompt, and no clinical content. `hasSecretRef` is a boolean because the
+ * only honest thing to say about a secret reference on a screen is whether
+ * one exists.
+ */
+export type LiveCopilotGovernance = {
+  providerId: string | null;
+  providerRegistered: boolean;
+  providerName: string | null;
+  providerKind: string | null;
+  hasSecretRef: boolean;
+  activationState: string;
+  environment: string;
+  approvedUse: string;
+  approvedModel: string | null;
+  scopeExpiresAt: string | null;
+  killSwitchEngaged: boolean;
+  killSwitchReason: string | null;
+  killSwitchAt: string | null;
+  /** unknown | verified | expired | not_approved — never inferred. */
+  baaStatus: "unknown" | "verified" | "expired" | "not_approved";
+  baaVerifiedAt: string | null;
+  zdrMamStatus: "unknown" | "verified" | "expired" | "not_approved";
+  zdrMamVerifiedAt: string | null;
+  approvedOpenaiOrganization: string | null;
+  approvedOpenaiProject: string | null;
+  eligibleEndpoint: string | null;
+  eligibleModel: string | null;
+  reviewerReference: string | null;
+  reviewedAt: string | null;
+  maxCalls: number | null;
+  usedCalls: number | null;
+  maxTokens: number | null;
+  usedTokens: number | null;
+  maxCostCents: number | null;
+  usedCostCents: number | null;
+  lastSuccessfulVerificationAt: string | null;
+  lastFailureCategory: string | null;
+  history: Array<{
+    changeKind: string;
+    reason: string | null;
+    recordedAt: string;
+    fromState: Record<string, unknown>;
+    toState: Record<string, unknown>;
+  }>;
+  runtime: {
+    pointedAtStagingProject: boolean;
+    backendConfigured: boolean;
+    requestContractVersion: string;
+    outputSchemaVersion: string;
+    buildGovernedModels: string[];
+  };
+  phaseLimits: {
+    phase: string;
+    purpose: string;
+    realPatientUseAvailable: boolean;
+    productionActivationAvailable: boolean;
+  };
 };

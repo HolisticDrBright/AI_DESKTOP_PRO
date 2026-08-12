@@ -251,7 +251,8 @@ export function createOpenAIAdapter(options: OpenAIAdapterOptions): CopilotProvi
       const parsed = parseAndValidateOpenAIResponse({
         raw: parsedJson,
         allowedCitationIds: input.allowedCitationIds,
-        expectedModelPrefix: model.split("-")[0],
+        // The exact identifier. A substituted model fails the run.
+        expectedModel: model,
       });
       return {
         runType: parsed.runType as CopilotRunType,
