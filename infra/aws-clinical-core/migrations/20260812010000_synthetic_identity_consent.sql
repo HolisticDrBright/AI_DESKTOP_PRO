@@ -18,6 +18,7 @@ begin
   if not exists (select 1 from pg_roles where rolname = 'clinical_core_migrator') then
     create role clinical_core_migrator nologin noinherit;
   end if;
+  execute format('grant clinical_core_api, clinical_core_migrator to %I', current_user);
 end
 $$;
 

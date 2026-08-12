@@ -22,3 +22,11 @@ export interface ClinicalCoreTransaction {
 export interface ClinicalCoreDatabase {
   transaction<T>(work: (tx: ClinicalCoreTransaction) => Promise<T>): Promise<T>;
 }
+
+/** A database-authored refusal with all provider and SQL text removed. */
+export class ClinicalCoreDatabaseRejection extends Error {
+  constructor(readonly category: "identity_refused" | "operation_refused") {
+    super(category);
+    this.name = "ClinicalCoreDatabaseRejection";
+  }
+}

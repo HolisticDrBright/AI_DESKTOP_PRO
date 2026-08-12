@@ -3,7 +3,7 @@ if (typeof window !== "undefined") {
 }
 
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import type { ClinicalCoreDatabase, ClinicalCoreTransaction } from "./database";
+import { ClinicalCoreDatabaseRejection, type ClinicalCoreDatabase, type ClinicalCoreTransaction } from "./database";
 
 export const CONSENT_SCOPES = [
   "programs",
@@ -129,7 +129,7 @@ export function createAwsSyntheticIdentityConsentAdapter(
       }>(await tx.query(
         "select * from clinical_core.issue_connection_invitation($1, $2, $3, $4, $5)",
         [input.context.organizationId, input.patientRecordId, tokenHash, expiresAt.toISOString(), idempotencyKey],
-      )));
+      )), "request_context_invalid");
       return {
         invitationId: row.invitation_id,
         connectionId: row.connection_id,
@@ -152,7 +152,7 @@ export function createAwsSyntheticIdentityConsentAdapter(
       }>(await tx.query(
         "select * from clinical_core.claim_connection_invitation($1, $2)",
         [sha256(input.token), input.context.actorPersonId],
-      ), "invitation_invalid_or_expired"));
+      ), "invitation_invalid_or_expired"), "invitation_invalid_or_expired");
       return {
         connectionId: row.connection_id,
         patientRecordId: row.patient_record_id,
@@ -172,7 +172,7 @@ export function createAwsSyntheticIdentityConsentAdapter(
       const row = await run(database, input.context, async (tx) => firstConsent(await tx.query(
         "select * from clinical_core.record_consent_grant($1, $2, $3, $4, $5)",
         [input.connectionId, input.artifactId, input.scope, input.method, input.representativeAuthority],
-      )));
+      )), "consent_precondition_failed");
       return toConsent(row);
     },
 
@@ -185,7 +185,7 @@ export function createAwsSyntheticIdentityConsentAdapter(
       const row = await run(database, input.context, async (tx) => firstConsent(await tx.query(
         "select * from clinical_core.revoke_consent_grant($1, $2, $3)",
         [input.connectionId, input.scope, input.reasonCode],
-      )));
+      )), "consent_precondition_failed");
       return toConsent(row);
     },
   };
@@ -195,6 +195,7 @@ async function run<T>(
   database: ClinicalCoreDatabase,
   context: SyntheticRequestContext,
   work: (tx: ClinicalCoreTransaction) => Promise<T>,
+  operationRefusal: ClinicalCoreAdapterError["category"] = "database_unavailable",
 ): Promise<T> {
   try {
     return await database.transaction(async (tx) => {
@@ -211,6 +212,9 @@ async function run<T>(
     });
   } catch (error) {
     if (error instanceof ClinicalCoreAdapterError) throw error;
+    if (error instanceof ClinicalCoreDatabaseRejection) {
+      throw new ClinicalCoreAdapterError(error.category === "identity_refused" ? "synthetic_boundary_refused" : operationRefusal);
+    }
     throw new ClinicalCoreAdapterError("database_unavailable");
   }
 }

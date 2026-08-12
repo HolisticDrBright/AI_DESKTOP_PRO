@@ -6,7 +6,7 @@ import {
   createAwsSyntheticIdentityConsentAdapter,
   type SyntheticRequestContext,
 } from "./aws-identity-consent";
-import type { ClinicalCoreDatabase, ClinicalCoreQueryResult } from "./database";
+import { ClinicalCoreDatabaseRejection, type ClinicalCoreDatabase, type ClinicalCoreQueryResult } from "./database";
 
 const ACTOR = "11111111-1111-4111-8111-111111111111";
 const ORG = "22222222-2222-4222-8222-222222222222";
@@ -189,6 +189,17 @@ describe("AWS synthetic identity and consent adapter", () => {
       context: context({ identityPool: "consumer" }),
       token: "A".repeat(43),
     })).rejects.toThrow(/^database_unavailable$/);
+  });
+
+  test("preserves bounded identity and operation refusals without database text", async () => {
+    const rejecting = (category: "identity_refused" | "operation_refused"): ClinicalCoreDatabase => ({
+      async transaction() { throw new ClinicalCoreDatabaseRejection(category); },
+    });
+    const claim = { context: context({ identityPool: "consumer" as const }), token: "A".repeat(43) };
+    await expect(createAwsSyntheticIdentityConsentAdapter(rejecting("identity_refused")).claimInvitation(claim))
+      .rejects.toThrow(/^synthetic_boundary_refused$/);
+    await expect(createAwsSyntheticIdentityConsentAdapter(rejecting("operation_refused")).claimInvitation(claim))
+      .rejects.toThrow(/^invitation_invalid_or_expired$/);
   });
 
   test("the public adapter contract has no demographic or contact matching fields", () => {
