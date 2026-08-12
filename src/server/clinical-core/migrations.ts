@@ -23,7 +23,10 @@ const VERSION_PATTERN = /^\d{14}$/;
 const FILE_PATTERN = /^\d{14}_[a-z0-9_]+\.sql$/;
 
 export class ClinicalCoreMigrationError extends Error {
-  constructor(readonly category: "manifest_invalid" | "history_mismatch" | "migration_failed") {
+  constructor(
+    readonly category: "manifest_invalid" | "history_mismatch" | "migration_failed",
+    readonly statementIndex?: number,
+  ) {
     super(category);
     this.name = "ClinicalCoreMigrationError";
   }
@@ -213,7 +216,13 @@ export async function applyClinicalCoreMigrations(
         }
         const statements = splitPostgresStatements(migration.sql);
         if (statements.length === 0) throw new ClinicalCoreMigrationError("manifest_invalid");
-        for (const statement of statements) await tx.query(statement);
+        for (const [index, statement] of statements.entries()) {
+          try {
+            await tx.query(statement);
+          } catch {
+            throw new ClinicalCoreMigrationError("migration_failed", index + 1);
+          }
+        }
         await tx.query(
           "insert into clinical_core.schema_migrations (version, name, sha256) values ($1, $2, $3)",
           [migration.version, migration.name, migration.sha256],

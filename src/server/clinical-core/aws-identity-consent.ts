@@ -3,7 +3,7 @@ if (typeof window !== "undefined") {
 }
 
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { ClinicalCoreDatabaseRejection, type ClinicalCoreDatabase, type ClinicalCoreTransaction } from "./database";
+import { clinicalUuid, ClinicalCoreDatabaseRejection, type ClinicalCoreDatabase, type ClinicalCoreTransaction } from "./database";
 
 export const CONSENT_SCOPES = [
   "programs",
@@ -127,8 +127,8 @@ export function createAwsSyntheticIdentityConsentAdapter(
         connection_id: string;
         expires_at: string;
       }>(await tx.query(
-        "select * from clinical_core.issue_connection_invitation($1, $2, $3, $4, $5)",
-        [input.context.organizationId, input.patientRecordId, tokenHash, expiresAt.toISOString(), idempotencyKey],
+        "select * from clinical_core.issue_connection_invitation($1, $2, $3, $4::timestamptz, $5)",
+        [clinicalUuid(input.context.organizationId), clinicalUuid(input.patientRecordId), tokenHash, expiresAt.toISOString(), idempotencyKey],
       )), "request_context_invalid");
       return {
         invitationId: row.invitation_id,
@@ -151,7 +151,7 @@ export function createAwsSyntheticIdentityConsentAdapter(
         verified_at: string;
       }>(await tx.query(
         "select * from clinical_core.claim_connection_invitation($1, $2)",
-        [sha256(input.token), input.context.actorPersonId],
+        [sha256(input.token), clinicalUuid(input.context.actorPersonId)],
       ), "invitation_invalid_or_expired"), "invitation_invalid_or_expired");
       return {
         connectionId: row.connection_id,
@@ -171,7 +171,7 @@ export function createAwsSyntheticIdentityConsentAdapter(
       }
       const row = await run(database, input.context, async (tx) => firstConsent(await tx.query(
         "select * from clinical_core.record_consent_grant($1, $2, $3, $4, $5)",
-        [input.connectionId, input.artifactId, input.scope, input.method, input.representativeAuthority],
+        [clinicalUuid(input.connectionId), clinicalUuid(input.artifactId), input.scope, input.method, input.representativeAuthority],
       )), "consent_precondition_failed");
       return toConsent(row);
     },
@@ -184,7 +184,7 @@ export function createAwsSyntheticIdentityConsentAdapter(
       }
       const row = await run(database, input.context, async (tx) => firstConsent(await tx.query(
         "select * from clinical_core.revoke_consent_grant($1, $2, $3)",
-        [input.connectionId, input.scope, input.reasonCode],
+        [clinicalUuid(input.connectionId), input.scope, input.reasonCode],
       )), "consent_precondition_failed");
       return toConsent(row);
     },
@@ -200,8 +200,8 @@ async function run<T>(
   try {
     return await database.transaction(async (tx) => {
       await tx.query("select clinical_private.set_request_context($1, $2, $3, $4, $5, $6, $7)", [
-        context.actorPersonId,
-        context.organizationId,
+        clinicalUuid(context.actorPersonId),
+        clinicalUuid(context.organizationId),
         context.identityPool,
         context.identitySubject,
         context.purpose,

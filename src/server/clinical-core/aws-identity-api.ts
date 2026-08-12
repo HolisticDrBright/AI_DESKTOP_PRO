@@ -40,10 +40,12 @@ export type IdentityApiConfiguration = {
 type RouteDefinition = {
   pool: IdentityPool;
   purpose: SyntheticRequestContext["purpose"];
-  operation: "issue" | "claim" | "grant" | "revoke";
+  operation: "posture" | "issue" | "claim" | "grant" | "revoke";
 };
 
 const ROUTES: Readonly<Record<string, RouteDefinition>> = {
+  "GET /clinical-core/workforce/posture": { pool: "workforce", purpose: "identity_link", operation: "posture" },
+  "GET /clinical-core/consumer/posture": { pool: "consumer", purpose: "identity_link", operation: "posture" },
   "POST /clinical-core/workforce/invitations": { pool: "workforce", purpose: "identity_link", operation: "issue" },
   "POST /clinical-core/consumer/invitations/claim": { pool: "consumer", purpose: "identity_link", operation: "claim" },
   "POST /clinical-core/workforce/consents/grant": { pool: "workforce", purpose: "consent_management", operation: "grant" },
@@ -72,6 +74,20 @@ export function createAwsIdentityApiHandler(input: {
       const route = event.routeKey ? ROUTES[event.routeKey] : undefined;
       if (!route) return response(404, { error: "route_not_found" });
       const context = contextFromClaims(event, route, input.configuration);
+      if (route.operation === "posture") {
+        if (event.body) throw new IdentityApiError("request_invalid");
+        return response(200, {
+          data: {
+            contractVersion: "clinical-core/1",
+            environment: context.environment,
+            dataClassification: context.dataClassification,
+            identityPool: context.identityPool,
+            authenticated: true,
+            phiAllowed: false,
+            realPatientDataAllowed: false,
+          },
+        });
+      }
       const body = parseBody(event);
 
       switch (route.operation) {

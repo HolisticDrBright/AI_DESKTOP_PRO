@@ -44,19 +44,24 @@ afterEach(() => {
 describe("AWS clinical-core migration runner", () => {
   test("loads ordered migrations and computes their content hash", () => {
     const migrations = loadClinicalCoreMigrations();
-    expect(migrations).toHaveLength(1);
+    expect(migrations).toHaveLength(2);
     expect(migrations[0]).toMatchObject({
       version: "20260812010000",
       name: "synthetic_identity_consent",
     });
     expect(migrations[0]!.sha256).toMatch(/^[0-9a-f]{64}$/);
     expect(migrations[0]!.sql).toContain("create table clinical_core.persons");
+    expect(migrations[1]).toMatchObject({
+      version: "20260812220000",
+      name: "identity_function_column_qualification",
+    });
+    expect(migrations[1]!.sha256).toMatch(/^[0-9a-f]{64}$/);
   });
 
   test("serializes and applies a missing migration in one transaction", async () => {
     const db = migrationDatabase();
     const result = await applyClinicalCoreMigrations(db.database);
-    expect(result).toEqual({ applied: ["20260812010000"], alreadyApplied: [] });
+    expect(result).toEqual({ applied: ["20260812010000", "20260812220000"], alreadyApplied: [] });
     expect(db.transactions()).toBe(1);
     expect(db.calls[0]!.sql).toContain("pg_advisory_xact_lock");
     expect(db.calls.some((call) => call.sql.includes("create table clinical_core.persons"))).toBe(true);

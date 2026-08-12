@@ -129,6 +129,8 @@ describe("AWS synthetic clinical-core infrastructure", () => {
     expect(functions).toHaveLength(1);
     expect(resources.PostureRoute.Properties.RouteKey).toBe("GET /posture");
     expect(resources.PostureFunction.Properties).not.toHaveProperty("ReservedConcurrentExecutions");
+    expect(resources.WorkforceUserPoolClient.Properties.ExplicitAuthFlows).toContain("ALLOW_ADMIN_USER_PASSWORD_AUTH");
+    expect(resources.ConsumerUserPoolClient.Properties.ExplicitAuthFlows).toContain("ALLOW_ADMIN_USER_PASSWORD_AUTH");
     expect(resources.ClinicalApiStage.Properties.DefaultRouteSettings).toMatchObject({
       ThrottlingBurstLimit: 20,
       ThrottlingRateLimit: 10,

@@ -30,8 +30,10 @@ export function validateAuthenticatedApi(foundation, extension) {
   }
 
   const routeEntries = Object.entries(resources).filter(([, resource]) => resource.Type === "AWS::ApiGatewayV2::Route");
-  assert(errors, routeEntries.length === 6, "extension must expose exactly six authenticated routes");
+  assert(errors, routeEntries.length === 8, "extension must expose exactly eight authenticated routes");
   const expectedRoutes = new Set([
+    "GET /clinical-core/workforce/posture",
+    "GET /clinical-core/consumer/posture",
     "POST /clinical-core/workforce/invitations",
     "POST /clinical-core/consumer/invitations/claim",
     "POST /clinical-core/workforce/consents/grant",
@@ -54,7 +56,7 @@ export function validateAuthenticatedApi(foundation, extension) {
 
   const fn = resources.IdentityApiFunction?.Properties;
   assert(errors, fn?.Runtime === "nodejs22.x" && fn?.Architectures?.[0] === "arm64", "Lambda runtime must be bounded and cost-efficient");
-  assert(errors, fn?.Timeout === 15 && fn?.MemorySize === 256 && fn?.ReservedConcurrentExecutions === 2, "Lambda resource bounds must remain fixed");
+  assert(errors, fn?.Timeout === 15 && fn?.MemorySize === 256 && !("ReservedConcurrentExecutions" in fn), "Lambda resource bounds must remain account-compatible");
   assert(errors, !fn?.VpcConfig, "Data API Lambda must not create NAT/VPC networking cost");
   const env = fn?.Environment?.Variables ?? {};
   assert(errors, Object.keys(env).sort().join(",") === [
@@ -78,7 +80,7 @@ export function validateAuthenticatedApi(foundation, extension) {
 
   const permission = resources.IdentityApiInvokePermission?.Properties;
   assert(errors, permission?.Principal === "apigateway.amazonaws.com", "only API Gateway may invoke the function");
-  assert(errors, JSON.stringify(permission?.SourceArn).includes("/POST/clinical-core/*"), "invoke permission must be method and path bounded");
+  assert(errors, JSON.stringify(permission?.SourceArn).includes("/*/clinical-core/*"), "invoke permission must be path bounded");
   assert(errors, resources.IdentityApiLogGroup?.Properties?.RetentionInDays === 30 && resources.IdentityApiLogGroup?.Properties?.KmsKeyId, "logs must be encrypted and expire after 30 days");
   assert(errors, resources.IdentityApiErrorAlarm?.Properties?.Threshold === 1, "first Lambda error must alarm");
 

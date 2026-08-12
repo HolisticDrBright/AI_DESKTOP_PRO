@@ -7,6 +7,12 @@ export type ClinicalCoreQueryResult<Row extends Record<string, unknown> = Record
   rowCount?: number;
 };
 
+export type ClinicalUuid = { readonly kind: "uuid"; readonly value: string };
+
+export function clinicalUuid(value: string): ClinicalUuid {
+  return { kind: "uuid", value };
+}
+
 export interface ClinicalCoreTransaction {
   query<Row extends Record<string, unknown> = Record<string, unknown>>(
     sql: string,

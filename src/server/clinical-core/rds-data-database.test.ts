@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { ClinicalCoreDatabaseRejection } from "./database";
+import { clinicalUuid, ClinicalCoreDatabaseRejection } from "./database";
 import {
   bindParameters,
   createRdsDataAdministrativeDatabase,
@@ -35,6 +35,14 @@ function client(respond?: (seen: Seen) => Record<string, unknown> | Promise<Reco
 }
 
 describe("Aurora RDS Data API transaction adapter", () => {
+  test("accepts AWS-managed RDS secret ARNs containing an exclamation mark", () => {
+    const mock = client();
+    expect(() => createRdsDataAdministrativeDatabase({
+      ...CONFIG,
+      secretArn: "arn:aws:secretsmanager:us-east-2:123456789012:secret:rds!cluster-abc123-XyZ789",
+    }, { purpose: "reviewed_synthetic_migration" }, mock.value)).not.toThrow();
+  });
+
   test("converts positional placeholders to bounded named parameters", () => {
     expect(bindParameters("select $2, $1, $2", ["alpha", 7])).toEqual({
       sql: "select :p2, :p1, :p2",
@@ -43,6 +51,16 @@ describe("Aurora RDS Data API transaction adapter", () => {
         { name: "p2", value: { longValue: 7 } },
       ],
     });
+  });
+
+  test("marks UUID parameters with the Aurora Data API UUID type hint", () => {
+    expect(bindParameters("select $1", [clinicalUuid("11111111-1111-4111-8111-111111111111")]).parameters)
+      .toEqual([{ name: "p1", value: { stringValue: "11111111-1111-4111-8111-111111111111" }, typeHint: "UUID" }]);
+  });
+
+  test("does not infer UUID typing from opaque identity subjects", () => {
+    expect(bindParameters("select $1", ["11111111-1111-4111-8111-111111111111"]).parameters)
+      .toEqual([{ name: "p1", value: { stringValue: "11111111-1111-4111-8111-111111111111" } }]);
   });
 
   test("does not reinterpret PostgreSQL function arguments in unparameterized migration SQL", () => {
@@ -128,6 +146,20 @@ describe("Aurora RDS Data API transaction adapter", () => {
     expect(failure).toBeInstanceOf(ClinicalCoreDatabaseRejection);
     expect(failure).toMatchObject({ category, message: category });
     expect(String(failure)).not.toContain(marker);
+  });
+
+  test("does not mistake a function name for an authored refusal marker", async () => {
+    const mock = client((call) => {
+      if (call.name === "BeginTransactionCommand") return { transactionId: "tx-function" };
+      if (call.name === "ExecuteStatementCommand" && call.input.sql !== "set local role clinical_core_api") {
+        const error = new Error("function clinical_core.issue_connection_invitation(uuid) does not exist");
+        error.name = "DatabaseErrorException";
+        throw error;
+      }
+      return {};
+    });
+    const database = createRdsDataClinicalCoreDatabase(CONFIG, mock.value);
+    await expect(database.transaction((tx) => tx.query("select 1"))).rejects.toThrow(/^query_failed$/);
   });
 
   test("refuses malformed resource identifiers before constructing a transaction", () => {

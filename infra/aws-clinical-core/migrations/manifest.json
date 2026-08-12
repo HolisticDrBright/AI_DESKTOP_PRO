@@ -4,6 +4,10 @@
     {
       "version": "20260812010000",
       "file": "20260812010000_synthetic_identity_consent.sql"
+    },
+    {
+      "version": "20260812220000",
+      "file": "20260812220000_identity_function_column_qualification.sql"
     }
   ]
 }

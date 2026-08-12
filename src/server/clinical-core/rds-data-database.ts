@@ -11,7 +11,7 @@ import {
   type Field,
   type SqlParameter,
 } from "@aws-sdk/client-rds-data";
-import { ClinicalCoreDatabaseRejection, type ClinicalCoreDatabase, type ClinicalCoreQueryResult, type ClinicalCoreTransaction } from "./database";
+import { ClinicalCoreDatabaseRejection, type ClinicalCoreDatabase, type ClinicalCoreQueryResult, type ClinicalCoreTransaction, type ClinicalUuid } from "./database";
 
 export type RdsDataConfiguration = {
   clusterArn: string;
@@ -32,7 +32,7 @@ export class RdsDataDatabaseError extends Error {
 }
 
 const ARN = /^arn:(aws|aws-us-gov|aws-cn):rds:[a-z0-9-]+:\d{12}:cluster:[A-Za-z0-9-]{1,63}$/;
-const SECRET_ARN = /^arn:(aws|aws-us-gov|aws-cn):secretsmanager:[a-z0-9-]+:\d{12}:secret:[A-Za-z0-9/_+=.@-]+$/;
+const SECRET_ARN = /^arn:(aws|aws-us-gov|aws-cn):secretsmanager:[a-z0-9-]+:\d{12}:secret:[A-Za-z0-9/_+=.@!-]+$/;
 const DB_NAME = /^[a-z][a-z0-9_]{0,62}$/;
 
 export function createRdsDataClinicalCoreDatabase(
@@ -148,12 +148,20 @@ export function bindParameters(sql: string, values: readonly unknown[]): { sql: 
   const names = [...new Set(referenced)].sort((a, b) => a - b);
   return {
     sql: sql.replace(/\$(\d+)/g, (_whole, index) => `:p${index}`),
-    parameters: names.map((index) => ({ name: `p${index}`, value: encodeField(values[index - 1]) })),
+    parameters: names.map((index) => {
+      const raw = values[index - 1];
+      return {
+        name: `p${index}`,
+        value: encodeField(raw),
+        ...(isClinicalUuid(raw) ? { typeHint: "UUID" as const } : {}),
+      };
+    }),
   };
 }
 
 function encodeField(value: unknown): Field {
   if (value === null || value === undefined) return { isNull: true };
+  if (isClinicalUuid(value)) return { stringValue: value.value };
   if (typeof value === "string") return { stringValue: value };
   if (typeof value === "boolean") return { booleanValue: value };
   if (typeof value === "number" && Number.isSafeInteger(value)) return { longValue: value };
@@ -162,6 +170,12 @@ function encodeField(value: unknown): Field {
   if (value instanceof Date && Number.isFinite(value.getTime())) return { stringValue: value.toISOString() };
   if (value instanceof Uint8Array) return { blobValue: value };
   throw new RdsDataDatabaseError("query_failed");
+}
+
+function isClinicalUuid(value: unknown): value is ClinicalUuid {
+  return Boolean(value) && typeof value === "object"
+    && (value as ClinicalUuid).kind === "uuid"
+    && typeof (value as ClinicalUuid).value === "string";
 }
 
 function decodeField(field: Field | undefined): unknown {
@@ -186,10 +200,10 @@ function classifyDatabaseRejection(error: unknown): ClinicalCoreDatabaseRejectio
   const record = error as Record<string, unknown>;
   if (record.name !== "DatabaseErrorException" || typeof record.message !== "string") return undefined;
   const message = record.message;
-  if (/(request_context_refused|synthetic_context_refused|clinical_role_required|consumer_identity_required|consent_actor_refused)/.test(message)) {
+  if (/\b(request_context_refused|synthetic_context_refused|clinical_role_required|consumer_identity_required|consent_actor_refused)\b/.test(message)) {
     return new ClinicalCoreDatabaseRejection("identity_refused");
   }
-  if (/(invitation_|synthetic_patient_not_found|connection_|approved_artifact_required|consent_|idempotency_conflict)/.test(message)) {
+  if (/\b(invitation_shape_invalid|invitation_invalid_or_expired|synthetic_patient_not_found|connection_not_invitable|connection_state_invalid|approved_artifact_required|consent_scope_invalid|consent_precondition_failed|consent_already_active|active_consent_required|idempotency_conflict)\b/.test(message)) {
     return new ClinicalCoreDatabaseRejection("operation_refused");
   }
   return undefined;

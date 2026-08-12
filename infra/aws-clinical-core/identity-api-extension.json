@@ -27,7 +27,7 @@
     "IdentityApiLogGroup": {
       "Type": "AWS::Logs::LogGroup",
       "Properties": {
-        "LogGroupName": { "Fn::Sub": "/aws/lambda/ai-desktop-pro-synthetic-identity-${AWS::StackName}" },
+        "LogGroupName": "/ai-clinical-core/synthetic-staging/identity-api",
         "RetentionInDays": 30,
         "KmsKeyId": { "Ref": "ClinicalCoreKeyArn" }
       },
@@ -90,7 +90,7 @@
               "Statement": [{
                 "Effect": "Allow",
                 "Action": ["logs:CreateLogStream", "logs:PutLogEvents"],
-                "Resource": { "Fn::Sub": "${IdentityApiLogGroup.Arn}:*" }
+                "Resource": { "Fn::GetAtt": ["IdentityApiLogGroup", "Arn"] }
               }]
             }
           }
@@ -101,14 +101,19 @@
       "Type": "AWS::Lambda::Function",
       "DependsOn": "IdentityApiLogGroup",
       "Properties": {
-        "FunctionName": { "Fn::Sub": "ai-desktop-pro-synthetic-identity-${AWS::StackName}" },
+        "FunctionName": { "Fn::Sub": "${ClinicalApiId}-synthetic-identity" },
         "Runtime": "nodejs22.x",
         "Architectures": ["arm64"],
         "Handler": "index.handler",
         "Role": { "Fn::GetAtt": ["IdentityApiRole", "Arn"] },
         "MemorySize": 256,
         "Timeout": 15,
-        "ReservedConcurrentExecutions": 2,
+        "LoggingConfig": {
+          "LogGroup": { "Ref": "IdentityApiLogGroup" },
+          "LogFormat": "JSON",
+          "ApplicationLogLevel": "WARN",
+          "SystemLogLevel": "WARN"
+        },
         "Code": { "S3Bucket": { "Ref": "LambdaCodeBucket" }, "S3Key": { "Ref": "LambdaCodeKey" } },
         "Environment": {
           "Variables": {
@@ -157,6 +162,22 @@
         "IntegrationUri": { "Fn::GetAtt": ["IdentityApiFunction", "Arn"] },
         "PayloadFormatVersion": "2.0",
         "TimeoutInMillis": 15000
+      }
+    },
+    "WorkforcePostureRoute": {
+      "Type": "AWS::ApiGatewayV2::Route",
+      "Properties": {
+        "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "GET /clinical-core/workforce/posture",
+        "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "WorkforceJwtAuthorizer" },
+        "Target": { "Fn::Sub": "integrations/${IdentityApiIntegration}" }
+      }
+    },
+    "ConsumerPostureRoute": {
+      "Type": "AWS::ApiGatewayV2::Route",
+      "Properties": {
+        "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "GET /clinical-core/consumer/posture",
+        "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "ConsumerJwtAuthorizer" },
+        "Target": { "Fn::Sub": "integrations/${IdentityApiIntegration}" }
       }
     },
     "IssueInvitationRoute": {
@@ -213,7 +234,7 @@
         "Action": "lambda:InvokeFunction",
         "FunctionName": { "Ref": "IdentityApiFunction" },
         "Principal": "apigateway.amazonaws.com",
-        "SourceArn": { "Fn::Sub": "arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${ClinicalApiId}/*/POST/clinical-core/*" }
+        "SourceArn": { "Fn::Sub": "arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${ClinicalApiId}/*/*/clinical-core/*" }
       }
     },
     "IdentityApiErrorAlarm": {
@@ -231,7 +252,7 @@
   "Outputs": {
     "ContractVersion": { "Value": "clinical-core-authenticated-api/1" },
     "IdentityApiFunctionArn": { "Value": { "Fn::GetAtt": ["IdentityApiFunction", "Arn"] } },
-    "RoutesEnabled": { "Value": "6" },
+    "RoutesEnabled": { "Value": "8" },
     "PhiAllowed": { "Value": "false" }
   }
 }

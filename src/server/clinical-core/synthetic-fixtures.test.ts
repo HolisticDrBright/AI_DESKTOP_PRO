@@ -20,6 +20,10 @@ const MANIFEST = {
     patientRecordId: "44444444-4444-4444-8444-444444444444",
     consentArtifactId: "55555555-5555-4555-8555-555555555555",
     consentArtifactSha256: "a".repeat(64),
+    isolationOrganizationId: "66666666-6666-4666-8666-666666666666",
+    isolationOrganizationLabel: "Synthetic acceptance isolation clinic",
+    isolationWorkforcePersonId: "77777777-7777-4777-8777-777777777777",
+    isolationWorkforceSubject: "isolation-workforce-sub-0001",
   },
 } as const;
 
@@ -31,7 +35,7 @@ describe("synthetic acceptance fixture boundary", () => {
     expect(() => validateSyntheticAcceptanceManifest({ ...MANIFEST, fixture: { ...MANIFEST.fixture, consumerSubject: MANIFEST.fixture.workforceSubject } })).toThrow(/manifest_invalid/);
   });
 
-  test("provisions the minimum seven records transactionally and checks every identity", async () => {
+  test("provisions the primary workflow and a second tenant transactionally", async () => {
     const queries: Array<{ sql: string; parameters: readonly unknown[] }> = [];
     const database: ClinicalCoreDatabase = {
       transaction: async (work) => work({
@@ -41,8 +45,8 @@ describe("synthetic acceptance fixture boundary", () => {
         },
       }),
     };
-    await expect(provisionSyntheticAcceptanceFixtures(database, MANIFEST)).resolves.toEqual({ provisioned: true, records: 8 });
-    expect(queries.filter((query) => query.sql.startsWith("insert into")).length).toBe(8);
+    await expect(provisionSyntheticAcceptanceFixtures(database, MANIFEST)).resolves.toEqual({ provisioned: true, records: 12 });
+    expect(queries.filter((query) => query.sql.startsWith("insert into")).length).toBe(12);
     expect(JSON.stringify(queries)).not.toMatch(/email|password|token|patientName/i);
   });
 

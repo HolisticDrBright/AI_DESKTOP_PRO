@@ -20,12 +20,14 @@ assert(packageJson.scripts?.["check:aws-deployment-acceptance"] === "node script
 assert(ignore.includes("/infra/aws-clinical-core/synthetic-acceptance-manifest.json"), "reviewed fixture manifest must remain ignored");
 assert(fixture.environment === "synthetic-staging" && fixture.dataClassification === "synthetic_only" && fixture.containsPhi === false, "fixture example must be synthetic-only");
 assert(!/(email|phone|password|token|authorization|cookie)/i.test(JSON.stringify(fixture)), "fixture example must not contain contacts, credentials, or tokens");
-assert(migration.includes("splitPostgresStatements") && migration.includes("for (const statement of statements) await tx.query(statement)"), "Data API migration runner must execute one parsed statement at a time");
+assert(migration.includes("splitPostgresStatements") && migration.includes("for (const [index, statement] of statements.entries())") && migration.includes("await tx.query(statement)"), "Data API migration runner must execute one parsed statement at a time");
 assert(database.includes("reviewed_synthetic_migration") && database.includes('createRdsDataDatabase(configuration, client, "clinical_core_api")')
   && database.includes("if (assumeRole)"), "administrative and request database paths must remain explicit");
 assert(provisioner.includes("hasExactKeys") && provisioner.includes("fixture_mismatch") && !provisioner.includes("on conflict (id) do update"), "fixtures must be exact, immutable, and mismatch-refusing");
 assert(acceptance.includes('redirect: "manual"') && acceptance.includes("AbortSignal.timeout(15_000)"), "acceptance transport must refuse redirects and have a hard timeout");
-assert(acceptance.includes("patientName: \"refused\"") && acceptance.includes("externalRequests: 8"), "acceptance must test PHI-shaped refusal and all eight boundaries");
+assert(acceptance.includes("patientName: \"refused\"") && acceptance.includes("isolationWorkforceIdToken") && acceptance.includes("externalRequests: 11")
+  && acceptance.includes("/clinical-core/workforce/posture") && acceptance.includes("/clinical-core/consumer/posture"),
+"acceptance must test both app bridges, PHI-shaped refusal, cross-tenant refusal, and all eleven boundaries");
 assert(!acceptance.includes("console.") && !provisioner.includes("console."), "clinical acceptance modules must not log tokens, subjects, or payloads");
 assert(powershell.includes("ConfirmSyntheticOnly") && powershell.includes("aws sts get-caller-identity") && powershell.includes("Remove-Item Env:CLINICAL_DATABASE_SECRET_ARN"), "operator script must confirm posture, pin account, and clear identifiers");
 

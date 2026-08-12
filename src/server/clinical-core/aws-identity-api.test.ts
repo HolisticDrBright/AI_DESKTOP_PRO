@@ -50,6 +50,26 @@ function handler(service = adapter()) {
 }
 
 describe("authenticated synthetic identity API", () => {
+  test.each(["workforce", "consumer"] as const)("reports authenticated %s synthetic posture without a body", async (pool) => {
+    const api = handler();
+    const request = event(`GET /clinical-core/${pool}/posture`, pool, {});
+    request.body = null;
+    const result = await api.run(request);
+    expect(result.statusCode).toBe(200);
+    expect(JSON.parse(result.body)).toEqual({
+      data: {
+        contractVersion: "clinical-core/1",
+        environment: "synthetic-staging",
+        dataClassification: "synthetic_only",
+        identityPool: pool,
+        authenticated: true,
+        phiAllowed: false,
+        realPatientDataAllowed: false,
+      },
+    });
+    expect(api.service.issueInvitation).not.toHaveBeenCalled();
+  });
+
   test("issues an invitation from a correctly bound workforce identity", async () => {
     const api = handler();
     const expiresAt = new Date(Date.now() + 60_000).toISOString();

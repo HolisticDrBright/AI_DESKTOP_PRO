@@ -38,7 +38,10 @@ if (Test-Path $zipPath) { Remove-Item -LiteralPath $zipPath }
 Compress-Archive -Path (Join-Path $artifactDir "index.js") -DestinationPath $zipPath
 $digest = (Get-FileHash -Algorithm SHA256 -LiteralPath $zipPath).Hash.ToLowerInvariant()
 $artifactKey = "clinical-core/authenticated-api/$digest.zip"
-aws s3 cp $zipPath "s3://$ArtifactBucket/$artifactKey" --region $Region --only-show-errors
+$kmsKeyArn = Output 'ClinicalCoreKeyArn'
+aws s3 cp $zipPath "s3://$ArtifactBucket/$artifactKey" --region $Region --only-show-errors `
+  --sse aws:kms --sse-kms-key-id $kmsKeyArn
+if ($LASTEXITCODE -ne 0) { throw "Authenticated API artifact upload failed." }
 
 $parameters = @(
   "ClinicalApiId=$(Output 'ClinicalApiId')",
@@ -61,5 +64,6 @@ aws cloudformation deploy `
   --capabilities CAPABILITY_IAM `
   --no-fail-on-empty-changeset `
   --parameter-overrides $parameters
+if ($LASTEXITCODE -ne 0) { throw "Authenticated API CloudFormation deployment failed." }
 
 Write-Host "Authenticated synthetic API extension deployed. No request payloads or credential values were printed."

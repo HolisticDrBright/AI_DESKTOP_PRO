@@ -33,6 +33,12 @@ function required(name: string) {
 
 main().catch((error) => {
   const category = error instanceof Error && /^[a-z_]+$/.test(error.message) ? error.message : "deployment_failed";
-  console.error(JSON.stringify({ ok: false, error: category }));
+  const statementIndex = error instanceof Error && "statementIndex" in error
+    && Number.isSafeInteger((error as { statementIndex?: number }).statementIndex)
+    ? (error as { statementIndex: number }).statementIndex : undefined;
+  const operationIndex = error instanceof Error && "operationIndex" in error
+    && Number.isSafeInteger((error as { operationIndex?: number }).operationIndex)
+    ? (error as { operationIndex: number }).operationIndex : undefined;
+  console.error(JSON.stringify({ ok: false, error: category, ...(statementIndex ? { statementIndex } : {}), ...(operationIndex ? { operationIndex } : {}) }));
   process.exitCode = 1;
 });

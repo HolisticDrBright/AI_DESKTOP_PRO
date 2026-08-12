@@ -27,6 +27,7 @@ async function boundary() {
   vi.resetModules();
   const mod = await import("./passio-boundary");
   mod.__resetPassioState();
+  mod.__setPassioGovernanceForTest(true);
   return mod;
 }
 
@@ -43,6 +44,17 @@ describe("Passio boundary configuration", () => {
     expect(report.mode).toBe("disabled");
     expect(report.configured).toBe(false);
     expect(report.problems.join(" ")).toMatch(/PASSIO_ENABLED is not set/);
+  });
+
+  test("credentials and enable flag cannot substitute for governed approval", async () => {
+    enable();
+    vi.resetModules();
+    const mod = await import("./passio-boundary");
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    expect(mod.getPassioConfig()).toMatchObject({ configured: false });
+    expect(mod.getPassioConfig().problems).toContain("Governed Passio approval is missing.");
+    await expect(mod.searchFoods("apple")).rejects.toMatchObject({ code: "not_configured" });
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   test("enabled but incomplete stays disabled and names what is missing", async () => {

@@ -78,7 +78,8 @@ export function validateIdentityConsentBoundary({ migration, manifest, adapter, 
   assert(errors, !/console\.(log|warn|error)|logger\./.test(adapter), "adapter must not log tokens or clinical identifiers");
 
   assert(errors, manifest.contract_version === "clinical-core-migrations/1", "migration manifest contract is invalid");
-  assert(errors, manifest.migrations?.length === 1, "unexpected migration count");
+  assert(errors, Array.isArray(manifest.migrations) && manifest.migrations.length >= 1, "migration ledger must not be empty");
+  assert(errors, new Set(manifest.migrations?.map((entry) => entry.version)).size === manifest.migrations?.length, "migration versions must be unique");
   assert(errors, runner.includes("pg_advisory_xact_lock"), "migration runner must serialize applies");
   assert(errors, runner.includes("history_mismatch"), "migration runner must refuse rewritten history");
   assert(errors, runner.includes("database.transaction"), "migration runner must apply atomically");

@@ -6,7 +6,7 @@ import {
   createAwsSyntheticIdentityConsentAdapter,
   type SyntheticRequestContext,
 } from "./aws-identity-consent";
-import { ClinicalCoreDatabaseRejection, type ClinicalCoreDatabase, type ClinicalCoreQueryResult } from "./database";
+import { clinicalUuid, ClinicalCoreDatabaseRejection, type ClinicalCoreDatabase, type ClinicalCoreQueryResult } from "./database";
 
 const ACTOR = "11111111-1111-4111-8111-111111111111";
 const ORG = "22222222-2222-4222-8222-222222222222";
@@ -71,6 +71,7 @@ describe("AWS synthetic identity and consent adapter", () => {
     expect(db.calls[0]!.parameters).toContain("synthetic-subject-001");
     const mutation = db.calls[1]!;
     expect(mutation.sql).toContain("issue_connection_invitation");
+    expect(mutation.sql).toContain("$4::timestamptz");
     expect(mutation.parameters).not.toContain(result.token);
     expect(mutation.parameters[2]).toMatch(/^[0-9a-f]{64}$/);
   });
@@ -138,7 +139,7 @@ describe("AWS synthetic identity and consent adapter", () => {
     });
     expect(result).toMatchObject({ status: "granted", scope: "wearables", version: 1 });
     expect(db.calls[1]!.parameters).toEqual([
-      CONNECTION, ARTIFACT, "wearables", "in_person", "self",
+      clinicalUuid(CONNECTION), clinicalUuid(ARTIFACT), "wearables", "in_person", "self",
     ]);
   });
 
@@ -160,7 +161,7 @@ describe("AWS synthetic identity and consent adapter", () => {
       reasonCode: "patient_request",
     });
     expect(result).toMatchObject({ status: "revoked", version: 2 });
-    expect(db.calls[1]!.parameters).toEqual([CONNECTION, "nutrition", "patient_request"]);
+    expect(db.calls[1]!.parameters).toEqual([clinicalUuid(CONNECTION), "nutrition", "patient_request"]);
   });
 
   test.each([

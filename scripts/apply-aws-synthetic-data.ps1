@@ -13,6 +13,7 @@ if (-not $ConfirmSyntheticOnly) { throw "Refusing operation: explicitly confirm 
 if (-not (Get-Command aws -ErrorAction SilentlyContinue)) { throw "AWS CLI is required. No cloud operation was attempted." }
 
 npm run preflight:aws-synthetic -- $DeploymentManifestPath
+if ($LASTEXITCODE -ne 0) { throw "Synthetic preflight refused or failed." }
 $deployment = Get-Content -Raw -LiteralPath $DeploymentManifestPath | ConvertFrom-Json
 $fixture = Get-Content -Raw -LiteralPath $SyntheticManifestPath | ConvertFrom-Json
 $account = aws sts get-caller-identity --query Account --output text
@@ -23,7 +24,9 @@ if ($fixture.environment -ne "synthetic-staging" -or $fixture.dataClassification
 }
 
 npm run check:aws-deployment-acceptance
+if ($LASTEXITCODE -ne 0) { throw "Deployment acceptance check refused or failed." }
 npm run build:aws-deployment-tools
+if ($LASTEXITCODE -ne 0) { throw "Deployment tools build failed." }
 $outputs = aws cloudformation describe-stacks --stack-name $FoundationStackName --region $Region --query "Stacks[0].Outputs" --output json | ConvertFrom-Json
 function Output([string]$key) {
   $entry = $outputs | Where-Object OutputKey -eq $key
