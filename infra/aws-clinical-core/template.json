@@ -479,7 +479,7 @@
         "GenerateSecret": false,
         "PreventUserExistenceErrors": "ENABLED",
         "EnableTokenRevocation": true,
-        "ExplicitAuthFlows": ["ALLOW_USER_SRP_AUTH", "ALLOW_ADMIN_USER_PASSWORD_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"],
+        "ExplicitAuthFlows": ["ALLOW_USER_SRP_AUTH", "ALLOW_USER_PASSWORD_AUTH", "ALLOW_ADMIN_USER_PASSWORD_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"],
         "AccessTokenValidity": 15,
         "IdTokenValidity": 15,
         "RefreshTokenValidity": 12,
@@ -749,7 +749,7 @@
         "ProtocolType": "HTTP",
         "CorsConfiguration": {
           "AllowOrigins": { "Ref": "AllowedClientOrigins" },
-          "AllowMethods": ["GET", "OPTIONS"],
+          "AllowMethods": ["GET", "POST", "OPTIONS"],
           "AllowHeaders": ["authorization", "content-type"],
           "MaxAge": 300
         },

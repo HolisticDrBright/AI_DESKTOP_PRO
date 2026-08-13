@@ -1,0 +1,165 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Durable synthetic-only AWS lab analysis for AI Longevity Pro V2.",
+  "Metadata": {
+    "ClinicalCore": {
+      "ContractVersion": "lab-analysis/1",
+      "Environment": "synthetic-staging",
+      "DataClassification": "synthetic_only",
+      "ContainsPhi": false,
+      "RealPatientDataAllowed": false
+    }
+  },
+  "Parameters": {
+    "ClinicalApiId": { "Type": "String", "AllowedPattern": "^[a-z0-9]{10}$" },
+    "ConsumerUserPoolId": { "Type": "String", "AllowedPattern": "^[a-z0-9-]+_[A-Za-z0-9]+$" },
+    "ConsumerUserPoolClientId": { "Type": "String", "AllowedPattern": "^[A-Za-z0-9]{20,128}$" },
+    "ClinicalCoreKeyArn": { "Type": "String", "AllowedPattern": "^arn:(aws|aws-us-gov|aws-cn):kms:[a-z0-9-]+:[0-9]{12}:key/[0-9a-f-]{36}$" },
+    "LambdaCodeBucket": { "Type": "String", "AllowedPattern": "^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$" },
+    "ApiCodeKey": { "Type": "String", "AllowedPattern": "^[A-Za-z0-9!_.*'()/\\-]{1,1024}$" },
+    "WorkerCodeKey": { "Type": "String", "AllowedPattern": "^[A-Za-z0-9!_.*'()/\\-]{1,1024}$" }
+  },
+  "Resources": {
+    "LabJobTable": {
+      "Type": "AWS::DynamoDB::Table",
+      "DeletionPolicy": "Delete",
+      "UpdateReplacePolicy": "Delete",
+      "Properties": {
+        "BillingMode": "PAY_PER_REQUEST",
+        "AttributeDefinitions": [{ "AttributeName": "pk", "AttributeType": "S" }],
+        "KeySchema": [{ "AttributeName": "pk", "KeyType": "HASH" }],
+        "PointInTimeRecoverySpecification": { "PointInTimeRecoveryEnabled": true },
+        "SSESpecification": { "SSEEnabled": true, "SSEType": "KMS", "KMSMasterKeyId": { "Ref": "ClinicalCoreKeyArn" } },
+        "TimeToLiveSpecification": { "AttributeName": "expiresAt", "Enabled": true },
+        "Tags": [
+          { "Key": "Environment", "Value": "synthetic-staging" },
+          { "Key": "DataClassification", "Value": "synthetic_only" }
+        ]
+      }
+    },
+    "LabDocumentsBucket": {
+      "Type": "AWS::S3::Bucket",
+      "DeletionPolicy": "Delete",
+      "UpdateReplacePolicy": "Delete",
+      "Properties": {
+        "BucketEncryption": { "ServerSideEncryptionConfiguration": [{ "BucketKeyEnabled": true, "ServerSideEncryptionByDefault": { "KMSMasterKeyID": { "Ref": "ClinicalCoreKeyArn" }, "SSEAlgorithm": "aws:kms" } }] },
+        "CorsConfiguration": { "CorsRules": [{ "AllowedHeaders": ["*"], "AllowedMethods": ["PUT"], "AllowedOrigins": ["http://localhost:8081", "http://127.0.0.1:8081", "http://localhost:19006", "http://127.0.0.1:19006"], "ExposedHeaders": ["ETag"], "MaxAge": 300 }] },
+        "LifecycleConfiguration": { "Rules": [{ "Id": "ExpireSyntheticLabData", "Status": "Enabled", "ExpirationInDays": 7, "NoncurrentVersionExpiration": { "NoncurrentDays": 7 }, "AbortIncompleteMultipartUpload": { "DaysAfterInitiation": 1 } }] },
+        "OwnershipControls": { "Rules": [{ "ObjectOwnership": "BucketOwnerEnforced" }] },
+        "PublicAccessBlockConfiguration": { "BlockPublicAcls": true, "BlockPublicPolicy": true, "IgnorePublicAcls": true, "RestrictPublicBuckets": true },
+        "VersioningConfiguration": { "Status": "Enabled" },
+        "Tags": [
+          { "Key": "Environment", "Value": "synthetic-staging" },
+          { "Key": "DataClassification", "Value": "synthetic_only" }
+        ]
+      }
+    },
+    "LabDocumentsBucketPolicy": {
+      "Type": "AWS::S3::BucketPolicy",
+      "Properties": {
+        "Bucket": { "Ref": "LabDocumentsBucket" },
+        "PolicyDocument": { "Version": "2012-10-17", "Statement": [
+          { "Sid": "DenyInsecureTransport", "Effect": "Deny", "Principal": "*", "Action": "s3:*", "Resource": [{ "Fn::GetAtt": ["LabDocumentsBucket", "Arn"] }, { "Fn::Sub": "${LabDocumentsBucket.Arn}/*" }], "Condition": { "Bool": { "aws:SecureTransport": "false" } } },
+          { "Sid": "DenyUnapprovedEncryption", "Effect": "Deny", "Principal": "*", "Action": "s3:PutObject", "Resource": { "Fn::Sub": "${LabDocumentsBucket.Arn}/*" }, "Condition": { "StringNotEquals": { "s3:x-amz-server-side-encryption": "aws:kms" } } },
+          { "Sid": "DenyWrongKey", "Effect": "Deny", "Principal": "*", "Action": "s3:PutObject", "Resource": { "Fn::Sub": "${LabDocumentsBucket.Arn}/*" }, "Condition": { "StringNotEquals": { "s3:x-amz-server-side-encryption-aws-kms-key-id": { "Ref": "ClinicalCoreKeyArn" } } } }
+        ] }
+      }
+    },
+    "LabApiLogGroup": {
+      "Type": "AWS::Logs::LogGroup",
+      "DeletionPolicy": "Delete",
+      "UpdateReplacePolicy": "Delete",
+      "Properties": { "LogGroupName": { "Fn::Sub": "/ai-clinical-core/synthetic-staging/lab-api-${ClinicalApiId}" }, "KmsKeyId": { "Ref": "ClinicalCoreKeyArn" }, "RetentionInDays": 14 }
+    },
+    "LabWorkerLogGroup": {
+      "Type": "AWS::Logs::LogGroup",
+      "DeletionPolicy": "Delete",
+      "UpdateReplacePolicy": "Delete",
+      "Properties": { "LogGroupName": { "Fn::Sub": "/ai-clinical-core/synthetic-staging/lab-worker-${ClinicalApiId}" }, "KmsKeyId": { "Ref": "ClinicalCoreKeyArn" }, "RetentionInDays": 14 }
+    },
+    "LabApiRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Principal": { "Service": "lambda.amazonaws.com" }, "Action": "sts:AssumeRole" }] },
+        "Policies": [
+          { "PolicyName": "LabJobLedger", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem"], "Resource": { "Fn::GetAtt": ["LabJobTable", "Arn"] } }, { "Effect": "Allow", "Action": ["kms:Decrypt", "kms:GenerateDataKey"], "Resource": { "Ref": "ClinicalCoreKeyArn" } }] } },
+          { "PolicyName": "LabDocumentUpload", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": ["s3:PutObject", "s3:GetObject"], "Resource": { "Fn::Sub": "${LabDocumentsBucket.Arn}/synthetic-labs/*" } }, { "Effect": "Allow", "Action": "kms:GenerateDataKey", "Resource": { "Ref": "ClinicalCoreKeyArn" } }] } },
+          { "PolicyName": "LabWorkflowStart", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": "states:StartExecution", "Resource": { "Fn::Sub": "arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:stateMachine:${ClinicalApiId}-synthetic-lab-analysis" } }] } },
+          { "PolicyName": "LabApiLogs", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": ["logs:CreateLogStream", "logs:PutLogEvents"], "Resource": { "Fn::GetAtt": ["LabApiLogGroup", "Arn"] } }] } }
+        ]
+      }
+    },
+    "LabWorkerRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Principal": { "Service": "lambda.amazonaws.com" }, "Action": "sts:AssumeRole" }] },
+        "Policies": [
+          { "PolicyName": "LabWorkerLedger", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": ["dynamodb:GetItem", "dynamodb:UpdateItem"], "Resource": { "Fn::GetAtt": ["LabJobTable", "Arn"] } }, { "Effect": "Allow", "Action": ["kms:Decrypt", "kms:GenerateDataKey"], "Resource": { "Ref": "ClinicalCoreKeyArn" } }] } },
+          { "PolicyName": "LabWorkerDocuments", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": ["s3:GetObject", "s3:PutObject"], "Resource": { "Fn::Sub": "${LabDocumentsBucket.Arn}/synthetic-labs/*" } }, { "Effect": "Allow", "Action": ["kms:Decrypt", "kms:GenerateDataKey"], "Resource": { "Ref": "ClinicalCoreKeyArn" } }] } },
+          { "PolicyName": "LabWorkerTextract", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": ["textract:DetectDocumentText", "textract:StartDocumentTextDetection", "textract:GetDocumentTextDetection"], "Resource": "*" }] } },
+          { "PolicyName": "LabWorkerLogs", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": ["logs:CreateLogStream", "logs:PutLogEvents"], "Resource": { "Fn::GetAtt": ["LabWorkerLogGroup", "Arn"] } }] } }
+        ]
+      }
+    },
+    "LabApiFunction": {
+      "Type": "AWS::Lambda::Function",
+      "Properties": {
+        "FunctionName": { "Fn::Sub": "${ClinicalApiId}-synthetic-lab-api" },
+        "Runtime": "nodejs22.x", "Architectures": ["arm64"], "Handler": "index.handler", "Role": { "Fn::GetAtt": ["LabApiRole", "Arn"] }, "MemorySize": 384, "Timeout": 20,
+        "LoggingConfig": { "LogGroup": { "Ref": "LabApiLogGroup" }, "LogFormat": "JSON", "ApplicationLogLevel": "ERROR", "SystemLogLevel": "WARN" },
+        "Code": { "S3Bucket": { "Ref": "LambdaCodeBucket" }, "S3Key": { "Ref": "ApiCodeKey" } },
+        "Environment": { "Variables": { "LAB_JOB_TABLE": { "Ref": "LabJobTable" }, "LAB_DOCUMENT_BUCKET": { "Ref": "LabDocumentsBucket" }, "LAB_KMS_KEY_ARN": { "Ref": "ClinicalCoreKeyArn" }, "LAB_STATE_MACHINE_ARN": { "Fn::Sub": "arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:stateMachine:${ClinicalApiId}-synthetic-lab-analysis" } } }
+      }
+    },
+    "LabWorkerFunction": {
+      "Type": "AWS::Lambda::Function",
+      "Properties": {
+        "FunctionName": { "Fn::Sub": "${ClinicalApiId}-synthetic-lab-worker" },
+        "Runtime": "nodejs22.x", "Architectures": ["arm64"], "Handler": "index.handler", "Role": { "Fn::GetAtt": ["LabWorkerRole", "Arn"] }, "MemorySize": 1024, "Timeout": 120,
+        "LoggingConfig": { "LogGroup": { "Ref": "LabWorkerLogGroup" }, "LogFormat": "JSON", "ApplicationLogLevel": "ERROR", "SystemLogLevel": "WARN" },
+        "Code": { "S3Bucket": { "Ref": "LambdaCodeBucket" }, "S3Key": { "Ref": "WorkerCodeKey" } },
+        "Environment": { "Variables": { "LAB_JOB_TABLE": { "Ref": "LabJobTable" }, "LAB_DOCUMENT_BUCKET": { "Ref": "LabDocumentsBucket" }, "LAB_KMS_KEY_ARN": { "Ref": "ClinicalCoreKeyArn" } } }
+      }
+    },
+    "LabStateMachineRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Principal": { "Service": "states.amazonaws.com" }, "Action": "sts:AssumeRole" }] },
+        "Policies": [{ "PolicyName": "InvokeLabWorker", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": "lambda:InvokeFunction", "Resource": [{ "Fn::GetAtt": ["LabWorkerFunction", "Arn"] }, { "Fn::Sub": "${LabWorkerFunction.Arn}:*" }] }] } }]
+      }
+    },
+    "LabStateMachine": {
+      "Type": "AWS::StepFunctions::StateMachine",
+      "Properties": {
+        "StateMachineName": { "Fn::Sub": "${ClinicalApiId}-synthetic-lab-analysis" },
+        "StateMachineType": "STANDARD",
+        "RoleArn": { "Fn::GetAtt": ["LabStateMachineRole", "Arn"] },
+        "DefinitionString": { "Fn::Sub": "{\"StartAt\":\"Pass0\",\"States\":{\"Pass0\":{\"Type\":\"Task\",\"Resource\":\"${LabWorkerFunction.Arn}\",\"Parameters\":{\"jobId.$\":\"$.jobId\",\"pass\":0},\"ResultPath\":null,\"Retry\":[{\"ErrorEquals\":[\"States.TaskFailed\"],\"IntervalSeconds\":2,\"MaxAttempts\":2,\"BackoffRate\":2}],\"Catch\":[{\"ErrorEquals\":[\"States.ALL\"],\"ResultPath\":\"$.failure\",\"Next\":\"FailJob\"}],\"Next\":\"Pass1\"},\"Pass1\":{\"Type\":\"Task\",\"Resource\":\"${LabWorkerFunction.Arn}\",\"Parameters\":{\"jobId.$\":\"$.jobId\",\"pass\":1},\"ResultPath\":null,\"Retry\":[{\"ErrorEquals\":[\"States.TaskFailed\"],\"IntervalSeconds\":2,\"MaxAttempts\":2,\"BackoffRate\":2}],\"Catch\":[{\"ErrorEquals\":[\"States.ALL\"],\"ResultPath\":\"$.failure\",\"Next\":\"FailJob\"}],\"Next\":\"Pass2\"},\"Pass2\":{\"Type\":\"Task\",\"Resource\":\"${LabWorkerFunction.Arn}\",\"Parameters\":{\"jobId.$\":\"$.jobId\",\"pass\":2},\"ResultPath\":null,\"Retry\":[{\"ErrorEquals\":[\"States.TaskFailed\"],\"IntervalSeconds\":2,\"MaxAttempts\":2,\"BackoffRate\":2}],\"Catch\":[{\"ErrorEquals\":[\"States.ALL\"],\"ResultPath\":\"$.failure\",\"Next\":\"FailJob\"}],\"Next\":\"Pass3\"},\"Pass3\":{\"Type\":\"Task\",\"Resource\":\"${LabWorkerFunction.Arn}\",\"Parameters\":{\"jobId.$\":\"$.jobId\",\"pass\":3},\"ResultPath\":null,\"Retry\":[{\"ErrorEquals\":[\"States.TaskFailed\"],\"IntervalSeconds\":2,\"MaxAttempts\":2,\"BackoffRate\":2}],\"Catch\":[{\"ErrorEquals\":[\"States.ALL\"],\"ResultPath\":\"$.failure\",\"Next\":\"FailJob\"}],\"Next\":\"Pass4\"},\"Pass4\":{\"Type\":\"Task\",\"Resource\":\"${LabWorkerFunction.Arn}\",\"Parameters\":{\"jobId.$\":\"$.jobId\",\"pass\":4},\"ResultPath\":null,\"Retry\":[{\"ErrorEquals\":[\"States.TaskFailed\"],\"IntervalSeconds\":2,\"MaxAttempts\":2,\"BackoffRate\":2}],\"Catch\":[{\"ErrorEquals\":[\"States.ALL\"],\"ResultPath\":\"$.failure\",\"Next\":\"FailJob\"}],\"End\":true},\"FailJob\":{\"Type\":\"Task\",\"Resource\":\"${LabWorkerFunction.Arn}\",\"Parameters\":{\"jobId.$\":\"$.jobId\",\"fail\":true,\"failureCategory.$\":\"$.failure.Error\"},\"End\":true}}}" }
+      }
+    },
+    "LabConsumerAuthorizer": {
+      "Type": "AWS::ApiGatewayV2::Authorizer",
+      "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "AuthorizerType": "JWT", "Name": "synthetic-lab-consumer", "IdentitySource": ["$request.header.Authorization"], "JwtConfiguration": { "Issuer": { "Fn::Sub": "https://cognito-idp.${AWS::Region}.${AWS::URLSuffix}/${ConsumerUserPoolId}" }, "Audience": [{ "Ref": "ConsumerUserPoolClientId" }] } }
+    },
+    "LabApiIntegration": {
+      "Type": "AWS::ApiGatewayV2::Integration",
+      "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "IntegrationType": "AWS_PROXY", "IntegrationUri": { "Fn::GetAtt": ["LabApiFunction", "Arn"] }, "PayloadFormatVersion": "2.0", "TimeoutInMillis": 20000 }
+    },
+    "CreateLabJobRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "POST /clinical-core/consumer/labs/jobs", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "LabConsumerAuthorizer" }, "Target": { "Fn::Sub": "integrations/${LabApiIntegration}" } } },
+    "CompleteLabUploadRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "POST /clinical-core/consumer/labs/jobs/{jobId}/complete-upload", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "LabConsumerAuthorizer" }, "Target": { "Fn::Sub": "integrations/${LabApiIntegration}" } } },
+    "GetLabJobRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "GET /clinical-core/consumer/labs/jobs/{jobId}", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "LabConsumerAuthorizer" }, "Target": { "Fn::Sub": "integrations/${LabApiIntegration}" } } },
+    "LabApiInvokePermission": {
+      "Type": "AWS::Lambda::Permission",
+      "Properties": { "Action": "lambda:InvokeFunction", "FunctionName": { "Ref": "LabApiFunction" }, "Principal": "apigateway.amazonaws.com", "SourceArn": { "Fn::Sub": "arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${ClinicalApiId}/*/*/clinical-core/consumer/labs/*" } }
+    }
+  },
+  "Outputs": {
+    "ContractVersion": { "Value": "lab-analysis/1" },
+    "LabJobTableName": { "Value": { "Ref": "LabJobTable" } },
+    "LabDocumentsBucketName": { "Value": { "Ref": "LabDocumentsBucket" } },
+    "LabStateMachineArn": { "Value": { "Ref": "LabStateMachine" } },
+    "RoutesEnabled": { "Value": "3" },
+    "PhiAllowed": { "Value": "false" },
+    "DataClassification": { "Value": "synthetic_only" }
+  }
+}
