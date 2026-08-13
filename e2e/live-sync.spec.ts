@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { STUB_BASE, resetBackend } from "./support/backend";
 
 /**
  * PHASE 5, browser-level: the Patient Delivery & Synchronization Gateway
@@ -51,7 +52,14 @@ test.skip(!process.env.E2E_LIVE, "live-mode suite: set E2E_LIVE=1 with a clinica
 
 test.describe.configure({ mode: "serial" });
 
-const STUB = "http://127.0.0.1:3999";
+/**
+ * Isolation, not ordering. This restores the whole fixture backend so the
+ * suite runs against exactly the state it was written for, wherever it lands
+ * in the battery.
+ */
+test.beforeAll(resetBackend);
+
+const STUB = STUB_BASE;
 
 // This suite is written against a pristine sync domain; reset it up front so
 // the battery is order-independent (other suites may have exercised sync).

@@ -12,6 +12,9 @@ import { LabsHub } from "@/components/patient/LabsHub";
 import { ProtocolWorkspace } from "@/components/patient/ProtocolWorkspace";
 import { PatientMessagesLive } from "@/components/inbox/PatientMessagesLive";
 import { PatientSyncPanel } from "@/components/sync/PatientSyncPanel";
+import { PatientBillingLive } from "@/components/billing/PatientBillingLive";
+import { PatientPlansLive } from "@/components/plans/PatientPlansLive";
+import { PatientNutritionLive } from "@/components/nutrition/PatientNutritionLive";
 
 /** Tabs with live data sources; the rest state their demo-only status in live mode. */
 const LIVE_READY: Partial<Record<PatientTabId, true>> = {
@@ -20,6 +23,9 @@ const LIVE_READY: Partial<Record<PatientTabId, true>> = {
   protocol: true,
   messages: true,
   "app-sync": true,
+  billing: true,
+  plans: true,
+  nutrition: true,
 };
 
 function LiveHold({ patientId, label }: { patientId: string; label: string }) {
@@ -96,12 +102,22 @@ export default async function PatientTabPage({
     return <PatientSyncPanel patientId={patientId} />;
   }
 
+  if (tab === "billing") {
+    return <PatientBillingLive patientId={patientId} />;
+  }
+
+  if (tab === "plans") {
+    return <PatientPlansLive patientId={patientId} />;
+  }
+
+  if (tab === "nutrition") {
+    return <PatientNutritionLive patientId={patientId} />;
+  }
+
   if (!LIVE_READY[tab]) {
     const label =
-      tab === "nutrition"
-          ? "Nutrition"
-          : tab === "supplements"
-            ? "Supplements"
+      tab === "supplements"
+        ? "Supplements"
         : tab === "tracking"
           ? "Tracking & Experiments"
           : tab.charAt(0).toUpperCase() + tab.slice(1);

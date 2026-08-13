@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { STUB_BASE, resetBackend } from "./support/backend";
 
 /**
  * PHASE 3, browser-level: the Programs & Education workspace against the
@@ -46,6 +47,13 @@ import { expect, test } from "@playwright/test";
 test.skip(!process.env.E2E_LIVE, "live-mode suite: set E2E_LIVE=1 with a clinical build + backend");
 
 test.describe.configure({ mode: "serial" });
+
+/**
+ * Isolation, not ordering. This restores the whole fixture backend so the
+ * suite runs against exactly the state it was written for, wherever it lands
+ * in the battery.
+ */
+test.beforeAll(resetBackend);
 
 const PATIENT = "aaaaaaaa-1111-2222-3333-444444444402";
 /** Identities that exist only in the demo edition's fixture dataset. */
@@ -353,7 +361,7 @@ test("14: a revoked membership refuses the library without leaking program data"
   // Warm the session, then revoke the bearer's memberships mid-session.
   await page.goto("/programs");
   await expect(page.getByTestId("program-list")).toBeVisible();
-  await page.request.post("http://127.0.0.1:3999/__control/revoke-memberships", {
+  await page.request.post(`${STUB_BASE}/__control/revoke-memberships`, {
     data: { bearer: "fixture-access-token" },
   });
   await page.goto("/programs");
@@ -361,7 +369,7 @@ test("14: a revoked membership refuses the library without leaking program data"
   await expect(page.getByText("Metabolic Reset")).toHaveCount(0);
 
   // Restore the membership so suites running after this one keep a live session.
-  await page.request.post("http://127.0.0.1:3999/__control/restore-memberships", {
+  await page.request.post(`${STUB_BASE}/__control/restore-memberships`, {
     data: { bearer: "fixture-access-token" },
   });
 });

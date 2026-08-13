@@ -12,10 +12,30 @@ import { defineConfig } from "@playwright/test";
  */
 const PORT = Number(process.env.E2E_PORT ?? 3114);
 
+/**
+ * E2E_DEV_SERVER=1 boots `next dev` instead of `next start`.
+ *
+ * WHY THIS EXISTS. `next start` forces NODE_ENV=production, which the
+ * deployed-runtime detector treats as a deployment signal — correctly, and
+ * categorically. The local contract-fixture boundary
+ * (`src/server/runtime/contractFixture.ts`) therefore refuses under
+ * `next start`, so the deterministic provider produces nothing there.
+ *
+ * The alternative was to weaken the deployed refusal to obtain browser
+ * coverage. That is the trade this repository refuses to make: the suite
+ * moves to a runtime where the fixture is legitimately allowed, rather than
+ * teaching the fixture to be allowed where it must not be.
+ *
+ * The longer timeouts below are for `next dev`'s on-demand compilation —
+ * the first navigation to a route compiles it. They are not flake
+ * tolerance: `retries` stays 0 in both modes, and no assertion is relaxed.
+ */
+const DEV_SERVER = process.env.E2E_DEV_SERVER === "1";
+
 export default defineConfig({
   testDir: "./e2e",
   workers: 1, // session-state flows stay deterministic
-  timeout: 30_000,
+  timeout: DEV_SERVER ? 90_000 : 30_000,
   retries: 0,
   reporter: [["list"]],
   use: {
@@ -35,9 +55,9 @@ export default defineConfig({
     },
   },
   webServer: {
-    command: `npx next start -p ${PORT}`,
+    command: DEV_SERVER ? `npx next dev -p ${PORT}` : `npx next start -p ${PORT}`,
     port: PORT,
     reuseExistingServer: true,
-    timeout: 60_000,
+    timeout: DEV_SERVER ? 180_000 : 60_000,
   },
 });

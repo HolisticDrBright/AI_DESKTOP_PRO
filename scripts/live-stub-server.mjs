@@ -34,7 +34,19 @@ const PATIENTS = [
   // Dedicated to the phase-2 front-desk walkthrough so that suite consumes its
   // own appointment instead of the one the EMR suite drives.
   { id: "aaaaaaaa-1111-2222-3333-444444444403", organization_id: "org-fixture", mrn: "FX-0003", first_name: "Frontdesk", last_name: "Walkthrough", date_of_birth: "1979-02-20", sex: "female", status: "active" },
+  // Dedicated to the phase-8A billing walkthrough so that suite consumes its
+  // own appointment instead of the one the EMR/tasks suite drives.
+  { id: "aaaaaaaa-1111-2222-3333-444444444404", organization_id: "org-fixture", mrn: "FX-0004", first_name: "Billing", last_name: "Walkthrough", date_of_birth: "1988-11-07", sex: "male", status: "active" },
+  // Dedicated to the phase-9A nutrition walkthrough. Carries a recorded peanut
+  // allergy, because the approval gate is only worth proving against a plan
+  // that actually collides with the chart.
+  { id: "aaaaaaaa-1111-2222-3333-444444444405", organization_id: "org-fixture", mrn: "FX-0005", first_name: "Nutrition", last_name: "Walkthrough", date_of_birth: "1986-06-15", sex: "female", status: "active" },
 ];
+
+/** Chart allergies the nutrition safety evaluator reads. */
+const NUTRITION_ALLERGIES = {
+  "aaaaaaaa-1111-2222-3333-444444444405": ["Peanut"],
+};
 
 const now = Date.now();
 const iso = (msAgo) => new Date(now - msAgo).toISOString();
@@ -72,6 +84,11 @@ const existingAccountEmails = new Set([
 
 function memberOrgIdsForBearer(bearerToken) {
   if (revokedBearers.has(bearerToken) || bearerToken.endsWith("--noorg")) return [];
+  // Phase 9E-A.1 continuation: an "outsider" bearer belongs to `org-outsider`
+  // only, so cross-tenant browser proofs can drive a genuine refusal path.
+  // Without this, every bearer defaulted to `org-fixture` and the refusal
+  // would never fire against the workspace's real fixture org.
+  if (/outsider/i.test(bearerToken)) return ["org-outsider"];
   return bearerToken.endsWith("--multi")
     ? ["org-fixture", "org-second"]
     : ["org-fixture"];
@@ -912,10 +929,30 @@ const scheduleAppointments = [];
 function seedScheduleFor(fromIso) {
   if (scheduleSeeded) return;
   scheduleSeeded = true;
-  const from = new Date(fromIso);
+
+  // NORMALISED TO THE MONDAY OF THE REQUESTED WEEK, not to the raw date.
+  //
+  // Three different entry points seed this fixture: the calendar (which asks
+  // for a week boundary), booking (which asks for an appointment time), and
+  // the Today page (which asks for `now`). Whichever fires first decided where
+  // the appointments landed, and offsets counted forward from a mid-week date
+  // pushed them into the FOLLOWING week — so on a Sunday, with a Monday-start
+  // calendar, the visible week was empty and the calendar suite failed with
+  // "no appointment found". A date-dependent fixture is a test that passes
+  // depending on what day it is run, which is not a test.
+  //
+  // Anchoring to the week start means every entry point seeds the same week,
+  // and day offsets 1-7 are Monday through Sunday OF THAT WEEK.
+  const requested = new Date(fromIso);
+  const weekStart = new Date(requested);
+  // getDay(): 0 = Sunday. Monday-start weeks put Sunday six days after Monday.
+  const daysSinceMonday = (weekStart.getDay() + 6) % 7;
+  weekStart.setDate(weekStart.getDate() - daysSinceMonday);
+  weekStart.setHours(0, 0, 0, 0);
+
   const at = (dayOffset, h, m = 0) => {
-    const d = new Date(from);
-    d.setDate(d.getDate() + dayOffset);
+    const d = new Date(weekStart);
+    d.setDate(d.getDate() + (dayOffset - 1));
     d.setHours(h, m, 0, 0);
     return d;
   };
@@ -937,6 +974,44 @@ function seedScheduleFor(fromIso) {
       title: null, appointmentType: "follow-up", location: "Room 3", telehealthUrl: null,
       status: "confirmed", version: 1,
       startsAt: at(3, 10).toISOString(), endsAt: at(3, 10, 40).toISOString(),
+    },
+    {
+      id: "abababab-1111-2222-3333-444444444404",
+      organizationId: "org-fixture",
+      patientId: PATIENTS[3].id, patientName: "Billing Walkthrough",
+      practitionerUserId: PRACTITIONER_USER_ID, practitionerName: "Demo Practitioner",
+      title: null, appointmentType: "follow-up", location: "Room 4", telehealthUrl: null,
+      status: "confirmed", version: 1,
+      startsAt: at(4, 9).toISOString(), endsAt: at(4, 9, 40).toISOString(),
+    },
+    // Dedicated to the phase-8B plans walkthrough: credit redemption needs
+    // several appointments for ONE patient (reserve, release, race).
+    {
+      id: "abababab-1111-2222-3333-444444444405",
+      organizationId: "org-fixture",
+      patientId: PATIENTS[3].id, patientName: "Billing Walkthrough",
+      practitionerUserId: PRACTITIONER_USER_ID, practitionerName: "Demo Practitioner",
+      title: null, appointmentType: "follow-up", location: "Room 4", telehealthUrl: null,
+      status: "confirmed", version: 1,
+      startsAt: at(5, 9).toISOString(), endsAt: at(5, 9, 40).toISOString(),
+    },
+    {
+      id: "abababab-1111-2222-3333-444444444406",
+      organizationId: "org-fixture",
+      patientId: PATIENTS[3].id, patientName: "Billing Walkthrough",
+      practitionerUserId: PRACTITIONER_USER_ID, practitionerName: "Demo Practitioner",
+      title: null, appointmentType: "follow-up", location: "Room 4", telehealthUrl: null,
+      status: "confirmed", version: 1,
+      startsAt: at(6, 9).toISOString(), endsAt: at(6, 9, 40).toISOString(),
+    },
+    {
+      id: "abababab-1111-2222-3333-444444444407",
+      organizationId: "org-fixture",
+      patientId: PATIENTS[3].id, patientName: "Billing Walkthrough",
+      practitionerUserId: PRACTITIONER_USER_ID, practitionerName: "Demo Practitioner",
+      title: null, appointmentType: "follow-up", location: "Room 4", telehealthUrl: null,
+      status: "confirmed", version: 1,
+      startsAt: at(7, 9).toISOString(), endsAt: at(7, 9, 40).toISOString(),
     },
     {
       id: "abababab-1111-2222-3333-444444444402",
@@ -1857,6 +1932,958 @@ const syncInboundRow = (i) => ({
   rejectionReason: i.rejectionReason ?? null, providerEventId: i.providerEventId,
 });
 
+/* ---- billing, checkout, catalog & inventory fixtures (phase-8A semantics).
+   Money is integer minor units. The accounting rules the desktop depends on
+   are reproduced here EXACTLY as the RPCs enforce them: tax is computed from
+   configured rates and never accepted from the caller; finalize reserves
+   tracked stock; full settlement commits the sale exactly once; void releases
+   reservations; a refund never restocks; a card payment only ever reaches
+   PENDING from a browser call, and settles solely through the __control
+   webhook stand-in for the service_role processor boundary. */
+
+const BILLING_LOCATION_ID = "b1111111-0000-4000-8000-000000000001";
+const BILLING_SUPPLIER_ID = "b2222222-0000-4000-8000-000000000001";
+const BILLING_TAX_RATE_ID = "b3333333-0000-4000-8000-000000000001";
+const BILLING_SERVICE_ID = "b4444444-0000-4000-8000-000000000001";
+const BILLING_SUPPLEMENT_ID = "b4444444-0000-4000-8000-000000000002";
+const BILLING_UNTRACKED_ID = "b4444444-0000-4000-8000-000000000003";
+
+let billingLocations = [];
+let billingSuppliers = [];
+let billingTaxRates = [];
+let billingProducts = [];
+let billingStock = new Map();      // `${locationId}:${productId}` -> row
+let billingLedger = [];            // append-only movements
+let billingInvoices = new Map();
+let billingLines = new Map();      // invoiceId -> line[]
+let billingEvents = [];            // append-only invoice history
+let billingPayments = new Map();
+let billingRefunds = [];
+let billingCredits = [];           // patient credit entries
+let billingWebhookEvents = [];
+let billingSeq = 0;
+let billingInvoiceNumber = 0;
+
+const billingId = (prefix) => `${prefix}-${String(++billingSeq).padStart(6, "0")}`;
+const stockKey = (locationId, productId) => `${locationId}:${productId}`;
+
+function resetBillingFixtures() {
+  billingSeq = 0;
+  billingInvoiceNumber = 0;
+  billingStock = new Map();
+  billingLedger = [];
+  billingInvoices = new Map();
+  billingLines = new Map();
+  billingEvents = [];
+  billingPayments = new Map();
+  billingRefunds = [];
+  billingCredits = [];
+  billingWebhookEvents = [];
+  billingLocations = [
+    { id: BILLING_LOCATION_ID, organizationId: "org-fixture", name: "Main Clinic", archivedAt: null },
+  ];
+  billingSuppliers = [
+    { id: BILLING_SUPPLIER_ID, organizationId: "org-fixture", name: "NutriSupply",
+      contactEmail: null, phone: null, notes: null, archivedAt: null },
+  ];
+  billingTaxRates = [
+    { id: BILLING_TAX_RATE_ID, organizationId: "org-fixture", name: "Sales Tax",
+      rateBps: 800, active: true },
+  ];
+  billingProducts = [
+    { id: BILLING_SERVICE_ID, organizationId: "org-fixture", name: "Follow-up",
+      kind: "service", amountMinor: 15000, currency: "USD", sku: null, barcode: null,
+      supplierId: null, costMinor: 0, taxRateId: BILLING_TAX_RATE_ID, description: null,
+      trackInventory: false, reorderThreshold: 0, catalogProductId: null,
+      archivedAt: null, version: 1 },
+    { id: BILLING_SUPPLEMENT_ID, organizationId: "org-fixture", name: "Omega-3 Fish Oil",
+      kind: "supplement", amountMinor: 2500, currency: "USD", sku: "OM3-90", barcode: null,
+      supplierId: BILLING_SUPPLIER_ID, costMinor: 1200, taxRateId: BILLING_TAX_RATE_ID,
+      description: null, trackInventory: true, reorderThreshold: 2, catalogProductId: null,
+      archivedAt: null, version: 1 },
+    { id: BILLING_UNTRACKED_ID, organizationId: "org-fixture", name: "Consult Packet",
+      kind: "product", amountMinor: 500, currency: "USD", sku: null, barcode: null,
+      supplierId: null, costMinor: 100, taxRateId: null, description: null,
+      trackInventory: false, reorderThreshold: 0, catalogProductId: null,
+      archivedAt: null, version: 1 },
+  ];
+  // Opening stock, received exactly the way the UI would.
+  billingMoveStock(BILLING_LOCATION_ID, BILLING_SUPPLEMENT_ID, "receipt", 10, 0, {
+    reason: "opening stock", unitCostMinor: 1200, supplierId: BILLING_SUPPLIER_ID,
+  });
+  for (const [id, item] of queue) {
+    if (item.itemType === "inventory_low_stock") queue.delete(id);
+  }
+}
+
+function billingProduct(id) {
+  return billingProducts.find((p) => p.id === id) ?? null;
+}
+
+/** Apply one movement: stock row + append-only ledger. Throws on oversell. */
+function billingMoveStock(locationId, productId, kind, onHandDelta, reservedDelta, extra = {}) {
+  const key = stockKey(locationId, productId);
+  let row = billingStock.get(key);
+  if (!row) {
+    const product = billingProduct(productId);
+    row = {
+      locationId, productId, organizationId: "org-fixture",
+      onHand: 0, reserved: 0, reorderThreshold: product?.reorderThreshold ?? 0,
+    };
+    billingStock.set(key, row);
+  }
+  if (row.onHand + onHandDelta < 0 || row.reserved + reservedDelta < 0) {
+    const err = new Error("insufficient stock for this movement");
+    err.code = "40001";
+    throw err;
+  }
+  row.onHand += onHandDelta;
+  row.reserved += reservedDelta;
+  billingLedger.push({
+    id: billingId("mv"), organizationId: "org-fixture", locationId, productId, kind,
+    onHandDelta, reservedDelta,
+    reason: extra.reason ?? null, condition: extra.condition ?? null,
+    unitCostMinor: extra.unitCostMinor ?? null, supplierId: extra.supplierId ?? null,
+    refType: extra.refType ?? null, refId: extra.refId ?? null,
+    createdAt: new Date().toISOString(),
+  });
+  billingLowStockCheck(locationId, productId);
+}
+
+/** One open watchdog task per product, exactly like the RPC. */
+function billingLowStockCheck(locationId, productId) {
+  const row = billingStock.get(stockKey(locationId, productId));
+  if (!row) return;
+  if (row.onHand - row.reserved > row.reorderThreshold) return;
+  for (const item of queue.values()) {
+    if (item.itemType === "inventory_low_stock" && item.refId === productId &&
+        (item.status === "open" || item.status === "in_review")) {
+      return;
+    }
+  }
+  const product = billingProduct(productId);
+  const location = billingLocations.find((l) => l.id === locationId);
+  const id = billingId("task");
+  queue.set(id, {
+    id, organizationId: "org-fixture", itemType: "inventory_low_stock",
+    priority: "medium", status: "open", refId: productId,
+    title: `Low stock: ${product?.name ?? "product"} at ${location?.name ?? "location"} ` +
+      `(${row.onHand - row.reserved} available, threshold ${row.reorderThreshold})`,
+    patientId: null, patientName: null, createdAt: new Date().toISOString(),
+  });
+}
+
+function billingCreditBalance(patientId) {
+  return billingCredits
+    .filter((c) => c.patientId === patientId)
+    .reduce((sum, c) => sum + (c.kind === "apply" ? -c.amountMinor : c.amountMinor), 0);
+}
+
+/** Exactly-once sale commitment, guarded like invoices.inventory_committed_at. */
+function billingCommitInventory(invoice) {
+  if (invoice.inventoryCommittedAt) return;
+  if (invoice.inventoryReservedAt) {
+    for (const line of billingLines.get(invoice.id) ?? []) {
+      const product = billingProduct(line.productId);
+      if (!product?.trackInventory) continue;
+      billingMoveStock(invoice.locationId, line.productId, "sale", -line.quantity,
+        -line.quantity, { refType: "invoice", refId: invoice.id });
+    }
+  }
+  invoice.inventoryCommittedAt = new Date().toISOString();
+}
+
+/** Recompute paid state and transition, mirroring private.billing_settle_invoice. */
+function billingSettle(invoice, source) {
+  const payments = [...billingPayments.values()].filter((p) => p.invoiceId === invoice.id);
+  const paid = payments.filter((p) => p.status === "succeeded")
+    .reduce((sum, p) => sum + p.amountMinor, 0);
+  const refunded = billingRefunds
+    .filter((r) => payments.some((p) => p.id === r.paymentId) && r.status === "succeeded")
+    .reduce((sum, r) => sum + r.amountMinor, 0);
+  const settled = paid + invoice.creditAppliedMinor;
+  const from = invoice.status;
+  let to;
+  if (invoice.status === "void" || invoice.status === "draft") to = invoice.status;
+  else if (refunded > 0 && refunded >= paid && paid > 0) to = "refunded";
+  else if (refunded > 0) to = "partially_refunded";
+  else if (settled >= invoice.totalMinor && invoice.totalMinor > 0) to = "paid";
+  else if (settled > 0) to = "partially_paid";
+  else to = "open";
+
+  invoice.paidMinor = paid;
+  invoice.refundedMinor = refunded;
+  invoice.status = to;
+  invoice.version += 1;
+  if (from !== to) {
+    billingEvents.push({
+      invoiceId: invoice.id, kind: "status", from, to, detail: source,
+      createdAt: new Date().toISOString(),
+    });
+  }
+  if (to === "paid") billingCommitInventory(invoice);
+}
+
+/** The invoice projection, key-for-key as private.billing_invoice_json emits. */
+function billingInvoiceJson(invoice) {
+  const lines = billingLines.get(invoice.id) ?? [];
+  const payments = [...billingPayments.values()]
+    .filter((p) => p.invoiceId === invoice.id)
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  const patient = PATIENTS.find((p) => p.id === invoice.patientId);
+  const location = billingLocations.find((l) => l.id === invoice.locationId);
+  return {
+    id: invoice.id, number: invoice.number, status: invoice.status, version: invoice.version,
+    currency: invoice.currency, patientId: invoice.patientId,
+    patientName: patient ? `${patient.first_name} ${patient.last_name}` : null,
+    appointmentId: invoice.appointmentId, practitionerUserId: invoice.practitionerUserId,
+    locationId: invoice.locationId, locationName: location?.name ?? null,
+    subtotalMinor: invoice.subtotalMinor, discountMinor: invoice.discountMinor,
+    taxMinor: invoice.taxMinor, totalMinor: invoice.totalMinor,
+    paidMinor: invoice.paidMinor, refundedMinor: invoice.refundedMinor,
+    creditAppliedMinor: invoice.creditAppliedMinor,
+    balanceMinor: Math.max(invoice.totalMinor - invoice.paidMinor - invoice.creditAppliedMinor, 0),
+    finalizedAt: invoice.finalizedAt, voidedAt: invoice.voidedAt,
+    voidReason: invoice.voidReason, createdAt: invoice.createdAt,
+    lines: lines.map((l) => ({
+      id: l.id, kind: l.kind, productId: l.productId, name: l.nameSnapshot,
+      sku: l.skuSnapshot, description: null, quantity: l.quantity,
+      unitAmountMinor: l.unitAmountMinor, amountMinor: l.amountMinor,
+      discountMinor: l.discountMinor, discountReason: l.discountReason,
+      taxRateBps: l.taxRateBps, taxMinor: l.taxMinor, verification: null,
+    })),
+    payments: payments.map((p) => ({
+      id: p.id, amountMinor: p.amountMinor, currency: p.currency, status: p.status,
+      method: p.method, reference: p.reference, environment: p.environment,
+      processor: p.processor, failureCode: p.failureCodeSafe, paidAt: p.paidAt,
+      createdAt: p.createdAt,
+      refunds: billingRefunds.filter((r) => r.paymentId === p.id).map((r) => ({
+        id: r.id, amountMinor: r.amountMinor, reason: r.reason, status: r.status,
+        method: r.method, createdAt: r.createdAt,
+      })),
+    })),
+    history: billingEvents
+      .filter((e) => e.invoiceId === invoice.id)
+      .map((e) => ({ kind: e.kind, from: e.from, to: e.to, detail: e.detail, at: e.createdAt })),
+  };
+}
+
+resetBillingFixtures();
+
+/* ---- phase 8B: plans, entitlements, memberships & reconciliation.
+   Reproduces the accounting policy EXACTLY as the RPCs enforce it, including
+   the identity granted = remaining + reserved + consumed + expired + refunded,
+   exactly-once granting, one-reservation-per-appointment, published-terms
+   immutability, and the granular financial permission model. */
+
+let planPackages = [];
+let planMemberships = [];
+let packageVersions = [];
+let membershipVersions = [];
+let planAcceptances = [];
+let patientMemberships = [];
+let patientMembershipEvents = [];
+let entitlements = new Map();
+let entitlementLedger = [];
+let packageRedemptions = [];
+let orgBillingPolicy = null;
+let reconciliationExceptions = [];
+let reconciliationEvents = [];
+let financialPermissionGrants = [];
+/** The signed-in fixture practitioner's role. Suites flip it to test refusal. */
+let fixtureRole = "owner";
+
+const DEFAULT_PERMS = {
+  owner: "*",
+  admin: "*",
+  practitioner: ["billing.view_summary", "billing.create_invoice", "billing.take_payment",
+    "billing.adjust_price", "catalog.manage_products", "inventory.adjust", "plans.manage"],
+  staff: ["billing.view_summary", "billing.create_invoice", "billing.take_payment"],
+};
+
+function hasFinancialPermission(permission) {
+  const explicit = financialPermissionGrants.find(
+    (g) => g.role === fixtureRole && g.permission === permission);
+  if (explicit) return explicit.granted;
+  const d = DEFAULT_PERMS[fixtureRole];
+  if (d === "*") return true;
+  return Array.isArray(d) && d.includes(permission);
+}
+
+/** Typed refusal matching the RPC contract. */
+function requireFinancial(res, permission) {
+  if (!hasFinancialPermission(permission)) {
+    json(res, 403, { code: "42501", message: `this action requires the ${permission} permission` });
+    return false;
+  }
+  return true;
+}
+
+/* ------------------------------------------------ phase 9A: nutrition state
+
+   Reproduces the RPC contract EXACTLY as the database enforces it, including
+   the approval gate (safety must have been evaluated, and no blocking flag may
+   be open or merely acknowledged), the per-version freeze, the template
+   snapshot, revision-without-overwrite, and the documented-override rule. */
+
+let nutritionTemplates = [];
+let nutritionTemplateVersions = [];
+let nutritionPlans = [];
+let nutritionPlanVersions = [];
+let nutritionCheckins = [];
+let nutritionSeq = 0;
+/** The signed-in fixture practitioner's clinical role for nutrition. */
+let nutritionRole = "practitioner";
+
+const NUTRITION_AUTHORS = ["owner", "admin", "practitioner"];
+const FROZEN_PLAN = ["approved", "active", "paused", "completed", "discontinued", "superseded"];
+
+function nutritionId(prefix) {
+  nutritionSeq += 1;
+  return `${prefix}-${String(nutritionSeq).padStart(4, "0")}`;
+}
+
+function requireNutritionRole(res) {
+  if (!NUTRITION_AUTHORS.includes(nutritionRole)) {
+    json(res, 403, {
+      code: "42501",
+      message: "authoring a nutrition plan requires a clinical role",
+    });
+    return false;
+  }
+  return true;
+}
+
+function emptyNutritionContent() {
+  return {
+    phases: [], foodRules: [], mealDays: [], recipes: [],
+    groceryItems: [], targets: [], provenance: [],
+  };
+}
+
+function nutritionPlanVersion(id) {
+  return nutritionPlanVersions.find((v) => v.id === id) ?? null;
+}
+
+/* ------------------------------------------------- Phase 9B import pipeline
+ *
+ * A faithful stub rather than a stub that always says yes: it classifies rows,
+ * detects intra-batch conflicts, is idempotent on the source hash, and refuses
+ * to commit while anything is unresolved. The browser proofs are only worth
+ * anything if the stub can actually refuse.
+ */
+let importBatches = new Map();
+let importSeenHashes = new Map();
+let importState = new Map();
+// Phase 9C: declared source files, imported catalog products, and the
+// append-only provenance ledger.
+let importSourceFiles = new Map();
+let catalogReviewProducts = new Map();
+let importProvenance = [];
+// Phase 9E-A: append-only log of 5-outcome restricted-review decisions.
+// The map is keyed by a composite `${subjectType}:${subjectId}` — Phase
+// 9E-A.1 extended the domain from products only to preview items + governed
+// knowledge references. The read helper picks currentOutcome by
+// newest-decidedAt across the bucket. resetImportFixtures() clears the log
+// so browser proofs start from a deterministic empty state.
+let catalogRestrictedReviewDecisions = new Map();
+// Phase 9E-A.1: fixture stores for the two non-product subject types.
+// `previewItemsRestricted` mirrors the SQL view of restricted preview items
+// (a preview batch row with restricted_flags != []); it is separate from the
+// full `importBatches` state so a workspace test can seed a restricted
+// preview item directly without walking the whole parse/preview/commit
+// journey. `governedKnowledgeReferences` is the stub of the SQL scaffold
+// table Phase 9E-A.1 lands; empty by default until seeded by a test.
+let previewItemsRestricted = new Map();
+let governedKnowledgeReferences = new Map();
+// Phase 9E-A.2: label versions, warning resolutions, bulk state.
+let productLabelVersions = new Map();
+let curationWarningResolutions = [];
+let bulkItemState = new Map(); // itemId -> {assigneeId, orgTag, duplicateOfItemId}
+
+function resetImportFixtures() {
+  importBatches = new Map();
+  importSeenHashes = new Map();
+  importState = new Map();
+  importSourceFiles = new Map();
+  catalogReviewProducts = new Map();
+  importProvenance = [];
+  catalogRestrictedReviewDecisions = new Map();
+  previewItemsRestricted = new Map();
+  governedKnowledgeReferences = new Map();
+  productLabelVersions = new Map();
+  curationWarningResolutions = [];
+  bulkItemState = new Map();
+}
+
+/* ------------------------------------------- Phase 9B catalog + templates
+ *
+ * Both start EMPTY, because that is the state the product is actually in and
+ * the honest-empty-state proofs have to be able to see it. Rows arrive only
+ * through the same calls a practitioner would make.
+ *
+ * The template fixture enforces the one rule worth enforcing here: publishing
+ * a version that carries a dose with no recorded source is REFUSED, with the
+ * offending item named. A stub that said yes would make the browser proof of
+ * that refusal worthless.
+ */
+let catalogLabels = new Map();
+let catalogCommercial = new Map();
+let templateSafety = [];
+let catalogSeq = 0;
+
+function resetCatalogFixtures() {
+  catalogLabels = new Map();
+  catalogCommercial = new Map();
+  templateSafety = [];
+  catalogSeq = 0;
+}
+
+/** Items carrying a dose with no recorded source, by label. */
+function unsourcedDoseLabels(versionId) {
+  const v = protocolVersions.get(versionId);
+  if (!v) return [];
+  return v.items
+    .filter((it) => it.kind === "product"
+      && String(it.dosageText ?? "").trim() !== ""
+      && !it.doseSourceKind)
+    .map((it) => it.label);
+}
+
+function templateDetailPayload(templateId) {
+  const t = protocolTemplates.get(templateId);
+  if (!t) return null;
+  const currentId = t.approvedVersionId ?? t.currentVersionId;
+  const current = currentId ? protocolVersions.get(currentId) : null;
+  const items = current ? current.items : [];
+  const unsourced = currentId ? unsourcedDoseLabels(currentId).length : 0;
+  return {
+    templateId: t.id,
+    name: t.name,
+    description: t.description,
+    status: t.status,
+    archivedAt: t.archivedAt ?? null,
+    supersededById: t.supersededById ?? null,
+    supersededAt: t.supersededAt ?? null,
+    supersededReason: t.supersededReason ?? null,
+    currentVersionId: currentId ?? null,
+    approvedVersionId: t.approvedVersionId ?? null,
+    versions: [...protocolVersions.values()]
+      .filter((v) => v.templateId === templateId)
+      .sort((a, b) => b.version - a.version)
+      .map((v) => ({
+        versionId: v.id, version: v.version, status: v.status,
+        title: v.title, approvedAt: v.approvedAt ?? null,
+        createdAt: v.createdAt, itemCount: v.items.length,
+      })),
+    items: items.map((it, i) => ({
+      itemId: it.id, label: it.label, kind: it.kind, position: i,
+      dosageText: it.dosageText ?? null, timingText: it.timingText ?? null,
+      route: it.route ?? null,
+      doseSourceKind: it.doseSourceKind ?? null,
+      doseSourceRef: it.doseSourceRef ?? null,
+      manufacturer: it.manufacturer ?? null, labelVersion: it.labelVersion ?? null,
+      productSku: it.productSku ?? null, productUpc: it.productUpc ?? null,
+      labelSha256: it.labelSha256 ?? null,
+      verificationStatus: it.verificationStatus ?? "unverified",
+      interventionClassCode: it.interventionClassCode ?? null,
+      monitoringRequirements: it.monitoringRequirements ?? [],
+      stoppingRules: it.stoppingRules ?? [],
+      contraindications: it.contraindications ?? [],
+      followupIntervalDays: it.followupIntervalDays ?? null,
+      jurisdictionSensitive: Boolean(it.jurisdictionSensitive),
+    })),
+    safetyReviews: templateSafety
+      .filter((s) => s.templateId === templateId)
+      .map((s) => ({ ...s })),
+    unsourcedDoseCount: unsourced,
+    patientInstructionPreview: items
+      .filter((it) => ["product", "diet", "lifestyle"].includes(it.kind))
+      .map((it) => ({
+        label: it.label, kind: it.kind,
+        instruction: it.instructions ?? null,
+        // No dose recorded means no dose shown. Never a plausible default.
+        dose: it.dosageText ?? null,
+        timing: it.timingText ?? null,
+        stopIf: it.stoppingRules ?? [],
+        doseIsSourced: Boolean(it.doseSourceKind),
+      })),
+    previewNotice:
+      "This preview is generated from the template as it stands right now. It "
+      + "is not stored and not sent anywhere. An item with no recorded dose "
+      + "shows no dose - nothing is filled in to make the sheet look complete.",
+    safetyNotice: unsourced > 0
+      ? unsourced + " item(s) carry a dose with no recorded source. "
+        + "Publication is blocked until each names an exact product label, a "
+        + "supplied practitioner protocol, or a governed reference."
+      : "Every recorded dose names its source.",
+  };
+}
+
+function stubHash(value) {
+  let h = 0n;
+  const text = JSON.stringify(value);
+  for (let i = 0; i < text.length; i += 1) {
+    h = (h * 31n + BigInt(text.charCodeAt(i))) % (2n ** 64n);
+  }
+  return h.toString(16).padStart(64, "0").slice(0, 64);
+}
+
+function stubDedupeKey(entityType, payload) {
+  const p = payload ?? {};
+  const lower = (v) => String(v ?? "").trim().toLowerCase();
+  switch (entityType) {
+    case "product_label": return lower(p.productCode) || null;
+    case "pathway": return lower(p.code) || null;
+    case "lab_suggestion":
+    case "intervention_class":
+    case "knowledge_claim": return lower(p.code) || null;
+    case "catalog_product":
+      return lower(p.sku) || lower(p.upc) || (lower(p.brand) + "|" + lower(p.name)).replace(/^\|$/, "") || null;
+    case "interpretation_rule": return (lower(p.biomarkerCode) + "|" + lower(p.name)) || null;
+    default: return null;
+  }
+}
+
+function stubValidationErrors(entityType, payload) {
+  const p = payload ?? {};
+  const errors = [];
+  const grade = String(p.evidenceClassification ?? "unclassified").toLowerCase();
+  if (["high", "moderate", "low", "very_low"].includes(grade)
+      && !String(p.referenceCode ?? "").trim()) {
+    errors.push(
+      "A graded evidence classification requires a governed reference; "
+      + "unreferenced practitioner content must be imported as practitioner_experience",
+    );
+  }
+  if (entityType === "product_label") {
+    if (!String(p.sourceUrl ?? "").trim()) {
+      errors.push("Current manufacturer label URL is required");
+    }
+    const label = p.exactLabel ?? {};
+    if (!String(label.ingredients ?? "").trim()) {
+      errors.push("Ingredient amounts and units are required");
+    }
+  }
+  if (entityType === "lab_suggestion" && !String(p.clinicalQuestion ?? "").trim()) {
+    errors.push("The clinical question this lab answers is required");
+  }
+  return errors;
+}
+
+function resetNutritionFixtures() {
+  nutritionTemplates = [];
+  nutritionTemplateVersions = [];
+  nutritionPlans = [];
+  nutritionPlanVersions = [];
+  nutritionCheckins = [];
+  nutritionSeq = 0;
+  nutritionRole = "practitioner";
+}
+
+function resetPlanFixtures() {
+  planPackages = [];
+  planMemberships = [];
+  packageVersions = [];
+  membershipVersions = [];
+  planAcceptances = [];
+  patientMemberships = [];
+  patientMembershipEvents = [];
+  entitlements = new Map();
+  entitlementLedger = [];
+  packageRedemptions = [];
+  orgBillingPolicy = null;
+  reconciliationExceptions = [];
+  reconciliationEvents = [];
+  financialPermissionGrants = [];
+  fixtureRole = "owner";
+  for (const [id, item] of queue) {
+    if (String(item.itemType || "").startsWith("subscription_") ||
+        ["membership_expiring", "package_credits_expiring", "payment_unreconciled",
+         "payment_dispute", "refund_action_required", "processor_failure_repeated"]
+          .includes(item.itemType)) {
+      queue.delete(id);
+    }
+  }
+}
+
+/** Apply one entitlement movement + ledger row, enforcing the identity. */
+function entitlementMove(entId, kind, quantity, refType, refId, reason, source = "rpc") {
+  const e = entitlements.get(entId);
+  if (!e) { const err = new Error("entitlement not found"); err.code = "P0002"; throw err; }
+  if (quantity <= 0) { const err = new Error("quantity must be positive"); err.code = "22023"; throw err; }
+  const fail = (msg, code = "40001") => { const err = new Error(msg); err.code = code; throw err; };
+
+  if (kind === "grant") {
+    e.remainingQuantity += quantity; e.grantedQuantity += quantity;
+  } else if (kind === "reserve") {
+    if (e.status !== "active") fail("this entitlement is not active");
+    if (e.expiresAt && new Date(e.expiresAt) <= new Date()) fail("this entitlement has expired");
+    if (e.remainingQuantity < quantity) fail("not enough remaining credit");
+    // one live reservation per (entitlement, appointment) — the unique index
+    if (refType === "appointment" && entitlementLedger.some(
+      (l) => l.entitlementId === entId && l.kind === "reserve" && l.refId === refId)) {
+      fail("a credit is already reserved for this appointment");
+    }
+    e.remainingQuantity -= quantity; e.reservedQuantity += quantity;
+  } else if (kind === "release") {
+    if (e.reservedQuantity < quantity) fail("not that much is reserved");
+    e.reservedQuantity -= quantity; e.remainingQuantity += quantity;
+  } else if (kind === "consume") {
+    if (e.reservedQuantity < quantity) fail("not that much is reserved");
+    e.reservedQuantity -= quantity; e.consumedQuantity += quantity;
+  } else if (kind === "expire") {
+    if (e.remainingQuantity < quantity) fail("not that much remains to expire");
+    e.remainingQuantity -= quantity; e.expiredQuantity += quantity;
+  } else if (kind === "refund_revoke") {
+    if (e.remainingQuantity < quantity) fail("only unspent credit can be revoked");
+    e.remainingQuantity -= quantity; e.refundedQuantity += quantity;
+  } else if (kind === "manual_restore") {
+    if (!reason || !String(reason).trim()) fail("a manual restoration requires a reason", "22023");
+    if (e.consumedQuantity >= quantity) { e.consumedQuantity -= quantity; e.remainingQuantity += quantity; }
+    else if (e.expiredQuantity >= quantity) { e.expiredQuantity -= quantity; e.remainingQuantity += quantity; }
+    else fail("there is not that much consumed or expired credit to restore");
+  } else {
+    fail("unknown entitlement movement", "22023");
+  }
+
+  // the identity the database enforces as a check constraint
+  const sum = e.remainingQuantity + e.reservedQuantity + e.consumedQuantity
+            + e.expiredQuantity + e.refundedQuantity;
+  if (sum !== e.grantedQuantity) {
+    const err = new Error("entitlement accounting identity violated"); err.code = "23514"; throw err;
+  }
+
+  entitlementLedger.push({
+    id: billingId("el"), organizationId: e.organizationId, entitlementId: entId, kind,
+    quantity, refType: refType ?? null, refId: refId ?? null, reason: reason ?? null,
+    source, createdAt: new Date().toISOString(),
+  });
+
+  if (e.status !== "revoked") {
+    if (e.expiresAt && new Date(e.expiresAt) <= new Date()
+        && e.remainingQuantity === 0 && e.reservedQuantity === 0) e.status = "expired";
+    else if (e.remainingQuantity === 0 && e.reservedQuantity === 0
+        && (e.consumedQuantity > 0 || e.refundedQuantity > 0 || e.expiredQuantity > 0)) e.status = "exhausted";
+    else e.status = "active";
+  }
+}
+
+/** One open financial task per (type, ref), exactly like the RPC. */
+function upsertFinancialTask(itemType, refId, title, patientId, priority = "medium") {
+  for (const item of queue.values()) {
+    if (item.itemType === itemType && item.refId === refId &&
+        (item.status === "open" || item.status === "in_review")) return item.id;
+  }
+  const id = billingId("task");
+  queue.set(id, {
+    id, organizationId: "org-fixture", itemType, priority, status: "open",
+    refId, title, patientId: patientId ?? null, patientName: null,
+    createdAt: new Date().toISOString(),
+  });
+  return id;
+}
+
+function entitlementJson(e) {
+  const pv = packageVersions.find((v) => v.id === e.packageVersionId);
+  const pkg = pv ? planPackages.find((p) => p.id === pv.packageId) : null;
+  const sub = patientMemberships.find((m) => m.id === e.patientMembershipId);
+  const mem = sub ? planMemberships.find((m) => m.id === sub.membershipId) : null;
+  return {
+    id: e.id, source: e.source, status: e.status,
+    grantedQuantity: e.grantedQuantity, remainingQuantity: e.remainingQuantity,
+    reservedQuantity: e.reservedQuantity, consumedQuantity: e.consumedQuantity,
+    expiredQuantity: e.expiredQuantity, refundedQuantity: e.refundedQuantity,
+    creditMode: e.creditMode, expiresAt: e.expiresAt, transferPolicy: e.transferPolicy,
+    planName: pkg?.name ?? mem?.name ?? null,
+    ledger: entitlementLedger.filter((l) => l.entitlementId === e.id)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .map((l) => ({ kind: l.kind, quantity: l.quantity, refType: l.refType,
+        refId: l.refId, reason: l.reason, at: l.createdAt })),
+  };
+}
+
+resetPlanFixtures();
+
+/* =====================================================================
+ * PHASE 10B.1 — governed copilot fixtures.
+ *
+ * Backs the provider-readiness browser suite. Everything here is
+ * deterministic and in-process: no handler in this section contacts an AI
+ * provider, a secret manager, or any external host. That is the point —
+ * the suite proves the application's refusal behaviour, and a fixture that
+ * reached out would be proving the opposite.
+ *
+ * Scenarios are selected with POST /__control/copilot-scenario. Each one
+ * writes a governed provider-registry row and an organization activation
+ * row, because approval in this product comes from records, never from
+ * configuration. A scenario cannot approve anything the real state
+ * machine would not.
+ * ===================================================================== */
+
+const COPILOT_PROVIDER_ID = "eeeeeeee-1111-2222-3333-444444444401";
+const COPILOT_ORG = "org-fixture";
+
+const copilotRuns = new Map();
+const copilotDispositions = new Map();
+const copilotProviderRegistry = [];
+const copilotActivations = new Map();
+const copilotReviewTasks = [];
+const copilotNoteAppends = [];
+const copilotProtocolDrafts = [];
+const copilotSupervisedReviews = [];
+/** Every copilot-related stub call, so a test can assert what was NOT asked. */
+const copilotRequestLog = [];
+let copilotSeq = 0;
+let copilotScenario = "unconfigured";
+/**
+ * When true the next create records an input hash that no longer matches
+ * the chart, so finalize must refuse. This models the chart changing
+ * underneath a run in flight.
+ */
+let copilotForceStale = false;
+
+const copilotId = (tag) =>
+  `${tag}-1111-2222-3333-${String(600000000000 + ++copilotSeq)}`;
+
+/** The governed retrieval envelope every scenario shares. */
+const COPILOT_ALLOWED_CITATIONS = ["kr-fixture-001", "kr-fixture-002"];
+
+function copilotAllRefs(act) {
+  act.legalRef = "LEGAL-FIXTURE-001";
+  act.privacyRef = "PRIVACY-FIXTURE-001";
+  act.clinicalRef = "CLINICAL-FIXTURE-001";
+  act.infraRef = "INFRA-FIXTURE-001";
+  return act;
+}
+
+function copilotApplyScenario(name) {
+  copilotScenario = name;
+  copilotProviderRegistry.length = 0;
+  copilotActivations.clear();
+  copilotRuns.clear();
+  copilotDispositions.clear();
+  copilotReviewTasks.length = 0;
+  copilotNoteAppends.length = 0;
+  copilotProtocolDrafts.length = 0;
+  copilotSupervisedReviews.length = 0;
+  copilotForceStale = false;
+
+  // No provider registered at all — the honest "Not configured" posture.
+  if (name === "unconfigured") return;
+
+  const reg = {
+    id: COPILOT_PROVIDER_ID,
+    provider_name: "openai",
+    provider_kind: "openai_hipaa",
+    approved_model_allowlist: ["gpt-test-model"],
+    approval_reference: "APPROVAL-FIXTURE-001",
+    baa_status_reference: null,
+    retention_mode: "unspecified",
+    processing_region: "us",
+    // A reference, never a key. The real column refuses secret-shaped values.
+    provider_secret_ref: "arn:aws:secretsmanager:us-east-1:123456789012:secret:fixture-openai",
+    revocation_state: "not_revoked",
+    expiration_date: null,
+    created_at: new Date().toISOString(),
+  };
+  const act = {
+    state: "disabled",
+    legalRef: null,
+    privacyRef: null,
+    clinicalRef: null,
+    infraRef: null,
+    retentionPosture: "unspecified",
+    supervisedRunsRequired: 25,
+    supervisedRunsCompleted: 0,
+  };
+
+  switch (name) {
+    // A key exists and nothing else does.
+    case "configured_unapproved":
+      act.state = "readiness_review";
+      break;
+
+    // Everything the vendor side needs, but the ORGANIZATION never opted in.
+    case "configured_no_org_approval":
+      reg.baa_status_reference = "BAA-FIXTURE-001";
+      reg.retention_mode = "zero";
+      copilotAllRefs(act);
+      act.state = "readiness_review";
+      act.retentionPosture = "zero";
+      break;
+
+    // Every sign-off recorded, PHI approved by the org — but NO BAA on the
+    // provider row. The one missing record still refuses.
+    case "approved_no_baa":
+      reg.baa_status_reference = null;
+      reg.retention_mode = "zero";
+      copilotAllRefs(act);
+      act.state = "approved_for_phi";
+      act.retentionPosture = "zero";
+      break;
+
+    // Approved for deterministic synthetic evaluation only.
+    case "approved_synthetic":
+      reg.provider_name = "synthetic_fixture";
+      reg.provider_kind = "synthetic_fixture";
+      reg.baa_status_reference = "BAA-FIXTURE-SYNTHETIC";
+      reg.retention_mode = "zero";
+      copilotAllRefs(act);
+      act.state = "approved_for_synthetic";
+      act.retentionPosture = "zero";
+      break;
+
+    // Same, but the registered identity emits a citation outside the
+    // governed envelope so the fail-closed path is exercised for real.
+    case "approved_synthetic_adversarial":
+      reg.provider_name = "synthetic_fixture_adversarial";
+      reg.provider_kind = "synthetic_fixture";
+      reg.baa_status_reference = "BAA-FIXTURE-SYNTHETIC";
+      reg.retention_mode = "zero";
+      copilotAllRefs(act);
+      act.state = "approved_for_synthetic";
+      act.retentionPosture = "zero";
+      break;
+
+    default:
+      throw new Error(`unknown copilot scenario: ${name}`);
+  }
+
+  copilotProviderRegistry.push(reg);
+  copilotActivations.set(`${COPILOT_ORG}::${reg.id}`, act);
+}
+
+function resetCopilotFixtures() {
+  copilotRequestLog.length = 0;
+  copilotSeq = 0;
+  copilotApplyScenario("unconfigured");
+}
+
+resetCopilotFixtures();
+
+/* =====================================================================
+ * FIXTURE ISOLATION — one reset that covers every mutable domain.
+ *
+ * Before this existed, each suite reset only its own domain, so running the
+ * whole battery in one process left every later suite reading data an earlier
+ * one created. The visible symptom was always the same: the first "honest
+ * empty state" assertion of each later suite failed. That is a harness defect
+ * that looks exactly like a product defect, which is the worst kind.
+ *
+ * TWO MECHANISMS, because the state has two shapes:
+ *
+ *   1. Collections bound with `const` (Maps, Sets, arrays) are restored IN
+ *      PLACE from a deep snapshot taken once at module load, after all seeding
+ *      has run. This is why there is no second copy of the seed data anywhere:
+ *      the snapshot IS the seed, so the two cannot drift apart.
+ *
+ *   2. Bindings held with `let` — counters, and collections that their domain
+ *      reset reassigns wholesale — are re-initialised explicitly in
+ *      `resetAllFixtures`, because a snapshot cannot rebind them.
+ *
+ * `scripts/check-stub-reset-coverage.mjs` parses this file and fails if a
+ * mutable top-level declaration is missing from both mechanisms. A reset that
+ * has to be remembered is a reset that eventually is not.
+ * ===================================================================== */
+
+const SNAPSHOT_COLLECTIONS = {
+  revokedBearers, members, queue, labMarkers, labReports,
+  encounters, emrNotes,
+  scribeParticipants, scribeRecordings, scribeSessions, scribeTokens,
+  scribeTranscripts, scribeGenerations, scribeAccessLog,
+  lensEvaluations, lensQuestions, lensBlocks, lensFeedbackRows,
+  scheduleAppointments, apptTransitionKeys,
+  protocols, protocolTemplates, protocolVersions,
+  programs, programTemplates, programVersions, programOffers,
+  programEnrollments, programProgressRows, programEvents,
+  auditEvents,
+  conversations, inboxMessages, inboxAttachments, commPrefs, inboxOutbox,
+  inboxEvents, inboxAiReviews, inboxTaskByMessage, inboxNoteAppends,
+  syncConnections, syncInvitations, syncScopes, syncOutbound, syncInbound,
+  syncCorrections, syncConflicts, syncDeadLetters, syncAcks, syncHistory,
+  syncDeliveryEventIds, syncProviders, syncWorkerCycles, syncNonces,
+  copilotRuns, copilotDispositions, copilotProviderRegistry, copilotActivations,
+  copilotReviewTasks, copilotNoteAppends, copilotProtocolDrafts,
+  copilotSupervisedReviews, copilotRequestLog,
+};
+
+const __fixtureSnapshots = new Map();
+
+function captureFixtureSnapshots() {
+  for (const [name, coll] of Object.entries(SNAPSHOT_COLLECTIONS)) {
+    const plain = coll instanceof Map
+      ? [...coll.entries()]
+      : coll instanceof Set
+        ? [...coll]
+        : coll;
+    __fixtureSnapshots.set(name, structuredClone(plain));
+  }
+}
+
+function restoreFixtureSnapshots() {
+  for (const [name, coll] of Object.entries(SNAPSHOT_COLLECTIONS)) {
+    // Cloned on the way OUT as well as in, so a test mutating a restored row
+    // cannot corrupt the snapshot for the next reset.
+    const snap = structuredClone(__fixtureSnapshots.get(name));
+    if (coll instanceof Map) {
+      coll.clear();
+      for (const [k, v] of snap) coll.set(k, v);
+    } else if (coll instanceof Set) {
+      coll.clear();
+      for (const v of snap) coll.add(v);
+    } else {
+      coll.length = 0;
+      coll.push(...snap);
+    }
+  }
+}
+
+/**
+ * Restore the entire backend to the state it had at process start.
+ *
+ * Every suite calls this in `beforeAll` via `e2e/support/backend.ts`, which is
+ * what makes the battery order-independent: a suite always runs against
+ * exactly the state it was written for, no matter what ran before it.
+ */
+function resetAllFixtures() {
+  restoreFixtureSnapshots();
+
+  // `let` bindings the snapshot cannot rebind.
+  memberSeq = 2;
+  emrSeq = 0;
+  scribeSeq = 0;
+  lensSeq = 0;
+  apptSeq = 0;
+  // Cleared rather than re-seeded: the schedule seeds lazily from the date the
+  // first request asks for, so it must be allowed to seed again.
+  scheduleSeeded = false;
+  protocolSeq = 0;
+  programSeq = 0;
+  auditSeq = 0;
+  hypothesisReview = null;
+  inboxSeq = 0;
+  syncSeq = 0;
+  syncCircuit = null;
+  fixtureRole = "owner";
+  nutritionRole = "practitioner";
+
+  // Domains whose reset reassigns their own collections and re-seeds them.
+  resetBillingFixtures();
+  resetPlanFixtures();
+  resetNutritionFixtures();
+  resetCatalogFixtures();
+  resetImportFixtures();
+  resetCopilotFixtures();
+
+  // NOT seedInboxFixtures() / seedLensFixtures(). Both ran before the snapshot
+  // was taken, so their output is already inside it. Calling them again would
+  // re-push every row of `inboxEvents` — the Map writes are keyed and would
+  // look harmless, which is exactly how that bug would have survived review.
+}
+
+captureFixtureSnapshots();
+
 /* --------------------------------------------------------------- wire utils */
 
 const json = (res, status, value) => {
@@ -1988,6 +3015,506 @@ createServer(async (req, res) => {
   // order-independent (every proof still runs, against exactly the state it
   // was written for). Non-sync domains (patients, labs, schedule, inbox) are
   // untouched.
+  // Reset the billing domain to its pristine state. The billing suite is
+  // written against a fresh backend; it calls this in beforeAll so the
+  // battery is order-independent. Non-billing domains are untouched.
+  // Reset the phase-8B plan domain so the suite is order-independent.
+  // THE canonical isolation hook. Every spec calls this in beforeAll, which is
+  // what makes the one-process battery order-independent. Per-domain resets are
+  // kept for the tests that reset mid-run, but no suite depends on them for
+  // isolation any more.
+  if (url.pathname === "/__control/reset-all" && req.method === "POST") {
+    resetAllFixtures();
+    return json(res, 200, { ok: true });
+  }
+
+  if (url.pathname === "/__control/import-reset" && req.method === "POST") {
+    resetImportFixtures();
+    return json(res, 200, { ok: true });
+  }
+
+  /**
+   * TEST-ONLY. Select a governed copilot scenario.
+   *
+   * Each scenario writes provider-registry + activation rows, which is the
+   * only way approval is expressed in this product. There is no scenario
+   * that approves something the real state machine would refuse.
+   */
+  if (url.pathname === "/__control/copilot-scenario" && req.method === "POST") {
+    const body = await readBody(req);
+    try {
+      copilotApplyScenario(String(body.scenario ?? "unconfigured"));
+    } catch (e) {
+      return json(res, 400, { code: "22023", message: String(e.message ?? e) });
+    }
+    return json(res, 200, { ok: true, scenario: copilotScenario });
+  }
+
+  /** TEST-ONLY. Make the next run's stored input hash go stale. */
+  if (url.pathname === "/__control/copilot-force-stale" && req.method === "POST") {
+    copilotForceStale = true;
+    return json(res, 200, { ok: true });
+  }
+
+  /** TEST-ONLY. What the application actually asked this backend for. */
+  if (url.pathname === "/__control/copilot-request-log" && req.method === "GET") {
+    return json(res, 200, { scenario: copilotScenario, calls: [...copilotRequestLog] });
+  }
+
+  /**
+   * TEST-ONLY. Seed a template version's items directly.
+   *
+   * Item editing lives in the protocol draft editor, not the template surface,
+   * so driving it through the UI would be testing a different screen. This
+   * sets up the state the template proofs are about — publication gating,
+   * comparison, the patient preview — without pretending a practitioner typed
+   * it. Nothing here reaches the real backend; it exists only in the fixture.
+   */
+  if (url.pathname === "/__control/seed-template-items" && req.method === "POST") {
+    const body = await readBody(req);
+    const version = protocolVersions.get(String(body.versionId ?? ""));
+    if (!version) return json(res, 404, { code: "P0002", message: "version not found" });
+    version.items = (Array.isArray(body.items) ? body.items : []).map((it, i) => ({
+      id: pid("item"),
+      versionId: version.id,
+      kind: String(it.kind ?? "product"),
+      position: i,
+      label: String(it.label ?? ""),
+      instructions: it.instructions ?? null,
+      dosageText: it.dosageText ?? null,
+      timingText: it.timingText ?? null,
+      route: it.route ?? null,
+      doseSourceKind: it.doseSourceKind ?? null,
+      doseSourceRef: it.doseSourceRef ?? null,
+      manufacturer: it.manufacturer ?? null,
+      labelVersion: it.labelVersion ?? null,
+      productSku: it.productSku ?? null,
+      productUpc: it.productUpc ?? null,
+      labelSha256: it.labelSha256 ?? null,
+      verificationStatus: it.verificationStatus ?? "unverified",
+      interventionClassCode: it.interventionClassCode ?? null,
+      monitoringRequirements: it.monitoringRequirements ?? [],
+      stoppingRules: it.stoppingRules ?? [],
+      contraindications: it.contraindications ?? [],
+      followupIntervalDays: it.followupIntervalDays ?? null,
+      jurisdictionSensitive: Boolean(it.jurisdictionSensitive),
+      interactionReviewState: "not_completed",
+    }));
+    return json(res, 200, { ok: true, itemCount: version.items.length });
+  }
+
+  /** TEST-ONLY. Record one governed label so the catalog has something real. */
+  if (url.pathname === "/__control/seed-catalog-label" && req.method === "POST") {
+    const body = await readBody(req);
+    catalogSeq += 1;
+    const id = `label-${catalogSeq}`;
+    const code = String(body.productCode ?? `seed-${catalogSeq}`);
+    catalogLabels.set(id, {
+      id,
+      productCode: code,
+      version: [...catalogLabels.values()].filter((h) => h.productCode === code).length + 1,
+      productName: String(body.productName ?? "Seeded product"),
+      brand: body.brand ?? null,
+      exactLabel: body.exactLabel ?? {},
+      labelSha256: stubHash(body.exactLabel ?? {}),
+      sourceUrl: body.sourceUrl ?? null,
+      status: "draft",
+      effectiveAt: null,
+      expiresAt: null,
+      verifiedAt: null,
+      verificationNote: null,
+      createdAt: nowIso(),
+      importHistory: [],
+    });
+    if (body.affiliateUrl) {
+      // Straight to the commercial store. It never touches the label row.
+      catalogCommercial.set(id, [{
+        id: `plcl-${catalogSeq}`,
+        kind: "affiliate",
+        url: String(body.affiliateUrl),
+        supplierName: null,
+        commissionDisclosure: body.commissionDisclosure ?? null,
+        availabilityStatus: null,
+        lastVerifiedAt: null,
+        revokedAt: null,
+        revokedReason: null,
+        recordedAt: nowIso(),
+      }]);
+    }
+    return json(res, 200, { ok: true, labelVersionId: id });
+  }
+
+  // Phase 9E-A.1 — seed a restricted catalog-review product without walking
+  // the whole parse/preview/commit journey. The A.1 workspace tests need a
+  // known restricted row visible in the queue on a fresh backend; without a
+  // seeder they would have to run inside the ordered flow that owns the
+  // pipeline, which couples them to test 6+ in the curated-import file.
+  if (url.pathname === "/__control/seed-restricted-product" && req.method === "POST") {
+    const body = await readBody(req);
+    catalogSeq += 1;
+    const productId = String(body.productId ?? `seed-restricted-${catalogSeq}`);
+    catalogReviewProducts.set(productId, {
+      productId,
+      name: String(body.name ?? "Seeded Restricted Product"),
+      brand: body.brand ?? null,
+      sku: body.sku ?? null,
+      upc: body.upc ?? null,
+      form: body.form ?? null,
+      category: body.category ?? null,
+      regulatoryClassification: body.regulatoryClassification ?? null,
+      jurisdiction: body.jurisdiction ?? null,
+      description: body.description ?? null,
+      status: String(body.status ?? "pending"),
+      restrictedFlags: Array.isArray(body.restrictedFlags) && body.restrictedFlags.length > 0
+        ? body.restrictedFlags
+        : ["iv_therapy"],
+      restrictedClearedAt: null,
+      restrictedClearanceNote: null,
+      missingFacts: Array.isArray(body.missingFacts) ? body.missingFacts : [],
+      organizationId: String(body.organizationId ?? "org-fixture"),
+      sourceFileName: body.sourceFileName ?? "seeded-fixture.xlsx",
+    });
+    return json(res, 200, { ok: true, productId });
+  }
+
+  // Phase 9E-A.1 continuation: seed a restricted preview import item so the
+  // workspace's unified restricted-review queue can display preview candidates
+  // without walking the whole parse/preview/commit journey.
+  if (url.pathname === "/__control/seed-restricted-preview-item" && req.method === "POST") {
+    const body = await readBody(req);
+    catalogSeq += 1;
+    const id = String(body.previewItemId ?? `seed-preview-item-${catalogSeq}`);
+    previewItemsRestricted.set(id, {
+      id,
+      organizationId: String(body.organizationId ?? "org-fixture"),
+      displayName: String(body.displayName ?? "Seeded Preview Row"),
+      entityType: String(body.entityType ?? "catalog_product"),
+      restrictedFlags: Array.isArray(body.restrictedFlags) && body.restrictedFlags.length > 0
+        ? body.restrictedFlags
+        : ["iv_therapy"],
+      missingFacts: Array.isArray(body.missingFacts) ? body.missingFacts : [],
+      changeKind: body.changeKind ?? null,
+      status: body.status ?? "needs_review",
+      sourceName: body.sourceName ?? "seeded-fixture-file.xlsx",
+      sourceSheet: body.sourceSheet ?? "Sheet1",
+      sourceRowNumber: body.sourceRowNumber ?? null,
+    });
+    return json(res, 200, { ok: true, previewItemId: id });
+  }
+
+  // Phase 9E-A.1 continuation: seed a full preview batch containing two
+  // conflicting rows so browser proofs of the Conflicts workflow do not
+  // depend on walking the parse pipeline. The seeded batch mirrors the shape
+  // real preview batches carry: an `items` array with `changeKind` set on
+  // the conflicting rows, `conflictWithItemId` chained across the pair, and a
+  // `restricted_flags` set carried on the second row so the test can
+  // separately assert that resolution does not clear the restriction.
+  if (url.pathname === "/__control/seed-conflict-batch" && req.method === "POST") {
+    const body = await readBody(req);
+    const org = String(body.organizationId ?? "org-fixture");
+    const batchId = String(body.batchId ?? `seed-conflict-batch-${importBatches.size + 1}`);
+    const firstId = `${batchId}-item-1`;
+    const secondId = `${batchId}-item-2`;
+    const dedupeKey = String(body.dedupeKey ?? "AC-100");
+    const firstDisplayName = String(body.firstDisplayName ?? "Existing row (batch-earlier)");
+    const secondDisplayName = String(body.secondDisplayName ?? "Incoming row (batch-later)");
+    const restrictedFlags = Array.isArray(body.restrictedFlags)
+      ? body.restrictedFlags
+      : ["prescription"];
+    const items = [
+      {
+        id: firstId,
+        entityType: "catalog_product",
+        displayName: firstDisplayName,
+        sourceSheet: "Sheet1",
+        sourceRowNumber: 1,
+        dedupeKey,
+        changeKind: "change",
+        status: "needs_review",
+        payloadSha256: stubHash({ id: firstId }),
+        existingRefType: null,
+        existingRefId: null,
+        conflictWithItemId: null,
+        conflictReason: null,
+        conflictResolution: null,
+        validationErrors: [],
+        warnings: [],
+        reviewNote: null,
+        appliedRefType: null,
+        appliedRefId: null,
+        payload: { name: firstDisplayName, sku: dedupeKey, restrictedFlags: [] },
+        sourceRaw: { "Product Name": firstDisplayName, "Item #": dedupeKey },
+        restrictedFlags: [],
+        restrictedReason: null,
+        missingFacts: [],
+        candidateMatches: [],
+      },
+      {
+        id: secondId,
+        entityType: "catalog_product",
+        displayName: secondDisplayName,
+        sourceSheet: "Sheet1",
+        sourceRowNumber: 2,
+        dedupeKey,
+        changeKind: "conflict",
+        status: "needs_review",
+        payloadSha256: stubHash({ id: secondId }),
+        existingRefType: null,
+        existingRefId: null,
+        conflictWithItemId: firstId,
+        conflictReason:
+          `Another row earlier in this file claims the same identity (${dedupeKey}). ` +
+          `Resolve which row is correct before committing.`,
+        conflictResolution: null,
+        validationErrors: [],
+        warnings: [],
+        reviewNote: null,
+        appliedRefType: null,
+        appliedRefId: null,
+        payload: { name: secondDisplayName, sku: dedupeKey, restrictedFlags },
+        sourceRaw: { "Product Name": secondDisplayName, "Item #": dedupeKey },
+        restrictedFlags,
+        restrictedReason: `Flagged as restricted (${restrictedFlags.join(", ")}).`,
+        missingFacts: [],
+        candidateMatches: [],
+      },
+    ];
+    const batch = {
+      id: batchId,
+      status: "preview",
+      sourceName: String(body.sourceName ?? "seeded-conflict-fixture.xlsx"),
+      sourceKind: "product_spreadsheet",
+      sourceFilename: "seeded-conflict-fixture.xlsx",
+      sourceByteSize: 1024,
+      sourceSha256: stubHash({ batchId }),
+      schemaVersion: "v1",
+      itemCount: items.length,
+      added: 0,
+      changed: 1,
+      unchanged: 0,
+      conflicts: 1,
+      removals: 0,
+      ambiguous: 0,
+      restricted: 1,
+      previewGeneratedAt: new Date().toISOString(),
+      committedAt: null,
+      createdAt: new Date().toISOString(),
+      organizationId: org,
+      items,
+    };
+    importBatches.set(batchId, batch);
+    return json(res, 200, { ok: true, batchId, itemCount: items.length, conflictItemId: secondId });
+  }
+
+  // Phase 9E-A.1 continuation: seed a governed knowledge reference so tests
+  // can exercise the third subject type.
+  if (url.pathname === "/__control/seed-knowledge-reference" && req.method === "POST") {
+    const body = await readBody(req);
+    catalogSeq += 1;
+    const id = String(body.referenceId ?? `seed-knowledge-ref-${catalogSeq}`);
+    governedKnowledgeReferences.set(id, {
+      id,
+      organizationId: String(body.organizationId ?? "org-fixture"),
+      claim: String(body.claim ?? "Seeded knowledge reference"),
+      citation: body.citation ?? null,
+      sourceKind: body.sourceKind ?? null,
+      jurisdiction: body.jurisdiction ?? null,
+      restrictedFlags: Array.isArray(body.restrictedFlags) ? body.restrictedFlags : [],
+      status: body.status ?? "pending",
+    });
+    return json(res, 200, { ok: true, referenceId: id });
+  }
+
+  if (url.pathname === "/__control/nutrition-reset" && req.method === "POST") {
+    resetNutritionFixtures();
+    return json(res, 200, { ok: true });
+  }
+
+  if (url.pathname === "/__control/nutrition-set-role" && req.method === "POST") {
+    const body = await readBody(req);
+    nutritionRole = String(body.role ?? "practitioner");
+    return json(res, 200, { ok: true, role: nutritionRole });
+  }
+
+  if (url.pathname === "/__control/plans-reset" && req.method === "POST") {
+    resetPlanFixtures();
+    return json(res, 200, { ok: true });
+  }
+
+  // Flip the signed-in fixture practitioner's role, so the suite can prove a
+  // permission refusal is REAL rather than a UI affordance being hidden.
+  if (url.pathname === "/__control/plans-set-role" && req.method === "POST") {
+    const body = await readBody(req);
+    fixtureRole = String(body.role ?? "owner");
+    return json(res, 200, { ok: true, role: fixtureRole });
+  }
+
+  // Stand-in for the service_role processor: raise a reconciliation exception.
+  if (url.pathname === "/__control/plans-raise-exception" && req.method === "POST") {
+    const body = await readBody(req);
+    const x = {
+      id: billingId("rx"), organizationId: "org-fixture",
+      kind: String(body.kind ?? "amount_mismatch"), status: "open",
+      internalAmountMinor: body.internalAmountMinor ?? null,
+      providerAmountMinor: body.providerAmountMinor ?? null,
+      currency: body.currency ?? "USD", detail: body.detail ?? null,
+      // deliberately null: settlement figures are not fetched in this phase
+      providerFeeMinor: null, providerNetMinor: null, providerSettlementStatus: null,
+      version: 1, createdAt: new Date().toISOString(),
+      resolvedAt: null, resolvedBy: null, resolutionReason: null,
+    };
+    reconciliationExceptions.push(x);
+    upsertFinancialTask("payment_unreconciled", x.id,
+      `Unreconciled payment: ${x.kind.replace("_", " ")}`, null, "high");
+    return json(res, 200, { id: x.id });
+  }
+
+  // Stand-in for a failed subscription payment arriving from the processor.
+  if (url.pathname === "/__control/plans-payment-failed" && req.method === "POST") {
+    const body = await readBody(req);
+    const sub = patientMemberships.find((m) => m.id === String(body.patientMembershipId ?? ""));
+    if (!sub) return json(res, 404, { code: "P0002", message: "membership not found" });
+    const from = sub.status;
+    sub.status = "past_due";
+    sub.version += 1;
+    patientMembershipEvents.push({
+      organizationId: "org-fixture", patientMembershipId: sub.id, kind: "payment_failed",
+      fromStatus: from, toStatus: "past_due", detail: "processor reported a failed payment",
+      source: "webhook", createdAt: new Date().toISOString(),
+    });
+    upsertFinancialTask("subscription_payment_failed", sub.id,
+      "Subscription payment failed — payment method needs updating", sub.patientId, "high");
+    return json(res, 200, { ok: true, status: sub.status });
+  }
+
+  // Stand-in for a RECOVERED subscription payment. Recovery is processor
+  // driven — there is deliberately no practitioner action that moves a
+  // past_due subscription back to active without money actually arriving.
+  if (url.pathname === "/__control/plans-payment-recovered" && req.method === "POST") {
+    const body = await readBody(req);
+    const sub = patientMemberships.find((m) => m.id === String(body.patientMembershipId ?? ""));
+    if (!sub) return json(res, 404, { code: "P0002", message: "membership not found" });
+    const from = sub.status;
+    sub.status = "active";
+    sub.version += 1;
+    patientMembershipEvents.push({
+      organizationId: "org-fixture", patientMembershipId: sub.id, kind: "payment_recovered",
+      fromStatus: from, toStatus: "active", detail: "processor reported a successful retry",
+      source: "webhook", createdAt: new Date().toISOString(),
+    });
+    for (const [id, item] of queue) {
+      if (item.itemType === "subscription_payment_failed" && item.refId === sub.id) queue.delete(id);
+    }
+    return json(res, 200, { ok: true, status: sub.status });
+  }
+
+  // Mark a package purchase invoice PAID, the way settlement would.
+  if (url.pathname === "/__control/plans-mark-invoice-paid" && req.method === "POST") {
+    const body = await readBody(req);
+    const invoice = billingInvoices.get(String(body.invoiceId ?? ""));
+    if (!invoice) return json(res, 404, { code: "P0002", message: "invoice not found" });
+    invoice.status = "paid";
+    invoice.paidMinor = invoice.totalMinor;
+    invoice.finalizedAt = invoice.finalizedAt ?? new Date().toISOString();
+    invoice.number = invoice.number ?? `INV-${String(++billingInvoiceNumber).padStart(5, "0")}`;
+    invoice.version += 1;
+    return json(res, 200, { ok: true });
+  }
+
+  if (url.pathname === "/__control/billing-reset" && req.method === "POST") {
+    resetBillingFixtures();
+    return json(res, 200, { ok: true });
+  }
+
+  // The service_role processor boundary, stood in for by test control so no
+  // browser-reachable route can settle a payment. Mirrors
+  // attach_payment_processor_ref + record_billing_webhook, including durable
+  // dedup, amount/currency agreement, and out-of-order safety.
+  if (url.pathname === "/__control/billing-attach-processor-ref" && req.method === "POST") {
+    const body = await readBody(req);
+    const payment = billingPayments.get(String(body.paymentId ?? ""));
+    if (!payment) return json(res, 404, { code: "P0002", message: "payment not found" });
+    if (payment.status !== "pending" || payment.method !== "card_test") {
+      return json(res, 403, { code: "42501", message: "only a pending card payment can attach" });
+    }
+    if (payment.processorRef && payment.processorRef !== String(body.processorRef)) {
+      return json(res, 409, { code: "40001", message: "a different reference is attached" });
+    }
+    payment.processorRef = String(body.processorRef ?? "");
+    return json(res, 200, { ok: true });
+  }
+
+  if (url.pathname === "/__control/billing-webhook" && req.method === "POST") {
+    const body = await readBody(req);
+    const eventId = String(body.eventId ?? "");
+    if (!eventId) return json(res, 400, { code: "22023", message: "event id required" });
+    if (billingWebhookEvents.some((e) => e.eventId === eventId)) {
+      return json(res, 200, { outcome: "duplicate" });
+    }
+    const eventType = String(body.eventType ?? "unknown");
+    const amountMinor = body.amountMinor == null ? null : Number(body.amountMinor);
+    const currency = body.currency == null ? null : String(body.currency);
+    const payment = [...billingPayments.values()].find(
+      (p) => p.processor === "stripe_test" && p.processorRef === String(body.processorRef ?? ""),
+    );
+
+    let outcome = "ignored";
+    let detail = "no matching payment";
+    if (!payment) {
+      // recorded as ignored
+    } else if (amountMinor != null && amountMinor !== payment.amountMinor) {
+      outcome = "refused"; detail = "amount mismatch";
+    } else if (currency != null && currency.toUpperCase() !== payment.currency.toUpperCase()) {
+      outcome = "refused"; detail = "currency mismatch";
+    } else if (eventType === "payment_intent.succeeded") {
+      if (payment.status === "pending") {
+        payment.status = "succeeded";
+        payment.paidAt = new Date().toISOString();
+        outcome = "processed"; detail = "payment succeeded";
+      } else if (payment.status === "succeeded") {
+        outcome = "duplicate"; detail = "already succeeded";
+      } else {
+        outcome = "out_of_order"; detail = `terminal state ${payment.status}`;
+      }
+    } else if (eventType === "payment_intent.payment_failed") {
+      if (payment.status === "pending") {
+        payment.status = "failed";
+        payment.failureCodeSafe = "card_declined";
+        outcome = "processed"; detail = "payment failed";
+      } else {
+        outcome = "out_of_order"; detail = `terminal state ${payment.status}`;
+      }
+    } else if (eventType === "charge.refunded") {
+      if (payment.status === "succeeded") {
+        const already = billingRefunds
+          .filter((r) => r.paymentId === payment.id && r.status === "succeeded")
+          .reduce((sum, r) => sum + r.amountMinor, 0);
+        if (!amountMinor || amountMinor <= 0 || already + amountMinor > payment.amountMinor) {
+          outcome = "refused"; detail = "refund amount invalid";
+        } else {
+          billingRefunds.push({
+            id: billingId("rf"), paymentId: payment.id, patientId: payment.patientId,
+            amountMinor, currency: payment.currency, reason: "processor refund",
+            status: "succeeded", method: "card_test", createdAt: new Date().toISOString(),
+          });
+          outcome = "processed"; detail = "refund recorded";
+        }
+      } else {
+        outcome = "out_of_order"; detail = "refund before success";
+      }
+    }
+
+    billingWebhookEvents.push({
+      eventId, eventType, outcome, detail,
+      receivedAt: new Date().toISOString(),
+    });
+    if (outcome === "processed" && payment?.invoiceId) {
+      const invoice = billingInvoices.get(payment.invoiceId);
+      if (invoice) billingSettle(invoice, "webhook");
+    }
+    return json(res, 200, { outcome, detail });
+  }
+
   if (url.pathname === "/__control/sync-reset" && req.method === "POST") {
     syncConnections.clear();
     syncInvitations.clear();
@@ -2078,6 +3605,1838 @@ createServer(async (req, res) => {
     const memberOrgIds = memberOrgIdsForBearer(bearerToken);
 
     // Desktop-owned encounter + signed-note RPC boundary.
+    /* ------------------------------------------- Phase 9C helpers ------ */
+
+    // Mirrors `private.import_restricted_flags`. The inference boundary is the
+    // point: a DECLARED value becomes its own flag; a text signal can only ever
+    // add `suspected_restricted`, never a regulatory class.
+    const stubRestrictedFlags = (payload) => {
+      const flags = new Set();
+      const declared = String(payload?.regulatoryClassification ?? "").trim().toLowerCase();
+      if (["prescription", "peptide", "device"].includes(declared)) flags.add(declared);
+      const route = String(payload?.route ?? "").trim().toLowerCase();
+      if (["iv", "intravenous", "infusion", "im", "intramuscular", "subcutaneous", "injection"].includes(route)) {
+        flags.add("parenteral_therapy");
+      }
+      if (payload?.vaccineRelated === true) flags.add("vaccine_related");
+      if (Array.isArray(payload?.restrictedFlags)) {
+        for (const f of payload.restrictedFlags) {
+          if (String(f).trim()) flags.add(String(f).trim().toLowerCase());
+        }
+      }
+      const text = [
+        payload?.name, payload?.productName, payload?.description, payload?.statement,
+        payload?.proposition, payload?.title, payload?.category, payload?.form,
+      ].filter(Boolean).join(" ").toLowerCase();
+      if (/(peptide|bpc-?157|tb-?500|semaglutide|tirzepatide|ipamorelin|sermorelin)/.test(text)
+        || /(intravenous|\biv\b|infusion|injectable|injection)/.test(text)
+        || /(vaccine|vax|mrna|spike protein)/.test(text)
+        || /(prescription|\brx\b|schedule ii|controlled substance)/.test(text)
+        || /(chelation|ozone therapy|stem cell|exosome)/.test(text)) {
+        flags.add("suspected_restricted");
+      }
+      return [...flags].sort();
+    };
+
+    // Mirrors `private.import_missing_facts`. Absence recorded as absence.
+    const stubMissingFacts = (entityType, payload) => {
+      if (entityType !== "catalog_product") return [];
+      const missing = [];
+      if (!String(payload?.brand ?? "").trim()) missing.push("manufacturer or brand");
+      if (!String(payload?.form ?? "").trim()) missing.push("dose form");
+      if (!String(payload?.servingSize ?? "").trim()) missing.push("serving size");
+      if (!Array.isArray(payload?.ingredients) || payload.ingredients.length === 0) {
+        missing.push("ingredient amounts and units");
+      }
+      if (!String(payload?.sourceUrl ?? "").trim()) missing.push("manufacturer label reference");
+      if (!String(payload?.regulatoryClassification ?? "").trim()) {
+        missing.push("regulatory classification");
+      }
+      return missing;
+    };
+
+    const stubReviewState = (missing) =>
+      missing.includes("serving size") || missing.includes("ingredient amounts and units")
+        ? "incomplete"
+        : "needs_review";
+
+    // Mirrors `private.import_product_candidates`: same name (and brand, when
+    // the row states one) but a DIFFERENT identity.
+    const stubCandidates = (payload) => {
+      const name = String(payload?.name ?? "").trim().toLowerCase();
+      if (!name) return [];
+      const brand = String(payload?.brand ?? "").trim().toLowerCase();
+      const sku = String(payload?.sku ?? "").trim().toLowerCase();
+      const out = [];
+      for (const p of catalogReviewProducts.values()) {
+        if (String(p.name).toLowerCase() !== name) continue;
+        if (brand && String(p.brand ?? "").toLowerCase() !== brand) continue;
+        if (sku && String(p.sku ?? "").toLowerCase() === sku) continue;
+        out.push({
+          productId: p.productId, name: p.name, brand: p.brand ?? null,
+          sku: p.sku ?? null, upc: p.upc ?? null, status: p.status,
+          why: "same product name and brand",
+        });
+      }
+      return out;
+    };
+
+    // Mirrors `private.catalog_product_block_reason` — ONE sentence, so the
+    // screen and the refusal cannot disagree.
+    const stubBlockReason = (p) => {
+      if (!p) return null;
+      if (p.status !== "active") {
+        return 'the catalog product "' + p.name + '" is in review state "' + p.status
+          + '". An imported product is a claim about a label nobody here has verified; '
+          + "complete its review before using it in a protocol.";
+      }
+      if (p.restrictedFlags.length > 0 && !p.restrictedClearedAt) {
+        return 'the catalog product "' + p.name + '" is flagged as restricted ('
+          + p.restrictedFlags.join(", ") + ") and has not been cleared by a reviewer. "
+          + "Restricted items are jurisdiction-sensitive and require a named clinical decision.";
+      }
+      return null;
+    };
+
+    const stubSelectable = (p) =>
+      !!p && p.status === "active" && (p.restrictedFlags.length === 0 || !!p.restrictedClearedAt);
+
+    if (url.pathname === "/rest/v1/rpc/preview_knowledge_import" && req.method === "POST") {
+      const body = await readBody(req);
+      const org = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(org)) {
+        return json(res, 403, { code: "42501", message: "knowledge editor role required" });
+      }
+      if (body._attests_no_phi !== true) {
+        return json(res, 400, { code: "55000", message: "no-PHI attestation is required" });
+      }
+      const items = Array.isArray(body._items) ? body._items : [];
+      if (items.length < 1) {
+        return json(res, 400, { code: "22023", message: "an import batch must contain between 1 and 5000 items" });
+      }
+      const hash = stubHash(items);
+
+      // File-level idempotency: the same bytes never stage twice.
+      const existingId = importSeenHashes.get(org + ":" + hash);
+      if (existingId) {
+        const b = importBatches.get(existingId);
+        return json(res, 200, {
+          batchId: b.id, idempotent: true, status: b.status, itemCount: b.itemCount,
+          added: b.added, changed: b.changed, unchanged: b.unchanged,
+          conflicts: b.conflicts, removals: b.removals,
+          ambiguous: b.ambiguous ?? 0, restricted: b.restricted ?? 0,
+          message: "This exact file was already imported. The existing batch is "
+            + "returned unchanged; nothing was staged a second time.",
+        });
+      }
+
+      const batchId = "batch-" + (importBatches.size + 1);
+      const seen = new Set();
+      const staged = [];
+      let added = 0, changed = 0, unchanged = 0, conflicts = 0;
+      let ambiguous = 0, restricted = 0;
+
+      items.forEach((raw, index) => {
+        const entityType = String(raw?.entityType ?? "");
+        const payload = raw?.payload ?? {};
+        const key = stubDedupeKey(entityType, payload);
+        const payloadHash = stubHash(payload);
+        const errors = stubValidationErrors(entityType, payload);
+        const flags = stubRestrictedFlags(payload);
+        const missingFacts = stubMissingFacts(entityType, payload);
+        let candidates = [];
+        let changeKind;
+        let conflictWith = null;
+        let existingRefType = null;
+        let existingRefId = null;
+        const composite = entityType + "|" + key;
+
+        if (key && seen.has(composite)) {
+          changeKind = "conflict";
+          conflictWith = staged.find((i) => i.dedupeKey === key && i.entityType === entityType)?.id ?? null;
+          conflicts += 1;
+        } else {
+          if (key) seen.add(composite);
+          const prior = key ? importState.get(org + "|" + composite) : null;
+          if (!prior) { changeKind = "add"; added += 1; }
+          else if (prior.hash === payloadHash) { changeKind = "unchanged"; unchanged += 1; }
+          else {
+            changeKind = "change"; changed += 1;
+            existingRefType = prior.refType ?? null;
+            existingRefId = prior.refId ?? null;
+          }
+
+          // Only an `add` can be ambiguous. A row that matched a governed
+          // identity is a change and needs no candidates.
+          if (changeKind === "add" && entityType === "catalog_product") {
+            candidates = stubCandidates(payload);
+            if (candidates.length > 0) { changeKind = "ambiguous"; added -= 1; ambiguous += 1; }
+          }
+        }
+        if (flags.length > 0) restricted += 1;
+
+        staged.push({
+          id: batchId + "-item-" + (index + 1),
+          entityType,
+          displayName: String(raw?.displayName ?? "Unnamed import item"),
+          sourceSheet: raw?.sourceSheet ?? null,
+          sourceRowNumber: index + 1,
+          dedupeKey: key,
+          changeKind,
+          status: ["unchanged", "conflict", "ambiguous"].includes(changeKind) ? "skipped" : "needs_review",
+          payloadSha256: payloadHash,
+          existingRefType,
+          existingRefId,
+          conflictWithItemId: conflictWith,
+          conflictReason: changeKind === "conflict"
+            ? "Another row earlier in this file claims the same identity (" + key
+              + "). Resolve which row is correct before committing."
+            : changeKind === "ambiguous"
+              ? "This row matches no governed identity but closely resembles "
+                + candidates.length + " existing product(s). Applying it would either "
+                + "duplicate one or overwrite the wrong one. Confirm which before committing."
+              : null,
+          conflictResolution: null,
+          validationErrors: errors,
+          warnings: Array.isArray(raw?.warnings) ? raw.warnings : [],
+          reviewNote: null,
+          appliedRefType: null,
+          appliedRefId: null,
+          payload,
+          sourceRaw: raw?.sourceRaw && typeof raw.sourceRaw === "object" ? raw.sourceRaw : {},
+          restrictedFlags: flags,
+          restrictedReason: flags.length
+            ? "Flagged as restricted (" + flags.join(", ") + "). A restricted item is not "
+              + "usable until a named reviewer clears it."
+            : null,
+          missingFacts,
+          candidateMatches: candidates,
+        });
+      });
+
+      const sourceKind = body._source_kind ?? null;
+      let removals = 0;
+      if (sourceKind) {
+        for (const [k, v] of importState.entries()) {
+          if (!k.startsWith(org + "|") || v.sourceKind !== sourceKind) continue;
+          const composite = k.slice(org.length + 1);
+          if (!staged.some((i) => i.entityType + "|" + i.dedupeKey === composite)) removals += 1;
+        }
+      }
+
+      const batch = {
+        id: batchId, status: "preview",
+        sourceName: String(body._source_name ?? ""),
+        sourceKind,
+        sourceFilename: body._source_filename ?? null,
+        sourceByteSize: body._source_byte_size ?? null,
+        sourceSha256: hash,
+        schemaVersion: String(body._schema_version ?? ""),
+        itemCount: items.length,
+        added, changed, unchanged, conflicts, removals, ambiguous, restricted,
+        previewGeneratedAt: new Date().toISOString(),
+        committedAt: null,
+        createdAt: new Date().toISOString(),
+        organizationId: org,
+        items: staged,
+      };
+      importBatches.set(batchId, batch);
+      importSeenHashes.set(org + ":" + hash, batchId);
+
+      return json(res, 200, {
+        batchId, idempotent: false, status: "preview", itemCount: items.length,
+        added, changed, unchanged, conflicts, removals, ambiguous, restricted,
+        sourceSha256: hash,
+        message: "Preview only. No governed record has been created or changed. "
+          + "Review every change and commit explicitly to apply.",
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/get_knowledge_import_preview" && req.method === "POST") {
+      const body = await readBody(req);
+      const b = importBatches.get(String(body._batch_id ?? ""));
+      if (!b) return json(res, 404, { code: "P0002", message: "import batch not found" });
+      const removals = [];
+      if (b.sourceKind) {
+        for (const [k, v] of importState.entries()) {
+          if (!k.startsWith(b.organizationId + "|") || v.sourceKind !== b.sourceKind) continue;
+          const composite = k.slice(b.organizationId.length + 1);
+          if (!b.items.some((i) => i.entityType + "|" + i.dedupeKey === composite)) {
+            removals.push({
+              entityType: composite.split("|")[0],
+              dedupeKey: composite.split("|").slice(1).join("|"),
+              refType: v.refType ?? null, refId: v.refId ?? null,
+            });
+          }
+        }
+      }
+      return json(res, 200, {
+        batch: {
+          id: b.id, status: b.status, sourceName: b.sourceName, sourceKind: b.sourceKind,
+          sourceFilename: b.sourceFilename, sourceByteSize: b.sourceByteSize,
+          sourceSha256: b.sourceSha256, schemaVersion: b.schemaVersion,
+          itemCount: b.itemCount, added: b.added, changed: b.changed,
+          unchanged: b.unchanged, conflicts: b.conflicts, removals: b.removals,
+          ambiguous: b.ambiguous ?? 0, restricted: b.restricted ?? 0,
+          previewGeneratedAt: b.previewGeneratedAt, committedAt: b.committedAt,
+          createdAt: b.createdAt,
+        },
+        items: b.items.map(({ payload, ...rest }) => ({
+          ...rest,
+          // Field-level diffs, mirroring `private.import_item_field_diffs`. A
+          // field the source does not mention is SILENCE, never a deletion.
+          fieldDiffs: (() => {
+            if (rest.entityType !== "catalog_product" || !rest.existingRefId) return [];
+            const current = catalogReviewProducts.get(rest.existingRefId);
+            if (!current) return [];
+            const fields = ["name", "brand", "form", "sku", "upc", "category",
+              "regulatoryClassification", "jurisdiction", "description"];
+            return fields
+              .filter((f) => payload?.[f] !== undefined
+                && String(payload[f] ?? "").trim() !== String(current[f] ?? "").trim())
+              .map((f) => ({
+                field: f,
+                current: current[f] ?? null,
+                incoming: payload[f] ?? null,
+              }));
+          })(),
+        })),
+        reportedRemovals: removals,
+        removalPolicy: "Removals are reported for review only. This pipeline "
+          + "never deletes governed clinical content; retire a record deliberately "
+          + "with its own action and reason.",
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/resolve_knowledge_import_conflict" && req.method === "POST") {
+      const body = await readBody(req);
+      const itemId = String(body._item_id ?? "");
+      const resolution = String(body._resolution ?? "");
+      const note = String(body._note ?? "").trim();
+      if (!note) return json(res, 400, { code: "22023", message: "a conflict resolution requires a reason" });
+      if (!["keep_existing", "take_incoming", "skip"].includes(resolution)) {
+        return json(res, 400, { code: "22023", message: "resolution must be keep_existing, take_incoming or skip" });
+      }
+      for (const b of importBatches.values()) {
+        const item = b.items.find((i) => i.id === itemId);
+        if (!item) continue;
+        // Phase 9E-A.1 continuation: tenant membership check. Without this
+        // the resolver ran for anyone with a bearer, which meant the
+        // cross-tenant refusal invariant was not actually enforced at the
+        // wire. The refusal message is deliberately generic — it must not
+        // leak the item's display name, source, or restriction state.
+        if (!memberOrgIds.includes(b.organizationId)) {
+          return json(res, 403, { code: "42501", message: "not authorized" });
+        }
+        if (item.changeKind !== "conflict") {
+          return json(res, 400, { code: "55000", message: "this item is not in conflict" });
+        }
+        if (resolution === "take_incoming") {
+          const superseded = b.items.find((i) => i.id === item.conflictWithItemId);
+          if (superseded) superseded.status = "skipped";
+          item.changeKind = "change";
+          item.status = "needs_review";
+        } else {
+          item.status = "skipped";
+        }
+        item.conflictResolution = resolution;
+        item.reviewNote = note;
+        // Audit fields: recorded so the workspace + tests can prove that
+        // actor + timestamp lands on the item alongside the decision +
+        // reason. `reviewedBy` is a deterministic marker for stub tests;
+        // the real RPC captures auth.uid().
+        item.reviewedAt = new Date().toISOString();
+        item.reviewedBy = "practitioner";
+        b.conflicts = Math.max(b.conflicts - 1, 0);
+        return json(res, 200, {
+          ok: true,
+          itemId,
+          resolution,
+          reviewedBy: item.reviewedBy,
+          reviewedAt: item.reviewedAt,
+        });
+      }
+      return json(res, 404, { code: "P0002", message: "import item not found" });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/commit_knowledge_import" && req.method === "POST") {
+      const body = await readBody(req);
+      const b = importBatches.get(String(body._batch_id ?? ""));
+      if (!b) return json(res, 404, { code: "P0002", message: "import batch not found" });
+      if (b.status === "committed" || b.status === "cancelled") {
+        return json(res, 400, { code: "55000", message: "only a previewed batch can be committed" });
+      }
+
+      const unresolved = b.items.filter((i) => i.changeKind === "conflict" && !i.conflictResolution);
+      if (unresolved.length) {
+        return json(res, 400, {
+          code: "55000",
+          message: "resolve all " + unresolved.length + " conflicting rows before committing",
+        });
+      }
+      const stillAmbiguous = b.items.filter((i) => i.changeKind === "ambiguous");
+      if (stillAmbiguous.length) {
+        return json(res, 400, {
+          code: "55000",
+          message: "resolve all " + stillAmbiguous.length + " ambiguous rows before committing; "
+            + "each one resembles an existing product closely enough that applying it blind "
+            + "would duplicate or overwrite it",
+        });
+      }
+      const invalid = b.items.filter((i) => i.status === "needs_review" && i.validationErrors.length);
+      if (invalid.length) {
+        return json(res, 400, {
+          code: "55000",
+          message: invalid.length + " row(s) have validation errors; fix them in the source and re-import",
+        });
+      }
+      const expected = body._expected_counts;
+      if (expected && (expected.added !== b.added || expected.changed !== b.changed)) {
+        return json(res, 409, {
+          code: "40001",
+          message: "this preview changed since it was reviewed (staged add/change is "
+            + b.added + "/" + b.changed + "); reload and review again",
+        });
+      }
+
+      let applied = 0;
+      let restrictedApplied = 0;
+      for (const item of b.items) {
+        if (item.status !== "needs_review") continue;
+        item.status = "applied";
+
+        if (item.entityType === "catalog_product") {
+          // The Phase 9C apply path: NEVER `active`, always carrying its flags
+          // and the facts the source did not supply.
+          const productId = item.existingRefId ?? item.id + "-product";
+          const reviewState = stubReviewState(item.missingFacts ?? []);
+          catalogReviewProducts.set(productId, {
+            productId,
+            name: item.payload?.name ?? item.displayName,
+            brand: item.payload?.brand ?? null,
+            sku: item.payload?.sku ?? null,
+            upc: item.payload?.upc ?? null,
+            form: item.payload?.form ?? null,
+            category: item.payload?.category ?? null,
+            regulatoryClassification: item.payload?.regulatoryClassification ?? null,
+            jurisdiction: item.payload?.jurisdiction ?? null,
+            description: item.payload?.description ?? null,
+            status: reviewState,
+            restrictedFlags: item.restrictedFlags ?? [],
+            // A changed source row re-enters review, and any clearance is dropped.
+            restrictedClearedAt: null,
+            restrictedClearanceNote: null,
+            missingFacts: item.missingFacts ?? [],
+            organizationId: b.organizationId,
+            sourceFileName: b.sourceFilename ?? null,
+          });
+          item.appliedRefType = "supplement_product";
+          item.appliedRefId = productId;
+          if ((item.restrictedFlags ?? []).length > 0) restrictedApplied += 1;
+        } else {
+          item.appliedRefType = item.entityType;
+          item.appliedRefId = item.id + "-ref";
+        }
+
+        // Append-only: a second commit of the same item never rewrites it.
+        if (!importProvenance.some((r) => r.itemId === item.id && r.refId === item.appliedRefId)) {
+          importProvenance.push({
+            id: "prov-" + (importProvenance.length + 1),
+            organizationId: b.organizationId,
+            refType: item.appliedRefType,
+            refId: item.appliedRefId,
+            batchId: b.id,
+            itemId: item.id,
+            sourceFileName: b.sourceFilename ?? null,
+            sourceFileSha256: b.sourceSha256,
+            sourceSheet: item.sourceSheet ?? null,
+            sourceRowNumber: item.sourceRowNumber ?? null,
+            payloadSha256: item.payloadSha256,
+            rawValues: item.sourceRaw ?? {},
+            normalizedValues: item.payload ?? {},
+            missingFacts: item.missingFacts ?? [],
+            restrictedFlags: item.restrictedFlags ?? [],
+            importedAt: new Date().toISOString(),
+            batchSourceName: b.sourceName,
+          });
+        }
+        applied += 1;
+        if (item.dedupeKey) {
+          importState.set(b.organizationId + "|" + item.entityType + "|" + item.dedupeKey, {
+            hash: item.payloadSha256, sourceKind: b.sourceKind,
+            refType: item.appliedRefType, refId: item.appliedRefId,
+          });
+        }
+      }
+      b.status = "committed";
+      b.committedAt = new Date().toISOString();
+
+      return json(res, 200, {
+        ok: true, batchId: b.id, applied, skipped: 0, restricted: restrictedApplied,
+        approvalState: "draft",
+        message: "Imported content is stored as NON-APPROVED drafts. Import is not "
+          + "review, and nothing here is approved for clinical use until a "
+          + "practitioner approves it. Imported products are NOT selectable in the "
+          + "protocol picker until their review state is completed.",
+      });
+    }
+
+    /* ------------------------------- Phase 9C: the review surface ------ */
+
+    if (url.pathname === "/rest/v1/rpc/record_import_source_file" && req.method === "POST") {
+      const body = await readBody(req);
+      const org = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(org)) {
+        return json(res, 403, { code: "42501", message: "knowledge editor role required" });
+      }
+      const name = String(body._declared_name ?? "").trim();
+      const availability = String(body._availability ?? "unavailable");
+      if (!name) {
+        return json(res, 400, { code: "22023", message: "a source file needs a declared name" });
+      }
+      // A file NAME, never a path. Where the operator keeps their material is
+      // not this system's business.
+      if (name.includes("/") || name.includes("\\") || /^[A-Za-z]:/.test(name) || name.startsWith("~")) {
+        return json(res, 400, {
+          code: "23514",
+          message: "a declared source file is recorded by NAME, never by path",
+        });
+      }
+      if (!["available", "unavailable"].includes(availability)) {
+        return json(res, 400, { code: "22023", message: "availability must be available or unavailable" });
+      }
+      const digest = String(body._content_sha256 ?? "");
+      if (availability === "available" && !/^[0-9a-f]{64}$/.test(digest)) {
+        return json(res, 400, {
+          code: "22023",
+          message: "a file recorded as available must carry its sha256 digest; an inventory "
+            + "that can be filled in without reading the file proves nothing",
+        });
+      }
+      const reason = String(body._unavailable_reason ?? "").trim();
+      if (availability === "unavailable" && !reason) {
+        return json(res, 400, {
+          code: "22023",
+          message: 'a file recorded as unavailable must say why; "not found" and "withheld" '
+            + "are different facts",
+        });
+      }
+      const key = org + "|" + name;
+      const existing = importSourceFiles.get(key);
+      const record = {
+        id: existing?.id ?? "src-" + (importSourceFiles.size + 1),
+        organizationId: org,
+        declaredName: name,
+        sourceKind: body._source_kind ?? existing?.sourceKind ?? null,
+        availability,
+        contentSha256: availability === "available" ? digest : null,
+        byteSize: availability === "available" ? (body._byte_size ?? 0) : null,
+        unavailableReason: availability === "unavailable" ? reason : null,
+        declaredAt: existing?.declaredAt ?? new Date().toISOString(),
+        lastCheckedAt: new Date().toISOString(),
+      };
+      importSourceFiles.set(key, record);
+      return json(res, 200, { ok: true, sourceFileId: record.id, availability });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/get_import_source_inventory" && req.method === "POST") {
+      const body = await readBody(req);
+      const org = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(org)) {
+        return json(res, 403, { code: "42501", message: "active organization membership required" });
+      }
+      const files = [...importSourceFiles.values()]
+        .filter((f) => f.organizationId === org)
+        .sort((a, b2) => a.declaredName.localeCompare(b2.declaredName))
+        .map((f) => ({
+          id: f.id, declaredName: f.declaredName, sourceKind: f.sourceKind,
+          availability: f.availability, contentSha256: f.contentSha256,
+          byteSize: f.byteSize, unavailableReason: f.unavailableReason,
+          declaredAt: f.declaredAt, lastCheckedAt: f.lastCheckedAt,
+          batchCount: [...importBatches.values()].filter(
+            (b) => b.organizationId === org && b.sourceSha256 === f.contentSha256).length,
+        }));
+      return json(res, 200, {
+        files,
+        counts: {
+          declared: files.length,
+          available: files.filter((f) => f.availability === "available").length,
+          unavailable: files.filter((f) => f.availability === "unavailable").length,
+        },
+        emptyStateMessage: "No source files have been declared for this organization. "
+          + "Declaring a file records what was looked for, including files that could not be "
+          + "read — an inventory with nothing in it is not the same as an import that found nothing.",
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/resolve_knowledge_import_ambiguity" && req.method === "POST") {
+      const body = await readBody(req);
+      const itemId = String(body._item_id ?? "");
+      const resolution = String(body._resolution ?? "");
+      const note = String(body._note ?? "").trim();
+      if (!["new_product", "same_as_existing", "skip"].includes(resolution)) {
+        return json(res, 400, {
+          code: "22023",
+          message: "resolution must be new_product, same_as_existing or skip",
+        });
+      }
+      if (!note) {
+        return json(res, 400, { code: "22023", message: "resolving an ambiguity requires a stated reason" });
+      }
+      for (const b of importBatches.values()) {
+        const item = b.items.find((i) => i.id === itemId);
+        if (!item) continue;
+        if (item.changeKind !== "ambiguous") {
+          return json(res, 400, { code: "55000", message: "this item is not ambiguous" });
+        }
+        if (resolution === "same_as_existing") {
+          const productId = String(body._existing_product_id ?? "");
+          if (!productId) {
+            return json(res, 400, { code: "22023", message: "name the existing product this row refers to" });
+          }
+          // Only a candidate the row itself raised. An arbitrary id would point
+          // the row at a product nobody compared it against.
+          if (!(item.candidateMatches ?? []).some((c) => c.productId === productId)) {
+            return json(res, 400, {
+              code: "22023",
+              message: "that product is not among this row's candidates",
+            });
+          }
+          item.changeKind = "change";
+          item.status = "needs_review";
+          item.existingRefType = "supplement_product";
+          item.existingRefId = productId;
+          b.changed += 1;
+        } else if (resolution === "new_product") {
+          item.changeKind = "add";
+          item.status = "needs_review";
+          b.added += 1;
+        } else {
+          item.status = "skipped";
+        }
+        item.reviewNote = note;
+        b.ambiguous = Math.max((b.ambiguous ?? 0) - 1, 0);
+        return json(res, 200, { ok: true, itemId, resolution });
+      }
+      return json(res, 404, { code: "P0002", message: "import item not found" });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/get_catalog_review_queue" && req.method === "POST") {
+      const body = await readBody(req);
+      const org = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(org)) {
+        return json(res, 403, { code: "42501", message: "active organization membership required" });
+      }
+      const products = [...catalogReviewProducts.values()]
+        .filter((p) => p.organizationId === org
+          && (p.status !== "active" || p.restrictedFlags.length > 0))
+        .sort((a, b2) => String(a.name).localeCompare(String(b2.name)))
+        .map((p) => ({
+          productId: p.productId, name: p.name, brand: p.brand, sku: p.sku, upc: p.upc,
+          status: p.status, restrictedFlags: p.restrictedFlags,
+          restrictedClearedAt: p.restrictedClearedAt,
+          restrictedClearanceNote: p.restrictedClearanceNote,
+          selectable: stubSelectable(p),
+          blockReason: stubBlockReason(p),
+          missingFacts: p.missingFacts ?? [],
+          sourceFileName: p.sourceFileName ?? null,
+        }));
+      return json(res, 200, {
+        products,
+        counts: {
+          total: products.length,
+          restricted: products.filter((p) => p.restrictedFlags.length > 0).length,
+          notSelectable: products.filter((p) => !p.selectable).length,
+        },
+        emptyStateMessage: "No imported product is waiting for review. Products entered by "
+          + "hand are not listed here — this queue is for records that arrived in a file.",
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/clear_catalog_product_restriction" && req.method === "POST") {
+      const body = await readBody(req);
+      const p = catalogReviewProducts.get(String(body._product_id ?? ""));
+      if (!p) return json(res, 404, { code: "P0002", message: "catalog product not found" });
+      const note = String(body._note ?? "").trim();
+      if (!note) {
+        return json(res, 400, { code: "22023", message: "clearing a restriction requires a stated reason" });
+      }
+      if (p.restrictedFlags.length === 0) {
+        return json(res, 400, { code: "55000", message: "this product is not flagged as restricted" });
+      }
+      p.restrictedClearedAt = new Date().toISOString();
+      p.restrictedClearanceNote = note;
+      return json(res, 200, {
+        ok: true, productId: p.productId,
+        message: "Restriction cleared. The product remains subject to its review state; "
+          + "clearance is not approval.",
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/complete_catalog_product_review" && req.method === "POST") {
+      const body = await readBody(req);
+      const p = catalogReviewProducts.get(String(body._product_id ?? ""));
+      if (!p) return json(res, 404, { code: "P0002", message: "catalog product not found" });
+      const note = String(body._note ?? "").trim();
+      if (!note) {
+        return json(res, 400, { code: "22023", message: "completing a review requires a stated reason" });
+      }
+      if (!["draft", "incomplete", "needs_review"].includes(p.status)) {
+        return json(res, 400, { code: "55000", message: "this product is not in a review state" });
+      }
+      // `incomplete` is refused, and the refusal NAMES what the source omitted.
+      if (p.status === "incomplete") {
+        return json(res, 400, {
+          code: "55000",
+          message: "this product is incomplete: the source did not supply "
+            + ((p.missingFacts ?? []).join(", ") || "required label detail")
+            + ". Record the missing facts against the product before completing its review.",
+        });
+      }
+      p.status = "active";
+      return json(res, 200, {
+        ok: true, productId: p.productId, status: "active",
+        message: "Review complete. The product is now selectable. It still cannot reach an "
+          + "APPROVED protocol until a reviewer verifies its exact label identity against "
+          + "the manufacturer.",
+      });
+    }
+
+    // Phase 9E-A: 5-outcome restricted review. record_restricted_review_outcome
+    // enforces role gating (member-only), a required reason, and jurisdiction
+    // on the clinician outcome. None of the outcomes clears the restriction —
+    // clearance stays on `clear_catalog_product_restriction`.
+    //
+    // Phase 9E-A.1: v2 accepts a subject discriminator so the same append-only
+    // history works for preview import items and governed knowledge
+    // references, not just committed catalog products. The three types share
+    // one bucket keyed by `${subjectType}:${subjectId}` — that matches the
+    // SQL exactly-one-subject constraint and keeps history reads O(1).
+    const VALID_OUTCOMES = new Set([
+      "retain_restricted",
+      "request_evidence",
+      "defer",
+      "reject",
+      "clinician_reviewed_for_jurisdiction",
+    ]);
+    const VALID_SUBJECT_TYPES = new Set(["product", "preview_item", "knowledge_reference"]);
+    function stubSubjectExists(subjectType, subjectId, org) {
+      if (subjectType === "product") {
+        return catalogReviewProducts.has(subjectId);
+      }
+      if (subjectType === "preview_item") {
+        const item = previewItemsRestricted.get(subjectId);
+        return item != null && item.organizationId === org;
+      }
+      if (subjectType === "knowledge_reference") {
+        const ref = governedKnowledgeReferences.get(subjectId);
+        return ref != null && ref.organizationId === org;
+      }
+      return false;
+    }
+    function stubSubjectOrg(subjectType, subjectId) {
+      if (subjectType === "preview_item") return previewItemsRestricted.get(subjectId)?.organizationId ?? null;
+      if (subjectType === "knowledge_reference") return governedKnowledgeReferences.get(subjectId)?.organizationId ?? null;
+      return null;
+    }
+    async function stubRecordRestrictedReview(body, defaultSubjectType) {
+      const org = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(org)) {
+        return { status: 403, payload: { code: "42501", message: "not a member of this organization" } };
+      }
+      const subjectType = String(body._subject_type ?? defaultSubjectType ?? "product");
+      const subjectId = String(
+        body._subject_id ?? body._product_id ?? body._preview_item_id ?? body._knowledge_reference_id ?? "",
+      );
+      const outcome = String(body._outcome ?? "");
+      const reason = String(body._reason ?? "").trim();
+      const jurisdiction = body._jurisdiction == null ? null : String(body._jurisdiction).trim();
+      if (!VALID_SUBJECT_TYPES.has(subjectType)) {
+        return { status: 400, payload: { code: "22023", message: "unknown subject type" } };
+      }
+      if (!VALID_OUTCOMES.has(outcome)) {
+        return { status: 400, payload: { code: "22023", message: "unknown outcome" } };
+      }
+      if (!reason) {
+        return { status: 400, payload: { code: "22023", message: "a restricted-review decision requires a reason" } };
+      }
+      if (outcome === "clinician_reviewed_for_jurisdiction" && !jurisdiction) {
+        return {
+          status: 400,
+          payload: { code: "22023", message: "clinician_reviewed_for_jurisdiction requires a jurisdiction" },
+        };
+      }
+      if (!stubSubjectExists(subjectType, subjectId, org)) {
+        return { status: 404, payload: { code: "P0002", message: `subject ${subjectType} not found` } };
+      }
+      const subjectOrg = stubSubjectOrg(subjectType, subjectId);
+      if (subjectOrg != null && subjectOrg !== org) {
+        return {
+          status: 403,
+          payload: { code: "42501", message: `subject ${subjectType} belongs to a different tenant` },
+        };
+      }
+      const key = `${subjectType}:${subjectId}`;
+      const decisionId = `rrd-${catalogRestrictedReviewDecisions.size + 1}-${subjectType}`;
+      // Wall-clock timestamp so multiple decisions in one browser test still
+      // sort strictly newest-first when the read helper picks currentOutcome.
+      const decidedAt = new Date().toISOString();
+      const record = {
+        id: decisionId,
+        organizationId: org,
+        subjectType,
+        subjectId,
+        outcome,
+        reason,
+        jurisdiction: jurisdiction || null,
+        decidedBy: "practitioner",
+        decidedAt,
+      };
+      const bucket = catalogRestrictedReviewDecisions.get(key) ?? [];
+      bucket.push(record);
+      catalogRestrictedReviewDecisions.set(key, bucket);
+      // Restriction flags are NOT touched here — none of the five outcomes
+      // clears them. That guarantee is what the workspace surfaces on screen.
+      return {
+        status: 200,
+        payload: {
+          ok: true,
+          decisionId,
+          subjectType,
+          subjectId,
+          outcome,
+          restrictionsPreserved: true,
+        },
+      };
+    }
+    if (url.pathname === "/rest/v1/rpc/record_restricted_review_outcome" && req.method === "POST") {
+      const body = await readBody(req);
+      const result = await stubRecordRestrictedReview(body, "product");
+      return json(res, result.status, result.payload);
+    }
+    if (url.pathname === "/rest/v1/rpc/record_restricted_review_outcome_v2" && req.method === "POST") {
+      const body = await readBody(req);
+      const result = await stubRecordRestrictedReview(body, undefined);
+      return json(res, result.status, result.payload);
+    }
+
+    async function stubGetRestrictedReviewHistory(body, defaultSubjectType) {
+      const org = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(org)) {
+        return { status: 403, payload: { code: "42501", message: "not a member of this organization" } };
+      }
+      const subjectType = String(body._subject_type ?? defaultSubjectType ?? "product");
+      const subjectId = String(body._subject_id ?? body._product_id ?? "");
+      if (!VALID_SUBJECT_TYPES.has(subjectType)) {
+        return { status: 400, payload: { code: "22023", message: "unknown subject type" } };
+      }
+      const key = `${subjectType}:${subjectId}`;
+      const history = (catalogRestrictedReviewDecisions.get(key) ?? [])
+        .filter((d) => d.organizationId === org)
+        .slice()
+        .sort((a, b) => (a.decidedAt < b.decidedAt ? 1 : -1));
+      return {
+        status: 200,
+        payload: {
+          subjectType,
+          subjectId,
+          organizationId: org,
+          currentOutcome: history[0]?.outcome ?? null,
+          history,
+        },
+      };
+    }
+    if (url.pathname === "/rest/v1/rpc/get_restricted_review_history" && req.method === "POST") {
+      const body = await readBody(req);
+      const result = await stubGetRestrictedReviewHistory(body, "product");
+      return json(res, result.status, result.payload);
+    }
+    if (url.pathname === "/rest/v1/rpc/get_restricted_review_history_v2" && req.method === "POST") {
+      const body = await readBody(req);
+      const result = await stubGetRestrictedReviewHistory(body, undefined);
+      return json(res, result.status, result.payload);
+    }
+
+    // ============================================ Phase 9E-A.2 label editor
+    if (url.pathname === "/rest/v1/rpc/create_product_label_draft" && req.method === "POST") {
+      const body = await readBody(req);
+      const org = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(org)) return json(res, 403, { code: "42501", message: "not a member" });
+      const productCode = String(body._product_code ?? "").trim();
+      const productName = String(body._product_name ?? "").trim();
+      const brand = String(body._brand ?? "").trim();
+      if (!productCode) return json(res, 400, { code: "22023", message: "product_code is required" });
+      if (!productName) return json(res, 400, { code: "22023", message: "product_name is required" });
+      if (!brand) return json(res, 400, { code: "22023", message: "brand is required" });
+      const versionsForCode = [...productLabelVersions.values()].filter(
+        (v) => v.organizationId === org && v.productCode === productCode,
+      );
+      const nextVersion = (versionsForCode.reduce((m, v) => Math.max(m, v.version), 0) || 0) + 1;
+      const id = `plv-${productLabelVersions.size + 1}`;
+      productLabelVersions.set(id, {
+        id,
+        organizationId: org,
+        productCode,
+        productName,
+        brand,
+        version: nextVersion,
+        exactLabel: body._exact_label ?? {},
+        labelSha256: stubHash(body._exact_label ?? {}),
+        sourceUrl: body._source_url ? String(body._source_url).trim() : null,
+        servingSize: body._serving_size ? String(body._serving_size).trim() : null,
+        ingredients: Array.isArray(body._ingredients) ? body._ingredients : [],
+        otherIngredients: body._other_ingredients ? String(body._other_ingredients).trim() : null,
+        allergens: body._allergens ? String(body._allergens).trim() : null,
+        contraindications: body._contraindications ? String(body._contraindications).trim() : null,
+        warningsText: body._warnings_text ? String(body._warnings_text).trim() : null,
+        storageInstructions: body._storage_instructions ? String(body._storage_instructions).trim() : null,
+        observedDate: body._observed_date ?? null,
+        jurisdiction: body._jurisdiction ? String(body._jurisdiction).trim() : null,
+        labelImageRef: body._label_image_ref ? String(body._label_image_ref).trim() : null,
+        supersedesId: null,
+        status: "pending",
+        verifiedAt: null,
+        verifiedBy: null,
+        verificationNote: null,
+        createdAt: new Date().toISOString(),
+        createdBy: "practitioner",
+      });
+      return json(res, 200, { ok: true, id, version: nextVersion, status: "pending" });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/verify_product_label_version" && req.method === "POST") {
+      const body = await readBody(req);
+      const isA2 = productLabelVersions.has(String(body._label_version_id ?? ""));
+      // If the ID lives in the OLD catalog-labels store, forward the parsed
+      // body to the old handler inline so it can use it without re-consuming
+      // the stream.
+      if (!isA2) {
+        // Fall through inline: replicate the old handler's behavior right
+        // here so we don't re-await readBody (which would return empty).
+        const l = catalogLabels.get(String(body._label_version_id ?? ""));
+        if (!l) return json(res, 404, { code: "P0002", message: "product label version not found" });
+        if (fixtureRole !== "owner" && fixtureRole !== "admin") {
+          return json(res, 403, { code: "42501", message: "knowledge administrator role required" });
+        }
+        l.verifiedAt = nowIso();
+        l.verificationNote = String(body._verification_note ?? "");
+        return json(res, 200, null);
+      } else {
+      const org = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(org)) return json(res, 403, { code: "42501", message: "not a member" });
+      const note = String(body._verification_note ?? "").trim();
+      if (!note) return json(res, 400, { code: "22023", message: "verification requires a stated note" });
+      const row = productLabelVersions.get(String(body._label_version_id ?? ""));
+      if (!row) return json(res, 404, { code: "P0002", message: "label version not found" });
+      if (row.organizationId !== org)
+        return json(res, 403, { code: "42501", message: "label version belongs to a different tenant" });
+      if (row.status !== "pending")
+        return json(res, 400, { code: "55000", message: "only pending drafts can be verified" });
+      if (!row.servingSize)
+        return json(res, 400, { code: "22023", message: "serving_size is required for verification" });
+      if (!Array.isArray(row.ingredients) || row.ingredients.length === 0)
+        return json(res, 400, { code: "22023", message: "at least one ingredient is required for verification" });
+      if (!row.sourceUrl && !row.labelImageRef)
+        return json(res, 400, { code: "22023", message: "a label source URL or label image reference is required for verification" });
+      row.status = "verified";
+      row.verifiedAt = new Date().toISOString();
+      row.verifiedBy = "practitioner";
+      row.verificationNote = note;
+      return json(res, 200, { ok: true, id: row.id, status: "verified" });
+      }  // end else block for Phase 9E-A.2 verify handler
+    }
+
+    if (url.pathname === "/rest/v1/rpc/supersede_product_label_version" && req.method === "POST") {
+      const body = await readBody(req);
+      // See verify_product_label_version for why we defer to the older handler
+      // when the ID lives in the OLD store.
+      if (!productLabelVersions.has(String(body._supersedes_id ?? ""))) {
+        // Fall through.
+      } else {
+      const org = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(org)) return json(res, 403, { code: "42501", message: "not a member" });
+      const reason = String(body._reason ?? "").trim();
+      if (!reason) return json(res, 400, { code: "22023", message: "supersede requires a stated reason" });
+      const prior = productLabelVersions.get(String(body._supersedes_id ?? ""));
+      if (!prior) return json(res, 404, { code: "P0002", message: "prior label version not found" });
+      if (prior.organizationId !== org)
+        return json(res, 403, { code: "42501", message: "prior label version belongs to a different tenant" });
+      const versionsForCode = [...productLabelVersions.values()].filter(
+        (v) => v.organizationId === org && v.productCode === prior.productCode,
+      );
+      const nextVersion = versionsForCode.reduce((m, v) => Math.max(m, v.version), 0) + 1;
+      const id = `plv-${productLabelVersions.size + 1}`;
+      productLabelVersions.set(id, {
+        ...prior,
+        id,
+        version: nextVersion,
+        exactLabel: body._exact_label ?? {},
+        labelSha256: stubHash(body._exact_label ?? {}),
+        sourceUrl: body._source_url ? String(body._source_url).trim() : prior.sourceUrl,
+        servingSize: body._serving_size ? String(body._serving_size).trim() : prior.servingSize,
+        ingredients: Array.isArray(body._ingredients) && body._ingredients.length ? body._ingredients : prior.ingredients,
+        otherIngredients: body._other_ingredients ? String(body._other_ingredients).trim() : prior.otherIngredients,
+        allergens: body._allergens ? String(body._allergens).trim() : prior.allergens,
+        contraindications: body._contraindications ? String(body._contraindications).trim() : prior.contraindications,
+        warningsText: body._warnings_text ? String(body._warnings_text).trim() : prior.warningsText,
+        storageInstructions: body._storage_instructions ? String(body._storage_instructions).trim() : prior.storageInstructions,
+        observedDate: body._observed_date ?? prior.observedDate,
+        supersedesId: prior.id,
+        status: "pending",
+        verifiedAt: null,
+        verifiedBy: null,
+        verificationNote: null,
+        createdAt: new Date().toISOString(),
+        createdBy: "practitioner",
+      });
+      return json(res, 200, {
+        ok: true, id, version: nextVersion, supersedesId: prior.id, status: "pending",
+      });
+      }  // end else block for Phase 9E-A.2 supersede handler
+    }
+
+    if (url.pathname === "/rest/v1/rpc/list_product_label_versions" && req.method === "POST") {
+      const body = await readBody(req);
+      const org = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(org)) return json(res, 403, { code: "42501", message: "not a member" });
+      const productCode = String(body._product_code ?? "");
+      const versions = [...productLabelVersions.values()]
+        .filter((v) => v.organizationId === org && v.productCode === productCode)
+        .sort((a, b) => b.version - a.version);
+      return json(res, 200, { productCode, organizationId: org, versions });
+    }
+
+    // ============================================ Phase 9E-A.2 knowledge references
+    if (url.pathname === "/rest/v1/rpc/create_knowledge_reference_draft" && req.method === "POST") {
+      const body = await readBody(req);
+      const org = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(org)) return json(res, 403, { code: "42501", message: "not a member" });
+      const claim = String(body._claim ?? "").trim();
+      if (!claim) return json(res, 400, { code: "22023", message: "claim is required" });
+      const grade = body._evidence_grade ? String(body._evidence_grade).trim() : null;
+      if (grade && !["A", "B", "C", "expert_consensus", "practitioner_experience", "unclassified"].includes(grade)) {
+        return json(res, 400, { code: "23514", message: "invalid evidence grade" });
+      }
+      const id = `gkr-${governedKnowledgeReferences.size + 1}`;
+      governedKnowledgeReferences.set(id, {
+        id,
+        organizationId: org,
+        claim,
+        citation: body._citation ? String(body._citation).trim() : null,
+        referenceType: body._reference_type ? String(body._reference_type).trim() : null,
+        clinicalDomain: body._clinical_domain ? String(body._clinical_domain).trim() : null,
+        structuredClaim: body._structured_claim ?? {},
+        population: body._population ? String(body._population).trim() : null,
+        intervention: body._intervention ? String(body._intervention).trim() : null,
+        outcomeField: body._outcome_field ? String(body._outcome_field).trim() : null,
+        evidenceGrade: grade,
+        sourceKind: body._source_kind ? String(body._source_kind).trim() : null,
+        sourceVersion: body._source_version ? String(body._source_version).trim() : null,
+        publicationDate: body._publication_date ?? null,
+        jurisdiction: body._jurisdiction ? String(body._jurisdiction).trim() : null,
+        limitations: Array.isArray(body._limitations) ? body._limitations : [],
+        contradictions: Array.isArray(body._contradictions) ? body._contradictions : [],
+        restrictedFlags: Array.isArray(body._restricted_flags) ? body._restricted_flags : [],
+        reviewerState: "draft",
+        status: "pending",
+        verifiedAt: null,
+        verifiedBy: null,
+        verificationReason: null,
+        supersededBy: null,
+        createdAt: new Date().toISOString(),
+        createdBy: "practitioner",
+      });
+      return json(res, 200, { ok: true, id, reviewerState: "draft" });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/approve_knowledge_reference" && req.method === "POST") {
+      const body = await readBody(req);
+      const org = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(org)) return json(res, 403, { code: "42501", message: "not a member" });
+      const reason = String(body._verification_reason ?? "").trim();
+      if (!reason) return json(res, 400, { code: "22023", message: "approval requires a stated reason" });
+      const row = governedKnowledgeReferences.get(String(body._reference_id ?? ""));
+      if (!row) return json(res, 404, { code: "P0002", message: "reference not found" });
+      if (row.organizationId !== org)
+        return json(res, 403, { code: "42501", message: "reference belongs to a different tenant" });
+      if (!["draft", "in_review"].includes(row.reviewerState))
+        return json(res, 400, { code: "55000", message: "only draft or in_review references can be approved" });
+      if (["A", "B", "C", "expert_consensus"].includes(row.evidenceGrade) && !row.citation) {
+        return json(res, 400, { code: "22023", message: `a graded reference (${row.evidenceGrade}) must have a citation before approval` });
+      }
+      row.reviewerState = "approved";
+      row.status = "verified";
+      row.verifiedAt = new Date().toISOString();
+      row.verifiedBy = "practitioner";
+      row.verificationReason = reason;
+      return json(res, 200, { ok: true, id: row.id, reviewerState: "approved" });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/supersede_knowledge_reference" && req.method === "POST") {
+      const body = await readBody(req);
+      const org = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(org)) return json(res, 403, { code: "42501", message: "not a member" });
+      const reason = String(body._reason ?? "").trim();
+      const claim = String(body._new_claim ?? "").trim();
+      if (!reason) return json(res, 400, { code: "22023", message: "supersede requires a stated reason" });
+      if (!claim) return json(res, 400, { code: "22023", message: "a new claim text is required" });
+      const prior = governedKnowledgeReferences.get(String(body._supersedes_id ?? ""));
+      if (!prior) return json(res, 404, { code: "P0002", message: "prior reference not found" });
+      if (prior.organizationId !== org)
+        return json(res, 403, { code: "42501", message: "prior reference belongs to a different tenant" });
+      const id = `gkr-${governedKnowledgeReferences.size + 1}`;
+      governedKnowledgeReferences.set(id, {
+        ...prior,
+        id,
+        claim,
+        reviewerState: "draft",
+        status: "pending",
+        verifiedAt: null,
+        verifiedBy: null,
+        verificationReason: null,
+        supersededBy: null,
+        createdAt: new Date().toISOString(),
+      });
+      prior.reviewerState = "superseded";
+      prior.supersededBy = id;
+      return json(res, 200, { ok: true, id, supersedesId: prior.id, reviewerState: "draft" });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/list_knowledge_references" && req.method === "POST") {
+      const body = await readBody(req);
+      const org = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(org)) return json(res, 403, { code: "42501", message: "not a member" });
+      const references = [...governedKnowledgeReferences.values()]
+        .filter((r) => r.organizationId === org)
+        .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+      return json(res, 200, { organizationId: org, references });
+    }
+
+    // ============================================ Phase 9E-A.2 warning resolutions
+    if (url.pathname === "/rest/v1/rpc/record_warning_resolution" && req.method === "POST") {
+      const body = await readBody(req);
+      const org = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(org)) return json(res, 403, { code: "42501", message: "not a member" });
+      const subjectType = String(body._subject_type ?? "");
+      if (!["preview_item", "product", "knowledge_reference"].includes(subjectType)) {
+        return json(res, 400, { code: "22023", message: "unknown subject_type" });
+      }
+      const disposition = String(body._disposition ?? "");
+      if (!["resolved", "superseded", "accepted_risk", "not_applicable"].includes(disposition)) {
+        return json(res, 400, { code: "22023", message: "unknown disposition" });
+      }
+      const reason = String(body._reason ?? "").trim();
+      const warningKey = String(body._warning_key ?? "").trim();
+      if (!reason) return json(res, 400, { code: "22023", message: "a warning resolution requires a stated reason" });
+      if (!warningKey) return json(res, 400, { code: "22023", message: "warning_key is required" });
+      const subjectId = String(body._subject_id ?? "");
+      // Verify subject exists + belongs to tenant.
+      if (subjectType === "preview_item") {
+        const item = previewItemsRestricted.get(subjectId);
+        if (!item) return json(res, 404, { code: "P0002", message: "preview item not found" });
+        if (item.organizationId !== org)
+          return json(res, 403, { code: "42501", message: "subject belongs to a different tenant" });
+      } else if (subjectType === "product") {
+        if (!catalogReviewProducts.has(subjectId))
+          return json(res, 404, { code: "P0002", message: "product not found" });
+      } else {
+        const ref = governedKnowledgeReferences.get(subjectId);
+        if (!ref) return json(res, 404, { code: "P0002", message: "reference not found" });
+        if (ref.organizationId !== org)
+          return json(res, 403, { code: "42501", message: "subject belongs to a different tenant" });
+      }
+      const id = `cwr-${curationWarningResolutions.length + 1}`;
+      curationWarningResolutions.push({
+        id, organizationId: org, subjectType, subjectId,
+        warningKey, disposition, reason,
+        decidedBy: "practitioner", decidedAt: new Date().toISOString(),
+      });
+      return json(res, 200, { ok: true, id, subjectType, disposition });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/list_warning_resolutions" && req.method === "POST") {
+      const body = await readBody(req);
+      const org = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(org)) return json(res, 403, { code: "42501", message: "not a member" });
+      const subjectType = String(body._subject_type ?? "");
+      const subjectId = String(body._subject_id ?? "");
+      const resolutions = curationWarningResolutions
+        .filter((r) => r.organizationId === org && r.subjectType === subjectType && r.subjectId === subjectId)
+        .sort((a, b) => (a.decidedAt < b.decidedAt ? 1 : -1));
+      return json(res, 200, { subjectType, subjectId, resolutions });
+    }
+
+    // ============================================ Phase 9E-A.2 bulk ops
+    if (url.pathname === "/rest/v1/rpc/bulk_assign_reviewer" && req.method === "POST") {
+      const body = await readBody(req);
+      const org = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(org)) return json(res, 403, { code: "42501", message: "not a member" });
+      const items = Array.isArray(body._item_ids) ? body._item_ids : [];
+      if (items.length === 0) return json(res, 400, { code: "22023", message: "no items selected" });
+      if (items.length > 500) return json(res, 400, { code: "22023", message: "bulk operation upper bound is 500 items" });
+      const reason = String(body._reason ?? "").trim();
+      if (!reason) return json(res, 400, { code: "22023", message: "a bulk-assign action requires a stated reason" });
+      let updated = 0;
+      for (const id of items) {
+        const s = bulkItemState.get(String(id)) ?? {};
+        s.assigneeId = String(body._assignee ?? "");
+        bulkItemState.set(String(id), s);
+        updated += 1;
+      }
+      return json(res, 200, { ok: true, itemsUpdated: updated });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/bulk_apply_org_tag" && req.method === "POST") {
+      const body = await readBody(req);
+      const org = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(org)) return json(res, 403, { code: "42501", message: "not a member" });
+      const items = Array.isArray(body._item_ids) ? body._item_ids : [];
+      if (items.length === 0) return json(res, 400, { code: "22023", message: "no items selected" });
+      if (items.length > 500) return json(res, 400, { code: "22023", message: "bulk operation upper bound is 500 items" });
+      const tag = String(body._tag ?? "").trim();
+      const reason = String(body._reason ?? "").trim();
+      if (!tag) return json(res, 400, { code: "22023", message: "tag is required" });
+      if (!reason) return json(res, 400, { code: "22023", message: "a bulk-tag action requires a stated reason" });
+      if (/approved|verified|cleared|activated|published|selectable|attached/i.test(tag)) {
+        return json(res, 400, {
+          code: "22023",
+          message: "this tag looks like a clinical review outcome; use the dedicated governed action instead",
+        });
+      }
+      let updated = 0;
+      for (const id of items) {
+        const s = bulkItemState.get(String(id)) ?? {};
+        s.orgTag = tag;
+        bulkItemState.set(String(id), s);
+        updated += 1;
+      }
+      return json(res, 200, { ok: true, itemsUpdated: updated });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/bulk_mark_duplicate" && req.method === "POST") {
+      const body = await readBody(req);
+      const org = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(org)) return json(res, 403, { code: "42501", message: "not a member" });
+      const items = Array.isArray(body._item_ids) ? body._item_ids : [];
+      if (items.length === 0) return json(res, 400, { code: "22023", message: "no items selected" });
+      if (items.length > 500) return json(res, 400, { code: "22023", message: "bulk operation upper bound is 500 items" });
+      const canonical = String(body._duplicate_of_item_id ?? "");
+      const reason = String(body._reason ?? "").trim();
+      if (!reason) return json(res, 400, { code: "22023", message: "a bulk-mark-duplicate action requires a stated reason" });
+      let updated = 0;
+      for (const id of items) {
+        if (id === canonical) continue;
+        const s = bulkItemState.get(String(id)) ?? {};
+        s.duplicateOfItemId = canonical;
+        bulkItemState.set(String(id), s);
+        updated += 1;
+      }
+      return json(res, 200, { ok: true, itemsUpdated: updated });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/get_restricted_review_queue" && req.method === "POST") {
+      const body = await readBody(req);
+      const org = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(org)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      // Union all three subject types the SQL RPC returns. Deliberately no
+      // raw source text — payload jsonb is not exposed here, only display
+      // fields and restriction flags.
+      const items = [];
+      for (const item of previewItemsRestricted.values()) {
+        if (item.organizationId !== org) continue;
+        if (!Array.isArray(item.restrictedFlags) || item.restrictedFlags.length === 0) continue;
+        const key = `preview_item:${item.id}`;
+        const currentOutcome = (catalogRestrictedReviewDecisions.get(key) ?? [])
+          .slice()
+          .sort((a, b) => (a.decidedAt < b.decidedAt ? 1 : -1))[0]?.outcome ?? null;
+        items.push({
+          subjectType: "preview_item",
+          subjectId: item.id,
+          displayName: item.displayName,
+          entityType: item.entityType ?? "catalog_product",
+          restrictedFlags: item.restrictedFlags,
+          missingFacts: item.missingFacts ?? [],
+          changeKind: item.changeKind ?? null,
+          status: item.status ?? "needs_review",
+          sourceName: item.sourceName ?? null,
+          sourceSheet: item.sourceSheet ?? null,
+          sourceRowNumber: item.sourceRowNumber ?? null,
+          currentOutcome,
+        });
+      }
+      for (const p of catalogReviewProducts.values()) {
+        if (p.organizationId !== org) continue;
+        if (!Array.isArray(p.restrictedFlags) || p.restrictedFlags.length === 0) continue;
+        const key = `product:${p.productId}`;
+        const currentOutcome = (catalogRestrictedReviewDecisions.get(key) ?? [])
+          .slice()
+          .sort((a, b) => (a.decidedAt < b.decidedAt ? 1 : -1))[0]?.outcome ?? null;
+        items.push({
+          subjectType: "product",
+          subjectId: p.productId,
+          displayName: p.name,
+          entityType: "supplement_product",
+          restrictedFlags: p.restrictedFlags,
+          missingFacts: p.missingFacts ?? [],
+          changeKind: null,
+          status: p.status,
+          sourceName: null,
+          sourceSheet: null,
+          sourceRowNumber: null,
+          currentOutcome,
+        });
+      }
+      for (const r of governedKnowledgeReferences.values()) {
+        if (r.organizationId !== org) continue;
+        if (!Array.isArray(r.restrictedFlags) || r.restrictedFlags.length === 0) continue;
+        const key = `knowledge_reference:${r.id}`;
+        const currentOutcome = (catalogRestrictedReviewDecisions.get(key) ?? [])
+          .slice()
+          .sort((a, b) => (a.decidedAt < b.decidedAt ? 1 : -1))[0]?.outcome ?? null;
+        items.push({
+          subjectType: "knowledge_reference",
+          subjectId: r.id,
+          displayName: r.claim,
+          entityType: "knowledge_reference",
+          restrictedFlags: r.restrictedFlags,
+          missingFacts: [],
+          changeKind: null,
+          status: r.status ?? "pending",
+          sourceName: null,
+          sourceSheet: null,
+          sourceRowNumber: null,
+          currentOutcome,
+        });
+      }
+      items.sort((a, b) => {
+        if (a.subjectType !== b.subjectType) return a.subjectType.localeCompare(b.subjectType);
+        return String(a.displayName).localeCompare(String(b.displayName));
+      });
+      return json(res, 200, {
+        items,
+        counts: {
+          total: items.length,
+          previewItems: items.filter((i) => i.subjectType === "preview_item").length,
+          products: items.filter((i) => i.subjectType === "product").length,
+          knowledgeReferences: items.filter((i) => i.subjectType === "knowledge_reference").length,
+        },
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/get_import_provenance" && req.method === "POST") {
+      const body = await readBody(req);
+      const org = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(org)) {
+        return json(res, 403, { code: "42501", message: "active organization membership required" });
+      }
+      const refType = body._ref_type ?? null;
+      const refId = body._ref_id ?? null;
+      const limit = Math.min(Math.max(Number(body._limit ?? 50), 1), 200);
+      const all = importProvenance.filter((r) => r.organizationId === org);
+      const records = all
+        .filter((r) => (!refType || r.refType === refType) && (!refId || r.refId === refId))
+        .slice(0, limit)
+        .map(({ organizationId, ...rest }) => rest);
+      return json(res, 200, {
+        records,
+        total: all.length,
+        immutable: true,
+        emptyStateMessage: "No governed record in this organization was created by an import. "
+          + "That is a statement about the import history, not about the catalog.",
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/cancel_knowledge_import" && req.method === "POST") {
+      const body = await readBody(req);
+      const b = importBatches.get(String(body._batch_id ?? ""));
+      if (!b) return json(res, 404, { code: "P0002", message: "import batch not found" });
+      if (b.status === "committed") {
+        return json(res, 400, { code: "55000", message: "a committed batch cannot be cancelled" });
+      }
+      if (!String(body._reason ?? "").trim()) {
+        return json(res, 400, { code: "22023", message: "a cancellation reason is required" });
+      }
+      b.status = "cancelled";
+      return json(res, 200, { ok: true, batchId: b.id, status: "cancelled" });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/list_label_commercial_links" && req.method === "POST") {
+      const body = await readBody(req);
+      const labelVersionId = String(body._label_version_id ?? "");
+      const rows = catalogCommercial.get(labelVersionId) ?? [];
+      return json(res, 200, {
+        labelVersionId,
+        links: rows,
+        disclaimer: "Commercial information is recorded for disclosure only. It is "
+          + "not read by any clinical eligibility, ranking, safety or evidence path.",
+      });
+    }
+
+    // Phase 9E-A.2 continuation: the real attach + revoke handlers. The
+    // matching table is `catalogCommercial` (keyed by label_version_id) which
+    // also backs the older `/__control/seed-catalog-label` seeder. Both the
+    // Phase 9E-A.2 `productLabelVersions` store and the legacy catalog store
+    // are checked for the label version.
+    if (url.pathname === "/rest/v1/rpc/attach_commercial_link_to_verified_product"
+        && req.method === "POST") {
+      const body = await readBody(req);
+      const org = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(org))
+        return json(res, 403, { code: "42501", message: "not a member" });
+      const labelVersionId = String(body._label_version_id ?? "");
+      const affiliateUrl = String(body._affiliate_url ?? "").trim();
+      const disclosure = String(body._disclosure ?? "").trim();
+      const matchReason = String(body._match_reason ?? "").trim();
+      if (!affiliateUrl)
+        return json(res, 400, { code: "22023", message: "affiliate_url is required" });
+      if (!disclosure)
+        return json(res, 400, { code: "22023", message: "disclosure is required" });
+      if (!matchReason)
+        return json(res, 400, { code: "22023", message: "match_reason is required" });
+
+      // Find the label in either store.
+      const a2 = productLabelVersions.get(labelVersionId);
+      const legacy = catalogLabels.get(labelVersionId);
+      const label = a2 ?? legacy;
+      if (!label)
+        return json(res, 404, { code: "P0002", message: "label version not found" });
+      // Verified only.
+      const isVerified = a2 ? a2.status === "verified" : legacy && legacy.status === "verified";
+      if (!isVerified)
+        return json(res, 400, { code: "55000", message: "label version is not verified" });
+
+      // Exact match on any one axis. The stub compares against the label's
+      // exact_label fields OR the labelversion's top-level identifiers.
+      const wantSku = String(body._incoming_sku ?? "").trim();
+      const wantUpc = String(body._incoming_upc ?? "").trim();
+      const wantMfg = String(body._incoming_manufacturer ?? "").trim();
+      const wantName = String(body._incoming_product_name ?? "").trim();
+      const labelSku = a2 ? (a2.exactLabel?.sku ?? "") : (legacy?.exactLabel?.sku ?? "");
+      const labelUpc = a2 ? (a2.exactLabel?.upc ?? "") : (legacy?.exactLabel?.upc ?? "");
+      const labelMfg = a2 ? (a2.exactLabel?.manufacturerIdentifier ?? "") : (legacy?.exactLabel?.manufacturerIdentifier ?? "");
+      const labelName = a2 ? a2.productName : legacy?.productName;
+
+      let matchAxis = null;
+      if (wantSku && String(labelSku).trim() === wantSku) matchAxis = "sku";
+      else if (wantUpc && String(labelUpc).trim() === wantUpc) matchAxis = "upc";
+      else if (wantMfg && String(labelMfg).trim() === wantMfg && wantName === String(labelName).trim())
+        matchAxis = "manufacturer_and_name";
+
+      if (!matchAxis) {
+        return json(res, 400, {
+          code: "22023",
+          message: "no exact match on sku / upc / manufacturer+name — fuzzy matching is refused",
+        });
+      }
+
+      const linkId = `plcl-${(catalogCommercial.get(labelVersionId)?.length ?? 0) + 1}-${labelVersionId}`;
+      const record = {
+        id: linkId,
+        kind: "affiliate",
+        url: affiliateUrl,
+        supplierName: null,
+        commissionDisclosure: disclosure,
+        availabilityStatus: "available",
+        lastVerifiedAt: null,
+        supersedesId: null,
+        revokedAt: null,
+        revokedReason: null,
+        recordedAt: new Date().toISOString(),
+        recordedBy: "practitioner",
+      };
+      const existing = catalogCommercial.get(labelVersionId) ?? [];
+      existing.push(record);
+      catalogCommercial.set(labelVersionId, existing);
+      return json(res, 200, {
+        ok: true, linkId, matchAxis,
+        restrictionsPreserved: true,
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/revoke_commercial_link" && req.method === "POST") {
+      const body = await readBody(req);
+      const org = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(org))
+        return json(res, 403, { code: "42501", message: "not a member" });
+      const linkId = String(body._link_id ?? "");
+      const reason = String(body._reason ?? "").trim();
+      if (!reason)
+        return json(res, 400, { code: "22023", message: "revoke requires a stated reason" });
+      // Find which label owns this link.
+      let target = null;
+      let owningLabel = null;
+      for (const [lv, arr] of catalogCommercial.entries()) {
+        const hit = arr.find((l) => l.id === linkId);
+        if (hit) { target = hit; owningLabel = lv; break; }
+      }
+      if (!target) return json(res, 404, { code: "P0002", message: "commercial link not found" });
+      if (target.revokedAt)
+        return json(res, 400, { code: "55000", message: "already revoked" });
+
+      const newId = `plcl-r-${(catalogCommercial.get(owningLabel)?.length ?? 0) + 1}`;
+      const superseding = {
+        ...target,
+        id: newId,
+        supersedesId: target.id,
+        availabilityStatus: "discontinued",
+        revokedAt: new Date().toISOString(),
+        revokedReason: reason,
+        recordedAt: new Date().toISOString(),
+        recordedBy: "practitioner",
+      };
+      catalogCommercial.get(owningLabel).push(superseding);
+      return json(res, 200, {
+        ok: true, supersedesId: target.id, newLinkId: newId,
+      });
+    }
+
+    /* ------------------------------- Phase 9B: the product catalog ------ */
+
+    if (url.pathname === "/rest/v1/rpc/get_product_catalog" && req.method === "POST") {
+      const body = await readBody(req);
+      const q = String(body._query ?? "").toLowerCase();
+      const status = body._status ?? null;
+      if (status !== null
+          && !["draft", "published", "superseded", "withdrawn"].includes(status)) {
+        return json(res, 400, { code: "22023", message: "unknown status filter" });
+      }
+      // Latest version per product code, exactly as the RPC does.
+      const latest = new Map();
+      for (const l of catalogLabels.values()) {
+        const prev = latest.get(l.productCode);
+        if (!prev || l.version > prev.version) latest.set(l.productCode, l);
+      }
+      const rows = [...latest.values()]
+        .filter((l) => status === null || l.status === status)
+        .filter((l) => !q
+          || l.productName.toLowerCase().includes(q)
+          || String(l.brand ?? "").toLowerCase().includes(q)
+          || l.productCode.toLowerCase().includes(q))
+        .sort((a, b) => a.productName.localeCompare(b.productName))
+        .map((l) => {
+          const links = (catalogCommercial.get(l.id) ?? []).filter((c) => !c.revokedAt);
+          return {
+            labelVersionId: l.id,
+            productCode: l.productCode,
+            productName: l.productName,
+            brand: l.brand,
+            version: l.version,
+            status: l.status,
+            labelSha256: l.labelSha256,
+            sourceUrl: l.sourceUrl,
+            effectiveAt: l.effectiveAt ?? null,
+            expiresAt: l.expiresAt ?? null,
+            verifiedAt: l.verifiedAt ?? null,
+            verificationState: l.verifiedAt ? "verified" : "unverified",
+            versionCount: [...catalogLabels.values()]
+              .filter((h) => h.productCode === l.productCode).length,
+            ingredientCount: (l.exactLabel?.ingredientRows ?? []).length,
+            hasWarnings: String(l.exactLabel?.warnings ?? "").trim() !== "",
+            // A COUNT only. No commercial URL reaches the list view.
+            commercialLinkCount: links.length,
+            commercialDisclosureComplete: !links.some(
+              (c) => c.kind === "affiliate" && c.url && !c.commissionDisclosure),
+          };
+        });
+      const all = [...catalogLabels.values()];
+      return json(res, 200, {
+        clinical: {
+          products: rows,
+          counts: {
+            total: all.length,
+            verified: all.filter((l) => l.verifiedAt).length,
+            unverified: all.filter((l) => !l.verifiedAt).length,
+            published: all.filter((l) => l.status === "published").length,
+            draft: all.filter((l) => l.status === "draft").length,
+          },
+        },
+        reviewQueue: [],
+        generatedAt: nowIso(),
+        emptyStateMessage:
+          "No governed product labels have been imported yet. This list stays "
+          + "empty until an operator imports exact labels - no example products "
+          + "are shown, because a placeholder is indistinguishable from a real "
+          + "product at a glance.",
+        commercialPolicy:
+          "Commercial links are recorded in a separate table and are never an "
+          + "input to eligibility, ranking, safety or evidence. This list can "
+          + "report that links exist; it cannot sort or filter by them.",
+        unknownPolicy:
+          "Only what was captured from an exact label is shown. Anything not "
+          + "recorded reads as Unknown. Nothing is inferred from a product name.",
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/get_product_label_detail" && req.method === "POST") {
+      const body = await readBody(req);
+      const l = catalogLabels.get(String(body._label_version_id ?? ""));
+      if (!l) return json(res, 404, { code: "P0002", message: "product label version not found" });
+      const links = catalogCommercial.get(l.id) ?? [];
+      const el = l.exactLabel ?? {};
+      return json(res, 200, {
+        clinical: {
+          labelVersionId: l.id,
+          productCode: l.productCode,
+          productName: l.productName,
+          brand: l.brand,
+          version: l.version,
+          status: l.status,
+          labelSha256: l.labelSha256,
+          sourceUrl: l.sourceUrl,
+          effectiveAt: l.effectiveAt ?? null,
+          expiresAt: l.expiresAt ?? null,
+          verifiedAt: l.verifiedAt ?? null,
+          verificationNote: l.verificationNote ?? null,
+          verificationState: l.verifiedAt ? "verified" : "unverified",
+          // Absent keys stay null so the UI renders "Unknown".
+          servingSize: el.servingSize ?? null,
+          servingsPerContainer: el.servingsPerContainer ?? null,
+          ingredients: el.ingredients ?? null,
+          ingredientRows: el.ingredientRows ?? [],
+          otherIngredients: el.otherIngredients ?? null,
+          allergens: el.allergens ?? null,
+          directions: el.directions ?? null,
+          warnings: el.warnings ?? null,
+          storage: el.storage ?? null,
+          jurisdiction: el.jurisdiction ?? null,
+          sku: el.sku ?? null,
+          upc: el.upc ?? null,
+          versions: [...catalogLabels.values()]
+            .filter((h) => h.productCode === l.productCode)
+            .sort((a, b) => b.version - a.version)
+            .map((h) => ({
+              labelVersionId: h.id, version: h.version, status: h.status,
+              labelSha256: h.labelSha256, effectiveAt: h.effectiveAt ?? null,
+              expiresAt: h.expiresAt ?? null, verifiedAt: h.verifiedAt ?? null,
+              verificationNote: h.verificationNote ?? null,
+              createdAt: h.createdAt,
+            })),
+          catalogMappings: [],
+          importHistory: l.importHistory ?? [],
+        },
+        commercial: {
+          links: links.map((c) => ({ ...c })),
+          disclosureComplete: !links.some(
+            (c) => !c.revokedAt && c.kind === "affiliate" && c.url
+              && !c.commissionDisclosure),
+          notice:
+            "Commercial information is stored separately from clinical data and "
+            + "has no effect on eligibility, ranking, safety or evidence. An "
+            + "affiliate link with no completed disclosure must not be shown to "
+            + "a patient.",
+        },
+        unknownPolicy:
+          "Fields that were not captured from the label are Unknown. They are not "
+          + "inferred from the product name, the brand, or any other product.",
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/verify_product_label_version" && req.method === "POST") {
+      const body = await readBody(req);
+      const l = catalogLabels.get(String(body._label_version_id ?? ""));
+      if (!l) return json(res, 404, { code: "P0002", message: "product label version not found" });
+      // The real RPC requires owner/admin. The fixture practitioner role is
+      // refused so the browser proof of that refusal is real.
+      if (fixtureRole !== "owner" && fixtureRole !== "admin") {
+        return json(res, 403, { code: "42501", message: "knowledge administrator role required" });
+      }
+      l.verifiedAt = nowIso();
+      l.verificationNote = String(body._verification_note ?? "");
+      return json(res, 200, null);
+    }
+
+    if (url.pathname === "/rest/v1/rpc/save_product_label_version" && req.method === "POST") {
+      const body = await readBody(req);
+      const code = String(body._product_code ?? "");
+      const version = [...catalogLabels.values()]
+        .filter((h) => h.productCode === code).length + 1;
+      catalogSeq += 1;
+      const id = `label-${catalogSeq}`;
+      const exactLabel = body._exact_label ?? {};
+      catalogLabels.set(id, {
+        id, productCode: code, version,
+        productName: String(body._product_name ?? ""),
+        brand: body._brand ?? null,
+        exactLabel,
+        labelSha256: stubHash(exactLabel),
+        sourceUrl: body._source_url ?? null,
+        status: "draft",
+        effectiveAt: null, expiresAt: null,
+        verifiedAt: null, verificationNote: null,
+        createdAt: nowIso(),
+        importHistory: [],
+      });
+      // An affiliate URL supplied here goes to the COMMERCIAL store, never
+      // onto the label row — the same split the database enforces.
+      const affiliate = body._affiliate_url ?? null;
+      if (affiliate) {
+        catalogCommercial.set(id, [{
+          id: `plcl-${catalogSeq}`,
+          kind: "affiliate",
+          url: String(affiliate),
+          supplierName: null,
+          commissionDisclosure:
+            "Recorded without explicit disclosure text. Review and complete "
+            + "the disclosure before this link is shown.",
+          availabilityStatus: null,
+          lastVerifiedAt: null,
+          revokedAt: null,
+          revokedReason: null,
+          recordedAt: nowIso(),
+        }]);
+      }
+      return json(res, 200, { labelVersionId: id, version });
+    }
+
+    /* ------------------------------- Phase 9B: template lifecycle ------- */
+
+    if (url.pathname === "/rest/v1/rpc/get_protocol_template_detail" && req.method === "POST") {
+      const body = await readBody(req);
+      const payload = templateDetailPayload(String(body._template_id ?? ""));
+      if (!payload) return json(res, 404, { code: "P0002", message: "template not found" });
+      return json(res, 200, payload);
+    }
+
+    if (url.pathname === "/rest/v1/rpc/compare_protocol_template_versions" && req.method === "POST") {
+      const body = await readBody(req);
+      const l = protocolVersions.get(String(body._left_version_id ?? ""));
+      const r = protocolVersions.get(String(body._right_version_id ?? ""));
+      if (!l) return json(res, 404, { code: "P0002", message: "left version not found" });
+      if (!r) return json(res, 404, { code: "P0002", message: "right version not found" });
+      const byLabel = (arr) => new Map(arr.map((it) => [it.label, it]));
+      const lm = byLabel(l.items);
+      const rm = byLabel(r.items);
+      const added = r.items.filter((it) => !lm.has(it.label)).map((it) => ({
+        label: it.label, kind: it.kind,
+        dosageText: it.dosageText ?? null,
+        doseSourceKind: it.doseSourceKind ?? null,
+      }));
+      const removed = l.items.filter((it) => !rm.has(it.label)).map((it) => ({
+        label: it.label, kind: it.kind,
+        dosageText: it.dosageText ?? null,
+        doseSourceKind: it.doseSourceKind ?? null,
+      }));
+      const changed = l.items
+        .filter((it) => rm.has(it.label))
+        .filter((it) => {
+          const o = rm.get(it.label);
+          return (it.dosageText ?? null) !== (o.dosageText ?? null)
+            || (it.timingText ?? null) !== (o.timingText ?? null)
+            || (it.doseSourceKind ?? null) !== (o.doseSourceKind ?? null);
+        })
+        .map((it) => {
+          const o = rm.get(it.label);
+          return {
+            label: it.label,
+            doseChanged: (it.dosageText ?? null) !== (o.dosageText ?? null),
+            from: { dosageText: it.dosageText ?? null, timingText: it.timingText ?? null,
+                    doseSourceKind: it.doseSourceKind ?? null,
+                    stoppingRules: it.stoppingRules ?? [],
+                    monitoringRequirements: it.monitoringRequirements ?? [] },
+            to: { dosageText: o.dosageText ?? null, timingText: o.timingText ?? null,
+                  doseSourceKind: o.doseSourceKind ?? null,
+                  stoppingRules: o.stoppingRules ?? [],
+                  monitoringRequirements: o.monitoringRequirements ?? [] },
+          };
+        });
+      return json(res, 200, {
+        sameTemplate: l.templateId === r.templateId,
+        left: { versionId: l.id, templateId: l.templateId, version: l.version,
+                status: l.status, title: l.title },
+        right: { versionId: r.id, templateId: r.templateId, version: r.version,
+                 status: r.status, title: r.title },
+        added, removed, changed,
+        doseChangeCount: changed.filter((c) => c.doseChanged).length,
+        matchNote:
+          "Items are matched by label. A renamed item therefore reads as one "
+          + "removal and one addition rather than as a change - check those pairs "
+          + "before assuming an item was replaced.",
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/record_protocol_template_safety_review" && req.method === "POST") {
+      const body = await readBody(req);
+      const v = protocolVersions.get(String(body._version_id ?? ""));
+      if (!v) return json(res, 404, { code: "P0002", message: "protocol version not found" });
+      const outcome = String(body._outcome ?? "");
+      if (!["passed", "concerns", "blocked"].includes(outcome)) {
+        return json(res, 400, { code: "22023",
+          message: "a safety review outcome must be passed, concerns or blocked" });
+      }
+      const note = String(body._note ?? "").trim();
+      if (!note) {
+        return json(res, 400, { code: "22023",
+          message: "a safety review needs a note saying what was checked" });
+      }
+      const unsourced = unsourcedDoseLabels(v.id).length;
+      templateSafety.unshift({
+        reviewId: `ptsr-${templateSafety.length + 1}`,
+        templateId: v.templateId, versionId: v.id, outcome, note,
+        itemsReviewed: v.items.length, unsourcedDoseCount: unsourced,
+        reviewedAt: nowIso(),
+      });
+      return json(res, 200, {
+        ok: true, reviewId: `ptsr-${templateSafety.length}`, outcome,
+        unsourcedDoseCount: unsourced,
+        message: unsourced > 0
+          ? `Review recorded. ${unsourced} item(s) carry a dose with no recorded `
+            + "source and will block publication until a source is named."
+          : "Review recorded.",
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/supersede_protocol_template" && req.method === "POST") {
+      const body = await readBody(req);
+      const t = protocolTemplates.get(String(body._template_id ?? ""));
+      if (!t) return json(res, 404, { code: "P0002", message: "template not found" });
+      const reason = String(body._reason ?? "").trim();
+      if (!reason) {
+        return json(res, 400, { code: "22023", message: "superseding a template needs a reason" });
+      }
+      if (t.supersededById) {
+        return json(res, 412, { code: "55000", message: "this template is already superseded" });
+      }
+      const successorId = String(body._successor_template_id ?? "");
+      if (successorId === t.id) {
+        return json(res, 400, { code: "22023", message: "a template cannot supersede itself" });
+      }
+      const succ = protocolTemplates.get(successorId);
+      if (!succ) return json(res, 404, { code: "P0002", message: "successor template not found" });
+      if (succ.status !== "approved") {
+        return json(res, 400, { code: "22023",
+          message: "only an approved template can supersede another" });
+      }
+      // Walk the chain: A->B->A is still a cycle.
+      let cursor = succ;
+      for (let i = 0; i < 64 && cursor; i += 1) {
+        if (cursor.id === t.id) {
+          return json(res, 400, { code: "22023", message: "that would create a supersession cycle" });
+        }
+        cursor = cursor.supersededById ? protocolTemplates.get(cursor.supersededById) : null;
+      }
+      t.supersededById = successorId;
+      t.supersededAt = nowIso();
+      t.supersededReason = reason;
+      return json(res, 200, {
+        ok: true, templateId: t.id, supersededBy: successorId,
+        message: "Superseded. The template is still readable - protocols already "
+          + "started from it must keep resolving - but it is no longer offered "
+          + "as a starting point.",
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/list_protocol_commercial_links" && req.method === "POST") {
+      const body = await readBody(req);
+      return json(res, 200, {
+        protocolVersionId: String(body._version_id ?? ""),
+        links: [],
+        disclaimer: "Commercial information is recorded for disclosure only. It is "
+          + "not read by any clinical eligibility, ranking, safety or evidence path.",
+      });
+    }
+
     if (url.pathname === "/rest/v1/rpc/start_encounter" && req.method === "POST") {
       const body = await readBody(req);
       const organizationId = String(body._organization_id ?? "");
@@ -2501,13 +5860,36 @@ createServer(async (req, res) => {
         return json(res, 403, { code: "42501", message: "not a member of this organization" });
       }
       const q = String(body._query ?? "").trim().toLowerCase();
+      // Imported products join the picker ONLY once they are selectable —
+      // mirroring `private.catalog_product_is_selectable` in the WHERE clause
+      // of the real `search_protocol_catalog`. An imported row that is still in
+      // review must be invisible here, and must become visible the moment its
+      // review is completed; a stub that never showed it either way would prove
+      // neither half.
+      const importedSelectable = [...catalogReviewProducts.values()]
+        .filter((p) => stubSelectable(p))
+        .map((p) => ({
+          productId: p.productId,
+          name: p.name,
+          form: p.form ?? null,
+          manufacturer: p.brand ?? null,
+          productVersionId: null,
+          labelVersion: null,
+          servingSize: null,
+          effectiveFrom: null,
+          verificationStatus: "unverified",
+          structuredIngredientCount: 0,
+        }));
       return json(res, 200, {
-        products: CATALOG.filter(
-          (p) =>
-            !q ||
-            p.name.toLowerCase().includes(q) ||
-            (p.manufacturer ?? "").toLowerCase().includes(q),
-        ).slice(0, Math.min(Number(body._limit ?? 20) || 20, 50)),
+        products: [...CATALOG, ...importedSelectable]
+          .filter(
+            (p) =>
+              !q ||
+              p.name.toLowerCase().includes(q) ||
+              (p.manufacturer ?? "").toLowerCase().includes(q),
+          )
+          .sort((a, b2) => a.name.localeCompare(b2.name))
+          .slice(0, Math.min(Number(body._limit ?? 20) || 20, 50)),
         query: q || null,
         generatedAt: nowIso(),
       });
@@ -2801,6 +6183,26 @@ createServer(async (req, res) => {
       const version = protocolVersions.get(String(body._version_id ?? ""));
       if (!version || !version.templateId) {
         return json(res, 404, { code: "P0002", message: "template version not found" });
+      }
+      // Phase 9B: a dose reaching a published template must name its source.
+      // Named, not counted — an operator has to know which item.
+      const missing = unsourcedDoseLabels(version.id);
+      if (missing.length) {
+        return json(res, 412, {
+          code: "55000",
+          message: "these items carry a dose with no recorded source: "
+            + missing.join(", ")
+            + ". A dose requires an exact product label, a supplied "
+            + "practitioner protocol, or a governed reference - record which "
+            + "one before approving.",
+        });
+      }
+      const owningTemplate = protocolTemplates.get(version.templateId);
+      if (owningTemplate?.supersededById) {
+        return json(res, 412, {
+          code: "55000",
+          message: "this template is superseded; publish on its successor instead",
+        });
       }
       version.status = "approved";
       version.approvedAt = nowIso();
@@ -4720,6 +8122,1325 @@ createServer(async (req, res) => {
       return { c };
     };
 
+    /* ---- billing, checkout, catalog & inventory RPCs (phase 8A) ---- */
+
+    /* ---- phase 8B: plans, entitlements, memberships, reconciliation ---- */
+
+    if (url.pathname === "/rest/v1/rpc/list_plans" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!memberOrgIds.includes(String(body._organization_id ?? ""))) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      if (!requireFinancial(res, "billing.view_summary")) return;
+      const includeArchived = body._include_archived === true;
+      return json(res, 200, {
+        packages: planPackages
+          .filter((p) => includeArchived || p.status !== "archived")
+          .sort((a, b) => a.name.localeCompare(b.name))
+          .map((p) => ({
+            id: p.id, name: p.name, description: p.description, kind: p.kind,
+            status: p.status, version: p.version, archivedAt: p.archivedAt,
+            currentVersionId: p.currentVersionId,
+            versions: packageVersions.filter((v) => v.packageId === p.id)
+              .sort((a, b) => b.versionNumber - a.versionNumber)
+              .map((v) => ({
+                id: v.id, versionNumber: v.versionNumber, priceMinor: v.priceMinor,
+                currency: v.currency, creditQuantity: v.creditQuantity, creditMode: v.creditMode,
+                expiresAfterDays: v.expiresAfterDays, transferPolicy: v.transferPolicy,
+                status: v.status, publishedAt: v.publishedAt, termsSummary: v.termsSummary })),
+          })),
+        memberships: planMemberships
+          .filter((m) => includeArchived || m.status !== "archived")
+          .sort((a, b) => a.name.localeCompare(b.name))
+          .map((m) => ({
+            id: m.id, name: m.name, description: m.description, status: m.status,
+            version: m.version, archivedAt: m.archivedAt, currentVersionId: m.currentVersionId,
+            versions: membershipVersions.filter((v) => v.membershipId === m.id)
+              .sort((a, b) => b.versionNumber - a.versionNumber)
+              .map((v) => ({
+                id: v.id, versionNumber: v.versionNumber, priceMinor: v.priceMinor,
+                currency: v.currency, intervalUnit: v.intervalUnit, intervalCount: v.intervalCount,
+                trialDays: v.trialDays, includedCredits: v.includedCredits,
+                minimumCommitmentPeriods: v.minimumCommitmentPeriods,
+                gracePeriodDays: v.gracePeriodDays, status: v.status,
+                publishedAt: v.publishedAt, termsSummary: v.termsSummary })),
+          })),
+        policy: orgBillingPolicy,
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/upsert_plan" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!requireFinancial(res, "plans.manage")) return;
+      const type = String(body._plan_type ?? "");
+      const list = type === "package" ? planPackages : planMemberships;
+      if (!body._id) {
+        const name = String(body._name ?? "").trim();
+        if (!name) return json(res, 400, { code: "22023", message: "a plan needs a name" });
+        const row = {
+          id: billingId(type === "package" ? "pkg" : "mem"), organizationId: "org-fixture",
+          name, description: body._description ?? null,
+          kind: type === "package" ? String(body._kind ?? "visit_credits") : null,
+          status: "draft", currentVersionId: null, archivedAt: null, version: 1,
+        };
+        list.push(row);
+        return json(res, 200, { id: row.id, version: 1 });
+      }
+      const row = list.find((r) => r.id === String(body._id));
+      if (!row) return json(res, 404, { code: "P0002", message: "plan not found" });
+      if (Number(body._expected_version) !== row.version) {
+        return json(res, 409, { code: "40001", message: "this plan changed since you loaded it" });
+      }
+      if (body._name) row.name = String(body._name).trim();
+      if (body._archive === true) { row.status = "archived"; row.archivedAt = new Date().toISOString(); }
+      row.version += 1;
+      return json(res, 200, { id: row.id, version: row.version });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/create_plan_version" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!requireFinancial(res, "plans.manage")) return;
+      const type = String(body._plan_type ?? "");
+      const planId = String(body._plan_id ?? "");
+      const price = Number(body._price_minor);
+      if (!Number.isFinite(price) || price < 0) {
+        return json(res, 400, { code: "22023", message: "a price cannot be negative" });
+      }
+      if (type === "package") {
+        if (!planPackages.some((p) => p.id === planId)) {
+          return json(res, 404, { code: "P0002", message: "plan not found" });
+        }
+        const n = packageVersions.filter((v) => v.packageId === planId).length + 1;
+        const v = {
+          id: billingId("pv"), organizationId: "org-fixture", packageId: planId,
+          versionNumber: n, priceMinor: price, currency: String(body._currency ?? "USD"),
+          creditQuantity: Number(body._credit_quantity ?? 0),
+          creditMode: String(body._credit_mode ?? "single_use"),
+          expiresAfterDays: body._expires_after_days == null ? null : Number(body._expires_after_days),
+          eligiblePractitionerIds: body._eligible_practitioner_ids ?? [],
+          transferPolicy: String(body._transfer_policy ?? "non_transferable"),
+          termsSummary: body._terms_summary ?? null, status: "draft", publishedAt: null,
+        };
+        packageVersions.push(v);
+        return json(res, 200, { id: v.id, versionNumber: n });
+      }
+      if (!planMemberships.some((m) => m.id === planId)) {
+        return json(res, 404, { code: "P0002", message: "plan not found" });
+      }
+      const n = membershipVersions.filter((v) => v.membershipId === planId).length + 1;
+      const v = {
+        id: billingId("mv"), organizationId: "org-fixture", membershipId: planId,
+        versionNumber: n, priceMinor: price, currency: String(body._currency ?? "USD"),
+        intervalUnit: String(body._interval_unit ?? "month"),
+        intervalCount: Number(body._interval_count ?? 1),
+        trialDays: Number(body._trial_days ?? 0),
+        includedCredits: Number(body._included_credits ?? 0),
+        minimumCommitmentPeriods: Number(body._minimum_commitment_periods ?? 0),
+        gracePeriodDays: Number(body._grace_period_days ?? 0),
+        termsSummary: body._terms_summary ?? null, status: "draft", publishedAt: null,
+      };
+      membershipVersions.push(v);
+      return json(res, 200, { id: v.id, versionNumber: n });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/publish_plan_version" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!requireFinancial(res, "plans.manage")) return;
+      const type = String(body._plan_type ?? "");
+      const vid = String(body._version_id ?? "");
+      const versions = type === "package" ? packageVersions : membershipVersions;
+      const plans = type === "package" ? planPackages : planMemberships;
+      const v = versions.find((x) => x.id === vid);
+      if (!v) return json(res, 404, { code: "P0002", message: "plan version not found" });
+      if (v.status !== "draft") {
+        return json(res, 403, { code: "42501", message: "only a draft version can be published" });
+      }
+      v.status = "published";
+      v.publishedAt = new Date().toISOString();
+      const plan = plans.find((p) => p.id === (v.packageId ?? v.membershipId));
+      if (plan) { plan.currentVersionId = v.id; plan.status = "active"; plan.version += 1; }
+      return json(res, 200, { id: v.id, planId: plan?.id, status: "published" });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/set_org_billing_policy" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!requireFinancial(res, "plans.manage")) return;
+      orgBillingPolicy = {
+        organization_id: "org-fixture",
+        no_show_policy: String(body._no_show_policy ?? "consume"),
+        late_cancel_policy: String(body._late_cancel_policy ?? "release"),
+        late_cancel_window_hours: Number(body._late_cancel_window_hours ?? 24),
+        consume_on: String(body._consume_on ?? "completed"),
+      };
+      return json(res, 200, { ok: true });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/purchase_package" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!requireFinancial(res, "billing.create_invoice")) return;
+      const pv = packageVersions.find((v) => v.id === String(body._package_version_id ?? ""));
+      if (!pv) return json(res, 404, { code: "P0002", message: "plan version not found" });
+      if (pv.status !== "published") {
+        return json(res, 403, { code: "42501", message: "only a published plan version can be sold" });
+      }
+      const pkg = planPackages.find((p) => p.id === pv.packageId);
+      const patientId = String(body._patient_id ?? "");
+      const invoice = {
+        id: billingId("inv"), organizationId: "org-fixture", patientId, appointmentId: null,
+        practitionerUserId: PRACTITIONER_USER_ID, locationId: null, number: null,
+        status: "draft", currency: pv.currency, version: 1,
+        subtotalMinor: pv.priceMinor, discountMinor: 0, taxMinor: 0, totalMinor: pv.priceMinor,
+        paidMinor: 0, refundedMinor: 0, creditAppliedMinor: 0,
+        finalizedAt: null, voidedAt: null, voidReason: null,
+        inventoryReservedAt: null, inventoryCommittedAt: null,
+        createdAt: new Date().toISOString(),
+      };
+      billingInvoices.set(invoice.id, invoice);
+      billingLines.set(invoice.id, [{
+        id: billingId("line"), invoiceId: invoice.id, productId: null, kind: "package",
+        nameSnapshot: `${pkg?.name ?? "Package"} (v${pv.versionNumber})`, skuSnapshot: null,
+        quantity: 1, unitAmountMinor: pv.priceMinor, amountMinor: pv.priceMinor,
+        discountMinor: 0, discountReason: null, taxRateBps: 0, taxMinor: 0,
+      }]);
+      planAcceptances.push({
+        id: billingId("pa"), organizationId: "org-fixture", patientId,
+        packageVersionId: pv.id, membershipVersionId: null,
+        method: String(body._acceptance_method ?? "in_person"),
+        acceptedAt: new Date().toISOString(),
+      });
+      return json(res, 200, { invoiceId: invoice.id, packageVersionId: pv.id });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/grant_entitlements_for_invoice" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!requireFinancial(res, "billing.create_invoice")) return;
+      const invoice = billingInvoices.get(String(body._invoice_id ?? ""));
+      if (!invoice) return json(res, 404, { code: "P0002", message: "invoice not found" });
+      if (invoice.status !== "paid") {
+        return json(res, 403, {
+          code: "42501", message: "entitlements are granted only for a paid invoice" });
+      }
+      let created = 0;
+      for (const pa of planAcceptances.filter((a) => a.patientId === invoice.patientId && a.packageVersionId)) {
+        const pv = packageVersions.find((v) => v.id === pa.packageVersionId);
+        if (!pv) continue;
+        // exactly-once: one entitlement per (invoice, package version)
+        const exists = [...entitlements.values()].some(
+          (e) => e.sourceInvoiceId === invoice.id && e.packageVersionId === pv.id);
+        if (exists) continue;
+        const ent = {
+          id: billingId("ent"), organizationId: "org-fixture", patientId: invoice.patientId,
+          packageVersionId: pv.id, patientMembershipId: null, source: "package_purchase",
+          creditMode: pv.creditMode, grantedQuantity: 0, remainingQuantity: 0,
+          reservedQuantity: 0, consumedQuantity: 0, expiredQuantity: 0, refundedQuantity: 0,
+          eligiblePractitionerIds: pv.eligiblePractitionerIds ?? [],
+          expiresAt: pv.expiresAfterDays == null ? null
+            : new Date(Date.now() + pv.expiresAfterDays * 864e5).toISOString(),
+          sourceInvoiceId: invoice.id, periodKey: null,
+          transferPolicy: pv.transferPolicy, status: "active",
+          createdAt: new Date().toISOString(),
+        };
+        entitlements.set(ent.id, ent);
+        entitlementMove(ent.id, "grant", pv.creditQuantity, "invoice", invoice.id, "package purchase paid");
+        created += 1;
+      }
+      return json(res, 200, { entitlementsCreated: created });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/assign_complimentary_plan" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!requireFinancial(res, "comp.assign")) return;
+      const reason = String(body._reason ?? "").trim();
+      if (!reason) {
+        return json(res, 400, { code: "22023", message: "a complimentary assignment requires a reason" });
+      }
+      const patientId = String(body._patient_id ?? "");
+      const type = String(body._plan_type ?? "");
+      const vid = String(body._version_id ?? "");
+      const invoice = {
+        id: billingId("inv"), organizationId: "org-fixture", patientId, appointmentId: null,
+        practitionerUserId: PRACTITIONER_USER_ID, locationId: null, number: null,
+        status: "draft", currency: "USD", version: 1,
+        subtotalMinor: 0, discountMinor: 0, taxMinor: 0, totalMinor: 0,
+        paidMinor: 0, refundedMinor: 0, creditAppliedMinor: 0,
+        finalizedAt: null, voidedAt: null, voidReason: null,
+        inventoryReservedAt: null, inventoryCommittedAt: null,
+        createdAt: new Date().toISOString(),
+      };
+      billingInvoices.set(invoice.id, invoice);
+      let entId = null; let subId = null;
+
+      if (type === "package") {
+        const pv = packageVersions.find((v) => v.id === vid);
+        if (!pv) return json(res, 404, { code: "P0002", message: "plan version not found" });
+        const pkg = planPackages.find((p) => p.id === pv.packageId);
+        billingLines.set(invoice.id, [{
+          id: billingId("line"), invoiceId: invoice.id, productId: null, kind: "package",
+          nameSnapshot: `Complimentary: ${pkg?.name ?? "Package"}`, skuSnapshot: null,
+          quantity: 1, unitAmountMinor: 0, amountMinor: 0,
+          discountMinor: 0, discountReason: reason, taxRateBps: 0, taxMinor: 0,
+        }]);
+        const ent = {
+          id: billingId("ent"), organizationId: "org-fixture", patientId,
+          packageVersionId: pv.id, patientMembershipId: null, source: "complimentary",
+          creditMode: pv.creditMode, grantedQuantity: 0, remainingQuantity: 0,
+          reservedQuantity: 0, consumedQuantity: 0, expiredQuantity: 0, refundedQuantity: 0,
+          eligiblePractitionerIds: pv.eligiblePractitionerIds ?? [],
+          expiresAt: body._expires_at ?? (pv.expiresAfterDays == null ? null
+            : new Date(Date.now() + pv.expiresAfterDays * 864e5).toISOString()),
+          sourceInvoiceId: invoice.id, periodKey: null,
+          transferPolicy: pv.transferPolicy, status: "active",
+          createdAt: new Date().toISOString(),
+        };
+        entitlements.set(ent.id, ent);
+        entitlementMove(ent.id, "grant", pv.creditQuantity, "invoice", invoice.id, `complimentary: ${reason}`);
+        entId = ent.id;
+      } else {
+        const mv = membershipVersions.find((v) => v.id === vid);
+        if (!mv) return json(res, 404, { code: "P0002", message: "plan version not found" });
+        const sub = {
+          id: billingId("sub"), organizationId: "org-fixture", patientId,
+          membershipId: mv.membershipId, membershipVersionId: mv.id, status: "active",
+          origin: "complimentary", complimentaryReason: reason,
+          startedAt: new Date().toISOString(), currentPeriodStart: new Date().toISOString(),
+          currentPeriodEnd: new Date(Date.now() + 30 * 864e5).toISOString(),
+          trialEnd: null, cancelAtPeriodEnd: false, canceledAt: null, cancelReason: null,
+          pausedAt: null, endsAt: body._expires_at ?? null, graceUntil: null,
+          processorSubscriptionRef: null, version: 1, createdAt: new Date().toISOString(),
+        };
+        patientMemberships.push(sub);
+        patientMembershipEvents.push({
+          organizationId: "org-fixture", patientMembershipId: sub.id,
+          kind: "complimentary_assigned", fromStatus: null, toStatus: "active",
+          detail: reason, source: "rpc", createdAt: new Date().toISOString(),
+        });
+        subId = sub.id;
+        if (mv.includedCredits > 0) {
+          const ent = {
+            id: billingId("ent"), organizationId: "org-fixture", patientId,
+            packageVersionId: null, patientMembershipId: sub.id, source: "complimentary",
+            creditMode: "single_use", grantedQuantity: 0, remainingQuantity: 0,
+            reservedQuantity: 0, consumedQuantity: 0, expiredQuantity: 0, refundedQuantity: 0,
+            eligiblePractitionerIds: [], expiresAt: body._expires_at ?? null,
+            sourceInvoiceId: invoice.id, periodKey: new Date().toISOString().slice(0, 7),
+            transferPolicy: "non_transferable", status: "active",
+            createdAt: new Date().toISOString(),
+          };
+          entitlements.set(ent.id, ent);
+          entitlementMove(ent.id, "grant", mv.includedCredits, "invoice", invoice.id, `complimentary: ${reason}`);
+          entId = ent.id;
+        }
+      }
+      return json(res, 200, {
+        invoiceId: invoice.id, entitlementId: entId,
+        patientMembershipId: subId, complimentary: true });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/get_patient_entitlements" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!memberOrgIds.includes(String(body._organization_id ?? ""))) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      if (!requireFinancial(res, "billing.view_summary")) return;
+      const patientId = String(body._patient_id ?? "");
+      return json(res, 200, {
+        entitlements: [...entitlements.values()]
+          .filter((e) => e.patientId === patientId)
+          .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+          .map(entitlementJson),
+        memberships: patientMemberships
+          .filter((m) => m.patientId === patientId)
+          .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+          .map((m) => ({
+            id: m.id, status: m.status, origin: m.origin, version: m.version,
+            membershipName: planMemberships.find((x) => x.id === m.membershipId)?.name ?? null,
+            currentPeriodEnd: m.currentPeriodEnd, trialEnd: m.trialEnd,
+            cancelAtPeriodEnd: m.cancelAtPeriodEnd, canceledAt: m.canceledAt,
+            graceUntil: m.graceUntil, complimentaryReason: m.complimentaryReason,
+            processorSubscriptionRef: m.processorSubscriptionRef })),
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/reserve_entitlement_for_appointment" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!requireFinancial(res, "billing.create_invoice")) return;
+      // The schedule seeds lazily on the first calendar read. A suite that
+      // redeems a credit without opening the calendar still needs the
+      // appointments to exist, so seed them here too.
+      seedScheduleFor(new Date().toISOString());
+      const entId = String(body._entitlement_id ?? "");
+      const apptId = String(body._appointment_id ?? "");
+      const e = entitlements.get(entId);
+      if (!e) return json(res, 404, { code: "P0002", message: "entitlement not found" });
+      const appt = scheduleAppointments.find((a) => a.id === apptId);
+      if (!appt) return json(res, 404, { code: "P0002", message: "appointment not found" });
+      if (appt.patientId !== e.patientId) {
+        return json(res, 403, { code: "42501", message: "that appointment belongs to a different patient" });
+      }
+      try {
+        entitlementMove(entId, "reserve", Number(body._quantity ?? 1), "appointment", apptId, null);
+      } catch (err) {
+        return json(res, err.code === "22023" ? 400 : 409,
+          { code: err.code ?? "40001", message: err.message });
+      }
+      packageRedemptions.push({
+        id: billingId("pr"), organizationId: "org-fixture", patientId: e.patientId,
+        entitlementId: entId, appointmentId: apptId, quantity: Number(body._quantity ?? 1),
+        state: "reserved", releasedReason: null, redeemedAt: null,
+      });
+      return json(res, 200, { entitlementId: entId, state: "reserved" });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/settle_entitlement_for_appointment" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!requireFinancial(res, "billing.take_payment")) return;
+      const apptId = String(body._appointment_id ?? "");
+      const outcome = String(body._outcome ?? "");
+      const policy = orgBillingPolicy ?? {
+        no_show_policy: "consume", late_cancel_policy: "release",
+        late_cancel_window_hours: 24, consume_on: "completed" };
+      const r = packageRedemptions.find((x) => x.appointmentId === apptId && x.state === "reserved");
+      if (!r) return json(res, 404, { code: "P0002", message: "no reserved credit for that appointment" });
+
+      let action = null;
+      if (outcome === "completed") action = "consume";
+      else if (outcome === "arrived") action = policy.consume_on === "arrived" ? "consume" : "hold";
+      else if (outcome === "no_show") action = policy.no_show_policy === "consume" ? "consume"
+        : policy.no_show_policy === "release" ? "release" : "review";
+      else if (outcome === "late_cancel") action = policy.late_cancel_policy === "consume" ? "consume"
+        : policy.late_cancel_policy === "release" ? "release" : "review";
+      else if (outcome === "cancelled") action = "release";
+      if (!action) return json(res, 400, { code: "22023", message: "unknown appointment outcome" });
+      if (action === "hold") return json(res, 200, { state: "reserved", policy: policy.consume_on });
+      if (action === "review") {
+        upsertFinancialTask("refund_action_required", r.entitlementId,
+          `Credit decision needed after a ${outcome}`, r.patientId);
+        return json(res, 200, { state: "reserved", reviewRequired: true });
+      }
+      try {
+        entitlementMove(r.entitlementId, action, r.quantity, "appointment", apptId, body._reason ?? null);
+      } catch (err) {
+        return json(res, 409, { code: err.code ?? "40001", message: err.message });
+      }
+      r.state = action === "consume" ? "consumed" : "released";
+      r.releasedReason = action === "release" ? (body._reason ?? outcome) : null;
+      r.redeemedAt = new Date().toISOString();
+      return json(res, 200, { state: r.state });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/restore_entitlement" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!requireFinancial(res, "billing.issue_refund")) return;
+      const reason = String(body._reason ?? "").trim();
+      if (!reason) return json(res, 400, { code: "22023", message: "a manual restoration requires a reason" });
+      try {
+        entitlementMove(String(body._entitlement_id ?? ""), "manual_restore",
+          Number(body._quantity ?? 1), "manual", null, reason);
+      } catch (err) {
+        return json(res, err.code === "P0002" ? 404 : 409,
+          { code: err.code ?? "40001", message: err.message });
+      }
+      return json(res, 200, { ok: true });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/expire_entitlements" && req.method === "POST") {
+      if (!requireFinancial(res, "plans.manage")) return;
+      let n = 0;
+      for (const e of entitlements.values()) {
+        if (e.status === "active" && e.expiresAt && new Date(e.expiresAt) <= new Date()
+            && e.remainingQuantity > 0) {
+          entitlementMove(e.id, "expire", e.remainingQuantity, "manual", null, "past expiry", "system");
+          n += 1;
+        }
+      }
+      return json(res, 200, { expired: n });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/revoke_entitlements_for_refund" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!requireFinancial(res, "billing.issue_refund")) return;
+      const reason = String(body._reason ?? "").trim();
+      if (!reason) return json(res, 400, { code: "22023", message: "a revocation requires a reason" });
+      const invoiceId = String(body._invoice_id ?? "");
+      let n = 0;
+      for (const e of entitlements.values()) {
+        if (e.sourceInvoiceId === invoiceId && e.remainingQuantity > 0) {
+          entitlementMove(e.id, "refund_revoke", e.remainingQuantity, "invoice", invoiceId, reason);
+          n += 1;
+        }
+      }
+      return json(res, 200, { revoked: n });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/set_membership_lifecycle" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!requireFinancial(res, "plans.manage")) return;
+      const sub = patientMemberships.find((m) => m.id === String(body._patient_membership_id ?? ""));
+      if (!sub) return json(res, 404, { code: "P0002", message: "membership not found" });
+      if (Number(body._expected_version) !== sub.version) {
+        return json(res, 409, { code: "40001", message: "this membership changed since you loaded it" });
+      }
+      const action = String(body._action ?? "");
+      const reason = body._reason ? String(body._reason).trim() : "";
+      if (action === "pause" && !["active", "trialing"].includes(sub.status)) {
+        return json(res, 403, { code: "42501", message: "only an active membership can be paused" });
+      }
+      if (action === "resume" && sub.status !== "paused") {
+        return json(res, 403, { code: "42501", message: "only a paused membership can be resumed" });
+      }
+      if (action === "reactivate" && !["canceled", "expired"].includes(sub.status)) {
+        return json(res, 403, { code: "42501", message: "only a canceled or expired membership can be reactivated" });
+      }
+      if (["cancel_now", "cancel_at_period_end"].includes(action) && !reason) {
+        return json(res, 400, { code: "22023", message: "cancelling a membership requires a reason" });
+      }
+      const from = sub.status;
+      if (action === "pause") { sub.status = "paused"; sub.pausedAt = new Date().toISOString(); }
+      else if (action === "resume") { sub.status = "active"; sub.pausedAt = null; }
+      else if (action === "cancel_now") { sub.status = "canceled"; sub.canceledAt = new Date().toISOString(); }
+      else if (action === "cancel_at_period_end") { sub.cancelAtPeriodEnd = true; }
+      else if (action === "reactivate") { sub.status = "active"; sub.cancelAtPeriodEnd = false; }
+      if (reason) sub.cancelReason = reason;
+      sub.version += 1;
+      patientMembershipEvents.push({
+        organizationId: "org-fixture", patientMembershipId: sub.id, kind: action,
+        fromStatus: from, toStatus: sub.status, detail: reason || null,
+        source: "rpc", createdAt: new Date().toISOString(),
+      });
+      return json(res, 200, { id: sub.id, status: sub.status, version: sub.version });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/get_reconciliation_workspace" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!memberOrgIds.includes(String(body._organization_id ?? ""))) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      if (!requireFinancial(res, "billing.view_summary")) return;
+      const status = body._status == null ? null : String(body._status);
+      return json(res, 200, {
+        exceptions: reconciliationExceptions
+          .filter((x) => !status || x.status === status)
+          .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+        // deliberately false: settlement figures are not fetched in this phase
+        settlementFieldsAvailable: false,
+        webhookEvents: [...billingWebhookEvents]
+          .sort((a, b) => b.receivedAt.localeCompare(a.receivedAt))
+          .map((e) => ({
+            eventId: e.eventId, type: e.eventType, outcome: e.outcome, detail: e.detail,
+            receivedAt: e.receivedAt, signatureVerified: e.signatureVerified ?? false,
+            livemode: e.livemode ?? null })),
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/resolve_reconciliation_exception" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!requireFinancial(res, "reconciliation.resolve")) return;
+      const reason = String(body._reason ?? "").trim();
+      if (!reason) return json(res, 400, { code: "22023", message: "resolving an exception requires a reason" });
+      const resolution = String(body._resolution ?? "");
+      if (!["resolved", "dismissed"].includes(resolution)) {
+        return json(res, 400, { code: "22023", message: "unknown resolution" });
+      }
+      const x = reconciliationExceptions.find((r) => r.id === String(body._exception_id ?? ""));
+      if (!x) return json(res, 404, { code: "P0002", message: "exception not found" });
+      if (x.status !== "open") {
+        return json(res, 403, { code: "42501", message: "this exception is already closed" });
+      }
+      if (Number(body._expected_version) !== x.version) {
+        return json(res, 409, { code: "40001", message: "this exception changed since you loaded it" });
+      }
+      x.status = resolution;
+      x.resolvedAt = new Date().toISOString();
+      x.resolutionReason = reason;
+      x.version += 1;
+      reconciliationEvents.push({
+        id: billingId("re"), organizationId: "org-fixture", exceptionId: x.id,
+        kind: resolution, detail: reason, createdAt: new Date().toISOString(),
+      });
+      for (const [id, item] of queue) {
+        if (item.itemType === "payment_unreconciled" && item.refId === x.id) queue.delete(id);
+      }
+      return json(res, 200, { id: x.id, status: resolution, version: x.version });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/get_billing_workspace" && req.method === "POST") {
+      const body = await readBody(req);
+      const orgId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(orgId)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const all = [...billingInvoices.values()];
+      const finalized = all.filter((i) => i.finalizedAt);
+      const visible = body._status ? all.filter((i) => i.status === body._status) : all;
+      const outstanding = all.filter((i) => i.status === "open" || i.status === "partially_paid");
+      const sum = (rows, pick) => rows.reduce((total, row) => total + pick(row), 0);
+      const balance = (i) => Math.max(i.totalMinor - i.paidMinor - i.creditAppliedMinor, 0);
+      const lineRows = [...billingLines.values()].flat().filter((l) => {
+        const invoice = billingInvoices.get(l.invoiceId);
+        return invoice?.finalizedAt && invoice.status !== "void";
+      });
+      const sales = new Map();
+      for (const line of lineRows) {
+        const entry = sales.get(line.productId) ?? {
+          productId: line.productId, name: line.nameSnapshot, kind: line.kind,
+          quantity: 0, amountMinor: 0,
+        };
+        entry.quantity += line.quantity;
+        entry.amountMinor += line.amountMinor - line.discountMinor;
+        sales.set(line.productId, entry);
+      }
+      const lowStock = [...billingStock.values()]
+        .filter((row) => row.onHand - row.reserved <= row.reorderThreshold)
+        .map((row) => ({
+          productId: row.productId, name: billingProduct(row.productId)?.name ?? "",
+          locationId: row.locationId,
+          locationName: billingLocations.find((l) => l.id === row.locationId)?.name ?? null,
+          onHand: row.onHand, reserved: row.reserved,
+          available: row.onHand - row.reserved, reorderThreshold: row.reorderThreshold,
+        }));
+      return json(res, 200, {
+        summary: {
+          invoicedMinor: sum(finalized.filter((i) => i.status !== "void"), (i) => i.totalMinor),
+          collectedMinor: sum(finalized, (i) => i.paidMinor + i.creditAppliedMinor),
+          outstandingMinor: sum(outstanding, balance),
+          refundedMinor: sum(finalized, (i) => i.refundedMinor),
+          discountMinor: sum(finalized.filter((i) => i.status !== "void"), (i) => i.discountMinor),
+          taxMinor: sum(finalized.filter((i) => i.status !== "void"), (i) => i.taxMinor),
+        },
+        invoices: visible
+          .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+          .map((i) => {
+            const patient = PATIENTS.find((p) => p.id === i.patientId);
+            return {
+              id: i.id, number: i.number, status: i.status, patientId: i.patientId,
+              patientName: patient ? `${patient.first_name} ${patient.last_name}` : null,
+              totalMinor: i.totalMinor, balanceMinor: balance(i), currency: i.currency,
+              locationId: i.locationId, practitionerUserId: i.practitionerUserId,
+              finalizedAt: i.finalizedAt, createdAt: i.createdAt, version: i.version,
+            };
+          }),
+        payments: [...billingPayments.values()]
+          .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+          .map((p) => ({
+            id: p.id, invoiceId: p.invoiceId, amountMinor: p.amountMinor,
+            currency: p.currency, status: p.status, method: p.method,
+            environment: p.environment, reference: p.reference, createdAt: p.createdAt,
+          })),
+        aging: {
+          current: sum(outstanding, balance), days31to60: 0, days61to90: 0, over90: 0,
+        },
+        productSales: [...sales.values()].sort((a, b) => b.amountMinor - a.amountMinor),
+        inventory: {
+          valuationMinor: [...billingStock.values()].reduce(
+            (total, row) => total + row.onHand * (billingProduct(row.productId)?.costMinor ?? 0), 0),
+          lowStock,
+        },
+        reconciliation: {
+          pendingCardPayments: [...billingPayments.values()]
+            .filter((p) => p.status === "pending" && p.method === "card_test").length,
+          webhookEvents: [...billingWebhookEvents]
+            .sort((a, b) => b.receivedAt.localeCompare(a.receivedAt))
+            .map((e) => ({
+              eventId: e.eventId, type: e.eventType, outcome: e.outcome,
+              detail: e.detail, receivedAt: e.receivedAt,
+            })),
+        },
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/get_billing_invoice" && req.method === "POST") {
+      const body = await readBody(req);
+      const orgId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(orgId)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const invoice = billingInvoices.get(String(body._invoice_id ?? ""));
+      if (!invoice) return json(res, 404, { code: "P0002", message: "invoice not found" });
+      return json(res, 200, billingInvoiceJson(invoice));
+    }
+
+    if (url.pathname === "/rest/v1/rpc/get_patient_billing" && req.method === "POST") {
+      const body = await readBody(req);
+      const orgId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(orgId)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const patientId = String(body._patient_id ?? "");
+      return json(res, 200, {
+        creditBalanceMinor: billingCreditBalance(patientId),
+        invoices: [...billingInvoices.values()]
+          .filter((i) => i.patientId === patientId)
+          .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+          .map((i) => ({
+            id: i.id, number: i.number, status: i.status, totalMinor: i.totalMinor,
+            paidMinor: i.paidMinor, creditAppliedMinor: i.creditAppliedMinor,
+            refundedMinor: i.refundedMinor,
+            balanceMinor: Math.max(i.totalMinor - i.paidMinor - i.creditAppliedMinor, 0),
+            currency: i.currency, appointmentId: i.appointmentId,
+            createdAt: i.createdAt, finalizedAt: i.finalizedAt, version: i.version,
+          })),
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/list_billing_catalog" && req.method === "POST") {
+      const body = await readBody(req);
+      const orgId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(orgId)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const q = String(body._query ?? "").trim().toLowerCase();
+      const filter = body._stock_filter ? String(body._stock_filter) : null;
+      const products = billingProducts
+        .filter((p) => (body._include_archived ? true : !p.archivedAt))
+        .filter((p) => (body._kind ? p.kind === body._kind : true))
+        .filter((p) => !q || p.name.toLowerCase().includes(q) ||
+          (p.sku ?? "").toLowerCase().includes(q))
+        .filter((p) => {
+          if (!filter) return true;
+          if (!p.trackInventory) return false;
+          const rows = [...billingStock.values()].filter((r) => r.productId === p.id);
+          const available = rows.reduce((sum, r) => sum + (r.onHand - r.reserved), 0);
+          if (filter === "out") return available <= 0;
+          return rows.some((r) => r.onHand - r.reserved <= r.reorderThreshold);
+        })
+        .map((p) => {
+          const tax = billingTaxRates.find((t) => t.id === p.taxRateId);
+          return {
+            id: p.id, name: p.name, kind: p.kind, amountMinor: p.amountMinor,
+            currency: p.currency, sku: p.sku, barcode: p.barcode,
+            supplierId: p.supplierId,
+            supplierName: billingSuppliers.find((sup) => sup.id === p.supplierId)?.name ?? null,
+            costMinor: p.costMinor, taxRateId: p.taxRateId,
+            taxRateBps: tax?.rateBps ?? null, taxRateName: tax?.name ?? null,
+            description: p.description, trackInventory: p.trackInventory,
+            reorderThreshold: p.reorderThreshold, catalogProductId: p.catalogProductId,
+            verificationStatus: null, commercialLinks: [],
+            archivedAt: p.archivedAt, version: p.version,
+            stock: [...billingStock.values()]
+              .filter((r) => r.productId === p.id)
+              .filter((r) => (body._location_id ? r.locationId === body._location_id : true))
+              .map((r) => ({
+                locationId: r.locationId,
+                locationName: billingLocations.find((l) => l.id === r.locationId)?.name ?? null,
+                onHand: r.onHand, reserved: r.reserved,
+                available: r.onHand - r.reserved, reorderThreshold: r.reorderThreshold,
+              })),
+          };
+        })
+        .sort((a, b) => a.name.localeCompare(b.name));
+      return json(res, 200, {
+        products,
+        suppliers: billingSuppliers.map((sup) => ({
+          id: sup.id, name: sup.name, contactEmail: sup.contactEmail,
+          phone: sup.phone, notes: sup.notes, archivedAt: sup.archivedAt,
+        })),
+        locations: billingLocations.map((l) => ({
+          id: l.id, name: l.name, archivedAt: l.archivedAt,
+        })),
+        taxRates: billingTaxRates.map((t) => ({
+          id: t.id, name: t.name, rateBps: t.rateBps, active: t.active,
+        })),
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/get_inventory_history" && req.method === "POST") {
+      const body = await readBody(req);
+      const orgId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(orgId)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      return json(res, 200, billingLedger
+        .filter((m) => m.productId === String(body._product_id ?? ""))
+        .slice()
+        .reverse()
+        .map((m) => ({
+          id: m.id, kind: m.kind, onHandDelta: m.onHandDelta, reservedDelta: m.reservedDelta,
+          reason: m.reason, condition: m.condition, unitCostMinor: m.unitCostMinor,
+          locationId: m.locationId,
+          locationName: billingLocations.find((l) => l.id === m.locationId)?.name ?? null,
+          refType: m.refType, refId: m.refId, at: m.createdAt,
+        })));
+    }
+
+    if (url.pathname === "/rest/v1/rpc/upsert_billing_product" && req.method === "POST") {
+      const body = await readBody(req);
+      const orgId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(orgId)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const id = body._id ? String(body._id) : null;
+      if (!id) {
+        const name = String(body._name ?? "").trim();
+        if (!name) return json(res, 400, { code: "22023", message: "a product name is required" });
+        const amount = Number(body._amount_minor);
+        if (!Number.isFinite(amount) || amount < 0) {
+          return json(res, 400, { code: "22023", message: "a non-negative price is required" });
+        }
+        const product = {
+          id: billingId("prod"), organizationId: orgId, name, kind: String(body._kind ?? "product"),
+          amountMinor: amount, currency: "USD",
+          sku: body._sku ? String(body._sku) : null, barcode: null,
+          supplierId: body._supplier_id ? String(body._supplier_id) : null,
+          costMinor: Number(body._cost_minor ?? 0),
+          taxRateId: body._tax_rate_id ? String(body._tax_rate_id) : null,
+          description: null, trackInventory: body._track_inventory === true,
+          reorderThreshold: Number(body._reorder_threshold ?? 0),
+          catalogProductId: null, archivedAt: null, version: 1,
+        };
+        billingProducts.push(product);
+        return json(res, 200, { id: product.id, version: 1 });
+      }
+      const product = billingProduct(id);
+      if (!product) return json(res, 404, { code: "P0002", message: "product not found" });
+      if (Number(body._expected_version) !== product.version) {
+        return json(res, 409, { code: "40001", message: "the product changed since you loaded it" });
+      }
+      if (body._name) product.name = String(body._name).trim();
+      if (body._amount_minor != null) product.amountMinor = Number(body._amount_minor);
+      if (body._reorder_threshold != null) {
+        product.reorderThreshold = Number(body._reorder_threshold);
+        for (const row of billingStock.values()) {
+          if (row.productId === product.id) row.reorderThreshold = product.reorderThreshold;
+        }
+      }
+      product.version += 1;
+      return json(res, 200, { id: product.id, version: product.version });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/archive_billing_product" && req.method === "POST") {
+      const body = await readBody(req);
+      const orgId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(orgId)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const product = billingProduct(String(body._product_id ?? ""));
+      if (!product) return json(res, 404, { code: "P0002", message: "product not found" });
+      if (Number(body._expected_version) !== product.version) {
+        return json(res, 409, { code: "40001", message: "the product changed since you loaded it" });
+      }
+      product.archivedAt = new Date().toISOString();
+      product.version += 1;
+      return json(res, 200, { id: product.id, version: product.version });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/upsert_billing_location" && req.method === "POST") {
+      const body = await readBody(req);
+      const name = String(body._name ?? "").trim();
+      if (!name) return json(res, 400, { code: "22023", message: "a location name is required" });
+      const location = { id: billingId("loc"), organizationId: "org-fixture", name, archivedAt: null };
+      billingLocations.push(location);
+      return json(res, 200, { id: location.id });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/upsert_supplier" && req.method === "POST") {
+      const body = await readBody(req);
+      const name = String(body._name ?? "").trim();
+      if (!name) return json(res, 400, { code: "22023", message: "a supplier name is required" });
+      const supplier = {
+        id: billingId("sup"), organizationId: "org-fixture", name,
+        contactEmail: null, phone: null, notes: null, archivedAt: null,
+      };
+      billingSuppliers.push(supplier);
+      return json(res, 200, { id: supplier.id });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/upsert_tax_rate" && req.method === "POST") {
+      const body = await readBody(req);
+      const name = String(body._name ?? "").trim();
+      const rateBps = body._rate_bps == null ? null : Number(body._rate_bps);
+      if (!name || rateBps == null) {
+        return json(res, 400, { code: "22023", message: "tax rates need a name and a rate" });
+      }
+      const rate = {
+        id: billingId("tax"), organizationId: "org-fixture", name, rateBps, active: true,
+      };
+      billingTaxRates.push(rate);
+      return json(res, 200, { id: rate.id });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/receive_inventory_stock" && req.method === "POST") {
+      const body = await readBody(req);
+      const orgId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(orgId)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const quantity = Number(body._quantity);
+      if (!Number.isFinite(quantity) || quantity <= 0) {
+        return json(res, 400, { code: "22023", message: "received quantity must be positive" });
+      }
+      const product = billingProduct(String(body._product_id ?? ""));
+      if (!product?.trackInventory) {
+        return json(res, 400, { code: "22023", message: "not an inventory-tracked product" });
+      }
+      if (!billingLocations.some((l) => l.id === String(body._location_id ?? ""))) {
+        return json(res, 404, { code: "P0002", message: "location not found" });
+      }
+      billingMoveStock(String(body._location_id), product.id, "receipt", quantity, 0, {
+        reason: body._reference ? String(body._reference) : null,
+        unitCostMinor: body._unit_cost_minor == null ? null : Number(body._unit_cost_minor),
+        supplierId: body._supplier_id ? String(body._supplier_id) : null,
+        refType: "receipt",
+      });
+      return json(res, 200, { ok: true });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/adjust_inventory_stock" && req.method === "POST") {
+      const body = await readBody(req);
+      const orgId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(orgId)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const reason = String(body._reason ?? "").trim();
+      if (!reason) {
+        return json(res, 400, { code: "22023", message: "inventory adjustments require a reason" });
+      }
+      const delta = Number(body._delta);
+      if (!Number.isFinite(delta) || delta === 0) {
+        return json(res, 400, { code: "22023", message: "an adjustment must change the quantity" });
+      }
+      const kind = String(body._kind ?? "");
+      if (!["adjustment", "damaged", "expired"].includes(kind)) {
+        return json(res, 400, { code: "22023", message: "unknown adjustment kind" });
+      }
+      if ((kind === "damaged" || kind === "expired") && delta > 0) {
+        return json(res, 400, { code: "22023", message: "damaged/expired stock can only be removed" });
+      }
+      try {
+        billingMoveStock(String(body._location_id), String(body._product_id), kind, delta, 0, {
+          reason, refType: "adjustment",
+        });
+      } catch (e) {
+        return json(res, 409, { code: e.code ?? "40001", message: "insufficient stock" });
+      }
+      return json(res, 200, { ok: true });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/return_inventory_stock" && req.method === "POST") {
+      const body = await readBody(req);
+      const orgId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(orgId)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const quantity = Number(body._quantity);
+      if (!Number.isFinite(quantity) || quantity <= 0) {
+        return json(res, 400, { code: "22023", message: "returned quantity must be positive" });
+      }
+      const condition = String(body._condition ?? "");
+      if (!["resalable", "damaged"].includes(condition)) {
+        return json(res, 400, { code: "22023", message: "a return needs an explicit condition" });
+      }
+      const reason = String(body._reason ?? "").trim();
+      if (!reason) return json(res, 400, { code: "22023", message: "a return needs a reason" });
+      const locationId = String(body._location_id);
+      const productId = String(body._product_id);
+      billingMoveStock(locationId, productId, "return", quantity, 0, {
+        reason, condition, refType: "invoice",
+        refId: body._invoice_id ? String(body._invoice_id) : null,
+      });
+      if (condition === "damaged") {
+        // Recorded, but never re-enters sellable stock.
+        billingMoveStock(locationId, productId, "damaged", -quantity, 0, {
+          reason: `damaged return: ${reason}`, condition, refType: "invoice",
+          refId: body._invoice_id ? String(body._invoice_id) : null,
+        });
+      }
+      return json(res, 200, { ok: true });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/create_invoice_draft" && req.method === "POST") {
+      const body = await readBody(req);
+      const orgId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(orgId)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const patientId = String(body._patient_id ?? "");
+      const appointmentId = body._appointment_id ? String(body._appointment_id) : null;
+      if (appointmentId) {
+        const live = [...billingInvoices.values()].some(
+          (i) => i.appointmentId === appointmentId && i.status !== "void");
+        if (live) {
+          return json(res, 409, { code: "40001", message: "this appointment already has an invoice" });
+        }
+      }
+      const appointment = appointmentId
+        ? scheduleAppointments.find((a) => a.id === appointmentId)
+        : null;
+      const invoice = {
+        id: billingId("inv"), organizationId: orgId, patientId, appointmentId,
+        practitionerUserId: PRACTITIONER_USER_ID,
+        locationId: body._location_id ? String(body._location_id) : null,
+        number: null, status: "draft", currency: "USD", version: 1,
+        subtotalMinor: 0, discountMinor: 0, taxMinor: 0, totalMinor: 0,
+        paidMinor: 0, refundedMinor: 0, creditAppliedMinor: 0,
+        finalizedAt: null, voidedAt: null, voidReason: null,
+        inventoryReservedAt: null, inventoryCommittedAt: null,
+        createdAt: new Date().toISOString(),
+      };
+      billingInvoices.set(invoice.id, invoice);
+      billingLines.set(invoice.id, []);
+
+      // The booked service joins the draft when its type matches an active
+      // catalog service by name — deterministic, never protocol-driven.
+      if (appointment?.appointmentType) {
+        const service = billingProducts.find(
+          (p) => !p.archivedAt && ["service", "visit"].includes(p.kind) &&
+            p.name.toLowerCase() === String(appointment.appointmentType).toLowerCase());
+        if (service) {
+          const rate = billingTaxRates.find((t) => t.id === service.taxRateId && t.active);
+          const taxMinor = Math.floor((service.amountMinor * (rate?.rateBps ?? 0) + 5000) / 10000);
+          billingLines.get(invoice.id).push({
+            id: billingId("line"), invoiceId: invoice.id, productId: service.id,
+            kind: "service", nameSnapshot: service.name, skuSnapshot: service.sku,
+            quantity: 1, unitAmountMinor: service.amountMinor,
+            amountMinor: service.amountMinor, discountMinor: 0, discountReason: null,
+            taxRateBps: rate?.rateBps ?? 0, taxMinor,
+          });
+          invoice.subtotalMinor = service.amountMinor;
+          invoice.taxMinor = taxMinor;
+          invoice.totalMinor = service.amountMinor + taxMinor;
+        }
+      }
+      billingEvents.push({
+        invoiceId: invoice.id, kind: "created", from: null, to: "draft", detail: null,
+        createdAt: new Date().toISOString(),
+      });
+      return json(res, 200, billingInvoiceJson(invoice));
+    }
+
+    if (url.pathname === "/rest/v1/rpc/save_invoice_draft" && req.method === "POST") {
+      const body = await readBody(req);
+      const orgId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(orgId)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const invoice = billingInvoices.get(String(body._invoice_id ?? ""));
+      if (!invoice) return json(res, 404, { code: "P0002", message: "invoice not found" });
+      if (invoice.status !== "draft") {
+        return json(res, 403, { code: "42501", message: "only a draft invoice can be edited" });
+      }
+      if (Number(body._expected_version) !== invoice.version) {
+        return json(res, 409, { code: "40001", message: "the invoice changed since you loaded it" });
+      }
+      const inputLines = Array.isArray(body._lines) ? body._lines : [];
+      const rebuilt = [];
+      let subtotal = 0, discount = 0, tax = 0;
+      for (const raw of inputLines) {
+        const product = billingProduct(String(raw.productId ?? ""));
+        if (!product) {
+          return json(res, 403, { code: "42501", message: "a line references an unknown product" });
+        }
+        if (product.archivedAt) {
+          return json(res, 400, { code: "22023", message: "an archived product cannot join a new invoice" });
+        }
+        const quantity = Number(raw.quantity ?? 1);
+        if (quantity < 1 || quantity > 999) {
+          return json(res, 400, { code: "22023", message: "line quantity must be between 1 and 999" });
+        }
+        const unit = raw.unitAmountMinor == null ? product.amountMinor : Number(raw.unitAmountMinor);
+        const gross = unit * quantity;
+        const lineDiscount = Number(raw.discountMinor ?? 0);
+        const reason = raw.discountReason ? String(raw.discountReason).trim() : "";
+        if (lineDiscount < 0 || lineDiscount > gross) {
+          return json(res, 400, { code: "22023", message: "a discount cannot exceed the line amount" });
+        }
+        if (lineDiscount > 0 && !reason) {
+          return json(res, 400, { code: "22023", message: "discounts require a reason" });
+        }
+        // TAX IS NEVER CLIENT-SUPPLIED: computed from the configured rate.
+        const rate = billingTaxRates.find((t) => t.id === product.taxRateId && t.active);
+        const rateBps = rate?.rateBps ?? 0;
+        const lineTax = Math.floor(((gross - lineDiscount) * rateBps + 5000) / 10000);
+        rebuilt.push({
+          id: billingId("line"), invoiceId: invoice.id, productId: product.id,
+          kind: product.kind === "visit" ? "service" : product.kind === "other" ? "product" : product.kind,
+          nameSnapshot: product.name, skuSnapshot: product.sku,
+          quantity, unitAmountMinor: unit, amountMinor: gross,
+          discountMinor: lineDiscount, discountReason: reason || null,
+          taxRateBps: rateBps, taxMinor: lineTax,
+        });
+        subtotal += gross; discount += lineDiscount; tax += lineTax;
+      }
+      billingLines.set(invoice.id, rebuilt);
+      invoice.subtotalMinor = subtotal;
+      invoice.discountMinor = discount;
+      invoice.taxMinor = tax;
+      invoice.totalMinor = subtotal - discount + tax;
+      if (body._location_id) invoice.locationId = String(body._location_id);
+      invoice.version += 1;
+      return json(res, 200, billingInvoiceJson(invoice));
+    }
+
+    if (url.pathname === "/rest/v1/rpc/finalize_invoice" && req.method === "POST") {
+      const body = await readBody(req);
+      const orgId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(orgId)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const invoice = billingInvoices.get(String(body._invoice_id ?? ""));
+      if (!invoice) return json(res, 404, { code: "P0002", message: "invoice not found" });
+      if (invoice.status !== "draft") {
+        return json(res, 403, { code: "42501", message: "only a draft invoice can be finalized" });
+      }
+      if (Number(body._expected_version) !== invoice.version) {
+        return json(res, 409, { code: "40001", message: "the invoice changed since you loaded it" });
+      }
+      const lines = billingLines.get(invoice.id) ?? [];
+      if (lines.length === 0) {
+        return json(res, 400, { code: "22023", message: "an empty invoice cannot be finalized" });
+      }
+      const tracked = lines.filter((l) => billingProduct(l.productId)?.trackInventory);
+      if (tracked.length > 0 && !invoice.locationId) {
+        return json(res, 400, { code: "22023", message: "a location is required to sell tracked inventory" });
+      }
+      // Check availability BEFORE moving anything: an oversell reserves nothing.
+      for (const line of tracked) {
+        const row = billingStock.get(stockKey(invoice.locationId, line.productId));
+        const available = row ? row.onHand - row.reserved : 0;
+        if (available < line.quantity) {
+          return json(res, 409, { code: "40001", message: "insufficient stock to finalize this sale" });
+        }
+      }
+      for (const line of tracked) {
+        billingMoveStock(invoice.locationId, line.productId, "reservation", 0, line.quantity, {
+          refType: "invoice", refId: invoice.id,
+        });
+      }
+      invoice.status = "open";
+      invoice.number = `INV-${String(++billingInvoiceNumber).padStart(5, "0")}`;
+      invoice.finalizedAt = new Date().toISOString();
+      if (tracked.length > 0) invoice.inventoryReservedAt = invoice.finalizedAt;
+      invoice.version += 1;
+      billingEvents.push({
+        invoiceId: invoice.id, kind: "status", from: "draft", to: "open", detail: null,
+        createdAt: new Date().toISOString(),
+      });
+      return json(res, 200, billingInvoiceJson(invoice));
+    }
+
+    if (url.pathname === "/rest/v1/rpc/void_invoice" && req.method === "POST") {
+      const body = await readBody(req);
+      const orgId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(orgId)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const reason = String(body._reason ?? "").trim();
+      if (!reason) {
+        return json(res, 400, { code: "22023", message: "voiding an invoice requires a reason" });
+      }
+      const invoice = billingInvoices.get(String(body._invoice_id ?? ""));
+      if (!invoice) return json(res, 404, { code: "P0002", message: "invoice not found" });
+      if (Number(body._expected_version) !== invoice.version) {
+        return json(res, 409, { code: "40001", message: "the invoice changed since you loaded it" });
+      }
+      if (!["draft", "open"].includes(invoice.status) ||
+          invoice.paidMinor > 0 || invoice.creditAppliedMinor > 0) {
+        return json(res, 403, {
+          code: "42501",
+          message: "only an unpaid draft or open invoice can be voided; use refunds for paid invoices",
+        });
+      }
+      if (invoice.inventoryReservedAt && !invoice.inventoryCommittedAt) {
+        for (const line of billingLines.get(invoice.id) ?? []) {
+          if (!billingProduct(line.productId)?.trackInventory) continue;
+          billingMoveStock(invoice.locationId, line.productId, "release", 0, -line.quantity, {
+            reason: "invoice voided", refType: "invoice", refId: invoice.id,
+          });
+        }
+      }
+      const from = invoice.status;
+      invoice.status = "void";
+      invoice.voidedAt = new Date().toISOString();
+      invoice.voidReason = reason;
+      invoice.version += 1;
+      billingEvents.push({
+        invoiceId: invoice.id, kind: "status", from, to: "void", detail: reason,
+        createdAt: new Date().toISOString(),
+      });
+      return json(res, 200, billingInvoiceJson(invoice));
+    }
+
+    if (url.pathname === "/rest/v1/rpc/record_manual_payment" && req.method === "POST") {
+      const body = await readBody(req);
+      const orgId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(orgId)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const method = String(body._method ?? "");
+      if (!["cash", "check", "bank_transfer", "external"].includes(method)) {
+        return json(res, 400, { code: "22023", message: "manual payments accept cash, check, bank_transfer, or external" });
+      }
+      const amount = Number(body._amount_minor);
+      if (!Number.isFinite(amount) || amount <= 0) {
+        return json(res, 400, { code: "22023", message: "a payment amount must be positive" });
+      }
+      const invoice = billingInvoices.get(String(body._invoice_id ?? ""));
+      if (!invoice) return json(res, 404, { code: "P0002", message: "invoice not found" });
+      if (!["open", "partially_paid"].includes(invoice.status)) {
+        return json(res, 403, { code: "42501", message: "payments apply only to open invoices" });
+      }
+      if (Number(body._expected_version) !== invoice.version) {
+        return json(res, 409, { code: "40001", message: "the invoice changed since you loaded it" });
+      }
+      const balance = invoice.totalMinor - invoice.paidMinor - invoice.creditAppliedMinor;
+      if (amount > balance) {
+        return json(res, 400, { code: "22023", message: "a payment cannot exceed the outstanding balance" });
+      }
+      const key = body._idempotency_key ? String(body._idempotency_key) : billingId("idem");
+      if ([...billingPayments.values()].some((p) => p.idempotencyKey === key)) {
+        return json(res, 409, { code: "40001", message: "this payment was already recorded" });
+      }
+      const payment = {
+        id: billingId("pay"), organizationId: orgId, invoiceId: invoice.id,
+        patientId: invoice.patientId, amountMinor: amount, currency: invoice.currency,
+        status: "succeeded", method, reference: body._reference ? String(body._reference) : null,
+        environment: null, processor: "manual", processorRef: null, failureCodeSafe: null,
+        paidAt: new Date().toISOString(), idempotencyKey: key,
+        createdAt: new Date().toISOString(),
+      };
+      billingPayments.set(payment.id, payment);
+      billingSettle(invoice, "rpc");
+      return json(res, 200, billingInvoiceJson(invoice));
+    }
+
+    if (url.pathname === "/rest/v1/rpc/grant_patient_credit" && req.method === "POST") {
+      const body = await readBody(req);
+      const orgId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(orgId)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const amount = Number(body._amount_minor);
+      if (!Number.isFinite(amount) || amount <= 0) {
+        return json(res, 400, { code: "22023", message: "a credit amount must be positive" });
+      }
+      const reason = String(body._reason ?? "").trim();
+      if (!reason) {
+        return json(res, 400, { code: "22023", message: "granting credit requires a reason" });
+      }
+      const patientId = String(body._patient_id ?? "");
+      billingCredits.push({
+        id: billingId("cr"), patientId, kind: "grant", amountMinor: amount, reason,
+        createdAt: new Date().toISOString(),
+      });
+      return json(res, 200, { balanceMinor: billingCreditBalance(patientId) });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/apply_patient_credit" && req.method === "POST") {
+      const body = await readBody(req);
+      const orgId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(orgId)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const amount = Number(body._amount_minor);
+      if (!Number.isFinite(amount) || amount <= 0) {
+        return json(res, 400, { code: "22023", message: "a credit application must be positive" });
+      }
+      const invoice = billingInvoices.get(String(body._invoice_id ?? ""));
+      if (!invoice) return json(res, 404, { code: "P0002", message: "invoice not found" });
+      if (!["open", "partially_paid"].includes(invoice.status)) {
+        return json(res, 403, { code: "42501", message: "credit applies only to open invoices" });
+      }
+      if (Number(body._expected_version) !== invoice.version) {
+        return json(res, 409, { code: "40001", message: "the invoice changed since you loaded it" });
+      }
+      const credit = billingCreditBalance(invoice.patientId);
+      const balance = invoice.totalMinor - invoice.paidMinor - invoice.creditAppliedMinor;
+      if (amount > credit) {
+        return json(res, 400, { code: "22023", message: "not enough patient credit" });
+      }
+      if (amount > balance) {
+        return json(res, 400, { code: "22023", message: "credit cannot exceed the outstanding balance" });
+      }
+      billingCredits.push({
+        id: billingId("cr"), patientId: invoice.patientId, kind: "apply",
+        amountMinor: amount, invoiceId: invoice.id, reason: null,
+        createdAt: new Date().toISOString(),
+      });
+      invoice.creditAppliedMinor += amount;
+      billingSettle(invoice, "rpc");
+      return json(res, 200, billingInvoiceJson(invoice));
+    }
+
+    if (url.pathname === "/rest/v1/rpc/refund_payment" && req.method === "POST") {
+      const body = await readBody(req);
+      const orgId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(orgId)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const reason = String(body._reason ?? "").trim();
+      if (!reason) return json(res, 400, { code: "22023", message: "refunds require a reason" });
+      const amount = Number(body._amount_minor);
+      if (!Number.isFinite(amount) || amount <= 0) {
+        return json(res, 400, { code: "22023", message: "a refund amount must be positive" });
+      }
+      const payment = billingPayments.get(String(body._payment_id ?? ""));
+      if (!payment) return json(res, 404, { code: "P0002", message: "payment not found" });
+      if (payment.status !== "succeeded") {
+        return json(res, 403, { code: "42501", message: "only a succeeded payment can be refunded" });
+      }
+      if (payment.method === "card_test") {
+        return json(res, 400, {
+          code: "22023", message: "card refunds go through the payment processor workflow",
+        });
+      }
+      const already = billingRefunds
+        .filter((r) => r.paymentId === payment.id && r.status === "succeeded")
+        .reduce((sum, r) => sum + r.amountMinor, 0);
+      if (already + amount > payment.amountMinor) {
+        return json(res, 400, { code: "22023", message: "refunds cannot exceed the original payment" });
+      }
+      billingRefunds.push({
+        id: billingId("rf"), paymentId: payment.id, patientId: payment.patientId,
+        amountMinor: amount, currency: payment.currency, reason, status: "succeeded",
+        method: payment.method, createdAt: new Date().toISOString(),
+      });
+      // NOTE: no stock movement. A refund never restocks.
+      const invoice = payment.invoiceId ? billingInvoices.get(payment.invoiceId) : null;
+      if (invoice) {
+        billingSettle(invoice, "rpc");
+        return json(res, 200, billingInvoiceJson(invoice));
+      }
+      return json(res, 200, { id: billingRefunds[billingRefunds.length - 1].id });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/start_card_payment" && req.method === "POST") {
+      const body = await readBody(req);
+      const orgId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(orgId)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const key = String(body._idempotency_key ?? "").trim();
+      if (!key) return json(res, 400, { code: "22023", message: "an idempotency key is required" });
+      const invoice = billingInvoices.get(String(body._invoice_id ?? ""));
+      if (!invoice) return json(res, 404, { code: "P0002", message: "invoice not found" });
+      if (!["open", "partially_paid"].includes(invoice.status)) {
+        return json(res, 403, { code: "42501", message: "payments apply only to open invoices" });
+      }
+      if (Number(body._expected_version) !== invoice.version) {
+        return json(res, 409, { code: "40001", message: "the invoice changed since you loaded it" });
+      }
+      const balance = invoice.totalMinor - invoice.paidMinor - invoice.creditAppliedMinor;
+      if (balance <= 0) {
+        return json(res, 400, { code: "22023", message: "this invoice has no outstanding balance" });
+      }
+      const inFlight = [...billingPayments.values()].some(
+        (p) => p.invoiceId === invoice.id && p.status === "pending" && p.method === "card_test");
+      if (inFlight) {
+        return json(res, 409, { code: "40001", message: "a card payment is already in progress" });
+      }
+      const payment = {
+        id: billingId("pay"), organizationId: orgId, invoiceId: invoice.id,
+        patientId: invoice.patientId, amountMinor: balance, currency: invoice.currency,
+        status: "pending", method: "card_test", reference: null, environment: "test",
+        processor: "stripe_test", processorRef: null, failureCodeSafe: null,
+        paidAt: null, idempotencyKey: key, createdAt: new Date().toISOString(),
+      };
+      billingPayments.set(payment.id, payment);
+      // Deliberately no success field: the browser cannot assert a charge.
+      return json(res, 200, {
+        paymentId: payment.id, amountMinor: balance, currency: invoice.currency,
+      });
+    }
+
     if (url.pathname === "/rest/v1/rpc/list_inbox" && req.method === "POST") {
       const body = await readBody(req);
       const orgId = String(body._organization_id ?? "");
@@ -5617,6 +10338,982 @@ createServer(async (req, res) => {
       b.reviewedBy = PRACTITIONER_USER_ID;
       b.resolution = body._resolution;
       return json(res, 200, null);
+    }
+
+    /* ------------------------------------------------ phase 9A: nutrition */
+
+    if (url.pathname === "/rest/v1/rpc/list_nutrition_templates" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!memberOrgIds.includes(String(body._organization_id ?? ""))) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const includeArchived = body._include_archived === true;
+      return json(res, 200, {
+        templates: nutritionTemplates
+          .filter((t) => includeArchived || t.status !== "archived")
+          .sort((a, b) => (b.isStarter ? 1 : 0) - (a.isStarter ? 1 : 0) || a.name.localeCompare(b.name))
+          .map((t) => ({
+            id: t.id, name: t.name, pattern: t.pattern, summary: t.summary,
+            status: t.status, isStarter: t.isStarter, version: t.version,
+            currentVersionId: t.currentVersionId,
+            versions: nutritionTemplateVersions
+              .filter((v) => v.templateId === t.id)
+              .sort((a, b) => b.versionNumber - a.versionNumber)
+              .map((v) => ({
+                id: v.id, versionNumber: v.versionNumber, status: v.status,
+                purpose: v.purpose, intendedUse: v.intendedUse,
+                requiresPractitionerReview: v.requiresPractitionerReview,
+                cautionPopulations: v.cautionPopulations,
+                prerequisites: v.prerequisites,
+                missingInformationRequired: v.missingInformationRequired,
+                evidenceGrade: v.evidenceGrade, evidenceSummary: v.evidenceSummary,
+                educationVsAdviceNote: v.educationVsAdviceNote,
+                publishedAt: v.publishedAt,
+              })),
+          })),
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/install_nutrition_starter_template" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!requireNutritionRole(res)) return;
+      const slug = String(body._slug ?? "");
+      const hash = String(body._content_hash ?? "");
+      const meta = body._meta ?? {};
+      if (meta.requiresPractitionerReview !== true) {
+        return json(res, 400, {
+          code: "22023", message: "a starter template must require practitioner review",
+        });
+      }
+      let template = nutritionTemplates.find((t) => t.starterSlug === slug);
+      if (template) {
+        // Idempotent on content: an unchanged re-install mints no new version.
+        const existing = nutritionTemplateVersions.find(
+          (v) => v.templateId === template.id && v.status === "published" && v.contentHash === hash);
+        if (existing) {
+          return json(res, 200, {
+            templateId: template.id, versionId: existing.id, outcome: "unchanged" });
+        }
+      } else {
+        template = {
+          id: nutritionId("ntpl"), name: String(body._name ?? ""),
+          pattern: String(body._pattern ?? "custom"), summary: body._summary ?? null,
+          status: "draft", isStarter: true, starterSlug: slug, version: 1,
+          currentVersionId: null,
+        };
+        nutritionTemplates.push(template);
+      }
+      const versionNumber = nutritionTemplateVersions
+        .filter((v) => v.templateId === template.id).length + 1;
+      const content = emptyNutritionContent();
+      const src = body._content ?? {};
+      content.phases = (src.phases ?? []).map((p, i) => ({ id: nutritionId("nph"), ...p, phaseNumber: p.phaseNumber ?? i + 1 }));
+      content.foodRules = (src.foodRules ?? []).map((r) => ({
+        id: nutritionId("nfr"), phaseId: null, scope: r.scope ?? "category",
+        canonicalSource: null, canonicalId: null, portionGuidance: r.portionGuidance ?? null,
+        frequencyGuidance: r.frequencyGuidance ?? null, preparationGuidance: r.preparationGuidance ?? null,
+        substitutions: r.substitutions ?? [], conditionNote: r.conditionNote ?? null,
+        rationale: r.rationale ?? null, sortOrder: r.sortOrder ?? 0,
+        disposition: r.disposition, label: r.label,
+      }));
+      content.mealDays = (src.mealDays ?? []).map((d) => ({
+        id: nutritionId("nmd"), phaseId: null, dayNumber: d.dayNumber,
+        label: d.label ?? null, notes: d.notes ?? null,
+        meals: (d.meals ?? []).map((m) => ({
+          id: nutritionId("nml"), mealType: m.mealType, name: m.name ?? null,
+          timeOfDay: null, notes: m.notes ?? null, sortOrder: m.sortOrder ?? 0,
+          items: (m.items ?? []).map((it) => ({
+            id: nutritionId("nmi"), label: it.label, quantity: null, unit: null,
+            canonicalSource: null, canonicalId: null, nutrientSource: null,
+            energyValue: null, energyUnit: null, proteinG: null, carbohydrateG: null,
+            fatG: null, fiberG: null, preparationNote: it.preparationNote ?? null,
+            substitutions: it.substitutions ?? [], sortOrder: it.sortOrder ?? 0,
+          })),
+        })),
+      }));
+      content.recipes = (src.recipes ?? []).map((r) => ({
+        id: nutritionId("nrc"), name: r.name, servings: r.servings ?? null,
+        ingredients: r.ingredients ?? [], method: r.method ?? null, notes: r.notes ?? null }));
+      content.groceryItems = (src.groceryItems ?? []).map((g) => ({
+        id: nutritionId("ngi"), category: g.category, label: g.label,
+        quantityNote: g.quantityNote ?? null }));
+
+      const version = {
+        id: nutritionId("ntv"), templateId: template.id, versionNumber,
+        status: "published", publishedAt: nowIso(), contentHash: hash,
+        purpose: meta.purpose ?? null, intendedUse: meta.intendedUse ?? null,
+        // Always true. There is no install path that turns review off.
+        requiresPractitionerReview: true,
+        cautionPopulations: meta.cautionPopulations ?? [],
+        prerequisites: meta.prerequisites ?? [],
+        missingInformationRequired: meta.missingInformationRequired ?? [],
+        evidenceGrade: meta.evidenceGrade ?? null,
+        evidenceSummary: meta.evidenceSummary ?? null,
+        educationVsAdviceNote: meta.educationVsAdviceNote ?? null,
+        content,
+      };
+      nutritionTemplateVersions
+        .filter((v) => v.templateId === template.id && v.status === "published")
+        .forEach((v) => { v.status = "superseded"; });
+      nutritionTemplateVersions.push(version);
+      template.currentVersionId = version.id;
+      template.status = "active";
+      return json(res, 200, {
+        templateId: template.id, versionId: version.id,
+        outcome: versionNumber === 1 ? "installed" : "updated" });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/upsert_nutrition_template" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!requireNutritionRole(res)) return;
+      const name = String(body._name ?? "").trim();
+      if (!name) return json(res, 400, { code: "22023", message: "a template needs a name" });
+      if (!body._template_id) {
+        const row = {
+          id: nutritionId("ntpl"), name, pattern: String(body._pattern ?? "custom"),
+          summary: body._summary ?? null, status: "draft", isStarter: false,
+          starterSlug: null, version: 1, currentVersionId: null,
+        };
+        nutritionTemplates.push(row);
+        return json(res, 200, row.id);
+      }
+      const row = nutritionTemplates.find((t) => t.id === String(body._template_id));
+      if (!row) return json(res, 404, { code: "P0002", message: "record not found" });
+      row.name = name;
+      row.version += 1;
+      return json(res, 200, row.id);
+    }
+
+    if (url.pathname === "/rest/v1/rpc/get_nutrition_version_content" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!memberOrgIds.includes(String(body._organization_id ?? ""))) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const tv = body._template_version_id ? String(body._template_version_id) : null;
+      const pv = body._plan_version_id ? String(body._plan_version_id) : null;
+      if ((tv === null) === (pv === null)) {
+        return json(res, 400, { code: "22023", message: "ask for exactly one version" });
+      }
+      const owner = tv
+        ? nutritionTemplateVersions.find((v) => v.id === tv)
+        : nutritionPlanVersion(pv);
+      if (!owner) return json(res, 404, { code: "P0002", message: "record not found" });
+      return json(res, 200, owner.content ?? emptyNutritionContent());
+    }
+
+    if (url.pathname === "/rest/v1/rpc/create_nutrition_plan" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!requireNutritionRole(res)) return;
+      const patientId = String(body._patient_id ?? "");
+      const title = String(body._title ?? "").trim();
+      if (!title) return json(res, 400, { code: "22023", message: "a plan needs a title" });
+      const sourceId = body._source_template_version_id
+        ? String(body._source_template_version_id) : null;
+      let source = null;
+      if (sourceId) {
+        source = nutritionTemplateVersions.find((v) => v.id === sourceId);
+        if (!source) return json(res, 404, { code: "P0002", message: "record not found" });
+        if (source.status !== "published") {
+          return json(res, 409, {
+            code: "40001",
+            message: "only a published template version can start a patient plan",
+          });
+        }
+      }
+      const plan = {
+        id: nutritionId("nplan"), patientId, title, status: "draft", version: 1,
+        currentVersionId: null, createdAt: nowIso(), events: [],
+      };
+      const template = source
+        ? nutritionTemplates.find((t) => t.id === source.templateId) : null;
+      const version = {
+        id: nutritionId("npv"), planId: plan.id, patientId, versionNumber: 1,
+        status: "draft", version: 1,
+        // A SNAPSHOT, not a pointer: editing the template later changes nothing.
+        sourceTemplateId: template?.id ?? null,
+        sourceTemplateVersionId: source?.id ?? null,
+        sourceTemplateName: template?.name ?? null,
+        sourceTemplateVersion: source?.versionNumber ?? null,
+        detachedAt: nowIso(),
+        goals: [], practitionerRationale: null, patientInstructions: null,
+        mealTimingGuidance: null, fastingInstructions: null,
+        energyTargetValue: null, energyTargetUnit: null,
+        proteinG: null, carbohydrateG: null, fatG: null, fiberG: null,
+        proteinPct: null, carbohydratePct: null, fatPct: null,
+        submittedAt: null, approvedAt: null, activatedAt: null,
+        discontinuedReason: null, autosavedAt: null,
+        constraints: [], safetyFlags: [], amendments: [], safetyEvaluated: false,
+        content: source
+          ? JSON.parse(JSON.stringify(source.content ?? emptyNutritionContent()))
+          : emptyNutritionContent(),
+      };
+      plan.currentVersionId = version.id;
+      plan.events.push({ kind: "created", fromStatus: null, toStatus: "draft",
+        detail: null, createdAt: nowIso() });
+      nutritionPlans.push(plan);
+      nutritionPlanVersions.push(version);
+      return json(res, 200, { planId: plan.id, planVersionId: version.id });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/save_nutrition_plan_version" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!requireNutritionRole(res)) return;
+      const v = nutritionPlanVersion(String(body._plan_version_id ?? ""));
+      if (!v) return json(res, 404, { code: "P0002", message: "record not found" });
+      if (FROZEN_PLAN.includes(v.status)) {
+        return json(res, 409, {
+          code: "40001",
+          message: "an approved plan version cannot be edited; revise it into a new draft",
+        });
+      }
+      if (Number(body._expected_version) !== v.version) {
+        return json(res, 409, { code: "40001", message: "this plan changed since it was loaded" });
+      }
+      if (body._energy_target_value != null && !body._energy_target_unit) {
+        return json(res, 400, { code: "22023", message: "an energy target must carry a unit" });
+      }
+      for (const [key, col] of [
+        ["_patient_instructions", "patientInstructions"],
+        ["_practitioner_rationale", "practitionerRationale"],
+        ["_energy_target_value", "energyTargetValue"],
+        ["_energy_target_unit", "energyTargetUnit"],
+        ["_protein_g", "proteinG"], ["_carbohydrate_g", "carbohydrateG"], ["_fat_g", "fatG"],
+      ]) {
+        if (body[key] != null) v[col] = body[key];
+      }
+      v.version += 1;
+      return json(res, 200, v.version);
+    }
+
+    if (url.pathname === "/rest/v1/rpc/set_nutrition_plan_constraints" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!requireNutritionRole(res)) return;
+      const v = nutritionPlanVersion(String(body._plan_version_id ?? ""));
+      if (!v) return json(res, 404, { code: "P0002", message: "record not found" });
+      if (FROZEN_PLAN.includes(v.status)) {
+        return json(res, 409, { code: "40001", message: "constraints belong to a draft version" });
+      }
+      v.constraints = (body._constraints ?? []).map((c) => ({
+        id: nutritionId("ncon"), kind: c.kind, label: c.label,
+        detail: c.detail ?? null, severity: c.severity ?? null,
+        source: c.source ?? "practitioner_entered",
+      }));
+      return json(res, 200, v.constraints.length);
+    }
+
+    if (url.pathname === "/rest/v1/rpc/evaluate_nutrition_plan_safety" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!requireNutritionRole(res)) return;
+      const v = nutritionPlanVersion(String(body._plan_version_id ?? ""));
+      if (!v) return json(res, 404, { code: "P0002", message: "record not found" });
+      if (FROZEN_PLAN.includes(v.status)) {
+        return json(res, 409, { code: "40001", message: "safety review runs on a draft version" });
+      }
+      // Decisions a practitioner already recorded survive a re-run.
+      v.safetyFlags = v.safetyFlags.filter((f) => f.status !== "open");
+
+      const allergens = NUTRITION_ALLERGIES[v.patientId] ?? [];
+      const eaten = [
+        ...(v.content.foodRules ?? [])
+          .filter((r) => r.disposition === "emphasize" || r.disposition === "include")
+          .map((r) => r.label),
+        ...(v.content.mealDays ?? []).flatMap((d) =>
+          (d.meals ?? []).flatMap((m) => (m.items ?? []).map((i) => i.label))),
+      ].map((l) => String(l).toLowerCase());
+
+      let blocking = 0;
+      let review = 0;
+      for (const allergen of allergens) {
+        const collides = eaten.some((l) => l.includes(allergen.toLowerCase()));
+        v.safetyFlags.push({
+          id: nutritionId("nsf"), kind: "recorded_allergy",
+          severity: collides ? "blocking" : "review",
+          detail: collides
+            ? "A recorded allergen appears in food this plan tells the patient to eat."
+            : "An allergy is recorded in the chart. Confirm this plan accounts for it.",
+          status: "open", evidenceRef: "allergies",
+          overrideReason: null, overriddenAt: null,
+        });
+        if (collides) blocking += 1; else review += 1;
+      }
+      if (v.constraints.length === 0) {
+        v.safetyFlags.push({
+          id: nutritionId("nsf"), kind: "missing_safety_information", severity: "review",
+          detail: "No allergies, intolerances, access or cooking constraints are recorded "
+            + "against this plan. Confirm the assessment was completed.",
+          status: "open", evidenceRef: null, overrideReason: null, overriddenAt: null,
+        });
+        review += 1;
+      }
+      v.safetyEvaluated = true;
+      const plan = nutritionPlans.find((p) => p.id === v.planId);
+      plan?.events.push({ kind: "safety_evaluated", fromStatus: null, toStatus: null,
+        detail: `${blocking} blocking, ${review} review`, createdAt: nowIso() });
+      return json(res, 200, { blocking, review });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/resolve_nutrition_safety_flag" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!requireNutritionRole(res)) return;
+      const action = String(body._action ?? "");
+      const reason = String(body._reason ?? "").trim();
+      if (!["acknowledge", "override", "resolve"].includes(action)) {
+        return json(res, 400, { code: "22023", message: "unknown action" });
+      }
+      // An undocumented override is worse than none.
+      if (action === "override" && !reason) {
+        return json(res, 400, {
+          code: "22023", message: "overriding a safety flag requires a reason" });
+      }
+      const flagId = String(body._flag_id ?? "");
+      const version = nutritionPlanVersions.find((v) => v.safetyFlags.some((f) => f.id === flagId));
+      const flag = version?.safetyFlags.find((f) => f.id === flagId);
+      if (!flag) return json(res, 404, { code: "P0002", message: "record not found" });
+      flag.status = action === "acknowledge" ? "acknowledged"
+        : action === "override" ? "overridden" : "resolved";
+      if (action === "override") {
+        flag.overrideReason = reason;
+        flag.overriddenAt = nowIso();
+      }
+      return json(res, 200, null);
+    }
+
+    if (url.pathname === "/rest/v1/rpc/submit_nutrition_plan_version" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!requireNutritionRole(res)) return;
+      const v = nutritionPlanVersion(String(body._plan_version_id ?? ""));
+      if (!v) return json(res, 404, { code: "P0002", message: "record not found" });
+      if (v.status !== "draft") {
+        return json(res, 409, { code: "40001", message: "only a draft version can be submitted" });
+      }
+      v.status = "in_review";
+      v.submittedAt = nowIso();
+      v.version += 1;
+      const plan = nutritionPlans.find((p) => p.id === v.planId);
+      if (plan) {
+        plan.status = "in_review";
+        plan.events.push({ kind: "submitted", fromStatus: "draft", toStatus: "in_review",
+          detail: null, createdAt: nowIso() });
+      }
+      return json(res, 200, null);
+    }
+
+    if (url.pathname === "/rest/v1/rpc/approve_nutrition_plan_version" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!requireNutritionRole(res)) return;
+      const v = nutritionPlanVersion(String(body._plan_version_id ?? ""));
+      if (!v) return json(res, 404, { code: "P0002", message: "record not found" });
+      if (v.status !== "in_review") {
+        return json(res, 409, { code: "40001", message: "only a version in review can be approved" });
+      }
+      // THE GATE. Skipping the safety screen in the browser changes nothing.
+      if (!v.safetyEvaluated) {
+        return json(res, 409, {
+          code: "40001", message: "safety review has not been run for this version" });
+      }
+      const blocking = v.safetyFlags.filter(
+        (f) => f.severity === "blocking" && (f.status === "open" || f.status === "acknowledged"));
+      if (blocking.length > 0) {
+        return json(res, 409, {
+          code: "40001",
+          message: `this version has ${blocking.length} unresolved blocking safety flag(s)`,
+        });
+      }
+      v.status = "approved";
+      v.approvedAt = nowIso();
+      v.version += 1;
+      const plan = nutritionPlans.find((p) => p.id === v.planId);
+      if (plan) {
+        plan.status = "approved";
+        plan.events.push({ kind: "approved", fromStatus: "in_review", toStatus: "approved",
+          detail: body._note ?? null, createdAt: nowIso() });
+      }
+      return json(res, 200, null);
+    }
+
+    if (url.pathname === "/rest/v1/rpc/activate_nutrition_plan_version" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!requireNutritionRole(res)) return;
+      const v = nutritionPlanVersion(String(body._plan_version_id ?? ""));
+      if (!v) return json(res, 404, { code: "P0002", message: "record not found" });
+      if (v.status !== "approved") {
+        return json(res, 409, { code: "40001", message: "only an approved version can be activated" });
+      }
+      // Two live diets for one patient is a clinical hazard, so the older plan
+      // is superseded rather than left to collide.
+      for (const other of nutritionPlans) {
+        if (other.patientId === v.patientId && other.status === "active" && other.id !== v.planId) {
+          nutritionPlanVersions
+            .filter((x) => x.planId === other.id && x.status === "active")
+            .forEach((x) => { x.status = "superseded"; });
+          other.status = "completed";
+          other.events.push({ kind: "superseded", fromStatus: "active", toStatus: "completed",
+            detail: "superseded by a newer active plan", createdAt: nowIso() });
+        }
+      }
+      nutritionPlanVersions
+        .filter((x) => x.planId === v.planId && x.status === "active" && x.id !== v.id)
+        .forEach((x) => { x.status = "superseded"; });
+      v.status = "active";
+      v.activatedAt = nowIso();
+      const plan = nutritionPlans.find((p) => p.id === v.planId);
+      if (plan) {
+        plan.status = "active";
+        plan.currentVersionId = v.id;
+        plan.version += 1;
+        plan.events.push({ kind: "activated", fromStatus: "approved", toStatus: "active",
+          detail: null, createdAt: nowIso() });
+      }
+      return json(res, 200, null);
+    }
+
+    if (url.pathname === "/rest/v1/rpc/set_nutrition_plan_lifecycle" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!requireNutritionRole(res)) return;
+      const plan = nutritionPlans.find((p) => p.id === String(body._plan_id ?? ""));
+      if (!plan) return json(res, 404, { code: "P0002", message: "record not found" });
+      const action = String(body._action ?? "");
+      const to = { pause: "paused", resume: "active", complete: "completed",
+        discontinue: "discontinued" }[action];
+      if (!to) return json(res, 400, { code: "22023", message: "unknown action" });
+      if (action === "discontinue" && !String(body._reason ?? "").trim()) {
+        return json(res, 400, {
+          code: "22023", message: "discontinuing a plan requires a reason" });
+      }
+      if (action === "pause" && plan.status !== "active") {
+        return json(res, 409, { code: "40001", message: "only an active plan can be paused" });
+      }
+      const from = plan.status;
+      plan.status = to;
+      plan.version += 1;
+      const current = nutritionPlanVersion(plan.currentVersionId);
+      if (current) {
+        current.status = to;
+        if (action === "discontinue") current.discontinuedReason = String(body._reason);
+      }
+      plan.events.push({ kind: action, fromStatus: from, toStatus: to,
+        detail: body._reason ?? null, createdAt: nowIso() });
+      return json(res, 200, null);
+    }
+
+    if (url.pathname === "/rest/v1/rpc/revise_nutrition_plan_version" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!requireNutritionRole(res)) return;
+      const v = nutritionPlanVersion(String(body._plan_version_id ?? ""));
+      if (!v) return json(res, 404, { code: "P0002", message: "record not found" });
+      if (!["approved", "active", "paused"].includes(v.status)) {
+        return json(res, 409, {
+          code: "40001", message: "only an approved or active version can be revised" });
+      }
+      const reason = String(body._reason ?? "").trim();
+      if (!reason) return json(res, 400, { code: "22023", message: "a revision needs a reason" });
+      if (nutritionPlanVersions.some(
+        (x) => x.planId === v.planId && (x.status === "draft" || x.status === "in_review"))) {
+        return json(res, 409, { code: "40001", message: "this plan already has an open draft" });
+      }
+      const next = nutritionPlanVersions.filter((x) => x.planId === v.planId).length + 1;
+      // A COPY. The version being revised is not touched at all, which is why
+      // the plan the patient was given stays readable exactly as it was.
+      const copy = {
+        ...JSON.parse(JSON.stringify(v)),
+        id: nutritionId("npv"), versionNumber: next, status: "draft", version: 1,
+        submittedAt: null, approvedAt: null, activatedAt: null,
+        safetyEvaluated: false, safetyFlags: [], amendments: [],
+      };
+      nutritionPlanVersions.push(copy);
+      const plan = nutritionPlans.find((p) => p.id === v.planId);
+      plan?.events.push({ kind: "revised", fromStatus: null, toStatus: "draft",
+        detail: reason, createdAt: nowIso() });
+      return json(res, 200, copy.id);
+    }
+
+    if (url.pathname === "/rest/v1/rpc/add_nutrition_amendment" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!requireNutritionRole(res)) return;
+      const v = nutritionPlanVersion(String(body._plan_version_id ?? ""));
+      if (!v) return json(res, 404, { code: "P0002", message: "record not found" });
+      const bodyText = String(body._body ?? "").trim();
+      const reason = String(body._reason ?? "").trim();
+      if (!bodyText || !reason) {
+        return json(res, 400, {
+          code: "22023", message: "an amendment needs a body and a reason" });
+      }
+      const id = nutritionId("nam");
+      v.amendments.push({ number: v.amendments.length + 1, body: bodyText, reason,
+        createdAt: nowIso() });
+      return json(res, 200, id);
+    }
+
+    if (url.pathname === "/rest/v1/rpc/record_nutrition_checkin" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!memberOrgIds.includes(String(body._organization_id ?? ""))) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const source = String(body._source ?? "");
+      // Adherence is always something someone REPORTED.
+      if (!["patient_reported", "practitioner_recorded", "imported_device", "imported_app"]
+        .includes(source)) {
+        return json(res, 400, {
+          code: "22023", message: "a check-in must say where it came from" });
+      }
+      const observedOn = String(body._observed_on ?? "");
+      const patientId = String(body._patient_id ?? "");
+      const existing = nutritionCheckins.find(
+        (c) => c.patientId === patientId && c.observedOn === observedOn && c.source === source);
+      const row = existing ?? {
+        id: nutritionId("nck"), patientId, observedOn, source, reviewState: "unreviewed" };
+      row.planVersionId = body._plan_version_id ?? null;
+      // null and 0 are different claims: not reported is not zero adherence.
+      row.mealPlanAdherencePct = body._meal_plan_adherence_pct ?? null;
+      row.dietAdherencePct = body._diet_adherence_pct ?? null;
+      row.hungerRating = body._hunger_rating ?? null;
+      row.satietyRating = body._satiety_rating ?? null;
+      row.energyRating = body._energy_rating ?? null;
+      row.digestiveTolerance = body._digestive_tolerance ?? null;
+      row.symptoms = body._symptoms ?? [];
+      row.patientNote = body._patient_note ?? null;
+      row.weightValue = body._weight_value ?? null;
+      row.weightUnit = body._weight_unit ?? null;
+      row.reviewState = "unreviewed";
+      if (!existing) nutritionCheckins.push(row);
+      return json(res, 200, row.id);
+    }
+
+    if (url.pathname === "/rest/v1/rpc/review_nutrition_checkin" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!requireNutritionRole(res)) return;
+      const state = String(body._state ?? "");
+      if (!["reviewed", "needs_followup"].includes(state)) {
+        return json(res, 400, { code: "22023", message: "unknown review state" });
+      }
+      const row = nutritionCheckins.find((c) => c.id === String(body._checkin_id ?? ""));
+      if (!row) return json(res, 404, { code: "P0002", message: "record not found" });
+      row.reviewState = state;
+      return json(res, 200, null);
+    }
+
+    if (url.pathname === "/rest/v1/rpc/get_patient_nutrition" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!memberOrgIds.includes(String(body._organization_id ?? ""))) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const patientId = String(body._patient_id ?? "");
+      return json(res, 200, {
+        plans: nutritionPlans
+          .filter((p) => p.patientId === patientId)
+          .map((p) => ({
+            id: p.id, title: p.title, status: p.status, version: p.version,
+            currentVersionId: p.currentVersionId, createdAt: p.createdAt,
+            versions: nutritionPlanVersions
+              .filter((v) => v.planId === p.id)
+              .sort((a, b) => b.versionNumber - a.versionNumber)
+              .map((v) => ({
+                id: v.id, versionNumber: v.versionNumber, status: v.status, version: v.version,
+                goals: v.goals, practitionerRationale: v.practitionerRationale,
+                patientInstructions: v.patientInstructions,
+                mealTimingGuidance: v.mealTimingGuidance,
+                fastingInstructions: v.fastingInstructions,
+                energyTargetValue: v.energyTargetValue, energyTargetUnit: v.energyTargetUnit,
+                proteinG: v.proteinG, carbohydrateG: v.carbohydrateG, fatG: v.fatG,
+                fiberG: v.fiberG, proteinPct: v.proteinPct,
+                carbohydratePct: v.carbohydratePct, fatPct: v.fatPct,
+                sourceTemplateName: v.sourceTemplateName,
+                sourceTemplateVersion: v.sourceTemplateVersion,
+                sourceTemplateVersionId: v.sourceTemplateVersionId,
+                detachedAt: v.detachedAt, submittedAt: v.submittedAt,
+                approvedAt: v.approvedAt, activatedAt: v.activatedAt,
+                discontinuedReason: v.discontinuedReason, autosavedAt: v.autosavedAt,
+                constraints: v.constraints, safetyFlags: v.safetyFlags,
+                amendments: v.amendments, safetyEvaluated: v.safetyEvaluated,
+              })),
+            events: [...p.events].reverse(),
+          })),
+        checkins: nutritionCheckins
+          .filter((c) => c.patientId === patientId)
+          .sort((a, b) => (a.observedOn < b.observedOn ? 1 : -1)),
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/get_nutrition_adherence_summary" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!memberOrgIds.includes(String(body._organization_id ?? ""))) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const patientId = String(body._patient_id ?? "");
+      const days = Number(body._days ?? 30);
+      const rows = nutritionCheckins.filter((c) => c.patientId === patientId);
+      const mean = (key) => {
+        const vals = rows.map((r) => r[key]).filter((n) => typeof n === "number");
+        return vals.length === 0
+          ? null
+          : Math.round((vals.reduce((a, b) => a + b, 0) / vals.length) * 10) / 10;
+      };
+      // DAYS covered, not rows: two sources on one day is still one day.
+      const reported = new Set(rows.map((r) => r.observedOn)).size;
+      return json(res, 200, {
+        windowDays: days,
+        from: new Date(Date.now() - (days - 1) * 86400000).toISOString().slice(0, 10),
+        to: new Date().toISOString().slice(0, 10),
+        daysReported: reported,
+        // A day with no check-in is MISSING, never zero adherence.
+        daysMissing: days - Math.min(reported, days),
+        meanMealPlanAdherencePct: mean("mealPlanAdherencePct"),
+        meanDietAdherencePct: mean("dietAdherencePct"),
+        meanDigestiveTolerance: mean("digestiveTolerance"),
+        needsFollowup: rows.filter((r) => r.reviewState === "needs_followup").length,
+        unreviewed: rows.filter((r) => r.reviewState === "unreviewed").length,
+      });
+    }
+
+    /* ============================================ Phase 10B.1 copilot RPCs
+     *
+     * Faithful to the SECURITY DEFINER contracts in
+     * supabase/migrations/*phase10b1*.sql and the Phase 10A run tables:
+     * org membership is re-checked on every call, the input snapshot and
+     * its hash are locked from creation, finalize refuses a mismatched
+     * hash, and the three practitioner actions stay bounded to drafts.
+     *
+     * Nothing below contacts an AI provider or a secret manager.
+     */
+
+    if (url.pathname === "/rest/v1/clinical_copilot_provider_registry" && req.method === "GET") {
+      copilotRequestLog.push({ path: "provider_registry", at: Date.now() });
+      // RLS on the real table is `select to authenticated using (true)`.
+      // The secret REFERENCE is stored here; the value never is.
+      return json(res, 200, copilotProviderRegistry.map((r) => ({ ...r })));
+    }
+
+    if (url.pathname === "/rest/v1/rpc/get_copilot_activation" && req.method === "POST") {
+      const body = await readBody(req);
+      copilotRequestLog.push({ path: "get_copilot_activation", at: Date.now() });
+      const orgId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(orgId)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const hit = copilotActivations.get(`${orgId}::${String(body._provider_id ?? "")}`);
+      if (!hit) {
+        return json(res, 200, {
+          state: "disabled",
+          supervisedRunsRequired: 25,
+          supervisedRunsCompleted: 0,
+        });
+      }
+      return json(res, 200, { id: `act-${COPILOT_PROVIDER_ID}`, ...hit });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/build_copilot_input_snapshot" && req.method === "POST") {
+      const body = await readBody(req);
+      copilotRequestLog.push({ path: "build_copilot_input_snapshot", at: Date.now() });
+      const orgId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(orgId)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const patient = PATIENTS.find(
+        (p) => p.id === String(body._patient_id ?? "") && p.organization_id === orgId,
+      );
+      if (!patient) {
+        // Cross-tenant or unknown patient is refused BEFORE any run row
+        // exists, exactly as the real RPC does.
+        return json(res, 403, { code: "42501", message: "patient not in this organization" });
+      }
+      // Deterministic and PHI-FREE. Every clinical table is empty for this
+      // org in the fixture backend, and the demographics stay null so
+      // `snapshotContainsPHI` is false — which is what keeps the governed
+      // synthetic provider reachable. Unknown stays unknown; nothing here
+      // invents an age, a sex, a lab, or a medication.
+      return json(res, 200, {
+        snapshot: {
+          demographics: {
+            ageYears: null,
+            sex: null,
+            isPregnant: null,
+            isLactating: null,
+            isPediatric: null,
+          },
+          medications: [],
+          allergies: [],
+          labs: [],
+          currentProtocols: [],
+          transcriptRevisions: [],
+          interactionReferences: [],
+          restrictedFlagsPresent: [],
+          sourceStaleness: { lastImportAt: null, lastEncounterAt: null, lastLabAt: null },
+          productLabelsInUse: [],
+          dosageMentions: [],
+        },
+        records: [],
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/fetch_copilot_governed_retrieval" && req.method === "POST") {
+      const body = await readBody(req);
+      copilotRequestLog.push({ path: "fetch_copilot_governed_retrieval", at: Date.now() });
+      if (!memberOrgIds.includes(String(body._organization_id ?? ""))) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      // Approved governed sources only. No commercial row can appear here.
+      return json(res, 200, {
+        approvedKnowledgeReferenceIds: [...COPILOT_ALLOWED_CITATIONS],
+        verifiedLabelIds: [],
+        approvedProtocolTemplateIds: [],
+        approvedDietTemplateIds: [],
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/create_copilot_run" && req.method === "POST") {
+      const body = await readBody(req);
+      copilotRequestLog.push({ path: "create_copilot_run", at: Date.now() });
+      const orgId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(orgId)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const id = copilotId("f0f0f0f0");
+      const suppliedHash = String(body._input_snapshot_hash ?? "");
+      copilotRuns.set(id, {
+        id,
+        organizationId: orgId,
+        patientId: String(body._patient_id ?? ""),
+        encounterId: body._encounter_id ?? null,
+        lens: String(body._lens ?? ""),
+        runType: String(body._run_type ?? ""),
+        pathwayVersionId: body._pathway_version_id ?? null,
+        ruleSetVersion: String(body._rule_set_version ?? "v1"),
+        promptVersion: String(body._prompt_version ?? "v1"),
+        jsonSchemaVersion: String(body._json_schema_version ?? "v1"),
+        providerName: String(body._provider_name ?? "disabled"),
+        // Locked from creation. `_forced_stale` models the chart changing
+        // under a run in flight: the stored hash no longer matches what
+        // finalize will present, so finalize must refuse.
+        inputSnapshotHash: copilotForceStale ? `${suppliedHash}-CHANGED` : suppliedHash,
+        inputSnapshot: body._input_snapshot ?? null,
+        status: "running",
+        outputHash: null,
+        failureCategory: null,
+        disposition: null,
+        staleAt: copilotForceStale ? new Date().toISOString() : null,
+        createdAt: new Date().toISOString(),
+        completedAt: null,
+        failedAt: null,
+        reviewedAt: null,
+        history: [{ at: new Date().toISOString(), event: "created" }],
+      });
+      copilotForceStale = false;
+      return json(res, 200, { ok: true, id });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/finalize_copilot_run" && req.method === "POST") {
+      const body = await readBody(req);
+      copilotRequestLog.push({ path: "finalize_copilot_run", at: Date.now() });
+      const orgId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(orgId)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const run = copilotRuns.get(String(body._run_id ?? ""));
+      if (!run || run.organizationId !== orgId) {
+        return json(res, 404, { code: "P0002", message: "run not found" });
+      }
+      if (run.status !== "running") {
+        // A completed run is never finalized twice. Retrying produces a NEW
+        // run, it does not mutate this one.
+        return json(res, 400, { code: "55000", message: "run already finalized" });
+      }
+      if (String(body._input_snapshot_hash ?? "") !== run.inputSnapshotHash) {
+        // The chart moved underneath the run. Refusing here is the whole
+        // point: silently finalizing would attach an answer computed from
+        // one snapshot to a patient who now looks different.
+        run.status = "stale";
+        run.staleAt = new Date().toISOString();
+        run.history.push({ at: run.staleAt, event: "stale_input_refused" });
+        return json(res, 400, {
+          code: "55000",
+          message: "input snapshot hash mismatch — the patient record changed after this run started",
+        });
+      }
+      const status = String(body._status ?? "failed");
+      run.status = status;
+      // Faithful to the real RPC:
+      //   output_sha256 = case when _status='completed' then _output_hash else output_sha256 end
+      // A failed run has no output, so it must not acquire a hash — a hash
+      // on a failed row would later read as "something was produced".
+      if (status === "completed") run.outputHash = body._output_hash ?? null;
+      if (status === "completed") run.completedAt = new Date().toISOString();
+      else run.failedAt = new Date().toISOString();
+      run.history.push({ at: new Date().toISOString(), event: `finalized_${status}` });
+      return json(res, 200, { ok: true, id: run.id, status });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/get_copilot_runs_for_patient" && req.method === "POST") {
+      const body = await readBody(req);
+      const orgId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(orgId)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const patientId = String(body._patient_id ?? "");
+      const runs = [...copilotRuns.values()]
+        .filter((r) => r.organizationId === orgId && r.patientId === patientId)
+        .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
+        .map((r) => ({
+          id: r.id,
+          lens: r.lens,
+          runType: r.runType,
+          status: r.status,
+          providerName: r.providerName,
+          providerModel: null,
+          inputSnapshotHash: r.inputSnapshotHash,
+          outputHash: r.outputHash,
+          createdAt: r.createdAt,
+          completedAt: r.completedAt,
+          failedAt: r.failedAt,
+          reviewedAt: r.reviewedAt,
+          staleAt: r.staleAt,
+          disposition: r.disposition,
+        }));
+      return json(res, 200, { patientId, runs });
+    }
+
+    if (
+      (url.pathname === "/rest/v1/rpc/record_copilot_disposition" ||
+        url.pathname === "/rest/v1/rpc/record_copilot_disposition_extended") &&
+      req.method === "POST"
+    ) {
+      const body = await readBody(req);
+      const orgId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(orgId)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const run = copilotRuns.get(String(body._run_id ?? ""));
+      if (!run || run.organizationId !== orgId) {
+        return json(res, 404, { code: "P0002", message: "run not found" });
+      }
+      if (copilotDispositions.has(run.id)) {
+        // Append-only: a practitioner's recorded judgement is not editable
+        // by repeating the call.
+        return json(res, 400, {
+          code: "55000",
+          message: "a disposition is already recorded for this run",
+        });
+      }
+      const row = {
+        id: copilotId("d0d0d0d0"),
+        runId: run.id,
+        disposition: String(body._disposition ?? ""),
+        note: body._note ?? null,
+        practitionerId: "dddddddd-1111-2222-3333-444444444401",
+        recordedAt: new Date().toISOString(),
+      };
+      copilotDispositions.set(run.id, row);
+      run.disposition = row.disposition;
+      run.reviewedAt = row.recordedAt;
+      run.history.push({ at: row.recordedAt, event: `disposition_${row.disposition}` });
+      return json(res, 200, { ok: true, id: row.id, disposition: row.disposition });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/apply_copilot_run_to_note" && req.method === "POST") {
+      const body = await readBody(req);
+      const orgId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(orgId)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const run = copilotRuns.get(String(body._run_id ?? ""));
+      if (!run || run.organizationId !== orgId) {
+        return json(res, 404, { code: "P0002", message: "run not found" });
+      }
+      const row = {
+        id: copilotId("a1a1a1a1"),
+        runId: run.id,
+        // The bounded action: an append to an UNSIGNED draft. Never a
+        // signature, and the stub records the fact explicitly so a test
+        // can assert it rather than infer it.
+        noteStatus: "draft_unsigned",
+        signed: false,
+        appendedAt: new Date().toISOString(),
+      };
+      copilotNoteAppends.push(row);
+      run.history.push({ at: row.appendedAt, event: "appended_to_unsigned_note_draft" });
+      return json(res, 200, { ok: true, id: row.id, noteStatus: row.noteStatus, signed: false });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/apply_copilot_run_to_protocol_draft" && req.method === "POST") {
+      const body = await readBody(req);
+      const orgId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(orgId)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const run = copilotRuns.get(String(body._run_id ?? ""));
+      if (!run || run.organizationId !== orgId) {
+        return json(res, 404, { code: "P0002", message: "run not found" });
+      }
+      const row = {
+        id: copilotId("b1b1b1b1"),
+        runId: run.id,
+        // A DRAFT version. Never activated, never published.
+        status: "draft",
+        active: false,
+        createdAt: new Date().toISOString(),
+      };
+      copilotProtocolDrafts.push(row);
+      run.history.push({ at: row.createdAt, event: "created_draft_protocol_version" });
+      return json(res, 200, { ok: true, id: row.id, status: "draft", active: false });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/create_copilot_review_task" && req.method === "POST") {
+      const body = await readBody(req);
+      const orgId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(orgId)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const run = copilotRuns.get(String(body._run_id ?? ""));
+      if (!run || run.organizationId !== orgId) {
+        return json(res, 404, { code: "P0002", message: "run not found" });
+      }
+      const row = {
+        id: copilotId("c1c1c1c1"),
+        runId: run.id,
+        status: "open",
+        createdAt: new Date().toISOString(),
+      };
+      copilotReviewTasks.push(row);
+      run.history.push({ at: row.createdAt, event: "created_open_review_task" });
+      return json(res, 200, { ok: true, id: row.id, status: "open" });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/approve_supervised_copilot_run" && req.method === "POST") {
+      const body = await readBody(req);
+      const orgId = String(body._organization_id ?? "");
+      if (!memberOrgIds.includes(orgId)) {
+        return json(res, 403, { code: "42501", message: "not a member of this organization" });
+      }
+      const run = copilotRuns.get(String(body._run_id ?? ""));
+      if (!run || run.organizationId !== orgId) {
+        return json(res, 404, { code: "P0002", message: "run not found" });
+      }
+      const row = {
+        id: copilotId("e1e1e1e1"),
+        runId: run.id,
+        reviewerId: "dddddddd-1111-2222-3333-444444444402",
+        draftAction: String(body._draft_action ?? ""),
+        approvedAt: new Date().toISOString(),
+      };
+      copilotSupervisedReviews.push(row);
+      return json(res, 200, { ok: true, id: row.id });
+    }
+
+    /** TEST-ONLY read-back of what the bounded actions actually wrote. */
+    if (url.pathname === "/rest/v1/rpc/__copilot_effects" && req.method === "POST") {
+      return json(res, 200, {
+        noteAppends: copilotNoteAppends.map((r) => ({ ...r })),
+        protocolDrafts: copilotProtocolDrafts.map((r) => ({ ...r })),
+        reviewTasks: copilotReviewTasks.map((r) => ({ ...r })),
+        supervisedReviews: copilotSupervisedReviews.map((r) => ({ ...r })),
+        runs: [...copilotRuns.values()].map((r) => ({
+          id: r.id,
+          status: r.status,
+          disposition: r.disposition,
+          outputHash: r.outputHash,
+          inputSnapshotHash: r.inputSnapshotHash,
+          history: r.history,
+        })),
+      });
     }
 
     if (url.pathname === "/rest/v1/patient_profiles" && req.method === "GET") {

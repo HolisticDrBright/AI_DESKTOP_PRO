@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { STUB_BASE, resetBackend } from "./support/backend";
 
 /**
  * LIVE-MODE Tasks slice coverage. Skipped unless E2E_LIVE=1, because it needs
@@ -19,6 +20,13 @@ import { expect, test } from "@playwright/test";
 test.skip(!process.env.E2E_LIVE, "live-mode suite: set E2E_LIVE=1 with a live-flag build + backend");
 
 test.describe.configure({ mode: "serial" });
+
+/**
+ * Isolation, not ordering. This restores the whole fixture backend so the
+ * suite runs against exactly the state it was written for, wherever it lands
+ * in the battery.
+ */
+test.beforeAll(resetBackend);
 
 test("root enters the real workspace: directory → patient → labs (no mock patient)", async ({ page }) => {
   // A root 404 (or a redirect to the synthetic demo patient) must FAIL here.
@@ -502,7 +510,7 @@ test("multi-org: auto-select, validated switch clears org data, tabs agree, mid-
   await tab2.close();
 
   // Membership revoked while the app is open → the very next read is refused.
-  await page.request.post("http://127.0.0.1:3999/__control/revoke-memberships", {
+  await page.request.post(`${STUB_BASE}/__control/revoke-memberships`, {
     data: { bearer: "fixture-access-token--multi" },
   });
   await page.goto("/tasks");

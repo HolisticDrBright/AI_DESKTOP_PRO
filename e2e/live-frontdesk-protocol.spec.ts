@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { resetBackend } from "./support/backend";
 
 /**
  * PHASE 2 VERTICAL SLICES, browser-level: front-desk scheduling and versioned
@@ -40,6 +41,13 @@ import { expect, test } from "@playwright/test";
 test.skip(!process.env.E2E_LIVE, "live-mode suite: set E2E_LIVE=1 with a clinical build + backend");
 
 test.describe.configure({ mode: "serial" });
+
+/**
+ * Isolation, not ordering. This restores the whole fixture backend so the
+ * suite runs against exactly the state it was written for, wherever it lands
+ * in the battery.
+ */
+test.beforeAll(resetBackend);
 
 const PATIENT = "aaaaaaaa-1111-2222-3333-444444444401";
 /** Identities that exist only in the demo edition's fixture dataset. */

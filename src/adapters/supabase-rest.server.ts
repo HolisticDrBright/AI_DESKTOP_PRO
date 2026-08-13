@@ -10,6 +10,8 @@ import {
 
 interface PostgrestError {
   code?: string;
+  /** Present on PostgREST errors and on the RPC refusals we author ourselves. */
+  message?: string;
 }
 
 function mapPostgrestError(status: number, serverCode?: string): AdapterErrorCode {
@@ -35,6 +37,24 @@ function mapPostgrestError(status: number, serverCode?: string): AdapterErrorCod
       return status === 409 ? "conflict" : codeFromHttpStatus(status);
   }
 }
+
+/*
+ * WHY DATABASE MESSAGES ARE NOT PASSED THROUGH.
+ *
+ * The governed RPCs raise carefully worded refusals ("these items carry a dose
+ * with no recorded source: Magnesium ..."), and it is tempting to surface them
+ * verbatim so the operator learns WHICH item. That was tried and reverted: a
+ * message is an unstructured channel, and this boundary cannot tell an
+ * authored refusal from a Postgres internal that happens to share a SQLSTATE
+ * and carries constraint names or the conflicting VALUES with it. There is an
+ * existing safety test asserting exactly this, and it is right.
+ *
+ * The actionable detail reaches the operator through a STRUCTURED read
+ * instead: `get_protocol_template_detail` returns `unsourcedDoseCount` and the
+ * items themselves, each marked with whether its dose names a source, and the
+ * template surface renders that. The refusal stays opaque; the explanation
+ * comes from data that was designed to be shown.
+ */
 
 function clinicalConfig() {
   const url = process.env.CLINICAL_SUPABASE_URL;

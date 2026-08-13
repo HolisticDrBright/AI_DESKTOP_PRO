@@ -98,6 +98,13 @@ event key, identifiers, and bounded scalar metadata.
 | `lens.evaluate` / `lens.aiStatus` | n/a | transitional worker (by design): the rules/AI engine computes under the caller's RLS view and persists atomically via `run_lens_evaluation` |
 | `knowledge.pathways` / `createDraft` / `updateDraft` / `approve` | session registry | ✅ authenticated organization registry through role-gated RPCs; approved content is immutable |
 | `knowledge.imports` / `stageImport` / `reviewImportItem` | session import review | ✅ immutable, hashed import batches with no-PHI attestation; acceptance creates only a pathway draft or pending product label |
+| `billing.workspace` / `invoice` / `forPatient` | n/a (billing was a not-configured stub) | ✅ `get_billing_workspace`, `get_billing_invoice`, `get_patient_billing`: summary, invoices, A/R aging, payments, product sales, stock valuation, and processor reconciliation summed by the database from persisted rows — the client computes no totals |
+| `billing.createDraft` / `saveDraft` / `finalize` / `voidInvoice` | n/a | ✅ checkout RPCs: appointment ↔ patient ↔ org agreement, one live invoice per appointment, SERVER-PRICED tax (no client tax field exists), reason-required discounts, reserve-on-finalize with a typed oversell conflict, release-on-void |
+| `billing.recordPayment` / `grantCredit` / `applyCredit` / `refund` | n/a | ✅ manual payment with idempotency-replay conflict, balance-capped credit, refunds that never restock; full settlement commits the inventory sale exactly once |
+| `billing.startCardPayment` | n/a | ✅ Stripe TEST MODE only: creates a PENDING row and returns what is owed. There is no success field — settlement arrives solely through the `service_role` webhook (`record_billing_webhook`), which is unreachable from any browser route |
+| `inventory.listProducts` / `addProduct` / `updateProduct` / `archiveProduct` / `upsertReference` | mock | ✅ `list_billing_catalog`, `upsert_billing_product`, `archive_billing_product`, `upsert_billing_location/supplier/tax_rate` — role-gated, optimistic versions, archive preserves invoice line snapshots |
+| `inventory.receiveStock` / `adjustStock` / `returnStock` / `history` | mock | ✅ append-only movement ledger; adjustments need a reason, returns need a condition, and only a resalable return restocks |
+| `inventory.setStock` / `recordSale` | mock | deliberately **not wired**: stock moves only through receipts, reasoned adjustments, sales, and returns, and a sale is the settlement of a finalized invoice |
 | everything else | mock | mock |
 
 `ActionBar` executes through `api.actions.execute`; an action whose context

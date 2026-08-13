@@ -1512,3 +1512,1502 @@ export interface PatientSyncInboundEnvelopeV1 {
   signatureKeyId: string | null;
   correlationId: string | null;
 }
+
+/* Billing, checkout, catalog & inventory (phase 8A) ---------------------- */
+
+export type LiveInvoiceStatus =
+  | "draft"
+  | "open"
+  | "partially_paid"
+  | "paid"
+  | "void"
+  | "refunded"
+  | "partially_refunded"
+  | "uncollectible";
+
+export type LiveInvoiceLineKind =
+  | "service"
+  | "product"
+  | "supplement"
+  | "lab"
+  | "program"
+  | "package"
+  | "adjustment";
+
+export type LiveBillingProductKind =
+  | "service"
+  | "visit"
+  | "program"
+  | "package"
+  | "lab"
+  | "product"
+  | "supplement"
+  | "adjustment"
+  | "other";
+
+/** Manual methods a practitioner may record. `card_test` is never manual. */
+export type LiveManualPaymentMethod = "cash" | "check" | "bank_transfer" | "external";
+
+export type LivePaymentMethod = LiveManualPaymentMethod | "card_test" | "credit";
+
+export type LivePaymentStatus = "pending" | "succeeded" | "failed" | "canceled" | "disputed";
+
+export type LiveInventoryMovementKind =
+  | "receipt"
+  | "adjustment"
+  | "reservation"
+  | "release"
+  | "sale"
+  | "return"
+  | "damaged"
+  | "expired";
+
+/** Adjustments a practitioner may make by hand; every one needs a reason. */
+export type LiveInventoryAdjustmentKind = "adjustment" | "damaged" | "expired";
+
+/** A return must declare its condition; only `resalable` restocks. */
+export type LiveInventoryReturnCondition = "resalable" | "damaged";
+
+export interface LiveInvoiceRefund {
+  id: string;
+  amountMinor: number;
+  reason: string | null;
+  status: string;
+  method: string;
+  createdAt: string;
+}
+
+export interface LiveInvoicePayment {
+  id: string;
+  amountMinor: number;
+  currency: string;
+  status: LivePaymentStatus;
+  method: LivePaymentMethod;
+  reference: string | null;
+  /** Only ever `"test"`: production card processing is not configured. */
+  environment: string | null;
+  processor: string | null;
+  failureCode: string | null;
+  paidAt: string | null;
+  createdAt: string;
+  refunds: LiveInvoiceRefund[];
+}
+
+export interface LiveInvoiceLine {
+  id: string;
+  kind: LiveInvoiceLineKind;
+  productId: string | null;
+  /** Snapshotted at save time — later catalog edits never rewrite history. */
+  name: string | null;
+  sku: string | null;
+  description: string | null;
+  quantity: number;
+  unitAmountMinor: number;
+  amountMinor: number;
+  discountMinor: number;
+  discountReason: string | null;
+  /** Server-computed from the configured tax rate; never client-supplied. */
+  taxRateBps: number;
+  taxMinor: number;
+  verification: string | null;
+}
+
+export interface LiveInvoiceEvent {
+  kind: string;
+  from: string | null;
+  to: string | null;
+  detail: string | null;
+  at: string;
+}
+
+export interface LiveInvoice {
+  id: string;
+  /** Assigned at finalize (`INV-00001`); null while the invoice is a draft. */
+  number: string | null;
+  status: LiveInvoiceStatus;
+  version: number;
+  currency: string;
+  patientId: string;
+  patientName: string | null;
+  appointmentId: string | null;
+  practitionerUserId: string | null;
+  locationId: string | null;
+  locationName: string | null;
+  subtotalMinor: number;
+  discountMinor: number;
+  taxMinor: number;
+  totalMinor: number;
+  paidMinor: number;
+  refundedMinor: number;
+  creditAppliedMinor: number;
+  balanceMinor: number;
+  finalizedAt: string | null;
+  voidedAt: string | null;
+  voidReason: string | null;
+  createdAt: string;
+  lines: LiveInvoiceLine[];
+  payments: LiveInvoicePayment[];
+  history: LiveInvoiceEvent[];
+}
+
+/** One line as the client proposes it. Tax is deliberately absent. */
+export interface LiveInvoiceLineInput {
+  productId: string;
+  quantity?: number;
+  unitAmountMinor?: number;
+  discountMinor?: number;
+  discountReason?: string | null;
+}
+
+export interface LiveBillingStockLevel {
+  locationId: string;
+  locationName: string | null;
+  onHand: number;
+  reserved: number;
+  available: number;
+  reorderThreshold: number;
+}
+
+export interface LiveBillingCommercialLink {
+  kind: "affiliate" | "wholesale" | "info";
+  label: string;
+  url: string | null;
+  disclosure: string | null;
+}
+
+export interface LiveBillingProduct {
+  id: string;
+  name: string;
+  kind: LiveBillingProductKind;
+  amountMinor: number;
+  currency: string;
+  sku: string | null;
+  barcode: string | null;
+  supplierId: string | null;
+  supplierName: string | null;
+  costMinor: number;
+  taxRateId: string | null;
+  taxRateBps: number | null;
+  taxRateName: string | null;
+  description: string | null;
+  trackInventory: boolean;
+  reorderThreshold: number;
+  catalogProductId: string | null;
+  /** Clinical verification of the linked catalog product, never a sales claim. */
+  verificationStatus: string | null;
+  commercialLinks: LiveBillingCommercialLink[];
+  archivedAt: string | null;
+  version: number;
+  stock: LiveBillingStockLevel[];
+}
+
+export interface LiveBillingSupplier {
+  id: string;
+  name: string;
+  contactEmail: string | null;
+  phone: string | null;
+  notes: string | null;
+  archivedAt: string | null;
+}
+
+export interface LiveBillingLocation {
+  id: string;
+  name: string;
+  archivedAt: string | null;
+}
+
+export interface LiveBillingTaxRate {
+  id: string;
+  name: string;
+  rateBps: number;
+  active: boolean;
+}
+
+export interface LiveBillingCatalog {
+  products: LiveBillingProduct[];
+  suppliers: LiveBillingSupplier[];
+  locations: LiveBillingLocation[];
+  taxRates: LiveBillingTaxRate[];
+}
+
+export interface LiveBillingCatalogFilters {
+  query?: string | null;
+  kind?: string | null;
+  supplierId?: string | null;
+  locationId?: string | null;
+  /** `"low"` at or below threshold, `"out"` nothing available. */
+  stockFilter?: "low" | "out" | null;
+  includeArchived?: boolean;
+  limit?: number;
+}
+
+export interface LiveInventoryMovement {
+  id: string;
+  kind: LiveInventoryMovementKind;
+  onHandDelta: number;
+  reservedDelta: number;
+  reason: string | null;
+  condition: string | null;
+  unitCostMinor: number | null;
+  locationId: string;
+  locationName: string | null;
+  refType: string | null;
+  refId: string | null;
+  at: string;
+}
+
+export interface LiveBillingSummary {
+  invoicedMinor: number;
+  collectedMinor: number;
+  outstandingMinor: number;
+  refundedMinor: number;
+  discountMinor: number;
+  taxMinor: number;
+}
+
+export interface LiveBillingInvoiceRow {
+  id: string;
+  number: string | null;
+  status: LiveInvoiceStatus;
+  patientId: string;
+  patientName: string | null;
+  totalMinor: number;
+  balanceMinor: number;
+  currency: string;
+  locationId: string | null;
+  practitionerUserId: string | null;
+  finalizedAt: string | null;
+  createdAt: string;
+  version: number;
+}
+
+export interface LiveBillingPaymentRow {
+  id: string;
+  invoiceId: string | null;
+  amountMinor: number;
+  currency: string;
+  status: LivePaymentStatus;
+  method: LivePaymentMethod;
+  environment: string | null;
+  reference: string | null;
+  createdAt: string;
+}
+
+export interface LiveBillingAging {
+  current: number;
+  days31to60: number;
+  days61to90: number;
+  over90: number;
+}
+
+export interface LiveBillingProductSale {
+  productId: string | null;
+  name: string | null;
+  kind: string | null;
+  quantity: number;
+  amountMinor: number;
+}
+
+export interface LiveBillingLowStock {
+  productId: string;
+  name: string;
+  locationId: string;
+  locationName: string | null;
+  onHand: number;
+  reserved: number;
+  available: number;
+  reorderThreshold: number;
+}
+
+export interface LiveBillingInventoryPanel {
+  valuationMinor: number;
+  lowStock: LiveBillingLowStock[];
+}
+
+export interface LiveBillingWebhookEvent {
+  eventId: string;
+  type: string;
+  /** A refusal is a RECORDED row, never a silent drop. */
+  outcome: "processed" | "duplicate" | "ignored" | "refused" | "out_of_order";
+  detail: string | null;
+  receivedAt: string;
+  /**
+   * Whether this event's signature was actually verified (phase 8B). An
+   * unverified event is never treated as proof of anything.
+   */
+  signatureVerified?: boolean;
+  /** Stripe's own livemode flag. A live event is refused by the boundary. */
+  livemode?: boolean | null;
+}
+
+export interface LiveBillingReconciliation {
+  pendingCardPayments: number;
+  webhookEvents: LiveBillingWebhookEvent[];
+}
+
+export interface LiveBillingWorkspace {
+  summary: LiveBillingSummary;
+  invoices: LiveBillingInvoiceRow[];
+  payments: LiveBillingPaymentRow[];
+  aging: LiveBillingAging;
+  productSales: LiveBillingProductSale[];
+  inventory: LiveBillingInventoryPanel;
+  reconciliation: LiveBillingReconciliation;
+}
+
+export interface LiveBillingWorkspaceFilters {
+  from?: string | null;
+  to?: string | null;
+  status?: string | null;
+  practitionerUserId?: string | null;
+  locationId?: string | null;
+  method?: string | null;
+}
+
+export interface LivePatientBillingInvoice {
+  id: string;
+  number: string | null;
+  status: LiveInvoiceStatus;
+  totalMinor: number;
+  paidMinor: number;
+  creditAppliedMinor: number;
+  refundedMinor: number;
+  balanceMinor: number;
+  currency: string;
+  appointmentId: string | null;
+  createdAt: string;
+  finalizedAt: string | null;
+  version: number;
+}
+
+export interface LivePatientBilling {
+  creditBalanceMinor: number;
+  invoices: LivePatientBillingInvoice[];
+}
+
+/** Simple acknowledgement shape for catalog/inventory writes. */
+export interface LiveBillingMutationResult {
+  id?: string;
+  version?: number;
+  ok?: boolean;
+  balanceMinor?: number;
+}
+
+/**
+ * A started card payment. There is deliberately no success field: the browser
+ * never asserts a charge — the server-only processor boundary attaches the
+ * intent and the webhook settles it.
+ */
+export interface LiveCardPaymentIntent {
+  paymentId: string;
+  amountMinor: number;
+  currency: string;
+}
+
+/* Plans, memberships, entitlements & reconciliation (phase 8B) ----------- */
+
+export type LivePlanType = "package" | "membership";
+
+export type LivePackageKind =
+  | "visit_credits"
+  | "product_bundle"
+  | "lab_bundle"
+  | "program_bundle"
+  | "mixed";
+
+export type LivePlanStatus = "draft" | "active" | "archived";
+export type LivePlanVersionStatus = "draft" | "published" | "retired";
+
+export type LiveTransferPolicy = "non_transferable" | "household" | "org_discretion";
+export type LiveCreditMode = "single_use" | "multi_use";
+
+/** The subscription status machine. Mirrors the database check constraint. */
+export type LiveMembershipStatus =
+  | "incomplete"
+  | "incomplete_expired"
+  | "trialing"
+  | "active"
+  | "past_due"
+  | "unpaid"
+  | "paused"
+  | "canceled"
+  | "expired";
+
+export type LiveMembershipAction =
+  | "pause"
+  | "resume"
+  | "cancel_at_period_end"
+  | "cancel_now"
+  | "reactivate";
+
+/** Every movement the entitlement ledger can record. */
+export type LiveEntitlementLedgerKind =
+  | "grant"
+  | "reserve"
+  | "release"
+  | "consume"
+  | "expire"
+  | "refund_revoke"
+  | "manual_restore";
+
+export type LiveEntitlementStatus = "active" | "exhausted" | "expired" | "revoked";
+
+/** The granular financial permissions. Taking cash ≠ issuing a refund. */
+export type LiveFinancialPermission =
+  | "billing.view_summary"
+  | "billing.create_invoice"
+  | "billing.take_payment"
+  | "billing.issue_refund"
+  | "billing.adjust_price"
+  | "catalog.manage_products"
+  | "inventory.adjust"
+  | "plans.manage"
+  | "comp.assign"
+  | "reconciliation.resolve"
+  | "reports.view_org";
+
+export interface LivePackageVersion {
+  id: string;
+  versionNumber: number;
+  priceMinor: number;
+  currency: string;
+  creditQuantity: number;
+  creditMode: LiveCreditMode;
+  expiresAfterDays: number | null;
+  transferPolicy: LiveTransferPolicy;
+  status: LivePlanVersionStatus;
+  publishedAt: string | null;
+  termsSummary: string | null;
+}
+
+export interface LiveMembershipVersion {
+  id: string;
+  versionNumber: number;
+  priceMinor: number;
+  currency: string;
+  intervalUnit: "day" | "week" | "month" | "year";
+  intervalCount: number;
+  trialDays: number;
+  includedCredits: number;
+  minimumCommitmentPeriods: number;
+  gracePeriodDays: number;
+  status: LivePlanVersionStatus;
+  publishedAt: string | null;
+  termsSummary: string | null;
+}
+
+export interface LivePackagePlan {
+  id: string;
+  name: string;
+  description: string | null;
+  kind: LivePackageKind;
+  status: LivePlanStatus;
+  version: number;
+  archivedAt: string | null;
+  currentVersionId: string | null;
+  versions: LivePackageVersion[];
+}
+
+export interface LiveMembershipPlan {
+  id: string;
+  name: string;
+  description: string | null;
+  status: LivePlanStatus;
+  version: number;
+  archivedAt: string | null;
+  currentVersionId: string | null;
+  versions: LiveMembershipVersion[];
+}
+
+/** How an organization treats a reserved credit when a visit does not happen. */
+export interface LiveOrgBillingPolicy {
+  organization_id: string;
+  no_show_policy: "consume" | "release" | "review";
+  late_cancel_policy: "consume" | "release" | "review";
+  late_cancel_window_hours: number;
+  consume_on: "arrived" | "completed";
+}
+
+export interface LivePlanLibrary {
+  packages: LivePackagePlan[];
+  memberships: LiveMembershipPlan[];
+  /** null when the org has never set one — the documented defaults apply. */
+  policy: LiveOrgBillingPolicy | null;
+}
+
+export interface LiveEntitlementLedgerEntry {
+  kind: LiveEntitlementLedgerKind;
+  quantity: number;
+  refType: string | null;
+  refId: string | null;
+  reason: string | null;
+  at: string;
+}
+
+export interface LiveEntitlement {
+  id: string;
+  source: "package_purchase" | "membership_period" | "complimentary";
+  status: LiveEntitlementStatus;
+  /** granted = remaining + reserved + consumed + expired + refunded. */
+  grantedQuantity: number;
+  remainingQuantity: number;
+  reservedQuantity: number;
+  consumedQuantity: number;
+  expiredQuantity: number;
+  refundedQuantity: number;
+  creditMode: LiveCreditMode;
+  expiresAt: string | null;
+  transferPolicy: LiveTransferPolicy;
+  planName: string | null;
+  ledger: LiveEntitlementLedgerEntry[];
+}
+
+export interface LivePatientMembership {
+  id: string;
+  status: LiveMembershipStatus;
+  origin: "purchase" | "complimentary";
+  version: number;
+  membershipName: string | null;
+  currentPeriodEnd: string | null;
+  trialEnd: string | null;
+  cancelAtPeriodEnd: boolean;
+  canceledAt: string | null;
+  graceUntil: string | null;
+  complimentaryReason: string | null;
+  processorSubscriptionRef: string | null;
+}
+
+export interface LivePatientEntitlements {
+  entitlements: LiveEntitlement[];
+  memberships: LivePatientMembership[];
+}
+
+export type LiveReconciliationExceptionKind =
+  | "unmatched_internal_payment"
+  | "unmatched_provider_event"
+  | "amount_mismatch"
+  | "currency_mismatch"
+  | "duplicate_event"
+  | "delayed_webhook"
+  | "failed_webhook"
+  | "dispute"
+  | "refund_action_required";
+
+export interface LiveReconciliationException {
+  id: string;
+  kind: LiveReconciliationExceptionKind;
+  status: "open" | "resolved" | "dismissed";
+  version: number;
+  internalAmountMinor: number | null;
+  providerAmountMinor: number | null;
+  currency: string | null;
+  detail: string | null;
+  /**
+   * NULL means UNAVAILABLE — balance transactions and payouts are not fetched
+   * in this phase. A UI must not render absence as zero.
+   */
+  providerFeeMinor: number | null;
+  providerNetMinor: number | null;
+  providerSettlementStatus: string | null;
+  createdAt: string;
+  resolvedAt: string | null;
+  resolutionReason: string | null;
+}
+
+export interface LiveReconciliationWorkspace {
+  exceptions: LiveReconciliationException[];
+  /** false in this phase: fee/net/settlement columns are not populated. */
+  settlementFieldsAvailable: boolean;
+  webhookEvents: LiveBillingWebhookEvent[];
+}
+
+/** Acknowledgement shape for plan/entitlement writes. */
+export interface LivePlanMutationResult {
+  id?: string;
+  planId?: string;
+  version?: number;
+  versionNumber?: number;
+  status?: string;
+  ok?: boolean;
+  invoiceId?: string;
+  entitlementId?: string | null;
+  patientMembershipId?: string | null;
+  packageVersionId?: string;
+  complimentary?: boolean;
+  entitlementsCreated?: number;
+  revoked?: number;
+  expired?: number;
+  state?: string;
+  reviewRequired?: boolean;
+  policy?: string;
+}
+
+/**
+ * The Stripe boundary as the browser is allowed to see it: whether it is
+ * configured at all, and why not. Never a key, never a secret.
+ */
+export interface LiveStripeStatus {
+  mode: "disabled" | "test";
+  configured: boolean;
+  problems: string[];
+  /**
+   * Whether a real Stripe API transaction has EVER been executed by this
+   * deployment. False until one actually runs — never inferred from config.
+   */
+  liveTransactionExecuted: boolean;
+}
+
+/* ------------------------------------------------- nutrition (phase 9A) */
+
+export interface LiveNutritionTemplateVersion {
+  id: string;
+  versionNumber: number;
+  status: string;
+  purpose: string | null;
+  intendedUse: string | null;
+  requiresPractitionerReview: boolean;
+  cautionPopulations: string[];
+  prerequisites: string[];
+  missingInformationRequired: string[];
+  evidenceGrade: string | null;
+  evidenceSummary: string | null;
+  educationVsAdviceNote: string | null;
+  publishedAt: string | null;
+}
+
+export interface LiveNutritionTemplate {
+  id: string;
+  name: string;
+  pattern: string;
+  summary: string | null;
+  status: string;
+  isStarter: boolean;
+  version: number;
+  currentVersionId: string | null;
+  versions: LiveNutritionTemplateVersion[];
+}
+
+export interface LiveNutritionTemplateLibrary {
+  templates: LiveNutritionTemplate[];
+}
+
+export interface LiveNutritionFoodRule {
+  id: string;
+  phaseId: string | null;
+  disposition: string;
+  scope: string;
+  label: string;
+  canonicalSource: string | null;
+  canonicalId: string | null;
+  portionGuidance: string | null;
+  frequencyGuidance: string | null;
+  preparationGuidance: string | null;
+  substitutions: string[];
+  conditionNote: string | null;
+  rationale: string | null;
+  sortOrder: number;
+}
+
+export interface LiveNutritionMealItem {
+  id: string;
+  label: string;
+  quantity: number | null;
+  unit: string | null;
+  canonicalSource: string | null;
+  canonicalId: string | null;
+  /** Where a nutrient number came from. Never presented as our measurement. */
+  nutrientSource: string | null;
+  energyValue: number | null;
+  energyUnit: string | null;
+  proteinG: number | null;
+  carbohydrateG: number | null;
+  fatG: number | null;
+  fiberG: number | null;
+  preparationNote: string | null;
+  substitutions: string[];
+  sortOrder: number;
+}
+
+export interface LiveNutritionMeal {
+  id: string;
+  mealType: string;
+  name: string | null;
+  timeOfDay: string | null;
+  notes: string | null;
+  sortOrder: number;
+  items: LiveNutritionMealItem[];
+}
+
+export interface LiveNutritionMealDay {
+  id: string;
+  phaseId: string | null;
+  dayNumber: number;
+  label: string | null;
+  notes: string | null;
+  meals: LiveNutritionMeal[];
+}
+
+export interface LiveNutritionPhase {
+  id: string;
+  phaseNumber: number;
+  name: string;
+  description: string | null;
+  timingMode: string;
+  relativeStartDay: number | null;
+  relativeDurationDays: number | null;
+  absoluteStartDate: string | null;
+  absoluteEndDate: string | null;
+  reintroductionGuidance: string | null;
+}
+
+export interface LiveNutritionTarget {
+  id: string;
+  nutrient: string | null;
+  label: string | null;
+  targetValue: number | null;
+  minimumValue: number | null;
+  maximumValue: number | null;
+  /** Always present — an unlabelled nutrition number is a safety problem. */
+  unit: string;
+  period: string | null;
+  rationale: string | null;
+}
+
+export interface LiveNutritionVersionContent {
+  phases: LiveNutritionPhase[];
+  foodRules: LiveNutritionFoodRule[];
+  mealDays: LiveNutritionMealDay[];
+  recipes: Array<{
+    id: string;
+    name: string;
+    servings: number | null;
+    ingredients: string[];
+    method: string | null;
+    notes: string | null;
+  }>;
+  groceryItems: Array<{
+    id: string;
+    category: string;
+    label: string;
+    quantityNote: string | null;
+  }>;
+  targets: LiveNutritionTarget[];
+  provenance: Array<{
+    kind: string;
+    label: string;
+    referenceId: string | null;
+    detail: string | null;
+    recordedAt: string;
+  }>;
+}
+
+export interface LiveNutritionSafetyFlag {
+  id: string;
+  kind: string;
+  severity: "review" | "blocking";
+  detail: string;
+  status: "open" | "acknowledged" | "overridden" | "resolved";
+  evidenceRef: string | null;
+  overrideReason: string | null;
+  overriddenAt: string | null;
+}
+
+export interface LiveNutritionConstraint {
+  id: string;
+  kind: string;
+  label: string;
+  detail: string | null;
+  severity: string | null;
+  source: string;
+}
+
+export interface LiveNutritionPlanVersion {
+  id: string;
+  versionNumber: number;
+  status: string;
+  version: number;
+  goals: string[];
+  practitionerRationale: string | null;
+  patientInstructions: string | null;
+  mealTimingGuidance: string | null;
+  fastingInstructions: string | null;
+  energyTargetValue: number | null;
+  energyTargetUnit: string | null;
+  proteinG: number | null;
+  carbohydrateG: number | null;
+  fatG: number | null;
+  fiberG: number | null;
+  proteinPct: number | null;
+  carbohydratePct: number | null;
+  fatPct: number | null;
+  /** Snapshot, not a pointer: template edits never change a delivered plan. */
+  sourceTemplateName: string | null;
+  sourceTemplateVersion: number | null;
+  sourceTemplateVersionId: string | null;
+  detachedAt: string | null;
+  submittedAt: string | null;
+  approvedAt: string | null;
+  activatedAt: string | null;
+  discontinuedReason: string | null;
+  autosavedAt: string | null;
+  constraints: LiveNutritionConstraint[];
+  safetyFlags: LiveNutritionSafetyFlag[];
+  amendments: Array<{ number: number; body: string; reason: string; createdAt: string }>;
+  /** Whether safety review has actually been run for THIS version. */
+  safetyEvaluated: boolean;
+}
+
+export interface LiveNutritionPlan {
+  id: string;
+  title: string;
+  status: string;
+  version: number;
+  currentVersionId: string | null;
+  createdAt: string;
+  versions: LiveNutritionPlanVersion[];
+  events: Array<{
+    kind: string;
+    fromStatus: string | null;
+    toStatus: string | null;
+    detail: string | null;
+    createdAt: string;
+  }>;
+}
+
+export interface LiveNutritionCheckin {
+  id: string;
+  observedOn: string;
+  /** Required — adherence is reported, never inferred. */
+  source: string;
+  mealPlanAdherencePct: number | null;
+  dietAdherencePct: number | null;
+  hungerRating: number | null;
+  satietyRating: number | null;
+  energyRating: number | null;
+  digestiveTolerance: number | null;
+  symptoms: string[];
+  patientNote: string | null;
+  weightValue: number | null;
+  weightUnit: string | null;
+  reviewState: string;
+  planVersionId: string | null;
+}
+
+export interface LivePatientNutrition {
+  plans: LiveNutritionPlan[];
+  checkins: LiveNutritionCheckin[];
+}
+
+export interface LiveNutritionAdherenceSummary {
+  windowDays: number;
+  from: string;
+  to: string;
+  daysReported: number;
+  /** A day with no check-in is MISSING, never zero adherence. */
+  daysMissing: number;
+  meanMealPlanAdherencePct: number | null;
+  meanDietAdherencePct: number | null;
+  meanDigestiveTolerance: number | null;
+  needsFollowup: number;
+  unreviewed: number;
+}
+
+export interface LiveNutritionMutationResult {
+  id?: string;
+  planId?: string;
+  planVersionId?: string;
+  versionId?: string;
+  templateId?: string;
+  version?: number;
+  outcome?: string;
+  blocking?: number;
+  review?: number;
+  count?: number;
+  ok?: boolean;
+}
+
+/**
+ * The Passio boundary as the browser is allowed to see it: whether it is
+ * configured at all, and why not. Never a licence key.
+ */
+export interface LiveNutritionProviderStatus {
+  mode: "disabled" | "live";
+  configured: boolean;
+  problems: string[];
+  /**
+   * Whether a real Passio request has EVER been executed by this deployment.
+   * False until one actually runs — never inferred from configuration.
+   */
+  liveRequestExecuted: boolean;
+  copilotEnabled: boolean;
+  copilotProblems: string[];
+}
+
+/** A copilot draft as the browser sees it — labelled, unsaved, and unapplied. */
+export interface LiveNutritionCopilotDraft {
+  suggestions: Array<{
+    kind: string;
+    isDraft: true;
+    title: string;
+    rationale: string;
+    derivedFrom: string;
+    severity: "info" | "attention";
+    ruleLabel?: string;
+  }>;
+  provenanceKind: "copilot_draft";
+  disclaimer: string;
+}
+
+/* ===================================================================== */
+/* PHASE 9B — governed knowledge, the import pipeline, and commercial     */
+/* disclosure. Commercial types are deliberately SEPARATE from every      */
+/* clinical type below: nothing clinical embeds a commercial field, so a  */
+/* renderer cannot accidentally place a price beside a dose.              */
+/* ===================================================================== */
+
+export type KnowledgeChangeKind =
+  | "add"
+  | "change"
+  | "unchanged"
+  | "conflict"
+  | "removal"
+  /**
+   * Phase 9C. A row that matches no governed identity but resembles one
+   * closely enough that applying it blind would either duplicate a product or
+   * overwrite the wrong one. Neither an add nor a change.
+   */
+  | "ambiguous";
+
+export type KnowledgeImportItemStatus =
+  | "needs_review"
+  | "applied"
+  | "rejected"
+  | "skipped";
+
+export interface LiveKnowledgeImportItem {
+  id: string;
+  entityType: string;
+  displayName: string;
+  sourceSheet: string | null;
+  sourceRowNumber: number | null;
+  dedupeKey: string | null;
+  changeKind: KnowledgeChangeKind | null;
+  status: KnowledgeImportItemStatus;
+  payloadSha256: string;
+  existingRefType: string | null;
+  existingRefId: string | null;
+  conflictWithItemId: string | null;
+  conflictReason: string | null;
+  conflictResolution: "keep_existing" | "take_incoming" | "skip" | null;
+  validationErrors: string[];
+  warnings: string[];
+  reviewNote: string | null;
+  appliedRefType: string | null;
+  appliedRefId: string | null;
+
+  /* --------------------------------------------- Phase 9C review fields */
+
+  /** The verbatim source row. Absent normalisation is `{}`, never the payload. */
+  sourceRaw?: Record<string, unknown>;
+  restrictedFlags?: string[];
+  restrictedReason?: string | null;
+  /** Facts the source did not supply. Absence recorded as absence. */
+  missingFacts?: string[];
+  /** Governed products this row resembles without sharing an identity. */
+  candidateMatches?: LiveImportCandidateMatch[];
+  /** Field-level differences against the governed row, for a `change`. */
+  fieldDiffs?: LiveImportFieldDiff[];
+}
+
+export interface LiveImportCandidateMatch {
+  productId: string;
+  name: string;
+  brand: string | null;
+  sku: string | null;
+  upc: string | null;
+  status: string;
+  why: string;
+}
+
+export interface LiveImportFieldDiff {
+  field: string;
+  current: string | null;
+  incoming: string | null;
+}
+
+export interface LiveKnowledgeImportBatch {
+  id: string;
+  status: "preview" | "staged" | "in_review" | "committed" | "completed" | "cancelled";
+  sourceName: string;
+  sourceKind: string | null;
+  sourceFilename: string | null;
+  sourceByteSize: number | null;
+  sourceSha256: string;
+  schemaVersion: string;
+  itemCount: number;
+  added: number;
+  changed: number;
+  unchanged: number;
+  conflicts: number;
+  removals: number;
+  /** Phase 9C. Rows resembling a governed product without sharing its identity. */
+  ambiguous?: number;
+  /** Phase 9C. Rows carrying a restricted flag. */
+  restricted?: number;
+  previewGeneratedAt: string | null;
+  committedAt: string | null;
+  createdAt: string;
+}
+
+export interface LiveKnowledgeImportPreview {
+  batch: LiveKnowledgeImportBatch;
+  items: LiveKnowledgeImportItem[];
+  /** Reported for review. This pipeline never deletes governed content. */
+  reportedRemovals: Array<{
+    entityType: string;
+    dedupeKey: string;
+    refType: string | null;
+    refId: string | null;
+  }>;
+  removalPolicy: string;
+}
+
+export interface LiveKnowledgeImportPreviewResult {
+  batchId: string;
+  /** True when the same bytes were already imported; nothing was staged again. */
+  idempotent: boolean;
+  status: string;
+  itemCount: number;
+  added: number;
+  changed: number;
+  unchanged: number;
+  conflicts: number;
+  removals: number;
+  ambiguous?: number;
+  restricted?: number;
+  sourceSha256?: string;
+  message: string;
+}
+
+/* ------------------------------------------- Phase 9C: the review surface */
+
+export interface LiveImportSourceFile {
+  id: string;
+  /** A file NAME. A path never reaches this field. */
+  declaredName: string;
+  sourceKind: string | null;
+  availability: "available" | "unavailable";
+  contentSha256: string | null;
+  byteSize: number | null;
+  /** Required when unavailable. "Not found" and "withheld" differ. */
+  unavailableReason: string | null;
+  declaredAt: string;
+  lastCheckedAt: string;
+  batchCount: number;
+}
+
+export interface LiveImportSourceInventory {
+  files: LiveImportSourceFile[];
+  counts: { declared: number; available: number; unavailable: number };
+  emptyStateMessage: string;
+}
+
+export interface LiveCatalogReviewProduct {
+  productId: string;
+  name: string;
+  brand: string | null;
+  sku: string | null;
+  upc: string | null;
+  status: string;
+  restrictedFlags: string[];
+  restrictedClearedAt: string | null;
+  restrictedClearanceNote: string | null;
+  selectable: boolean;
+  /** The same sentence the attach refusal raises. One answer, two surfaces. */
+  blockReason: string | null;
+  missingFacts: string[];
+  sourceFileName: string | null;
+}
+
+export interface LiveCatalogReviewQueue {
+  products: LiveCatalogReviewProduct[];
+  counts: { total: number; restricted: number; notSelectable: number };
+  emptyStateMessage: string;
+}
+
+export interface LiveImportProvenanceRecord {
+  id: string;
+  refType: string;
+  refId: string;
+  batchId: string;
+  itemId: string;
+  sourceFileName: string | null;
+  sourceFileSha256: string | null;
+  sourceSheet: string | null;
+  sourceRowNumber: number | null;
+  payloadSha256: string;
+  rawValues: Record<string, unknown>;
+  normalizedValues: Record<string, unknown>;
+  missingFacts: string[];
+  restrictedFlags: string[];
+  importedAt: string;
+  batchSourceName: string;
+}
+
+export interface LiveImportProvenanceHistory {
+  records: LiveImportProvenanceRecord[];
+  total: number;
+  /** Always true. The table refuses update and delete at the trigger. */
+  immutable: boolean;
+  emptyStateMessage: string;
+}
+
+export interface LiveKnowledgeImportCommitResult {
+  ok: true;
+  batchId: string;
+  applied: number;
+  skipped: number;
+  /** Always "draft". Import is not approval. */
+  approvalState: "draft";
+  message: string;
+}
+
+/**
+ * Commercial disclosure for a label version or protocol version.
+ *
+ * A SEPARATE read, never folded into a clinical payload. The disclaimer is
+ * carried from the database rather than written in the browser, so the UI
+ * cannot soften it.
+ */
+export interface LiveCommercialLink {
+  id: string;
+  kind: "affiliate" | "supplier" | "retailer" | "other";
+  url: string | null;
+  itemLabel?: string | null;
+  catalogProductVersionId?: string | null;
+  supplierName: string | null;
+  commissionDisclosure: string | null;
+  availabilityStatus: string | null;
+  lastVerifiedAt: string | null;
+  revokedAt: string | null;
+  recordedAt: string;
+}
+
+export interface LiveCommercialDisclosure {
+  labelVersionId?: string;
+  protocolVersionId?: string;
+  links: LiveCommercialLink[];
+  disclaimer: string;
+}
+
+/** A protocol copilot draft as the browser sees it — labelled and unsaved. */
+export interface LiveProtocolCopilotDraft {
+  suggestions: Array<{
+    kind: string;
+    isDraft: true;
+    title: string;
+    rationale: string;
+    derivedFrom: string;
+    severity: "info" | "attention";
+    itemLabel?: string;
+    proposedDose?: string | null;
+    doseSource?: string | null;
+  }>;
+  provenanceKind: "copilot_draft";
+  disclaimer: string;
+  interactionReviewState: "not_completed";
+  interactionReviewReason: string;
+}
+
+export interface LiveProtocolCopilotStatus {
+  enabled: boolean;
+  problems: string[];
+}
+
+/* ------------------------------------------------------------------------ *
+ * Phase 9B: the Product Catalog registry.
+ *
+ * The `clinical` / `commercial` split is the database's shape, carried
+ * through verbatim. It is not flattened here on purpose: a flat object is one
+ * careless spread away from a commercial field reaching a clinical renderer,
+ * and the whole point is that there is no such path.
+ * ------------------------------------------------------------------------ */
+
+/** Derived from whether a named person verified this exact label. */
+export type LiveLabelVerificationState = "verified" | "unverified";
+
+export interface LiveCatalogListEntry {
+  labelVersionId: string;
+  productCode: string;
+  productName: string;
+  brand: string | null;
+  version: number;
+  status: "draft" | "published" | "superseded" | "withdrawn";
+  labelSha256: string | null;
+  sourceUrl: string | null;
+  effectiveAt: string | null;
+  expiresAt: string | null;
+  verifiedAt: string | null;
+  verificationState: LiveLabelVerificationState;
+  versionCount: number;
+  ingredientCount: number;
+  hasWarnings: boolean;
+  /** A COUNT only. The list view never receives a commercial URL. */
+  commercialLinkCount: number;
+  commercialDisclosureComplete: boolean;
+}
+
+export interface LiveProductCatalog {
+  clinical: {
+    products: LiveCatalogListEntry[];
+    counts: {
+      total: number;
+      verified: number;
+      unverified: number;
+      published: number;
+      draft: number;
+    };
+  };
+  reviewQueue: Array<{
+    itemId: string;
+    displayName: string;
+    externalKey: string | null;
+    changeKind: string | null;
+    sourceName: string;
+    validationErrors: string[];
+    conflictReason: string | null;
+    createdAt: string;
+  }>;
+  generatedAt: string;
+  /** Rendered verbatim when the registry is empty. Never softened. */
+  emptyStateMessage: string;
+  commercialPolicy: string;
+  unknownPolicy: string;
+}
+
+/**
+ * One label in full.
+ *
+ * Every optional string is `string | null` rather than `string | undefined`:
+ * NULL is a value here, meaning "not captured from the label", and it must
+ * render as "Unknown" rather than disappearing.
+ */
+export interface LiveProductLabelDetail {
+  clinical: {
+    labelVersionId: string;
+    productCode: string;
+    productName: string;
+    brand: string | null;
+    version: number;
+    status: string;
+    labelSha256: string | null;
+    sourceUrl: string | null;
+    effectiveAt: string | null;
+    expiresAt: string | null;
+    verifiedAt: string | null;
+    verificationNote: string | null;
+    verificationState: LiveLabelVerificationState;
+    servingSize: string | null;
+    servingsPerContainer: string | null;
+    ingredients: string | null;
+    ingredientRows: Array<Record<string, unknown>>;
+    otherIngredients: string | null;
+    allergens: string | null;
+    directions: string | null;
+    warnings: string | null;
+    storage: string | null;
+    jurisdiction: string | null;
+    sku: string | null;
+    upc: string | null;
+    versions: Array<{
+      labelVersionId: string;
+      version: number;
+      status: string;
+      labelSha256: string | null;
+      effectiveAt: string | null;
+      expiresAt: string | null;
+      verifiedAt: string | null;
+      verificationNote: string | null;
+      createdAt: string;
+    }>;
+    catalogMappings: Array<{
+      productId: string;
+      name: string;
+      form: string | null;
+      sku: string | null;
+      upc: string | null;
+    }>;
+    importHistory: Array<{
+      itemId: string;
+      sourceName: string;
+      sourceFilename: string | null;
+      sourceSha256: string | null;
+      changeKind: string | null;
+      status: string;
+      reviewedAt: string | null;
+      importedAt: string | null;
+    }>;
+  };
+  commercial: {
+    links: Array<{
+      id: string;
+      kind: string;
+      url: string | null;
+      supplierName: string | null;
+      commissionDisclosure: string | null;
+      availabilityStatus: string | null;
+      lastVerifiedAt: string | null;
+      revokedAt: string | null;
+      revokedReason: string | null;
+      recordedAt: string;
+    }>;
+    disclosureComplete: boolean;
+    notice: string;
+  };
+  unknownPolicy: string;
+}
+
+/* ------------------------------------------------------------------------ *
+ * Phase 9B: protocol template lifecycle.
+ * ------------------------------------------------------------------------ */
+
+export type LiveTemplateSafetyOutcome = "passed" | "concerns" | "blocked";
+
+export interface LiveProtocolTemplateDetail {
+  templateId: string;
+  name: string;
+  description: string | null;
+  status: string;
+  archivedAt: string | null;
+  supersededById: string | null;
+  supersededAt: string | null;
+  supersededReason: string | null;
+  currentVersionId: string | null;
+  approvedVersionId: string | null;
+  versions: Array<{
+    versionId: string;
+    version: number;
+    status: string;
+    title: string;
+    approvedAt: string | null;
+    createdAt: string;
+    itemCount: number;
+  }>;
+  items: Array<{
+    itemId: string;
+    label: string;
+    kind: string;
+    position: number;
+    dosageText: string | null;
+    timingText: string | null;
+    route: string | null;
+    doseSourceKind: string | null;
+    doseSourceRef: string | null;
+    manufacturer: string | null;
+    labelVersion: string | null;
+    productSku: string | null;
+    productUpc: string | null;
+    labelSha256: string | null;
+    verificationStatus: string;
+    interventionClassCode: string | null;
+    monitoringRequirements: string[];
+    stoppingRules: string[];
+    contraindications: string[];
+    followupIntervalDays: number | null;
+    jurisdictionSensitive: boolean;
+  }>;
+  safetyReviews: Array<{
+    reviewId: string;
+    versionId: string;
+    outcome: LiveTemplateSafetyOutcome;
+    note: string;
+    itemsReviewed: number;
+    unsourcedDoseCount: number;
+    reviewedAt: string;
+  }>;
+  unsourcedDoseCount: number;
+  /** Derived on read, never stored. A stored copy drifts, invisibly. */
+  patientInstructionPreview: Array<{
+    label: string;
+    kind: string;
+    instruction: string | null;
+    dose: string | null;
+    timing: string | null;
+    stopIf: string[];
+    doseIsSourced: boolean;
+  }>;
+  previewNotice: string;
+  safetyNotice: string;
+}
+
+export interface LiveTemplateComparison {
+  sameTemplate: boolean;
+  left: {
+    versionId: string;
+    templateId: string;
+    version: number;
+    status: string;
+    title: string;
+  };
+  right: {
+    versionId: string;
+    templateId: string;
+    version: number;
+    status: string;
+    title: string;
+  };
+  added: Array<{
+    label: string;
+    kind: string;
+    dosageText: string | null;
+    doseSourceKind: string | null;
+  }>;
+  removed: Array<{
+    label: string;
+    kind: string;
+    dosageText: string | null;
+    doseSourceKind: string | null;
+  }>;
+  changed: Array<{
+    label: string;
+    doseChanged: boolean;
+    from: Record<string, unknown>;
+    to: Record<string, unknown>;
+  }>;
+  doseChangeCount: number;
+  matchNote: string;
+}
+
+/**
+ * What the parser returns. NOTHING IS WRITTEN to produce this — it is the
+ * operator's evidence for deciding whether to stage the file at all.
+ */
+export interface LiveParsedImportEnvelope {
+  schemaVersion: string;
+  sourceKind: "product_spreadsheet" | "protocol_document";
+  /** A file NAME. The parser strips any path before this object exists. */
+  sourceFilename: string;
+  sourceName: string;
+  sourceByteSize: number;
+  sourceSha256: string;
+  items: Array<{
+    entityType: string;
+    displayName: string;
+    externalKey?: string;
+    sourceSheet?: string;
+    payload: Record<string, unknown>;
+    sourceRaw: Record<string, unknown>;
+    warnings?: string[];
+  }>;
+  report: {
+    itemCount: number;
+    sheetsRead: string[];
+    unmappedColumns: string[];
+    skippedRows: Array<{ sheet: string; rowNumber: number; why: string }>;
+    ignoredParts: string[];
+    uncachedFormulaCells: number;
+    discardedFieldCodes: number;
+    truncated: boolean;
+    notices: string[];
+  };
+}

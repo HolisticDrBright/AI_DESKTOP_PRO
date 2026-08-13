@@ -9,7 +9,7 @@
  */
 
 export type SurfaceGroup = "Workspace" | "Clinical" | "Operations" | "System";
-export type SurfaceStatus = "Spec" | "In design" | "Backend pending";
+export type SurfaceStatus = "Spec" | "In design" | "Backend pending" | "Live";
 
 export interface SurfaceSpec {
   slug: string;
@@ -94,11 +94,12 @@ export const SURFACES: Record<string, SurfaceSpec> = {
       "Reconcile against the practice ledger",
       "Export for accounting",
     ],
-    permissions: ["Admin or Billing role", "Practice-scoped access only"],
+    permissions: ["Owner, admin, or practitioner role", "Practice-scoped access only"],
     dataSource:
-      "No live data yet. Billing will integrate a payment processor; no card data is stored in-app.",
-    status: "Backend pending",
-    nextAction: "Choose the payment processor and define the invoice record shape.",
+      "Live: invoices, payments, refunds, patient credit, and stock movements are persisted rows behind the Desktop RPC boundary. Card payments run in Stripe TEST MODE only and settle solely through the server-side processor webhook; no card data is stored in-app.",
+    status: "Live",
+    nextAction:
+      "Enable a production processor (out of scope for this phase) before any real charge is taken.",
   },
   claims: {
     slug: "claims",

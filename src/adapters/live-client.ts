@@ -38,6 +38,35 @@ import type {
   LiveInbox,
   LiveInboxFilters,
   LiveInboxMutationResult,
+  LiveBillingCatalog,
+  LiveBillingCatalogFilters,
+  LiveBillingMutationResult,
+  LiveBillingProductKind,
+  LiveBillingWorkspace,
+  LiveBillingWorkspaceFilters,
+  LiveCardPaymentIntent,
+  LiveInventoryAdjustmentKind,
+  LiveInventoryMovement,
+  LiveInventoryReturnCondition,
+  LiveInvoice,
+  LiveInvoiceLineInput,
+  LiveManualPaymentMethod,
+  LivePatientBilling,
+  LiveMembershipAction,
+  LivePackageKind,
+  LivePatientEntitlements,
+  LivePlanLibrary,
+  LivePlanMutationResult,
+  LivePlanType,
+  LiveReconciliationWorkspace,
+  LiveStripeStatus,
+  LiveNutritionAdherenceSummary,
+  LiveNutritionCopilotDraft,
+  LiveNutritionMutationResult,
+  LiveNutritionProviderStatus,
+  LiveNutritionTemplateLibrary,
+  LiveNutritionVersionContent,
+  LivePatientNutrition,
   LiveInboxTodaySummary,
   LiveMessageChannel,
   LivePatientMessages,
@@ -57,6 +86,20 @@ import type {
   LiveSyncMutationResult,
   LiveSyncOutboundResourceType,
   LiveSyncScope,
+  LiveKnowledgeImportPreview,
+  LiveKnowledgeImportPreviewResult,
+  LiveKnowledgeImportCommitResult,
+  LiveImportSourceInventory,
+  LiveCatalogReviewQueue,
+  LiveImportProvenanceHistory,
+  LiveParsedImportEnvelope,
+  LiveCommercialDisclosure,
+  LiveProtocolCopilotDraft,
+  LiveProtocolCopilotStatus,
+  LiveProductCatalog,
+  LiveProductLabelDetail,
+  LiveProtocolTemplateDetail,
+  LiveTemplateComparison,
 } from "./live-types";
 
 interface Envelope<T> {
@@ -560,4 +603,1031 @@ export const liveClient = {
     overlay: Record<string, unknown>;
     reason: string;
   }) => liveFetch<LiveSyncMutationResult>("sync/review", { method: "POST", body: input }),
+
+  /* ------------------------------------------- billing (phase 8A) */
+  billingWorkspace: (filters: LiveBillingWorkspaceFilters) =>
+    liveFetch<LiveBillingWorkspace>("billing/workspace", { method: "POST", body: filters }),
+
+  billingInvoice: (invoiceId: string) =>
+    liveFetch<LiveInvoice>("billing/invoice", { method: "POST", body: { invoiceId } }),
+
+  billingPatient: (patientId: string) =>
+    liveFetch<LivePatientBilling>("billing/patient", { method: "POST", body: { patientId } }),
+
+  billingCatalog: (filters: LiveBillingCatalogFilters) =>
+    liveFetch<LiveBillingCatalog>("billing/catalog", { method: "POST", body: filters }),
+
+  billingInventoryHistory: (input: {
+    productId: string;
+    locationId?: string | null;
+    limit?: number;
+  }) => liveFetch<LiveInventoryMovement[]>("billing/inventory-history", {
+    method: "POST",
+    body: input,
+  }),
+
+  billingUpsertProduct: (input: {
+    id?: string | null;
+    expectedVersion?: number | null;
+    name?: string | null;
+    kind?: LiveBillingProductKind | null;
+    amountMinor?: number | null;
+    currency?: string | null;
+    sku?: string | null;
+    barcode?: string | null;
+    supplierId?: string | null;
+    costMinor?: number | null;
+    taxRateId?: string | null;
+    description?: string | null;
+    trackInventory?: boolean | null;
+    reorderThreshold?: number | null;
+  }) => liveFetch<LiveBillingMutationResult>("billing/product", { method: "POST", body: input }),
+
+  billingArchiveProduct: (input: { id: string; expectedVersion: number }) =>
+    liveFetch<LiveBillingMutationResult>("billing/product", {
+      method: "POST",
+      body: { action: "archive", ...input },
+    }),
+
+  billingUpsertReference: (input: {
+    entity: "location" | "supplier" | "taxRate";
+    id?: string | null;
+    name?: string | null;
+    contactEmail?: string | null;
+    phone?: string | null;
+    notes?: string | null;
+    rateBps?: number | null;
+    active?: boolean;
+    archive?: boolean;
+  }) => liveFetch<LiveBillingMutationResult>("billing/reference", { method: "POST", body: input }),
+
+  billingReceiveStock: (input: {
+    locationId: string;
+    productId: string;
+    quantity: number;
+    unitCostMinor?: number | null;
+    supplierId?: string | null;
+    reference?: string | null;
+  }) => liveFetch<LiveBillingMutationResult>("billing/inventory", {
+    method: "POST",
+    body: { action: "receive", ...input },
+  }),
+
+  billingAdjustStock: (input: {
+    locationId: string;
+    productId: string;
+    delta: number;
+    kind: LiveInventoryAdjustmentKind;
+    reason: string;
+  }) => liveFetch<LiveBillingMutationResult>("billing/inventory", {
+    method: "POST",
+    body: { action: "adjust", ...input },
+  }),
+
+  billingReturnStock: (input: {
+    locationId: string;
+    productId: string;
+    quantity: number;
+    condition: LiveInventoryReturnCondition;
+    reason: string;
+    invoiceId?: string | null;
+  }) => liveFetch<LiveBillingMutationResult>("billing/inventory", {
+    method: "POST",
+    body: { action: "return", ...input },
+  }),
+
+  billingCreateDraft: (input: {
+    patientId: string;
+    appointmentId?: string | null;
+    locationId?: string | null;
+  }) => liveFetch<LiveInvoice>("billing/draft", { method: "POST", body: input }),
+
+  billingSaveDraft: (input: {
+    invoiceId: string;
+    expectedVersion: number;
+    locationId?: string | null;
+    lines: LiveInvoiceLineInput[];
+  }) => liveFetch<LiveInvoice>("billing/save", { method: "POST", body: input }),
+
+  billingFinalize: (input: { invoiceId: string; expectedVersion: number }) =>
+    liveFetch<LiveInvoice>("billing/finalize", { method: "POST", body: input }),
+
+  billingVoid: (input: { invoiceId: string; expectedVersion: number; reason: string }) =>
+    liveFetch<LiveInvoice>("billing/void", { method: "POST", body: input }),
+
+  billingRecordPayment: (input: {
+    invoiceId: string;
+    expectedVersion: number;
+    amountMinor: number;
+    method: LiveManualPaymentMethod;
+    reference?: string | null;
+    idempotencyKey?: string | null;
+  }) => liveFetch<LiveInvoice>("billing/payment", { method: "POST", body: input }),
+
+  billingGrantCredit: (input: { patientId: string; amountMinor: number; reason: string }) =>
+    liveFetch<LiveBillingMutationResult>("billing/credit", {
+      method: "POST",
+      body: { action: "grant", ...input },
+    }),
+
+  billingApplyCredit: (input: {
+    invoiceId: string;
+    expectedVersion: number;
+    amountMinor: number;
+  }) => liveFetch<LiveInvoice>("billing/credit", {
+    method: "POST",
+    body: { action: "apply", ...input },
+  }),
+
+  billingRefund: (input: {
+    paymentId: string;
+    amountMinor: number;
+    reason: string;
+    method?: string | null;
+  }) => liveFetch<LiveInvoice>("billing/refund", { method: "POST", body: input }),
+
+  billingStartCardPayment: (input: {
+    invoiceId: string;
+    expectedVersion: number;
+    idempotencyKey: string;
+  }) => liveFetch<LiveCardPaymentIntent>("billing/card", { method: "POST", body: input }),
+
+  /* ------------------------------------------- plans etc (phase 8B) */
+  plansLibrary: (includeArchived = false) =>
+    liveFetch<LivePlanLibrary>("plans/library", {
+      method: "POST",
+      body: { includeArchived },
+    }),
+
+  plansPatient: (patientId: string) =>
+    liveFetch<LivePatientEntitlements>("plans/patient", {
+      method: "POST",
+      body: { patientId },
+    }),
+
+  plansUpsert: (input: {
+    planType: LivePlanType;
+    id?: string | null;
+    expectedVersion?: number | null;
+    name?: string | null;
+    description?: string | null;
+    kind?: LivePackageKind | null;
+    archive?: boolean;
+  }) => liveFetch<LivePlanMutationResult>("plans/plan", { method: "POST", body: input }),
+
+  plansCreateVersion: (input: Record<string, unknown> & { planType: LivePlanType; planId: string; priceMinor: number }) =>
+    liveFetch<LivePlanMutationResult>("plans/version", { method: "POST", body: input }),
+
+  plansPublishVersion: (input: { planType: LivePlanType; versionId: string }) =>
+    liveFetch<LivePlanMutationResult>("plans/publish", { method: "POST", body: input }),
+
+  plansSetPolicy: (input: {
+    noShowPolicy: string;
+    lateCancelPolicy: string;
+    lateCancelWindowHours: number;
+    consumeOn: string;
+  }) => liveFetch<LivePlanMutationResult>("plans/policy", { method: "POST", body: input }),
+
+  plansPurchase: (input: {
+    patientId: string;
+    packageVersionId: string;
+    acceptanceMethod?: string;
+  }) => liveFetch<LivePlanMutationResult>("plans/purchase", { method: "POST", body: input }),
+
+  plansGrantForInvoice: (invoiceId: string) =>
+    liveFetch<LivePlanMutationResult>("plans/grant", { method: "POST", body: { invoiceId } }),
+
+  plansAssignComplimentary: (input: {
+    patientId: string;
+    planType: LivePlanType;
+    versionId: string;
+    reason: string;
+    expiresAt?: string | null;
+  }) => liveFetch<LivePlanMutationResult>("plans/complimentary", { method: "POST", body: input }),
+
+  plansReserveCredit: (input: {
+    entitlementId: string;
+    appointmentId: string;
+    quantity?: number;
+  }) => liveFetch<LivePlanMutationResult>("plans/reserve", { method: "POST", body: input }),
+
+  plansSettleCredit: (input: {
+    appointmentId: string;
+    outcome: string;
+    reason?: string | null;
+  }) => liveFetch<LivePlanMutationResult>("plans/settle", { method: "POST", body: input }),
+
+  plansRestoreCredit: (input: { entitlementId: string; quantity: number; reason: string }) =>
+    liveFetch<LivePlanMutationResult>("plans/restore", { method: "POST", body: input }),
+
+  plansExpireCredits: () =>
+    liveFetch<LivePlanMutationResult>("plans/expire", { method: "POST", body: {} }),
+
+  plansRevokeForRefund: (input: { invoiceId: string; reason: string }) =>
+    liveFetch<LivePlanMutationResult>("plans/revoke", { method: "POST", body: input }),
+
+  plansMembershipLifecycle: (input: {
+    patientMembershipId: string;
+    action: LiveMembershipAction;
+    expectedVersion: number;
+    reason?: string | null;
+  }) => liveFetch<LivePlanMutationResult>("plans/membership", { method: "POST", body: input }),
+
+  plansReconciliation: (status: string | null = "open") =>
+    liveFetch<LiveReconciliationWorkspace>("plans/reconciliation", {
+      method: "POST",
+      body: { status },
+    }),
+
+  plansResolveException: (input: {
+    exceptionId: string;
+    resolution: "resolved" | "dismissed";
+    reason: string;
+    expectedVersion: number;
+  }) => liveFetch<LivePlanMutationResult>("plans/reconciliation", {
+    method: "POST",
+    body: { action: "resolve", ...input },
+  }),
+
+  plansStripeStatus: () =>
+    liveFetch<LiveStripeStatus>("plans/stripe-status", { method: "POST", body: {} }),
+
+  /* ------------------------------------------------ nutrition (phase 9A) */
+
+  nutritionTemplates: (includeArchived = false) =>
+    liveFetch<LiveNutritionTemplateLibrary>("nutrition/templates", {
+      method: "POST",
+      body: { includeArchived },
+    }),
+
+  nutritionVersionContent: (input: {
+    templateVersionId?: string | null;
+    planVersionId?: string | null;
+  }) =>
+    liveFetch<LiveNutritionVersionContent>("nutrition/content", {
+      method: "POST",
+      body: input,
+    }),
+
+  nutritionForPatient: (patientId: string) =>
+    liveFetch<LivePatientNutrition>("nutrition/patient", {
+      method: "POST",
+      body: { patientId },
+    }),
+
+  nutritionAdherence: (patientId: string, days = 30) =>
+    liveFetch<LiveNutritionAdherenceSummary>("nutrition/adherence", {
+      method: "POST",
+      body: { patientId, days },
+    }),
+
+  nutritionUpsertTemplate: (input: Record<string, unknown> & { name: string }) =>
+    liveFetch<LiveNutritionMutationResult>("nutrition/template", { method: "POST", body: input }),
+
+  nutritionCreateTemplateVersion: (input: Record<string, unknown> & { templateId: string }) =>
+    liveFetch<LiveNutritionMutationResult>("nutrition/template-version", {
+      method: "POST",
+      body: input,
+    }),
+
+  nutritionSaveTemplateContent: (input: { templateVersionId: string; content: unknown }) =>
+    liveFetch<LiveNutritionMutationResult>("nutrition/template-content", {
+      method: "POST",
+      body: input,
+    }),
+
+  nutritionPublishTemplateVersion: (templateVersionId: string) =>
+    liveFetch<LiveNutritionMutationResult>("nutrition/template-publish", {
+      method: "POST",
+      body: { templateVersionId },
+    }),
+
+  nutritionArchiveTemplate: (input: { templateId: string; reason: string }) =>
+    liveFetch<LiveNutritionMutationResult>("nutrition/template-archive", {
+      method: "POST",
+      body: input,
+    }),
+
+  nutritionInstallStarters: () =>
+    liveFetch<{ installed: Array<{ slug: string; outcome: string }> }>(
+      "nutrition/starter-install",
+      { method: "POST", body: {} },
+    ),
+
+  nutritionCreatePlan: (input: {
+    patientId: string;
+    title: string;
+    sourceTemplateVersionId?: string | null;
+  }) => liveFetch<LiveNutritionMutationResult>("nutrition/plan", { method: "POST", body: input }),
+
+  nutritionSavePlanVersion: (
+    input: Record<string, unknown> & { planVersionId: string; expectedVersion: number },
+  ) => liveFetch<LiveNutritionMutationResult>("nutrition/plan-save", { method: "POST", body: input }),
+
+  nutritionSetConstraints: (input: { planVersionId: string; constraints: unknown[] }) =>
+    liveFetch<LiveNutritionMutationResult>("nutrition/constraints", {
+      method: "POST",
+      body: input,
+    }),
+
+  nutritionEvaluateSafety: (planVersionId: string) =>
+    liveFetch<LiveNutritionMutationResult>("nutrition/safety-evaluate", {
+      method: "POST",
+      body: { planVersionId },
+    }),
+
+  nutritionRaiseSafetyFlag: (input: {
+    planVersionId: string;
+    kind: string;
+    severity: "review" | "blocking";
+    detail: string;
+  }) => liveFetch<LiveNutritionMutationResult>("nutrition/safety-raise", {
+    method: "POST",
+    body: input,
+  }),
+
+  nutritionResolveSafetyFlag: (input: {
+    flagId: string;
+    action: "acknowledge" | "override" | "resolve";
+    reason?: string | null;
+  }) => liveFetch<LiveNutritionMutationResult>("nutrition/safety-resolve", {
+    method: "POST",
+    body: input,
+  }),
+
+  nutritionSubmit: (planVersionId: string) =>
+    liveFetch<LiveNutritionMutationResult>("nutrition/submit", {
+      method: "POST",
+      body: { planVersionId },
+    }),
+
+  nutritionApprove: (input: { planVersionId: string; note?: string | null }) =>
+    liveFetch<LiveNutritionMutationResult>("nutrition/approve", { method: "POST", body: input }),
+
+  nutritionActivate: (planVersionId: string) =>
+    liveFetch<LiveNutritionMutationResult>("nutrition/activate", {
+      method: "POST",
+      body: { planVersionId },
+    }),
+
+  nutritionLifecycle: (input: {
+    planId: string;
+    action: "pause" | "resume" | "complete" | "discontinue";
+    reason?: string | null;
+  }) => liveFetch<LiveNutritionMutationResult>("nutrition/lifecycle", {
+    method: "POST",
+    body: input,
+  }),
+
+  nutritionRevise: (input: { planVersionId: string; reason: string }) =>
+    liveFetch<LiveNutritionMutationResult>("nutrition/revise", { method: "POST", body: input }),
+
+  nutritionAddAmendment: (input: { planVersionId: string; body: string; reason: string }) =>
+    liveFetch<LiveNutritionMutationResult>("nutrition/amendment", { method: "POST", body: input }),
+
+  nutritionRecordCheckin: (
+    input: Record<string, unknown> & { patientId: string; observedOn: string; source: string },
+  ) => liveFetch<LiveNutritionMutationResult>("nutrition/checkin", { method: "POST", body: input }),
+
+  nutritionReviewCheckin: (input: {
+    checkinId: string;
+    state: "reviewed" | "needs_followup";
+  }) => liveFetch<LiveNutritionMutationResult>("nutrition/checkin-review", {
+    method: "POST",
+    body: input,
+  }),
+
+  nutritionCopilotDraft: (input: { planVersionId: string; patientId: string }) =>
+    liveFetch<LiveNutritionCopilotDraft>("nutrition/copilot-draft", {
+      method: "POST",
+      body: input,
+    }),
+
+  nutritionProviderStatus: () =>
+    liveFetch<LiveNutritionProviderStatus>("nutrition/provider-status", {
+      method: "POST",
+      body: {},
+    }),
+
+  /* ------------------------- Phase 9B: governed import pipeline ------- */
+
+  /** Stage a preview. Writes nothing governed — the server proves this. */
+  knowledgeImportPreview: (input: {
+    sourceKind: string | null;
+    sourceName: string;
+    schemaVersion: string;
+    items: unknown[];
+    attestsNoPhi: boolean;
+    sourceFilename?: string | null;
+    sourceByteSize?: number | null;
+    sourceRevision?: string | null;
+  }) =>
+    liveFetch<LiveKnowledgeImportPreviewResult>("knowledge/import-preview", {
+      method: "POST",
+      body: input,
+    }),
+
+  knowledgeImportDetail: (batchId: string) =>
+    liveFetch<LiveKnowledgeImportPreview>("knowledge/import-detail", {
+      method: "POST",
+      body: { batchId },
+    }),
+
+  knowledgeImportResolve: (input: {
+    itemId: string;
+    resolution: "keep_existing" | "take_incoming" | "skip";
+    note: string;
+  }) =>
+    liveFetch<{ ok: true; itemId: string; resolution: string }>(
+      "knowledge/import-resolve",
+      { method: "POST", body: input },
+    ),
+
+  /**
+   * Commit a reviewed batch.
+   *
+   * `expectedCounts` carries the numbers the reviewer actually looked at, so a
+   * preview that changed underneath them fails rather than applying a
+   * different set of rows than the one on screen.
+   */
+  knowledgeImportCommit: (input: {
+    batchId: string;
+    expectedCounts?: { added: number; changed: number } | null;
+    note?: string | null;
+  }) =>
+    liveFetch<LiveKnowledgeImportCommitResult>("knowledge/import-commit", {
+      method: "POST",
+      body: input,
+    }),
+
+  knowledgeImportCancel: (input: { batchId: string; reason: string }) =>
+    liveFetch<{ ok: true; batchId: string; status: string }>(
+      "knowledge/import-cancel",
+      { method: "POST", body: input },
+    ),
+
+  /* --------------------- Phase 9C: parse, review, provenance ---------- */
+
+  /**
+   * Parse a spreadsheet or document into a reviewable envelope.
+   *
+   * Multipart rather than JSON, so the bytes are streamed instead of being
+   * base64'd through a JSON body. NOTHING IS WRITTEN by this call: the
+   * envelope it returns is inert until the operator reads the report and
+   * stages it deliberately.
+   */
+  knowledgeImportParse: async (input: {
+    file: File;
+    sourceKind: "product_spreadsheet" | "protocol_document";
+    sourceName?: string;
+    sheetName?: string;
+  }): Promise<LiveParsedImportEnvelope> => {
+    const form = new FormData();
+    form.append("file", input.file);
+    form.append("sourceKind", input.sourceKind);
+    if (input.sourceName) form.append("sourceName", input.sourceName);
+    if (input.sheetName) form.append("sheetName", input.sheetName);
+    return liveFetch<LiveParsedImportEnvelope>("knowledge/import-parse", {
+      method: "POST",
+      form,
+    });
+  },
+
+  importSourceInventory: () =>
+    liveFetch<LiveImportSourceInventory>("knowledge/source-files", { method: "GET" }),
+
+  recordImportSourceFile: (input: {
+    declaredName: string;
+    sourceKind?: string | null;
+    availability: "available" | "unavailable";
+    contentSha256?: string | null;
+    byteSize?: number | null;
+    unavailableReason?: string | null;
+  }) =>
+    liveFetch<{ ok: true; sourceFileId: string; availability: string }>(
+      "knowledge/source-files",
+      { method: "POST", body: input },
+    ),
+
+  knowledgeImportResolveAmbiguity: (input: {
+    itemId: string;
+    resolution: "new_product" | "same_as_existing" | "skip";
+    note: string;
+    existingProductId?: string | null;
+  }) =>
+    liveFetch<{ ok: true; itemId: string; resolution: string }>(
+      "knowledge/import-ambiguity",
+      { method: "POST", body: input },
+    ),
+
+  /**
+   * Ordinary import conflict resolution — Phase 9E-A adds a governed
+   * three-answer surface for the batch-level conflicts (as opposed to
+   * ambiguities). Every answer requires a stated reason; the RPC preserves
+   * restrictions on every outcome.
+   */
+  knowledgeImportResolveConflict: (input: {
+    itemId: string;
+    resolution: "keep_existing" | "take_incoming" | "skip";
+    note: string;
+  }) =>
+    liveFetch<{ ok: true; itemId: string; resolution: string }>(
+      "knowledge/import-conflict",
+      { method: "POST", body: input },
+    ),
+
+  /**
+   * 5-outcome restricted-review — Phase 9E-A. Every outcome demands a
+   * reason; the clinician outcome additionally demands a jurisdiction.
+   *
+   * Phase 9E-A.1 continuation: subject can be a preview item or governed
+   * knowledge reference in addition to a supplement product. The legacy
+   * `productId` field remains valid (routes to `subjectType=product`).
+   */
+  restrictedReviewRecord: (input: {
+    subjectType?: "product" | "preview_item" | "knowledge_reference";
+    subjectId?: string;
+    productId?: string;
+    outcome:
+      | "retain_restricted"
+      | "request_evidence"
+      | "defer"
+      | "reject"
+      | "clinician_reviewed_for_jurisdiction";
+    reason: string;
+    jurisdiction?: string | null;
+  }) =>
+    liveFetch<{
+      ok: true;
+      decisionId: string;
+      subjectType: "product" | "preview_item" | "knowledge_reference";
+      subjectId: string;
+      outcome: string;
+      restrictionsPreserved: true;
+    }>("knowledge/restricted-review", { method: "POST", body: input }),
+
+  restrictedReviewHistory: (
+    subject:
+      | string
+      | { subjectType: "product" | "preview_item" | "knowledge_reference"; subjectId: string },
+  ) => {
+    const query =
+      typeof subject === "string"
+        ? `productId=${encodeURIComponent(subject)}`
+        : `subjectType=${encodeURIComponent(subject.subjectType)}&subjectId=${encodeURIComponent(subject.subjectId)}`;
+    return liveFetch<{
+      subjectType: "product" | "preview_item" | "knowledge_reference";
+      subjectId: string;
+      organizationId: string;
+      currentOutcome: string | null;
+      history: Array<{
+        id: string;
+        outcome: string;
+        reason: string;
+        jurisdiction: string | null;
+        decidedBy: string;
+        decidedAt: string;
+      }>;
+    }>(`knowledge/restricted-review?${query}`, { method: "GET" });
+  },
+
+  /* ================================ Phase 9E-A.2 label editor */
+  productLabelCreateDraft: (input: {
+    productCode: string;
+    productName: string;
+    brand: string;
+    exactLabel: Record<string, unknown>;
+    sourceUrl?: string | null;
+    servingSize?: string | null;
+    ingredients?: Array<Record<string, unknown>>;
+    otherIngredients?: string | null;
+    allergens?: string | null;
+    contraindications?: string | null;
+    warningsText?: string | null;
+    storageInstructions?: string | null;
+    observedDate?: string | null;
+    jurisdiction?: string | null;
+    labelImageRef?: string | null;
+  }) =>
+    liveFetch<{ ok: true; id: string; version: number; status: string }>(
+      "knowledge/product-label",
+      { method: "POST", body: { action: "create_draft", ...input } },
+    ),
+
+  productLabelVerify: (input: { labelVersionId: string; verificationNote: string }) =>
+    liveFetch<{ ok: true; id: string; status: string }>(
+      "knowledge/product-label",
+      { method: "POST", body: { action: "verify", ...input } },
+    ),
+
+  productLabelSupersede: (input: {
+    supersedesId: string;
+    exactLabel: Record<string, unknown>;
+    reason: string;
+    servingSize?: string | null;
+    ingredients?: Array<Record<string, unknown>>;
+    otherIngredients?: string | null;
+    allergens?: string | null;
+    contraindications?: string | null;
+    warningsText?: string | null;
+    storageInstructions?: string | null;
+    sourceUrl?: string | null;
+    observedDate?: string | null;
+  }) =>
+    liveFetch<{ ok: true; id: string; version: number; supersedesId: string; status: string }>(
+      "knowledge/product-label",
+      { method: "POST", body: { action: "supersede", ...input } },
+    ),
+
+  productLabelList: (productCode: string) =>
+    liveFetch<{
+      productCode: string;
+      organizationId: string;
+      versions: Array<Record<string, unknown>>;
+    }>(`knowledge/product-label?productCode=${encodeURIComponent(productCode)}`, { method: "GET" }),
+
+  /* ============================ Phase 9E-A.2 knowledge references */
+  knowledgeReferenceCreateDraft: (input: {
+    claim: string;
+    referenceType?: string | null;
+    clinicalDomain?: string | null;
+    structuredClaim?: Record<string, unknown>;
+    population?: string | null;
+    intervention?: string | null;
+    outcomeField?: string | null;
+    evidenceGrade?: string | null;
+    citation?: string | null;
+    sourceKind?: string | null;
+    sourceVersion?: string | null;
+    publicationDate?: string | null;
+    jurisdiction?: string | null;
+    limitations?: string[];
+    contradictions?: string[];
+    restrictedFlags?: string[];
+  }) =>
+    liveFetch<{ ok: true; id: string; reviewerState: string }>(
+      "knowledge/knowledge-reference",
+      { method: "POST", body: { action: "create_draft", ...input } },
+    ),
+
+  knowledgeReferenceApprove: (input: { referenceId: string; verificationReason: string }) =>
+    liveFetch<{ ok: true; id: string; reviewerState: string }>(
+      "knowledge/knowledge-reference",
+      { method: "POST", body: { action: "approve", ...input } },
+    ),
+
+  knowledgeReferenceSupersede: (input: {
+    supersedesId: string;
+    newClaim: string;
+    reason: string;
+  }) =>
+    liveFetch<{ ok: true; id: string; supersedesId: string; reviewerState: string }>(
+      "knowledge/knowledge-reference",
+      { method: "POST", body: { action: "supersede", ...input } },
+    ),
+
+  knowledgeReferenceList: () =>
+    liveFetch<{
+      organizationId: string;
+      references: Array<Record<string, unknown>>;
+    }>("knowledge/knowledge-reference", { method: "GET" }),
+
+  /* ================================ Phase 9E-A.2 commercial matching */
+  commercialLinkAttach: (input: {
+    labelVersionId: string;
+    incomingSku?: string | null;
+    incomingUpc?: string | null;
+    incomingManufacturer?: string | null;
+    incomingProductName?: string | null;
+    affiliateUrl: string;
+    discountCode?: string | null;
+    disclosure: string;
+    matchReason: string;
+  }) =>
+    liveFetch<{ ok: true; linkId: string; matchAxis: string }>(
+      "knowledge/commercial-link",
+      { method: "POST", body: { action: "attach", ...input } },
+    ),
+
+  commercialLinkRevoke: (input: { linkId: string; reason: string }) =>
+    liveFetch<{ ok: true; supersedesId: string; newLinkId: string }>(
+      "knowledge/commercial-link",
+      { method: "POST", body: { action: "revoke", ...input } },
+    ),
+
+  commercialLinkList: (labelVersionId: string) =>
+    liveFetch<{
+      labelVersionId: string;
+      links: Array<{
+        id: string;
+        supplierName: string | null;
+        url: string | null;
+        commissionDisclosure: string | null;
+        availabilityStatus: string | null;
+        supersedesId: string | null;
+        revokedAt: string | null;
+        revokedReason: string | null;
+        recordedAt: string;
+      }>;
+    }>(`knowledge/commercial-link?labelVersionId=${encodeURIComponent(labelVersionId)}`, {
+      method: "GET",
+    }),
+
+  /* ================================ Phase 9E-A.2 warnings */
+  warningResolutionRecord: (input: {
+    subjectType: "preview_item" | "product" | "knowledge_reference";
+    subjectId: string;
+    warningKey: string;
+    disposition: "resolved" | "superseded" | "accepted_risk" | "not_applicable";
+    reason: string;
+  }) =>
+    liveFetch<{ ok: true; id: string; subjectType: string; disposition: string }>(
+      "knowledge/warning-resolution",
+      { method: "POST", body: input },
+    ),
+
+  warningResolutionList: (input: {
+    subjectType: "preview_item" | "product" | "knowledge_reference";
+    subjectId: string;
+  }) =>
+    liveFetch<{
+      subjectType: string;
+      subjectId: string;
+      resolutions: Array<{
+        id: string;
+        warningKey: string;
+        disposition: string;
+        reason: string;
+        decidedBy: string;
+        decidedAt: string;
+      }>;
+    }>(
+      `knowledge/warning-resolution?subjectType=${encodeURIComponent(input.subjectType)}&subjectId=${encodeURIComponent(input.subjectId)}`,
+      { method: "GET" },
+    ),
+
+  /* ================================ Phase 9E-A.2 bulk ops */
+  bulkAssignReviewer: (input: { itemIds: string[]; assignee: string; reason: string }) =>
+    liveFetch<{ ok: true; itemsUpdated: number }>(
+      "knowledge/bulk",
+      { method: "POST", body: { action: "assign_reviewer", ...input } },
+    ),
+
+  bulkApplyOrgTag: (input: { itemIds: string[]; tag: string; reason: string }) =>
+    liveFetch<{ ok: true; itemsUpdated: number }>(
+      "knowledge/bulk",
+      { method: "POST", body: { action: "apply_org_tag", ...input } },
+    ),
+
+  bulkMarkDuplicate: (input: { itemIds: string[]; duplicateOfItemId: string; reason: string }) =>
+    liveFetch<{ ok: true; itemsUpdated: number }>(
+      "knowledge/bulk",
+      { method: "POST", body: { action: "mark_duplicate", ...input } },
+    ),
+
+  restrictedReviewQueue: () =>
+    liveFetch<{
+      items: Array<{
+        subjectType: "preview_item" | "product" | "knowledge_reference";
+        subjectId: string;
+        displayName: string;
+        entityType: string;
+        restrictedFlags: string[];
+        missingFacts: string[];
+        changeKind: string | null;
+        status: string;
+        sourceName: string | null;
+        sourceSheet: string | null;
+        sourceRowNumber: number | null;
+        currentOutcome: string | null;
+      }>;
+      counts: {
+        total: number;
+        previewItems: number;
+        products: number;
+        knowledgeReferences: number;
+      };
+    }>("knowledge/restricted-review-queue", { method: "GET" }),
+
+  catalogReviewQueue: () =>
+    liveFetch<LiveCatalogReviewQueue>("knowledge/catalog-review", { method: "GET" }),
+
+  catalogReviewAction: (input: {
+    productId: string;
+    action: "clear_restriction" | "complete_review";
+    note: string;
+  }) =>
+    liveFetch<{ ok: true; productId: string; message: string }>(
+      "knowledge/catalog-review",
+      { method: "POST", body: input },
+    ),
+
+  importProvenance: (input: { refType?: string; refId?: string; limit?: number } = {}) => {
+    const params = new URLSearchParams();
+    if (input.refType) params.set("refType", input.refType);
+    if (input.refId) params.set("refId", input.refId);
+    if (input.limit) params.set("limit", String(input.limit));
+    const query = params.toString();
+    return liveFetch<LiveImportProvenanceHistory>(
+      `knowledge/provenance${query ? `?${query}` : ""}`,
+      { method: "GET" },
+    );
+  },
+
+  /** A SEPARATE call. Commercial data never rides inside a clinical payload. */
+  commercialLinks: (
+    input: { labelVersionId: string } | { protocolVersionId: string },
+  ) =>
+    liveFetch<LiveCommercialDisclosure>("knowledge/commercial-links", {
+      method: "POST",
+      body: input,
+    }),
+
+  protocolCopilotStatus: () =>
+    liveFetch<LiveProtocolCopilotStatus>("knowledge/copilot-status", {
+      method: "POST",
+      body: {},
+    }),
+
+  protocolCopilotDraft: (input: { patientId: string; versionId: string }) =>
+    liveFetch<LiveProtocolCopilotDraft>("knowledge/copilot-draft", {
+      method: "POST",
+      body: input,
+    }),
+
+  /* ------------------- Phase 9B: the product catalog registry ---------- */
+
+  /**
+   * The catalog list. The response keeps the server's `clinical` /
+   * `commercial` split rather than flattening it, so a renderer has to reach
+   * across a named boundary to touch commercial data instead of finding it
+   * beside a clinical field.
+   */
+  productCatalog: (
+    input: { query?: string | null; status?: string | null; limit?: number } = {},
+  ) =>
+    liveFetch<LiveProductCatalog>("knowledge/catalog", {
+      method: "POST",
+      body: input,
+    }),
+
+  productLabelDetail: (input: { labelVersionId: string }) =>
+    liveFetch<LiveProductLabelDetail>("knowledge/catalog-detail", {
+      method: "POST",
+      body: input,
+    }),
+
+  /** Whether the caller may verify at all is decided by the database. */
+  verifyProductLabel: (input: {
+    labelVersionId: string;
+    verificationNote: string;
+  }) =>
+    liveFetch<{ ok: true }>("knowledge/catalog-verify", {
+      method: "POST",
+      body: input,
+    }),
+
+  /* ------------------- Phase 9B: template lifecycle -------------------- */
+
+  protocolTemplateDetail: (input: { templateId: string }) =>
+    liveFetch<LiveProtocolTemplateDetail>("protocols/template-detail", {
+      method: "POST",
+      body: input,
+    }),
+
+  protocolTemplateCompare: (input: {
+    leftVersionId: string;
+    rightVersionId: string;
+  }) =>
+    liveFetch<LiveTemplateComparison>("protocols/template-compare", {
+      method: "POST",
+      body: input,
+    }),
+
+  protocolTemplateSafetyReview: (input: {
+    versionId: string;
+    outcome: "passed" | "concerns" | "blocked";
+    note: string;
+  }) =>
+    liveFetch<{
+      ok: true;
+      reviewId: string;
+      outcome: string;
+      unsourcedDoseCount: number;
+      message: string;
+    }>("protocols/template-safety", { method: "POST", body: input }),
+
+  protocolTemplateSupersede: (input: {
+    templateId: string;
+    successorTemplateId: string;
+    reason: string;
+  }) =>
+    liveFetch<{
+      ok: true;
+      templateId: string;
+      supersededBy: string;
+      message: string;
+    }>("protocols/template-supersede", { method: "POST", body: input }),
+
+  /* ================================ Phase 10A copilot */
+  copilotRun: (input: {
+    patientId: string;
+    encounterId?: string;
+    pathwayVersionId?: string;
+    runType:
+      | "longitudinal_brief"
+      | "differential_questions"
+      | "lab_suggestions"
+      | "protocol_draft"
+      | "practitioner_brief";
+    lens: "western" | "functional" | "naturopathy" | "tcm" | "biohacking" | "synergistic";
+  }) =>
+    liveFetch<{
+      runId?: string;
+      status: "completed" | "unavailable" | "failed";
+      runType: string;
+      lens: string;
+      providerName: string;
+      providerModel: string | null;
+      safetyItems: Array<{
+        category: string;
+        severity: "urgent" | "important" | "info";
+        message: string;
+        pinned: boolean;
+      }>;
+      draft: {
+        runType: string;
+        content: Record<string, unknown>;
+        citations: Array<{ citationType: string; refId: string; version: string | null }>;
+        contentSha256: string;
+      } | null;
+      rejectedCitations: string[];
+      inputSnapshotHash: string;
+      outputHash: string | null;
+      message: string;
+    }>("copilot/run", { method: "POST", body: input }),
+
+  copilotDisposition: (input: {
+    runId: string;
+    disposition: "accepted" | "dismissed" | "info_requested" | "superseded";
+  }) =>
+    liveFetch<{ ok: true; id: string; disposition: string }>(
+      "copilot/disposition",
+      { method: "POST", body: input },
+    ),
+
+  copilotHistory: (patientId: string) =>
+    liveFetch<{
+      patientId: string;
+      runs: Array<{
+        id: string;
+        lens: string;
+        runType: string;
+        status: string;
+        providerName: string;
+        providerModel: string | null;
+        inputSnapshotHash: string;
+        outputHash: string | null;
+        createdAt: string;
+        completedAt: string | null;
+        failedAt: string | null;
+        reviewedAt: string | null;
+        staleAt: string | null;
+        disposition: string | null;
+      }>;
+    }>(`copilot/history?patientId=${encodeURIComponent(patientId)}`, { method: "GET" }),
+
+  /* ============================ Phase 10B.1 provider posture */
+  copilotProviderStatus: () =>
+    liveFetch<{
+      posture: {
+        state:
+          | "disabled"
+          | "configured_unapproved"
+          | "approved_never_transacted"
+          | "fixture_test_mode"
+          | "live_unavailable"
+          | "live_failed"
+          | "live_transacted";
+        label: string;
+        detail: string;
+        configured: boolean;
+        transacted: boolean;
+        approved: boolean;
+        gates: Array<{
+          name: string;
+          label: string;
+          status: "approved" | "not_approved" | "not_run";
+          reference: string | null;
+        }>;
+        providerName: string | null;
+        providerKind: string | null;
+        retentionMode: string | null;
+        processingRegion: string | null;
+        supervisedRunsRequired: number | null;
+        supervisedRunsCompleted: number | null;
+        lastFailureCategory: string | null;
+      };
+      refusal: string | null;
+    }>("copilot/provider-status", { method: "GET" }),
 };

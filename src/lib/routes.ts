@@ -16,6 +16,7 @@ export const PATIENT_TABS: { id: PatientTabId; label: string }[] = [
   { id: "appointments", label: "Appointments" },
   { id: "messages", label: "Messages" },
   { id: "billing", label: "Billing" },
+  { id: "plans", label: "Plans & Credits" },
   { id: "files", label: "Files" },
   { id: "app-sync", label: "Patient App" },
 ];
