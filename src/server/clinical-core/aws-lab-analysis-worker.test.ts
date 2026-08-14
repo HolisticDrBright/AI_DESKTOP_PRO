@@ -59,4 +59,21 @@ describe("synthetic AWS functional lab rules", () => {
     expect(biomarkers[0]).toMatchObject({ labMin: null, labMax: 50, unit: "ng/ml" });
     expect(biomarkers[1]).toMatchObject({ labMin: 5, labMax: null, unit: "not reported" });
   });
+
+  test("ignores a standalone parenthetical result flag instead of emitting an empty canonical name", () => {
+    const rows = [
+      ["(H)", "12", "10-20"],
+      ["Valid Marker (mg/dL)", "42", "10-50"],
+    ].map((values) => ({
+      page: 1,
+      documentId,
+      cells: values.map((text, column) => ({ text, confidence: 98, column: column + 1 })),
+    }));
+
+    const biomarkers = normalizeExtractedLabTables({ lines: [], tableRows: rows });
+
+    expect(biomarkers).toHaveLength(1);
+    expect(biomarkers[0].canonicalName).toBe("Valid Marker");
+    expect(biomarkers.every((row) => row.canonicalName.length > 0)).toBe(true);
+  });
 });

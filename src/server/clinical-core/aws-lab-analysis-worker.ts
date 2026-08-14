@@ -243,6 +243,9 @@ export function normalizeExtractedLabTables(extracted: Extracted): Biomarker[] {
       ?? cells.slice(valueIndex + 1).map((cell) => cell.text.trim()).find((text) => /^[%A-Za-zµμ][%A-Za-z0-9µμ/^.-]{0,39}$/.test(text))?.replace(/[μµ]/g, "u").toLowerCase()
       ?? "not reported";
     const canonicalName = rule?.name ?? reportedName.replace(/\s*\([^()]*\)\s*$/, "").trim();
+    // OCR sometimes promotes a standalone result flag such as "(H)" into the
+    // analyte column. It is not a biomarker and must not poison the full result.
+    if (!canonicalName || !/[A-Za-z]/.test(canonicalName)) continue;
     output.push({
       canonicalName, reportedName, value: Number(valueMatch[1]), unit,
       labMin: range.min, labMax: range.max,
