@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { GetCommand, PutCommand, UpdateCommand, DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
-import { HeadObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { DeleteCommand, GetCommand, PutCommand, UpdateCommand, DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
+import { DeleteObjectsCommand, HeadObjectCommand, ListObjectVersionsCommand, S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { SFNClient, StartExecutionCommand } from "@aws-sdk/client-sfn";
@@ -128,6 +128,45 @@ async function ownedJob(jobId: string, ownerSub: string): Promise<Job | null> {
   return job?.ownerSub === ownerSub ? job : null;
 }
 
+async function purgePrefix(bucket: string, prefix: string): Promise<void> {
+  let keyMarker: string | undefined;
+  let versionIdMarker: string | undefined;
+  do {
+    const page = await s3.send(new ListObjectVersionsCommand({
+      Bucket: bucket,
+      Prefix: prefix,
+      ...(keyMarker ? { KeyMarker: keyMarker } : {}),
+      ...(versionIdMarker ? { VersionIdMarker: versionIdMarker } : {}),
+    }));
+    const objects = [
+      ...(page.Versions ?? []).map((row) => ({ Key: row.Key!, VersionId: row.VersionId! })),
+      ...(page.DeleteMarkers ?? []).map((row) => ({ Key: row.Key!, VersionId: row.VersionId! })),
+    ];
+    if (objects.length > 0) {
+      await s3.send(new DeleteObjectsCommand({ Bucket: bucket, Delete: { Objects: objects, Quiet: true } }));
+    }
+    keyMarker = page.IsTruncated ? page.NextKeyMarker : undefined;
+    versionIdMarker = page.IsTruncated ? page.NextVersionIdMarker : undefined;
+  } while (keyMarker || versionIdMarker);
+}
+
+async function deleteJob(identity: Claims, jobId: string) {
+  const job = await ownedJob(jobId, identity.sub);
+  if (!job) return json(200, { contractVersion: CONTRACT_VERSION, jobId, deleted: true });
+  if (!["awaiting_upload", "completed", "needs_review", "failed"].includes(job.state)) return refusal(409);
+
+  const bucket = required("LAB_DOCUMENT_BUCKET");
+  await purgePrefix(bucket, `synthetic-labs/${job.organizationId}/${job.ownerSub}/${jobId}/`);
+  await purgePrefix(bucket, `synthetic-labs/artifacts/${jobId}/`);
+  await db.send(new DeleteCommand({
+    TableName: required("LAB_JOB_TABLE"),
+    Key: { pk: job.pk },
+    ConditionExpression: "ownerSub = :owner",
+    ExpressionAttributeValues: { ":owner": identity.sub },
+  }));
+  return json(200, { contractVersion: CONTRACT_VERSION, jobId, deleted: true });
+}
+
 async function createJob(event: ApiEvent, identity: Claims) {
   const input = body(event);
   if (input.dataClassification !== "synthetic_only" || input.attestsSyntheticOnly !== true
@@ -237,6 +276,7 @@ export async function createAwsLabAnalysisApiHandler(event: ApiEvent) {
     const match = typeof path === "string" ? path.match(/^\/clinical-core\/consumer\/labs\/jobs\/([0-9a-f-]{36})(\/complete-upload)?$/i) : null;
     if (!match) return refusal(404);
     if (method === "POST" && match[2]) return completeUpload(event, identity, match[1]);
+    if (method === "DELETE" && !match[2]) return deleteJob(identity, match[1]);
     if (method === "GET" && !match[2]) {
       const job = await ownedJob(match[1], identity.sub);
       return job ? json(200, status(job)) : refusal(404);

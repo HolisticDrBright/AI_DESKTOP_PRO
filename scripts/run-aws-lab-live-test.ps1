@@ -80,7 +80,17 @@ try {
   $resumed = Invoke-RestMethod -Method Get -Uri "$ApiOrigin/clinical-core/consumer/labs/jobs/$($created.data.jobId)" -Headers $freshHeaders
   if ($resumed.data.state -ne "completed" -or $resumed.data.result.analysisId -ne $result.analysisId) { throw "A fresh session could not resume the persisted result." }
 
-  [pscustomobject]@{ Contract = $current.data.contractVersion; State = $state; Passes = $current.data.passesCompleted; Biomarkers = $result.biomarkers.Count; AiSynthesis = $true; Recommendations = $result.recommendations.Count; ReviewState = $result.reviewState; IdempotentRetry = $true; FreshSessionResume = $true } | Format-List
+  $deleted = Invoke-RestMethod -Method Delete -Uri "$ApiOrigin/clinical-core/consumer/labs/jobs/$($created.data.jobId)" -Headers $freshHeaders
+  if ($deleted.data.deleted -ne $true -or $deleted.data.jobId -ne $created.data.jobId) { throw "Authenticated lab deletion did not return the exact job proof." }
+  $deleteIsDurable = $false
+  try {
+    $null = Invoke-RestMethod -Method Get -Uri "$ApiOrigin/clinical-core/consumer/labs/jobs/$($created.data.jobId)" -Headers $freshHeaders
+  } catch {
+    $deleteIsDurable = $true
+  }
+  if (-not $deleteIsDurable) { throw "Deleted lab job remained readable." }
+
+  [pscustomobject]@{ Contract = $current.data.contractVersion; State = $state; Passes = $current.data.passesCompleted; Biomarkers = $result.biomarkers.Count; AiSynthesis = $true; Recommendations = $result.recommendations.Count; ReviewState = $result.reviewState; IdempotentRetry = $true; FreshSessionResume = $true; Deleted = $true } | Format-List
 } finally {
   Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue
 }

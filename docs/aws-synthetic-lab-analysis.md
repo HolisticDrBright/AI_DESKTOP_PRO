@@ -24,7 +24,13 @@ From this repository in PowerShell:
 .\scripts\run-aws-lab-live-test.ps1
 ```
 
-The script signs in through Cognito, generates and uploads a synthetic lab image, waits through all five passes, proves that the AI synthesis marker is present, retries completion to prove idempotency, signs in again, and confirms the same result can be resumed from a fresh session.
+The script signs in through Cognito, generates and uploads a synthetic lab image, waits through all five passes, proves that the AI synthesis marker is present, retries completion to prove idempotency, signs in again, confirms the same result can be resumed from a fresh session, and deletes the job through the authenticated consumer API.
+
+## Deletion
+
+`DELETE /clinical-core/consumer/labs/jobs/{jobId}` is protected by the same consumer JWT authorizer as the rest of the lab API. The API verifies ownership without revealing whether another user's job exists, removes every version and delete marker under the job's source and artifact prefixes, and then removes the DynamoDB job record. Repeating the request is idempotent.
+
+Jobs in `awaiting_upload`, `completed`, `needs_review`, or `failed` can be deleted. Jobs actively moving through extraction or analysis return a conflict response and remain intact; the client must wait for a terminal state and try again. If cloud deletion fails, the mobile app keeps its local panel instead of showing a false success.
 
 The high-volume regression sends four synthetic table images containing 80 unique markers and requires all 80 to survive the real AWS workflow:
 
