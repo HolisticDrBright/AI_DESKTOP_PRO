@@ -27,11 +27,14 @@ describe("AWS lab OpenAI boundary", () => {
 
   test("builds a stored-false, tool-free structured Responses request", () => {
     const body = buildLabSynthesisRequest({ model: "gpt-5.1-2025-11-13", biomarkers: [marker], jobId: "job" });
-    expect(body).toMatchObject({ model: "gpt-5.1-2025-11-13", store: false, reasoning: { effort: "low" } });
+    expect(body).toMatchObject({ model: "gpt-5.1-2025-11-13", store: false, reasoning: { effort: "none" }, max_output_tokens: 6000 });
     expect(body.text.format).toMatchObject({ type: "json_schema", strict: true });
     expect(body).not.toHaveProperty("tools");
     expect(body).not.toHaveProperty("background");
     expect(JSON.stringify(body)).not.toMatch(/affiliate_url|commercial_link|patient_name/i);
+    expect(body.text.format.schema.properties.summary.maxLength).toBe(4000);
+    expect(body.text.format.schema.properties.priorityActions.maxItems).toBe(8);
+    expect(body.text.format.schema.properties.referencedBiomarkerIds.maxItems).toBe(40);
   });
 
   test("accepts a bounded synthesis that references only supplied markers", () => {

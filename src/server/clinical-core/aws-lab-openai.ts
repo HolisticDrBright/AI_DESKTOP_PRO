@@ -61,17 +61,17 @@ const LAB_SYNTHESIS_SCHEMA = {
   additionalProperties: false,
   required: ["summary", "uncertainty", "priorityActions", "referencedBiomarkerIds"],
   properties: {
-    summary: { type: "string", minLength: 1, maxLength: 8000 },
-    uncertainty: { type: "string", minLength: 1, maxLength: 2000 },
+    summary: { type: "string", minLength: 1, maxLength: 4000 },
+    uncertainty: { type: "string", minLength: 1, maxLength: 1000 },
     priorityActions: {
       type: "array",
-      maxItems: 12,
-      items: { type: "string", minLength: 1, maxLength: 500 },
+      maxItems: 8,
+      items: { type: "string", minLength: 1, maxLength: 350 },
     },
     referencedBiomarkerIds: {
       type: "array",
       minItems: 1,
-      maxItems: 200,
+      maxItems: 40,
       items: { type: "string" },
     },
   },
@@ -84,6 +84,7 @@ const SYSTEM_INSTRUCTION = [
   "Discuss cautious patterns, relationships, differential possibilities, and useful practitioner questions; do not diagnose.",
   "Do not recommend products, supplements, herbs, medications, peptides, doses, purchases, affiliate links, or treatment changes.",
   "Do not claim external research or citations. Reference only biomarkerId values supplied in the request.",
+  "Keep the draft concise. Cite only the most clinically relevant biomarkerId values, up to 40, rather than listing every supplied marker.",
   "Reply only with JSON matching the required schema.",
 ].join(" ");
 
@@ -139,7 +140,7 @@ export function buildLabSynthesisRequest(input: {
       },
     },
     store: false,
-    reasoning: { effort: "low" },
+    reasoning: { effort: "none" },
     max_output_tokens: 6000,
     metadata: {
       contract: "lab-analysis-openai/1",
@@ -186,11 +187,11 @@ export function parseLabSynthesisResponse(input: {
   const row = parsed as Record<string, unknown>;
   const keys = Object.keys(row).sort();
   if (keys.join("|") !== ["priorityActions", "referencedBiomarkerIds", "summary", "uncertainty"].sort().join("|")) throw new Error("openai_output_keys_refused");
-  if (typeof row.summary !== "string" || row.summary.length < 1 || row.summary.length > 8000) throw new Error("openai_summary_refused");
-  if (typeof row.uncertainty !== "string" || row.uncertainty.length < 1 || row.uncertainty.length > 2000) throw new Error("openai_uncertainty_refused");
-  if (!Array.isArray(row.priorityActions) || row.priorityActions.length > 12
-    || row.priorityActions.some((value) => typeof value !== "string" || value.length < 1 || value.length > 500)) throw new Error("openai_actions_refused");
-  if (!Array.isArray(row.referencedBiomarkerIds) || row.referencedBiomarkerIds.length < 1 || row.referencedBiomarkerIds.length > 200
+  if (typeof row.summary !== "string" || row.summary.length < 1 || row.summary.length > 4000) throw new Error("openai_summary_refused");
+  if (typeof row.uncertainty !== "string" || row.uncertainty.length < 1 || row.uncertainty.length > 1000) throw new Error("openai_uncertainty_refused");
+  if (!Array.isArray(row.priorityActions) || row.priorityActions.length > 8
+    || row.priorityActions.some((value) => typeof value !== "string" || value.length < 1 || value.length > 350)) throw new Error("openai_actions_refused");
+  if (!Array.isArray(row.referencedBiomarkerIds) || row.referencedBiomarkerIds.length < 1 || row.referencedBiomarkerIds.length > 40
     || row.referencedBiomarkerIds.some((value) => typeof value !== "string")) throw new Error("openai_biomarker_references_refused");
   if (row.referencedBiomarkerIds.some((value) => !input.allowedBiomarkerIds.has(value as string))) throw new Error("openai_unknown_biomarker_reference_refused");
   const combined = `${row.summary} ${row.uncertainty} ${(row.priorityActions as string[]).join(" ")}`;

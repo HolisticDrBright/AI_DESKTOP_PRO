@@ -12,7 +12,7 @@ The synthetic staging account exposes a test-only lab pipeline for AI Longevity 
 
 The first four passes use Textract table analysis plus deterministic normalization and range rules. They retain credible reported biomarker rows even when a biomarker is not in the governed functional-range catalog. A functional range is added only for an exact governed match; otherwise the reporting laboratory range is preserved without inventing one.
 
-The fifth pass sends only the normalized synthetic biomarker envelope to the pinned OpenAI Responses API model. It requests strict structured JSON with `store: false`, no tools, no web access, and no background processing. The response is rejected if it substitutes a model, cites a biomarker outside the supplied envelope, adds a commercial link, or gives a product, dose, or treatment directive. The result remains a draft for practitioner review and `recommendations` remains empty.
+The fifth pass sends only the normalized synthetic biomarker envelope to the pinned OpenAI Responses API model. It requests concise strict structured JSON with `store: false`, no tools, no web access, no background processing, and no reserved reasoning budget. Extraction retains every credible biomarker, while the narrative cites at most the 40 most relevant supplied biomarker IDs. The response is rejected if it is incomplete, substitutes a model, cites a biomarker outside the supplied envelope, adds a commercial link, or gives a product, dose, or treatment directive. The result remains a draft for practitioner review and `recommendations` remains empty.
 
 The API key is read by the worker from AWS Secrets Manager at runtime. It is not stored in the app, repository, CloudFormation parameters, logs, or result payloads.
 
