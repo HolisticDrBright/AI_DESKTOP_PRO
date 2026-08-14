@@ -9,12 +9,22 @@ $credentialPath = Join-Path $env:USERPROFILE ".ai-longevity-pro-synthetic-lab-te
 if (-not (Test-Path -LiteralPath $credentialPath)) { throw "Prepare the synthetic lab test account first." }
 $record = Get-Content -LiteralPath $credentialPath -Raw | ConvertFrom-Json
 $password = [System.Net.NetworkCredential]::new("", ($record.password | ConvertTo-SecureString)).Password
+$clientId = $record.client_id
+if (-not $clientId) {
+  $clientId = aws cloudformation describe-stacks `
+    --stack-name "ai-clinical-core-synthetic-staging" `
+    --profile $Profile `
+    --region $Region `
+    --query "Stacks[0].Outputs[?OutputKey=='ConsumerUserPoolClientId'].OutputValue | [0]" `
+    --output text
+  if ($LASTEXITCODE -ne 0 -or -not $clientId -or $clientId -eq "None") { throw "Synthetic Cognito client lookup failed." }
+}
 $temp = Join-Path $env:TEMP ("ai-lab-live-test-" + [guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Path $temp | Out-Null
 $authPath = Join-Path $temp "auth.json"
 $imagePath = Join-Path $temp "synthetic-functional-lab.png"
 try {
-  [ordered]@{ AuthFlow = "USER_PASSWORD_AUTH"; ClientId = $record.client_id; AuthParameters = @{ USERNAME = $record.email; PASSWORD = $password } } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $authPath -Encoding utf8NoBOM
+  [ordered]@{ AuthFlow = "USER_PASSWORD_AUTH"; ClientId = $clientId; AuthParameters = @{ USERNAME = $record.email; PASSWORD = $password } } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $authPath -Encoding utf8NoBOM
   $auth = aws cognito-idp initiate-auth --cli-input-json ("file://" + $authPath.Replace("\", "/")) --profile $Profile --region $Region --output json | ConvertFrom-Json
   if ($LASTEXITCODE -ne 0 -or -not $auth.AuthenticationResult.IdToken) { throw "Synthetic Cognito sign-in failed." }
   $token = $auth.AuthenticationResult.IdToken

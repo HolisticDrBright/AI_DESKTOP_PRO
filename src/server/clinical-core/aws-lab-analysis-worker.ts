@@ -3,9 +3,9 @@ import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { GetCommand, UpdateCommand, DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import { GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import {
-  DetectDocumentTextCommand,
-  GetDocumentTextDetectionCommand,
-  StartDocumentTextDetectionCommand,
+  AnalyzeDocumentCommand,
+  GetDocumentAnalysisCommand,
+  StartDocumentAnalysisCommand,
   TextractClient,
 } from "@aws-sdk/client-textract";
 
@@ -18,12 +18,24 @@ const UUID_NS = "ai-longevity-pro-synthetic-lab-v1";
 
 type StoredDocument = { clientDocumentId: string; contentType: string; objectKey: string };
 type Job = { pk: string; state: string; documents: StoredDocument[] };
-export type Extracted = { lines: Array<{ text: string; confidence: number; page: number | null; documentId: string }> };
+type ExtractedCell = { text: string; confidence: number; column: number };
+type ExtractedRow = { cells: ExtractedCell[]; page: number | null; documentId: string };
+export type Extracted = {
+  lines: Array<{ text: string; confidence: number; page: number | null; documentId: string }>;
+  tableRows?: ExtractedRow[];
+};
 export type Biomarker = {
   canonicalName: string; reportedName: string; value: number; unit: string;
-  labMin: number | null; labMax: number | null; functionalMin: number; functionalMax: number;
-  sourceId: string; sourceVersion: string; population: string; confidence: number;
+  labMin: number | null; labMax: number | null; functionalMin: number | null; functionalMax: number | null;
+  sourceId: string | null; sourceVersion: string | null; population: string | null; confidence: number;
   documentId: string; page: number | null;
+};
+
+type TextractBlock = {
+  Id?: string; BlockType?: string; Text?: string; Confidence?: number; Page?: number;
+  RowIndex?: number; ColumnIndex?: number;
+  Geometry?: { BoundingBox?: { Left?: number; Top?: number; Width?: number; Height?: number } };
+  Relationships?: Array<{ Type?: string; Ids?: string[] }>;
 };
 
 const RULES = [
@@ -60,13 +72,103 @@ async function readArtifact(jobId: string, name: string) {
 async function writeArtifact(jobId: string, name: string, value: unknown) {
   await s3.send(new PutObjectCommand({ Bucket: required("LAB_DOCUMENT_BUCKET"), Key: `synthetic-labs/artifacts/${jobId}/${name}.json`, Body: JSON.stringify(value), ContentType: "application/json", ServerSideEncryption: "aws:kms", SSEKMSKeyId: required("LAB_KMS_KEY_ARN") }));
 }
-async function extractDocument(document: StoredDocument): Promise<Extracted["lines"]> {
-  if (document.contentType !== "application/pdf") {
-    const response = await textract.send(new DetectDocumentTextCommand({ Document: { S3Object: { Bucket: required("LAB_DOCUMENT_BUCKET"), Name: document.objectKey } } }));
-    return (response.Blocks ?? []).filter((block) => block.BlockType === "LINE" && block.Text).map((block) => ({ text: block.Text!, confidence: block.Confidence ?? 0, page: block.Page ?? null, documentId: document.clientDocumentId }));
+function tableRowsFromBlocks(blocks: TextractBlock[], documentId: string): ExtractedRow[] {
+  const byId = new Map(blocks.filter((block) => block.Id).map((block) => [block.Id!, block]));
+  const rows: ExtractedRow[] = [];
+  const textForCell = (cell: TextractBlock) => (cell.Relationships ?? [])
+    .filter((relationship) => relationship.Type === "CHILD")
+    .flatMap((relationship) => relationship.Ids ?? [])
+    .map((id) => byId.get(id))
+    .filter((block): block is TextractBlock => Boolean(block))
+    .map((block) => block.BlockType === "SELECTION_ELEMENT" ? "selected" : block.Text ?? "")
+    .filter(Boolean)
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  for (const table of blocks.filter((block) => block.BlockType === "TABLE")) {
+    const cellIds = (table.Relationships ?? [])
+      .filter((relationship) => relationship.Type === "CHILD")
+      .flatMap((relationship) => relationship.Ids ?? []);
+    const grouped = new Map<number, ExtractedCell[]>();
+    for (const id of cellIds) {
+      const cell = byId.get(id);
+      if (!cell || cell.BlockType !== "CELL" || !cell.RowIndex || !cell.ColumnIndex) continue;
+      const text = textForCell(cell);
+      if (!text) continue;
+      const row = grouped.get(cell.RowIndex) ?? [];
+      row.push({ text, confidence: cell.Confidence ?? 0, column: cell.ColumnIndex });
+      grouped.set(cell.RowIndex, row);
+    }
+    for (const cells of grouped.values()) {
+      rows.push({ cells: cells.sort((a, b) => a.column - b.column), page: table.Page ?? null, documentId });
+    }
   }
-  const started = await textract.send(new StartDocumentTextDetectionCommand({
+  return rows;
+}
+
+function spatialRowsFromBlocks(blocks: TextractBlock[], documentId: string): ExtractedRow[] {
+  const lineBlocks = blocks
+    .filter((block) => block.BlockType === "LINE" && block.Text && block.Geometry?.BoundingBox)
+    .map((block) => ({
+      text: block.Text!,
+      confidence: block.Confidence ?? 0,
+      page: block.Page ?? null,
+      left: block.Geometry!.BoundingBox!.Left ?? 0,
+      top: block.Geometry!.BoundingBox!.Top ?? 0,
+      height: block.Geometry!.BoundingBox!.Height ?? 0,
+    }))
+    .sort((a, b) => (a.page ?? 0) - (b.page ?? 0) || a.top - b.top || a.left - b.left);
+  const groups: Array<{ page: number | null; center: number; height: number; lines: typeof lineBlocks }> = [];
+  for (const line of lineBlocks) {
+    const center = line.top + line.height / 2;
+    const prior = groups.at(-1);
+    const tolerance = Math.max(0.006, Math.min(0.02, Math.max(line.height, prior?.height ?? 0) * 0.65));
+    if (prior && prior.page === line.page && Math.abs(prior.center - center) <= tolerance) {
+      prior.lines.push(line);
+      prior.center = prior.lines.reduce((sum, item) => sum + item.top + item.height / 2, 0) / prior.lines.length;
+      prior.height = Math.max(prior.height, line.height);
+    } else {
+      groups.push({ page: line.page, center, height: line.height, lines: [line] });
+    }
+  }
+  return groups
+    .filter((group) => group.lines.length >= 2)
+    .map((group) => ({
+      page: group.page,
+      documentId,
+      cells: group.lines
+        .sort((a, b) => a.left - b.left)
+        .map((line, index) => ({ text: line.text, confidence: line.confidence, column: index + 1 })),
+    }));
+}
+
+function extractedFromBlocks(blocks: TextractBlock[], documentId: string): Extracted {
+  const tableRows = tableRowsFromBlocks(blocks, documentId);
+  const seen = new Set(tableRows.map((row) => `${row.page}|${row.cells.map((cell) => cell.text.toLowerCase()).join("|")}`));
+  for (const row of spatialRowsFromBlocks(blocks, documentId)) {
+    const key = `${row.page}|${row.cells.map((cell) => cell.text.toLowerCase()).join("|")}`;
+    if (!seen.has(key)) tableRows.push(row);
+  }
+  return {
+    lines: blocks
+      .filter((block) => block.BlockType === "LINE" && block.Text)
+      .map((block) => ({ text: block.Text!, confidence: block.Confidence ?? 0, page: block.Page ?? null, documentId })),
+    tableRows,
+  };
+}
+
+async function extractDocument(document: StoredDocument): Promise<Extracted> {
+  if (document.contentType !== "application/pdf") {
+    const response = await textract.send(new AnalyzeDocumentCommand({
+      Document: { S3Object: { Bucket: required("LAB_DOCUMENT_BUCKET"), Name: document.objectKey } },
+      FeatureTypes: ["TABLES"],
+    }));
+    return extractedFromBlocks(response.Blocks ?? [], document.clientDocumentId);
+  }
+  const started = await textract.send(new StartDocumentAnalysisCommand({
     DocumentLocation: { S3Object: { Bucket: required("LAB_DOCUMENT_BUCKET"), Name: document.objectKey } },
+    FeatureTypes: ["TABLES"],
     ClientRequestToken: createHash("sha256").update(document.objectKey).digest("hex").slice(0, 64),
     JobTag: "synthetic-lab",
   }));
@@ -74,24 +176,91 @@ async function extractDocument(document: StoredDocument): Promise<Extracted["lin
   for (let attempt = 0; attempt < 45; attempt += 1) {
     await new Promise((resolve) => setTimeout(resolve, attempt === 0 ? 500 : 2_000));
     let nextToken: string | undefined;
-    const lines: Extracted["lines"] = [];
+    const blocks: TextractBlock[] = [];
     do {
-      const response = await textract.send(new GetDocumentTextDetectionCommand({ JobId: started.JobId, NextToken: nextToken, MaxResults: 1000 }));
+      const response = await textract.send(new GetDocumentAnalysisCommand({ JobId: started.JobId, NextToken: nextToken, MaxResults: 1000 }));
       if (response.JobStatus === "FAILED") throw Object.assign(new Error("textract_failed"), { category: "document_unreadable" });
       if (response.JobStatus === "IN_PROGRESS") break;
-      for (const block of response.Blocks ?? []) if (block.BlockType === "LINE" && block.Text) lines.push({ text: block.Text, confidence: block.Confidence ?? 0, page: block.Page ?? null, documentId: document.clientDocumentId });
+      blocks.push(...(response.Blocks ?? []));
       nextToken = response.NextToken;
-      if (!nextToken) return lines;
+      if (!nextToken) return extractedFromBlocks(blocks, document.clientDocumentId);
     } while (nextToken);
   }
   throw Object.assign(new Error("textract_timeout"), { category: "provider_unavailable" });
 }
 function parseRange(line: string): { min: number | null; max: number | null } {
   const range = line.match(/(?:range|reference)?\s*[:=]?\s*(-?\d+(?:\.\d+)?)\s*[-–]\s*(-?\d+(?:\.\d+)?)/i);
-  return range ? { min: Number(range[1]), max: Number(range[2]) } : { min: null, max: null };
+  if (range) return { min: Number(range[1]), max: Number(range[2]) };
+  const upper = line.match(/(?:<|≤|less than)\s*(-?\d+(?:\.\d+)?)/i);
+  if (upper) return { min: null, max: Number(upper[1]) };
+  const lower = line.match(/(?:>|≥|greater than)\s*(-?\d+(?:\.\d+)?)/i);
+  return lower ? { min: Number(lower[1]), max: null } : { min: null, max: null };
 }
-export function normalizeExtractedLabLines(extracted: Extracted): Biomarker[] {
+
+const NON_ANALYTE_NAMES = /^(?:test|analyte|biomarker|result|results|value|units?|reference|reference range|range|status|flag|current|previous|date|patient|accession|specimen|service date)$/i;
+const IDENTIFIER_TEXT = /(?:date of birth|telephone|address|street|accession|patient id|medical record|mrn|service date|collection date|received date|reported date|laboratory director|phlebotomist)/i;
+const STRICT_NUMBER = /^(?:[HL]\s*)?(?:<=?|>=?|≤|≥)?\s*(-?\d+(?:\.\d+)?)(?:\s*[HL*])?$/i;
+
+function cleanAnalyteName(value: string): string {
+  return value.replace(/\s+/g, " ").replace(/[\s:;-]+$/, "").trim();
+}
+
+function unitFromName(value: string): string | null {
+  const matches = [...value.matchAll(/\(([^()]*)\)/g)];
+  const candidate = matches.at(-1)?.[1]?.trim();
+  return candidate && /[%/A-Za-zµμ]/.test(candidate) ? candidate.replace(/[μµ]/g, "u").toLowerCase() : null;
+}
+
+function matchingRule(value: string) {
+  const normalized = value.toLowerCase().replace(/[μµ]/g, "u");
+  return RULES.find((rule) => rule.aliases.some((alias) => new RegExp(`(^|\\b)${alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(\\b|$)`, "i").test(normalized)));
+}
+
+export function normalizeExtractedLabTables(extracted: Extracted): Biomarker[] {
   const output: Biomarker[] = [];
+  for (const row of extracted.tableRows ?? []) {
+    const cells = row.cells.filter((cell) => cell.text.trim());
+    if (cells.length < 2) continue;
+    const nameIndex = cells.findIndex((cell) => {
+      const name = cleanAnalyteName(cell.text);
+      return name.length >= 2 && name.length <= 180 && /[A-Za-z]/.test(name)
+        && !NON_ANALYTE_NAMES.test(name) && !IDENTIFIER_TEXT.test(name);
+    });
+    if (nameIndex < 0) continue;
+    const valueIndex = cells.findIndex((cell, index) => index > nameIndex && STRICT_NUMBER.test(cell.text.trim()));
+    if (valueIndex < 0) continue;
+    const valueMatch = cells[valueIndex].text.trim().match(STRICT_NUMBER);
+    if (!valueMatch) continue;
+
+    const reportedName = cleanAnalyteName(cells[nameIndex].text);
+    const rule = matchingRule(reportedName);
+    const rowTail = cells.slice(valueIndex + 1).map((cell) => cell.text).join(" ");
+    const range = parseRange(rowTail);
+    const rowText = cells.map((cell) => cell.text).join(" ").toLowerCase().replace(/[μµ]/g, "u");
+    const unit = unitFromName(reportedName)
+      ?? rule?.units.find((candidate) => rowText.includes(candidate.replace(/[μµ]/g, "u")))
+      ?? cells.slice(valueIndex + 1).map((cell) => cell.text.trim()).find((text) => /^[%A-Za-zµμ][%A-Za-z0-9µμ/^.-]{0,39}$/.test(text))?.replace(/[μµ]/g, "u").toLowerCase()
+      ?? "not reported";
+    const canonicalName = rule?.name ?? reportedName.replace(/\s*\([^()]*\)\s*$/, "").trim();
+    output.push({
+      canonicalName, reportedName, value: Number(valueMatch[1]), unit,
+      labMin: range.min, labMax: range.max,
+      functionalMin: rule?.min ?? null, functionalMax: rule?.max ?? null,
+      sourceId: rule ? stableUuid(`range:${rule.name}`) : null,
+      sourceVersion: rule ? "synthetic-functional-ranges/1" : null,
+      population: rule ? "Synthetic adult test fixture; practitioner verification required" : null,
+      confidence: Math.max(0, Math.min(1, Math.min(...cells.map((cell) => cell.confidence)) / 100)),
+      documentId: row.documentId, page: row.page,
+    });
+  }
+  return output.filter((row, index) => {
+    const key = `${row.canonicalName.toLowerCase()}|${row.unit.toLowerCase()}`;
+    return output.findIndex((candidate) => `${candidate.canonicalName.toLowerCase()}|${candidate.unit.toLowerCase()}` === key) === index;
+  });
+}
+
+export function normalizeExtractedLabLines(extracted: Extracted): Biomarker[] {
+  const output: Biomarker[] = normalizeExtractedLabTables(extracted);
   for (const line of extracted.lines) {
     const lower = line.text.toLowerCase().replace(/[μµ]/g, "u");
     for (const rule of RULES) {
@@ -113,14 +282,22 @@ export function functionalRangeStatus(value: number, min: number, max: number) {
   const span = Math.max(max - min, Math.abs(max), 1);
   return value < min - span || value > max + span ? "critical" : "suboptimal";
 }
+function reportedRangeStatus(value: number, min: number | null, max: number | null) {
+  if ((min === null || value >= min) && (max === null || value <= max)) return "normal";
+  const anchor = Math.max(Math.abs(min ?? 0), Math.abs(max ?? 0), 1);
+  return (min !== null && value < min - anchor) || (max !== null && value > max + anchor) ? "critical" : "suboptimal";
+}
 async function executePass(job: Job, pass: number): Promise<unknown | null> {
   const jobId = job.pk.slice(4);
   if (pass === 0) {
     const lines: Extracted["lines"] = [];
+    const tableRows: ExtractedRow[] = [];
     for (const document of job.documents) {
-      lines.push(...await extractDocument(document));
+      const extracted = await extractDocument(document);
+      lines.push(...extracted.lines);
+      tableRows.push(...(extracted.tableRows ?? []));
     }
-    await writeArtifact(jobId, "extracted", { lines });
+    await writeArtifact(jobId, "extracted", { lines, tableRows });
     return null;
   }
   if (pass === 1) {
@@ -138,7 +315,12 @@ async function executePass(job: Job, pass: number): Promise<unknown | null> {
   }
   if (pass === 3) {
     const { biomarkers } = await readArtifact(jobId, "normalized") as { biomarkers: Biomarker[] };
-    const interpreted = biomarkers.map((row) => ({ ...row, status: functionalRangeStatus(row.value, row.functionalMin, row.functionalMax) }));
+    const interpreted = biomarkers.map((row) => ({
+      ...row,
+      status: row.functionalMin !== null && row.functionalMax !== null
+        ? functionalRangeStatus(row.value, row.functionalMin, row.functionalMax)
+        : reportedRangeStatus(row.value, row.labMin, row.labMax),
+    }));
     await writeArtifact(jobId, "interpreted", { biomarkers: interpreted });
     return null;
   }
@@ -147,11 +329,11 @@ async function executePass(job: Job, pass: number): Promise<unknown | null> {
   const generatedAt = new Date().toISOString();
   const result = {
     analysisId: randomUUID(), reviewState: "draft_for_practitioner_review", generatedAt,
-    summary: flagged.length ? `${flagged.length} of ${biomarkers.length} supported biomarker(s) fall outside the synthetic functional ranges. This is a test interpretation and requires practitioner review.` : `All ${biomarkers.length} supported biomarker(s) fall within the synthetic functional ranges. This is a test interpretation and requires practitioner review.`,
-    biomarkers: biomarkers.map((row) => ({ biomarkerId: stableUuid(`biomarker:${row.canonicalName}`), canonicalName: row.canonicalName, reportedName: row.reportedName, value: row.value, unit: row.unit, labReferenceRange: { min: row.labMin, max: row.labMax, rawText: row.labMin === null && row.labMax === null ? "Not reported or not reliably extracted" : `${row.labMin ?? ""}-${row.labMax ?? ""}` }, functionalRange: { min: row.functionalMin, max: row.functionalMax, sourceId: row.sourceId, sourceVersion: row.sourceVersion, population: row.population }, status: row.status, extractionConfidence: row.confidence, verificationState: row.confidence >= 0.8 ? "independently_verified" : "needs_human_review", sourceDocumentId: row.documentId, sourcePage: row.page })),
+    summary: `${biomarkers.length} reported biomarker(s) were retained. ${flagged.length} fall outside an available governed functional range or the reporting laboratory range. Markers without a governed functional range are not given one. This test interpretation requires practitioner review.`,
+    biomarkers: biomarkers.map((row) => ({ biomarkerId: stableUuid(`biomarker:${row.canonicalName}:${row.unit}`), canonicalName: row.canonicalName, reportedName: row.reportedName, value: row.value, unit: row.unit, labReferenceRange: { min: row.labMin, max: row.labMax, rawText: row.labMin === null && row.labMax === null ? "Not reported or not reliably extracted" : `${row.labMin ?? ""}-${row.labMax ?? ""}` }, functionalRange: row.functionalMin !== null && row.functionalMax !== null && row.sourceId && row.sourceVersion && row.population ? { min: row.functionalMin, max: row.functionalMax, sourceId: row.sourceId, sourceVersion: row.sourceVersion, population: row.population } : null, status: row.status, extractionConfidence: row.confidence, verificationState: row.confidence >= 0.8 ? "independently_verified" : "needs_human_review", sourceDocumentId: row.documentId, sourcePage: row.page })),
     recommendations: [],
     priorityActions: flagged.map((row) => `Review ${row.canonicalName} (${row.value} ${row.unit}) with a qualified practitioner before changing treatment.`).slice(0, 12),
-    citations: biomarkers.map((row) => ({ sourceId: row.sourceId, sourceVersion: row.sourceVersion, claimIds: [] })).filter((row, index, all) => all.findIndex((candidate) => candidate.sourceId === row.sourceId) === index),
+    citations: biomarkers.filter((row) => row.sourceId && row.sourceVersion).map((row) => ({ sourceId: row.sourceId!, sourceVersion: row.sourceVersion!, claimIds: [] })).filter((row, index, all) => all.findIndex((candidate) => candidate.sourceId === row.sourceId) === index),
   };
   await writeArtifact(jobId, "result", result);
   return result;

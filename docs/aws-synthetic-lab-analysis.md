@@ -10,7 +10,7 @@ The synthetic staging account exposes a test-only lab pipeline for AI Longevity 
 4. Step Functions runs five durable passes: extract, verify, normalize, interpret, and synthesize.
 5. DynamoDB stores the resumable job and a draft result for practitioner review.
 
-The first test engine uses Textract plus deterministic functional-range rules. It makes no OpenAI request and emits no product recommendation.
+The test engine uses Textract table analysis plus deterministic range rules. It retains credible reported biomarker rows even when a biomarker is not in the governed functional-range catalog. A functional range is added only for an exact governed match; otherwise the reporting laboratory range is preserved without inventing a functional range. It makes no OpenAI request and emits no product recommendation.
 
 ## Live synthetic acceptance
 
@@ -21,6 +21,14 @@ From this repository in PowerShell:
 ```
 
 The script signs in through Cognito, generates and uploads a synthetic lab image, waits through all five passes, retries completion to prove idempotency, signs in again, and confirms the same result can be resumed from a fresh session.
+
+The high-volume regression sends four synthetic table images containing 80 unique markers and requires all 80 to survive the real AWS workflow:
+
+```powershell
+.\scripts\run-aws-lab-80-marker-test.ps1
+```
+
+Both tests use generated synthetic records only. Never use a real patient report in this stack, even if the AWS account has a BAA; the deployed resources are explicitly tagged and constrained as `synthetic_only` with `PhiAllowed=false`.
 
 ## Test account
 

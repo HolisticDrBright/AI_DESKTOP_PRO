@@ -96,7 +96,7 @@
         "Policies": [
           { "PolicyName": "LabWorkerLedger", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": ["dynamodb:GetItem", "dynamodb:UpdateItem"], "Resource": { "Fn::GetAtt": ["LabJobTable", "Arn"] } }, { "Effect": "Allow", "Action": ["kms:Decrypt", "kms:GenerateDataKey"], "Resource": { "Ref": "ClinicalCoreKeyArn" } }] } },
           { "PolicyName": "LabWorkerDocuments", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": ["s3:GetObject", "s3:PutObject"], "Resource": { "Fn::Sub": "${LabDocumentsBucket.Arn}/synthetic-labs/*" } }, { "Effect": "Allow", "Action": ["kms:Decrypt", "kms:GenerateDataKey"], "Resource": { "Ref": "ClinicalCoreKeyArn" } }] } },
-          { "PolicyName": "LabWorkerTextract", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": ["textract:DetectDocumentText", "textract:StartDocumentTextDetection", "textract:GetDocumentTextDetection"], "Resource": "*" }] } },
+          { "PolicyName": "LabWorkerTextract", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": ["textract:AnalyzeDocument", "textract:StartDocumentAnalysis", "textract:GetDocumentAnalysis"], "Resource": "*" }] } },
           { "PolicyName": "LabWorkerLogs", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": ["logs:CreateLogStream", "logs:PutLogEvents"], "Resource": { "Fn::GetAtt": ["LabWorkerLogGroup", "Arn"] } }] } }
         ]
       }
