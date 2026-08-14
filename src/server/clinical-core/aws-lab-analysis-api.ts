@@ -102,6 +102,18 @@ function safeDocument(value: unknown): DocumentInput {
   return row as DocumentInput;
 }
 
+export function sanitizeStoredResult(result: unknown): unknown {
+  if (!result || typeof result !== "object" || Array.isArray(result)) return result;
+  const row = result as Record<string, unknown>;
+  if (!Array.isArray(row.biomarkers)) return result;
+  const biomarkers = row.biomarkers.filter((candidate) => {
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return true;
+    const canonicalName = (candidate as Record<string, unknown>).canonicalName;
+    return typeof canonicalName !== "string" || canonicalName.trim().length > 0;
+  });
+  return biomarkers.length === row.biomarkers.length ? result : { ...row, biomarkers };
+}
+
 function status(job: Job) {
   return {
     contractVersion: CONTRACT_VERSION,
@@ -113,7 +125,7 @@ function status(job: Job) {
     attempt: job.attempt,
     updatedAt: job.updatedAt,
     failureCategory: job.failureCategory,
-    result: job.result,
+    result: sanitizeStoredResult(job.result),
   };
 }
 
