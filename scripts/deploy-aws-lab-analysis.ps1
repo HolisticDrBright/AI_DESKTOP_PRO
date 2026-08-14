@@ -30,6 +30,8 @@ $workerDigest = (Get-FileHash -Algorithm SHA256 -LiteralPath $workerZip).Hash.To
 $apiKey = "clinical-core/lab-analysis/api-$apiDigest.zip"
 $workerKey = "clinical-core/lab-analysis/worker-$workerDigest.zip"
 $kmsKey = Output "ClinicalCoreKeyArn"
+$openAiSecretArn = aws secretsmanager describe-secret --secret-id "ai-longevity-pro/synthetic-staging/openai" --profile $Profile --region $Region --query ARN --output text
+if ($LASTEXITCODE -ne 0 -or -not $openAiSecretArn -or $openAiSecretArn -eq "None") { throw "OpenAI secret lookup failed." }
 aws s3 cp $apiZip "s3://$ArtifactBucket/$apiKey" --profile $Profile --region $Region --only-show-errors --sse aws:kms --sse-kms-key-id $kmsKey
 if ($LASTEXITCODE -ne 0) { throw "API artifact upload failed." }
 aws s3 cp $workerZip "s3://$ArtifactBucket/$workerKey" --profile $Profile --region $Region --only-show-errors --sse aws:kms --sse-kms-key-id $kmsKey
@@ -42,7 +44,9 @@ aws cloudformation deploy --stack-name $StackName --template-file "infra/aws-cli
   "ClinicalCoreKeyArn=$kmsKey" `
   "LambdaCodeBucket=$ArtifactBucket" `
   "ApiCodeKey=$apiKey" `
-  "WorkerCodeKey=$workerKey"
+  "WorkerCodeKey=$workerKey" `
+  "OpenAISecretArn=$openAiSecretArn" `
+  "OpenAIModel=gpt-5.1-2025-11-13"
 if ($LASTEXITCODE -ne 0) { throw "Lab analysis stack deployment failed." }
 
 Write-Host "Synthetic AWS lab analysis deployed. No credential or document content was printed."

@@ -69,7 +69,7 @@ try {
   } while ($state -notin @("completed", "needs_review", "failed") -and (Get-Date) -lt $deadline)
   if ($state -ne "completed") { throw "Synthetic lab analysis ended in state $state." }
   $result = $current.data.result
-  if ($current.data.passesCompleted -ne 5 -or $current.data.progressPercent -ne 100 -or $result.biomarkers.Count -lt 8 -or $result.recommendations.Count -ne 0) { throw "Synthetic lab result failed acceptance checks." }
+  if ($current.data.passesCompleted -ne 5 -or $current.data.progressPercent -ne 100 -or $result.biomarkers.Count -lt 8 -or $result.recommendations.Count -ne 0 -or -not $result.summary.StartsWith("AI-assisted functional-medicine draft for practitioner review.")) { throw "Synthetic lab result failed acceptance checks." }
 
   $idempotent = Invoke-RestMethod -Method Post -Uri "$ApiOrigin/clinical-core/consumer/labs/jobs/$($created.data.jobId)/complete-upload" -Headers $headers -ContentType "application/json" -Body $completeBody
   if ($idempotent.data.state -ne "completed") { throw "Completed upload retry was not idempotent." }
@@ -80,7 +80,7 @@ try {
   $resumed = Invoke-RestMethod -Method Get -Uri "$ApiOrigin/clinical-core/consumer/labs/jobs/$($created.data.jobId)" -Headers $freshHeaders
   if ($resumed.data.state -ne "completed" -or $resumed.data.result.analysisId -ne $result.analysisId) { throw "A fresh session could not resume the persisted result." }
 
-  [pscustomobject]@{ Contract = $current.data.contractVersion; State = $state; Passes = $current.data.passesCompleted; Biomarkers = $result.biomarkers.Count; Recommendations = $result.recommendations.Count; ReviewState = $result.reviewState; IdempotentRetry = $true; FreshSessionResume = $true } | Format-List
+  [pscustomobject]@{ Contract = $current.data.contractVersion; State = $state; Passes = $current.data.passesCompleted; Biomarkers = $result.biomarkers.Count; AiSynthesis = $true; Recommendations = $result.recommendations.Count; ReviewState = $result.reviewState; IdempotentRetry = $true; FreshSessionResume = $true } | Format-List
 } finally {
   Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue
 }

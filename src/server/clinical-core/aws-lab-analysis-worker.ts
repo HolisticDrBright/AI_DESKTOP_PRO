@@ -8,6 +8,7 @@ import {
   StartDocumentAnalysisCommand,
   TextractClient,
 } from "@aws-sdk/client-textract";
+import { synthesizeLabWithOpenAI } from "./aws-lab-openai";
 
 const db = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const s3 = new S3Client({});
@@ -327,14 +328,43 @@ async function executePass(job: Job, pass: number): Promise<unknown | null> {
   const { biomarkers } = await readArtifact(jobId, "interpreted") as { biomarkers: Array<Biomarker & { status: string }> };
   const flagged = biomarkers.filter((row) => row.status !== "optimal");
   const generatedAt = new Date().toISOString();
+  const resultBiomarkers = biomarkers.map((row) => ({
+    biomarkerId: stableUuid(`biomarker:${row.canonicalName}:${row.unit}`),
+    canonicalName: row.canonicalName,
+    reportedName: row.reportedName,
+    value: row.value,
+    unit: row.unit,
+    labReferenceRange: { min: row.labMin, max: row.labMax, rawText: row.labMin === null && row.labMax === null ? "Not reported or not reliably extracted" : `${row.labMin ?? ""}-${row.labMax ?? ""}` },
+    functionalRange: row.functionalMin !== null && row.functionalMax !== null && row.sourceId && row.sourceVersion && row.population ? { min: row.functionalMin, max: row.functionalMax, sourceId: row.sourceId, sourceVersion: row.sourceVersion, population: row.population } : null,
+    status: row.status,
+    extractionConfidence: row.confidence,
+    verificationState: row.confidence >= 0.8 ? "independently_verified" : "needs_human_review",
+    sourceDocumentId: row.documentId,
+    sourcePage: row.page,
+  }));
+  const aiSynthesis = await synthesizeLabWithOpenAI({
+    jobId,
+    biomarkers: resultBiomarkers.map((row) => ({
+      biomarkerId: row.biomarkerId,
+      canonicalName: row.canonicalName,
+      value: row.value,
+      unit: row.unit,
+      labMin: row.labReferenceRange.min,
+      labMax: row.labReferenceRange.max,
+      functionalMin: row.functionalRange?.min ?? null,
+      functionalMax: row.functionalRange?.max ?? null,
+      status: row.status,
+    })),
+  });
   const result = {
     analysisId: randomUUID(), reviewState: "draft_for_practitioner_review", generatedAt,
-    summary: `${biomarkers.length} reported biomarker(s) were retained. ${flagged.length} fall outside an available governed functional range or the reporting laboratory range. Markers without a governed functional range are not given one. This test interpretation requires practitioner review.`,
-    biomarkers: biomarkers.map((row) => ({ biomarkerId: stableUuid(`biomarker:${row.canonicalName}:${row.unit}`), canonicalName: row.canonicalName, reportedName: row.reportedName, value: row.value, unit: row.unit, labReferenceRange: { min: row.labMin, max: row.labMax, rawText: row.labMin === null && row.labMax === null ? "Not reported or not reliably extracted" : `${row.labMin ?? ""}-${row.labMax ?? ""}` }, functionalRange: row.functionalMin !== null && row.functionalMax !== null && row.sourceId && row.sourceVersion && row.population ? { min: row.functionalMin, max: row.functionalMax, sourceId: row.sourceId, sourceVersion: row.sourceVersion, population: row.population } : null, status: row.status, extractionConfidence: row.confidence, verificationState: row.confidence >= 0.8 ? "independently_verified" : "needs_human_review", sourceDocumentId: row.documentId, sourcePage: row.page })),
+    summary: `AI-assisted functional-medicine draft for practitioner review. ${biomarkers.length} reported biomarker(s) were retained; ${flagged.length} are outside an available governed functional range or reporting laboratory range. ${aiSynthesis.summary} Uncertainty: ${aiSynthesis.uncertainty}`,
+    biomarkers: resultBiomarkers,
     recommendations: [],
-    priorityActions: flagged.map((row) => `Review ${row.canonicalName} (${row.value} ${row.unit}) with a qualified practitioner before changing treatment.`).slice(0, 12),
+    priorityActions: aiSynthesis.priorityActions,
     citations: biomarkers.filter((row) => row.sourceId && row.sourceVersion).map((row) => ({ sourceId: row.sourceId!, sourceVersion: row.sourceVersion!, claimIds: [] })).filter((row, index, all) => all.findIndex((candidate) => candidate.sourceId === row.sourceId) === index),
   };
+  await writeArtifact(jobId, "ai-synthesis", { ...aiSynthesis, referencedBiomarkerIds: aiSynthesis.referencedBiomarkerIds });
   await writeArtifact(jobId, "result", result);
   return result;
 }

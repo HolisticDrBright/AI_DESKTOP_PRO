@@ -17,7 +17,9 @@
     "ClinicalCoreKeyArn": { "Type": "String", "AllowedPattern": "^arn:(aws|aws-us-gov|aws-cn):kms:[a-z0-9-]+:[0-9]{12}:key/[0-9a-f-]{36}$" },
     "LambdaCodeBucket": { "Type": "String", "AllowedPattern": "^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$" },
     "ApiCodeKey": { "Type": "String", "AllowedPattern": "^[A-Za-z0-9!_.*'()/\\-]{1,1024}$" },
-    "WorkerCodeKey": { "Type": "String", "AllowedPattern": "^[A-Za-z0-9!_.*'()/\\-]{1,1024}$" }
+    "WorkerCodeKey": { "Type": "String", "AllowedPattern": "^[A-Za-z0-9!_.*'()/\\-]{1,1024}$" },
+    "OpenAISecretArn": { "Type": "String", "AllowedPattern": "^arn:(aws|aws-us-gov|aws-cn):secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+$" },
+    "OpenAIModel": { "Type": "String", "Default": "gpt-5.1-2025-11-13", "AllowedValues": ["gpt-5.1-2025-11-13"] }
   },
   "Resources": {
     "LabJobTable": {
@@ -97,6 +99,7 @@
           { "PolicyName": "LabWorkerLedger", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": ["dynamodb:GetItem", "dynamodb:UpdateItem"], "Resource": { "Fn::GetAtt": ["LabJobTable", "Arn"] } }, { "Effect": "Allow", "Action": ["kms:Decrypt", "kms:GenerateDataKey"], "Resource": { "Ref": "ClinicalCoreKeyArn" } }] } },
           { "PolicyName": "LabWorkerDocuments", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": ["s3:GetObject", "s3:PutObject"], "Resource": { "Fn::Sub": "${LabDocumentsBucket.Arn}/synthetic-labs/*" } }, { "Effect": "Allow", "Action": ["kms:Decrypt", "kms:GenerateDataKey"], "Resource": { "Ref": "ClinicalCoreKeyArn" } }] } },
           { "PolicyName": "LabWorkerTextract", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": ["textract:AnalyzeDocument", "textract:StartDocumentAnalysis", "textract:GetDocumentAnalysis"], "Resource": "*" }] } },
+          { "PolicyName": "LabWorkerOpenAISecret", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": "secretsmanager:GetSecretValue", "Resource": { "Ref": "OpenAISecretArn" } }] } },
           { "PolicyName": "LabWorkerLogs", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": ["logs:CreateLogStream", "logs:PutLogEvents"], "Resource": { "Fn::GetAtt": ["LabWorkerLogGroup", "Arn"] } }] } }
         ]
       }
@@ -115,10 +118,10 @@
       "Type": "AWS::Lambda::Function",
       "Properties": {
         "FunctionName": { "Fn::Sub": "${ClinicalApiId}-synthetic-lab-worker" },
-        "Runtime": "nodejs22.x", "Architectures": ["arm64"], "Handler": "index.handler", "Role": { "Fn::GetAtt": ["LabWorkerRole", "Arn"] }, "MemorySize": 1024, "Timeout": 120,
+        "Runtime": "nodejs22.x", "Architectures": ["arm64"], "Handler": "index.handler", "Role": { "Fn::GetAtt": ["LabWorkerRole", "Arn"] }, "MemorySize": 1024, "Timeout": 300,
         "LoggingConfig": { "LogGroup": { "Ref": "LabWorkerLogGroup" }, "LogFormat": "JSON", "ApplicationLogLevel": "ERROR", "SystemLogLevel": "WARN" },
         "Code": { "S3Bucket": { "Ref": "LambdaCodeBucket" }, "S3Key": { "Ref": "WorkerCodeKey" } },
-        "Environment": { "Variables": { "LAB_JOB_TABLE": { "Ref": "LabJobTable" }, "LAB_DOCUMENT_BUCKET": { "Ref": "LabDocumentsBucket" }, "LAB_KMS_KEY_ARN": { "Ref": "ClinicalCoreKeyArn" } } }
+        "Environment": { "Variables": { "LAB_JOB_TABLE": { "Ref": "LabJobTable" }, "LAB_DOCUMENT_BUCKET": { "Ref": "LabDocumentsBucket" }, "LAB_KMS_KEY_ARN": { "Ref": "ClinicalCoreKeyArn" }, "LAB_OPENAI_SECRET_ARN": { "Ref": "OpenAISecretArn" }, "LAB_OPENAI_MODEL": { "Ref": "OpenAIModel" } } }
       }
     },
     "LabStateMachineRole": {

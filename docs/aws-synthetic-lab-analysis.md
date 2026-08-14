@@ -10,7 +10,11 @@ The synthetic staging account exposes a test-only lab pipeline for AI Longevity 
 4. Step Functions runs five durable passes: extract, verify, normalize, interpret, and synthesize.
 5. DynamoDB stores the resumable job and a draft result for practitioner review.
 
-The test engine uses Textract table analysis plus deterministic range rules. It retains credible reported biomarker rows even when a biomarker is not in the governed functional-range catalog. A functional range is added only for an exact governed match; otherwise the reporting laboratory range is preserved without inventing a functional range. It makes no OpenAI request and emits no product recommendation.
+The first four passes use Textract table analysis plus deterministic normalization and range rules. They retain credible reported biomarker rows even when a biomarker is not in the governed functional-range catalog. A functional range is added only for an exact governed match; otherwise the reporting laboratory range is preserved without inventing one.
+
+The fifth pass sends only the normalized synthetic biomarker envelope to the pinned OpenAI Responses API model. It requests strict structured JSON with `store: false`, no tools, no web access, and no background processing. The response is rejected if it substitutes a model, cites a biomarker outside the supplied envelope, adds a commercial link, or gives a product, dose, or treatment directive. The result remains a draft for practitioner review and `recommendations` remains empty.
+
+The API key is read by the worker from AWS Secrets Manager at runtime. It is not stored in the app, repository, CloudFormation parameters, logs, or result payloads.
 
 ## Live synthetic acceptance
 
@@ -20,7 +24,7 @@ From this repository in PowerShell:
 .\scripts\run-aws-lab-live-test.ps1
 ```
 
-The script signs in through Cognito, generates and uploads a synthetic lab image, waits through all five passes, retries completion to prove idempotency, signs in again, and confirms the same result can be resumed from a fresh session.
+The script signs in through Cognito, generates and uploads a synthetic lab image, waits through all five passes, proves that the AI synthesis marker is present, retries completion to prove idempotency, signs in again, and confirms the same result can be resumed from a fresh session.
 
 The high-volume regression sends four synthetic table images containing 80 unique markers and requires all 80 to survive the real AWS workflow:
 
@@ -29,6 +33,12 @@ The high-volume regression sends four synthetic table images containing 80 uniqu
 ```
 
 Both tests use generated synthetic records only. Never use a real patient report in this stack, even if the AWS account has a BAA; the deployed resources are explicitly tagged and constrained as `synthetic_only` with `PhiAllowed=false`.
+
+Verified on 2026-08-14 against the deployed synthetic stack:
+
+- the standard panel completed all five passes with 11 retained biomarkers and a persisted AI synthesis;
+- the high-volume panel retained 80 of 80 unique biomarkers and completed AI synthesis;
+- both returned zero product recommendations and remained `draft_for_practitioner_review`.
 
 ## Test account
 

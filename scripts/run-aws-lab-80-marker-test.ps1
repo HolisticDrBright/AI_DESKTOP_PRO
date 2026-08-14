@@ -103,7 +103,7 @@ try {
   if ($state -ne "completed") { throw "Synthetic 80-marker analysis ended in state $state." }
   $result = $current.data.result
   $uniqueNames = @($result.biomarkers.canonicalName | Sort-Object -Unique)
-  if ($current.data.passesCompleted -ne 5 -or $result.biomarkers.Count -ne 80 -or $uniqueNames.Count -ne 80 -or $result.recommendations.Count -ne 0) {
+  if ($current.data.passesCompleted -ne 5 -or $result.biomarkers.Count -ne 80 -or $uniqueNames.Count -ne 80 -or $result.recommendations.Count -ne 0 -or -not $result.summary.StartsWith("AI-assisted functional-medicine draft for practitioner review.")) {
     throw "Synthetic 80-marker result failed completeness checks: returned $($result.biomarkers.Count) marker(s), $($uniqueNames.Count) unique."
   }
   [pscustomobject]@{
@@ -113,6 +113,7 @@ try {
     SourceMarkers = 80
     ReturnedBiomarkers = $result.biomarkers.Count
     UniqueBiomarkers = $uniqueNames.Count
+    AiSynthesis = $true
     Recommendations = $result.recommendations.Count
     ReviewState = $result.reviewState
   } | Format-List
