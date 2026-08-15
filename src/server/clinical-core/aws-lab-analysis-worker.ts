@@ -9,6 +9,7 @@ import {
   TextractClient,
 } from "@aws-sdk/client-textract";
 import { synthesizeLabWithOpenAI } from "./aws-lab-openai";
+import type { PatientContext } from "./aws-lab-analysis-api";
 
 const db = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const s3 = new S3Client({});
@@ -18,7 +19,7 @@ const PASS_PROGRESS = [20, 40, 60, 80, 95];
 const UUID_NS = "ai-longevity-pro-synthetic-lab-v1";
 
 type StoredDocument = { clientDocumentId: string; contentType: string; objectKey: string };
-type Job = { pk: string; state: string; documents: StoredDocument[] };
+type Job = { pk: string; state: string; documents: StoredDocument[]; patientContext?: PatientContext };
 type ExtractedCell = { text: string; confidence: number; column: number };
 type ExtractedRow = { cells: ExtractedCell[]; page: number | null; documentId: string };
 export type Extracted = {
@@ -347,6 +348,7 @@ async function executePass(job: Job, pass: number): Promise<unknown | null> {
   }));
   const aiSynthesis = await synthesizeLabWithOpenAI({
     jobId,
+    patientContext: job.patientContext,
     biomarkers: resultBiomarkers.map((row) => ({
       biomarkerId: row.biomarkerId,
       canonicalName: row.canonicalName,

@@ -25,6 +25,21 @@ type DocumentInput = {
   byteSize: number;
 };
 
+export type PatientContext = {
+  ageYears: number | null;
+  sex: "male" | "female" | "other";
+  pregnancyStatus: "not_pregnant" | "pregnant" | "unsure" | "not_applicable";
+  nursing: boolean;
+  mainComplaint: string | null;
+  complaintDuration: string | null;
+  complaintSeverity: number | null;
+  conditions: string[];
+  medications: string[];
+  allergies: string[];
+  topSymptomSignals: Array<{ categoryId: string; percentage: number }>;
+  lifestyle: { sleepHours: number; sleepQuality: number; stressLevel: number; dietType: string; exerciseFrequency: number };
+};
+
 type Job = {
   pk: string;
   ownerSub: string;
@@ -39,6 +54,7 @@ type Job = {
   expiresAt: number;
   documents: Array<DocumentInput & { objectKey: string }>;
   panelId?: string;
+  patientContext?: PatientContext;
   failureCategory: string | null;
   result: unknown | null;
 };
@@ -100,6 +116,42 @@ function safeDocument(value: unknown): DocumentInput {
     throw new Error("document_invalid");
   }
   return row as DocumentInput;
+}
+
+function safePatientContext(value: unknown): PatientContext | undefined {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("patient_context_invalid");
+  const row = value as Record<string, unknown>;
+  const expectedKeys = ["ageYears", "sex", "pregnancyStatus", "nursing", "mainComplaint", "complaintDuration", "complaintSeverity", "conditions", "medications", "allergies", "topSymptomSignals", "lifestyle"];
+  if (Object.keys(row).some((key) => !expectedKeys.includes(key))) throw new Error("patient_context_invalid");
+  const textOrNull = (candidate: unknown, max: number) => candidate === null
+    || (typeof candidate === "string" && candidate.trim().length >= 1 && candidate.length <= max);
+  const stringList = (candidate: unknown) => Array.isArray(candidate) && candidate.length <= 24
+    && candidate.every((item) => typeof item === "string" && item.trim().length >= 1 && item.length <= 160);
+  const signals = row.topSymptomSignals;
+  const lifestyle = row.lifestyle as Record<string, unknown> | undefined;
+  if (!(row.ageYears === null || (Number.isInteger(row.ageYears) && Number(row.ageYears) >= 0 && Number(row.ageYears) <= 125))
+    || !["male", "female", "other"].includes(String(row.sex))
+    || !["not_pregnant", "pregnant", "unsure", "not_applicable"].includes(String(row.pregnancyStatus))
+    || typeof row.nursing !== "boolean"
+    || !textOrNull(row.mainComplaint, 500) || !textOrNull(row.complaintDuration, 120)
+    || !(row.complaintSeverity === null || (Number.isInteger(row.complaintSeverity) && Number(row.complaintSeverity) >= 1 && Number(row.complaintSeverity) <= 10))
+    || !stringList(row.conditions) || !stringList(row.medications) || !stringList(row.allergies)
+    || !Array.isArray(signals) || signals.length > 8 || signals.some((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) return true;
+      const signal = item as Record<string, unknown>;
+      return typeof signal.categoryId !== "string" || signal.categoryId.length < 1 || signal.categoryId.length > 80
+        || !Number.isInteger(signal.percentage) || Number(signal.percentage) < 0 || Number(signal.percentage) > 100;
+    })
+    || !lifestyle || Array.isArray(lifestyle)
+    || typeof lifestyle.sleepHours !== "number" || lifestyle.sleepHours < 0 || lifestyle.sleepHours > 24
+    || typeof lifestyle.sleepQuality !== "number" || lifestyle.sleepQuality < 0 || lifestyle.sleepQuality > 10
+    || typeof lifestyle.stressLevel !== "number" || lifestyle.stressLevel < 0 || lifestyle.stressLevel > 10
+    || typeof lifestyle.dietType !== "string" || !["omnivore", "vegetarian", "vegan", "keto", "paleo", "mediterranean", "other"].includes(lifestyle.dietType)
+    || typeof lifestyle.exerciseFrequency !== "number" || lifestyle.exerciseFrequency < 0 || lifestyle.exerciseFrequency > 14) {
+    throw new Error("patient_context_invalid");
+  }
+  return row as PatientContext;
 }
 
 export function sanitizeStoredResult(result: unknown): unknown {
@@ -186,6 +238,7 @@ async function createJob(event: ApiEvent, identity: Claims) {
     return refusal();
   }
   const documents = input.documents.map(safeDocument);
+  const patientContext = safePatientContext(input.patientContext);
   if (new Set(documents.map((row) => row.clientDocumentId)).size !== documents.length) return refusal();
   const jobId = randomUUID();
   const now = new Date().toISOString();
@@ -209,6 +262,7 @@ async function createJob(event: ApiEvent, identity: Claims) {
     expiresAt: Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60,
     documents: stored,
     ...(typeof input.panelId === "string" && input.panelId.length <= 160 ? { panelId: input.panelId } : {}),
+    ...(patientContext ? { patientContext } : {}),
     failureCategory: null,
     result: null,
   };

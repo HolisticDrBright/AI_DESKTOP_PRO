@@ -26,12 +26,22 @@ describe("AWS lab OpenAI boundary", () => {
   });
 
   test("builds a stored-false, tool-free structured Responses request", () => {
-    const body = buildLabSynthesisRequest({ model: "gpt-5.1-2025-11-13", biomarkers: [marker], jobId: "job" });
+    const body = buildLabSynthesisRequest({
+      model: "gpt-5.1-2025-11-13", biomarkers: [marker], jobId: "job",
+      patientContext: {
+        ageYears: 41, sex: "female", pregnancyStatus: "unsure", nursing: false,
+        mainComplaint: "Synthetic fatigue", complaintDuration: "6 months", complaintSeverity: 7,
+        conditions: [], medications: ["Synthetic medication"], allergies: [], topSymptomSignals: [],
+        lifestyle: { sleepHours: 6.5, sleepQuality: 5, stressLevel: 7, dietType: "omnivore", exerciseFrequency: 2 },
+      },
+    });
     expect(body).toMatchObject({ model: "gpt-5.1-2025-11-13", store: false, reasoning: { effort: "none" }, max_output_tokens: 6000 });
     expect(body.text.format).toMatchObject({ type: "json_schema", strict: true });
     expect(body).not.toHaveProperty("tools");
     expect(body).not.toHaveProperty("background");
     expect(JSON.stringify(body)).not.toMatch(/affiliate_url|commercial_link|patient_name/i);
+    expect(JSON.stringify(body)).toContain("Synthetic fatigue");
+    expect(JSON.stringify(body)).not.toMatch(/firstName|lastName|email|dateOfBirth/);
     expect(body.text.format.schema.properties.summary.maxLength).toBe(4000);
     expect(body.text.format.schema.properties.priorityActions.maxItems).toBe(8);
     expect(body.text.format.schema.properties.referencedBiomarkerIds.maxItems).toBe(40);
