@@ -2,9 +2,10 @@
 
 ## Current environment
 
-The practitioner web interface is hosted through AWS Amplify Hosting's
-managed Next.js compute. The initial deployment is a synthetic-only staging
-environment and must not receive real patient data.
+The practitioner web interface is hosted as a locked Next.js container in the
+dedicated AWS synthetic-staging account. AWS CodeBuild builds the image, Amazon
+ECR stores it, and AWS App Runner provides the managed HTTPS endpoint. The
+initial deployment is synthetic-only and must not receive real patient data.
 
 Runtime posture:
 
@@ -18,16 +19,17 @@ Runtime posture:
   core; hosting this UI does not change that boundary.
 
 No service-role key, provider API key, password, or patient data is stored in
-Amplify environment variables. The Supabase publishable key is used only by
-server-side adapters together with the signed-in practitioner's JWT.
+the image or source archive. The Supabase publishable key is injected at
+runtime from AWS Secrets Manager and is used only by server-side adapters
+together with the signed-in practitioner's JWT.
 
 ## Deployment boundary
 
-`amplify.yml` writes an explicit allowlist of reviewed runtime settings to
-`.env.production`. It must never be widened to copy all environment variables.
-The hosted branch builds with `APP_EDITION=clinical`, so the repository's
-edition lock continues to refuse demo binaries and mock-data fallback.
+The container builds with `APP_EDITION=clinical`, so the repository's edition
+lock continues to refuse demo binaries and mock-data fallback. The runtime
+configuration is an explicit allowlist. App Runner receives no AWS service
+role beyond read access to the one publishable-key secret.
 
-The generated Amplify URL is a staging URL. A production custom domain, WAF
+The generated App Runner URL is a staging URL. A production custom domain, WAF
 policy, production data plane, operational monitoring, and real-PHI approval
 remain separate activation gates.

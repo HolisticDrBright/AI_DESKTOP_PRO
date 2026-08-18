@@ -60,6 +60,9 @@ const RECORDING_CSP = [
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  // Produce the traced, minimal Node runtime used by the AWS-hosted clinical
+  // container. Build-time edition checks remain authoritative.
+  output: "standalone",
   /**
    * Publish the validated edition to the browser bundle. `src/lib/edition.ts`
    * reads these two and nothing else.
