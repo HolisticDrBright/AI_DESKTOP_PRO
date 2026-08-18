@@ -46,7 +46,7 @@ export function LiveClientDirectory({
         <div>
           <h1 className="m-0 text-[17px] font-bold">Patients</h1>
           <span className="text-[11.5px] text-subtle">
-            {entries.length} patient{entries.length === 1 ? "" : "s"} · live records scoped to your access
+            {entries.length} patient{entries.length === 1 ? "" : "s"} · live record, scoped to your access
           </span>
         </div>
         <AddPatientDialog syntheticOnly={syntheticOnly} />
