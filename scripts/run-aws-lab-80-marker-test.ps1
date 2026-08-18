@@ -80,7 +80,46 @@ try {
     attestsSyntheticOnly = $true
     panelId = "synthetic-80-marker-panel"
     documents = @($documents | Select-Object clientDocumentId, fileName, contentType, byteSize)
-  } | ConvertTo-Json -Depth 6
+    longitudinalContext = @{
+      incomingPanel = @{
+        panelId = "synthetic-80-marker-panel"
+        panelName = "Synthetic Current Lab"
+        testDate = "2026-08-17"
+      }
+      priorPanels = @(
+        @{
+          panelId = "synthetic-prior-panel"
+          panelName = "Synthetic Prior Lab"
+          testDate = "2026-05-17"
+          biomarkers = @(
+            @{
+              biomarkerId = "00000000-0000-4000-8000-000000000001"
+              canonicalName = "Synthetic Biomarker 001"
+              value = 49
+              unit = "mg/dL"
+              labMin = 10
+              labMax = 200
+              functionalMin = 10
+              functionalMax = 200
+              status = "optimal"
+            }
+          )
+        }
+      )
+      activeProtocol = @{
+        protocolId = "synthetic-protocol"
+        protocolName = "Synthetic Review Protocol"
+        version = 1
+        items = @(
+          @{
+            itemId = "synthetic-protocol-item"
+            kind = "lifestyle"
+            name = "Synthetic hydration review"
+          }
+        )
+      }
+    }
+  } | ConvertTo-Json -Depth 9
   $created = Invoke-RestMethod -Method Post -Uri "$ApiOrigin/clinical-core/consumer/labs/jobs" -Headers $headers -ContentType "application/json" -Body $createBody
   $uploaded = @()
   foreach ($document in $documents) {
@@ -103,7 +142,7 @@ try {
   if ($state -ne "completed") { throw "Synthetic 80-marker analysis ended in state $state." }
   $result = $current.data.result
   $uniqueNames = @($result.biomarkers.canonicalName | Sort-Object -Unique)
-  if ($current.data.passesCompleted -ne 5 -or $result.biomarkers.Count -ne 80 -or $uniqueNames.Count -ne 80 -or $result.recommendations.Count -ne 0 -or -not $result.summary.StartsWith("AI-assisted functional-medicine draft for practitioner review.")) {
+  if ($current.data.passesCompleted -ne 5 -or $result.biomarkers.Count -ne 80 -or $uniqueNames.Count -ne 80 -or $result.recommendations.Count -ne 0 -or $result.longitudinalReview.panelCount -ne 2 -or -not $result.longitudinalReview.planImpact -or -not $result.summary.StartsWith("AI-assisted functional-medicine draft for practitioner review.")) {
     throw "Synthetic 80-marker result failed completeness checks: returned $($result.biomarkers.Count) marker(s), $($uniqueNames.Count) unique."
   }
   [pscustomobject]@{
@@ -116,6 +155,8 @@ try {
     AiSynthesis = $true
     Recommendations = $result.recommendations.Count
     ReviewState = $result.reviewState
+    LongitudinalPanels = $result.longitudinalReview.panelCount
+    PlanImpactChanges = $result.longitudinalReview.planImpact.changes.Count
   } | Format-List
 } finally {
   Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue

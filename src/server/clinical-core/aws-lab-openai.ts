@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { GetSecretValueCommand, SecretsManagerClient } from "@aws-sdk/client-secrets-manager";
-import type { PatientContext } from "./aws-lab-analysis-api";
+import type { LongitudinalContext, PatientContext } from "./aws-lab-analysis-api";
 
 const secrets = new SecretsManagerClient({});
 const OPENAI_ORIGIN = "https://api.openai.com";
@@ -47,6 +47,16 @@ export type LabSynthesisBiomarker = {
   functionalMin: number | null;
   functionalMax: number | null;
   status: string;
+  panelId?: string;
+  testDate?: string;
+};
+
+type PlanImpactChange = {
+  kind: "continue_review" | "discuss_addition" | "reassess";
+  label: string;
+  rationale: string;
+  biomarkerIds: string[];
+  protocolItemIds: string[];
 };
 
 export type LabAiSynthesis = {
@@ -54,13 +64,15 @@ export type LabAiSynthesis = {
   uncertainty: string;
   priorityActions: string[];
   referencedBiomarkerIds: string[];
+  longitudinalSummary: string;
+  planImpact: { headline: string; changes: PlanImpactChange[] };
   providerModel: string;
 };
 
 const LAB_SYNTHESIS_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["summary", "uncertainty", "priorityActions", "referencedBiomarkerIds"],
+  required: ["summary", "uncertainty", "priorityActions", "referencedBiomarkerIds", "longitudinalSummary", "planImpact"],
   properties: {
     summary: { type: "string", minLength: 1, maxLength: 4000 },
     uncertainty: { type: "string", minLength: 1, maxLength: 1000 },
@@ -75,6 +87,31 @@ const LAB_SYNTHESIS_SCHEMA = {
       maxItems: 40,
       items: { type: "string" },
     },
+    longitudinalSummary: { type: "string", minLength: 1, maxLength: 4000 },
+    planImpact: {
+      type: "object",
+      additionalProperties: false,
+      required: ["headline", "changes"],
+      properties: {
+        headline: { type: "string", minLength: 1, maxLength: 300 },
+        changes: {
+          type: "array",
+          maxItems: 20,
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["kind", "label", "rationale", "biomarkerIds", "protocolItemIds"],
+            properties: {
+              kind: { type: "string", enum: ["continue_review", "discuss_addition", "reassess"] },
+              label: { type: "string", minLength: 1, maxLength: 180 },
+              rationale: { type: "string", minLength: 1, maxLength: 1000 },
+              biomarkerIds: { type: "array", maxItems: 40, items: { type: "string" } },
+              protocolItemIds: { type: "array", maxItems: 40, items: { type: "string" } },
+            },
+          },
+        },
+      },
+    },
   },
 } as const;
 
@@ -85,6 +122,9 @@ const SYSTEM_INSTRUCTION = [
   "When pregnancy is pregnant or unsure, nursing is true, or medications/allergies are recorded, explicitly call for appropriate safety or interaction review before any change in care.",
   "Distinguish the reporting laboratory range from a governed functional range. Never invent a functional range.",
   "Discuss cautious patterns, relationships, differential possibilities, and useful practitioner questions; do not diagnose.",
+  "Review all supplied panels together in test-date order. Distinguish a repeated-marker trend from a one-time finding and state when measurements are not comparable.",
+  "Return a plan-impact draft. It may label an existing plan item continue_review or reassess, or identify a discuss_addition topic. It must never directly change a plan.",
+  "Every plan-impact change must cite only supplied biomarkerId and protocol itemId values. An empty active plan means protocolItemIds must be empty.",
   "Do not recommend products, supplements, herbs, medications, peptides, doses, purchases, affiliate links, or treatment changes.",
   "Do not claim external research or citations. Reference only biomarkerId values supplied in the request.",
   "Keep the draft concise. Cite only the most clinically relevant biomarkerId values, up to 40, rather than listing every supplied marker.",
@@ -122,6 +162,7 @@ export function buildLabSynthesisRequest(input: {
   biomarkers: LabSynthesisBiomarker[];
   jobId: string;
   patientContext?: PatientContext;
+  activeProtocol?: LongitudinalContext["activeProtocol"];
 }) {
   const payload = {
     reviewState: "draft_for_practitioner_review",
@@ -129,6 +170,7 @@ export function buildLabSynthesisRequest(input: {
     biomarkerCount: input.biomarkers.length,
     biomarkers: input.biomarkers,
     patientReportedContext: input.patientContext ?? null,
+    activeProtocol: input.activeProtocol ?? null,
   };
   return {
     model: input.model,
@@ -176,6 +218,7 @@ export function parseLabSynthesisResponse(input: {
   response: unknown;
   expectedModel: string;
   allowedBiomarkerIds: ReadonlySet<string>;
+  allowedProtocolItemIds?: ReadonlySet<string>;
 }): LabAiSynthesis {
   if (!input.response || typeof input.response !== "object" || Array.isArray(input.response)) throw new Error("openai_response_malformed");
   const response = input.response as Record<string, unknown>;
@@ -191,7 +234,7 @@ export function parseLabSynthesisResponse(input: {
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("openai_output_malformed");
   const row = parsed as Record<string, unknown>;
   const keys = Object.keys(row).sort();
-  if (keys.join("|") !== ["priorityActions", "referencedBiomarkerIds", "summary", "uncertainty"].sort().join("|")) throw new Error("openai_output_keys_refused");
+  if (keys.join("|") !== ["priorityActions", "referencedBiomarkerIds", "summary", "uncertainty", "longitudinalSummary", "planImpact"].sort().join("|")) throw new Error("openai_output_keys_refused");
   if (typeof row.summary !== "string" || row.summary.length < 1 || row.summary.length > 4000) throw new Error("openai_summary_refused");
   if (typeof row.uncertainty !== "string" || row.uncertainty.length < 1 || row.uncertainty.length > 1000) throw new Error("openai_uncertainty_refused");
   if (!Array.isArray(row.priorityActions) || row.priorityActions.length > 8
@@ -199,7 +242,25 @@ export function parseLabSynthesisResponse(input: {
   if (!Array.isArray(row.referencedBiomarkerIds) || row.referencedBiomarkerIds.length < 1 || row.referencedBiomarkerIds.length > 40
     || row.referencedBiomarkerIds.some((value) => typeof value !== "string")) throw new Error("openai_biomarker_references_refused");
   if (row.referencedBiomarkerIds.some((value) => !input.allowedBiomarkerIds.has(value as string))) throw new Error("openai_unknown_biomarker_reference_refused");
-  const combined = `${row.summary} ${row.uncertainty} ${(row.priorityActions as string[]).join(" ")}`;
+  if (typeof row.longitudinalSummary !== "string" || row.longitudinalSummary.length < 1 || row.longitudinalSummary.length > 4000) throw new Error("openai_summary_refused");
+  if (!row.planImpact || typeof row.planImpact !== "object" || Array.isArray(row.planImpact)) throw new Error("openai_output_malformed");
+  const planImpact = row.planImpact as Record<string, unknown>;
+  if (Object.keys(planImpact).sort().join("|") !== ["changes", "headline"].sort().join("|")
+    || typeof planImpact.headline !== "string" || planImpact.headline.length < 1 || planImpact.headline.length > 300
+    || !Array.isArray(planImpact.changes) || planImpact.changes.length > 20) throw new Error("openai_output_malformed");
+  const allowedProtocolItemIds = input.allowedProtocolItemIds ?? new Set<string>();
+  const changes = planImpact.changes.map((candidate): PlanImpactChange => {
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) throw new Error("openai_output_malformed");
+    const change = candidate as Record<string, unknown>;
+    if (Object.keys(change).sort().join("|") !== ["biomarkerIds", "kind", "label", "protocolItemIds", "rationale"].sort().join("|")
+      || !["continue_review", "discuss_addition", "reassess"].includes(String(change.kind))
+      || typeof change.label !== "string" || change.label.length < 1 || change.label.length > 180
+      || typeof change.rationale !== "string" || change.rationale.length < 1 || change.rationale.length > 1000
+      || !Array.isArray(change.biomarkerIds) || change.biomarkerIds.length > 40 || change.biomarkerIds.some((id) => typeof id !== "string" || !input.allowedBiomarkerIds.has(id))
+      || !Array.isArray(change.protocolItemIds) || change.protocolItemIds.length > 40 || change.protocolItemIds.some((id) => typeof id !== "string" || !allowedProtocolItemIds.has(id))) throw new Error("openai_unknown_biomarker_reference_refused");
+    return change as unknown as PlanImpactChange;
+  });
+  const combined = `${row.summary} ${row.uncertainty} ${row.longitudinalSummary} ${planImpact.headline} ${changes.map((change) => `${change.label} ${change.rationale}`).join(" ")} ${(row.priorityActions as string[]).join(" ")}`;
   if (/https?:\/\//i.test(combined)) throw new Error("openai_link_refused");
   if (/\b(?:affiliate|buy|purchase)\b/i.test(combined)) throw new Error("openai_commercial_language_refused");
   if (/\btake\s+\d|\b\d+(?:\.\d+)?\s*(?:mg|mcg|iu)\s*(?:\/\s*day|per\s+day|daily|twice|once)/i.test(combined)) throw new Error("openai_dose_directive_refused");
@@ -209,6 +270,8 @@ export function parseLabSynthesisResponse(input: {
     uncertainty: row.uncertainty,
     priorityActions: row.priorityActions as string[],
     referencedBiomarkerIds: row.referencedBiomarkerIds as string[],
+    longitudinalSummary: row.longitudinalSummary,
+    planImpact: { headline: planImpact.headline, changes },
     providerModel: input.expectedModel,
   };
 }
@@ -223,9 +286,10 @@ export async function synthesizeLabWithOpenAI(input: {
   biomarkers: LabSynthesisBiomarker[];
   jobId: string;
   patientContext?: PatientContext;
+  activeProtocol?: LongitudinalContext["activeProtocol"];
 }): Promise<LabAiSynthesis> {
   const model = required("LAB_OPENAI_MODEL");
-  const body = buildLabSynthesisRequest({ model, biomarkers: input.biomarkers, jobId: input.jobId, patientContext: input.patientContext });
+  const body = buildLabSynthesisRequest({ model, biomarkers: input.biomarkers, jobId: input.jobId, patientContext: input.patientContext, activeProtocol: input.activeProtocol });
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
@@ -255,6 +319,7 @@ export async function synthesizeLabWithOpenAI(input: {
       response: parsed,
       expectedModel: model,
       allowedBiomarkerIds: new Set(input.biomarkers.map((row) => row.biomarkerId)),
+      allowedProtocolItemIds: new Set(input.activeProtocol?.items.map((row) => row.itemId) ?? []),
     });
   } catch (error) {
     if (controller.signal.aborted) throw Object.assign(new Error("openai_timeout"), { category: "provider_unavailable" });

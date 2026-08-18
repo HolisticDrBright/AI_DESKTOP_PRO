@@ -9,7 +9,7 @@ import {
   TextractClient,
 } from "@aws-sdk/client-textract";
 import { synthesizeLabWithOpenAI } from "./aws-lab-openai";
-import type { PatientContext } from "./aws-lab-analysis-api";
+import type { LongitudinalContext, PatientContext } from "./aws-lab-analysis-api";
 
 const db = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const s3 = new S3Client({});
@@ -19,7 +19,7 @@ const PASS_PROGRESS = [20, 40, 60, 80, 95];
 const UUID_NS = "ai-longevity-pro-synthetic-lab-v1";
 
 type StoredDocument = { clientDocumentId: string; contentType: string; objectKey: string };
-type Job = { pk: string; state: string; documents: StoredDocument[]; patientContext?: PatientContext };
+type Job = { pk: string; state: string; documents: StoredDocument[]; patientContext?: PatientContext; longitudinalContext?: LongitudinalContext };
 type ExtractedCell = { text: string; confidence: number; column: number };
 type ExtractedRow = { cells: ExtractedCell[]; page: number | null; documentId: string };
 export type Extracted = {
@@ -346,20 +346,29 @@ async function executePass(job: Job, pass: number): Promise<unknown | null> {
     sourceDocumentId: row.documentId,
     sourcePage: row.page,
   }));
+  const currentForSynthesis = resultBiomarkers.map((row) => ({
+    biomarkerId: row.biomarkerId,
+    canonicalName: row.canonicalName,
+    value: row.value,
+    unit: row.unit,
+    labMin: row.labReferenceRange.min,
+    labMax: row.labReferenceRange.max,
+    functionalMin: row.functionalRange?.min ?? null,
+    functionalMax: row.functionalRange?.max ?? null,
+    status: row.status,
+    panelId: job.longitudinalContext?.incomingPanel.panelId ?? jobId,
+    testDate: job.longitudinalContext?.incomingPanel.testDate ?? generatedAt.slice(0, 10),
+  }));
+  const priorForSynthesis = (job.longitudinalContext?.priorPanels ?? []).flatMap((panel) => panel.biomarkers.map((row) => ({
+    ...row,
+    panelId: panel.panelId,
+    testDate: panel.testDate,
+  })));
   const aiSynthesis = await synthesizeLabWithOpenAI({
     jobId,
     patientContext: job.patientContext,
-    biomarkers: resultBiomarkers.map((row) => ({
-      biomarkerId: row.biomarkerId,
-      canonicalName: row.canonicalName,
-      value: row.value,
-      unit: row.unit,
-      labMin: row.labReferenceRange.min,
-      labMax: row.labReferenceRange.max,
-      functionalMin: row.functionalRange?.min ?? null,
-      functionalMax: row.functionalRange?.max ?? null,
-      status: row.status,
-    })),
+    biomarkers: [...currentForSynthesis, ...priorForSynthesis],
+    activeProtocol: job.longitudinalContext?.activeProtocol ?? null,
   });
   const result = {
     analysisId: randomUUID(), reviewState: "draft_for_practitioner_review", generatedAt,
@@ -368,6 +377,20 @@ async function executePass(job: Job, pass: number): Promise<unknown | null> {
     recommendations: [],
     priorityActions: aiSynthesis.priorityActions,
     citations: biomarkers.filter((row) => row.sourceId && row.sourceVersion).map((row) => ({ sourceId: row.sourceId!, sourceVersion: row.sourceVersion!, claimIds: [] })).filter((row, index, all) => all.findIndex((candidate) => candidate.sourceId === row.sourceId) === index),
+    longitudinalReview: {
+      reviewState: "draft_for_practitioner_review",
+      panelCount: (job.longitudinalContext?.priorPanels.length ?? 0) + 1,
+      generatedAt,
+      summary: aiSynthesis.longitudinalSummary,
+      planImpact: {
+        status: "review_required",
+        headline: aiSynthesis.planImpact.headline,
+        changes: aiSynthesis.planImpact.changes.map((change, index) => ({
+          changeId: stableUuid(`plan-impact:${jobId}:${index}:${change.kind}`),
+          ...change,
+        })),
+      },
+    },
   };
   await writeArtifact(jobId, "ai-synthesis", { ...aiSynthesis, referencedBiomarkerIds: aiSynthesis.referencedBiomarkerIds });
   await writeArtifact(jobId, "result", result);

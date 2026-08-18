@@ -40,6 +40,21 @@ export type PatientContext = {
   lifestyle: { sleepHours: number; sleepQuality: number; stressLevel: number; dietType: string; exerciseFrequency: number };
 };
 
+export type LongitudinalBiomarker = {
+  biomarkerId: string; canonicalName: string; value: number; unit: string;
+  labMin: number | null; labMax: number | null; functionalMin: number | null; functionalMax: number | null;
+  status: "optimal" | "normal" | "suboptimal" | "critical";
+};
+
+export type LongitudinalContext = {
+  incomingPanel: { panelId: string; panelName: string; testDate: string };
+  priorPanels: Array<{ panelId: string; panelName: string; testDate: string; biomarkers: LongitudinalBiomarker[] }>;
+  activeProtocol: null | {
+    protocolId: string; protocolName: string; version: number;
+    items: Array<{ itemId: string; kind: "supplement" | "peptide" | "lifestyle"; name: string }>;
+  };
+};
+
 type Job = {
   pk: string;
   ownerSub: string;
@@ -55,6 +70,7 @@ type Job = {
   documents: Array<DocumentInput & { objectKey: string }>;
   panelId?: string;
   patientContext?: PatientContext;
+  longitudinalContext?: LongitudinalContext;
   failureCategory: string | null;
   result: unknown | null;
 };
@@ -163,6 +179,74 @@ function safePatientContext(value: unknown): PatientContext | undefined {
   return row as PatientContext;
 }
 
+function boundedString(value: unknown, max: number): value is string {
+  return typeof value === "string" && value.trim().length >= 1 && value.length <= max;
+}
+
+function safeNullableNumber(value: unknown): value is number | null {
+  return value === null || (typeof value === "number" && Number.isFinite(value));
+}
+
+function safeDate(value: unknown): value is string {
+  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) && Number.isFinite(Date.parse(`${value}T00:00:00Z`));
+}
+
+function safeLongitudinalBiomarker(value: unknown): LongitudinalBiomarker {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("longitudinal_context_invalid");
+  const row = value as Record<string, unknown>;
+  const expected = ["biomarkerId", "canonicalName", "value", "unit", "labMin", "labMax", "functionalMin", "functionalMax", "status"];
+  if (Object.keys(row).some((key) => !expected.includes(key))
+    || typeof row.biomarkerId !== "string" || !/^[0-9a-f-]{36}$/i.test(row.biomarkerId)
+    || !boundedString(row.canonicalName, 160) || typeof row.value !== "number" || !Number.isFinite(row.value)
+    || !boundedString(row.unit, 80) || !safeNullableNumber(row.labMin) || !safeNullableNumber(row.labMax)
+    || !safeNullableNumber(row.functionalMin) || !safeNullableNumber(row.functionalMax)
+    || !["optimal", "normal", "suboptimal", "critical"].includes(String(row.status))) throw new Error("longitudinal_context_invalid");
+  return row as LongitudinalBiomarker;
+}
+
+export function safeLongitudinalContext(value: unknown): LongitudinalContext | undefined {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("longitudinal_context_invalid");
+  const row = value as Record<string, unknown>;
+  if (Object.keys(row).some((key) => !["incomingPanel", "priorPanels", "activeProtocol"].includes(key))) throw new Error("longitudinal_context_invalid");
+  const incoming = row.incomingPanel as Record<string, unknown> | undefined;
+  if (!incoming || Array.isArray(incoming) || Object.keys(incoming).some((key) => !["panelId", "panelName", "testDate"].includes(key))
+    || !boundedString(incoming.panelId, 160) || !boundedString(incoming.panelName, 180) || !safeDate(incoming.testDate)
+    || !Array.isArray(row.priorPanels) || row.priorPanels.length > 20) throw new Error("longitudinal_context_invalid");
+  let totalBiomarkers = 0;
+  const priorPanels = row.priorPanels.map((candidate) => {
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) throw new Error("longitudinal_context_invalid");
+    const panel = candidate as Record<string, unknown>;
+    if (Object.keys(panel).some((key) => !["panelId", "panelName", "testDate", "biomarkers"].includes(key))
+      || !boundedString(panel.panelId, 160) || !boundedString(panel.panelName, 180) || !safeDate(panel.testDate)
+      || !Array.isArray(panel.biomarkers) || panel.biomarkers.length > 1000) throw new Error("longitudinal_context_invalid");
+    totalBiomarkers += panel.biomarkers.length;
+    return { panelId: panel.panelId, panelName: panel.panelName, testDate: panel.testDate, biomarkers: panel.biomarkers.map(safeLongitudinalBiomarker) };
+  });
+  if (totalBiomarkers > 2000) throw new Error("longitudinal_context_invalid");
+  let activeProtocol: LongitudinalContext["activeProtocol"] = null;
+  if (row.activeProtocol !== null) {
+    const protocol = row.activeProtocol as Record<string, unknown> | undefined;
+    if (!protocol || Array.isArray(protocol) || Object.keys(protocol).some((key) => !["protocolId", "protocolName", "version", "items"].includes(key))
+      || !boundedString(protocol.protocolId, 160) || !boundedString(protocol.protocolName, 180)
+      || !Number.isInteger(protocol.version) || Number(protocol.version) < 1 || Number(protocol.version) > 10_000
+      || !Array.isArray(protocol.items) || protocol.items.length > 150) throw new Error("longitudinal_context_invalid");
+    activeProtocol = {
+      protocolId: protocol.protocolId,
+      protocolName: protocol.protocolName,
+      version: protocol.version as number,
+      items: protocol.items.map((candidate) => {
+        if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) throw new Error("longitudinal_context_invalid");
+        const item = candidate as Record<string, unknown>;
+        if (Object.keys(item).some((key) => !["itemId", "kind", "name"].includes(key)) || !boundedString(item.itemId, 160)
+          || !["supplement", "peptide", "lifestyle"].includes(String(item.kind)) || !boundedString(item.name, 180)) throw new Error("longitudinal_context_invalid");
+        return item as LongitudinalContext["activeProtocol"] extends { items: infer T } ? T extends Array<infer U> ? U : never : never;
+      }),
+    };
+  }
+  return { incomingPanel: incoming as LongitudinalContext["incomingPanel"], priorPanels, activeProtocol };
+}
+
 export function sanitizeStoredResult(result: unknown): unknown {
   if (!result || typeof result !== "object" || Array.isArray(result)) return result;
   const row = result as Record<string, unknown>;
@@ -248,6 +332,7 @@ async function createJob(event: ApiEvent, identity: Claims) {
   }
   const documents = input.documents.map(safeDocument);
   const patientContext = safePatientContext(input.patientContext);
+  const longitudinalContext = safeLongitudinalContext(input.longitudinalContext);
   if (new Set(documents.map((row) => row.clientDocumentId)).size !== documents.length) return refusal();
   const jobId = randomUUID();
   const now = new Date().toISOString();
@@ -272,6 +357,7 @@ async function createJob(event: ApiEvent, identity: Claims) {
     documents: stored,
     ...(typeof input.panelId === "string" && input.panelId.length <= 160 ? { panelId: input.panelId } : {}),
     ...(patientContext ? { patientContext } : {}),
+    ...(longitudinalContext ? { longitudinalContext } : {}),
     failureCategory: null,
     result: null,
   };
