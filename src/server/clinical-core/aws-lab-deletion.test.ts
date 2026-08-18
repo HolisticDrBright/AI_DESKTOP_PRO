@@ -10,6 +10,10 @@ describe("AWS lab deletion boundary", () => {
     expect(route.RouteKey).toBe("DELETE /clinical-core/consumer/labs/jobs/{jobId}");
     expect(route.AuthorizationType).toBe("JWT");
     expect(route.AuthorizerId.Ref).toBe("LabConsumerAuthorizer");
+    const appSessionRoute = template.Resources.DeleteLabJobSyntheticSessionRoute.Properties;
+    expect(appSessionRoute.RouteKey).toBe("DELETE /clinical-core/synthetic-session/labs/jobs/{jobId}");
+    expect(appSessionRoute.AuthorizationType).toBe("CUSTOM");
+    expect(appSessionRoute.AuthorizerId.Ref).toBe("LabSyntheticSessionAuthorizer");
   });
 
   test("checks ownership, refuses active jobs, and purges source plus artifact versions", () => {
@@ -27,6 +31,6 @@ describe("AWS lab deletion boundary", () => {
     expect(source).toContain("dynamodb:DeleteItem");
     expect(source).toContain("s3:DeleteObjectVersion");
     expect(source).toContain("s3:ListBucketVersions");
-    expect(template.Outputs.RoutesEnabled.Value).toBe("4");
+    expect(template.Outputs.RoutesEnabled.Value).toBe("8");
   });
 });

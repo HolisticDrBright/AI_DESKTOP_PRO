@@ -16,7 +16,7 @@ type Claims = { sub: string; "custom:person_id": string; "custom:organization_id
 type ApiEvent = {
   body?: unknown;
   rawPath?: unknown;
-  requestContext?: { authorizer?: { jwt?: { claims?: unknown } }; http?: { method?: unknown } };
+  requestContext?: { authorizer?: { jwt?: { claims?: unknown }; lambda?: unknown }; http?: { method?: unknown } };
 };
 type DocumentInput = {
   clientDocumentId: string;
@@ -82,7 +82,16 @@ function refusal(statusCode = 400) {
 }
 
 function claims(event: ApiEvent): Claims {
-  const value = event?.requestContext?.authorizer?.jwt?.claims;
+  const jwtClaims = event?.requestContext?.authorizer?.jwt?.claims;
+  const lambdaClaims = event?.requestContext?.authorizer?.lambda;
+  const value = jwtClaims ?? (lambdaClaims && typeof lambdaClaims === "object" && !Array.isArray(lambdaClaims)
+    ? {
+      sub: (lambdaClaims as Record<string, unknown>).sub,
+      "custom:person_id": (lambdaClaims as Record<string, unknown>).person_id,
+      "custom:organization_id": (lambdaClaims as Record<string, unknown>).organization_id,
+      "custom:synthetic_attested": (lambdaClaims as Record<string, unknown>).synthetic_attested,
+    }
+    : undefined);
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("synthetic_claim_required");
   const row = value as Record<string, unknown>;
   if (row["custom:synthetic_attested"] !== "true") throw new Error("synthetic_claim_required");
@@ -338,8 +347,8 @@ export async function createAwsLabAnalysisApiHandler(event: ApiEvent) {
     const identity = claims(event);
     const method = event?.requestContext?.http?.method;
     const path = event?.rawPath;
-    if (method === "POST" && path === "/clinical-core/consumer/labs/jobs") return createJob(event, identity);
-    const match = typeof path === "string" ? path.match(/^\/clinical-core\/consumer\/labs\/jobs\/([0-9a-f-]{36})(\/complete-upload)?$/i) : null;
+    if (method === "POST" && (path === "/clinical-core/consumer/labs/jobs" || path === "/clinical-core/synthetic-session/labs/jobs")) return createJob(event, identity);
+    const match = typeof path === "string" ? path.match(/^\/clinical-core\/(?:consumer|synthetic-session)\/labs\/jobs\/([0-9a-f-]{36})(\/complete-upload)?$/i) : null;
     if (!match) return refusal(404);
     if (method === "POST" && match[2]) return completeUpload(event, identity, match[1]);
     if (method === "DELETE" && !match[2]) return deleteJob(identity, match[1]);

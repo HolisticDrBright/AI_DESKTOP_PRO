@@ -14,6 +14,11 @@
     "ClinicalApiId": { "Type": "String", "AllowedPattern": "^[a-z0-9]{10}$" },
     "ConsumerUserPoolId": { "Type": "String", "AllowedPattern": "^[a-z0-9-]+_[A-Za-z0-9]+$" },
     "ConsumerUserPoolClientId": { "Type": "String", "AllowedPattern": "^[A-Za-z0-9]{20,128}$" },
+    "SyntheticSupabaseIssuer": { "Type": "String", "AllowedPattern": "^https://[a-z0-9-]+\\.supabase\\.co/auth/v1$" },
+    "SyntheticSupabaseAudience": { "Type": "String", "Default": "authenticated", "AllowedValues": ["authenticated"] },
+    "SyntheticEmailDomain": { "Type": "String", "Default": "@brightlongevity.test", "AllowedPattern": "^@[a-z0-9.-]+$" },
+    "SyntheticOrganizationId": { "Type": "String", "Default": "11111111-1111-4111-8111-111111111111", "AllowedPattern": "^[0-9a-f-]{36}$" },
+    "SyntheticAllowedSubjects": { "Type": "String", "AllowedPattern": "^[0-9a-f-]{36}(,[0-9a-f-]{36}){0,9}$" },
     "ClinicalCoreKeyArn": { "Type": "String", "AllowedPattern": "^arn:(aws|aws-us-gov|aws-cn):kms:[a-z0-9-]+:[0-9]{12}:key/[0-9a-f-]{36}$" },
     "LambdaCodeBucket": { "Type": "String", "AllowedPattern": "^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$" },
     "ApiCodeKey": { "Type": "String", "AllowedPattern": "^[A-Za-z0-9!_.*'()/\\-]{1,1024}$" },
@@ -91,6 +96,12 @@
         ]
       }
     },
+    "LabSyntheticAuthorizerLogGroup": {
+      "Type": "AWS::Logs::LogGroup",
+      "DeletionPolicy": "Delete",
+      "UpdateReplacePolicy": "Delete",
+      "Properties": { "LogGroupName": { "Fn::Sub": "/ai-clinical-core/synthetic-staging/lab-session-authorizer-${ClinicalApiId}" }, "KmsKeyId": { "Ref": "ClinicalCoreKeyArn" }, "RetentionInDays": 14 }
+    },
     "LabWorkerRole": {
       "Type": "AWS::IAM::Role",
       "Properties": {
@@ -102,6 +113,13 @@
           { "PolicyName": "LabWorkerOpenAISecret", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": "secretsmanager:GetSecretValue", "Resource": { "Ref": "OpenAISecretArn" } }] } },
           { "PolicyName": "LabWorkerLogs", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": ["logs:CreateLogStream", "logs:PutLogEvents"], "Resource": { "Fn::GetAtt": ["LabWorkerLogGroup", "Arn"] } }] } }
         ]
+      }
+    },
+    "LabSyntheticAuthorizerRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Principal": { "Service": "lambda.amazonaws.com" }, "Action": "sts:AssumeRole" }] },
+        "Policies": [{ "PolicyName": "SyntheticAuthorizerLogs", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": ["logs:CreateLogStream", "logs:PutLogEvents"], "Resource": { "Fn::GetAtt": ["LabSyntheticAuthorizerLogGroup", "Arn"] } }] } }]
       }
     },
     "LabApiFunction": {
@@ -124,6 +142,16 @@
         "Environment": { "Variables": { "LAB_JOB_TABLE": { "Ref": "LabJobTable" }, "LAB_DOCUMENT_BUCKET": { "Ref": "LabDocumentsBucket" }, "LAB_KMS_KEY_ARN": { "Ref": "ClinicalCoreKeyArn" }, "LAB_OPENAI_SECRET_ARN": { "Ref": "OpenAISecretArn" }, "LAB_OPENAI_MODEL": { "Ref": "OpenAIModel" } } }
       }
     },
+    "LabSyntheticAuthorizerFunction": {
+      "Type": "AWS::Lambda::Function",
+      "Properties": {
+        "FunctionName": { "Fn::Sub": "${ClinicalApiId}-synthetic-lab-session-authorizer" },
+        "Runtime": "nodejs22.x", "Architectures": ["arm64"], "Handler": "index.authorizer", "Role": { "Fn::GetAtt": ["LabSyntheticAuthorizerRole", "Arn"] }, "MemorySize": 256, "Timeout": 10,
+        "LoggingConfig": { "LogGroup": { "Ref": "LabSyntheticAuthorizerLogGroup" }, "LogFormat": "JSON", "ApplicationLogLevel": "ERROR", "SystemLogLevel": "WARN" },
+        "Code": { "S3Bucket": { "Ref": "LambdaCodeBucket" }, "S3Key": { "Ref": "ApiCodeKey" } },
+        "Environment": { "Variables": { "SYNTHETIC_SUPABASE_ISSUER": { "Ref": "SyntheticSupabaseIssuer" }, "SYNTHETIC_SUPABASE_AUDIENCE": { "Ref": "SyntheticSupabaseAudience" }, "SYNTHETIC_EMAIL_DOMAIN": { "Ref": "SyntheticEmailDomain" }, "SYNTHETIC_ORGANIZATION_ID": { "Ref": "SyntheticOrganizationId" }, "SYNTHETIC_ALLOWED_SUBJECTS": { "Ref": "SyntheticAllowedSubjects" } } }
+      }
+    },
     "LabStateMachineRole": {
       "Type": "AWS::IAM::Role",
       "Properties": {
@@ -144,6 +172,18 @@
       "Type": "AWS::ApiGatewayV2::Authorizer",
       "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "AuthorizerType": "JWT", "Name": "synthetic-lab-consumer", "IdentitySource": ["$request.header.Authorization"], "JwtConfiguration": { "Issuer": { "Fn::Sub": "https://cognito-idp.${AWS::Region}.${AWS::URLSuffix}/${ConsumerUserPoolId}" }, "Audience": [{ "Ref": "ConsumerUserPoolClientId" }] } }
     },
+    "LabSyntheticSessionAuthorizer": {
+      "Type": "AWS::ApiGatewayV2::Authorizer",
+      "Properties": {
+        "ApiId": { "Ref": "ClinicalApiId" }, "AuthorizerType": "REQUEST", "Name": "synthetic-app-session", "IdentitySource": ["$request.header.Authorization"],
+        "AuthorizerPayloadFormatVersion": "2.0", "EnableSimpleResponses": true, "AuthorizerResultTtlInSeconds": 0,
+        "AuthorizerUri": { "Fn::Sub": "arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LabSyntheticAuthorizerFunction.Arn}/invocations" }
+      }
+    },
+    "LabSyntheticAuthorizerInvokePermission": {
+      "Type": "AWS::Lambda::Permission",
+      "Properties": { "Action": "lambda:InvokeFunction", "FunctionName": { "Ref": "LabSyntheticAuthorizerFunction" }, "Principal": "apigateway.amazonaws.com", "SourceArn": { "Fn::Sub": "arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${ClinicalApiId}/authorizers/*" } }
+    },
     "LabApiIntegration": {
       "Type": "AWS::ApiGatewayV2::Integration",
       "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "IntegrationType": "AWS_PROXY", "IntegrationUri": { "Fn::GetAtt": ["LabApiFunction", "Arn"] }, "PayloadFormatVersion": "2.0", "TimeoutInMillis": 20000 }
@@ -152,9 +192,17 @@
     "CompleteLabUploadRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "POST /clinical-core/consumer/labs/jobs/{jobId}/complete-upload", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "LabConsumerAuthorizer" }, "Target": { "Fn::Sub": "integrations/${LabApiIntegration}" } } },
     "GetLabJobRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "GET /clinical-core/consumer/labs/jobs/{jobId}", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "LabConsumerAuthorizer" }, "Target": { "Fn::Sub": "integrations/${LabApiIntegration}" } } },
     "DeleteLabJobRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "DELETE /clinical-core/consumer/labs/jobs/{jobId}", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "LabConsumerAuthorizer" }, "Target": { "Fn::Sub": "integrations/${LabApiIntegration}" } } },
+    "CreateLabJobSyntheticSessionRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "POST /clinical-core/synthetic-session/labs/jobs", "AuthorizationType": "CUSTOM", "AuthorizerId": { "Ref": "LabSyntheticSessionAuthorizer" }, "Target": { "Fn::Sub": "integrations/${LabApiIntegration}" } } },
+    "CompleteLabUploadSyntheticSessionRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "POST /clinical-core/synthetic-session/labs/jobs/{jobId}/complete-upload", "AuthorizationType": "CUSTOM", "AuthorizerId": { "Ref": "LabSyntheticSessionAuthorizer" }, "Target": { "Fn::Sub": "integrations/${LabApiIntegration}" } } },
+    "GetLabJobSyntheticSessionRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "GET /clinical-core/synthetic-session/labs/jobs/{jobId}", "AuthorizationType": "CUSTOM", "AuthorizerId": { "Ref": "LabSyntheticSessionAuthorizer" }, "Target": { "Fn::Sub": "integrations/${LabApiIntegration}" } } },
+    "DeleteLabJobSyntheticSessionRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "DELETE /clinical-core/synthetic-session/labs/jobs/{jobId}", "AuthorizationType": "CUSTOM", "AuthorizerId": { "Ref": "LabSyntheticSessionAuthorizer" }, "Target": { "Fn::Sub": "integrations/${LabApiIntegration}" } } },
     "LabApiInvokePermission": {
       "Type": "AWS::Lambda::Permission",
       "Properties": { "Action": "lambda:InvokeFunction", "FunctionName": { "Ref": "LabApiFunction" }, "Principal": "apigateway.amazonaws.com", "SourceArn": { "Fn::Sub": "arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${ClinicalApiId}/*/*/clinical-core/consumer/labs/*" } }
+    },
+    "LabApiSyntheticSessionInvokePermission": {
+      "Type": "AWS::Lambda::Permission",
+      "Properties": { "Action": "lambda:InvokeFunction", "FunctionName": { "Ref": "LabApiFunction" }, "Principal": "apigateway.amazonaws.com", "SourceArn": { "Fn::Sub": "arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${ClinicalApiId}/*/*/clinical-core/synthetic-session/labs/*" } }
     }
   },
   "Outputs": {
@@ -162,7 +210,8 @@
     "LabJobTableName": { "Value": { "Ref": "LabJobTable" } },
     "LabDocumentsBucketName": { "Value": { "Ref": "LabDocumentsBucket" } },
     "LabStateMachineArn": { "Value": { "Ref": "LabStateMachine" } },
-    "RoutesEnabled": { "Value": "4" },
+    "RoutesEnabled": { "Value": "8" },
+    "SyntheticAppSessionEnabled": { "Value": "true" },
     "PhiAllowed": { "Value": "false" },
     "DataClassification": { "Value": "synthetic_only" }
   }

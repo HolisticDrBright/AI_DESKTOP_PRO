@@ -41,6 +41,11 @@ aws cloudformation deploy --stack-name $StackName --template-file "infra/aws-cli
   "ClinicalApiId=$(Output 'ClinicalApiId')" `
   "ConsumerUserPoolId=$(Output 'ConsumerUserPoolId')" `
   "ConsumerUserPoolClientId=$(Output 'ConsumerUserPoolClientId')" `
+  "SyntheticSupabaseIssuer=https://urcjiehlxoehievobezf.supabase.co/auth/v1" `
+  "SyntheticSupabaseAudience=authenticated" `
+  "SyntheticEmailDomain=@brightlongevity.test" `
+  "SyntheticOrganizationId=11111111-1111-4111-8111-111111111111" `
+  "SyntheticAllowedSubjects=c1a00000-0000-4000-8000-000000000001,c1a00000-0000-4000-8000-000000000002" `
   "ClinicalCoreKeyArn=$kmsKey" `
   "LambdaCodeBucket=$ArtifactBucket" `
   "ApiCodeKey=$apiKey" `
