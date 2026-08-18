@@ -32,20 +32,15 @@ COPY --from=dependencies /app/node_modules ./node_modules
 COPY . .
 RUN CLINICAL_SUPABASE_ANON_KEY=build-time-placeholder npm run build
 
-FROM public.ecr.aws/docker/library/node:22-bookworm-slim AS runtime
+FROM gcr.io/distroless/nodejs22-debian12:nonroot AS runtime
 
 WORKDIR /app
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
     HOSTNAME=0.0.0.0 \
     PORT=3000
-RUN groupadd --system --gid 1001 nodejs \
-    && useradd --system --uid 1001 --gid nodejs nextjs
-COPY --from=builder --chown=nextjs:nodejs /app/public ./public
-COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
-COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
-USER nextjs
+COPY --from=builder --chown=nonroot:nonroot /app/public ./public
+COPY --from=builder --chown=nonroot:nonroot /app/.next/standalone ./
+COPY --from=builder --chown=nonroot:nonroot /app/.next/static ./.next/static
 EXPOSE 3000
-# App Runner injects its own HOSTNAME value. Pin the listen address at process
-# launch so the managed health checker can reach the Next.js server.
-CMD ["sh", "-c", "HOSTNAME=0.0.0.0 exec node server.js"]
+CMD ["server.js"]

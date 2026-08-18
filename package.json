@@ -29,7 +29,9 @@
     "build:aws-sync-bridge": "node scripts/build-aws-sync-bridge.mjs",
     "build:aws-deployment-tools": "node scripts/build-aws-deployment-tools.mjs",
     "check:aws-deployment-acceptance": "node scripts/check-aws-deployment-acceptance.mjs",
-    "preflight:aws-synthetic": "node scripts/preflight-aws-synthetic.mjs"
+    "preflight:aws-synthetic": "node scripts/preflight-aws-synthetic.mjs",
+    "check:aws-production-readiness": "node scripts/check-aws-production-readiness.mjs",
+    "test:aws-production-readiness": "node scripts/check-aws-production-readiness.test.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-dynamodb": "^3.1109.0",

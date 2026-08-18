@@ -91,6 +91,35 @@ No real PHI enters the AWS environment until the BAA, vendor inventory, risk
 analysis, access review, backup/restore exercise, incident-response exercise,
 logging exclusions, and synthetic end-to-end acceptance gate are complete.
 
+The AWS Organizations BAA was confirmed active on August 18, 2026. The current
+member account and every deployed stack remain explicitly synthetic-only. The
+agreement milestone does not change `PhiAllowed=false`, create a production
+account, approve vendors, or complete the HIPAA Security Rule risk analysis.
+
+`infra/aws-clinical-core/production-readiness.example.json` is the activation
+contract. Operators keep the completed manifest outside Git at
+`production-readiness.json`; `npm run check:aws-production-readiness` refuses
+activation unless the production account differs from synthetic staging, all
+technical controls are approved, and legal/compliance, security, clinical
+safety, and engineering approvals are named and dated.
+
+## Production migration groups
+
+The Desktop application currently has one Supabase staging transport used by
+most governed adapters. Migration is grouped by authority and risk rather than
+by screen:
+
+1. Cognito workforce identity, organizations, patient directory, invitations,
+   and consent.
+2. Clinical chart, encounters, notes, labs, protocols, and deterministic safety.
+3. Scheduling, inbox, programs, nutrition, wearables, and patient sync.
+4. Billing, inventory, reporting, knowledge curation, and governed copilot runs.
+
+Each group moves only after Aurora schema parity, typed AWS API contracts,
+Cognito authorization, cross-tenant refusal, audit completeness, deletion,
+backup/restore, and count/hash reconciliation pass. Supabase staging is never
+used as an AWS outage fallback.
+
 AWS endpoint environment variables are descriptive only. They do not activate
 the runtime: the application also requires a durable, server-read
 `production-clinical` approval record. The synthetic stack never creates that

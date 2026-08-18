@@ -73,11 +73,16 @@ No item in this document is implied complete by synthetic acceptance. Production
 - [ ] Legal/compliance, clinical safety, security, engineering, and business owners sign the production change record.
 - [ ] Activate a supervised internal pilot with minimum data and immediate rollback; expand only after an observation period and documented review.
 
-## Current blockers as of 2026-08-12
+## Current verified posture as of 2026-08-18
 
-- AWS organizational BAA activation is not yet reflected in the reviewed deployment manifest.
-- App session federation to Cognito is not implemented.
+- The AWS Organizations Business Associate Addendum is active with an effective date of August 18, 2026. This closes the AWS agreement prerequisite only; it does not approve the application or account configuration for PHI.
+- Account `588966314750` remains the synthetic-staging account. A separate empty production account has not been created.
+- Desktop still uses Supabase staging for practitioner authentication and most clinical domains. It is not a production fallback.
+- V2 still uses Supabase TestFlight authentication and state persistence. Consumer Cognito federation is not implemented.
 - Durable Junction and Passio connector-registry reads and vendor approvals are not implemented.
-- Production AWS account and production data plane have not been created.
+- GuardDuty and Security Hub are not enabled in the synthetic member account. The current trail is multi-region with validation but is not an organization trail.
+- The Desktop runtime has been changed to a non-root distroless image; an AWS CodeBuild/ECR scan of that exact image is still required.
+- V2 local PHI storage now uses AES-256-GCM with per-write nonces and record-bound authenticated data. Independent cryptography, lost-device, backup, and deletion review remain required.
+- The mobile dependency audit has no critical findings after targeted upgrades. Remaining high findings in the Expo/Metro toolchain require a reviewed Expo SDK upgrade.
 
 Until these blockers are closed, use synthetic identities and synthetic data only.
