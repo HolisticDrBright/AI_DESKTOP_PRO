@@ -7,6 +7,14 @@ dedicated AWS synthetic-staging account. AWS CodeBuild builds the image, Amazon
 ECR stores it, and AWS App Runner provides the managed HTTPS endpoint. The
 initial deployment is synthetic-only and must not receive real patient data.
 
+Deployed 2026-08-18:
+
+- URL: `https://penrnyupn3.us-east-2.awsapprunner.com`
+- CloudFormation stack: `ai-desktop-pro-synthetic-web`
+- App Runner service: `ai-desktop-pro-synthetic-staging`
+- Region: `us-east-2`
+- Image source commit: `689c8b571c501a9ceddb7eccd597bbe62f3197e8`
+
 Runtime posture:
 
 - `APP_EDITION=clinical`
