@@ -4,6 +4,7 @@ param(
   [string]$ArtifactBucket = "ai-clinical-core-synthetic-clinicaldocumentsbucket-1wv5abdrcnn7",
   [string]$Region = "us-east-2",
   [string]$Profile = "ai-synthetic-member",
+  [string]$SyntheticAllowedSubjects = "c1a00000-0000-4000-8000-000000000001,c1a00000-0000-4000-8000-000000000002,c1a00000-0000-4000-8000-000000000009",
   [switch]$ConfirmSyntheticOnly
 )
 
@@ -45,7 +46,7 @@ aws cloudformation deploy --stack-name $StackName --template-file "infra/aws-cli
   "SyntheticSupabaseAudience=authenticated" `
   "SyntheticEmailDomain=@brightlongevity.test" `
   "SyntheticOrganizationId=11111111-1111-4111-8111-111111111111" `
-  "SyntheticAllowedSubjects=c1a00000-0000-4000-8000-000000000001,c1a00000-0000-4000-8000-000000000002" `
+  "SyntheticAllowedSubjects=$SyntheticAllowedSubjects" `
   "ClinicalCoreKeyArn=$kmsKey" `
   "LambdaCodeBucket=$ArtifactBucket" `
   "ApiCodeKey=$apiKey" `
