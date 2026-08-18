@@ -13,8 +13,8 @@ Deployed 2026-08-18:
 - CloudFormation stack: `ai-desktop-pro-synthetic-web`
 - App Runner service: `ai-desktop-pro-synthetic-staging`
 - Region: `us-east-2`
-- Image source commit: `e7bf0fb05d80602194260f4cb1fb72b2c8dfbf82`
-- Deployed image tag: `e7bf0fb05d80`
+- Image source commit: `4c23d54f0e189bf06cb428a085dbcef319461f52`
+- Deployed image tag: `4c23d54f0e189bf06cb428a085dbcef319461f52`
 
 Runtime posture:
 
