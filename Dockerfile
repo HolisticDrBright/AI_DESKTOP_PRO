@@ -46,4 +46,6 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 USER nextjs
 EXPOSE 3000
-CMD ["node", "server.js"]
+# App Runner injects its own HOSTNAME value. Pin the listen address at process
+# launch so the managed health checker can reach the Next.js server.
+CMD ["sh", "-c", "HOSTNAME=0.0.0.0 exec node server.js"]
