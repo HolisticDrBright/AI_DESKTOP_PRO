@@ -26,6 +26,7 @@
     "check:aws-authenticated-api": "node scripts/check-aws-authenticated-api.mjs",
     "build:aws-authenticated-api": "node scripts/build-aws-authenticated-api.mjs",
     "build:aws-lab-analysis": "node scripts/build-aws-lab-analysis.mjs",
+    "build:aws-sync-bridge": "node scripts/build-aws-sync-bridge.mjs",
     "build:aws-deployment-tools": "node scripts/build-aws-deployment-tools.mjs",
     "check:aws-deployment-acceptance": "node scripts/check-aws-deployment-acceptance.mjs",
     "preflight:aws-synthetic": "node scripts/preflight-aws-synthetic.mjs"

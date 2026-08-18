@@ -58,3 +58,4 @@ next-env.d.ts
 # Reviewed AWS deployment manifests contain account and operator identifiers.
 /infra/aws-clinical-core/deployment-manifest.json
 /infra/aws-clinical-core/synthetic-acceptance-manifest.json
+/supabase/.temp/
