@@ -58,3 +58,22 @@ provider that will create, receive, maintain, or transmit PHI.
 Before an image is pushed, CodeBuild starts that exact image and requires its
 same-container `/api/health` endpoint to answer successfully. A container that
 only compiles but cannot boot never reaches ECR or App Runner.
+
+## Distroless production-candidate evidence
+
+On 2026-08-18, AWS CodeBuild built commit
+`023839705beedfa93b376f28c5926d114f99054c` from
+`agent/aws-hipaa-production-phase1`. The runtime stage uses
+`gcr.io/distroless/nodejs22-debian12:nonroot`, contains no shell or package
+manager, and passed the same-container health check. The image was pushed to
+ECR for evidence only and was not deployed to App Runner.
+
+- ECR digest: `sha256:1ea79c351c0da95bb92abfd8e9d3ccb4fc554fec7e14d0c5032a7acc5e1b6aa5`
+- Basic ECR scan status: `COMPLETE`
+- Critical findings: `0`
+- High findings: `0`
+- Total image findings: `0`
+
+This closes the prior Debian/Perl image findings for this candidate. It does
+not replace source-dependency review, penetration testing, or the final scan
+of the exact production release image.
