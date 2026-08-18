@@ -13,7 +13,8 @@ Deployed 2026-08-18:
 - CloudFormation stack: `ai-desktop-pro-synthetic-web`
 - App Runner service: `ai-desktop-pro-synthetic-staging`
 - Region: `us-east-2`
-- Image source commit: `689c8b571c501a9ceddb7eccd597bbe62f3197e8`
+- Image source commit: `e7bf0fb05d80602194260f4cb1fb72b2c8dfbf82`
+- Deployed image tag: `e7bf0fb05d80`
 
 Runtime posture:
 
@@ -42,6 +43,17 @@ role and therefore cannot read unrelated account resources.
 The generated App Runner URL is a staging URL. A production custom domain, WAF
 policy, production data plane, operational monitoring, and real-PHI approval
 remain separate activation gates.
+
+## BAA milestone
+
+The AWS Organizations Business Associate Addendum was confirmed active on
+2026-08-18. This clears the AWS contractual prerequisite, but it does not make
+this staging deployment suitable for real PHI by itself. The current Desktop
+still uses `CLINICAL_DATA_PLANE=supabase_staging` and remains explicitly
+synthetic-only. Production activation requires the production AWS clinical
+data plane, a documented risk analysis, verified access/audit/backup/recovery
+controls, incident procedures, and appropriate agreements for every downstream
+provider that will create, receive, maintain, or transmit PHI.
 
 Before an image is pushed, CodeBuild starts that exact image and requires its
 same-container `/api/health` endpoint to answer successfully. A container that
