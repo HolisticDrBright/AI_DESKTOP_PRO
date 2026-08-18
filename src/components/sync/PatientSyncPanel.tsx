@@ -39,6 +39,7 @@ const SCOPES: { value: LiveSyncScope; label: string; research?: boolean }[] = [
   { value: "symptoms_adherence", label: "Symptoms & adherence" },
   { value: "wearables", label: "Wearables" },
   { value: "lab_summaries", label: "Lab summaries" },
+  { value: "lab_results_import", label: "Lab results imported from patient app" },
   { value: "billing_links", label: "Billing links" },
   { value: "research_n_of_1", label: "Research / N-of-1 (separate consent)", research: true },
 ];
@@ -61,6 +62,10 @@ function fmt(iso: string | null | undefined): string {
   return Number.isNaN(d.getTime())
     ? "—"
     : d.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
+function formatInvitationCode(code: string): string {
+  return `${code.slice(0, 4)}-${code.slice(4, 8)}-${code.slice(8)}`;
 }
 
 function StatePill({ state }: { state: string }) {
@@ -331,12 +336,25 @@ export function PatientSyncPanel({ patientId }: { patientId: string }) {
               <p className="m-0 text-[12px] font-semibold text-warning-deep">
                 One-time connection code (shown ONCE — only its hash is stored):
               </p>
-              <code className="mt-1 block break-all text-[11px]" data-testid="sync-token-value">
-                {oneTimeToken.token}
-              </code>
+              <div className="mt-1 flex flex-wrap items-center gap-2">
+                <code className="block text-[18px] font-bold tracking-[0.16em]" data-testid="sync-token-value">
+                  {formatInvitationCode(oneTimeToken.token)}
+                </code>
+                <Btn
+                  size="sm"
+                  onClick={() =>
+                    void navigator.clipboard.writeText(formatInvitationCode(oneTimeToken.token))
+                      .then(() => announce("Connection code copied."))
+                      .catch(() => announce("Could not copy the code. Select it and copy manually."))
+                  }
+                  data-testid="sync-copy-token"
+                >
+                  Copy code
+                </Btn>
+              </div>
               <p className="m-0 mt-1 text-[11.5px] text-subtle">
                 Expires {fmt(oneTimeToken.expiresAt)}. Delivery provider not configured — this code
-                was not transmitted anywhere; convey it to the patient directly.
+                was not transmitted anywhere; give it to the patient directly.
               </p>
             </div>
           )}

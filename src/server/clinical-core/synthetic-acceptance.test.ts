@@ -38,7 +38,7 @@ describe("deployed synthetic Cognito-to-Aurora acceptance harness", () => {
     const statuses = [
       json(200, { data: { contractVersion: "clinical-core/1", environment: "synthetic-staging", dataClassification: "synthetic_only", identityPool: "workforce", authenticated: true, phiAllowed: false, realPatientDataAllowed: false } }),
       json(200, { data: { contractVersion: "clinical-core/1", environment: "synthetic-staging", dataClassification: "synthetic_only", identityPool: "consumer", authenticated: true, phiAllowed: false, realPatientDataAllowed: false } }),
-      json(201, { data: { invitationId: "66666666-6666-4666-8666-666666666666", connectionId: "77777777-7777-4777-8777-777777777777", expiresAt: "2026-08-12T20:00:00Z", token: "x".repeat(43) } }),
+      json(201, { data: { invitationId: "66666666-6666-4666-8666-666666666666", connectionId: "77777777-7777-4777-8777-777777777777", expiresAt: "2026-08-12T20:00:00Z", token: "ABCDEFGHJKMNP" } }),
       json(200, { data: { connectionId: "77777777-7777-4777-8777-777777777777", patientRecordId: manifest.fixture.patientRecordId, consumerPersonId: manifest.fixture.consumerPersonId, state: "verified", verifiedAt: "2026-08-11T20:00:00Z" } }),
       json(404, { error: "invitation_invalid_or_expired" }),
       json(403, { message: "Forbidden" }),

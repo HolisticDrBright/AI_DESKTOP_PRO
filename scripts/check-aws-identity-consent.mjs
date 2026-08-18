@@ -70,7 +70,8 @@ export function validateIdentityConsentBoundary({ migration, manifest, adapter, 
   assert(errors, migration.includes("safe_metadata ?| array["), "audit metadata needs a denied-key guard");
 
   assert(errors, adapter.includes('throw new Error("clinical-core/aws-identity-consent is server-only.")'), "adapter needs a server-only guard");
-  assert(errors, adapter.includes('randomBytes(32).toString("base64url")'), "invitation token must use 256 bits of randomness");
+  assert(errors, adapter.includes("INVITATION_ALPHABET") && adapter.includes("byte & 31"), "invitation code must use the 32-symbol ambiguity-free alphabet");
+  assert(errors, adapter.includes("randomBytes(13)"), "invitation code must contain 65 bits of randomness");
   assert(errors, adapter.includes("const tokenHash = sha256(token)"), "token must be hashed before persistence");
   assert(errors, adapter.includes("context.identitySubject"), "adapter must pass the verified identity subject");
   assert(errors, adapter.includes('environment: "synthetic-staging"'), "adapter context must be synthetic-only");

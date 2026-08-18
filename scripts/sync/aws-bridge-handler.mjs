@@ -143,7 +143,7 @@ export function createSignedBridgeHandler({
         return response(200, { ok: true, duplicate: result.duplicate === true });
       }
       if (body.resourceType && body.providerEventId) {
-        const result = await rpc("record_sync_inbound", {
+        const result = await rpc(body.resourceType === "lab_result" ? "record_sync_lab_result" : "record_sync_inbound", {
           _connection_id: String(body.connectionId ?? ""),
           _provider_event_id: String(body.providerEventId),
           _contract_version: String(body.contractVersion ?? ""),

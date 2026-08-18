@@ -136,7 +136,7 @@ versions, and PHI-safe audit events.
 The contract intentionally contains no email, name, phone, birth date, or
 demographic matching field. A Cognito subject binds to a stable internal
 person, and a patient connection binds only when that consumer presents an
-expiring 256-bit invitation token. Aurora stores the SHA-256 digest, never the
+expiring 13-character, 65-bit one-time invitation code. Aurora stores the SHA-256 digest, never the
 token.
 
 `src/server/clinical-core/aws-identity-consent.ts` is the first server-only

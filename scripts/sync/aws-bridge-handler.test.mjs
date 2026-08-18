@@ -73,6 +73,35 @@ describe("AWS patient-sync bridge", () => {
     expect(calls[1][1]._resource_type).toBe("wearable_summary");
   });
 
+  it("routes lab results only to the clinician-review import RPC", async () => {
+    const calls = [];
+    const handler = createSignedBridgeHandler({
+      rpc: async (name, args) => {
+        calls.push([name, args]);
+        return name === "register_sync_callback_nonce" ? { replay: false } : { duplicate: false };
+      },
+      organizationId: "org-1",
+      callbackKeyId: "v2-to-desktop-2026-08",
+      callbackSecret: "a".repeat(64),
+      nowMs: () => 1_800_000_000_000,
+      log: { log() {} },
+    });
+    const result = await handler(signedEvent("/sync/callback", {
+      connectionId: "connection-1",
+      providerEventId: "alp-lab-synthetic-1",
+      contractVersion: "patient-sync/1",
+      resourceType: "lab_result",
+      payload: { schemaVersion: "lab-result/1" },
+      payloadHash: "f".repeat(64),
+      occurredAt: "2026-08-17T12:00:00.000Z",
+      externalResourceId: "panel-1:glucose",
+      resourceVersion: "2026-08-17T12:00:00.000Z",
+    }));
+    expect(result.statusCode).toBe(200);
+    expect(calls[1][0]).toBe("record_sync_lab_result");
+    expect(calls[1][1]._resource_type).toBe("lab_result");
+  });
+
   it("refuses a tampered body before any database call", async () => {
     let calls = 0;
     const event = signedEvent("/sync/callback", { kind: "delivered", eventUid: "event-1" });

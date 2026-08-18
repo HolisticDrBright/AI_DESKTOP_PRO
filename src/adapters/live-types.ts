@@ -1209,6 +1209,7 @@ export type LiveSyncScope =
   | "symptoms_adherence"
   | "wearables"
   | "lab_summaries"
+  | "lab_results_import"
   | "billing_links"
   | "research_n_of_1";
 
@@ -1498,6 +1499,7 @@ export interface PatientSyncInboundEnvelopeV1 {
     | "symptom_report"
     | "outcome_report"
     | "wearable_summary"
+    | "lab_result"
     | "patient_message"
     | "appointment_request"
     | "consent_change"

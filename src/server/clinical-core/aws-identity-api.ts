@@ -6,6 +6,8 @@ import {
   ClinicalCoreAdapterError,
   CONSENT_SCOPES,
   createAwsSyntheticIdentityConsentAdapter,
+  INVITATION_CODE_PATTERN,
+  normalizeInvitationCode,
   type AwsSyntheticIdentityConsentAdapter,
   type ConsentMethod,
   type IdentityPool,
@@ -57,7 +59,6 @@ const ROUTES: Readonly<Record<string, RouteDefinition>> = {
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SUBJECT = /^[A-Za-z0-9:_-]{8,128}$/;
 const IDEMPOTENCY = /^[A-Za-z0-9:_-]{8,128}$/;
-const TOKEN = /^[A-Za-z0-9_-]{43}$/;
 const MAX_BODY_BYTES = 8_192;
 
 export function createAwsIdentityApiHandler(input: {
@@ -100,7 +101,9 @@ export function createAwsIdentityApiHandler(input: {
         }
         case "claim": {
           exactKeys(body, ["token"], ["token"]);
-          return response(200, { data: await adapter.claimInvitation({ context, token: requiredString(body, "token", TOKEN) }) });
+          const token = normalizeInvitationCode(requiredString(body, "token"));
+          if (!INVITATION_CODE_PATTERN.test(token)) throw new IdentityApiError("request_invalid");
+          return response(200, { data: await adapter.claimInvitation({ context, token }) });
         }
         case "grant": {
           exactKeys(body, ["connectionId", "artifactId", "scope", "method", "representativeAuthority"],

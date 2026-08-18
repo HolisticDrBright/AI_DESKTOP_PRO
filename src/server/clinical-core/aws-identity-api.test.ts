@@ -14,7 +14,7 @@ const CONSUMER_AUD = "consumerclient0000000000000";
 
 function adapter(): AwsSyntheticIdentityConsentAdapter {
   return {
-    issueInvitation: vi.fn(async () => ({ invitationId: ARTIFACT, connectionId: CONNECTION, expiresAt: "2026-08-12T12:00:00Z", token: "a".repeat(43) })),
+    issueInvitation: vi.fn(async () => ({ invitationId: ARTIFACT, connectionId: CONNECTION, expiresAt: "2026-08-12T12:00:00Z", token: "ABCDEFGHJKMNP" })),
     claimInvitation: vi.fn(async () => ({ connectionId: CONNECTION, patientRecordId: PATIENT, consumerPersonId: PERSON, state: "verified" as const, verifiedAt: "2026-08-12T12:00:00Z" })),
     recordConsent: vi.fn(async (input) => ({ consentId: ARTIFACT, connectionId: input.connectionId, scope: input.scope, status: "granted" as const, version: 1, recordedAt: "2026-08-12T12:00:00Z" })),
     revokeConsent: vi.fn(async (input) => ({ consentId: ARTIFACT, connectionId: input.connectionId, scope: input.scope, status: "revoked" as const, version: 2, recordedAt: "2026-08-12T12:00:00Z" })),
@@ -86,10 +86,11 @@ describe("authenticated synthetic identity API", () => {
 
   test("claims an invitation only through the consumer route and pool", async () => {
     const api = handler();
-    const result = await api.run(event("POST /clinical-core/consumer/invitations/claim", "consumer", { token: "b".repeat(43) }));
+    const result = await api.run(event("POST /clinical-core/consumer/invitations/claim", "consumer", { token: "abcd-efgh-jkmnp" }));
     expect(result.statusCode).toBe(200);
     expect(api.service.claimInvitation).toHaveBeenCalledWith(expect.objectContaining({
       context: expect.objectContaining({ identityPool: "consumer", purpose: "identity_link" }),
+      token: "ABCDEFGHJKMNP",
     }));
   });
 

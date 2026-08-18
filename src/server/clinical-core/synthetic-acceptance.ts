@@ -52,7 +52,7 @@ export async function runSyntheticApiAcceptance(input: {
   });
   const invitation = data(issue, ["invitationId", "connectionId", "expiresAt", "token"]);
   const token = string(invitation.token);
-  if (!/^[A-Za-z0-9_-]{43}$/.test(token)) throw new SyntheticAcceptanceError("workflow_failed");
+  if (!/^[A-HJ-NP-Z2-9]{13}$/.test(token)) throw new SyntheticAcceptanceError("workflow_failed");
 
   const claimed = data(await call("/clinical-core/consumer/invitations/claim", input.consumerIdToken, 200, { token }),
     ["connectionId", "patientRecordId", "consumerPersonId", "state", "verifiedAt"]);

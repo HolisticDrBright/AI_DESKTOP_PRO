@@ -15,6 +15,7 @@ export const CONSENT_SCOPES = [
   "symptoms_adherence",
   "wearables",
   "lab_summaries",
+  "lab_results_import",
   "billing_links",
   "research_n_of_1",
 ] as const;
@@ -102,7 +103,18 @@ export interface AwsSyntheticIdentityConsentAdapter {
 }
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+const INVITATION_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+export const INVITATION_CODE_PATTERN = /^[A-HJ-NP-Z2-9]{13}$/;
+
+export function normalizeInvitationCode(value: string): string {
+  return value.toUpperCase().replace(/[\s-]/g, "");
+}
+
+function generateInvitationCode(): string {
+  return [...randomBytes(13)]
+    .map((byte) => INVITATION_ALPHABET[byte & 31])
+    .join("");
+}
 
 export function createAwsSyntheticIdentityConsentAdapter(
   database: ClinicalCoreDatabase,
@@ -117,7 +129,9 @@ export function createAwsSyntheticIdentityConsentAdapter(
         throw new ClinicalCoreAdapterError("request_context_invalid");
       }
 
-      const token = randomBytes(32).toString("base64url");
+      // Thirteen characters from a 32-symbol, ambiguity-free alphabet = 65 bits.
+      // The code remains short-lived, single-use, and hash-only at rest.
+      const token = generateInvitationCode();
       const tokenHash = sha256(token);
       const idempotencyKey = input.idempotencyKey ?? randomUUID();
       assertBoundedIdempotencyKey(idempotencyKey);
@@ -140,7 +154,8 @@ export function createAwsSyntheticIdentityConsentAdapter(
 
     async claimInvitation(input) {
       assertContext(input.context, "consumer", "identity_link");
-      if (!TOKEN_PATTERN.test(input.token)) {
+      const token = normalizeInvitationCode(input.token);
+      if (!INVITATION_CODE_PATTERN.test(token)) {
         throw new ClinicalCoreAdapterError("invitation_invalid_or_expired");
       }
       const row = await run(database, input.context, async (tx) => firstRow<{
@@ -151,7 +166,7 @@ export function createAwsSyntheticIdentityConsentAdapter(
         verified_at: string;
       }>(await tx.query(
         "select * from clinical_core.claim_connection_invitation($1, $2)",
-        [sha256(input.token), clinicalUuid(input.context.actorPersonId)],
+        [sha256(token), clinicalUuid(input.context.actorPersonId)],
       ), "invitation_invalid_or_expired"), "invitation_invalid_or_expired");
       return {
         connectionId: row.connection_id,

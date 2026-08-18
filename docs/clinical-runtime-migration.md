@@ -548,8 +548,8 @@ inbound → (terminal; read_at is the only mutable field)
 ```
 
 - Linking is NEVER by email, name, phone, DOB, or fuzzy matching. An opaque
-  256-bit token is returned ONCE by `create_sync_invitation`; only its sha256
-  is stored. Tokens expire (7 days), are single-use, org/patient scoped, and
+  13-character, 65-bit code is returned ONCE by `create_sync_invitation`; only its sha256
+  is stored. Codes expire (48 hours), are single-use, org/patient scoped, and
   superseded by any newer invitation. `verify_sync_invitation` (worker
   boundary) binds the external system's authenticated subject; a partial
   unique index refuses a subject already bound elsewhere (forgery/reuse) and
@@ -561,7 +561,7 @@ inbound → (terminal; read_at is the only mutable field)
 
 **Consent scopes.** Eleven independent, versioned scopes (programs,
 protocols_supplements, nutrition, appointments, messaging, forms_checkins,
-symptoms_adherence, wearables, lab_summaries, billing_links,
+symptoms_adherence, wearables, lab_summaries, lab_results_import, billing_links,
 research_n_of_1). A grant records the presented artifact + version,
 jurisdiction where available, method, and representative authority. A
 revocation (practitioner or patient-app; the newest valid revocation wins

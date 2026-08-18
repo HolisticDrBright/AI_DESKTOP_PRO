@@ -7,6 +7,7 @@ param(
   [string]$SupabaseProjectRef = "urcjiehlxoehievobezf",
   [string]$OrganizationId = "a0000000-0000-4000-8000-000000000001",
   [string]$V2BaseUrl = "https://expo-sunlit-resonance-4543.fly.dev",
+  [string]$V2FlyApp = "expo-sunlit-resonance-4543",
   [switch]$ConfirmSyntheticOnly
 )
 
@@ -66,7 +67,8 @@ if (-not $existing) {
 
 function NewSecretValue {
   $bytes = New-Object byte[] 48
-  [System.Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
+  $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+  try { $rng.GetBytes($bytes) } finally { $rng.Dispose() }
   return [Convert]::ToBase64String($bytes)
 }
 $desktopToV2 = if ($existing -and $existing.desktopToV2Secret) { $existing.desktopToV2Secret } else { NewSecretValue }
@@ -83,8 +85,23 @@ $secretPayload = @{
   desktopToV2Secret = $desktopToV2
   v2ToDesktopSecret = $v2ToDesktop
 } | ConvertTo-Json -Compress
-aws secretsmanager put-secret-value --secret-id $secretArn --secret-string $secretPayload --profile $Profile --region $Region | Out-Null
-if ($LASTEXITCODE -ne 0) { throw "Sync bridge secret update failed." }
+$secretFile = New-TemporaryFile
+try {
+  [System.IO.File]::WriteAllText(
+    $secretFile.FullName,
+    $secretPayload,
+    [System.Text.UTF8Encoding]::new($false)
+  )
+  aws secretsmanager put-secret-value --secret-id $secretArn --secret-string "file://$($secretFile.FullName)" --profile $Profile --region $Region | Out-Null
+  if ($LASTEXITCODE -ne 0) { throw "Sync bridge secret update failed." }
+} finally {
+  Remove-Item -LiteralPath $secretFile.FullName -Force -ErrorAction SilentlyContinue
+}
+
+# Rotate both sides together. Values stay server-side: Fly receives them as
+# protected secrets and neither client bundle can read them.
+flyctl secrets set --app $V2FlyApp "PATIENT_SYNC_INBOUND_SECRET=$desktopToV2" "PATIENT_SYNC_OUTBOUND_SECRET=$v2ToDesktop" | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "AI Longevity Pro sync secret update failed." }
 
 Write-Host "Synthetic AWS patient-sync bridge deployed."
 Write-Host "CallbackBaseUrl=$callbackBaseUrl"

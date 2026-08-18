@@ -157,7 +157,7 @@ begin
   _r := public.create_sync_invitation('bbbbbbbb-0000-0000-0000-000000000801','cccccccc-0000-0000-0000-000000000801');
   insert into _ids values('tok1', _r->>'token'), ('conn', _r->>'connectionId');
   insert into _v values('invitation created: pending connection, one-time token, honest no-delivery',
-    (_r->>'ok')::boolean and length(_r->>'token') = 64
+    (_r->>'ok')::boolean and (_r->>'token') ~ '^[A-HJ-NP-Z2-9]{13}$'
     and (_r->>'deliveryConfigured')::boolean = false
     and (_r->>'message') like '%Delivery provider not configured%'
     and (select state from public.patient_app_connections where id=(_r->>'connectionId')::uuid) = 'invitation_pending',

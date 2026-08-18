@@ -22,7 +22,7 @@
  *        npx next start -p 3114
  */
 import { createServer } from "node:http";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 
 const PORT = Number(process.env.STUB_PORT ?? 3999);
 
@@ -1729,7 +1729,7 @@ let syncCircuit = null;             // { provider, state, failureCount, openedAt
 const syncNonces = new Set();       // `${provider}:${nonce}` callback replay protection
 
 const SYNC_SCOPE_LIST = ["programs","protocols_supplements","nutrition","appointments",
-  "messaging","forms_checkins","symptoms_adherence","wearables","lab_summaries",
+  "messaging","forms_checkins","symptoms_adherence","wearables","lab_summaries","lab_results_import",
   "billing_links","research_n_of_1"];
 const SYNC_OUT_SCOPE = {
   program_enrollment: "programs", protocol_version: "protocols_supplements",
@@ -1742,6 +1742,7 @@ const SYNC_IN_SCOPE = {
   checkin_response: "forms_checkins", protocol_adherence: "symptoms_adherence",
   supplement_adherence: "symptoms_adherence", symptom_report: "symptoms_adherence",
   outcome_report: "symptoms_adherence", wearable_summary: "wearables",
+  lab_result: "lab_results_import",
   patient_message: "messaging", appointment_request: "appointments",
 };
 
@@ -1816,7 +1817,8 @@ function syncApplyDelivery(e, providerEventId, kind, errorSafe) {
 // and the worker's service-role REST boundary: hashed single-use expiring
 // token + unique external-subject binding.
 function syncApplyVerify(token, subject) {
-  const inv = syncInvitations.get(sha256hex(token));
+  const normalizedToken = String(token).toUpperCase().replace(/[\s-]/g, "");
+  const inv = syncInvitations.get(sha256hex(normalizedToken));
   if (!inv) return { status: 404, body: { code: "P0002", message: "invitation not found" } };
   if (inv.usedAt) return { status: 400, body: { code: "22023", message: "this invitation was already used" } };
   if (inv.supersededAt) return { status: 400, body: { code: "22023", message: "this invitation was superseded" } };
@@ -1875,7 +1877,7 @@ function syncApplyInbound(conn, {
     return { status: 200, body: { ok: true, duplicate: true } };
   }
   let state = "processed";
-  if (["patient_message", "appointment_request", "symptom_report"].includes(resourceType)) {
+  if (["patient_message", "appointment_request", "symptom_report", "lab_result"].includes(resourceType)) {
     state = "review_pending";
   } else if (resourceVersion && externalResourceId
     && [...syncInbound.values()].some((i) => i.connectionId === conn.id
@@ -3555,7 +3557,8 @@ createServer(async (req, res) => {
   // Force-expire an invitation (time travel for the expiry proof).
   if (url.pathname === "/__control/sync-expire-invitation" && req.method === "POST") {
     const body = await readBody(req);
-    const inv = syncInvitations.get(sha256hex(String(body.token ?? "")));
+    const normalizedToken = String(body.token ?? "").toUpperCase().replace(/[\s-]/g, "");
+    const inv = syncInvitations.get(sha256hex(normalizedToken));
     if (!inv) return json(res, 404, { code: "P0002", message: "invitation not found" });
     inv.expiresAt = new Date(Date.now() - 60e3).toISOString();
     return json(res, 200, { ok: true });
@@ -7596,9 +7599,10 @@ createServer(async (req, res) => {
       for (const i of syncInvitations.values()) {
         if (i.connectionId === conn.id && !i.usedAt && !i.supersededAt) i.supersededAt = nowIso();
       }
-      // 256-bit opaque token; ONLY its hash is stored, mirroring the backend.
-      const token = [...Array(64)].map(() => "0123456789abcdef"[Math.floor(Math.random() * 16)]).join("");
-      const inv = { id: syncId(), connectionId: conn.id, expiresAt: iso(-7 * 864e5),
+      // Human-entered 65-bit code; ONLY its hash is stored, mirroring the backend.
+      const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+      const token = [...randomBytes(13)].map((byte) => alphabet[byte & 31]).join("");
+      const inv = { id: syncId(), connectionId: conn.id, expiresAt: iso(-48 * 60 * 60 * 1_000),
         createdAt: nowIso(), usedAt: null, supersededAt: null };
       syncInvitations.set(sha256hex(token), inv);
       syncEvent(conn.id, "invitation_created", null, inv.id, null);
@@ -8081,12 +8085,56 @@ createServer(async (req, res) => {
       if (action === "reject") i.rejectionReason = String(body._note).trim();
       i.reviewedAt = nowIso();
       i.reviewNote = String(body._note ?? "").trim() || null;
+      if (action === "accept" && i.resourceType === "lab_result") {
+        const panel = i.payload?.panel ?? {};
+        const result = i.payload?.result ?? {};
+        const source = i.payload?.source ?? {};
+        let report = labReports.find((item) => item.sourceRecordId === source.panelId);
+        if (!report) {
+          report = {
+            id: syncId(),
+            name: String(panel.name ?? "Imported lab panel"),
+            lab: String(panel.sourceLabel ?? "AI Longevity Pro"),
+            collectedAt: String(panel.collectedAt ?? i.occurredAt),
+            uploadedAt: nowIso(),
+            markerCount: 0,
+            sourceRecordId: source.panelId,
+          };
+          labReports.push(report);
+        }
+        let marker = labMarkers.find((item) => item.sourceRecordId === i.externalResourceId);
+        if (!marker) {
+          const numeric = Number(result.value);
+          marker = {
+            id: syncId(), sourceRecordId: i.externalResourceId,
+            name: String(result.name ?? "Unnamed marker"), unit: String(result.unit ?? ""),
+            current: numeric, currentDisplay: `${numeric} ${String(result.unit ?? "")}`.trim(),
+            labRangeText: result.referenceRange
+              ? `${result.referenceRange.min ?? ""}–${result.referenceRange.max ?? ""}` : "Not provided by lab",
+            optimalRange: { unit: String(result.unit ?? ""), source: "Not configured" },
+            status: ["optimal", "normal"].includes(String(result.sourceStatus)) ? String(result.sourceStatus) : "unknown",
+            trend: "needs-review", series: [{ date: String(panel.collectedAt ?? i.occurredAt), value: numeric }],
+            confidence: null, confidenceBand: "unknown", reviewState: "awaiting-review",
+            collectedAt: String(panel.collectedAt ?? i.occurredAt),
+            source: { reportName: report.name, location: "AI Longevity Pro signed import",
+              snippet: `${String(result.name ?? "Unnamed marker")} ${numeric} ${String(result.unit ?? "")}`.trim(),
+              confidenceNote: "Imported from the connected patient app; clinician verification required.", documentId: report.id },
+            provenance: { sourceType: "patient_reported", sourceName: "AI Longevity Pro",
+              lastUpdated: nowIso() }, relatedSystems: [], relatedContext: [], relatedHypotheses: [],
+            relatedProtocols: [], seeds: [],
+          };
+          labMarkers.push(marker);
+          report.markerCount += 1;
+        }
+      }
       for (const t of queue.values()) {
         if (t.itemType === "sync_review" && t.refId === i.id && t.status === "open") t.status = "resolved";
       }
       syncEvent(conn.id, "inbound_reviewed", i.resourceType, action, i.reviewNote);
       return json(res, 200, { ok: true, state: i.state,
-        message: action === "accept" ? "Accepted." : "Rejected." });
+        message: action === "accept" && i.resourceType === "lab_result"
+          ? "Accepted and staged in Labs for marker review."
+          : action === "accept" ? "Accepted." : "Rejected." });
     }
 
     if (url.pathname === "/rest/v1/rpc/record_sync_inbound_correction" && req.method === "POST") {

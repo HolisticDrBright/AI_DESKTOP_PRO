@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
 import {
@@ -53,7 +54,7 @@ function fakeDatabase(
 }
 
 describe("AWS synthetic identity and consent adapter", () => {
-  test("issues a 256-bit invitation token once and persists only its SHA-256", async () => {
+  test("issues a 13-character invitation code once and persists only its SHA-256", async () => {
     const db = fakeDatabase((sql) => sql.includes("issue_connection_invitation") ? {
       rows: [{ invitation_id: INVITATION, connection_id: CONNECTION, expires_at: "2026-08-12T18:00:00.000Z" }],
     } : { rows: [] });
@@ -65,7 +66,7 @@ describe("AWS synthetic identity and consent adapter", () => {
       idempotencyKey: "invite:test:0001",
     });
 
-    expect(result.token).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(result.token).toMatch(/^[A-HJ-NP-Z2-9]{13}$/);
     expect(db.transactions()).toBe(1);
     expect(db.calls[0]!.sql).toContain("set_request_context");
     expect(db.calls[0]!.parameters).toContain("synthetic-subject-001");
@@ -98,7 +99,7 @@ describe("AWS synthetic identity and consent adapter", () => {
       }],
     } : { rows: [] });
     const adapter = createAwsSyntheticIdentityConsentAdapter(db.database);
-    const token = "A".repeat(43);
+    const token = "ABCDEFGHJKMNP";
     const result = await adapter.claimInvitation({
       context: context({ identityPool: "consumer" }),
       token,
@@ -106,6 +107,20 @@ describe("AWS synthetic identity and consent adapter", () => {
     expect(result.state).toBe("verified");
     expect(db.calls[1]!.parameters[0]).toMatch(/^[0-9a-f]{64}$/);
     expect(db.calls[1]!.parameters).not.toContain(token);
+  });
+
+  test("normalizes spaces, hyphens, and lowercase before hashing a code", async () => {
+    const db = fakeDatabase((sql) => sql.includes("claim_connection_invitation") ? {
+      rows: [{ connection_id: CONNECTION, patient_record_id: PATIENT, consumer_person_id: ACTOR,
+        state: "verified", verified_at: "2026-08-12T18:00:00.000Z" }],
+    } : { rows: [] });
+    const adapter = createAwsSyntheticIdentityConsentAdapter(db.database);
+    await adapter.claimInvitation({
+      context: context({ identityPool: "consumer" }),
+      token: "abcd-efgh-jkmnp",
+    });
+    const expected = createHash("sha256").update("ABCDEFGHJKMNP", "utf8").digest("hex");
+    expect(db.calls[1]!.parameters[0]).toBe(expected);
   });
 
   test("does not permit contact information to substitute for an invitation", async () => {
@@ -188,7 +203,7 @@ describe("AWS synthetic identity and consent adapter", () => {
     };
     await expect(createAwsSyntheticIdentityConsentAdapter(database).claimInvitation({
       context: context({ identityPool: "consumer" }),
-      token: "A".repeat(43),
+      token: "ABCDEFGHJKMNP",
     })).rejects.toThrow(/^database_unavailable$/);
   });
 
@@ -196,7 +211,7 @@ describe("AWS synthetic identity and consent adapter", () => {
     const rejecting = (category: "identity_refused" | "operation_refused"): ClinicalCoreDatabase => ({
       async transaction() { throw new ClinicalCoreDatabaseRejection(category); },
     });
-    const claim = { context: context({ identityPool: "consumer" as const }), token: "A".repeat(43) };
+    const claim = { context: context({ identityPool: "consumer" as const }), token: "ABCDEFGHJKMNP" };
     await expect(createAwsSyntheticIdentityConsentAdapter(rejecting("identity_refused")).claimInvitation(claim))
       .rejects.toThrow(/^synthetic_boundary_refused$/);
     await expect(createAwsSyntheticIdentityConsentAdapter(rejecting("operation_refused")).claimInvitation(claim))

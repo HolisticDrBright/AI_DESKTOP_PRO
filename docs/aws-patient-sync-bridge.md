@@ -30,6 +30,22 @@ consent scope. Without a current grant the database refuses the write. With a
 grant, the event opens a `sync_review` item for the practitioner; it is never
 silently merged into the chart.
 
+## Patient-app lab imports
+
+Historical app labs use the independent `lab_results_import` consent scope;
+the existing `lab_summaries` scope remains Desktop-to-app only. The app
+projects each numeric marker into a signed `lab_result` event. Notes, uploaded
+files, interpretations, recommendations, contact data, and account identity
+are excluded. Deterministic provider-event and source-version keys make a
+repeated backfill idempotent on both sides.
+
+Every accepted event first creates a `sync_review` task. A practitioner must
+accept that exact signed event before Desktop creates an `alp_patient_sync`
+lab document, panel, and unreviewed biomarker observation. Source identity,
+source version, provider event id, signing key id, and clinician import actor
+remain in provenance. Marker-level review is still required in Labs; import
+acceptance never labels a result clinically reviewed.
+
 ## Deployment and verification
 
 The stack is deployed only to the dedicated synthetic staging AWS account.
@@ -47,3 +63,9 @@ The final live synthetic acceptance still requires deliberate practitioner
 and patient actions: issue invitation, link V2, grant the `wearables` scope,
 send a wearable summary, and review it in Desktop. This document does not
 authorize production or real PHI.
+
+Lab-import acceptance additionally requires a synthetic app panel, explicit
+`lab_results_import` consent, repeated backfill with zero duplicates, signed
+AWS callback delivery, practitioner import acceptance, and confirmation that
+the marker appears in Labs as awaiting review. Real lab transfer stays blocked
+until that gate and the production PHI-readiness gate both pass.
