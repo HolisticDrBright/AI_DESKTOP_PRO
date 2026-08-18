@@ -101,6 +101,7 @@ import type {
   LiveProtocolTemplateDetail,
   LiveTemplateComparison,
 } from "./live-types";
+import type { CreatePatientInput, CreatePatientResult } from "./types";
 
 interface Envelope<T> {
   data?: T;
@@ -141,6 +142,9 @@ async function liveFetch<T>(
 }
 
 export const liveClient = {
+  createPatient: (input: CreatePatientInput) =>
+    liveFetch<CreatePatientResult>("patients/create", { method: "POST", body: input }),
+
   labsWorkspace: (patientId: string) =>
     liveFetch<LabWorkspace>("labs/workspace", { method: "POST", body: { patientId } }),
 

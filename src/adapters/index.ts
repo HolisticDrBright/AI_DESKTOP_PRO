@@ -35,6 +35,7 @@ import {
 } from "./review-state";
 import { executeLiveAction, type ActionContext, type ActionKind } from "./actions";
 import type { OptimalRange } from "./labs.types";
+import type { CreatePatientInput } from "./types";
 import type {
   LiveAppointmentStatus,
   LiveAuditEvent,
@@ -95,6 +96,7 @@ export const api = {
       (await import("./patients.live")).patientsLive.list(sessionToken, orgId),
     get: async (id: string, sessionToken?: string | null, orgId?: string | null) =>
       (await import("./patients.live")).patientsLive.get(id, sessionToken, orgId),
+    create: async (input: CreatePatientInput) => liveClient.createPatient(input),
     /**
      * LIVE: the bounded patient-overview aggregate (demographics, care team,
      * allergies, medications, conditions, recent activity, latest labs, open
