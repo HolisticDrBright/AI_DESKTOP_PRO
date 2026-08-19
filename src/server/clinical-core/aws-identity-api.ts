@@ -58,6 +58,7 @@ type RouteDefinition = {
   pool: IdentityPool;
   purpose: SyntheticRequestContext["purpose"];
   operation: "posture" | "issue" | "claim" | "grant" | "revoke"
+    | "get_consent_artifact"
     | "get_connection" | "import_lab" | "list_lab_imports" | "review_lab" | "list_labs"
     | "record_clinical" | "list_clinical" | "list_consent_history"
     | "submit_privacy_request" | "list_privacy_requests";
@@ -72,6 +73,7 @@ const ROUTES: Readonly<Record<string, RouteDefinition>> = {
   "POST /clinical-core/consumer/consents/grant": { pool: "consumer", purpose: "consent_management", operation: "grant" },
   "POST /clinical-core/workforce/consents/revoke": { pool: "workforce", purpose: "consent_management", operation: "revoke" },
   "POST /clinical-core/consumer/consents/revoke": { pool: "consumer", purpose: "consent_management", operation: "revoke" },
+  "GET /clinical-core/consumer/consent-artifact": { pool: "consumer", purpose: "consent_management", operation: "get_consent_artifact" },
   "POST /clinical-core/consumer/labs/import": { pool: "consumer", purpose: "clinical_data", operation: "import_lab" },
   "GET /clinical-core/consumer/connection": { pool: "consumer", purpose: "clinical_data", operation: "get_connection" },
   "GET /clinical-core/workforce/lab-imports": { pool: "workforce", purpose: "clinical_data", operation: "list_lab_imports" },
@@ -127,6 +129,17 @@ export function createAwsIdentityApiHandler(input: {
             realPatientDataAllowed: false,
           },
         });
+      }
+      if (route.operation === "get_consent_artifact") {
+        if (event.body) throw new IdentityApiError("request_invalid");
+        const scope = event.queryStringParameters?.scope ?? "";
+        if (!CONSENT_SCOPES.includes(scope as (typeof CONSENT_SCOPES)[number])) {
+          throw new IdentityApiError("request_invalid");
+        }
+        return response(200, { data: await adapter.getCurrentConsentArtifact({
+          context,
+          scope: scope as (typeof CONSENT_SCOPES)[number],
+        }) });
       }
       if (route.operation === "list_lab_imports") {
         if (event.body) throw new IdentityApiError("request_invalid");

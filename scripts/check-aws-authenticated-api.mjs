@@ -30,7 +30,7 @@ export function validateAuthenticatedApi(foundation, extension) {
   }
 
   const routeEntries = Object.entries(resources).filter(([, resource]) => resource.Type === "AWS::ApiGatewayV2::Route");
-  assert(errors, routeEntries.length === 19, "extension must expose exactly nineteen authenticated routes");
+  assert(errors, routeEntries.length === 20, "extension must expose exactly twenty authenticated routes");
   const expectedRoutes = new Set([
     "GET /clinical-core/workforce/posture",
     "GET /clinical-core/consumer/posture",
@@ -42,6 +42,7 @@ export function validateAuthenticatedApi(foundation, extension) {
     "POST /clinical-core/consumer/consents/revoke",
     "POST /clinical-core/consumer/labs/import",
     "GET /clinical-core/consumer/connection",
+    "GET /clinical-core/consumer/consent-artifact",
     "GET /clinical-core/workforce/lab-imports",
     "POST /clinical-core/workforce/lab-imports/review",
     "GET /clinical-core/workforce/patient-labs",

@@ -26,15 +26,16 @@ assert(database.includes("reviewed_synthetic_migration") && database.includes('c
   && database.includes("if (assumeRole)"), "administrative and request database paths must remain explicit");
 assert(provisioner.includes("hasExactKeys") && provisioner.includes("fixture_mismatch") && !provisioner.includes("on conflict (id) do update"), "fixtures must be exact, immutable, and mismatch-refusing");
 assert(acceptance.includes('redirect: "manual"') && acceptance.includes("AbortSignal.timeout(15_000)"), "acceptance transport must refuse redirects and have a hard timeout");
-assert(acceptance.includes("patientName: \"refused\"") && acceptance.includes("isolationWorkforceIdToken") && acceptance.includes("externalRequests: 30")
+assert(acceptance.includes("patientName: \"refused\"") && acceptance.includes("isolationWorkforceIdToken") && acceptance.includes("externalRequests: 31")
   && acceptance.includes("/clinical-core/workforce/posture") && acceptance.includes("/clinical-core/consumer/posture")
+  && acceptance.includes("/clinical-core/consumer/consent-artifact?scope=lab_results_import")
   && acceptance.includes("scope: \"lab_results_import\"") && acceptance.includes("duplicateImport")
   && acceptance.includes("/clinical-core/workforce/lab-imports/review")
   && acceptance.includes("/clinical-core/consumer/patient-labs")
   && acceptance.includes("/clinical-core/consumer/records")
   && acceptance.includes("/clinical-core/consumer/privacy/consents")
   && acceptance.includes("/clinical-core/consumer/privacy/requests"),
-"acceptance must test both identity bridges, PHI-shaped and cross-tenant refusal, scoped consents, duplicate-safe clinical and lab imports, privacy requests, review, and read-back across all thirty operations");
+"acceptance must test both identity bridges, PHI-shaped and cross-tenant refusal, approved consent-artifact retrieval, scoped consents, duplicate-safe clinical and lab imports, privacy requests, review, and read-back across all thirty-one operations");
 assert(identityProvisioning.includes("labConsentArtifactId") && identityProvisioning.includes("protocolConsentArtifactId")
   && identityProvisioning.includes("nutritionConsentArtifactId") && identityProvisioning.includes("symptomsConsentArtifactId")
   && identityProvisioning.includes("formsConsentArtifactId") && identityProvisioning.includes("syncProviderId"),

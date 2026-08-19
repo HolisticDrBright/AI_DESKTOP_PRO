@@ -63,6 +63,15 @@ export type ConsentResult = {
   recordedAt: string;
 };
 
+export type ConsentArtifactResult = {
+  artifactId: string;
+  scope: ConsentScope;
+  artifactVersion: string;
+  contentSha256: string;
+  jurisdiction: string;
+  approvedAt: string;
+};
+
 export class ClinicalCoreAdapterError extends Error {
   constructor(readonly category:
     | "synthetic_boundary_refused"
@@ -76,6 +85,10 @@ export class ClinicalCoreAdapterError extends Error {
 }
 
 export interface AwsSyntheticIdentityConsentAdapter {
+  getCurrentConsentArtifact(input: {
+    context: SyntheticRequestContext;
+    scope: ConsentScope;
+  }): Promise<ConsentArtifactResult>;
   issueInvitation(input: {
     context: SyntheticRequestContext;
     patientRecordId: string;
@@ -120,6 +133,35 @@ export function createAwsSyntheticIdentityConsentAdapter(
   database: ClinicalCoreDatabase,
 ): AwsSyntheticIdentityConsentAdapter {
   return {
+    async getCurrentConsentArtifact(input) {
+      assertContext(input.context, "consumer", "consent_management");
+      if (!CONSENT_SCOPES.includes(input.scope)) {
+        throw new ClinicalCoreAdapterError("consent_precondition_failed");
+      }
+      const row = await run(database, input.context, async (tx) => firstRow<{
+        id: string;
+        scope: ConsentScope;
+        artifact_version: string;
+        content_sha256: string;
+        jurisdiction: string;
+        approved_at: string;
+      }>(await tx.query(
+        `select id, scope, artifact_version, content_sha256, jurisdiction, approved_at
+           from clinical_core.consent_artifacts
+          where organization_id=$1 and scope=$2 and status='approved'
+          order by approved_at desc, created_at desc limit 1`,
+        [clinicalUuid(input.context.organizationId), input.scope],
+      ), "consent_precondition_failed"), "consent_precondition_failed");
+      return {
+        artifactId: row.id,
+        scope: row.scope,
+        artifactVersion: row.artifact_version,
+        contentSha256: row.content_sha256,
+        jurisdiction: row.jurisdiction,
+        approvedAt: row.approved_at,
+      };
+    },
+
     async issueInvitation(input) {
       assertContext(input.context, "workforce", "identity_link");
       assertUuid(input.patientRecordId);

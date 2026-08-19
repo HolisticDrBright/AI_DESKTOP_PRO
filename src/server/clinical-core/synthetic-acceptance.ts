@@ -25,7 +25,7 @@ export async function runSyntheticApiAcceptance(input: {
   isolationWorkforceIdToken: string;
   manifest: SyntheticAcceptanceManifest;
   fetch?: FetchLike;
-}): Promise<{ passed: 30; externalRequests: 30 }> {
+}): Promise<{ passed: 31; externalRequests: 31 }> {
   const fetcher = input.fetch ?? fetch;
   const origin = validateConfiguration(input);
   let operationIndex = 0;
@@ -99,9 +99,17 @@ export async function runSyntheticApiAcceptance(input: {
     throw new SyntheticAcceptanceError("workflow_failed");
   }
 
+  const labConsentArtifact = data(await call(
+    "/clinical-core/consumer/consent-artifact?scope=lab_results_import", input.consumerIdToken, 200,
+  ), ["artifactId", "scope", "artifactVersion", "contentSha256", "jurisdiction", "approvedAt"]);
+  if (labConsentArtifact.scope !== "lab_results_import"
+    || labConsentArtifact.artifactId !== input.manifest.fixture.labConsentArtifactId) {
+    throw new SyntheticAcceptanceError("workflow_failed");
+  }
+
   const labConsent = data(await call("/clinical-core/consumer/consents/grant", input.consumerIdToken, 201, {
     connectionId: string(claimed.connectionId),
-    artifactId: input.manifest.fixture.labConsentArtifactId,
+    artifactId: string(labConsentArtifact.artifactId),
     scope: "lab_results_import",
     method: "patient_app",
     representativeAuthority: "self",
@@ -250,7 +258,7 @@ export async function runSyntheticApiAcceptance(input: {
   if (!observation || observation.marker_name !== "Synthetic Glucose" || observation.review_status !== "unreviewed") {
     throw new SyntheticAcceptanceError("workflow_failed");
   }
-  return { passed: 30, externalRequests: 30 };
+  return { passed: 31, externalRequests: 31 };
 }
 
 function validateConfiguration(input: { apiOrigin: string; workforceIdToken: string; consumerIdToken: string; isolationWorkforceIdToken: string; manifest: SyntheticAcceptanceManifest }) {

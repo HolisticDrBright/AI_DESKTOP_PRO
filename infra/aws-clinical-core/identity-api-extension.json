@@ -227,6 +227,14 @@
         "Target": { "Fn::Sub": "integrations/${IdentityApiIntegration}" }
       }
     },
+    "ConsumerConsentArtifactRoute": {
+      "Type": "AWS::ApiGatewayV2::Route",
+      "Properties": {
+        "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "GET /clinical-core/consumer/consent-artifact",
+        "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "ConsumerJwtAuthorizer" },
+        "Target": { "Fn::Sub": "integrations/${IdentityApiIntegration}" }
+      }
+    },
     "ConsumerLabImportRoute": {
       "Type": "AWS::ApiGatewayV2::Route",
       "Properties": {

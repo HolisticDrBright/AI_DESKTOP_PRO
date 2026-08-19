@@ -54,6 +54,26 @@ function fakeDatabase(
 }
 
 describe("AWS synthetic identity and consent adapter", () => {
+  test("returns only the latest approved consent artifact metadata for the consumer organization", async () => {
+    const db = fakeDatabase((sql) => sql.includes("from clinical_core.consent_artifacts") ? {
+      rows: [{
+        id: ARTIFACT,
+        scope: "lab_results_import",
+        artifact_version: "synthetic-lab-import/1",
+        content_sha256: "a".repeat(64),
+        jurisdiction: "US",
+        approved_at: "2026-08-12T18:00:00.000Z",
+      }],
+    } : { rows: [] });
+    const result = await createAwsSyntheticIdentityConsentAdapter(db.database).getCurrentConsentArtifact({
+      context: context({ identityPool: "consumer", purpose: "consent_management" }),
+      scope: "lab_results_import",
+    });
+    expect(result).toMatchObject({ artifactId: ARTIFACT, scope: "lab_results_import" });
+    expect(db.calls[1]!.parameters).toEqual([clinicalUuid(ORG), "lab_results_import"]);
+    expect(db.calls[1]!.sql).toContain("status='approved'");
+  });
+
   test("issues a 13-character invitation code once and persists only its SHA-256", async () => {
     const db = fakeDatabase((sql) => sql.includes("issue_connection_invitation") ? {
       rows: [{ invitation_id: INVITATION, connection_id: CONNECTION, expires_at: "2026-08-12T18:00:00.000Z" }],

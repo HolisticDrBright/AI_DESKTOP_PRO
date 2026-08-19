@@ -59,6 +59,7 @@ describe("deployed synthetic Cognito-to-Aurora acceptance harness", () => {
       json(409, { error: "consent_precondition_failed" }),
       json(201, { data: { consentId: "99999999-9999-4999-8999-999999999999", connectionId: "77777777-7777-4777-8777-777777777777", scope: "programs", status: "revoked", version: 2, recordedAt: "2026-08-11T20:02:00Z" } }),
       json(200, { data: { connectionId: "77777777-7777-4777-8777-777777777777", patientRecordId: manifest.fixture.patientRecordId, state: "verified", verifiedAt: "2026-08-11T20:00:00Z", labResultsImportConsent: "not_granted" } }),
+      json(200, { data: { artifactId: manifest.fixture.labConsentArtifactId, scope: "lab_results_import", artifactVersion: "synthetic-lab-import/1", contentSha256: manifest.fixture.labConsentArtifactSha256, jurisdiction: "US", approvedAt: "2026-08-11T20:00:00Z" } }),
       json(201, { data: { consentId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", connectionId: "77777777-7777-4777-8777-777777777777", scope: "lab_results_import", status: "granted", version: 1, recordedAt: "2026-08-11T20:03:00Z" } }),
       json(200, { data: { connectionId: "77777777-7777-4777-8777-777777777777", patientRecordId: manifest.fixture.patientRecordId, state: "verified", verifiedAt: "2026-08-11T20:00:00Z", labResultsImportConsent: "granted" } }),
       ...(["protocols_supplements", "nutrition", "symptoms_adherence", "forms_checkins"].map((scope, index) => json(201, { data: {
@@ -94,19 +95,20 @@ describe("deployed synthetic Cognito-to-Aurora acceptance harness", () => {
       isolationWorkforceIdToken: token("c"),
       manifest,
       fetch: fetcher,
-    })).resolves.toEqual({ passed: 30, externalRequests: 30 });
-    expect(calls).toHaveLength(30);
+    })).resolves.toEqual({ passed: 31, externalRequests: 31 });
+    expect(calls).toHaveLength(31);
     expect(calls[0]!.body).toBeNull();
     expect(calls[1]!.body).toBeNull();
     expect(calls[2]!.body).not.toHaveProperty("patientName");
     expect(calls[6]!.body).toHaveProperty("patientName", "refused");
     expect(calls[7]!.body).toEqual(expect.objectContaining({ patientRecordId: manifest.fixture.patientRecordId }));
-    expect(calls[12]!.body).toEqual(expect.objectContaining({ scope: "lab_results_import" }));
-    expect(calls[20]!.body).toEqual(calls[19]!.body);
-    expect(calls[24]!.body).toHaveProperty("payload.email", "refused@example.test");
-    expect(calls[26]!.body).toEqual(calls[25]!.body);
-    expect(calls[27]!.url).toContain("state=review_pending");
-    expect(calls[29]!.url).toContain(encodeURIComponent(manifest.fixture.patientRecordId));
+    expect(calls[12]!.url).toContain("consent-artifact?scope=lab_results_import");
+    expect(calls[13]!.body).toEqual(expect.objectContaining({ scope: "lab_results_import" }));
+    expect(calls[21]!.body).toEqual(calls[20]!.body);
+    expect(calls[25]!.body).toHaveProperty("payload.email", "refused@example.test");
+    expect(calls[27]!.body).toEqual(calls[26]!.body);
+    expect(calls[28]!.url).toContain("state=review_pending");
+    expect(calls[30]!.url).toContain(encodeURIComponent(manifest.fixture.patientRecordId));
     expect(calls.every((call) => call.url.startsWith("https://abc123.execute-api.us-east-2.amazonaws.com/clinical-core/"))).toBe(true);
   });
 

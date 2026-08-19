@@ -14,6 +14,14 @@ const CONSUMER_AUD = "consumerclient0000000000000";
 
 function adapter(): AwsSyntheticIdentityConsentAdapter {
   return {
+    getCurrentConsentArtifact: vi.fn(async (input) => ({
+      artifactId: ARTIFACT,
+      scope: input.scope,
+      artifactVersion: "synthetic-lab-import/1",
+      contentSha256: "a".repeat(64),
+      jurisdiction: "US",
+      approvedAt: "2026-08-12T12:00:00Z",
+    })),
     issueInvitation: vi.fn(async () => ({ invitationId: ARTIFACT, connectionId: CONNECTION, expiresAt: "2026-08-12T12:00:00Z", token: "ABCDEFGHJKMNP" })),
     claimInvitation: vi.fn(async () => ({ connectionId: CONNECTION, patientRecordId: PATIENT, consumerPersonId: PERSON, state: "verified" as const, verifiedAt: "2026-08-12T12:00:00Z" })),
     recordConsent: vi.fn(async (input) => ({ consentId: ARTIFACT, connectionId: input.connectionId, scope: input.scope, status: "granted" as const, version: 1, recordedAt: "2026-08-12T12:00:00Z" })),
@@ -50,6 +58,20 @@ function handler(service = adapter()) {
 }
 
 describe("authenticated synthetic identity API", () => {
+  test("returns the current approved consent artifact without its document body", async () => {
+    const api = handler();
+    const request = event("GET /clinical-core/consumer/consent-artifact", "consumer", {});
+    request.body = undefined;
+    request.queryStringParameters = { scope: "lab_results_import" };
+    const response = await api.run(request);
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(response.body).data).toMatchObject({
+      artifactId: ARTIFACT,
+      scope: "lab_results_import",
+      artifactVersion: "synthetic-lab-import/1",
+    });
+  });
+
   test.each(["workforce", "consumer"] as const)("reports authenticated %s synthetic posture without a body", async (pool) => {
     const api = handler();
     const request = event(`GET /clinical-core/${pool}/posture`, pool, {});
