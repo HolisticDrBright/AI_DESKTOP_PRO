@@ -10,9 +10,9 @@ import {
 export async function POST() {
   const session = readAuthSession(await cookies());
   let providerRevoked = false;
-  if (session.accessToken) {
+  if (session.refreshToken) {
     try {
-      await signOutSession(session.accessToken);
+      await signOutSession(session.refreshToken);
       providerRevoked = true;
     } catch {
       // Local sign-out must still complete when the identity provider is down.

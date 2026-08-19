@@ -27,6 +27,8 @@ const guardReferenceAllowlist = new Map([
   ["desktop:src/server/runtime/contractFixture.ts", new Set(["supabase_saas_runtime"])],
   ["desktop:src/server/runtime/deployedRuntime.ts", new Set(["fly_runtime"])],
   ["desktop:src/server/runtime/posture.ts", new Set(["supabase_saas_runtime"])],
+  ["desktop:src/adapters/session.server.ts", new Set(["supabase_saas_runtime"])],
+  ["desktop:src/lib/edition.server.ts", new Set(["supabase_saas_runtime"])],
   ["app:backend/clinical-core/aws-production-gate.ts", new Set(["supabase_saas_runtime", "fly_runtime"])],
 ]);
 

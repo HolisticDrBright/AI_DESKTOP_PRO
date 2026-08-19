@@ -10,7 +10,25 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
  * all, so a demo deployment cannot be nudged toward live behaviour.
  */
 
-const CLINICAL_ENV = ["CLINICAL_SUPABASE_URL", "CLINICAL_SUPABASE_ANON_KEY"];
+const CLINICAL_ENV = [
+  "CLINICAL_AWS_REGION",
+  "CLINICAL_AWS_API_ORIGIN",
+  "CLINICAL_AWS_ALLOWED_API_HOSTS",
+  "CLINICAL_AWS_WORKFORCE_USER_POOL_ID",
+  "CLINICAL_AWS_WORKFORCE_CLIENT_ID",
+  "AWS_CLINICAL_ADAPTER_READY",
+  "PHI_ALLOWED",
+];
+
+function configureAwsClinicalBoundary() {
+  vi.stubEnv("CLINICAL_AWS_REGION", "us-east-2");
+  vi.stubEnv("CLINICAL_AWS_API_ORIGIN", "https://clinical-api.example.test");
+  vi.stubEnv("CLINICAL_AWS_ALLOWED_API_HOSTS", "clinical-api.example.test");
+  vi.stubEnv("CLINICAL_AWS_WORKFORCE_USER_POOL_ID", "us-east-2_example");
+  vi.stubEnv("CLINICAL_AWS_WORKFORCE_CLIENT_ID", "client-example");
+  vi.stubEnv("AWS_CLINICAL_ADAPTER_READY", "true");
+  vi.stubEnv("PHI_ALLOWED", "false");
+}
 
 async function loadGate(edition: "demo" | "clinical") {
   vi.resetModules();
@@ -46,21 +64,20 @@ describe("clinical edition configuration gate", () => {
     const gate = await loadGate("clinical");
 
     expect(() => gate.assertEditionConfig()).toThrow(/fails closed/);
-    expect(() => gate.assertEditionConfig()).toThrow(/CLINICAL_SUPABASE_URL/);
+    expect(() => gate.assertEditionConfig()).toThrow(/CLINICAL_AWS_REGION/);
   });
 
   test("treats whitespace-only configuration as absent", async () => {
-    vi.stubEnv("CLINICAL_SUPABASE_URL", "   ");
-    vi.stubEnv("CLINICAL_SUPABASE_ANON_KEY", "key");
+    configureAwsClinicalBoundary();
+    vi.stubEnv("CLINICAL_AWS_API_ORIGIN", "   ");
     const gate = await loadGate("clinical");
 
-    expect(gate.inspectEditionConfig().missing).toEqual(["CLINICAL_SUPABASE_URL"]);
+    expect(gate.inspectEditionConfig().missing).toEqual(["CLINICAL_AWS_API_ORIGIN"]);
     expect(gate.isClinicalBoundaryConfigured()).toBe(false);
   });
 
   test("passes once the boundary is fully configured", async () => {
-    vi.stubEnv("CLINICAL_SUPABASE_URL", "https://clinical.example.test");
-    vi.stubEnv("CLINICAL_SUPABASE_ANON_KEY", "publishable-key");
+    configureAwsClinicalBoundary();
     const gate = await loadGate("clinical");
 
     const report = gate.inspectEditionConfig();

@@ -1,36 +1,30 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
 
 /**
- * Completes a password reset. The one-time recovery token arrives in the URL
- * FRAGMENT of the emailed link (never sent to any server by the browser); it
- * is read here, used for exactly one reset-complete call, and never stored.
+ * Completes a Cognito workforce password reset with the one-time email code.
  */
 export function ResetForm() {
-  const [token, setToken] = useState<string | null>(null);
+  const [email, setEmail] = useState("");
+  const [code, setCode] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [working, setWorking] = useState(false);
   const [done, setDone] = useState(false);
   const [error, setError] = useState("");
 
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.hash.replace(/^#/, ""));
-    setToken(params.get("access_token"));
-    // Drop the fragment so the one-time token doesn't linger in the URL bar.
-    if (params.get("access_token")) {
-      window.history.replaceState(null, "", window.location.pathname);
-    }
-  }, []);
-
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (working) return;
     setError("");
-    if (password.length < 8) {
-      setError("Choose a password of at least 8 characters.");
+    if (!email.includes("@") || !/^\d{6}$/.test(code)) {
+      setError("Enter your workforce email and the six-digit code from the reset email.");
+      return;
+    }
+    if (password.length < 14) {
+      setError("Choose a password of at least 14 characters.");
       return;
     }
     if (password !== confirm) {
@@ -42,7 +36,7 @@ export function ResetForm() {
       const res = await fetch("/api/auth/reset-complete", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ accessToken: token, password }),
+        body: JSON.stringify({ email, confirmationCode: code, password }),
       });
       const json = (await res.json().catch(() => ({}))) as { error?: { message?: string } };
       if (!res.ok) {
@@ -74,23 +68,39 @@ export function ResetForm() {
     );
   }
 
-  if (token === null) {
-    return (
-      <div className="rounded-[12px] border border-line bg-card px-4 py-[14px]">
-        <p className="m-0 text-[13px] font-semibold text-ink">Reset your password</p>
-        <p className="m-0 mt-[6px] text-[12.5px] leading-[1.5] text-body">
-          Open this page from the link in your reset email. If you don&apos;t have one,
-          request it from the <Link href="/login" className="font-semibold text-action hover:underline">sign-in page</Link>.
-        </p>
-      </div>
-    );
-  }
-
   const field =
     "h-9 w-full rounded-lg border border-line bg-card px-[10px] text-[13px] text-body outline-none focus-visible:border-action focus-visible:outline-2 focus-visible:outline-action";
 
   return (
     <form onSubmit={submit} className="flex flex-col gap-[12px]">
+      <div>
+        <label htmlFor="reset-email" className="mb-[5px] block text-[10px] font-bold tracking-[0.04em] text-faint uppercase">
+          Workforce email
+        </label>
+        <input
+          id="reset-email"
+          type="email"
+          autoComplete="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          className={field}
+        />
+      </div>
+      <div>
+        <label htmlFor="reset-code" className="mb-[5px] block text-[10px] font-bold tracking-[0.04em] text-faint uppercase">
+          Six-digit reset code
+        </label>
+        <input
+          id="reset-code"
+          inputMode="numeric"
+          autoComplete="one-time-code"
+          pattern="[0-9]{6}"
+          maxLength={6}
+          value={code}
+          onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+          className={field}
+        />
+      </div>
       <div>
         <label htmlFor="new-password" className="mb-[5px] block text-[10px] font-bold tracking-[0.04em] text-faint uppercase">
           New password

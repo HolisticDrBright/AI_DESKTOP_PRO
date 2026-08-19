@@ -25,6 +25,8 @@ export function LoginForm() {
   const [session, setSession] = useState<SessionInfo | null>(null);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [mfaRequired, setMfaRequired] = useState(false);
+  const [mfaCode, setMfaCode] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [resetSent, setResetSent] = useState(false);
@@ -73,17 +75,22 @@ export function LoginForm() {
     setPending(true);
     setError(null);
     try {
-      const res = await fetch("/api/auth/login", {
+      const res = await fetch(mfaRequired ? "/api/auth/mfa" : "/api/auth/login", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify(mfaRequired ? { code: mfaCode } : { email, password }),
       });
       const json = (await res.json().catch(() => ({}))) as {
-        data?: { email?: string };
+        data?: { email?: string; mfaRequired?: boolean };
         error?: { message?: string };
       };
       if (!res.ok) {
         setError(json.error?.message ?? "Sign-in failed. Please try again.");
+        return;
+      }
+      if (json.data?.mfaRequired) {
+        setMfaRequired(true);
+        setPassword("");
         return;
       }
       setSession({ signedIn: true, email: json.data?.email ?? email });
@@ -143,7 +150,7 @@ export function LoginForm() {
         enforced by the backend and row-level security, not by this screen.
       </p>
       <form onSubmit={submit} className="flex flex-col gap-3">
-        <label className="block">
+        {!mfaRequired && <label className="block">
           <span className="mb-[4px] block text-[10.5px] font-bold tracking-[0.04em] text-faint uppercase">Email</span>
           <input
             type="email"
@@ -153,8 +160,8 @@ export function LoginForm() {
             onChange={(e) => setEmail(e.target.value)}
             className={inputCls}
           />
-        </label>
-        <label className="block">
+        </label>}
+        {!mfaRequired && <label className="block">
           <span className="mb-[4px] block text-[10.5px] font-bold tracking-[0.04em] text-faint uppercase">Password</span>
           <input
             type="password"
@@ -164,7 +171,24 @@ export function LoginForm() {
             onChange={(e) => setPassword(e.target.value)}
             className={inputCls}
           />
-        </label>
+        </label>}
+        {mfaRequired && (
+          <label className="block">
+            <span className="mb-[4px] block text-[10.5px] font-bold tracking-[0.04em] text-faint uppercase">
+              Authenticator code
+            </span>
+            <input
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              pattern="[0-9]{6}"
+              maxLength={6}
+              required
+              value={mfaCode}
+              onChange={(e) => setMfaCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+              className={inputCls}
+            />
+          </label>
+        )}
         {error && (
           <p role="alert" className="m-0 rounded-lg bg-critical-tint px-3 py-[8px] text-[12px] font-semibold text-critical">
             {error}
@@ -176,15 +200,15 @@ export function LoginForm() {
           className="mt-1 flex h-10 items-center justify-center gap-[7px] rounded-lg border-none bg-action text-[13px] font-semibold text-white hover:bg-action-deep focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink disabled:cursor-not-allowed disabled:opacity-60"
         >
           <LogIn size={14} strokeWidth={2} aria-hidden />
-          {pending ? "Signing in…" : "Sign in"}
+          {pending ? "Signing in…" : mfaRequired ? "Verify and sign in" : "Sign in"}
         </button>
       </form>
 
       <div className="mt-3 border-t border-hairline pt-3">
         {resetSent ? (
           <p className="m-0 text-[12px] leading-[1.5] text-body" role="status">
-            If an account exists for that email, a reset link is on its way. Open it to set a
-            new password.
+            If an account exists for that email, a six-digit reset code is on its way. Enter it
+            on the reset-password screen.
           </p>
         ) : (
           <button
@@ -193,7 +217,7 @@ export function LoginForm() {
             disabled={pending}
             className="cursor-pointer border-none bg-transparent p-0 text-[12px] font-semibold text-action hover:underline focus-visible:outline-2 focus-visible:outline-action disabled:opacity-50"
           >
-            Forgot password? Email me a reset link
+            Forgot password? Email me a reset code
           </button>
         )}
       </div>

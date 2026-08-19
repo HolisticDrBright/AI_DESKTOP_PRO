@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { AUTH_COOKIES, cookieOptions, refreshSession } from "@/adapters/auth.server";
 import { AdapterError } from "@/adapters/errors";
+import { evaluateContractFixtureBoundary } from "@/server/runtime/contractFixture";
 
 /**
  * Global authentication lifecycle (P0). LIVE mode only — the demo runs with no
@@ -31,7 +32,9 @@ const REFRESH_WINDOW_MS = 10 * 60_000;
  * every page requires a practitioner session.
  */
 const HAS_ENV_FALLBACK = Boolean(
-  process.env.CLINICAL_DEMO_EMAIL && process.env.CLINICAL_DEMO_PASSWORD,
+  evaluateContractFixtureBoundary().allowed &&
+    process.env.CLINICAL_DEMO_EMAIL &&
+    process.env.CLINICAL_DEMO_PASSWORD,
 );
 
 type Tokens = Awaited<ReturnType<typeof refreshSession>>;

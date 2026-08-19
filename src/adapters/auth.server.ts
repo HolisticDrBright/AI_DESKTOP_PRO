@@ -4,13 +4,11 @@ if (typeof window !== "undefined") {
 import { AdapterError } from "./errors";
 
 /**
- * Practitioner session for LIVE mode — real Supabase Auth sign-in, held in
- * httpOnly cookies. The browser never sees tokens or Supabase; this module
- * (and the /api/auth/* route handlers that own cookie writes) do the
- * password/refresh grants server-side against the CLINICAL project's auth
- * endpoint. Authenticated server adapters then present the access token to
- * either the Desktop-owned clinical Supabase boundary or a transitional tRPC
- * domain (ADR 0003).
+ * Practitioner session for LIVE mode — AWS Cognito workforce sign-in, held in
+ * httpOnly cookies. The browser never sees tokens; route handlers perform the
+ * password, MFA, refresh, recovery, and revocation calls server-side. The
+ * `accessToken` field below intentionally carries Cognito's ID token because
+ * the guarded clinical API accepts only workforce ID tokens (`token_use=id`).
  *
  * Cookie model (all httpOnly, sameSite=lax, secure in production):
  *   aidp_at  — access token (JWT presented by server adapters as bearer)
@@ -34,6 +32,10 @@ export const AUTH_COOKIES = {
   email: "aidp_em",
   /** Active organization (validated against memberships before it is set). */
   org: "aidp_org",
+  /** Short-lived Cognito MFA transaction; never exposed to client JavaScript. */
+  mfaSession: "aidp_mfa",
+  mfaUsername: "aidp_mfu",
+  mfaEmail: "aidp_mfe",
 } as const;
 
 export interface AuthTokens {
@@ -54,58 +56,121 @@ export interface AuthSessionState {
   orgId: string | null;
 }
 
-function authBase(): { url: string; anon: string } {
-  const url = process.env.CLINICAL_SUPABASE_URL;
-  const anon = process.env.CLINICAL_SUPABASE_ANON_KEY;
-  if (!url || !anon) {
+export interface MfaChallenge {
+  challenge: "SOFTWARE_TOKEN_MFA";
+  session: string;
+  username: string;
+  email: string;
+}
+
+function cognitoConfig(): { endpoint: string; clientId: string } {
+  const region = String(process.env.CLINICAL_AWS_REGION ?? "").trim();
+  const clientId = String(process.env.CLINICAL_AWS_WORKFORCE_CLIENT_ID ?? "").trim();
+  if (!/^[a-z]{2}(?:-gov)?-[a-z]+-\d$/i.test(region) || !/^[a-z0-9]{8,128}$/i.test(clientId)) {
     throw new AdapterError(
       "unavailable",
       "Live sign-in is not configured on this deployment.",
-      "CLINICAL_SUPABASE_URL / CLINICAL_SUPABASE_ANON_KEY missing",
+      "Cognito workforce configuration missing or invalid",
     );
   }
-  return { url, anon };
+  return { endpoint: `https://cognito-idp.${region}.amazonaws.com/`, clientId };
 }
 
-interface GrantResponse {
-  access_token?: string;
-  refresh_token?: string;
-  expires_in?: number;
-  user?: { email?: string };
+interface CognitoAuthenticationResult {
+  IdToken?: string;
+  AccessToken?: string;
+  RefreshToken?: string;
+  ExpiresIn?: number;
 }
 
-async function grant(body: Record<string, string>, kind: "password" | "refresh_token"): Promise<AuthTokens> {
-  const { url, anon } = authBase();
+interface CognitoAuthResponse {
+  AuthenticationResult?: CognitoAuthenticationResult;
+  ChallengeName?: string;
+  ChallengeParameters?: Record<string, string>;
+  Session?: string;
+}
+
+async function cognitoRequest<T>(operation: string, body: Record<string, unknown>): Promise<T> {
+  const { endpoint } = cognitoConfig();
   let res: Response;
   try {
-    res = await fetch(`${url}/auth/v1/token?grant_type=${kind}`, {
+    res = await fetch(endpoint, {
       method: "POST",
-      headers: { apikey: anon, "content-type": "application/json" },
+      headers: {
+        "content-type": "application/x-amz-json-1.1",
+        "x-amz-target": `AWSCognitoIdentityProviderService.${operation}`,
+      },
       body: JSON.stringify(body),
       cache: "no-store",
     });
   } catch (e) {
-    throw new AdapterError("unavailable", undefined, `auth grant: ${e instanceof Error ? e.message : "network"}`);
+    throw new AdapterError("unavailable", undefined, `Cognito ${operation}: ${e instanceof Error ? e.message : "network"}`);
   }
-  if (res.status === 400 || res.status === 401 || res.status === 403) {
-    // Wrong credentials / revoked refresh token. Never echo server detail.
-    throw new AdapterError("unauthenticated", "Sign-in failed — check your email and password.");
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { __type?: string; code?: string };
+    const code = String(data.__type ?? data.code ?? "").split("#").pop() ?? "";
+    if (["NotAuthorizedException", "UserNotFoundException", "CodeMismatchException", "ExpiredCodeException"].includes(code)) {
+      throw new AdapterError("unauthenticated", "Sign-in or verification failed. Check your details and try again.");
+    }
+    if (["TooManyRequestsException", "LimitExceededException"].includes(code)) {
+      throw new AdapterError("unavailable", "Too many attempts. Wait a moment and try again.");
+    }
+    if (code === "InvalidPasswordException") {
+      throw new AdapterError("invalid", "The new password does not meet the workforce password policy.");
+    }
+    throw new AdapterError("unavailable", undefined, `Cognito ${operation} status ${res.status} ${code}`);
   }
-  if (!res.ok) throw new AdapterError("unavailable", undefined, `auth grant status ${res.status}`);
-  const data = (await res.json()) as GrantResponse;
-  if (!data.access_token || !data.refresh_token) {
+  return (await res.json().catch(() => ({}))) as T;
+}
+
+function tokensFrom(result: CognitoAuthenticationResult | undefined, refreshToken: string, email: string): AuthTokens {
+  if (!result?.IdToken) {
     throw new AdapterError("unauthenticated", "Sign-in failed — check your email and password.");
   }
   return {
-    accessToken: data.access_token,
-    refreshToken: data.refresh_token,
-    expiresAt: Date.now() + (data.expires_in ?? 3600) * 1000,
-    email: data.user?.email ?? body.email ?? "",
+    accessToken: result.IdToken,
+    refreshToken: result.RefreshToken ?? refreshToken,
+    expiresAt: Date.now() + (result.ExpiresIn ?? 900) * 1000,
+    email,
   };
 }
 
-export function passwordSignIn(email: string, password: string): Promise<AuthTokens> {
-  return grant({ email, password }, "password");
+export async function passwordSignIn(email: string, password: string): Promise<AuthTokens | MfaChallenge> {
+  const { clientId } = cognitoConfig();
+  const data = await cognitoRequest<CognitoAuthResponse>("InitiateAuth", {
+    AuthFlow: "USER_PASSWORD_AUTH",
+    ClientId: clientId,
+    AuthParameters: { USERNAME: email, PASSWORD: password },
+  });
+  if (data.ChallengeName === "SOFTWARE_TOKEN_MFA" && data.Session) {
+    return {
+      challenge: "SOFTWARE_TOKEN_MFA",
+      session: data.Session,
+      username: data.ChallengeParameters?.USER_ID_FOR_SRP ?? email,
+      email,
+    };
+  }
+  if (data.ChallengeName) {
+    throw new AdapterError("unauthenticated", "This workforce sign-in requires an unsupported account challenge. Contact an administrator.");
+  }
+  return tokensFrom(data.AuthenticationResult, "", email);
+}
+
+export async function completeMfaSignIn(input: {
+  session: string;
+  username: string;
+  email: string;
+  code: string;
+}): Promise<AuthTokens> {
+  const { clientId } = cognitoConfig();
+  if (!/^\d{6}$/.test(input.code)) throw new AdapterError("invalid", "Enter the six-digit authenticator code.");
+  const data = await cognitoRequest<CognitoAuthResponse>("RespondToAuthChallenge", {
+    ClientId: clientId,
+    ChallengeName: "SOFTWARE_TOKEN_MFA",
+    Session: input.session,
+    ChallengeResponses: { USERNAME: input.username, SOFTWARE_TOKEN_MFA_CODE: input.code },
+  });
+  return tokensFrom(data.AuthenticationResult, "", input.email);
 }
 
 /**
@@ -114,15 +179,11 @@ export function passwordSignIn(email: string, password: string): Promise<AuthTok
  * message. Only a network/config failure throws (honest unavailable state).
  */
 export async function requestPasswordReset(email: string): Promise<void> {
-  const { url, anon } = authBase();
+  const { clientId } = cognitoConfig();
   try {
-    await fetch(`${url}/auth/v1/recover`, {
-      method: "POST",
-      headers: { "content-type": "application/json", apikey: anon },
-      body: JSON.stringify({ email }),
-      cache: "no-store",
-    });
+    await cognitoRequest("ForgotPassword", { ClientId: clientId, Username: email });
   } catch (e) {
+    if (e instanceof AdapterError && e.code === "unauthenticated") return;
     throw new AdapterError(
       "unavailable",
       "The reset service is unreachable right now. Please try again.",
@@ -137,61 +198,39 @@ export async function requestPasswordReset(email: string): Promise<void> {
  * it reaches us in a POST body, is used once here, and is never stored).
  */
 export async function completePasswordReset(
-  recoveryAccessToken: string,
+  email: string,
+  confirmationCode: string,
   newPassword: string,
 ): Promise<void> {
-  const { url, anon } = authBase();
-  let res: Response;
-  try {
-    res = await fetch(`${url}/auth/v1/user`, {
-      method: "PUT",
-      headers: {
-        "content-type": "application/json",
-        apikey: anon,
-        Authorization: `Bearer ${recoveryAccessToken}`,
-      },
-      body: JSON.stringify({ password: newPassword }),
-      cache: "no-store",
-    });
-  } catch (e) {
-    throw new AdapterError(
-      "unavailable",
-      "The reset service is unreachable right now. Please try again.",
-      e instanceof Error ? e.message : undefined,
-    );
-  }
-  if (res.status === 400 || res.status === 401 || res.status === 403) {
-    throw new AdapterError(
-      "unauthenticated",
-      "This reset link is invalid or has expired. Request a new one.",
-    );
-  }
-  if (!res.ok) {
-    throw new AdapterError("unavailable", "Could not update the password. Please try again.");
-  }
+  const { clientId } = cognitoConfig();
+  await cognitoRequest("ConfirmForgotPassword", {
+    ClientId: clientId,
+    Username: email,
+    ConfirmationCode: confirmationCode,
+    Password: newPassword,
+  });
 }
 
-export function refreshSession(refreshToken: string): Promise<AuthTokens> {
-  return grant({ refresh_token: refreshToken }, "refresh_token");
+export async function refreshSession(refreshToken: string): Promise<AuthTokens> {
+  const { clientId } = cognitoConfig();
+  const data = await cognitoRequest<CognitoAuthResponse>("InitiateAuth", {
+    AuthFlow: "REFRESH_TOKEN_AUTH",
+    ClientId: clientId,
+    AuthParameters: { REFRESH_TOKEN: refreshToken },
+  });
+  return tokensFrom(data.AuthenticationResult, refreshToken, "");
 }
 
 /**
  * Revoke only the current Supabase session. Cookie clearing remains mandatory
  * even when the provider is unavailable, so callers treat this as best effort.
  */
-export async function signOutSession(accessToken: string): Promise<void> {
-  const { url, anon } = authBase();
-  let res: Response;
+export async function signOutSession(refreshToken: string): Promise<void> {
+  const { clientId } = cognitoConfig();
   try {
-    res = await fetch(`${url}/auth/v1/logout?scope=local`, {
-      method: "POST",
-      headers: {
-        apikey: anon,
-        Authorization: `Bearer ${accessToken}`,
-      },
-      cache: "no-store",
-    });
+    await cognitoRequest("RevokeToken", { ClientId: clientId, Token: refreshToken });
   } catch (e) {
+    if (e instanceof AdapterError && e.code === "unauthenticated") return;
     throw new AdapterError(
       "unavailable",
       undefined,
@@ -199,9 +238,6 @@ export async function signOutSession(accessToken: string): Promise<void> {
     );
   }
 
-  // An already expired or revoked token is functionally signed out.
-  if (res.ok || res.status === 401 || res.status === 403) return;
-  throw new AdapterError("unavailable", undefined, `auth sign-out status ${res.status}`);
 }
 
 /** Minimal cookie-store shape (matches next/headers' ReadonlyRequestCookies). */
