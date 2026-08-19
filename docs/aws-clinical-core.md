@@ -22,6 +22,10 @@ fallback.
 | Billing, inventory, scheduling | AI Desktop Pro |
 | Commercial and affiliate information | Separate commercial namespace |
 
+The governed reference-catalog implementation and its independent migration,
+import, review, and read contracts are documented in
+`docs/aws-governed-reference-catalog.md`. It remains undeployed and PHI-free.
+
 Desktop must never infer that a patient-generated observation is a verified
 chart fact. V2 sends a provenance-bearing observation. A practitioner decision
 creates the clinical fact, preserves the original payload hash, and records the

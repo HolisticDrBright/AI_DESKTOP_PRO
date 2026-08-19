@@ -14,6 +14,18 @@ export type ClinicalCoreMigration = {
   sha256: string;
 };
 
+export type ClinicalCoreMigrationLedger = {
+  schema: "clinical_core" | "clinical_reference";
+  table: "schema_migrations";
+  advisoryLock: string;
+};
+
+const DEFAULT_LEDGER: ClinicalCoreMigrationLedger = {
+  schema: "clinical_core",
+  table: "schema_migrations",
+  advisoryLock: "ai-desktop-pro:clinical-core-migrations",
+};
+
 type MigrationManifest = {
   contract_version: "clinical-core-migrations/1";
   migrations: Array<{ version: string; file: string }>;
@@ -186,12 +198,18 @@ export function splitPostgresStatements(sql: string): string[] {
 export async function applyClinicalCoreMigrations(
   database: ClinicalCoreDatabase,
   migrations = loadClinicalCoreMigrations(),
+  ledger: ClinicalCoreMigrationLedger = DEFAULT_LEDGER,
 ): Promise<{ applied: string[]; alreadyApplied: string[] }> {
+  if (!/^[a-z_]{1,63}$/.test(ledger.schema) || !/^[a-z_]{1,63}$/.test(ledger.table)
+    || !ledger.advisoryLock || ledger.advisoryLock.length > 200) {
+    throw new ClinicalCoreMigrationError("manifest_invalid");
+  }
+  const qualifiedLedger = `${ledger.schema}.${ledger.table}`;
   try {
     return await database.transaction(async (tx) => {
-      await tx.query("select pg_advisory_xact_lock(hashtext($1))", ["ai-desktop-pro:clinical-core-migrations"]);
-      await tx.query("create schema if not exists clinical_core");
-      await tx.query(`create table if not exists clinical_core.schema_migrations (
+      await tx.query("select pg_advisory_xact_lock(hashtext($1))", [ledger.advisoryLock]);
+      await tx.query(`create schema if not exists ${ledger.schema}`);
+      await tx.query(`create table if not exists ${qualifiedLedger} (
         version text primary key,
         name text not null,
         sha256 text not null check (sha256 ~ '^[0-9a-f]{64}$'),
@@ -199,7 +217,7 @@ export async function applyClinicalCoreMigrations(
       )`);
 
       const existing = await tx.query<{ version: string; sha256: string }>(
-        "select version, sha256 from clinical_core.schema_migrations order by version",
+        `select version, sha256 from ${qualifiedLedger} order by version`,
       );
       const byVersion = new Map(existing.rows.map((row) => [row.version, row.sha256]));
       const applied: string[] = [];
@@ -224,7 +242,7 @@ export async function applyClinicalCoreMigrations(
           }
         }
         await tx.query(
-          "insert into clinical_core.schema_migrations (version, name, sha256) values ($1, $2, $3)",
+          `insert into ${qualifiedLedger} (version, name, sha256) values ($1, $2, $3)`,
           [migration.version, migration.name, migration.sha256],
         );
         applied.push(migration.version);

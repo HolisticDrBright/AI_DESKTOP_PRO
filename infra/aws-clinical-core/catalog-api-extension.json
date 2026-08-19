@@ -1,0 +1,230 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Authenticated PHI-free governed reference catalog API extension.",
+  "Metadata": {
+    "ClinicalCore": {
+      "ContractVersion": "governed-catalog-api/1",
+      "EnvironmentMode": "parameterized-isolated-account",
+      "DataClassification": "reference_only",
+      "ContainsPhi": false,
+      "RealPatientDataAllowed": false
+    }
+  },
+  "Parameters": {
+    "EnvironmentName": { "Type": "String", "AllowedValues": ["synthetic-staging", "production-clinical"] },
+    "ClinicalApiId": { "Type": "String", "AllowedPattern": "^[a-z0-9]{10}$" },
+    "WorkforceUserPoolId": { "Type": "String", "AllowedPattern": "^[a-z0-9-]+_[A-Za-z0-9]+$" },
+    "WorkforceUserPoolClientId": { "Type": "String", "AllowedPattern": "^[A-Za-z0-9]{20,128}$" },
+    "ConsumerUserPoolId": { "Type": "String", "AllowedPattern": "^[a-z0-9-]+_[A-Za-z0-9]+$" },
+    "ConsumerUserPoolClientId": { "Type": "String", "AllowedPattern": "^[A-Za-z0-9]{20,128}$" },
+    "DatabaseClusterArn": { "Type": "String", "AllowedPattern": "^arn:(aws|aws-us-gov|aws-cn):rds:[a-z0-9-]+:[0-9]{12}:cluster:[A-Za-z0-9-]{1,63}$" },
+    "DatabaseSecretArn": { "Type": "String", "NoEcho": true },
+    "DatabaseName": { "Type": "String", "AllowedPattern": "^[a-z][a-z0-9_]{0,62}$" },
+    "ClinicalCoreKeyArn": { "Type": "String", "AllowedPattern": "^arn:(aws|aws-us-gov|aws-cn):kms:[a-z0-9-]+:[0-9]{12}:key/[0-9a-f-]{36}$" },
+    "LambdaCodeBucket": { "Type": "String", "AllowedPattern": "^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$" },
+    "LambdaCodeKey": { "Type": "String", "AllowedPattern": "^[A-Za-z0-9!_.*'()/\\-]{1,1024}$" }
+  },
+  "Resources": {
+    "CatalogApiLogGroup": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "LogGroupName": { "Fn::Sub": "/ai-clinical-core/${EnvironmentName}/governed-catalog-api" },
+        "RetentionInDays": 30,
+        "KmsKeyId": { "Ref": "ClinicalCoreKeyArn" }
+      },
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain"
+    },
+    "CatalogApiRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [{
+            "Effect": "Allow",
+            "Principal": { "Service": "lambda.amazonaws.com" },
+            "Action": "sts:AssumeRole"
+          }]
+        },
+        "Policies": [
+          {
+            "PolicyName": "AuroraDataApiReadTransactions",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [{
+                "Effect": "Allow",
+                "Action": [
+                  "rds-data:BeginTransaction",
+                  "rds-data:ExecuteStatement",
+                  "rds-data:CommitTransaction",
+                  "rds-data:RollbackTransaction"
+                ],
+                "Resource": { "Ref": "DatabaseClusterArn" }
+              }]
+            }
+          },
+          {
+            "PolicyName": "ManagedDatabaseCredentialRead",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": "secretsmanager:GetSecretValue",
+                  "Resource": { "Ref": "DatabaseSecretArn" }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "kms:Decrypt",
+                  "Resource": { "Ref": "ClinicalCoreKeyArn" },
+                  "Condition": {
+                    "StringEquals": { "kms:ViaService": { "Fn::Sub": "secretsmanager.${AWS::Region}.${AWS::URLSuffix}" } }
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "BoundedFunctionLogging",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [{
+                "Effect": "Allow",
+                "Action": ["logs:CreateLogStream", "logs:PutLogEvents"],
+                "Resource": { "Fn::GetAtt": ["CatalogApiLogGroup", "Arn"] }
+              }]
+            }
+          }
+        ]
+      }
+    },
+    "CatalogApiFunction": {
+      "Type": "AWS::Lambda::Function",
+      "Properties": {
+        "FunctionName": { "Fn::Sub": "${ClinicalApiId}-${EnvironmentName}-catalog" },
+        "Runtime": "nodejs22.x",
+        "Architectures": ["arm64"],
+        "Handler": "index.handler",
+        "Role": { "Fn::GetAtt": ["CatalogApiRole", "Arn"] },
+        "MemorySize": 256,
+        "Timeout": 15,
+        "LoggingConfig": {
+          "LogGroup": { "Ref": "CatalogApiLogGroup" },
+          "LogFormat": "JSON",
+          "ApplicationLogLevel": "WARN",
+          "SystemLogLevel": "WARN"
+        },
+        "Code": { "S3Bucket": { "Ref": "LambdaCodeBucket" }, "S3Key": { "Ref": "LambdaCodeKey" } },
+        "Environment": {
+          "Variables": {
+            "CLINICAL_DATABASE_CLUSTER_ARN": { "Ref": "DatabaseClusterArn" },
+            "CLINICAL_DATABASE_SECRET_ARN": { "Ref": "DatabaseSecretArn" },
+            "CLINICAL_DATABASE_NAME": { "Ref": "DatabaseName" },
+            "CLINICAL_CATALOG_ENVIRONMENT": { "Ref": "EnvironmentName" },
+            "CLINICAL_WORKFORCE_ISSUER": { "Fn::Sub": "https://cognito-idp.${AWS::Region}.${AWS::URLSuffix}/${WorkforceUserPoolId}" },
+            "CLINICAL_WORKFORCE_AUDIENCE": { "Ref": "WorkforceUserPoolClientId" },
+            "CLINICAL_CONSUMER_ISSUER": { "Fn::Sub": "https://cognito-idp.${AWS::Region}.${AWS::URLSuffix}/${ConsumerUserPoolId}" },
+            "CLINICAL_CONSUMER_AUDIENCE": { "Ref": "ConsumerUserPoolClientId" }
+          }
+        }
+      }
+    },
+    "WorkforceCatalogJwtAuthorizer": {
+      "Type": "AWS::ApiGatewayV2::Authorizer",
+      "Properties": {
+        "ApiId": { "Ref": "ClinicalApiId" },
+        "AuthorizerType": "JWT",
+        "Name": { "Fn::Sub": "${EnvironmentName}-workforce-catalog" },
+        "IdentitySource": ["$request.header.Authorization"],
+        "JwtConfiguration": {
+          "Issuer": { "Fn::Sub": "https://cognito-idp.${AWS::Region}.${AWS::URLSuffix}/${WorkforceUserPoolId}" },
+          "Audience": [{ "Ref": "WorkforceUserPoolClientId" }]
+        }
+      }
+    },
+    "ConsumerCatalogJwtAuthorizer": {
+      "Type": "AWS::ApiGatewayV2::Authorizer",
+      "Properties": {
+        "ApiId": { "Ref": "ClinicalApiId" },
+        "AuthorizerType": "JWT",
+        "Name": { "Fn::Sub": "${EnvironmentName}-consumer-catalog" },
+        "IdentitySource": ["$request.header.Authorization"],
+        "JwtConfiguration": {
+          "Issuer": { "Fn::Sub": "https://cognito-idp.${AWS::Region}.${AWS::URLSuffix}/${ConsumerUserPoolId}" },
+          "Audience": [{ "Ref": "ConsumerUserPoolClientId" }]
+        }
+      }
+    },
+    "CatalogApiIntegration": {
+      "Type": "AWS::ApiGatewayV2::Integration",
+      "Properties": {
+        "ApiId": { "Ref": "ClinicalApiId" },
+        "IntegrationType": "AWS_PROXY",
+        "IntegrationUri": { "Fn::GetAtt": ["CatalogApiFunction", "Arn"] },
+        "PayloadFormatVersion": "2.0",
+        "TimeoutInMillis": 15000
+      }
+    },
+    "WorkforceCatalogProductsRoute": {
+      "Type": "AWS::ApiGatewayV2::Route",
+      "Properties": {
+        "ApiId": { "Ref": "ClinicalApiId" },
+        "RouteKey": "GET /clinical-core/workforce/catalog/products",
+        "AuthorizationType": "JWT",
+        "AuthorizerId": { "Ref": "WorkforceCatalogJwtAuthorizer" },
+        "Target": { "Fn::Sub": "integrations/${CatalogApiIntegration}" }
+      }
+    },
+    "ConsumerCatalogProductsRoute": {
+      "Type": "AWS::ApiGatewayV2::Route",
+      "Properties": {
+        "ApiId": { "Ref": "ClinicalApiId" },
+        "RouteKey": "GET /clinical-core/consumer/catalog/products",
+        "AuthorizationType": "JWT",
+        "AuthorizerId": { "Ref": "ConsumerCatalogJwtAuthorizer" },
+        "Target": { "Fn::Sub": "integrations/${CatalogApiIntegration}" }
+      }
+    },
+    "WorkforceProtocolTemplatesRoute": {
+      "Type": "AWS::ApiGatewayV2::Route",
+      "Properties": {
+        "ApiId": { "Ref": "ClinicalApiId" },
+        "RouteKey": "GET /clinical-core/workforce/catalog/protocol-templates",
+        "AuthorizationType": "JWT",
+        "AuthorizerId": { "Ref": "WorkforceCatalogJwtAuthorizer" },
+        "Target": { "Fn::Sub": "integrations/${CatalogApiIntegration}" }
+      }
+    },
+    "CatalogApiInvokePermission": {
+      "Type": "AWS::Lambda::Permission",
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": { "Ref": "CatalogApiFunction" },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": { "Fn::Sub": "arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${ClinicalApiId}/*/*/clinical-core/*" }
+      }
+    },
+    "CatalogApiErrorAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmDescription": "Governed reference catalog Lambda errors",
+        "Namespace": "AWS/Lambda",
+        "MetricName": "Errors",
+        "Dimensions": [{ "Name": "FunctionName", "Value": { "Ref": "CatalogApiFunction" } }],
+        "Statistic": "Sum",
+        "Period": 300,
+        "EvaluationPeriods": 1,
+        "Threshold": 1,
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "TreatMissingData": "notBreaching"
+      }
+    }
+  },
+  "Outputs": {
+    "ContractVersion": { "Value": "governed-catalog-api/1" },
+    "CatalogApiFunctionArn": { "Value": { "Fn::GetAtt": ["CatalogApiFunction", "Arn"] } },
+    "Environment": { "Value": { "Ref": "EnvironmentName" } },
+    "RoutesEnabled": { "Value": "3" },
+    "PhiAllowed": { "Value": "false" }
+  }
+}

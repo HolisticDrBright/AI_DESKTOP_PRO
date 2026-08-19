@@ -43,6 +43,14 @@ describe("Aurora RDS Data API transaction adapter", () => {
     }, { purpose: "reviewed_synthetic_migration" }, mock.value)).not.toThrow();
   });
 
+  test("permits the distinct reviewed reference-catalog operator purpose", () => {
+    expect(() => createRdsDataAdministrativeDatabase(
+      CONFIG,
+      { purpose: "reviewed_reference_catalog_import" },
+      client().value,
+    )).not.toThrow();
+  });
+
   test("converts positional placeholders to bounded named parameters", () => {
     expect(bindParameters("select $2, $1, $2", ["alpha", 7])).toEqual({
       sql: "select :p2, :p1, :p2",

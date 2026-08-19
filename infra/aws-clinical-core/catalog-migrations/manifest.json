@@ -1,0 +1,9 @@
+{
+  "contract_version": "clinical-core-migrations/1",
+  "migrations": [
+    {
+      "version": "20260819173000",
+      "file": "20260819173000_governed_reference_catalog.sql"
+    }
+  ]
+}

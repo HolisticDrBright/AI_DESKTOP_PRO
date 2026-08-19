@@ -42,13 +42,13 @@ export function createRdsDataClinicalCoreDatabase(
   return createRdsDataDatabase(configuration, client, "clinical_core_api");
 }
 
-/** Administrative access is reserved for the reviewed synthetic migration/fixture operator path. */
+/** Administrative access is reserved for reviewed migration/import operator paths. */
 export function createRdsDataAdministrativeDatabase(
   configuration: RdsDataConfiguration,
-  authorization: { purpose: "reviewed_synthetic_migration" },
+  authorization: { purpose: "reviewed_synthetic_migration" | "reviewed_reference_catalog_import" },
   client: RdsDataCommandClient = new RDSDataClient({ region: configuration.region }),
 ): ClinicalCoreDatabase {
-  if (authorization.purpose !== "reviewed_synthetic_migration") {
+  if (!["reviewed_synthetic_migration", "reviewed_reference_catalog_import"].includes(authorization.purpose)) {
     throw new RdsDataDatabaseError("configuration_invalid");
   }
   return createRdsDataDatabase(configuration, client);
