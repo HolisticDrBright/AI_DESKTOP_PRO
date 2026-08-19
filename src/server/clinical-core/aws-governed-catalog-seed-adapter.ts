@@ -11,19 +11,29 @@ import {
   knowledgeSourceContentForHash,
   manifestContentForHash,
   offerContentForHash,
+  productLabelContentForHash,
   productContentForHash,
   safetyRuleContentForHash,
   templateContentForHash,
   validateGovernedCatalogManifest,
   type CatalogKnowledgeSourceSeed,
   type CatalogProductSeed,
+  type CatalogProductLabelSeed,
   type CatalogSafetyRuleSeed,
   type CommercialOfferSeed,
   type GovernedCatalogSeedManifest,
   type ProtocolTemplateSeed,
 } from "./aws-governed-catalog";
 
-const SOURCE_FILES = ["products.json", "protocols.json", "safety_rules.json", "sources.json"] as const;
+const SOURCE_FILES = [
+  "products.json",
+  "protocols.json",
+  "protocol_steps.json",
+  "safety_rules.json",
+  "sources.json",
+  "labels.json",
+  "label_crosscheck.json",
+] as const;
 const SHA256 = /^[0-9a-f]{64}$/;
 
 export class GovernedCatalogSourcePackageError extends Error {
@@ -56,7 +66,7 @@ export function loadAndAdaptGovernedCatalogSourcePackage(options: {
       throw new GovernedCatalogSourcePackageError("source_package_hash_mismatch");
     }
     const records = parseJson(bytes);
-    if (!Array.isArray(records) || records.length !== expected.records) invalid();
+    if (recordCount(file, records) !== expected.records) invalid();
     return [file, records];
   })) as SourceFiles;
   return adaptGovernedCatalogSourcePackage({
@@ -81,16 +91,22 @@ export function adaptGovernedCatalogSourcePackage(input: {
   for (const file of SOURCE_FILES) {
     const expected = sourceManifest.files?.[file];
     if (!expected || !SHA256.test(expected.sha256) || !positiveInteger(expected.records)
-      || !Array.isArray(input.files[file]) || input.files[file].length !== expected.records) invalid();
+      || recordCount(file, input.files[file]) !== expected.records) invalid();
   }
 
   const products = input.files["products.json"].map(asProduct);
   const protocols = input.files["protocols.json"].map(asProtocol);
+  const protocolSteps = input.files["protocol_steps.json"].map(asProtocolStep);
   const rules = input.files["safety_rules.json"].map(asSafetyRule);
   const sources = input.files["sources.json"].map(asKnowledgeSource);
+  const labels = input.files["labels.json"].map(asLabel);
+  const crosscheck = asLabelCrosscheck(input.files["label_crosscheck.json"]);
   assertUnique(products.map((row) => row.id));
   assertUnique(protocols.map((row) => row.id));
+  assertUnique(protocolSteps.map((row) => row.id));
   assertUnique(rules.map((row) => row.id));
+  assertUnique(labels.map((row) => row.id));
+  assertUnique(crosscheck.records.map((row) => row.id));
   const sourceGroups = groupBy(sources, (row) => row.code);
   for (const group of sourceGroups.values()) {
     const canonical = group[0]!;
@@ -113,10 +129,23 @@ export function adaptGovernedCatalogSourcePackage(input: {
     if (product.access === "open" && !product.affiliate) invalid();
     if (product.affiliate && !safeHttpsUrl(product.affiliate.url)) invalid();
   }
+  const labelIds = new Set(labels.map((row) => row.id));
+  const crosscheckIds = new Set(crosscheck.records.map((row) => row.id));
+  if (labelIds.size !== crosscheckIds.size
+    || labels.some((row) => !productIds.has(row.id))
+    || crosscheck.records.some((row) => !labelIds.has(row.id))) referenceInvalid();
+  for (const step of protocolSteps) {
+    if (!protocolIds.has(step.templateId) || (step.productId && !productIds.has(step.productId))) referenceInvalid();
+  }
+  const labelsById = new Map(labels.map((row) => [row.id, row]));
+  const crosscheckById = new Map(crosscheck.records.map((row) => [row.id, row]));
 
   const adaptedProducts = products.map((source): CatalogProductSeed => {
     const stableId = productStableId(source.id);
     const restricted = source.access !== "open";
+    const label = labelsById.get(source.id);
+    const labelCrosscheck = crosscheckById.get(source.id);
+    const labelReview = labelReviewState(label, labelCrosscheck);
     const base = {
       stableId,
       version: 1,
@@ -139,6 +168,7 @@ export function adaptGovernedCatalogSourcePackage(input: {
         duplicateOf: source.duplicateOf ? productStableId(source.duplicateOf) : undefined,
         normalizations: source.normalizations,
         sourceReviewStatus: source.reviewStatus,
+        labelReview,
       }),
       sourceRefs: [packageRef, provenanceRef(source.provenance)],
     };
@@ -166,6 +196,23 @@ export function adaptGovernedCatalogSourcePackage(input: {
     return [{ ...base, contentSha256: catalogSha256(offerContentForHash(base)) }];
   });
 
+  const productLabels = labels.map((label): CatalogProductLabelSeed => {
+    const labelCrosscheck = crosscheckById.get(label.id)!;
+    const base = {
+      stableId: productLabelStableId(label.id),
+      version: 1,
+      productStableId: productStableId(label.id),
+      labelFound: label.labelFound,
+      physicalLabelRequired: label.phase9f.physicalLabelRequired || labelCrosscheck.physicalLabelRequired,
+      substantiveConflict: labelCrosscheck.verdict === "substantive_conflict",
+      practitionerDecisionRequired: Boolean(label.practitionerDecisionRequired),
+      labelPayload: safeLabelEvidence(label),
+      crosscheckPayload: labelCrosscheck,
+      sourceRefs: [packageRef, `label-research:${label.phase9f.prhId}`],
+    };
+    return { ...base, contentSha256: catalogSha256(productLabelContentForHash(base)) };
+  });
+
   const protocolTemplates = protocols.map((source): ProtocolTemplateSeed => {
     const linkedProducts = products
       .filter((product) => product.protocolTemplateIds.includes(source.id))
@@ -188,6 +235,25 @@ export function adaptGovernedCatalogSourcePackage(input: {
         stoppingRules: [],
         contraindications: product.contraindicationRuleIds.map(safetyRuleStableId),
       })),
+      steps: protocolSteps
+        .filter((step) => step.templateId === source.id)
+        .sort((left, right) => Number(left.sequence) - Number(right.sequence))
+        .map((step) => ({
+          stableId: protocolStepStableId(step.id),
+          sequence: Number(step.sequence),
+          phase: step.phase,
+          instructions: step.instructions,
+          prerequisites: step.prerequisites,
+          monitoring: step.monitoring,
+          stopCriteria: step.stopCriteria,
+          conditionalLogic: step.conditionalLogic,
+          ...(step.adjustmentLogic ? { adjustmentLogic: step.adjustmentLogic } : {}),
+          ...(step.duration ? { duration: step.duration } : {}),
+          ...(step.timing ? { timing: step.timing } : {}),
+          ...(step.interventionId ? { interventionId: step.interventionId } : {}),
+          ...(step.productId ? { productStableId: productStableId(step.productId) } : {}),
+          sourceRefs: [packageRef, provenanceRef(step.provenance)],
+        })),
     };
     return { ...base, contentSha256: catalogSha256(templateContentForHash(base)) };
   });
@@ -237,6 +303,7 @@ export function adaptGovernedCatalogSourcePackage(input: {
     dataClassification: "reference_only" as const,
     containsPhi: false as const,
     products: adaptedProducts,
+    productLabels,
     commercialOffers,
     protocolTemplates,
     safetyRules,
@@ -254,7 +321,15 @@ type SourceManifest = {
   files?: Partial<Record<typeof SOURCE_FILES[number], { records: number; sha256: string }>>;
 };
 
-export type SourceFiles = Record<typeof SOURCE_FILES[number], unknown[]>;
+export type SourceFiles = {
+  "products.json": unknown[];
+  "protocols.json": unknown[];
+  "protocol_steps.json": unknown[];
+  "safety_rules.json": unknown[];
+  "sources.json": unknown[];
+  "labels.json": unknown[];
+  "label_crosscheck.json": unknown;
+};
 
 type Provenance = {
   sourceFile?: string;
@@ -298,6 +373,64 @@ type SourceProtocol = {
   provenance: Provenance;
 };
 
+type SourceProtocolStep = {
+  id: string;
+  templateId: string;
+  sequence: string;
+  phase: string;
+  instructions: string;
+  prerequisites: string;
+  monitoring: string;
+  stopCriteria: string;
+  conditionalLogic: string;
+  adjustmentLogic?: string;
+  duration?: string;
+  timing?: string;
+  interventionId?: string;
+  productId?: string;
+  reviewStatus: string;
+  provenance: Provenance;
+};
+
+type SourceLabel = {
+  id: string;
+  labelFound: boolean;
+  labelSourceUrl?: string | null;
+  researchDate: string;
+  researchMethod: string;
+  confidence: "high" | "medium" | "low";
+  form?: string | null;
+  servingSize?: string | null;
+  servingsPerContainer?: string | number | null;
+  ingredients: Array<Record<string, unknown>>;
+  otherIngredients?: string | null;
+  allergens?: string | null;
+  warnings?: string | null;
+  notes?: string | null;
+  practitionerDecisionRequired?: boolean;
+  phase9f: Record<string, unknown> & {
+    prhId: string;
+    disposition: string;
+    evidenceArchived: boolean;
+    physicalLabelRequired: boolean;
+    officialProductUrl?: string | null;
+  };
+};
+
+type SourceLabelCrosscheckRecord = Record<string, unknown> & {
+  id: string;
+  prhId: string;
+  verdict: string;
+  evidenceArchived: boolean;
+  physicalLabelRequired: boolean;
+  jurisdictionReview: boolean;
+};
+
+type SourceLabelCrosscheck = {
+  meta: Record<string, unknown>;
+  records: SourceLabelCrosscheckRecord[];
+};
+
 type SourceSafetyRule = {
   id: string;
   severity: string;
@@ -334,6 +467,40 @@ function asProtocol(value: unknown): SourceProtocol {
   return value as unknown as SourceProtocol;
 }
 
+function asProtocolStep(value: unknown): SourceProtocolStep {
+  if (!isRecord(value) || !text(value.id) || !text(value.templateId) || !text(value.sequence)
+    || !positiveInteger(Number(value.sequence)) || !text(value.phase) || !text(value.instructions)
+    || !text(value.prerequisites) || !text(value.monitoring) || !text(value.stopCriteria)
+    || !text(value.conditionalLogic) || !text(value.reviewStatus) || !validProvenance(value.provenance)
+    || !optionalSourceText(value.adjustmentLogic) || !optionalSourceText(value.duration)
+    || !optionalSourceText(value.timing) || !optionalSourceText(value.interventionId)
+    || !optionalSourceText(value.productId)) invalid();
+  return value as unknown as SourceProtocolStep;
+}
+
+function asLabel(value: unknown): SourceLabel {
+  if (!isRecord(value) || !text(value.id) || typeof value.labelFound !== "boolean"
+    || !text(value.researchDate) || !text(value.researchMethod)
+    || !["high", "medium", "low"].includes(String(value.confidence))
+    || !Array.isArray(value.ingredients) || value.ingredients.some((item) => !isRecord(item) || !text(item.name))
+    || !isRecord(value.phase9f) || !text(value.phase9f.prhId) || !text(value.phase9f.disposition)
+    || typeof value.phase9f.evidenceArchived !== "boolean"
+    || typeof value.phase9f.physicalLabelRequired !== "boolean"
+    || !optionalSourceText(value.labelSourceUrl)) invalid();
+  return value as unknown as SourceLabel;
+}
+
+function asLabelCrosscheck(value: unknown): SourceLabelCrosscheck {
+  if (!isRecord(value) || !isRecord(value.meta) || !Array.isArray(value.records)) invalid();
+  const records = value.records.map((row) => {
+    if (!isRecord(row) || !text(row.id) || !text(row.prhId) || !text(row.verdict)
+      || typeof row.evidenceArchived !== "boolean" || typeof row.physicalLabelRequired !== "boolean"
+      || typeof row.jurisdictionReview !== "boolean") invalid();
+    return row as SourceLabelCrosscheckRecord;
+  });
+  return { meta: value.meta, records };
+}
+
 function asSafetyRule(value: unknown): SourceSafetyRule {
   if (!isRecord(value) || !text(value.id) || !text(value.severity) || !text(value.blocksRecommendation)
     || !text(value.category) || !text(value.appliesTo) || !text(value.expression)
@@ -349,10 +516,12 @@ function asKnowledgeSource(value: unknown): SourceKnowledgeSource {
 }
 
 function productStableId(value: string) { return stableId("prd", value); }
+function productLabelStableId(value: string) { return stableId("lbl", value.replace(/^aff_/i, "")); }
 function offerStableId(value: string) { return stableId("off", value); }
 function protocolStableId(value: string) { return stableId("tpl", value.replace(/^pt_/i, "")); }
 function safetyRuleStableId(value: string) { return stableId("saf", value.replace(/^safe_/i, "")); }
 function knowledgeSourceStableId(value: string) { return stableId("src", value.replace(/^src_/i, "")); }
+function protocolStepStableId(value: string) { return stableId("stp", value.replace(/^ps_/i, "")); }
 
 function stableId(prefix: string, source: string): string {
   const normalized = source.toLowerCase().replace(/[^a-z0-9_-]+/g, "_").replace(/^_+|_+$/g, "");
@@ -392,6 +561,45 @@ function byteSha256(value: Buffer): string {
 
 function safeHttpsUrl(value: unknown): value is string {
   try { return typeof value === "string" && new URL(value).protocol === "https:"; } catch { return false; }
+}
+
+function safeLabelEvidence(label: SourceLabel, crosscheck?: SourceLabelCrosscheckRecord): Record<string, unknown> {
+  const phase9f = { ...label.phase9f };
+  const officialProductUrl = phase9f.officialProductUrl;
+  delete phase9f.officialProductUrl;
+  return compactObject({
+    ...label,
+    labelSourceUrl: safeHttpsUrl(label.labelSourceUrl) ? label.labelSourceUrl : undefined,
+    labelSourceUrlReviewRequired: Boolean(label.labelSourceUrl) && !safeHttpsUrl(label.labelSourceUrl),
+    phase9f: compactObject({
+      ...phase9f,
+      officialProductUrl: safeHttpsUrl(officialProductUrl) ? officialProductUrl : undefined,
+      officialProductUrlReviewRequired: Boolean(officialProductUrl) && !safeHttpsUrl(officialProductUrl),
+    }),
+    crosscheck,
+  });
+}
+
+function labelReviewState(label?: SourceLabel, crosscheck?: SourceLabelCrosscheckRecord) {
+  const reasons = new Set<string>();
+  if (!label) reasons.add("label_evidence_missing");
+  if (label && !label.labelFound) reasons.add("label_not_found");
+  if (label?.phase9f.physicalLabelRequired || crosscheck?.physicalLabelRequired) reasons.add("physical_label_required");
+  if (label?.practitionerDecisionRequired || crosscheck?.verdict === "substantive_conflict") reasons.add("substantive_conflict");
+  if (label?.labelSourceUrl && !safeHttpsUrl(label.labelSourceUrl)) reasons.add("label_source_url_invalid");
+  if (label?.phase9f.officialProductUrl && !safeHttpsUrl(label.phase9f.officialProductUrl)) reasons.add("official_product_url_invalid");
+  return { approvalBlocked: reasons.size > 0, reasons: [...reasons].sort() };
+}
+
+function recordCount(file: typeof SOURCE_FILES[number], value: unknown): number {
+  if (file === "label_crosscheck.json") {
+    return isRecord(value) && Array.isArray(value.records) ? value.records.length : -1;
+  }
+  return Array.isArray(value) ? value.length : -1;
+}
+
+function optionalSourceText(value: unknown): boolean {
+  return value === undefined || value === null || typeof value === "string";
 }
 
 function compactObject(value: Record<string, unknown>): Record<string, unknown> {

@@ -36,6 +36,7 @@ describe("AWS governed catalog reader", () => {
         clinical_payload_json: JSON.stringify({ ingredients: ["EPA"] }),
         source_refs_json: JSON.stringify(["label:reviewed-omega:v1"]),
       }],
+      [],
       [{
         offer_stable_id: "off_reviewed_omega",
         version: 1,
@@ -50,7 +51,8 @@ describe("AWS governed catalog reader", () => {
     });
     expect(db.calls[0]!.parameters).toEqual(["production-clinical"]);
     expect(db.calls[1]!.sql).not.toContain("commercial_reference");
-    expect(db.calls[2]!.sql).not.toContain("clinical_payload");
+    expect(db.calls[2]!.sql).toContain("product_label_versions");
+    expect(db.calls[3]!.sql).not.toContain("clinical_payload");
     expect(db.calls.every((call) => !call.sql.toLowerCase().includes("supabase"))).toBe(true);
   });
 

@@ -23,6 +23,20 @@ export type CatalogProductSeed = {
   contentSha256: string;
 };
 
+export type CatalogProductLabelSeed = {
+  stableId: string;
+  version: number;
+  productStableId: string;
+  labelFound: boolean;
+  physicalLabelRequired: boolean;
+  substantiveConflict: boolean;
+  practitionerDecisionRequired: boolean;
+  labelPayload: Record<string, unknown>;
+  crosscheckPayload: Record<string, unknown>;
+  sourceRefs: string[];
+  contentSha256: string;
+};
+
 export type CommercialOfferSeed = {
   stableId: string;
   version: number;
@@ -45,6 +59,23 @@ export type ProtocolTemplateItemSeed = {
   contraindications: string[];
 };
 
+export type ProtocolStepSeed = {
+  stableId: string;
+  sequence: number;
+  phase: string;
+  instructions: string;
+  prerequisites: string;
+  monitoring: string;
+  stopCriteria: string;
+  conditionalLogic: string;
+  adjustmentLogic?: string;
+  duration?: string;
+  timing?: string;
+  interventionId?: string;
+  productStableId?: string;
+  sourceRefs: string[];
+};
+
 export type ProtocolTemplateSeed = {
   stableId: string;
   version: number;
@@ -52,6 +83,7 @@ export type ProtocolTemplateSeed = {
   summary?: string;
   sourceRefs: string[];
   items: ProtocolTemplateItemSeed[];
+  steps: ProtocolStepSeed[];
   contentSha256: string;
 };
 
@@ -86,6 +118,7 @@ export type GovernedCatalogSeedManifest = {
   containsPhi: false;
   manifestSha256: string;
   products: CatalogProductSeed[];
+  productLabels: CatalogProductLabelSeed[];
   commercialOffers: CommercialOfferSeed[];
   protocolTemplates: ProtocolTemplateSeed[];
   safetyRules: CatalogSafetyRuleSeed[];
@@ -98,6 +131,7 @@ export type CatalogImportResult = {
   alreadyApplied: boolean;
   counts: {
     products: number;
+    productLabels: number;
     commercialOffers: number;
     protocolTemplates: number;
     safetyRules: number;
@@ -119,8 +153,10 @@ export class GovernedCatalogError extends Error {
 }
 
 const PRODUCT_ID = /^prd_[a-z0-9][a-z0-9_-]{2,95}$/;
+const LABEL_ID = /^lbl_[a-z0-9][a-z0-9_-]{2,95}$/;
 const OFFER_ID = /^off_[a-z0-9][a-z0-9_-]{2,95}$/;
 const TEMPLATE_ID = /^tpl_[a-z0-9][a-z0-9_-]{2,95}$/;
+const STEP_ID = /^stp_[a-z0-9][a-z0-9_-]{2,95}$/;
 const SAFETY_RULE_ID = /^saf_[a-z0-9][a-z0-9_-]{2,95}$/;
 const KNOWLEDGE_SOURCE_ID = /^src_[a-z0-9][a-z0-9_-]{2,95}$/;
 const PACKAGE_ID = /^[a-z0-9][a-z0-9._-]{2,127}$/;
@@ -149,6 +185,10 @@ export function catalogSha256(value: unknown): string {
 
 export function productContentForHash(product: Omit<CatalogProductSeed, "contentSha256">): unknown {
   return product;
+}
+
+export function productLabelContentForHash(label: Omit<CatalogProductLabelSeed, "contentSha256">): unknown {
+  return label;
 }
 
 export function offerContentForHash(offer: Omit<CommercialOfferSeed, "contentSha256">): unknown {
@@ -182,6 +222,7 @@ export function validateGovernedCatalogManifest(input: unknown): GovernedCatalog
     || manifest.dataClassification !== "reference_only"
     || manifest.containsPhi !== false
     || !boundedArray(manifest.products)
+    || !boundedArray(manifest.productLabels)
     || !boundedArray(manifest.commercialOffers)
     || !boundedArray(manifest.protocolTemplates)
     || !boundedArray(manifest.safetyRules)
@@ -216,6 +257,33 @@ export function validateGovernedCatalogManifest(input: unknown): GovernedCatalog
     }
     productKeys.add(key);
     productIds.add(product.stableId);
+  }
+
+  const labelKeys = new Set<string>();
+  const labeledProducts = new Set<string>();
+  for (const label of manifest.productLabels) {
+    if (!isRecord(label)) invalid();
+    const key = `${label.stableId}:${label.version}`;
+    if (!boundedString(label.stableId, LABEL_ID, 100)
+      || !positiveInteger(label.version)
+      || !productIds.has(label.productStableId)
+      || labeledProducts.has(label.productStableId)
+      || typeof label.labelFound !== "boolean"
+      || typeof label.physicalLabelRequired !== "boolean"
+      || typeof label.substantiveConflict !== "boolean"
+      || typeof label.practitionerDecisionRequired !== "boolean"
+      || !isRecord(label.labelPayload)
+      || !isRecord(label.crosscheckPayload)
+      || hasForbiddenKey(label.labelPayload)
+      || hasForbiddenKey(label.crosscheckPayload)
+      || !sourceRefsValid(label.sourceRefs)
+      || !SHA256.test(label.contentSha256)
+      || labelKeys.has(key)) invalid();
+    if (catalogSha256(productLabelContentForHash(withoutHash(label))) !== label.contentSha256) {
+      throw new GovernedCatalogError("content_hash_mismatch");
+    }
+    labelKeys.add(key);
+    labeledProducts.add(label.productStableId);
   }
 
   const offerKeys = new Set<string>();
@@ -274,6 +342,30 @@ export function validateGovernedCatalogManifest(input: unknown): GovernedCatalog
         || (item.dosageText?.trim() && !item.doseSourceRef?.trim())
       ) invalid();
       positions.add(item.position);
+    }
+    if (!boundedArray(template.steps)) invalid();
+    const stepIds = new Set<string>();
+    const sequences = new Set<number>();
+    for (const step of template.steps) {
+      if (!isRecord(step)
+        || !boundedString(step.stableId, STEP_ID, 100)
+        || stepIds.has(step.stableId)
+        || !positiveInteger(step.sequence)
+        || sequences.has(step.sequence)
+        || !boundedString(step.phase, undefined, 100)
+        || !boundedString(step.instructions, undefined, 8_000)
+        || !boundedString(step.prerequisites, undefined, 4_000)
+        || !boundedString(step.monitoring, undefined, 4_000)
+        || !boundedString(step.stopCriteria, undefined, 4_000)
+        || !boundedString(step.conditionalLogic, undefined, 4_000)
+        || !optionalText(step.adjustmentLogic, 4_000)
+        || !optionalText(step.duration, 1_000)
+        || !optionalText(step.timing, 1_000)
+        || !optionalText(step.interventionId, 200)
+        || (step.productStableId !== undefined && !productIds.has(step.productStableId))
+        || !sourceRefsValid(step.sourceRefs)) invalid();
+      stepIds.add(step.stableId);
+      sequences.add(step.sequence);
     }
     if (catalogSha256(templateContentForHash(withoutHash(template))) !== template.contentSha256) {
       throw new GovernedCatalogError("content_hash_mismatch");
@@ -337,6 +429,7 @@ export async function importGovernedCatalog(
   const manifest = validateGovernedCatalogManifest(input);
   const counts = {
     products: manifest.products.length,
+    productLabels: manifest.productLabels.length,
     commercialOffers: manifest.commercialOffers.length,
     protocolTemplates: manifest.protocolTemplates.length,
     safetyRules: manifest.safetyRules.length,
@@ -346,7 +439,7 @@ export async function importGovernedCatalog(
     return await database.transaction(async (tx) => {
       await tx.query("select pg_advisory_xact_lock(hashtext($1))", [`governed-catalog:${manifest.manifestSha256}`]);
       const existing = await tx.query<BatchRow>(
-        `select id, manifest_sha256, product_count, commercial_offer_count, protocol_template_count,
+        `select id, manifest_sha256, product_count, product_label_count, commercial_offer_count, protocol_template_count,
                 safety_rule_count, knowledge_source_count, status
          from clinical_reference.catalog_import_batches where manifest_sha256 = $1`,
         [manifest.manifestSha256],
@@ -356,6 +449,7 @@ export async function importGovernedCatalog(
         if (
           row.status !== "succeeded"
           || Number(row.product_count) !== counts.products
+          || Number(row.product_label_count) !== counts.productLabels
           || Number(row.commercial_offer_count) !== counts.commercialOffers
           || Number(row.protocol_template_count) !== counts.protocolTemplates
           || Number(row.safety_rule_count) !== counts.safetyRules
@@ -368,18 +462,19 @@ export async function importGovernedCatalog(
         `insert into clinical_reference.catalog_import_batches
           (contract_version, source_package_id, source_package_version, environment,
            data_classification, contains_phi, manifest_sha256,
-           product_count, commercial_offer_count, protocol_template_count,
+           product_count, product_label_count, commercial_offer_count, protocol_template_count,
            safety_rule_count, knowledge_source_count)
-         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) returning id`,
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) returning id`,
         [manifest.contractVersion, manifest.sourcePackageId, manifest.sourcePackageVersion,
           manifest.targetEnvironment, manifest.dataClassification, manifest.containsPhi,
-          manifest.manifestSha256, counts.products, counts.commercialOffers, counts.protocolTemplates,
+          manifest.manifestSha256, counts.products, counts.productLabels, counts.commercialOffers, counts.protocolTemplates,
           counts.safetyRules, counts.knowledgeSources],
       );
       const batchId = batch.rows[0]?.id;
       if (!batchId) throw new GovernedCatalogError("database_unavailable");
 
       for (const product of manifest.products) await importProduct(tx, batchId, manifest.targetEnvironment, product);
+      for (const label of manifest.productLabels) await importProductLabel(tx, batchId, manifest.targetEnvironment, label);
       for (const offer of manifest.commercialOffers) await importOffer(tx, batchId, manifest.targetEnvironment, offer);
       for (const template of manifest.protocolTemplates) await importTemplate(tx, batchId, manifest.targetEnvironment, template);
       for (const rule of manifest.safetyRules) await importSafetyRule(tx, batchId, manifest.targetEnvironment, rule);
@@ -403,12 +498,43 @@ type BatchRow = {
   id: string;
   manifest_sha256: string;
   product_count: number;
+  product_label_count: number;
   commercial_offer_count: number;
   protocol_template_count: number;
   safety_rule_count: number;
   knowledge_source_count: number;
   status: string;
 };
+
+async function importProductLabel(
+  tx: ClinicalCoreTransaction,
+  batchId: string,
+  environment: GovernedCatalogSeedManifest["targetEnvironment"],
+  label: CatalogProductLabelSeed,
+) {
+  await tx.query(
+    `insert into clinical_reference.product_labels (stable_id, product_stable_id, environment)
+     values ($1, $2, $3) on conflict (stable_id) do nothing`,
+    [label.stableId, label.productStableId, environment],
+  );
+  await assertRegistryEnvironment(tx, "clinical_reference.product_labels", label.stableId, environment);
+  await assertVersionCompatible(tx,
+    `select content_sha256 from clinical_reference.product_label_versions
+     where label_stable_id = $1 and version = $2`,
+    [label.stableId, label.version], label.contentSha256);
+  await tx.query(
+    `insert into clinical_reference.product_label_versions
+      (label_stable_id, version, label_found, physical_label_required, substantive_conflict,
+       practitioner_decision_required, label_payload, crosscheck_payload, source_refs,
+       content_sha256, review_status, import_batch_id)
+     values ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9::jsonb, $10, 'needs_review', $11)
+     on conflict (label_stable_id, version) do nothing`,
+    [label.stableId, label.version, label.labelFound, label.physicalLabelRequired,
+      label.substantiveConflict, label.practitionerDecisionRequired,
+      JSON.stringify(label.labelPayload), JSON.stringify(label.crosscheckPayload),
+      JSON.stringify(label.sourceRefs), label.contentSha256, clinicalUuid(batchId)],
+  );
+}
 
 async function importProduct(
   tx: ClinicalCoreTransaction,
@@ -503,6 +629,20 @@ async function importTemplate(
         JSON.stringify(item.contraindications)],
     );
   }
+  for (const step of template.steps) {
+    await tx.query(
+      `insert into clinical_reference.protocol_template_steps
+        (step_stable_id, template_stable_id, template_version, sequence, phase,
+         instructions, prerequisites, monitoring, stop_criteria, conditional_logic,
+         adjustment_logic, duration, timing, intervention_id, product_stable_id, source_refs)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16::jsonb)`,
+      [step.stableId, template.stableId, template.version, step.sequence, step.phase,
+        step.instructions, step.prerequisites, step.monitoring, step.stopCriteria,
+        step.conditionalLogic, step.adjustmentLogic ?? null, step.duration ?? null,
+        step.timing ?? null, step.interventionId ?? null, step.productStableId ?? null,
+        JSON.stringify(step.sourceRefs)],
+    );
+  }
 }
 
 async function importSafetyRule(
@@ -579,6 +719,7 @@ async function assertRegistryEnvironment(
   tx: ClinicalCoreTransaction,
   table:
     | "clinical_reference.catalog_products"
+    | "clinical_reference.product_labels"
     | "clinical_reference.protocol_templates"
     | "clinical_reference.safety_rules"
     | "clinical_reference.knowledge_sources",

@@ -27,8 +27,10 @@ async function main() {
       manifestSha256: manifest.manifestSha256,
       counts: {
         products: manifest.products.length,
+        productLabels: manifest.productLabels.length,
         commercialOffers: manifest.commercialOffers.length,
         protocolTemplates: manifest.protocolTemplates.length,
+        protocolSteps: manifest.protocolTemplates.reduce((count, template) => count + template.steps.length, 0),
         safetyRules: manifest.safetyRules.length,
         knowledgeSources: manifest.knowledgeSources.length,
       },

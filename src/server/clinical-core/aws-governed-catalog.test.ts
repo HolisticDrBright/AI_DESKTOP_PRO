@@ -51,6 +51,7 @@ function manifest(): GovernedCatalogSeedManifest {
       stoppingRules: ["synthetic stop"],
       contraindications: ["synthetic contraindication"],
     }],
+    steps: [],
   };
   const template = { ...templateBase, contentSha256: catalogSha256(templateContentForHash(templateBase)) };
   const safetyRuleBase = {
@@ -84,6 +85,7 @@ function manifest(): GovernedCatalogSeedManifest {
     dataClassification: "reference_only" as const,
     containsPhi: false as const,
     products: [product],
+    productLabels: [],
     commercialOffers: [offer],
     protocolTemplates: [template],
     safetyRules: [safetyRule],
@@ -109,6 +111,7 @@ function database(options: { existingBatch?: boolean; conflict?: boolean } = {})
               id: "11111111-1111-4111-8111-111111111111",
               manifest_sha256: manifest().manifestSha256,
               product_count: 1,
+              product_label_count: 0,
               commercial_offer_count: 1,
               protocol_template_count: 1,
               safety_rule_count: 1,
@@ -184,7 +187,7 @@ describe("AWS governed catalog seed boundary", () => {
     await expect(importGovernedCatalog(db.value, manifest())).resolves.toMatchObject({
       alreadyApplied: false,
       reviewStatus: "needs_review",
-      counts: { products: 1, commercialOffers: 1, protocolTemplates: 1, safetyRules: 1, knowledgeSources: 1 },
+      counts: { products: 1, productLabels: 0, commercialOffers: 1, protocolTemplates: 1, safetyRules: 1, knowledgeSources: 1 },
     });
     expect(db.transactions()).toBe(1);
     expect(db.calls[0]!.sql).toContain("pg_advisory_xact_lock");

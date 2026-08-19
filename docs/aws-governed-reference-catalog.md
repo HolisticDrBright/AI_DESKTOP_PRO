@@ -2,11 +2,11 @@
 
 ## Current status
 
-The governed catalog is implemented and verified in source. It is **not yet
-deployed**, its Aurora migration has not been applied, and no catalog package
-has been imported. Claude's hash-pinned source package has been independently
-validated and adapted to the AWS contract for synthetic staging. The production
-account remains `PHI_ALLOWED=false`.
+The governed catalog is implemented and deployed to the isolated synthetic AWS
+account. Both catalog migrations are applied, the hash-pinned package was
+imported as `needs_review`, and the three JWT-protected routes are live. The
+import activated no clinical or commercial records. The production account
+remains `PHI_ALLOWED=false` and has no catalog workload.
 
 This work deliberately does not copy catalog data into either shared Supabase
 project. Supabase remains synthetic staging and is not a fallback if the AWS
@@ -14,17 +14,18 @@ catalog is unavailable.
 
 ## Authority and separation
 
-- `clinical_reference` owns versioned product knowledge, safety rules,
-  knowledge sources, protocol templates, dose provenance, import ledgers, and
-  append-only review evidence.
+- `clinical_reference` owns versioned product knowledge, label evidence and
+  cross-checks, safety rules, knowledge sources, protocol templates, 163
+  first-class protocol steps, dose provenance, import ledgers, and append-only
+  review evidence.
 - `commercial_reference` owns versioned affiliate destinations and tracking
   metadata. Clinical SQL does not read this schema.
 - Catalog packages declare `containsPhi=false` and
   `dataClassification=reference_only`. The importer verifies both values and
   the target environment before opening a transaction.
-- Product, offer, template, safety-rule, and knowledge-source versions are
-  immutable. Import always lands as `needs_review`; named approval changes only
-  the registry's active version.
+- Product, product-label, offer, template, protocol-step, safety-rule, and
+  knowledge-source versions are immutable. Import always lands as
+  `needs_review`; named approval changes only the registry's active version.
 - Restricted or injectable products cannot allow direct ordering. Protocol
   items with a recorded dose must name its source.
 
@@ -44,25 +45,32 @@ hash/count, then deterministically emits `governed-catalog-seed/1`. The AWS
 package includes:
 
 - a canonical manifest SHA-256;
-- per-product, per-offer, per-template, per-safety-rule, and
-  per-knowledge-source content SHA-256 values;
+- per-product, per-label, per-offer, per-template, per-step,
+  per-safety-rule, and per-knowledge-source content SHA-256 values;
 - deterministic stable IDs and positive versions;
 - source references and explicit restrictions;
 - separately modeled clinical and commercial content;
-- dose sources for every non-empty protocol dose; and
+- first-class protocol steps, including non-product assessment, safety, and
+  monitoring steps, plus dose sources for every non-empty protocol dose; and
 - an exact target environment (`synthetic-staging` or
   `production-clinical`).
 
 Duplicate manifest application returns the prior batch. Reusing a stable ID
 and version with different content is refused.
 
-The pinned handoff manifest is
-`65256f14060f4f18cc6bc301dfdc9d2c3823b9337f093316bcc64b54ceae0196`.
-It reconciles to 133 products, 91 commercial offers, 32 protocol templates,
-55 safety rules, and 76 canonical knowledge sources. The source file contains
-77 rows because `SRC_FDA_COMPOUNDING_RISK` is duplicated at rows 15 and 73 with
-identical content. The adapter preserves both provenance rows on one canonical
-immutable source rather than inserting a duplicate.
+The frozen source commit is `8e866aa`. Its manifest file SHA-256 is
+`feeda0c11d46eca0096fc1b8c74fcdd5cf495cbaba462c8cc6659de39e8cf220`;
+the deterministically adapted AWS manifest SHA-256 is
+`9dee1f5f8c960a7889a28da983bfbe3df71f649dd08a7fbd927329fae2db4b1e`.
+It reconciles to 133 products, 91 labels, 91 label cross-checks, 91 commercial
+offers, 32 protocol templates, 163 protocol steps, 55 safety rules, and 76
+canonical knowledge sources. The source file contains 77 source rows because
+`SRC_FDA_COMPOUNDING_RISK` is duplicated with identical content; the adapter
+preserves both provenance rows on one immutable source.
+
+All imported records remain review-locked. Six substantive label conflicts,
+physical-label requirements, missing labels, invalid/redacted evidence URLs,
+and practitioner-decision flags fail closed until named reviewers resolve them.
 
 ## Read API
 
@@ -98,14 +106,11 @@ reasons.
 ## Remaining activation gates
 
 1. Commit and review the source implementation and the handoff reconciliation.
-2. Run the migration and import first in the isolated synthetic account.
-3. Complete named clinical, safety, citation, and commercial review; verify restricted-product
+2. Complete named clinical, safety, citation, commercial, and label review; verify restricted-product
    and dose-provenance refusals.
-4. Deploy the catalog API extension and run authenticated synthetic browser/API
-   acceptance.
-5. Finish V2 Cognito consumer authentication, then make the mobile provider
-   use the governed tRPC route instead of its synthetic bundled catalog.
-6. Reconcile counts and hashes in the production-reference account while PHI
+3. Run authenticated synthetic browser/API acceptance with a reviewed test
+   product after review evidence exists.
+4. Reconcile counts and hashes in the production-reference account while PHI
    remains disabled.
 
 None of these steps authorizes real patient data. PHI activation remains a

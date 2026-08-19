@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, "claude/**"]
+    branches: [main, "claude/**", "agent/**"]
   pull_request:
 
 # This repository builds the CLINICAL edition only. Every job that builds the
@@ -29,12 +29,20 @@ jobs:
         run: npm run check:aws-identity-consent
       - name: AWS authenticated synthetic API safety gate
         run: npm run check:aws-authenticated-api
+      - name: AWS governed catalog and read API safety gates
+        run: |
+          npm run check:aws-governed-catalog
+          npm run check:aws-governed-catalog-api
       - name: CloudFormation schema and reference lint
         run: |
           pip install --disable-pip-version-check --quiet cfn-lint==1.55.0
-          cfn-lint infra/aws-clinical-core/template.json infra/aws-clinical-core/identity-api-extension.json
+          cfn-lint infra/aws-clinical-core/template.json infra/aws-clinical-core/identity-api-extension.json infra/aws-clinical-core/catalog-api-extension.json
       - name: Build the authenticated API Lambda artifact
         run: npm run build:aws-authenticated-api
+      - name: Build governed catalog and deployment artifacts
+        run: |
+          npm run build:aws-governed-catalog-api
+          npm run build:aws-deployment-tools
       - name: Mock-import graph (no production path to fixtures)
         run: npm run check:mock-imports
       - name: Build refuses without an explicit edition

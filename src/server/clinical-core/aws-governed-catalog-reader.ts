@@ -16,6 +16,13 @@ export type GovernedCatalogProduct = {
   clinical: Record<string, unknown>;
   sourceRefs: string[];
   reviewStatus: "approved";
+  label?: {
+    stableId: string;
+    version: number;
+    label: Record<string, unknown>;
+    crosscheck: Record<string, unknown>;
+    reviewStatus: "approved";
+  };
 };
 
 export type GovernedCommercialOffer = {
@@ -43,6 +50,22 @@ export type GovernedProtocolTemplate = {
     monitoringRequirements: string[];
     stoppingRules: string[];
     contraindications: string[];
+  }>;
+  steps: Array<{
+    stableId: string;
+    sequence: number;
+    phase: string;
+    instructions: string;
+    prerequisites: string;
+    monitoring: string;
+    stopCriteria: string;
+    conditionalLogic: string;
+    adjustmentLogic?: string;
+    duration?: string;
+    timing?: string;
+    interventionId?: string;
+    productStableId?: string;
+    sourceRefs: string[];
   }>;
 };
 
@@ -101,6 +124,19 @@ export function createAwsGovernedCatalogReader(
           );
           const pageRows = rows.rows.slice(0, input.limit);
           const productIds = pageRows.map((row) => row.product_stable_id);
+          const labels = productIds.length === 0 ? [] : (await tx.query<LabelRow>(
+            `select l.product_stable_id, v.label_stable_id, v.version,
+                    v.label_payload::text as label_payload_json,
+                    v.crosscheck_payload::text as crosscheck_payload_json
+             from clinical_reference.product_label_versions v
+             join clinical_reference.product_labels l
+               on l.stable_id = v.label_stable_id and l.active_version = v.version
+             where l.review_status = 'approved'
+               and l.product_stable_id = any(string_to_array($1, ','))
+             order by l.product_stable_id`,
+            [productIds.join(",")],
+          )).rows;
+          const labelsByProduct = new Map(labels.map((row) => [row.product_stable_id, toLabel(row)]));
           const offers = productIds.length === 0 ? [] : (await tx.query<OfferRow>(
             `select v.offer_stable_id, v.version, v.product_stable_id, v.destination_url,
                     v.tracking_metadata::text as tracking_metadata_json
@@ -114,7 +150,7 @@ export function createAwsGovernedCatalogReader(
             [productIds.join(",")],
           )).rows;
           return {
-            products: pageRows.map(toProduct),
+            products: pageRows.map((row) => toProduct(row, labelsByProduct.get(row.product_stable_id))),
             commercial: { offers: offers.map(toOffer) },
             ...(rows.rows.length > input.limit ? { nextCursor: pageRows.at(-1)!.product_stable_id } : {}),
           };
@@ -155,8 +191,23 @@ export function createAwsGovernedCatalogReader(
             [input.cursor ?? "", input.limit + 1],
           );
           const pageRows = rows.rows.slice(0, input.limit);
+          const templateIds = pageRows.map((row) => row.template_stable_id);
+          const steps = templateIds.length === 0 ? [] : (await tx.query<StepRow>(
+            `select s.template_stable_id, s.step_stable_id, s.sequence, s.phase,
+                    s.instructions, s.prerequisites, s.monitoring, s.stop_criteria,
+                    s.conditional_logic, s.adjustment_logic, s.duration, s.timing,
+                    s.intervention_id, s.product_stable_id, s.source_refs::text as source_refs_json
+             from clinical_reference.protocol_template_steps s
+             where s.template_stable_id = any(string_to_array($1, ','))
+             order by s.template_stable_id, s.sequence`,
+            [templateIds.join(",")],
+          )).rows;
+          const stepsByTemplate = new Map<string, StepRow[]>();
+          for (const step of steps) {
+            stepsByTemplate.set(step.template_stable_id, [...(stepsByTemplate.get(step.template_stable_id) ?? []), step]);
+          }
           return {
-            protocolTemplates: pageRows.map(toTemplate),
+            protocolTemplates: pageRows.map((row) => toTemplate(row, stepsByTemplate.get(row.template_stable_id) ?? [])),
             ...(rows.rows.length > input.limit ? { nextCursor: pageRows.at(-1)!.template_stable_id } : {}),
           };
         });
@@ -188,6 +239,14 @@ type OfferRow = {
   tracking_metadata_json: string;
 };
 
+type LabelRow = {
+  product_stable_id: string;
+  label_stable_id: string;
+  version: number;
+  label_payload_json: string;
+  crosscheck_payload_json: string;
+};
+
 type TemplateRow = {
   template_stable_id: string;
   version: number;
@@ -197,7 +256,25 @@ type TemplateRow = {
   items_json: string;
 };
 
-function toProduct(row: ProductRow): GovernedCatalogProduct {
+type StepRow = {
+  template_stable_id: string;
+  step_stable_id: string;
+  sequence: number;
+  phase: string;
+  instructions: string;
+  prerequisites: string;
+  monitoring: string;
+  stop_criteria: string;
+  conditional_logic: string;
+  adjustment_logic: string | null;
+  duration: string | null;
+  timing: string | null;
+  intervention_id: string | null;
+  product_stable_id: string | null;
+  source_refs_json: string;
+};
+
+function toProduct(row: ProductRow, label?: GovernedCatalogProduct["label"]): GovernedCatalogProduct {
   return {
     stableId: checkedId(row.product_stable_id, "prd_"),
     version: checkedVersion(row.version),
@@ -208,6 +285,17 @@ function toProduct(row: ProductRow): GovernedCatalogProduct {
     directOrderAllowed: checkedBoolean(row.direct_order_allowed),
     clinical: parsedObject(row.clinical_payload_json),
     sourceRefs: parsedStringArray(row.source_refs_json),
+    reviewStatus: "approved",
+    ...(label ? { label } : {}),
+  };
+}
+
+function toLabel(row: LabelRow): NonNullable<GovernedCatalogProduct["label"]> {
+  return {
+    stableId: checkedId(row.label_stable_id, "lbl_"),
+    version: checkedVersion(row.version),
+    label: parsedObject(row.label_payload_json),
+    crosscheck: parsedObject(row.crosscheck_payload_json),
     reviewStatus: "approved",
   };
 }
@@ -230,7 +318,7 @@ function toOffer(row: OfferRow): GovernedCommercialOffer {
   };
 }
 
-function toTemplate(row: TemplateRow): GovernedProtocolTemplate {
+function toTemplate(row: TemplateRow, stepRows: StepRow[]): GovernedProtocolTemplate {
   const items = parsedArray(row.items_json).map((value) => {
     if (!value || typeof value !== "object" || Array.isArray(value)) invalidResponse();
     const item = value as Record<string, unknown>;
@@ -254,6 +342,22 @@ function toTemplate(row: TemplateRow): GovernedProtocolTemplate {
     sourceRefs: parsedStringArray(row.source_refs_json),
     reviewStatus: "approved",
     items,
+    steps: stepRows.map((step) => ({
+      stableId: checkedId(step.step_stable_id, "stp_"),
+      sequence: checkedVersion(step.sequence),
+      phase: checkedText(step.phase, 100),
+      instructions: checkedText(step.instructions, 8_000),
+      prerequisites: checkedText(step.prerequisites, 4_000),
+      monitoring: checkedText(step.monitoring, 4_000),
+      stopCriteria: checkedText(step.stop_criteria, 4_000),
+      conditionalLogic: checkedText(step.conditional_logic, 4_000),
+      ...(step.adjustment_logic === null ? {} : { adjustmentLogic: checkedText(step.adjustment_logic, 4_000) }),
+      ...(step.duration === null ? {} : { duration: checkedText(step.duration, 1_000) }),
+      ...(step.timing === null ? {} : { timing: checkedText(step.timing, 1_000) }),
+      ...(step.intervention_id === null ? {} : { interventionId: checkedText(step.intervention_id, 200) }),
+      ...(step.product_stable_id === null ? {} : { productStableId: checkedId(step.product_stable_id, "prd_") }),
+      sourceRefs: parsedStringArray(step.source_refs_json),
+    })),
   };
 }
 
@@ -266,9 +370,9 @@ function assertPage(input: { limit: number; cursor?: string }) {
   }
 }
 
-function checkedId(value: unknown, prefix: "prd_" | "off_" | "tpl_"): string {
+function checkedId(value: unknown, prefix: "prd_" | "off_" | "tpl_" | "lbl_" | "stp_"): string {
   if (typeof value !== "string" || !value.startsWith(prefix) || value.length > 100
-    || !/^(prd|off|tpl)_[a-z0-9][a-z0-9_-]{2,95}$/.test(value)) invalidResponse();
+    || !/^(prd|off|tpl|lbl|stp)_[a-z0-9][a-z0-9_-]{2,95}$/.test(value)) invalidResponse();
   return value;
 }
 

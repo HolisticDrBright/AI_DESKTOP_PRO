@@ -57,6 +57,20 @@ function sourcePackage() {
       reviewStatus: "needs_review",
       provenance: { ...provenance, sheet: "Protocol Templates", row: 3 },
     }],
+    "protocol_steps.json": [{
+      id: "ps_synthetic_01",
+      templateId: "pt_synthetic_v1",
+      sequence: "1",
+      phase: "assessment",
+      instructions: "Review the synthetic fixture.",
+      prerequisites: "Synthetic consent confirmed",
+      monitoring: "Synthetic status",
+      stopCriteria: "Stop on synthetic warning",
+      conditionalLogic: "Proceed only in synthetic staging",
+      productId: "aff_synthetic_omega_001",
+      reviewStatus: "needs_review",
+      provenance: { ...provenance, sheet: "Protocol Steps", row: 6 },
+    }],
     "safety_rules.json": [{
       id: "safe_synthetic_stop",
       severity: "practitioner_review_required",
@@ -75,6 +89,36 @@ function sourcePackage() {
       url: "https://example.invalid/source",
       provenance: { ...provenance, sheet: "Sources", row: 5 },
     }],
+    "labels.json": [{
+      id: "aff_synthetic_omega_001",
+      labelFound: true,
+      labelSourceUrl: "https://example.invalid/label",
+      researchDate: "2026-08-19",
+      researchMethod: "synthetic fixture",
+      confidence: "high",
+      form: "capsule",
+      servingSize: "1 synthetic capsule",
+      servingsPerContainer: 1,
+      ingredients: [{ name: "Synthetic EPA", amount: "1", unit: "mg" }],
+      phase9f: {
+        prhId: "PRH-SYNTHETIC",
+        disposition: "verified",
+        evidenceArchived: true,
+        physicalLabelRequired: false,
+        officialProductUrl: "https://example.invalid/product",
+      },
+    }],
+    "label_crosscheck.json": {
+      meta: { summary: { matched: 1 } },
+      records: [{
+        id: "aff_synthetic_omega_001",
+        prhId: "PRH-SYNTHETIC",
+        verdict: "corroborated",
+        evidenceArchived: true,
+        physicalLabelRequired: false,
+        jurisdictionReview: false,
+      }],
+    },
   };
 }
 
@@ -82,10 +126,11 @@ function writeSourcePackage() {
   const directory = mkdtempSync(join(tmpdir(), "governed-catalog-source-"));
   const files = sourcePackage();
   const manifestFiles: Record<string, { records: number; sha256: string }> = {};
-  for (const [file, rows] of Object.entries(files)) {
-    const bytes = JSON.stringify(rows, null, 2);
+  for (const [file, value] of Object.entries(files)) {
+    const bytes = JSON.stringify(value, null, 2);
     writeFileSync(join(directory, file), bytes);
-    manifestFiles[file] = { records: rows.length, sha256: sha256(bytes) };
+    const records = Array.isArray(value) ? value.length : value.records.length;
+    manifestFiles[file] = { records, sha256: sha256(bytes) };
   }
   const manifest = JSON.stringify({
     package: "ai-longevity-pro-v2-governed-catalog",
@@ -106,8 +151,10 @@ describe("Claude source package to AWS governed catalog adapter", () => {
         targetEnvironment: "synthetic-staging",
       });
       expect(manifest.products).toHaveLength(133);
+      expect(manifest.productLabels).toHaveLength(91);
       expect(manifest.commercialOffers).toHaveLength(91);
       expect(manifest.protocolTemplates).toHaveLength(32);
+      expect(manifest.protocolTemplates.flatMap((template) => template.steps)).toHaveLength(163);
       expect(manifest.safetyRules).toHaveLength(55);
       expect(manifest.knowledgeSources).toHaveLength(76);
     },
@@ -127,8 +174,10 @@ describe("Claude source package to AWS governed catalog adapter", () => {
         containsPhi: false,
       });
       expect(manifest.products).toHaveLength(1);
+      expect(manifest.productLabels).toHaveLength(1);
       expect(manifest.commercialOffers).toHaveLength(1);
       expect(manifest.protocolTemplates[0]?.items).toHaveLength(1);
+      expect(manifest.protocolTemplates[0]?.steps).toHaveLength(1);
       expect(manifest.safetyRules).toHaveLength(1);
       expect(manifest.knowledgeSources).toHaveLength(1);
       expect(manifest.products[0]?.clinicalPayload).not.toHaveProperty("affiliate");

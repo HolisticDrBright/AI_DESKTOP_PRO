@@ -7,6 +7,7 @@ import type { CatalogEnvironment } from "./aws-governed-catalog-reader";
 
 export type CatalogReviewSubject =
   | "product_version"
+  | "product_label_version"
   | "protocol_template_version"
   | "affiliate_offer_version"
   | "safety_rule_version"
@@ -46,6 +47,7 @@ export class GovernedCatalogReviewError extends Error {
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const IDS: Record<CatalogReviewSubject, RegExp> = {
   product_version: /^prd_[a-z0-9][a-z0-9_-]{2,95}$/,
+  product_label_version: /^lbl_[a-z0-9][a-z0-9_-]{2,95}$/,
   protocol_template_version: /^tpl_[a-z0-9][a-z0-9_-]{2,95}$/,
   affiliate_offer_version: /^off_[a-z0-9][a-z0-9_-]{2,95}$/,
   safety_rule_version: /^saf_[a-z0-9][a-z0-9_-]{2,95}$/,
@@ -97,12 +99,24 @@ async function verifySubject(tx: ClinicalCoreTransaction, input: CatalogReviewIn
       direct_order_allowed: boolean;
       access_tier: string;
       unresolved_safety_rules: number;
+      label_ready: boolean;
     }>(
       `select p.environment, v.declared_restricted, v.direct_order_allowed, v.access_tier,
               (select count(*)::int
                from jsonb_array_elements_text(coalesce(v.clinical_payload->'contraindicationRuleIds', '[]'::jsonb)) as rule_id(stable_id)
                left join clinical_reference.safety_rules r on r.stable_id = rule_id.stable_id
-               where r.review_status is distinct from 'approved' or r.active_version is null) as unresolved_safety_rules
+               where r.review_status is distinct from 'approved' or r.active_version is null) as unresolved_safety_rules,
+              exists (
+                select 1 from clinical_reference.product_labels l
+                join clinical_reference.product_label_versions lv
+                  on lv.label_stable_id = l.stable_id and lv.version = l.active_version
+                where l.product_stable_id = v.product_stable_id
+                  and l.review_status = 'approved'
+                  and lv.label_found = true
+                  and lv.physical_label_required = false
+                  and lv.substantive_conflict = false
+                  and lv.practitioner_decision_required = false
+              ) as label_ready
        from clinical_reference.catalog_product_versions v
        join clinical_reference.catalog_products p on p.stable_id = v.product_stable_id
        where v.product_stable_id = $1 and v.version = $2`,
@@ -112,7 +126,31 @@ async function verifySubject(tx: ClinicalCoreTransaction, input: CatalogReviewIn
     if (!row) notFound();
     if (row.environment !== input.environment
       || (row.declared_restricted && (row.direct_order_allowed || row.access_tier === "open"))
-      || (input.outcome === "approved" && Number(row.unresolved_safety_rules) > 0)) precondition();
+      || (input.outcome === "approved" && (Number(row.unresolved_safety_rules) > 0
+        || (row.direct_order_allowed && !row.label_ready)))) precondition();
+    return;
+  }
+  if (input.subjectType === "product_label_version") {
+    const found = await tx.query<{
+      environment: string;
+      label_found: boolean;
+      physical_label_required: boolean;
+      substantive_conflict: boolean;
+      practitioner_decision_required: boolean;
+    }>(
+      `select l.environment, v.label_found, v.physical_label_required,
+              v.substantive_conflict, v.practitioner_decision_required
+       from clinical_reference.product_label_versions v
+       join clinical_reference.product_labels l on l.stable_id = v.label_stable_id
+       where v.label_stable_id = $1 and v.version = $2`,
+      [input.stableId, input.version],
+    );
+    const row = found.rows[0];
+    if (!row) notFound();
+    if (row.environment !== input.environment || (input.outcome === "approved" && (
+      !row.label_found || row.physical_label_required || row.substantive_conflict
+      || row.practitioner_decision_required
+    ))) precondition();
     return;
   }
   if (input.subjectType === "protocol_template_version") {
@@ -199,6 +237,7 @@ async function updateRegistry(tx: ClinicalCoreTransaction, input: CatalogReviewI
 
 function registryFor(subjectType: CatalogReviewSubject): [string, string] {
   if (subjectType === "product_version") return ["clinical_reference", "catalog_products"];
+  if (subjectType === "product_label_version") return ["clinical_reference", "product_labels"];
   if (subjectType === "protocol_template_version") return ["clinical_reference", "protocol_templates"];
   if (subjectType === "safety_rule_version") return ["clinical_reference", "safety_rules"];
   if (subjectType === "knowledge_source_version") return ["clinical_reference", "knowledge_sources"];

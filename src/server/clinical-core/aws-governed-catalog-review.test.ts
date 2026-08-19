@@ -13,7 +13,8 @@ function database(subject: Record<string, unknown>) {
         ): Promise<ClinicalCoreQueryResult<Row>> {
           calls.push({ sql, parameters });
           if (sql.includes("select p.environment") || sql.includes("select t.environment")
-            || sql.includes("select v.environment") || sql.includes("select r.environment")) {
+            || sql.includes("select v.environment") || sql.includes("select r.environment")
+            || sql.includes("select l.environment")) {
             return { rows: [subject as Row] };
           }
           if (sql.includes("insert into clinical_reference.catalog_review_events")) {
@@ -40,6 +41,7 @@ describe("governed catalog review activation", () => {
       declared_restricted: false,
       direct_order_allowed: true,
       access_tier: "open",
+      label_ready: true,
     });
     await expect(reviewGovernedCatalogVersion(db.value, {
       ...common,
@@ -80,6 +82,24 @@ describe("governed catalog review activation", () => {
       version: 1,
       outcome: "approved",
     })).rejects.toMatchObject({ category: "review_precondition_failed" });
+  });
+
+  test("blocks label approval while a physical-label or substantive-conflict flag remains", async () => {
+    const db = database({
+      environment: "production-clinical",
+      label_found: true,
+      physical_label_required: true,
+      substantive_conflict: true,
+      practitioner_decision_required: true,
+    });
+    await expect(reviewGovernedCatalogVersion(db.value, {
+      ...common,
+      subjectType: "product_label_version",
+      stableId: "lbl_synthetic_conflict",
+      version: 1,
+      outcome: "approved",
+    })).rejects.toMatchObject({ category: "review_precondition_failed" });
+    expect(db.calls.some((call) => call.sql.includes("catalog_review_events"))).toBe(false);
   });
 
   test("keeps rejection as append-only review evidence without activating content", async () => {
