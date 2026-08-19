@@ -17,6 +17,19 @@ const rules = [
   { id: "app_runner_runtime", pattern: /(?:awsapprunner\.com\b|AWS::AppRunner::Service)/i },
 ];
 
+// These modules mention legacy provider names only to detect, refuse, or
+// describe them. They do not construct a client or send runtime traffic.
+// Keep this allowlist exact and rule-scoped so new files and new dependency
+// types still fail the production gate.
+const guardReferenceAllowlist = new Map([
+  ["desktop:src/app/api/knowledge/authoring-pack/route.ts", new Set(["fly_runtime"])],
+  ["desktop:src/server/runtime/awsProductionGate.ts", new Set(["supabase_saas_runtime", "fly_runtime"])],
+  ["desktop:src/server/runtime/contractFixture.ts", new Set(["supabase_saas_runtime"])],
+  ["desktop:src/server/runtime/deployedRuntime.ts", new Set(["fly_runtime"])],
+  ["desktop:src/server/runtime/posture.ts", new Set(["supabase_saas_runtime"])],
+  ["app:backend/clinical-core/aws-production-gate.ts", new Set(["supabase_saas_runtime", "fly_runtime"])],
+]);
+
 function walk(directory) {
   if (!existsSync(directory)) return [];
   const files = [];
@@ -40,12 +53,17 @@ export function scanAwsDataPlaneMigration({ desktop = desktopRoot, app = default
     { name: "app", root: app, directories: ["app", "backend", "lib"] },
   ];
   const findings = [];
+  const guardReferences = [];
   for (const project of projects) {
     for (const path of projectFiles(project.root, project.directories)) {
       const content = readFileSync(path, "utf8");
+      const file = relative(project.root, path).replaceAll("\\", "/");
       for (const rule of rules) {
         if (rule.pattern.test(content)) {
-          findings.push({ project: project.name, rule: rule.id, file: relative(project.root, path).replaceAll("\\", "/") });
+          const finding = { project: project.name, rule: rule.id, file };
+          const allowedRules = guardReferenceAllowlist.get(`${project.name}:${file}`);
+          if (allowedRules?.has(rule.id)) guardReferences.push(finding);
+          else findings.push(finding);
         }
       }
     }
@@ -55,6 +73,7 @@ export function scanAwsDataPlaneMigration({ desktop = desktopRoot, app = default
     phi_allowed: false,
     scanned_projects: projects.map(({ name, root }) => ({ name, root, present: existsSync(root) })),
     blockers: findings,
+    guard_references: guardReferences,
     counts: Object.fromEntries(rules.map((rule) => [rule.id, findings.filter((item) => item.rule === rule.id).length])),
   };
 }
