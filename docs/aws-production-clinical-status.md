@@ -19,6 +19,8 @@ synthetic-only.
   workforce/consumer pools, ECR repositories, and an ECS/Fargate cluster.
 - Account and bucket public-access blocking in the guarded deployment workflow.
 - An immutable `PhiAllowed=false` foundation output.
+- A separate production-only `Dockerfile.production` that accepts no provider
+  credentials or staging/synthetic defaults and runs as non-root distroless.
 - An encrypted, deletion-protected, point-in-time-recoverable DynamoDB billing
   ledger with a minimum-necessary ECS task role limited to `dynamodb:PutItem`.
 - Desktop and patient-API startup guards that refuse a production label if

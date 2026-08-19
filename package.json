@@ -38,6 +38,7 @@
     "build:aws-production-foundation": "node scripts/build-aws-production-foundation.mjs",
     "check:aws-production-foundation": "node scripts/check-aws-production-foundation.mjs",
     "test:aws-production-foundation": "node scripts/check-aws-production-foundation.test.mjs",
+    "check:aws-production-container": "node scripts/check-aws-production-container.mjs",
     "audit:aws-data-plane-migration": "node scripts/check-aws-data-plane-migration.mjs --report",
     "check:aws-data-plane-migration": "node scripts/check-aws-data-plane-migration.mjs --enforce",
     "test:aws-data-plane-migration": "node scripts/check-aws-data-plane-migration.test.mjs"
