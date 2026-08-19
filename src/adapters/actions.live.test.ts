@@ -9,12 +9,13 @@ function response(body: unknown, status = 200) {
 }
 
 beforeEach(() => {
-  process.env.CLINICAL_SUPABASE_URL = "https://clinical.example.test";
+  process.env.CLINICAL_CONTRACT_FIXTURE = "1";
+  process.env.CLINICAL_SUPABASE_URL = "http://127.0.0.1:3999";
   process.env.CLINICAL_SUPABASE_ANON_KEY = "publishable-test-key";
   vi.restoreAllMocks();
 });
 
-describe("actionsLive Desktop Supabase boundary", () => {
+describe("actionsLive Desktop AWS clinical boundary", () => {
   test("records only the registered event payload through the audit RPC", async () => {
     const fetchMock = vi.fn().mockResolvedValue(response("audit-3"));
     vi.stubGlobal("fetch", fetchMock);
@@ -27,7 +28,7 @@ describe("actionsLive Desktop Supabase boundary", () => {
     }, "signed-token")).resolves.toEqual({ id: "audit-3" });
 
     expect(fetchMock.mock.calls[0]?.[0]).toBe(
-      "https://clinical.example.test/rest/v1/rpc/record_registered_audit_event",
+      "http://127.0.0.1:3999/rest/v1/rpc/record_registered_audit_event",
     );
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
       _organization_id: "org-1",
@@ -69,7 +70,7 @@ describe("actionsLive Desktop Supabase boundary", () => {
     }]);
 
     expect(fetchMock.mock.calls[0]?.[0]).toBe(
-      "https://clinical.example.test/rest/v1/rpc/list_audit_events",
+      "http://127.0.0.1:3999/rest/v1/rpc/list_audit_events",
     );
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
       _organization_id: "org-1",
@@ -77,7 +78,7 @@ describe("actionsLive Desktop Supabase boundary", () => {
     });
   });
 
-  test("creates a review task through the audited Supabase RPC", async () => {
+  test("creates a review task through the audited contract RPC", async () => {
     const fetchMock = vi.fn().mockResolvedValue(response({
       id: "queue-2",
       status: "open",
@@ -98,7 +99,7 @@ describe("actionsLive Desktop Supabase boundary", () => {
       message: "Review task created.",
     });
     expect(fetchMock.mock.calls[0]?.[0]).toBe(
-      "https://clinical.example.test/rest/v1/rpc/create_review_task",
+      "http://127.0.0.1:3999/rest/v1/rpc/create_review_task",
     );
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
       _patient_id: "patient-1",

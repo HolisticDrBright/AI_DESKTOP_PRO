@@ -356,6 +356,70 @@ export function buildProductionFoundation(source) {
       Tags: [{ Key: "Environment", Value: { Ref: "EnvironmentName" } }],
     },
   };
+  resources.BillingLedger = {
+    Type: "AWS::DynamoDB::Table",
+    DeletionPolicy: "Retain",
+    UpdateReplacePolicy: "Retain",
+    Properties: {
+      TableName: { "Fn::Sub": "${ProjectName}-${EnvironmentName}-billing-ledger" },
+      BillingMode: "PAY_PER_REQUEST",
+      AttributeDefinitions: [
+        { AttributeName: "pk", AttributeType: "S" },
+        { AttributeName: "sk", AttributeType: "S" },
+      ],
+      KeySchema: [
+        { AttributeName: "pk", KeyType: "HASH" },
+        { AttributeName: "sk", KeyType: "RANGE" },
+      ],
+      DeletionProtectionEnabled: true,
+      PointInTimeRecoverySpecification: { PointInTimeRecoveryEnabled: true },
+      SSESpecification: {
+        SSEEnabled: true,
+        SSEType: "KMS",
+        KMSMasterKeyId: { "Fn::GetAtt": ["ClinicalCoreKey", "Arn"] },
+      },
+      Tags: [
+        { Key: "Environment", Value: { Ref: "EnvironmentName" } },
+        { Key: "DataClassification", Value: "billing_metadata_no_phi" },
+        { Key: "PhiAllowed", Value: "false" },
+      ],
+    },
+  };
+  resources.DesktopProductionTaskExecutionRole = {
+    Type: "AWS::IAM::Role",
+    Properties: {
+      AssumeRolePolicyDocument: {
+        Version: "2012-10-17",
+        Statement: [{ Effect: "Allow", Principal: { Service: "ecs-tasks.amazonaws.com" }, Action: "sts:AssumeRole" }],
+      },
+      ManagedPolicyArns: [{ "Fn::Sub": "arn:${AWS::Partition}:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy" }],
+      Tags: [{ Key: "Environment", Value: { Ref: "EnvironmentName" } }],
+    },
+  };
+  resources.DesktopProductionTaskRole = {
+    Type: "AWS::IAM::Role",
+    Properties: {
+      AssumeRolePolicyDocument: {
+        Version: "2012-10-17",
+        Statement: [{ Effect: "Allow", Principal: { Service: "ecs-tasks.amazonaws.com" }, Action: "sts:AssumeRole" }],
+      },
+      Policies: [{
+        PolicyName: "minimum-necessary-billing-ledger-write",
+        PolicyDocument: {
+          Version: "2012-10-17",
+          Statement: [{
+            Effect: "Allow",
+            Action: ["dynamodb:PutItem"],
+            Resource: { "Fn::GetAtt": ["BillingLedger", "Arn"] },
+          }],
+        },
+      }],
+      Tags: [
+        { Key: "Environment", Value: { Ref: "EnvironmentName" } },
+        { Key: "PhiAllowed", Value: "false" },
+      ],
+    },
+  };
   for (const [logicalId, repositoryName] of [
     ["DesktopProductionRepository", "ai-desktop-pro-production"],
     ["PatientApiProductionRepository", "ai-longevity-pro-v2-production"],
@@ -405,6 +469,9 @@ export function buildProductionFoundation(source) {
   template.Outputs.DataClassification.Value = "clinical_phi_target";
   template.Outputs.PhiAllowed.Value = "false";
   template.Outputs.ProductionEcsClusterArn = { Value: { "Fn::GetAtt": ["ProductionEcsCluster", "Arn"] } };
+  template.Outputs.BillingLedgerTableName = { Value: { Ref: "BillingLedger" } };
+  template.Outputs.DesktopProductionTaskExecutionRoleArn = { Value: { "Fn::GetAtt": ["DesktopProductionTaskExecutionRole", "Arn"] } };
+  template.Outputs.DesktopProductionTaskRoleArn = { Value: { "Fn::GetAtt": ["DesktopProductionTaskRole", "Arn"] } };
   template.Outputs.DesktopProductionRepositoryUri = { Value: { "Fn::GetAtt": ["DesktopProductionRepository", "RepositoryUri"] } };
   template.Outputs.PatientApiProductionRepositoryUri = { Value: { "Fn::GetAtt": ["PatientApiProductionRepository", "RepositoryUri"] } };
   template.Outputs.GuardDutyDetectorId = { Value: { Ref: "GuardDutyDetector" } };

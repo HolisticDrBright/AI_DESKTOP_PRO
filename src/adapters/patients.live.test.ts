@@ -24,12 +24,13 @@ const patientRow = {
 };
 
 beforeEach(() => {
-  process.env.CLINICAL_SUPABASE_URL = "https://clinical.example.test";
+  process.env.CLINICAL_CONTRACT_FIXTURE = "1";
+  process.env.CLINICAL_SUPABASE_URL = "http://127.0.0.1:3999";
   process.env.CLINICAL_SUPABASE_ANON_KEY = "publishable-test-key";
   vi.restoreAllMocks();
 });
 
-describe("patientsLive Supabase boundary", () => {
+describe("patientsLive AWS clinical boundary", () => {
   test("lists only the selected organization's RLS-visible patients", async () => {
     const fetchMock = vi.fn().mockResolvedValue(response([patientRow]));
     vi.stubGlobal("fetch", fetchMock);

@@ -3,7 +3,7 @@ if (typeof window !== "undefined") {
 }
 import { trpcMutation, trpcQuery } from "./trpc.server";
 import { getClinicalAccessToken } from "./session.server";
-import { clinicalRpc } from "./supabase-rest.server";
+import { clinicalRpc } from "./aws-clinical-data.server";
 
 /**
  * Live lens namespace (server-only): differential questions + clinical lens

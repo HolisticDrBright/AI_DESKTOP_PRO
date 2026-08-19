@@ -4,7 +4,7 @@ if (typeof window !== "undefined") {
 import { AdapterError } from "./errors";
 import { resolveOrgId } from "./config";
 import { getClinicalAccessToken } from "./session.server";
-import { clinicalRpc } from "./supabase-rest.server";
+import { clinicalRpc } from "./aws-clinical-data.server";
 import type { LiveHypothesisReviewResult, LiveReasoningWorkspace } from "./live-types";
 
 /**

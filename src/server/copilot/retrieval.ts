@@ -21,7 +21,7 @@ if (typeof window !== "undefined") {
   throw new Error("copilot/retrieval is server-only.");
 }
 
-import { clinicalRpc } from "@/adapters/supabase-rest.server";
+import { clinicalRpc } from "@/adapters/aws-clinical-data.server";
 
 export type GovernedSourceRef = {
   type: "knowledge_reference" | "product_label" | "protocol_template" | "diet_template";

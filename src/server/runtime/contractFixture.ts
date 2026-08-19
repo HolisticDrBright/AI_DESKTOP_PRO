@@ -64,6 +64,7 @@ const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1", "[::1]", "0.0.0
 type FixtureEnv = {
   CLINICAL_CONTRACT_FIXTURE?: string;
   CLINICAL_SUPABASE_URL?: string;
+  CLINICAL_SUPABASE_ANON_KEY?: string;
 };
 
 export function evaluateContractFixtureBoundary(
@@ -138,4 +139,19 @@ export function evaluateContractFixtureBoundary(
 /** Convenience boolean. Prefer the verdict when you need to report why. */
 export function isContractFixtureAllowed(env?: FixtureEnv): boolean {
   return evaluateContractFixtureBoundary(env).allowed;
+}
+
+/**
+ * The only accessor allowed to expose the retired REST-shaped local fixture.
+ * It never returns a hosted origin and is categorically refused in deployment.
+ */
+export function getContractFixtureTransport(env: FixtureEnv = process.env as FixtureEnv): {
+  origin: string;
+  credential: string;
+} | null {
+  const verdict = evaluateContractFixtureBoundary(env);
+  if (!verdict.allowed) return null;
+  const credential = String(env.CLINICAL_SUPABASE_ANON_KEY ?? "").trim();
+  if (!credential) return null;
+  return { origin: verdict.backendOrigin, credential };
 }

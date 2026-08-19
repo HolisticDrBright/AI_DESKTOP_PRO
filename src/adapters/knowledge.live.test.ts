@@ -12,12 +12,13 @@ function response(body: unknown, status = 200) {
 }
 
 beforeEach(() => {
-  process.env.CLINICAL_SUPABASE_URL = "https://clinical.example.test";
+  process.env.CLINICAL_CONTRACT_FIXTURE = "1";
+  process.env.CLINICAL_SUPABASE_URL = "http://127.0.0.1:3999";
   process.env.CLINICAL_SUPABASE_ANON_KEY = "publishable-test-key";
   vi.restoreAllMocks();
 });
 
-describe("knowledgeLive Supabase boundary", () => {
+describe("knowledgeLive AWS clinical boundary", () => {
   test("loads and maps organization-scoped pathway versions under the caller token", async () => {
     const fetchMock = vi.fn().mockResolvedValue(response([{
       id: "pathway-1",
@@ -85,7 +86,7 @@ describe("knowledgeLive Supabase boundary", () => {
     expect(result).toEqual({ batchId: "batch-1", itemCount: 1 });
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe(
-      "https://clinical.example.test/rest/v1/rpc/stage_clinical_knowledge_import",
+      "http://127.0.0.1:3999/rest/v1/rpc/stage_clinical_knowledge_import",
     );
     expect(JSON.parse(String(init.body))).toMatchObject({
       _organization_id: ORG_ID,

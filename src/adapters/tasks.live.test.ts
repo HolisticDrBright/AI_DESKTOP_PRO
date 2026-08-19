@@ -12,12 +12,13 @@ function response(body: unknown, status = 200) {
 }
 
 beforeEach(() => {
-  process.env.CLINICAL_SUPABASE_URL = "https://clinical.example.test";
+  process.env.CLINICAL_CONTRACT_FIXTURE = "1";
+  process.env.CLINICAL_SUPABASE_URL = "http://127.0.0.1:3999";
   process.env.CLINICAL_SUPABASE_ANON_KEY = "publishable-test-key";
   vi.restoreAllMocks();
 });
 
-describe("tasksLive Supabase boundary", () => {
+describe("tasksLive AWS clinical boundary", () => {
   test("maps the caller-scoped review queue", async () => {
     const fetchMock = vi.fn().mockResolvedValue(response([{
       id: "queue-1",
@@ -46,7 +47,7 @@ describe("tasksLive Supabase boundary", () => {
       createdAt: "2026-07-28T20:00:00Z",
     }]);
     expect(fetchMock.mock.calls[0]?.[0]).toBe(
-      "https://clinical.example.test/rest/v1/rpc/list_review_queue",
+      "http://127.0.0.1:3999/rest/v1/rpc/list_review_queue",
     );
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
       _organization_id: ORG_ID,
@@ -71,7 +72,7 @@ describe("tasksLive Supabase boundary", () => {
       auditEventId: "audit-1",
     });
     expect(fetchMock.mock.calls[0]?.[0]).toBe(
-      "https://clinical.example.test/rest/v1/rpc/resolve_review_queue_item",
+      "http://127.0.0.1:3999/rest/v1/rpc/resolve_review_queue_item",
     );
   });
 

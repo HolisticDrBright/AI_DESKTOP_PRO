@@ -12,12 +12,13 @@ function response(body: unknown, status = 200) {
 }
 
 beforeEach(() => {
-  process.env.CLINICAL_SUPABASE_URL = "https://clinical.example.test";
+  process.env.CLINICAL_CONTRACT_FIXTURE = "1";
+  process.env.CLINICAL_SUPABASE_URL = "http://127.0.0.1:3999";
   process.env.CLINICAL_SUPABASE_ANON_KEY = "publishable-test-key";
   vi.restoreAllMocks();
 });
 
-describe("organizationsLive Supabase boundary", () => {
+describe("organizationsLive AWS clinical boundary", () => {
   test("loads and maps only organizations returned by the caller-scoped RPC", async () => {
     const fetchMock = vi.fn().mockResolvedValue(response([{
       organization_id: ORG_ID,
@@ -34,7 +35,7 @@ describe("organizationsLive Supabase boundary", () => {
       role: "practitioner",
     }]);
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe("https://clinical.example.test/rest/v1/rpc/list_my_organizations");
+    expect(url).toBe("http://127.0.0.1:3999/rest/v1/rpc/list_my_organizations");
     expect(init.headers).toMatchObject({
       apikey: "publishable-test-key",
       Authorization: `Bearer ${TOKEN}`,
@@ -47,7 +48,7 @@ describe("organizationsLive Supabase boundary", () => {
 
     await expect(organizationsLive.claim(TOKEN)).resolves.toEqual({ activated: 2 });
     expect(fetchMock.mock.calls[0]?.[0]).toBe(
-      "https://clinical.example.test/rest/v1/rpc/activate_my_memberships",
+      "http://127.0.0.1:3999/rest/v1/rpc/activate_my_memberships",
     );
   });
 
@@ -103,8 +104,8 @@ describe("organizationsLive Supabase boundary", () => {
     await organizationsLive.remove({ membershipId: "membership-1" }, TOKEN);
 
     expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([
-      "https://clinical.example.test/rest/v1/rpc/set_org_member_role",
-      "https://clinical.example.test/rest/v1/rpc/remove_org_member",
+      "http://127.0.0.1:3999/rest/v1/rpc/set_org_member_role",
+      "http://127.0.0.1:3999/rest/v1/rpc/remove_org_member",
     ]);
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
       _membership_id: "membership-1",

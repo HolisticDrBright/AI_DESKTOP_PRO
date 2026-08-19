@@ -19,12 +19,13 @@ function sentCall(fetchMock: ReturnType<typeof vi.fn>) {
 }
 
 beforeEach(() => {
-  process.env.CLINICAL_SUPABASE_URL = "https://clinical.example.test";
+  process.env.CLINICAL_CONTRACT_FIXTURE = "1";
+  process.env.CLINICAL_SUPABASE_URL = "http://127.0.0.1:3999";
   process.env.CLINICAL_SUPABASE_ANON_KEY = "publishable-test-key";
   vi.restoreAllMocks();
 });
 
-describe("billingLive Desktop Supabase boundary", () => {
+describe("billingLive Desktop AWS clinical boundary", () => {
   test("the workspace read passes every filter through untouched", async () => {
     const fetchMock = vi.fn().mockResolvedValue(response({ summary: { invoicedMinor: 0 } }));
     vi.stubGlobal("fetch", fetchMock);

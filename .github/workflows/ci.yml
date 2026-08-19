@@ -103,6 +103,7 @@ jobs:
           sleep 2
           E2E_LIVE=1 \
           APP_EDITION=clinical \
+          CLINICAL_CONTRACT_FIXTURE=1 \
           TRPC_BASE_URL=http://127.0.0.1:3999/api/trpc \
           CLINICAL_SUPABASE_URL=http://127.0.0.1:3999 \
           CLINICAL_SUPABASE_ANON_KEY=stub \

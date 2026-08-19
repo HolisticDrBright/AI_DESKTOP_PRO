@@ -4,7 +4,7 @@ if (typeof window !== "undefined") {
 import { resolveOrgId } from "./config";
 import type { LiveAuditEvent, LiveTaskResult } from "./live-types";
 import { getClinicalAccessToken } from "./session.server";
-import { clinicalRpc } from "./supabase-rest.server";
+import { clinicalRpc } from "./aws-clinical-data.server";
 
 /**
  * Live `actions` namespace (server-only).

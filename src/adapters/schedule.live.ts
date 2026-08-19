@@ -10,7 +10,7 @@ import type {
   LiveRescheduleResult,
 } from "./live-types";
 import { getClinicalAccessToken } from "./session.server";
-import { clinicalRpc } from "./supabase-rest.server";
+import { clinicalRpc } from "./aws-clinical-data.server";
 
 interface CalendarRpcAppointment {
   id: string;

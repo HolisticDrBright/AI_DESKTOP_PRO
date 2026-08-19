@@ -41,4 +41,12 @@ const stalePostureVersion = structuredClone(production);
 stalePostureVersion.Resources.PostureFunction.Properties.Environment.Variables.CLINICAL_CORE_CONTRACT_VERSION = "clinical-core/1";
 assert(validateProductionFoundation(stalePostureVersion).some((error) => error.includes("posture endpoint must report clinical-core/2")));
 
+const broadBillingPermission = structuredClone(production);
+broadBillingPermission.Resources.DesktopProductionTaskRole.Properties.Policies[0].PolicyDocument.Statement[0].Action = ["dynamodb:*"];
+assert(validateProductionFoundation(broadBillingPermission).some((error) => error.includes("only write billing ledger")));
+
+const unprotectedBillingLedger = structuredClone(production);
+unprotectedBillingLedger.Resources.BillingLedger.Properties.DeletionProtectionEnabled = false;
+assert(validateProductionFoundation(unprotectedBillingLedger).some((error) => error.includes("deletion protection")));
+
 console.log("AWS production foundation fail-closed checks passed.");

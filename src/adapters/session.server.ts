@@ -7,8 +7,8 @@ import { evaluateContractFixtureBoundary } from "@/server/runtime/contractFixtur
 /**
  * Access-token source for live clinical server adapters, in strict order:
  *
- *  1. The signed-in practitioner's session (httpOnly cookies set by
- *     /api/auth/login — real Supabase Auth). This is the product path.
+ *  1. The signed-in practitioner's Cognito session (httpOnly cookies set by
+ *     /api/auth/login). This is the product path.
  *  2. ⚠️ LOCAL/E2E FALLBACK ONLY: env demo credentials
  *     (CLINICAL_DEMO_EMAIL/PASSWORD). Kept so the contract-fixture e2e suite
  *     and headless local runs work without a browser session. Do NOT set

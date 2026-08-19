@@ -75,6 +75,9 @@ export function validateProductionFoundation(template) {
     ["ClinicalBackupVault", "AWS::Backup::BackupVault"],
     ["ClinicalBackupPlan", "AWS::Backup::BackupPlan"],
     ["ProductionEcsCluster", "AWS::ECS::Cluster"],
+    ["BillingLedger", "AWS::DynamoDB::Table"],
+    ["DesktopProductionTaskExecutionRole", "AWS::IAM::Role"],
+    ["DesktopProductionTaskRole", "AWS::IAM::Role"],
     ["DesktopProductionRepository", "AWS::ECR::Repository"],
     ["PatientApiProductionRepository", "AWS::ECR::Repository"],
     ["DesktopDomainRegistry", "AWS::SSM::Parameter"],
@@ -84,6 +87,18 @@ export function validateProductionFoundation(template) {
   ]) {
     assert(errors, resources[logicalId]?.Type === type, `${logicalId} (${type}) is required`);
   }
+
+  const billing = resources.BillingLedger?.Properties;
+  assert(errors, resources.BillingLedger?.DeletionPolicy === "Retain", "BillingLedger must be retained on stack deletion");
+  assert(errors, resources.BillingLedger?.UpdateReplacePolicy === "Retain", "BillingLedger must be retained on replacement");
+  assert(errors, billing?.DeletionProtectionEnabled === true, "BillingLedger deletion protection is required");
+  assert(errors, billing?.PointInTimeRecoverySpecification?.PointInTimeRecoveryEnabled === true, "BillingLedger point-in-time recovery is required");
+  assert(errors, billing?.SSESpecification?.SSEType === "KMS", "BillingLedger must use KMS encryption");
+  assert(errors, billing?.SSESpecification?.KMSMasterKeyId?.["Fn::GetAtt"]?.[0] === "ClinicalCoreKey", "BillingLedger must use the application KMS key");
+  const billingStatements = resources.DesktopProductionTaskRole?.Properties?.Policies?.flatMap((policy) => policy.PolicyDocument?.Statement ?? []) ?? [];
+  assert(errors, billingStatements.length === 1, "Desktop task role must have one minimum-necessary billing statement");
+  assert(errors, JSON.stringify(billingStatements[0]?.Action) === JSON.stringify(["dynamodb:PutItem"]), "Desktop task role must only write billing ledger items");
+  assert(errors, billingStatements[0]?.Resource?.["Fn::GetAtt"]?.[0] === "BillingLedger", "Desktop task role must be scoped to BillingLedger");
 
   for (const [parameter, expected] of [
     ["DesktopDomainName", "desktop.ailongevitypro.app"],

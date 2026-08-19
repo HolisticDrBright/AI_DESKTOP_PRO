@@ -2,7 +2,7 @@ if (typeof window !== "undefined") {
   throw new Error("This module is server-only and must not run in the browser.");
 }
 import { resolveOrgId } from "./config";
-import { clinicalRpc, clinicalSelect } from "./supabase-rest.server";
+import { clinicalRpc, clinicalSelect } from "./aws-clinical-data.server";
 import { getClinicalAccessToken } from "./session.server";
 import type { CreatePatientInput, CreatePatientResult, PatientDirectoryEntry } from "./types";
 import { calendarAge, displaySex, formatDateOnly } from "@/lib/dates";
