@@ -47,11 +47,13 @@ try {
     --stack-name $StackName `
     --template-file dist/aws-clinical-core/production-foundation.json `
     --capabilities CAPABILITY_NAMED_IAM `
+    --disable-rollback `
     --no-fail-on-empty-changeset `
     --parameter-overrides `
       EnvironmentName=production-clinical `
       DataClassification=clinical_phi `
       BudgetAlertEmail=$BudgetAlertEmail
+  if ($LASTEXITCODE -ne 0) { throw "CloudFormation production foundation deployment failed." }
 
   $outputs = aws cloudformation describe-stacks `
     --profile $Profile `

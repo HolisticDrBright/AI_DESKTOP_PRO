@@ -18,6 +18,8 @@ export function validateProductionFoundation(template) {
   assert(errors, template.Metadata?.ClinicalCore?.ContainsPhi === false, "foundation deployment must not contain PHI");
   assert(errors, template.Metadata?.ClinicalCore?.PhiActivation === "blocked", "PHI activation must be blocked");
   assert(errors, template.Outputs?.PhiAllowed?.Value === "false", "PhiAllowed output must remain false");
+  assert(errors, resources.PostureFunction?.Properties?.Environment?.Variables?.CLINICAL_CORE_CONTRACT_VERSION === "clinical-core/2", "posture endpoint must report clinical-core/2");
+  assert(errors, resources.PostureFunction?.Properties?.Environment?.Variables?.CLINICAL_CORE_STATUS === "production_foundation_phi_blocked", "posture endpoint must report the PHI-blocked production foundation state");
   assert(errors, JSON.stringify(template.Parameters?.EnvironmentName?.AllowedValues) === JSON.stringify(["production-clinical"]), "environment must be locked to production-clinical");
   assert(errors, JSON.stringify(template.Parameters?.DataClassification?.AllowedValues) === JSON.stringify(["clinical_phi"]), "target data class must be clinical_phi");
   assert(errors, !types.includes("AWS::AppRunner::Service"), "App Runner is forbidden from the PHI target architecture");
@@ -27,6 +29,21 @@ export function validateProductionFoundation(template) {
     assert(errors, resources[logicalId]?.Type === "AWS::KMS::Key", `${logicalId} is required`);
     assert(errors, resources[logicalId]?.Properties?.EnableKeyRotation === true, `${logicalId} rotation must be enabled`);
   }
+  assert(
+    errors,
+    resources.ClinicalCoreKey?.Properties?.KeyPolicy?.Statement?.some((statement) => statement.Sid === "CloudWatchLogsEncryption"),
+    "ClinicalCoreKey must authorize encrypted CloudWatch Logs",
+  );
+  assert(
+    errors,
+    resources.ClinicalApiStage?.DependsOn?.includes("ClinicalApiAccessLogGroup"),
+    "ClinicalApiStage must wait for its encrypted access log destination",
+  );
+  assert(
+    errors,
+    resources.AuditKey?.Properties?.KeyPolicy?.Statement?.some((statement) => statement.Sid === "AWSConfigEncryption"),
+    "AuditKey must authorize AWS Config encryption",
+  );
   assert(errors, resources.ClinicalDatabaseCluster?.Properties?.BackupRetentionPeriod === 35, "Aurora must retain 35 days of backups");
   assert(errors, resources.ClinicalDatabaseCluster?.Properties?.DeletionProtection === true, "Aurora deletion protection is required");
   assert(errors, resources.ClinicalDatabaseWriter?.Properties?.PubliclyAccessible === false, "Aurora writer must remain private");
@@ -38,6 +55,16 @@ export function validateProductionFoundation(template) {
     assert(errors, bucket?.VersioningConfiguration?.Status === "Enabled", `${bucketName} must enable versioning`);
     assert(errors, Object.values(bucket?.PublicAccessBlockConfiguration ?? {}).every((value) => value === true), `${bucketName} must block public access`);
   }
+  const configBucket = resources.ConfigDeliveryBucket?.Properties;
+  assert(errors, resources.ConfigDeliveryBucket?.Type === "AWS::S3::Bucket", "ConfigDeliveryBucket is required");
+  assert(errors, configBucket?.ObjectLockEnabled !== true, "ConfigDeliveryBucket must not enable Object Lock");
+  assert(errors, configBucket?.VersioningConfiguration?.Status === "Enabled", "ConfigDeliveryBucket must enable versioning");
+  assert(errors, Object.values(configBucket?.PublicAccessBlockConfiguration ?? {}).every((value) => value === true), "ConfigDeliveryBucket must block public access");
+  assert(errors, configBucket?.BucketEncryption?.ServerSideEncryptionConfiguration?.[0]?.ServerSideEncryptionByDefault?.KMSMasterKeyID?.["Fn::GetAtt"]?.[0] === "AuditKey", "ConfigDeliveryBucket must use AuditKey encryption");
+  assert(errors, resources.ConfigDeliveryBucketPolicy?.Type === "AWS::S3::BucketPolicy", "ConfigDeliveryBucketPolicy is required");
+  assert(errors, resources.ConfigDeliveryChannel?.Properties?.S3BucketName?.Ref === "ConfigDeliveryBucket", "AWS Config must use its dedicated delivery bucket");
+  assert(errors, resources.ConfigDeliveryChannel?.Properties?.S3KmsKeyArn?.["Fn::GetAtt"]?.[0] === "AuditKey", "AWS Config delivery must use AuditKey encryption");
+  assert(errors, resources.ConfigDeliveryChannel?.DependsOn?.includes("ConfigDeliveryBucketPolicy"), "AWS Config delivery must wait for its bucket policy");
 
   for (const [logicalId, type] of [
     ["GuardDutyDetector", "AWS::GuardDuty::Detector"],
@@ -50,8 +77,22 @@ export function validateProductionFoundation(template) {
     ["ProductionEcsCluster", "AWS::ECS::Cluster"],
     ["DesktopProductionRepository", "AWS::ECR::Repository"],
     ["PatientApiProductionRepository", "AWS::ECR::Repository"],
+    ["DesktopDomainRegistry", "AWS::SSM::Parameter"],
+    ["ClinicalApiDomainRegistry", "AWS::SSM::Parameter"],
+    ["WorkforceAuthDomainRegistry", "AWS::SSM::Parameter"],
+    ["ConsumerAuthDomainRegistry", "AWS::SSM::Parameter"],
   ]) {
     assert(errors, resources[logicalId]?.Type === type, `${logicalId} (${type}) is required`);
+  }
+
+  for (const [parameter, expected] of [
+    ["DesktopDomainName", "desktop.ailongevitypro.app"],
+    ["ClinicalApiDomainName", "clinical-api.ailongevitypro.app"],
+    ["WorkforceAuthDomainName", "staff-auth.ailongevitypro.app"],
+    ["ConsumerAuthDomainName", "app-auth.ailongevitypro.app"],
+  ]) {
+    assert(errors, resources[`${parameter.replace("Name", "Registry")}`]?.Properties?.Value?.Ref === parameter, `${parameter} registry is required`);
+    assert(errors, template.Parameters?.[parameter]?.Default === expected, `${parameter} must be locked to ${expected}`);
   }
 
   for (const poolName of ["WorkforceUserPool", "ConsumerUserPool"]) {

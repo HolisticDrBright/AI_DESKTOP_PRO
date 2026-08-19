@@ -18,6 +18,7 @@ import { createCallbackServer } from "./callback-server.mjs";
 
 const ALP_DIR = process.env.ALP_BRIDGE_DIR ?? "";
 const RUN = Boolean(ALP_DIR) && existsSync(ALP_DIR);
+const BUN_EXECUTABLE = process.env.BUN_EXECUTABLE ?? "bun";
 
 const ALP_PORT = 3996;
 const DESKTOP_PORT = 3995;
@@ -64,7 +65,7 @@ function claimedEnvelope(overrides = {}) {
 
 describe.skipIf(!RUN)("patient-sync/1 bridge round trip (both real codebases)", () => {
   beforeAll(async () => {
-    alpProcess = spawn("bun", ["run", "backend/sync/dev-server.ts"], {
+    alpProcess = spawn(BUN_EXECUTABLE, ["run", "backend/sync/dev-server.ts"], {
       cwd: ALP_DIR,
       env: {
         ...process.env,

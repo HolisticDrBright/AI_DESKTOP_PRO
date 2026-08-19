@@ -720,11 +720,12 @@
             "CLINICAL_CORE_CONTRACT_VERSION": "clinical-core/1",
             "CLINICAL_CORE_ENVIRONMENT": { "Ref": "EnvironmentName" },
             "CLINICAL_CORE_DATA_CLASSIFICATION": { "Ref": "DataClassification" },
-            "CLINICAL_CORE_PHI_ALLOWED": "false"
+            "CLINICAL_CORE_PHI_ALLOWED": "false",
+            "CLINICAL_CORE_STATUS": "synthetic_staging_not_configured"
           }
         },
         "Code": {
-          "ZipFile": "exports.handler = async () => ({ statusCode: 200, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' }, body: JSON.stringify({ contractVersion: process.env.CLINICAL_CORE_CONTRACT_VERSION, environment: process.env.CLINICAL_CORE_ENVIRONMENT, dataClassification: process.env.CLINICAL_CORE_DATA_CLASSIFICATION, phiAllowed: false, status: 'synthetic_staging_not_configured' }) });"
+          "ZipFile": "exports.handler = async () => ({ statusCode: 200, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' }, body: JSON.stringify({ contractVersion: process.env.CLINICAL_CORE_CONTRACT_VERSION, environment: process.env.CLINICAL_CORE_ENVIRONMENT, dataClassification: process.env.CLINICAL_CORE_DATA_CLASSIFICATION, phiAllowed: false, status: process.env.CLINICAL_CORE_STATUS || 'synthetic_staging_not_configured' }) });"
         },
         "Tags": [
           { "Key": "Environment", "Value": { "Ref": "EnvironmentName" } },

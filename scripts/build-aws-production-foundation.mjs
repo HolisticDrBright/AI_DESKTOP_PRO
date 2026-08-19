@@ -69,9 +69,24 @@ export function buildProductionFoundation(source) {
     Default: 4,
     AllowedValues: [2, 4, 8, 16],
   };
+  for (const [name, domain] of [
+    ["DesktopDomainName", "desktop.ailongevitypro.app"],
+    ["ClinicalApiDomainName", "clinical-api.ailongevitypro.app"],
+    ["WorkforceAuthDomainName", "staff-auth.ailongevitypro.app"],
+    ["ConsumerAuthDomainName", "app-auth.ailongevitypro.app"],
+  ]) {
+    template.Parameters[name] = {
+      Type: "String",
+      Default: domain,
+      AllowedValues: [domain],
+    };
+  }
 
   resources.ClinicalCoreKey.Properties.Description = { "Fn::Sub": "${ProjectName}-${EnvironmentName} application-service encryption" };
-  resources.ClinicalCoreKey.Properties.KeyPolicy.Statement = [clone(baseStatements[0])];
+  resources.ClinicalCoreKey.Properties.KeyPolicy.Statement = [
+    clone(baseStatements[0]),
+    clone(baseStatements.find((statement) => statement.Sid === "CloudWatchLogsEncryption")),
+  ];
   resources.ClinicalCoreKeyAlias.Properties.AliasName = { "Fn::Sub": "alias/${ProjectName}-${EnvironmentName}-application" };
 
   resources.DatabaseKey = accountKey(baseKey, { "Fn::Sub": "${ProjectName}-${EnvironmentName} Aurora encryption" });
@@ -79,6 +94,17 @@ export function buildProductionFoundation(source) {
   resources.DocumentsKey = accountKey(baseKey, { "Fn::Sub": "${ProjectName}-${EnvironmentName} clinical document encryption" });
   resources.DocumentsKeyAlias = aliasFor("documents", "DocumentsKey");
   resources.AuditKey = accountKey(baseKey, { "Fn::Sub": "${ProjectName}-${EnvironmentName} audit encryption" }, baseStatements.slice(1));
+  resources.AuditKey.Properties.KeyPolicy.Statement.push({
+    Sid: "AWSConfigEncryption",
+    Effect: "Allow",
+    Principal: { Service: "config.amazonaws.com" },
+    Action: ["kms:Decrypt", "kms:GenerateDataKey"],
+    Resource: "*",
+    Condition: {
+      StringEquals: { "AWS:SourceAccount": { Ref: "AWS::AccountId" } },
+      ArnLike: { "AWS:SourceArn": { "Fn::Sub": "arn:${AWS::Partition}:config:${AWS::Region}:${AWS::AccountId}:*" } },
+    },
+  });
   resources.AuditKeyAlias = aliasFor("audit", "AuditKey");
   resources.BackupKey = accountKey(baseKey, { "Fn::Sub": "${ProjectName}-${EnvironmentName} backup encryption" });
   resources.BackupKeyAlias = aliasFor("backup", "BackupKey");
@@ -173,38 +199,95 @@ export function buildProductionFoundation(source) {
       RecordingGroup: { AllSupported: true, IncludeGlobalResourceTypes: true },
     },
   };
+  resources.ConfigDeliveryBucket = {
+    Type: "AWS::S3::Bucket",
+    Properties: {
+      BucketEncryption: {
+        ServerSideEncryptionConfiguration: [{
+          BucketKeyEnabled: true,
+          ServerSideEncryptionByDefault: {
+            KMSMasterKeyID: { "Fn::GetAtt": ["AuditKey", "Arn"] },
+            SSEAlgorithm: "aws:kms",
+          },
+        }],
+      },
+      OwnershipControls: { Rules: [{ ObjectOwnership: "BucketOwnerPreferred" }] },
+      PublicAccessBlockConfiguration: {
+        BlockPublicAcls: true,
+        BlockPublicPolicy: true,
+        IgnorePublicAcls: true,
+        RestrictPublicBuckets: true,
+      },
+      VersioningConfiguration: { Status: "Enabled" },
+      LifecycleConfiguration: {
+        Rules: [{ Id: "RetainConfigHistory", Status: "Enabled", ExpirationInDays: 2557 }],
+      },
+      Tags: [
+        { Key: "Environment", Value: { Ref: "EnvironmentName" } },
+        { Key: "DataClassification", Value: { Ref: "DataClassification" } },
+      ],
+    },
+    DeletionPolicy: "Retain",
+    UpdateReplacePolicy: "Retain",
+  };
+  resources.ConfigDeliveryBucketPolicy = {
+    Type: "AWS::S3::BucketPolicy",
+    Properties: {
+      Bucket: { Ref: "ConfigDeliveryBucket" },
+      PolicyDocument: {
+        Version: "2012-10-17",
+        Statement: [
+          {
+            Sid: "ConfigBucketPermissionsCheck",
+            Effect: "Allow",
+            Principal: { Service: "config.amazonaws.com" },
+            Action: ["s3:GetBucketAcl", "s3:ListBucket"],
+            Resource: { "Fn::GetAtt": ["ConfigDeliveryBucket", "Arn"] },
+            Condition: {
+              StringEquals: { "AWS:SourceAccount": { Ref: "AWS::AccountId" } },
+              ArnLike: { "AWS:SourceArn": { "Fn::Sub": "arn:${AWS::Partition}:config:${AWS::Region}:${AWS::AccountId}:*" } },
+            },
+          },
+          {
+            Sid: "ConfigBucketDelivery",
+            Effect: "Allow",
+            Principal: { Service: "config.amazonaws.com" },
+            Action: ["s3:PutObject", "s3:PutObjectAcl"],
+            Resource: { "Fn::Sub": "${ConfigDeliveryBucket.Arn}/config/AWSLogs/${AWS::AccountId}/Config/*" },
+            Condition: {
+              StringEquals: {
+                "s3:x-amz-acl": "bucket-owner-full-control",
+                "AWS:SourceAccount": { Ref: "AWS::AccountId" },
+              },
+              ArnLike: { "AWS:SourceArn": { "Fn::Sub": "arn:${AWS::Partition}:config:${AWS::Region}:${AWS::AccountId}:*" } },
+            },
+          },
+          {
+            Sid: "DenyInsecureTransport",
+            Effect: "Deny",
+            Principal: "*",
+            Action: "s3:*",
+            Resource: [
+              { "Fn::GetAtt": ["ConfigDeliveryBucket", "Arn"] },
+              { "Fn::Sub": "${ConfigDeliveryBucket.Arn}/*" },
+            ],
+            Condition: { Bool: { "aws:SecureTransport": "false" } },
+          },
+        ],
+      },
+    },
+  };
   resources.ConfigDeliveryChannel = {
     Type: "AWS::Config::DeliveryChannel",
+    DependsOn: ["ConfigDeliveryBucketPolicy"],
     Properties: {
       Name: { "Fn::Sub": "${ProjectName}-${EnvironmentName}" },
-      S3BucketName: { Ref: "AuditBucket" },
+      S3BucketName: { Ref: "ConfigDeliveryBucket" },
       S3KeyPrefix: "config",
+      S3KmsKeyArn: { "Fn::GetAtt": ["AuditKey", "Arn"] },
       ConfigSnapshotDeliveryProperties: { DeliveryFrequency: "Six_Hours" },
     },
   };
-  resources.AuditBucketPolicy.Properties.PolicyDocument.Statement.push(
-    {
-      Sid: "ConfigBucketPermissionsCheck",
-      Effect: "Allow",
-      Principal: { Service: "config.amazonaws.com" },
-      Action: "s3:GetBucketAcl",
-      Resource: { "Fn::GetAtt": ["AuditBucket", "Arn"] },
-      Condition: { StringEquals: { "AWS:SourceAccount": { Ref: "AWS::AccountId" } } },
-    },
-    {
-      Sid: "ConfigBucketDelivery",
-      Effect: "Allow",
-      Principal: { Service: "config.amazonaws.com" },
-      Action: "s3:PutObject",
-      Resource: { "Fn::Sub": "${AuditBucket.Arn}/config/AWSLogs/${AWS::AccountId}/Config/*" },
-      Condition: {
-        StringEquals: {
-          "s3:x-amz-acl": "bucket-owner-full-control",
-          "AWS:SourceAccount": { Ref: "AWS::AccountId" },
-        },
-      },
-    },
-  );
 
   resources.ClinicalBackupVault = {
     Type: "AWS::Backup::BackupVault",
@@ -292,9 +375,30 @@ export function buildProductionFoundation(source) {
     };
   }
 
+  for (const [logicalId, path, parameter] of [
+    ["DesktopDomainRegistry", "desktop-domain", "DesktopDomainName"],
+    ["ClinicalApiDomainRegistry", "clinical-api-domain", "ClinicalApiDomainName"],
+    ["WorkforceAuthDomainRegistry", "workforce-auth-domain", "WorkforceAuthDomainName"],
+    ["ConsumerAuthDomainRegistry", "consumer-auth-domain", "ConsumerAuthDomainName"],
+  ]) {
+    resources[logicalId] = {
+      Type: "AWS::SSM::Parameter",
+      Properties: {
+        Name: { "Fn::Sub": `/\${ProjectName}/\${EnvironmentName}/endpoints/${path}` },
+        Type: "String",
+        Value: { Ref: parameter },
+        Description: "Reserved production endpoint name; DNS activation is a separate reviewed change.",
+        Tags: { Environment: { Ref: "EnvironmentName" }, PhiAllowed: "false" },
+      },
+    };
+  }
+
   resources.PostureFunction.Properties.Environment.Variables.CLINICAL_CORE_PHI_ALLOWED = "false";
+  resources.PostureFunction.Properties.Environment.Variables.CLINICAL_CORE_CONTRACT_VERSION = "clinical-core/2";
   resources.PostureFunction.Properties.Environment.Variables.CLINICAL_CORE_ENVIRONMENT = "production-clinical";
   resources.PostureFunction.Properties.Environment.Variables.CLINICAL_CORE_DATA_CLASSIFICATION = "clinical_phi_target";
+  resources.PostureFunction.Properties.Environment.Variables.CLINICAL_CORE_STATUS = "production_foundation_phi_blocked";
+  resources.ClinicalApiStage.DependsOn = ["ClinicalApiAccessLogGroup"];
 
   template.Outputs.ContractVersion.Value = "clinical-core/2";
   template.Outputs.Environment.Value = "production-clinical";
@@ -307,6 +411,10 @@ export function buildProductionFoundation(source) {
   template.Outputs.SecurityHubArn = { Value: { Ref: "SecurityHub" } };
   template.Outputs.AccessAnalyzerArn = { Value: { "Fn::GetAtt": ["AccountAccessAnalyzer", "Arn"] } };
   template.Outputs.BackupVaultName = { Value: { Ref: "ClinicalBackupVault" } };
+  template.Outputs.DesktopDomainName = { Value: { Ref: "DesktopDomainName" } };
+  template.Outputs.ClinicalApiDomainName = { Value: { Ref: "ClinicalApiDomainName" } };
+  template.Outputs.WorkforceAuthDomainName = { Value: { Ref: "WorkforceAuthDomainName" } };
+  template.Outputs.ConsumerAuthDomainName = { Value: { Ref: "ConsumerAuthDomainName" } };
 
   return template;
 }

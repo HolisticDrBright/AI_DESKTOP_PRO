@@ -73,11 +73,12 @@ No item in this document is implied complete by synthetic acceptance. Production
 - [ ] Legal/compliance, clinical safety, security, engineering, and business owners sign the production change record.
 - [ ] Activate a supervised internal pilot with minimum data and immediate rollback; expand only after an observation period and documented review.
 
-## Current verified posture as of 2026-08-18
+## Current verified posture as of 2026-08-19
 
 - The AWS Organizations Business Associate Addendum is active with an effective date of August 18, 2026. This closes the AWS agreement prerequisite only; it does not approve the application or account configuration for PHI.
-- Account `588966314750` remains the synthetic-staging account. A separate empty production account has not been created.
-- A fail-closed production foundation now exists and passes local and AWS CloudFormation validation. It has not been deployed because there is no dedicated production account; both existing accounts are refused by the deployment guard.
+- Account `588966314750` remains the synthetic-staging account. Dedicated production account `173535830222` was created empty with `PhiAllowed=false`; no clinical data was copied into it.
+- The fail-closed production foundation stack is deployed in account `173535830222`, region `us-east-2`, and is `UPDATE_COMPLETE`. Its live posture response reports `clinical-core/2`, `production-clinical`, `production_foundation_phi_blocked`, and `phiAllowed=false`. The management and synthetic account IDs are refused by the deployment guard.
+- The production foundation has private encrypted Aurora, immutable document and CloudTrail archives, a separate encrypted/versioned AWS Config delivery bucket, active Config recording, GuardDuty, Security Hub, Access Analyzer, account/bucket public-access blocks, and a locked backup vault. Production ECR repositories and ECS contain no images, services, or tasks.
 - Desktop still uses Supabase staging for practitioner authentication and most clinical domains. It is not a production fallback.
 - V2 still uses Supabase TestFlight authentication and state persistence. Consumer Cognito federation is not implemented.
 - The cross-repository migration inventory currently reports 17 direct Supabase source dependencies and two Fly-specific source references. Production startup guards refuse those legacy variables.
