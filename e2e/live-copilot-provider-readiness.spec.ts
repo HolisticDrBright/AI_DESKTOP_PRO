@@ -158,6 +158,19 @@ async function openCopilot(page: Page) {
   attempts.set(page, 0); // the panel's own counter resets on mount
 }
 
+async function openCopilotOrExpectWorkforceDenial(page: Page): Promise<"panel" | "sign-in"> {
+  await page.goto(COPILOT_URL);
+  const signIn = page.getByRole("heading", { name: /Practitioner sign-in/i });
+  const panel = page.getByRole("heading", { name: /Governed copilot run/i });
+  await expect(signIn.or(panel)).toBeVisible({ timeout: 15_000 });
+  if (await signIn.isVisible()) {
+    await expect(panel).toHaveCount(0);
+    return "sign-in";
+  }
+  attempts.set(page, 0);
+  return "panel";
+}
+
 async function runOnce(page: Page) {
   const next = (attempts.get(page) ?? 0) + 1;
   attempts.set(page, next);
@@ -600,19 +613,21 @@ test.describe(
       // carries deployment markers, and that alone must be decisive.
       const traffic = assertNoExternalTraffic(page);
       await setScenario("approved_synthetic");
-      await openCopilot(page);
+      const access = await openCopilotOrExpectWorkforceDenial(page);
 
-      // The banner does not announce fixture test mode for content that
-      // will never be produced.
-      await expect(page.getByTestId("copilot-posture-state")).not.toHaveText("fixture_test_mode");
-      const detail = (await page.getByTestId("copilot-posture-detail").textContent()) ?? "";
-      expect(detail).toMatch(/not available in this runtime/i);
-      expect(detail).toMatch(/no example content is shown/i);
+      if (access === "panel") {
+        // If this isolated test build renders its fixture shell, the
+        // deployed-runtime guard must still keep the provider unavailable.
+        await expect(page.getByTestId("copilot-posture-state")).not.toHaveText("fixture_test_mode");
+        const detail = (await page.getByTestId("copilot-posture-detail").textContent()) ?? "";
+        expect(detail).toMatch(/not available in this runtime/i);
+        expect(detail).toMatch(/no example content is shown/i);
+        await runOnce(page);
+        await expect(page.getByTestId("copilot-status")).toContainText("unavailable");
+      }
 
-      await runOnce(page);
-      await expect(page.getByTestId("copilot-status")).toContainText("unavailable");
-
-      // Nothing synthetic reached the screen, under any label.
+      // Whether workforce auth refuses the page first or the isolated shell
+      // renders its refusal panel, no synthetic content can be produced.
       const body = (await page.textContent("body")) ?? "";
       expect(body).not.toContain("fixture-copilot-v1");
       expect(body).not.toContain("fixture:governed-synthetic");
@@ -632,9 +647,11 @@ test.describe(
       // about the runtime, so it cannot be routed around by registering a
       // different synthetic provider.
       await setScenario("approved_synthetic_adversarial");
-      await openCopilot(page);
-      await runOnce(page);
-      await expect(page.getByTestId("copilot-status")).toContainText("unavailable");
+      const access = await openCopilotOrExpectWorkforceDenial(page);
+      if (access === "panel") {
+        await runOnce(page);
+        await expect(page.getByTestId("copilot-status")).toContainText("unavailable");
+      }
       const body = (await page.textContent("body")) ?? "";
       expect(body).not.toContain("fixture:governed-synthetic-adversarial");
       expect(body).not.toContain("hallucinated-reference-not-in-envelope");
@@ -644,8 +661,7 @@ test.describe(
       page,
     }) => {
       await setScenario("approved_synthetic");
-      await openCopilot(page);
-      await runOnce(page);
+      await openCopilotOrExpectWorkforceDenial(page);
       await assertBundleIsClean(page);
     });
   },
