@@ -44,10 +44,16 @@ async function openNewEncounter(page: Page): Promise<void> {
 }
 
 async function addParticipant(page: Page, name: string, kind: string): Promise<void> {
-  await page.getByTestId("participant-name").fill(name);
+  const nameInput = page.getByTestId("participant-name");
+  await nameInput.fill(name);
   await page.getByTestId("participant-kind").selectOption(kind);
   await page.getByTestId("add-participant-btn").click();
-  await expect(page.getByText(name)).toBeVisible();
+  // The local dev server compiles this API route on first use. The input is
+  // cleared only after the write succeeds; the participant appears only
+  // after the authoritative server list is read back.
+  const persistedTimeout = process.env.E2E_DEV_SERVER === "1" ? 20_000 : 5_000;
+  await expect(nameInput).toHaveValue("", { timeout: persistedTimeout });
+  await expect(page.getByText(name)).toBeVisible({ timeout: persistedTimeout });
 }
 
 async function grant(page: Page, kind: string, scope: string): Promise<void> {
