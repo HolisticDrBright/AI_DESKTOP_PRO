@@ -110,6 +110,7 @@ jobs:
           node scripts/live-stub-server.mjs &
           sleep 2
           E2E_LIVE=1 \
+          E2E_DEV_SERVER=1 \
           APP_EDITION=clinical \
           CLINICAL_CONTRACT_FIXTURE=1 \
           TRPC_BASE_URL=http://127.0.0.1:3999/api/trpc \

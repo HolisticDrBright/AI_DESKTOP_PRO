@@ -10,8 +10,7 @@ import { USE_LIVE_API } from "@/adapters/mode";
 
 /**
  * GET → current practitioner session state. Route-handler scope may write
- * cookies, so this is also where near-expiry sessions are refreshed (Supabase
- * rotates the refresh token; both cookies are replaced).
+ * cookies, so this is also where near-expiry Cognito sessions are refreshed.
  */
 export async function GET() {
   if (!USE_LIVE_API) {

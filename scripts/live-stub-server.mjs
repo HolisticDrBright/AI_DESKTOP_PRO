@@ -2947,6 +2947,43 @@ function parseMultipart(buffer, contentType) {
 createServer(async (req, res) => {
   const url = new URL(req.url, `http://127.0.0.1:${PORT}`);
 
+  // AWS Cognito-shaped identity fixture. Production can never reach this path:
+  // auth.server.ts selects it only when the local contract-fixture boundary
+  // has independently accepted loopback + explicit opt-in + non-deployment.
+  if (url.pathname === "/" && req.method === "POST") {
+    const operation = String(req.headers["x-amz-target"] ?? "").split(".").pop();
+    const body = await readBody(req);
+    if (operation === "InitiateAuth") {
+      const params = body.AuthParameters ?? {};
+      if (params.REFRESH_TOKEN === "revoked-refresh-token") {
+        return json(res, 400, { __type: "NotAuthorizedException", message: "Token revoked" });
+      }
+      const email = params.USERNAME ?? "practitioner@fixture.local";
+      const suffix =
+        email === "no-orgs@fixture.local" ? "--noorg"
+        : email === "dual-org@fixture.local" ? "--multi"
+        : "";
+      return json(res, 200, {
+        AuthenticationResult: {
+          IdToken: `fixture-access-token${suffix}`,
+          AccessToken: `fixture-cognito-access-token${suffix}`,
+          ...(params.REFRESH_TOKEN ? {} : { RefreshToken: "fixture-refresh-token" }),
+          ExpiresIn: 3600,
+        },
+      });
+    }
+    if (operation === "ForgotPassword" || operation === "RevokeToken") {
+      return json(res, 200, {});
+    }
+    if (operation === "ConfirmForgotPassword") {
+      if (body.ConfirmationCode !== "123456" || !body.Password) {
+        return json(res, 400, { __type: "CodeMismatchException", message: "Invalid code" });
+      }
+      return json(res, 200, {});
+    }
+    return json(res, 400, { __type: "InvalidParameterException", message: "Unsupported fixture operation" });
+  }
+
   // Supabase-auth-shaped token endpoint (identity only, fixture tokens).
   // Handles both password and refresh_token grants; echoes a stable email so
   // the desktop's cookie-session sign-in flow can be exercised end-to-end.

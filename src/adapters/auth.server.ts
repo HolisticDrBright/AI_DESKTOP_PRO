@@ -2,6 +2,7 @@ if (typeof window !== "undefined") {
   throw new Error("This module is server-only and must not run in the browser.");
 }
 import { AdapterError } from "./errors";
+import { evaluateContractFixtureBoundary } from "@/server/runtime/contractFixture";
 
 /**
  * Practitioner session for LIVE mode — AWS Cognito workforce sign-in, held in
@@ -12,7 +13,7 @@ import { AdapterError } from "./errors";
  *
  * Cookie model (all httpOnly, sameSite=lax, secure in production):
  *   aidp_at  — access token (JWT presented by server adapters as bearer)
- *   aidp_rt  — refresh token (rotated by Supabase on each refresh)
+ *   aidp_rt  — Cognito refresh token
  *   aidp_exp — access-token expiry (epoch ms), for cheap freshness checks
  *   aidp_em  — signed-in email, display only (no PHI)
  *
@@ -64,6 +65,10 @@ export interface MfaChallenge {
 }
 
 function cognitoConfig(): { endpoint: string; clientId: string } {
+  const fixture = evaluateContractFixtureBoundary();
+  if (fixture.allowed) {
+    return { endpoint: `${fixture.backendOrigin}/`, clientId: "fixtureclient" };
+  }
   const region = String(process.env.CLINICAL_AWS_REGION ?? "").trim();
   const clientId = String(process.env.CLINICAL_AWS_WORKFORCE_CLIENT_ID ?? "").trim();
   if (!/^[a-z]{2}(?:-gov)?-[a-z]+-\d$/i.test(region) || !/^[a-z0-9]{8,128}$/i.test(clientId)) {
@@ -193,9 +198,8 @@ export async function requestPasswordReset(email: string): Promise<void> {
 }
 
 /**
- * Complete a reset using the RECOVERY access token from the emailed link
- * (Supabase puts it in the URL fragment, so only the browser ever sees it —
- * it reaches us in a POST body, is used once here, and is never stored).
+ * Complete a reset using the one-time Cognito confirmation code delivered to
+ * the workforce email address. The code is used once and is never stored.
  */
 export async function completePasswordReset(
   email: string,
@@ -222,7 +226,7 @@ export async function refreshSession(refreshToken: string): Promise<AuthTokens> 
 }
 
 /**
- * Revoke only the current Supabase session. Cookie clearing remains mandatory
+ * Revoke only the current Cognito session. Cookie clearing remains mandatory
  * even when the provider is unavailable, so callers treat this as best effort.
  */
 export async function signOutSession(refreshToken: string): Promise<void> {
