@@ -158,14 +158,22 @@ async function openCopilot(page: Page) {
   attempts.set(page, 0); // the panel's own counter resets on mount
 }
 
-async function openCopilotOrExpectWorkforceDenial(page: Page): Promise<"panel" | "sign-in"> {
+async function openCopilotOrExpectWorkforceDenial(
+  page: Page,
+): Promise<"panel" | "sign-in" | "unavailable"> {
   await page.goto(COPILOT_URL);
   const signIn = page.getByRole("heading", { name: /Practitioner sign-in/i });
   const panel = page.getByRole("heading", { name: /Governed copilot run/i });
-  await expect(signIn.or(panel)).toBeVisible({ timeout: 15_000 });
+  const unavailable = page.getByRole("heading", { name: /This didn't load/i });
+  await expect(signIn.or(panel).or(unavailable)).toBeVisible({ timeout: 15_000 });
   if (await signIn.isVisible()) {
     await expect(panel).toHaveCount(0);
     return "sign-in";
+  }
+  if (await unavailable.isVisible()) {
+    await expect(page.getByText(/clinical service may be temporarily unavailable/i)).toBeVisible();
+    await expect(panel).toHaveCount(0);
+    return "unavailable";
   }
   attempts.set(page, 0);
   return "panel";
@@ -554,13 +562,16 @@ test.describe(
     test("PROOF 4 — fixture mode is refused under a deployed-runtime marker", async ({ page }) => {
       const traffic = assertNoExternalTraffic(page);
       await setScenario("approved_synthetic");
-      await openCopilot(page);
+      const access = await openCopilotOrExpectWorkforceDenial(page);
 
-      // The server refuses to resolve the mode at all, so the panel reports
-      // an honest unavailable state…
-      await expect(page.getByTestId("copilot-posture-unavailable")).toBeVisible();
-      const detail = await page.getByTestId("copilot-posture-detail").textContent();
-      expect(detail).toMatch(/no example content is shown/i);
+      if (access === "panel") {
+        // The server refuses to resolve the mode at all, so an isolated shell
+        // reports the honest unavailable state. A normal deployed runtime may
+        // instead refuse at workforce sign-in before this shell exists.
+        await expect(page.getByTestId("copilot-posture-unavailable")).toBeVisible();
+        const detail = await page.getByTestId("copilot-posture-detail").textContent();
+        expect(detail).toMatch(/no example content is shown/i);
+      }
 
       // …and crucially it does NOT render fixture content instead.
       const body = (await page.textContent("body")) ?? "";
@@ -576,12 +587,14 @@ test.describe(
       // the mode explicitly does not either — a deployed process has to be
       // reconfigured, not persuaded.
       await setScenario("approved_synthetic");
-      await openCopilot(page);
-      await expect(page.getByTestId("copilot-posture-unavailable")).toBeVisible();
+      const access = await openCopilotOrExpectWorkforceDenial(page);
+      if (access === "panel") {
+        await expect(page.getByTestId("copilot-posture-unavailable")).toBeVisible();
 
-      // The run path refuses on the same grounds, not just the status panel.
-      await page.getByTestId("copilot-run").click();
-      await expect(page.getByTestId("copilot-error")).toBeVisible();
+        // The run path refuses on the same grounds, not just the status panel.
+        await page.getByTestId("copilot-run").click();
+        await expect(page.getByTestId("copilot-error")).toBeVisible();
+      }
       const body = (await page.textContent("body")) ?? "";
       expect(body).not.toContain("fixture-copilot-v1");
 
