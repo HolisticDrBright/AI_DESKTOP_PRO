@@ -21,6 +21,14 @@ import {
   type AwsSyntheticClinicalStateAdapter,
   type LabResultImport,
 } from "./aws-clinical-state";
+import {
+  CONSUMER_CLINICAL_COLLECTIONS,
+  ConsumerClinicalError,
+  createAwsConsumerClinicalRecordsAdapter,
+  type AwsConsumerClinicalRecordsAdapter,
+  type ConsumerClinicalCollection,
+  type PrivacyRequestKind,
+} from "./aws-consumer-clinical-records";
 
 export type ApiGatewayV2Event = {
   routeKey?: string;
@@ -50,7 +58,9 @@ type RouteDefinition = {
   pool: IdentityPool;
   purpose: SyntheticRequestContext["purpose"];
   operation: "posture" | "issue" | "claim" | "grant" | "revoke"
-    | "get_connection" | "import_lab" | "list_lab_imports" | "review_lab" | "list_labs";
+    | "get_connection" | "import_lab" | "list_lab_imports" | "review_lab" | "list_labs"
+    | "record_clinical" | "list_clinical" | "list_consent_history"
+    | "submit_privacy_request" | "list_privacy_requests";
 };
 
 const ROUTES: Readonly<Record<string, RouteDefinition>> = {
@@ -68,22 +78,30 @@ const ROUTES: Readonly<Record<string, RouteDefinition>> = {
   "POST /clinical-core/workforce/lab-imports/review": { pool: "workforce", purpose: "clinical_data", operation: "review_lab" },
   "GET /clinical-core/workforce/patient-labs": { pool: "workforce", purpose: "clinical_data", operation: "list_labs" },
   "GET /clinical-core/consumer/patient-labs": { pool: "consumer", purpose: "clinical_data", operation: "list_labs" },
+  "POST /clinical-core/consumer/records": { pool: "consumer", purpose: "clinical_data", operation: "record_clinical" },
+  "GET /clinical-core/consumer/records": { pool: "consumer", purpose: "clinical_data", operation: "list_clinical" },
+  "GET /clinical-core/consumer/privacy/consents": { pool: "consumer", purpose: "consent_management", operation: "list_consent_history" },
+  "POST /clinical-core/consumer/privacy/requests": { pool: "consumer", purpose: "consent_management", operation: "submit_privacy_request" },
+  "GET /clinical-core/consumer/privacy/requests": { pool: "consumer", purpose: "consent_management", operation: "list_privacy_requests" },
 };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SUBJECT = /^[A-Za-z0-9:_-]{8,128}$/;
 const IDEMPOTENCY = /^[A-Za-z0-9:_-]{8,128}$/;
-const MAX_BODY_BYTES = 8_192;
+const MAX_BODY_BYTES = 20_480;
 
 export function createAwsIdentityApiHandler(input: {
   database?: ClinicalCoreDatabase;
   adapter?: AwsSyntheticIdentityConsentAdapter;
   clinicalStateAdapter?: AwsSyntheticClinicalStateAdapter;
+  clinicalRecordsAdapter?: AwsConsumerClinicalRecordsAdapter;
   configuration: IdentityApiConfiguration;
 }) {
   const adapter = input.adapter ?? (input.database ? createAwsSyntheticIdentityConsentAdapter(input.database) : undefined);
   const clinicalStateAdapter = input.clinicalStateAdapter
     ?? (input.database ? createAwsSyntheticClinicalStateAdapter(input.database) : undefined);
+  const clinicalRecordsAdapter = input.clinicalRecordsAdapter
+    ?? (input.database ? createAwsConsumerClinicalRecordsAdapter(input.database) : undefined);
   if (!adapter) throw new Error("identity_api_adapter_required");
   validateConfiguration(input.configuration);
 
@@ -94,6 +112,8 @@ export function createAwsIdentityApiHandler(input: {
       const context = contextFromClaims(event, route, input.configuration);
       if (["get_connection", "import_lab", "list_lab_imports", "review_lab", "list_labs"].includes(route.operation)
         && !clinicalStateAdapter) throw new Error("clinical_state_api_adapter_required");
+      if (["record_clinical", "list_clinical", "list_consent_history", "submit_privacy_request", "list_privacy_requests"].includes(route.operation)
+        && !clinicalRecordsAdapter) throw new Error("consumer_clinical_api_adapter_required");
       if (route.operation === "posture") {
         if (event.body) throw new IdentityApiError("request_invalid");
         return response(200, {
@@ -128,6 +148,33 @@ export function createAwsIdentityApiHandler(input: {
         const patientRecordId = event.queryStringParameters?.patientRecordId ?? "";
         if (!UUID.test(patientRecordId)) throw new IdentityApiError("request_invalid");
         return response(200, { data: await clinicalStateAdapter!.listPatientLabObservations(context, patientRecordId) });
+      }
+      if (route.operation === "list_clinical") {
+        if (event.body) throw new IdentityApiError("request_invalid");
+        const collection = event.queryStringParameters?.collection ?? "";
+        const connectionId = event.queryStringParameters?.connectionId ?? "";
+        const limit = Number(event.queryStringParameters?.limit ?? "100");
+        const cursor = decodeCursor(event.queryStringParameters?.cursor);
+        if (!UUID.test(connectionId) || !CONSUMER_CLINICAL_COLLECTIONS.includes(collection as ConsumerClinicalCollection)
+          || !Number.isSafeInteger(limit) || limit < 1 || limit > 200) throw new IdentityApiError("request_invalid");
+        const rows = await clinicalRecordsAdapter!.listRecords(context, {
+          connectionId, collection: collection as ConsumerClinicalCollection, limit,
+          ...(cursor ? { afterReceivedAt: cursor.receivedAt, afterId: cursor.id } : {}),
+        });
+        const last = rows.length === limit ? rows.at(-1) : undefined;
+        return response(200, { data: { items: rows, nextCursor: last ? encodeCursor(last.receivedAt, last.versionId) : null } });
+      }
+      if (route.operation === "list_consent_history") {
+        if (event.body) throw new IdentityApiError("request_invalid");
+        const connectionId = event.queryStringParameters?.connectionId ?? "";
+        if (!UUID.test(connectionId)) throw new IdentityApiError("request_invalid");
+        return response(200, { data: await clinicalRecordsAdapter!.listConsentHistory(context, connectionId) });
+      }
+      if (route.operation === "list_privacy_requests") {
+        if (event.body) throw new IdentityApiError("request_invalid");
+        const connectionId = event.queryStringParameters?.connectionId ?? "";
+        if (!UUID.test(connectionId)) throw new IdentityApiError("request_invalid");
+        return response(200, { data: await clinicalRecordsAdapter!.listPrivacyRequests(context, connectionId) });
       }
       const body = parseBody(event);
 
@@ -196,6 +243,36 @@ export function createAwsIdentityApiHandler(input: {
             ...(note ? { note } : {}),
           }) });
         }
+        case "record_clinical": {
+          exactKeys(body, ["connectionId", "stableRecordId", "collection", "recordKey", "resourceVersion", "idempotencyKey", "payload", "deleted"],
+            ["connectionId", "stableRecordId", "collection", "recordKey", "resourceVersion", "idempotencyKey", "payload"]);
+          const collection = requiredString(body, "collection");
+          if (!CONSUMER_CLINICAL_COLLECTIONS.includes(collection as ConsumerClinicalCollection)) {
+            throw new IdentityApiError("request_invalid");
+          }
+          const payload = requiredObject(body, "payload");
+          const deleted = body.deleted === undefined ? false : requiredBoolean(body, "deleted");
+          return response(202, { data: await clinicalRecordsAdapter!.recordVersion(context, {
+            connectionId: requiredString(body, "connectionId", UUID),
+            stableRecordId: requiredString(body, "stableRecordId", UUID),
+            collection: collection as ConsumerClinicalCollection,
+            recordKey: requiredString(body, "recordKey"),
+            resourceVersion: requiredString(body, "resourceVersion"),
+            idempotencyKey: requiredString(body, "idempotencyKey", /^[A-Za-z0-9:_-]{8,160}$/),
+            payload,
+            deleted,
+          }) });
+        }
+        case "submit_privacy_request": {
+          exactKeys(body, ["connectionId", "kind", "detail"], ["connectionId", "kind"]);
+          const kind = requiredString(body, "kind");
+          if (!["export", "correction", "deletion"].includes(kind)) throw new IdentityApiError("request_invalid");
+          return response(201, { data: await clinicalRecordsAdapter!.submitPrivacyRequest(context, {
+            connectionId: requiredString(body, "connectionId", UUID),
+            kind: kind as PrivacyRequestKind,
+            ...(body.detail !== undefined && body.detail !== null ? { detail: requiredString(body, "detail") } : {}),
+          }) });
+        }
       }
     } catch (error) {
       if (error instanceof IdentityApiError) return response(error.category === "identity_refused" ? 403 : 400, { error: error.category });
@@ -209,6 +286,12 @@ export function createAwsIdentityApiHandler(input: {
       if (error instanceof ClinicalStateError) {
         const status = error.category === "clinical_state_refused" ? 403
           : error.category === "database_unavailable" ? 503 : 400;
+        return response(status, { error: error.category });
+      }
+      if (error instanceof ConsumerClinicalError) {
+        const status = error.category === "clinical_record_refused" ? 403
+          : error.category === "consent_required" || error.category === "conflict" ? 409
+            : error.category === "database_unavailable" ? 503 : 400;
         return response(status, { error: error.category });
       }
       return response(503, { error: "service_unavailable" });
@@ -343,6 +426,32 @@ function requiredNumber(body: Record<string, unknown>, key: string): number {
   const value = body[key];
   if (typeof value !== "number" || !Number.isFinite(value)) throw new IdentityApiError("request_invalid");
   return value;
+}
+
+function requiredBoolean(body: Record<string, unknown>, key: string): boolean {
+  const value = body[key];
+  if (typeof value !== "boolean") throw new IdentityApiError("request_invalid");
+  return value;
+}
+
+function encodeCursor(receivedAt: string, id: string): string {
+  if (!UUID.test(id) || !Number.isFinite(new Date(receivedAt).getTime())) throw new IdentityApiError("request_invalid");
+  return Buffer.from(`${receivedAt}|${id}`, "utf8").toString("base64url");
+}
+
+function decodeCursor(value: string | undefined): { receivedAt: string; id: string } | undefined {
+  if (!value) return undefined;
+  if (!/^[A-Za-z0-9_-]{20,160}$/.test(value)) throw new IdentityApiError("request_invalid");
+  try {
+    const decoded = Buffer.from(value, "base64url").toString("utf8");
+    const separator = decoded.lastIndexOf("|");
+    const receivedAt = decoded.slice(0, separator);
+    const id = decoded.slice(separator + 1);
+    if (separator < 1 || !UUID.test(id) || !Number.isFinite(new Date(receivedAt).getTime())) throw new Error("shape");
+    return { receivedAt: new Date(receivedAt).toISOString(), id };
+  } catch {
+    throw new IdentityApiError("request_invalid");
+  }
 }
 
 function optionalString(body: Record<string, unknown>, key: string, pattern: RegExp): string | undefined {

@@ -22,6 +22,14 @@ const MANIFEST = {
     consentArtifactSha256: "a".repeat(64),
     labConsentArtifactId: "99999999-9999-4999-8999-999999999999",
     labConsentArtifactSha256: "b".repeat(64),
+    protocolConsentArtifactId: "12121212-1212-4121-8121-121212121212",
+    protocolConsentArtifactSha256: "c".repeat(64),
+    nutritionConsentArtifactId: "13131313-1313-4131-8131-131313131313",
+    nutritionConsentArtifactSha256: "d".repeat(64),
+    symptomsConsentArtifactId: "14141414-1414-4141-8141-141414141414",
+    symptomsConsentArtifactSha256: "e".repeat(64),
+    formsConsentArtifactId: "15151515-1515-4151-8151-151515151515",
+    formsConsentArtifactSha256: "f".repeat(64),
     syncProviderId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
     isolationOrganizationId: "66666666-6666-4666-8666-666666666666",
     isolationOrganizationLabel: "Synthetic acceptance isolation clinic",
@@ -48,8 +56,8 @@ describe("synthetic acceptance fixture boundary", () => {
         },
       }),
     };
-    await expect(provisionSyntheticAcceptanceFixtures(database, MANIFEST)).resolves.toEqual({ provisioned: true, records: 14 });
-    expect(queries.filter((query) => query.sql.startsWith("insert into")).length).toBe(14);
+    await expect(provisionSyntheticAcceptanceFixtures(database, MANIFEST)).resolves.toEqual({ provisioned: true, records: 18 });
+    expect(queries.filter((query) => query.sql.startsWith("insert into")).length).toBe(18);
     expect(JSON.stringify(queries)).not.toMatch(/email|password|token|patientName/i);
   });
 

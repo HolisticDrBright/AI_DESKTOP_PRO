@@ -12,8 +12,9 @@ does not switch AI Desktop Pro or AI Longevity Pro V2 away from their current
 runtime, and AI Longevity Pro V1 remains unchanged.
 
 The public foundation still exposes only `GET /posture`. The separate
-`identity-api-extension.json` stack adds six `POST` routes for invitation
-issuance/claim and consent grant/revocation.
+`identity-api-extension.json` stack exposes 19 Cognito-authenticated routes for
+identity linking, scoped consent, governed clinical records, privacy requests,
+and reviewed lab import/read-back.
 
 ## Identity boundary
 
@@ -23,8 +24,10 @@ issuance/claim and consent grant/revocation.
   exact `custom:synthetic_attested=true` marker.
 - A valid token from the wrong pool is refused. An environment variable cannot
   convert a real person or patient into a synthetic subject.
-- Request bodies are flat, exact-key JSON objects capped at 8 KiB. Unexpected
-  fields, including contact or demographic fields, are refused.
+- Request bodies are exact-key JSON objects capped at 20 KiB. Clinical payloads
+  are collection-specific, capped at 16 KiB and eight levels, and reject
+  credentials, direct account identifiers, unexpected fields, and non-finite
+  values before Aurora is called.
 - Responses use bounded categories. Raw AWS, PostgreSQL, credential, claim,
   and request-body details are never returned.
 
@@ -39,6 +42,12 @@ The Lambda role can perform only the four Data API transaction actions, read
 the single AWS-managed database secret, decrypt it only through Secrets
 Manager, and write to its encrypted 30-day log group. It cannot administer
 Cognito, S3, networking, or clinical infrastructure.
+
+Clinical writes are immutable versions keyed by stable record ID, resource
+version, payload hash, and idempotency key. Each collection requires its
+matching active consent. Audit events contain only opaque IDs and safe posture;
+clinical content is excluded. Export, correction, and deletion requests are
+stored separately for workforce fulfillment.
 
 ## Deployment order
 
@@ -65,11 +74,12 @@ powershell -ExecutionPolicy Bypass -File scripts/deploy-aws-authenticated-api.ps
   -ConfirmSyntheticMigrationApplied
 ```
 
-## Acceptance still required in AWS
+## Acceptance status and remaining production gates
 
-Source tests use injected transports and make zero AWS or Aurora requests.
-Before either app may call these routes, run a deployed synthetic acceptance
-gate proving correct-pool success, wrong-pool/issuer/audience refusal,
-cross-tenant denial, invitation expiry/replay, consent version races,
-transaction rollback, audit completeness, CloudWatch exclusions, budget
-alarms, and backup/restore. Real patient data and PHI remain prohibited.
+The deployed synthetic gate now runs 30 external operations covering pool and
+tenant isolation, invitation replay, scoped consent, duplicate-safe clinical
+and lab writes, paginated read-back, privacy requests, forbidden-identifier
+rejection, clinician lab review, and patient lab read-back. Production risk
+analysis, named workforce approval, backup/restore and incident-response
+evidence, vendor/BAA review, and the production-specific data plane remain
+separate gates. Real patient data and PHI remain prohibited until they pass.

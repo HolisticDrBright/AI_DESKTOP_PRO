@@ -26,14 +26,19 @@ assert(database.includes("reviewed_synthetic_migration") && database.includes('c
   && database.includes("if (assumeRole)"), "administrative and request database paths must remain explicit");
 assert(provisioner.includes("hasExactKeys") && provisioner.includes("fixture_mismatch") && !provisioner.includes("on conflict (id) do update"), "fixtures must be exact, immutable, and mismatch-refusing");
 assert(acceptance.includes('redirect: "manual"') && acceptance.includes("AbortSignal.timeout(15_000)"), "acceptance transport must refuse redirects and have a hard timeout");
-assert(acceptance.includes("patientName: \"refused\"") && acceptance.includes("isolationWorkforceIdToken") && acceptance.includes("externalRequests: 19")
+assert(acceptance.includes("patientName: \"refused\"") && acceptance.includes("isolationWorkforceIdToken") && acceptance.includes("externalRequests: 30")
   && acceptance.includes("/clinical-core/workforce/posture") && acceptance.includes("/clinical-core/consumer/posture")
   && acceptance.includes("scope: \"lab_results_import\"") && acceptance.includes("duplicateImport")
   && acceptance.includes("/clinical-core/workforce/lab-imports/review")
-  && acceptance.includes("/clinical-core/consumer/patient-labs"),
-"acceptance must test both bridges, PHI-shaped and cross-tenant refusal, explicit lab consent, duplicate-safe import, review, and read-back across all nineteen boundaries");
-assert(identityProvisioning.includes("labConsentArtifactId") && identityProvisioning.includes("syncProviderId"),
-  "synthetic identity reprovisioning must preserve the lab consent and governed provider fixture fields");
+  && acceptance.includes("/clinical-core/consumer/patient-labs")
+  && acceptance.includes("/clinical-core/consumer/records")
+  && acceptance.includes("/clinical-core/consumer/privacy/consents")
+  && acceptance.includes("/clinical-core/consumer/privacy/requests"),
+"acceptance must test both identity bridges, PHI-shaped and cross-tenant refusal, scoped consents, duplicate-safe clinical and lab imports, privacy requests, review, and read-back across all thirty operations");
+assert(identityProvisioning.includes("labConsentArtifactId") && identityProvisioning.includes("protocolConsentArtifactId")
+  && identityProvisioning.includes("nutritionConsentArtifactId") && identityProvisioning.includes("symptomsConsentArtifactId")
+  && identityProvisioning.includes("formsConsentArtifactId") && identityProvisioning.includes("syncProviderId"),
+  "synthetic identity reprovisioning must preserve every governed consent and provider fixture field");
 assert(!acceptance.includes("console.") && !provisioner.includes("console."), "clinical acceptance modules must not log tokens, subjects, or payloads");
 assert(powershell.includes("ConfirmSyntheticOnly") && powershell.includes("aws sts get-caller-identity") && powershell.includes("Remove-Item Env:CLINICAL_DATABASE_SECRET_ARN"), "operator script must confirm posture, pin account, and clear identifiers");
 

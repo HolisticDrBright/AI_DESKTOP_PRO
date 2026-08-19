@@ -29,6 +29,8 @@ jobs:
         run: npm run check:aws-identity-consent
       - name: AWS authenticated synthetic API safety gate
         run: npm run check:aws-authenticated-api
+      - name: AWS deployed synthetic acceptance harness gate
+        run: npm run check:aws-deployment-acceptance
       - name: AWS governed catalog and read API safety gates
         run: |
           npm run check:aws-governed-catalog

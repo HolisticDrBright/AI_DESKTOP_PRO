@@ -275,6 +275,46 @@
         "Target": { "Fn::Sub": "integrations/${IdentityApiIntegration}" }
       }
     },
+    "ConsumerClinicalRecordWriteRoute": {
+      "Type": "AWS::ApiGatewayV2::Route",
+      "Properties": {
+        "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "POST /clinical-core/consumer/records",
+        "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "ConsumerJwtAuthorizer" },
+        "Target": { "Fn::Sub": "integrations/${IdentityApiIntegration}" }
+      }
+    },
+    "ConsumerClinicalRecordListRoute": {
+      "Type": "AWS::ApiGatewayV2::Route",
+      "Properties": {
+        "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "GET /clinical-core/consumer/records",
+        "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "ConsumerJwtAuthorizer" },
+        "Target": { "Fn::Sub": "integrations/${IdentityApiIntegration}" }
+      }
+    },
+    "ConsumerConsentHistoryRoute": {
+      "Type": "AWS::ApiGatewayV2::Route",
+      "Properties": {
+        "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "GET /clinical-core/consumer/privacy/consents",
+        "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "ConsumerJwtAuthorizer" },
+        "Target": { "Fn::Sub": "integrations/${IdentityApiIntegration}" }
+      }
+    },
+    "ConsumerPrivacyRequestSubmitRoute": {
+      "Type": "AWS::ApiGatewayV2::Route",
+      "Properties": {
+        "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "POST /clinical-core/consumer/privacy/requests",
+        "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "ConsumerJwtAuthorizer" },
+        "Target": { "Fn::Sub": "integrations/${IdentityApiIntegration}" }
+      }
+    },
+    "ConsumerPrivacyRequestListRoute": {
+      "Type": "AWS::ApiGatewayV2::Route",
+      "Properties": {
+        "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "GET /clinical-core/consumer/privacy/requests",
+        "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "ConsumerJwtAuthorizer" },
+        "Target": { "Fn::Sub": "integrations/${IdentityApiIntegration}" }
+      }
+    },
     "IdentityApiInvokePermission": {
       "Type": "AWS::Lambda::Permission",
       "Properties": {
@@ -299,7 +339,7 @@
   "Outputs": {
     "ContractVersion": { "Value": "clinical-core-authenticated-api/1" },
     "IdentityApiFunctionArn": { "Value": { "Fn::GetAtt": ["IdentityApiFunction", "Arn"] } },
-    "RoutesEnabled": { "Value": "14" },
+    "RoutesEnabled": { "Value": "19" },
     "PhiAllowed": { "Value": "false" }
   }
 }

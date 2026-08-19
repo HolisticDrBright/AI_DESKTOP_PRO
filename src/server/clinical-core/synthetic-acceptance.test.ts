@@ -23,6 +23,14 @@ const manifest = validateSyntheticAcceptanceManifest({
     consentArtifactSha256: "a".repeat(64),
     labConsentArtifactId: "88888888-8888-4888-8888-888888888888",
     labConsentArtifactSha256: "b".repeat(64),
+    protocolConsentArtifactId: "12121212-1212-4121-8121-121212121212",
+    protocolConsentArtifactSha256: "c".repeat(64),
+    nutritionConsentArtifactId: "13131313-1313-4131-8131-131313131313",
+    nutritionConsentArtifactSha256: "d".repeat(64),
+    symptomsConsentArtifactId: "14141414-1414-4141-8141-141414141414",
+    symptomsConsentArtifactSha256: "e".repeat(64),
+    formsConsentArtifactId: "15151515-1515-4151-8151-151515151515",
+    formsConsentArtifactSha256: "f".repeat(64),
     syncProviderId: "99999999-9999-4999-8999-999999999999",
     isolationOrganizationId: "66666666-6666-4666-8666-666666666666",
     isolationOrganizationLabel: "Synthetic acceptance isolation clinic",
@@ -53,6 +61,18 @@ describe("deployed synthetic Cognito-to-Aurora acceptance harness", () => {
       json(200, { data: { connectionId: "77777777-7777-4777-8777-777777777777", patientRecordId: manifest.fixture.patientRecordId, state: "verified", verifiedAt: "2026-08-11T20:00:00Z", labResultsImportConsent: "not_granted" } }),
       json(201, { data: { consentId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", connectionId: "77777777-7777-4777-8777-777777777777", scope: "lab_results_import", status: "granted", version: 1, recordedAt: "2026-08-11T20:03:00Z" } }),
       json(200, { data: { connectionId: "77777777-7777-4777-8777-777777777777", patientRecordId: manifest.fixture.patientRecordId, state: "verified", verifiedAt: "2026-08-11T20:00:00Z", labResultsImportConsent: "granted" } }),
+      ...(["protocols_supplements", "nutrition", "symptoms_adherence", "forms_checkins"].map((scope, index) => json(201, { data: {
+        consentId: `${index + 1}1111111-1111-4111-8111-111111111111`,
+        connectionId: "77777777-7777-4777-8777-777777777777", scope,
+        status: "granted", version: 1, recordedAt: "2026-08-11T20:04:00Z",
+      } }))),
+      json(200, { data: [{ scope: "protocols_supplements", status: "granted", recordedAt: "2026-08-11T20:04:00Z", version: 1, method: "patient_app", representativeAuthority: "self" }] }),
+      json(202, { data: { versionId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", stableRecordId: "88888888-8888-4888-8888-888888888888", recordKey: "record:acceptance:1", resourceVersion: "acceptance-v1", payload: { id: "synthetic_protocol_acceptance" }, payloadSha256: "a".repeat(64), deleted: false, receivedAt: "2026-08-11T20:05:00Z", duplicate: false } }),
+      json(202, { data: { versionId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", stableRecordId: "88888888-8888-4888-8888-888888888888", recordKey: "record:acceptance:1", resourceVersion: "acceptance-v1", payload: { id: "synthetic_protocol_acceptance" }, payloadSha256: "a".repeat(64), deleted: false, receivedAt: "2026-08-11T20:05:00Z", duplicate: true } }),
+      json(200, { data: { items: [{ versionId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" }], nextCursor: null } }),
+      json(201, { data: { requestId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd", kind: "export", status: "submitted", detail: "Synthetic acceptance export", submittedAt: "2026-08-11T20:06:00Z", resolvedAt: null } }),
+      json(200, { data: [{ requestId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd", kind: "export", status: "submitted", detail: "Synthetic acceptance export", submittedAt: "2026-08-11T20:06:00Z", resolvedAt: null }] }),
+      json(400, { error: "request_invalid" }),
       json(202, { data: { eventId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", state: "review_pending", duplicate: false } }),
       json(202, { data: { eventId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", state: "review_pending", duplicate: true } }),
       json(200, { data: [{ event_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", patient_record_id: manifest.fixture.patientRecordId, marker_name: "Synthetic Glucose", state: "review_pending" }] }),
@@ -74,17 +94,19 @@ describe("deployed synthetic Cognito-to-Aurora acceptance harness", () => {
       isolationWorkforceIdToken: token("c"),
       manifest,
       fetch: fetcher,
-    })).resolves.toEqual({ passed: 19, externalRequests: 19 });
-    expect(calls).toHaveLength(19);
+    })).resolves.toEqual({ passed: 30, externalRequests: 30 });
+    expect(calls).toHaveLength(30);
     expect(calls[0]!.body).toBeNull();
     expect(calls[1]!.body).toBeNull();
     expect(calls[2]!.body).not.toHaveProperty("patientName");
     expect(calls[6]!.body).toHaveProperty("patientName", "refused");
     expect(calls[7]!.body).toEqual(expect.objectContaining({ patientRecordId: manifest.fixture.patientRecordId }));
     expect(calls[12]!.body).toEqual(expect.objectContaining({ scope: "lab_results_import" }));
-    expect(calls[15]!.body).toEqual(calls[14]!.body);
-    expect(calls[16]!.url).toContain("state=review_pending");
-    expect(calls[18]!.url).toContain(encodeURIComponent(manifest.fixture.patientRecordId));
+    expect(calls[20]!.body).toEqual(calls[19]!.body);
+    expect(calls[24]!.body).toHaveProperty("payload.email", "refused@example.test");
+    expect(calls[26]!.body).toEqual(calls[25]!.body);
+    expect(calls[27]!.url).toContain("state=review_pending");
+    expect(calls[29]!.url).toContain(encodeURIComponent(manifest.fixture.patientRecordId));
     expect(calls.every((call) => call.url.startsWith("https://abc123.execute-api.us-east-2.amazonaws.com/clinical-core/"))).toBe(true);
   });
 

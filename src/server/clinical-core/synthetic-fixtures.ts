@@ -25,6 +25,14 @@ export type SyntheticAcceptanceManifest = {
     consentArtifactSha256: string;
     labConsentArtifactId: string;
     labConsentArtifactSha256: string;
+    protocolConsentArtifactId: string;
+    protocolConsentArtifactSha256: string;
+    nutritionConsentArtifactId: string;
+    nutritionConsentArtifactSha256: string;
+    symptomsConsentArtifactId: string;
+    symptomsConsentArtifactSha256: string;
+    formsConsentArtifactId: string;
+    formsConsentArtifactSha256: string;
     syncProviderId: string;
     isolationOrganizationId: string;
     isolationOrganizationLabel: string;
@@ -48,7 +56,7 @@ const SUBJECT = /^[A-Za-z0-9:_-]{8,128}$/;
 const SHA256 = /^[0-9a-f]{64}$/;
 const REGION = /^[a-z]{2}(?:-gov)?-[a-z]+-\d$/;
 const EXACT_TOP = ["schemaVersion", "environment", "dataClassification", "containsPhi", "awsAccountId", "awsRegion", "reviewedAt", "fixture"];
-const EXACT_FIXTURE = ["organizationId", "organizationLabel", "workforcePersonId", "workforceSubject", "consumerPersonId", "consumerSubject", "patientRecordId", "consentArtifactId", "consentArtifactSha256", "labConsentArtifactId", "labConsentArtifactSha256", "syncProviderId", "isolationOrganizationId", "isolationOrganizationLabel", "isolationWorkforcePersonId", "isolationWorkforceSubject"];
+const EXACT_FIXTURE = ["organizationId", "organizationLabel", "workforcePersonId", "workforceSubject", "consumerPersonId", "consumerSubject", "patientRecordId", "consentArtifactId", "consentArtifactSha256", "labConsentArtifactId", "labConsentArtifactSha256", "protocolConsentArtifactId", "protocolConsentArtifactSha256", "nutritionConsentArtifactId", "nutritionConsentArtifactSha256", "symptomsConsentArtifactId", "symptomsConsentArtifactSha256", "formsConsentArtifactId", "formsConsentArtifactSha256", "syncProviderId", "isolationOrganizationId", "isolationOrganizationLabel", "isolationWorkforcePersonId", "isolationWorkforceSubject"];
 const FORBIDDEN_KEY = /(email|phone|name|address|birth|dob|password|secret|token|authorization|cookie)/i;
 
 export function loadSyntheticAcceptanceManifest(file: string): SyntheticAcceptanceManifest {
@@ -80,7 +88,9 @@ export function validateSyntheticAcceptanceManifest(value: unknown): SyntheticAc
     || !REGION.test(manifest.awsRegion)
     || !validTimestamp(manifest.reviewedAt)
     || ![f.organizationId, f.workforcePersonId, f.consumerPersonId, f.patientRecordId, f.consentArtifactId,
-      f.labConsentArtifactId, f.syncProviderId, f.isolationOrganizationId, f.isolationWorkforcePersonId].every((entry) => UUID.test(entry))
+      f.labConsentArtifactId, f.protocolConsentArtifactId, f.nutritionConsentArtifactId,
+      f.symptomsConsentArtifactId, f.formsConsentArtifactId, f.syncProviderId,
+      f.isolationOrganizationId, f.isolationWorkforcePersonId].every((entry) => UUID.test(entry))
     || new Set([f.organizationId, f.isolationOrganizationId]).size !== 2
     || new Set([f.workforcePersonId, f.consumerPersonId, f.isolationWorkforcePersonId]).size !== 3
     || !SUBJECT.test(f.workforceSubject)
@@ -91,6 +101,10 @@ export function validateSyntheticAcceptanceManifest(value: unknown): SyntheticAc
     || !/^Synthetic acceptance [A-Za-z0-9 _-]{1,80}$/.test(f.isolationOrganizationLabel)
     || !SHA256.test(f.consentArtifactSha256)
     || !SHA256.test(f.labConsentArtifactSha256)
+    || !SHA256.test(f.protocolConsentArtifactSha256)
+    || !SHA256.test(f.nutritionConsentArtifactSha256)
+    || !SHA256.test(f.symptomsConsentArtifactSha256)
+    || !SHA256.test(f.formsConsentArtifactSha256)
   ) throw new SyntheticFixtureError("manifest_invalid");
   return manifest;
 }
@@ -98,7 +112,7 @@ export function validateSyntheticAcceptanceManifest(value: unknown): SyntheticAc
 export async function provisionSyntheticAcceptanceFixtures(
   database: ClinicalCoreDatabase,
   manifest: SyntheticAcceptanceManifest,
-): Promise<{ provisioned: true; records: 14 }> {
+): Promise<{ provisioned: true; records: 18 }> {
   let operationIndex = 0;
   try {
     return await database.transaction(async (tx) => {
@@ -161,6 +175,11 @@ export async function provisionSyntheticAcceptanceFixtures(
         on conflict (id) do nothing`,
       [clinicalUuid(f.labConsentArtifactId), clinicalUuid(f.organizationId), labArtifactVersion,
         f.labConsentArtifactSha256, clinicalUuid(f.workforcePersonId)]);
+
+      await insertConsentArtifact(tx, f, "protocols_supplements", f.protocolConsentArtifactId, f.protocolConsentArtifactSha256);
+      await insertConsentArtifact(tx, f, "nutrition", f.nutritionConsentArtifactId, f.nutritionConsentArtifactSha256);
+      await insertConsentArtifact(tx, f, "symptoms_adherence", f.symptomsConsentArtifactId, f.symptomsConsentArtifactSha256);
+      await insertConsentArtifact(tx, f, "forms_checkins", f.formsConsentArtifactId, f.formsConsentArtifactSha256);
       await assertCount(tx, `select count(*)::int as count from clinical_core.consent_artifacts
         where id=$1 and organization_id=$2 and scope='lab_results_import' and artifact_version=$3
           and content_sha256=$4 and jurisdiction='US-SYNTHETIC' and status='approved'
@@ -197,12 +216,32 @@ export async function provisionSyntheticAcceptanceFixtures(
       await assertCount(tx, `select count(*)::int as count from clinical_core.organization_memberships
         where organization_id=$1 and person_id=$2 and role='practitioner' and status='active'`,
       [clinicalUuid(f.isolationOrganizationId), clinicalUuid(f.isolationWorkforcePersonId)]);
-      return { provisioned: true, records: 14 };
+      return { provisioned: true, records: 18 };
     });
   } catch (error) {
     if (error instanceof SyntheticFixtureError) throw error;
     throw new SyntheticFixtureError("fixture_failed", operationIndex || undefined);
   }
+}
+
+async function insertConsentArtifact(
+  tx: ClinicalCoreTransaction,
+  fixture: SyntheticAcceptanceManifest["fixture"],
+  scope: "protocols_supplements" | "nutrition" | "symptoms_adherence" | "forms_checkins",
+  artifactId: string,
+  sha256: string,
+) {
+  const artifactVersion = `synthetic-${artifactId.replaceAll("-", "").slice(0, 20)}`;
+  await tx.query(`insert into clinical_core.consent_artifacts
+    (id, organization_id, scope, artifact_version, content_sha256, jurisdiction, status, approved_at, approved_by_person_id)
+    values ($1,$2,$3,$4,$5,'US-SYNTHETIC','approved',clock_timestamp(),$6)
+    on conflict (id) do nothing`, [clinicalUuid(artifactId), clinicalUuid(fixture.organizationId), scope,
+    artifactVersion, sha256, clinicalUuid(fixture.workforcePersonId)]);
+  await assertCount(tx, `select count(*)::int as count from clinical_core.consent_artifacts
+    where id=$1 and organization_id=$2 and scope=$3 and artifact_version=$4
+      and content_sha256=$5 and jurisdiction='US-SYNTHETIC' and status='approved'
+      and approved_by_person_id=$6`, [clinicalUuid(artifactId), clinicalUuid(fixture.organizationId), scope,
+    artifactVersion, sha256, clinicalUuid(fixture.workforcePersonId)]);
 }
 
 async function upsertPerson(tx: ClinicalCoreTransaction, id: string, key: string) {

@@ -25,7 +25,7 @@ export async function runSyntheticApiAcceptance(input: {
   isolationWorkforceIdToken: string;
   manifest: SyntheticAcceptanceManifest;
   fetch?: FetchLike;
-}): Promise<{ passed: 19; externalRequests: 19 }> {
+}): Promise<{ passed: 30; externalRequests: 30 }> {
   const fetcher = input.fetch ?? fetch;
   const origin = validateConfiguration(input);
   let operationIndex = 0;
@@ -117,6 +117,77 @@ export async function runSyntheticApiAcceptance(input: {
     throw new SyntheticAcceptanceError("workflow_failed");
   }
 
+  for (const [scope, artifactId] of [
+    ["protocols_supplements", input.manifest.fixture.protocolConsentArtifactId],
+    ["nutrition", input.manifest.fixture.nutritionConsentArtifactId],
+    ["symptoms_adherence", input.manifest.fixture.symptomsConsentArtifactId],
+    ["forms_checkins", input.manifest.fixture.formsConsentArtifactId],
+  ] as const) {
+    const clinicalConsent = data(await call("/clinical-core/consumer/consents/grant", input.consumerIdToken, 201, {
+      connectionId: string(claimed.connectionId), artifactId, scope,
+      method: "patient_app", representativeAuthority: "self",
+    }), ["consentId", "connectionId", "scope", "status", "version", "recordedAt"]);
+    if (clinicalConsent.scope !== scope || clinicalConsent.status !== "granted") {
+      throw new SyntheticAcceptanceError("workflow_failed");
+    }
+  }
+
+  const consentHistory = listData(await call(
+    `/clinical-core/consumer/privacy/consents?connectionId=${encodeURIComponent(string(claimed.connectionId))}`,
+    input.consumerIdToken, 200,
+  ));
+  if (!consentHistory.some((row) => row.scope === "protocols_supplements" && row.status === "granted")) {
+    throw new SyntheticAcceptanceError("workflow_failed");
+  }
+
+  const recordKey = `record:acceptance:${Date.now()}`;
+  const idempotencyKey = `write:acceptance:${Date.now()}`;
+  const stableRecordId = "88888888-8888-4888-8888-888888888888";
+  const recordPayload = {
+    connectionId: string(claimed.connectionId), stableRecordId, collection: "protocols",
+    recordKey, resourceVersion: "acceptance-v1", idempotencyKey,
+    payload: {
+      id: "synthetic_protocol_acceptance", name: "Synthetic acceptance protocol",
+      start_date: new Date().toISOString().slice(0, 10), status: "active", version: 1,
+      supplements_json: [], peptides_json: [], lifestyle_tasks_json: [],
+    },
+  };
+  const recorded = data(await call("/clinical-core/consumer/records", input.consumerIdToken, 202, recordPayload),
+    ["versionId", "stableRecordId", "recordKey", "resourceVersion", "payload", "payloadSha256", "deleted", "receivedAt", "duplicate"]);
+  if (recorded.stableRecordId !== stableRecordId || recorded.duplicate !== false) {
+    throw new SyntheticAcceptanceError("workflow_failed");
+  }
+  const duplicateRecord = data(await call("/clinical-core/consumer/records", input.consumerIdToken, 202, recordPayload),
+    ["versionId", "stableRecordId", "recordKey", "resourceVersion", "payload", "payloadSha256", "deleted", "receivedAt", "duplicate"]);
+  if (duplicateRecord.versionId !== recorded.versionId || duplicateRecord.duplicate !== true) {
+    throw new SyntheticAcceptanceError("workflow_failed");
+  }
+  const recordsPage = data(await call(
+    `/clinical-core/consumer/records?connectionId=${encodeURIComponent(string(claimed.connectionId))}&collection=protocols&limit=100`,
+    input.consumerIdToken, 200,
+  ), ["items", "nextCursor"]);
+  if (!Array.isArray(recordsPage.items)
+    || !recordsPage.items.some((row) => record(row) && row.versionId === recorded.versionId)
+    || recordsPage.nextCursor !== null) throw new SyntheticAcceptanceError("workflow_failed");
+
+  const privacyRequest = data(await call("/clinical-core/consumer/privacy/requests", input.consumerIdToken, 201, {
+    connectionId: string(claimed.connectionId), kind: "export", detail: "Synthetic acceptance export",
+  }), ["requestId", "kind", "status", "detail", "submittedAt", "resolvedAt"]);
+  if (privacyRequest.kind !== "export" || privacyRequest.status !== "submitted") {
+    throw new SyntheticAcceptanceError("workflow_failed");
+  }
+  const privacyRequests = listData(await call(
+    `/clinical-core/consumer/privacy/requests?connectionId=${encodeURIComponent(string(claimed.connectionId))}`,
+    input.consumerIdToken, 200,
+  ));
+  if (!privacyRequests.some((row) => row.requestId === privacyRequest.requestId)) {
+    throw new SyntheticAcceptanceError("workflow_failed");
+  }
+  await call("/clinical-core/consumer/records", input.consumerIdToken, 400, {
+    ...recordPayload, idempotencyKey: `write:refused:${Date.now()}`,
+    payload: { ...recordPayload.payload, email: "refused@example.test" },
+  });
+
   const syntheticEventId = `acceptance_lab_event_${Date.now()}`;
   const occurredAt = new Date().toISOString();
   const labPayload = {
@@ -179,7 +250,7 @@ export async function runSyntheticApiAcceptance(input: {
   if (!observation || observation.marker_name !== "Synthetic Glucose" || observation.review_status !== "unreviewed") {
     throw new SyntheticAcceptanceError("workflow_failed");
   }
-  return { passed: 19, externalRequests: 19 };
+  return { passed: 30, externalRequests: 30 };
 }
 
 function validateConfiguration(input: { apiOrigin: string; workforceIdToken: string; consumerIdToken: string; isolationWorkforceIdToken: string; manifest: SyntheticAcceptanceManifest }) {
