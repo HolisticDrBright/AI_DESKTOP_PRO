@@ -42,5 +42,6 @@ ENV NODE_ENV=production \
 COPY --from=builder --chown=nonroot:nonroot /app/public ./public
 COPY --from=builder --chown=nonroot:nonroot /app/.next/standalone ./
 COPY --from=builder --chown=nonroot:nonroot /app/.next/static ./.next/static
+COPY --from=builder --chown=nonroot:nonroot /app/scripts/app-runner-server.cjs ./app-runner-server.cjs
 EXPOSE 3000
-CMD ["server.js"]
+CMD ["app-runner-server.cjs"]
