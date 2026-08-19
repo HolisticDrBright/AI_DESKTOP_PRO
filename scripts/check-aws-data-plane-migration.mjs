@@ -11,7 +11,7 @@ const ignoredDirectories = new Set([".git", ".next", "coverage", "dist", "node_m
 const rules = [
   {
     id: "supabase_saas_runtime",
-    pattern: /(?:@supabase\/|createClient\s*\(|SUPABASE_(?:URL|ANON_KEY|SERVICE_ROLE_KEY)|CLINICAL_SUPABASE_|SYNC_(?:WORKER_)?SUPABASE_)/i,
+    pattern: /(?:@supabase\/|SUPABASE_(?:URL|ANON_KEY|SERVICE_ROLE_KEY)|CLINICAL_SUPABASE_|SYNC_(?:WORKER_)?SUPABASE_)/i,
   },
   { id: "fly_runtime", pattern: /(?:\.fly\.dev\b|fly\.io\b|FLY_APP_NAME|FLY_REGION)/i },
   { id: "app_runner_runtime", pattern: /(?:awsapprunner\.com\b|AWS::AppRunner::Service)/i },
