@@ -8,6 +8,14 @@
     {
       "version": "20260812220000",
       "file": "20260812220000_identity_function_column_qualification.sql"
+    },
+    {
+      "version": "20260821010000",
+      "file": "20260821010000_governed_synthetic_lab_import.sql"
+    },
+    {
+      "version": "20260821020000",
+      "file": "20260821020000_consumer_connection_posture.sql"
     }
   ]
 }

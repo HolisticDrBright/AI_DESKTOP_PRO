@@ -44,7 +44,7 @@ afterEach(() => {
 describe("AWS clinical-core migration runner", () => {
   test("loads ordered migrations and computes their content hash", () => {
     const migrations = loadClinicalCoreMigrations();
-    expect(migrations).toHaveLength(2);
+    expect(migrations).toHaveLength(4);
     expect(migrations[0]).toMatchObject({
       version: "20260812010000",
       name: "synthetic_identity_consent",
@@ -56,19 +56,32 @@ describe("AWS clinical-core migration runner", () => {
       name: "identity_function_column_qualification",
     });
     expect(migrations[1]!.sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(migrations[2]).toMatchObject({
+      version: "20260821010000",
+      name: "governed_synthetic_lab_import",
+    });
+    expect(migrations[2]!.sql).toContain("create table clinical_core.lab_import_events");
+    expect(migrations[2]!.sql).toContain("'lab_results_import'");
+    expect(migrations[3]).toMatchObject({
+      version: "20260821020000",
+      name: "consumer_connection_posture",
+    });
   });
 
   test("serializes and applies a missing migration in one transaction", async () => {
     const db = migrationDatabase();
     const result = await applyClinicalCoreMigrations(db.database);
-    expect(result).toEqual({ applied: ["20260812010000", "20260812220000"], alreadyApplied: [] });
+    expect(result).toEqual({
+      applied: ["20260812010000", "20260812220000", "20260821010000", "20260821020000"],
+      alreadyApplied: [],
+    });
     expect(db.transactions()).toBe(1);
     expect(db.calls[0]!.sql).toContain("pg_advisory_xact_lock");
     expect(db.calls.some((call) => call.sql.includes("create table clinical_core.persons"))).toBe(true);
     expect(db.calls.at(-1)!.sql).toContain("insert into clinical_core.schema_migrations");
     expect(db.calls.some((call) => call.sql === loadClinicalCoreMigrations()[0]!.sql)).toBe(false);
     expect(db.calls.filter((call) => call.sql.startsWith("create table clinical_core.")).length).toBeGreaterThan(5);
-  });
+  }, 15_000);
 
   test("does not reapply a migration whose recorded hash matches", async () => {
     const migration = loadClinicalCoreMigrations()[0]!;

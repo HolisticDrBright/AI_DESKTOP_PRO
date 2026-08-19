@@ -20,6 +20,9 @@ const MANIFEST = {
     patientRecordId: "44444444-4444-4444-8444-444444444444",
     consentArtifactId: "55555555-5555-4555-8555-555555555555",
     consentArtifactSha256: "a".repeat(64),
+    labConsentArtifactId: "99999999-9999-4999-8999-999999999999",
+    labConsentArtifactSha256: "b".repeat(64),
+    syncProviderId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
     isolationOrganizationId: "66666666-6666-4666-8666-666666666666",
     isolationOrganizationLabel: "Synthetic acceptance isolation clinic",
     isolationWorkforcePersonId: "77777777-7777-4777-8777-777777777777",
@@ -45,8 +48,8 @@ describe("synthetic acceptance fixture boundary", () => {
         },
       }),
     };
-    await expect(provisionSyntheticAcceptanceFixtures(database, MANIFEST)).resolves.toEqual({ provisioned: true, records: 12 });
-    expect(queries.filter((query) => query.sql.startsWith("insert into")).length).toBe(12);
+    await expect(provisionSyntheticAcceptanceFixtures(database, MANIFEST)).resolves.toEqual({ provisioned: true, records: 14 });
+    expect(queries.filter((query) => query.sql.startsWith("insert into")).length).toBe(14);
     expect(JSON.stringify(queries)).not.toMatch(/email|password|token|patientName/i);
   });
 

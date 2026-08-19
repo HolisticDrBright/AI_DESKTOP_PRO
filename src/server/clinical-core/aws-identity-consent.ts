@@ -31,7 +31,7 @@ export type SyntheticRequestContext = {
   identityPool: IdentityPool;
   /** Verified Cognito `sub`; opaque and never derived from contact information. */
   identitySubject: string;
-  purpose: "identity_link" | "consent_management";
+  purpose: "identity_link" | "consent_management" | "clinical_data";
   environment: "synthetic-staging";
   dataClassification: "synthetic_only";
   containsPhi: false;

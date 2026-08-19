@@ -15,12 +15,19 @@ import {
   type SyntheticRequestContext,
 } from "./aws-identity-consent";
 import type { ClinicalCoreDatabase } from "./database";
+import {
+  ClinicalStateError,
+  createAwsSyntheticClinicalStateAdapter,
+  type AwsSyntheticClinicalStateAdapter,
+  type LabResultImport,
+} from "./aws-clinical-state";
 
 export type ApiGatewayV2Event = {
   routeKey?: string;
   headers?: Record<string, string | undefined>;
   body?: string | null;
   isBase64Encoded?: boolean;
+  queryStringParameters?: Record<string, string | undefined> | null;
   requestContext?: {
     authorizer?: { jwt?: { claims?: Record<string, string | number | boolean | undefined> } };
   };
@@ -42,7 +49,8 @@ export type IdentityApiConfiguration = {
 type RouteDefinition = {
   pool: IdentityPool;
   purpose: SyntheticRequestContext["purpose"];
-  operation: "posture" | "issue" | "claim" | "grant" | "revoke";
+  operation: "posture" | "issue" | "claim" | "grant" | "revoke"
+    | "get_connection" | "import_lab" | "list_lab_imports" | "review_lab" | "list_labs";
 };
 
 const ROUTES: Readonly<Record<string, RouteDefinition>> = {
@@ -54,6 +62,12 @@ const ROUTES: Readonly<Record<string, RouteDefinition>> = {
   "POST /clinical-core/consumer/consents/grant": { pool: "consumer", purpose: "consent_management", operation: "grant" },
   "POST /clinical-core/workforce/consents/revoke": { pool: "workforce", purpose: "consent_management", operation: "revoke" },
   "POST /clinical-core/consumer/consents/revoke": { pool: "consumer", purpose: "consent_management", operation: "revoke" },
+  "POST /clinical-core/consumer/labs/import": { pool: "consumer", purpose: "clinical_data", operation: "import_lab" },
+  "GET /clinical-core/consumer/connection": { pool: "consumer", purpose: "clinical_data", operation: "get_connection" },
+  "GET /clinical-core/workforce/lab-imports": { pool: "workforce", purpose: "clinical_data", operation: "list_lab_imports" },
+  "POST /clinical-core/workforce/lab-imports/review": { pool: "workforce", purpose: "clinical_data", operation: "review_lab" },
+  "GET /clinical-core/workforce/patient-labs": { pool: "workforce", purpose: "clinical_data", operation: "list_labs" },
+  "GET /clinical-core/consumer/patient-labs": { pool: "consumer", purpose: "clinical_data", operation: "list_labs" },
 };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -64,9 +78,12 @@ const MAX_BODY_BYTES = 8_192;
 export function createAwsIdentityApiHandler(input: {
   database?: ClinicalCoreDatabase;
   adapter?: AwsSyntheticIdentityConsentAdapter;
+  clinicalStateAdapter?: AwsSyntheticClinicalStateAdapter;
   configuration: IdentityApiConfiguration;
 }) {
   const adapter = input.adapter ?? (input.database ? createAwsSyntheticIdentityConsentAdapter(input.database) : undefined);
+  const clinicalStateAdapter = input.clinicalStateAdapter
+    ?? (input.database ? createAwsSyntheticClinicalStateAdapter(input.database) : undefined);
   if (!adapter) throw new Error("identity_api_adapter_required");
   validateConfiguration(input.configuration);
 
@@ -75,6 +92,8 @@ export function createAwsIdentityApiHandler(input: {
       const route = event.routeKey ? ROUTES[event.routeKey] : undefined;
       if (!route) return response(404, { error: "route_not_found" });
       const context = contextFromClaims(event, route, input.configuration);
+      if (["get_connection", "import_lab", "list_lab_imports", "review_lab", "list_labs"].includes(route.operation)
+        && !clinicalStateAdapter) throw new Error("clinical_state_api_adapter_required");
       if (route.operation === "posture") {
         if (event.body) throw new IdentityApiError("request_invalid");
         return response(200, {
@@ -88,6 +107,27 @@ export function createAwsIdentityApiHandler(input: {
             realPatientDataAllowed: false,
           },
         });
+      }
+      if (route.operation === "list_lab_imports") {
+        if (event.body) throw new IdentityApiError("request_invalid");
+        const state = event.queryStringParameters?.state ?? "review_pending";
+        if (!["review_pending", "conflict", "accepted", "rejected"].includes(state)) {
+          throw new IdentityApiError("request_invalid");
+        }
+        return response(200, { data: await clinicalStateAdapter!.listLabImports(
+          context,
+          state as "review_pending" | "conflict" | "accepted" | "rejected",
+        ) });
+      }
+      if (route.operation === "get_connection") {
+        if (event.body) throw new IdentityApiError("request_invalid");
+        return response(200, { data: await clinicalStateAdapter!.getConsumerConnection(context) });
+      }
+      if (route.operation === "list_labs") {
+        if (event.body) throw new IdentityApiError("request_invalid");
+        const patientRecordId = event.queryStringParameters?.patientRecordId ?? "";
+        if (!UUID.test(patientRecordId)) throw new IdentityApiError("request_invalid");
+        return response(200, { data: await clinicalStateAdapter!.listPatientLabObservations(context, patientRecordId) });
       }
       const body = parseBody(event);
 
@@ -140,6 +180,22 @@ export function createAwsIdentityApiHandler(input: {
             reasonCode: reasonCode as "patient_request" | "scope_changed" | "connection_revoked",
           }) });
         }
+        case "import_lab": {
+          return response(202, { data: await clinicalStateAdapter!.importLabResult(context, parseLabImport(body)) });
+        }
+        case "review_lab": {
+          exactKeys(body, ["eventId", "decision", "note"], ["eventId", "decision"]);
+          const decision = requiredString(body, "decision");
+          if (!UUID.test(requiredString(body, "eventId")) || !["accept", "reject"].includes(decision)) {
+            throw new IdentityApiError("request_invalid");
+          }
+          const note = "note" in body ? requiredString(body, "note") : undefined;
+          return response(200, { data: await clinicalStateAdapter!.reviewLabResult(context, {
+            eventId: requiredString(body, "eventId"),
+            decision: decision as "accept" | "reject",
+            ...(note ? { note } : {}),
+          }) });
+        }
       }
     } catch (error) {
       if (error instanceof IdentityApiError) return response(error.category === "identity_refused" ? 403 : 400, { error: error.category });
@@ -150,8 +206,59 @@ export function createAwsIdentityApiHandler(input: {
               : error.category === "database_unavailable" ? 503 : 400;
         return response(status, { error: error.category });
       }
+      if (error instanceof ClinicalStateError) {
+        const status = error.category === "clinical_state_refused" ? 403
+          : error.category === "database_unavailable" ? 503 : 400;
+        return response(status, { error: error.category });
+      }
       return response(503, { error: "service_unavailable" });
     }
+  };
+}
+
+function parseLabImport(body: Record<string, unknown>): LabResultImport {
+  exactKeys(body, ["schemaVersion", "provider", "providerEventId", "connectionId", "resourceVersion",
+    "occurredAt", "source", "panel", "result"], ["schemaVersion", "provider", "providerEventId",
+    "connectionId", "resourceVersion", "occurredAt", "source", "panel", "result"]);
+  const source = requiredObject(body, "source");
+  const panel = requiredObject(body, "panel");
+  const result = requiredObject(body, "result");
+  exactKeys(source, ["system", "recordType", "panelId", "markerId"], ["system", "recordType", "panelId", "markerId"]);
+  exactKeys(panel, ["name", "collectedAt", "sourceLabel"], ["name", "collectedAt"]);
+  exactKeys(result, ["name", "value", "unit", "sourceStatus", "referenceRange"], ["name", "value"]);
+  let referenceRange: { min?: number; max?: number } | undefined;
+  if ("referenceRange" in result) {
+    const range = requiredObject(result, "referenceRange");
+    exactKeys(range, ["min", "max"], []);
+    referenceRange = {
+      ...(range.min !== undefined ? { min: requiredNumber(range, "min") } : {}),
+      ...(range.max !== undefined ? { max: requiredNumber(range, "max") } : {}),
+    };
+  }
+  return {
+    schemaVersion: requiredString(body, "schemaVersion") as "lab-result/1",
+    provider: requiredString(body, "provider") as "alp_patient_sync",
+    providerEventId: requiredString(body, "providerEventId"),
+    connectionId: requiredString(body, "connectionId"),
+    resourceVersion: requiredString(body, "resourceVersion"),
+    occurredAt: requiredString(body, "occurredAt"),
+    source: {
+      system: requiredString(source, "system") as "ai_longevity_pro_v2",
+      recordType: requiredString(source, "recordType") as "lab_panels",
+      panelId: requiredString(source, "panelId"), markerId: requiredString(source, "markerId"),
+    },
+    panel: {
+      name: requiredString(panel, "name"), collectedAt: requiredString(panel, "collectedAt"),
+      ...("sourceLabel" in panel ? { sourceLabel: requiredString(panel, "sourceLabel") } : {}),
+    },
+    result: {
+      name: requiredString(result, "name"), value: requiredNumber(result, "value"),
+      ...("unit" in result ? { unit: requiredString(result, "unit") } : {}),
+      ...(result.sourceStatus !== undefined
+        ? { sourceStatus: requiredString(result, "sourceStatus") as LabResultImport["result"]["sourceStatus"] }
+        : {}),
+      ...(referenceRange ? { referenceRange } : {}),
+    },
   };
 }
 
@@ -223,6 +330,18 @@ function requiredString(body: Record<string, unknown>, key: string, pattern?: Re
   if (typeof value !== "string" || value.length > 512 || (pattern && !pattern.test(value))) {
     throw new IdentityApiError("request_invalid");
   }
+  return value;
+}
+
+function requiredObject(body: Record<string, unknown>, key: string): Record<string, unknown> {
+  const value = body[key];
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new IdentityApiError("request_invalid");
+  return value as Record<string, unknown>;
+}
+
+function requiredNumber(body: Record<string, unknown>, key: string): number {
+  const value = body[key];
+  if (typeof value !== "number" || !Number.isFinite(value)) throw new IdentityApiError("request_invalid");
   return value;
 }
 
