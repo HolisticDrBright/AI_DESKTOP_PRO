@@ -408,7 +408,7 @@ function groupBy<T>(values: T[], key: (value: T) => string): Map<string, T[]> {
   return groups;
 }
 
-function isRecord(value: unknown): value is Record<string, any> {
+function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 

@@ -610,7 +610,7 @@ function invalid(): never {
   throw new GovernedCatalogError("manifest_invalid");
 }
 
-function isRecord(value: unknown): value is Record<string, any> {
+function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
@@ -622,7 +622,7 @@ function boundedString(value: unknown, pattern?: RegExp, max = 512): value is st
   return typeof value === "string" && value.trim().length > 0 && value.length <= max && (!pattern || pattern.test(value));
 }
 
-function boundedArray(value: unknown): value is any[] {
+function boundedArray(value: unknown): value is unknown[] {
   return Array.isArray(value) && value.length <= MAX_RECORDS;
 }
 
