@@ -92,9 +92,28 @@ $consumerUser = "synthetic-consumer-primary@ailongevitypro.app"
 $workforcePassword = New-Password
 $isolationPassword = New-Password
 $consumerPassword = New-Password
+$existingFixture = $null
+if (Test-Path -LiteralPath $ManifestPath) {
+  try {
+    $existingManifest = Get-Content -Raw -LiteralPath $ManifestPath | ConvertFrom-Json
+    if ($existingManifest.environment -eq 'synthetic-staging' -and $existingManifest.containsPhi -eq $false) {
+      $existingFixture = $existingManifest.fixture
+    }
+  } catch {
+    $existingFixture = $null
+  }
+}
+function Stable-FixtureUuid([string]$key) {
+  $candidate = if ($existingFixture) { $existingFixture.$key } else { $null }
+  $parsed = [guid]::Empty
+  if ($candidate -and [guid]::TryParse([string]$candidate, [ref]$parsed)) { return $parsed.ToString() }
+  return [guid]::NewGuid().ToString()
+}
 $consumerPersonId = [guid]::NewGuid().ToString()
 $patientRecordId = [guid]::NewGuid().ToString()
 $consentArtifactId = [guid]::NewGuid().ToString()
+$labConsentArtifactId = [guid]::NewGuid().ToString()
+$syncProviderId = Stable-FixtureUuid 'syncProviderId'
 
 $workforceSubject = New-SyntheticUser $workforcePool $workforceUser "22222222-2222-4222-8222-222222222222" "11111111-1111-4111-8111-111111111111" $workforcePassword $false
 $isolationSubject = New-SyntheticUser $workforcePool $isolationUser "77777777-7777-4777-8777-777777777777" "66666666-6666-4666-8666-666666666666" $isolationPassword $false
@@ -118,6 +137,9 @@ $consumerSubject = New-SyntheticUser $consumerPool $consumerUser $consumerPerson
     patientRecordId = $patientRecordId
     consentArtifactId = $consentArtifactId
     consentArtifactSha256 = "a" * 64
+    labConsentArtifactId = $labConsentArtifactId
+    labConsentArtifactSha256 = "b" * 64
+    syncProviderId = $syncProviderId
     isolationOrganizationId = "66666666-6666-4666-8666-666666666666"
     isolationOrganizationLabel = "Synthetic acceptance isolation clinic"
     isolationWorkforcePersonId = "77777777-7777-4777-8777-777777777777"

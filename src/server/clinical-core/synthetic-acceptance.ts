@@ -25,7 +25,7 @@ export async function runSyntheticApiAcceptance(input: {
   isolationWorkforceIdToken: string;
   manifest: SyntheticAcceptanceManifest;
   fetch?: FetchLike;
-}): Promise<{ passed: 11; externalRequests: 11 }> {
+}): Promise<{ passed: 19; externalRequests: 19 }> {
   const fetcher = input.fetch ?? fetch;
   const origin = validateConfiguration(input);
   let operationIndex = 0;
@@ -88,7 +88,98 @@ export async function runSyntheticApiAcceptance(input: {
     connectionId: string(claimed.connectionId), scope: "programs", reasonCode: "patient_request",
   }), ["consentId", "connectionId", "scope", "status", "version", "recordedAt"]);
   if (revoke.status !== "revoked" || revoke.version !== 2) throw new SyntheticAcceptanceError("workflow_failed");
-  return { passed: 11, externalRequests: 11 };
+
+  const connectionBeforeLabConsent = nullableData(await call(
+    "/clinical-core/consumer/connection", input.consumerIdToken, 200,
+  ));
+  if (!connectionBeforeLabConsent || connectionBeforeLabConsent.connectionId !== claimed.connectionId
+    || connectionBeforeLabConsent.patientRecordId !== input.manifest.fixture.patientRecordId
+    || connectionBeforeLabConsent.state !== "verified"
+    || connectionBeforeLabConsent.labResultsImportConsent !== "not_granted") {
+    throw new SyntheticAcceptanceError("workflow_failed");
+  }
+
+  const labConsent = data(await call("/clinical-core/consumer/consents/grant", input.consumerIdToken, 201, {
+    connectionId: string(claimed.connectionId),
+    artifactId: input.manifest.fixture.labConsentArtifactId,
+    scope: "lab_results_import",
+    method: "patient_app",
+    representativeAuthority: "self",
+  }), ["consentId", "connectionId", "scope", "status", "version", "recordedAt"]);
+  if (labConsent.scope !== "lab_results_import" || labConsent.status !== "granted" || labConsent.version !== 1) {
+    throw new SyntheticAcceptanceError("workflow_failed");
+  }
+
+  const connectionAfterLabConsent = nullableData(await call(
+    "/clinical-core/consumer/connection", input.consumerIdToken, 200,
+  ));
+  if (!connectionAfterLabConsent || connectionAfterLabConsent.labResultsImportConsent !== "granted") {
+    throw new SyntheticAcceptanceError("workflow_failed");
+  }
+
+  const syntheticEventId = `acceptance_lab_event_${Date.now()}`;
+  const occurredAt = new Date().toISOString();
+  const labPayload = {
+    schemaVersion: "lab-result/1",
+    provider: "alp_patient_sync",
+    providerEventId: syntheticEventId,
+    connectionId: string(claimed.connectionId),
+    resourceVersion: "acceptance-v1",
+    occurredAt,
+    source: {
+      system: "ai_longevity_pro_v2",
+      recordType: "lab_panels",
+      panelId: syntheticEventId,
+      markerId: "synthetic_glucose_marker",
+    },
+    panel: { name: "Synthetic Metabolic Panel", collectedAt: occurredAt, sourceLabel: "Synthetic acceptance only" },
+    result: {
+      name: "Synthetic Glucose",
+      value: 91,
+      unit: "mg/dL",
+      sourceStatus: "normal",
+      referenceRange: { min: 70, max: 99 },
+    },
+  };
+  const firstImport = data(await call(
+    "/clinical-core/consumer/labs/import", input.consumerIdToken, 202, labPayload,
+  ), ["eventId", "state", "duplicate"]);
+  if (firstImport.state !== "review_pending" || firstImport.duplicate !== false) {
+    throw new SyntheticAcceptanceError("workflow_failed");
+  }
+  const duplicateImport = data(await call(
+    "/clinical-core/consumer/labs/import", input.consumerIdToken, 202, labPayload,
+  ), ["eventId", "state", "duplicate"]);
+  if (duplicateImport.eventId !== firstImport.eventId || duplicateImport.state !== "review_pending"
+    || duplicateImport.duplicate !== true) throw new SyntheticAcceptanceError("workflow_failed");
+
+  const pendingImports = listData(await call(
+    "/clinical-core/workforce/lab-imports?state=review_pending", input.workforceIdToken, 200,
+  ));
+  const pending = pendingImports.find((row) => row.event_id === firstImport.eventId);
+  if (!pending || pending.patient_record_id !== input.manifest.fixture.patientRecordId
+    || pending.marker_name !== "Synthetic Glucose" || pending.state !== "review_pending") {
+    throw new SyntheticAcceptanceError("workflow_failed");
+  }
+
+  const reviewed = data(await call("/clinical-core/workforce/lab-imports/review", input.workforceIdToken, 200, {
+    eventId: string(firstImport.eventId), decision: "accept", note: "Synthetic acceptance only",
+  }), ["eventId", "state", "observationId", "duplicate"]);
+  if (reviewed.eventId !== firstImport.eventId || reviewed.state !== "accepted"
+    || reviewed.duplicate !== false || typeof reviewed.observationId !== "string") {
+    throw new SyntheticAcceptanceError("workflow_failed");
+  }
+
+  const observations = listData(await call(
+    `/clinical-core/consumer/patient-labs?patientRecordId=${encodeURIComponent(input.manifest.fixture.patientRecordId)}`,
+    input.consumerIdToken,
+    200,
+  ));
+  const observation = observations.find((row) => row.observation_id === reviewed.observationId);
+  if (!observation || observation.marker_name !== "Synthetic Glucose" || observation.review_status !== "unreviewed") {
+    throw new SyntheticAcceptanceError("workflow_failed");
+  }
+  return { passed: 19, externalRequests: 19 };
 }
 
 function validateConfiguration(input: { apiOrigin: string; workforceIdToken: string; consumerIdToken: string; isolationWorkforceIdToken: string; manifest: SyntheticAcceptanceManifest }) {
@@ -139,6 +230,18 @@ function data(value: unknown, exactKeys: string[]) {
     throw new SyntheticAcceptanceError("workflow_failed");
   }
   return value.data;
+}
+
+function nullableData(value: unknown): Record<string, unknown> | null {
+  if (!record(value) || Object.keys(value).join("|") !== "data"
+    || (value.data !== null && !record(value.data))) throw new SyntheticAcceptanceError("workflow_failed");
+  return value.data;
+}
+
+function listData(value: unknown): Record<string, unknown>[] {
+  if (!record(value) || Object.keys(value).join("|") !== "data" || !Array.isArray(value.data)
+    || value.data.some((entry) => !record(entry))) throw new SyntheticAcceptanceError("workflow_failed");
+  return value.data as Record<string, unknown>[];
 }
 
 function record(value: unknown): value is Record<string, unknown> {

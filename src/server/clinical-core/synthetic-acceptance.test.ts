@@ -36,7 +36,7 @@ function json(status: number, value: unknown) {
 }
 
 describe("deployed synthetic Cognito-to-Aurora acceptance harness", () => {
-  test("runs all eleven requests without persisting or printing bearer and invitation tokens", async () => {
+  test("runs the connection, consent, duplicate-safe lab import, review, and read-back without exposing tokens", async () => {
     const calls: Array<{ url: string; body: Record<string, unknown> | null; authorization: string }> = [];
     const statuses = [
       json(200, { data: { contractVersion: "clinical-core/1", environment: "synthetic-staging", dataClassification: "synthetic_only", identityPool: "workforce", authenticated: true, phiAllowed: false, realPatientDataAllowed: false } }),
@@ -50,6 +50,14 @@ describe("deployed synthetic Cognito-to-Aurora acceptance harness", () => {
       json(201, { data: { consentId: "88888888-8888-4888-8888-888888888888", connectionId: "77777777-7777-4777-8777-777777777777", scope: "programs", status: "granted", version: 1, recordedAt: "2026-08-11T20:01:00Z" } }),
       json(409, { error: "consent_precondition_failed" }),
       json(201, { data: { consentId: "99999999-9999-4999-8999-999999999999", connectionId: "77777777-7777-4777-8777-777777777777", scope: "programs", status: "revoked", version: 2, recordedAt: "2026-08-11T20:02:00Z" } }),
+      json(200, { data: { connectionId: "77777777-7777-4777-8777-777777777777", patientRecordId: manifest.fixture.patientRecordId, state: "verified", verifiedAt: "2026-08-11T20:00:00Z", labResultsImportConsent: "not_granted" } }),
+      json(201, { data: { consentId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", connectionId: "77777777-7777-4777-8777-777777777777", scope: "lab_results_import", status: "granted", version: 1, recordedAt: "2026-08-11T20:03:00Z" } }),
+      json(200, { data: { connectionId: "77777777-7777-4777-8777-777777777777", patientRecordId: manifest.fixture.patientRecordId, state: "verified", verifiedAt: "2026-08-11T20:00:00Z", labResultsImportConsent: "granted" } }),
+      json(202, { data: { eventId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", state: "review_pending", duplicate: false } }),
+      json(202, { data: { eventId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", state: "review_pending", duplicate: true } }),
+      json(200, { data: [{ event_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", patient_record_id: manifest.fixture.patientRecordId, marker_name: "Synthetic Glucose", state: "review_pending" }] }),
+      json(200, { data: { eventId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", state: "accepted", observationId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", duplicate: false } }),
+      json(200, { data: [{ observation_id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", marker_name: "Synthetic Glucose", review_status: "unreviewed" }] }),
     ];
     const fetcher = async (url: string, init?: RequestInit) => {
       calls.push({
@@ -66,13 +74,17 @@ describe("deployed synthetic Cognito-to-Aurora acceptance harness", () => {
       isolationWorkforceIdToken: token("c"),
       manifest,
       fetch: fetcher,
-    })).resolves.toEqual({ passed: 11, externalRequests: 11 });
-    expect(calls).toHaveLength(11);
+    })).resolves.toEqual({ passed: 19, externalRequests: 19 });
+    expect(calls).toHaveLength(19);
     expect(calls[0]!.body).toBeNull();
     expect(calls[1]!.body).toBeNull();
     expect(calls[2]!.body).not.toHaveProperty("patientName");
     expect(calls[6]!.body).toHaveProperty("patientName", "refused");
     expect(calls[7]!.body).toEqual(expect.objectContaining({ patientRecordId: manifest.fixture.patientRecordId }));
+    expect(calls[12]!.body).toEqual(expect.objectContaining({ scope: "lab_results_import" }));
+    expect(calls[15]!.body).toEqual(calls[14]!.body);
+    expect(calls[16]!.url).toContain("state=review_pending");
+    expect(calls[18]!.url).toContain(encodeURIComponent(manifest.fixture.patientRecordId));
     expect(calls.every((call) => call.url.startsWith("https://abc123.execute-api.us-east-2.amazonaws.com/clinical-core/"))).toBe(true);
   });
 

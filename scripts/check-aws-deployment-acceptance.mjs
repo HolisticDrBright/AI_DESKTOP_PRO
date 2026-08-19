@@ -13,6 +13,7 @@ const database = read("src/server/clinical-core/rds-data-database.ts");
 const provisioner = read("src/server/clinical-core/synthetic-fixtures.ts");
 const acceptance = read("src/server/clinical-core/synthetic-acceptance.ts");
 const powershell = read("scripts/apply-aws-synthetic-data.ps1");
+const identityProvisioning = read("scripts/provision-aws-synthetic-identities.ps1");
 const ignore = read(".gitignore");
 
 assert(packageJson.scripts?.["build:aws-deployment-tools"] === "node scripts/build-aws-deployment-tools.mjs", "deployment-tools build script must be pinned");
@@ -25,9 +26,14 @@ assert(database.includes("reviewed_synthetic_migration") && database.includes('c
   && database.includes("if (assumeRole)"), "administrative and request database paths must remain explicit");
 assert(provisioner.includes("hasExactKeys") && provisioner.includes("fixture_mismatch") && !provisioner.includes("on conflict (id) do update"), "fixtures must be exact, immutable, and mismatch-refusing");
 assert(acceptance.includes('redirect: "manual"') && acceptance.includes("AbortSignal.timeout(15_000)"), "acceptance transport must refuse redirects and have a hard timeout");
-assert(acceptance.includes("patientName: \"refused\"") && acceptance.includes("isolationWorkforceIdToken") && acceptance.includes("externalRequests: 11")
-  && acceptance.includes("/clinical-core/workforce/posture") && acceptance.includes("/clinical-core/consumer/posture"),
-"acceptance must test both app bridges, PHI-shaped refusal, cross-tenant refusal, and all eleven boundaries");
+assert(acceptance.includes("patientName: \"refused\"") && acceptance.includes("isolationWorkforceIdToken") && acceptance.includes("externalRequests: 19")
+  && acceptance.includes("/clinical-core/workforce/posture") && acceptance.includes("/clinical-core/consumer/posture")
+  && acceptance.includes("scope: \"lab_results_import\"") && acceptance.includes("duplicateImport")
+  && acceptance.includes("/clinical-core/workforce/lab-imports/review")
+  && acceptance.includes("/clinical-core/consumer/patient-labs"),
+"acceptance must test both bridges, PHI-shaped and cross-tenant refusal, explicit lab consent, duplicate-safe import, review, and read-back across all nineteen boundaries");
+assert(identityProvisioning.includes("labConsentArtifactId") && identityProvisioning.includes("syncProviderId"),
+  "synthetic identity reprovisioning must preserve the lab consent and governed provider fixture fields");
 assert(!acceptance.includes("console.") && !provisioner.includes("console."), "clinical acceptance modules must not log tokens, subjects, or payloads");
 assert(powershell.includes("ConfirmSyntheticOnly") && powershell.includes("aws sts get-caller-identity") && powershell.includes("Remove-Item Env:CLINICAL_DATABASE_SECRET_ARN"), "operator script must confirm posture, pin account, and clear identifiers");
 
