@@ -77,11 +77,13 @@ No item in this document is implied complete by synthetic acceptance. Production
 
 - The AWS Organizations Business Associate Addendum is active with an effective date of August 18, 2026. This closes the AWS agreement prerequisite only; it does not approve the application or account configuration for PHI.
 - Account `588966314750` remains the synthetic-staging account. A separate empty production account has not been created.
+- A fail-closed production foundation now exists and passes local and AWS CloudFormation validation. It has not been deployed because there is no dedicated production account; both existing accounts are refused by the deployment guard.
 - Desktop still uses Supabase staging for practitioner authentication and most clinical domains. It is not a production fallback.
 - V2 still uses Supabase TestFlight authentication and state persistence. Consumer Cognito federation is not implemented.
+- The cross-repository migration inventory currently reports 17 direct Supabase source dependencies and two Fly-specific source references. Production startup guards refuse those legacy variables.
 - Durable Junction and Passio connector-registry reads and vendor approvals are not implemented.
 - GuardDuty and Security Hub are not enabled in the synthetic member account. The current trail is multi-region with validation but is not an organization trail.
-- The Desktop runtime has been changed to a non-root distroless image; an AWS CodeBuild/ECR scan of that exact image is still required.
+- The deployed synthetic Desktop uses the non-root distroless image and its reviewed ECR scan reported zero findings. This is evidence for that synthetic image only, not approval of the future PHI runtime.
 - V2 local PHI storage now uses AES-256-GCM with per-write nonces and record-bound authenticated data. Independent cryptography, lost-device, backup, and deletion review remain required.
 - The mobile dependency audit has no critical findings after targeted upgrades. Remaining high findings in the Expo/Metro toolchain require a reviewed Expo SDK upgrade.
 

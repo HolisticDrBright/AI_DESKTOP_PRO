@@ -32,6 +32,19 @@
     "passio_approval": "blocked",
     "clinical_ai_approval": "blocked"
   },
+  "runtime_boundaries": {
+    "desktop_compute": "blocked",
+    "patient_api_compute": "blocked",
+    "clinical_database": "blocked",
+    "workforce_identity": "blocked",
+    "consumer_identity": "blocked",
+    "object_storage": "blocked",
+    "app_runner_removed": "blocked",
+    "fly_removed": "blocked",
+    "supabase_saas_removed": "blocked",
+    "migration_reconciled": "blocked",
+    "forbidden_phi_services_absent": "blocked"
+  },
   "approvals": {
     "legal_compliance": { "status": "blocked", "reviewer": "", "reviewed_at": "" },
     "security": { "status": "blocked", "reviewer": "", "reviewed_at": "" },

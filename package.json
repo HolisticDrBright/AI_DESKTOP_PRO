@@ -31,7 +31,13 @@
     "check:aws-deployment-acceptance": "node scripts/check-aws-deployment-acceptance.mjs",
     "preflight:aws-synthetic": "node scripts/preflight-aws-synthetic.mjs",
     "check:aws-production-readiness": "node scripts/check-aws-production-readiness.mjs",
-    "test:aws-production-readiness": "node scripts/check-aws-production-readiness.test.mjs"
+    "test:aws-production-readiness": "node scripts/check-aws-production-readiness.test.mjs",
+    "build:aws-production-foundation": "node scripts/build-aws-production-foundation.mjs",
+    "check:aws-production-foundation": "node scripts/check-aws-production-foundation.mjs",
+    "test:aws-production-foundation": "node scripts/check-aws-production-foundation.test.mjs",
+    "audit:aws-data-plane-migration": "node scripts/check-aws-data-plane-migration.mjs --report",
+    "check:aws-data-plane-migration": "node scripts/check-aws-data-plane-migration.mjs --enforce",
+    "test:aws-data-plane-migration": "node scripts/check-aws-data-plane-migration.test.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-dynamodb": "^3.1109.0",
