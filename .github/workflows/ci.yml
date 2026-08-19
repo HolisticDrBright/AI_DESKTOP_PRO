@@ -48,6 +48,7 @@ jobs:
       - name: AWS production provider-removal and foundation gates
         run: |
           npm run check:aws-data-plane-migration
+          npm run check:aws-desktop-compatibility-contract
           npm run build:aws-production-foundation
           npm run check:aws-production-foundation
           npm run test:aws-production-foundation

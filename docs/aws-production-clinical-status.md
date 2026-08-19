@@ -52,6 +52,15 @@ behavior have not been ported to the production Aurora API. Until they are
 implemented, deployed, and accepted end to end, clinical features fail closed
 and `AWS_CLINICAL_ADAPTER_READY` must not be set to `true`.
 
+The required compatibility surface is now explicit rather than estimated:
+`infra/aws-clinical-core/desktop-compatibility-operations.json` contains 217
+RPC functions and five bounded read models used by the live Desktop adapters.
+`npm run check:aws-desktop-compatibility-contract` parses the TypeScript call
+graph, refuses unreviewed or stale operations, rejects dynamic operation names
+outside literal conditionals, and verifies that every RPC has an authored
+PostgreSQL definition in the legacy migration history. This proves the port's
+scope; it does not claim those definitions are Aurora-portable or deployed.
+
 A dedicated production member account now exists as account `173535830222`.
 Account `588966314750` remains synthetic staging and account `449901517958`
 remains the management account; both are explicitly refused by the production
