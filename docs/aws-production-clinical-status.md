@@ -82,7 +82,7 @@ uniform database wrapper. Migration `20260821040000` creates that registry and
 dispatcher with zero enabled operations. The API role cannot change the
 registry. This is intentionally fail-closed until all required wrappers have
 been ported and the deployed registry is reconciled to the source manifest.
-The production functional candidate currently accounts for 31 operations:
+The production functional candidate currently accounts for 32 operations:
 `create_patient_profile`, `review_biomarker`,
 `list_patient_lab_observations`, `list_audit_events`,
 `record_registered_audit_event`, `list_my_organizations`, `list_org_members`,
@@ -106,8 +106,13 @@ metadata, append-only storage, and workforce/tenant/patient authorization. The
 membership operations expose no workforce email/display data, require
 owner/admin authorization, preserve the last owner, refuse self-removal, and
 suspend rather than delete. Legacy add-by-email and self-activation remain
-unported pending governed Cognito identity binding. All 222 inventory entries
-remain disabled in the deployed production route, and 191
+unported pending governed Cognito identity binding. The bounded
+`get_patient_overview` aggregate then combines only verified AWS
+demographics, care-team roles, appointments, encounters, labs, and review tasks;
+it returns contact-presence flags instead of contact values and explicitly
+labels allergy, medication, and problem lists as unrecorded until governed
+write contracts exist. All 222 inventory entries remain disabled in the
+deployed production route, and 190
 still need reviewed AWS implementations for full Desktop functionality.
 
 The same candidate now covers the complete 21-route governed
@@ -118,7 +123,7 @@ compatibility route. Its production adapters set `production-clinical`,
 `clinical_phi`, and `containsPhi=true` only after the independent activation
 gate and a token with `custom:production_bound=true`; a token carrying the
 synthetic attestation is refused. Exact source
-`98b423305d4a72697b63cf500081437c86475ac3` is now deployed behind all 21
+`31e904e10ee12caac9b85cdda5e8cafb1ae282b5` is now deployed behind all 21
 explicit JWT routes, but its activation inputs remain false/blocked and the
 Lambda role has encrypted-log writes only. It therefore still returns the
 bounded 503 before parsing a request or touching Aurora. No PHI data plane is
@@ -224,7 +229,7 @@ production workload, operational safeguards, or HIPAA compliance.
   `503` with `production_not_activated` and `phiAllowed:false`.
 - Encrypted runtime error search: zero ERROR/Error/FATAL/Exception events.
 - Container Insights running-task alarm: `OK`.
-- Production Aurora: 26 application tables, 12 migration ledger entries,
+- Production Aurora: 26 application tables, 13 migration ledger entries,
   and zero clinical/audit rows.
 - The companion AI Longevity Pro V2 patient API readiness service is also
   deployed privately from exact commit
@@ -236,7 +241,7 @@ production workload, operational safeguards, or HIPAA compliance.
 - PHI-disabled API stack:
   `ai-longevity-production-clinical-api-disabled`, `UPDATE_COMPLETE`.
   It is now `UPDATE_COMPLETE` with exact candidate source
-  `98b423305d4a72697b63cf500081437c86475ac3`. API Gateway exposes exactly 21
+  `31e904e10ee12caac9b85cdda5e8cafb1ae282b5`. API Gateway exposes exactly 21
   explicit JWT-only routes. Unauthenticated requests return 401; direct or
   authorized execution returns bounded 503. Its Lambda execution role has one
   log-write policy, no attached policies, and no Aurora/secret/KMS data-plane
@@ -300,6 +305,11 @@ production workload, operational safeguards, or HIPAA compliance.
   note, signature, addendum, provenance, or audit rows, plus all JWT/IAM/log
   refusal invariants. Evidence SHA-256:
   `b3843bd16da82f449bc7fbcf21af5fb68e60e916318ebd5fe913e06598e44d00`.
+- The thirteenth migration added the bounded, read-only patient overview with
+  no new table or row. Exact candidate `31e904e` was deployed closed. The
+  exercise reverified 13 migrations, 26 tables, zero clinical/audit rows, and
+  all JWT/IAM/log refusal invariants. Evidence SHA-256:
+  `c27861202656da4df5e65f1fc9ca7f73d68237469fd381389bdd5010de4dac9f`.
 
 CloudFormation drift detection reports only three GuardDuty service-returned
 result fields as additions: disabled `AI_ANALYST`, disabled `AI_PROTECTION`,
