@@ -1,0 +1,173 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "PHI-disabled authenticated production clinical API boundary for AI Longevity Pro.",
+  "Metadata": {
+    "ClinicalCore": {
+      "ContractVersion": "production-clinical-api-readiness/1",
+      "Environment": "production-clinical",
+      "DataClassification": "clinical_phi_target",
+      "PhiAllowed": false,
+      "ActivationState": "blocked"
+    }
+  },
+  "Parameters": {
+    "ClinicalApiId": { "Type": "String", "AllowedPattern": "^[a-z0-9]{10}$" },
+    "WorkforceUserPoolId": { "Type": "String", "AllowedPattern": "^[a-z0-9-]+_[A-Za-z0-9]+$" },
+    "WorkforceUserPoolClientId": { "Type": "String", "AllowedPattern": "^[A-Za-z0-9]{20,128}$" },
+    "ConsumerUserPoolId": { "Type": "String", "AllowedPattern": "^[a-z0-9-]+_[A-Za-z0-9]+$" },
+    "ConsumerUserPoolClientId": { "Type": "String", "AllowedPattern": "^[A-Za-z0-9]{20,128}$" },
+    "ClinicalCoreKeyArn": { "Type": "String", "AllowedPattern": "^arn:(aws|aws-us-gov|aws-cn):kms:[a-z0-9-]+:[0-9]{12}:key/[0-9a-f-]{36}$" },
+    "PhiAllowed": { "Type": "String", "Default": "false", "AllowedValues": ["false"] }
+  },
+  "Resources": {
+    "ProductionClinicalApiLogGroup": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "LogGroupName": { "Fn::Sub": "/ai-clinical-core/production-clinical/disabled-api-v1/${ClinicalApiId}" },
+        "RetentionInDays": 365,
+        "KmsKeyId": { "Ref": "ClinicalCoreKeyArn" }
+      },
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain"
+    },
+    "ProductionClinicalApiRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [{
+            "Effect": "Allow",
+            "Principal": { "Service": "lambda.amazonaws.com" },
+            "Action": "sts:AssumeRole"
+          }]
+        },
+        "Policies": [{
+          "PolicyName": "BoundedEncryptedLoggingOnly",
+          "PolicyDocument": {
+            "Version": "2012-10-17",
+            "Statement": [{
+              "Effect": "Allow",
+              "Action": ["logs:CreateLogStream", "logs:PutLogEvents"],
+              "Resource": { "Fn::GetAtt": ["ProductionClinicalApiLogGroup", "Arn"] }
+            }]
+          }
+        }]
+      }
+    },
+    "ProductionClinicalApiFunction": {
+      "Type": "AWS::Lambda::Function",
+      "Properties": {
+        "FunctionName": { "Fn::Sub": "${ClinicalApiId}-production-clinical-disabled" },
+        "Runtime": "nodejs22.x",
+        "Architectures": ["arm64"],
+        "Handler": "index.handler",
+        "Role": { "Fn::GetAtt": ["ProductionClinicalApiRole", "Arn"] },
+        "MemorySize": 128,
+        "Timeout": 5,
+        "LoggingConfig": {
+          "LogGroup": { "Ref": "ProductionClinicalApiLogGroup" },
+          "LogFormat": "JSON",
+          "ApplicationLogLevel": "ERROR",
+          "SystemLogLevel": "WARN"
+        },
+        "Environment": {
+          "Variables": {
+            "PHI_ALLOWED": { "Ref": "PhiAllowed" },
+            "ACTIVATION_STATE": "blocked",
+            "CONTRACT_VERSION": "production-clinical-api-readiness/1"
+          }
+        },
+        "Code": {
+          "ZipFile": "exports.handler = async () => ({ statusCode: 503, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' }, body: JSON.stringify({ error: 'production_not_activated', phiAllowed: false, contractVersion: process.env.CONTRACT_VERSION }) });"
+        }
+      }
+    },
+    "WorkforceJwtAuthorizer": {
+      "Type": "AWS::ApiGatewayV2::Authorizer",
+      "Properties": {
+        "ApiId": { "Ref": "ClinicalApiId" },
+        "AuthorizerType": "JWT",
+        "Name": "production-workforce-disabled",
+        "IdentitySource": ["$request.header.Authorization"],
+        "JwtConfiguration": {
+          "Issuer": { "Fn::Sub": "https://cognito-idp.${AWS::Region}.${AWS::URLSuffix}/${WorkforceUserPoolId}" },
+          "Audience": [{ "Ref": "WorkforceUserPoolClientId" }]
+        }
+      }
+    },
+    "ConsumerJwtAuthorizer": {
+      "Type": "AWS::ApiGatewayV2::Authorizer",
+      "Properties": {
+        "ApiId": { "Ref": "ClinicalApiId" },
+        "AuthorizerType": "JWT",
+        "Name": "production-consumer-disabled",
+        "IdentitySource": ["$request.header.Authorization"],
+        "JwtConfiguration": {
+          "Issuer": { "Fn::Sub": "https://cognito-idp.${AWS::Region}.${AWS::URLSuffix}/${ConsumerUserPoolId}" },
+          "Audience": [{ "Ref": "ConsumerUserPoolClientId" }]
+        }
+      }
+    },
+    "ProductionClinicalApiIntegration": {
+      "Type": "AWS::ApiGatewayV2::Integration",
+      "Properties": {
+        "ApiId": { "Ref": "ClinicalApiId" },
+        "IntegrationType": "AWS_PROXY",
+        "IntegrationUri": { "Fn::GetAtt": ["ProductionClinicalApiFunction", "Arn"] },
+        "PayloadFormatVersion": "2.0",
+        "TimeoutInMillis": 5000
+      }
+    },
+    "WorkforceDisabledRoute": {
+      "Type": "AWS::ApiGatewayV2::Route",
+      "Properties": {
+        "ApiId": { "Ref": "ClinicalApiId" },
+        "RouteKey": "ANY /clinical-core/workforce/{proxy+}",
+        "AuthorizationType": "JWT",
+        "AuthorizerId": { "Ref": "WorkforceJwtAuthorizer" },
+        "Target": { "Fn::Sub": "integrations/${ProductionClinicalApiIntegration}" }
+      }
+    },
+    "ConsumerDisabledRoute": {
+      "Type": "AWS::ApiGatewayV2::Route",
+      "Properties": {
+        "ApiId": { "Ref": "ClinicalApiId" },
+        "RouteKey": "ANY /clinical-core/consumer/{proxy+}",
+        "AuthorizationType": "JWT",
+        "AuthorizerId": { "Ref": "ConsumerJwtAuthorizer" },
+        "Target": { "Fn::Sub": "integrations/${ProductionClinicalApiIntegration}" }
+      }
+    },
+    "ProductionClinicalApiInvokePermission": {
+      "Type": "AWS::Lambda::Permission",
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": { "Ref": "ProductionClinicalApiFunction" },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": { "Fn::Sub": "arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${ClinicalApiId}/*/*/clinical-core/*" }
+      }
+    },
+    "ProductionClinicalApiErrorAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmName": { "Fn::Sub": "${ClinicalApiId}-production-clinical-disabled-errors" },
+        "Namespace": "AWS/Lambda",
+        "MetricName": "Errors",
+        "Dimensions": [{ "Name": "FunctionName", "Value": { "Ref": "ProductionClinicalApiFunction" } }],
+        "Statistic": "Sum",
+        "Period": 300,
+        "EvaluationPeriods": 1,
+        "DatapointsToAlarm": 1,
+        "Threshold": 1,
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "TreatMissingData": "notBreaching"
+      }
+    }
+  },
+  "Outputs": {
+    "FunctionName": { "Value": { "Ref": "ProductionClinicalApiFunction" } },
+    "WorkforceBoundaryPath": { "Value": "/clinical-core/workforce/{proxy+}" },
+    "ConsumerBoundaryPath": { "Value": "/clinical-core/consumer/{proxy+}" },
+    "PhiAllowed": { "Value": { "Ref": "PhiAllowed" } }
+  }
+}
