@@ -25,9 +25,10 @@ record:
   `production_not_activated` contract;
 - the Lambda execution role has no managed policies and its only actions are
   encrypted-log stream creation and event writes;
-- Aurora contains 11 reviewed migrations, 20 application tables, and zero
+- Aurora contains 12 reviewed migrations, 26 application tables, and zero
   organization, person, patient, lab-import, clinical-record, review-task,
-  appointment, appointment-status-event, or audit rows;
+  appointment, appointment-status-event, encounter, clinical-note, version,
+  signature, addendum, provenance, or audit rows;
 - the disabled-function error alarm is `OK`; and
 - the last 15 minutes of disabled-function logs contain no credential or
   clinical-content markers.

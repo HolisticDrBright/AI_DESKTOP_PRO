@@ -16,7 +16,7 @@ const errors = [];
 const assert = (condition, message) => { if (!condition) errors.push(message); };
 
 assert(manifest.contract_version === "clinical-core-migrations/1", "generated manifest contract is invalid");
-assert(manifest.migrations.length === 11, "expected six transformed migrations and five production overlays");
+assert(manifest.migrations.length === 12, "expected six transformed migrations and six production overlays");
 assert(new Set(manifest.migrations.map((entry) => entry.version)).size === manifest.migrations.length,
   "migration versions must be unique");
 
@@ -65,6 +65,8 @@ const reviewQueueOverlay = readFileSync(path.join(root, "infra", "aws-clinical-c
   "20260821080000_production_review_queue.sql"), "utf8");
 const schedulingOverlay = readFileSync(path.join(root, "infra", "aws-clinical-core", "production-migrations",
   "20260821090000_production_scheduling.sql"), "utf8");
+const encounterOverlay = readFileSync(path.join(root, "infra", "aws-clinical-core", "production-migrations",
+  "20260821100000_production_encounters_notes.sql"), "utf8");
 assert(overlay.includes("_organization_id uuid") && overlay.includes("_first_name text")
   && overlay.includes("_last_name text") && overlay.includes("_date_of_birth date")
   && overlay.includes("_sex text") && overlay.includes("_mrn text")
@@ -138,6 +140,20 @@ const schedulingAudits = schedulingOverlay.match(/insert into clinical_audit\.ev
 assert(!/['\"](?:title|location|telehealth_url|reason)['\"]\s*,\s*_(?:title|location|telehealth_url|reason)/i.test(schedulingAudits)
   && schedulingAudits.includes("reason_present"),
 "scheduling audit must retain only bounded facts, never appointment content");
+for (const operation of [
+  "start_encounter", "set_encounter_status", "save_note_draft", "mark_note_ready", "sign_note",
+  "add_note_addendum", "mark_note_error", "get_desktop_encounter",
+  "list_desktop_patient_encounters", "get_desktop_note", "get_desktop_patient_timeline",
+]) assert(encounterOverlay.includes(`clinical_core.${operation}`), `missing production encounter operation ${operation}`);
+for (const invariant of [
+  "clinical_note_versions_freeze", "clinical_note_versions_append_only", "note_signatures_append_only",
+  "note_addenda_append_only", "note_version_conflict", "note_content_frozen",
+  "note_provenance_freeze", "content_sha256", "appointment_patient_mismatch",
+  "appointments_identity_patient_uniq", "require_clinical_patient",
+]) assert(encounterOverlay.includes(invariant), `missing encounter/note invariant ${invariant}`);
+const noteAudits = encounterOverlay.match(/insert into clinical_audit\.events[\s\S]*?;/g)?.join("\n") ?? "";
+assert(!/['\"](?:content|reason|status_reason)['\"]\s*,\s*_(?:content|reason)/i.test(noteAudits)
+  && noteAudits.includes("reason_present"), "encounter/note audit contains clinical content or lacks presence-only reason evidence");
 
 if (errors.length) {
   for (const error of errors) console.error(`ERROR: ${error}`);
@@ -145,4 +161,4 @@ if (errors.length) {
 }
 
 const releaseHash = createHash("sha256").update(combined).digest("hex");
-console.log(`Production clinical-core gate passed: 11 migrations, zero seeded rows (${releaseHash}).`);
+console.log(`Production clinical-core gate passed: 12 migrations, zero seeded rows (${releaseHash}).`);

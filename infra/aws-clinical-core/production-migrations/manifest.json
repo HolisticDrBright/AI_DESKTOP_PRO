@@ -20,6 +20,10 @@
     {
       "version": "20260821090000",
       "file": "20260821090000_production_scheduling.sql"
+    },
+    {
+      "version": "20260821100000",
+      "file": "20260821100000_production_encounters_notes.sql"
     }
   ]
 }

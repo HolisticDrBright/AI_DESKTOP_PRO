@@ -111,6 +111,72 @@
       "source": "infra/aws-clinical-core/production-migrations/20260821090000_production_scheduling.sql"
     },
     {
+      "kind": "rpc",
+      "name": "start_encounter",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821100000_production_encounters_notes.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "set_encounter_status",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821100000_production_encounters_notes.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "save_note_draft",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821100000_production_encounters_notes.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "mark_note_ready",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821100000_production_encounters_notes.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "sign_note",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821100000_production_encounters_notes.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "add_note_addendum",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821100000_production_encounters_notes.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "mark_note_error",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821100000_production_encounters_notes.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "get_desktop_encounter",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821100000_production_encounters_notes.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "list_desktop_patient_encounters",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821100000_production_encounters_notes.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "get_desktop_note",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821100000_production_encounters_notes.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "get_desktop_patient_timeline",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821100000_production_encounters_notes.sql"
+    },
+    {
       "kind": "select",
       "name": "lab_documents",
       "implementation": "native_production_adapter",

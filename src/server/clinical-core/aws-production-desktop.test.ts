@@ -15,6 +15,8 @@ const AUDIT = "55555555-5555-4555-8555-555555555555";
 const MEMBERSHIP = "66666666-6666-4666-8666-666666666666";
 const QUEUE_ITEM = "77777777-7777-4777-8777-777777777777";
 const APPOINTMENT = "88888888-8888-4888-8888-888888888888";
+const ENCOUNTER = "99999999-9999-4999-8999-999999999999";
+const NOTE = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 
 const context: ProductionRequestContext = {
   actorPersonId: PERSON,
@@ -434,6 +436,143 @@ describe("AWS production Desktop adapter", () => {
       },
     })).rejects.toEqual(new ProductionDesktopError("request_invalid"));
     expect(test.calls).toHaveLength(3);
+  });
+
+  it("starts and completes a governed encounter using bounded references", async () => {
+    const start = harness({ id: ENCOUNTER });
+    await expect(start.adapter.execute(context, {
+      kind: "rpc",
+      functionName: "start_encounter",
+      args: {
+        _organization_id: ORG, _patient_id: PATIENT, _visit_type: "lab-review",
+        _appointment_id: APPOINTMENT,
+      },
+    })).resolves.toBe(ENCOUNTER);
+    expect(start.calls[1]?.sql).toContain("clinical_core.start_encounter");
+    expect(start.calls[1]?.values).toEqual([
+      { kind: "uuid", value: ORG }, { kind: "uuid", value: PATIENT }, "lab-review",
+      { kind: "uuid", value: APPOINTMENT },
+    ]);
+
+    const complete = harness({});
+    await expect(complete.adapter.execute(context, {
+      kind: "rpc",
+      functionName: "set_encounter_status",
+      args: { _encounter_id: ENCOUNTER, _status: "completed", _reason: null },
+    })).resolves.toBeNull();
+    expect(complete.calls[1]?.sql).toContain("clinical_core.set_encounter_status");
+  });
+
+  it("saves a versioned note with structured content and governed provenance", async () => {
+    const test = harness({ note_id: NOTE, version: 1, saved_at: "2026-08-20T20:00:00.000Z" });
+    await expect(test.adapter.execute(context, {
+      kind: "rpc",
+      functionName: "save_note_draft",
+      args: {
+        _organization_id: ORG,
+        _encounter_id: ENCOUNTER,
+        _note_type: "soap",
+        _content: { subjective: "Synthetic symptom history", assessment: "Synthetic assessment" },
+        _expected_version: 0,
+        _note_id: null,
+        _save_kind: "manual",
+        _provenance: [{
+          sectionKey: "assessment", refType: "lab_observation", refId: OBSERVATION,
+          label: "Synthetic hs-CRP observation",
+        }],
+      },
+    })).resolves.toMatchObject({ note_id: NOTE, version: 1 });
+    expect(test.calls[1]?.sql).toContain("clinical_core.save_note_draft");
+    expect(test.calls[1]?.values[3]).toBe(JSON.stringify({
+      subjective: "Synthetic symptom history", assessment: "Synthetic assessment",
+    }));
+    expect(test.calls[1]?.values[7]).toBe(JSON.stringify([{
+      sectionKey: "assessment", refType: "lab_observation", refId: OBSERVATION,
+      label: "Synthetic hs-CRP observation",
+    }]));
+  });
+
+  it("moves a note through review, idempotent signing, addendum, and error functions", async () => {
+    const ready = harness({});
+    await expect(ready.adapter.execute(context, {
+      kind: "rpc", functionName: "mark_note_ready", args: { _note_id: NOTE },
+    })).resolves.toBeNull();
+
+    const sign = harness({ signature_id: AUDIT, already_signed: false, version: 2 });
+    await expect(sign.adapter.execute(context, {
+      kind: "rpc", functionName: "sign_note", args: { _note_id: NOTE, _expected_version: 2 },
+    })).resolves.toMatchObject({ signature_id: AUDIT, version: 2 });
+    expect(sign.calls[1]?.values).toEqual([{ kind: "uuid", value: NOTE }, 2]);
+
+    const addendum = harness({ id: QUEUE_ITEM });
+    await expect(addendum.adapter.execute(context, {
+      kind: "rpc",
+      functionName: "add_note_addendum",
+      args: { _note_id: NOTE, _reason: "Correction", _content: "Synthetic corrected context" },
+    })).resolves.toBe(QUEUE_ITEM);
+
+    const error = harness({});
+    await expect(error.adapter.execute(context, {
+      kind: "rpc", functionName: "mark_note_error",
+      args: { _note_id: NOTE, _reason: "Wrong synthetic patient selected" },
+    })).resolves.toBeNull();
+  });
+
+  it("reads bounded encounter, note, patient encounter, and timeline DTOs", async () => {
+    const encounter = harness({ encounter: { encounter_id: ENCOUNTER }, notes: [] });
+    await expect(encounter.adapter.execute(context, {
+      kind: "rpc", functionName: "get_desktop_encounter", args: { _encounter_id: ENCOUNTER },
+    })).resolves.toMatchObject({ encounter: { encounter_id: ENCOUNTER } });
+
+    const note = harness({ note: { note_id: NOTE }, content: {}, addenda: [], provenance: [] });
+    await expect(note.adapter.execute(context, {
+      kind: "rpc", functionName: "get_desktop_note", args: { _note_id: NOTE },
+    })).resolves.toMatchObject({ note: { note_id: NOTE } });
+
+    const list = harness([{ encounter_id: ENCOUNTER }]);
+    await expect(list.adapter.execute(context, {
+      kind: "rpc", functionName: "list_desktop_patient_encounters",
+      args: { _patient_id: PATIENT, _limit: 100 },
+    })).resolves.toEqual([{ encounter_id: ENCOUNTER }]);
+
+    const timeline = harness({ event_at: "2026-08-20T20:00:00.000Z", event_type: "note.signed" });
+    await expect(timeline.adapter.execute(context, {
+      kind: "rpc", functionName: "get_desktop_patient_timeline",
+      args: { _patient_id: PATIENT, _limit: 200 },
+    })).resolves.toEqual([expect.objectContaining({ event_type: "note.signed" })]);
+  });
+
+  it("rejects cross-tenant notes, nested content, invalid provenance, and oversized corrections", async () => {
+    const test = harness();
+    await expect(test.adapter.execute(context, {
+      kind: "rpc", functionName: "start_encounter",
+      args: {
+        _organization_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        _patient_id: PATIENT, _visit_type: "initial", _appointment_id: null,
+      },
+    })).rejects.toEqual(new ProductionDesktopError("request_invalid"));
+    await expect(test.adapter.execute(context, {
+      kind: "rpc", functionName: "save_note_draft",
+      args: {
+        _organization_id: ORG, _encounter_id: ENCOUNTER, _note_type: "soap",
+        _content: { assessment: { nested: "refused" } }, _expected_version: 0,
+        _note_id: null, _save_kind: "manual", _provenance: [],
+      },
+    })).rejects.toEqual(new ProductionDesktopError("request_invalid"));
+    await expect(test.adapter.execute(context, {
+      kind: "rpc", functionName: "save_note_draft",
+      args: {
+        _organization_id: ORG, _encounter_id: ENCOUNTER, _note_type: "soap",
+        _content: { assessment: "Synthetic" }, _expected_version: 0,
+        _note_id: null, _save_kind: "manual",
+        _provenance: [{ sectionKey: "assessment", refType: "unknown", refId: null, label: "No" }],
+      },
+    })).rejects.toEqual(new ProductionDesktopError("request_invalid"));
+    await expect(test.adapter.execute(context, {
+      kind: "rpc", functionName: "add_note_addendum",
+      args: { _note_id: NOTE, _reason: "x".repeat(501), _content: "Synthetic" },
+    })).rejects.toEqual(new ProductionDesktopError("request_invalid"));
+    expect(test.calls).toHaveLength(4);
   });
 
   it("refuses a cross-tenant request before touching Aurora", async () => {

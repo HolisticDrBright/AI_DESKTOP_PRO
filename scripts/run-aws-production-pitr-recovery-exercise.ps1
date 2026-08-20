@@ -97,11 +97,17 @@ select
   (select count(*)::int from clinical_core.review_queue_items),
   (select count(*)::int from clinical_core.appointments),
   (select count(*)::int from clinical_core.appointment_status_events),
+  (select count(*)::int from clinical_core.encounters),
+  (select count(*)::int from clinical_core.clinical_notes),
+  (select count(*)::int from clinical_core.clinical_note_versions),
+  (select count(*)::int from clinical_core.note_signatures),
+  (select count(*)::int from clinical_core.note_addenda),
+  (select count(*)::int from clinical_core.note_provenance_refs),
   (select count(*)::int from clinical_audit.events)
 "@
   $sourceVector = @($sourceCounts.records[0] | ForEach-Object { [int64]$_.longValue })
-  if (($sourceVector -join ",") -ne "11,20,0,0,0,0,0,0,0,0,0") {
-    throw "Source database is not the reviewed empty 11-migration/20-table state."
+  if (($sourceVector -join ",") -ne "12,26,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0") {
+    throw "Source database is not the reviewed empty 12-migration/26-table state."
   }
 
   $securityGroups = @($source.VpcSecurityGroups | ForEach-Object { $_.VpcSecurityGroupId })
@@ -157,6 +163,12 @@ select
   (select count(*)::int from clinical_core.review_queue_items),
   (select count(*)::int from clinical_core.appointments),
   (select count(*)::int from clinical_core.appointment_status_events),
+  (select count(*)::int from clinical_core.encounters),
+  (select count(*)::int from clinical_core.clinical_notes),
+  (select count(*)::int from clinical_core.clinical_note_versions),
+  (select count(*)::int from clinical_core.note_signatures),
+  (select count(*)::int from clinical_core.note_addenda),
+  (select count(*)::int from clinical_core.note_provenance_refs),
   (select count(*)::int from clinical_audit.events)
 "@
   $restoredVector = @($restoredCounts.records[0] | ForEach-Object { [int64]$_.longValue })
@@ -179,7 +191,7 @@ select
     restoredClusterPrivate = $true
     migrationCount = $restoredVector[0]
     tableCount = $restoredVector[1]
-    clinicalRowCount = ($restoredVector[2..10] | Measure-Object -Sum).Sum
+    clinicalRowCount = ($restoredVector[2..16] | Measure-Object -Sum).Sum
     restoreVerificationSeconds = [math]::Round(($verifiedAt - $exerciseStarted).TotalSeconds, 1)
     temporaryResourcesDeleted = $false
   }

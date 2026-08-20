@@ -40,6 +40,17 @@ const CORE_RPCS = new Set([
   "reschedule_appointment",
   "transition_appointment",
   "correct_appointment_status",
+  "start_encounter",
+  "set_encounter_status",
+  "save_note_draft",
+  "mark_note_ready",
+  "sign_note",
+  "add_note_addendum",
+  "mark_note_error",
+  "get_desktop_encounter",
+  "list_desktop_patient_encounters",
+  "get_desktop_note",
+  "get_desktop_patient_timeline",
 ]);
 const CORE_SELECTS = new Set(["patient_profiles", "lab_documents"]);
 
@@ -268,6 +279,106 @@ async function executeCoreRpc(
     ));
     return decodeJson(row.data);
   }
+  if (name === "start_encounter") {
+    exactKeys(args, ["_organization_id", "_patient_id", "_visit_type", "_appointment_id"]);
+    if (args._organization_id !== context.organizationId) throw invalid();
+    const appointmentId = optionalUuid(args._appointment_id);
+    const row = first(await tx.query<{ id: string }>(
+      "select clinical_core.start_encounter($1,$2,$3,$4) as id",
+      [
+        clinicalUuid(context.organizationId), clinicalUuid(requiredUuid(args._patient_id)),
+        requiredString(args._visit_type, 32), appointmentId ? clinicalUuid(appointmentId) : null,
+      ],
+    ));
+    return row.id;
+  }
+  if (name === "set_encounter_status") {
+    exactKeys(args, ["_encounter_id", "_status", "_reason"]);
+    await tx.query("select clinical_core.set_encounter_status($1,$2,$3)", [
+      clinicalUuid(requiredUuid(args._encounter_id)), requiredString(args._status, 32),
+      optionalString(args._reason, 1000),
+    ]);
+    return null;
+  }
+  if (name === "save_note_draft") {
+    exactKeys(args, [
+      "_organization_id", "_encounter_id", "_note_type", "_content", "_expected_version",
+      "_note_id", "_save_kind", "_provenance",
+    ]);
+    if (args._organization_id !== context.organizationId) throw invalid();
+    const noteId = optionalUuid(args._note_id);
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.save_note_draft($1,$2,$3,$4::jsonb,$5,$6,$7,$8::jsonb) as data",
+      [
+        clinicalUuid(context.organizationId), clinicalUuid(requiredUuid(args._encounter_id)),
+        requiredString(args._note_type, 32), JSON.stringify(boundedNoteContent(args._content)),
+        boundedInteger(args._expected_version, 0, 1_000_000), noteId ? clinicalUuid(noteId) : null,
+        requiredString(args._save_kind, 16), JSON.stringify(boundedProvenance(args._provenance)),
+      ],
+    ));
+    return decodeJson(row.data);
+  }
+  if (name === "mark_note_ready") {
+    exactKeys(args, ["_note_id"]);
+    await tx.query("select clinical_core.mark_note_ready($1)", [clinicalUuid(requiredUuid(args._note_id))]);
+    return null;
+  }
+  if (name === "sign_note") {
+    exactKeys(args, ["_note_id", "_expected_version"]);
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.sign_note($1,$2) as data",
+      [clinicalUuid(requiredUuid(args._note_id)), boundedInteger(args._expected_version, 1, 1_000_000)],
+    ));
+    return decodeJson(row.data);
+  }
+  if (name === "add_note_addendum") {
+    exactKeys(args, ["_note_id", "_reason", "_content"]);
+    const row = first(await tx.query<{ id: string }>(
+      "select clinical_core.add_note_addendum($1,$2,$3) as id",
+      [
+        clinicalUuid(requiredUuid(args._note_id)), requiredString(args._reason, 500),
+        requiredString(args._content, 65_536),
+      ],
+    ));
+    return row.id;
+  }
+  if (name === "mark_note_error") {
+    exactKeys(args, ["_note_id", "_reason"]);
+    await tx.query("select clinical_core.mark_note_error($1,$2)", [
+      clinicalUuid(requiredUuid(args._note_id)), requiredString(args._reason, 1000),
+    ]);
+    return null;
+  }
+  if (name === "get_desktop_encounter") {
+    exactKeys(args, ["_encounter_id"]);
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.get_desktop_encounter($1) as data",
+      [clinicalUuid(requiredUuid(args._encounter_id))],
+    ));
+    return decodeJson(row.data);
+  }
+  if (name === "list_desktop_patient_encounters") {
+    exactKeys(args, ["_patient_id", "_limit"]);
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.list_desktop_patient_encounters($1,$2) as data",
+      [clinicalUuid(requiredUuid(args._patient_id)), boundedInteger(args._limit, 1, 200)],
+    ));
+    return decodeJson(row.data);
+  }
+  if (name === "get_desktop_note") {
+    exactKeys(args, ["_note_id"]);
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.get_desktop_note($1) as data",
+      [clinicalUuid(requiredUuid(args._note_id))],
+    ));
+    return decodeJson(row.data);
+  }
+  if (name === "get_desktop_patient_timeline") {
+    exactKeys(args, ["_patient_id", "_limit"]);
+    return (await tx.query("select * from clinical_core.get_desktop_patient_timeline($1,$2)", [
+      clinicalUuid(requiredUuid(args._patient_id)), boundedInteger(args._limit, 1, 500),
+    ])).rows;
+  }
   throw new ProductionDesktopError("operation_refused");
 }
 
@@ -406,6 +517,35 @@ function boundedScalarMetadata(value: unknown): Record<string, string | number |
   }
   if (JSON.stringify(value).length > 2048) throw invalid();
   return Object.fromEntries(entries) as Record<string, string | number | boolean>;
+}
+
+function boundedNoteContent(value: unknown): Record<string, string> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw invalid();
+  const entries = Object.entries(value as Record<string, unknown>);
+  if (entries.length > 64 || entries.some(([key, content]) => !/^[A-Za-z0-9 _-]{1,60}$/.test(key)
+    || typeof content !== "string" || content.length > 65_536)) throw invalid();
+  if (JSON.stringify(value).length > 262_144) throw invalid();
+  return Object.fromEntries(entries) as Record<string, string>;
+}
+
+function boundedProvenance(value: unknown): Array<Record<string, string | null>> {
+  if (!Array.isArray(value) || value.length > 50) throw invalid();
+  const allowed = new Set([
+    "appointment", "encounter", "lab_observation", "lab_document", "patient_form", "chart_item",
+    "practitioner_entered", "transcript", "differential_question", "lens_evaluation",
+  ]);
+  return value.map((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw invalid();
+    const item = entry as Record<string, unknown>;
+    exactKeys(item, ["sectionKey", "refType", "refId", "label"]);
+    const refId = optionalUuid(item.refId);
+    const refType = requiredString(item.refType, 32);
+    if (!allowed.has(refType)) throw invalid();
+    return {
+      sectionKey: requiredString(item.sectionKey, 60), refType, refId,
+      label: requiredString(item.label, 200),
+    };
+  });
 }
 
 function first<Row extends Record<string, unknown>>(result: { rows: Row[] }): Row {

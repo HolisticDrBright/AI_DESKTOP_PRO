@@ -104,9 +104,15 @@ export async function applyProductionClinicalCoreMigrations(
         + (select count(*) from clinical_core.review_queue_items)
         + (select count(*) from clinical_core.appointments)
         + (select count(*) from clinical_core.appointment_status_events)
+        + (select count(*) from clinical_core.encounters)
+        + (select count(*) from clinical_core.clinical_notes)
+        + (select count(*) from clinical_core.clinical_note_versions)
+        + (select count(*) from clinical_core.note_signatures)
+        + (select count(*) from clinical_core.note_addenda)
+        + (select count(*) from clinical_core.note_provenance_refs)
       )::int as clinical_row_count`);
     const row = verification.rows[0];
-    if (!row || Number(row.table_count) !== 20 || Number(row.contract_count) !== 2
+    if (!row || Number(row.table_count) !== 26 || Number(row.contract_count) !== 2
       || Number(row.clinical_row_count) !== 0) {
       throw new ProductionClinicalCoreMigrationError("verification_failed");
     }
