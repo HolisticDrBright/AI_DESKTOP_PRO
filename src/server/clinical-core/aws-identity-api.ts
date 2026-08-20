@@ -29,6 +29,12 @@ import {
   type ConsumerClinicalCollection,
   type PrivacyRequestKind,
 } from "./aws-consumer-clinical-records";
+import {
+  createAwsDesktopCompatibilityAdapter,
+  DesktopCompatibilityError,
+  validateDesktopCompatibilityRequest,
+  type DesktopCompatibilityAdapter,
+} from "./aws-desktop-compatibility";
 
 export type ApiGatewayV2Event = {
   routeKey?: string;
@@ -61,7 +67,7 @@ type RouteDefinition = {
     | "get_consent_artifact"
     | "get_connection" | "import_lab" | "list_lab_imports" | "review_lab" | "list_labs"
     | "record_clinical" | "list_clinical" | "list_consent_history"
-    | "submit_privacy_request" | "list_privacy_requests";
+    | "submit_privacy_request" | "list_privacy_requests" | "desktop_compatibility";
 };
 
 const ROUTES: Readonly<Record<string, RouteDefinition>> = {
@@ -85,6 +91,7 @@ const ROUTES: Readonly<Record<string, RouteDefinition>> = {
   "GET /clinical-core/consumer/privacy/consents": { pool: "consumer", purpose: "consent_management", operation: "list_consent_history" },
   "POST /clinical-core/consumer/privacy/requests": { pool: "consumer", purpose: "consent_management", operation: "submit_privacy_request" },
   "GET /clinical-core/consumer/privacy/requests": { pool: "consumer", purpose: "consent_management", operation: "list_privacy_requests" },
+  "POST /clinical-core/workforce/data-compatibility": { pool: "workforce", purpose: "clinical_data", operation: "desktop_compatibility" },
 };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -97,6 +104,7 @@ export function createAwsIdentityApiHandler(input: {
   adapter?: AwsSyntheticIdentityConsentAdapter;
   clinicalStateAdapter?: AwsSyntheticClinicalStateAdapter;
   clinicalRecordsAdapter?: AwsConsumerClinicalRecordsAdapter;
+  desktopCompatibilityAdapter?: DesktopCompatibilityAdapter;
   configuration: IdentityApiConfiguration;
 }) {
   const adapter = input.adapter ?? (input.database ? createAwsSyntheticIdentityConsentAdapter(input.database) : undefined);
@@ -104,6 +112,8 @@ export function createAwsIdentityApiHandler(input: {
     ?? (input.database ? createAwsSyntheticClinicalStateAdapter(input.database) : undefined);
   const clinicalRecordsAdapter = input.clinicalRecordsAdapter
     ?? (input.database ? createAwsConsumerClinicalRecordsAdapter(input.database) : undefined);
+  const desktopCompatibilityAdapter = input.desktopCompatibilityAdapter
+    ?? (input.database ? createAwsDesktopCompatibilityAdapter(input.database) : undefined);
   if (!adapter) throw new Error("identity_api_adapter_required");
   validateConfiguration(input.configuration);
 
@@ -116,6 +126,9 @@ export function createAwsIdentityApiHandler(input: {
         && !clinicalStateAdapter) throw new Error("clinical_state_api_adapter_required");
       if (["record_clinical", "list_clinical", "list_consent_history", "submit_privacy_request", "list_privacy_requests"].includes(route.operation)
         && !clinicalRecordsAdapter) throw new Error("consumer_clinical_api_adapter_required");
+      if (route.operation === "desktop_compatibility" && !desktopCompatibilityAdapter) {
+        throw new Error("desktop_compatibility_adapter_required");
+      }
       if (route.operation === "posture") {
         if (event.body) throw new IdentityApiError("request_invalid");
         return response(200, {
@@ -188,6 +201,11 @@ export function createAwsIdentityApiHandler(input: {
         const connectionId = event.queryStringParameters?.connectionId ?? "";
         if (!UUID.test(connectionId)) throw new IdentityApiError("request_invalid");
         return response(200, { data: await clinicalRecordsAdapter!.listPrivacyRequests(context, connectionId) });
+      }
+      if (route.operation === "desktop_compatibility") {
+        const body = parseBody(event);
+        const request = validateDesktopCompatibilityRequest(context, body);
+        return response(200, { data: await desktopCompatibilityAdapter!.execute(context, request) });
       }
       const body = parseBody(event);
 
@@ -306,6 +324,9 @@ export function createAwsIdentityApiHandler(input: {
           : error.category === "consent_required" || error.category === "conflict" ? 409
             : error.category === "database_unavailable" ? 503 : 400;
         return response(status, { error: error.category });
+      }
+      if (error instanceof DesktopCompatibilityError) {
+        return response(error.category === "operation_refused" ? 403 : 503, { error: error.category });
       }
       return response(503, { error: "service_unavailable" });
     }

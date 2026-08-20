@@ -20,6 +20,10 @@
     {
       "version": "20260821030000",
       "file": "20260821030000_consumer_clinical_records_privacy.sql"
+    },
+    {
+      "version": "20260821040000",
+      "file": "20260821040000_desktop_compatibility_boundary.sql"
     }
   ]
 }

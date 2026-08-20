@@ -211,7 +211,7 @@ function classifyDatabaseRejection(error: unknown): ClinicalCoreDatabaseRejectio
   if (/\b(request_context_refused|synthetic_context_refused|clinical_role_required|consumer_identity_required|consent_actor_refused|consumer_connection_refused)\b/.test(message)) {
     return new ClinicalCoreDatabaseRejection("identity_refused");
   }
-  if (/\b(invitation_shape_invalid|invitation_invalid_or_expired|synthetic_patient_not_found|connection_not_invitable|connection_state_invalid|approved_artifact_required|consent_scope_invalid|consent_precondition_failed|consent_already_active|active_consent_required|idempotency_conflict|resource_version_conflict|clinical_record_consent_required|verified_connection_required|connection_required|clinical_collection_invalid|clinical_query_invalid|clinical_record_invalid|privacy_request_invalid)\b/.test(message)) {
+  if (/\b(invitation_shape_invalid|invitation_invalid_or_expired|synthetic_patient_not_found|connection_not_invitable|connection_state_invalid|approved_artifact_required|consent_scope_invalid|consent_precondition_failed|consent_already_active|active_consent_required|idempotency_conflict|resource_version_conflict|clinical_record_consent_required|verified_connection_required|connection_required|clinical_collection_invalid|clinical_query_invalid|clinical_record_invalid|privacy_request_invalid|compatibility_request_invalid|compatibility_tenant_refused|compatibility_operation_not_ported|compatibility_handler_missing)\b/.test(message)) {
     return new ClinicalCoreDatabaseRejection("operation_refused");
   }
   return undefined;

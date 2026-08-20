@@ -20,7 +20,7 @@ const base = {
     "consent_enforcement", "durable_audit", "organization_cloudtrail", "guardduty",
     "security_hub", "aws_config", "access_analyzer", "backup_restore_rehearsal",
     "incident_response_rehearsal", "vulnerability_gate", "mobile_secure_storage_review",
-    "junction_approval", "passio_approval", "clinical_ai_approval",
+    "junction_approval", "passio_approval", "clinical_ai_approval", "desktop_compatibility_contract",
   ].map((name) => [name, "approved"])),
   runtime_boundaries: {
     desktop_compute: "ecs_fargate",
@@ -33,6 +33,7 @@ const base = {
     fly_removed: "approved",
     supabase_saas_removed: "approved",
     migration_reconciled: "approved",
+    desktop_operations_migrated: "approved",
     forbidden_phi_services_absent: "approved",
   },
   approvals: Object.fromEntries(["legal_compliance", "security", "clinical_safety", "engineering"].map((name) => [name, {

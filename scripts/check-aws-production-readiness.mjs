@@ -33,6 +33,7 @@ const requiredControls = [
   "junction_approval",
   "passio_approval",
   "clinical_ai_approval",
+  "desktop_compatibility_contract",
 ];
 const requiredApprovals = ["legal_compliance", "security", "clinical_safety", "engineering"];
 const requiredRuntimeBoundaries = {
@@ -46,6 +47,7 @@ const requiredRuntimeBoundaries = {
   fly_removed: "approved",
   supabase_saas_removed: "approved",
   migration_reconciled: "approved",
+  desktop_operations_migrated: "approved",
   forbidden_phi_services_absent: "approved",
 };
 if (manifest.schema_version !== 1) blockers.push("schema_version");

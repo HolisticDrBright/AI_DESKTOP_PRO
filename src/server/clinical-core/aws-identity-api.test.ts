@@ -185,4 +185,28 @@ describe("authenticated synthetic identity API", () => {
     expect(result.statusCode).toBe(404);
     expect(api.service.issueInvitation).not.toHaveBeenCalled();
   });
+
+  test("routes reviewed Desktop operations through the workforce-only compatibility adapter", async () => {
+    const service = adapter();
+    const desktopCompatibilityAdapter = { execute: vi.fn(async () => [{ id: "synthetic-patient" }]) };
+    const run = createAwsIdentityApiHandler({
+      adapter: service,
+      desktopCompatibilityAdapter,
+      configuration: {
+        workforceIssuer: WORKFORCE_ISSUER, workforceAudience: WORKFORCE_AUD,
+        consumerIssuer: CONSUMER_ISSUER, consumerAudience: CONSUMER_AUD,
+      },
+    });
+    const result = await run(event("POST /clinical-core/workforce/data-compatibility", "workforce", {
+      kind: "rpc",
+      functionName: "get_patient_overview",
+      args: { _organization_id: ORG, _patient_id: PATIENT },
+    }));
+    expect(result.statusCode).toBe(200);
+    expect(JSON.parse(result.body)).toEqual({ data: [{ id: "synthetic-patient" }] });
+    expect(desktopCompatibilityAdapter.execute).toHaveBeenCalledWith(
+      expect.objectContaining({ actorPersonId: PERSON, organizationId: ORG }),
+      expect.objectContaining({ kind: "rpc", functionName: "get_patient_overview" }),
+    );
+  });
 });

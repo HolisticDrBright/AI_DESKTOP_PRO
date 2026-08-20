@@ -323,6 +323,14 @@
         "Target": { "Fn::Sub": "integrations/${IdentityApiIntegration}" }
       }
     },
+    "WorkforceDesktopCompatibilityRoute": {
+      "Type": "AWS::ApiGatewayV2::Route",
+      "Properties": {
+        "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "POST /clinical-core/workforce/data-compatibility",
+        "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "WorkforceJwtAuthorizer" },
+        "Target": { "Fn::Sub": "integrations/${IdentityApiIntegration}" }
+      }
+    },
     "IdentityApiInvokePermission": {
       "Type": "AWS::Lambda::Permission",
       "Properties": {
@@ -347,7 +355,7 @@
   "Outputs": {
     "ContractVersion": { "Value": "clinical-core-authenticated-api/1" },
     "IdentityApiFunctionArn": { "Value": { "Fn::GetAtt": ["IdentityApiFunction", "Arn"] } },
-    "RoutesEnabled": { "Value": "19" },
+    "RoutesEnabled": { "Value": "21" },
     "PhiAllowed": { "Value": "false" }
   }
 }

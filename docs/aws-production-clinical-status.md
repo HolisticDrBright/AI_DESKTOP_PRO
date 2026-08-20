@@ -61,6 +61,20 @@ outside literal conditionals, and verifies that every RPC has an authored
 PostgreSQL definition in the legacy migration history. This proves the port's
 scope; it does not claim those definitions are Aurora-portable or deployed.
 
+The authenticated AWS API now also contains the workforce-only
+`POST /clinical-core/workforce/data-compatibility` boundary. It validates the
+reviewed operation allowlist, rejects cross-organization RPC and read requests,
+sets the immutable Cognito-backed request context, and invokes only a registered
+uniform database wrapper. Migration `20260821040000` creates that registry and
+dispatcher with zero enabled operations. The API role cannot change the
+registry. This is intentionally fail-closed until all 222 wrappers have been
+ported and the deployed registry is reconciled to the source manifest.
+
+Production activation separately requires the
+`desktop_compatibility_contract` control and the
+`desktop_operations_migrated` runtime boundary to be approved. Neither may be
+approved from the existence of the endpoint alone.
+
 A dedicated production member account now exists as account `173535830222`.
 Account `588966314750` remains synthetic staging and account `449901517958`
 remains the management account; both are explicitly refused by the production

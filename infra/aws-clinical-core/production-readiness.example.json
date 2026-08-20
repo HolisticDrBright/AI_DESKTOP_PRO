@@ -30,7 +30,8 @@
     "mobile_secure_storage_review": "blocked",
     "junction_approval": "blocked",
     "passio_approval": "blocked",
-    "clinical_ai_approval": "blocked"
+    "clinical_ai_approval": "blocked",
+    "desktop_compatibility_contract": "blocked"
   },
   "runtime_boundaries": {
     "desktop_compute": "blocked",
@@ -43,6 +44,7 @@
     "fly_removed": "blocked",
     "supabase_saas_removed": "blocked",
     "migration_reconciled": "blocked",
+    "desktop_operations_migrated": "blocked",
     "forbidden_phi_services_absent": "blocked"
   },
   "approvals": {
