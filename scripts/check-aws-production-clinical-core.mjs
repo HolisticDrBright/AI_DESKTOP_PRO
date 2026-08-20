@@ -16,7 +16,7 @@ const errors = [];
 const assert = (condition, message) => { if (!condition) errors.push(message); };
 
 assert(manifest.contract_version === "clinical-core-migrations/1", "generated manifest contract is invalid");
-assert(manifest.migrations.length === 13, "expected six transformed migrations and seven production overlays");
+assert(manifest.migrations.length === 14, "expected six transformed migrations and eight production overlays");
 assert(new Set(manifest.migrations.map((entry) => entry.version)).size === manifest.migrations.length,
   "migration versions must be unique");
 
@@ -69,6 +69,8 @@ const encounterOverlay = readFileSync(path.join(root, "infra", "aws-clinical-cor
   "20260821100000_production_encounters_notes.sql"), "utf8");
 const overviewOverlay = readFileSync(path.join(root, "infra", "aws-clinical-core", "production-migrations",
   "20260821110000_production_patient_overview.sql"), "utf8");
+const syncControlOverlay = readFileSync(path.join(root, "infra", "aws-clinical-core", "production-migrations",
+  "20260821120000_production_patient_sync_control.sql"), "utf8");
 assert(overlay.includes("_organization_id uuid") && overlay.includes("_first_name text")
   && overlay.includes("_last_name text") && overlay.includes("_date_of_birth date")
   && overlay.includes("_sex text") && overlay.includes("_mrn text")
@@ -163,6 +165,24 @@ assert(overviewOverlay.includes("clinical_core.get_patient_overview")
   && overviewOverlay.includes("'No allergy list recorded'")
   && overviewOverlay.includes("limit 10"),
 "patient overview lacks tenant gate, contact minimization, explicit missing-data state, or bounded changes");
+for (const operation of [
+  "create_sync_invitation", "pause_sync_connection", "resume_sync_connection",
+  "revoke_sync_connection", "set_sync_consent_scope", "get_patient_sync_overview",
+  "get_org_sync_operations",
+]) assert(syncControlOverlay.includes(`clinical_core.${operation}`), `missing production sync-control operation ${operation}`);
+assert(syncControlOverlay.includes("gen_random_bytes(8)")
+  && syncControlOverlay.includes("substr(translate(rtrim(encode")
+  && syncControlOverlay.includes("digest(_token,'sha256')")
+  && syncControlOverlay.includes("'approved_consent_artifact_required'")
+  && syncControlOverlay.includes("'lab_results_import'")
+  && syncControlOverlay.includes("connection_version_conflict")
+  && syncControlOverlay.includes("connection_revoked")
+  && syncControlOverlay.includes("provider.state='active'"),
+"sync controls lack short one-time code hashing, governed consent, lab scope, concurrency, revocation, or provider gate");
+const syncAudits = syncControlOverlay.match(/insert into clinical_audit\.events[\s\S]*?;/g)?.join("\n") ?? "";
+assert(!/['"]reason['"]\s*,\s*_reason/i.test(syncAudits)
+  && syncAudits.includes("'reason_present',true"),
+"sync audit must retain reason presence only, never reason text");
 
 if (errors.length) {
   for (const error of errors) console.error(`ERROR: ${error}`);
@@ -170,4 +190,4 @@ if (errors.length) {
 }
 
 const releaseHash = createHash("sha256").update(combined).digest("hex");
-console.log(`Production clinical-core gate passed: 13 migrations, zero seeded rows (${releaseHash}).`);
+console.log(`Production clinical-core gate passed: 14 migrations, zero seeded rows (${releaseHash}).`);

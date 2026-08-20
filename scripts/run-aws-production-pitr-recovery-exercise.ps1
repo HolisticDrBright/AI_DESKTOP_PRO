@@ -106,8 +106,8 @@ select
   (select count(*)::int from clinical_audit.events)
 "@
   $sourceVector = @($sourceCounts.records[0] | ForEach-Object { [int64]$_.longValue })
-  if (($sourceVector -join ",") -ne "13,26,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0") {
-    throw "Source database is not the reviewed empty 13-migration/26-table state."
+  if (($sourceVector -join ",") -ne "14,26,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0") {
+    throw "Source database is not the reviewed empty 14-migration/26-table state."
   }
 
   $securityGroups = @($source.VpcSecurityGroups | ForEach-Object { $_.VpcSecurityGroupId })

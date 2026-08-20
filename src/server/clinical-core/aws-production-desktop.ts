@@ -52,6 +52,13 @@ const CORE_RPCS = new Set([
   "get_desktop_note",
   "get_desktop_patient_timeline",
   "get_patient_overview",
+  "get_patient_sync_overview",
+  "get_org_sync_operations",
+  "create_sync_invitation",
+  "pause_sync_connection",
+  "resume_sync_connection",
+  "revoke_sync_connection",
+  "set_sync_consent_scope",
 ]);
 const CORE_SELECTS = new Set(["patient_profiles", "lab_documents"]);
 
@@ -386,6 +393,68 @@ async function executeCoreRpc(
     const row = first(await tx.query<{ data: unknown }>(
       "select clinical_core.get_patient_overview($1,$2) as data",
       [clinicalUuid(context.organizationId), clinicalUuid(requiredUuid(args._patient_id))],
+    ));
+    return decodeJson(row.data);
+  }
+  if (name === "get_patient_sync_overview") {
+    exactKeys(args, ["_patient_id"]);
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.get_patient_sync_overview($1) as data",
+      [clinicalUuid(requiredUuid(args._patient_id))],
+    ));
+    return decodeJson(row.data);
+  }
+  if (name === "get_org_sync_operations") {
+    exactKeys(args, ["_organization_id"]);
+    if (args._organization_id !== context.organizationId) throw invalid();
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.get_org_sync_operations($1) as data",
+      [clinicalUuid(context.organizationId)],
+    ));
+    return decodeJson(row.data);
+  }
+  if (name === "create_sync_invitation") {
+    exactKeys(args, ["_organization_id", "_patient_id"]);
+    if (args._organization_id !== context.organizationId) throw invalid();
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.create_sync_invitation($1,$2) as data",
+      [clinicalUuid(context.organizationId), clinicalUuid(requiredUuid(args._patient_id))],
+    ));
+    return decodeJson(row.data);
+  }
+  if (name === "pause_sync_connection" || name === "resume_sync_connection") {
+    exactKeys(args, ["_connection_id", "_expected_version"]);
+    const row = first(await tx.query<{ data: unknown }>(
+      `select clinical_core.${name}($1,$2) as data`,
+      [clinicalUuid(requiredUuid(args._connection_id)), boundedInteger(args._expected_version, 1, 1_000_000)],
+    ));
+    return decodeJson(row.data);
+  }
+  if (name === "revoke_sync_connection") {
+    exactKeys(args, ["_connection_id", "_expected_version", "_reason"]);
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.revoke_sync_connection($1,$2,$3) as data",
+      [
+        clinicalUuid(requiredUuid(args._connection_id)), boundedInteger(args._expected_version, 1, 1_000_000),
+        requiredString(args._reason, 500),
+      ],
+    ));
+    return decodeJson(row.data);
+  }
+  if (name === "set_sync_consent_scope") {
+    exactKeys(args, [
+      "_connection_id", "_scope", "_grant", "_artifact_title", "_artifact_version",
+      "_jurisdiction", "_method", "_authority",
+    ]);
+    if (typeof args._grant !== "boolean") throw invalid();
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.set_sync_consent_scope($1,$2,$3,$4,$5,$6,$7,$8) as data",
+      [
+        clinicalUuid(requiredUuid(args._connection_id)), requiredString(args._scope, 64), args._grant,
+        optionalString(args._artifact_title, 200), optionalString(args._artifact_version, 64),
+        optionalString(args._jurisdiction, 64), requiredString(args._method, 32),
+        requiredString(args._authority, 32),
+      ],
     ));
     return decodeJson(row.data);
   }

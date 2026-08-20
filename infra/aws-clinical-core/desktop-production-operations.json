@@ -183,6 +183,48 @@
       "source": "infra/aws-clinical-core/production-migrations/20260821110000_production_patient_overview.sql"
     },
     {
+      "kind": "rpc",
+      "name": "get_patient_sync_overview",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821120000_production_patient_sync_control.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "get_org_sync_operations",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821120000_production_patient_sync_control.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "create_sync_invitation",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821120000_production_patient_sync_control.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "pause_sync_connection",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821120000_production_patient_sync_control.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "resume_sync_connection",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821120000_production_patient_sync_control.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "revoke_sync_connection",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821120000_production_patient_sync_control.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "set_sync_consent_scope",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821120000_production_patient_sync_control.sql"
+    },
+    {
       "kind": "select",
       "name": "lab_documents",
       "implementation": "native_production_adapter",

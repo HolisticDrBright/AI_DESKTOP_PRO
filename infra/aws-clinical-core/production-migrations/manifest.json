@@ -28,6 +28,10 @@
     {
       "version": "20260821110000",
       "file": "20260821110000_production_patient_overview.sql"
+    },
+    {
+      "version": "20260821120000",
+      "file": "20260821120000_production_patient_sync_control.sql"
     }
   ]
 }

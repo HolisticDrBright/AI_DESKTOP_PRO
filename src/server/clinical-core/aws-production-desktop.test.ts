@@ -17,6 +17,7 @@ const QUEUE_ITEM = "77777777-7777-4777-8777-777777777777";
 const APPOINTMENT = "88888888-8888-4888-8888-888888888888";
 const ENCOUNTER = "99999999-9999-4999-8999-999999999999";
 const NOTE = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const CONNECTION = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 
 const context: ProductionRequestContext = {
   actorPersonId: PERSON,
@@ -561,6 +562,67 @@ describe("AWS production Desktop adapter", () => {
       args: { _organization_id: ORG, _patient_id: PATIENT },
     })).resolves.toMatchObject({ patientId: PATIENT, demographics: { hasEmail: false, hasPhone: false } });
     expect(test.calls[1]?.sql).toBe("select clinical_core.get_patient_overview($1,$2) as data");
+  });
+
+  it("routes the governed patient-sync control plane without provider-specific fallback", async () => {
+    const operations: Array<{ functionName: string; args: Record<string, unknown>; sql: string }> = [
+      {
+        functionName: "get_patient_sync_overview", args: { _patient_id: PATIENT },
+        sql: "select clinical_core.get_patient_sync_overview($1) as data",
+      },
+      {
+        functionName: "get_org_sync_operations", args: { _organization_id: ORG },
+        sql: "select clinical_core.get_org_sync_operations($1) as data",
+      },
+      {
+        functionName: "create_sync_invitation", args: { _organization_id: ORG, _patient_id: PATIENT },
+        sql: "select clinical_core.create_sync_invitation($1,$2) as data",
+      },
+      {
+        functionName: "pause_sync_connection", args: { _connection_id: CONNECTION, _expected_version: 1 },
+        sql: "select clinical_core.pause_sync_connection($1,$2) as data",
+      },
+      {
+        functionName: "resume_sync_connection", args: { _connection_id: CONNECTION, _expected_version: 2 },
+        sql: "select clinical_core.resume_sync_connection($1,$2) as data",
+      },
+      {
+        functionName: "revoke_sync_connection",
+        args: { _connection_id: CONNECTION, _expected_version: 3, _reason: "patient request" },
+        sql: "select clinical_core.revoke_sync_connection($1,$2,$3) as data",
+      },
+      {
+        functionName: "set_sync_consent_scope",
+        args: {
+          _connection_id: CONNECTION, _scope: "lab_results_import", _grant: true,
+          _artifact_title: "Laboratory data import", _artifact_version: "1.0",
+          _jurisdiction: "US", _method: "in_person", _authority: "self",
+        },
+        sql: "select clinical_core.set_sync_consent_scope($1,$2,$3,$4,$5,$6,$7,$8) as data",
+      },
+    ];
+    for (const operation of operations) {
+      const test = harness({ ok: true });
+      await expect(test.adapter.execute(context, {
+        kind: "rpc", functionName: operation.functionName, args: operation.args,
+      })).resolves.toEqual({ ok: true });
+      expect(test.calls[1]?.sql).toBe(operation.sql);
+      expect(test.fallback.execute).not.toHaveBeenCalled();
+    }
+  });
+
+  it("rejects cross-tenant sync operations and unreasoned revocation before Aurora", async () => {
+    const test = harness();
+    await expect(test.adapter.execute(context, {
+      kind: "rpc", functionName: "get_org_sync_operations",
+      args: { _organization_id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc" },
+    })).rejects.toEqual(new ProductionDesktopError("request_invalid"));
+    await expect(test.adapter.execute(context, {
+      kind: "rpc", functionName: "revoke_sync_connection",
+      args: { _connection_id: CONNECTION, _expected_version: 1, _reason: "" },
+    })).rejects.toEqual(new ProductionDesktopError("request_invalid"));
+    expect(test.calls).toHaveLength(2);
+    expect(test.calls.every((call) => call.sql.includes("clinical_private.set_request_context"))).toBe(true);
   });
 
   it("rejects cross-tenant notes, nested content, invalid provenance, and oversized corrections", async () => {
