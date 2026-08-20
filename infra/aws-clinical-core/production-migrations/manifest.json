@@ -8,6 +8,10 @@
     {
       "version": "20260821060000",
       "file": "20260821060000_production_registered_audit_actions.sql"
+    },
+    {
+      "version": "20260821070000",
+      "file": "20260821070000_production_workforce_memberships.sql"
     }
   ]
 }

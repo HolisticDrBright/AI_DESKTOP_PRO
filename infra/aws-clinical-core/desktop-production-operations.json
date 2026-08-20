@@ -33,6 +33,30 @@
       "source": "infra/aws-clinical-core/production-migrations/20260821060000_production_registered_audit_actions.sql"
     },
     {
+      "kind": "rpc",
+      "name": "list_my_organizations",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821070000_production_workforce_memberships.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "list_org_members",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821070000_production_workforce_memberships.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "set_org_member_role",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821070000_production_workforce_memberships.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "remove_org_member",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821070000_production_workforce_memberships.sql"
+    },
+    {
       "kind": "select",
       "name": "lab_documents",
       "implementation": "native_production_adapter",

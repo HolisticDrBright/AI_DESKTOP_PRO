@@ -27,6 +27,10 @@ const CORE_RPCS = new Set([
   "list_patient_lab_observations",
   "record_registered_audit_event",
   "list_audit_events",
+  "list_my_organizations",
+  "list_org_members",
+  "set_org_member_role",
+  "remove_org_member",
 ]);
 const CORE_SELECTS = new Set(["patient_profiles", "lab_documents"]);
 
@@ -122,6 +126,38 @@ async function executeCoreRpc(
       "select * from clinical_core.list_audit_events($1,$2)",
       [clinicalUuid(context.organizationId), limit],
     )).rows;
+  }
+  if (name === "list_my_organizations") {
+    exactKeys(args, []);
+    return (await tx.query("select * from clinical_core.list_my_organizations()", [])).rows;
+  }
+  if (name === "list_org_members") {
+    exactKeys(args, ["_organization_id"]);
+    if (args._organization_id !== context.organizationId) throw invalid();
+    return (await tx.query(
+      "select * from clinical_core.list_org_members($1)",
+      [clinicalUuid(context.organizationId)],
+    )).rows;
+  }
+  if (name === "set_org_member_role") {
+    exactKeys(args, ["_membership_id", "_role"]);
+    const membershipId = requiredUuid(args._membership_id);
+    const role = requiredString(args._role, 16);
+    if (!["owner", "admin", "practitioner", "staff"].includes(role)) throw invalid();
+    await tx.query(
+      "select clinical_core.set_org_member_role($1,$2)",
+      [clinicalUuid(membershipId), role],
+    );
+    return null;
+  }
+  if (name === "remove_org_member") {
+    exactKeys(args, ["_membership_id"]);
+    const membershipId = requiredUuid(args._membership_id);
+    await tx.query(
+      "select clinical_core.remove_org_member($1)",
+      [clinicalUuid(membershipId)],
+    );
+    return null;
   }
   throw new ProductionDesktopError("operation_refused");
 }
@@ -224,6 +260,12 @@ function optionalUuid(value: unknown): string | null {
   if (value === null || value === undefined || value === "") return null;
   if (typeof value !== "string" || !UUID.test(value)) throw invalid();
   return value;
+}
+
+function requiredUuid(value: unknown): string {
+  const candidate = optionalUuid(value);
+  if (!candidate) throw invalid();
+  return candidate;
 }
 
 function boundedInteger(value: unknown, min: number, max: number): number {

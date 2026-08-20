@@ -12,6 +12,7 @@ const ORG = "22222222-2222-4222-8222-222222222222";
 const PATIENT = "33333333-3333-4333-8333-333333333333";
 const OBSERVATION = "44444444-4444-4444-8444-444444444444";
 const AUDIT = "55555555-5555-4555-8555-555555555555";
+const MEMBERSHIP = "66666666-6666-4666-8666-666666666666";
 
 const context: ProductionRequestContext = {
   actorPersonId: PERSON,
@@ -161,6 +162,65 @@ describe("AWS production Desktop adapter", () => {
     })).rejects.toEqual(new ProductionDesktopError("request_invalid"));
     expect(test.calls).toHaveLength(1);
     expect(test.calls[0]?.sql).toContain("clinical_private.set_request_context");
+  });
+
+  it("lists only the production identity's organizations through the governed function", async () => {
+    const test = harness({ organization_id: ORG, name: "Clinic", slug: ORG, role: "owner" });
+    const result = await test.adapter.execute(context, {
+      kind: "rpc", functionName: "list_my_organizations", args: {},
+    });
+    expect(result).toEqual([expect.objectContaining({ organization_id: ORG, role: "owner" })]);
+    expect(test.calls[1]?.sql).toBe("select * from clinical_core.list_my_organizations()");
+  });
+
+  it("lists the workforce roster only through the tenant-scoped production function", async () => {
+    const test = harness({
+      membership_id: MEMBERSHIP,
+      user_id: PERSON,
+      email: null,
+      display_name: null,
+      role: "practitioner",
+      status: "active",
+      joined_at: "2026-08-20T00:00:00.000Z",
+    });
+    const result = await test.adapter.execute(context, {
+      kind: "rpc", functionName: "list_org_members", args: { _organization_id: ORG },
+    });
+    expect(result).toEqual([expect.objectContaining({ membership_id: MEMBERSHIP, email: null })]);
+    expect(test.calls[1]?.sql).toBe("select * from clinical_core.list_org_members($1)");
+    expect(test.calls[1]?.values).toEqual([{ kind: "uuid", value: ORG }]);
+  });
+
+  it("changes or suspends a membership only through guarded production functions", async () => {
+    const roleTest = harness({});
+    await expect(roleTest.adapter.execute(context, {
+      kind: "rpc",
+      functionName: "set_org_member_role",
+      args: { _membership_id: MEMBERSHIP, _role: "admin" },
+    })).resolves.toBeNull();
+    expect(roleTest.calls[1]?.sql).toBe("select clinical_core.set_org_member_role($1,$2)");
+    expect(roleTest.calls[1]?.values).toEqual([{ kind: "uuid", value: MEMBERSHIP }, "admin"]);
+
+    const removeTest = harness({});
+    await expect(removeTest.adapter.execute(context, {
+      kind: "rpc",
+      functionName: "remove_org_member",
+      args: { _membership_id: MEMBERSHIP },
+    })).resolves.toBeNull();
+    expect(removeTest.calls[1]?.sql).toBe("select clinical_core.remove_org_member($1)");
+  });
+
+  it("keeps legacy email invitation and self-activation outside the production core", async () => {
+    const test = harness();
+    await expect(test.adapter.execute(context, {
+      kind: "rpc",
+      functionName: "add_org_member",
+      args: { _organization_id: ORG, _email: "person@example.test", _role: "staff" },
+    })).resolves.toEqual({ delegated: true });
+    await expect(test.adapter.execute(context, {
+      kind: "rpc", functionName: "activate_my_memberships", args: {},
+    })).resolves.toEqual({ delegated: true });
+    expect(test.fallback.execute).toHaveBeenCalledTimes(2);
   });
 
   it("refuses a cross-tenant request before touching Aurora", async () => {

@@ -16,7 +16,7 @@ const errors = [];
 const assert = (condition, message) => { if (!condition) errors.push(message); };
 
 assert(manifest.contract_version === "clinical-core-migrations/1", "generated manifest contract is invalid");
-assert(manifest.migrations.length === 8, "expected six transformed migrations and two production overlays");
+assert(manifest.migrations.length === 9, "expected six transformed migrations and three production overlays");
 assert(new Set(manifest.migrations.map((entry) => entry.version)).size === manifest.migrations.length,
   "migration versions must be unique");
 
@@ -59,6 +59,8 @@ const overlay = readFileSync(path.join(root, "infra", "aws-clinical-core", "prod
   "20260821050000_production_patient_directory.sql"), "utf8");
 const auditOverlay = readFileSync(path.join(root, "infra", "aws-clinical-core", "production-migrations",
   "20260821060000_production_registered_audit_actions.sql"), "utf8");
+const membershipOverlay = readFileSync(path.join(root, "infra", "aws-clinical-core", "production-migrations",
+  "20260821070000_production_workforce_memberships.sql"), "utf8");
 assert(overlay.includes("_organization_id uuid") && overlay.includes("_first_name text")
   && overlay.includes("_last_name text") && overlay.includes("_date_of_birth date")
   && overlay.includes("_sex text") && overlay.includes("_mrn text")
@@ -92,6 +94,18 @@ assert(auditOverlay.includes("where event.organization_id = _organization_id")
 assert(!/email|date_of_birth|authorization|cookie|payload/i.test(
   auditOverlay.match(/from \(values[\s\S]*?\) as definition/)?.[0] ?? ""),
 "registered audit definitions contain a prohibited metadata key");
+for (const operation of ["list_my_organizations", "list_org_members", "set_org_member_role", "remove_org_member"]) {
+  assert(membershipOverlay.includes(`clinical_core.${operation}`), `missing production membership operation ${operation}`);
+}
+assert(membershipOverlay.includes("caller.role in ('owner','admin')")
+  && membershipOverlay.includes("last_owner_protected")
+  && membershipOverlay.includes("self_suspension_refused")
+  && membershipOverlay.includes("set status = 'suspended'"),
+"membership administration lacks owner/admin, last-owner, self, or retention guards");
+assert(!membershipOverlay.includes("add_org_member")
+  && !membershipOverlay.includes("activate_my_memberships")
+  && !membershipOverlay.includes("_email"),
+"production membership overlay must not recreate legacy email invitation or self-activation");
 
 if (errors.length) {
   for (const error of errors) console.error(`ERROR: ${error}`);
@@ -99,4 +113,4 @@ if (errors.length) {
 }
 
 const releaseHash = createHash("sha256").update(combined).digest("hex");
-console.log(`Production clinical-core gate passed: 8 migrations, zero seeded rows (${releaseHash}).`);
+console.log(`Production clinical-core gate passed: 9 migrations, zero seeded rows (${releaseHash}).`);
