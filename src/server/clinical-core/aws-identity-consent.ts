@@ -38,6 +38,23 @@ export type SyntheticRequestContext = {
   realPatientData: false;
 };
 
+export type ProductionClinicalRequestContext = {
+  actorPersonId: string;
+  organizationId: string;
+  identityPool: IdentityPool;
+  /** Verified Cognito `sub`; opaque and never derived from contact information. */
+  identitySubject: string;
+  purpose: "identity_link" | "consent_management" | "clinical_data";
+  environment: "production-clinical";
+  dataClassification: "clinical_phi";
+  containsPhi: true;
+  realPatientData: true;
+  productionBound: true;
+};
+
+export type ClinicalRequestContext = SyntheticRequestContext | ProductionClinicalRequestContext;
+type ClinicalBoundary = "synthetic" | "production";
+
 export type InvitationResult = {
   invitationId: string;
   connectionId: string;
@@ -75,6 +92,7 @@ export type ConsentArtifactResult = {
 export class ClinicalCoreAdapterError extends Error {
   constructor(readonly category:
     | "synthetic_boundary_refused"
+    | "production_boundary_refused"
     | "request_context_invalid"
     | "invitation_invalid_or_expired"
     | "consent_precondition_failed"
@@ -84,23 +102,23 @@ export class ClinicalCoreAdapterError extends Error {
   }
 }
 
-export interface AwsSyntheticIdentityConsentAdapter {
+export interface AwsIdentityConsentAdapter<Context extends ClinicalRequestContext> {
   getCurrentConsentArtifact(input: {
-    context: SyntheticRequestContext;
+    context: Context;
     scope: ConsentScope;
   }): Promise<ConsentArtifactResult>;
   issueInvitation(input: {
-    context: SyntheticRequestContext;
+    context: Context;
     patientRecordId: string;
     expiresAt: string;
     idempotencyKey?: string;
   }): Promise<InvitationResult>;
   claimInvitation(input: {
-    context: SyntheticRequestContext;
+    context: Context;
     token: string;
   }): Promise<ConnectionResult>;
   recordConsent(input: {
-    context: SyntheticRequestContext;
+    context: Context;
     connectionId: string;
     artifactId: string;
     scope: ConsentScope;
@@ -108,12 +126,15 @@ export interface AwsSyntheticIdentityConsentAdapter {
     representativeAuthority: RepresentativeAuthority;
   }): Promise<ConsentResult>;
   revokeConsent(input: {
-    context: SyntheticRequestContext;
+    context: Context;
     connectionId: string;
     scope: ConsentScope;
     reasonCode: "patient_request" | "scope_changed" | "connection_revoked";
   }): Promise<ConsentResult>;
 }
+
+export type AwsSyntheticIdentityConsentAdapter = AwsIdentityConsentAdapter<SyntheticRequestContext>;
+export type AwsProductionIdentityConsentAdapter = AwsIdentityConsentAdapter<ProductionClinicalRequestContext>;
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const INVITATION_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -132,9 +153,22 @@ function generateInvitationCode(): string {
 export function createAwsSyntheticIdentityConsentAdapter(
   database: ClinicalCoreDatabase,
 ): AwsSyntheticIdentityConsentAdapter {
+  return createAwsIdentityConsentAdapter(database, "synthetic");
+}
+
+export function createAwsProductionIdentityConsentAdapter(
+  database: ClinicalCoreDatabase,
+): AwsProductionIdentityConsentAdapter {
+  return createAwsIdentityConsentAdapter(database, "production");
+}
+
+function createAwsIdentityConsentAdapter<Context extends ClinicalRequestContext>(
+  database: ClinicalCoreDatabase,
+  boundary: ClinicalBoundary,
+): AwsIdentityConsentAdapter<Context> {
   return {
     async getCurrentConsentArtifact(input) {
-      assertContext(input.context, "consumer", "consent_management");
+      assertContext(input.context, boundary, "consumer", "consent_management");
       if (!CONSENT_SCOPES.includes(input.scope)) {
         throw new ClinicalCoreAdapterError("consent_precondition_failed");
       }
@@ -163,7 +197,7 @@ export function createAwsSyntheticIdentityConsentAdapter(
     },
 
     async issueInvitation(input) {
-      assertContext(input.context, "workforce", "identity_link");
+      assertContext(input.context, boundary, "workforce", "identity_link");
       assertUuid(input.patientRecordId);
       const expiresAt = new Date(input.expiresAt);
       const lifetime = expiresAt.getTime() - Date.now();
@@ -195,7 +229,7 @@ export function createAwsSyntheticIdentityConsentAdapter(
     },
 
     async claimInvitation(input) {
-      assertContext(input.context, "consumer", "identity_link");
+      assertContext(input.context, boundary, "consumer", "identity_link");
       const token = normalizeInvitationCode(input.token);
       if (!INVITATION_CODE_PATTERN.test(token)) {
         throw new ClinicalCoreAdapterError("invitation_invalid_or_expired");
@@ -220,7 +254,7 @@ export function createAwsSyntheticIdentityConsentAdapter(
     },
 
     async recordConsent(input) {
-      assertContext(input.context, undefined, "consent_management");
+      assertContext(input.context, boundary, undefined, "consent_management");
       assertUuid(input.connectionId);
       assertUuid(input.artifactId);
       if (!CONSENT_SCOPES.includes(input.scope)) {
@@ -234,7 +268,7 @@ export function createAwsSyntheticIdentityConsentAdapter(
     },
 
     async revokeConsent(input) {
-      assertContext(input.context, undefined, "consent_management");
+      assertContext(input.context, boundary, undefined, "consent_management");
       assertUuid(input.connectionId);
       if (!CONSENT_SCOPES.includes(input.scope)) {
         throw new ClinicalCoreAdapterError("consent_precondition_failed");
@@ -250,7 +284,7 @@ export function createAwsSyntheticIdentityConsentAdapter(
 
 async function run<T>(
   database: ClinicalCoreDatabase,
-  context: SyntheticRequestContext,
+  context: ClinicalRequestContext,
   work: (tx: ClinicalCoreTransaction) => Promise<T>,
   operationRefusal: ClinicalCoreAdapterError["category"] = "database_unavailable",
 ): Promise<T> {
@@ -270,29 +304,35 @@ async function run<T>(
   } catch (error) {
     if (error instanceof ClinicalCoreAdapterError) throw error;
     if (error instanceof ClinicalCoreDatabaseRejection) {
-      throw new ClinicalCoreAdapterError(error.category === "identity_refused" ? "synthetic_boundary_refused" : operationRefusal);
+      throw new ClinicalCoreAdapterError(error.category === "identity_refused"
+        ? (context.environment === "production-clinical" ? "production_boundary_refused" : "synthetic_boundary_refused")
+        : operationRefusal);
     }
     throw new ClinicalCoreAdapterError("database_unavailable");
   }
 }
 
 function assertContext(
-  context: SyntheticRequestContext,
+  context: ClinicalRequestContext,
+  boundary: ClinicalBoundary,
   requiredPool: IdentityPool | undefined,
-  requiredPurpose: SyntheticRequestContext["purpose"],
+  requiredPurpose: ClinicalRequestContext["purpose"],
 ) {
+  const boundaryMatches = boundary === "synthetic"
+    ? context.environment === "synthetic-staging" && context.dataClassification === "synthetic_only"
+      && context.containsPhi === false && context.realPatientData === false
+    : context.environment === "production-clinical" && context.dataClassification === "clinical_phi"
+      && context.containsPhi === true && context.realPatientData === true
+      && "productionBound" in context && context.productionBound === true;
   if (
-    context.environment !== "synthetic-staging"
-    || context.dataClassification !== "synthetic_only"
-    || context.containsPhi !== false
-    || context.realPatientData !== false
+    !boundaryMatches
     || context.purpose !== requiredPurpose
     || (requiredPool && context.identityPool !== requiredPool)
     || !UUID_PATTERN.test(context.actorPersonId)
     || !UUID_PATTERN.test(context.organizationId)
     || !/^[A-Za-z0-9:_-]{8,128}$/.test(context.identitySubject)
   ) {
-    throw new ClinicalCoreAdapterError("synthetic_boundary_refused");
+    throw new ClinicalCoreAdapterError(boundary === "synthetic" ? "synthetic_boundary_refused" : "production_boundary_refused");
   }
 }
 

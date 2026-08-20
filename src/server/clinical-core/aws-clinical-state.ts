@@ -4,7 +4,12 @@ if (typeof window !== "undefined") {
 
 import { createHash } from "node:crypto";
 import { clinicalUuid, ClinicalCoreDatabaseRejection, type ClinicalCoreDatabase, type ClinicalCoreTransaction } from "./database";
-import { ClinicalCoreAdapterError, type SyntheticRequestContext } from "./aws-identity-consent";
+import {
+  ClinicalCoreAdapterError,
+  type ClinicalRequestContext,
+  type ProductionClinicalRequestContext,
+  type SyntheticRequestContext,
+} from "./aws-identity-consent";
 
 export type LabResultImport = {
   schemaVersion: "lab-result/1";
@@ -42,25 +47,28 @@ export type LabReviewResult = {
   duplicate: boolean;
 };
 
-export interface AwsSyntheticClinicalStateAdapter {
-  getConsumerConnection(context: SyntheticRequestContext): Promise<{
+export interface AwsClinicalStateAdapter<Context extends ClinicalRequestContext> {
+  getConsumerConnection(context: Context): Promise<{
     connectionId: string;
     patientRecordId: string;
     state: "verified" | "paused";
     verifiedAt: string;
     labResultsImportConsent: "granted" | "revoked" | "not_granted";
   } | null>;
-  importLabResult(context: SyntheticRequestContext, payload: LabResultImport): Promise<LabImportResult>;
-  reviewLabResult(context: SyntheticRequestContext, input: {
+  importLabResult(context: Context, payload: LabResultImport): Promise<LabImportResult>;
+  reviewLabResult(context: Context, input: {
     eventId: string;
     decision: "accept" | "reject";
     note?: string;
   }): Promise<LabReviewResult>;
-  listLabImports(context: SyntheticRequestContext, state: LabImportResult["state"]): Promise<Record<string, unknown>[]>;
-  listPatientLabObservations(context: SyntheticRequestContext, patientRecordId: string): Promise<Record<string, unknown>[]>;
-  listDesktopPatients?(context: SyntheticRequestContext, patientRecordId?: string): Promise<Record<string, unknown>[]>;
-  listDesktopLabDocuments?(context: SyntheticRequestContext, patientRecordId: string): Promise<Record<string, unknown>[]>;
+  listLabImports(context: Context, state: LabImportResult["state"]): Promise<Record<string, unknown>[]>;
+  listPatientLabObservations(context: Context, patientRecordId: string): Promise<Record<string, unknown>[]>;
+  listDesktopPatients?(context: Context, patientRecordId?: string): Promise<Record<string, unknown>[]>;
+  listDesktopLabDocuments?(context: Context, patientRecordId: string): Promise<Record<string, unknown>[]>;
 }
+
+export type AwsSyntheticClinicalStateAdapter = AwsClinicalStateAdapter<SyntheticRequestContext>;
+export type AwsProductionClinicalStateAdapter = AwsClinicalStateAdapter<ProductionClinicalRequestContext>;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const EXTERNAL_ID = /^[A-Za-z0-9:_-]{1,160}$/;
@@ -68,9 +76,20 @@ const EVENT_ID = /^[A-Za-z0-9:_-]{8,160}$/;
 const VERSION = /^[A-Za-z0-9._:-]{1,64}$/;
 
 export function createAwsSyntheticClinicalStateAdapter(database: ClinicalCoreDatabase): AwsSyntheticClinicalStateAdapter {
+  return createAwsClinicalStateAdapter(database, "synthetic");
+}
+
+export function createAwsProductionClinicalStateAdapter(database: ClinicalCoreDatabase): AwsProductionClinicalStateAdapter {
+  return createAwsClinicalStateAdapter(database, "production");
+}
+
+function createAwsClinicalStateAdapter<Context extends ClinicalRequestContext>(
+  database: ClinicalCoreDatabase,
+  boundary: "synthetic" | "production",
+): AwsClinicalStateAdapter<Context> {
   return {
     async getConsumerConnection(context) {
-      assertContext(context, "consumer");
+      assertContext(context, boundary, "consumer");
       const rows = await run(database, context, async (tx) => (await tx.query<{
         connection_id: string;
         patient_record_id: string;
@@ -88,7 +107,7 @@ export function createAwsSyntheticClinicalStateAdapter(database: ClinicalCoreDat
       } : null;
     },
     async importLabResult(context, payload) {
-      assertContext(context, "consumer");
+      assertContext(context, boundary, "consumer");
       validateLabImport(payload);
       const canonicalPayload = JSON.stringify({
         schemaVersion: payload.schemaVersion,
@@ -126,7 +145,7 @@ export function createAwsSyntheticClinicalStateAdapter(database: ClinicalCoreDat
     },
 
     async reviewLabResult(context, input) {
-      assertContext(context, "workforce");
+      assertContext(context, boundary, "workforce");
       if (!UUID.test(input.eventId) || !["accept", "reject"].includes(input.decision)
         || (input.note !== undefined && (input.note.trim().length === 0 || input.note.length > 500))) {
         throw new ClinicalStateError("request_invalid");
@@ -148,7 +167,7 @@ export function createAwsSyntheticClinicalStateAdapter(database: ClinicalCoreDat
     },
 
     async listLabImports(context, state) {
-      assertContext(context, "workforce");
+      assertContext(context, boundary, "workforce");
       if (!["review_pending", "conflict", "accepted", "rejected"].includes(state)) {
         throw new ClinicalStateError("request_invalid");
       }
@@ -158,27 +177,33 @@ export function createAwsSyntheticClinicalStateAdapter(database: ClinicalCoreDat
     },
 
     async listPatientLabObservations(context, patientRecordId) {
-      assertContext(context);
+      assertContext(context, boundary);
       if (!UUID.test(patientRecordId)) throw new ClinicalStateError("request_invalid");
       return run(database, context, async (tx) => (await tx.query(
         "select * from clinical_core.list_patient_lab_observations($1)", [clinicalUuid(patientRecordId)],
       )).rows, "clinical_state_refused");
     },
     async listDesktopPatients(context, patientRecordId) {
-      assertContext(context, "workforce");
+      assertContext(context, boundary, "workforce");
       if (patientRecordId !== undefined && !UUID.test(patientRecordId)) throw new ClinicalStateError("request_invalid");
+      const sql = boundary === "synthetic"
+        ? `select id, organization_id, synthetic_record_key as mrn,
+             'Synthetic'::text as first_name, synthetic_record_key as last_name,
+             null::date as date_of_birth, null::text as sex, status
+           from clinical_core.patient_records
+           where organization_id=$1 and ($2::uuid is null or id=$2)
+           order by synthetic_record_key, id limit 1000`
+        : `select id, organization_id, mrn, first_name, last_name, date_of_birth, sex, status
+           from clinical_core.patient_records
+           where organization_id=$1 and deleted_at is null and ($2::uuid is null or id=$2)
+           order by last_name, first_name, id limit 1000`;
       return run(database, context, async (tx) => (await tx.query(
-        `select id, organization_id, synthetic_record_key as mrn,
-           'Synthetic'::text as first_name, synthetic_record_key as last_name,
-           null::date as date_of_birth, null::text as sex, status
-         from clinical_core.patient_records
-         where organization_id=$1 and ($2::uuid is null or id=$2)
-         order by synthetic_record_key, id limit 1000`,
+        sql,
         [clinicalUuid(context.organizationId), patientRecordId ? clinicalUuid(patientRecordId) : null],
       )).rows, "clinical_state_refused");
     },
     async listDesktopLabDocuments(context, patientRecordId) {
-      assertContext(context, "workforce");
+      assertContext(context, boundary, "workforce");
       if (!UUID.test(patientRecordId)) throw new ClinicalStateError("request_invalid");
       return run(database, context, async (tx) => (await tx.query(
         `select id, 'AI Longevity Pro import'::text as file_name,
@@ -225,10 +250,18 @@ function bounded(value: string, min: number, max: number): boolean {
   return value.trim().length >= min && value.length <= max;
 }
 
-function assertContext(context: SyntheticRequestContext, pool?: "workforce" | "consumer") {
-  if (context.purpose !== "clinical_data" || context.environment !== "synthetic-staging"
-    || context.dataClassification !== "synthetic_only" || context.containsPhi !== false
-    || context.realPatientData !== false || (pool && context.identityPool !== pool)
+function assertContext(
+  context: ClinicalRequestContext,
+  boundary: "synthetic" | "production",
+  pool?: "workforce" | "consumer",
+) {
+  const boundaryMatches = boundary === "synthetic"
+    ? context.environment === "synthetic-staging" && context.dataClassification === "synthetic_only"
+      && context.containsPhi === false && context.realPatientData === false
+    : context.environment === "production-clinical" && context.dataClassification === "clinical_phi"
+      && context.containsPhi === true && context.realPatientData === true
+      && "productionBound" in context && context.productionBound === true;
+  if (context.purpose !== "clinical_data" || !boundaryMatches || (pool && context.identityPool !== pool)
     || !UUID.test(context.actorPersonId) || !UUID.test(context.organizationId)) {
     throw new ClinicalStateError("clinical_state_refused");
   }
@@ -236,7 +269,7 @@ function assertContext(context: SyntheticRequestContext, pool?: "workforce" | "c
 
 async function run<T>(
   database: ClinicalCoreDatabase,
-  context: SyntheticRequestContext,
+  context: ClinicalRequestContext,
   work: (tx: ClinicalCoreTransaction) => Promise<T>,
   operationRefusal: ClinicalStateError["category"],
 ): Promise<T> {

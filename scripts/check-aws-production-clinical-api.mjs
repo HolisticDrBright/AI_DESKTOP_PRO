@@ -9,6 +9,7 @@ const resources = Object.values(template.Resources ?? {});
 const role = template.Resources?.ProductionClinicalApiRole;
 const fn = template.Resources?.ProductionClinicalApiFunction;
 const handler = readFileSync(new URL("../src/server/clinical-core/aws-production-clinical-api.ts", import.meta.url), "utf8");
+const identityHandler = readFileSync(new URL("../src/server/clinical-core/aws-identity-api.ts", import.meta.url), "utf8");
 const runtime = readFileSync(new URL("../src/server/clinical-core/aws-production-clinical-lambda.ts", import.meta.url), "utf8");
 
 assert(template.Metadata?.ClinicalCore?.Environment === "production-clinical", "environment marker missing");
@@ -35,8 +36,20 @@ for (const forbidden of [
 assert(handler.includes('activationState === "approved"') && handler.includes("activationEvidenceSha256")
   && handler.includes('get("custom:production_bound") !== "true"'),
 "candidate API must require approved evidence and an immutable production-bound identity");
+assert(identityHandler.includes("createAwsProductionIdentityApiHandler")
+  && identityHandler.includes('claim(claims, "custom:production_bound") !== "true"')
+  && identityHandler.includes('claim(claims, "custom:synthetic_attested") === "true"')
+  && identityHandler.includes('environment: "production-clinical"')
+  && identityHandler.includes('containsPhi: true'),
+"candidate App/Desktop API must bind both identity planes to the production PHI context");
 assert(runtime.includes('required("PHI_ALLOWED") === "true"')
-  && runtime.includes('required("ACTIVATION_STATE")'), "candidate runtime must read both independent activation gates");
+  && runtime.includes('required("ACTIVATION_STATE")')
+  && runtime.includes('required("CLINICAL_CONSUMER_ISSUER")')
+  && runtime.includes('required("CLINICAL_CONSUMER_AUDIENCE")')
+  && runtime.includes("createAwsProductionIdentityConsentAdapter")
+  && runtime.includes("createAwsProductionClinicalStateAdapter")
+  && runtime.includes("createAwsProductionConsumerClinicalRecordsAdapter"),
+"candidate runtime must read both activation gates and use production App/Desktop adapters");
 
 if (errors.length) {
   errors.forEach((error) => console.error(`ERROR: ${error}`));

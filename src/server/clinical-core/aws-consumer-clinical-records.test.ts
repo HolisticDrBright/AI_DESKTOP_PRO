@@ -1,7 +1,12 @@
 import { describe, expect, test } from "vitest";
 import type { ClinicalCoreDatabase } from "./database";
-import type { SyntheticRequestContext } from "./aws-identity-consent";
-import { ConsumerClinicalError, canonicalPayload, createAwsConsumerClinicalRecordsAdapter } from "./aws-consumer-clinical-records";
+import type { ProductionClinicalRequestContext, SyntheticRequestContext } from "./aws-identity-consent";
+import {
+  ConsumerClinicalError,
+  canonicalPayload,
+  createAwsConsumerClinicalRecordsAdapter,
+  createAwsProductionConsumerClinicalRecordsAdapter,
+} from "./aws-consumer-clinical-records";
 
 const PERSON = "11111111-1111-4111-8111-111111111111";
 const ORG = "22222222-2222-4222-8222-222222222222";
@@ -15,6 +20,15 @@ function context(purpose: "clinical_data" | "consent_management" = "clinical_dat
     identitySubject: "synthetic-subject-001", purpose,
     environment: "synthetic-staging", dataClassification: "synthetic_only",
     containsPhi: false, realPatientData: false,
+  };
+}
+
+function productionContext(): ProductionClinicalRequestContext {
+  return {
+    actorPersonId: PERSON, organizationId: ORG, identityPool: "consumer",
+    identitySubject: "production-subject-001", purpose: "clinical_data",
+    environment: "production-clinical", dataClassification: "clinical_phi",
+    containsPhi: true, realPatientData: true, productionBound: true,
   };
 }
 
@@ -103,5 +117,15 @@ describe("AWS consumer clinical record adapter", () => {
     await expect(service.submitPrivacyRequest(context("consent_management"), {
       connectionId: CONNECTION, kind: "export",
     })).resolves.toEqual(expect.objectContaining({ requestId: VERSION_ID, status: "submitted" }));
+  });
+});
+
+describe("AWS production consumer clinical record adapter", () => {
+  test("sets the production PHI context before listing governed records", async () => {
+    const fixture = database();
+    await expect(createAwsProductionConsumerClinicalRecordsAdapter(fixture.db).listRecords(productionContext(), {
+      connectionId: CONNECTION, collection: "protocols", limit: 100,
+    })).resolves.toHaveLength(1);
+    expect(fixture.calls[0]!.parameters.slice(4)).toEqual(["clinical_data", "production-clinical", "clinical_phi"]);
   });
 });

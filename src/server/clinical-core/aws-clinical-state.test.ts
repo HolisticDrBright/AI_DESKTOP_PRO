@@ -1,7 +1,12 @@
 import { describe, expect, test } from "vitest";
 import type { ClinicalCoreDatabase } from "./database";
-import { ClinicalStateError, createAwsSyntheticClinicalStateAdapter, type LabResultImport } from "./aws-clinical-state";
-import type { SyntheticRequestContext } from "./aws-identity-consent";
+import {
+  ClinicalStateError,
+  createAwsProductionClinicalStateAdapter,
+  createAwsSyntheticClinicalStateAdapter,
+  type LabResultImport,
+} from "./aws-clinical-state";
+import type { ProductionClinicalRequestContext, SyntheticRequestContext } from "./aws-identity-consent";
 
 const PERSON = "11111111-1111-4111-8111-111111111111";
 const ORG = "22222222-2222-4222-8222-222222222222";
@@ -19,6 +24,15 @@ function context(pool: "consumer" | "workforce" = "consumer"): SyntheticRequestC
     dataClassification: "synthetic_only",
     containsPhi: false,
     realPatientData: false,
+  };
+}
+
+function productionContext(): ProductionClinicalRequestContext {
+  return {
+    actorPersonId: PERSON, organizationId: ORG, identityPool: "consumer",
+    identitySubject: "production-subject-001", purpose: "clinical_data",
+    environment: "production-clinical", dataClassification: "clinical_phi",
+    containsPhi: true, realPatientData: true, productionBound: true,
   };
 }
 
@@ -48,6 +62,12 @@ function database() {
           }
           if (sql.includes("review_lab_import")) {
             return { rows: [{ event_id: EVENT, state: "accepted", observation_id: EVENT, duplicate: false }] as unknown as Row[] };
+          }
+          if (sql.includes("get_consumer_connection")) {
+            return { rows: [{
+              connection_id: CONNECTION, patient_record_id: EVENT, state: "verified",
+              verified_at: "2026-08-20T00:00:00.000Z", lab_results_import_consent: "granted",
+            }] as unknown as Row[] };
           }
           return { rows: [] };
         },
@@ -107,5 +127,14 @@ describe("AWS synthetic clinical state adapter", () => {
     expect(documentRead.sql).toContain("state='accepted'");
     expect(patientRead.parameters[0]).toMatchObject({ kind: "uuid", value: ORG });
     expect(documentRead.parameters[1]).toMatchObject({ kind: "uuid", value: EVENT });
+  });
+});
+
+describe("AWS production clinical state adapter", () => {
+  test("sets the production PHI context for the consumer connection read", async () => {
+    const fixture = database();
+    await expect(createAwsProductionClinicalStateAdapter(fixture.db).getConsumerConnection(productionContext()))
+      .resolves.toMatchObject({ connectionId: CONNECTION, state: "verified" });
+    expect(fixture.calls[0]!.parameters.slice(4)).toEqual(["clinical_data", "production-clinical", "clinical_phi"]);
   });
 });

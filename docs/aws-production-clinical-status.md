@@ -86,6 +86,16 @@ source-only and deliberately not attached to the deployed API. All 222
 inventory entries remain disabled in the deployed production route, and 217
 still need reviewed AWS implementations for full Desktop functionality.
 
+The same undeployed candidate now covers the complete 21-route governed
+App/Desktop clinical contract for both Cognito pools: invitation and connection,
+versioned consent artifacts and grant/withdrawal, lab import/review/read-back,
+versioned consumer clinical records, privacy requests, and the bounded Desktop
+compatibility route. Its production adapters set `production-clinical`,
+`clinical_phi`, and `containsPhi=true` only after the independent activation
+gate and a token with `custom:production_bound=true`; a token carrying the
+synthetic attestation is refused. The deployed production route remains the
+separate log-only 503 function, so this source readiness does not expose PHI.
+
 Production activation separately requires the
 `desktop_compatibility_contract` control and the
 `desktop_operations_migrated` runtime boundary to be approved. Neither may be

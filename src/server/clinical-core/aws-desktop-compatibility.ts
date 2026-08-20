@@ -19,8 +19,8 @@ export type DesktopCompatibilityContext = {
   dataClassification: "synthetic_only" | "clinical_phi";
 };
 
-export type DesktopCompatibilityAdapter = {
-  execute(context: DesktopCompatibilityContext, request: DesktopCompatibilityRequest): Promise<unknown>;
+export type DesktopCompatibilityAdapter<Context extends DesktopCompatibilityContext = DesktopCompatibilityContext> = {
+  execute(context: Context, request: DesktopCompatibilityRequest): Promise<unknown>;
 };
 
 export class DesktopCompatibilityError extends Error {

@@ -1,13 +1,23 @@
 import { describe, expect, it, vi } from "vitest";
 import { createAwsProductionClinicalApiHandler, type ProductionClinicalApiConfiguration } from "./aws-production-clinical-api";
 import type { AwsProductionDesktopAdapter } from "./aws-production-desktop";
-import type { ApiGatewayV2Event } from "./aws-identity-api";
+import {
+  createAwsProductionIdentityApiHandler,
+  type ApiGatewayV2Event,
+  type ProductionIdentityApiConfiguration,
+} from "./aws-identity-api";
+import type { AwsIdentityConsentAdapter, ProductionClinicalRequestContext } from "./aws-identity-consent";
+import type { AwsClinicalStateAdapter } from "./aws-clinical-state";
+import type { AwsClinicalRecordsAdapter } from "./aws-consumer-clinical-records";
+import type { DesktopCompatibilityAdapter } from "./aws-desktop-compatibility";
 
 const PERSON = "11111111-1111-4111-8111-111111111111";
 const ORG = "22222222-2222-4222-8222-222222222222";
 const ISSUER = "https://cognito-idp.us-east-2.amazonaws.com/us-east-2_Production";
 const AUDIENCE = "productionclient00000000000";
 const EVIDENCE = "a".repeat(64);
+const CONSUMER_ISSUER = "https://cognito-idp.us-east-2.amazonaws.com/us-east-2_ConsumerProduction";
+const CONSUMER_AUDIENCE = "consumerclient000000000000";
 
 const approved: ProductionClinicalApiConfiguration = {
   workforceIssuer: ISSUER,
@@ -41,6 +51,33 @@ function event(overrides: Record<string, unknown> = {}): ApiGatewayV2Event {
 
 function adapter(): AwsProductionDesktopAdapter {
   return { execute: vi.fn(async () => [{ observation_id: "44444444-4444-4444-8444-444444444444" }]) };
+}
+
+function fullProductionInput(configurationOverrides: Partial<ProductionIdentityApiConfiguration> = {}) {
+  const connection = vi.fn(async () => ({
+    connectionId: "33333333-3333-4333-8333-333333333333",
+    patientRecordId: "44444444-4444-4444-8444-444444444444",
+    state: "verified" as const,
+    verifiedAt: "2026-08-20T00:00:00.000Z",
+    labResultsImportConsent: "granted" as const,
+  }));
+  return {
+    adapter: {} as AwsIdentityConsentAdapter<ProductionClinicalRequestContext>,
+    clinicalStateAdapter: { getConsumerConnection: connection } as unknown as AwsClinicalStateAdapter<ProductionClinicalRequestContext>,
+    clinicalRecordsAdapter: {} as AwsClinicalRecordsAdapter<ProductionClinicalRequestContext>,
+    desktopCompatibilityAdapter: adapter() as DesktopCompatibilityAdapter<ProductionClinicalRequestContext>,
+    configuration: {
+      workforceIssuer: ISSUER,
+      workforceAudience: AUDIENCE,
+      consumerIssuer: CONSUMER_ISSUER,
+      consumerAudience: CONSUMER_AUDIENCE,
+      phiAllowed: true,
+      activationState: "approved" as const,
+      activationEvidenceSha256: EVIDENCE,
+      ...configurationOverrides,
+    },
+    connection,
+  };
 }
 
 describe("AWS production clinical API", () => {
@@ -96,5 +133,53 @@ describe("AWS production clinical API", () => {
     const result = await createAwsProductionClinicalApiHandler({ adapter: service, configuration: approved })(event());
     expect(result.statusCode).toBe(503);
     expect(result.body).toBe('{"error":"database_unavailable"}');
+  });
+});
+
+describe("AWS production App and Desktop API", () => {
+  it("blocks every workforce and consumer route before activation", async () => {
+    const input = fullProductionInput({ phiAllowed: false, activationState: "blocked", activationEvidenceSha256: undefined });
+    const result = await createAwsProductionIdentityApiHandler(input)({ routeKey: "GET /clinical-core/consumer/connection" });
+    expect(result.statusCode).toBe(503);
+    expect(JSON.parse(result.body)).toEqual({ error: "production_not_activated", phiAllowed: false });
+    expect(input.connection).not.toHaveBeenCalled();
+  });
+
+  it("accepts a production-bound consumer token and creates a PHI-aware database context", async () => {
+    const input = fullProductionInput();
+    const result = await createAwsProductionIdentityApiHandler(input)({
+      routeKey: "GET /clinical-core/consumer/connection",
+      requestContext: { authorizer: { jwt: { claims: {
+        iss: CONSUMER_ISSUER, aud: CONSUMER_AUDIENCE, token_use: "id",
+        sub: "production-consumer-001", "custom:person_id": PERSON,
+        "custom:organization_id": ORG, "custom:production_bound": "true",
+      } } } },
+    });
+    expect(result.statusCode).toBe(200);
+    expect(input.connection).toHaveBeenCalledWith(expect.objectContaining({
+      environment: "production-clinical", dataClassification: "clinical_phi",
+      containsPhi: true, realPatientData: true, productionBound: true,
+      identityPool: "consumer",
+    }));
+  });
+
+  it("refuses a production token carrying the synthetic attestation", async () => {
+    const input = fullProductionInput();
+    const result = await createAwsProductionIdentityApiHandler(input)({
+      routeKey: "GET /clinical-core/consumer/connection",
+      requestContext: { authorizer: { jwt: { claims: {
+        iss: CONSUMER_ISSUER, aud: CONSUMER_AUDIENCE, token_use: "id",
+        sub: "production-consumer-001", "custom:person_id": PERSON,
+        "custom:organization_id": ORG, "custom:production_bound": "true",
+        "custom:synthetic_attested": "true",
+      } } } },
+    });
+    expect(result.statusCode).toBe(403);
+    expect(input.connection).not.toHaveBeenCalled();
+  });
+
+  it("refuses a PHI-enabled App/Desktop configuration without signed evidence", () => {
+    const input = fullProductionInput({ activationEvidenceSha256: "missing" });
+    expect(() => createAwsProductionIdentityApiHandler(input)).toThrow("production_api_configuration_invalid");
   });
 });

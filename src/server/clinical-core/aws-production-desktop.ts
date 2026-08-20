@@ -5,26 +5,13 @@ if (typeof window !== "undefined") {
 import {
   createAwsDesktopCompatibilityAdapter,
   type DesktopCompatibilityAdapter,
-  type DesktopCompatibilityRequest,
 } from "./aws-desktop-compatibility";
+import type { ProductionClinicalRequestContext } from "./aws-identity-consent";
 import { clinicalUuid, ClinicalCoreDatabaseRejection, type ClinicalCoreDatabase, type ClinicalCoreTransaction } from "./database";
 
-export type ProductionRequestContext = {
-  actorPersonId: string;
-  organizationId: string;
-  identityPool: "workforce" | "consumer";
-  identitySubject: string;
-  purpose: "identity_link" | "consent_management" | "clinical_data";
-  environment: "production-clinical";
-  dataClassification: "clinical_phi";
-  containsPhi: true;
-  realPatientData: true;
-  productionBound: true;
-};
+export type ProductionRequestContext = ProductionClinicalRequestContext;
 
-export type AwsProductionDesktopAdapter = {
-  execute(context: ProductionRequestContext, request: DesktopCompatibilityRequest): Promise<unknown>;
-};
+export type AwsProductionDesktopAdapter = DesktopCompatibilityAdapter<ProductionRequestContext>;
 
 export class ProductionDesktopError extends Error {
   constructor(readonly category: "request_invalid" | "operation_refused" | "database_unavailable") {

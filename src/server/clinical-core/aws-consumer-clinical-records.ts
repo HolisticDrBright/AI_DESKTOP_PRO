@@ -4,7 +4,11 @@ if (typeof window !== "undefined") {
 
 import { createHash } from "node:crypto";
 import { clinicalUuid, ClinicalCoreDatabaseRejection, type ClinicalCoreDatabase, type ClinicalCoreTransaction } from "./database";
-import type { SyntheticRequestContext } from "./aws-identity-consent";
+import type {
+  ClinicalRequestContext,
+  ProductionClinicalRequestContext,
+  SyntheticRequestContext,
+} from "./aws-identity-consent";
 
 export const CONSUMER_CLINICAL_COLLECTIONS = [
   "protocols", "daily_adherence", "symptom_logs", "hormone_entries",
@@ -43,8 +47,8 @@ export type ConsumerPrivacyRequest = {
   resolvedAt: string | null;
 };
 
-export interface AwsConsumerClinicalRecordsAdapter {
-  recordVersion(context: SyntheticRequestContext, input: {
+export interface AwsClinicalRecordsAdapter<Context extends ClinicalRequestContext> {
+  recordVersion(context: Context, input: {
     connectionId: string;
     stableRecordId: string;
     collection: ConsumerClinicalCollection;
@@ -54,21 +58,24 @@ export interface AwsConsumerClinicalRecordsAdapter {
     payload: Record<string, unknown>;
     deleted: boolean;
   }): Promise<ConsumerClinicalVersion>;
-  listRecords(context: SyntheticRequestContext, input: {
+  listRecords(context: Context, input: {
     connectionId: string;
     collection: ConsumerClinicalCollection;
     afterReceivedAt?: string;
     afterId?: string;
     limit: number;
   }): Promise<ConsumerClinicalVersion[]>;
-  listConsentHistory(context: SyntheticRequestContext, connectionId: string): Promise<ConsumerConsentHistory[]>;
-  submitPrivacyRequest(context: SyntheticRequestContext, input: {
+  listConsentHistory(context: Context, connectionId: string): Promise<ConsumerConsentHistory[]>;
+  submitPrivacyRequest(context: Context, input: {
     connectionId: string;
     kind: PrivacyRequestKind;
     detail?: string;
   }): Promise<ConsumerPrivacyRequest>;
-  listPrivacyRequests(context: SyntheticRequestContext, connectionId: string): Promise<ConsumerPrivacyRequest[]>;
+  listPrivacyRequests(context: Context, connectionId: string): Promise<ConsumerPrivacyRequest[]>;
 }
+
+export type AwsConsumerClinicalRecordsAdapter = AwsClinicalRecordsAdapter<SyntheticRequestContext>;
+export type AwsProductionConsumerClinicalRecordsAdapter = AwsClinicalRecordsAdapter<ProductionClinicalRequestContext>;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const EXTERNAL_KEY = /^[A-Za-z0-9:_-]{1,160}$/;
@@ -109,9 +116,22 @@ const COLLECTION_KEYS: Record<ConsumerClinicalCollection, { allowed: readonly st
 };
 
 export function createAwsConsumerClinicalRecordsAdapter(database: ClinicalCoreDatabase): AwsConsumerClinicalRecordsAdapter {
+  return createAwsClinicalRecordsAdapter(database, "synthetic");
+}
+
+export function createAwsProductionConsumerClinicalRecordsAdapter(
+  database: ClinicalCoreDatabase,
+): AwsProductionConsumerClinicalRecordsAdapter {
+  return createAwsClinicalRecordsAdapter(database, "production");
+}
+
+function createAwsClinicalRecordsAdapter<Context extends ClinicalRequestContext>(
+  database: ClinicalCoreDatabase,
+  boundary: "synthetic" | "production",
+): AwsClinicalRecordsAdapter<Context> {
   return {
     async recordVersion(context, input) {
-      assertContext(context, "clinical_data");
+      assertContext(context, boundary, "clinical_data");
       if (!UUID.test(input.connectionId) || !UUID.test(input.stableRecordId)
         || !CONSUMER_CLINICAL_COLLECTIONS.includes(input.collection)
         || !EXTERNAL_KEY.test(input.recordKey) || !VERSION.test(input.resourceVersion)
@@ -130,7 +150,7 @@ export function createAwsConsumerClinicalRecordsAdapter(database: ClinicalCoreDa
     },
 
     async listRecords(context, input) {
-      assertContext(context, "clinical_data");
+      assertContext(context, boundary, "clinical_data");
       if (!UUID.test(input.connectionId) || !CONSUMER_CLINICAL_COLLECTIONS.includes(input.collection)
         || !Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > 200
         || (input.afterId !== undefined && !UUID.test(input.afterId))
@@ -147,7 +167,7 @@ export function createAwsConsumerClinicalRecordsAdapter(database: ClinicalCoreDa
     },
 
     async listConsentHistory(context, connectionId) {
-      assertContext(context, "consent_management");
+      assertContext(context, boundary, "consent_management");
       if (!UUID.test(connectionId)) throw new ConsumerClinicalError("request_invalid");
       const rows = await run(database, context, async (tx) => (await tx.query<ConsentRow>(
         "select * from clinical_core.list_consumer_consent_history($1)", [clinicalUuid(connectionId)],
@@ -160,7 +180,7 @@ export function createAwsConsumerClinicalRecordsAdapter(database: ClinicalCoreDa
     },
 
     async submitPrivacyRequest(context, input) {
-      assertContext(context, "consent_management");
+      assertContext(context, boundary, "consent_management");
       if (!UUID.test(input.connectionId) || !["export", "correction", "deletion"].includes(input.kind)
         || (input.detail !== undefined && (input.detail.trim().length < 1 || input.detail.length > 1000))) {
         throw new ConsumerClinicalError("request_invalid");
@@ -172,7 +192,7 @@ export function createAwsConsumerClinicalRecordsAdapter(database: ClinicalCoreDa
     },
 
     async listPrivacyRequests(context, connectionId) {
-      assertContext(context, "consent_management");
+      assertContext(context, boundary, "consent_management");
       if (!UUID.test(connectionId)) throw new ConsumerClinicalError("request_invalid");
       const rows = await run(database, context, async (tx) => (await tx.query<PrivacyRow>(
         "select * from clinical_core.list_consumer_privacy_requests($1)", [clinicalUuid(connectionId)],
@@ -289,16 +309,25 @@ function validDate(value: string): boolean {
   return value.length <= 40 && Number.isFinite(new Date(value).getTime());
 }
 
-function assertContext(context: SyntheticRequestContext, purpose: "clinical_data" | "consent_management") {
+function assertContext(
+  context: ClinicalRequestContext,
+  boundary: "synthetic" | "production",
+  purpose: "clinical_data" | "consent_management",
+) {
+  const boundaryMatches = boundary === "synthetic"
+    ? context.environment === "synthetic-staging" && context.dataClassification === "synthetic_only"
+      && context.containsPhi === false && context.realPatientData === false
+    : context.environment === "production-clinical" && context.dataClassification === "clinical_phi"
+      && context.containsPhi === true && context.realPatientData === true
+      && "productionBound" in context && context.productionBound === true;
   if (context.identityPool !== "consumer" || context.purpose !== purpose
-    || context.environment !== "synthetic-staging" || context.dataClassification !== "synthetic_only"
-    || context.containsPhi !== false || context.realPatientData !== false
+    || !boundaryMatches
     || !UUID.test(context.actorPersonId) || !UUID.test(context.organizationId)) {
     throw new ConsumerClinicalError("clinical_record_refused");
   }
 }
 
-async function run<T>(database: ClinicalCoreDatabase, context: SyntheticRequestContext, work: (tx: ClinicalCoreTransaction) => Promise<T>): Promise<T> {
+async function run<T>(database: ClinicalCoreDatabase, context: ClinicalRequestContext, work: (tx: ClinicalCoreTransaction) => Promise<T>): Promise<T> {
   try {
     return await database.transaction(async (tx) => {
       await tx.query("select clinical_private.set_request_context($1,$2,$3,$4,$5,$6,$7)", [

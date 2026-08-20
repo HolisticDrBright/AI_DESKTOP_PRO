@@ -4,7 +4,9 @@ import path from "node:path";
 import { describe, expect, test } from "vitest";
 import {
   ClinicalCoreAdapterError,
+  createAwsProductionIdentityConsentAdapter,
   createAwsSyntheticIdentityConsentAdapter,
+  type ProductionClinicalRequestContext,
   type SyntheticRequestContext,
 } from "./aws-identity-consent";
 import { clinicalUuid, ClinicalCoreDatabaseRejection, type ClinicalCoreDatabase, type ClinicalCoreQueryResult } from "./database";
@@ -30,6 +32,22 @@ function context(overrides: Partial<SyntheticRequestContext> = {}): SyntheticReq
     dataClassification: "synthetic_only",
     containsPhi: false,
     realPatientData: false,
+    ...overrides,
+  };
+}
+
+function productionContext(overrides: Partial<ProductionClinicalRequestContext> = {}): ProductionClinicalRequestContext {
+  return {
+    actorPersonId: ACTOR,
+    organizationId: ORG,
+    identityPool: "consumer",
+    identitySubject: "production-subject-001",
+    purpose: "consent_management",
+    environment: "production-clinical",
+    dataClassification: "clinical_phi",
+    containsPhi: true,
+    realPatientData: true,
+    productionBound: true,
     ...overrides,
   };
 }
@@ -243,5 +261,29 @@ describe("AWS synthetic identity and consent adapter", () => {
       .replace(/\/\*[\s\S]*?\*\//g, "")
       .replace(/\/\/.*$/gm, "");
     expect(source).not.toMatch(/\b(email|phone|dateOfBirth|firstName|lastName)\b/);
+  });
+});
+
+describe("AWS production identity and consent adapter", () => {
+  test("sets the explicit production PHI context before a consent artifact read", async () => {
+    const db = fakeDatabase((sql) => sql.includes("from clinical_core.consent_artifacts") ? {
+      rows: [{
+        id: ARTIFACT, scope: "lab_results_import", artifact_version: "production-lab-import/1",
+        content_sha256: "b".repeat(64), jurisdiction: "US", approved_at: "2026-08-20T00:00:00.000Z",
+      }],
+    } : { rows: [] });
+    await expect(createAwsProductionIdentityConsentAdapter(db.database).getCurrentConsentArtifact({
+      context: productionContext(), scope: "lab_results_import",
+    })).resolves.toMatchObject({ artifactId: ARTIFACT, artifactVersion: "production-lab-import/1" });
+    expect(db.calls[0]!.parameters.slice(4)).toEqual(["consent_management", "production-clinical", "clinical_phi"]);
+  });
+
+  test("refuses a synthetic context before opening a production transaction", async () => {
+    const db = fakeDatabase();
+    await expect(createAwsProductionIdentityConsentAdapter(db.database).getCurrentConsentArtifact({
+      context: context({ identityPool: "consumer", purpose: "consent_management" }) as unknown as ProductionClinicalRequestContext,
+      scope: "lab_results_import",
+    })).rejects.toMatchObject({ category: "production_boundary_refused" });
+    expect(db.transactions()).toBe(0);
   });
 });

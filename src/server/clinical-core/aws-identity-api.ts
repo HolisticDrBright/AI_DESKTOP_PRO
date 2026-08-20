@@ -8,7 +8,10 @@ import {
   createAwsSyntheticIdentityConsentAdapter,
   INVITATION_CODE_PATTERN,
   normalizeInvitationCode,
+  type AwsIdentityConsentAdapter,
   type AwsSyntheticIdentityConsentAdapter,
+  type ClinicalRequestContext,
+  type ProductionClinicalRequestContext,
   type ConsentMethod,
   type IdentityPool,
   type RepresentativeAuthority,
@@ -18,6 +21,7 @@ import type { ClinicalCoreDatabase } from "./database";
 import {
   ClinicalStateError,
   createAwsSyntheticClinicalStateAdapter,
+  type AwsClinicalStateAdapter,
   type AwsSyntheticClinicalStateAdapter,
   type LabResultImport,
 } from "./aws-clinical-state";
@@ -25,6 +29,7 @@ import {
   CONSUMER_CLINICAL_COLLECTIONS,
   ConsumerClinicalError,
   createAwsConsumerClinicalRecordsAdapter,
+  type AwsClinicalRecordsAdapter,
   type AwsConsumerClinicalRecordsAdapter,
   type ConsumerClinicalCollection,
   type PrivacyRequestKind,
@@ -62,7 +67,7 @@ export type IdentityApiConfiguration = {
 
 type RouteDefinition = {
   pool: IdentityPool;
-  purpose: SyntheticRequestContext["purpose"];
+  purpose: ClinicalRequestContext["purpose"];
   operation: "posture" | "issue" | "claim" | "grant" | "revoke"
     | "get_consent_artifact"
     | "get_connection" | "import_lab" | "list_lab_imports" | "review_lab" | "list_labs"
@@ -98,6 +103,13 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 const SUBJECT = /^[A-Za-z0-9:_-]{8,128}$/;
 const IDEMPOTENCY = /^[A-Za-z0-9:_-]{8,128}$/;
 const MAX_BODY_BYTES = 20_480;
+const SHA256 = /^[0-9a-f]{64}$/;
+
+export type ProductionIdentityApiConfiguration = IdentityApiConfiguration & {
+  phiAllowed: boolean;
+  activationState: "blocked" | "approved";
+  activationEvidenceSha256?: string;
+};
 
 export function createAwsIdentityApiHandler(input: {
   database?: ClinicalCoreDatabase;
@@ -107,13 +119,57 @@ export function createAwsIdentityApiHandler(input: {
   desktopCompatibilityAdapter?: DesktopCompatibilityAdapter;
   configuration: IdentityApiConfiguration;
 }) {
-  const adapter = input.adapter ?? (input.database ? createAwsSyntheticIdentityConsentAdapter(input.database) : undefined);
+  return createIdentityApiHandler<SyntheticRequestContext>({ ...input, boundary: "synthetic" });
+}
+
+export function createAwsProductionIdentityApiHandler(input: {
+  adapter: AwsIdentityConsentAdapter<ProductionClinicalRequestContext>;
+  clinicalStateAdapter: AwsClinicalStateAdapter<ProductionClinicalRequestContext>;
+  clinicalRecordsAdapter: AwsClinicalRecordsAdapter<ProductionClinicalRequestContext>;
+  desktopCompatibilityAdapter: DesktopCompatibilityAdapter<ProductionClinicalRequestContext>;
+  configuration: ProductionIdentityApiConfiguration;
+}) {
+  validateConfiguration(input.configuration);
+  if (input.configuration.phiAllowed === true
+    && (input.configuration.activationState !== "approved"
+      || !SHA256.test(input.configuration.activationEvidenceSha256 ?? ""))) {
+    throw new Error("production_api_configuration_invalid");
+  }
+  const activated = input.configuration.phiAllowed === true
+    && input.configuration.activationState === "approved"
+    && SHA256.test(input.configuration.activationEvidenceSha256 ?? "");
+  if (!activated) {
+    return async (): Promise<ApiGatewayV2Response> => response(503, {
+      error: "production_not_activated", phiAllowed: false,
+    });
+  }
+  return createIdentityApiHandler<ProductionClinicalRequestContext>({ ...input, boundary: "production" });
+}
+
+function createIdentityApiHandler<Context extends ClinicalRequestContext>(input: {
+  database?: ClinicalCoreDatabase;
+  adapter?: AwsIdentityConsentAdapter<Context>;
+  clinicalStateAdapter?: AwsClinicalStateAdapter<Context>;
+  clinicalRecordsAdapter?: AwsClinicalRecordsAdapter<Context>;
+  desktopCompatibilityAdapter?: DesktopCompatibilityAdapter<Context>;
+  configuration: IdentityApiConfiguration;
+  boundary: "synthetic" | "production";
+}) {
+  const adapter = input.adapter ?? (input.database && input.boundary === "synthetic"
+    ? createAwsSyntheticIdentityConsentAdapter(input.database) as AwsIdentityConsentAdapter<Context>
+    : undefined);
   const clinicalStateAdapter = input.clinicalStateAdapter
-    ?? (input.database ? createAwsSyntheticClinicalStateAdapter(input.database) : undefined);
+    ?? (input.database && input.boundary === "synthetic"
+      ? createAwsSyntheticClinicalStateAdapter(input.database) as AwsClinicalStateAdapter<Context>
+      : undefined);
   const clinicalRecordsAdapter = input.clinicalRecordsAdapter
-    ?? (input.database ? createAwsConsumerClinicalRecordsAdapter(input.database) : undefined);
+    ?? (input.database && input.boundary === "synthetic"
+      ? createAwsConsumerClinicalRecordsAdapter(input.database) as AwsClinicalRecordsAdapter<Context>
+      : undefined);
   const desktopCompatibilityAdapter = input.desktopCompatibilityAdapter
-    ?? (input.database ? createAwsDesktopCompatibilityAdapter(input.database) : undefined);
+    ?? (input.database && input.boundary === "synthetic"
+      ? createAwsDesktopCompatibilityAdapter(input.database) as DesktopCompatibilityAdapter<Context>
+      : undefined);
   if (!adapter) throw new Error("identity_api_adapter_required");
   validateConfiguration(input.configuration);
 
@@ -121,7 +177,7 @@ export function createAwsIdentityApiHandler(input: {
     try {
       const route = event.routeKey ? ROUTES[event.routeKey] : undefined;
       if (!route) return response(404, { error: "route_not_found" });
-      const context = contextFromClaims(event, route, input.configuration);
+      const context = contextFromClaims(event, route, input.configuration, input.boundary) as Context;
       if (["get_connection", "import_lab", "list_lab_imports", "review_lab", "list_labs"].includes(route.operation)
         && !clinicalStateAdapter) throw new Error("clinical_state_api_adapter_required");
       if (["record_clinical", "list_clinical", "list_consent_history", "submit_privacy_request", "list_privacy_requests"].includes(route.operation)
@@ -138,8 +194,8 @@ export function createAwsIdentityApiHandler(input: {
             dataClassification: context.dataClassification,
             identityPool: context.identityPool,
             authenticated: true,
-            phiAllowed: false,
-            realPatientDataAllowed: false,
+            phiAllowed: input.boundary === "production",
+            realPatientDataAllowed: input.boundary === "production",
           },
         });
       }
@@ -327,7 +383,7 @@ export function createAwsIdentityApiHandler(input: {
     } catch (error) {
       if (error instanceof IdentityApiError) return response(error.category === "identity_refused" ? 403 : 400, { error: error.category });
       if (error instanceof ClinicalCoreAdapterError) {
-        const status = error.category === "synthetic_boundary_refused" ? 403
+        const status = ["synthetic_boundary_refused", "production_boundary_refused"].includes(error.category) ? 403
           : error.category === "invitation_invalid_or_expired" ? 404
             : error.category === "consent_precondition_failed" ? 409
               : error.category === "database_unavailable" ? 503 : 400;
@@ -449,7 +505,8 @@ function contextFromClaims(
   event: ApiGatewayV2Event,
   route: RouteDefinition,
   configuration: IdentityApiConfiguration,
-): SyntheticRequestContext {
+  boundary: "synthetic" | "production",
+): ClinicalRequestContext {
   const claims = event.requestContext?.authorizer?.jwt?.claims;
   if (!claims) throw new IdentityApiError("identity_refused");
   const issuer = route.pool === "workforce" ? configuration.workforceIssuer : configuration.consumerIssuer;
@@ -461,22 +518,24 @@ function contextFromClaims(
     claim(claims, "iss") !== issuer
     || claim(claims, "aud") !== audience
     || claim(claims, "token_use") !== "id"
-    || claim(claims, "custom:synthetic_attested") !== "true"
+    || (boundary === "synthetic"
+      ? claim(claims, "custom:synthetic_attested") !== "true"
+      : claim(claims, "custom:production_bound") !== "true"
+        || claim(claims, "custom:synthetic_attested") === "true")
     || !UUID.test(personId)
     || !UUID.test(organizationId)
     || !SUBJECT.test(subject)
   ) throw new IdentityApiError("identity_refused");
-  return {
+  const base = {
     actorPersonId: personId,
     organizationId,
     identityPool: route.pool,
     identitySubject: subject,
     purpose: route.purpose,
-    environment: "synthetic-staging",
-    dataClassification: "synthetic_only",
-    containsPhi: false,
-    realPatientData: false,
   };
+  return boundary === "synthetic"
+    ? { ...base, environment: "synthetic-staging", dataClassification: "synthetic_only", containsPhi: false, realPatientData: false }
+    : { ...base, environment: "production-clinical", dataClassification: "clinical_phi", containsPhi: true, realPatientData: true, productionBound: true };
 }
 
 function parseBody(event: ApiGatewayV2Event): Record<string, unknown> {
