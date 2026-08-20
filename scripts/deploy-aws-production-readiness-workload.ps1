@@ -58,28 +58,34 @@ $clinicalOrigin = $foundation.ApiOrigin.TrimEnd("/")
 $clinicalHost = ([Uri]$clinicalOrigin).Host
 $clusterName = $foundation.ProductionEcsClusterArn.Split("/")[-1]
 $params = @(
-  "ParameterKey=VpcId,ParameterValue=$vpcId",
-  "ParameterKey=VpcCidr,ParameterValue=$vpcCidr",
-  "ParameterKey=PrivateSubnetIds,ParameterValue=$($subnets -join ',')",
-  "ParameterKey=PrivateRouteTableId,ParameterValue=$routeTableId",
-  "ParameterKey=EcsClusterArn,ParameterValue=$($foundation.ProductionEcsClusterArn)",
-  "ParameterKey=EcsClusterName,ParameterValue=$clusterName",
-  "ParameterKey=DesktopRepositoryUri,ParameterValue=$repositoryUri",
-  "ParameterKey=DesktopRepositoryArn,ParameterValue=$repositoryArn",
-  "ParameterKey=TaskExecutionRoleArn,ParameterValue=$($foundation.DesktopProductionTaskExecutionRoleArn)",
-  "ParameterKey=ClinicalCoreKeyArn,ParameterValue=$($foundation.ClinicalCoreKeyArn)",
-  "ParameterKey=ClinicalApiOrigin,ParameterValue=$clinicalOrigin",
-  "ParameterKey=ClinicalApiHost,ParameterValue=$clinicalHost",
-  "ParameterKey=WorkforceUserPoolId,ParameterValue=$($foundation.WorkforceUserPoolId)",
-  "ParameterKey=WorkforceClientId,ParameterValue=$($foundation.WorkforceUserPoolClientId)",
-  "ParameterKey=ConsumerUserPoolId,ParameterValue=$($foundation.ConsumerUserPoolId)",
-  "ParameterKey=ConsumerClientId,ParameterValue=$($foundation.ConsumerUserPoolClientId)",
-  "ParameterKey=ImageTag,ParameterValue=$SourceVersion",
-  "ParameterKey=SourceVersion,ParameterValue=$SourceVersion"
+  "VpcId=$vpcId",
+  "VpcCidr=$vpcCidr",
+  "PrivateSubnetIds=$($subnets -join ',')",
+  "PrivateRouteTableId=$routeTableId",
+  "EcsClusterArn=$($foundation.ProductionEcsClusterArn)",
+  "EcsClusterName=$clusterName",
+  "DesktopRepositoryUri=$repositoryUri",
+  "DesktopRepositoryArn=$repositoryArn",
+  "TaskExecutionRoleArn=$($foundation.DesktopProductionTaskExecutionRoleArn)",
+  "ClinicalCoreKeyArn=$($foundation.ClinicalCoreKeyArn)",
+  "ClinicalApiOrigin=$clinicalOrigin",
+  "ClinicalApiHost=$clinicalHost",
+  "WorkforceUserPoolId=$($foundation.WorkforceUserPoolId)",
+  "WorkforceClientId=$($foundation.WorkforceUserPoolClientId)",
+  "ConsumerUserPoolId=$($foundation.ConsumerUserPoolId)",
+  "ConsumerClientId=$($foundation.ConsumerUserPoolClientId)",
+  "ImageTag=$SourceVersion",
+  "SourceVersion=$SourceVersion"
 )
 
 function Deploy([string]$DeployService) {
-  & aws cloudformation deploy --profile $Profile --region $Region --stack-name $WorkloadStack --template-file $templatePath --capabilities CAPABILITY_NAMED_IAM --no-fail-on-empty-changeset --parameter-overrides @params "ParameterKey=DeployService,ParameterValue=$DeployService"
+  $deployArgs = @(
+    "cloudformation", "deploy", "--profile", $Profile, "--region", $Region,
+    "--stack-name", $WorkloadStack, "--template-file", $templatePath,
+    "--capabilities", "CAPABILITY_NAMED_IAM", "--no-fail-on-empty-changeset",
+    "--parameter-overrides"
+  ) + $params + @("DeployService=$DeployService")
+  & aws @deployArgs
   if ($LASTEXITCODE -ne 0) { throw "Production readiness workload stack deployment failed." }
 }
 
