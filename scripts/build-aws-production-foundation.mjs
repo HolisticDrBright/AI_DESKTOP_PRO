@@ -166,6 +166,10 @@ export function buildProductionFoundation(source) {
       FindingPublishingFrequency: "FIFTEEN_MINUTES",
       Features: [
         { Name: "S3_DATA_EVENTS", Status: "ENABLED" },
+        { Name: "EKS_AUDIT_LOGS", Status: "ENABLED" },
+        { Name: "EBS_MALWARE_PROTECTION", Status: "ENABLED" },
+        { Name: "RDS_LOGIN_EVENTS", Status: "ENABLED" },
+        { Name: "LAMBDA_NETWORK_LOGS", Status: "ENABLED" },
         { Name: "RUNTIME_MONITORING", Status: "ENABLED" },
       ],
       Tags: [{ Key: "Environment", Value: { Ref: "EnvironmentName" } }],

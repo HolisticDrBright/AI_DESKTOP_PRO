@@ -11,6 +11,13 @@ record:
   `production-clinical`, `clinical_phi_target`, and `PhiAllowed=false`;
 - the candidate stack reports an exact 40-character source commit,
   `ActivationState=blocked`, and `DataPlaneEnabled=false`;
+- both Cognito pools expose the immutable four-character
+  `custom:production_bound` attribute required by the production API, without
+  creating or approving an identity;
+- all six template-managed GuardDuty protection plans are enabled, and stack
+  drift is either clean or limited exactly to GuardDuty's service-returned
+  disabled `AI_ANALYST`, `AI_PROTECTION`, and mutually exclusive
+  `EKS_RUNTIME_MONITORING` result fields; any other drift fails the exercise;
 - API Gateway exposes exactly 21 explicit clinical routes, every route requires
   the correct JWT authorizer, and no wildcard clinical route remains;
 - an unauthenticated clinical request returns 401;

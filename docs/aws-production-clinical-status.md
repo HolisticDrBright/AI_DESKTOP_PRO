@@ -19,6 +19,9 @@ synthetic-only.
   workforce/consumer pools, ECR repositories, and an ECS/Fargate cluster.
 - Account and bucket public-access blocking in the guarded deployment workflow.
 - An immutable `PhiAllowed=false` foundation output.
+- Immutable four-character `custom:production_bound` attributes in both
+  production Cognito pools. No production users or approved identities were
+  created by the schema update.
 - A separate production-only `Dockerfile.production` that accepts no provider
   credentials or staging/synthetic defaults and runs as non-root distroless.
 - An encrypted, deletion-protected, point-in-time-recoverable DynamoDB billing
@@ -237,9 +240,20 @@ production workload, operational safeguards, or HIPAA compliance.
   `5b260b5d593fd357c787a53165970c6688c8d76641c430df22aae0db017b7f5a`.
 - After deploying the exact closed candidate, exercise version 2 additionally
   verified its source commit, all 21 JWT route definitions, absent wildcard
-  routes, blocked activation, disabled data plane, empty database, `OK` alarm,
-  and zero unsafe log matches. Evidence SHA-256:
-  `b6778795741836f5be50a2980f6e3f1317d87610bb74da46b48b893ff5646343`.
+  routes, both immutable production identity attributes, six explicitly
+  managed GuardDuty protection plans, zero unreviewed foundation drift,
+  blocked activation, disabled data plane, empty database, `OK` alarm, and
+  zero unsafe log matches. Evidence SHA-256:
+  `b425616777af158967b80c62b43aee85b21be94ef1e4310dabe19f6cbbb8cc54`.
+
+CloudFormation drift detection reports only three GuardDuty service-returned
+result fields as additions: disabled `AI_ANALYST`, disabled `AI_PROTECTION`,
+and disabled `EKS_RUNTIME_MONITORING`. The latter cannot be declared alongside
+enabled `RUNTIME_MONITORING`; the exercise allows exactly these three disabled
+results and fails for every other resource or property difference. The six
+managed production plans—S3 data events, EKS audit logs, EBS malware
+protection, RDS login events, Lambda network logs, and Runtime Monitoring—are
+all declared and live-enabled.
 
 This evidence closes the exact-image/private-compute proof, portable empty
 schema proof, rollback-only minimum patient/lab transfer semantics, tenant

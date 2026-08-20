@@ -57,6 +57,66 @@ if ($foundation.PhiAllowed -ne "false" -or $foundation.Environment -ne "producti
   throw "Foundation is not the reviewed PHI-disabled production boundary."
 }
 
+$productionBoundPools = 0
+foreach ($poolId in @($foundation.WorkforceUserPoolId, $foundation.ConsumerUserPoolId)) {
+  $attribute = @(aws cognito-idp describe-user-pool --profile $AwsProfile --region $Region `
+    --user-pool-id $poolId --query "UserPool.SchemaAttributes[?Name=='custom:production_bound']" `
+    --output json | ConvertFrom-Json)
+  if ($attribute.Count -ne 1 -or $attribute[0].AttributeDataType -ne "String" `
+    -or $attribute[0].Mutable -ne $false -or $attribute[0].Required -ne $false `
+    -or $attribute[0].StringAttributeConstraints.MinLength -ne "4" `
+    -or $attribute[0].StringAttributeConstraints.MaxLength -ne "4") {
+    throw "Production Cognito pool is missing the immutable four-character production_bound attribute."
+  }
+  $productionBoundPools++
+}
+
+$guardDuty = aws guardduty get-detector --profile $AwsProfile --region $Region `
+  --detector-id $foundation.GuardDutyDetectorId --output json | ConvertFrom-Json
+$guardDutyFeatureState = @{}
+foreach ($feature in $guardDuty.Features) { $guardDutyFeatureState[$feature.Name] = $feature.Status }
+$requiredGuardDutyFeatures = @(
+  "S3_DATA_EVENTS", "EKS_AUDIT_LOGS", "EBS_MALWARE_PROTECTION",
+  "RDS_LOGIN_EVENTS", "LAMBDA_NETWORK_LOGS", "RUNTIME_MONITORING"
+)
+if (@($requiredGuardDutyFeatures | Where-Object { $guardDutyFeatureState[$_] -ne "ENABLED" }).Count -ne 0) {
+  throw "A reviewed GuardDuty production protection plan is not enabled."
+}
+
+$driftDetectionId = aws cloudformation detect-stack-drift --profile $AwsProfile --region $Region `
+  --stack-name $FoundationStackName --query "StackDriftDetectionId" --output text
+do {
+  Start-Sleep -Seconds 3
+  $drift = aws cloudformation describe-stack-drift-detection-status --profile $AwsProfile --region $Region `
+    --stack-drift-detection-id $driftDetectionId --output json | ConvertFrom-Json
+} while ($drift.DetectionStatus -eq "DETECTION_IN_PROGRESS")
+if ($drift.DetectionStatus -ne "DETECTION_COMPLETE") { throw "Production foundation drift detection did not complete." }
+$serviceReportedDisabledFeatures = 0
+if ($drift.StackDriftStatus -ne "IN_SYNC") {
+  $resourceDrifts = @(aws cloudformation describe-stack-resource-drifts --profile $AwsProfile --region $Region `
+    --stack-name $FoundationStackName --stack-resource-drift-status-filters MODIFIED DELETED NOT_CHECKED `
+    --query "StackResourceDrifts" --output json | ConvertFrom-Json)
+  if ($resourceDrifts.Count -ne 1 -or $resourceDrifts[0].LogicalResourceId -ne "GuardDutyDetector" `
+    -or $resourceDrifts[0].StackResourceDriftStatus -ne "MODIFIED") {
+    throw "Production foundation has unreviewed resource drift."
+  }
+  $allowedServiceResults = @("AI_ANALYST", "AI_PROTECTION", "EKS_RUNTIME_MONITORING")
+  $actualServiceResults = @()
+  foreach ($difference in $resourceDrifts[0].PropertyDifferences) {
+    $actual = $difference.ActualValue | ConvertFrom-Json
+    if ($difference.DifferenceType -ne "ADD" -or $difference.ExpectedValue -ne "null" `
+      -or $actual.Status -ne "DISABLED" -or $allowedServiceResults -notcontains $actual.Name) {
+      throw "Production foundation has unreviewed GuardDuty drift."
+    }
+    $actualServiceResults += $actual.Name
+  }
+  if ((@($actualServiceResults | Sort-Object -Unique) -join ",") `
+    -ne (@($allowedServiceResults | Sort-Object) -join ",")) {
+    throw "Production foundation GuardDuty drift does not match the reviewed service-returned disabled fields."
+  }
+  $serviceReportedDisabledFeatures = $actualServiceResults.Count
+}
+
 $disabledStack = StackOutputs $DisabledApiStackName
 $disabled = $disabledStack.values
 if ($disabled.PhiAllowed -ne "false" -or $disabled.ActivationState -ne "blocked" `
@@ -162,6 +222,10 @@ $evidence = [ordered]@{
   activationState = "blocked"
   dataPlaneEnabled = $false
   sourceVersion = $disabled.SourceVersion
+  productionBoundIdentityPools = $productionBoundPools
+  guardDutyManagedFeaturesEnabled = $requiredGuardDutyFeatures.Count
+  serviceReportedDisabledGuardDutyFeatures = $serviceReportedDisabledFeatures
+  unreviewedFoundationDrift = 0
   foundationStackStatus = $foundationStack.status
   disabledApiStackStatus = $disabledStack.status
   clinicalRouteCount = $routes.Count

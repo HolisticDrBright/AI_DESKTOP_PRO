@@ -37,6 +37,17 @@ const missingConfigKms = structuredClone(production);
 delete missingConfigKms.Resources.ConfigDeliveryChannel.Properties.S3KmsKeyArn;
 assert(validateProductionFoundation(missingConfigKms).some((error) => error.includes("delivery must use AuditKey")));
 
+const missingGuardDutyRds = structuredClone(production);
+missingGuardDutyRds.Resources.GuardDutyDetector.Properties.Features = missingGuardDutyRds.Resources.GuardDutyDetector.Properties.Features
+  .filter((feature) => feature.Name !== "RDS_LOGIN_EVENTS");
+assert(validateProductionFoundation(missingGuardDutyRds).some((error) => error.includes("six reviewed production protection plans")));
+
+const conflictingGuardDutyRuntime = structuredClone(production);
+conflictingGuardDutyRuntime.Resources.GuardDutyDetector.Properties.Features.push({
+  Name: "EKS_RUNTIME_MONITORING", Status: "DISABLED",
+});
+assert(validateProductionFoundation(conflictingGuardDutyRuntime).some((error) => error.includes("alongside Runtime Monitoring")));
+
 const stalePostureVersion = structuredClone(production);
 stalePostureVersion.Resources.PostureFunction.Properties.Environment.Variables.CLINICAL_CORE_CONTRACT_VERSION = "clinical-core/1";
 assert(validateProductionFoundation(stalePostureVersion).some((error) => error.includes("posture endpoint must report clinical-core/2")));

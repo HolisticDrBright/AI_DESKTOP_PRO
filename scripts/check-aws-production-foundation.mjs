@@ -88,6 +88,18 @@ export function validateProductionFoundation(template) {
     assert(errors, resources[logicalId]?.Type === type, `${logicalId} (${type}) is required`);
   }
 
+  const guardDutyFeatures = new Map((resources.GuardDutyDetector?.Properties?.Features ?? [])
+    .map((feature) => [feature.Name, feature.Status]));
+  const requiredGuardDutyFeatures = [
+    "S3_DATA_EVENTS", "EKS_AUDIT_LOGS", "EBS_MALWARE_PROTECTION",
+    "RDS_LOGIN_EVENTS", "LAMBDA_NETWORK_LOGS", "RUNTIME_MONITORING",
+  ];
+  assert(errors, requiredGuardDutyFeatures.every((name) => guardDutyFeatures.get(name) === "ENABLED")
+    && guardDutyFeatures.size === requiredGuardDutyFeatures.length,
+  "GuardDuty must explicitly enable the six reviewed production protection plans");
+  assert(errors, !guardDutyFeatures.has("EKS_RUNTIME_MONITORING"),
+    "GuardDuty must not specify EKS runtime monitoring alongside Runtime Monitoring");
+
   const billing = resources.BillingLedger?.Properties;
   assert(errors, resources.BillingLedger?.DeletionPolicy === "Retain", "BillingLedger must be retained on stack deletion");
   assert(errors, resources.BillingLedger?.UpdateReplacePolicy === "Retain", "BillingLedger must be retained on replacement");
