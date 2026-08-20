@@ -542,6 +542,27 @@ describe("AWS production Desktop adapter", () => {
     })).resolves.toEqual([expect.objectContaining({ event_type: "note.signed" })]);
   });
 
+  it("reads the bounded production patient overview without contact values", async () => {
+    const test = harness({
+      patientId: PATIENT,
+      demographics: {
+        fullName: "Synthetic Patient", dateOfBirth: null, sex: "unknown",
+        hasEmail: false, hasPhone: false,
+      },
+      careTeam: [], allergies: [], medications: [], conditions: [],
+      recentAppointments: [], recentEncounters: [],
+      labs: { latestCollectedAt: null, markerCount: 0, awaitingReview: 0, abnormal: 0, recent: [] },
+      openTasks: [], carePlan: null, wearableSources: [],
+      missingInformation: ["No allergy list recorded"],
+      changesSinceLastVisit: { anchorEncounterAt: null, items: [] },
+    });
+    await expect(test.adapter.execute(context, {
+      kind: "rpc", functionName: "get_patient_overview",
+      args: { _organization_id: ORG, _patient_id: PATIENT },
+    })).resolves.toMatchObject({ patientId: PATIENT, demographics: { hasEmail: false, hasPhone: false } });
+    expect(test.calls[1]?.sql).toBe("select clinical_core.get_patient_overview($1,$2) as data");
+  });
+
   it("rejects cross-tenant notes, nested content, invalid provenance, and oversized corrections", async () => {
     const test = harness();
     await expect(test.adapter.execute(context, {

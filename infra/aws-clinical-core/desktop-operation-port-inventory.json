@@ -2,14 +2,14 @@
   "schemaVersion": "desktop-operation-port-inventory/1",
   "generatedFrom": {
     "operationManifestSha256": "88edf2081d80d44c57d18d47a8e66bcd9e601d0f8db64edd870fbaff25b5d1d0",
-    "productionOperationManifestSha256": "227ce85d0721313dd11eaf2c4996217133e883a52a3d91cb8857c282921d0186",
+    "productionOperationManifestSha256": "4fda14624482fa7c2a4026191ffa38fbdd84a944391e07d7e9970ab90a520054",
     "legacyDefinitionSetSha256": "dce8bb87ed890c305c656ee61b8438da0cb518647ea2df65f4bdf26e55277e96"
   },
   "counts": {
     "rpc": 217,
     "select": 5,
     "total": 222,
-    "productionImplemented": 31,
+    "productionImplemented": 32,
     "productionEnabled": 0
   },
   "operations": [
@@ -4082,7 +4082,13 @@
         }
       ],
       "syntheticBoundary": "registry_disabled",
-      "productionStatus": "not_ported"
+      "productionStatus": "implemented_activation_blocked",
+      "productionEvidence": {
+        "implementation": "native_production_function",
+        "source": "infra/aws-clinical-core/production-migrations/20260821110000_production_patient_overview.sql",
+        "sourceSha256": "c59f658a56ae19a877ac8777b93a7a671b9f81e958435e6fbc33da716993c4f3",
+        "activationState": "phi_disabled"
+      }
     },
     {
       "kind": "rpc",
@@ -11065,7 +11071,7 @@
       "productionEvidence": {
         "implementation": "native_production_adapter",
         "source": "src/server/clinical-core/aws-production-desktop.ts",
-        "sourceSha256": "181a79a79c542d64b9bf68d4e2453d161c5abe2bc32a7e914f76705c41fadea8",
+        "sourceSha256": "2c1638d7899842d43ce73754a297c48fa37920702e7a186b79da8dcd8576fe0c",
         "activationState": "phi_disabled"
       }
     },
@@ -11106,7 +11112,7 @@
       "productionEvidence": {
         "implementation": "native_production_adapter",
         "source": "src/server/clinical-core/aws-production-desktop.ts",
-        "sourceSha256": "181a79a79c542d64b9bf68d4e2453d161c5abe2bc32a7e914f76705c41fadea8",
+        "sourceSha256": "2c1638d7899842d43ce73754a297c48fa37920702e7a186b79da8dcd8576fe0c",
         "activationState": "phi_disabled"
       }
     }

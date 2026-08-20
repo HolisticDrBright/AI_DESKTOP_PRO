@@ -51,6 +51,7 @@ const CORE_RPCS = new Set([
   "list_desktop_patient_encounters",
   "get_desktop_note",
   "get_desktop_patient_timeline",
+  "get_patient_overview",
 ]);
 const CORE_SELECTS = new Set(["patient_profiles", "lab_documents"]);
 
@@ -378,6 +379,15 @@ async function executeCoreRpc(
     return (await tx.query("select * from clinical_core.get_desktop_patient_timeline($1,$2)", [
       clinicalUuid(requiredUuid(args._patient_id)), boundedInteger(args._limit, 1, 500),
     ])).rows;
+  }
+  if (name === "get_patient_overview") {
+    exactKeys(args, ["_organization_id", "_patient_id"]);
+    if (args._organization_id !== context.organizationId) throw invalid();
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.get_patient_overview($1,$2) as data",
+      [clinicalUuid(context.organizationId), clinicalUuid(requiredUuid(args._patient_id))],
+    ));
+    return decodeJson(row.data);
   }
   throw new ProductionDesktopError("operation_refused");
 }

@@ -206,8 +206,8 @@ select
   (select count(*)::int from clinical_audit.events) as audit_count
 "@
 $counts = @($database.records[0] | ForEach-Object { [int64]$_.longValue })
-if (($counts -join ",") -ne "12,26,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0") {
-  throw "Production database is not the reviewed empty 12-migration/26-table state: $($counts -join ',')."
+if (($counts -join ",") -ne "13,26,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0") {
+  throw "Production database is not the reviewed empty 13-migration/26-table state: $($counts -join ',')."
 }
 
 $alarmName = "$functionName-errors"

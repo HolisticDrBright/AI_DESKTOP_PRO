@@ -16,7 +16,7 @@ const errors = [];
 const assert = (condition, message) => { if (!condition) errors.push(message); };
 
 assert(manifest.contract_version === "clinical-core-migrations/1", "generated manifest contract is invalid");
-assert(manifest.migrations.length === 12, "expected six transformed migrations and six production overlays");
+assert(manifest.migrations.length === 13, "expected six transformed migrations and seven production overlays");
 assert(new Set(manifest.migrations.map((entry) => entry.version)).size === manifest.migrations.length,
   "migration versions must be unique");
 
@@ -67,6 +67,8 @@ const schedulingOverlay = readFileSync(path.join(root, "infra", "aws-clinical-co
   "20260821090000_production_scheduling.sql"), "utf8");
 const encounterOverlay = readFileSync(path.join(root, "infra", "aws-clinical-core", "production-migrations",
   "20260821100000_production_encounters_notes.sql"), "utf8");
+const overviewOverlay = readFileSync(path.join(root, "infra", "aws-clinical-core", "production-migrations",
+  "20260821110000_production_patient_overview.sql"), "utf8");
 assert(overlay.includes("_organization_id uuid") && overlay.includes("_first_name text")
   && overlay.includes("_last_name text") && overlay.includes("_date_of_birth date")
   && overlay.includes("_sex text") && overlay.includes("_mrn text")
@@ -154,6 +156,13 @@ for (const invariant of [
 const noteAudits = encounterOverlay.match(/insert into clinical_audit\.events[\s\S]*?;/g)?.join("\n") ?? "";
 assert(!/['\"](?:content|reason|status_reason)['\"]\s*,\s*_(?:content|reason)/i.test(noteAudits)
   && noteAudits.includes("reason_present"), "encounter/note audit contains clinical content or lacks presence-only reason evidence");
+assert(overviewOverlay.includes("clinical_core.get_patient_overview")
+  && overviewOverlay.includes("clinical_private.require_clinical_patient")
+  && overviewOverlay.includes("'hasEmail',_patient.email is not null")
+  && overviewOverlay.includes("'allergies','[]'::jsonb")
+  && overviewOverlay.includes("'No allergy list recorded'")
+  && overviewOverlay.includes("limit 10"),
+"patient overview lacks tenant gate, contact minimization, explicit missing-data state, or bounded changes");
 
 if (errors.length) {
   for (const error of errors) console.error(`ERROR: ${error}`);
@@ -161,4 +170,4 @@ if (errors.length) {
 }
 
 const releaseHash = createHash("sha256").update(combined).digest("hex");
-console.log(`Production clinical-core gate passed: 12 migrations, zero seeded rows (${releaseHash}).`);
+console.log(`Production clinical-core gate passed: 13 migrations, zero seeded rows (${releaseHash}).`);
