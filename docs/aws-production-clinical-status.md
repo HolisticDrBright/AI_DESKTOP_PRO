@@ -100,7 +100,7 @@ compatibility route. Its production adapters set `production-clinical`,
 `clinical_phi`, and `containsPhi=true` only after the independent activation
 gate and a token with `custom:production_bound=true`; a token carrying the
 synthetic attestation is refused. Exact source
-`c36648dfa237f60a204df471711dfc6c103c6882` is now deployed behind all 21
+`954b148acd4cf0647ba67aac7d2c104e1776c2b6` is now deployed behind all 21
 explicit JWT routes, but its activation inputs remain false/blocked and the
 Lambda role has encrypted-log writes only. It therefore still returns the
 bounded 503 before parsing a request or touching Aurora. No PHI data plane is
@@ -217,7 +217,7 @@ production workload, operational safeguards, or HIPAA compliance.
 - PHI-disabled API stack:
   `ai-longevity-production-clinical-api-disabled`, `UPDATE_COMPLETE`.
   It is now `UPDATE_COMPLETE` with exact candidate source
-  `c36648dfa237f60a204df471711dfc6c103c6882`. API Gateway exposes exactly 21
+  `954b148acd4cf0647ba67aac7d2c104e1776c2b6`. API Gateway exposes exactly 21
   explicit JWT-only routes. Unauthenticated requests return 401; direct or
   authorized execution returns bounded 503. Its Lambda execution role has one
   log-write policy, no attached policies, and no Aurora/secret/KMS data-plane
@@ -249,9 +249,11 @@ production workload, operational safeguards, or HIPAA compliance.
   zero unsafe log matches. Evidence SHA-256:
   `b425616777af158967b80c62b43aee85b21be94ef1e4310dabe19f6cbbb8cc54`.
 - The PHI-disabled schema-only operator then added the eighth registered-audit
-  migration with zero clinical rows. The closed-boundary exercise reverified
-  the 8-migration/17-table empty state; interim evidence SHA-256:
-  `590eb063f8da5bee0d9c5bf6ec2fdaef751d9dd3cfcbbee20deb71ddf9689d75`.
+  migration with zero clinical rows. Exact candidate `954b148` was deployed
+  closed and the exercise reverified the 8-migration/17-table empty state,
+  immutable identity binding, 21 JWT-only routes, 401/503 refusal, log-only
+  IAM, alarm `OK`, and zero unsafe log matches. Evidence SHA-256:
+  `d3bb7035ae949bc51ea1eca20a54af5d39cca784fb16d48949bb78ccc9b36b73`.
 
 CloudFormation drift detection reports only three GuardDuty service-returned
 result fields as additions: disabled `AI_ANALYST`, disabled `AI_PROTECTION`,
