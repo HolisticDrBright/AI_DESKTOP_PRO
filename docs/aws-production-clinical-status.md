@@ -160,6 +160,10 @@ production workload, operational safeguards, or HIPAA compliance.
 - Encrypted runtime error search: zero ERROR/Error/FATAL/Exception events.
 - Container Insights running-task alarm: `OK`.
 - Production Aurora read-only inventory: zero application tables.
+- The companion AI Longevity Pro V2 patient API readiness service is also
+  deployed privately from exact commit `9f8d526`; ECR digest
+  `sha256:4a3c58ac…1bf7` scans at 0 Critical/0 High, its one task is healthy,
+  runtime error search is empty, and its running-task alarm is `OK`.
 
 This evidence closes only the exact-image/private-compute readiness proof. It
 does not authorize PHI and must not be represented as a production clinical
