@@ -53,6 +53,7 @@ jobs:
           npm run check:aws-production-clinical-core
           npm run check:aws-production-clinical-api
           npm run build:aws-production-clinical-api
+          npm run build:aws-production-rollback-acceptance
           npm run build:aws-production-clinical-core-verifier
           npm run build:aws-production-migration-operator
           npm run build:aws-production-foundation

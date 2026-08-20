@@ -49,6 +49,7 @@
     "check:aws-production-clinical-core": "node scripts/check-aws-production-clinical-core.mjs",
     "check:aws-production-clinical-api": "node scripts/check-aws-production-clinical-api.mjs",
     "build:aws-production-clinical-api": "node scripts/build-aws-production-clinical-api.mjs",
+    "build:aws-production-rollback-acceptance": "node scripts/build-aws-production-rollback-acceptance.mjs",
     "audit:aws-data-plane-migration": "node scripts/check-aws-data-plane-migration.mjs --report",
     "check:aws-data-plane-migration": "node scripts/check-aws-data-plane-migration.mjs --enforce",
     "test:aws-data-plane-migration": "node scripts/check-aws-data-plane-migration.test.mjs"

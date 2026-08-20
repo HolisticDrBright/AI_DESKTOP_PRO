@@ -145,7 +145,10 @@ describe("Aurora RDS Data API transaction adapter", () => {
 
   test.each([
     ["request_context_refused", "identity_refused"],
+    ["production_context_refused", "identity_refused"],
+    ["patient_access_refused", "identity_refused"],
     ["invitation_invalid_or_expired", "operation_refused"],
+    ["production_patient_not_found", "operation_refused"],
   ])("maps the authored %s marker without returning provider text", async (marker, category) => {
     const mock = client((call) => {
       if (call.name === "BeginTransactionCommand") return { transactionId: "tx-refused" };
