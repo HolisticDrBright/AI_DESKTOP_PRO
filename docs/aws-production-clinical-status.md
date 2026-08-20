@@ -164,8 +164,8 @@ production workload, operational safeguards, or HIPAA compliance.
 ## Latest production-clinical evidence (2026-08-20)
 
 - Workload stack: `ai-desktop-pro-production-readiness`, `UPDATE_COMPLETE`.
-- Exact source: `3a30769653028e9bdb71b32a9525e1a5d2d8b880`.
-- ECR digest: `sha256:d67060e4543411375701ec3ac45ebed7c6a16596899a31a35ef83952c0f3d849`.
+- Exact source: `c606066cf4e2879b535aa491029e6d08711a38cf`.
+- ECR digest: `sha256:344e5ff3731877883c482083f8ffacb7bac2269dc5eb188ce074faa595cd987d`.
 - Image scan: 0 Critical, 0 High.
 - ECS: one RUNNING/HEALTHY task, private address only, no public association.
 - Container smoke test: `/api/health` succeeds; normal Desktop traffic returns
@@ -175,8 +175,10 @@ production workload, operational safeguards, or HIPAA compliance.
 - Production Aurora: 17 application tables, seven migration ledger entries,
   and zero clinical/audit rows.
 - The companion AI Longevity Pro V2 patient API readiness service is also
-  deployed privately from exact commit `9f8d526`; ECR digest
-  `sha256:4a3c58ac…1bf7` scans at 0 Critical/0 High, its one task is healthy,
+  deployed privately from exact commit
+  `a6af612826f9e0e5afa29eefcde72226fc19a25e`; ECR digest
+  `sha256:f1f809b9d9f0bb4f5585384066e8aebd11d34bec22678e51b2e97a418e8ef4c7`
+  scans at 0 Critical/0 High, its one task is healthy,
   runtime error search is empty, and its running-task alarm is `OK`.
 
 - PHI-disabled API stack:
