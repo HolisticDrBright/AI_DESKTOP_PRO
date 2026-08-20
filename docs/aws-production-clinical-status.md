@@ -111,8 +111,13 @@ unported pending governed Cognito identity binding. The bounded
 demographics, care-team roles, appointments, encounters, labs, and review tasks;
 it returns contact-presence flags instead of contact values and explicitly
 labels allergy, medication, and problem lists as unrecorded until governed
-write contracts exist. All 222 inventory entries remain disabled in the
-deployed production route, and 190
+write contracts exist. The connection-control slice adds a ten-character,
+single-use invitation code whose SHA-256 hash alone is stored, optimistic
+pause/resume/revoke transitions, automatic consent withdrawal on connection
+revocation, approved-artifact-only consent grants (including
+`lab_results_import`), and tenant-scoped Desktop connection/operations views.
+All 222 inventory entries remain disabled in the deployed production route,
+and 183
 still need reviewed AWS implementations for full Desktop functionality.
 
 The same candidate now covers the complete 21-route governed
@@ -123,7 +128,7 @@ compatibility route. Its production adapters set `production-clinical`,
 `clinical_phi`, and `containsPhi=true` only after the independent activation
 gate and a token with `custom:production_bound=true`; a token carrying the
 synthetic attestation is refused. Exact source
-`31e904e10ee12caac9b85cdda5e8cafb1ae282b5` is now deployed behind all 21
+`c2ec3e5c59c79d63f71465f1d9178aba7b49d13e` is now deployed behind all 21
 explicit JWT routes, but its activation inputs remain false/blocked and the
 Lambda role has encrypted-log writes only. It therefore still returns the
 bounded 503 before parsing a request or touching Aurora. No PHI data plane is
@@ -229,7 +234,7 @@ production workload, operational safeguards, or HIPAA compliance.
   `503` with `production_not_activated` and `phiAllowed:false`.
 - Encrypted runtime error search: zero ERROR/Error/FATAL/Exception events.
 - Container Insights running-task alarm: `OK`.
-- Production Aurora: 26 application tables, 13 migration ledger entries,
+- Production Aurora: 26 application tables, 14 migration ledger entries,
   and zero clinical/audit rows.
 - The companion AI Longevity Pro V2 patient API readiness service is also
   deployed privately from exact commit
@@ -241,7 +246,7 @@ production workload, operational safeguards, or HIPAA compliance.
 - PHI-disabled API stack:
   `ai-longevity-production-clinical-api-disabled`, `UPDATE_COMPLETE`.
   It is now `UPDATE_COMPLETE` with exact candidate source
-  `31e904e10ee12caac9b85cdda5e8cafb1ae282b5`. API Gateway exposes exactly 21
+  `c2ec3e5c59c79d63f71465f1d9178aba7b49d13e`. API Gateway exposes exactly 21
   explicit JWT-only routes. Unauthenticated requests return 401; direct or
   authorized execution returns bounded 503. Its Lambda execution role has one
   log-write policy, no attached policies, and no Aurora/secret/KMS data-plane
@@ -310,6 +315,17 @@ production workload, operational safeguards, or HIPAA compliance.
   exercise reverified 13 migrations, 26 tables, zero clinical/audit rows, and
   all JWT/IAM/log refusal invariants. Evidence SHA-256:
   `c27861202656da4df5e65f1fc9ca7f73d68237469fd381389bdd5010de4dac9f`.
+- The fourteenth migration added the governed Desktop-side connection control
+  plane without adding a table or row: ten-character one-time invitation
+  codes with hash-only storage, versioned pause/resume/revoke, automatic
+  consent withdrawal on revocation, approved-artifact-only scoped consent,
+  and tenant-bounded sync posture reads. Seven additional Desktop operations
+  are therefore implemented but activation-blocked (39 total; 0 enabled).
+  Exact candidate `c2ec3e5` remains closed. The exercise reverified 14
+  migrations, 26 tables, zero clinical/audit rows, 21 JWT-only routes,
+  401/503 refusal, log-only IAM, alarm `OK`, and zero unsafe log matches.
+  Evidence SHA-256:
+  `5be0b5e7bbc850ec774f1096561db15a3e345c0760d2468031dcea2ba1d25bbd`.
 
 CloudFormation drift detection reports only three GuardDuty service-returned
 result fields as additions: disabled `AI_ANALYST`, disabled `AI_PROTECTION`,
