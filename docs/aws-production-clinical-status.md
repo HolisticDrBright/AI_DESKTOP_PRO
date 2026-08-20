@@ -56,7 +56,7 @@ fixture and is categorically refused in a deployed process.
 
 This source-level result and the healthy readiness container are not the same
 as a functioning production data plane. Production Aurora now contains the
-reviewed portable clinical-core schema: 17 application tables and eight
+reviewed portable clinical-core schema: 17 application tables and nine
 immutable migration-ledger rows, with zero organization, person, patient, lab,
 clinical-record, or audit rows. The production API that is actually deployed
 is a separate Cognito-JWT boundary with no database, secret, S3, or KMS
@@ -82,14 +82,19 @@ uniform database wrapper. Migration `20260821040000` creates that registry and
 dispatcher with zero enabled operations. The API role cannot change the
 registry. This is intentionally fail-closed until all required wrappers have
 been ported and the deployed registry is reconciled to the source manifest.
-The production functional candidate currently accounts for seven operations:
+The production functional candidate currently accounts for eleven operations:
 `create_patient_profile`, `review_biomarker`,
 `list_patient_lab_observations`, `list_audit_events`,
-`record_registered_audit_event`, `patient_profiles`, and `lab_documents`. The
+`record_registered_audit_event`, `list_my_organizations`, `list_org_members`,
+`set_org_member_role`, `remove_org_member`, `patient_profiles`, and
+`lab_documents`. The
 two audit operations use a database-owned event registry, bounded scalar
 metadata, append-only storage, and workforce/tenant/patient authorization. The
-candidate is source-only and deliberately not attached to the deployed API.
-All 222 inventory entries remain disabled in the deployed production route, and 215
+membership operations expose no workforce email/display data, require
+owner/admin authorization, preserve the last owner, refuse self-removal, and
+suspend rather than delete. Legacy add-by-email and self-activation remain
+unported pending governed Cognito identity binding. All 222 inventory entries
+remain disabled in the deployed production route, and 211
 still need reviewed AWS implementations for full Desktop functionality.
 
 The same candidate now covers the complete 21-route governed
@@ -100,7 +105,7 @@ compatibility route. Its production adapters set `production-clinical`,
 `clinical_phi`, and `containsPhi=true` only after the independent activation
 gate and a token with `custom:production_bound=true`; a token carrying the
 synthetic attestation is refused. Exact source
-`954b148acd4cf0647ba67aac7d2c104e1776c2b6` is now deployed behind all 21
+`c4d309f53046f9dd45092eae4868a54cc1b51e32` is now deployed behind all 21
 explicit JWT routes, but its activation inputs remain false/blocked and the
 Lambda role has encrypted-log writes only. It therefore still returns the
 bounded 503 before parsing a request or touching Aurora. No PHI data plane is
@@ -205,7 +210,7 @@ production workload, operational safeguards, or HIPAA compliance.
   `503` with `production_not_activated` and `phiAllowed:false`.
 - Encrypted runtime error search: zero ERROR/Error/FATAL/Exception events.
 - Container Insights running-task alarm: `OK`.
-- Production Aurora: 17 application tables, eight migration ledger entries,
+- Production Aurora: 17 application tables, nine migration ledger entries,
   and zero clinical/audit rows.
 - The companion AI Longevity Pro V2 patient API readiness service is also
   deployed privately from exact commit
@@ -217,7 +222,7 @@ production workload, operational safeguards, or HIPAA compliance.
 - PHI-disabled API stack:
   `ai-longevity-production-clinical-api-disabled`, `UPDATE_COMPLETE`.
   It is now `UPDATE_COMPLETE` with exact candidate source
-  `954b148acd4cf0647ba67aac7d2c104e1776c2b6`. API Gateway exposes exactly 21
+  `c4d309f53046f9dd45092eae4868a54cc1b51e32`. API Gateway exposes exactly 21
   explicit JWT-only routes. Unauthenticated requests return 401; direct or
   authorized execution returns bounded 503. Its Lambda execution role has one
   log-write policy, no attached policies, and no Aurora/secret/KMS data-plane
@@ -254,6 +259,11 @@ production workload, operational safeguards, or HIPAA compliance.
   immutable identity binding, 21 JWT-only routes, 401/503 refusal, log-only
   IAM, alarm `OK`, and zero unsafe log matches. Evidence SHA-256:
   `d3bb7035ae949bc51ea1eca20a54af5d39cca784fb16d48949bb78ccc9b36b73`.
+- It then added the ninth workforce-membership migration with zero rows and
+  deployed exact candidate `c4d309f` closed. The exercise reverified the
+  9-migration/17-table empty state and all refusal/security invariants.
+  Evidence SHA-256:
+  `2b1868fadcbad96c2144dc35a7feb40453d6c96f9474a3c51b25dd3ed35886fd`.
 
 CloudFormation drift detection reports only three GuardDuty service-returned
 result fields as additions: disabled `AI_ANALYST`, disabled `AI_PROTECTION`,
