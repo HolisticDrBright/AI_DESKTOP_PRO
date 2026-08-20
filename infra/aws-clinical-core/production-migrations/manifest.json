@@ -1,0 +1,9 @@
+{
+  "contract_version": "clinical-core-production-overlays/1",
+  "migrations": [
+    {
+      "version": "20260821050000",
+      "file": "20260821050000_production_patient_directory.sql"
+    }
+  ]
+}

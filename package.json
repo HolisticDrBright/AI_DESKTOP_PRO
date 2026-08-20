@@ -43,6 +43,9 @@
     "check:aws-desktop-compatibility-contract": "node scripts/check-aws-desktop-compatibility-contract.mjs",
     "build:aws-desktop-operation-inventory": "node scripts/build-aws-desktop-operation-inventory.mjs --write",
     "check:aws-desktop-operation-inventory": "node scripts/check-aws-desktop-operation-inventory.mjs",
+    "build:aws-production-clinical-core": "node scripts/build-aws-production-clinical-core.mjs",
+    "build:aws-production-clinical-core-verifier": "node scripts/build-aws-production-clinical-core-verifier.mjs",
+    "check:aws-production-clinical-core": "node scripts/check-aws-production-clinical-core.mjs",
     "audit:aws-data-plane-migration": "node scripts/check-aws-data-plane-migration.mjs --report",
     "check:aws-data-plane-migration": "node scripts/check-aws-data-plane-migration.mjs --enforce",
     "test:aws-data-plane-migration": "node scripts/check-aws-data-plane-migration.test.mjs"
