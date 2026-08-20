@@ -117,9 +117,11 @@ if ((DeployedOutput "PhiAllowed") -ne "false" `
 $roleName = aws cloudformation describe-stack-resource --profile $AwsProfile --region $Region `
   --stack-name $ExtensionStackName --logical-resource-id ProductionClinicalApiRole `
   --query "StackResourceDetail.PhysicalResourceId" --output text
-$policies = @(aws iam list-role-policies --profile $AwsProfile --role-name $roleName `
-  --query "PolicyNames" --output text) -split "\s+" | Where-Object { $_ }
-if ($policies.Count -ne 1 -or $policies[0] -ne "BoundedEncryptedLogging") {
+$policyResponse = aws iam list-role-policies --profile $AwsProfile --role-name $roleName --output json | ConvertFrom-Json
+$attachedResponse = aws iam list-attached-role-policies --profile $AwsProfile --role-name $roleName --output json | ConvertFrom-Json
+$policies = @($policyResponse.PolicyNames)
+$attached = @($attachedResponse.AttachedPolicies)
+if ($policies.Count -ne 1 -or $policies[0] -ne "BoundedEncryptedLoggingOnly" -or $attached.Count -ne 0) {
   throw "Closed candidate unexpectedly has clinical data-plane permissions."
 }
 

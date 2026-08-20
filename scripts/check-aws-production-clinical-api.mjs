@@ -96,7 +96,7 @@ assert(candidateFunction?.Properties?.Environment?.Variables?.PHI_ALLOWED?.Ref =
 "candidate function must receive every activation and provenance gate");
 const candidatePolicies = candidateRole?.Properties?.Policies ?? [];
 assert(candidatePolicies.length === 3
-  && candidatePolicies[0]?.PolicyName === "BoundedEncryptedLogging"
+  && candidatePolicies[0]?.PolicyName === "BoundedEncryptedLoggingOnly"
   && candidatePolicies.slice(1).every((policy) => policy?.["Fn::If"]?.[0] === "DataPlaneEnabled"),
 "candidate data permissions must exist only behind DataPlaneEnabled");
 const candidateRoutes = candidateResources.filter((resource) => resource.Type === "AWS::ApiGatewayV2::Route");
