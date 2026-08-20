@@ -102,9 +102,11 @@ export async function applyProductionClinicalCoreMigrations(
         + (select count(*) from clinical_core.consumer_clinical_record_versions)
         + (select count(*) from clinical_core.privacy_requests)
         + (select count(*) from clinical_core.review_queue_items)
+        + (select count(*) from clinical_core.appointments)
+        + (select count(*) from clinical_core.appointment_status_events)
       )::int as clinical_row_count`);
     const row = verification.rows[0];
-    if (!row || Number(row.table_count) !== 18 || Number(row.contract_count) !== 2
+    if (!row || Number(row.table_count) !== 20 || Number(row.contract_count) !== 2
       || Number(row.clinical_row_count) !== 0) {
       throw new ProductionClinicalCoreMigrationError("verification_failed");
     }

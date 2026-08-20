@@ -16,7 +16,7 @@ const errors = [];
 const assert = (condition, message) => { if (!condition) errors.push(message); };
 
 assert(manifest.contract_version === "clinical-core-migrations/1", "generated manifest contract is invalid");
-assert(manifest.migrations.length === 10, "expected six transformed migrations and four production overlays");
+assert(manifest.migrations.length === 11, "expected six transformed migrations and five production overlays");
 assert(new Set(manifest.migrations.map((entry) => entry.version)).size === manifest.migrations.length,
   "migration versions must be unique");
 
@@ -63,6 +63,8 @@ const membershipOverlay = readFileSync(path.join(root, "infra", "aws-clinical-co
   "20260821070000_production_workforce_memberships.sql"), "utf8");
 const reviewQueueOverlay = readFileSync(path.join(root, "infra", "aws-clinical-core", "production-migrations",
   "20260821080000_production_review_queue.sql"), "utf8");
+const schedulingOverlay = readFileSync(path.join(root, "infra", "aws-clinical-core", "production-migrations",
+  "20260821090000_production_scheduling.sql"), "utf8");
 assert(overlay.includes("_organization_id uuid") && overlay.includes("_first_name text")
   && overlay.includes("_last_name text") && overlay.includes("_date_of_birth date")
   && overlay.includes("_sex text") && overlay.includes("_mrn text")
@@ -118,6 +120,24 @@ assert(reviewQueueOverlay.includes("review_queue_identity_immutable")
   && !/['\"]title['\"]\s*,\s*_normalized_title/.test(
     reviewQueueOverlay.match(/insert into clinical_audit\.events[\s\S]*?;/g)?.join("\n") ?? ""),
 "review queue lacks immutable identity, tenant scope, or minimum audit content");
+for (const operation of [
+  "get_desktop_calendar", "book_appointment", "update_appointment_status",
+  "reschedule_appointment", "transition_appointment", "correct_appointment_status",
+]) {
+  assert(schedulingOverlay.includes(`clinical_core.${operation}`), `missing production scheduling operation ${operation}`);
+}
+assert(schedulingOverlay.includes("appointment_status_events_append_only")
+  && schedulingOverlay.includes("appointment_transition_allowed")
+  && schedulingOverlay.includes("appointment_overlap")
+  && schedulingOverlay.includes("appointment_version_conflict")
+  && schedulingOverlay.includes("idempotency_key")
+  && schedulingOverlay.includes("organization_admin_required")
+  && schedulingOverlay.includes("pg_catalog.pg_advisory_xact_lock"),
+"scheduling lacks append-only history, state, overlap, concurrency, idempotency, admin-correction, or locking guards");
+const schedulingAudits = schedulingOverlay.match(/insert into clinical_audit\.events[\s\S]*?;/g)?.join("\n") ?? "";
+assert(!/['\"](?:title|location|telehealth_url|reason)['\"]\s*,\s*_(?:title|location|telehealth_url|reason)/i.test(schedulingAudits)
+  && schedulingAudits.includes("reason_present"),
+"scheduling audit must retain only bounded facts, never appointment content");
 
 if (errors.length) {
   for (const error of errors) console.error(`ERROR: ${error}`);
@@ -125,4 +145,4 @@ if (errors.length) {
 }
 
 const releaseHash = createHash("sha256").update(combined).digest("hex");
-console.log(`Production clinical-core gate passed: 10 migrations, zero seeded rows (${releaseHash}).`);
+console.log(`Production clinical-core gate passed: 11 migrations, zero seeded rows (${releaseHash}).`);

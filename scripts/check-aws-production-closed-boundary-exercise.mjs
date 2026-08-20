@@ -5,7 +5,7 @@ const document = fs.readFileSync("docs/aws-production-closed-boundary-exercise.m
 const required = [
   "ConfirmPhiDisabled", "173535830222", 'PhiAllowed -ne "false"',
   "production_not_activated", "Unauthenticated clinical request was not refused",
-  "logs:CreateLogStream,logs:PutLogEvents", "10,18,0,0,0,0,0,0,0",
+  "logs:CreateLogStream,logs:PutLogEvents", "11,20,0,0,0,0,0,0,0,0,0",
   "DataPlaneEnabled", "SourceVersion", "custom:production_bound", "productionBoundIdentityPools",
   "RDS_LOGIN_EVENTS", "LAMBDA_NETWORK_LOGS", "EBS_MALWARE_PROTECTION",
   "serviceReportedDisabledGuardDutyFeatures", "unreviewedFoundationDrift",

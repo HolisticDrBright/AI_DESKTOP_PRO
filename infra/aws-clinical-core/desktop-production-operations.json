@@ -75,6 +75,42 @@
       "source": "infra/aws-clinical-core/production-migrations/20260821080000_production_review_queue.sql"
     },
     {
+      "kind": "rpc",
+      "name": "get_desktop_calendar",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821090000_production_scheduling.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "book_appointment",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821090000_production_scheduling.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "update_appointment_status",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821090000_production_scheduling.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "reschedule_appointment",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821090000_production_scheduling.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "transition_appointment",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821090000_production_scheduling.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "correct_appointment_status",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821090000_production_scheduling.sql"
+    },
+    {
       "kind": "select",
       "name": "lab_documents",
       "implementation": "native_production_adapter",

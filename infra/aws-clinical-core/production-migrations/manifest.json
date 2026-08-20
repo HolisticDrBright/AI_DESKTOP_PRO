@@ -16,6 +16,10 @@
     {
       "version": "20260821080000",
       "file": "20260821080000_production_review_queue.sql"
+    },
+    {
+      "version": "20260821090000",
+      "file": "20260821090000_production_scheduling.sql"
     }
   ]
 }

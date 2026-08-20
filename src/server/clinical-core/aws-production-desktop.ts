@@ -34,6 +34,12 @@ const CORE_RPCS = new Set([
   "create_review_task",
   "list_review_queue",
   "resolve_review_queue_item",
+  "get_desktop_calendar",
+  "book_appointment",
+  "update_appointment_status",
+  "reschedule_appointment",
+  "transition_appointment",
+  "correct_appointment_status",
 ]);
 const CORE_SELECTS = new Set(["patient_profiles", "lab_documents"]);
 
@@ -192,6 +198,76 @@ async function executeCoreRpc(
     ));
     return decodeJson(row.data);
   }
+  if (name === "get_desktop_calendar") {
+    exactKeys(args, ["_organization_id", "_from", "_to"]);
+    if (args._organization_id !== context.organizationId) throw invalid();
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.get_desktop_calendar($1,$2,$3) as data",
+      [clinicalUuid(context.organizationId), requiredTimestamp(args._from), requiredTimestamp(args._to)],
+    ));
+    return decodeJson(row.data);
+  }
+  if (name === "book_appointment") {
+    exactKeys(args, [
+      "_organization_id", "_practitioner_user_id", "_appointment_type", "_starts_at", "_ends_at",
+      "_patient_id", "_location", "_telehealth_url", "_title",
+    ]);
+    if (args._organization_id !== context.organizationId) throw invalid();
+    const patient = optionalUuid(args._patient_id);
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.book_appointment($1,$2,$3,$4,$5,$6,$7,$8,$9) as data",
+      [
+        clinicalUuid(context.organizationId), clinicalUuid(requiredUuid(args._practitioner_user_id)),
+        requiredString(args._appointment_type, 32), requiredTimestamp(args._starts_at),
+        requiredTimestamp(args._ends_at), patient ? clinicalUuid(patient) : null,
+        optionalString(args._location, 200), optionalString(args._telehealth_url, 2048),
+        optionalString(args._title, 200),
+      ],
+    ));
+    return decodeJson(row.data);
+  }
+  if (name === "update_appointment_status") {
+    exactKeys(args, ["_appointment_id", "_status"]);
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.update_appointment_status($1,$2) as data",
+      [clinicalUuid(requiredUuid(args._appointment_id)), requiredString(args._status, 32)],
+    ));
+    return decodeJson(row.data);
+  }
+  if (name === "reschedule_appointment") {
+    exactKeys(args, ["_appointment_id", "_starts_at", "_ends_at"]);
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.reschedule_appointment($1,$2,$3) as data",
+      [
+        clinicalUuid(requiredUuid(args._appointment_id)), requiredTimestamp(args._starts_at),
+        requiredTimestamp(args._ends_at),
+      ],
+    ));
+    return decodeJson(row.data);
+  }
+  if (name === "transition_appointment") {
+    exactKeys(args, ["_appointment_id", "_to_status", "_expected_version", "_idempotency_key", "_reason"]);
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.transition_appointment($1,$2,$3,$4,$5) as data",
+      [
+        clinicalUuid(requiredUuid(args._appointment_id)), requiredString(args._to_status, 32),
+        optionalInteger(args._expected_version, 1), optionalString(args._idempotency_key, 128),
+        optionalString(args._reason, 1000),
+      ],
+    ));
+    return decodeJson(row.data);
+  }
+  if (name === "correct_appointment_status") {
+    exactKeys(args, ["_appointment_id", "_to_status", "_reason", "_expected_version"]);
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.correct_appointment_status($1,$2,$3,$4) as data",
+      [
+        clinicalUuid(requiredUuid(args._appointment_id)), requiredString(args._to_status, 32),
+        requiredString(args._reason, 1000), optionalInteger(args._expected_version, 1),
+      ],
+    ));
+    return decodeJson(row.data);
+  }
   throw new ProductionDesktopError("operation_refused");
 }
 
@@ -304,6 +380,18 @@ function requiredUuid(value: unknown): string {
 function boundedInteger(value: unknown, min: number, max: number): number {
   if (!Number.isInteger(value) || (value as number) < min || (value as number) > max) throw invalid();
   return value as number;
+}
+
+function optionalInteger(value: unknown, min: number): number | null {
+  if (value === null || value === undefined) return null;
+  if (!Number.isInteger(value) || (value as number) < min) throw invalid();
+  return value as number;
+}
+
+function requiredTimestamp(value: unknown): string {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T/.test(value)
+    || !Number.isFinite(Date.parse(value))) throw invalid();
+  return value;
 }
 
 function boundedScalarMetadata(value: unknown): Record<string, string | number | boolean> {

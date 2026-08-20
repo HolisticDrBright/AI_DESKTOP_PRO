@@ -14,6 +14,7 @@ const OBSERVATION = "44444444-4444-4444-8444-444444444444";
 const AUDIT = "55555555-5555-4555-8555-555555555555";
 const MEMBERSHIP = "66666666-6666-4666-8666-666666666666";
 const QUEUE_ITEM = "77777777-7777-4777-8777-777777777777";
+const APPOINTMENT = "88888888-8888-4888-8888-888888888888";
 
 const context: ProductionRequestContext = {
   actorPersonId: PERSON,
@@ -291,6 +292,148 @@ describe("AWS production Desktop adapter", () => {
       args: { _item_id: QUEUE_ITEM, _note: "x".repeat(501) },
     })).rejects.toEqual(new ProductionDesktopError("request_invalid"));
     expect(test.calls.every((call) => call.sql.includes("clinical_private.set_request_context"))).toBe(true);
+  });
+
+  it("reads only a bounded tenant calendar through the production function", async () => {
+    const test = harness({ appointments: [], practitioners: [], patients: [] });
+    await expect(test.adapter.execute(context, {
+      kind: "rpc",
+      functionName: "get_desktop_calendar",
+      args: {
+        _organization_id: ORG,
+        _from: "2026-08-20T00:00:00.000Z",
+        _to: "2026-08-27T00:00:00.000Z",
+      },
+    })).resolves.toMatchObject({ appointments: [], practitioners: [], patients: [] });
+    expect(test.calls[1]?.sql).toBe("select clinical_core.get_desktop_calendar($1,$2,$3) as data");
+    expect(test.calls[1]?.values).toEqual([
+      { kind: "uuid", value: ORG }, "2026-08-20T00:00:00.000Z", "2026-08-27T00:00:00.000Z",
+    ]);
+  });
+
+  it("books an appointment with exact bounded fields and nullable patient handling", async () => {
+    const test = harness({ id: APPOINTMENT, status: "scheduled" });
+    await expect(test.adapter.execute(context, {
+      kind: "rpc",
+      functionName: "book_appointment",
+      args: {
+        _organization_id: ORG,
+        _practitioner_user_id: PERSON,
+        _appointment_type: "lab-review",
+        _starts_at: "2026-08-21T17:00:00.000Z",
+        _ends_at: "2026-08-21T17:30:00.000Z",
+        _patient_id: PATIENT,
+        _location: null,
+        _telehealth_url: "https://meet.example.test/session",
+        _title: "Lab review",
+      },
+    })).resolves.toMatchObject({ id: APPOINTMENT, status: "scheduled" });
+    expect(test.calls[1]?.sql).toContain("clinical_core.book_appointment");
+    expect(test.calls[1]?.values).toEqual([
+      { kind: "uuid", value: ORG }, { kind: "uuid", value: PERSON }, "lab-review",
+      "2026-08-21T17:00:00.000Z", "2026-08-21T17:30:00.000Z",
+      { kind: "uuid", value: PATIENT }, null, "https://meet.example.test/session", "Lab review",
+    ]);
+  });
+
+  it("uses the governed transition, compatibility update, and reschedule functions", async () => {
+    const transition = harness({ id: APPOINTMENT, status: "confirmed", version: 2, already_applied: false });
+    await transition.adapter.execute(context, {
+      kind: "rpc",
+      functionName: "transition_appointment",
+      args: {
+        _appointment_id: APPOINTMENT,
+        _to_status: "confirmed",
+        _expected_version: 1,
+        _idempotency_key: "frontdesk-confirm-001",
+        _reason: null,
+      },
+    });
+    expect(transition.calls[1]?.sql).toContain("clinical_core.transition_appointment");
+    expect(transition.calls[1]?.values).toEqual([
+      { kind: "uuid", value: APPOINTMENT }, "confirmed", 1, "frontdesk-confirm-001", null,
+    ]);
+
+    const update = harness({ id: APPOINTMENT, status: "arrived", already_set: false });
+    await update.adapter.execute(context, {
+      kind: "rpc",
+      functionName: "update_appointment_status",
+      args: { _appointment_id: APPOINTMENT, _status: "arrived" },
+    });
+    expect(update.calls[1]?.sql).toContain("clinical_core.update_appointment_status");
+
+    const reschedule = harness({ id: APPOINTMENT, status: "confirmed" });
+    await reschedule.adapter.execute(context, {
+      kind: "rpc",
+      functionName: "reschedule_appointment",
+      args: {
+        _appointment_id: APPOINTMENT,
+        _starts_at: "2026-08-22T17:00:00.000Z",
+        _ends_at: "2026-08-22T17:30:00.000Z",
+      },
+    });
+    expect(reschedule.calls[1]?.sql).toContain("clinical_core.reschedule_appointment");
+  });
+
+  it("requires a bounded reason for terminal appointment correction", async () => {
+    const correction = harness({ id: APPOINTMENT, status: "confirmed", version: 3 });
+    await expect(correction.adapter.execute(context, {
+      kind: "rpc",
+      functionName: "correct_appointment_status",
+      args: {
+        _appointment_id: APPOINTMENT,
+        _to_status: "confirmed",
+        _reason: "Front desk selected the wrong terminal status.",
+        _expected_version: 2,
+      },
+    })).resolves.toMatchObject({ id: APPOINTMENT, status: "confirmed" });
+    expect(correction.calls[1]?.values).toEqual([
+      { kind: "uuid", value: APPOINTMENT }, "confirmed",
+      "Front desk selected the wrong terminal status.", 2,
+    ]);
+
+    const invalidCorrection = harness();
+    await expect(invalidCorrection.adapter.execute(context, {
+      kind: "rpc",
+      functionName: "correct_appointment_status",
+      args: {
+        _appointment_id: APPOINTMENT,
+        _to_status: "scheduled",
+        _reason: "",
+        _expected_version: 1,
+      },
+    })).rejects.toEqual(new ProductionDesktopError("request_invalid"));
+    expect(invalidCorrection.calls).toHaveLength(1);
+  });
+
+  it("refuses cross-tenant, malformed-time, and invalid-version scheduling requests", async () => {
+    const test = harness();
+    await expect(test.adapter.execute(context, {
+      kind: "rpc",
+      functionName: "get_desktop_calendar",
+      args: {
+        _organization_id: "99999999-9999-4999-8999-999999999999",
+        _from: "2026-08-20T00:00:00.000Z",
+        _to: "2026-08-27T00:00:00.000Z",
+      },
+    })).rejects.toEqual(new ProductionDesktopError("request_invalid"));
+    await expect(test.adapter.execute(context, {
+      kind: "rpc",
+      functionName: "reschedule_appointment",
+      args: { _appointment_id: APPOINTMENT, _starts_at: "tomorrow", _ends_at: "later" },
+    })).rejects.toEqual(new ProductionDesktopError("request_invalid"));
+    await expect(test.adapter.execute(context, {
+      kind: "rpc",
+      functionName: "transition_appointment",
+      args: {
+        _appointment_id: APPOINTMENT,
+        _to_status: "confirmed",
+        _expected_version: 0,
+        _idempotency_key: null,
+        _reason: null,
+      },
+    })).rejects.toEqual(new ProductionDesktopError("request_invalid"));
+    expect(test.calls).toHaveLength(3);
   });
 
   it("refuses a cross-tenant request before touching Aurora", async () => {
