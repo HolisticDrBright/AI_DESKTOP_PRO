@@ -52,11 +52,15 @@ transport remains available only to the explicitly enabled loopback contract
 fixture and is categorically refused in a deployed process.
 
 This source-level result and the healthy readiness container are not the same
-as a functioning production data plane. The compatibility route and the
-legacy Desktop clinical schema/RPC behavior have not been ported to production
-Aurora. Production Aurora currently has zero application tables. Until those
-schemas and operations are implemented, deployed, and accepted end to end,
-clinical features fail closed and `AWS_CLINICAL_ADAPTER_READY` remains false.
+as a functioning production data plane. Production Aurora now contains the
+reviewed portable clinical-core schema: 17 application tables and seven
+immutable migration-ledger rows, with zero organization, person, patient, lab,
+clinical-record, or audit rows. The production API that is actually deployed
+is a separate Cognito-JWT boundary with no database, secret, S3, or KMS
+data-plane permissions; it always returns `503 production_not_activated` after
+authorization. Until the required operations are implemented, deployed, and
+accepted end to end, clinical features fail closed and
+`AWS_CLINICAL_ADAPTER_READY` remains false.
 
 The required compatibility surface is now explicit rather than estimated:
 `infra/aws-clinical-core/desktop-compatibility-operations.json` contains 217
@@ -75,8 +79,12 @@ uniform database wrapper. Migration `20260821040000` creates that registry and
 dispatcher with zero enabled operations. The API role cannot change the
 registry. This is intentionally fail-closed until all required wrappers have
 been ported and the deployed registry is reconciled to the source manifest.
-The synthetic native lab slice accounts for three operations; 214 RPCs and
-three non-lab read models remain.
+The production functional candidate currently accounts for five operations:
+`create_patient_profile`, `review_biomarker`,
+`list_patient_lab_observations`, `patient_profiles`, and `lab_documents`. It is
+source-only and deliberately not attached to the deployed API. All 222
+inventory entries remain disabled in the deployed production route, and 217
+still need reviewed AWS implementations for full Desktop functionality.
 
 Production activation separately requires the
 `desktop_compatibility_contract` control and the
@@ -102,8 +110,9 @@ targets and GoDaddy DNS validation records exist.
 
 ## Inputs that cannot be invented by engineering
 
-1. Confirmation that `info+aws-prod@AILongevityPro.app` is received and retained
-   by the controlled `info` inbox.
+1. A controlled production/root/budget mailbox that is not
+   `info@AILongevityPro.app`, with evidence of delivery and retention. The
+   address cannot be invented by engineering.
 2. A controlled evidence reference showing the AWS Organizations BAA applies to
    the new member account.
 3. GoDaddy DNS changes and ACM validation for the four reserved endpoint names.
@@ -111,8 +120,9 @@ targets and GoDaddy DNS validation records exist.
 5. Named reviewers and timestamps for legal/compliance, security, clinical
    safety, and engineering approval.
 6. A documented HIPAA Security Rule risk analysis and risk-management plan,
-   tested backup restoration and incident response, workforce access reviews,
-   and vendor inventory/BAA decisions.
+   incident-response exercise, workforce access reviews, and vendor
+   inventory/BAA decisions. Aurora point-in-time recovery has now been tested;
+   the remaining recovery controls and incident exercise still require review.
 7. Named practitioner decisions for the unresolved governed-catalog label and
    classification review packets. Code must not invent those decisions.
 
@@ -122,14 +132,17 @@ targets and GoDaddy DNS validation records exist.
 2. Deploy the production foundation with PHI blocked.
 3. Replace Supabase Auth with the two Cognito identity planes. (Implemented in
    source; production deployment verification remains.)
-4. Port the remaining Desktop clinical schemas and explicitly allowlisted API
-   operations to Aurora/AWS; do not copy staging snapshots, service-role keys,
-   or synthetic identities.
+4. Port the remaining explicitly allowlisted Desktop API operations to
+   Aurora/AWS; do not copy staging snapshots, service-role keys, or synthetic
+   identities. The empty portable schema is deployed, but the functional API
+   is not.
 5. Deploy Desktop and patient API to ECS/Fargate behind reviewed TLS/WAF
    boundaries; remove App Runner and Fly from the PHI route.
 6. Run synthetic migration, reconciliation, duplicate/replay, tenant-isolation,
    consent, provenance, clinician-review, backup/restore, and incident tests in
-   the exact production configuration.
+   the exact production configuration. The rollback-only transfer proof and
+   Aurora PITR restore have passed; deployment-path and incident exercises
+   remain.
 7. Complete independent risk, security, privacy, vendor, and clinical reviews.
 8. Only after the signed readiness manifest passes may a supervised minimum-data
    pilot be considered. Activation remains a separate, reversible change.
@@ -148,7 +161,7 @@ dependency blockers while preserving `phi_allowed=false`. That check proves
 provider removal only; it does not prove the missing Aurora operations,
 production workload, operational safeguards, or HIPAA compliance.
 
-## Latest private workload evidence (2026-08-19)
+## Latest production-clinical evidence (2026-08-20)
 
 - Workload stack: `ai-desktop-pro-production-readiness`, `UPDATE_COMPLETE`.
 - Exact source: `3a30769653028e9bdb71b32a9525e1a5d2d8b880`.
@@ -159,12 +172,33 @@ production workload, operational safeguards, or HIPAA compliance.
   `503` with `production_not_activated` and `phiAllowed:false`.
 - Encrypted runtime error search: zero ERROR/Error/FATAL/Exception events.
 - Container Insights running-task alarm: `OK`.
-- Production Aurora read-only inventory: zero application tables.
+- Production Aurora: 17 application tables, seven migration ledger entries,
+  and zero clinical/audit rows.
 - The companion AI Longevity Pro V2 patient API readiness service is also
   deployed privately from exact commit `9f8d526`; ECR digest
   `sha256:4a3c58ac…1bf7` scans at 0 Critical/0 High, its one task is healthy,
   runtime error search is empty, and its running-task alarm is `OK`.
 
-This evidence closes only the exact-image/private-compute readiness proof. It
-does not authorize PHI and must not be represented as a production clinical
-application or HIPAA certification.
+- PHI-disabled API stack:
+  `ai-longevity-production-clinical-api-disabled`, `CREATE_COMPLETE`.
+  Unauthenticated requests return 401; authorized requests return bounded 503.
+  Its Lambda execution role has log-write permissions only.
+- Rollback-only clinical acceptance passed connection, explicit lab consent,
+  provider registration, import, replay/duplicate protection, clinician
+  acceptance, idempotent biomarker review, versioned clinical-record transfer,
+  provenance retention, cross-tenant refusal, and 11 audit events. Evidence
+  SHA-256:
+  `39006ee03d373dd6a7d85050f08809f684e2c77ca876eb6538fbf574262f4d37`.
+  The transaction was rolled back and an independent post-check returned zero
+  rows.
+- Aurora PITR restored the latest state into a private encrypted temporary
+  cluster. The restore contained all seven migration entries, all 17 tables,
+  and zero patient/audit rows. The exact temporary instance and cluster were
+  then deleted; the production cluster remains encrypted, deletion-protected,
+  and configured for 35-day backup retention.
+
+This evidence closes the exact-image/private-compute proof, portable empty
+schema proof, rollback-only minimum patient/lab transfer semantics, tenant
+isolation, and Aurora PITR proof. It does not authorize PHI and must not be
+represented as a live clinical application, HIPAA certification, or a complete
+port of the Desktop's 222-operation surface.

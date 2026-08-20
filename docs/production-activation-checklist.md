@@ -73,7 +73,7 @@ No item in this document is implied complete by synthetic acceptance. Production
 - [ ] Legal/compliance, clinical safety, security, engineering, and business owners sign the production change record.
 - [ ] Activate a supervised internal pilot with minimum data and immediate rollback; expand only after an observation period and documented review.
 
-## Current verified posture as of 2026-08-19
+## Current verified posture as of 2026-08-20
 
 - The AWS Organizations Business Associate Addendum is active with an effective date of August 18, 2026. This closes the AWS agreement prerequisite only; it does not approve the application or account configuration for PHI.
 - Account `588966314750` remains the synthetic-staging account. Dedicated production account `173535830222` was created empty with `PhiAllowed=false`; no clinical data was copied into it.
@@ -81,11 +81,14 @@ No item in this document is implied complete by synthetic acceptance. Production
 - The production foundation has private encrypted Aurora, immutable document and CloudTrail archives, a separate encrypted/versioned AWS Config delivery bucket, active Config recording, GuardDuty, Security Hub, Access Analyzer, account/bucket public-access blocks, and a locked backup vault.
 - Desktop production source now uses workforce Cognito and the AWS clinical API boundary; V2 production source uses consumer Cognito and is AWS-or-fail-closed. The cross-repository migration gate reports zero direct Supabase, Fly, or App Runner runtime blockers. Historical transition data still requires rotation/redaction, retention, and deletion decisions.
 - Exact-commit Desktop and patient-API readiness images are in production ECR and both scan at 0 Critical/0 High. Two private ECS tasks are RUNNING/HEALTHY with no public ingress, secrets, or application IAM permissions. They permit only health checks and return 503 for all normal traffic; `AWS_CLINICAL_ADAPTER_READY=false` and `PHI_ALLOWED=false`.
-- Production Aurora contains zero application tables. The synthetic AWS native lab slice is proven, but 214 Desktop RPCs and three non-lab read models plus production clinical schemas remain unported. This is the main engineering blocker to a real-data pilot.
+- Production Aurora contains the reviewed portable empty clinical core: 17 application tables, seven migration-ledger entries, and zero clinical/audit rows. A separate deployed JWT API has no clinical data-plane permissions and always fails closed. Five patient/lab operations have an activation-gated source implementation, but that functional candidate is not deployed; all 222 inventory entries are disabled in the deployed route and 217 still need reviewed AWS implementations for full Desktop functionality.
+- Rollback-only production acceptance proved connection, explicit laboratory-data consent, reviewed provider registration, import, duplicate protection, clinician acceptance, versioned clinical-record transfer, provenance, audit, and tenant isolation, then independently verified zero rows after rollback. This is a production-schema test with synthetic values, not authorization for PHI.
+- Aurora point-in-time recovery restored the current empty schema into a private encrypted temporary cluster and verified seven migrations, 17 tables, and zero patient/audit rows. The exact temporary recovery resources were deleted afterward; the production cluster remains encrypted, deletion-protected, and configured for 35-day backup retention. Snapshot/object/Cognito/application rollback and incident tabletop items remain open.
 - Durable Junction and Passio connector-registry reads and vendor approvals are not implemented.
 - GuardDuty and Security Hub are not enabled in the synthetic member account. The current trail is multi-region with validation but is not an organization trail.
 - The exact production readiness image uses the non-root distroless runtime and its ECR scan reports zero Critical/High findings. This is image/private-compute evidence only, not approval of PHI processing.
 - V2 local PHI storage now uses AES-256-GCM with per-write nonces and record-bound authenticated data. Independent cryptography, lost-device, backup, and deletion review remain required.
 - The mobile dependency audit has no critical findings after targeted upgrades. Remaining high findings in the Expo/Metro toolchain require a reviewed Expo SDK upgrade.
+- Production identity bootstrap remains blocked on a controlled root/budget mailbox that is not `info@AILongevityPro.app`. Engineering will not invent that address or deploy the `production_bound` Cognito attribute change using the rejected mailbox.
 
 Until these blockers are closed, use synthetic identities and synthetic data only.

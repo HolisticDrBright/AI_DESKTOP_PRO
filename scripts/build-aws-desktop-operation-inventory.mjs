@@ -11,7 +11,11 @@ const manifestPath = path.join(root, "infra", "aws-clinical-core", "desktop-comp
 const productionManifestPath = path.join(root, "infra", "aws-clinical-core", "desktop-production-operations.json");
 const outputPath = path.join(root, "infra", "aws-clinical-core", "desktop-operation-port-inventory.json");
 
-const sha256 = (value) => createHash("sha256").update(value).digest("hex");
+// Git may materialize text files with CRLF on Windows and LF in CI. Hash the
+// semantic UTF-8 text so the reviewed inventory is reproducible on both.
+const sha256 = (value) => createHash("sha256")
+  .update((Buffer.isBuffer(value) ? value.toString("utf8") : value).replace(/\r\n?/g, "\n"))
+  .digest("hex");
 const normalized = (value) => value.replace(/\s+/g, " ").trim();
 const lineAt = (value, offset) => value.slice(0, offset).split("\n").length;
 
