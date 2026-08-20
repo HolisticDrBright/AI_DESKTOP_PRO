@@ -198,7 +198,7 @@
       "kind": "rpc",
       "name": "create_sync_invitation",
       "implementation": "native_production_function",
-      "source": "infra/aws-clinical-core/production-migrations/20260821120000_production_patient_sync_control.sql"
+      "source": "infra/aws-clinical-core/production-migrations/20260821121000_production_patient_sync_invitation_pgcrypto.sql"
     },
     {
       "kind": "rpc",

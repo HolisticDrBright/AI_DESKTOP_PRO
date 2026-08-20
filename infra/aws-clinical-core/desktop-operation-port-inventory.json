@@ -2,7 +2,7 @@
   "schemaVersion": "desktop-operation-port-inventory/1",
   "generatedFrom": {
     "operationManifestSha256": "88edf2081d80d44c57d18d47a8e66bcd9e601d0f8db64edd870fbaff25b5d1d0",
-    "productionOperationManifestSha256": "f3e046512cf09741f18f705bd9d8097ce93891838367d37284855b7ec75d520c",
+    "productionOperationManifestSha256": "196474553360ead87a8f8b2036115850e7ec5879f8bbb3202abe0a03fae28770",
     "legacyDefinitionSetSha256": "dce8bb87ed890c305c656ee61b8438da0cb518647ea2df65f4bdf26e55277e96"
   },
   "counts": {
@@ -2662,8 +2662,8 @@
       "productionStatus": "implemented_activation_blocked",
       "productionEvidence": {
         "implementation": "native_production_function",
-        "source": "infra/aws-clinical-core/production-migrations/20260821120000_production_patient_sync_control.sql",
-        "sourceSha256": "37167135e019663de6548077790328d1b93975e34f58339690802a967382dd05",
+        "source": "infra/aws-clinical-core/production-migrations/20260821121000_production_patient_sync_invitation_pgcrypto.sql",
+        "sourceSha256": "0270a8b938a8cc51e8b4432b56045729b29b6dbf3a86f298bcbc6326cdf35f47",
         "activationState": "phi_disabled"
       }
     },

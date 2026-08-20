@@ -16,7 +16,7 @@ const errors = [];
 const assert = (condition, message) => { if (!condition) errors.push(message); };
 
 assert(manifest.contract_version === "clinical-core-migrations/1", "generated manifest contract is invalid");
-assert(manifest.migrations.length === 14, "expected six transformed migrations and eight production overlays");
+assert(manifest.migrations.length === 15, "expected six transformed migrations and nine production overlays");
 assert(new Set(manifest.migrations.map((entry) => entry.version)).size === manifest.migrations.length,
   "migration versions must be unique");
 
@@ -71,6 +71,8 @@ const overviewOverlay = readFileSync(path.join(root, "infra", "aws-clinical-core
   "20260821110000_production_patient_overview.sql"), "utf8");
 const syncControlOverlay = readFileSync(path.join(root, "infra", "aws-clinical-core", "production-migrations",
   "20260821120000_production_patient_sync_control.sql"), "utf8");
+const syncInvitationRepair = readFileSync(path.join(root, "infra", "aws-clinical-core", "production-migrations",
+  "20260821121000_production_patient_sync_invitation_pgcrypto.sql"), "utf8");
 assert(overlay.includes("_organization_id uuid") && overlay.includes("_first_name text")
   && overlay.includes("_last_name text") && overlay.includes("_date_of_birth date")
   && overlay.includes("_sex text") && overlay.includes("_mrn text")
@@ -170,9 +172,10 @@ for (const operation of [
   "revoke_sync_connection", "set_sync_consent_scope", "get_patient_sync_overview",
   "get_org_sync_operations",
 ]) assert(syncControlOverlay.includes(`clinical_core.${operation}`), `missing production sync-control operation ${operation}`);
-assert(syncControlOverlay.includes("gen_random_bytes(8)")
-  && syncControlOverlay.includes("substr(translate(rtrim(encode")
-  && syncControlOverlay.includes("digest(_token,'sha256')")
+assert(syncInvitationRepair.includes("public.gen_random_bytes(8)")
+  && syncInvitationRepair.includes("substr(translate(rtrim(encode")
+  && syncInvitationRepair.includes("public.digest(_token,'sha256')")
+  && syncInvitationRepair.includes("security definer set search_path = ''")
   && syncControlOverlay.includes("'approved_consent_artifact_required'")
   && syncControlOverlay.includes("'lab_results_import'")
   && syncControlOverlay.includes("connection_version_conflict")
@@ -190,4 +193,4 @@ if (errors.length) {
 }
 
 const releaseHash = createHash("sha256").update(combined).digest("hex");
-console.log(`Production clinical-core gate passed: 14 migrations, zero seeded rows (${releaseHash}).`);
+console.log(`Production clinical-core gate passed: 15 migrations, zero seeded rows (${releaseHash}).`);

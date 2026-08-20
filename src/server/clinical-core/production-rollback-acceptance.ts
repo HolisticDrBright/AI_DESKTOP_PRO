@@ -15,7 +15,6 @@ const PROTOCOL_ARTIFACT = "74000000-0000-4000-8000-000000000002";
 const STABLE_RECORD = "75000000-0000-4000-8000-000000000001";
 const WORKFORCE_SUBJECT = "acceptance-workforce-subject-01";
 const CONSUMER_SUBJECT = "acceptance-consumer-subject-01";
-const TOKEN_HASH = "a".repeat(64);
 const LAB_HASH = "b".repeat(64);
 const RECORD_HASH = "c".repeat(64);
 
@@ -23,9 +22,17 @@ class RollbackSuccess extends Error {
   constructor() { super("rollback_success"); }
 }
 
+let acceptanceStage = "not_started";
+
 type AcceptanceEvidence = {
   patientCreated: boolean;
   connectionVerified: boolean;
+  shortInvitationCode: boolean;
+  connectionLifecycleVersioned: boolean;
+  desktopConsentGoverned: boolean;
+  syncOverviewBounded: boolean;
+  syncOperationsBounded: boolean;
+  connectionRevokeCascade: boolean;
   explicitLabConsent: boolean;
   providerRegistered: boolean;
   labImported: boolean;
@@ -72,6 +79,7 @@ function json(value: unknown): Record<string, unknown> {
 }
 
 async function acceptance(tx: ClinicalCoreTransaction): Promise<AcceptanceEvidence> {
+  acceptanceStage = "seed_identity";
   await tx.query(`insert into clinical_core.organizations(
     id,organization_label,environment,data_classification,contains_phi,status
   ) values ($1,$2,'production-clinical','clinical_phi',true,'active')`, [
@@ -94,25 +102,40 @@ async function acceptance(tx: ClinicalCoreTransaction): Promise<AcceptanceEviden
   ) values ($1,$2,'practitioner','active')`, [clinicalUuid(ORG), clinicalUuid(WORKFORCE)]);
 
   await setContext(tx, WORKFORCE, ORG, "workforce", WORKFORCE_SUBJECT, "clinical_data");
+  acceptanceStage = "create_patient";
   const patient = json(row(await tx.query<{ data: unknown }>(
     "select clinical_core.create_patient_profile($1,$2,$3,$4::date,$5,$6,$7,$8) as data",
     [clinicalUuid(ORG), "Rollback", "Acceptance", "1980-01-01", "unknown", "ACCEPT-001", null, null],
   )).data);
   const patientId = String(patient.id ?? "");
 
-  await setContext(tx, WORKFORCE, ORG, "workforce", WORKFORCE_SUBJECT, "identity_link");
-  const invitation = row(await tx.query<{ connection_id: string }>(
-    "select * from clinical_core.issue_connection_invitation($1,$2,$3,$4::timestamptz,$5)",
-    [clinicalUuid(ORG), clinicalUuid(patientId), TOKEN_HASH, new Date(Date.now() + 3_600_000).toISOString(), "acceptance:invitation:01"],
-  ));
-  const connectionId = invitation.connection_id;
+  acceptanceStage = "create_short_invitation";
+  const invitation = json(row(await tx.query<{ data: unknown }>(
+    "select clinical_core.create_sync_invitation($1,$2) as data",
+    [clinicalUuid(ORG), clinicalUuid(patientId)],
+  )).data);
+  const connectionId = String(invitation.connectionId ?? "");
+  const invitationToken = String(invitation.token ?? "");
+  const tokenHash = createHash("sha256").update(invitationToken).digest("hex");
 
   await setContext(tx, CONSUMER, ORG, "consumer", CONSUMER_SUBJECT, "identity_link");
+  acceptanceStage = "claim_invitation";
   const connection = row(await tx.query<{ state: string }>(
     "select * from clinical_core.claim_connection_invitation($1,$2)",
-    [TOKEN_HASH, clinicalUuid(CONSUMER)],
+    [tokenHash, clinicalUuid(CONSUMER)],
   ));
 
+  await setContext(tx, WORKFORCE, ORG, "workforce", WORKFORCE_SUBJECT, "clinical_data");
+  acceptanceStage = "pause_connection";
+  const paused = json(row(await tx.query<{ data: unknown }>(
+    "select clinical_core.pause_sync_connection($1,1) as data", [clinicalUuid(connectionId)],
+  )).data);
+  acceptanceStage = "resume_connection";
+  const resumed = json(row(await tx.query<{ data: unknown }>(
+    "select clinical_core.resume_sync_connection($1,2) as data", [clinicalUuid(connectionId)],
+  )).data);
+
+  acceptanceStage = "seed_consent_provider";
   await tx.query(`insert into clinical_core.consent_artifacts(
     id,organization_id,scope,artifact_version,content_sha256,jurisdiction,status,
     approved_at,approved_by_person_id
@@ -129,14 +152,20 @@ async function acceptance(tx: ClinicalCoreTransaction): Promise<AcceptanceEviden
     'active',$2,clock_timestamp())`, [clinicalUuid(ORG), clinicalUuid(WORKFORCE)]);
 
   await setContext(tx, CONSUMER, ORG, "consumer", CONSUMER_SUBJECT, "consent_management");
+  acceptanceStage = "consumer_lab_consent";
   await tx.query("select * from clinical_core.record_consent_grant($1,$2,'lab_results_import','patient_app','self')", [
     clinicalUuid(connectionId), clinicalUuid(LAB_ARTIFACT),
   ]);
-  await tx.query("select * from clinical_core.record_consent_grant($1,$2,'protocols_supplements','patient_app','self')", [
-    clinicalUuid(connectionId), clinicalUuid(PROTOCOL_ARTIFACT),
-  ]);
+  await setContext(tx, WORKFORCE, ORG, "workforce", WORKFORCE_SUBJECT, "clinical_data");
+  acceptanceStage = "desktop_protocol_consent";
+  const desktopConsent = json(row(await tx.query<{ data: unknown }>(
+    `select clinical_core.set_sync_consent_scope(
+      $1,'protocols_supplements',true,'Governed consent artifact','acceptance-protocol/1','US','in_person','self'
+    ) as data`, [clinicalUuid(connectionId)],
+  )).data);
 
   await setContext(tx, CONSUMER, ORG, "consumer", CONSUMER_SUBJECT, "clinical_data");
+  acceptanceStage = "clinical_transfer";
   const occurredAt = new Date().toISOString();
   const labArguments = [
     clinicalUuid(connectionId), "alp_patient_sync", "lab:acceptance:event:01",
@@ -168,6 +197,7 @@ async function acceptance(tx: ClinicalCoreTransaction): Promise<AcceptanceEviden
   ));
 
   await tx.query("savepoint tenant_isolation_probe");
+  acceptanceStage = "tenant_isolation";
   let crossTenantRefused = false;
   try {
     await setContext(tx, CONSUMER, OTHER_ORG, "consumer", CONSUMER_SUBJECT, "clinical_data");
@@ -184,6 +214,7 @@ async function acceptance(tx: ClinicalCoreTransaction): Promise<AcceptanceEviden
   );
 
   await setContext(tx, WORKFORCE, ORG, "workforce", WORKFORCE_SUBJECT, "clinical_data");
+  acceptanceStage = "clinical_review";
   const review = row(await tx.query<{ state: string; observation_id: string; duplicate: boolean }>(
     "select * from clinical_core.review_lab_import($1,'accept',null)", [clinicalUuid(firstLab.event_id)],
   ));
@@ -201,10 +232,46 @@ async function acceptance(tx: ClinicalCoreTransaction): Promise<AcceptanceEviden
     [clinicalUuid(ORG)],
   ));
   const provenance = json(observations.rows[0]?.provenance);
+  acceptanceStage = "sync_overview";
+  const overview = json(row(await tx.query<{ data: unknown }>(
+    "select clinical_core.get_patient_sync_overview($1) as data", [clinicalUuid(patientId)],
+  )).data);
+  acceptanceStage = "sync_operations";
+  const operations = json(row(await tx.query<{ data: unknown }>(
+    "select clinical_core.get_org_sync_operations($1) as data", [clinicalUuid(ORG)],
+  )).data);
+  acceptanceStage = "connection_revoke";
+  await tx.query("savepoint connection_revoke_probe");
+  const revoked = json(row(await tx.query<{ data: unknown }>(
+    "select clinical_core.revoke_sync_connection($1,3,'rollback acceptance probe') as data",
+    [clinicalUuid(connectionId)],
+  )).data);
+  const revokedScopes = await tx.query<{ status: string }>(
+    "select status from clinical_core.current_consent where connection_id=$1 order by scope",
+    [clinicalUuid(connectionId)],
+  );
+  const connectionRevokeCascade = revoked.state === "revoked"
+    && revoked.version === 4
+    && revokedScopes.rows.length === 2
+    && revokedScopes.rows.every((scope) => scope.status === "revoked");
+  await tx.query("rollback to savepoint connection_revoke_probe");
 
   return {
     patientCreated: Boolean(patientId),
     connectionVerified: connection.state === "verified",
+    shortInvitationCode: /^[A-Z0-9_-]{10}$/.test(invitationToken)
+      && invitation.token === invitationToken && invitationToken.length === 10,
+    connectionLifecycleVersioned: paused.state === "paused" && paused.version === 2
+      && resumed.state === "verified" && resumed.version === 3,
+    desktopConsentGoverned: desktopConsent.status === "granted"
+      && desktopConsent.scope === "protocols_supplements",
+    syncOverviewBounded: overview.providerConfigured === true
+      && Array.isArray(overview.outbound) && overview.outbound.length === 0
+      && Array.isArray(overview.inbound) && overview.inbound.length === 0,
+    syncOperationsBounded: operations.providerConfigured === true
+      && json(operations.connections).verified === 1
+      && json(operations.outbound).queued === 0,
+    connectionRevokeCascade,
     explicitLabConsent: true,
     providerRegistered: true,
     labImported: firstLab.state === "review_pending" && firstLab.duplicate === false,
@@ -253,6 +320,11 @@ async function run() {
 }
 
 run().catch((error) => {
+  if (error instanceof Error && error.message === "query_failed") {
+    console.error(`acceptance_${acceptanceStage}_failed`);
+    process.exitCode = 1;
+    return;
+  }
   console.error(error instanceof Error && /^[a-z0-9_:.-]+$/.test(error.message)
     ? error.message : "production_acceptance_failed");
   process.exitCode = 1;
