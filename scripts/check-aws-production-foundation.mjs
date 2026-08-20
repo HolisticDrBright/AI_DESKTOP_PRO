@@ -115,6 +115,11 @@ export function validateProductionFoundation(template) {
     assert(errors, pool?.DeletionProtection === "ACTIVE", `${poolName} deletion protection is required`);
     assert(errors, pool?.UserPoolAddOns?.AdvancedSecurityMode === "ENFORCED", `${poolName} threat protection must be enforced`);
     assert(errors, !pool?.Schema?.some((attribute) => attribute.Name === "synthetic_attested"), `${poolName} must not contain a synthetic-only claim`);
+    const productionBound = pool?.Schema?.find((attribute) => attribute.Name === "production_bound");
+    assert(errors, productionBound?.Mutable === false && productionBound?.Required === false
+      && productionBound?.StringAttributeConstraints?.MinLength === "4"
+      && productionBound?.StringAttributeConstraints?.MaxLength === "4",
+    `${poolName} must carry an immutable production-bound claim`);
   }
 
   return errors;

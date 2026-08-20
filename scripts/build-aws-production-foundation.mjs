@@ -149,6 +149,13 @@ export function buildProductionFoundation(source) {
   for (const poolName of ["WorkforceUserPool", "ConsumerUserPool"]) {
     const pool = resources[poolName].Properties;
     pool.Schema = pool.Schema.filter((attribute) => attribute.Name !== "synthetic_attested");
+    pool.Schema.push({
+      Name: "production_bound",
+      AttributeDataType: "String",
+      Mutable: false,
+      Required: false,
+      StringAttributeConstraints: { MinLength: "4", MaxLength: "4" },
+    });
     pool.UserPoolAddOns = { AdvancedSecurityMode: "ENFORCED" };
   }
 

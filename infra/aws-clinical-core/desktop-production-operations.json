@@ -1,0 +1,36 @@
+{
+  "schemaVersion": "desktop-production-operations/1",
+  "activationState": "phi_disabled",
+  "operations": [
+    {
+      "kind": "rpc",
+      "name": "create_patient_profile",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821050000_production_patient_directory.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "review_biomarker",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821050000_production_patient_directory.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "list_patient_lab_observations",
+      "implementation": "generated_production_function",
+      "source": "infra/aws-clinical-core/migrations/20260821010000_governed_synthetic_lab_import.sql"
+    },
+    {
+      "kind": "select",
+      "name": "lab_documents",
+      "implementation": "native_production_adapter",
+      "source": "src/server/clinical-core/aws-production-desktop.ts"
+    },
+    {
+      "kind": "select",
+      "name": "patient_profiles",
+      "implementation": "native_production_adapter",
+      "source": "src/server/clinical-core/aws-production-desktop.ts"
+    }
+  ]
+}

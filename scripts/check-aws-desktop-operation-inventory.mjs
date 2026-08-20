@@ -17,7 +17,14 @@ if (JSON.stringify(committed) !== JSON.stringify(expected)) errors.push("invento
 if (committed.counts?.rpc !== 217 || committed.counts?.select !== 5 || committed.counts?.total !== 222) errors.push("operation counts changed without review");
 if (committed.operations?.some((operation) => operation.kind === "rpc" && operation.legacyDefinitions.length === 0)) errors.push("an RPC has no extracted definition");
 if (committed.operations?.some((operation) => operation.callSites.length === 0)) errors.push("an operation has no live adapter call site");
-if (committed.counts?.productionPorted !== 0) errors.push("inventory must not assert production ports; deployment evidence owns that status");
+if (committed.counts?.productionImplemented !== 5 || committed.counts?.productionEnabled !== 0) {
+  errors.push("production operation evidence must show five implemented core operations and zero enabled operations");
+}
+const implemented = committed.operations?.filter((operation) => operation.productionStatus === "implemented_activation_blocked") ?? [];
+if (implemented.some((operation) => operation.productionEvidence?.activationState !== "phi_disabled"
+  || !/^[0-9a-f]{64}$/.test(operation.productionEvidence?.sourceSha256 ?? ""))) {
+  errors.push("an implemented production operation lacks PHI-disabled, hash-bound source evidence");
+}
 
 if (errors.length) {
   for (const error of errors) console.error(`Desktop operation inventory check failed: ${error}`);
@@ -26,5 +33,5 @@ if (errors.length) {
   const providerBound = committed.operations.filter((operation) => operation.legacyDefinitions.some(
     (definition) => Object.values(definition.providerDependencies).some(Boolean),
   )).length;
-  console.log(`Desktop operation inventory passed: 222 live operations, exact signatures/dependencies captured; ${providerBound} require provider-specific rewrites.`);
+  console.log(`Desktop operation inventory passed: 222 live operations, 5 implemented but activation-blocked, 0 enabled; ${providerBound} require provider-specific rewrites.`);
 }

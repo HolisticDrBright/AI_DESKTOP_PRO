@@ -8,6 +8,8 @@ const serialized = JSON.stringify(template);
 const resources = Object.values(template.Resources ?? {});
 const role = template.Resources?.ProductionClinicalApiRole;
 const fn = template.Resources?.ProductionClinicalApiFunction;
+const handler = readFileSync(new URL("../src/server/clinical-core/aws-production-clinical-api.ts", import.meta.url), "utf8");
+const runtime = readFileSync(new URL("../src/server/clinical-core/aws-production-clinical-lambda.ts", import.meta.url), "utf8");
 
 assert(template.Metadata?.ClinicalCore?.Environment === "production-clinical", "environment marker missing");
 assert(template.Metadata?.ClinicalCore?.DataClassification === "clinical_phi_target", "classification marker missing");
@@ -30,6 +32,11 @@ for (const forbidden of [
   "DatabaseSecretArn", "DatabaseClusterArn", "secretsmanager:GetSecretValue", "rds-data:",
   "supabase", "fly.dev", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY",
 ]) assert(!serialized.toLowerCase().includes(forbidden.toLowerCase()), `forbidden capability present: ${forbidden}`);
+assert(handler.includes('activationState === "approved"') && handler.includes("activationEvidenceSha256")
+  && handler.includes('get("custom:production_bound") !== "true"'),
+"candidate API must require approved evidence and an immutable production-bound identity");
+assert(runtime.includes('required("PHI_ALLOWED") === "true"')
+  && runtime.includes('required("ACTIVATION_STATE")'), "candidate runtime must read both independent activation gates");
 
 if (errors.length) {
   errors.forEach((error) => console.error(`ERROR: ${error}`));

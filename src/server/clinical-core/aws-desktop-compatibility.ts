@@ -3,15 +3,24 @@ if (typeof window !== "undefined") {
 }
 
 import operationManifest from "../../../infra/aws-clinical-core/desktop-compatibility-operations.json";
-import type { SyntheticRequestContext } from "./aws-identity-consent";
 import { ClinicalCoreDatabaseRejection, clinicalUuid, type ClinicalCoreDatabase } from "./database";
 
 export type DesktopCompatibilityRequest =
   | { kind: "rpc"; functionName: string; args: Record<string, unknown> }
   | { kind: "select"; table: string; query: string };
 
+export type DesktopCompatibilityContext = {
+  actorPersonId: string;
+  organizationId: string;
+  identityPool: "workforce" | "consumer";
+  identitySubject: string;
+  purpose: "identity_link" | "consent_management" | "clinical_data";
+  environment: "synthetic-staging" | "production-clinical";
+  dataClassification: "synthetic_only" | "clinical_phi";
+};
+
 export type DesktopCompatibilityAdapter = {
-  execute(context: SyntheticRequestContext, request: DesktopCompatibilityRequest): Promise<unknown>;
+  execute(context: DesktopCompatibilityContext, request: DesktopCompatibilityRequest): Promise<unknown>;
 };
 
 export class DesktopCompatibilityError extends Error {
@@ -27,7 +36,7 @@ const OPERATION = /^[a-z][a-z0-9_]{1,127}$/;
 const ARGUMENT = /^_[a-z][a-z0-9_]{0,126}$/;
 
 export function validateDesktopCompatibilityRequest(
-  context: SyntheticRequestContext,
+  context: Pick<DesktopCompatibilityContext, "organizationId">,
   value: unknown,
 ): DesktopCompatibilityRequest {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw refused();

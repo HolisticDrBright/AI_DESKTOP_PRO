@@ -8,6 +8,7 @@ const root = process.cwd();
 const adaptersDir = path.join(root, "src", "adapters");
 const migrationsDir = path.join(root, "supabase", "migrations");
 const manifestPath = path.join(root, "infra", "aws-clinical-core", "desktop-compatibility-operations.json");
+const productionManifestPath = path.join(root, "infra", "aws-clinical-core", "desktop-production-operations.json");
 const outputPath = path.join(root, "infra", "aws-clinical-core", "desktop-operation-port-inventory.json");
 
 const sha256 = (value) => createHash("sha256").update(value).digest("hex");
@@ -160,6 +161,23 @@ function createTableSources() {
 
 export function buildDesktopOperationInventory() {
   const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+  const productionManifest = JSON.parse(fs.readFileSync(productionManifestPath, "utf8"));
+  if (productionManifest.schemaVersion !== "desktop-production-operations/1"
+    || productionManifest.activationState !== "phi_disabled"
+    || !Array.isArray(productionManifest.operations)) throw new Error("production operation manifest invalid");
+  const productionPorts = new Map();
+  for (const port of productionManifest.operations) {
+    const key = `${port.kind}:${port.name}`;
+    if (productionPorts.has(key) || !["rpc", "select"].includes(port.kind)
+      || typeof port.name !== "string" || typeof port.source !== "string"
+      || !fs.existsSync(path.join(root, port.source))) throw new Error(`production operation evidence invalid: ${key}`);
+    productionPorts.set(key, {
+      implementation: port.implementation,
+      source: port.source,
+      sourceSha256: sha256(fs.readFileSync(path.join(root, port.source))),
+      activationState: "phi_disabled",
+    });
+  }
   const calls = adapterOperations();
   const definitions = functionDefinitions();
   const tableSources = createTableSources();
@@ -169,6 +187,7 @@ export function buildDesktopOperationInventory() {
     for (const name of manifest.operations[kind]) {
       const uses = calls[kind].get(name) ?? [];
       const legacyDefinitions = kind === "rpc" ? (definitions.get(name) ?? []) : [];
+      const productionEvidence = productionPorts.get(`${kind}:${name}`);
       operations.push({
         kind,
         name,
@@ -177,7 +196,8 @@ export function buildDesktopOperationInventory() {
         legacyDefinitions,
         ...(kind === "select" ? { legacyTableSource: tableSources.get(name) ?? null } : {}),
         syntheticBoundary: nativeSynthetic.has(`${kind}:${name}`) ? "native_aws" : "registry_disabled",
-        productionStatus: "not_ported",
+        productionStatus: productionEvidence ? "implemented_activation_blocked" : "not_ported",
+        ...(productionEvidence ? { productionEvidence } : {}),
       });
     }
   }
@@ -186,13 +206,15 @@ export function buildDesktopOperationInventory() {
     schemaVersion: "desktop-operation-port-inventory/1",
     generatedFrom: {
       operationManifestSha256: sha256(fs.readFileSync(manifestPath)),
+      productionOperationManifestSha256: sha256(fs.readFileSync(productionManifestPath)),
       legacyDefinitionSetSha256: sha256(allDefinitionHashes.sort().join("\n")),
     },
     counts: {
       rpc: manifest.operations.rpc.length,
       select: manifest.operations.select.length,
       total: operations.length,
-      productionPorted: operations.filter((operation) => operation.productionStatus === "ported").length,
+      productionImplemented: operations.filter((operation) => operation.productionStatus === "implemented_activation_blocked").length,
+      productionEnabled: 0,
     },
     operations,
   };
