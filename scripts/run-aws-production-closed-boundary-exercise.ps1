@@ -1,0 +1,177 @@
+param(
+  [string]$FoundationStackName = "ai-longevity-production-clinical-foundation",
+  [string]$DisabledApiStackName = "ai-longevity-production-clinical-api-disabled",
+  [string]$AwsProfile = "ai-production",
+  [string]$Region = "us-east-2",
+  [string]$OutputPath = "",
+  [switch]$ConfirmPhiDisabled
+)
+
+$ErrorActionPreference = "Stop"
+$expectedAccount = "173535830222"
+if (-not $ConfirmPhiDisabled) {
+  throw "Refusing exercise: explicitly confirm the PHI-disabled production boundary."
+}
+
+function StackOutputs([string]$stackName) {
+  $stack = aws cloudformation describe-stacks --profile $AwsProfile --region $Region `
+    --stack-name $stackName --query "Stacks[0]" --output json | ConvertFrom-Json
+  if ($LASTEXITCODE -ne 0 -or $stack.StackStatus -notmatch "^(CREATE|UPDATE)_COMPLETE$") {
+    throw "Required stack is not complete: $stackName"
+  }
+  $values = @{}
+  foreach ($entry in $stack.Outputs) { $values[$entry.OutputKey] = $entry.OutputValue }
+  return @{ status = $stack.StackStatus; values = $values }
+}
+
+function QueryDatabase([hashtable]$foundation, [string]$sql) {
+  $requestPath = Join-Path ([IO.Path]::GetTempPath()) ("production-boundary-db-" + [guid]::NewGuid().ToString("N") + ".json")
+  try {
+    @{
+      resourceArn = $foundation.DatabaseClusterArn
+      secretArn = $foundation.DatabaseSecretArn
+      database = $foundation.DatabaseName
+      sql = $sql
+      includeResultMetadata = $true
+    } | ConvertTo-Json -Compress | ForEach-Object {
+      [IO.File]::WriteAllText($requestPath, $_, (New-Object Text.UTF8Encoding($false)))
+    }
+    $result = aws rds-data execute-statement --profile $AwsProfile --region $Region `
+      --cli-input-json ("file://" + $requestPath.Replace("\", "/")) --output json | ConvertFrom-Json
+    if ($LASTEXITCODE -ne 0) { throw "Production database posture query failed." }
+    return $result
+  } finally {
+    Remove-Item -LiteralPath $requestPath -Force -ErrorAction SilentlyContinue
+  }
+}
+
+$account = aws sts get-caller-identity --profile $AwsProfile --query Account --output text
+if ($LASTEXITCODE -ne 0 -or $account -ne $expectedAccount) {
+  throw "Exercise requires the reviewed production account."
+}
+
+$foundationStack = StackOutputs $FoundationStackName
+$foundation = $foundationStack.values
+if ($foundation.PhiAllowed -ne "false" -or $foundation.Environment -ne "production-clinical" `
+  -or $foundation.DataClassification -ne "clinical_phi_target") {
+  throw "Foundation is not the reviewed PHI-disabled production boundary."
+}
+
+$disabledStack = StackOutputs $DisabledApiStackName
+$disabled = $disabledStack.values
+if ($disabled.PhiAllowed -ne "false") { throw "Disabled API reports an unsafe PHI posture." }
+
+$posture = Invoke-RestMethod -Method Get -Uri $foundation.PostureUrl -MaximumRedirection 0
+if ($posture.phiAllowed -ne $false -or $posture.environment -ne "production-clinical") {
+  throw "Public production posture is not fail-closed."
+}
+
+$unauthorized = Invoke-WebRequest -Method Get `
+  -Uri "$($foundation.ApiOrigin)/clinical-core/workforce/closed-boundary-exercise" `
+  -MaximumRedirection 0 -SkipHttpErrorCheck
+if ([int]$unauthorized.StatusCode -ne 401) { throw "Unauthenticated clinical request was not refused." }
+
+$functionName = $disabled.FunctionName
+$configuration = aws lambda get-function-configuration --profile $AwsProfile --region $Region `
+  --function-name $functionName --output json | ConvertFrom-Json
+if ($configuration.Environment.Variables.PHI_ALLOWED -ne "false" `
+  -or $configuration.Environment.Variables.ACTIVATION_STATE -ne "blocked") {
+  throw "Deployed disabled Lambda is not activation-blocked."
+}
+
+$invokePath = Join-Path ([IO.Path]::GetTempPath()) ("production-boundary-invoke-" + [guid]::NewGuid().ToString("N") + ".json")
+try {
+  aws lambda invoke --profile $AwsProfile --region $Region --function-name $functionName `
+    --cli-binary-format raw-in-base64-out --payload "{}" $invokePath --output json | Out-Null
+  if ($LASTEXITCODE -ne 0) { throw "Disabled Lambda invocation failed." }
+  $invoked = Get-Content -Raw -LiteralPath $invokePath | ConvertFrom-Json
+  $body = $invoked.body | ConvertFrom-Json
+  if ([int]$invoked.statusCode -ne 503 -or $body.error -ne "production_not_activated" `
+    -or $body.phiAllowed -ne $false) {
+    throw "Disabled Lambda did not return the bounded refusal contract."
+  }
+} finally {
+  Remove-Item -LiteralPath $invokePath -Force -ErrorAction SilentlyContinue
+}
+
+$roleName = aws cloudformation describe-stack-resource --profile $AwsProfile --region $Region `
+  --stack-name $DisabledApiStackName --logical-resource-id ProductionClinicalApiRole `
+  --query "StackResourceDetail.PhysicalResourceId" --output text
+$managedPolicies = aws iam list-attached-role-policies --profile $AwsProfile --role-name $roleName `
+  --query "AttachedPolicies" --output json | ConvertFrom-Json
+$inlineNames = @(aws iam list-role-policies --profile $AwsProfile --role-name $roleName `
+  --query "PolicyNames" --output json | ConvertFrom-Json)
+if (@($managedPolicies).Count -ne 0 -or $inlineNames.Count -ne 1) {
+  throw "Disabled API role has an unexpected policy attachment."
+}
+$policy = aws iam get-role-policy --profile $AwsProfile --role-name $roleName `
+  --policy-name $inlineNames[0] --query "PolicyDocument" --output json | ConvertFrom-Json
+$actions = @($policy.Statement | ForEach-Object { $_.Action }) | Sort-Object -Unique
+if (($actions -join ",") -ne "logs:CreateLogStream,logs:PutLogEvents") {
+  throw "Disabled API role has a non-logging permission."
+}
+
+$database = QueryDatabase $foundation @"
+select
+  (select count(*)::int from clinical_core.schema_migrations) as migration_count,
+  (select count(*)::int from information_schema.tables
+    where table_schema in ('clinical_core','clinical_private','clinical_audit')
+      and table_name <> 'schema_migrations') as table_count,
+  (select count(*)::int from clinical_core.organizations) as organization_count,
+  (select count(*)::int from clinical_core.persons) as person_count,
+  (select count(*)::int from clinical_core.patient_records) as patient_count,
+  (select count(*)::int from clinical_core.lab_import_events) as lab_import_count,
+  (select count(*)::int from clinical_core.consumer_clinical_record_versions) as clinical_record_count,
+  (select count(*)::int from clinical_audit.events) as audit_count
+"@
+$counts = @($database.records[0] | ForEach-Object { [int64]$_.longValue })
+if (($counts -join ",") -ne "7,17,0,0,0,0,0,0") {
+  throw "Production database is not the reviewed empty 7-migration/17-table state: $($counts -join ',')."
+}
+
+$alarmName = "$functionName-errors"
+$alarm = aws cloudwatch describe-alarms --profile $AwsProfile --region $Region `
+  --alarm-names $alarmName --query "MetricAlarms[0]" --output json | ConvertFrom-Json
+if (-not $alarm -or $alarm.StateValue -ne "OK") { throw "Disabled API error alarm is not OK." }
+
+$logGroup = "/ai-clinical-core/production-clinical/disabled-api-v1/$($foundation.ClinicalApiId)"
+$startTime = [DateTimeOffset]::UtcNow.AddMinutes(-15).ToUnixTimeMilliseconds()
+$messages = @(aws logs filter-log-events --profile $AwsProfile --region $Region `
+  --log-group-name $logGroup --start-time $startTime --query "events[].message" --output json | ConvertFrom-Json)
+$unsafeLog = $messages | Where-Object { $_ -match "(?i)authorization|bearer|token|patient|biomarker|laboratory|@" }
+if ($unsafeLog) { throw "Potential sensitive content appeared in the disabled API logs." }
+
+$evidence = [ordered]@{
+  contractVersion = "production-closed-boundary-exercise/1"
+  observedAt = [DateTimeOffset]::UtcNow.ToString("o")
+  account = $account
+  region = $Region
+  phiAllowed = $false
+  foundationStackStatus = $foundationStack.status
+  disabledApiStackStatus = $disabledStack.status
+  unauthenticatedHttpStatus = 401
+  authenticatedFunctionStatus = 503
+  functionPermissions = $actions
+  migrationCount = $counts[0]
+  tableCount = $counts[1]
+  clinicalRowCount = ($counts[2..7] | Measure-Object -Sum).Sum
+  alarmState = $alarm.StateValue
+  unsafeLogMatches = 0
+}
+$canonical = $evidence | ConvertTo-Json -Depth 8 -Compress
+$hash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData(
+  [Text.Encoding]::UTF8.GetBytes($canonical))).ToLowerInvariant()
+
+if ($OutputPath) {
+  $resolvedParent = Split-Path -Parent $OutputPath
+  if (-not $resolvedParent -or -not (Test-Path -LiteralPath $resolvedParent -PathType Container)) {
+    throw "OutputPath parent must already exist."
+  }
+  $outputRecord = [ordered]@{}
+  foreach ($key in $evidence.Keys) { $outputRecord[$key] = $evidence[$key] }
+  $outputRecord["evidenceSha256"] = $hash
+  [IO.File]::WriteAllText($OutputPath, ($outputRecord | ConvertTo-Json -Depth 8), `
+    (New-Object Text.UTF8Encoding($false)))
+}
+
+Write-Host "Production closed-boundary exercise passed. Evidence SHA-256: $hash"

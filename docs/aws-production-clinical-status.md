@@ -196,6 +196,11 @@ production workload, operational safeguards, or HIPAA compliance.
   and zero patient/audit rows. The exact temporary instance and cluster were
   then deleted; the production cluster remains encrypted, deletion-protected,
   and configured for 35-day backup retention.
+- The repeatable closed-boundary exercise independently rechecked the account,
+  public PHI posture, unauthenticated 401, bounded 503, log-only Lambda role,
+  empty 17-table database, `OK` alarm, and zero sensitive-log pattern matches.
+  Evidence SHA-256:
+  `5b260b5d593fd357c787a53165970c6688c8d76641c430df22aae0db017b7f5a`.
 
 This evidence closes the exact-image/private-compute proof, portable empty
 schema proof, rollback-only minimum patient/lab transfer semantics, tenant

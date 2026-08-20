@@ -48,6 +48,7 @@
     "build:aws-production-migration-operator": "node scripts/build-aws-production-migration-operator.mjs",
     "check:aws-production-clinical-core": "node scripts/check-aws-production-clinical-core.mjs",
     "check:aws-production-clinical-api": "node scripts/check-aws-production-clinical-api.mjs",
+    "check:aws-production-closed-boundary-exercise": "node scripts/check-aws-production-closed-boundary-exercise.mjs",
     "build:aws-production-clinical-api": "node scripts/build-aws-production-clinical-api.mjs",
     "build:aws-production-rollback-acceptance": "node scripts/build-aws-production-rollback-acceptance.mjs",
     "audit:aws-data-plane-migration": "node scripts/check-aws-data-plane-migration.mjs --report",
