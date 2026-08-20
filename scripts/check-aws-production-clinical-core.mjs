@@ -16,7 +16,7 @@ const errors = [];
 const assert = (condition, message) => { if (!condition) errors.push(message); };
 
 assert(manifest.contract_version === "clinical-core-migrations/1", "generated manifest contract is invalid");
-assert(manifest.migrations.length === 9, "expected six transformed migrations and three production overlays");
+assert(manifest.migrations.length === 10, "expected six transformed migrations and four production overlays");
 assert(new Set(manifest.migrations.map((entry) => entry.version)).size === manifest.migrations.length,
   "migration versions must be unique");
 
@@ -61,6 +61,8 @@ const auditOverlay = readFileSync(path.join(root, "infra", "aws-clinical-core", 
   "20260821060000_production_registered_audit_actions.sql"), "utf8");
 const membershipOverlay = readFileSync(path.join(root, "infra", "aws-clinical-core", "production-migrations",
   "20260821070000_production_workforce_memberships.sql"), "utf8");
+const reviewQueueOverlay = readFileSync(path.join(root, "infra", "aws-clinical-core", "production-migrations",
+  "20260821080000_production_review_queue.sql"), "utf8");
 assert(overlay.includes("_organization_id uuid") && overlay.includes("_first_name text")
   && overlay.includes("_last_name text") && overlay.includes("_date_of_birth date")
   && overlay.includes("_sex text") && overlay.includes("_mrn text")
@@ -106,6 +108,16 @@ assert(!membershipOverlay.includes("add_org_member")
   && !membershipOverlay.includes("activate_my_memberships")
   && !membershipOverlay.includes("_email"),
 "production membership overlay must not recreate legacy email invitation or self-activation");
+for (const operation of ["create_review_task", "list_review_queue", "resolve_review_queue_item"]) {
+  assert(reviewQueueOverlay.includes(`clinical_core.${operation}`), `missing production review operation ${operation}`);
+}
+assert(reviewQueueOverlay.includes("review_queue_identity_immutable")
+  && reviewQueueOverlay.includes("where id = _item_id")
+  && reviewQueueOverlay.includes("organization_id = _organization_id")
+  && reviewQueueOverlay.includes("note_present")
+  && !/['\"]title['\"]\s*,\s*_normalized_title/.test(
+    reviewQueueOverlay.match(/insert into clinical_audit\.events[\s\S]*?;/g)?.join("\n") ?? ""),
+"review queue lacks immutable identity, tenant scope, or minimum audit content");
 
 if (errors.length) {
   for (const error of errors) console.error(`ERROR: ${error}`);
@@ -113,4 +125,4 @@ if (errors.length) {
 }
 
 const releaseHash = createHash("sha256").update(combined).digest("hex");
-console.log(`Production clinical-core gate passed: 9 migrations, zero seeded rows (${releaseHash}).`);
+console.log(`Production clinical-core gate passed: 10 migrations, zero seeded rows (${releaseHash}).`);

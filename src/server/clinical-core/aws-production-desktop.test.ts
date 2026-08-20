@@ -13,6 +13,7 @@ const PATIENT = "33333333-3333-4333-8333-333333333333";
 const OBSERVATION = "44444444-4444-4444-8444-444444444444";
 const AUDIT = "55555555-5555-4555-8555-555555555555";
 const MEMBERSHIP = "66666666-6666-4666-8666-666666666666";
+const QUEUE_ITEM = "77777777-7777-4777-8777-777777777777";
 
 const context: ProductionRequestContext = {
   actorPersonId: PERSON,
@@ -221,6 +222,75 @@ describe("AWS production Desktop adapter", () => {
       kind: "rpc", functionName: "activate_my_memberships", args: {},
     })).resolves.toEqual({ delegated: true });
     expect(test.fallback.execute).toHaveBeenCalledTimes(2);
+  });
+
+  it("creates a review task with a bounded production payload", async () => {
+    const test = harness({ id: QUEUE_ITEM, status: "open", audit_event_id: AUDIT });
+    const result = await test.adapter.execute(context, {
+      kind: "rpc",
+      functionName: "create_review_task",
+      args: {
+        _patient_id: PATIENT,
+        _title: "Review abnormal hs-CRP",
+        _item_type: "abnormal_result",
+        _priority: "high",
+        _ref_id: OBSERVATION,
+      },
+    });
+    expect(result).toMatchObject({ id: QUEUE_ITEM, status: "open" });
+    expect(test.calls[1]?.sql).toContain("clinical_core.create_review_task");
+    expect(test.calls[1]?.values).toEqual([
+      { kind: "uuid", value: PATIENT }, "Review abnormal hs-CRP",
+      "abnormal_result", "high", { kind: "uuid", value: OBSERVATION },
+    ]);
+  });
+
+  it("lists the tenant review queue and resolves an item idempotently through AWS", async () => {
+    const listTest = harness({
+      id: QUEUE_ITEM,
+      item_type: "abnormal_result",
+      title: "Review marker",
+      priority: "high",
+      status: "open",
+      patient_id: PATIENT,
+      patient_name: "Test Patient",
+      assignee_name: null,
+      due_at: null,
+      created_at: "2026-08-20T00:00:00.000Z",
+    });
+    await expect(listTest.adapter.execute(context, {
+      kind: "rpc", functionName: "list_review_queue", args: { _organization_id: ORG },
+    })).resolves.toEqual([expect.objectContaining({ id: QUEUE_ITEM, patient_id: PATIENT })]);
+    expect(listTest.calls[1]?.sql).toBe("select * from clinical_core.list_review_queue($1)");
+
+    const resolveTest = harness({
+      id: QUEUE_ITEM,
+      status: "resolved",
+      previous_status: "open",
+      already_resolved: false,
+      audit_event_id: AUDIT,
+    });
+    await expect(resolveTest.adapter.execute(context, {
+      kind: "rpc",
+      functionName: "resolve_review_queue_item",
+      args: { _item_id: QUEUE_ITEM, _note: "Reviewed in chart" },
+    })).resolves.toMatchObject({ id: QUEUE_ITEM, status: "resolved", already_resolved: false });
+    expect(resolveTest.calls[1]?.sql).toContain("clinical_core.resolve_review_queue_item");
+  });
+
+  it("refuses cross-tenant queue reads and oversized task notes", async () => {
+    const test = harness();
+    await expect(test.adapter.execute(context, {
+      kind: "rpc",
+      functionName: "list_review_queue",
+      args: { _organization_id: "99999999-9999-4999-8999-999999999999" },
+    })).rejects.toEqual(new ProductionDesktopError("request_invalid"));
+    await expect(test.adapter.execute(context, {
+      kind: "rpc",
+      functionName: "resolve_review_queue_item",
+      args: { _item_id: QUEUE_ITEM, _note: "x".repeat(501) },
+    })).rejects.toEqual(new ProductionDesktopError("request_invalid"));
+    expect(test.calls.every((call) => call.sql.includes("clinical_private.set_request_context"))).toBe(true);
   });
 
   it("refuses a cross-tenant request before touching Aurora", async () => {

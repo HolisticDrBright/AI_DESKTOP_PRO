@@ -12,6 +12,10 @@
     {
       "version": "20260821070000",
       "file": "20260821070000_production_workforce_memberships.sql"
+    },
+    {
+      "version": "20260821080000",
+      "file": "20260821080000_production_review_queue.sql"
     }
   ]
 }

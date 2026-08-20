@@ -194,11 +194,12 @@ select
   (select count(*)::int from clinical_core.patient_records) as patient_count,
   (select count(*)::int from clinical_core.lab_import_events) as lab_import_count,
   (select count(*)::int from clinical_core.consumer_clinical_record_versions) as clinical_record_count,
+  (select count(*)::int from clinical_core.review_queue_items) as review_queue_count,
   (select count(*)::int from clinical_audit.events) as audit_count
 "@
 $counts = @($database.records[0] | ForEach-Object { [int64]$_.longValue })
-if (($counts -join ",") -ne "9,17,0,0,0,0,0,0") {
-  throw "Production database is not the reviewed empty 9-migration/17-table state: $($counts -join ',')."
+if (($counts -join ",") -ne "10,18,0,0,0,0,0,0,0") {
+  throw "Production database is not the reviewed empty 10-migration/18-table state: $($counts -join ',')."
 }
 
 $alarmName = "$functionName-errors"
@@ -236,7 +237,7 @@ $evidence = [ordered]@{
   functionPermissions = $actions
   migrationCount = $counts[0]
   tableCount = $counts[1]
-  clinicalRowCount = ($counts[2..7] | Measure-Object -Sum).Sum
+  clinicalRowCount = ($counts[2..8] | Measure-Object -Sum).Sum
   alarmState = $alarm.StateValue
   unsafeLogMatches = 0
 }

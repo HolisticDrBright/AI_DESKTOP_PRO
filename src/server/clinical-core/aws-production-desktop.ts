@@ -31,6 +31,9 @@ const CORE_RPCS = new Set([
   "list_org_members",
   "set_org_member_role",
   "remove_org_member",
+  "create_review_task",
+  "list_review_queue",
+  "resolve_review_queue_item",
 ]);
 const CORE_SELECTS = new Set(["patient_profiles", "lab_documents"]);
 
@@ -158,6 +161,36 @@ async function executeCoreRpc(
       [clinicalUuid(membershipId)],
     );
     return null;
+  }
+  if (name === "create_review_task") {
+    exactKeys(args, ["_patient_id", "_title", "_item_type", "_priority", "_ref_id"]);
+    const patientId = requiredUuid(args._patient_id);
+    const referenceId = optionalUuid(args._ref_id);
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.create_review_task($1,$2,$3,$4,$5) as data",
+      [
+        clinicalUuid(patientId), requiredString(args._title, 200),
+        requiredString(args._item_type, 32), requiredString(args._priority, 16),
+        referenceId ? clinicalUuid(referenceId) : null,
+      ],
+    ));
+    return decodeJson(row.data);
+  }
+  if (name === "list_review_queue") {
+    exactKeys(args, ["_organization_id"]);
+    if (args._organization_id !== context.organizationId) throw invalid();
+    return (await tx.query(
+      "select * from clinical_core.list_review_queue($1)",
+      [clinicalUuid(context.organizationId)],
+    )).rows;
+  }
+  if (name === "resolve_review_queue_item") {
+    exactKeys(args, ["_item_id", "_note"]);
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.resolve_review_queue_item($1,$2) as data",
+      [clinicalUuid(requiredUuid(args._item_id)), optionalString(args._note, 500)],
+    ));
+    return decodeJson(row.data);
   }
   throw new ProductionDesktopError("operation_refused");
 }
