@@ -128,7 +128,7 @@ compatibility route. Its production adapters set `production-clinical`,
 `clinical_phi`, and `containsPhi=true` only after the independent activation
 gate and a token with `custom:production_bound=true`; a token carrying the
 synthetic attestation is refused. Exact source
-`c2ec3e5c59c79d63f71465f1d9178aba7b49d13e` is now deployed behind all 21
+`f4611c664e3e808c6b3c1f67e28c839cfede4801` is now deployed behind all 21
 explicit JWT routes, but its activation inputs remain false/blocked and the
 Lambda role has encrypted-log writes only. It therefore still returns the
 bounded 503 before parsing a request or touching Aurora. No PHI data plane is
@@ -234,7 +234,7 @@ production workload, operational safeguards, or HIPAA compliance.
   `503` with `production_not_activated` and `phiAllowed:false`.
 - Encrypted runtime error search: zero ERROR/Error/FATAL/Exception events.
 - Container Insights running-task alarm: `OK`.
-- Production Aurora: 26 application tables, 14 migration ledger entries,
+- Production Aurora: 26 application tables, 15 migration ledger entries,
   and zero clinical/audit rows.
 - The companion AI Longevity Pro V2 patient API readiness service is also
   deployed privately from exact commit
@@ -246,17 +246,21 @@ production workload, operational safeguards, or HIPAA compliance.
 - PHI-disabled API stack:
   `ai-longevity-production-clinical-api-disabled`, `UPDATE_COMPLETE`.
   It is now `UPDATE_COMPLETE` with exact candidate source
-  `c2ec3e5c59c79d63f71465f1d9178aba7b49d13e`. API Gateway exposes exactly 21
+  `f4611c664e3e808c6b3c1f67e28c839cfede4801`. API Gateway exposes exactly 21
   explicit JWT-only routes. Unauthenticated requests return 401; direct or
   authorized execution returns bounded 503. Its Lambda execution role has one
   log-write policy, no attached policies, and no Aurora/secret/KMS data-plane
   permissions. `PhiAllowed=false`, `ActivationState=blocked`, and
   `DataPlaneEnabled=false`.
-- Rollback-only clinical acceptance passed connection, explicit lab consent,
-  provider registration, import, replay/duplicate protection, clinician
-  acceptance, idempotent biomarker review, versioned clinical-record transfer,
-  provenance retention, cross-tenant refusal, and 11 audit events. Evidence
-  SHA-256:
+- Rollback-only clinical acceptance passed the ten-character invitation code,
+  connection claim and optimistic pause/resume, approved Desktop consent,
+  bounded sync posture reads, revoke-with-consent-cascade, explicit App lab
+  consent, provider registration, import, replay/duplicate protection,
+  clinician acceptance, idempotent biomarker review, versioned clinical-record
+  transfer, provenance retention, cross-tenant refusal, and 13 audit events.
+  Current evidence SHA-256:
+  `fadeb920f20271f930b114e7ef7594e473a69e50183b3db5ef84ccf1b8f95587`.
+  Earlier core-transfer evidence SHA-256:
   `39006ee03d373dd6a7d85050f08809f684e2c77ca876eb6538fbf574262f4d37`.
   The transaction was rolled back and an independent post-check returned zero
   rows.
@@ -326,6 +330,24 @@ production workload, operational safeguards, or HIPAA compliance.
   401/503 refusal, log-only IAM, alarm `OK`, and zero unsafe log matches.
   Evidence SHA-256:
   `5be0b5e7bbc850ec774f1096561db15a3e345c0760d2468031dcea2ba1d25bbd`.
+- The rollback exercise then found that the empty search path in the
+  security-definer invitation function correctly blocked unqualified pgcrypto
+  lookups. The fifteenth immutable repair migration qualified only those two
+  extension calls while retaining the empty search path. Rollback acceptance
+  then passed every connection/consent/transfer invariant and retained zero
+  rows. Exact candidate `f4611c6` remains closed; the exercise reverified 15
+  migrations, 26 tables, zero rows, 21 JWT-only routes, 401/503 refusal,
+  log-only IAM, alarm `OK`, and zero unsafe log matches. Evidence SHA-256:
+  `2b1eff659d9d9469f21c4f07ef995037c75ff73d685a0acc7e2e0f05185fe078`.
+- Point-in-time recovery restored the current empty 15-migration schema into
+  a private encrypted full-copy cluster and independently verified 26 tables
+  and zero clinical/audit rows in 691.1 seconds. The exact temporary writer
+  and cluster were deleted afterward; the protected production cluster remains
+  encrypted, deletion-protected, and configured for 35-day backup retention.
+  Evidence SHA-256:
+  `ebbe679d77f940499fd99c5fdf78cbd8fe9d3458bd0d47bc0e5e34d109afed3f`.
+  Snapshot/object/Cognito/application rollback and the incident tabletop
+  remain open.
 
 CloudFormation drift detection reports only three GuardDuty service-returned
 result fields as additions: disabled `AI_ANALYST`, disabled `AI_PROTECTION`,
