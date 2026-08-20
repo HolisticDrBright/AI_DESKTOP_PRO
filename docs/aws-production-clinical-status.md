@@ -172,7 +172,11 @@ targets and GoDaddy DNS validation records exist.
 
 1. A controlled production/root/budget mailbox that is not
    `info@AILongevityPro.app`, with evidence of delivery and retention. The
-   address cannot be invented by engineering.
+   address cannot be invented by engineering. Live AWS Budgets inspection on
+   2026-08-20 found the healthy `$100` production budget but zero configured
+   notifications/subscribers; alert delivery must be added and verified once
+   the controlled address is supplied. The ignored local synthetic deployment
+   manifest now contains only `REPLACE_WITH_CONTROLLED_BILLING_EMAIL`.
 2. A controlled evidence reference showing the AWS Organizations BAA applies to
    the new member account.
 3. GoDaddy DNS changes and ACM validation for the four reserved endpoint names.
