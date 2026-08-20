@@ -86,15 +86,19 @@ source-only and deliberately not attached to the deployed API. All 222
 inventory entries remain disabled in the deployed production route, and 217
 still need reviewed AWS implementations for full Desktop functionality.
 
-The same undeployed candidate now covers the complete 21-route governed
+The same candidate now covers the complete 21-route governed
 App/Desktop clinical contract for both Cognito pools: invitation and connection,
 versioned consent artifacts and grant/withdrawal, lab import/review/read-back,
 versioned consumer clinical records, privacy requests, and the bounded Desktop
 compatibility route. Its production adapters set `production-clinical`,
 `clinical_phi`, and `containsPhi=true` only after the independent activation
 gate and a token with `custom:production_bound=true`; a token carrying the
-synthetic attestation is refused. The deployed production route remains the
-separate log-only 503 function, so this source readiness does not expose PHI.
+synthetic attestation is refused. Exact source
+`c36648dfa237f60a204df471711dfc6c103c6882` is now deployed behind all 21
+explicit JWT routes, but its activation inputs remain false/blocked and the
+Lambda role has encrypted-log writes only. It therefore still returns the
+bounded 503 before parsing a request or touching Aurora. No PHI data plane is
+enabled.
 
 `production-clinical-api-candidate.json` is the in-place deployment definition
 for that candidate. Its defaults are `PhiAllowed=false`,
@@ -205,9 +209,14 @@ production workload, operational safeguards, or HIPAA compliance.
   runtime error search is empty, and its running-task alarm is `OK`.
 
 - PHI-disabled API stack:
-  `ai-longevity-production-clinical-api-disabled`, `CREATE_COMPLETE`.
-  Unauthenticated requests return 401; authorized requests return bounded 503.
-  Its Lambda execution role has log-write permissions only.
+  `ai-longevity-production-clinical-api-disabled`, `UPDATE_COMPLETE`.
+  It is now `UPDATE_COMPLETE` with exact candidate source
+  `c36648dfa237f60a204df471711dfc6c103c6882`. API Gateway exposes exactly 21
+  explicit JWT-only routes. Unauthenticated requests return 401; direct or
+  authorized execution returns bounded 503. Its Lambda execution role has one
+  log-write policy, no attached policies, and no Aurora/secret/KMS data-plane
+  permissions. `PhiAllowed=false`, `ActivationState=blocked`, and
+  `DataPlaneEnabled=false`.
 - Rollback-only clinical acceptance passed connection, explicit lab consent,
   provider registration, import, replay/duplicate protection, clinician
   acceptance, idempotent biomarker review, versioned clinical-record transfer,
@@ -226,6 +235,11 @@ production workload, operational safeguards, or HIPAA compliance.
   empty 17-table database, `OK` alarm, and zero sensitive-log pattern matches.
   Evidence SHA-256:
   `5b260b5d593fd357c787a53165970c6688c8d76641c430df22aae0db017b7f5a`.
+- After deploying the exact closed candidate, exercise version 2 additionally
+  verified its source commit, all 21 JWT route definitions, absent wildcard
+  routes, blocked activation, disabled data plane, empty database, `OK` alarm,
+  and zero unsafe log matches. Evidence SHA-256:
+  `b6778795741836f5be50a2980f6e3f1317d87610bb74da46b48b893ff5646343`.
 
 This evidence closes the exact-image/private-compute proof, portable empty
 schema proof, rollback-only minimum patient/lab transfer semantics, tenant

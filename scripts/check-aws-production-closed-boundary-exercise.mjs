@@ -6,6 +6,7 @@ const required = [
   "ConfirmPhiDisabled", "173535830222", 'PhiAllowed -ne "false"',
   "production_not_activated", "Unauthenticated clinical request was not refused",
   "logs:CreateLogStream,logs:PutLogEvents", "7,17,0,0,0,0,0,0",
+  "DataPlaneEnabled", "SourceVersion", "clinicalRouteCount", "allClinicalRoutesJwt",
   "unsafeLogMatches", "evidenceSha256",
 ];
 const missing = required.filter((entry) => !script.includes(entry));
@@ -14,4 +15,4 @@ if (missing.length || !document.includes("does not authorize PHI")
   console.error(`Production closed-boundary exercise gate failed: ${missing.join(", ") || "documentation invariant"}`);
   process.exit(1);
 }
-console.log("Production closed-boundary exercise gate passed: PHI false, 401/503 refusal, log-only IAM, empty database, alarm and log checks are pinned.");
+console.log("Production closed-boundary exercise gate passed: exact source, 21 JWT routes, PHI false, 401/503 refusal, log-only IAM, empty database, alarm and log checks are pinned.");

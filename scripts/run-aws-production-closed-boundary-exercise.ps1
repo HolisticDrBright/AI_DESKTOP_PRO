@@ -59,7 +59,18 @@ if ($foundation.PhiAllowed -ne "false" -or $foundation.Environment -ne "producti
 
 $disabledStack = StackOutputs $DisabledApiStackName
 $disabled = $disabledStack.values
-if ($disabled.PhiAllowed -ne "false") { throw "Disabled API reports an unsafe PHI posture." }
+if ($disabled.PhiAllowed -ne "false" -or $disabled.ActivationState -ne "blocked" `
+  -or $disabled.DataPlaneEnabled -ne "false" -or $disabled.SourceVersion -notmatch "^[0-9a-f]{40}$") {
+  throw "Production candidate does not report the reviewed closed posture and exact source."
+}
+
+$routes = @(aws apigatewayv2 get-routes --profile $AwsProfile --region $Region `
+  --api-id $foundation.ClinicalApiId --query "Items" --output json | ConvertFrom-Json) |
+  Where-Object { $_.RouteKey -match "^(GET|POST) /clinical-core/" }
+if ($routes.Count -ne 21 -or @($routes | Where-Object AuthorizationType -ne "JWT").Count -ne 0 `
+  -or @($routes | Where-Object RouteKey -match "ANY|\{proxy\+\}").Count -ne 0) {
+  throw "Production candidate must expose exactly 21 explicit JWT-only clinical routes."
+}
 
 $posture = Invoke-RestMethod -Method Get -Uri $foundation.PostureUrl -MaximumRedirection 0
 if ($posture.phiAllowed -ne $false -or $posture.environment -ne "production-clinical") {
@@ -67,7 +78,7 @@ if ($posture.phiAllowed -ne $false -or $posture.environment -ne "production-clin
 }
 
 $unauthorized = Invoke-WebRequest -Method Get `
-  -Uri "$($foundation.ApiOrigin)/clinical-core/workforce/closed-boundary-exercise" `
+  -Uri "$($foundation.ApiOrigin)/clinical-core/workforce/posture" `
   -MaximumRedirection 0 -SkipHttpErrorCheck
 if ([int]$unauthorized.StatusCode -ne 401) { throw "Unauthenticated clinical request was not refused." }
 
@@ -75,7 +86,8 @@ $functionName = $disabled.FunctionName
 $configuration = aws lambda get-function-configuration --profile $AwsProfile --region $Region `
   --function-name $functionName --output json | ConvertFrom-Json
 if ($configuration.Environment.Variables.PHI_ALLOWED -ne "false" `
-  -or $configuration.Environment.Variables.ACTIVATION_STATE -ne "blocked") {
+  -or $configuration.Environment.Variables.ACTIVATION_STATE -ne "blocked" `
+  -or $configuration.Environment.Variables.SOURCE_VERSION -ne $disabled.SourceVersion) {
   throw "Deployed disabled Lambda is not activation-blocked."
 }
 
@@ -142,15 +154,21 @@ $unsafeLog = $messages | Where-Object { $_ -match "(?i)authorization|bearer|toke
 if ($unsafeLog) { throw "Potential sensitive content appeared in the disabled API logs." }
 
 $evidence = [ordered]@{
-  contractVersion = "production-closed-boundary-exercise/1"
+  contractVersion = "production-closed-boundary-exercise/2"
   observedAt = [DateTimeOffset]::UtcNow.ToString("o")
   account = $account
   region = $Region
   phiAllowed = $false
+  activationState = "blocked"
+  dataPlaneEnabled = $false
+  sourceVersion = $disabled.SourceVersion
   foundationStackStatus = $foundationStack.status
   disabledApiStackStatus = $disabledStack.status
+  clinicalRouteCount = $routes.Count
+  allClinicalRoutesJwt = $true
   unauthenticatedHttpStatus = 401
   authenticatedFunctionStatus = 503
+  functionCodeSha256 = $configuration.CodeSha256
   functionPermissions = $actions
   migrationCount = $counts[0]
   tableCount = $counts[1]

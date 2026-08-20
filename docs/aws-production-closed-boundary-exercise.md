@@ -9,6 +9,10 @@ record:
 
 - caller is account `173535830222` and the foundation reports
   `production-clinical`, `clinical_phi_target`, and `PhiAllowed=false`;
+- the candidate stack reports an exact 40-character source commit,
+  `ActivationState=blocked`, and `DataPlaneEnabled=false`;
+- API Gateway exposes exactly 21 explicit clinical routes, every route requires
+  the correct JWT authorizer, and no wildcard clinical route remains;
 - an unauthenticated clinical request returns 401;
 - the deployed disabled Lambda returns the bounded 503
   `production_not_activated` contract;
@@ -29,6 +33,7 @@ Run from a controlled engineering workstation:
 An explicit `-OutputPath` may be provided when the parent evidence directory
 already exists. The script produces a canonical SHA-256 so an approved evidence
 repository can retain the result without placing runtime evidence in source.
+The evidence also records the deployed source commit and Lambda code digest.
 
 This exercise is intentionally bounded. The privacy/security owners must still
 run and sign the lost-device, compromised-account, leaked-token, malicious
