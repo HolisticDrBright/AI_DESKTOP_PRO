@@ -79,6 +79,10 @@ describe("deployed synthetic Cognito-to-Aurora acceptance harness", () => {
       json(200, { data: [{ event_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", patient_record_id: manifest.fixture.patientRecordId, marker_name: "Synthetic Glucose", state: "review_pending" }] }),
       json(200, { data: { eventId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", state: "accepted", observationId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", duplicate: false } }),
       json(200, { data: [{ observation_id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", marker_name: "Synthetic Glucose", review_status: "unreviewed" }] }),
+      json(200, { data: [{ id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", canonical_name: "Synthetic Glucose", source: "ai_longevity_pro_v2", review_status: "unreviewed" }] }),
+      json(200, { data: [{ id: manifest.fixture.patientRecordId, first_name: "Synthetic", last_name: "acceptance-patient" }] }),
+      json(200, { data: [{ id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", panel_name: "Synthetic Metabolic Panel" }] }),
+      json(403, { error: "operation_refused" }),
     ];
     const fetcher = async (url: string, init?: RequestInit) => {
       calls.push({
@@ -95,8 +99,8 @@ describe("deployed synthetic Cognito-to-Aurora acceptance harness", () => {
       isolationWorkforceIdToken: token("c"),
       manifest,
       fetch: fetcher,
-    })).resolves.toEqual({ passed: 31, externalRequests: 31 });
-    expect(calls).toHaveLength(31);
+    })).resolves.toEqual({ passed: 35, externalRequests: 35 });
+    expect(calls).toHaveLength(35);
     expect(calls[0]!.body).toBeNull();
     expect(calls[1]!.body).toBeNull();
     expect(calls[2]!.body).not.toHaveProperty("patientName");
@@ -109,6 +113,10 @@ describe("deployed synthetic Cognito-to-Aurora acceptance harness", () => {
     expect(calls[27]!.body).toEqual(calls[26]!.body);
     expect(calls[28]!.url).toContain("state=review_pending");
     expect(calls[30]!.url).toContain(encodeURIComponent(manifest.fixture.patientRecordId));
+    expect(calls[31]!.body).toMatchObject({ kind: "rpc", functionName: "list_patient_lab_observations" });
+    expect(calls[32]!.body).toMatchObject({ kind: "select", table: "patient_profiles" });
+    expect(calls[33]!.body).toMatchObject({ kind: "select", table: "lab_documents" });
+    expect(calls[34]!.authorization).toContain(token("c"));
     expect(calls.every((call) => call.url.startsWith("https://abc123.execute-api.us-east-2.amazonaws.com/clinical-core/"))).toBe(true);
   });
 

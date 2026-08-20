@@ -75,6 +75,13 @@ Production activation separately requires the
 `desktop_operations_migrated` runtime boundary to be approved. Neither may be
 approved from the existence of the endpoint alone.
 
+The first native compatibility slice is the governed App-to-Desktop lab path.
+`list_patient_lab_observations`, `patient_profiles`, and `lab_documents` are
+served from the AWS patient, accepted-import, and observation tables rather
+than the legacy schema. The deployed synthetic acceptance now verifies import,
+duplicate replay, practitioner acceptance, Desktop-formatted read-back,
+patient/document lookup, and cross-tenant refusal in 35 authenticated calls.
+
 A dedicated production member account now exists as account `173535830222`.
 Account `588966314750` remains synthetic staging and account `449901517958`
 remains the management account; both are explicitly refused by the production

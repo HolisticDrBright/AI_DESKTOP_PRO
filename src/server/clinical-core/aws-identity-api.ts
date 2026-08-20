@@ -205,6 +205,25 @@ export function createAwsIdentityApiHandler(input: {
       if (route.operation === "desktop_compatibility") {
         const body = parseBody(event);
         const request = validateDesktopCompatibilityRequest(context, body);
+        if (request.kind === "rpc" && request.functionName === "list_patient_lab_observations") {
+          if (!clinicalStateAdapter) throw new Error("clinical_state_api_adapter_required");
+          const patientRecordId = request.args._patient_id;
+          if (typeof patientRecordId !== "string" || !UUID.test(patientRecordId)) {
+            throw new IdentityApiError("request_invalid");
+          }
+          const rows = await clinicalStateAdapter.listPatientLabObservations(context, patientRecordId);
+          return response(200, { data: rows.map(desktopLabObservation) });
+        }
+        if (request.kind === "select" && request.table === "patient_profiles") {
+          if (!clinicalStateAdapter?.listDesktopPatients) throw new Error("desktop_patient_read_adapter_required");
+          const patientRecordId = equalityUuid(new URLSearchParams(request.query).get("id"));
+          return response(200, { data: await clinicalStateAdapter.listDesktopPatients(context, patientRecordId) });
+        }
+        if (request.kind === "select" && request.table === "lab_documents") {
+          if (!clinicalStateAdapter?.listDesktopLabDocuments) throw new Error("desktop_lab_document_adapter_required");
+          const patientRecordId = equalityUuid(new URLSearchParams(request.query).get("patient_id"), true);
+          return response(200, { data: await clinicalStateAdapter.listDesktopLabDocuments(context, patientRecordId!) });
+        }
         return response(200, { data: await desktopCompatibilityAdapter!.execute(context, request) });
       }
       const body = parseBody(event);
@@ -330,6 +349,46 @@ export function createAwsIdentityApiHandler(input: {
       }
       return response(503, { error: "service_unavailable" });
     }
+  };
+}
+
+function equalityUuid(value: string | null, required = false): string | undefined {
+  if (value === null && !required) return undefined;
+  if (!value?.startsWith("eq.") || !UUID.test(value.slice(3))) throw new IdentityApiError("request_invalid");
+  return value.slice(3);
+}
+
+function desktopLabObservation(row: Record<string, unknown>): Record<string, unknown> {
+  const observedAt = typeof row.observed_at === "string" ? row.observed_at : "";
+  const referenceMin = row.reference_min;
+  const referenceMax = row.reference_max;
+  const reference = referenceMin == null && referenceMax == null
+    ? null
+    : `${referenceMin ?? ""}–${referenceMax ?? ""}`;
+  const provenance = row.provenance && typeof row.provenance === "object"
+    ? row.provenance as Record<string, unknown>
+    : {};
+  return {
+    id: row.observation_id,
+    biomarker_definition_id: null,
+    canonical_name: row.marker_name,
+    biological_system: null,
+    value_numeric: row.value_numeric,
+    value_text: null,
+    unit: row.unit,
+    status: null,
+    original_reference_interval: reference,
+    confidence: null,
+    provenance: "AI Longevity Pro governed lab import",
+    review_status: row.review_status,
+    reviewed_at: null,
+    observed_at: observedAt,
+    ingested_at: observedAt,
+    lab_document_id: null,
+    source: "ai_longevity_pro_v2",
+    document_file_name: null,
+    document_lab_company: "AI Longevity Pro",
+    source_record_id: provenance.providerEventId ?? null,
   };
 }
 

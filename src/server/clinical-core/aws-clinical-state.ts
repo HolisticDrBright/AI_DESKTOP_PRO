@@ -58,6 +58,8 @@ export interface AwsSyntheticClinicalStateAdapter {
   }): Promise<LabReviewResult>;
   listLabImports(context: SyntheticRequestContext, state: LabImportResult["state"]): Promise<Record<string, unknown>[]>;
   listPatientLabObservations(context: SyntheticRequestContext, patientRecordId: string): Promise<Record<string, unknown>[]>;
+  listDesktopPatients?(context: SyntheticRequestContext, patientRecordId?: string): Promise<Record<string, unknown>[]>;
+  listDesktopLabDocuments?(context: SyntheticRequestContext, patientRecordId: string): Promise<Record<string, unknown>[]>;
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -160,6 +162,32 @@ export function createAwsSyntheticClinicalStateAdapter(database: ClinicalCoreDat
       if (!UUID.test(patientRecordId)) throw new ClinicalStateError("request_invalid");
       return run(database, context, async (tx) => (await tx.query(
         "select * from clinical_core.list_patient_lab_observations($1)", [clinicalUuid(patientRecordId)],
+      )).rows, "clinical_state_refused");
+    },
+    async listDesktopPatients(context, patientRecordId) {
+      assertContext(context, "workforce");
+      if (patientRecordId !== undefined && !UUID.test(patientRecordId)) throw new ClinicalStateError("request_invalid");
+      return run(database, context, async (tx) => (await tx.query(
+        `select id, organization_id, synthetic_record_key as mrn,
+           'Synthetic'::text as first_name, synthetic_record_key as last_name,
+           null::date as date_of_birth, null::text as sex, status
+         from clinical_core.patient_records
+         where organization_id=$1 and ($2::uuid is null or id=$2)
+         order by synthetic_record_key, id limit 1000`,
+        [clinicalUuid(context.organizationId), patientRecordId ? clinicalUuid(patientRecordId) : null],
+      )).rows, "clinical_state_refused");
+    },
+    async listDesktopLabDocuments(context, patientRecordId) {
+      assertContext(context, "workforce");
+      if (!UUID.test(patientRecordId)) throw new ClinicalStateError("request_invalid");
+      return run(database, context, async (tx) => (await tx.query(
+        `select id, 'AI Longevity Pro import'::text as file_name,
+           coalesce(source_label,'AI Longevity Pro') as lab_company,
+           panel_name, collected_at::date as lab_date, received_at as created_at
+         from clinical_core.lab_import_events
+         where organization_id=$1 and patient_record_id=$2 and state='accepted'
+         order by received_at desc, id limit 100`,
+        [clinicalUuid(context.organizationId), clinicalUuid(patientRecordId)],
       )).rows, "clinical_state_refused");
     },
   };

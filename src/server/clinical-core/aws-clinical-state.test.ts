@@ -94,4 +94,18 @@ describe("AWS synthetic clinical state adapter", () => {
     await expect(service.reviewLabResult(context("workforce"), { eventId: EVENT, decision: "accept" }))
       .resolves.toMatchObject({ state: "accepted", observationId: EVENT });
   });
+
+  test("provides tenant-bound synthetic patient and imported-document reads for Desktop", async () => {
+    const fixture = database();
+    const service = createAwsSyntheticClinicalStateAdapter(fixture.db);
+    await service.listDesktopPatients!(context("workforce"), EVENT);
+    await service.listDesktopLabDocuments!(context("workforce"), EVENT);
+    const patientRead = fixture.calls.find((entry) => entry.sql.includes("from clinical_core.patient_records"))!;
+    const documentRead = fixture.calls.find((entry) => entry.sql.includes("from clinical_core.lab_import_events"))!;
+    expect(patientRead.sql).toContain("organization_id=$1");
+    expect(documentRead.sql).toContain("organization_id=$1 and patient_record_id=$2");
+    expect(documentRead.sql).toContain("state='accepted'");
+    expect(patientRead.parameters[0]).toMatchObject({ kind: "uuid", value: ORG });
+    expect(documentRead.parameters[1]).toMatchObject({ kind: "uuid", value: EVENT });
+  });
 });

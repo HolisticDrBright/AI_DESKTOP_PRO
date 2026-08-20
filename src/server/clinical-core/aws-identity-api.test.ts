@@ -209,4 +209,45 @@ describe("authenticated synthetic identity API", () => {
       expect.objectContaining({ kind: "rpc", functionName: "get_patient_overview" }),
     );
   });
+
+  test("serves the App-to-Desktop lab slice from the native AWS clinical model", async () => {
+    const service = adapter();
+    const clinicalStateAdapter = {
+      getConsumerConnection: vi.fn(), importLabResult: vi.fn(), reviewLabResult: vi.fn(), listLabImports: vi.fn(),
+      listPatientLabObservations: vi.fn(async () => [{
+        observation_id: ARTIFACT, marker_name: "Vitamin D", value_numeric: 48, unit: "ng/mL",
+        reference_min: 30, reference_max: 100, observed_at: "2026-08-12T12:00:00Z",
+        review_status: "unreviewed", provenance: { providerEventId: "event-1" },
+      }]),
+      listDesktopPatients: vi.fn(async () => [{ id: PATIENT, first_name: "Synthetic", last_name: "Patient" }]),
+      listDesktopLabDocuments: vi.fn(async () => [{ id: ARTIFACT, panel_name: "Wellness" }]),
+    };
+    const desktopCompatibilityAdapter = { execute: vi.fn() };
+    const run = createAwsIdentityApiHandler({
+      adapter: service, clinicalStateAdapter, desktopCompatibilityAdapter,
+      configuration: {
+        workforceIssuer: WORKFORCE_ISSUER, workforceAudience: WORKFORCE_AUD,
+        consumerIssuer: CONSUMER_ISSUER, consumerAudience: CONSUMER_AUD,
+      },
+    });
+    const labs = await run(event("POST /clinical-core/workforce/data-compatibility", "workforce", {
+      kind: "rpc", functionName: "list_patient_lab_observations",
+      args: { _organization_id: ORG, _patient_id: PATIENT },
+    }));
+    const patients = await run(event("POST /clinical-core/workforce/data-compatibility", "workforce", {
+      kind: "select", table: "patient_profiles",
+      query: `select=id&organization_id=eq.${ORG}&id=eq.${PATIENT}&limit=1`,
+    }));
+    const documents = await run(event("POST /clinical-core/workforce/data-compatibility", "workforce", {
+      kind: "select", table: "lab_documents",
+      query: `select=id&organization_id=eq.${ORG}&patient_id=eq.${PATIENT}&limit=20`,
+    }));
+    expect(JSON.parse(labs.body).data[0]).toMatchObject({
+      id: ARTIFACT, canonical_name: "Vitamin D", value_numeric: 48,
+      source: "ai_longevity_pro_v2", review_status: "unreviewed",
+    });
+    expect(JSON.parse(patients.body).data[0]).toMatchObject({ id: PATIENT, first_name: "Synthetic" });
+    expect(JSON.parse(documents.body).data[0]).toMatchObject({ id: ARTIFACT, panel_name: "Wellness" });
+    expect(desktopCompatibilityAdapter.execute).not.toHaveBeenCalled();
+  });
 });

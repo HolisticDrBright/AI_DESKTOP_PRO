@@ -26,7 +26,7 @@ assert(database.includes("reviewed_synthetic_migration") && database.includes('c
   && database.includes("if (assumeRole)"), "administrative and request database paths must remain explicit");
 assert(provisioner.includes("hasExactKeys") && provisioner.includes("fixture_mismatch") && !provisioner.includes("on conflict (id) do update"), "fixtures must be exact, immutable, and mismatch-refusing");
 assert(acceptance.includes('redirect: "manual"') && acceptance.includes("AbortSignal.timeout(15_000)"), "acceptance transport must refuse redirects and have a hard timeout");
-assert(acceptance.includes("patientName: \"refused\"") && acceptance.includes("isolationWorkforceIdToken") && acceptance.includes("externalRequests: 31")
+assert(acceptance.includes("patientName: \"refused\"") && acceptance.includes("isolationWorkforceIdToken") && acceptance.includes("externalRequests: 35")
   && acceptance.includes("/clinical-core/workforce/posture") && acceptance.includes("/clinical-core/consumer/posture")
   && acceptance.includes("/clinical-core/consumer/consent-artifact?scope=lab_results_import")
   && acceptance.includes("scope: \"lab_results_import\"") && acceptance.includes("duplicateImport")

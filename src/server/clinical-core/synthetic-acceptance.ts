@@ -25,7 +25,7 @@ export async function runSyntheticApiAcceptance(input: {
   isolationWorkforceIdToken: string;
   manifest: SyntheticAcceptanceManifest;
   fetch?: FetchLike;
-}): Promise<{ passed: 31; externalRequests: 31 }> {
+}): Promise<{ passed: 35; externalRequests: 35 }> {
   const fetcher = input.fetch ?? fetch;
   const origin = validateConfiguration(input);
   let operationIndex = 0;
@@ -258,7 +258,44 @@ export async function runSyntheticApiAcceptance(input: {
   if (!observation || observation.marker_name !== "Synthetic Glucose" || observation.review_status !== "unreviewed") {
     throw new SyntheticAcceptanceError("workflow_failed");
   }
-  return { passed: 31, externalRequests: 31 };
+  const compatibilityPath = "/clinical-core/workforce/data-compatibility";
+  const desktopLabs = listData(await call(compatibilityPath, input.workforceIdToken, 200, {
+    kind: "rpc", functionName: "list_patient_lab_observations",
+    args: { _organization_id: input.manifest.fixture.organizationId, _patient_id: input.manifest.fixture.patientRecordId },
+  }));
+  if (!desktopLabs.some((row) => row.id === reviewed.observationId
+    && row.canonical_name === "Synthetic Glucose" && row.source === "ai_longevity_pro_v2")) {
+    throw new SyntheticAcceptanceError("workflow_failed");
+  }
+  const desktopPatients = listData(await call(compatibilityPath, input.workforceIdToken, 200, {
+    kind: "select", table: "patient_profiles",
+    query: new URLSearchParams({
+      select: "id,organization_id,mrn,first_name,last_name,date_of_birth,sex,status",
+      organization_id: `eq.${input.manifest.fixture.organizationId}`,
+      id: `eq.${input.manifest.fixture.patientRecordId}`,
+      limit: "1",
+    }).toString(),
+  }));
+  if (desktopPatients.length !== 1 || desktopPatients[0]?.id !== input.manifest.fixture.patientRecordId) {
+    throw new SyntheticAcceptanceError("workflow_failed");
+  }
+  const desktopDocuments = listData(await call(compatibilityPath, input.workforceIdToken, 200, {
+    kind: "select", table: "lab_documents",
+    query: new URLSearchParams({
+      select: "id,file_name,lab_company,panel_name,lab_date,created_at",
+      patient_id: `eq.${input.manifest.fixture.patientRecordId}`,
+      organization_id: `eq.${input.manifest.fixture.organizationId}`,
+      limit: "20",
+    }).toString(),
+  }));
+  if (!desktopDocuments.some((row) => row.panel_name === "Synthetic Metabolic Panel")) {
+    throw new SyntheticAcceptanceError("workflow_failed");
+  }
+  await call(compatibilityPath, input.isolationWorkforceIdToken, 403, {
+    kind: "rpc", functionName: "list_patient_lab_observations",
+    args: { _organization_id: input.manifest.fixture.organizationId, _patient_id: input.manifest.fixture.patientRecordId },
+  });
+  return { passed: 35, externalRequests: 35 };
 }
 
 function validateConfiguration(input: { apiOrigin: string; workforceIdToken: string; consumerIdToken: string; isolationWorkforceIdToken: string; manifest: SyntheticAcceptanceManifest }) {
