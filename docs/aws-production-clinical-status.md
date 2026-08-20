@@ -32,9 +32,14 @@ synthetic-only.
 - A public no-PHI posture response at the stack `PostureUrl` reports
   `clinical-core/2`, `production-clinical`,
   `production_foundation_phi_blocked`, and `phiAllowed=false`.
-- The production ECR repositories and ECS cluster contain no images, services,
-  or tasks. No application workload or patient data was deployed with the
-  foundation.
+- A separate private production-readiness stack builds one immutable Desktop
+  image from an exact pushed commit, proves the health/refusal boundary in the
+  same container, requires a 0 Critical/0 High ECR scan, and then runs exactly
+  one Fargate task with `PRODUCTION_WORKLOAD_MODE=readiness_only`,
+  `AWS_CLINICAL_ADAPTER_READY=false`, and `PHI_ALLOWED=false`.
+- The readiness task has no public IP, load balancer, ECS Exec, secrets, or
+  application IAM permissions. It uses private ECR/Logs/S3 endpoints, a
+  read-only root filesystem, non-root distroless UID, and encrypted logs.
 
 ## Current engineering boundary
 
@@ -46,11 +51,12 @@ the bounded AWS API Gateway route
 transport remains available only to the explicitly enabled loopback contract
 fixture and is categorically refused in a deployed process.
 
-This source-level result is not the same as a functioning production data
-plane. The compatibility route and the legacy Desktop clinical schema/RPC
-behavior have not been ported to the production Aurora API. Until they are
-implemented, deployed, and accepted end to end, clinical features fail closed
-and `AWS_CLINICAL_ADAPTER_READY` must not be set to `true`.
+This source-level result and the healthy readiness container are not the same
+as a functioning production data plane. The compatibility route and the
+legacy Desktop clinical schema/RPC behavior have not been ported to production
+Aurora. Production Aurora currently has zero application tables. Until those
+schemas and operations are implemented, deployed, and accepted end to end,
+clinical features fail closed and `AWS_CLINICAL_ADAPTER_READY` remains false.
 
 The required compatibility surface is now explicit rather than estimated:
 `infra/aws-clinical-core/desktop-compatibility-operations.json` contains 217
@@ -67,8 +73,10 @@ reviewed operation allowlist, rejects cross-organization RPC and read requests,
 sets the immutable Cognito-backed request context, and invokes only a registered
 uniform database wrapper. Migration `20260821040000` creates that registry and
 dispatcher with zero enabled operations. The API role cannot change the
-registry. This is intentionally fail-closed until all 222 wrappers have been
-ported and the deployed registry is reconciled to the source manifest.
+registry. This is intentionally fail-closed until all required wrappers have
+been ported and the deployed registry is reconciled to the source manifest.
+The synthetic native lab slice accounts for three operations; 214 RPCs and
+three non-lab read models remain.
 
 Production activation separately requires the
 `desktop_compatibility_contract` control and the
@@ -132,8 +140,27 @@ targets and GoDaddy DNS validation records exist.
 - `bun run check:aws-production-foundation`
 - `bun run audit:aws-data-plane-migration`
 - `bun run check:aws-production-readiness -- <reviewed-manifest>`
+- `npm run check:aws-production-readiness-workload`
+- `./scripts/deploy-aws-production-readiness-workload.ps1 -ConfirmPhiDisabled -SourceVersion <full-sha>`
 
 The `check:aws-data-plane-migration` command now passes with zero direct runtime
 dependency blockers while preserving `phi_allowed=false`. That check proves
 provider removal only; it does not prove the missing Aurora operations,
 production workload, operational safeguards, or HIPAA compliance.
+
+## Latest private workload evidence (2026-08-19)
+
+- Workload stack: `ai-desktop-pro-production-readiness`, `UPDATE_COMPLETE`.
+- Exact source: `3a30769653028e9bdb71b32a9525e1a5d2d8b880`.
+- ECR digest: `sha256:d67060e4543411375701ec3ac45ebed7c6a16596899a31a35ef83952c0f3d849`.
+- Image scan: 0 Critical, 0 High.
+- ECS: one RUNNING/HEALTHY task, private address only, no public association.
+- Container smoke test: `/api/health` succeeds; normal Desktop traffic returns
+  `503` with `production_not_activated` and `phiAllowed:false`.
+- Encrypted runtime error search: zero ERROR/Error/FATAL/Exception events.
+- Container Insights running-task alarm: `OK`.
+- Production Aurora read-only inventory: zero application tables.
+
+This evidence closes only the exact-image/private-compute readiness proof. It
+does not authorize PHI and must not be represented as a production clinical
+application or HIPAA certification.
