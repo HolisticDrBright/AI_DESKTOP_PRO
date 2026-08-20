@@ -258,6 +258,7 @@
     "PhiAllowed": { "Value": "false" },
     "WorkloadMode": { "Value": "readiness_only" },
     "BuildProjectName": { "Value": { "Ref": "ImageBuildProject" } },
+    "EndpointSecurityGroupId": { "Value": { "Ref": "EndpointSecurityGroup" } },
     "ServiceName": { "Condition": "ShouldDeployService", "Value": { "Fn::GetAtt": ["ReadinessService", "Name"] } },
     "ImageReference": { "Value": { "Fn::Sub": "${DesktopRepositoryUri}:${ImageTag}" } }
   }

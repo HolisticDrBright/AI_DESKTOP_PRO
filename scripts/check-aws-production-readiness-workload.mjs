@@ -41,6 +41,7 @@ assert(service?.Properties?.DesiredCount === 1, "service must run exactly one re
 assert(service?.Properties?.NetworkConfiguration?.AwsvpcConfiguration?.AssignPublicIp === "DISABLED", "public IPs must be disabled");
 assert(service?.Properties?.EnableExecuteCommand === false, "ECS Exec must remain disabled");
 assert(resources.ReadinessRunningTaskAlarm?.Condition === "ShouldDeployService", "running-task alarm is required");
+assert(template.Outputs?.EndpointSecurityGroupId?.Value?.Ref === "EndpointSecurityGroup", "private endpoint security group output is required for the patient readiness task");
 
 const buildspec = resources.ImageBuildProject?.Properties?.Source?.BuildSpec?.["Fn::Sub"] ?? "";
 assert(buildspec.includes("git checkout --detach ${SourceVersion}"), "build must pin the exact source commit");
