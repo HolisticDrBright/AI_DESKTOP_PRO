@@ -56,7 +56,7 @@ fixture and is categorically refused in a deployed process.
 
 This source-level result and the healthy readiness container are not the same
 as a functioning production data plane. Production Aurora now contains the
-reviewed portable clinical-core schema: 17 application tables and seven
+reviewed portable clinical-core schema: 17 application tables and eight
 immutable migration-ledger rows, with zero organization, person, patient, lab,
 clinical-record, or audit rows. The production API that is actually deployed
 is a separate Cognito-JWT boundary with no database, secret, S3, or KMS
@@ -82,11 +82,14 @@ uniform database wrapper. Migration `20260821040000` creates that registry and
 dispatcher with zero enabled operations. The API role cannot change the
 registry. This is intentionally fail-closed until all required wrappers have
 been ported and the deployed registry is reconciled to the source manifest.
-The production functional candidate currently accounts for five operations:
+The production functional candidate currently accounts for seven operations:
 `create_patient_profile`, `review_biomarker`,
-`list_patient_lab_observations`, `patient_profiles`, and `lab_documents`. It is
-source-only and deliberately not attached to the deployed API. All 222
-inventory entries remain disabled in the deployed production route, and 217
+`list_patient_lab_observations`, `list_audit_events`,
+`record_registered_audit_event`, `patient_profiles`, and `lab_documents`. The
+two audit operations use a database-owned event registry, bounded scalar
+metadata, append-only storage, and workforce/tenant/patient authorization. The
+candidate is source-only and deliberately not attached to the deployed API.
+All 222 inventory entries remain disabled in the deployed production route, and 215
 still need reviewed AWS implementations for full Desktop functionality.
 
 The same candidate now covers the complete 21-route governed
@@ -202,7 +205,7 @@ production workload, operational safeguards, or HIPAA compliance.
   `503` with `production_not_activated` and `phiAllowed:false`.
 - Encrypted runtime error search: zero ERROR/Error/FATAL/Exception events.
 - Container Insights running-task alarm: `OK`.
-- Production Aurora: 17 application tables, seven migration ledger entries,
+- Production Aurora: 17 application tables, eight migration ledger entries,
   and zero clinical/audit rows.
 - The companion AI Longevity Pro V2 patient API readiness service is also
   deployed privately from exact commit
@@ -228,8 +231,8 @@ production workload, operational safeguards, or HIPAA compliance.
   `39006ee03d373dd6a7d85050f08809f684e2c77ca876eb6538fbf574262f4d37`.
   The transaction was rolled back and an independent post-check returned zero
   rows.
-- Aurora PITR restored the latest state into a private encrypted temporary
-  cluster. The restore contained all seven migration entries, all 17 tables,
+- Aurora PITR restored the prior state into a private encrypted temporary
+  cluster. The restore contained the first seven migration entries, all 17 tables,
   and zero patient/audit rows. The exact temporary instance and cluster were
   then deleted; the production cluster remains encrypted, deletion-protected,
   and configured for 35-day backup retention.
@@ -245,6 +248,10 @@ production workload, operational safeguards, or HIPAA compliance.
   blocked activation, disabled data plane, empty database, `OK` alarm, and
   zero unsafe log matches. Evidence SHA-256:
   `b425616777af158967b80c62b43aee85b21be94ef1e4310dabe19f6cbbb8cc54`.
+- The PHI-disabled schema-only operator then added the eighth registered-audit
+  migration with zero clinical rows. The closed-boundary exercise reverified
+  the 8-migration/17-table empty state; interim evidence SHA-256:
+  `590eb063f8da5bee0d9c5bf6ec2fdaef751d9dd3cfcbbee20deb71ddf9689d75`.
 
 CloudFormation drift detection reports only three GuardDuty service-returned
 result fields as additions: disabled `AI_ANALYST`, disabled `AI_PROTECTION`,

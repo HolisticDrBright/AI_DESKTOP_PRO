@@ -21,7 +21,13 @@ export class ProductionDesktopError extends Error {
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const CORE_RPCS = new Set(["create_patient_profile", "review_biomarker", "list_patient_lab_observations"]);
+const CORE_RPCS = new Set([
+  "create_patient_profile",
+  "review_biomarker",
+  "list_patient_lab_observations",
+  "record_registered_audit_event",
+  "list_audit_events",
+]);
 const CORE_SELECTS = new Set(["patient_profiles", "lab_documents"]);
 
 export function createAwsProductionDesktopAdapter(
@@ -91,6 +97,30 @@ async function executeCoreRpc(
     return (await tx.query(
       "select * from clinical_core.list_patient_lab_observations($1)",
       [clinicalUuid(patientId)],
+    )).rows;
+  }
+  if (name === "record_registered_audit_event") {
+    exactKeys(args, ["_organization_id", "_event_type", "_resource_id", "_patient_id", "_metadata"]);
+    if (args._organization_id !== context.organizationId) throw invalid();
+    const patientId = optionalUuid(args._patient_id);
+    const metadata = boundedScalarMetadata(args._metadata);
+    const row = first(await tx.query<{ id: string }>(
+      "select clinical_core.record_registered_audit_event($1,$2,$3,$4,$5::jsonb) as id",
+      [
+        clinicalUuid(context.organizationId), requiredString(args._event_type, 64),
+        optionalString(args._resource_id, 128), patientId ? clinicalUuid(patientId) : null,
+        JSON.stringify(metadata),
+      ],
+    ));
+    return row.id;
+  }
+  if (name === "list_audit_events") {
+    exactKeys(args, ["_organization_id", "_limit"]);
+    if (args._organization_id !== context.organizationId) throw invalid();
+    const limit = boundedInteger(args._limit, 1, 200);
+    return (await tx.query(
+      "select * from clinical_core.list_audit_events($1,$2)",
+      [clinicalUuid(context.organizationId), limit],
     )).rows;
   }
   throw new ProductionDesktopError("operation_refused");
@@ -188,6 +218,31 @@ function equalityUuid(value: string | null, required = false): string | undefine
   const candidate = value.startsWith("eq.") ? value.slice(3) : "";
   if (!UUID.test(candidate)) throw invalid();
   return candidate;
+}
+
+function optionalUuid(value: unknown): string | null {
+  if (value === null || value === undefined || value === "") return null;
+  if (typeof value !== "string" || !UUID.test(value)) throw invalid();
+  return value;
+}
+
+function boundedInteger(value: unknown, min: number, max: number): number {
+  if (!Number.isInteger(value) || (value as number) < min || (value as number) > max) throw invalid();
+  return value as number;
+}
+
+function boundedScalarMetadata(value: unknown): Record<string, string | number | boolean> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw invalid();
+  const entries = Object.entries(value as Record<string, unknown>);
+  if (entries.length > 16) throw invalid();
+  for (const [key, item] of entries) {
+    if (!/^[a-z][a-z0-9_]{0,63}$/.test(key)
+      || !["string", "number", "boolean"].includes(typeof item)
+      || (typeof item === "string" && item.length > 256)
+      || (typeof item === "number" && !Number.isFinite(item))) throw invalid();
+  }
+  if (JSON.stringify(value).length > 2048) throw invalid();
+  return Object.fromEntries(entries) as Record<string, string | number | boolean>;
 }
 
 function first<Row extends Record<string, unknown>>(result: { rows: Row[] }): Row {

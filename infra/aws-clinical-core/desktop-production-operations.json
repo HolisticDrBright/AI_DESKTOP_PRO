@@ -21,6 +21,18 @@
       "source": "infra/aws-clinical-core/migrations/20260821010000_governed_synthetic_lab_import.sql"
     },
     {
+      "kind": "rpc",
+      "name": "list_audit_events",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821060000_production_registered_audit_actions.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "record_registered_audit_event",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821060000_production_registered_audit_actions.sql"
+    },
+    {
       "kind": "select",
       "name": "lab_documents",
       "implementation": "native_production_adapter",

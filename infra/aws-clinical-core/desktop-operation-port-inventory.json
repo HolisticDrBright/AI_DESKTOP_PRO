@@ -2,14 +2,14 @@
   "schemaVersion": "desktop-operation-port-inventory/1",
   "generatedFrom": {
     "operationManifestSha256": "88edf2081d80d44c57d18d47a8e66bcd9e601d0f8db64edd870fbaff25b5d1d0",
-    "productionOperationManifestSha256": "5c6800ac8b2dae2e167aabb2ed8d3ea8a74a8941c6c7e1d57e31680243985d9c",
+    "productionOperationManifestSha256": "f73fb3aeb218aed602f58c74d456946b1dedc2de6b275324c13bbae638b99f4e",
     "legacyDefinitionSetSha256": "dce8bb87ed890c305c656ee61b8438da0cb518647ea2df65f4bdf26e55277e96"
   },
   "counts": {
     "rpc": 217,
     "select": 5,
     "total": 222,
-    "productionImplemented": 5,
+    "productionImplemented": 7,
     "productionEnabled": 0
   },
   "operations": [
@@ -4839,7 +4839,13 @@
         }
       ],
       "syntheticBoundary": "registry_disabled",
-      "productionStatus": "not_ported"
+      "productionStatus": "implemented_activation_blocked",
+      "productionEvidence": {
+        "implementation": "native_production_function",
+        "source": "infra/aws-clinical-core/production-migrations/20260821060000_production_registered_audit_actions.sql",
+        "sourceSha256": "9800f06d08398d31ce90ae117612ae7a82fa42aec9a41eee9a253e1a0ca51e33",
+        "activationState": "phi_disabled"
+      }
     },
     {
       "kind": "rpc",
@@ -6832,7 +6838,13 @@
         }
       ],
       "syntheticBoundary": "registry_disabled",
-      "productionStatus": "not_ported"
+      "productionStatus": "implemented_activation_blocked",
+      "productionEvidence": {
+        "implementation": "native_production_function",
+        "source": "infra/aws-clinical-core/production-migrations/20260821060000_production_registered_audit_actions.sql",
+        "sourceSha256": "9800f06d08398d31ce90ae117612ae7a82fa42aec9a41eee9a253e1a0ca51e33",
+        "activationState": "phi_disabled"
+      }
     },
     {
       "kind": "rpc",
@@ -10909,7 +10921,7 @@
       "productionEvidence": {
         "implementation": "native_production_adapter",
         "source": "src/server/clinical-core/aws-production-desktop.ts",
-        "sourceSha256": "5e3ce001dd4fe1caf9c1b60245b38d9b8342efd3ea19171eff1e1935cc937cef",
+        "sourceSha256": "f111cd4a43864fae3d5934fe719cd54a9ac2f833e8786f6a9044436e53d0f107",
         "activationState": "phi_disabled"
       }
     },
@@ -10950,7 +10962,7 @@
       "productionEvidence": {
         "implementation": "native_production_adapter",
         "source": "src/server/clinical-core/aws-production-desktop.ts",
-        "sourceSha256": "5e3ce001dd4fe1caf9c1b60245b38d9b8342efd3ea19171eff1e1935cc937cef",
+        "sourceSha256": "f111cd4a43864fae3d5934fe719cd54a9ac2f833e8786f6a9044436e53d0f107",
         "activationState": "phi_disabled"
       }
     }

@@ -16,7 +16,7 @@ const errors = [];
 const assert = (condition, message) => { if (!condition) errors.push(message); };
 
 assert(manifest.contract_version === "clinical-core-migrations/1", "generated manifest contract is invalid");
-assert(manifest.migrations.length === 7, "expected six transformed migrations and one production overlay");
+assert(manifest.migrations.length === 8, "expected six transformed migrations and two production overlays");
 assert(new Set(manifest.migrations.map((entry) => entry.version)).size === manifest.migrations.length,
   "migration versions must be unique");
 
@@ -57,6 +57,8 @@ assert(!/insert\s+into\s+clinical_core\.(organizations|persons|identities|organi
 
 const overlay = readFileSync(path.join(root, "infra", "aws-clinical-core", "production-migrations",
   "20260821050000_production_patient_directory.sql"), "utf8");
+const auditOverlay = readFileSync(path.join(root, "infra", "aws-clinical-core", "production-migrations",
+  "20260821060000_production_registered_audit_actions.sql"), "utf8");
 assert(overlay.includes("_organization_id uuid") && overlay.includes("_first_name text")
   && overlay.includes("_last_name text") && overlay.includes("_date_of_birth date")
   && overlay.includes("_sex text") && overlay.includes("_mrn text")
@@ -75,6 +77,21 @@ assert(!/(_first|_last|_normalized_email|_normalized_phone|date_of_birth)/i.test
 assert(reviewAudit.includes("'note_present', coalesce(char_length(btrim(_note)), 0) > 0")
   && !/['\"]note['\"]\s*,\s*_note/i.test(reviewAudit),
   "review audit must record only note presence, never note content");
+assert(auditOverlay.includes("clinical_core.record_registered_audit_event")
+  && auditOverlay.includes("clinical_core.list_audit_events")
+  && auditOverlay.includes("clinical_private.assert_production_context")
+  && auditOverlay.includes("clinical_private.has_clinical_role"),
+"registered audit actions must enforce production context and clinical role");
+assert(auditOverlay.includes("where patient.id = _patient_id")
+  && auditOverlay.includes("patient.organization_id = _organization_id")
+  && auditOverlay.includes("patient.deleted_at is null"),
+"registered audit actions must bind patients to the caller organization");
+assert(auditOverlay.includes("where event.organization_id = _organization_id")
+  && auditOverlay.includes("limit _limit"),
+"audit history must be tenant-scoped and bounded");
+assert(!/email|date_of_birth|authorization|cookie|payload/i.test(
+  auditOverlay.match(/from \(values[\s\S]*?\) as definition/)?.[0] ?? ""),
+"registered audit definitions contain a prohibited metadata key");
 
 if (errors.length) {
   for (const error of errors) console.error(`ERROR: ${error}`);
@@ -82,4 +99,4 @@ if (errors.length) {
 }
 
 const releaseHash = createHash("sha256").update(combined).digest("hex");
-console.log(`Production clinical-core gate passed: 7 migrations, zero seeded rows (${releaseHash}).`);
+console.log(`Production clinical-core gate passed: 8 migrations, zero seeded rows (${releaseHash}).`);

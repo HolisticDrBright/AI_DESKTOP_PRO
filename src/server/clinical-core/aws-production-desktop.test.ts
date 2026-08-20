@@ -11,6 +11,7 @@ const PERSON = "11111111-1111-4111-8111-111111111111";
 const ORG = "22222222-2222-4222-8222-222222222222";
 const PATIENT = "33333333-3333-4333-8333-333333333333";
 const OBSERVATION = "44444444-4444-4444-8444-444444444444";
+const AUDIT = "55555555-5555-4555-8555-555555555555";
 
 const context: ProductionRequestContext = {
   actorPersonId: PERSON,
@@ -83,6 +84,83 @@ describe("AWS production Desktop adapter", () => {
     });
     expect(result).toEqual([expect.objectContaining({ id: PATIENT })]);
     expect(test.calls[1]?.sql).toContain("from clinical_core.patient_records");
+  });
+
+  it("records only the bounded registered audit payload in the caller tenant", async () => {
+    const test = harness({ id: AUDIT });
+    const result = await test.adapter.execute(context, {
+      kind: "rpc",
+      functionName: "record_registered_audit_event",
+      args: {
+        _organization_id: ORG,
+        _event_type: "report.exported",
+        _resource_id: "report-001",
+        _patient_id: null,
+        _metadata: { format: "pdf", report_type: "labs" },
+      },
+    });
+    expect(result).toBe(AUDIT);
+    expect(test.calls[1]?.sql).toContain("clinical_core.record_registered_audit_event");
+    expect(test.calls[1]?.values).toEqual([
+      { kind: "uuid", value: ORG }, "report.exported", "report-001", null,
+      JSON.stringify({ format: "pdf", report_type: "labs" }),
+    ]);
+    expect(test.fallback.execute).not.toHaveBeenCalled();
+  });
+
+  it("reads bounded tenant-scoped audit history through the production function", async () => {
+    const test = harness({
+      id: AUDIT,
+      action: "patient.created",
+      resource_type: "patient_profile",
+      resource_id: PATIENT,
+      safe_message: null,
+      patient_id: null,
+      actor_user_id: PERSON,
+      occurred_at: "2026-08-20T00:00:00.000Z",
+      metadata: { source: "manual" },
+    });
+    const result = await test.adapter.execute(context, {
+      kind: "rpc",
+      functionName: "list_audit_events",
+      args: { _organization_id: ORG, _limit: 50 },
+    });
+    expect(result).toEqual([expect.objectContaining({ id: AUDIT, action: "patient.created" })]);
+    expect(test.calls[1]?.sql).toBe("select * from clinical_core.list_audit_events($1,$2)");
+    expect(test.calls[1]?.values).toEqual([{ kind: "uuid", value: ORG }, 50]);
+  });
+
+  it("refuses cross-tenant and unbounded audit requests after only establishing request context", async () => {
+    const test = harness();
+    await expect(test.adapter.execute(context, {
+      kind: "rpc",
+      functionName: "list_audit_events",
+      args: { _organization_id: "99999999-9999-4999-8999-999999999999", _limit: 50 },
+    })).rejects.toEqual(new ProductionDesktopError("request_invalid"));
+    await expect(test.adapter.execute(context, {
+      kind: "rpc",
+      functionName: "list_audit_events",
+      args: { _organization_id: ORG, _limit: 201 },
+    })).rejects.toEqual(new ProductionDesktopError("request_invalid"));
+    expect(test.calls).toHaveLength(2);
+    expect(test.calls.every((call) => call.sql.includes("clinical_private.set_request_context"))).toBe(true);
+  });
+
+  it("refuses nested or oversized generic audit metadata without issuing an audit query", async () => {
+    const test = harness();
+    await expect(test.adapter.execute(context, {
+      kind: "rpc",
+      functionName: "record_registered_audit_event",
+      args: {
+        _organization_id: ORG,
+        _event_type: "report.exported",
+        _resource_id: "report-001",
+        _patient_id: null,
+        _metadata: { payload: { identifying: "content" } },
+      },
+    })).rejects.toEqual(new ProductionDesktopError("request_invalid"));
+    expect(test.calls).toHaveLength(1);
+    expect(test.calls[0]?.sql).toContain("clinical_private.set_request_context");
   });
 
   it("refuses a cross-tenant request before touching Aurora", async () => {

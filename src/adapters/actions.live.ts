@@ -10,9 +10,9 @@ import { clinicalRpc } from "./aws-clinical-data.server";
  * Live `actions` namespace (server-only).
  *
  * Persistent audit reads, registered generic audit writes, and downstream
- * review-task writes go directly to the clinical Supabase project as the
- * authenticated practitioner. Domain mutations still append their own audit
- * event atomically inside their database function.
+ * review-task writes use the active clinical data adapter as the authenticated
+ * practitioner. Domain mutations still append their own audit event atomically
+ * inside their database function.
  */
 
 /**
