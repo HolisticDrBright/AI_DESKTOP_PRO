@@ -96,6 +96,18 @@ gate and a token with `custom:production_bound=true`; a token carrying the
 synthetic attestation is refused. The deployed production route remains the
 separate log-only 503 function, so this source readiness does not expose PHI.
 
+`production-clinical-api-candidate.json` is the in-place deployment definition
+for that candidate. Its defaults are `PhiAllowed=false`,
+`ActivationState=blocked`, and no activation evidence. In that state its IAM
+role contains encrypted-log writes only: Aurora Data API, Secrets Manager, and
+KMS decrypt statements are removed by a CloudFormation condition. The guarded
+deployment script accepts only the exact pushed commit, the reviewed production
+account, and two explicit PHI-disabled confirmations, then verifies the role has
+one log-only policy and the function returns bounded 503. The template's future
+data-plane condition cannot become true unless PHI, approval state, and a
+64-character evidence digest are coherent. Adding this template does not
+satisfy or bypass the independent human activation checklist.
+
 Production activation separately requires the
 `desktop_compatibility_contract` control and the
 `desktop_operations_migrated` runtime boundary to be approved. Neither may be
@@ -165,6 +177,7 @@ targets and GoDaddy DNS validation records exist.
 - `bun run check:aws-production-readiness -- <reviewed-manifest>`
 - `npm run check:aws-production-readiness-workload`
 - `./scripts/deploy-aws-production-readiness-workload.ps1 -ConfirmPhiDisabled -SourceVersion <full-sha>`
+- `./scripts/deploy-aws-production-clinical-api-candidate-disabled.ps1 -ArtifactBucket <reviewed-bucket> -SourceVersion <full-sha> -ConfirmPhiDisabledCandidateDeployment -ConfirmReplaceLogOnlyBoundary`
 
 The `check:aws-data-plane-migration` command now passes with zero direct runtime
 dependency blockers while preserving `phi_allowed=false`. That check proves

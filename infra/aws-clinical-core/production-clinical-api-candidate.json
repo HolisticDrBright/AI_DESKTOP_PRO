@@ -1,0 +1,280 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Activation-gated production clinical API candidate for AI Longevity Pro. Defaults to a closed data plane.",
+  "Metadata": {
+    "ClinicalCore": {
+      "ContractVersion": "production-clinical-api/1",
+      "Environment": "production-clinical",
+      "DataClassification": "clinical_phi_target",
+      "DefaultPhiAllowed": false
+    }
+  },
+  "Parameters": {
+    "ClinicalApiId": { "Type": "String", "AllowedPattern": "^[a-z0-9]{10}$" },
+    "WorkforceUserPoolId": { "Type": "String", "AllowedPattern": "^[a-z0-9-]+_[A-Za-z0-9]+$" },
+    "WorkforceUserPoolClientId": { "Type": "String", "AllowedPattern": "^[A-Za-z0-9]{20,128}$" },
+    "ConsumerUserPoolId": { "Type": "String", "AllowedPattern": "^[a-z0-9-]+_[A-Za-z0-9]+$" },
+    "ConsumerUserPoolClientId": { "Type": "String", "AllowedPattern": "^[A-Za-z0-9]{20,128}$" },
+    "DatabaseClusterArn": { "Type": "String", "AllowedPattern": "^arn:(aws|aws-us-gov|aws-cn):rds:[a-z0-9-]+:[0-9]{12}:cluster:[A-Za-z0-9-]{1,63}$" },
+    "DatabaseSecretArn": { "Type": "String", "NoEcho": true },
+    "DatabaseName": { "Type": "String", "AllowedPattern": "^[a-z][a-z0-9_]{0,62}$" },
+    "ClinicalCoreKeyArn": { "Type": "String", "AllowedPattern": "^arn:(aws|aws-us-gov|aws-cn):kms:[a-z0-9-]+:[0-9]{12}:key/[0-9a-f-]{36}$" },
+    "LambdaCodeBucket": { "Type": "String", "AllowedPattern": "^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$" },
+    "LambdaCodeKey": { "Type": "String", "AllowedPattern": "^[A-Za-z0-9!_.*'()/\\-]{1,1024}$" },
+    "SourceVersion": { "Type": "String", "AllowedPattern": "^[0-9a-f]{40}$" },
+    "PhiAllowed": { "Type": "String", "Default": "false", "AllowedValues": ["false", "true"] },
+    "ActivationState": { "Type": "String", "Default": "blocked", "AllowedValues": ["blocked", "approved"] },
+    "ActivationEvidenceSha256": { "Type": "String", "Default": "", "AllowedPattern": "^$|^[0-9a-f]{64}$" }
+  },
+  "Rules": {
+    "ActivationMustBeCoherent": {
+      "Assertions": [{
+        "Assert": {
+          "Fn::Or": [
+            { "Fn::Equals": [{ "Ref": "PhiAllowed" }, "false"] },
+            {
+              "Fn::And": [
+                { "Fn::Equals": [{ "Ref": "ActivationState" }, "approved"] },
+                { "Fn::Not": [{ "Fn::Equals": [{ "Ref": "ActivationEvidenceSha256" }, ""] }] }
+              ]
+            }
+          ]
+        },
+        "AssertDescription": "PHI activation requires approved state and a 64-character evidence SHA-256."
+      }]
+    },
+    "BlockedStateCannotCarryEvidence": {
+      "Assertions": [{
+        "Assert": {
+          "Fn::Or": [
+            { "Fn::Equals": [{ "Ref": "ActivationState" }, "approved"] },
+            { "Fn::Equals": [{ "Ref": "ActivationEvidenceSha256" }, ""] }
+          ]
+        },
+        "AssertDescription": "Blocked deployments must not imply approval evidence."
+      }]
+    }
+  },
+  "Conditions": {
+    "DataPlaneEnabled": {
+      "Fn::And": [
+        { "Fn::Equals": [{ "Ref": "PhiAllowed" }, "true"] },
+        { "Fn::Equals": [{ "Ref": "ActivationState" }, "approved"] },
+        { "Fn::Not": [{ "Fn::Equals": [{ "Ref": "ActivationEvidenceSha256" }, ""] }] }
+      ]
+    }
+  },
+  "Resources": {
+    "ProductionClinicalApiLogGroup": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "LogGroupName": { "Fn::Sub": "/ai-clinical-core/production-clinical/disabled-api-v1/${ClinicalApiId}" },
+        "RetentionInDays": 365,
+        "KmsKeyId": { "Ref": "ClinicalCoreKeyArn" }
+      },
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain"
+    },
+    "ProductionClinicalApiRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [{
+            "Effect": "Allow",
+            "Principal": { "Service": "lambda.amazonaws.com" },
+            "Action": "sts:AssumeRole"
+          }]
+        },
+        "Policies": [
+          {
+            "PolicyName": "BoundedEncryptedLogging",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [{
+                "Effect": "Allow",
+                "Action": ["logs:CreateLogStream", "logs:PutLogEvents"],
+                "Resource": { "Fn::GetAtt": ["ProductionClinicalApiLogGroup", "Arn"] }
+              }]
+            }
+          },
+          {
+            "Fn::If": [
+              "DataPlaneEnabled",
+              {
+                "PolicyName": "ActivationGatedAuroraTransactions",
+                "PolicyDocument": {
+                  "Version": "2012-10-17",
+                  "Statement": [{
+                    "Effect": "Allow",
+                    "Action": [
+                      "rds-data:BeginTransaction",
+                      "rds-data:ExecuteStatement",
+                      "rds-data:CommitTransaction",
+                      "rds-data:RollbackTransaction"
+                    ],
+                    "Resource": { "Ref": "DatabaseClusterArn" }
+                  }]
+                }
+              },
+              { "Ref": "AWS::NoValue" }
+            ]
+          },
+          {
+            "Fn::If": [
+              "DataPlaneEnabled",
+              {
+                "PolicyName": "ActivationGatedDatabaseCredentialRead",
+                "PolicyDocument": {
+                  "Version": "2012-10-17",
+                  "Statement": [
+                    {
+                      "Effect": "Allow",
+                      "Action": "secretsmanager:GetSecretValue",
+                      "Resource": { "Ref": "DatabaseSecretArn" }
+                    },
+                    {
+                      "Effect": "Allow",
+                      "Action": "kms:Decrypt",
+                      "Resource": { "Ref": "ClinicalCoreKeyArn" },
+                      "Condition": {
+                        "StringEquals": {
+                          "kms:ViaService": { "Fn::Sub": "secretsmanager.${AWS::Region}.${AWS::URLSuffix}" }
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              { "Ref": "AWS::NoValue" }
+            ]
+          }
+        ]
+      }
+    },
+    "ProductionClinicalApiFunction": {
+      "Type": "AWS::Lambda::Function",
+      "Properties": {
+        "FunctionName": { "Fn::Sub": "${ClinicalApiId}-production-clinical-disabled" },
+        "Runtime": "nodejs22.x",
+        "Architectures": ["arm64"],
+        "Handler": "index.handler",
+        "Role": { "Fn::GetAtt": ["ProductionClinicalApiRole", "Arn"] },
+        "MemorySize": 256,
+        "Timeout": 15,
+        "ReservedConcurrentExecutions": 2,
+        "LoggingConfig": {
+          "LogGroup": { "Ref": "ProductionClinicalApiLogGroup" },
+          "LogFormat": "JSON",
+          "ApplicationLogLevel": "WARN",
+          "SystemLogLevel": "WARN"
+        },
+        "Code": { "S3Bucket": { "Ref": "LambdaCodeBucket" }, "S3Key": { "Ref": "LambdaCodeKey" } },
+        "Environment": {
+          "Variables": {
+            "CLINICAL_DATABASE_CLUSTER_ARN": { "Ref": "DatabaseClusterArn" },
+            "CLINICAL_DATABASE_SECRET_ARN": { "Ref": "DatabaseSecretArn" },
+            "CLINICAL_DATABASE_NAME": { "Ref": "DatabaseName" },
+            "CLINICAL_WORKFORCE_ISSUER": { "Fn::Sub": "https://cognito-idp.${AWS::Region}.${AWS::URLSuffix}/${WorkforceUserPoolId}" },
+            "CLINICAL_WORKFORCE_AUDIENCE": { "Ref": "WorkforceUserPoolClientId" },
+            "CLINICAL_CONSUMER_ISSUER": { "Fn::Sub": "https://cognito-idp.${AWS::Region}.${AWS::URLSuffix}/${ConsumerUserPoolId}" },
+            "CLINICAL_CONSUMER_AUDIENCE": { "Ref": "ConsumerUserPoolClientId" },
+            "PHI_ALLOWED": { "Ref": "PhiAllowed" },
+            "ACTIVATION_STATE": { "Ref": "ActivationState" },
+            "ACTIVATION_EVIDENCE_SHA256": { "Ref": "ActivationEvidenceSha256" },
+            "SOURCE_VERSION": { "Ref": "SourceVersion" }
+          }
+        }
+      }
+    },
+    "WorkforceJwtAuthorizer": {
+      "Type": "AWS::ApiGatewayV2::Authorizer",
+      "Properties": {
+        "ApiId": { "Ref": "ClinicalApiId" },
+        "AuthorizerType": "JWT",
+        "Name": "production-workforce-disabled",
+        "IdentitySource": ["$request.header.Authorization"],
+        "JwtConfiguration": {
+          "Issuer": { "Fn::Sub": "https://cognito-idp.${AWS::Region}.${AWS::URLSuffix}/${WorkforceUserPoolId}" },
+          "Audience": [{ "Ref": "WorkforceUserPoolClientId" }]
+        }
+      }
+    },
+    "ConsumerJwtAuthorizer": {
+      "Type": "AWS::ApiGatewayV2::Authorizer",
+      "Properties": {
+        "ApiId": { "Ref": "ClinicalApiId" },
+        "AuthorizerType": "JWT",
+        "Name": "production-consumer-disabled",
+        "IdentitySource": ["$request.header.Authorization"],
+        "JwtConfiguration": {
+          "Issuer": { "Fn::Sub": "https://cognito-idp.${AWS::Region}.${AWS::URLSuffix}/${ConsumerUserPoolId}" },
+          "Audience": [{ "Ref": "ConsumerUserPoolClientId" }]
+        }
+      }
+    },
+    "ProductionClinicalApiIntegration": {
+      "Type": "AWS::ApiGatewayV2::Integration",
+      "Properties": {
+        "ApiId": { "Ref": "ClinicalApiId" },
+        "IntegrationType": "AWS_PROXY",
+        "IntegrationUri": { "Fn::GetAtt": ["ProductionClinicalApiFunction", "Arn"] },
+        "PayloadFormatVersion": "2.0",
+        "TimeoutInMillis": 15000
+      }
+    },
+    "WorkforcePostureRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "GET /clinical-core/workforce/posture", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "WorkforceJwtAuthorizer" }, "Target": { "Fn::Sub": "integrations/${ProductionClinicalApiIntegration}" } } },
+    "ConsumerPostureRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "GET /clinical-core/consumer/posture", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "ConsumerJwtAuthorizer" }, "Target": { "Fn::Sub": "integrations/${ProductionClinicalApiIntegration}" } } },
+    "IssueInvitationRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "POST /clinical-core/workforce/invitations", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "WorkforceJwtAuthorizer" }, "Target": { "Fn::Sub": "integrations/${ProductionClinicalApiIntegration}" } } },
+    "ClaimInvitationRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "POST /clinical-core/consumer/invitations/claim", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "ConsumerJwtAuthorizer" }, "Target": { "Fn::Sub": "integrations/${ProductionClinicalApiIntegration}" } } },
+    "WorkforceGrantConsentRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "POST /clinical-core/workforce/consents/grant", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "WorkforceJwtAuthorizer" }, "Target": { "Fn::Sub": "integrations/${ProductionClinicalApiIntegration}" } } },
+    "ConsumerGrantConsentRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "POST /clinical-core/consumer/consents/grant", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "ConsumerJwtAuthorizer" }, "Target": { "Fn::Sub": "integrations/${ProductionClinicalApiIntegration}" } } },
+    "WorkforceRevokeConsentRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "POST /clinical-core/workforce/consents/revoke", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "WorkforceJwtAuthorizer" }, "Target": { "Fn::Sub": "integrations/${ProductionClinicalApiIntegration}" } } },
+    "ConsumerRevokeConsentRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "POST /clinical-core/consumer/consents/revoke", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "ConsumerJwtAuthorizer" }, "Target": { "Fn::Sub": "integrations/${ProductionClinicalApiIntegration}" } } },
+    "ConsumerConsentArtifactRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "GET /clinical-core/consumer/consent-artifact", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "ConsumerJwtAuthorizer" }, "Target": { "Fn::Sub": "integrations/${ProductionClinicalApiIntegration}" } } },
+    "ConsumerLabImportRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "POST /clinical-core/consumer/labs/import", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "ConsumerJwtAuthorizer" }, "Target": { "Fn::Sub": "integrations/${ProductionClinicalApiIntegration}" } } },
+    "ConsumerConnectionRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "GET /clinical-core/consumer/connection", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "ConsumerJwtAuthorizer" }, "Target": { "Fn::Sub": "integrations/${ProductionClinicalApiIntegration}" } } },
+    "WorkforceLabImportListRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "GET /clinical-core/workforce/lab-imports", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "WorkforceJwtAuthorizer" }, "Target": { "Fn::Sub": "integrations/${ProductionClinicalApiIntegration}" } } },
+    "WorkforceLabImportReviewRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "POST /clinical-core/workforce/lab-imports/review", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "WorkforceJwtAuthorizer" }, "Target": { "Fn::Sub": "integrations/${ProductionClinicalApiIntegration}" } } },
+    "WorkforcePatientLabsRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "GET /clinical-core/workforce/patient-labs", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "WorkforceJwtAuthorizer" }, "Target": { "Fn::Sub": "integrations/${ProductionClinicalApiIntegration}" } } },
+    "ConsumerPatientLabsRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "GET /clinical-core/consumer/patient-labs", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "ConsumerJwtAuthorizer" }, "Target": { "Fn::Sub": "integrations/${ProductionClinicalApiIntegration}" } } },
+    "ConsumerClinicalRecordWriteRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "POST /clinical-core/consumer/records", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "ConsumerJwtAuthorizer" }, "Target": { "Fn::Sub": "integrations/${ProductionClinicalApiIntegration}" } } },
+    "ConsumerClinicalRecordListRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "GET /clinical-core/consumer/records", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "ConsumerJwtAuthorizer" }, "Target": { "Fn::Sub": "integrations/${ProductionClinicalApiIntegration}" } } },
+    "ConsumerConsentHistoryRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "GET /clinical-core/consumer/privacy/consents", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "ConsumerJwtAuthorizer" }, "Target": { "Fn::Sub": "integrations/${ProductionClinicalApiIntegration}" } } },
+    "ConsumerPrivacyRequestSubmitRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "POST /clinical-core/consumer/privacy/requests", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "ConsumerJwtAuthorizer" }, "Target": { "Fn::Sub": "integrations/${ProductionClinicalApiIntegration}" } } },
+    "ConsumerPrivacyRequestListRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "GET /clinical-core/consumer/privacy/requests", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "ConsumerJwtAuthorizer" }, "Target": { "Fn::Sub": "integrations/${ProductionClinicalApiIntegration}" } } },
+    "WorkforceDesktopCompatibilityRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "POST /clinical-core/workforce/data-compatibility", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "WorkforceJwtAuthorizer" }, "Target": { "Fn::Sub": "integrations/${ProductionClinicalApiIntegration}" } } },
+    "ProductionClinicalApiInvokePermission": {
+      "Type": "AWS::Lambda::Permission",
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": { "Ref": "ProductionClinicalApiFunction" },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": { "Fn::Sub": "arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${ClinicalApiId}/*/*/clinical-core/*" }
+      }
+    },
+    "ProductionClinicalApiErrorAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmName": { "Fn::Sub": "${ClinicalApiId}-production-clinical-disabled-errors" },
+        "Namespace": "AWS/Lambda",
+        "MetricName": "Errors",
+        "Dimensions": [{ "Name": "FunctionName", "Value": { "Ref": "ProductionClinicalApiFunction" } }],
+        "Statistic": "Sum",
+        "Period": 300,
+        "EvaluationPeriods": 1,
+        "DatapointsToAlarm": 1,
+        "Threshold": 1,
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "TreatMissingData": "notBreaching"
+      }
+    }
+  },
+  "Outputs": {
+    "FunctionName": { "Value": { "Ref": "ProductionClinicalApiFunction" } },
+    "SourceVersion": { "Value": { "Ref": "SourceVersion" } },
+    "PhiAllowed": { "Value": { "Ref": "PhiAllowed" } },
+    "ActivationState": { "Value": { "Ref": "ActivationState" } },
+    "DataPlaneEnabled": { "Value": { "Fn::If": ["DataPlaneEnabled", "true", "false"] } }
+  }
+}

@@ -2,6 +2,8 @@ import { readFileSync } from "node:fs";
 
 const template = JSON.parse(readFileSync(new URL(
   "../infra/aws-clinical-core/production-clinical-api-disabled.json", import.meta.url), "utf8"));
+const candidate = JSON.parse(readFileSync(new URL(
+  "../infra/aws-clinical-core/production-clinical-api-candidate.json", import.meta.url), "utf8"));
 const errors = [];
 const assert = (condition, message) => { if (!condition) errors.push(message); };
 const serialized = JSON.stringify(template);
@@ -11,6 +13,32 @@ const fn = template.Resources?.ProductionClinicalApiFunction;
 const handler = readFileSync(new URL("../src/server/clinical-core/aws-production-clinical-api.ts", import.meta.url), "utf8");
 const identityHandler = readFileSync(new URL("../src/server/clinical-core/aws-identity-api.ts", import.meta.url), "utf8");
 const runtime = readFileSync(new URL("../src/server/clinical-core/aws-production-clinical-lambda.ts", import.meta.url), "utf8");
+const candidateResources = Object.values(candidate.Resources ?? {});
+const candidateRole = candidate.Resources?.ProductionClinicalApiRole;
+const candidateFunction = candidate.Resources?.ProductionClinicalApiFunction;
+const expectedRoutes = new Set([
+  "GET /clinical-core/workforce/posture",
+  "GET /clinical-core/consumer/posture",
+  "POST /clinical-core/workforce/invitations",
+  "POST /clinical-core/consumer/invitations/claim",
+  "POST /clinical-core/workforce/consents/grant",
+  "POST /clinical-core/consumer/consents/grant",
+  "POST /clinical-core/workforce/consents/revoke",
+  "POST /clinical-core/consumer/consents/revoke",
+  "GET /clinical-core/consumer/consent-artifact",
+  "POST /clinical-core/consumer/labs/import",
+  "GET /clinical-core/consumer/connection",
+  "GET /clinical-core/workforce/lab-imports",
+  "POST /clinical-core/workforce/lab-imports/review",
+  "GET /clinical-core/workforce/patient-labs",
+  "GET /clinical-core/consumer/patient-labs",
+  "POST /clinical-core/consumer/records",
+  "GET /clinical-core/consumer/records",
+  "GET /clinical-core/consumer/privacy/consents",
+  "POST /clinical-core/consumer/privacy/requests",
+  "GET /clinical-core/consumer/privacy/requests",
+  "POST /clinical-core/workforce/data-compatibility",
+]);
 
 assert(template.Metadata?.ClinicalCore?.Environment === "production-clinical", "environment marker missing");
 assert(template.Metadata?.ClinicalCore?.DataClassification === "clinical_phi_target", "classification marker missing");
@@ -51,8 +79,40 @@ assert(runtime.includes('required("PHI_ALLOWED") === "true"')
   && runtime.includes("createAwsProductionConsumerClinicalRecordsAdapter"),
 "candidate runtime must read both activation gates and use production App/Desktop adapters");
 
+assert(candidate.Metadata?.ClinicalCore?.Environment === "production-clinical"
+  && candidate.Metadata?.ClinicalCore?.DefaultPhiAllowed === false,
+"candidate template must default to the closed production boundary");
+assert(candidate.Parameters?.PhiAllowed?.Default === "false"
+  && candidate.Parameters?.ActivationState?.Default === "blocked"
+  && candidate.Parameters?.ActivationEvidenceSha256?.Default === "",
+"candidate activation parameters must default to blocked with no evidence");
+assert(candidate.Rules?.ActivationMustBeCoherent && candidate.Rules?.BlockedStateCannotCarryEvidence
+  && candidate.Conditions?.DataPlaneEnabled,
+"candidate must have independent coherent-activation rules and a data-plane condition");
+assert(candidateFunction?.Properties?.Environment?.Variables?.PHI_ALLOWED?.Ref === "PhiAllowed"
+  && candidateFunction.Properties.Environment.Variables.ACTIVATION_STATE?.Ref === "ActivationState"
+  && candidateFunction.Properties.Environment.Variables.ACTIVATION_EVIDENCE_SHA256?.Ref === "ActivationEvidenceSha256"
+  && candidateFunction.Properties.Environment.Variables.SOURCE_VERSION?.Ref === "SourceVersion",
+"candidate function must receive every activation and provenance gate");
+const candidatePolicies = candidateRole?.Properties?.Policies ?? [];
+assert(candidatePolicies.length === 3
+  && candidatePolicies[0]?.PolicyName === "BoundedEncryptedLogging"
+  && candidatePolicies.slice(1).every((policy) => policy?.["Fn::If"]?.[0] === "DataPlaneEnabled"),
+"candidate data permissions must exist only behind DataPlaneEnabled");
+const candidateRoutes = candidateResources.filter((resource) => resource.Type === "AWS::ApiGatewayV2::Route");
+assert(candidateRoutes.length === expectedRoutes.size
+  && candidateRoutes.every((route) => expectedRoutes.has(route.Properties?.RouteKey))
+  && new Set(candidateRoutes.map((route) => route.Properties?.RouteKey)).size === expectedRoutes.size,
+"candidate must expose exactly the 21 reviewed routes, without wildcard routes");
+assert(candidateRoutes.every((route) => route.Properties?.AuthorizationType === "JWT"),
+"every candidate route must require JWT authorization");
+const candidateSerialized = JSON.stringify(candidate).toLowerCase();
+for (const forbidden of ["supabase", "fly.dev", "aws_access_key_id", "aws_secret_access_key"]) {
+  assert(!candidateSerialized.includes(forbidden), `candidate contains forbidden provider/credential marker: ${forbidden}`);
+}
+
 if (errors.length) {
   errors.forEach((error) => console.error(`ERROR: ${error}`));
   process.exit(1);
 }
-console.log("Production clinical API disabled-boundary gate passed: JWT required, PHI false, zero data-plane permissions.");
+console.log("Production clinical API gates passed: deployed boundary is PHI-disabled/log-only; candidate has 21 JWT routes and conditionally absent data permissions.");
