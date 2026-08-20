@@ -162,7 +162,6 @@
         "Role": { "Fn::GetAtt": ["ProductionClinicalApiRole", "Arn"] },
         "MemorySize": 256,
         "Timeout": 15,
-        "ReservedConcurrentExecutions": 2,
         "LoggingConfig": {
           "LogGroup": { "Ref": "ProductionClinicalApiLogGroup" },
           "LogFormat": "JSON",
