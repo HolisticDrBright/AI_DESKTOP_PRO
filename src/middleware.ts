@@ -61,6 +61,16 @@ function loginRedirect(req: NextRequest): NextResponse {
 }
 
 export async function middleware(req: NextRequest) {
+  if (process.env.PRODUCTION_WORKLOAD_MODE === "readiness_only") {
+    if (req.nextUrl.pathname === "/api/health") return NextResponse.next();
+    return NextResponse.json(
+      { error: "production_not_activated", phiAllowed: false },
+      {
+        status: 503,
+        headers: { "cache-control": "no-store", "retry-after": "3600" },
+      },
+    );
+  }
   if (!LIVE) return NextResponse.next();
 
   const { pathname } = req.nextUrl;

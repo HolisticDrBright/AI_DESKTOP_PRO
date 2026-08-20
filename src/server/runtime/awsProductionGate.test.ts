@@ -27,6 +27,31 @@ describe("AWS production runtime gate", () => {
     expect(inspectAwsProductionRuntime(base)).toEqual({ active: true, ready: true, phiAllowed: false, blockers: [] });
   });
 
+  test("permits a PHI-disabled readiness workload while the adapter is incomplete", () => {
+    const report = inspectAwsProductionRuntime({
+      ...base,
+      PRODUCTION_WORKLOAD_MODE: "readiness_only",
+      AWS_CLINICAL_ADAPTER_READY: "false",
+    });
+    expect(report).toEqual({ active: true, ready: true, phiAllowed: false, blockers: [] });
+  });
+
+  test("readiness-only mode refuses an enabled adapter, PHI, or activation material", () => {
+    const report = inspectAwsProductionRuntime({
+      ...base,
+      PRODUCTION_WORKLOAD_MODE: "readiness_only",
+      PHI_ALLOWED: "true",
+      PHI_ACTIVATION: "approved",
+      PRODUCTION_READINESS_EVIDENCE_SHA256: "a".repeat(64),
+    });
+    expect(report.ready).toBe(false);
+    expect(report.blockers).toEqual(expect.arrayContaining([
+      "readiness_only_adapter_refused",
+      "readiness_only_activation_material",
+      "readiness_only_phi_refused",
+    ]));
+  });
+
   test("refuses legacy Supabase credentials and non-Fargate compute", () => {
     const report = inspectAwsProductionRuntime({ ...base, CLINICAL_COMPUTE: "app_runner", CLINICAL_SUPABASE_URL: "https://legacy.supabase.co" });
     expect(report.ready).toBe(false);

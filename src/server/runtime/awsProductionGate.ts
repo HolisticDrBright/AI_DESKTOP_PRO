@@ -4,6 +4,7 @@ if (typeof window !== "undefined") {
 
 const PRODUCTION_RUNTIME = "production-clinical";
 const PRODUCTION_DATA_PLANE = "aws_production";
+const READINESS_ONLY_MODE = "readiness_only";
 
 const required = [
   "CLINICAL_AWS_REGION",
@@ -55,6 +56,7 @@ export function inspectAwsProductionRuntime(env: RuntimeEnvironment = process.en
   if (!active) return { active: false, ready: true, phiAllowed: false, blockers: [] };
 
   const blockers = [];
+  const readinessOnly = value(env, "PRODUCTION_WORKLOAD_MODE") === READINESS_ONLY_MODE;
   if (value(env, "APP_RUNTIME_ENV") !== PRODUCTION_RUNTIME) blockers.push("APP_RUNTIME_ENV");
   if (value(env, "CLINICAL_DATA_PLANE") !== PRODUCTION_DATA_PLANE) blockers.push("CLINICAL_DATA_PLANE");
   if (value(env, "CLINICAL_COMPUTE") !== "ecs_fargate") blockers.push("CLINICAL_COMPUTE");
@@ -75,10 +77,18 @@ export function inspectAwsProductionRuntime(env: RuntimeEnvironment = process.en
     blockers.push("CLINICAL_AWS_API_ORIGIN_ALLOWLIST");
   }
 
-  if (value(env, "AWS_CLINICAL_ADAPTER_READY") !== "true") blockers.push("AWS_CLINICAL_ADAPTER_READY");
+  if (readinessOnly) {
+    if (value(env, "AWS_CLINICAL_ADAPTER_READY") !== "false") blockers.push("readiness_only_adapter_refused");
+    if (value(env, "PHI_ACTIVATION") || value(env, "PRODUCTION_READINESS_EVIDENCE_SHA256")) {
+      blockers.push("readiness_only_activation_material");
+    }
+  } else if (value(env, "AWS_CLINICAL_ADAPTER_READY") !== "true") {
+    blockers.push("AWS_CLINICAL_ADAPTER_READY");
+  }
   const phi = value(env, "PHI_ALLOWED");
   if (phi !== "false" && phi !== "true") blockers.push("PHI_ALLOWED");
   const phiAllowed = phi === "true";
+  if (readinessOnly && phiAllowed) blockers.push("readiness_only_phi_refused");
   if (phiAllowed) {
     if (value(env, "PHI_ACTIVATION") !== "approved") blockers.push("PHI_ACTIVATION");
     if (!/^[a-f0-9]{64}$/i.test(value(env, "PRODUCTION_READINESS_EVIDENCE_SHA256"))) {

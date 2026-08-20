@@ -38,7 +38,7 @@ jobs:
       - name: CloudFormation schema and reference lint
         run: |
           pip install --disable-pip-version-check --quiet cfn-lint==1.55.0
-          cfn-lint infra/aws-clinical-core/template.json infra/aws-clinical-core/identity-api-extension.json infra/aws-clinical-core/catalog-api-extension.json
+          cfn-lint infra/aws-clinical-core/template.json infra/aws-clinical-core/identity-api-extension.json infra/aws-clinical-core/catalog-api-extension.json infra/aws-clinical-core/production-readiness-workload.json
       - name: Build the authenticated API Lambda artifact
         run: npm run build:aws-authenticated-api
       - name: Build governed catalog and deployment artifacts
@@ -54,6 +54,7 @@ jobs:
           npm run test:aws-production-foundation
           npm run test:aws-production-readiness
           npm run check:aws-production-container
+          npm run check:aws-production-readiness-workload
       - name: Mock-import graph (no production path to fixtures)
         run: npm run check:mock-imports
       - name: Build refuses without an explicit edition
