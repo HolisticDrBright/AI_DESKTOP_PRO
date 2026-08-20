@@ -49,6 +49,7 @@ jobs:
         run: |
           npm run check:aws-data-plane-migration
           npm run check:aws-desktop-compatibility-contract
+          npm run check:aws-desktop-operation-inventory
           npm run build:aws-production-foundation
           npm run check:aws-production-foundation
           npm run test:aws-production-foundation

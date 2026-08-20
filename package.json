@@ -41,6 +41,8 @@
     "check:aws-production-container": "node scripts/check-aws-production-container.mjs",
     "check:aws-production-readiness-workload": "node scripts/check-aws-production-readiness-workload.mjs",
     "check:aws-desktop-compatibility-contract": "node scripts/check-aws-desktop-compatibility-contract.mjs",
+    "build:aws-desktop-operation-inventory": "node scripts/build-aws-desktop-operation-inventory.mjs --write",
+    "check:aws-desktop-operation-inventory": "node scripts/check-aws-desktop-operation-inventory.mjs",
     "audit:aws-data-plane-migration": "node scripts/check-aws-data-plane-migration.mjs --report",
     "check:aws-data-plane-migration": "node scripts/check-aws-data-plane-migration.mjs --enforce",
     "test:aws-data-plane-migration": "node scripts/check-aws-data-plane-migration.test.mjs"
