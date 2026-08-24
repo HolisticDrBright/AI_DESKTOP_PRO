@@ -203,11 +203,15 @@ select
   (select count(*)::int from clinical_core.note_signatures) as note_signature_count,
   (select count(*)::int from clinical_core.note_addenda) as note_addendum_count,
   (select count(*)::int from clinical_core.note_provenance_refs) as note_provenance_count,
+  (select count(*)::int from clinical_core.patient_protocols) as patient_protocol_count,
+  (select count(*)::int from clinical_core.patient_protocol_versions) as patient_protocol_version_count,
+  (select count(*)::int from clinical_core.patient_protocol_phases) as patient_protocol_phase_count,
+  (select count(*)::int from clinical_core.patient_protocol_items) as patient_protocol_item_count,
   (select count(*)::int from clinical_audit.events) as audit_count
 "@
 $counts = @($database.records[0] | ForEach-Object { [int64]$_.longValue })
-if (($counts -join ",") -ne "15,26,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0") {
-  throw "Production database is not the reviewed empty 15-migration/26-table state: $($counts -join ',')."
+if (($counts -join ",") -ne "16,30,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0") {
+  throw "Production database is not the reviewed empty 16-migration/30-table state: $($counts -join ',')."
 }
 
 $alarmName = "$functionName-errors"
@@ -223,7 +227,7 @@ $unsafeLog = $messages | Where-Object { $_ -match "(?i)authorization|bearer|toke
 if ($unsafeLog) { throw "Potential sensitive content appeared in the disabled API logs." }
 
 $evidence = [ordered]@{
-  contractVersion = "production-closed-boundary-exercise/2"
+  contractVersion = "production-closed-boundary-exercise/3"
   observedAt = [DateTimeOffset]::UtcNow.ToString("o")
   account = $account
   region = $Region
@@ -245,7 +249,7 @@ $evidence = [ordered]@{
   functionPermissions = $actions
   migrationCount = $counts[0]
   tableCount = $counts[1]
-  clinicalRowCount = ($counts[2..16] | Measure-Object -Sum).Sum
+  clinicalRowCount = ($counts[2..20] | Measure-Object -Sum).Sum
   alarmState = $alarm.StateValue
   unsafeLogMatches = 0
 }

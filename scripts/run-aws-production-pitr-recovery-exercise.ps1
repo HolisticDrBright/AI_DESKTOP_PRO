@@ -103,11 +103,15 @@ select
   (select count(*)::int from clinical_core.note_signatures),
   (select count(*)::int from clinical_core.note_addenda),
   (select count(*)::int from clinical_core.note_provenance_refs),
+  (select count(*)::int from clinical_core.patient_protocols),
+  (select count(*)::int from clinical_core.patient_protocol_versions),
+  (select count(*)::int from clinical_core.patient_protocol_phases),
+  (select count(*)::int from clinical_core.patient_protocol_items),
   (select count(*)::int from clinical_audit.events)
 "@
   $sourceVector = @($sourceCounts.records[0] | ForEach-Object { [int64]$_.longValue })
-  if (($sourceVector -join ",") -ne "15,26,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0") {
-    throw "Source database is not the reviewed empty 15-migration/26-table state."
+  if (($sourceVector -join ",") -ne "16,30,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0") {
+    throw "Source database is not the reviewed empty 16-migration/30-table state."
   }
 
   $securityGroups = @($source.VpcSecurityGroups | ForEach-Object { $_.VpcSecurityGroupId })
@@ -169,6 +173,10 @@ select
   (select count(*)::int from clinical_core.note_signatures),
   (select count(*)::int from clinical_core.note_addenda),
   (select count(*)::int from clinical_core.note_provenance_refs),
+  (select count(*)::int from clinical_core.patient_protocols),
+  (select count(*)::int from clinical_core.patient_protocol_versions),
+  (select count(*)::int from clinical_core.patient_protocol_phases),
+  (select count(*)::int from clinical_core.patient_protocol_items),
   (select count(*)::int from clinical_audit.events)
 "@
   $restoredVector = @($restoredCounts.records[0] | ForEach-Object { [int64]$_.longValue })
