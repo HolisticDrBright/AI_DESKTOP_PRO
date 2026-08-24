@@ -64,7 +64,9 @@ async function verify() {
       sql: `select
         (select count(*) from information_schema.tables where table_schema in ('clinical_core','clinical_audit')) as table_count,
         (select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-          where n.nspname = 'clinical_core' and p.proname in ('create_patient_profile','review_biomarker')) as contract_count,
+          where n.nspname = 'clinical_core' and p.proname in ('create_patient_profile','review_biomarker',
+            'get_patient_protocol','create_protocol_draft','save_protocol_draft','approve_protocol_version',
+            'activate_protocol_version','set_protocol_lifecycle','revise_protocol_version')) as contract_count,
         (select count(*) from clinical_core.organizations) as organization_count,
         (select count(*) from clinical_core.persons) as person_count,
         (select count(*) from clinical_core.patient_records) as patient_count`,
@@ -72,7 +74,7 @@ async function verify() {
     }));
     const fields = catalog.records?.[0] ?? [];
     const counts = fields.map((field) => Number(field.longValue ?? field.stringValue ?? -1));
-    if (counts.length !== 5 || counts[0]! < 10 || counts[1] !== 2
+    if (counts.length !== 5 || counts[0]! < 31 || counts[1] !== 9
       || counts[2] !== 0 || counts[3] !== 0 || counts[4] !== 0) {
       throw new Error("catalog_verification_refused");
     }

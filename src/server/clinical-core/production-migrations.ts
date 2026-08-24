@@ -86,7 +86,9 @@ export async function applyProductionClinicalCoreMigrations(
           and table_name <> 'schema_migrations')::int as table_count,
       (select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
         where n.nspname = 'clinical_core'
-          and p.proname in ('create_patient_profile','review_biomarker'))::int as contract_count,
+          and p.proname in ('create_patient_profile','review_biomarker','get_patient_protocol',
+            'create_protocol_draft','save_protocol_draft','approve_protocol_version',
+            'activate_protocol_version','set_protocol_lifecycle','revise_protocol_version'))::int as contract_count,
       (
         (select count(*) from clinical_core.organizations)
         + (select count(*) from clinical_core.persons)
@@ -110,9 +112,13 @@ export async function applyProductionClinicalCoreMigrations(
         + (select count(*) from clinical_core.note_signatures)
         + (select count(*) from clinical_core.note_addenda)
         + (select count(*) from clinical_core.note_provenance_refs)
+        + (select count(*) from clinical_core.patient_protocols)
+        + (select count(*) from clinical_core.patient_protocol_versions)
+        + (select count(*) from clinical_core.patient_protocol_phases)
+        + (select count(*) from clinical_core.patient_protocol_items)
       )::int as clinical_row_count`);
     const row = verification.rows[0];
-    if (!row || Number(row.table_count) !== 26 || Number(row.contract_count) !== 2
+    if (!row || Number(row.table_count) !== 30 || Number(row.contract_count) !== 9
       || Number(row.clinical_row_count) !== 0) {
       throw new ProductionClinicalCoreMigrationError("verification_failed");
     }

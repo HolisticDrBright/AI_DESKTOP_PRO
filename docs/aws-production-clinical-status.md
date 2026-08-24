@@ -353,6 +353,30 @@ production workload, operational safeguards, or HIPAA compliance.
   Snapshot/object/Cognito/application rollback and the incident tabletop
   remain open.
 
+## Patient protocol production candidate (2026-08-24; not deployed)
+
+The current Desktop branch adds a sixteenth immutable migration with four
+tenant-scoped protocol tables and seven AWS-native operations:
+`get_patient_protocol`, `create_protocol_draft`, `save_protocol_draft`,
+`approve_protocol_version`, `activate_protocol_version`,
+`set_protocol_lifecycle`, and `revise_protocol_version`. The generated
+inventory now records **46 implemented but activation-blocked operations, zero
+enabled, and 176 not ported** out of the fixed 222-operation surface.
+
+The candidate keeps approved/active versions immutable, uses optimistic draft
+concurrency, records bounded audit events, separates approval from explicit
+activation, and cannot create orders, messages, charges, prescriptions, or
+signed notes. Commercial destinations are refused. Product entries are saved
+as unverified and any product-bearing protocol remains unapprovable until the
+governed production catalog supplies server-verified product evidence. This
+allows non-product diet, lifestyle, monitoring, and follow-up plans to use the
+governed lifecycle without accepting client-asserted supplement verification.
+
+This is source and test evidence only. Production remains at 15 migrations and
+26 application tables until the PHI-disabled schema operator applies the
+candidate and the closed-boundary exercise is repeated. All 222 operations
+remain disabled in the deployed route, and `PHI_ALLOWED=false` is unchanged.
+
 CloudFormation drift detection reports only three GuardDuty service-returned
 result fields as additions: disabled `AI_ANALYST`, disabled `AI_PROTECTION`,
 and disabled `EKS_RUNTIME_MONITORING`. The latter cannot be declared alongside

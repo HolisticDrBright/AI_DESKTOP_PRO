@@ -59,6 +59,13 @@ const CORE_RPCS = new Set([
   "resume_sync_connection",
   "revoke_sync_connection",
   "set_sync_consent_scope",
+  "get_patient_protocol",
+  "create_protocol_draft",
+  "save_protocol_draft",
+  "approve_protocol_version",
+  "activate_protocol_version",
+  "set_protocol_lifecycle",
+  "revise_protocol_version",
 ]);
 const CORE_SELECTS = new Set(["patient_profiles", "lab_documents"]);
 
@@ -458,6 +465,76 @@ async function executeCoreRpc(
     ));
     return decodeJson(row.data);
   }
+  if (name === "get_patient_protocol") {
+    exactKeys(args, ["_organization_id", "_patient_id"]);
+    if (args._organization_id !== context.organizationId) throw invalid();
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.get_patient_protocol($1,$2) as data",
+      [clinicalUuid(context.organizationId), clinicalUuid(requiredUuid(args._patient_id))],
+    ));
+    return decodeJson(row.data);
+  }
+  if (name === "create_protocol_draft") {
+    exactKeys(args, ["_organization_id", "_patient_id", "_title", "_from_template_id"]);
+    if (args._organization_id !== context.organizationId) throw invalid();
+    const templateId = optionalUuid(args._from_template_id);
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.create_protocol_draft($1,$2,$3,$4) as data",
+      [
+        clinicalUuid(context.organizationId), clinicalUuid(requiredUuid(args._patient_id)),
+        requiredString(args._title, 200), templateId ? clinicalUuid(templateId) : null,
+      ],
+    ));
+    return decodeJson(row.data);
+  }
+  if (name === "save_protocol_draft") {
+    exactKeys(args, ["_version_id", "_payload", "_expected_updated_at"]);
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.save_protocol_draft($1,$2::jsonb,$3) as data",
+      [
+        clinicalUuid(requiredUuid(args._version_id)), JSON.stringify(boundedProtocolPayload(args._payload)),
+        optionalTimestamp(args._expected_updated_at),
+      ],
+    ));
+    return decodeJson(row.data);
+  }
+  if (name === "approve_protocol_version") {
+    exactKeys(args, ["_version_id", "_review_note"]);
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.approve_protocol_version($1,$2) as data",
+      [clinicalUuid(requiredUuid(args._version_id)), optionalString(args._review_note, 2000)],
+    ));
+    return decodeJson(row.data);
+  }
+  if (name === "activate_protocol_version") {
+    exactKeys(args, ["_version_id"]);
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.activate_protocol_version($1) as data",
+      [clinicalUuid(requiredUuid(args._version_id))],
+    ));
+    return decodeJson(row.data);
+  }
+  if (name === "set_protocol_lifecycle") {
+    exactKeys(args, ["_protocol_id", "_status", "_reason"]);
+    const status = requiredString(args._status, 16);
+    if (!["active", "paused", "completed", "discontinued"].includes(status)) throw invalid();
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.set_protocol_lifecycle($1,$2,$3) as data",
+      [
+        clinicalUuid(requiredUuid(args._protocol_id)), status,
+        optionalString(args._reason, 1000),
+      ],
+    ));
+    return decodeJson(row.data);
+  }
+  if (name === "revise_protocol_version") {
+    exactKeys(args, ["_version_id"]);
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.revise_protocol_version($1) as data",
+      [clinicalUuid(requiredUuid(args._version_id))],
+    ));
+    return decodeJson(row.data);
+  }
   throw new ProductionDesktopError("operation_refused");
 }
 
@@ -582,6 +659,92 @@ function requiredTimestamp(value: unknown): string {
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T/.test(value)
     || !Number.isFinite(Date.parse(value))) throw invalid();
   return value;
+}
+
+function optionalTimestamp(value: unknown): string | null {
+  if (value === null || value === undefined || value === "") return null;
+  return requiredTimestamp(value);
+}
+
+function boundedProtocolPayload(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw invalid();
+  const payload = value as Record<string, unknown>;
+  allowedKeys(payload, [
+    "title", "summary", "dietInstructions", "lifestyleInstructions", "monitoringPlan",
+    "followupPlan", "phases", "items",
+  ]);
+  const result: Record<string, unknown> = {};
+  for (const [key, max] of [
+    ["title", 200], ["summary", 10_000], ["dietInstructions", 20_000],
+    ["lifestyleInstructions", 20_000], ["monitoringPlan", 20_000], ["followupPlan", 20_000],
+  ] as const) {
+    if (key in payload) result[key] = optionalString(payload[key], max);
+  }
+  const phases = payload.phases ?? [];
+  if (!Array.isArray(phases) || phases.length > 24) throw invalid();
+  result.phases = phases.map((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw invalid();
+    const phase = entry as Record<string, unknown>;
+    allowedKeys(phase, [
+      "name", "startsOn", "endsOn", "relativeStartDay", "relativeDurationDays", "notes",
+    ]);
+    const startsOn = optionalDate(phase.startsOn);
+    const endsOn = optionalDate(phase.endsOn);
+    const relativeStartDay = optionalBoundedInteger(phase.relativeStartDay, 0, 3650);
+    const relativeDurationDays = optionalBoundedInteger(phase.relativeDurationDays, 1, 3650);
+    if ((startsOn !== null || endsOn !== null)
+      && (relativeStartDay !== null || relativeDurationDays !== null)) throw invalid();
+    return {
+      name: requiredString(phase.name, 120), startsOn, endsOn, relativeStartDay,
+      relativeDurationDays, notes: optionalString(phase.notes, 5000),
+    };
+  });
+  const items = payload.items ?? [];
+  if (!Array.isArray(items) || items.length > 200) throw invalid();
+  result.items = items.map((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw invalid();
+    const item = entry as Record<string, unknown>;
+    allowedKeys(item, [
+      "kind", "label", "phaseIndex", "instructions", "catalogProductId",
+      "catalogProductVersionId", "manufacturer", "labelVersion", "dosageText",
+      "timingText", "route", "verificationStatus", "affiliateUrl",
+    ]);
+    const kind = requiredString(item.kind, 16);
+    if (!["product", "diet", "lifestyle", "monitoring", "followup"].includes(kind)) throw invalid();
+    const phaseIndex = optionalBoundedInteger(item.phaseIndex, 0, Math.max(phases.length - 1, 0));
+    if (phaseIndex !== null && phases.length === 0) throw invalid();
+    if (item.affiliateUrl !== null && item.affiliateUrl !== undefined && item.affiliateUrl !== "") throw invalid();
+    if (item.verificationStatus !== null && item.verificationStatus !== undefined
+      && item.verificationStatus !== "unverified") throw invalid();
+    const clinical = {
+      catalogProductId: optionalString(item.catalogProductId, 100),
+      catalogProductVersionId: optionalString(item.catalogProductVersionId, 9),
+      manufacturer: optionalString(item.manufacturer, 200), labelVersion: optionalString(item.labelVersion, 120),
+      dosageText: optionalString(item.dosageText, 1000), timingText: optionalString(item.timingText, 1000),
+      route: optionalString(item.route, 120),
+    };
+    if (kind === "product") {
+      if (!/^prd_[a-z0-9][a-z0-9_-]{2,95}$/.test(clinical.catalogProductId ?? "")
+        || !/^[1-9][0-9]{0,8}$/.test(clinical.catalogProductVersionId ?? "")) throw invalid();
+    } else if (Object.values(clinical).some((candidate) => candidate !== null)) throw invalid();
+    return {
+      kind, label: requiredString(item.label, 240), phaseIndex,
+      instructions: optionalString(item.instructions, 10_000), ...clinical,
+      verificationStatus: "unverified", affiliateUrl: null,
+    };
+  });
+  if (JSON.stringify(result).length > 524_288) throw invalid();
+  return result;
+}
+
+function allowedKeys(value: Record<string, unknown>, allowed: readonly string[]) {
+  if (Object.keys(value).some((key) => !allowed.includes(key))) throw invalid();
+}
+
+function optionalBoundedInteger(value: unknown, min: number, max: number): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  if (!Number.isInteger(value) || (value as number) < min || (value as number) > max) throw invalid();
+  return value as number;
 }
 
 function boundedScalarMetadata(value: unknown): Record<string, string | number | boolean> {

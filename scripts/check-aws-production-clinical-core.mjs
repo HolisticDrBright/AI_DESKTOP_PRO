@@ -16,7 +16,7 @@ const errors = [];
 const assert = (condition, message) => { if (!condition) errors.push(message); };
 
 assert(manifest.contract_version === "clinical-core-migrations/1", "generated manifest contract is invalid");
-assert(manifest.migrations.length === 15, "expected six transformed migrations and nine production overlays");
+assert(manifest.migrations.length === 16, "expected six transformed migrations and ten production overlays");
 assert(new Set(manifest.migrations.map((entry) => entry.version)).size === manifest.migrations.length,
   "migration versions must be unique");
 
@@ -193,4 +193,4 @@ if (errors.length) {
 }
 
 const releaseHash = createHash("sha256").update(combined).digest("hex");
-console.log(`Production clinical-core gate passed: 15 migrations, zero seeded rows (${releaseHash}).`);
+console.log(`Production clinical-core gate passed: 16 migrations, zero seeded rows (${releaseHash}).`);

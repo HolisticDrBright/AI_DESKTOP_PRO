@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import type { ClinicalCoreDatabase, ClinicalCoreTransaction } from "./database";
 import type { ClinicalCoreMigration } from "./migrations";
 import {
@@ -28,8 +30,8 @@ function databaseFor(options: {
       }
       if (sql.startsWith("select\n      (select count(*)")) {
         return { rows: [{
-          table_count: 26,
-          contract_count: 2,
+          table_count: 30,
+          contract_count: 9,
           clinical_row_count: 0,
           ...options.verification,
         }] as unknown as Row[] };
@@ -42,14 +44,38 @@ function databaseFor(options: {
 }
 
 describe("production clinical-core migrations", () => {
+  it("keeps the patient protocol migration tenant-scoped, immutable, and commercially separated", () => {
+    const sql = readFileSync(path.join(
+      process.cwd(), "infra", "aws-clinical-core", "production-migrations",
+      "20260824130000_production_patient_protocols.sql",
+    ), "utf8");
+    for (const table of [
+      "patient_protocols", "patient_protocol_versions", "patient_protocol_phases", "patient_protocol_items",
+    ]) {
+      expect(sql).toContain(`alter table clinical_core.${table} enable row level security`);
+    }
+    for (const contract of [
+      "get_patient_protocol", "create_protocol_draft", "save_protocol_draft",
+      "approve_protocol_version", "activate_protocol_version", "set_protocol_lifecycle",
+      "revise_protocol_version",
+    ]) {
+      expect(sql).toContain(`function clinical_core.${contract}`);
+    }
+    expect(sql).toContain("clinical_private.require_clinical_patient");
+    expect(sql).toContain("protocol_version_immutable");
+    expect(sql).toContain("governed_product_review_required");
+    expect(sql).toMatch(/affiliateUrl\|destinationUrl\|discountCode\|trackingCode/);
+    expect(sql).not.toMatch(/grant\s+(?:all|select|insert|update|delete)\s+on[\s\S]*?\s+to\s+public/i);
+  });
+
   it("applies ordered statements and verifies the empty PHI-disabled readiness state", async () => {
     const harness = databaseFor();
     const result = await applyProductionClinicalCoreMigrations(harness.database, [migration]);
     expect(result).toEqual({
       applied: [migration.version],
       alreadyApplied: [],
-      tableCount: 26,
-      contractCount: 2,
+      tableCount: 30,
+      contractCount: 9,
       clinicalRowCount: 0,
     });
     expect(harness.statements.map(({ sql }) => sql)).toContain("create table clinical_core.example(id uuid)");
@@ -66,7 +92,7 @@ describe("production clinical-core migrations", () => {
   });
 
   it("refuses to commit when any clinical record exists", async () => {
-    const harness = databaseFor({ verification: { table_count: 26, contract_count: 2, clinical_row_count: 1 } });
+    const harness = databaseFor({ verification: { table_count: 30, contract_count: 9, clinical_row_count: 1 } });
     await expect(applyProductionClinicalCoreMigrations(harness.database, [migration]))
       .rejects.toMatchObject({ category: "verification_failed" });
   });

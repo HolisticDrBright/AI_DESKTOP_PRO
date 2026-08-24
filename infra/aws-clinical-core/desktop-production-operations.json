@@ -225,6 +225,48 @@
       "source": "infra/aws-clinical-core/production-migrations/20260821120000_production_patient_sync_control.sql"
     },
     {
+      "kind": "rpc",
+      "name": "get_patient_protocol",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260824130000_production_patient_protocols.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "create_protocol_draft",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260824130000_production_patient_protocols.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "save_protocol_draft",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260824130000_production_patient_protocols.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "approve_protocol_version",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260824130000_production_patient_protocols.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "activate_protocol_version",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260824130000_production_patient_protocols.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "set_protocol_lifecycle",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260824130000_production_patient_protocols.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "revise_protocol_version",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260824130000_production_patient_protocols.sql"
+    },
+    {
       "kind": "select",
       "name": "lab_documents",
       "implementation": "native_production_adapter",

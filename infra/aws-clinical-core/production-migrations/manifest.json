@@ -36,6 +36,10 @@
     {
       "version": "20260821121000",
       "file": "20260821121000_production_patient_sync_invitation_pgcrypto.sql"
+    },
+    {
+      "version": "20260824130000",
+      "file": "20260824130000_production_patient_protocols.sql"
     }
   ]
 }

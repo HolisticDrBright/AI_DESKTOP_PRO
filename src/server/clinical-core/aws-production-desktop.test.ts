@@ -18,6 +18,8 @@ const APPOINTMENT = "88888888-8888-4888-8888-888888888888";
 const ENCOUNTER = "99999999-9999-4999-8999-999999999999";
 const NOTE = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const CONNECTION = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+const PROTOCOL = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+const PROTOCOL_VERSION = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
 
 const context: ProductionRequestContext = {
   actorPersonId: PERSON,
@@ -623,6 +625,114 @@ describe("AWS production Desktop adapter", () => {
     })).rejects.toEqual(new ProductionDesktopError("request_invalid"));
     expect(test.calls).toHaveLength(2);
     expect(test.calls.every((call) => call.sql.includes("clinical_private.set_request_context"))).toBe(true);
+  });
+
+  it("routes patient protocol reads and explicit lifecycle actions through AWS-native functions", async () => {
+    const operations: Array<{ functionName: string; args: Record<string, unknown>; sql: string }> = [
+      {
+        functionName: "get_patient_protocol",
+        args: { _organization_id: ORG, _patient_id: PATIENT },
+        sql: "select clinical_core.get_patient_protocol($1,$2) as data",
+      },
+      {
+        functionName: "create_protocol_draft",
+        args: { _organization_id: ORG, _patient_id: PATIENT, _title: "Synthetic care plan", _from_template_id: null },
+        sql: "select clinical_core.create_protocol_draft($1,$2,$3,$4) as data",
+      },
+      {
+        functionName: "approve_protocol_version",
+        args: { _version_id: PROTOCOL_VERSION, _review_note: "Reviewed synthetic plan" },
+        sql: "select clinical_core.approve_protocol_version($1,$2) as data",
+      },
+      {
+        functionName: "activate_protocol_version",
+        args: { _version_id: PROTOCOL_VERSION },
+        sql: "select clinical_core.activate_protocol_version($1) as data",
+      },
+      {
+        functionName: "set_protocol_lifecycle",
+        args: { _protocol_id: PROTOCOL, _status: "paused", _reason: "Synthetic pause" },
+        sql: "select clinical_core.set_protocol_lifecycle($1,$2,$3) as data",
+      },
+      {
+        functionName: "revise_protocol_version",
+        args: { _version_id: PROTOCOL_VERSION },
+        sql: "select clinical_core.revise_protocol_version($1) as data",
+      },
+    ];
+    for (const operation of operations) {
+      const test = harness({ ok: true });
+      await expect(test.adapter.execute(context, {
+        kind: "rpc", functionName: operation.functionName, args: operation.args,
+      })).resolves.toEqual({ ok: true });
+      expect(test.calls[1]?.sql).toBe(operation.sql);
+      expect(test.fallback.execute).not.toHaveBeenCalled();
+    }
+  });
+
+  it("sanitizes protocol drafts and never trusts commercial or product-review assertions", async () => {
+    const test = harness({ ok: true, versionId: PROTOCOL_VERSION });
+    await expect(test.adapter.execute(context, {
+      kind: "rpc",
+      functionName: "save_protocol_draft",
+      args: {
+        _version_id: PROTOCOL_VERSION,
+        _expected_updated_at: "2026-08-24T20:00:00.000Z",
+        _payload: {
+          title: "Synthetic plan",
+          phases: [{ name: "Foundation", relativeStartDay: 0, relativeDurationDays: 30 }],
+          items: [{
+            kind: "monitoring", label: "Review synthetic laboratory trend", phaseIndex: 0,
+            instructions: "Review before any clinical change.", verificationStatus: "unverified",
+            affiliateUrl: null,
+          }],
+        },
+      },
+    })).resolves.toMatchObject({ ok: true });
+    expect(test.calls[1]?.sql).toBe("select clinical_core.save_protocol_draft($1,$2::jsonb,$3) as data");
+    expect(JSON.parse(test.calls[1]?.values[1] as string)).toMatchObject({
+      items: [expect.objectContaining({
+        kind: "monitoring", verificationStatus: "unverified", affiliateUrl: null,
+      })],
+    });
+
+    const commercial = harness();
+    await expect(commercial.adapter.execute(context, {
+      kind: "rpc", functionName: "save_protocol_draft",
+      args: {
+        _version_id: PROTOCOL_VERSION, _expected_updated_at: null,
+        _payload: {
+          phases: [], items: [{
+            kind: "product", label: "Synthetic product", phaseIndex: null,
+            catalogProductId: "prd_synthetic_product", catalogProductVersionId: "1",
+            verificationStatus: "structured_verified", affiliateUrl: "https://example.test/buy",
+          }],
+        },
+      },
+    })).rejects.toEqual(new ProductionDesktopError("request_invalid"));
+    expect(commercial.calls).toHaveLength(1);
+  });
+
+  it("rejects cross-tenant protocol access, invalid lifecycle states, and unbounded drafts before Aurora", async () => {
+    const test = harness();
+    await expect(test.adapter.execute(context, {
+      kind: "rpc", functionName: "get_patient_protocol",
+      args: { _organization_id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", _patient_id: PATIENT },
+    })).rejects.toEqual(new ProductionDesktopError("request_invalid"));
+    await expect(test.adapter.execute(context, {
+      kind: "rpc", functionName: "set_protocol_lifecycle",
+      args: { _protocol_id: PROTOCOL, _status: "auto_activated", _reason: null },
+    })).rejects.toEqual(new ProductionDesktopError("request_invalid"));
+    await expect(test.adapter.execute(context, {
+      kind: "rpc", functionName: "save_protocol_draft",
+      args: {
+        _version_id: PROTOCOL_VERSION, _expected_updated_at: null,
+        _payload: { phases: [], items: Array.from({ length: 201 }, (_, index) => ({
+          kind: "monitoring", label: `Item ${index}`,
+        })) },
+      },
+    })).rejects.toEqual(new ProductionDesktopError("request_invalid"));
+    expect(test.calls).toHaveLength(3);
   });
 
   it("rejects cross-tenant notes, nested content, invalid provenance, and oversized corrections", async () => {
