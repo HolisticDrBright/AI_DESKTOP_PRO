@@ -124,12 +124,13 @@ if ($disabled.PhiAllowed -ne "false" -or $disabled.ActivationState -ne "blocked"
   throw "Production candidate does not report the reviewed closed posture and exact source."
 }
 
-$routes = @(aws apigatewayv2 get-routes --profile $AwsProfile --region $Region `
-  --api-id $foundation.ClinicalApiId --query "Items" --output json | ConvertFrom-Json) |
-  Where-Object { $_.RouteKey -match "^(GET|POST) /clinical-core/" }
-if ($routes.Count -ne 21 -or @($routes | Where-Object AuthorizationType -ne "JWT").Count -ne 0 `
-  -or @($routes | Where-Object RouteKey -match "ANY|\{proxy\+\}").Count -ne 0) {
-  throw "Production candidate must expose exactly 21 explicit JWT-only clinical routes."
+$routePayload = aws apigatewayv2 get-routes --profile $AwsProfile --region $Region `
+  --api-id $foundation.ClinicalApiId --query "Items" --output json | ConvertFrom-Json
+$routes = @($routePayload | Where-Object { $_.RouteKey -match "^(GET|POST) /clinical-core/" })
+$nonJwtRouteCount = @($routes | Where-Object { $_.AuthorizationType -ne "JWT" }).Count
+$proxyRouteCount = @($routes | Where-Object { $_.RouteKey -match "ANY|\{proxy\+\}" }).Count
+if ($routes.Count -ne 21 -or $nonJwtRouteCount -ne 0 -or $proxyRouteCount -ne 0) {
+  throw "Production candidate route posture is invalid (clinical=$($routes.Count), nonJwt=$nonJwtRouteCount, proxy=$proxyRouteCount)."
 }
 
 $posture = Invoke-RestMethod -Method Get -Uri $foundation.PostureUrl -MaximumRedirection 0

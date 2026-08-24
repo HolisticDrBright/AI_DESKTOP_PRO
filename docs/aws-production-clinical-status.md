@@ -353,7 +353,7 @@ production workload, operational safeguards, or HIPAA compliance.
   Snapshot/object/Cognito/application rollback and the incident tabletop
   remain open.
 
-## Patient protocol production candidate (2026-08-24; not deployed)
+## Patient protocol production schema (2026-08-24; PHI disabled)
 
 The current Desktop branch adds a sixteenth immutable migration with four
 tenant-scoped protocol tables and seven AWS-native operations:
@@ -372,10 +372,14 @@ governed production catalog supplies server-verified product evidence. This
 allows non-product diet, lifestyle, monitoring, and follow-up plans to use the
 governed lifecycle without accepting client-asserted supplement verification.
 
-This is source and test evidence only. Production remains at 15 migrations and
-26 application tables until the PHI-disabled schema operator applies the
-candidate and the closed-boundary exercise is repeated. All 222 operations
-remain disabled in the deployed route, and `PHI_ALLOWED=false` is unchanged.
+The guarded PHI-disabled operator applied migration 16 to production Aurora.
+The live database now has 30 application tables, nine production contracts,
+and zero clinical/audit rows. Closed-boundary exercise v3 independently
+confirmed the empty database, 21 JWT-only clinical routes, unauthenticated 401,
+bounded 503 refusal, log-only IAM, zero unsafe log matches, `PHI_ALLOWED=false`,
+`ActivationState=blocked`, and `DataPlaneEnabled=false`. Evidence SHA-256:
+`0a58965d459470f961acd4c78b84b5c740c4a38da3e4bb5f95dfd85f119ec8ee`.
+All 222 operations remain disabled in the deployed route.
 
 CloudFormation drift detection reports only three GuardDuty service-returned
 result fields as additions: disabled `AI_ANALYST`, disabled `AI_PROTECTION`,
