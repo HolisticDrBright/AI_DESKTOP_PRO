@@ -83,6 +83,37 @@ describe("AWS consumer clinical record adapter", () => {
     expect(write.parameters).not.toContain("synthetic-subject-001");
   });
 
+  test("accepts bounded patient-reported health intake without account identifiers", async () => {
+    const fixture = database();
+    await expect(createAwsConsumerClinicalRecordsAdapter(fixture.db).recordVersion(context(), {
+      connectionId: CONNECTION, stableRecordId: RECORD, collection: "clinical_intakes",
+      recordKey: "current", resourceVersion: "intake-v1",
+      idempotencyKey: "intake:synthetic:0001",
+      payload: {
+        id: "intake_local_1",
+        chiefComplaint: { id: "chief_1", description: "Synthetic fatigue", onset: "chronic",
+          duration: "3 months", severity: 4, betterWith: [], worseWith: [],
+          previousDiagnoses: [], previousTreatments: [], timestamp: "2026-08-25T10:00:00.000Z" },
+        associatedSymptoms: [], energyLevel: 4, sleepQuality: 5, digestiveFunction: 5,
+        stressPerception: 6, temperatureSensitivity: "normal",
+        createdAt: "2026-08-25T10:00:00.000Z", updatedAt: "2026-08-25T10:00:00.000Z",
+      }, deleted: false,
+    })).resolves.toMatchObject({ versionId: VERSION_ID });
+    expect(fixture.calls.some((call) => call.sql.includes("record_consumer_clinical_version"))).toBe(true);
+  });
+
+  test("refuses identity fields in generic health-profile payloads", async () => {
+    const fixture = database();
+    await expect(createAwsConsumerClinicalRecordsAdapter(fixture.db).recordVersion(context(), {
+      connectionId: CONNECTION, stableRecordId: RECORD, collection: "wellness_profiles",
+      recordKey: "current", resourceVersion: "profile-v1",
+      idempotencyKey: "profile:synthetic:0001",
+      payload: { id: "profile_1", goals: [], onboardingCompleted: true, role: "patient",
+        email: "synthetic@example.invalid" }, deleted: false,
+    })).rejects.toMatchObject({ category: "request_invalid" });
+    expect(fixture.calls).toHaveLength(0);
+  });
+
   test("returns only bounded, current record payloads", async () => {
     const fixture = database();
     const rows = await createAwsConsumerClinicalRecordsAdapter(fixture.db).listRecords(context(), {

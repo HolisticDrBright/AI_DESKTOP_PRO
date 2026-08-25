@@ -568,6 +568,21 @@ describe("AWS production Desktop adapter", () => {
     expect(test.calls[1]?.sql).toBe("select clinical_core.get_patient_overview($1,$2) as data");
   });
 
+  it("reads consent-scoped patient-reported V2 intake through the exact patient boundary", async () => {
+    const test = harness({
+      patientId: PATIENT, connectionState: "verified", sharingStatus: "granted",
+      wellnessProfile: { payload: { goals: ["synthetic longevity"] }, receivedAt: "2026-08-25T10:00:00Z" },
+      lifestyleProfile: null, contraindications: null, clinicalIntake: null,
+      questionnaireResponses: [], generatedAt: "2026-08-25T10:00:01Z",
+    });
+    await expect(test.adapter.execute(context, {
+      kind: "rpc", functionName: "get_patient_app_intake",
+      args: { _organization_id: ORG, _patient_id: PATIENT },
+    })).resolves.toMatchObject({ patientId: PATIENT, sharingStatus: "granted" });
+    expect(test.calls[1]?.sql).toBe("select clinical_core.get_patient_app_intake($1,$2) as data");
+    expect(test.fallback.execute).not.toHaveBeenCalled();
+  });
+
   it("routes the governed patient-sync control plane without provider-specific fallback", async () => {
     const operations: Array<{ functionName: string; args: Record<string, unknown>; sql: string }> = [
       {

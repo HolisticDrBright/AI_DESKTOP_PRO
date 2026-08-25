@@ -23,6 +23,7 @@ import type {
   LiveTaskResult,
   LiveUploadResult,
   LivePatientOverview,
+  LivePatientAppIntake,
   LiveReasoningWorkspace,
   LiveHypothesisReviewResult,
   LiveAppointmentStatus,
@@ -247,6 +248,9 @@ export const liveClient = {
 
   patientOverview: (patientId: string) =>
     liveFetch<LivePatientOverview>("patients/overview", { method: "POST", body: { patientId } }),
+
+  patientAppIntake: (patientId: string) =>
+    liveFetch<LivePatientAppIntake>("patients/app-intake", { method: "POST", body: { patientId } }),
 
   reasoningWorkspace: (patientId: string) =>
     liveFetch<LiveReasoningWorkspace>("reasoning/workspace", { method: "POST", body: { patientId } }),

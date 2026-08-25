@@ -44,6 +44,18 @@ function databaseFor(options: {
 }
 
 describe("production clinical-core migrations", () => {
+  it("queues patient-reported intake for review and exposes only the bounded patient view", () => {
+    const sql = readFileSync(path.join(
+      process.cwd(), "infra", "aws-clinical-core", "production-migrations",
+      "20260825140000_production_consumer_health_intake_review.sql",
+    ), "utf8");
+    expect(sql).toContain("Patient app health intake update");
+    expect(sql).toContain("clinical_private.require_clinical_patient");
+    expect(sql).toContain("scope = 'forms_checkins'");
+    expect(sql).toContain("distinct on (r.record_key)");
+    expect(sql).not.toMatch(/insert into clinical_core\.patient_records/i);
+  });
+
   it("keeps the patient protocol migration tenant-scoped, immutable, and commercially separated", () => {
     const sql = readFileSync(path.join(
       process.cwd(), "infra", "aws-clinical-core", "production-migrations",

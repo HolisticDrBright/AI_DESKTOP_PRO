@@ -52,6 +52,7 @@ const CORE_RPCS = new Set([
   "get_desktop_note",
   "get_desktop_patient_timeline",
   "get_patient_overview",
+  "get_patient_app_intake",
   "get_patient_sync_overview",
   "get_org_sync_operations",
   "create_sync_invitation",
@@ -406,6 +407,15 @@ async function executeCoreRpc(
     if (args._organization_id !== context.organizationId) throw invalid();
     const row = first(await tx.query<{ data: unknown }>(
       "select clinical_core.get_patient_overview($1,$2) as data",
+      [clinicalUuid(context.organizationId), clinicalUuid(requiredUuid(args._patient_id))],
+    ));
+    return decodeJson(row.data);
+  }
+  if (name === "get_patient_app_intake") {
+    exactKeys(args, ["_organization_id", "_patient_id"]);
+    if (args._organization_id !== context.organizationId) throw invalid();
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.get_patient_app_intake($1,$2) as data",
       [clinicalUuid(context.organizationId), clinicalUuid(requiredUuid(args._patient_id))],
     ));
     return decodeJson(row.data);

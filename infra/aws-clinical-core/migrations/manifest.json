@@ -24,6 +24,10 @@
     {
       "version": "20260821040000",
       "file": "20260821040000_desktop_compatibility_boundary.sql"
+    },
+    {
+      "version": "20260821045000",
+      "file": "20260821045000_consumer_health_intake_records.sql"
     }
   ]
 }

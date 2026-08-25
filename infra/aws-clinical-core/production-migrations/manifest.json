@@ -52,6 +52,10 @@
     {
       "version": "20260825123000",
       "file": "20260825123000_production_sync_lab_summary_observed_at.sql"
+    },
+    {
+      "version": "20260825140000",
+      "file": "20260825140000_production_consumer_health_intake_review.sql"
     }
   ]
 }

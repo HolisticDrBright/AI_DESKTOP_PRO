@@ -13,6 +13,8 @@ import type {
 export const CONSUMER_CLINICAL_COLLECTIONS = [
   "protocols", "daily_adherence", "symptom_logs", "hormone_entries",
   "meal_logs", "subjective_rollups", "weekly_checkins",
+  "wellness_profiles", "lifestyle_profiles", "contraindications",
+  "questionnaire_responses", "clinical_intakes",
 ] as const;
 export type ConsumerClinicalCollection = (typeof CONSUMER_CLINICAL_COLLECTIONS)[number];
 export type PrivacyRequestKind = "export" | "correction" | "deletion";
@@ -112,6 +114,26 @@ const COLLECTION_KEYS: Record<ConsumerClinicalCollection, { allowed: readonly st
   weekly_checkins: {
     allowed: ["id","date","weight","waistCircumference","restingHeartRate","sleepScore","wins","challenges","notes"],
     required: ["date"],
+  },
+  wellness_profiles: {
+    allowed: ["id","height","weight","goals","onboardingCompleted","role"],
+    required: ["id","goals","onboardingCompleted","role"],
+  },
+  lifestyle_profiles: {
+    allowed: ["id","sleepHours","sleepQuality","stressLevel","dietType","cookingSkill","shoppingCadence","exerciseFrequency","exerciseTypes"],
+    required: ["id","sleepHours","sleepQuality","stressLevel","dietType","exerciseFrequency","exerciseTypes"],
+  },
+  contraindications: {
+    allowed: ["id","pregnant","pregnancyStatus","nursing","medications","allergies","conditions"],
+    required: ["id","pregnant","pregnancyStatus","nursing","medications","allergies","conditions"],
+  },
+  questionnaire_responses: {
+    allowed: ["id","questionId","categoryId","severity","timestamp"],
+    required: ["id","questionId","categoryId","severity","timestamp"],
+  },
+  clinical_intakes: {
+    allowed: ["id","chiefComplaint","associatedSymptoms","energyLevel","sleepQuality","digestiveFunction","stressPerception","temperatureSensitivity","painQuality","createdAt","updatedAt"],
+    required: ["id","chiefComplaint","associatedSymptoms","energyLevel","sleepQuality","digestiveFunction","stressPerception","temperatureSensitivity","createdAt","updatedAt"],
   },
 };
 

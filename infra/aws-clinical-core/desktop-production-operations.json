@@ -184,6 +184,12 @@
     },
     {
       "kind": "rpc",
+      "name": "get_patient_app_intake",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260825140000_production_consumer_health_intake_review.sql"
+    },
+    {
+      "kind": "rpc",
       "name": "get_patient_sync_overview",
       "implementation": "native_production_function",
       "source": "infra/aws-clinical-core/production-migrations/20260821120000_production_patient_sync_control.sql"

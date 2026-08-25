@@ -105,6 +105,8 @@ export const api = {
      * invents a number.
      */
     overview: async (patientId: string) => liveClient.patientOverview(patientId),
+    /** LIVE: consent-scoped, patient-reported V2 profile and health intake. */
+    appIntake: async (patientId: string) => liveClient.patientAppIntake(patientId),
     /**
      * The synthesized health-score/systems summary has NO governed source
      * (algorithm, inputs, version, and review status are not defined), so it

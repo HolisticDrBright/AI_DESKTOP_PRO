@@ -16,7 +16,7 @@ const errors = [];
 const assert = (condition, message) => { if (!condition) errors.push(message); };
 
 assert(manifest.contract_version === "clinical-core-migrations/1", "generated manifest contract is invalid");
-assert(manifest.migrations.length === 19, "expected six transformed migrations and thirteen production overlays");
+assert(manifest.migrations.length === 21, "expected seven transformed migrations and fourteen production overlays");
 assert(new Set(manifest.migrations.map((entry) => entry.version)).size === manifest.migrations.length,
   "migration versions must be unique");
 
@@ -79,6 +79,8 @@ const syncWorkerOverlay = readFileSync(path.join(root, "infra", "aws-clinical-co
   "20260825120000_production_patient_sync_worker.sql"), "utf8");
 const syncLabSummaryRepair = readFileSync(path.join(root, "infra", "aws-clinical-core", "production-migrations",
   "20260825123000_production_sync_lab_summary_observed_at.sql"), "utf8");
+const patientAppIntakeOverlay = readFileSync(path.join(root, "infra", "aws-clinical-core", "production-migrations",
+  "20260825140000_production_consumer_health_intake_review.sql"), "utf8");
 assert(overlay.includes("_organization_id uuid") && overlay.includes("_first_name text")
   && overlay.includes("_last_name text") && overlay.includes("_date_of_birth date")
   && overlay.includes("_sex text") && overlay.includes("_mrn text")
@@ -223,6 +225,14 @@ assert(syncLabSummaryRepair.includes("max(o.observed_at)")
   && syncLabSummaryRepair.includes("'lastObservedAt'")
   && !syncLabSummaryRepair.includes("max(o.collected_at)"),
 "lab summary repair must project the governed observation timestamp");
+assert(patientAppIntakeOverlay.includes("clinical_core.get_patient_app_intake")
+  && patientAppIntakeOverlay.includes("clinical_private.require_clinical_patient")
+  && patientAppIntakeOverlay.includes("scope = 'forms_checkins'")
+  && patientAppIntakeOverlay.includes("Patient app health intake update")
+  && patientAppIntakeOverlay.includes("distinct on (r.record_key)"),
+"patient app intake lacks consent status, patient access, review task, or current-version projection");
+assert(!/insert\s+into\s+clinical_core\.patient_records/i.test(patientAppIntakeOverlay),
+"patient app intake must not silently overwrite the practitioner-authored patient record");
 
 if (errors.length) {
   for (const error of errors) console.error(`ERROR: ${error}`);
@@ -230,4 +240,4 @@ if (errors.length) {
 }
 
 const releaseHash = createHash("sha256").update(combined).digest("hex");
-console.log(`Production clinical-core gate passed: 19 migrations, zero seeded rows (${releaseHash}).`);
+console.log(`Production clinical-core gate passed: 21 migrations, zero seeded rows (${releaseHash}).`);

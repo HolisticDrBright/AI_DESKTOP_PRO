@@ -83,6 +83,7 @@
       "get_patient_entitlements",
       "get_patient_messages",
       "get_patient_nutrition",
+      "get_patient_app_intake",
       "get_patient_overview",
       "get_patient_programs",
       "get_patient_protocol",

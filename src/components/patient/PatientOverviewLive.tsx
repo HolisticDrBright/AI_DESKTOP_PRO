@@ -23,6 +23,7 @@ import type {
 } from "@/adapters/live-types";
 import { ClinicalError, ClinicalLoading } from "@/components/ui/ClinicalStates";
 import { PatientProgramsLive } from "@/components/programs/PatientProgramsLive";
+import { PatientAppIntakeCard } from "@/components/patient/PatientAppIntakeCard";
 import { Card, CardTitle } from "@/components/ui/bits";
 import { Pill } from "@/components/ui/Pill";
 import { patientPath } from "@/lib/routes";
@@ -312,6 +313,9 @@ export function PatientOverviewLive({ patientId }: { patientId: string }) {
             )}
           </Card>
         </div>
+
+        {/* Consent-scoped patient-reported V2 profile and intake */}
+        <PatientAppIntakeCard patientId={patientId} />
 
         {/* Programs: real enrollments pinned to published versions */}
         <PatientProgramsLive patientId={patientId} />
