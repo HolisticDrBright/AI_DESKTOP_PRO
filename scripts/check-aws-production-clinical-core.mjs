@@ -16,7 +16,7 @@ const errors = [];
 const assert = (condition, message) => { if (!condition) errors.push(message); };
 
 assert(manifest.contract_version === "clinical-core-migrations/1", "generated manifest contract is invalid");
-assert(manifest.migrations.length === 17, "expected six transformed migrations and eleven production overlays");
+assert(manifest.migrations.length === 19, "expected six transformed migrations and thirteen production overlays");
 assert(new Set(manifest.migrations.map((entry) => entry.version)).size === manifest.migrations.length,
   "migration versions must be unique");
 
@@ -75,6 +75,10 @@ const syncInvitationRepair = readFileSync(path.join(root, "infra", "aws-clinical
   "20260821121000_production_patient_sync_invitation_pgcrypto.sql"), "utf8");
 const syncDeliveryOverlay = readFileSync(path.join(root, "infra", "aws-clinical-core", "production-migrations",
   "20260825100000_production_patient_sync_delivery_controls.sql"), "utf8");
+const syncWorkerOverlay = readFileSync(path.join(root, "infra", "aws-clinical-core", "production-migrations",
+  "20260825120000_production_patient_sync_worker.sql"), "utf8");
+const syncLabSummaryRepair = readFileSync(path.join(root, "infra", "aws-clinical-core", "production-migrations",
+  "20260825123000_production_sync_lab_summary_observed_at.sql"), "utf8");
 assert(overlay.includes("_organization_id uuid") && overlay.includes("_first_name text")
   && overlay.includes("_last_name text") && overlay.includes("_date_of_birth date")
   && overlay.includes("_sex text") && overlay.includes("_mrn text")
@@ -202,10 +206,28 @@ assert(!/['"](?:reason|note|payload)['"]\s*,\s*_(?:reason|note|payload)/i.test(s
   && syncDeliveryAudits.includes("'reason_present',true"),
 "sync delivery audits must never contain payload/reason/note content");
 
+for (const operation of [
+  "register_sync_provider", "review_sync_provider", "claim_sync_outbound", "recheck_sync_export",
+  "record_sync_delivery", "record_sync_inbound", "record_sync_lab_result",
+  "record_sync_worker_cycle", "register_sync_callback_nonce",
+]) assert(syncWorkerOverlay.includes(`clinical_core.${operation}`), `missing AWS sync worker operation ${operation}`);
+for (const invariant of [
+  "clinical_sync_worker nologin noinherit", "sync_worker_role_required", "for update of e skip locked",
+  "lab_import_consent_required", "chartMaterialized',false", "deliveryEnabled',false",
+  "sync_delivery_events_append_only", "sync_callback_nonces_append_only",
+]) assert(syncWorkerOverlay.includes(invariant), `missing AWS sync worker invariant ${invariant}`);
+assert(!/insert\s+into\s+clinical_core\.sync_providers[\s\S]*?'active'/i.test(
+  syncWorkerOverlay.replace(/\$([A-Za-z_][A-Za-z0-9_]*)?\$[\s\S]*?\$\1\$/g, "")),
+"AWS sync worker migration must not seed or approve a provider");
+assert(syncLabSummaryRepair.includes("max(o.observed_at)")
+  && syncLabSummaryRepair.includes("'lastObservedAt'")
+  && !syncLabSummaryRepair.includes("max(o.collected_at)"),
+"lab summary repair must project the governed observation timestamp");
+
 if (errors.length) {
   for (const error of errors) console.error(`ERROR: ${error}`);
   process.exit(1);
 }
 
 const releaseHash = createHash("sha256").update(combined).digest("hex");
-console.log(`Production clinical-core gate passed: 17 migrations, zero seeded rows (${releaseHash}).`);
+console.log(`Production clinical-core gate passed: 19 migrations, zero seeded rows (${releaseHash}).`);

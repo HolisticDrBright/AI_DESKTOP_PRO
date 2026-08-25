@@ -90,7 +90,10 @@ export async function applyProductionClinicalCoreMigrations(
             'create_protocol_draft','save_protocol_draft','approve_protocol_version',
             'activate_protocol_version','set_protocol_lifecycle','revise_protocol_version',
             'queue_sync_export','withdraw_sync_resource','retry_sync_event','cancel_sync_event',
-            'resolve_sync_conflict','review_sync_inbound','record_sync_inbound_correction'))::int as contract_count,
+            'resolve_sync_conflict','review_sync_inbound','record_sync_inbound_correction',
+            'register_sync_provider','review_sync_provider','claim_sync_outbound','recheck_sync_export',
+            'record_sync_delivery','record_sync_inbound','record_sync_lab_result',
+            'record_sync_worker_cycle','register_sync_callback_nonce'))::int as contract_count,
       (
         (select count(*) from clinical_core.organizations)
         + (select count(*) from clinical_core.persons)
@@ -124,9 +127,15 @@ export async function applyProductionClinicalCoreMigrations(
         + (select count(*) from clinical_core.sync_dead_letters)
         + (select count(*) from clinical_core.sync_conflicts)
         + (select count(*) from clinical_core.sync_resource_acks)
+        + (select count(*) from clinical_core.sync_delivery_attempts)
+        + (select count(*) from clinical_core.sync_delivery_events)
+        + (select count(*) from clinical_core.sync_worker_cycles)
+        + (select count(*) from clinical_core.sync_circuit_states)
+        + (select count(*) from clinical_core.sync_callback_nonces)
+        + (select count(*) from clinical_core.sync_inbound_lab_imports)
       )::int as clinical_row_count`);
     const row = verification.rows[0];
-    if (!row || Number(row.table_count) !== 36 || Number(row.contract_count) !== 16
+    if (!row || Number(row.table_count) !== 42 || Number(row.contract_count) !== 25
       || Number(row.clinical_row_count) !== 0) {
       throw new ProductionClinicalCoreMigrationError("verification_failed");
     }

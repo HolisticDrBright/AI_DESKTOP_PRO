@@ -214,11 +214,17 @@ select
   (select count(*)::int from clinical_core.sync_dead_letters) as sync_dead_letter_count,
   (select count(*)::int from clinical_core.sync_conflicts) as sync_conflict_count,
   (select count(*)::int from clinical_core.sync_resource_acks) as sync_resource_ack_count,
+  (select count(*)::int from clinical_core.sync_delivery_attempts) as sync_delivery_attempt_count,
+  (select count(*)::int from clinical_core.sync_delivery_events) as sync_delivery_event_count,
+  (select count(*)::int from clinical_core.sync_worker_cycles) as sync_worker_cycle_count,
+  (select count(*)::int from clinical_core.sync_circuit_states) as sync_circuit_state_count,
+  (select count(*)::int from clinical_core.sync_callback_nonces) as sync_callback_nonce_count,
+  (select count(*)::int from clinical_core.sync_inbound_lab_imports) as sync_inbound_lab_link_count,
   (select count(*)::int from clinical_audit.events) as audit_count
 "@
 $counts = @($database.records[0] | ForEach-Object { [int64]$_.longValue })
-if (($counts -join ",") -ne "17,36,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0") {
-  throw "Production database is not the reviewed empty 17-migration/36-table state: $($counts -join ',')."
+if (($counts -join ",") -ne "19,42,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0") {
+  throw "Production database is not the reviewed empty 19-migration/42-table state: $($counts -join ',')."
 }
 
 $alarmName = "$functionName-errors"
@@ -256,7 +262,7 @@ $evidence = [ordered]@{
   functionPermissions = $actions
   migrationCount = $counts[0]
   tableCount = $counts[1]
-  clinicalRowCount = ($counts[2..26] | Measure-Object -Sum).Sum
+  clinicalRowCount = ($counts[2..32] | Measure-Object -Sum).Sum
   alarmState = $alarm.StateValue
   unsafeLogMatches = 0
 }

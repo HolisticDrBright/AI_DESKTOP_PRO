@@ -5,7 +5,7 @@ if (typeof window !== "undefined") {
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { loadClinicalCoreMigrations } from "./migrations";
-import { applyProductionClinicalCoreMigrations } from "./production-migrations";
+import { applyProductionClinicalCoreMigrations, ProductionClinicalCoreMigrationError } from "./production-migrations";
 import { createRdsDataAdministrativeDatabase } from "./rds-data-database";
 
 const CLUSTER_ARN = /^arn:(aws|aws-us-gov|aws-cn):rds:[a-z0-9-]+:(\d{12}):cluster:[A-Za-z0-9-]{1,63}$/;
@@ -51,6 +51,11 @@ async function run() {
 }
 
 run().catch((error) => {
+  if (error instanceof ProductionClinicalCoreMigrationError) {
+    console.error(`${error.category}:${error.version ?? "none"}:${error.statementIndex ?? 0}`);
+    process.exitCode = 1;
+    return;
+  }
   const category = error instanceof Error ? error.message : "production_schema_migration_failed";
   console.error(category);
   process.exitCode = 1;

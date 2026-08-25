@@ -30,8 +30,8 @@ function databaseFor(options: {
       }
       if (sql.startsWith("select\n      (select count(*)")) {
         return { rows: [{
-          table_count: 36,
-          contract_count: 16,
+          table_count: 42,
+          contract_count: 25,
           clinical_row_count: 0,
           ...options.verification,
         }] as unknown as Row[] };
@@ -91,14 +91,46 @@ describe("production clinical-core migrations", () => {
     expect(sql).not.toMatch(/grant\s+(?:all|select|insert|update|delete)\s+on[\s\S]*?\s+to\s+public/i);
   });
 
+  it("keeps the AWS sync worker least-privileged, review-first, and inactive by default", () => {
+    const sql = readFileSync(path.join(
+      process.cwd(), "infra", "aws-clinical-core", "production-migrations",
+      "20260825120000_production_patient_sync_worker.sql",
+    ), "utf8");
+    for (const table of [
+      "sync_delivery_attempts", "sync_delivery_events", "sync_worker_cycles",
+      "sync_circuit_states", "sync_callback_nonces", "sync_inbound_lab_imports",
+    ]) expect(sql).toContain(`alter table clinical_core.${table} enable row level security`);
+    for (const contract of [
+      "register_sync_provider", "review_sync_provider", "claim_sync_outbound",
+      "recheck_sync_export", "record_sync_delivery", "record_sync_inbound",
+      "record_sync_lab_result", "record_sync_worker_cycle", "register_sync_callback_nonce",
+    ]) expect(sql).toContain(`function clinical_core.${contract}`);
+    expect(sql).toContain("clinical_sync_worker nologin noinherit");
+    expect(sql).toContain("state='pending_review'");
+    expect(sql).toContain("m.role in('owner','admin')");
+    expect(sql).toContain("lab_import_consent_required");
+    expect(sql).toContain("chartMaterialized',false");
+    expect(sql).toContain("deliveryEnabled',false");
+    expect(sql).toContain("for update of e skip locked");
+    expect(sql).not.toMatch(/grant\s+(?:all|select|insert|update|delete)\s+on[\s\S]*?\s+to\s+public/i);
+  });
+
+  it("projects lab summaries from the governed observation timestamp", () => {
+    const sql = readFileSync(path.join(process.cwd(), "infra", "aws-clinical-core", "production-migrations",
+      "20260825123000_production_sync_lab_summary_observed_at.sql"), "utf8");
+    expect(sql).toContain("max(o.observed_at)");
+    expect(sql).toContain("'lastObservedAt'");
+    expect(sql).not.toContain("max(o.collected_at)");
+  });
+
   it("applies ordered statements and verifies the empty PHI-disabled readiness state", async () => {
     const harness = databaseFor();
     const result = await applyProductionClinicalCoreMigrations(harness.database, [migration]);
     expect(result).toEqual({
       applied: [migration.version],
       alreadyApplied: [],
-      tableCount: 36,
-      contractCount: 16,
+      tableCount: 42,
+      contractCount: 25,
       clinicalRowCount: 0,
     });
     expect(harness.statements.map(({ sql }) => sql)).toContain("create table clinical_core.example(id uuid)");
@@ -115,7 +147,7 @@ describe("production clinical-core migrations", () => {
   });
 
   it("refuses to commit when any clinical record exists", async () => {
-    const harness = databaseFor({ verification: { table_count: 36, contract_count: 16, clinical_row_count: 1 } });
+    const harness = databaseFor({ verification: { table_count: 42, contract_count: 25, clinical_row_count: 1 } });
     await expect(applyProductionClinicalCoreMigrations(harness.database, [migration]))
       .rejects.toMatchObject({ category: "verification_failed" });
   });

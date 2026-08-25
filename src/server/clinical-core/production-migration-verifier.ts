@@ -68,7 +68,10 @@ async function verify() {
             'get_patient_protocol','create_protocol_draft','save_protocol_draft','approve_protocol_version',
             'activate_protocol_version','set_protocol_lifecycle','revise_protocol_version',
             'queue_sync_export','withdraw_sync_resource','retry_sync_event','cancel_sync_event',
-            'resolve_sync_conflict','review_sync_inbound','record_sync_inbound_correction')) as contract_count,
+            'resolve_sync_conflict','review_sync_inbound','record_sync_inbound_correction',
+            'register_sync_provider','review_sync_provider','claim_sync_outbound','recheck_sync_export',
+            'record_sync_delivery','record_sync_inbound','record_sync_lab_result',
+            'record_sync_worker_cycle','register_sync_callback_nonce')) as contract_count,
         (select count(*) from clinical_core.organizations) as organization_count,
         (select count(*) from clinical_core.persons) as person_count,
         (select count(*) from clinical_core.patient_records) as patient_count`,
@@ -76,7 +79,7 @@ async function verify() {
     }));
     const fields = catalog.records?.[0] ?? [];
     const counts = fields.map((field) => Number(field.longValue ?? field.stringValue ?? -1));
-    if (counts.length !== 5 || counts[0] !== 37 || counts[1] !== 16
+    if (counts.length !== 5 || counts[0] !== 43 || counts[1] !== 25
       || counts[2] !== 0 || counts[3] !== 0 || counts[4] !== 0) {
       throw new Error("catalog_verification_refused");
     }

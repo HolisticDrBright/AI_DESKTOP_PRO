@@ -12,7 +12,9 @@ const WORKFORCE = "72000000-0000-4000-8000-000000000001";
 const CONSUMER = "73000000-0000-4000-8000-000000000001";
 const LAB_ARTIFACT = "74000000-0000-4000-8000-000000000001";
 const PROTOCOL_ARTIFACT = "74000000-0000-4000-8000-000000000002";
+const LAB_SUMMARY_ARTIFACT = "74000000-0000-4000-8000-000000000003";
 const STABLE_RECORD = "75000000-0000-4000-8000-000000000001";
+const SYNC_WORKER = "76000000-0000-4000-8000-000000000001";
 const WORKFORCE_SUBJECT = "acceptance-workforce-subject-01";
 const CONSUMER_SUBJECT = "acceptance-consumer-subject-01";
 const LAB_HASH = "b".repeat(64);
@@ -35,6 +37,7 @@ type AcceptanceEvidence = {
   connectionRevokeCascade: boolean;
   explicitLabConsent: boolean;
   providerRegistered: boolean;
+  providerReviewed: boolean;
   labImported: boolean;
   duplicateProtected: boolean;
   clinicianAccepted: boolean;
@@ -42,6 +45,12 @@ type AcceptanceEvidence = {
   clinicalRecordTransferred: boolean;
   clinicalRecordDuplicateProtected: boolean;
   provenancePreserved: boolean;
+  workerClaimed: boolean;
+  outboundAcknowledged: boolean;
+  callbackReplayProtected: boolean;
+  inboundLabReviewPending: boolean;
+  inboundDuplicateProtected: boolean;
+  inboundChartMaterialized: boolean;
   crossTenantRefused: boolean;
   auditEventCount: number;
 };
@@ -99,7 +108,7 @@ async function acceptance(tx: ClinicalCoreTransaction): Promise<AcceptanceEviden
   ]);
   await tx.query(`insert into clinical_core.organization_memberships(
     organization_id,person_id,role,status
-  ) values ($1,$2,'practitioner','active')`, [clinicalUuid(ORG), clinicalUuid(WORKFORCE)]);
+  ) values ($1,$2,'admin','active')`, [clinicalUuid(ORG), clinicalUuid(WORKFORCE)]);
 
   await setContext(tx, WORKFORCE, ORG, "workforce", WORKFORCE_SUBJECT, "clinical_data");
   acceptanceStage = "create_patient";
@@ -136,20 +145,28 @@ async function acceptance(tx: ClinicalCoreTransaction): Promise<AcceptanceEviden
   )).data);
 
   acceptanceStage = "seed_consent_provider";
+  acceptanceStage = "seed_consent_artifacts";
   await tx.query(`insert into clinical_core.consent_artifacts(
     id,organization_id,scope,artifact_version,content_sha256,jurisdiction,status,
     approved_at,approved_by_person_id
   ) values
     ($1,$2,'lab_results_import','acceptance-lab/1',$3,'US','approved',clock_timestamp(),$4),
-    ($5,$2,'protocols_supplements','acceptance-protocol/1',$6,'US','approved',clock_timestamp(),$4)`, [
+    ($5,$2,'protocols_supplements','acceptance-protocol/1',$6,'US','approved',clock_timestamp(),$4),
+    ($7,$2,'lab_summaries','acceptance-lab-summary/1',$8,'US','approved',clock_timestamp(),$4)`, [
     clinicalUuid(LAB_ARTIFACT), clinicalUuid(ORG), "d".repeat(64), clinicalUuid(WORKFORCE),
     clinicalUuid(PROTOCOL_ARTIFACT), "e".repeat(64),
+    clinicalUuid(LAB_SUMMARY_ARTIFACT), "a".repeat(64),
   ]);
-  await tx.query(`insert into clinical_core.sync_providers(
-    organization_id,stable_id,contract_version,lab_contract_version,adapter_version,
-    state,reviewed_by_person_id,reviewed_at
-  ) values ($1,'alp_patient_sync','patient-sync/1','lab-result/1','production-candidate/1',
-    'active',$2,clock_timestamp())`, [clinicalUuid(ORG), clinicalUuid(WORKFORCE)]);
+  acceptanceStage = "register_sync_provider";
+  const providerRegistration = json(row(await tx.query<{ data: unknown }>(
+    "select clinical_core.register_sync_provider($1,'aws-production-candidate/1') as data",
+    [clinicalUuid(ORG)],
+  )).data);
+  acceptanceStage = "review_sync_provider";
+  const providerReview = json(row(await tx.query<{ data: unknown }>(
+    "select clinical_core.review_sync_provider($1,'approve',$2::integer) as data",
+    [clinicalUuid(String(providerRegistration.providerId)), Number(providerRegistration.version)],
+  )).data);
 
   await setContext(tx, CONSUMER, ORG, "consumer", CONSUMER_SUBJECT, "consent_management");
   acceptanceStage = "consumer_lab_consent";
@@ -232,6 +249,87 @@ async function acceptance(tx: ClinicalCoreTransaction): Promise<AcceptanceEviden
     [clinicalUuid(ORG)],
   ));
   const provenance = json(observations.rows[0]?.provenance);
+
+  acceptanceStage = "aws_worker_roundtrip";
+  acceptanceStage = "grant_lab_summary_consent";
+  await tx.query(`select clinical_core.set_sync_consent_scope(
+    $1,'lab_summaries',true,'Governed consent artifact','acceptance-lab-summary/1','US','in_person','self'
+  )`, [clinicalUuid(connectionId)]);
+  acceptanceStage = "queue_sync_lab_summary";
+  const queued = json(row(await tx.query<{ data: unknown }>(
+    "select clinical_core.queue_sync_export($1,'lab_summary',$2) as data",
+    [clinicalUuid(connectionId), clinicalUuid(patientId)],
+  )).data);
+  acceptanceStage = "assume_sync_worker_role";
+  await tx.query("set local role clinical_sync_worker");
+  acceptanceStage = "claim_sync_outbound";
+  const claimed = json(row(await tx.query<{ data: unknown }>(
+    "select clinical_core.claim_sync_outbound($1,10,120,$2) as data",
+    [clinicalUuid(ORG), clinicalUuid(SYNC_WORKER)],
+  )).data);
+  const claimedEvents = Array.isArray(claimed.events) ? claimed.events as Array<Record<string, unknown>> : [];
+  const claimedEvent = claimedEvents[0];
+  if (!claimedEvent) throw new Error("acceptance_claim_missing");
+  const claimedEventUid = String(claimedEvent.eventUid ?? "");
+  acceptanceStage = "recheck_sync_export";
+  const rechecked = json(row(await tx.query<{ data: unknown }>(
+    "select clinical_core.recheck_sync_export($1) as data", [clinicalUuid(claimedEventUid)],
+  )).data);
+  acceptanceStage = "record_sync_delivered";
+  await tx.query("select clinical_core.record_sync_delivery($1,$2,'delivered',clock_timestamp(),null,null)", [
+    clinicalUuid(claimedEventUid), "alp:acceptance:delivered:01",
+  ]);
+  acceptanceStage = "record_sync_acknowledged";
+  const acknowledged = json(row(await tx.query<{ data: unknown }>(
+    "select clinical_core.record_sync_delivery($1,$2,'acknowledged',clock_timestamp(),null,null) as data", [
+      clinicalUuid(claimedEventUid), "alp:acceptance:ack:0001",
+    ],
+  )).data);
+  acceptanceStage = "register_callback_nonce";
+  const nonceOne = json(row(await tx.query<{ data: unknown }>(
+    "select clinical_core.register_sync_callback_nonce($1,'alp_patient_sync',$2) as data",
+    [clinicalUuid(ORG), "acceptance_nonce_00000001"],
+  )).data);
+  acceptanceStage = "register_callback_replay";
+  const nonceTwo = json(row(await tx.query<{ data: unknown }>(
+    "select clinical_core.register_sync_callback_nonce($1,'alp_patient_sync',$2) as data",
+    [clinicalUuid(ORG), "acceptance_nonce_00000001"],
+  )).data);
+  const inboundPayload = {
+    panelId: "panel_acceptance_worker_01",
+    panelName: "Rollback worker panel",
+    sourceLabel: "AI Longevity Pro V2",
+    collectedAt: occurredAt,
+    markers: [{ markerId: "marker_acceptance_worker_01", markerName: "Rollback worker marker",
+      value: 44, unit: "unit", referenceMin: 10, referenceMax: 50, sourceStatus: "normal" }],
+  };
+  const inboundArguments = [
+    clinicalUuid(connectionId), "lab:acceptance:worker:01", "lab-result/1", "lab_result",
+    JSON.stringify(inboundPayload), "f".repeat(64), occurredAt, "panel_acceptance_worker_01",
+    "version:acceptance:worker:01", null, null,
+  ] as const;
+  acceptanceStage = "record_sync_lab_result";
+  const inbound = json(row(await tx.query<{ data: unknown }>(
+    "select clinical_core.record_sync_lab_result($1,$2,$3,$4,$5::jsonb,$6,$7::timestamptz,$8,$9,$10,$11) as data",
+    inboundArguments,
+  )).data);
+  acceptanceStage = "record_sync_lab_duplicate";
+  const inboundDuplicate = json(row(await tx.query<{ data: unknown }>(
+    "select clinical_core.record_sync_lab_result($1,$2,$3,$4,$5::jsonb,$6,$7::timestamptz,$8,$9,$10,$11) as data",
+    inboundArguments,
+  )).data);
+  acceptanceStage = "restore_workforce_role";
+  await tx.query("reset role");
+  await setContext(tx, WORKFORCE, ORG, "workforce", WORKFORCE_SUBJECT, "clinical_data");
+  acceptanceStage = "review_sync_lab_inbound";
+  const inboundReview = json(row(await tx.query<{ data: unknown }>(
+    "select clinical_core.review_sync_inbound($1,'accept',null) as data",
+    [clinicalUuid(String(inbound.eventId))],
+  )).data);
+  acceptanceStage = "list_materialized_sync_labs";
+  const finalObservations = await tx.query(
+    "select * from clinical_core.list_patient_lab_observations($1)", [clinicalUuid(patientId)],
+  );
   acceptanceStage = "sync_overview";
   const overview = json(row(await tx.query<{ data: unknown }>(
     "select clinical_core.get_patient_sync_overview($1) as data", [clinicalUuid(patientId)],
@@ -252,7 +350,7 @@ async function acceptance(tx: ClinicalCoreTransaction): Promise<AcceptanceEviden
   );
   const connectionRevokeCascade = revoked.state === "revoked"
     && revoked.version === 4
-    && revokedScopes.rows.length === 2
+    && revokedScopes.rows.length === 3
     && revokedScopes.rows.every((scope) => scope.status === "revoked");
   await tx.query("rollback to savepoint connection_revoke_probe");
 
@@ -265,15 +363,16 @@ async function acceptance(tx: ClinicalCoreTransaction): Promise<AcceptanceEviden
       && resumed.state === "verified" && resumed.version === 3,
     desktopConsentGoverned: desktopConsent.status === "granted"
       && desktopConsent.scope === "protocols_supplements",
-    syncOverviewBounded: overview.providerConfigured === true
-      && Array.isArray(overview.outbound) && overview.outbound.length === 0
-      && Array.isArray(overview.inbound) && overview.inbound.length === 0,
+    syncOverviewBounded: overview.deliveryEnabled === false
+      && Array.isArray(overview.outbound) && overview.outbound.length <= 50
+      && Array.isArray(overview.inbound) && overview.inbound.length <= 50,
     syncOperationsBounded: operations.providerConfigured === true
       && json(operations.connections).verified === 1
       && json(operations.outbound).queued === 0,
     connectionRevokeCascade,
     explicitLabConsent: true,
-    providerRegistered: true,
+    providerRegistered: providerRegistration.state === "pending_review",
+    providerReviewed: providerReview.state === "active" && providerReview.deliveryEnabled === false,
     labImported: firstLab.state === "review_pending" && firstLab.duplicate === false,
     duplicateProtected: duplicateLab.duplicate === true,
     clinicianAccepted: review.state === "accepted" && review.duplicate === false,
@@ -283,6 +382,13 @@ async function acceptance(tx: ClinicalCoreTransaction): Promise<AcceptanceEviden
     clinicalRecordDuplicateProtected: duplicateRecord.duplicate === true,
     provenancePreserved: provenance.sourceSystem === "ai_longevity_pro_v2"
       && provenance.payloadSha256 === LAB_HASH,
+    workerClaimed: String(queued.eventId ?? "") === claimedEventUid && rechecked.deliverable === true,
+    outboundAcknowledged: acknowledged.state === "delivered" && acknowledged.duplicate === false,
+    callbackReplayProtected: nonceOne.replay === false && nonceTwo.replay === true,
+    inboundLabReviewPending: inbound.state === "review_pending" && inbound.chartMaterialized === false,
+    inboundDuplicateProtected: inboundDuplicate.duplicate === true,
+    inboundChartMaterialized: inboundReview.state === "accepted"
+      && inboundReview.chartMaterialized === true && finalObservations.rows.length === 2,
     crossTenantRefused,
     auditEventCount: Number(counts.audit_count),
   };
@@ -306,8 +412,11 @@ async function run() {
   try {
     await database.transaction(async (tx) => {
       evidence = await acceptance(tx);
-      if (!Object.entries(evidence).every(([key, value]) => key === "auditEventCount" ? Number(value) >= 10 : value === true)) {
-        throw new Error("acceptance_invariant_failed");
+      const failed = Object.entries(evidence)
+        .filter(([key, value]) => key === "auditEventCount" ? Number(value) < 10 : value !== true)
+        .map(([key]) => key);
+      if (failed.length > 0) {
+        throw new Error(`acceptance_invariant_failed:${failed.join(":").toLowerCase()}`);
       }
       throw new RollbackSuccess();
     });

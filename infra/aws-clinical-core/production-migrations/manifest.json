@@ -44,6 +44,14 @@
     {
       "version": "20260825100000",
       "file": "20260825100000_production_patient_sync_delivery_controls.sql"
+    },
+    {
+      "version": "20260825120000",
+      "file": "20260825120000_production_patient_sync_worker.sql"
+    },
+    {
+      "version": "20260825123000",
+      "file": "20260825123000_production_sync_lab_summary_observed_at.sql"
     }
   ]
 }

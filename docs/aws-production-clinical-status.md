@@ -421,3 +421,44 @@ schema proof, rollback-only minimum patient/lab transfer semantics, tenant
 isolation, and Aurora PITR proof. It does not authorize PHI and must not be
 represented as a live clinical application, HIPAA certification, or a complete
 port of the Desktop's 222-operation surface.
+
+## AWS-native patient-sync worker and reviewed materialization (2026-08-25; PHI disabled)
+
+Migrations 18 and 19 add the inactive production worker contract and an
+immutable lab-summary timestamp repair. Six empty tables now retain delivery
+attempts, provider evidence, PHI-free worker cycles, circuit state, callback
+nonces, and inbound-to-lab links. Aurora has **42 application tables, 19
+migrations, 25 counted contracts, and zero clinical/audit/sync rows**.
+
+Provider registration is a two-step admin workflow: registration always lands
+in `pending_review`; a version-matched review is required before the provider
+can become active. The worker is a dedicated no-login database role. It leases
+bounded batches with `FOR UPDATE SKIP LOCKED`, re-checks provider, connection,
+and consent at delivery time, records provider evidence, backs off retryable
+failures, dead-letters permanent failures, and rejects callback replay.
+
+The signed inbound `lab-result/1` contract carries a panel plus bounded marker
+rows. Receipt requires a verified connection, active reviewed provider, and
+current `lab_results_import` consent. Exact provider-event replay is
+idempotent; a changed hash conflicts. Receipt creates review work and no chart
+observation. Only explicit clinician acceptance creates governed observations
+with App source, external panel/marker identifiers, resource version, payload
+hash, accepting clinician, and acceptance time.
+
+Rollback-only production acceptance proved provider registration/review,
+outbound lease/recheck/delivery/ack, nonce replay refusal, inbound lab receipt,
+duplicate protection, clinician materialization, provenance, and tenant
+isolation. All synthetic rows were rolled back. Evidence SHA-256:
+`7781bf21dce29358b276a90b449112ba69a09e08f910fc95ce814176711cc25e`.
+The independent empty-boundary check then reconfirmed 19 migrations, 42 tables,
+zero rows, PHI false, activation blocked, log-only deployed API permissions,
+and bounded 401/503 refusal. Evidence SHA-256:
+`559fc3dda9145cc00ae6f0099a8ea2f18551b5a581305a50d79674896aeaa6ed`.
+
+The production sync Lambda/CloudFormation candidate defaults to PHI false,
+blocked activation, a disabled schedule, placeholder provider configuration,
+and log-only IAM. Its data/secret permissions exist only behind the same
+three-part activation condition as the clinical API. It has no Supabase
+runtime or credential path. It remains an inactive candidate until deployed
+from an exact pushed commit; deployment still will not register a provider or
+enable PHI.

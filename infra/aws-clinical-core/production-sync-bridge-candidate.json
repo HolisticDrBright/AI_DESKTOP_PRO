@@ -1,0 +1,99 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Activation-gated AWS-native patient sync worker and signed callback candidate. Disabled by default.",
+  "Metadata": { "ClinicalCore": { "ContractVersion": "production-patient-sync/1", "DefaultPhiAllowed": false, "ProviderDefault": "unregistered" } },
+  "Parameters": {
+    "ClinicalApiId": { "Type": "String", "AllowedPattern": "^[a-z0-9]{10}$" },
+    "DatabaseClusterArn": { "Type": "String", "AllowedPattern": "^arn:(aws|aws-us-gov|aws-cn):rds:[a-z0-9-]+:[0-9]{12}:cluster:[A-Za-z0-9-]{1,63}$" },
+    "DatabaseSecretArn": { "Type": "String", "NoEcho": true },
+    "DatabaseName": { "Type": "String", "AllowedPattern": "^[a-z][a-z0-9_]{0,62}$" },
+    "ClinicalCoreKeyArn": { "Type": "String", "AllowedPattern": "^arn:(aws|aws-us-gov|aws-cn):kms:[a-z0-9-]+:[0-9]{12}:key/[0-9a-f-]{36}$" },
+    "LambdaCodeBucket": { "Type": "String", "AllowedPattern": "^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$" },
+    "LambdaCodeKey": { "Type": "String", "AllowedPattern": "^[A-Za-z0-9!_.*'()/\\-]{1,1024}$" },
+    "OrganizationId": { "Type": "String", "Default": "00000000-0000-4000-8000-000000000000", "AllowedPattern": "^[0-9a-f-]{36}$" },
+    "V2BaseUrl": { "Type": "String", "Default": "https://disabled.invalid", "AllowedPattern": "^https://[A-Za-z0-9.-]+$" },
+    "V2InboundKeyId": { "Type": "String", "Default": "disabled-desktop-to-v2", "AllowedPattern": "^[A-Za-z0-9._-]{8,80}$" },
+    "DesktopCallbackKeyId": { "Type": "String", "Default": "disabled-v2-to-desktop", "AllowedPattern": "^[A-Za-z0-9._-]{8,80}$" },
+    "SourceVersion": { "Type": "String", "AllowedPattern": "^[0-9a-f]{40}$" },
+    "PhiAllowed": { "Type": "String", "Default": "false", "AllowedValues": ["false", "true"] },
+    "ActivationState": { "Type": "String", "Default": "blocked", "AllowedValues": ["blocked", "approved"] },
+    "ActivationEvidenceSha256": { "Type": "String", "Default": "", "AllowedPattern": "^$|^[0-9a-f]{64}$" }
+  },
+  "Rules": {
+    "ActivationMustBeCoherent": { "Assertions": [{ "Assert": { "Fn::Or": [
+      { "Fn::Equals": [{ "Ref": "PhiAllowed" }, "false"] },
+      { "Fn::And": [
+        { "Fn::Equals": [{ "Ref": "ActivationState" }, "approved"] },
+        { "Fn::Not": [{ "Fn::Equals": [{ "Ref": "ActivationEvidenceSha256" }, ""] }] }
+      ] }
+    ] }, "AssertDescription": "Worker activation requires approved state and reviewed evidence." }] },
+    "BlockedStateCannotCarryEvidence": { "Assertions": [{ "Assert": { "Fn::Or": [
+      { "Fn::Equals": [{ "Ref": "ActivationState" }, "approved"] },
+      { "Fn::Equals": [{ "Ref": "ActivationEvidenceSha256" }, ""] }
+    ] }, "AssertDescription": "Blocked deployments cannot imply approval evidence." }] }
+  },
+  "Conditions": { "DataPlaneEnabled": { "Fn::And": [
+    { "Fn::Equals": [{ "Ref": "PhiAllowed" }, "true"] },
+    { "Fn::Equals": [{ "Ref": "ActivationState" }, "approved"] },
+    { "Fn::Not": [{ "Fn::Equals": [{ "Ref": "ActivationEvidenceSha256" }, ""] }] }
+  ] } },
+  "Resources": {
+    "SyncBridgeSecret": { "Type": "AWS::SecretsManager::Secret", "DeletionPolicy": "Retain", "UpdateReplacePolicy": "Retain", "Properties": {
+      "Name": { "Fn::Sub": "ai-clinical-core/production-clinical/patient-sync-${ClinicalApiId}" },
+      "Description": "Activation-gated patient-sync credentials. Placeholder contains no credential material.",
+      "KmsKeyId": { "Ref": "ClinicalCoreKeyArn" }, "SecretString": "{\"configured\":false}",
+      "Tags": [{ "Key": "Environment", "Value": "production-clinical" }, { "Key": "PhiAllowed", "Value": { "Ref": "PhiAllowed" } }]
+    } },
+    "SyncApiLogGroup": { "Type": "AWS::Logs::LogGroup", "DeletionPolicy": "Retain", "UpdateReplacePolicy": "Retain", "Properties": {
+      "LogGroupName": { "Fn::Sub": "/ai-clinical-core/production-clinical/patient-sync-api/${ClinicalApiId}" }, "RetentionInDays": 365, "KmsKeyId": { "Ref": "ClinicalCoreKeyArn" }
+    } },
+    "SyncWorkerLogGroup": { "Type": "AWS::Logs::LogGroup", "DeletionPolicy": "Retain", "UpdateReplacePolicy": "Retain", "Properties": {
+      "LogGroupName": { "Fn::Sub": "/ai-clinical-core/production-clinical/patient-sync-worker/${ClinicalApiId}" }, "RetentionInDays": 365, "KmsKeyId": { "Ref": "ClinicalCoreKeyArn" }
+    } },
+    "SyncBridgeRole": { "Type": "AWS::IAM::Role", "Properties": {
+      "AssumeRolePolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Principal": { "Service": "lambda.amazonaws.com" }, "Action": "sts:AssumeRole" }] },
+      "Policies": [
+        { "PolicyName": "EncryptedSyncLogging", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": ["logs:CreateLogStream", "logs:PutLogEvents"], "Resource": [{ "Fn::GetAtt": ["SyncApiLogGroup", "Arn"] }, { "Fn::GetAtt": ["SyncWorkerLogGroup", "Arn"] }] }] } },
+        { "Fn::If": ["DataPlaneEnabled", { "PolicyName": "ActivationGatedSyncData", "PolicyDocument": { "Version": "2012-10-17", "Statement": [
+          { "Effect": "Allow", "Action": ["rds-data:BeginTransaction", "rds-data:ExecuteStatement", "rds-data:CommitTransaction", "rds-data:RollbackTransaction"], "Resource": { "Ref": "DatabaseClusterArn" } },
+          { "Effect": "Allow", "Action": "secretsmanager:GetSecretValue", "Resource": [{ "Ref": "DatabaseSecretArn" }, { "Ref": "SyncBridgeSecret" }] },
+          { "Effect": "Allow", "Action": "kms:Decrypt", "Resource": { "Ref": "ClinicalCoreKeyArn" }, "Condition": { "StringEquals": { "kms:ViaService": { "Fn::Sub": "secretsmanager.${AWS::Region}.${AWS::URLSuffix}" } } } }
+        ] } }, { "Ref": "AWS::NoValue" }] }
+      ]
+    } },
+    "SyncApiFunction": { "Type": "AWS::Lambda::Function", "Properties": {
+      "FunctionName": { "Fn::Sub": "${ClinicalApiId}-production-patient-sync-api" }, "Runtime": "nodejs22.x", "Architectures": ["arm64"], "Handler": "index.apiHandler", "Role": { "Fn::GetAtt": ["SyncBridgeRole", "Arn"] }, "MemorySize": 256, "Timeout": 20,
+      "LoggingConfig": { "LogGroup": { "Ref": "SyncApiLogGroup" }, "LogFormat": "JSON", "ApplicationLogLevel": "ERROR", "SystemLogLevel": "WARN" },
+      "Code": { "S3Bucket": { "Ref": "LambdaCodeBucket" }, "S3Key": { "Ref": "LambdaCodeKey" } },
+      "Environment": { "Variables": {
+        "CLINICAL_DATABASE_CLUSTER_ARN": { "Ref": "DatabaseClusterArn" }, "CLINICAL_DATABASE_SECRET_ARN": { "Ref": "DatabaseSecretArn" }, "CLINICAL_DATABASE_NAME": { "Ref": "DatabaseName" },
+        "SYNC_BRIDGE_SECRET_ARN": { "Ref": "SyncBridgeSecret" }, "SYNC_ORGANIZATION_ID": { "Ref": "OrganizationId" }, "SYNC_CALLBACK_KEY_ID": { "Ref": "DesktopCallbackKeyId" },
+        "PHI_ALLOWED": { "Ref": "PhiAllowed" }, "ACTIVATION_STATE": { "Ref": "ActivationState" }, "ACTIVATION_EVIDENCE_SHA256": { "Ref": "ActivationEvidenceSha256" }, "SOURCE_VERSION": { "Ref": "SourceVersion" }
+      } }
+    } },
+    "SyncWorkerFunction": { "Type": "AWS::Lambda::Function", "Properties": {
+      "FunctionName": { "Fn::Sub": "${ClinicalApiId}-production-patient-sync-worker" }, "Runtime": "nodejs22.x", "Architectures": ["arm64"], "Handler": "index.workerHandler", "Role": { "Fn::GetAtt": ["SyncBridgeRole", "Arn"] }, "MemorySize": 384, "Timeout": 55,
+      "LoggingConfig": { "LogGroup": { "Ref": "SyncWorkerLogGroup" }, "LogFormat": "JSON", "ApplicationLogLevel": "ERROR", "SystemLogLevel": "WARN" },
+      "Code": { "S3Bucket": { "Ref": "LambdaCodeBucket" }, "S3Key": { "Ref": "LambdaCodeKey" } },
+      "Environment": { "Variables": {
+        "CLINICAL_DATABASE_CLUSTER_ARN": { "Ref": "DatabaseClusterArn" }, "CLINICAL_DATABASE_SECRET_ARN": { "Ref": "DatabaseSecretArn" }, "CLINICAL_DATABASE_NAME": { "Ref": "DatabaseName" },
+        "SYNC_BRIDGE_SECRET_ARN": { "Ref": "SyncBridgeSecret" }, "SYNC_ORGANIZATION_ID": { "Ref": "OrganizationId" }, "SYNC_V2_BASE_URL": { "Ref": "V2BaseUrl" }, "SYNC_V2_KEY_ID": { "Ref": "V2InboundKeyId" },
+        "SYNC_WORKER_BATCH": "10", "SYNC_WORKER_LEASE_SECONDS": "120", "PHI_ALLOWED": { "Ref": "PhiAllowed" }, "ACTIVATION_STATE": { "Ref": "ActivationState" }, "ACTIVATION_EVIDENCE_SHA256": { "Ref": "ActivationEvidenceSha256" }, "SOURCE_VERSION": { "Ref": "SourceVersion" }
+      } }
+    } },
+    "SyncIntegration": { "Type": "AWS::ApiGatewayV2::Integration", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "IntegrationType": "AWS_PROXY", "IntegrationUri": { "Fn::GetAtt": ["SyncApiFunction", "Arn"] }, "PayloadFormatVersion": "2.0", "TimeoutInMillis": 20000 } },
+    "SyncCallbackRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "POST /patient-sync/v1/callback", "Target": { "Fn::Sub": "integrations/${SyncIntegration}" } } },
+    "SyncInvokePermission": { "Type": "AWS::Lambda::Permission", "Properties": { "Action": "lambda:InvokeFunction", "FunctionName": { "Ref": "SyncApiFunction" }, "Principal": "apigateway.amazonaws.com", "SourceArn": { "Fn::Sub": "arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${ClinicalApiId}/*/POST/patient-sync/v1/callback" } } },
+    "SyncWorkerSchedule": { "Type": "AWS::Events::Rule", "Properties": { "ScheduleExpression": "rate(1 minute)", "State": { "Fn::If": ["DataPlaneEnabled", "ENABLED", "DISABLED"] }, "Targets": [{ "Arn": { "Fn::GetAtt": ["SyncWorkerFunction", "Arn"] }, "Id": "PatientSyncWorker" }] } },
+    "SyncWorkerPermission": { "Type": "AWS::Lambda::Permission", "Properties": { "Action": "lambda:InvokeFunction", "FunctionName": { "Ref": "SyncWorkerFunction" }, "Principal": "events.amazonaws.com", "SourceArn": { "Fn::GetAtt": ["SyncWorkerSchedule", "Arn"] } } },
+    "SyncApiAlarm": { "Type": "AWS::CloudWatch::Alarm", "Properties": { "AlarmName": { "Fn::Sub": "${ClinicalApiId}-production-patient-sync-api-errors" }, "Namespace": "AWS/Lambda", "MetricName": "Errors", "Dimensions": [{ "Name": "FunctionName", "Value": { "Ref": "SyncApiFunction" } }], "Statistic": "Sum", "Period": 300, "EvaluationPeriods": 1, "Threshold": 1, "ComparisonOperator": "GreaterThanOrEqualToThreshold", "TreatMissingData": "notBreaching" } },
+    "SyncWorkerAlarm": { "Type": "AWS::CloudWatch::Alarm", "Properties": { "AlarmName": { "Fn::Sub": "${ClinicalApiId}-production-patient-sync-worker-errors" }, "Namespace": "AWS/Lambda", "MetricName": "Errors", "Dimensions": [{ "Name": "FunctionName", "Value": { "Ref": "SyncWorkerFunction" } }], "Statistic": "Sum", "Period": 300, "EvaluationPeriods": 1, "Threshold": 1, "ComparisonOperator": "GreaterThanOrEqualToThreshold", "TreatMissingData": "notBreaching" } }
+  },
+  "Outputs": {
+    "PhiAllowed": { "Value": { "Ref": "PhiAllowed" } }, "ActivationState": { "Value": { "Ref": "ActivationState" } },
+    "DataPlaneEnabled": { "Value": { "Fn::If": ["DataPlaneEnabled", "true", "false"] } }, "SourceVersion": { "Value": { "Ref": "SourceVersion" } },
+    "CallbackUrl": { "Value": { "Fn::Sub": "https://${ClinicalApiId}.execute-api.${AWS::Region}.${AWS::URLSuffix}/patient-sync/v1/callback" } },
+    "WorkerFunctionName": { "Value": { "Ref": "SyncWorkerFunction" } }, "ApiFunctionName": { "Value": { "Ref": "SyncApiFunction" } },
+    "BridgeSecretArn": { "Value": { "Ref": "SyncBridgeSecret" } }
+  }
+}
