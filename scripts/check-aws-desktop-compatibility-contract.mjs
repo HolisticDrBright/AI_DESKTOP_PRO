@@ -12,6 +12,12 @@ const manifestPath = path.join(
   "aws-clinical-core",
   "desktop-compatibility-operations.json",
 );
+const productionManifestPath = path.join(
+  root,
+  "infra",
+  "aws-clinical-core",
+  "desktop-production-operations.json",
+);
 
 function fail(message) {
   console.error(`[aws-desktop-compatibility] FAIL — ${message}`);
@@ -97,11 +103,30 @@ function legacyFunctionDefinitions() {
 }
 
 let manifest;
+let productionManifest;
 try {
   manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+  productionManifest = JSON.parse(fs.readFileSync(productionManifestPath, "utf8"));
 } catch (error) {
   fail(`cannot read operation manifest: ${error instanceof Error ? error.message : "invalid JSON"}`);
   process.exit();
+}
+
+const productionNativeRpc = new Set();
+if (productionManifest.schemaVersion !== "desktop-production-operations/1"
+  || productionManifest.activationState !== "phi_disabled"
+  || !Array.isArray(productionManifest.operations)) {
+  fail("production operation manifest is missing or invalid");
+} else {
+  for (const operation of productionManifest.operations) {
+    if (operation?.kind === "rpc"
+      && operation?.implementation === "native_production_function"
+      && typeof operation?.name === "string"
+      && typeof operation?.source === "string"
+      && fs.existsSync(path.join(root, operation.source))) {
+      productionNativeRpc.add(operation.name);
+    }
+  }
 }
 
 if (manifest.schemaVersion !== "desktop-aws-compatibility/1") {
@@ -120,14 +145,16 @@ compare("rpc", reviewed.rpc, actual.rpc);
 compare("select", reviewed.select, actual.select);
 
 const legacyFunctions = legacyFunctionDefinitions();
-const undefinedRpc = reviewed.rpc.filter((name) => !legacyFunctions.has(name));
+const undefinedRpc = reviewed.rpc.filter(
+  (name) => !legacyFunctions.has(name) && !productionNativeRpc.has(name),
+);
 if (undefinedRpc.length) {
-  fail(`RPCs have no authored PostgreSQL function in the migration history: ${undefinedRpc.join(", ")}`);
+  fail(`RPCs have no authored legacy or native-production PostgreSQL function: ${undefinedRpc.join(", ")}`);
 }
 
 if (!process.exitCode) {
   console.log(
     `[aws-desktop-compatibility] PASS — ${reviewed.rpc.length} RPCs and ${reviewed.select.length} `
-      + "read models are explicitly reviewed; every RPC has an authored PostgreSQL definition.",
+      + "read models are explicitly reviewed; every RPC has an authored legacy or native-production PostgreSQL definition.",
   );
 }
