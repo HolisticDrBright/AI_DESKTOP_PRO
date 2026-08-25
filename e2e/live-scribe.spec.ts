@@ -60,7 +60,7 @@ async function addParticipant(page: Page, name: string, kind: string): Promise<v
 async function grant(page: Page, kind: string, scope: string): Promise<void> {
   await page.getByTestId(`ack-${kind}-${scope}`).check();
   await page.getByTestId(`grant-${kind}-${scope}`).click();
-  await expect(page.getByTestId(`withdraw-${kind}-${scope}`)).toBeVisible({ timeout: pageReadyTimeout });
+  await expect(page.getByTestId(`withdraw-${kind}-${scope}`)).toBeVisible();
 }
 
 async function consentEveryone(page: Page, scopes: string[]): Promise<void> {
