@@ -455,10 +455,21 @@ zero rows, PHI false, activation blocked, log-only deployed API permissions,
 and bounded 401/503 refusal. Evidence SHA-256:
 `559fc3dda9145cc00ae6f0099a8ea2f18551b5a581305a50d79674896aeaa6ed`.
 
-The production sync Lambda/CloudFormation candidate defaults to PHI false,
-blocked activation, a disabled schedule, placeholder provider configuration,
-and log-only IAM. Its data/secret permissions exist only behind the same
-three-part activation condition as the clinical API. It has no Supabase
-runtime or credential path. It remains an inactive candidate until deployed
-from an exact pushed commit; deployment still will not register a provider or
-enable PHI.
+The production sync Lambda/CloudFormation candidate was deployed from exact
+pushed commit `7bea773e4473d4293a0db3a2327b3a1998f2383d` as stack
+`ai-longevity-production-patient-sync-disabled`. Artifact SHA-256:
+`e4663a496e12fb5ffadbf9a848ba93435799a405dfb70194d1d34d989ff5ea55`.
+The stack is `CREATE_COMPLETE`, but deliberately inert: PHI false, activation
+blocked, schedule disabled, provider URL disabled, placeholder secret marked
+unconfigured, and log-only IAM with no database, Secrets Manager, or KMS data
+permissions. The HMAC callback returns bounded `503
+production_not_activated`. No provider was registered and no PHI was enabled.
+
+The repeat point-in-time recovery exercise restored the current empty
+19-migration/42-table schema into an isolated private copy, independently
+verified it, and deleted the exact temporary writer and cluster. Evidence
+SHA-256:
+`043d1e7e22880b7ec9a6ff1b810b85c4d58e07295ff29c45b19fb1a47f9d65e4`.
+PR #41 head `7bea773e4473d4293a0db3a2327b3a1998f2383d` passed every GitHub CI and
+browser check. These are closed-boundary and recovery proofs only; they do not
+authorize PHI or activate the provider.
