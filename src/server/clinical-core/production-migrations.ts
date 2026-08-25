@@ -88,7 +88,9 @@ export async function applyProductionClinicalCoreMigrations(
         where n.nspname = 'clinical_core'
           and p.proname in ('create_patient_profile','review_biomarker','get_patient_protocol',
             'create_protocol_draft','save_protocol_draft','approve_protocol_version',
-            'activate_protocol_version','set_protocol_lifecycle','revise_protocol_version'))::int as contract_count,
+            'activate_protocol_version','set_protocol_lifecycle','revise_protocol_version',
+            'queue_sync_export','withdraw_sync_resource','retry_sync_event','cancel_sync_event',
+            'resolve_sync_conflict','review_sync_inbound','record_sync_inbound_correction'))::int as contract_count,
       (
         (select count(*) from clinical_core.organizations)
         + (select count(*) from clinical_core.persons)
@@ -116,9 +118,15 @@ export async function applyProductionClinicalCoreMigrations(
         + (select count(*) from clinical_core.patient_protocol_versions)
         + (select count(*) from clinical_core.patient_protocol_phases)
         + (select count(*) from clinical_core.patient_protocol_items)
+        + (select count(*) from clinical_core.sync_outbound_events)
+        + (select count(*) from clinical_core.sync_inbound_events)
+        + (select count(*) from clinical_core.sync_inbound_corrections)
+        + (select count(*) from clinical_core.sync_dead_letters)
+        + (select count(*) from clinical_core.sync_conflicts)
+        + (select count(*) from clinical_core.sync_resource_acks)
       )::int as clinical_row_count`);
     const row = verification.rows[0];
-    if (!row || Number(row.table_count) !== 30 || Number(row.contract_count) !== 9
+    if (!row || Number(row.table_count) !== 36 || Number(row.contract_count) !== 16
       || Number(row.clinical_row_count) !== 0) {
       throw new ProductionClinicalCoreMigrationError("verification_failed");
     }

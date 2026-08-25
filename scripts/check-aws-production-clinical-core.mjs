@@ -16,7 +16,7 @@ const errors = [];
 const assert = (condition, message) => { if (!condition) errors.push(message); };
 
 assert(manifest.contract_version === "clinical-core-migrations/1", "generated manifest contract is invalid");
-assert(manifest.migrations.length === 16, "expected six transformed migrations and ten production overlays");
+assert(manifest.migrations.length === 17, "expected six transformed migrations and eleven production overlays");
 assert(new Set(manifest.migrations.map((entry) => entry.version)).size === manifest.migrations.length,
   "migration versions must be unique");
 
@@ -73,6 +73,8 @@ const syncControlOverlay = readFileSync(path.join(root, "infra", "aws-clinical-c
   "20260821120000_production_patient_sync_control.sql"), "utf8");
 const syncInvitationRepair = readFileSync(path.join(root, "infra", "aws-clinical-core", "production-migrations",
   "20260821121000_production_patient_sync_invitation_pgcrypto.sql"), "utf8");
+const syncDeliveryOverlay = readFileSync(path.join(root, "infra", "aws-clinical-core", "production-migrations",
+  "20260825100000_production_patient_sync_delivery_controls.sql"), "utf8");
 assert(overlay.includes("_organization_id uuid") && overlay.includes("_first_name text")
   && overlay.includes("_last_name text") && overlay.includes("_date_of_birth date")
   && overlay.includes("_sex text") && overlay.includes("_mrn text")
@@ -186,6 +188,19 @@ const syncAudits = syncControlOverlay.match(/insert into clinical_audit\.events[
 assert(!/['"]reason['"]\s*,\s*_reason/i.test(syncAudits)
   && syncAudits.includes("'reason_present',true"),
 "sync audit must retain reason presence only, never reason text");
+for (const operation of [
+  "queue_sync_export", "withdraw_sync_resource", "retry_sync_event", "cancel_sync_event",
+  "resolve_sync_conflict", "review_sync_inbound", "record_sync_inbound_correction",
+]) assert(syncDeliveryOverlay.includes(`clinical_core.${operation}`), `missing production sync delivery operation ${operation}`);
+for (const invariant of [
+  "active_sync_provider_required", "consent_required", "consent_revoke_cancels_sync",
+  "sync_event_content_immutable", "sync_inbound_corrections_append_only",
+  "governed_product_review_required", "chartMaterialized',false", "deliveryEnabled',false",
+]) assert(syncDeliveryOverlay.includes(invariant), `missing sync delivery invariant ${invariant}`);
+const syncDeliveryAudits = syncDeliveryOverlay.match(/insert into clinical_audit\.events[\s\S]*?;/g)?.join("\n") ?? "";
+assert(!/['"](?:reason|note|payload)['"]\s*,\s*_(?:reason|note|payload)/i.test(syncDeliveryAudits)
+  && syncDeliveryAudits.includes("'reason_present',true"),
+"sync delivery audits must never contain payload/reason/note content");
 
 if (errors.length) {
   for (const error of errors) console.error(`ERROR: ${error}`);
@@ -193,4 +208,4 @@ if (errors.length) {
 }
 
 const releaseHash = createHash("sha256").update(combined).digest("hex");
-console.log(`Production clinical-core gate passed: 16 migrations, zero seeded rows (${releaseHash}).`);
+console.log(`Production clinical-core gate passed: 17 migrations, zero seeded rows (${releaseHash}).`);

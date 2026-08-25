@@ -208,11 +208,17 @@ select
   (select count(*)::int from clinical_core.patient_protocol_versions) as patient_protocol_version_count,
   (select count(*)::int from clinical_core.patient_protocol_phases) as patient_protocol_phase_count,
   (select count(*)::int from clinical_core.patient_protocol_items) as patient_protocol_item_count,
+  (select count(*)::int from clinical_core.sync_outbound_events) as sync_outbound_count,
+  (select count(*)::int from clinical_core.sync_inbound_events) as sync_inbound_count,
+  (select count(*)::int from clinical_core.sync_inbound_corrections) as sync_correction_count,
+  (select count(*)::int from clinical_core.sync_dead_letters) as sync_dead_letter_count,
+  (select count(*)::int from clinical_core.sync_conflicts) as sync_conflict_count,
+  (select count(*)::int from clinical_core.sync_resource_acks) as sync_resource_ack_count,
   (select count(*)::int from clinical_audit.events) as audit_count
 "@
 $counts = @($database.records[0] | ForEach-Object { [int64]$_.longValue })
-if (($counts -join ",") -ne "16,30,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0") {
-  throw "Production database is not the reviewed empty 16-migration/30-table state: $($counts -join ',')."
+if (($counts -join ",") -ne "17,36,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0") {
+  throw "Production database is not the reviewed empty 17-migration/36-table state: $($counts -join ',')."
 }
 
 $alarmName = "$functionName-errors"
@@ -250,7 +256,7 @@ $evidence = [ordered]@{
   functionPermissions = $actions
   migrationCount = $counts[0]
   tableCount = $counts[1]
-  clinicalRowCount = ($counts[2..20] | Measure-Object -Sum).Sum
+  clinicalRowCount = ($counts[2..26] | Measure-Object -Sum).Sum
   alarmState = $alarm.StateValue
   unsafeLogMatches = 0
 }

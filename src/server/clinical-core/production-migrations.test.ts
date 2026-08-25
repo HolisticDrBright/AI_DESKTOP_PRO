@@ -30,8 +30,8 @@ function databaseFor(options: {
       }
       if (sql.startsWith("select\n      (select count(*)")) {
         return { rows: [{
-          table_count: 30,
-          contract_count: 9,
+          table_count: 36,
+          contract_count: 16,
           clinical_row_count: 0,
           ...options.verification,
         }] as unknown as Row[] };
@@ -68,14 +68,37 @@ describe("production clinical-core migrations", () => {
     expect(sql).not.toMatch(/grant\s+(?:all|select|insert|update|delete)\s+on[\s\S]*?\s+to\s+public/i);
   });
 
+  it("keeps patient sync durable, consent-bound, review-gated, and delivery disabled", () => {
+    const sql = readFileSync(path.join(
+      process.cwd(), "infra", "aws-clinical-core", "production-migrations",
+      "20260825100000_production_patient_sync_delivery_controls.sql",
+    ), "utf8");
+    for (const table of [
+      "sync_outbound_events", "sync_inbound_events", "sync_inbound_corrections",
+      "sync_dead_letters", "sync_conflicts", "sync_resource_acks",
+    ]) expect(sql).toContain(`alter table clinical_core.${table}`);
+    for (const contract of [
+      "queue_sync_export", "withdraw_sync_resource", "retry_sync_event", "cancel_sync_event",
+      "resolve_sync_conflict", "review_sync_inbound", "record_sync_inbound_correction",
+    ]) expect(sql).toContain(`function clinical_core.${contract}`);
+    expect(sql).toContain("active_sync_provider_required");
+    expect(sql).toContain("consent_required");
+    expect(sql).toContain("consent_revoke_cancels_sync");
+    expect(sql).toContain("chartMaterialized',false");
+    expect(sql).toContain("deliveryEnabled',false");
+    expect(sql).toContain("sync_inbound_corrections_append_only");
+    expect(sql).toContain("governed_product_review_required");
+    expect(sql).not.toMatch(/grant\s+(?:all|select|insert|update|delete)\s+on[\s\S]*?\s+to\s+public/i);
+  });
+
   it("applies ordered statements and verifies the empty PHI-disabled readiness state", async () => {
     const harness = databaseFor();
     const result = await applyProductionClinicalCoreMigrations(harness.database, [migration]);
     expect(result).toEqual({
       applied: [migration.version],
       alreadyApplied: [],
-      tableCount: 30,
-      contractCount: 9,
+      tableCount: 36,
+      contractCount: 16,
       clinicalRowCount: 0,
     });
     expect(harness.statements.map(({ sql }) => sql)).toContain("create table clinical_core.example(id uuid)");
@@ -92,7 +115,7 @@ describe("production clinical-core migrations", () => {
   });
 
   it("refuses to commit when any clinical record exists", async () => {
-    const harness = databaseFor({ verification: { table_count: 30, contract_count: 9, clinical_row_count: 1 } });
+    const harness = databaseFor({ verification: { table_count: 36, contract_count: 16, clinical_row_count: 1 } });
     await expect(applyProductionClinicalCoreMigrations(harness.database, [migration]))
       .rejects.toMatchObject({ category: "verification_failed" });
   });

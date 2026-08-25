@@ -381,6 +381,32 @@ bounded 503 refusal, log-only IAM, zero unsafe log matches, `PHI_ALLOWED=false`,
 `0a58965d459470f961acd4c78b84b5c740c4a38da3e4bb5f95dfd85f119ec8ee`.
 All 222 operations remain disabled in the deployed route.
 
+## Durable patient-sync delivery controls (2026-08-25; PHI disabled)
+
+Migration 17 adds six empty, tenant-scoped tables for outbound events, inbound
+review events, append-only corrections, dead letters, conflicts, and resource
+acknowledgements. Seven Desktop operations are now AWS-native: queue export,
+queue withdrawal, retry, cancel, accept/reject inbound, record a bounded
+correction overlay, and resolve a conflict with optimistic concurrency. The
+inventory is **53 implemented but activation-blocked, zero enabled, and 169
+not ported** out of 222.
+
+Exports are limited to server-built approved protocol versions without product
+items, minimum-necessary appointment summaries, and aggregate laboratory
+summaries. An active reviewed provider, verified connection, and current scope
+consent are required. Consent revocation cancels pending events. Clinical
+payload, correction reason, and review note content never enters the audit
+stream. Inbound acceptance records review only and explicitly does not
+materialize chart data.
+
+The guarded operator applied the empty migration to production Aurora. Live
+state is 17 migrations, 36 application tables, 16 counted contracts, and zero
+clinical/audit/sync rows. The delivery worker and provider registration remain
+absent, every functional route remains disabled, and the service still reports
+`PHI_ALLOWED=false`, `ActivationState=blocked`, and `DataPlaneEnabled=false`.
+Closed-boundary evidence SHA-256:
+`b1caf7acab662562816890239b6d0988035e08a739e28cac25f91dc3b4bb7192`.
+
 CloudFormation drift detection reports only three GuardDuty service-returned
 result fields as additions: disabled `AI_ANALYST`, disabled `AI_PROTECTION`,
 and disabled `EKS_RUNTIME_MONITORING`. The latter cannot be declared alongside

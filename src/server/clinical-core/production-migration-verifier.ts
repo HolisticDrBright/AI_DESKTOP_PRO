@@ -66,7 +66,9 @@ async function verify() {
         (select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
           where n.nspname = 'clinical_core' and p.proname in ('create_patient_profile','review_biomarker',
             'get_patient_protocol','create_protocol_draft','save_protocol_draft','approve_protocol_version',
-            'activate_protocol_version','set_protocol_lifecycle','revise_protocol_version')) as contract_count,
+            'activate_protocol_version','set_protocol_lifecycle','revise_protocol_version',
+            'queue_sync_export','withdraw_sync_resource','retry_sync_event','cancel_sync_event',
+            'resolve_sync_conflict','review_sync_inbound','record_sync_inbound_correction')) as contract_count,
         (select count(*) from clinical_core.organizations) as organization_count,
         (select count(*) from clinical_core.persons) as person_count,
         (select count(*) from clinical_core.patient_records) as patient_count`,
@@ -74,7 +76,7 @@ async function verify() {
     }));
     const fields = catalog.records?.[0] ?? [];
     const counts = fields.map((field) => Number(field.longValue ?? field.stringValue ?? -1));
-    if (counts.length !== 5 || counts[0]! < 31 || counts[1] !== 9
+    if (counts.length !== 5 || counts[0] !== 37 || counts[1] !== 16
       || counts[2] !== 0 || counts[3] !== 0 || counts[4] !== 0) {
       throw new Error("catalog_verification_refused");
     }

@@ -4,7 +4,7 @@ const script = fs.readFileSync("scripts/run-aws-production-pitr-recovery-exercis
 const required = [
   "ConfirmPhiDisabledRecoveryExercise", "173535830222", 'PhiAllowed', 'production-clinical',
   'clinical_phi_target', 'BackupRetentionPeriod -ne 35', 'restore-db-cluster-to-point-in-time',
-  'full-copy', 'use-latest-restorable-time', '16,30,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0',
+  'full-copy', 'use-latest-restorable-time', '17,36,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0',
   'patient_protocols', 'patient_protocol_versions', 'patient_protocol_phases', 'patient_protocol_items',
   'temporaryResourcesDeleted', 'skip-final-snapshot', 'evidenceSha256',
 ];

@@ -59,6 +59,13 @@ const CORE_RPCS = new Set([
   "resume_sync_connection",
   "revoke_sync_connection",
   "set_sync_consent_scope",
+  "queue_sync_export",
+  "withdraw_sync_resource",
+  "retry_sync_event",
+  "cancel_sync_event",
+  "resolve_sync_conflict",
+  "review_sync_inbound",
+  "record_sync_inbound_correction",
   "get_patient_protocol",
   "create_protocol_draft",
   "save_protocol_draft",
@@ -465,6 +472,66 @@ async function executeCoreRpc(
     ));
     return decodeJson(row.data);
   }
+  if (name === "queue_sync_export") {
+    exactKeys(args, ["_connection_id", "_resource_type", "_resource_id"]);
+    const resourceType = requiredString(args._resource_type, 32);
+    if (!["protocol_version", "appointment_summary", "lab_summary"].includes(resourceType)) throw invalid();
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.queue_sync_export($1,$2,$3) as data",
+      [clinicalUuid(requiredUuid(args._connection_id)), resourceType, clinicalUuid(requiredUuid(args._resource_id))],
+    ));
+    return decodeJson(row.data);
+  }
+  if (name === "withdraw_sync_resource") {
+    exactKeys(args, ["_connection_id", "_resource_type", "_resource_id", "_reason"]);
+    const resourceType = requiredString(args._resource_type, 32);
+    if (!["protocol_version", "appointment_summary", "lab_summary"].includes(resourceType)) throw invalid();
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.withdraw_sync_resource($1,$2,$3,$4) as data",
+      [clinicalUuid(requiredUuid(args._connection_id)), resourceType,
+        clinicalUuid(requiredUuid(args._resource_id)), requiredString(args._reason, 500)],
+    ));
+    return decodeJson(row.data);
+  }
+  if (name === "retry_sync_event" || name === "cancel_sync_event") {
+    exactKeys(args, ["_event_id", "_reason"]);
+    const row = first(await tx.query<{ data: unknown }>(
+      `select clinical_core.${name}($1,$2) as data`,
+      [clinicalUuid(requiredUuid(args._event_id)), requiredString(args._reason, 500)],
+    ));
+    return decodeJson(row.data);
+  }
+  if (name === "resolve_sync_conflict") {
+    exactKeys(args, ["_conflict_id", "_resolution", "_note", "_expected_version"]);
+    const resolution = requiredString(args._resolution, 32);
+    if (!["resolved_keep_desktop", "resolved_keep_external", "resolved_manual", "dismissed"].includes(resolution)) throw invalid();
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.resolve_sync_conflict($1,$2,$3,$4) as data",
+      [clinicalUuid(requiredUuid(args._conflict_id)), resolution, requiredString(args._note, 1000),
+        boundedInteger(args._expected_version, 1, 1_000_000)],
+    ));
+    return decodeJson(row.data);
+  }
+  if (name === "review_sync_inbound") {
+    exactKeys(args, ["_event_id", "_action", "_note"]);
+    const action = requiredString(args._action, 16);
+    if (!["accept", "reject"].includes(action)) throw invalid();
+    const note = action === "reject" ? requiredString(args._note, 500) : optionalString(args._note, 500);
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.review_sync_inbound($1,$2,$3) as data",
+      [clinicalUuid(requiredUuid(args._event_id)), action, note],
+    ));
+    return decodeJson(row.data);
+  }
+  if (name === "record_sync_inbound_correction") {
+    exactKeys(args, ["_inbound_event_id", "_overlay", "_reason"]);
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.record_sync_inbound_correction($1,$2::jsonb,$3) as data",
+      [clinicalUuid(requiredUuid(args._inbound_event_id)), JSON.stringify(boundedCorrectionOverlay(args._overlay)),
+        requiredString(args._reason, 1000)],
+    ));
+    return decodeJson(row.data);
+  }
   if (name === "get_patient_protocol") {
     exactKeys(args, ["_organization_id", "_patient_id"]);
     if (args._organization_id !== context.organizationId) throw invalid();
@@ -759,6 +826,21 @@ function boundedScalarMetadata(value: unknown): Record<string, string | number |
   }
   if (JSON.stringify(value).length > 2048) throw invalid();
   return Object.fromEntries(entries) as Record<string, string | number | boolean>;
+}
+
+function boundedCorrectionOverlay(value: unknown): Record<string, string | number | boolean | null> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw invalid();
+  const forbidden = /authorization|cookie|password|token|secret|service.?role|affiliate|destination|discount|tracking/i;
+  const entries = Object.entries(value as Record<string, unknown>);
+  if (entries.length < 1 || entries.length > 64) throw invalid();
+  for (const [key, item] of entries) {
+    if (!/^[A-Za-z][A-Za-z0-9 _-]{0,63}$/.test(key) || forbidden.test(key)
+      || !(item === null || ["string", "number", "boolean"].includes(typeof item))
+      || (typeof item === "string" && item.length > 2000)
+      || (typeof item === "number" && !Number.isFinite(item))) throw invalid();
+  }
+  if (JSON.stringify(value).length > 16_384) throw invalid();
+  return Object.fromEntries(entries) as Record<string, string | number | boolean | null>;
 }
 
 function boundedNoteContent(value: unknown): Record<string, string> {

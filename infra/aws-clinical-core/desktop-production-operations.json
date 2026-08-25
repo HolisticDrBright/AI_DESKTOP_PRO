@@ -267,6 +267,48 @@
       "source": "infra/aws-clinical-core/production-migrations/20260824130000_production_patient_protocols.sql"
     },
     {
+      "kind": "rpc",
+      "name": "queue_sync_export",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260825100000_production_patient_sync_delivery_controls.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "withdraw_sync_resource",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260825100000_production_patient_sync_delivery_controls.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "retry_sync_event",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260825100000_production_patient_sync_delivery_controls.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "cancel_sync_event",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260825100000_production_patient_sync_delivery_controls.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "resolve_sync_conflict",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260825100000_production_patient_sync_delivery_controls.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "review_sync_inbound",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260825100000_production_patient_sync_delivery_controls.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "record_sync_inbound_correction",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260825100000_production_patient_sync_delivery_controls.sql"
+    },
+    {
       "kind": "select",
       "name": "lab_documents",
       "implementation": "native_production_adapter",

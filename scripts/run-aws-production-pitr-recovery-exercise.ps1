@@ -107,11 +107,17 @@ select
   (select count(*)::int from clinical_core.patient_protocol_versions),
   (select count(*)::int from clinical_core.patient_protocol_phases),
   (select count(*)::int from clinical_core.patient_protocol_items),
+  (select count(*)::int from clinical_core.sync_outbound_events),
+  (select count(*)::int from clinical_core.sync_inbound_events),
+  (select count(*)::int from clinical_core.sync_inbound_corrections),
+  (select count(*)::int from clinical_core.sync_dead_letters),
+  (select count(*)::int from clinical_core.sync_conflicts),
+  (select count(*)::int from clinical_core.sync_resource_acks),
   (select count(*)::int from clinical_audit.events)
 "@
   $sourceVector = @($sourceCounts.records[0] | ForEach-Object { [int64]$_.longValue })
-  if (($sourceVector -join ",") -ne "16,30,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0") {
-    throw "Source database is not the reviewed empty 16-migration/30-table state."
+  if (($sourceVector -join ",") -ne "17,36,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0") {
+    throw "Source database is not the reviewed empty 17-migration/36-table state."
   }
 
   $securityGroups = @($source.VpcSecurityGroups | ForEach-Object { $_.VpcSecurityGroupId })
@@ -177,6 +183,12 @@ select
   (select count(*)::int from clinical_core.patient_protocol_versions),
   (select count(*)::int from clinical_core.patient_protocol_phases),
   (select count(*)::int from clinical_core.patient_protocol_items),
+  (select count(*)::int from clinical_core.sync_outbound_events),
+  (select count(*)::int from clinical_core.sync_inbound_events),
+  (select count(*)::int from clinical_core.sync_inbound_corrections),
+  (select count(*)::int from clinical_core.sync_dead_letters),
+  (select count(*)::int from clinical_core.sync_conflicts),
+  (select count(*)::int from clinical_core.sync_resource_acks),
   (select count(*)::int from clinical_audit.events)
 "@
   $restoredVector = @($restoredCounts.records[0] | ForEach-Object { [int64]$_.longValue })
@@ -199,7 +211,7 @@ select
     restoredClusterPrivate = $true
     migrationCount = $restoredVector[0]
     tableCount = $restoredVector[1]
-    clinicalRowCount = ($restoredVector[2..16] | Measure-Object -Sum).Sum
+    clinicalRowCount = ($restoredVector[2..26] | Measure-Object -Sum).Sum
     restoreVerificationSeconds = [math]::Round(($verifiedAt - $exerciseStarted).TotalSeconds, 1)
     temporaryResourcesDeleted = $false
   }

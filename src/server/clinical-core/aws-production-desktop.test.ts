@@ -20,6 +20,8 @@ const NOTE = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const CONNECTION = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const PROTOCOL = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 const PROTOCOL_VERSION = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+const SYNC_EVENT = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+const SYNC_CONFLICT = "ffffffff-ffff-4fff-8fff-ffffffffffff";
 
 const context: ProductionRequestContext = {
   actorPersonId: PERSON,
@@ -732,6 +734,65 @@ describe("AWS production Desktop adapter", () => {
         })) },
       },
     })).rejects.toEqual(new ProductionDesktopError("request_invalid"));
+    expect(test.calls).toHaveLength(3);
+  });
+
+  it("routes the seven durable sync controls through exact production functions", async () => {
+    const queue = harness({ ok: true, eventId: SYNC_EVENT, state: "queued", deliveryEnabled: false });
+    await expect(queue.adapter.execute(context, { kind: "rpc", functionName: "queue_sync_export", args: {
+      _connection_id: CONNECTION, _resource_type: "lab_summary", _resource_id: PATIENT,
+    } })).resolves.toMatchObject({ state: "queued", deliveryEnabled: false });
+    expect(queue.calls[1]?.sql).toBe("select clinical_core.queue_sync_export($1,$2,$3) as data");
+
+    const withdraw = harness({ ok: true, eventId: SYNC_EVENT, acknowledged: false });
+    await withdraw.adapter.execute(context, { kind: "rpc", functionName: "withdraw_sync_resource", args: {
+      _connection_id: CONNECTION, _resource_type: "lab_summary", _resource_id: PATIENT,
+      _reason: "Patient requested withdrawal",
+    } });
+    expect(withdraw.calls[1]?.values).toEqual([
+      { kind: "uuid", value: CONNECTION }, "lab_summary", { kind: "uuid", value: PATIENT },
+      "Patient requested withdrawal",
+    ]);
+
+    for (const functionName of ["retry_sync_event", "cancel_sync_event"] as const) {
+      const test = harness({ ok: true, eventId: SYNC_EVENT });
+      await test.adapter.execute(context, { kind: "rpc", functionName, args: {
+        _event_id: SYNC_EVENT, _reason: "Operator reviewed the event",
+      } });
+      expect(test.calls[1]?.sql).toBe(`select clinical_core.${functionName}($1,$2) as data`);
+    }
+
+    const conflict = harness({ ok: true, conflictId: SYNC_CONFLICT, version: 2 });
+    await conflict.adapter.execute(context, { kind: "rpc", functionName: "resolve_sync_conflict", args: {
+      _conflict_id: SYNC_CONFLICT, _resolution: "resolved_keep_desktop",
+      _note: "Desktop record retained after clinical review", _expected_version: 1,
+    } });
+    expect(conflict.calls[1]?.values[3]).toBe(1);
+
+    const review = harness({ ok: true, eventId: SYNC_EVENT, state: "accepted", chartMaterialized: false });
+    await expect(review.adapter.execute(context, { kind: "rpc", functionName: "review_sync_inbound", args: {
+      _event_id: SYNC_EVENT, _action: "accept", _note: null,
+    } })).resolves.toMatchObject({ chartMaterialized: false });
+
+    const correction = harness({ ok: true, correctionId: QUEUE_ITEM, version: 1 });
+    await correction.adapter.execute(context, { kind: "rpc", functionName: "record_sync_inbound_correction", args: {
+      _inbound_event_id: SYNC_EVENT, _overlay: { markerName: "Corrected marker", value: 42 },
+      _reason: "Corrected transcription after source review",
+    } });
+    expect(JSON.parse(correction.calls[1]?.values[1] as string)).toEqual({ markerName: "Corrected marker", value: 42 });
+  });
+
+  it("refuses unsupported exports, incomplete reviews, and unsafe correction overlays before Aurora", async () => {
+    const test = harness();
+    await expect(test.adapter.execute(context, { kind: "rpc", functionName: "queue_sync_export", args: {
+      _connection_id: CONNECTION, _resource_type: "supplement_order", _resource_id: PATIENT,
+    } })).rejects.toEqual(new ProductionDesktopError("request_invalid"));
+    await expect(test.adapter.execute(context, { kind: "rpc", functionName: "review_sync_inbound", args: {
+      _event_id: SYNC_EVENT, _action: "reject", _note: null,
+    } })).rejects.toEqual(new ProductionDesktopError("request_invalid"));
+    await expect(test.adapter.execute(context, { kind: "rpc", functionName: "record_sync_inbound_correction", args: {
+      _inbound_event_id: SYNC_EVENT, _overlay: { access_token: "must-not-pass" }, _reason: "Unsafe",
+    } })).rejects.toEqual(new ProductionDesktopError("request_invalid"));
     expect(test.calls).toHaveLength(3);
   });
 
