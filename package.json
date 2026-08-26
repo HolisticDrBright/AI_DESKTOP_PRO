@@ -24,6 +24,7 @@
     "check:aws-clinical-core": "node scripts/check-aws-clinical-core.mjs",
     "check:aws-identity-consent": "node scripts/check-aws-identity-consent.mjs",
     "check:aws-authenticated-api": "node scripts/check-aws-authenticated-api.mjs",
+    "check:aws-desktop-hosting": "node scripts/check-aws-desktop-hosting.mjs",
     "check:aws-governed-catalog": "node scripts/check-aws-governed-catalog.mjs",
     "check:aws-governed-catalog-api": "node scripts/check-aws-governed-catalog-api.mjs",
     "build:aws-authenticated-api": "node scripts/build-aws-authenticated-api.mjs",
