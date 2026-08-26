@@ -32,6 +32,8 @@ const QUESTION = "18181818-1818-4818-8818-181818181818";
 const SAFETY_BLOCK = "19191919-1919-4919-8919-191919191919";
 const PATHWAY = "20202020-2020-4020-8020-202020202020";
 const PATHWAY_VERSION = "21212121-2121-4121-8121-212121212121";
+const IMPORT_BATCH = "22222222-3333-4333-8333-222222222222";
+const IMPORT_ITEM = "23232323-2323-4323-8323-232323232323";
 
 const context: ProductionRequestContext = {
   actorPersonId: PERSON,
@@ -155,6 +157,83 @@ describe("AWS production Desktop adapter", () => {
         _source_refs: [{ label: "Reviewed source" }], _change_summary: null },
     })).rejects.toEqual(new ProductionDesktopError("request_invalid"));
     expect(commercial.calls).toHaveLength(1);
+  });
+
+  it("stages and reviews bounded no-PHI knowledge without approving it", async () => {
+    const items = [{
+      entityType: "pathway", externalKey: "pathway_test", displayName: "Test pathway",
+      sourceSheet: "Reviewed source", warnings: ["Practitioner review required"],
+      payload: {
+        code: "pathway_test", name: "Test pathway", domainCode: "testing",
+        sourceRefs: [{ label: "Reviewed source" }],
+        content: {
+          differentiatingQuestions: [], labStrategy: [], productCandidates: [],
+          nutrition: [], lifestyle: [], safetyStops: ["Stop pending review"],
+        },
+      },
+    }];
+    const stage = harness({ batchId: IMPORT_BATCH, itemCount: 1, duplicate: false });
+    await expect(stage.adapter.execute(context, {
+      kind: "rpc", functionName: "stage_clinical_knowledge_import",
+      args: {
+        _organization_id: ORG, _source_name: "Reviewed authoring package", _source_revision: "v1",
+        _schema_version: "clinical-knowledge-import-v1", _items: items, _attests_no_phi: true,
+      },
+    })).resolves.toMatchObject({ batchId: IMPORT_BATCH, duplicate: false });
+    expect(stage.calls[1]?.sql).toBe(
+      "select clinical_core.stage_clinical_knowledge_import($1,$2,$3,$4,$5::jsonb,$6) as data",
+    );
+
+    const review = harness({
+      status: "applied", appliedRefType: "clinical_pathway_version", appliedRefId: PATHWAY_VERSION,
+    });
+    await expect(review.adapter.execute(context, {
+      kind: "rpc", functionName: "review_clinical_knowledge_import_item",
+      args: { _item_id: IMPORT_ITEM, _decision: "accept", _review_note: "Reviewed against source evidence" },
+    })).resolves.toMatchObject({ status: "applied", appliedRefType: "clinical_pathway_version" });
+    expect(review.calls[1]?.sql).toBe(
+      "select clinical_core.review_clinical_knowledge_import_item($1,$2,$3) as data",
+    );
+  });
+
+  it("reads bounded tenant knowledge-import batches and items through AWS functions", async () => {
+    const batches = harness([{ id: IMPORT_BATCH, organization_id: ORG, status: "in_review" }]);
+    await expect(batches.adapter.execute(context, {
+      kind: "select", table: "clinical_knowledge_import_batches",
+      query: `select=id&organization_id=eq.${ORG}&order=created_at.desc&limit=20`,
+    })).resolves.toEqual([expect.objectContaining({ id: IMPORT_BATCH })]);
+    expect(batches.calls[1]?.sql).toBe(
+      "select clinical_core.list_clinical_knowledge_import_batches($1,$2) as data",
+    );
+
+    const items = harness([{ id: IMPORT_ITEM, batch_id: IMPORT_BATCH, status: "needs_review" }]);
+    await expect(items.adapter.execute(context, {
+      kind: "select", table: "clinical_knowledge_import_items",
+      query: `select=id&organization_id=eq.${ORG}&batch_id=in.(${IMPORT_BATCH})&order=created_at.asc`,
+    })).resolves.toEqual([expect.objectContaining({ id: IMPORT_ITEM })]);
+    expect(items.calls[1]?.sql).toBe(
+      "select clinical_core.list_clinical_knowledge_import_items($1,string_to_array($2,',')::uuid[]) as data",
+    );
+  });
+
+  it("refuses missing attestation, commercial payloads, and weak review claims before Aurora", async () => {
+    const test = harness();
+    const base = {
+      _organization_id: ORG, _source_name: "Source", _source_revision: null,
+      _schema_version: "clinical-knowledge-import-v1", _attests_no_phi: true,
+      _items: [{ entityType: "product_label", externalKey: "product_test", displayName: "Test",
+        warnings: [], payload: { productCode: "product_test", affiliateUrl: "https://example.invalid" } }],
+    };
+    await expect(test.adapter.execute(context, { kind: "rpc", functionName: "stage_clinical_knowledge_import",
+      args: { ...base, _attests_no_phi: false },
+    })).rejects.toEqual(new ProductionDesktopError("request_invalid"));
+    await expect(test.adapter.execute(context, { kind: "rpc", functionName: "stage_clinical_knowledge_import",
+      args: base,
+    })).rejects.toEqual(new ProductionDesktopError("request_invalid"));
+    await expect(test.adapter.execute(context, { kind: "rpc", functionName: "review_clinical_knowledge_import_item",
+      args: { _item_id: IMPORT_ITEM, _decision: "accept", _review_note: "yes" },
+    })).rejects.toEqual(new ProductionDesktopError("request_invalid"));
+    expect(test.calls).toHaveLength(3);
   });
 
   it("records only the bounded registered audit payload in the caller tenant", async () => {

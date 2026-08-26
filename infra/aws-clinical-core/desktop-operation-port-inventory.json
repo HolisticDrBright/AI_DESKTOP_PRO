@@ -2,14 +2,14 @@
   "schemaVersion": "desktop-operation-port-inventory/1",
   "generatedFrom": {
     "operationManifestSha256": "8cd2bed9d9db0f17aab030e397cbb07cc4fe50647f4eaf5e4ba83816a4a4fbff",
-    "productionOperationManifestSha256": "91b131b2e5b67f023fb605694eed840e520cbd1d60162001f379fe47695beae2",
+    "productionOperationManifestSha256": "28475400bcdf87076773e9441bd2b2acde51a8fa55178123fe1f13d9ca3c865e",
     "legacyDefinitionSetSha256": "dce8bb87ed890c305c656ee61b8438da0cb518647ea2df65f4bdf26e55277e96"
   },
   "counts": {
     "rpc": 218,
     "select": 5,
     "total": 223,
-    "productionImplemented": 86,
+    "productionImplemented": 90,
     "productionEnabled": 0
   },
   "operations": [
@@ -8350,7 +8350,13 @@
         }
       ],
       "syntheticBoundary": "registry_disabled",
-      "productionStatus": "not_ported"
+      "productionStatus": "implemented_activation_blocked",
+      "productionEvidence": {
+        "implementation": "native_production_function",
+        "source": "infra/aws-clinical-core/production-migrations/20260826150000_production_clinical_knowledge_import_review.sql",
+        "sourceSha256": "4338c028aaf7ff8c5006a54b34e4d95f4e696959e6b42b86a13b336a0e562740",
+        "activationState": "phi_disabled"
+      }
     },
     {
       "kind": "rpc",
@@ -10170,7 +10176,13 @@
         }
       ],
       "syntheticBoundary": "registry_disabled",
-      "productionStatus": "not_ported"
+      "productionStatus": "implemented_activation_blocked",
+      "productionEvidence": {
+        "implementation": "native_production_function",
+        "source": "infra/aws-clinical-core/production-migrations/20260826150000_production_clinical_knowledge_import_review.sql",
+        "sourceSha256": "4338c028aaf7ff8c5006a54b34e4d95f4e696959e6b42b86a13b336a0e562740",
+        "activationState": "phi_disabled"
+      }
     },
     {
       "kind": "rpc",
@@ -11340,7 +11352,13 @@
         "line": 52
       },
       "syntheticBoundary": "registry_disabled",
-      "productionStatus": "not_ported"
+      "productionStatus": "implemented_activation_blocked",
+      "productionEvidence": {
+        "implementation": "native_production_adapter",
+        "source": "src/server/clinical-core/aws-production-desktop.ts",
+        "sourceSha256": "5587b130656b5baceeca2ce02279ff231528fc202ace243aacca8e37832f7974",
+        "activationState": "phi_disabled"
+      }
     },
     {
       "kind": "select",
@@ -11362,7 +11380,13 @@
         "line": 72
       },
       "syntheticBoundary": "registry_disabled",
-      "productionStatus": "not_ported"
+      "productionStatus": "implemented_activation_blocked",
+      "productionEvidence": {
+        "implementation": "native_production_adapter",
+        "source": "src/server/clinical-core/aws-production-desktop.ts",
+        "sourceSha256": "5587b130656b5baceeca2ce02279ff231528fc202ace243aacca8e37832f7974",
+        "activationState": "phi_disabled"
+      }
     },
     {
       "kind": "select",
@@ -11388,7 +11412,7 @@
       "productionEvidence": {
         "implementation": "native_production_adapter",
         "source": "src/server/clinical-core/aws-production-desktop.ts",
-        "sourceSha256": "386bab455d2067d859a873d120d5d7d3534974fa8bc3e02eea401dffa966cee5",
+        "sourceSha256": "5587b130656b5baceeca2ce02279ff231528fc202ace243aacca8e37832f7974",
         "activationState": "phi_disabled"
       }
     },
@@ -11416,7 +11440,7 @@
       "productionEvidence": {
         "implementation": "native_production_adapter",
         "source": "src/server/clinical-core/aws-production-desktop.ts",
-        "sourceSha256": "386bab455d2067d859a873d120d5d7d3534974fa8bc3e02eea401dffa966cee5",
+        "sourceSha256": "5587b130656b5baceeca2ce02279ff231528fc202ace243aacca8e37832f7974",
         "activationState": "phi_disabled"
       }
     },
@@ -11457,7 +11481,7 @@
       "productionEvidence": {
         "implementation": "native_production_adapter",
         "source": "src/server/clinical-core/aws-production-desktop.ts",
-        "sourceSha256": "386bab455d2067d859a873d120d5d7d3534974fa8bc3e02eea401dffa966cee5",
+        "sourceSha256": "5587b130656b5baceeca2ce02279ff231528fc202ace243aacca8e37832f7974",
         "activationState": "phi_disabled"
       }
     }

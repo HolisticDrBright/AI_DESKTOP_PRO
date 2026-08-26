@@ -76,6 +76,14 @@
     {
       "version": "20260826140000",
       "file": "20260826140000_production_clinical_pathway_registry.sql"
+    },
+    {
+      "version": "20260826150000",
+      "file": "20260826150000_production_clinical_knowledge_import_review.sql"
+    },
+    {
+      "version": "20260826151000",
+      "file": "20260826151000_production_knowledge_import_url_validation_repair.sql"
     }
   ]
 }

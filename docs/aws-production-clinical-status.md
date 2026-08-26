@@ -603,3 +603,38 @@ complete 210-page clinical build, and every AWS/data-plane gate. Hosted
 synthetic health is HTTP 200; the rendered login retains the synthetic-only/not
 for real care banner with zero browser-console errors. `PHI_ALLOWED=false` and
 every production route remain unchanged.
+
+## Governed clinical knowledge staging and review (2026-08-26; PHI disabled)
+
+Production migrations `20260826150000` and `20260826151000` add two empty,
+tenant-scoped import tables plus an isolated product-label candidate table. The
+second immutable migration repairs PostgreSQL URL validation without rewriting
+the already-applied first migration. Aurora now reports **28 migrations, 60
+clinical/audit tables, 54 counted contracts, and zero retained rows**. Four
+more Desktop operations are AWS-native, bringing the inventory to **90/223
+implemented, zero enabled, and 133 not ported**.
+
+Staging requires an explicit no-PHI attestation, a bounded reviewed schema, and
+1–250 reference-only items. Exact source replays return the existing batch
+instead of creating duplicates. Affiliate destinations, tracking codes,
+discount codes, and other commercial fields are refused before storage. Source
+and item snapshots are immutable; every accept/reject decision requires an
+attributable practitioner and a substantive note.
+
+An accepted pathway creates only an organization-scoped draft with source
+references; separate owner/admin approval remains mandatory. An accepted
+product label creates only an isolated `needs_review` candidate. It is not an
+approved catalog product, has no commercial destination, and cannot power a
+patient protocol. Claude's frozen catalog package and the eight unresolved
+practitioner decisions remain unimported and unchanged.
+
+The complete rollback-only AWS exercise proved source replay deduplication,
+human review, first-pathway creation as draft, product-candidate isolation,
+commercial-field refusal, and every prior App-to-Desktop safeguard. Every
+temporary row rolled back. Evidence SHA-256:
+`d110f835c70283e1ea808c15a81ab1d370ac2bfc085aba7a56b0f004b85f39d6`.
+A final schema-only verification found all 28 migrations applied, 60 tables, 54
+contracts, and **0 clinical/reference rows**. Local verification passed **956
+tests with 10 intentional skips**, TypeScript, lint with zero errors, the full
+210-page clinical build, and every AWS/data-plane gate. `PHI_ALLOWED=false`;
+the production API and all real-data routes remain disabled.

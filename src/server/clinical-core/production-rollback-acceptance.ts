@@ -94,6 +94,10 @@ type AcceptanceEvidence = {
   pathwayRegistryBounded: boolean;
   pathwayApprovalHumanGated: boolean;
   pathwayHistoryImmutable: boolean;
+  knowledgeImportDuplicateProtected: boolean;
+  knowledgeImportHumanReviewed: boolean;
+  knowledgeImportNonApproving: boolean;
+  knowledgeImportCommercialSeparated: boolean;
 };
 
 function required(name: string): string {
@@ -412,6 +416,90 @@ async function acceptance(tx: ClinicalCoreTransaction): Promise<AcceptanceEviden
     end;
   end $probe$`);
   const pathwayHistoryImmutable = true;
+
+  acceptanceStage = "stage_clinical_knowledge_import";
+  const knowledgeImportItems = [{
+    entityType: "pathway", externalKey: "rollback_import_pathway", displayName: "Imported rollback pathway",
+    sourceSheet: "Rollback review", warnings: ["Separate approval required"],
+    payload: {
+      code: "rollback_import_pathway", name: "Imported rollback pathway", domainCode: "general",
+      description: "Transaction-scoped import candidate",
+      sourceRefs: [{ label: "Rollback-only reviewed import source" }], content: pathwayContent,
+    },
+  }, {
+    entityType: "product_label", externalKey: "rollback_product_candidate",
+    displayName: "Rollback product candidate", sourceSheet: "Rollback review",
+    warnings: ["Separate governed catalog promotion required"],
+    payload: {
+      productCode: "rollback_product_candidate", productName: "Rollback product candidate",
+      brand: "Rollback brand", sourceUrl: "https://example.test/manufacturer-label",
+      exactLabel: { ingredients: "Rollback ingredient 10 mg", servingSize: "One capsule" },
+    },
+  }];
+  const stagedKnowledgeImport = json(row(await tx.query<{ data: unknown }>(
+    "select clinical_core.stage_clinical_knowledge_import($1,$2,$3,$4,$5::jsonb,true) as data", [
+      clinicalUuid(ORG), "Rollback-only practitioner authoring package", "v1",
+      "clinical-knowledge-import-v1", JSON.stringify(knowledgeImportItems),
+    ],
+  )).data);
+  const knowledgeImportBatchId = String(stagedKnowledgeImport.batchId ?? "");
+  acceptanceStage = "replay_clinical_knowledge_import";
+  const replayedKnowledgeImport = json(row(await tx.query<{ data: unknown }>(
+    "select clinical_core.stage_clinical_knowledge_import($1,$2,$3,$4,$5::jsonb,true) as data", [
+      clinicalUuid(ORG), "Rollback-only practitioner authoring package", "v1",
+      "clinical-knowledge-import-v1", JSON.stringify(knowledgeImportItems),
+    ],
+  )).data);
+  acceptanceStage = "list_clinical_knowledge_import_items";
+  const stagedKnowledgeItems = jsonArray(row(await tx.query<{ data: unknown }>(
+    "select clinical_core.list_clinical_knowledge_import_items($1,string_to_array($2,',')::uuid[]) as data", [
+      clinicalUuid(ORG), knowledgeImportBatchId,
+    ],
+  )).data);
+  const stagedPathwayItem = stagedKnowledgeItems.find((item) => item.entity_type === "pathway");
+  const stagedProductItem = stagedKnowledgeItems.find((item) => item.entity_type === "product_label");
+  if (!stagedPathwayItem?.id || !stagedProductItem?.id) throw new Error("knowledge_import_items_missing");
+  acceptanceStage = "review_clinical_knowledge_pathway_item";
+  const reviewedKnowledgePathway = json(row(await tx.query<{ data: unknown }>(
+    "select clinical_core.review_clinical_knowledge_import_item($1,'accept',$2) as data", [
+      clinicalUuid(String(stagedPathwayItem.id)), "Reviewed against rollback-only pathway source",
+    ],
+  )).data);
+  acceptanceStage = "review_clinical_knowledge_product_item";
+  const reviewedKnowledgeProduct = json(row(await tx.query<{ data: unknown }>(
+    "select clinical_core.review_clinical_knowledge_import_item($1,'accept',$2) as data", [
+      clinicalUuid(String(stagedProductItem.id)), "Reviewed as candidate; catalog promotion remains separate",
+    ],
+  )).data);
+  acceptanceStage = "verify_clinical_knowledge_import_review";
+  const knowledgeImportBatch = row(await tx.query<{ status: string; completed_at: string | null }>(
+    "select status,completed_at from clinical_core.clinical_knowledge_import_batches where id=$1", [
+      clinicalUuid(knowledgeImportBatchId),
+    ],
+  ));
+  const importedPathway = row(await tx.query<{ status: string; approved_at: string | null }>(
+    `select version.status,version.approved_at from clinical_core.clinical_pathway_versions version
+      join clinical_core.clinical_pathways pathway on pathway.id=version.pathway_id
+      where pathway.organization_id=$1 and pathway.code='rollback_import_pathway'`, [clinicalUuid(ORG)],
+  ));
+  const productCandidate = row(await tx.query<{ review_status: string }>(
+    `select review_status from clinical_reference.product_label_candidates
+      where organization_id=$1 and product_code='rollback_product_candidate'`, [clinicalUuid(ORG)],
+  ));
+  acceptanceStage = "probe_clinical_knowledge_commercial_refusal";
+  await tx.query(`do $probe$
+  begin
+    begin
+      perform clinical_core.stage_clinical_knowledge_import(
+        '${ORG}'::uuid,'Commercial payload refusal','v1','clinical-knowledge-import-v1',
+        '[{"entityType":"product_label","externalKey":"commercial_refusal","displayName":"Refused",
+          "warnings":[],"payload":{"productCode":"commercial_refusal","affiliateUrl":"https://example.test"}}]'::jsonb,
+        true);
+      raise exception using errcode='P0001',message='commercial_separation_guard_missing';
+    exception when sqlstate '22023' then null;
+    end;
+  end $probe$`);
+  const knowledgeImportCommercialSeparated = true;
 
   acceptanceStage = "seed_reasoning_lens_review";
   acceptanceStage = "seed_lens_paradigm";
@@ -915,6 +1003,17 @@ async function acceptance(tx: ClinicalCoreTransaction): Promise<AcceptanceEviden
       && pathwayStates.rows[1]?.status === "approved"
       && pathwayStates.rows[1]?.approved_by_person_id === WORKFORCE,
     pathwayHistoryImmutable,
+    knowledgeImportDuplicateProtected: replayedKnowledgeImport.batchId === knowledgeImportBatchId
+      && replayedKnowledgeImport.duplicate === true && stagedKnowledgeItems.length === 2,
+    knowledgeImportHumanReviewed: knowledgeImportBatch.status === "completed"
+      && knowledgeImportBatch.completed_at !== null
+      && reviewedKnowledgePathway.status === "applied"
+      && reviewedKnowledgeProduct.status === "applied",
+    knowledgeImportNonApproving: importedPathway.status === "draft"
+      && importedPathway.approved_at === null
+      && productCandidate.review_status === "needs_review"
+      && reviewedKnowledgeProduct.appliedRefType === "product_label_candidate",
+    knowledgeImportCommercialSeparated,
   };
 }
 

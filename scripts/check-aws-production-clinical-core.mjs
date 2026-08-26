@@ -16,7 +16,7 @@ const errors = [];
 const assert = (condition, message) => { if (!condition) errors.push(message); };
 
 assert(manifest.contract_version === "clinical-core-migrations/1", "generated manifest contract is invalid");
-assert(manifest.migrations.length === 26, "expected seven transformed migrations and nineteen production overlays");
+assert(manifest.migrations.length === 28, "expected seven transformed migrations and twenty-one production overlays");
 assert(new Set(manifest.migrations.map((entry) => entry.version)).size === manifest.migrations.length,
   "migration versions must be unique");
 
@@ -91,6 +91,10 @@ const reasoningLensOverlay = readFileSync(path.join(root, "infra", "aws-clinical
   "20260826130000_production_reasoning_lens_review.sql"), "utf8");
 const clinicalPathwayOverlay = readFileSync(path.join(root, "infra", "aws-clinical-core", "production-migrations",
   "20260826140000_production_clinical_pathway_registry.sql"), "utf8");
+const clinicalKnowledgeImportOverlay = readFileSync(path.join(root, "infra", "aws-clinical-core", "production-migrations",
+  "20260826150000_production_clinical_knowledge_import_review.sql"), "utf8");
+const clinicalKnowledgeImportRepair = readFileSync(path.join(root, "infra", "aws-clinical-core", "production-migrations",
+  "20260826151000_production_knowledge_import_url_validation_repair.sql"), "utf8");
 assert(overlay.includes("_organization_id uuid") && overlay.includes("_first_name text")
   && overlay.includes("_last_name text") && overlay.includes("_date_of_birth date")
   && overlay.includes("_sex text") && overlay.includes("_mrn text")
@@ -295,6 +299,28 @@ for (const invariant of [
 assert(clinicalPathwayOverlay.includes("affiliateUrl|destinationUrl|discountCode|trackingCode")
   && !/insert\s+into\s+clinical_core\.clinical_pathways/i.test(clinicalPathwayOverlay),
 "clinical pathways must be commercially separated and unseeded");
+for (const operation of [
+  "stage_clinical_knowledge_import", "review_clinical_knowledge_import_item",
+  "list_clinical_knowledge_import_batches", "list_clinical_knowledge_import_items",
+]) assert(clinicalKnowledgeImportOverlay.includes(`clinical_core.${operation}`),
+  `missing clinical knowledge import operation ${operation}`);
+for (const invariant of [
+  "knowledge_import_no_phi_attestation_required", "knowledge_import_commercial_data_refused",
+  "knowledge_import_source_correction_required", "product_label_candidate",
+  "knowledge_import_batch_append_only", "knowledge_import_item_source_immutable",
+]) assert(clinicalKnowledgeImportOverlay.includes(invariant),
+  `missing clinical knowledge import invariant ${invariant}`);
+assert(!/insert\s+into\s+(?:clinical_core\.clinical_knowledge_import|clinical_reference\.product_label_candidates)/i
+  .test(clinicalKnowledgeImportOverlay.replace(/\$([A-Za-z_][A-Za-z0-9_]*)?\$[\s\S]*?\$\1\$/g, "")),
+"clinical knowledge import migration must not seed imports or product candidates");
+assert(!/\b(approved|verified)\b\s*[,)]/i.test(
+  clinicalKnowledgeImportOverlay.match(/create table clinical_reference\.product_label_candidates[\s\S]*?;/i)?.[0] ?? ""),
+"product label candidates must not support approval or verification in the staging queue");
+assert(clinicalKnowledgeImportRepair.includes("drop constraint product_label_candidates_source_url_check")
+  && clinicalKnowledgeImportRepair.includes("char_length(source_url)<=2000")
+  && clinicalKnowledgeImportRepair.includes("char_length(coalesce(_payload->>'sourceUrl','')) not between 9 and 2000")
+  && !clinicalKnowledgeImportRepair.includes("{1,1990}"),
+"knowledge import URL repair must use scalar length bounds supported by PostgreSQL");
 assert(governedCatalogOverlay.includes("contains_phi boolean not null default false check (contains_phi = false)")
   && governedCatalogOverlay.includes("data_classification text not null default 'reference_only'")
   && !/insert\s+into\s+(?:clinical_reference|commercial_reference)\./i.test(
@@ -307,4 +333,4 @@ if (errors.length) {
 }
 
 const releaseHash = createHash("sha256").update(combined).digest("hex");
-console.log(`Production clinical-core gate passed: 26 migrations, zero seeded rows (${releaseHash}).`);
+console.log(`Production clinical-core gate passed: 28 migrations, zero seeded rows (${releaseHash}).`);

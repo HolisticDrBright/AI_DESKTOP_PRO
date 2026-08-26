@@ -517,6 +517,30 @@
       "name": "approve_clinical_pathway_version",
       "implementation": "native_production_function",
       "source": "infra/aws-clinical-core/production-migrations/20260826140000_production_clinical_pathway_registry.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "stage_clinical_knowledge_import",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826150000_production_clinical_knowledge_import_review.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "review_clinical_knowledge_import_item",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826150000_production_clinical_knowledge_import_review.sql"
+    },
+    {
+      "kind": "select",
+      "name": "clinical_knowledge_import_batches",
+      "implementation": "native_production_adapter",
+      "source": "src/server/clinical-core/aws-production-desktop.ts"
+    },
+    {
+      "kind": "select",
+      "name": "clinical_knowledge_import_items",
+      "implementation": "native_production_adapter",
+      "source": "src/server/clinical-core/aws-production-desktop.ts"
     }
   ]
 }

@@ -30,8 +30,8 @@ function databaseFor(options: {
       }
       if (sql.startsWith("select\n      (select count(*)")) {
         return { rows: [{
-          table_count: 58,
-          contract_count: 50,
+          table_count: 60,
+          contract_count: 54,
           clinical_row_count: 0,
           ...options.verification,
         }] as unknown as Row[] };
@@ -123,6 +123,33 @@ describe("production clinical-core migrations", () => {
     expect(sql).not.toMatch(/grant\s+(?:all|select|insert|update|delete)\s+on[\s\S]*?\s+to\s+public/i);
   });
 
+  it("keeps clinical knowledge imports no-PHI, human-reviewed, unseeded, and non-approving", () => {
+    const sql = readFileSync(path.join(
+      process.cwd(), "infra", "aws-clinical-core", "production-migrations",
+      "20260826150000_production_clinical_knowledge_import_review.sql",
+    ), "utf8");
+    for (const table of ["clinical_knowledge_import_batches", "clinical_knowledge_import_items"]) {
+      expect(sql).toContain(`alter table clinical_core.${table} enable row level security`);
+    }
+    for (const contract of [
+      "stage_clinical_knowledge_import", "review_clinical_knowledge_import_item",
+      "list_clinical_knowledge_import_batches", "list_clinical_knowledge_import_items",
+    ]) expect(sql).toContain(`function clinical_core.${contract}`);
+    expect(sql).toContain("knowledge_import_no_phi_attestation_required");
+    expect(sql).toContain("knowledge_import_commercial_data_refused");
+    expect(sql).toContain("knowledge_import_source_correction_required");
+    expect(sql).toContain("product_label_candidate");
+    expect(sql).not.toMatch(/insert\s+into\s+clinical_core\.clinical_knowledge_import_(?:batches|items)\s*\([^)]*\)\s*values\s*\([^_$]/i);
+    expect(sql).not.toMatch(/grant\s+(?:all|select|insert|update|delete)\s+on[\s\S]*?\s+to\s+public/i);
+    const repair = readFileSync(path.join(
+      process.cwd(), "infra", "aws-clinical-core", "production-migrations",
+      "20260826151000_production_knowledge_import_url_validation_repair.sql",
+    ), "utf8");
+    expect(repair).toContain("drop constraint product_label_candidates_source_url_check");
+    expect(repair).toContain("char_length(source_url)<=2000");
+    expect(repair).not.toContain("{1,1990}");
+  });
+
   it("keeps patient sync durable, consent-bound, review-gated, and delivery disabled", () => {
     const sql = readFileSync(path.join(
       process.cwd(), "infra", "aws-clinical-core", "production-migrations",
@@ -184,8 +211,8 @@ describe("production clinical-core migrations", () => {
     expect(result).toEqual({
       applied: [migration.version],
       alreadyApplied: [],
-      tableCount: 58,
-      contractCount: 50,
+      tableCount: 60,
+      contractCount: 54,
       clinicalRowCount: 0,
     });
     expect(harness.statements.map(({ sql }) => sql)).toContain("create table clinical_core.example(id uuid)");
@@ -202,7 +229,7 @@ describe("production clinical-core migrations", () => {
   });
 
   it("refuses to commit when any clinical record exists", async () => {
-    const harness = databaseFor({ verification: { table_count: 58, contract_count: 50, clinical_row_count: 1 } });
+    const harness = databaseFor({ verification: { table_count: 60, contract_count: 54, clinical_row_count: 1 } });
     await expect(applyProductionClinicalCoreMigrations(harness.database, [migration]))
       .rejects.toMatchObject({ category: "verification_failed" });
   });

@@ -105,8 +105,16 @@ const CORE_RPCS = new Set([
   "create_clinical_pathway_draft",
   "update_clinical_pathway_draft",
   "approve_clinical_pathway_version",
+  "stage_clinical_knowledge_import",
+  "review_clinical_knowledge_import_item",
 ]);
-const CORE_SELECTS = new Set(["patient_profiles", "lab_documents", "clinical_pathways"]);
+const CORE_SELECTS = new Set([
+  "patient_profiles",
+  "lab_documents",
+  "clinical_pathways",
+  "clinical_knowledge_import_batches",
+  "clinical_knowledge_import_items",
+]);
 
 export function createAwsProductionDesktopAdapter(
   database: ClinicalCoreDatabase,
@@ -895,6 +903,35 @@ async function executeCoreRpc(
     ]);
     return null;
   }
+  if (name === "stage_clinical_knowledge_import") {
+    exactKeys(args, [
+      "_organization_id", "_source_name", "_source_revision", "_schema_version",
+      "_items", "_attests_no_phi",
+    ]);
+    if (args._organization_id !== context.organizationId
+      || args._schema_version !== "clinical-knowledge-import-v1"
+      || args._attests_no_phi !== true) throw invalid();
+    const items = boundedKnowledgeImportItems(args._items);
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.stage_clinical_knowledge_import($1,$2,$3,$4,$5::jsonb,$6) as data",
+      [clinicalUuid(context.organizationId), requiredString(args._source_name, 240),
+        optionalString(args._source_revision, 120), args._schema_version,
+        JSON.stringify(items), true],
+    ));
+    return decodeJson(row.data);
+  }
+  if (name === "review_clinical_knowledge_import_item") {
+    exactKeys(args, ["_item_id", "_decision", "_review_note"]);
+    const decision = requiredString(args._decision, 16);
+    if (!["accept", "reject"].includes(decision)) throw invalid();
+    const note = requiredString(args._review_note, 2000);
+    if (note.trim().length < 10) throw invalid();
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.review_clinical_knowledge_import_item($1,$2,$3) as data",
+      [clinicalUuid(requiredUuid(args._item_id)), decision, note],
+    ));
+    return decodeJson(row.data);
+  }
   throw new ProductionDesktopError("operation_refused");
 }
 
@@ -933,6 +970,23 @@ async function executeCoreSelect(
     const row = first(await tx.query<{ data: unknown }>(
       "select clinical_core.list_clinical_pathways($1) as data",
       [clinicalUuid(context.organizationId)],
+    ));
+    return decodeJson(row.data);
+  }
+  if (table === "clinical_knowledge_import_batches") {
+    if (params.get("limit") !== "20" || params.get("order") !== "created_at.desc") throw invalid();
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.list_clinical_knowledge_import_batches($1,$2) as data",
+      [clinicalUuid(context.organizationId), 20],
+    ));
+    return decodeJson(row.data);
+  }
+  if (table === "clinical_knowledge_import_items") {
+    if (params.get("order") !== "created_at.asc") throw invalid();
+    const batchIds = equalityUuidList(params.get("batch_id"), 20);
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.list_clinical_knowledge_import_items($1,string_to_array($2,',')::uuid[]) as data",
+      [clinicalUuid(context.organizationId), batchIds.join(",")],
     ));
     return decodeJson(row.data);
   }
@@ -999,6 +1053,13 @@ function equalityUuid(value: string | null, required = false): string | undefine
   return candidate;
 }
 
+function equalityUuidList(value: string | null, max: number): string[] {
+  if (!value?.startsWith("in.(") || !value.endsWith(")")) throw invalid();
+  const values = value.slice(4, -1).split(",");
+  if (values.length < 1 || values.length > max || values.some((item) => !UUID.test(item))) throw invalid();
+  return values;
+}
+
 function optionalUuid(value: unknown): string | null {
   if (value === null || value === undefined || value === "") return null;
   if (typeof value !== "string" || !UUID.test(value)) throw invalid();
@@ -1015,6 +1076,30 @@ function requiredCatalogId(value: unknown, prefix: "prd" | "tpl"): string {
   const candidate = requiredString(value, 100);
   if (!new RegExp(`^${prefix}_[a-z0-9][a-z0-9_-]{2,95}$`).test(candidate)) throw invalid();
   return candidate;
+}
+
+function boundedKnowledgeImportItems(value: unknown): Array<Record<string, unknown>> {
+  if (!Array.isArray(value) || value.length < 1 || value.length > 250) throw invalid();
+  const serialized = JSON.stringify(value);
+  if (serialized.length > 4_194_304
+    || /"(?:affiliateUrl|affiliateUrls|destinationUrl|discountCode|trackingCode)"\s*:/i.test(serialized)) {
+    throw invalid();
+  }
+  return value.map((candidate) => {
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) throw invalid();
+    const item = candidate as Record<string, unknown>;
+    const allowed = new Set(["entityType", "externalKey", "displayName", "sourceSheet", "warnings", "payload"]);
+    if (Object.keys(item).some((key) => !allowed.has(key))) throw invalid();
+    if (!["pathway", "product_label"].includes(requiredString(item.entityType, 32))) throw invalid();
+    requiredString(item.externalKey, 200);
+    requiredString(item.displayName, 300);
+    optionalString(item.sourceSheet, 200);
+    if (!Array.isArray(item.warnings) || item.warnings.length > 50
+      || item.warnings.some((warning) => typeof warning !== "string" || warning.length > 1000)
+      || !item.payload || typeof item.payload !== "object" || Array.isArray(item.payload)
+      || JSON.stringify(item.payload).length > 524_288) throw invalid();
+    return item;
+  });
 }
 
 function boundedInteger(value: unknown, min: number, max: number): number {
