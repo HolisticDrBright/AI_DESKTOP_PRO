@@ -507,3 +507,35 @@ An independent query confirmed zero rows across all ten new tables. Local
 verification passed 945 unit tests with 10 intentional skips and the complete
 210-page clinical build. `PHI_ALLOWED=false`, the private production API, and
 all human activation gates remain blocked.
+
+## Governed protocol templates and product approval (2026-08-25; PHI disabled)
+
+Production migrations `20260826110000` and `20260826120000` add two empty
+organization-template tables, seven AWS-native Desktop operations, and a
+compatibility repair that preserves the complete sync-worker audit vocabulary.
+Aurora now records 24 migrations, 44 clinical/audit tables, 32 counted
+contracts, and zero retained clinical or reference rows. The Desktop inventory
+is **68/223 implemented, zero enabled, and 155 not ported**.
+
+The new operations are `list_protocol_templates`, `create_protocol_template`,
+`approve_protocol_template_version`, `archive_protocol_template`,
+`search_protocol_catalog`, `check_protocol_interactions`, and
+`review_protocol_item_interactions`. Reusable templates omit patient free text,
+identifiers, phases, and patient-specific review claims. Copying an approved
+template back to a patient creates a new draft and resets interaction review.
+
+Product verification is derived by AWS from the exact active governed label;
+browser-supplied verification claims remain ignored. A product-bearing patient
+protocol can be approved only when the product/version is approved, its exact
+label has an attributable verification, and a practitioner has explicitly
+reviewed the item. The automated interaction result remains honestly **not
+completed** because coded medications and the governed interaction reference
+set are not active; no "no interactions" claim is produced.
+
+The complete rollback-only App-to-Desktop exercise passed every existing sync,
+consent, provenance, duplicate, tenant-isolation, catalog, and template check,
+plus the new protocol lifecycle. All temporary rows rolled back. Evidence
+SHA-256:
+`cb23932cfef49a82e9c5913c7bab8cd8272345ad5f83a2f06692cc7a01f368cd`.
+An independent production query confirmed zero retained rows. The production
+API and all operations remain disabled with `PHI_ALLOWED=false`.

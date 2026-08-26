@@ -93,7 +93,10 @@ export async function applyProductionClinicalCoreMigrations(
             'resolve_sync_conflict','review_sync_inbound','record_sync_inbound_correction',
             'register_sync_provider','review_sync_provider','claim_sync_outbound','recheck_sync_export',
             'record_sync_delivery','record_sync_inbound','record_sync_lab_result',
-            'record_sync_worker_cycle','register_sync_callback_nonce'))::int as contract_count,
+            'record_sync_worker_cycle','register_sync_callback_nonce',
+            'list_protocol_templates','create_protocol_template','approve_protocol_template_version',
+            'archive_protocol_template','search_protocol_catalog','check_protocol_interactions',
+            'review_protocol_item_interactions'))::int as contract_count,
       (
         (select count(*) from clinical_core.organizations)
         + (select count(*) from clinical_core.persons)
@@ -121,6 +124,8 @@ export async function applyProductionClinicalCoreMigrations(
         + (select count(*) from clinical_core.patient_protocol_versions)
         + (select count(*) from clinical_core.patient_protocol_phases)
         + (select count(*) from clinical_core.patient_protocol_items)
+        + (select count(*) from clinical_core.protocol_templates)
+        + (select count(*) from clinical_core.protocol_template_versions)
         + (select count(*) from clinical_core.sync_outbound_events)
         + (select count(*) from clinical_core.sync_inbound_events)
         + (select count(*) from clinical_core.sync_inbound_corrections)
@@ -135,7 +140,7 @@ export async function applyProductionClinicalCoreMigrations(
         + (select count(*) from clinical_core.sync_inbound_lab_imports)
       )::int as clinical_row_count`);
     const row = verification.rows[0];
-    if (!row || Number(row.table_count) !== 42 || Number(row.contract_count) !== 25
+    if (!row || Number(row.table_count) !== 44 || Number(row.contract_count) !== 32
       || Number(row.clinical_row_count) !== 0) {
       throw new ProductionClinicalCoreMigrationError("verification_failed");
     }

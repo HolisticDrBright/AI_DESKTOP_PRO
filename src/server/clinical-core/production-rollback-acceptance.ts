@@ -66,6 +66,12 @@ type AcceptanceEvidence = {
   templateComparisonBounded: boolean;
   safetyReviewAppendOnly: boolean;
   templateSuperseded: boolean;
+  protocolCatalogSearchGoverned: boolean;
+  interactionCheckHonest: boolean;
+  interactionReviewAttributed: boolean;
+  productProtocolApprovalGated: boolean;
+  organizationTemplateLifecycle: boolean;
+  templateCopyResetsReview: boolean;
 };
 
 function required(name: string): string {
@@ -98,6 +104,14 @@ function json(value: unknown): Record<string, unknown> {
   if (typeof value === "string") return JSON.parse(value) as Record<string, unknown>;
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("acceptance_json_invalid");
   return value as Record<string, unknown>;
+}
+
+function jsonArray(value: unknown): Array<Record<string, unknown>> {
+  const parsed = typeof value === "string" ? JSON.parse(value) as unknown : value;
+  if (!Array.isArray(parsed) || parsed.some((entry) => !entry || typeof entry !== "object" || Array.isArray(entry))) {
+    throw new Error("acceptance_json_array_invalid");
+  }
+  return parsed as Array<Record<string, unknown>>;
 }
 
 async function acceptance(tx: ClinicalCoreTransaction): Promise<AcceptanceEvidence> {
@@ -233,6 +247,88 @@ async function acceptance(tx: ClinicalCoreTransaction): Promise<AcceptanceEviden
     [clinicalUuid(ORG), "Rollback", "Acceptance", "1980-01-01", "unknown", "ACCEPT-001", null, null],
   )).data);
   const patientId = String(patient.id ?? "");
+
+  acceptanceStage = "search_protocol_catalog";
+  const protocolCatalog = json(row(await tx.query<{ data: unknown }>(
+    "select clinical_core.search_protocol_catalog($1,$2,20) as data",
+    [clinicalUuid(ORG), "Rollback catalog"],
+  )).data);
+  acceptanceStage = "create_product_protocol";
+  const protocolDraft = json(row(await tx.query<{ data: unknown }>(
+    "select clinical_core.create_protocol_draft($1,$2,$3,null) as data",
+    [clinicalUuid(ORG), clinicalUuid(patientId), "Rollback governed protocol"],
+  )).data);
+  const protocolVersionId = String(protocolDraft.versionId ?? "");
+  const savedProtocol = json(row(await tx.query<{ data: unknown }>(
+    "select clinical_core.save_protocol_draft($1,$2::jsonb,null) as data", [
+      clinicalUuid(protocolVersionId), JSON.stringify({
+        title: "Rollback governed protocol",
+        phases: [],
+        items: [{ kind: "product", label: "Rollback catalog product",
+          catalogProductId: "prd_rollback_acceptance", catalogProductVersionId: "1",
+          manufacturer: "Acceptance brand", labelVersion: "1", dosageText: "One capsule",
+          timingText: "Daily", route: "oral" }],
+      }),
+    ],
+  )).data);
+  const protocolItemIds = Array.isArray(savedProtocol.itemIds) ? savedProtocol.itemIds : [];
+  const protocolItemId = String(protocolItemIds[0] ?? "");
+  acceptanceStage = "check_protocol_interactions";
+  const interactionCheck = json(row(await tx.query<{ data: unknown }>(
+    "select clinical_core.check_protocol_interactions($1) as data", [clinicalUuid(protocolVersionId)],
+  )).data);
+  acceptanceStage = "review_protocol_interactions";
+  const interactionReview = json(row(await tx.query<{ data: unknown }>(
+    "select clinical_core.review_protocol_item_interactions($1,$2) as data", [
+      clinicalUuid(protocolItemId), "Rollback-only practitioner review; automated check remains incomplete",
+    ],
+  )).data);
+  acceptanceStage = "approve_product_protocol";
+  const approvedProtocol = json(row(await tx.query<{ data: unknown }>(
+    "select clinical_core.approve_protocol_version($1,$2) as data", [
+      clinicalUuid(protocolVersionId), "Rollback-only governed product approval",
+    ],
+  )).data);
+  acceptanceStage = "create_organization_template";
+  const organizationTemplate = json(row(await tx.query<{ data: unknown }>(
+    "select clinical_core.create_protocol_template($1,$2,$3,$4) as data", [
+      clinicalUuid(ORG), "Rollback organization template", "No patient free text",
+      clinicalUuid(protocolVersionId),
+    ],
+  )).data);
+  const organizationTemplateId = String(organizationTemplate.templateId ?? "");
+  const organizationTemplateVersionId = String(organizationTemplate.versionId ?? "");
+  acceptanceStage = "approve_organization_template";
+  const approvedOrganizationTemplate = json(row(await tx.query<{ data: unknown }>(
+    "select clinical_core.approve_protocol_template_version($1) as data",
+    [clinicalUuid(organizationTemplateVersionId)],
+  )).data);
+  const organizationTemplateList = row(await tx.query<{ data: unknown }>(
+    "select clinical_core.list_protocol_templates($1,false) as data", [clinicalUuid(ORG)],
+  )).data;
+  acceptanceStage = "archive_organization_template";
+  const archivedOrganizationTemplate = json(row(await tx.query<{ data: unknown }>(
+    "select clinical_core.archive_protocol_template($1,true) as data",
+    [clinicalUuid(organizationTemplateId)],
+  )).data);
+  const restoredOrganizationTemplate = json(row(await tx.query<{ data: unknown }>(
+    "select clinical_core.archive_protocol_template($1,false) as data",
+    [clinicalUuid(organizationTemplateId)],
+  )).data);
+  acceptanceStage = "copy_organization_template";
+  const copiedProtocolDraft = json(row(await tx.query<{ data: unknown }>(
+    "select clinical_core.create_protocol_draft($1,$2,$3,$4) as data", [
+      clinicalUuid(ORG), clinicalUuid(patientId), "Rollback copied protocol",
+      clinicalUuid(organizationTemplateId),
+    ],
+  )).data);
+  const copiedVersionId = String(copiedProtocolDraft.versionId ?? "");
+  const copiedReviewState = row(await tx.query<{ review_state: string; instruction_count: number }>(
+    `select interaction_review_state as review_state,
+      count(*) filter (where instructions is not null)::int as instruction_count
+      from clinical_core.patient_protocol_items where protocol_version_id=$1
+      group by interaction_review_state`, [clinicalUuid(copiedVersionId)],
+  ));
 
   acceptanceStage = "create_short_invitation";
   const invitation = json(row(await tx.query<{ data: unknown }>(
@@ -475,6 +571,11 @@ async function acceptance(tx: ClinicalCoreTransaction): Promise<AcceptanceEviden
     ? catalogClinical.products as Array<Record<string, unknown>> : [];
   const labelClinical = json(labelDetail.clinical);
   const labelCommercial = json(labelDetail.commercial);
+  const protocolCatalogProducts = Array.isArray(protocolCatalog.products)
+    ? protocolCatalog.products as Array<Record<string, unknown>> : [];
+  const interactionItems = Array.isArray(interactionCheck.items)
+    ? interactionCheck.items as Array<Record<string, unknown>> : [];
+  const organizationTemplates = jsonArray(organizationTemplateList);
   return {
     patientCreated: Boolean(patientId),
     connectionVerified: connection.state === "verified",
@@ -528,6 +629,25 @@ async function acceptance(tx: ClinicalCoreTransaction): Promise<AcceptanceEviden
       && safetyReview.outcome === "passed" && safetyReview.unsourcedDoseCount === 0,
     templateSuperseded: superseded.ok === true
       && superseded.supersededBy === "tpl_rollback_successor",
+    protocolCatalogSearchGoverned: protocolCatalogProducts.length === 1
+      && protocolCatalogProducts[0]?.productId === "prd_rollback_acceptance"
+      && protocolCatalogProducts[0]?.verificationStatus === "structured_verified",
+    interactionCheckHonest: interactionItems.length === 1
+      && interactionItems[0]?.state === "not_completed"
+      && interactionCheck.medicationsCoded === 0
+      && String(interactionCheck.disclaimer).includes("not completed"),
+    interactionReviewAttributed: interactionReview.ok === true
+      && interactionReview.alreadyReviewed === false,
+    productProtocolApprovalGated: approvedProtocol.ok === true
+      && approvedProtocol.status === "approved",
+    organizationTemplateLifecycle: approvedOrganizationTemplate.ok === true
+      && organizationTemplates.some((template) => template.id === organizationTemplateId
+        && template.status === "approved")
+      && archivedOrganizationTemplate.archived === true
+      && restoredOrganizationTemplate.archived === false,
+    templateCopyResetsReview: copiedProtocolDraft.ok === true
+      && copiedReviewState.review_state === "not_completed"
+      && copiedReviewState.instruction_count === 0,
   };
 }
 

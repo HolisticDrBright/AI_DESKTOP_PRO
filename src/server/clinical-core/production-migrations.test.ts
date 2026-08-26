@@ -30,8 +30,8 @@ function databaseFor(options: {
       }
       if (sql.startsWith("select\n      (select count(*)")) {
         return { rows: [{
-          table_count: 42,
-          contract_count: 25,
+          table_count: 44,
+          contract_count: 32,
           clinical_row_count: 0,
           ...options.verification,
         }] as unknown as Row[] };
@@ -141,8 +141,8 @@ describe("production clinical-core migrations", () => {
     expect(result).toEqual({
       applied: [migration.version],
       alreadyApplied: [],
-      tableCount: 42,
-      contractCount: 25,
+      tableCount: 44,
+      contractCount: 32,
       clinicalRowCount: 0,
     });
     expect(harness.statements.map(({ sql }) => sql)).toContain("create table clinical_core.example(id uuid)");
@@ -159,7 +159,7 @@ describe("production clinical-core migrations", () => {
   });
 
   it("refuses to commit when any clinical record exists", async () => {
-    const harness = databaseFor({ verification: { table_count: 42, contract_count: 25, clinical_row_count: 1 } });
+    const harness = databaseFor({ verification: { table_count: 44, contract_count: 32, clinical_row_count: 1 } });
     await expect(applyProductionClinicalCoreMigrations(harness.database, [migration]))
       .rejects.toMatchObject({ category: "verification_failed" });
   });

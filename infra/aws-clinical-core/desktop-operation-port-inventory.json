@@ -2,14 +2,14 @@
   "schemaVersion": "desktop-operation-port-inventory/1",
   "generatedFrom": {
     "operationManifestSha256": "8cd2bed9d9db0f17aab030e397cbb07cc4fe50647f4eaf5e4ba83816a4a4fbff",
-    "productionOperationManifestSha256": "23c4d5f34aa40453d56ee83a4ae84e138692c78bf1e0df1da6901ba8b8c9b021",
+    "productionOperationManifestSha256": "45b343a1d041eeda18322e41fafb120e1564bb7b0894265f0785f9db9351583c",
     "legacyDefinitionSetSha256": "dce8bb87ed890c305c656ee61b8438da0cb518647ea2df65f4bdf26e55277e96"
   },
   "counts": {
     "rpc": 218,
     "select": 5,
     "total": 223,
-    "productionImplemented": 61,
+    "productionImplemented": 68,
     "productionEnabled": 0
   },
   "operations": [
@@ -773,7 +773,13 @@
         }
       ],
       "syntheticBoundary": "registry_disabled",
-      "productionStatus": "not_ported"
+      "productionStatus": "implemented_activation_blocked",
+      "productionEvidence": {
+        "implementation": "native_production_function",
+        "source": "infra/aws-clinical-core/production-migrations/20260826110000_production_protocol_templates_and_interactions.sql",
+        "sourceSha256": "74f520b7af0185bce2191717ffd2825deec128f5d940be7757e3c41156433d15",
+        "activationState": "phi_disabled"
+      }
     },
     {
       "kind": "rpc",
@@ -1052,7 +1058,13 @@
         }
       ],
       "syntheticBoundary": "registry_disabled",
-      "productionStatus": "not_ported"
+      "productionStatus": "implemented_activation_blocked",
+      "productionEvidence": {
+        "implementation": "native_production_function",
+        "source": "infra/aws-clinical-core/production-migrations/20260826110000_production_protocol_templates_and_interactions.sql",
+        "sourceSha256": "74f520b7af0185bce2191717ffd2825deec128f5d940be7757e3c41156433d15",
+        "activationState": "phi_disabled"
+      }
     },
     {
       "kind": "rpc",
@@ -1560,7 +1572,13 @@
         }
       ],
       "syntheticBoundary": "registry_disabled",
-      "productionStatus": "not_ported"
+      "productionStatus": "implemented_activation_blocked",
+      "productionEvidence": {
+        "implementation": "native_production_function",
+        "source": "infra/aws-clinical-core/production-migrations/20260826110000_production_protocol_templates_and_interactions.sql",
+        "sourceSha256": "74f520b7af0185bce2191717ffd2825deec128f5d940be7757e3c41156433d15",
+        "activationState": "phi_disabled"
+      }
     },
     {
       "kind": "rpc",
@@ -2587,7 +2605,13 @@
         }
       ],
       "syntheticBoundary": "registry_disabled",
-      "productionStatus": "not_ported"
+      "productionStatus": "implemented_activation_blocked",
+      "productionEvidence": {
+        "implementation": "native_production_function",
+        "source": "infra/aws-clinical-core/production-migrations/20260826110000_production_protocol_templates_and_interactions.sql",
+        "sourceSha256": "74f520b7af0185bce2191717ffd2825deec128f5d940be7757e3c41156433d15",
+        "activationState": "phi_disabled"
+      }
     },
     {
       "kind": "rpc",
@@ -5913,7 +5937,13 @@
         }
       ],
       "syntheticBoundary": "registry_disabled",
-      "productionStatus": "not_ported"
+      "productionStatus": "implemented_activation_blocked",
+      "productionEvidence": {
+        "implementation": "native_production_function",
+        "source": "infra/aws-clinical-core/production-migrations/20260826110000_production_protocol_templates_and_interactions.sql",
+        "sourceSha256": "74f520b7af0185bce2191717ffd2825deec128f5d940be7757e3c41156433d15",
+        "activationState": "phi_disabled"
+      }
     },
     {
       "kind": "rpc",
@@ -8429,7 +8459,13 @@
         }
       ],
       "syntheticBoundary": "registry_disabled",
-      "productionStatus": "not_ported"
+      "productionStatus": "implemented_activation_blocked",
+      "productionEvidence": {
+        "implementation": "native_production_function",
+        "source": "infra/aws-clinical-core/production-migrations/20260826110000_production_protocol_templates_and_interactions.sql",
+        "sourceSha256": "74f520b7af0185bce2191717ffd2825deec128f5d940be7757e3c41156433d15",
+        "activationState": "phi_disabled"
+      }
     },
     {
       "kind": "rpc",
@@ -9280,7 +9316,13 @@
         }
       ],
       "syntheticBoundary": "registry_disabled",
-      "productionStatus": "not_ported"
+      "productionStatus": "implemented_activation_blocked",
+      "productionEvidence": {
+        "implementation": "native_production_function",
+        "source": "infra/aws-clinical-core/production-migrations/20260826110000_production_protocol_templates_and_interactions.sql",
+        "sourceSha256": "74f520b7af0185bce2191717ffd2825deec128f5d940be7757e3c41156433d15",
+        "activationState": "phi_disabled"
+      }
     },
     {
       "kind": "rpc",

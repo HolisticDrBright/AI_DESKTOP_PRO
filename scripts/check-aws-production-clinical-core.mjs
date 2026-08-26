@@ -16,7 +16,7 @@ const errors = [];
 const assert = (condition, message) => { if (!condition) errors.push(message); };
 
 assert(manifest.contract_version === "clinical-core-migrations/1", "generated manifest contract is invalid");
-assert(manifest.migrations.length === 22, "expected seven transformed migrations and fifteen production overlays");
+assert(manifest.migrations.length === 24, "expected seven transformed migrations and seventeen production overlays");
 assert(new Set(manifest.migrations.map((entry) => entry.version)).size === manifest.migrations.length,
   "migration versions must be unique");
 
@@ -83,6 +83,10 @@ const patientAppIntakeOverlay = readFileSync(path.join(root, "infra", "aws-clini
   "20260825140000_production_consumer_health_intake_review.sql"), "utf8");
 const governedCatalogOverlay = readFileSync(path.join(root, "infra", "aws-clinical-core", "production-migrations",
   "20260826100000_production_governed_catalog.sql"), "utf8");
+const protocolTemplateOverlay = readFileSync(path.join(root, "infra", "aws-clinical-core", "production-migrations",
+  "20260826110000_production_protocol_templates_and_interactions.sql"), "utf8");
+const protocolAuditRepair = readFileSync(path.join(root, "infra", "aws-clinical-core", "production-migrations",
+  "20260826120000_production_protocol_audit_vocabulary_repair.sql"), "utf8");
 assert(overlay.includes("_organization_id uuid") && overlay.includes("_first_name text")
   && overlay.includes("_last_name text") && overlay.includes("_date_of_birth date")
   && overlay.includes("_sex text") && overlay.includes("_mrn text")
@@ -246,6 +250,19 @@ for (const invariant of [
   "protocol_item_dose_provenance", "organization_admin_required",
   "unsourced_dose_blocks_passed_review", "protocol_template_supersession_cycle",
 ]) assert(governedCatalogOverlay.includes(invariant), `missing governed catalog invariant ${invariant}`);
+for (const operation of [
+  "list_protocol_templates", "create_protocol_template", "approve_protocol_template_version",
+  "archive_protocol_template", "search_protocol_catalog", "check_protocol_interactions",
+  "review_protocol_item_interactions",
+]) assert(protocolTemplateOverlay.includes(operation), `missing protocol-template operation ${operation}`);
+for (const invariant of [
+  "Patient free text was not copied", "reviewed_by_practitioner",
+  "automated_check_completed',false", "Client verification claims",
+]) assert(protocolTemplateOverlay.includes(invariant), `missing protocol-template invariant ${invariant}`);
+for (const action of [
+  "sync.provider_registered", "sync.provider_reviewed", "sync.inbound_accepted",
+  "protocol.interaction_reviewed", "protocol_template.approved",
+]) assert(protocolAuditRepair.includes(action), `missing repaired audit action ${action}`);
 assert(governedCatalogOverlay.includes("contains_phi boolean not null default false check (contains_phi = false)")
   && governedCatalogOverlay.includes("data_classification text not null default 'reference_only'")
   && !/insert\s+into\s+(?:clinical_reference|commercial_reference)\./i.test(
@@ -258,4 +275,4 @@ if (errors.length) {
 }
 
 const releaseHash = createHash("sha256").update(combined).digest("hex");
-console.log(`Production clinical-core gate passed: 22 migrations, zero seeded rows (${releaseHash}).`);
+console.log(`Production clinical-core gate passed: 24 migrations, zero seeded rows (${releaseHash}).`);
