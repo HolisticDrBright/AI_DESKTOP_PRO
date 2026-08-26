@@ -493,6 +493,30 @@
       "name": "patient_profiles",
       "implementation": "native_production_adapter",
       "source": "src/server/clinical-core/aws-production-desktop.ts"
+    },
+    {
+      "kind": "select",
+      "name": "clinical_pathways",
+      "implementation": "native_production_adapter",
+      "source": "src/server/clinical-core/aws-production-desktop.ts"
+    },
+    {
+      "kind": "rpc",
+      "name": "create_clinical_pathway_draft",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826140000_production_clinical_pathway_registry.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "update_clinical_pathway_draft",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826140000_production_clinical_pathway_registry.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "approve_clinical_pathway_version",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826140000_production_clinical_pathway_registry.sql"
     }
   ]
 }

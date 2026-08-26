@@ -29,6 +29,8 @@ const QUESTION = "78000000-0000-4000-8000-000000000005";
 const SAFETY_BLOCK = "78000000-0000-4000-8000-000000000006";
 const KNOWLEDGE_SOURCE = "78000000-0000-4000-8000-000000000007";
 const DISMISSED_QUESTION = "78000000-0000-4000-8000-000000000008";
+const CLINICAL_PATHWAY = "79000000-0000-4000-8000-000000000001";
+const CLINICAL_PATHWAY_VERSION_ONE = "79000000-0000-4000-8000-000000000002";
 const WORKFORCE_SUBJECT = "acceptance-workforce-subject-01";
 const CONSUMER_SUBJECT = "acceptance-consumer-subject-01";
 const LAB_HASH = "b".repeat(64);
@@ -89,6 +91,9 @@ type AcceptanceEvidence = {
   questionDismissalAudited: boolean;
   questionNoteUseExplicit: boolean;
   safetyBlockReviewAttributed: boolean;
+  pathwayRegistryBounded: boolean;
+  pathwayApprovalHumanGated: boolean;
+  pathwayHistoryImmutable: boolean;
 };
 
 function required(name: string): string {
@@ -346,6 +351,67 @@ async function acceptance(tx: ClinicalCoreTransaction): Promise<AcceptanceEviden
       from clinical_core.patient_protocol_items where protocol_version_id=$1
       group by interaction_review_state`, [clinicalUuid(copiedVersionId)],
   ));
+
+  acceptanceStage = "seed_reviewed_clinical_pathway";
+  const pathwayContent = {
+    differentiatingQuestions: ["Which reviewed source finding changes the pathway?"],
+    labStrategy: [{ panel: "Rollback-only panel", vendor: "Not selected", purpose: "Review source evidence" }],
+    productCandidates: [{ name: "Rollback-only candidate", brand: "Not selected", role: "Requires review" }],
+    nutrition: ["Practitioner review required"], lifestyle: ["Practitioner review required"],
+    safetyStops: ["Stop and review adverse effects"],
+  };
+  const pathwaySources = [{ label: "Rollback-only practitioner-reviewed source" }];
+  await tx.query(`insert into clinical_core.clinical_pathways(
+    id,organization_id,code,name,domain_code,description,created_by_person_id
+  ) values($1,$2,'rollback_pathway','Rollback-only clinical pathway','general',
+    'Transaction-scoped acceptance fixture',$3)`, [
+    clinicalUuid(CLINICAL_PATHWAY), clinicalUuid(ORG), clinicalUuid(WORKFORCE),
+  ]);
+  await tx.query(`insert into clinical_core.clinical_pathway_versions(
+    id,pathway_id,organization_id,version,status,content,source_refs,content_sha256,
+    change_summary,created_by_person_id,approved_by_person_id,approved_at
+  ) values($1,$2,$3,1,'approved',$4::jsonb,$5::jsonb,
+    pg_catalog.encode(public.digest(pg_catalog.convert_to($4::jsonb::text,'UTF8'),'sha256'),'hex'),
+    'Rollback-only initial review',$6,$6,clock_timestamp())`, [
+    clinicalUuid(CLINICAL_PATHWAY_VERSION_ONE), clinicalUuid(CLINICAL_PATHWAY), clinicalUuid(ORG),
+    JSON.stringify(pathwayContent), JSON.stringify(pathwaySources), clinicalUuid(WORKFORCE),
+  ]);
+  acceptanceStage = "create_clinical_pathway_draft";
+  const pathwayDraft = json(row(await tx.query<{ data: unknown }>(
+    "select clinical_core.create_clinical_pathway_draft($1,$2::jsonb,$3::jsonb,$4) as data", [
+      clinicalUuid(CLINICAL_PATHWAY), JSON.stringify(pathwayContent), JSON.stringify(pathwaySources),
+      "Rollback-only governed revision",
+    ],
+  )).data);
+  const pathwayDraftId = String(pathwayDraft.versionId ?? "");
+  acceptanceStage = "update_clinical_pathway_draft";
+  await tx.query("select clinical_core.update_clinical_pathway_draft($1,$2::jsonb,$3::jsonb,$4)", [
+    clinicalUuid(pathwayDraftId), JSON.stringify({ ...pathwayContent,
+      safetyStops: [...pathwayContent.safetyStops, "Escalate red flags before any action"] }),
+    JSON.stringify(pathwaySources), "Rollback-only reviewed update",
+  ]);
+  acceptanceStage = "approve_clinical_pathway_version";
+  await tx.query("select clinical_core.approve_clinical_pathway_version($1)", [clinicalUuid(pathwayDraftId)]);
+  acceptanceStage = "list_clinical_pathways";
+  const clinicalPathways = jsonArray(row(await tx.query<{ data: unknown }>(
+    "select clinical_core.list_clinical_pathways($1) as data", [clinicalUuid(ORG)],
+  )).data);
+  const pathwayStates = await tx.query<{ id: string; status: string; approved_by_person_id: string }>(
+    "select id,status,approved_by_person_id from clinical_core.clinical_pathway_versions where pathway_id=$1 order by version",
+    [clinicalUuid(CLINICAL_PATHWAY)],
+  );
+  acceptanceStage = "probe_clinical_pathway_immutability";
+  await tx.query(`do $probe$
+  begin
+    begin
+      update clinical_core.clinical_pathway_versions set content='{}'::jsonb
+        where id='${pathwayDraftId}'::uuid;
+      raise exception using errcode='P0001',message='pathway_immutability_guard_missing';
+    exception when sqlstate '55000' then
+      null;
+    end;
+  end $probe$`);
+  const pathwayHistoryImmutable = true;
 
   acceptanceStage = "seed_reasoning_lens_review";
   acceptanceStage = "seed_lens_paradigm";
@@ -840,6 +906,15 @@ async function acceptance(tx: ClinicalCoreTransaction): Promise<AcceptanceEviden
     questionNoteUseExplicit: Number(reasoningAudit.count) >= 6,
     safetyBlockReviewAttributed: reviewedSafetyBlock.reviewed_by_person_id === WORKFORCE
       && reviewedSafetyBlock.resolution.includes("no automatic action"),
+    pathwayRegistryBounded: clinicalPathways.length === 1
+      && clinicalPathways[0]?.id === CLINICAL_PATHWAY
+      && Array.isArray(clinicalPathways[0]?.clinical_pathway_versions)
+      && (clinicalPathways[0]?.clinical_pathway_versions as unknown[]).length === 2,
+    pathwayApprovalHumanGated: pathwayStates.rows.length === 2
+      && pathwayStates.rows[0]?.status === "superseded"
+      && pathwayStates.rows[1]?.status === "approved"
+      && pathwayStates.rows[1]?.approved_by_person_id === WORKFORCE,
+    pathwayHistoryImmutable,
   };
 }
 

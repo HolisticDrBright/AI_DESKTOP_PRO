@@ -569,3 +569,37 @@ An independent AWS query then confirmed **0 clinical rows and 0 reference
 rows** across the new tables. Local verification passed **949 tests with 10
 intentional skips**. The hosted synthetic Desktop remains healthy (HTTP 200),
 and `PHI_ALLOWED=false` remains unchanged.
+
+## Governed clinical pathway registry (2026-08-26; PHI disabled)
+
+Production migration `20260826140000` adds two empty, tenant-scoped clinical
+pathway tables and four activation-blocked Desktop operations: bounded pathway
+read, new draft version, draft update, and human approval. Aurora now reports
+**26 migrations, 58 clinical/audit tables, 50 counted contracts, and zero
+retained rows**. The operation inventory is **86/223 implemented, zero enabled,
+and 137 not ported**.
+
+Pathway versions retain an attributable author and approver, a content digest,
+source references, and append-only history. Only owner/admin membership can
+approve. Approval is refused without at least one reviewed source reference;
+commercial destinations and tracking fields are structurally rejected. An
+approved version can only be superseded by another version, never overwritten
+or deleted.
+
+This phase intentionally created no first pathway, seed, import, or clinical
+approval. The current Desktop can edit and approve an existing pathway, while
+the first pathway still depends on a separately reviewed import flow. Claude's
+frozen catalog package remains unimported, and all eight practitioner decisions
+remain open.
+
+The complete rollback-only AWS exercise passed the pathway lifecycle plus all
+prior sync, catalog, protocol, reasoning, and Lens safeguards. Every temporary
+row rolled back. Evidence SHA-256:
+`6ed52b23af01ce2ab0f67503a5b8f5327424ff1e2f5cf7f470a0ec63b397ba10`.
+A second schema-only verification reported all 26 migrations already applied,
+58 tables, 50 contracts, and **0 clinical rows**. Local verification passed
+**952 tests with 10 intentional skips**, TypeScript, lint with zero errors, the
+complete 210-page clinical build, and every AWS/data-plane gate. Hosted
+synthetic health is HTTP 200; the rendered login retains the synthetic-only/not
+for real care banner with zero browser-console errors. `PHI_ALLOWED=false` and
+every production route remain unchanged.

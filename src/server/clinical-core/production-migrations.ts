@@ -101,7 +101,8 @@ export async function applyProductionClinicalCoreMigrations(
             'list_desktop_lens_knowledge_sources','get_desktop_lens_evaluation',
             'list_desktop_question_answers','set_question_status','dismiss_question','answer_question',
             'correct_question_answer','record_question_note_use','submit_question_feedback',
-            'review_safety_block'))::int as contract_count,
+            'review_safety_block','list_clinical_pathways','create_clinical_pathway_draft',
+            'update_clinical_pathway_draft','approve_clinical_pathway_version'))::int as contract_count,
       (
         (select count(*) from clinical_core.organizations)
         + (select count(*) from clinical_core.persons)
@@ -143,6 +144,8 @@ export async function applyProductionClinicalCoreMigrations(
         + (select count(*) from clinical_core.question_answers)
         + (select count(*) from clinical_core.question_feedback)
         + (select count(*) from clinical_core.lens_safety_blocks)
+        + (select count(*) from clinical_core.clinical_pathways)
+        + (select count(*) from clinical_core.clinical_pathway_versions)
         + (select count(*) from clinical_core.sync_outbound_events)
         + (select count(*) from clinical_core.sync_inbound_events)
         + (select count(*) from clinical_core.sync_inbound_corrections)
@@ -157,7 +160,7 @@ export async function applyProductionClinicalCoreMigrations(
         + (select count(*) from clinical_core.sync_inbound_lab_imports)
       )::int as clinical_row_count`);
     const row = verification.rows[0];
-    if (!row || Number(row.table_count) !== 56 || Number(row.contract_count) !== 46
+    if (!row || Number(row.table_count) !== 58 || Number(row.contract_count) !== 50
       || Number(row.clinical_row_count) !== 0) {
       throw new ProductionClinicalCoreMigrationError("verification_failed");
     }

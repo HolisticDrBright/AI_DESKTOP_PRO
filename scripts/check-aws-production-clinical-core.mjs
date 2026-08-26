@@ -16,7 +16,7 @@ const errors = [];
 const assert = (condition, message) => { if (!condition) errors.push(message); };
 
 assert(manifest.contract_version === "clinical-core-migrations/1", "generated manifest contract is invalid");
-assert(manifest.migrations.length === 25, "expected seven transformed migrations and eighteen production overlays");
+assert(manifest.migrations.length === 26, "expected seven transformed migrations and nineteen production overlays");
 assert(new Set(manifest.migrations.map((entry) => entry.version)).size === manifest.migrations.length,
   "migration versions must be unique");
 
@@ -89,6 +89,8 @@ const protocolAuditRepair = readFileSync(path.join(root, "infra", "aws-clinical-
   "20260826120000_production_protocol_audit_vocabulary_repair.sql"), "utf8");
 const reasoningLensOverlay = readFileSync(path.join(root, "infra", "aws-clinical-core", "production-migrations",
   "20260826130000_production_reasoning_lens_review.sql"), "utf8");
+const clinicalPathwayOverlay = readFileSync(path.join(root, "infra", "aws-clinical-core", "production-migrations",
+  "20260826140000_production_clinical_pathway_registry.sql"), "utf8");
 assert(overlay.includes("_organization_id uuid") && overlay.includes("_first_name text")
   && overlay.includes("_last_name text") && overlay.includes("_date_of_birth date")
   && overlay.includes("_sex text") && overlay.includes("_mrn text")
@@ -281,6 +283,18 @@ for (const invariant of [
 assert(!/insert\s+into\s+clinical_reference\.clinical_(?:paradigms|domains|knowledge_sources)/i.test(reasoningLensOverlay)
   && !/function\s+clinical_core\.(?:run|generate|create)_(?:lens|reasoning)/i.test(reasoningLensOverlay),
 "reasoning/Lens overlay must not seed references or enable a generation path");
+for (const operation of [
+  "list_clinical_pathways", "create_clinical_pathway_draft",
+  "update_clinical_pathway_draft", "approve_clinical_pathway_version",
+]) assert(clinicalPathwayOverlay.includes(`clinical_core.${operation}`),
+  `missing clinical pathway operation ${operation}`);
+for (const invariant of [
+  "clinical_pathway_version_append_only", "approved_clinical_pathway_immutable",
+  "clinical_pathway_source_review_required", "knowledge_admin_role_required",
+]) assert(clinicalPathwayOverlay.includes(invariant), `missing clinical pathway invariant ${invariant}`);
+assert(clinicalPathwayOverlay.includes("affiliateUrl|destinationUrl|discountCode|trackingCode")
+  && !/insert\s+into\s+clinical_core\.clinical_pathways/i.test(clinicalPathwayOverlay),
+"clinical pathways must be commercially separated and unseeded");
 assert(governedCatalogOverlay.includes("contains_phi boolean not null default false check (contains_phi = false)")
   && governedCatalogOverlay.includes("data_classification text not null default 'reference_only'")
   && !/insert\s+into\s+(?:clinical_reference|commercial_reference)\./i.test(
@@ -293,4 +307,4 @@ if (errors.length) {
 }
 
 const releaseHash = createHash("sha256").update(combined).digest("hex");
-console.log(`Production clinical-core gate passed: 25 migrations, zero seeded rows (${releaseHash}).`);
+console.log(`Production clinical-core gate passed: 26 migrations, zero seeded rows (${releaseHash}).`);

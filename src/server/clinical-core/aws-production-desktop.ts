@@ -102,8 +102,11 @@ const CORE_RPCS = new Set([
   "record_question_note_use",
   "submit_question_feedback",
   "review_safety_block",
+  "create_clinical_pathway_draft",
+  "update_clinical_pathway_draft",
+  "approve_clinical_pathway_version",
 ]);
-const CORE_SELECTS = new Set(["patient_profiles", "lab_documents"]);
+const CORE_SELECTS = new Set(["patient_profiles", "lab_documents", "clinical_pathways"]);
 
 export function createAwsProductionDesktopAdapter(
   database: ClinicalCoreDatabase,
@@ -863,6 +866,35 @@ async function executeCoreRpc(
     ]);
     return null;
   }
+  if (name === "create_clinical_pathway_draft") {
+    exactKeys(args, ["_pathway_id", "_content", "_source_refs", "_change_summary"]);
+    const content = boundedKnowledgePathwayContent(args._content);
+    const sources = boundedKnowledgeSourceRefs(args._source_refs);
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.create_clinical_pathway_draft($1,$2::jsonb,$3::jsonb,$4) as data",
+      [clinicalUuid(requiredUuid(args._pathway_id)), JSON.stringify(content), JSON.stringify(sources),
+        optionalString(args._change_summary, 2000)],
+    ));
+    return decodeJson(row.data);
+  }
+  if (name === "update_clinical_pathway_draft") {
+    exactKeys(args, ["_version_id", "_content", "_source_refs", "_change_summary"]);
+    const content = boundedKnowledgePathwayContent(args._content);
+    const sources = boundedKnowledgeSourceRefs(args._source_refs);
+    await tx.query(
+      "select clinical_core.update_clinical_pathway_draft($1,$2::jsonb,$3::jsonb,$4)",
+      [clinicalUuid(requiredUuid(args._version_id)), JSON.stringify(content), JSON.stringify(sources),
+        optionalString(args._change_summary, 2000)],
+    );
+    return null;
+  }
+  if (name === "approve_clinical_pathway_version") {
+    exactKeys(args, ["_version_id"]);
+    await tx.query("select clinical_core.approve_clinical_pathway_version($1)", [
+      clinicalUuid(requiredUuid(args._version_id)),
+    ]);
+    return null;
+  }
   throw new ProductionDesktopError("operation_refused");
 }
 
@@ -896,6 +928,13 @@ async function executeCoreSelect(
        order by received_at desc, id limit 20`,
       [clinicalUuid(context.organizationId), clinicalUuid(patientId)],
     )).rows;
+  }
+  if (table === "clinical_pathways") {
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.list_clinical_pathways($1) as data",
+      [clinicalUuid(context.organizationId)],
+    ));
+    return decodeJson(row.data);
   }
   throw new ProductionDesktopError("operation_refused");
 }
@@ -1069,6 +1108,49 @@ function boundedProtocolPayload(value: unknown): Record<string, unknown> {
   });
   if (JSON.stringify(result).length > 524_288) throw invalid();
   return result;
+}
+
+function boundedKnowledgePathwayContent(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw invalid();
+  const content = value as Record<string, unknown>;
+  exactKeys(content, [
+    "differentiatingQuestions", "labStrategy", "productCandidates", "nutrition", "lifestyle", "safetyStops",
+  ]);
+  const strings = (candidate: unknown, maxItems: number, maxLength: number) => {
+    if (!Array.isArray(candidate) || candidate.length > maxItems) throw invalid();
+    return candidate.map((item) => requiredString(item, maxLength));
+  };
+  const objectRows = (candidate: unknown, keys: readonly string[], maxItems: number) => {
+    if (!Array.isArray(candidate) || candidate.length > maxItems) throw invalid();
+    return candidate.map((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) throw invalid();
+      const row = item as Record<string, unknown>;
+      exactKeys(row, [...keys]);
+      return Object.fromEntries(keys.map((key) => [key, requiredString(row[key], 1000)]));
+    });
+  };
+  const bounded = {
+    differentiatingQuestions: strings(content.differentiatingQuestions, 100, 2000),
+    labStrategy: objectRows(content.labStrategy, ["panel", "vendor", "purpose"], 100),
+    productCandidates: objectRows(content.productCandidates, ["name", "brand", "role"], 100),
+    nutrition: strings(content.nutrition, 100, 2000),
+    lifestyle: strings(content.lifestyle, 100, 2000),
+    safetyStops: strings(content.safetyStops, 100, 2000),
+  };
+  if (JSON.stringify(bounded).length > 524_288) throw invalid();
+  return bounded;
+}
+
+function boundedKnowledgeSourceRefs(value: unknown): Array<{ label: string }> {
+  if (!Array.isArray(value) || value.length > 100) throw invalid();
+  const sources = value.map((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) throw invalid();
+    const source = item as Record<string, unknown>;
+    exactKeys(source, ["label"]);
+    return { label: requiredString(source.label, 1000) };
+  });
+  if (JSON.stringify(sources).length > 131_072) throw invalid();
+  return sources;
 }
 
 function allowedKeys(value: Record<string, unknown>, allowed: readonly string[]) {

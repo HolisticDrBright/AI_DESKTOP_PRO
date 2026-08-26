@@ -30,6 +30,8 @@ const PROTOCOL_ITEM = "16161616-1616-4616-8616-161616161616";
 const HYPOTHESIS = "17171717-1717-4717-8717-171717171717";
 const QUESTION = "18181818-1818-4818-8818-181818181818";
 const SAFETY_BLOCK = "19191919-1919-4919-8919-191919191919";
+const PATHWAY = "20202020-2020-4020-8020-202020202020";
+const PATHWAY_VERSION = "21212121-2121-4121-8121-212121212121";
 
 const context: ProductionRequestContext = {
   actorPersonId: PERSON,
@@ -102,6 +104,57 @@ describe("AWS production Desktop adapter", () => {
     });
     expect(result).toEqual([expect.objectContaining({ id: PATIENT })]);
     expect(test.calls[1]?.sql).toContain("from clinical_core.patient_records");
+  });
+
+  it("reads the empty-or-reviewed pathway registry through a bounded AWS function", async () => {
+    const test = harness([{ id: PATHWAY, clinical_pathway_versions: [] }]);
+    const result = await test.adapter.execute(context, {
+      kind: "select",
+      table: "clinical_pathways",
+      query: `select=id,name&organization_id=eq.${ORG}&retired_at=is.null&order=name.asc`,
+    });
+    expect(result).toEqual([{ id: PATHWAY, clinical_pathway_versions: [] }]);
+    expect(test.calls[1]?.sql).toBe("select clinical_core.list_clinical_pathways($1) as data");
+    expect(test.fallback.execute).not.toHaveBeenCalled();
+  });
+
+  it("routes pathway drafts and human approval without accepting commercial fields", async () => {
+    const content = {
+      differentiatingQuestions: ["Which source finding needs review?"],
+      labStrategy: [{ panel: "Synthetic panel", vendor: "Not selected", purpose: "Review evidence" }],
+      productCandidates: [{ name: "Candidate", brand: "Not selected", role: "Requires review" }],
+      nutrition: ["Review before use"], lifestyle: ["Review before use"], safetyStops: ["Stop for adverse effects"],
+    };
+    const create = harness({ versionId: PATHWAY_VERSION, version: 2 });
+    await expect(create.adapter.execute(context, { kind: "rpc", functionName: "create_clinical_pathway_draft",
+      args: { _pathway_id: PATHWAY, _content: content, _source_refs: [{ label: "Reviewed source" }],
+        _change_summary: "Practitioner-authored revision" },
+    })).resolves.toMatchObject({ version: 2 });
+    expect(create.calls[1]?.sql).toBe(
+      "select clinical_core.create_clinical_pathway_draft($1,$2::jsonb,$3::jsonb,$4) as data",
+    );
+
+    const update = harness();
+    await expect(update.adapter.execute(context, { kind: "rpc", functionName: "update_clinical_pathway_draft",
+      args: { _version_id: PATHWAY_VERSION, _content: content, _source_refs: [{ label: "Reviewed source" }],
+        _change_summary: null },
+    })).resolves.toBeNull();
+    expect(update.calls[1]?.sql).toBe(
+      "select clinical_core.update_clinical_pathway_draft($1,$2::jsonb,$3::jsonb,$4)",
+    );
+
+    const approve = harness();
+    await expect(approve.adapter.execute(context, { kind: "rpc", functionName: "approve_clinical_pathway_version",
+      args: { _version_id: PATHWAY_VERSION },
+    })).resolves.toBeNull();
+    expect(approve.calls[1]?.sql).toBe("select clinical_core.approve_clinical_pathway_version($1)");
+
+    const commercial = harness();
+    await expect(commercial.adapter.execute(context, { kind: "rpc", functionName: "create_clinical_pathway_draft",
+      args: { _pathway_id: PATHWAY, _content: { ...content, affiliateUrl: "https://example.invalid" },
+        _source_refs: [{ label: "Reviewed source" }], _change_summary: null },
+    })).rejects.toEqual(new ProductionDesktopError("request_invalid"));
+    expect(commercial.calls).toHaveLength(1);
   });
 
   it("records only the bounded registered audit payload in the caller tenant", async () => {
