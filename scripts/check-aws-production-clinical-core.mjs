@@ -16,7 +16,7 @@ const errors = [];
 const assert = (condition, message) => { if (!condition) errors.push(message); };
 
 assert(manifest.contract_version === "clinical-core-migrations/1", "generated manifest contract is invalid");
-assert(manifest.migrations.length === 24, "expected seven transformed migrations and seventeen production overlays");
+assert(manifest.migrations.length === 25, "expected seven transformed migrations and eighteen production overlays");
 assert(new Set(manifest.migrations.map((entry) => entry.version)).size === manifest.migrations.length,
   "migration versions must be unique");
 
@@ -87,6 +87,8 @@ const protocolTemplateOverlay = readFileSync(path.join(root, "infra", "aws-clini
   "20260826110000_production_protocol_templates_and_interactions.sql"), "utf8");
 const protocolAuditRepair = readFileSync(path.join(root, "infra", "aws-clinical-core", "production-migrations",
   "20260826120000_production_protocol_audit_vocabulary_repair.sql"), "utf8");
+const reasoningLensOverlay = readFileSync(path.join(root, "infra", "aws-clinical-core", "production-migrations",
+  "20260826130000_production_reasoning_lens_review.sql"), "utf8");
 assert(overlay.includes("_organization_id uuid") && overlay.includes("_first_name text")
   && overlay.includes("_last_name text") && overlay.includes("_date_of_birth date")
   && overlay.includes("_sex text") && overlay.includes("_mrn text")
@@ -263,6 +265,22 @@ for (const action of [
   "sync.provider_registered", "sync.provider_reviewed", "sync.inbound_accepted",
   "protocol.interaction_reviewed", "protocol_template.approved",
 ]) assert(protocolAuditRepair.includes(action), `missing repaired audit action ${action}`);
+for (const operation of [
+  "get_reasoning_workspace", "review_hypothesis", "list_desktop_lens_paradigms",
+  "list_desktop_lens_domains", "list_desktop_lens_knowledge_sources",
+  "get_desktop_lens_evaluation", "list_desktop_question_answers", "set_question_status",
+  "dismiss_question", "answer_question", "correct_question_answer", "record_question_note_use",
+  "submit_question_feedback", "review_safety_block",
+]) assert(reasoningLensOverlay.includes(`clinical_core.${operation}`),
+  `missing reasoning/Lens operation ${operation}`);
+for (const invariant of [
+  "not a medical probability", "nothing is generated or fabricated", "hypothesis_reviews_append_only",
+  "question_answers_append_only", "question_transition_refused", "note_question_mismatch",
+  "safety_block_already_reviewed",
+]) assert(reasoningLensOverlay.includes(invariant), `missing reasoning/Lens invariant ${invariant}`);
+assert(!/insert\s+into\s+clinical_reference\.clinical_(?:paradigms|domains|knowledge_sources)/i.test(reasoningLensOverlay)
+  && !/function\s+clinical_core\.(?:run|generate|create)_(?:lens|reasoning)/i.test(reasoningLensOverlay),
+"reasoning/Lens overlay must not seed references or enable a generation path");
 assert(governedCatalogOverlay.includes("contains_phi boolean not null default false check (contains_phi = false)")
   && governedCatalogOverlay.includes("data_classification text not null default 'reference_only'")
   && !/insert\s+into\s+(?:clinical_reference|commercial_reference)\./i.test(
@@ -275,4 +293,4 @@ if (errors.length) {
 }
 
 const releaseHash = createHash("sha256").update(combined).digest("hex");
-console.log(`Production clinical-core gate passed: 24 migrations, zero seeded rows (${releaseHash}).`);
+console.log(`Production clinical-core gate passed: 25 migrations, zero seeded rows (${releaseHash}).`);

@@ -81,6 +81,27 @@ const CORE_RPCS = new Set([
   "compare_protocol_template_versions",
   "record_protocol_template_safety_review",
   "supersede_protocol_template",
+  "list_protocol_templates",
+  "create_protocol_template",
+  "approve_protocol_template_version",
+  "archive_protocol_template",
+  "search_protocol_catalog",
+  "check_protocol_interactions",
+  "review_protocol_item_interactions",
+  "get_reasoning_workspace",
+  "review_hypothesis",
+  "list_desktop_lens_paradigms",
+  "list_desktop_lens_domains",
+  "list_desktop_lens_knowledge_sources",
+  "get_desktop_lens_evaluation",
+  "list_desktop_question_answers",
+  "set_question_status",
+  "dismiss_question",
+  "answer_question",
+  "correct_question_answer",
+  "record_question_note_use",
+  "submit_question_feedback",
+  "review_safety_block",
 ]);
 const CORE_SELECTS = new Set(["patient_profiles", "lab_documents"]);
 
@@ -681,6 +702,167 @@ async function executeCoreRpc(
     ));
     return decodeJson(row.data);
   }
+  if (name === "list_protocol_templates") {
+    exactKeys(args, ["_organization_id", "_include_archived"]);
+    if (args._organization_id !== context.organizationId || typeof args._include_archived !== "boolean") throw invalid();
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.list_protocol_templates($1,$2) as data",
+      [clinicalUuid(context.organizationId), args._include_archived],
+    ));
+    return decodeJson(row.data);
+  }
+  if (name === "create_protocol_template") {
+    exactKeys(args, ["_organization_id", "_name", "_description", "_from_version_id"]);
+    if (args._organization_id !== context.organizationId) throw invalid();
+    const sourceVersionId = optionalUuid(args._from_version_id);
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.create_protocol_template($1,$2,$3,$4) as data",
+      [clinicalUuid(context.organizationId), requiredString(args._name, 200),
+        optionalString(args._description, 10_000), sourceVersionId ? clinicalUuid(sourceVersionId) : null],
+    ));
+    return decodeJson(row.data);
+  }
+  if (name === "approve_protocol_template_version") {
+    exactKeys(args, ["_version_id"]);
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.approve_protocol_template_version($1) as data",
+      [clinicalUuid(requiredUuid(args._version_id))],
+    ));
+    return decodeJson(row.data);
+  }
+  if (name === "archive_protocol_template") {
+    exactKeys(args, ["_template_id", "_archived"]);
+    if (typeof args._archived !== "boolean") throw invalid();
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.archive_protocol_template($1,$2) as data",
+      [clinicalUuid(requiredUuid(args._template_id)), args._archived],
+    ));
+    return decodeJson(row.data);
+  }
+  if (name === "search_protocol_catalog") {
+    exactKeys(args, ["_organization_id", "_query", "_limit"]);
+    if (args._organization_id !== context.organizationId) throw invalid();
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.search_protocol_catalog($1,$2,$3) as data",
+      [clinicalUuid(context.organizationId), optionalString(args._query, 200), boundedInteger(args._limit, 1, 100)],
+    ));
+    return decodeJson(row.data);
+  }
+  if (name === "check_protocol_interactions") {
+    exactKeys(args, ["_version_id"]);
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.check_protocol_interactions($1) as data",
+      [clinicalUuid(requiredUuid(args._version_id))],
+    ));
+    return decodeJson(row.data);
+  }
+  if (name === "review_protocol_item_interactions") {
+    exactKeys(args, ["_item_id", "_note"]);
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.review_protocol_item_interactions($1,$2) as data",
+      [clinicalUuid(requiredUuid(args._item_id)), optionalString(args._note, 2000)],
+    ));
+    return decodeJson(row.data);
+  }
+  if (name === "get_reasoning_workspace") {
+    exactKeys(args, ["_organization_id", "_patient_id"]);
+    if (args._organization_id !== context.organizationId) throw invalid();
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.get_reasoning_workspace($1,$2) as data",
+      [clinicalUuid(context.organizationId), clinicalUuid(requiredUuid(args._patient_id))],
+    ));
+    return decodeJson(row.data);
+  }
+  if (name === "review_hypothesis") {
+    exactKeys(args, ["_hypothesis_id", "_action", "_note"]);
+    const action = requiredString(args._action, 16);
+    if (!["accepted", "rejected", "needs_data"].includes(action)) throw invalid();
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.review_hypothesis($1,$2,$3) as data",
+      [clinicalUuid(requiredUuid(args._hypothesis_id)), action, optionalString(args._note, 2000)],
+    ));
+    return decodeJson(row.data);
+  }
+  if (name === "list_desktop_lens_paradigms" || name === "list_desktop_lens_domains"
+    || name === "list_desktop_lens_knowledge_sources") {
+    exactKeys(args, []);
+    const row = first(await tx.query<{ data: unknown }>(`select clinical_core.${name}() as data`, []));
+    return decodeJson(row.data);
+  }
+  if (name === "get_desktop_lens_evaluation") {
+    exactKeys(args, ["_encounter_id", "_paradigm"]);
+    const paradigm = requiredString(args._paradigm, 32);
+    if (!["western_conventional", "functional", "naturopathic", "tcm", "biohacking", "synergistic"].includes(paradigm)) throw invalid();
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.get_desktop_lens_evaluation($1,$2) as data",
+      [clinicalUuid(requiredUuid(args._encounter_id)), paradigm],
+    ));
+    return decodeJson(row.data);
+  }
+  if (name === "list_desktop_question_answers") {
+    exactKeys(args, ["_question_id"]);
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.list_desktop_question_answers($1) as data",
+      [clinicalUuid(requiredUuid(args._question_id))],
+    ));
+    return decodeJson(row.data);
+  }
+  if (name === "set_question_status") {
+    exactKeys(args, ["_question_id", "_to", "_reason"]);
+    const action = requiredString(args._to, 16);
+    if (!["accepted", "asked", "deferred", "skipped"].includes(action)) throw invalid();
+    await tx.query("select clinical_core.set_question_status($1,$2,$3)", [
+      clinicalUuid(requiredUuid(args._question_id)), action, optionalString(args._reason, 2000),
+    ]);
+    return null;
+  }
+  if (name === "dismiss_question") {
+    exactKeys(args, ["_question_id", "_feedback_kind", "_comment"]);
+    const kind = questionFeedbackKind(args._feedback_kind);
+    await tx.query("select clinical_core.dismiss_question($1,$2,$3)", [
+      clinicalUuid(requiredUuid(args._question_id)), kind, optionalString(args._comment, 2000),
+    ]);
+    return null;
+  }
+  if (name === "answer_question") {
+    exactKeys(args, ["_question_id", "_answer"]);
+    const row = first(await tx.query<{ data: number }>(
+      "select clinical_core.answer_question($1,$2::jsonb) as data",
+      [clinicalUuid(requiredUuid(args._question_id)), JSON.stringify(boundedJsonObject(args._answer, 16_384))],
+    ));
+    return Number(row.data);
+  }
+  if (name === "correct_question_answer") {
+    exactKeys(args, ["_question_id", "_answer", "_reason"]);
+    const row = first(await tx.query<{ data: number }>(
+      "select clinical_core.correct_question_answer($1,$2::jsonb,$3) as data",
+      [clinicalUuid(requiredUuid(args._question_id)), JSON.stringify(boundedJsonObject(args._answer, 16_384)),
+        optionalString(args._reason, 2000)],
+    ));
+    return Number(row.data);
+  }
+  if (name === "record_question_note_use") {
+    exactKeys(args, ["_question_id", "_note_id"]);
+    await tx.query("select clinical_core.record_question_note_use($1,$2)", [
+      clinicalUuid(requiredUuid(args._question_id)), clinicalUuid(requiredUuid(args._note_id)),
+    ]);
+    return null;
+  }
+  if (name === "submit_question_feedback") {
+    exactKeys(args, ["_question_id", "_kind", "_comment"]);
+    await tx.query("select clinical_core.submit_question_feedback($1,$2,$3)", [
+      clinicalUuid(requiredUuid(args._question_id)), questionFeedbackKind(args._kind),
+      optionalString(args._comment, 2000),
+    ]);
+    return null;
+  }
+  if (name === "review_safety_block") {
+    exactKeys(args, ["_block_id", "_resolution"]);
+    await tx.query("select clinical_core.review_safety_block($1,$2)", [
+      clinicalUuid(requiredUuid(args._block_id)), requiredString(args._resolution, 4000),
+    ]);
+    return null;
+  }
   throw new ProductionDesktopError("operation_refused");
 }
 
@@ -911,6 +1093,18 @@ function boundedScalarMetadata(value: unknown): Record<string, string | number |
   }
   if (JSON.stringify(value).length > 2048) throw invalid();
   return Object.fromEntries(entries) as Record<string, string | number | boolean>;
+}
+
+function boundedJsonObject(value: unknown, maxBytes: number): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw invalid();
+  if (JSON.stringify(value).length > maxBytes) throw invalid();
+  return value as Record<string, unknown>;
+}
+
+function questionFeedbackKind(value: unknown): string {
+  const kind = requiredString(value, 24);
+  if (!["helpful", "not_relevant", "unsafe", "incorrect", "duplicate", "other"].includes(kind)) throw invalid();
+  return kind;
 }
 
 function boundedCorrectionOverlay(value: unknown): Record<string, string | number | boolean | null> {

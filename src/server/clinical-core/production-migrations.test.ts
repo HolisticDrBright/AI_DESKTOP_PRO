@@ -30,8 +30,8 @@ function databaseFor(options: {
       }
       if (sql.startsWith("select\n      (select count(*)")) {
         return { rows: [{
-          table_count: 44,
-          contract_count: 32,
+          table_count: 56,
+          contract_count: 46,
           clinical_row_count: 0,
           ...options.verification,
         }] as unknown as Row[] };
@@ -78,6 +78,29 @@ describe("production clinical-core migrations", () => {
     expect(sql).toContain("governed_product_review_required");
     expect(sql).toMatch(/affiliateUrl\|destinationUrl\|discountCode\|trackingCode/);
     expect(sql).not.toMatch(/grant\s+(?:all|select|insert|update|delete)\s+on[\s\S]*?\s+to\s+public/i);
+  });
+
+  it("keeps reasoning and Lens review-only, source-linked, unseeded, and closed to direct writes", () => {
+    const sql = readFileSync(path.join(
+      process.cwd(), "infra", "aws-clinical-core", "production-migrations",
+      "20260826130000_production_reasoning_lens_review.sql",
+    ), "utf8");
+    for (const contract of [
+      "get_reasoning_workspace", "review_hypothesis", "list_desktop_lens_paradigms",
+      "list_desktop_lens_domains", "list_desktop_lens_knowledge_sources",
+      "get_desktop_lens_evaluation", "list_desktop_question_answers", "set_question_status",
+      "dismiss_question", "answer_question", "correct_question_answer", "record_question_note_use",
+      "submit_question_feedback", "review_safety_block",
+    ]) expect(sql).toContain(`function clinical_core.${contract}`);
+    expect(sql).toContain("Internal evidence weighting");
+    expect(sql).toContain("not a medical probability");
+    expect(sql).toContain("nothing is generated or fabricated");
+    expect(sql).toContain("clinical_private.require_reasoning_actor");
+    expect(sql).toContain("hypothesis_reviews_append_only");
+    expect(sql).toContain("question_answers_append_only");
+    expect(sql).toContain("from public,clinical_core_api");
+    expect(sql).not.toMatch(/insert into clinical_reference\.clinical_(?:paradigms|domains|knowledge_sources)/i);
+    expect(sql).not.toMatch(/function clinical_core\.(?:run|generate|create)_(?:lens|reasoning)/i);
   });
 
   it("keeps patient sync durable, consent-bound, review-gated, and delivery disabled", () => {
@@ -141,8 +164,8 @@ describe("production clinical-core migrations", () => {
     expect(result).toEqual({
       applied: [migration.version],
       alreadyApplied: [],
-      tableCount: 44,
-      contractCount: 32,
+      tableCount: 56,
+      contractCount: 46,
       clinicalRowCount: 0,
     });
     expect(harness.statements.map(({ sql }) => sql)).toContain("create table clinical_core.example(id uuid)");
@@ -159,7 +182,7 @@ describe("production clinical-core migrations", () => {
   });
 
   it("refuses to commit when any clinical record exists", async () => {
-    const harness = databaseFor({ verification: { table_count: 44, contract_count: 32, clinical_row_count: 1 } });
+    const harness = databaseFor({ verification: { table_count: 56, contract_count: 46, clinical_row_count: 1 } });
     await expect(applyProductionClinicalCoreMigrations(harness.database, [migration]))
       .rejects.toMatchObject({ category: "verification_failed" });
   });

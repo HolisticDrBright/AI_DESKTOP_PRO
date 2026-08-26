@@ -399,6 +399,90 @@
       "source": "infra/aws-clinical-core/production-migrations/20260826110000_production_protocol_templates_and_interactions.sql"
     },
     {
+      "kind": "rpc",
+      "name": "answer_question",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826130000_production_reasoning_lens_review.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "correct_question_answer",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826130000_production_reasoning_lens_review.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "dismiss_question",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826130000_production_reasoning_lens_review.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "get_desktop_lens_evaluation",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826130000_production_reasoning_lens_review.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "get_reasoning_workspace",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826130000_production_reasoning_lens_review.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "list_desktop_lens_domains",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826130000_production_reasoning_lens_review.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "list_desktop_lens_knowledge_sources",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826130000_production_reasoning_lens_review.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "list_desktop_lens_paradigms",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826130000_production_reasoning_lens_review.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "list_desktop_question_answers",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826130000_production_reasoning_lens_review.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "record_question_note_use",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826130000_production_reasoning_lens_review.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "review_hypothesis",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826130000_production_reasoning_lens_review.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "review_safety_block",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826130000_production_reasoning_lens_review.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "set_question_status",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826130000_production_reasoning_lens_review.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "submit_question_feedback",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826130000_production_reasoning_lens_review.sql"
+    },
+    {
       "kind": "select",
       "name": "lab_documents",
       "implementation": "native_production_adapter",

@@ -21,6 +21,14 @@ const CATALOG_OFFER_VERSION = "77000000-0000-4000-8000-000000000003";
 const TEMPLATE_VERSION_ONE = "77000000-0000-4000-8000-000000000004";
 const TEMPLATE_VERSION_TWO = "77000000-0000-4000-8000-000000000005";
 const SUCCESSOR_TEMPLATE_VERSION = "77000000-0000-4000-8000-000000000006";
+const REASONING_SNAPSHOT = "78000000-0000-4000-8000-000000000001";
+const REASONING_FACT = "78000000-0000-4000-8000-000000000002";
+const HYPOTHESIS = "78000000-0000-4000-8000-000000000003";
+const LENS_EVALUATION = "78000000-0000-4000-8000-000000000004";
+const QUESTION = "78000000-0000-4000-8000-000000000005";
+const SAFETY_BLOCK = "78000000-0000-4000-8000-000000000006";
+const KNOWLEDGE_SOURCE = "78000000-0000-4000-8000-000000000007";
+const DISMISSED_QUESTION = "78000000-0000-4000-8000-000000000008";
 const WORKFORCE_SUBJECT = "acceptance-workforce-subject-01";
 const CONSUMER_SUBJECT = "acceptance-consumer-subject-01";
 const LAB_HASH = "b".repeat(64);
@@ -72,6 +80,15 @@ type AcceptanceEvidence = {
   productProtocolApprovalGated: boolean;
   organizationTemplateLifecycle: boolean;
   templateCopyResetsReview: boolean;
+  reasoningWorkspaceGoverned: boolean;
+  hypothesisReviewAttributed: boolean;
+  aiGenerationDisabled: boolean;
+  lensReferencesGoverned: boolean;
+  lensEvaluationBounded: boolean;
+  questionLifecycleVersioned: boolean;
+  questionDismissalAudited: boolean;
+  questionNoteUseExplicit: boolean;
+  safetyBlockReviewAttributed: boolean;
 };
 
 function required(name: string): string {
@@ -328,6 +345,165 @@ async function acceptance(tx: ClinicalCoreTransaction): Promise<AcceptanceEviden
       count(*) filter (where instructions is not null)::int as instruction_count
       from clinical_core.patient_protocol_items where protocol_version_id=$1
       group by interaction_review_state`, [clinicalUuid(copiedVersionId)],
+  ));
+
+  acceptanceStage = "seed_reasoning_lens_review";
+  acceptanceStage = "seed_lens_paradigm";
+  await tx.query(`insert into clinical_reference.clinical_paradigms(
+    code,name,description,is_composite,composed_of,review_status,reviewed_by_person_id,reviewed_at
+  ) values('functional','Functional medicine','Reviewed rollback-only reference framing',false,'{}',
+    'approved',$1,clock_timestamp())`, [clinicalUuid(WORKFORCE)]);
+  acceptanceStage = "seed_lens_domain";
+  await tx.query(`insert into clinical_reference.clinical_domains(
+    code,version,name,description,active,reviewed_by_person_id,reviewed_at
+  ) values('sleep',1,'Sleep','Reviewed rollback-only question domain',true,$1,clock_timestamp())`, [
+    clinicalUuid(WORKFORCE),
+  ]);
+  acceptanceStage = "seed_lens_source";
+  await tx.query(`insert into clinical_reference.clinical_knowledge_sources(
+    id,code,revision,citation,validation_status,reviewed_by_person_id,reviewed_at
+  ) values($1,'rollback_sleep_source',1,'Rollback-only reviewed source fixture.',
+    'validated',$2,clock_timestamp())`, [clinicalUuid(KNOWLEDGE_SOURCE), clinicalUuid(WORKFORCE)]);
+  acceptanceStage = "start_reasoning_encounter";
+  const reasoningEncounter = row(await tx.query<{ id: string }>(
+    "select clinical_core.start_encounter($1,$2,'lab-review',null) as id",
+    [clinicalUuid(ORG), clinicalUuid(patientId)],
+  ));
+  acceptanceStage = "create_reasoning_note";
+  const reasoningNote = json(row(await tx.query<{ data: unknown }>(
+    "select clinical_core.save_note_draft($1,$2,'soap',$3::jsonb,0,null,'manual','[]'::jsonb) as data", [
+      clinicalUuid(ORG), clinicalUuid(reasoningEncounter.id),
+      JSON.stringify({ assessment: "Rollback-only practitioner draft." }),
+    ],
+  )).data);
+  acceptanceStage = "seed_reasoning_snapshot";
+  await tx.query(`insert into clinical_core.reasoning_snapshots(
+    id,organization_id,patient_record_id,encounter_id,source_cutoff_at,worker_run_id,
+    generation_status,input_sha256,output_sha256
+  ) values($1,$2,$3,$4,clock_timestamp(),'rollback:reasoning:0001','review_pending',$5,$6)`, [
+    clinicalUuid(REASONING_SNAPSHOT), clinicalUuid(ORG), clinicalUuid(patientId),
+    clinicalUuid(reasoningEncounter.id), "8".repeat(64), "9".repeat(64),
+  ]);
+  acceptanceStage = "seed_reasoning_fact";
+  await tx.query(`insert into clinical_core.clinical_facts(
+    id,organization_id,patient_record_id,snapshot_id,fact_type,statement,source_type,source_record_id
+  ) values($1,$2,$3,$4,'practitioner_entered','Rollback-only reviewed source fact',
+    'practitioner_entered',$5)`, [
+    clinicalUuid(REASONING_FACT), clinicalUuid(ORG), clinicalUuid(patientId),
+    clinicalUuid(REASONING_SNAPSHOT), clinicalUuid(WORKFORCE),
+  ]);
+  acceptanceStage = "seed_reasoning_hypothesis";
+  await tx.query(`insert into clinical_core.clinical_hypotheses(
+    id,organization_id,patient_record_id,snapshot_id,title,status,reasoning_strength
+  ) values($1,$2,$3,$4,'Rollback-only review hypothesis','under_review',60)`, [
+    clinicalUuid(HYPOTHESIS), clinicalUuid(ORG), clinicalUuid(patientId), clinicalUuid(REASONING_SNAPSHOT),
+  ]);
+  acceptanceStage = "seed_reasoning_evidence";
+  await tx.query(`insert into clinical_core.evidence_items(hypothesis_id,fact_id,direction,summary)
+    values($1,$2,'supporting','Reviewed source-linked fixture evidence')`, [
+    clinicalUuid(HYPOTHESIS), clinicalUuid(REASONING_FACT),
+  ]);
+  acceptanceStage = "seed_lens_evaluation";
+  await tx.query(`insert into clinical_core.lens_evaluations(
+    id,organization_id,patient_record_id,encounter_id,paradigm_code,status,invariant_core,
+    lens_framing,input_snapshot,input_cutoff_at,rule_set_version,knowledge_versions,
+    output_schema_version,output_sha256,validation_result
+  ) values($1,$2,$3,$4,'functional','complete',$5::jsonb,$6::jsonb,$7::jsonb,
+    clock_timestamp(),'rollback-rules/1',$8::jsonb,'lens-output/1',$9,$10::jsonb)`, [
+    clinicalUuid(LENS_EVALUATION), clinicalUuid(ORG), clinicalUuid(patientId),
+    clinicalUuid(reasoningEncounter.id), JSON.stringify({ redFlags: [] }),
+    JSON.stringify({ framing: "review-only" }), JSON.stringify({ minimized: true }),
+    JSON.stringify([{ sourceId: KNOWLEDGE_SOURCE, revision: 1 }]), "a".repeat(64),
+    JSON.stringify({ schemaValid: true, safetyInvariant: true }),
+  ]);
+  acceptanceStage = "seed_lens_questions";
+  await tx.query(`insert into clinical_core.differential_questions(
+    id,organization_id,patient_record_id,encounter_id,evaluation_id,domain_code,question_text,
+    rationale,priority,answer_type,knowledge_source_ids,generation_method,generation_version,dedupe_key
+  ) values
+    ($1,$2,$3,$4,$5,'sleep','How many hours of sleep were recorded?','Clarifies source data',
+      'medium','text',array[$6::uuid],'deterministic_rules','rollback-rules/1','rollback-sleep-hours'),
+    ($7,$2,$3,$4,$5,'sleep','Was this already reviewed?','Tests attributable dismissal',
+      'low','boolean',array[$6::uuid],'deterministic_rules','rollback-rules/1','rollback-dismissal')`, [
+    clinicalUuid(QUESTION), clinicalUuid(ORG), clinicalUuid(patientId), clinicalUuid(reasoningEncounter.id),
+    clinicalUuid(LENS_EVALUATION), clinicalUuid(KNOWLEDGE_SOURCE), clinicalUuid(DISMISSED_QUESTION),
+  ]);
+  acceptanceStage = "seed_lens_safety_block";
+  await tx.query(`insert into clinical_core.lens_safety_blocks(id,evaluation_id,rule_code,detail)
+    values($1,$2,'rollback_review_required',$3::jsonb)`, [
+    clinicalUuid(SAFETY_BLOCK), clinicalUuid(LENS_EVALUATION), JSON.stringify({ reviewRequired: true }),
+  ]);
+
+  acceptanceStage = "list_lens_paradigms";
+  const paradigms = jsonArray(row(await tx.query<{ data: unknown }>(
+    "select clinical_core.list_desktop_lens_paradigms() as data",
+  )).data);
+  acceptanceStage = "list_lens_domains";
+  const domains = jsonArray(row(await tx.query<{ data: unknown }>(
+    "select clinical_core.list_desktop_lens_domains() as data",
+  )).data);
+  acceptanceStage = "list_lens_sources";
+  const knowledgeSources = jsonArray(row(await tx.query<{ data: unknown }>(
+    "select clinical_core.list_desktop_lens_knowledge_sources() as data",
+  )).data);
+  acceptanceStage = "review_reasoning_hypothesis";
+  const hypothesisReview = json(row(await tx.query<{ data: unknown }>(
+    "select clinical_core.review_hypothesis($1,'needs_data',$2) as data", [
+      clinicalUuid(HYPOTHESIS), "Repeat source measurement before any clinical action",
+    ],
+  )).data);
+  acceptanceStage = "read_reasoning_workspace";
+  const reasoningWorkspace = json(row(await tx.query<{ data: unknown }>(
+    "select clinical_core.get_reasoning_workspace($1,$2) as data", [clinicalUuid(ORG), clinicalUuid(patientId)],
+  )).data);
+  acceptanceStage = "read_lens_evaluation";
+  const lensEvaluation = json(row(await tx.query<{ data: unknown }>(
+    "select clinical_core.get_desktop_lens_evaluation($1,'functional') as data",
+    [clinicalUuid(reasoningEncounter.id)],
+  )).data);
+  acceptanceStage = "accept_lens_question";
+  await tx.query("select clinical_core.set_question_status($1,'accepted',null)", [clinicalUuid(QUESTION)]);
+  acceptanceStage = "ask_lens_question";
+  await tx.query("select clinical_core.set_question_status($1,'asked',null)", [clinicalUuid(QUESTION)]);
+  acceptanceStage = "answer_lens_question";
+  const answerOne = row(await tx.query<{ version: number }>(
+    "select clinical_core.answer_question($1,$2::jsonb) as version", [
+      clinicalUuid(QUESTION), JSON.stringify({ text: "About five hours" }),
+    ],
+  ));
+  acceptanceStage = "correct_lens_answer";
+  const answerTwo = row(await tx.query<{ version: number }>(
+    "select clinical_core.correct_question_answer($1,$2::jsonb,$3) as version", [
+      clinicalUuid(QUESTION), JSON.stringify({ text: "About six hours" }), "Source corrected",
+    ],
+  ));
+  acceptanceStage = "list_lens_answers";
+  const answerVersions = jsonArray(row(await tx.query<{ data: unknown }>(
+    "select clinical_core.list_desktop_question_answers($1) as data", [clinicalUuid(QUESTION)],
+  )).data);
+  acceptanceStage = "record_lens_note_use";
+  await tx.query("select clinical_core.record_question_note_use($1,$2)", [
+    clinicalUuid(QUESTION), clinicalUuid(String(reasoningNote.note_id)),
+  ]);
+  acceptanceStage = "submit_lens_feedback";
+  await tx.query("select clinical_core.submit_question_feedback($1,'helpful',null)", [clinicalUuid(QUESTION)]);
+  acceptanceStage = "dismiss_lens_question";
+  await tx.query("select clinical_core.dismiss_question($1,'not_relevant',$2)", [
+    clinicalUuid(DISMISSED_QUESTION), "Already reviewed in the governed source",
+  ]);
+  acceptanceStage = "review_lens_safety_block";
+  await tx.query("select clinical_core.review_safety_block($1,$2)", [
+    clinicalUuid(SAFETY_BLOCK), "Reviewed against the source; no automatic action taken",
+  ]);
+  const reasoningAudit = row(await tx.query<{ count: number }>(
+    `select count(*)::int as count from clinical_audit.events where organization_id=$1
+      and action in ('hypothesis.needs_data','lens.question_answered','lens.answer_corrected',
+        'lens.question_added_to_note','lens.question_dismissed','lens.safety_block_reviewed')`,
+    [clinicalUuid(ORG)],
+  ));
+  const reviewedSafetyBlock = row(await tx.query<{ reviewed_by_person_id: string; resolution: string }>(
+    "select reviewed_by_person_id,resolution from clinical_core.lens_safety_blocks where id=$1",
+    [clinicalUuid(SAFETY_BLOCK)],
   ));
 
   acceptanceStage = "create_short_invitation";
@@ -648,6 +824,22 @@ async function acceptance(tx: ClinicalCoreTransaction): Promise<AcceptanceEviden
     templateCopyResetsReview: copiedProtocolDraft.ok === true
       && copiedReviewState.review_state === "not_completed"
       && copiedReviewState.instruction_count === 0,
+    reasoningWorkspaceGoverned: Array.isArray(reasoningWorkspace.hypotheses)
+      && reasoningWorkspace.hypotheses.length === 1
+      && JSON.stringify(reasoningWorkspace).includes("not a medical probability"),
+    hypothesisReviewAttributed: hypothesisReview.ok === true
+      && hypothesisReview.state === "needs_data",
+    aiGenerationDisabled: json(reasoningWorkspace.aiGeneration).configured === false,
+    lensReferencesGoverned: paradigms.length === 1 && domains.length === 1
+      && knowledgeSources.length === 1,
+    lensEvaluationBounded: lensEvaluation.evaluationId === LENS_EVALUATION
+      && Array.isArray(lensEvaluation.questions) && lensEvaluation.questions.length === 2,
+    questionLifecycleVersioned: Number(answerOne.version) === 1 && Number(answerTwo.version) === 2
+      && answerVersions.length === 2 && answerVersions[1]?.correctsVersion === 1,
+    questionDismissalAudited: Number(reasoningAudit.count) >= 6,
+    questionNoteUseExplicit: Number(reasoningAudit.count) >= 6,
+    safetyBlockReviewAttributed: reviewedSafetyBlock.reviewed_by_person_id === WORKFORCE
+      && reviewedSafetyBlock.resolution.includes("no automatic action"),
   };
 }
 

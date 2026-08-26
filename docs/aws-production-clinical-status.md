@@ -539,3 +539,33 @@ SHA-256:
 `cb23932cfef49a82e9c5913c7bab8cd8272345ad5f83a2f06692cc7a01f368cd`.
 An independent production query confirmed zero retained rows. The production
 API and all operations remain disabled with `PHI_ALLOWED=false`.
+
+## Practitioner reasoning and Lens review boundary (2026-08-26; PHI disabled)
+
+Production migration `20260826130000` adds 12 empty clinical review tables
+plus three empty reviewed-reference tables. Aurora now records **25 migrations,
+56 clinical/audit tables, 46 counted contracts, and zero retained clinical or
+reference rows**. Fourteen more Desktop operations are AWS-native, bringing the
+inventory to **82/223 implemented, zero enabled, and 141 not ported**.
+
+The reasoning workspace returns only stored, source-linked records. Its
+strength label is explicitly an internal evidence weighting—not a medical
+probability—and it reports AI generation as unconfigured. Hypothesis decisions
+append an attributable review and audit record; accepting an inference never
+writes a note, care plan, diagnosis, order, message, or protocol. `needs_data`
+creates an explicit practitioner request without inventing a clinical result.
+
+Lens reference rows must be human-reviewed before reads expose them. The
+database preserves the lens-invariant core, question provenance, constrained
+lifecycle transitions, append-only answer versions/corrections, explicit note
+use, feedback, and attributable safety-block review. No reasoning or Lens
+generation function, worker, reference seed, or auto-approval path was added.
+
+The complete rollback-only App-to-Desktop exercise passed every prior sync,
+catalog, and protocol safeguard plus the new review lifecycle; every temporary
+row rolled back. Evidence SHA-256:
+`90699eb3f218063cee577b905f0a548ca587ad3ba957aa35e61c6f6c8c728565`.
+An independent AWS query then confirmed **0 clinical rows and 0 reference
+rows** across the new tables. Local verification passed **949 tests with 10
+intentional skips**. The hosted synthetic Desktop remains healthy (HTTP 200),
+and `PHI_ALLOWED=false` remains unchanged.

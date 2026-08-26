@@ -68,6 +68,10 @@
     {
       "version": "20260826120000",
       "file": "20260826120000_production_protocol_audit_vocabulary_repair.sql"
+    },
+    {
+      "version": "20260826130000",
+      "file": "20260826130000_production_reasoning_lens_review.sql"
     }
   ]
 }

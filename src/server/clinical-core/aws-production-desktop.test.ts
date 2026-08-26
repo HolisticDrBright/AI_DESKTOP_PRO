@@ -25,6 +25,11 @@ const SYNC_CONFLICT = "ffffffff-ffff-4fff-8fff-ffffffffffff";
 const CATALOG_VERSION = "12121212-1212-4212-8212-121212121212";
 const TEMPLATE_VERSION = "13131313-1313-4313-8313-131313131313";
 const OTHER_TEMPLATE_VERSION = "14141414-1414-4414-8414-141414141414";
+const TEMPLATE = "15151515-1515-4515-8515-151515151515";
+const PROTOCOL_ITEM = "16161616-1616-4616-8616-161616161616";
+const HYPOTHESIS = "17171717-1717-4717-8717-171717171717";
+const QUESTION = "18181818-1818-4818-8818-181818181818";
+const SAFETY_BLOCK = "19191919-1919-4919-8919-191919191919";
 
 const context: ProductionRequestContext = {
   actorPersonId: PERSON,
@@ -738,6 +743,85 @@ describe("AWS production Desktop adapter", () => {
       args: { _label_version_id: CATALOG_VERSION, _verification_note: "Exact label reviewed" },
     })).resolves.toBeNull();
     expect(verify.calls[1]?.sql).toBe("select clinical_core.verify_product_label_version($1,$2)");
+  });
+
+  it("routes the organization-template and interaction contracts through AWS rather than fallback", async () => {
+    const operations: Array<{ functionName: string; args: Record<string, unknown>; sql: string }> = [
+      { functionName: "list_protocol_templates", args: { _organization_id: ORG, _include_archived: false },
+        sql: "select clinical_core.list_protocol_templates($1,$2) as data" },
+      { functionName: "create_protocol_template", args: { _organization_id: ORG, _name: "Foundation", _description: null, _from_version_id: null },
+        sql: "select clinical_core.create_protocol_template($1,$2,$3,$4) as data" },
+      { functionName: "approve_protocol_template_version", args: { _version_id: TEMPLATE_VERSION },
+        sql: "select clinical_core.approve_protocol_template_version($1) as data" },
+      { functionName: "archive_protocol_template", args: { _template_id: TEMPLATE, _archived: true },
+        sql: "select clinical_core.archive_protocol_template($1,$2) as data" },
+      { functionName: "search_protocol_catalog", args: { _organization_id: ORG, _query: "magnesium", _limit: 20 },
+        sql: "select clinical_core.search_protocol_catalog($1,$2,$3) as data" },
+      { functionName: "check_protocol_interactions", args: { _version_id: PROTOCOL_VERSION },
+        sql: "select clinical_core.check_protocol_interactions($1) as data" },
+      { functionName: "review_protocol_item_interactions", args: { _item_id: PROTOCOL_ITEM, _note: null },
+        sql: "select clinical_core.review_protocol_item_interactions($1,$2) as data" },
+    ];
+    for (const operation of operations) {
+      const test = harness({ ok: true });
+      await expect(test.adapter.execute(context, { kind: "rpc", ...operation })).resolves.toEqual({ ok: true });
+      expect(test.calls[1]?.sql).toBe(operation.sql);
+      expect(test.fallback.execute).not.toHaveBeenCalled();
+    }
+  });
+
+  it("routes bounded reasoning and Lens reads through the AWS clinical core", async () => {
+    const operations: Array<{ functionName: string; args: Record<string, unknown>; sql: string }> = [
+      { functionName: "get_reasoning_workspace", args: { _organization_id: ORG, _patient_id: PATIENT },
+        sql: "select clinical_core.get_reasoning_workspace($1,$2) as data" },
+      { functionName: "list_desktop_lens_paradigms", args: {}, sql: "select clinical_core.list_desktop_lens_paradigms() as data" },
+      { functionName: "list_desktop_lens_domains", args: {}, sql: "select clinical_core.list_desktop_lens_domains() as data" },
+      { functionName: "list_desktop_lens_knowledge_sources", args: {}, sql: "select clinical_core.list_desktop_lens_knowledge_sources() as data" },
+      { functionName: "get_desktop_lens_evaluation", args: { _encounter_id: ENCOUNTER, _paradigm: "functional" },
+        sql: "select clinical_core.get_desktop_lens_evaluation($1,$2) as data" },
+      { functionName: "list_desktop_question_answers", args: { _question_id: QUESTION },
+        sql: "select clinical_core.list_desktop_question_answers($1) as data" },
+    ];
+    for (const operation of operations) {
+      const test = harness([]);
+      await expect(test.adapter.execute(context, { kind: "rpc", ...operation })).resolves.toEqual([]);
+      expect(test.calls[1]?.sql).toBe(operation.sql);
+      expect(test.fallback.execute).not.toHaveBeenCalled();
+    }
+  });
+
+  it("routes attributable reasoning and Lens review actions and rejects fabricated states", async () => {
+    const review = harness({ ok: true, state: "needs_data" });
+    await expect(review.adapter.execute(context, { kind: "rpc", functionName: "review_hypothesis",
+      args: { _hypothesis_id: HYPOTHESIS, _action: "needs_data", _note: "Repeat source measurement" },
+    })).resolves.toMatchObject({ state: "needs_data" });
+    expect(review.calls[1]?.sql).toBe("select clinical_core.review_hypothesis($1,$2,$3) as data");
+
+    for (const [functionName, args, sql] of [
+      ["set_question_status", { _question_id: QUESTION, _to: "asked", _reason: null }, "select clinical_core.set_question_status($1,$2,$3)"],
+      ["dismiss_question", { _question_id: QUESTION, _feedback_kind: "not_relevant", _comment: "Already reviewed" }, "select clinical_core.dismiss_question($1,$2,$3)"],
+      ["record_question_note_use", { _question_id: QUESTION, _note_id: NOTE }, "select clinical_core.record_question_note_use($1,$2)"],
+      ["submit_question_feedback", { _question_id: QUESTION, _kind: "helpful", _comment: null }, "select clinical_core.submit_question_feedback($1,$2,$3)"],
+      ["review_safety_block", { _block_id: SAFETY_BLOCK, _resolution: "Reviewed with source data" }, "select clinical_core.review_safety_block($1,$2)"],
+    ] as const) {
+      const test = harness();
+      await expect(test.adapter.execute(context, { kind: "rpc", functionName, args })).resolves.toBeNull();
+      expect(test.calls[1]?.sql).toBe(sql);
+    }
+    const answer = harness(1);
+    await expect(answer.adapter.execute(context, { kind: "rpc", functionName: "answer_question",
+      args: { _question_id: QUESTION, _answer: { text: "Reviewed answer" } },
+    })).resolves.toBe(1);
+    const correction = harness(2);
+    await expect(correction.adapter.execute(context, { kind: "rpc", functionName: "correct_question_answer",
+      args: { _question_id: QUESTION, _answer: { text: "Corrected answer" }, _reason: "Source corrected" },
+    })).resolves.toBe(2);
+
+    const refused = harness();
+    await expect(refused.adapter.execute(context, { kind: "rpc", functionName: "review_hypothesis",
+      args: { _hypothesis_id: HYPOTHESIS, _action: "auto_approve", _note: null },
+    })).rejects.toEqual(new ProductionDesktopError("request_invalid"));
+    expect(refused.calls).toHaveLength(1);
   });
 
   it("refuses malformed catalog identifiers and ungoverned review assertions before Aurora", async () => {

@@ -96,7 +96,12 @@ export async function applyProductionClinicalCoreMigrations(
             'record_sync_worker_cycle','register_sync_callback_nonce',
             'list_protocol_templates','create_protocol_template','approve_protocol_template_version',
             'archive_protocol_template','search_protocol_catalog','check_protocol_interactions',
-            'review_protocol_item_interactions'))::int as contract_count,
+            'review_protocol_item_interactions','get_reasoning_workspace','review_hypothesis',
+            'list_desktop_lens_paradigms','list_desktop_lens_domains',
+            'list_desktop_lens_knowledge_sources','get_desktop_lens_evaluation',
+            'list_desktop_question_answers','set_question_status','dismiss_question','answer_question',
+            'correct_question_answer','record_question_note_use','submit_question_feedback',
+            'review_safety_block'))::int as contract_count,
       (
         (select count(*) from clinical_core.organizations)
         + (select count(*) from clinical_core.persons)
@@ -126,6 +131,18 @@ export async function applyProductionClinicalCoreMigrations(
         + (select count(*) from clinical_core.patient_protocol_items)
         + (select count(*) from clinical_core.protocol_templates)
         + (select count(*) from clinical_core.protocol_template_versions)
+        + (select count(*) from clinical_core.reasoning_snapshots)
+        + (select count(*) from clinical_core.clinical_facts)
+        + (select count(*) from clinical_core.clinical_hypotheses)
+        + (select count(*) from clinical_core.evidence_items)
+        + (select count(*) from clinical_core.missing_data_recommendations)
+        + (select count(*) from clinical_core.hypothesis_reviews)
+        + (select count(*) from clinical_core.lens_evaluations)
+        + (select count(*) from clinical_core.differential_questions)
+        + (select count(*) from clinical_core.question_status_transitions)
+        + (select count(*) from clinical_core.question_answers)
+        + (select count(*) from clinical_core.question_feedback)
+        + (select count(*) from clinical_core.lens_safety_blocks)
         + (select count(*) from clinical_core.sync_outbound_events)
         + (select count(*) from clinical_core.sync_inbound_events)
         + (select count(*) from clinical_core.sync_inbound_corrections)
@@ -140,7 +157,7 @@ export async function applyProductionClinicalCoreMigrations(
         + (select count(*) from clinical_core.sync_inbound_lab_imports)
       )::int as clinical_row_count`);
     const row = verification.rows[0];
-    if (!row || Number(row.table_count) !== 44 || Number(row.contract_count) !== 32
+    if (!row || Number(row.table_count) !== 56 || Number(row.contract_count) !== 46
       || Number(row.clinical_row_count) !== 0) {
       throw new ProductionClinicalCoreMigrationError("verification_failed");
     }
