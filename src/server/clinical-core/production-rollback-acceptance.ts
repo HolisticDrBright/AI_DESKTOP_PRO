@@ -15,6 +15,12 @@ const PROTOCOL_ARTIFACT = "74000000-0000-4000-8000-000000000002";
 const LAB_SUMMARY_ARTIFACT = "74000000-0000-4000-8000-000000000003";
 const STABLE_RECORD = "75000000-0000-4000-8000-000000000001";
 const SYNC_WORKER = "76000000-0000-4000-8000-000000000001";
+const CATALOG_BATCH = "77000000-0000-4000-8000-000000000001";
+const CATALOG_PRODUCT_VERSION = "77000000-0000-4000-8000-000000000002";
+const CATALOG_OFFER_VERSION = "77000000-0000-4000-8000-000000000003";
+const TEMPLATE_VERSION_ONE = "77000000-0000-4000-8000-000000000004";
+const TEMPLATE_VERSION_TWO = "77000000-0000-4000-8000-000000000005";
+const SUCCESSOR_TEMPLATE_VERSION = "77000000-0000-4000-8000-000000000006";
 const WORKFORCE_SUBJECT = "acceptance-workforce-subject-01";
 const CONSUMER_SUBJECT = "acceptance-consumer-subject-01";
 const LAB_HASH = "b".repeat(64);
@@ -53,6 +59,13 @@ type AcceptanceEvidence = {
   inboundChartMaterialized: boolean;
   crossTenantRefused: boolean;
   auditEventCount: number;
+  catalogListGoverned: boolean;
+  labelVerificationAttributed: boolean;
+  commercialClinicalSeparated: boolean;
+  templateDetailDerived: boolean;
+  templateComparisonBounded: boolean;
+  safetyReviewAppendOnly: boolean;
+  templateSuperseded: boolean;
 };
 
 function required(name: string): string {
@@ -111,6 +124,109 @@ async function acceptance(tx: ClinicalCoreTransaction): Promise<AcceptanceEviden
   ) values ($1,$2,'admin','active')`, [clinicalUuid(ORG), clinicalUuid(WORKFORCE)]);
 
   await setContext(tx, WORKFORCE, ORG, "workforce", WORKFORCE_SUBJECT, "clinical_data");
+  acceptanceStage = "seed_governed_catalog";
+  await tx.query(`insert into clinical_reference.catalog_import_batches(
+    id,contract_version,source_package_id,source_package_version,manifest_sha256,
+    environment,data_classification,contains_phi,status,product_count,protocol_template_count,completed_at
+  ) values ($1,'governed-catalog-seed/1','rollback_acceptance','1.0.0',$2,
+    'production-clinical','reference_only',false,'succeeded',1,2,clock_timestamp())`, [
+    clinicalUuid(CATALOG_BATCH), "1".repeat(64),
+  ]);
+  await tx.query(`insert into clinical_reference.catalog_products(
+    stable_id,review_status,active_version,environment,data_classification,contains_phi
+  ) values ('prd_rollback_acceptance','approved',1,'production-clinical','reference_only',false)`);
+  await tx.query(`insert into clinical_reference.catalog_product_versions(
+    id,product_stable_id,version,display_name,brand,product_type,access_tier,
+    declared_restricted,direct_order_allowed,label_sha256,content_sha256,clinical_payload,
+    source_refs,review_status,import_batch_id
+  ) values ($1,'prd_rollback_acceptance',1,'Rollback catalog product','Acceptance brand',
+    'supplement','open',false,true,$2,$3,$4::jsonb,$5::jsonb,'approved',$6)`, [
+    clinicalUuid(CATALOG_PRODUCT_VERSION), "2".repeat(64), "3".repeat(64),
+    JSON.stringify({ servingSize: "One capsule", ingredientRows: [{ name: "Acceptance ingredient" }],
+      warnings: "Practitioner review required", sku: "ACCEPT-001" }),
+    JSON.stringify([{ sourceId: "src_rollback_acceptance" }]), clinicalUuid(CATALOG_BATCH),
+  ]);
+  await tx.query(`insert into commercial_reference.affiliate_offers(
+    stable_id,product_stable_id,review_status,active_version
+  ) values ('off_rollback_acceptance','prd_rollback_acceptance','approved',1)`);
+  await tx.query(`insert into commercial_reference.affiliate_offer_versions(
+    id,offer_stable_id,version,kind,destination_url,supplier_name,commission_disclosure,
+    availability_status,declared_restricted,direct_order_allowed,content_sha256,
+    review_status,environment,import_batch_id,last_verified_at
+  ) values ($1,'off_rollback_acceptance',1,'affiliate','https://example.test/catalog',
+    'Acceptance supplier','A commission may be earned.','available',false,true,$2,
+    'approved','production-clinical',$3,clock_timestamp())`, [
+    clinicalUuid(CATALOG_OFFER_VERSION), "4".repeat(64), clinicalUuid(CATALOG_BATCH),
+  ]);
+  acceptanceStage = "verify_catalog_label";
+  await tx.query("select clinical_core.verify_product_label_version($1,$2)", [
+    clinicalUuid(CATALOG_PRODUCT_VERSION), "Rollback-only exact label review",
+  ]);
+  acceptanceStage = "read_governed_catalog";
+  const catalog = json(row(await tx.query<{ data: unknown }>(
+    "select clinical_core.get_product_catalog($1,null,null,100) as data", [clinicalUuid(ORG)],
+  )).data);
+  const labelDetail = json(row(await tx.query<{ data: unknown }>(
+    "select clinical_core.get_product_label_detail($1) as data", [clinicalUuid(CATALOG_PRODUCT_VERSION)],
+  )).data);
+
+  acceptanceStage = "seed_governed_templates";
+  await tx.query(`insert into clinical_reference.protocol_templates(
+    stable_id,review_status,active_version,environment,data_classification,contains_phi
+  ) values
+    ('tpl_rollback_acceptance','approved',2,'production-clinical','reference_only',false),
+    ('tpl_rollback_successor','approved',1,'production-clinical','reference_only',false)`);
+  await tx.query(`insert into clinical_reference.protocol_template_versions(
+    id,template_stable_id,version,title,summary,content_sha256,source_refs,
+    review_status,approved_at,import_batch_id
+  ) values
+    ($1,'tpl_rollback_acceptance',1,'Rollback template v1','First reviewed version',$2,$3::jsonb,
+      'approved',clock_timestamp(),$4),
+    ($5,'tpl_rollback_acceptance',2,'Rollback template v2','Second reviewed version',$6,$3::jsonb,
+      'approved',clock_timestamp(),$4),
+    ($7,'tpl_rollback_successor',1,'Rollback successor','Reviewed successor',$8,$3::jsonb,
+      'approved',clock_timestamp(),$4)`, [
+    clinicalUuid(TEMPLATE_VERSION_ONE), "5".repeat(64),
+    JSON.stringify([{ sourceId: "src_rollback_acceptance" }]), clinicalUuid(CATALOG_BATCH),
+    clinicalUuid(TEMPLATE_VERSION_TWO), "6".repeat(64),
+    clinicalUuid(SUCCESSOR_TEMPLATE_VERSION), "7".repeat(64),
+  ]);
+  await tx.query(`insert into clinical_reference.protocol_template_items(
+    template_version_id,position,product_stable_id,label,kind,instructions,dosage_text,
+    timing_text,route,dose_source_kind,dose_source_ref,monitoring_requirements,
+    stopping_rules,contraindications
+  ) values
+    ($1,1,'prd_rollback_acceptance','Acceptance product','supplement','Review before use',
+      'One capsule','Daily','oral','label','src_rollback_acceptance','[]'::jsonb,
+      '["Stop and review"]'::jsonb,'[]'::jsonb),
+    ($2,1,'prd_rollback_acceptance','Acceptance product','supplement','Review before use',
+      'Two capsules','Daily','oral','label','src_rollback_acceptance','[]'::jsonb,
+      '["Stop and review"]'::jsonb,'[]'::jsonb),
+    ($3,1,'prd_rollback_acceptance','Acceptance product','supplement','Review before use',
+      'Two capsules','Daily','oral','label','src_rollback_acceptance','[]'::jsonb,
+      '["Stop and review"]'::jsonb,'[]'::jsonb)`, [
+    clinicalUuid(TEMPLATE_VERSION_ONE), clinicalUuid(TEMPLATE_VERSION_TWO),
+    clinicalUuid(SUCCESSOR_TEMPLATE_VERSION),
+  ]);
+  acceptanceStage = "review_governed_template";
+  const templateDetail = json(row(await tx.query<{ data: unknown }>(
+    "select clinical_core.get_protocol_template_detail('tpl_rollback_acceptance') as data",
+  )).data);
+  const comparison = json(row(await tx.query<{ data: unknown }>(
+    "select clinical_core.compare_protocol_template_versions($1,$2) as data", [
+      clinicalUuid(TEMPLATE_VERSION_ONE), clinicalUuid(TEMPLATE_VERSION_TWO),
+    ],
+  )).data);
+  const safetyReview = json(row(await tx.query<{ data: unknown }>(
+    "select clinical_core.record_protocol_template_safety_review($1,'passed',$2) as data", [
+      clinicalUuid(TEMPLATE_VERSION_TWO), "Rollback-only sourced-dose review",
+    ],
+  )).data);
+  const superseded = json(row(await tx.query<{ data: unknown }>(
+    "select clinical_core.supersede_protocol_template('tpl_rollback_acceptance','tpl_rollback_successor',$1) as data",
+    ["Rollback-only reviewed successor"],
+  )).data);
+
   acceptanceStage = "create_patient";
   const patient = json(row(await tx.query<{ data: unknown }>(
     "select clinical_core.create_patient_profile($1,$2,$3,$4::date,$5,$6,$7,$8) as data",
@@ -354,6 +470,11 @@ async function acceptance(tx: ClinicalCoreTransaction): Promise<AcceptanceEviden
     && revokedScopes.rows.every((scope) => scope.status === "revoked");
   await tx.query("rollback to savepoint connection_revoke_probe");
 
+  const catalogClinical = json(catalog.clinical);
+  const catalogProducts = Array.isArray(catalogClinical.products)
+    ? catalogClinical.products as Array<Record<string, unknown>> : [];
+  const labelClinical = json(labelDetail.clinical);
+  const labelCommercial = json(labelDetail.commercial);
   return {
     patientCreated: Boolean(patientId),
     connectionVerified: connection.state === "verified",
@@ -391,6 +512,22 @@ async function acceptance(tx: ClinicalCoreTransaction): Promise<AcceptanceEviden
       && inboundReview.chartMaterialized === true && finalObservations.rows.length === 2,
     crossTenantRefused,
     auditEventCount: Number(counts.audit_count),
+    catalogListGoverned: catalogProducts.length === 1
+      && catalogProducts[0]?.productCode === "prd_rollback_acceptance",
+    labelVerificationAttributed: labelClinical.verificationState === "verified"
+      && typeof labelClinical.verifiedAt === "string",
+    commercialClinicalSeparated: Array.isArray(labelCommercial.links)
+      && labelCommercial.links.length === 1
+      && !JSON.stringify(labelClinical).includes("example.test"),
+    templateDetailDerived: templateDetail.templateId === "tpl_rollback_acceptance"
+      && templateDetail.unsourcedDoseCount === 0
+      && Array.isArray(templateDetail.patientInstructionPreview),
+    templateComparisonBounded: comparison.sameTemplate === true
+      && comparison.doseChangeCount === 1,
+    safetyReviewAppendOnly: safetyReview.ok === true
+      && safetyReview.outcome === "passed" && safetyReview.unsourcedDoseCount === 0,
+    templateSuperseded: superseded.ok === true
+      && superseded.supersededBy === "tpl_rollback_successor",
   };
 }
 

@@ -74,6 +74,13 @@ const CORE_RPCS = new Set([
   "activate_protocol_version",
   "set_protocol_lifecycle",
   "revise_protocol_version",
+  "get_product_catalog",
+  "get_product_label_detail",
+  "verify_product_label_version",
+  "get_protocol_template_detail",
+  "compare_protocol_template_versions",
+  "record_protocol_template_safety_review",
+  "supersede_protocol_template",
 ]);
 const CORE_SELECTS = new Set(["patient_profiles", "lab_documents"]);
 
@@ -612,6 +619,68 @@ async function executeCoreRpc(
     ));
     return decodeJson(row.data);
   }
+  if (name === "get_product_catalog") {
+    exactKeys(args, ["_organization_id", "_query", "_status", "_limit"]);
+    if (args._organization_id !== context.organizationId) throw invalid();
+    const status = optionalString(args._status, 20);
+    if (status !== null && !["draft", "published", "superseded", "withdrawn"].includes(status)) throw invalid();
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.get_product_catalog($1,$2,$3,$4) as data",
+      [clinicalUuid(context.organizationId), optionalString(args._query, 200), status,
+        args._limit === null ? null : boundedInteger(args._limit, 1, 500)],
+    ));
+    return decodeJson(row.data);
+  }
+  if (name === "get_product_label_detail") {
+    exactKeys(args, ["_label_version_id"]);
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.get_product_label_detail($1) as data",
+      [clinicalUuid(requiredUuid(args._label_version_id))],
+    ));
+    return decodeJson(row.data);
+  }
+  if (name === "verify_product_label_version") {
+    exactKeys(args, ["_label_version_id", "_verification_note"]);
+    await tx.query("select clinical_core.verify_product_label_version($1,$2)", [
+      clinicalUuid(requiredUuid(args._label_version_id)), requiredString(args._verification_note, 2000),
+    ]);
+    return null;
+  }
+  if (name === "get_protocol_template_detail") {
+    exactKeys(args, ["_template_id"]);
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.get_protocol_template_detail($1) as data",
+      [requiredCatalogId(args._template_id, "tpl")],
+    ));
+    return decodeJson(row.data);
+  }
+  if (name === "compare_protocol_template_versions") {
+    exactKeys(args, ["_left_version_id", "_right_version_id"]);
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.compare_protocol_template_versions($1,$2) as data",
+      [clinicalUuid(requiredUuid(args._left_version_id)), clinicalUuid(requiredUuid(args._right_version_id))],
+    ));
+    return decodeJson(row.data);
+  }
+  if (name === "record_protocol_template_safety_review") {
+    exactKeys(args, ["_version_id", "_outcome", "_note"]);
+    const outcome = requiredString(args._outcome, 16);
+    if (!["passed", "concerns", "blocked"].includes(outcome)) throw invalid();
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.record_protocol_template_safety_review($1,$2,$3) as data",
+      [clinicalUuid(requiredUuid(args._version_id)), outcome, requiredString(args._note, 2000)],
+    ));
+    return decodeJson(row.data);
+  }
+  if (name === "supersede_protocol_template") {
+    exactKeys(args, ["_template_id", "_successor_template_id", "_reason"]);
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.supersede_protocol_template($1,$2,$3) as data",
+      [requiredCatalogId(args._template_id, "tpl"), requiredCatalogId(args._successor_template_id, "tpl"),
+        requiredString(args._reason, 2000)],
+    ));
+    return decodeJson(row.data);
+  }
   throw new ProductionDesktopError("operation_refused");
 }
 
@@ -718,6 +787,12 @@ function optionalUuid(value: unknown): string | null {
 function requiredUuid(value: unknown): string {
   const candidate = optionalUuid(value);
   if (!candidate) throw invalid();
+  return candidate;
+}
+
+function requiredCatalogId(value: unknown, prefix: "prd" | "tpl"): string {
+  const candidate = requiredString(value, 100);
+  if (!new RegExp(`^${prefix}_[a-z0-9][a-z0-9_-]{2,95}$`).test(candidate)) throw invalid();
   return candidate;
 }
 

@@ -315,6 +315,48 @@
       "source": "infra/aws-clinical-core/production-migrations/20260825100000_production_patient_sync_delivery_controls.sql"
     },
     {
+      "kind": "rpc",
+      "name": "get_product_catalog",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826100000_production_governed_catalog.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "get_product_label_detail",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826100000_production_governed_catalog.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "verify_product_label_version",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826100000_production_governed_catalog.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "get_protocol_template_detail",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826100000_production_governed_catalog.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "compare_protocol_template_versions",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826100000_production_governed_catalog.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "record_protocol_template_safety_review",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826100000_production_governed_catalog.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "supersede_protocol_template",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826100000_production_governed_catalog.sql"
+    },
+    {
       "kind": "select",
       "name": "lab_documents",
       "implementation": "native_production_adapter",

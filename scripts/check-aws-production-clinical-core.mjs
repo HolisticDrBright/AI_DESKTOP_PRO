@@ -16,7 +16,7 @@ const errors = [];
 const assert = (condition, message) => { if (!condition) errors.push(message); };
 
 assert(manifest.contract_version === "clinical-core-migrations/1", "generated manifest contract is invalid");
-assert(manifest.migrations.length === 21, "expected seven transformed migrations and fourteen production overlays");
+assert(manifest.migrations.length === 22, "expected seven transformed migrations and fifteen production overlays");
 assert(new Set(manifest.migrations.map((entry) => entry.version)).size === manifest.migrations.length,
   "migration versions must be unique");
 
@@ -81,6 +81,8 @@ const syncLabSummaryRepair = readFileSync(path.join(root, "infra", "aws-clinical
   "20260825123000_production_sync_lab_summary_observed_at.sql"), "utf8");
 const patientAppIntakeOverlay = readFileSync(path.join(root, "infra", "aws-clinical-core", "production-migrations",
   "20260825140000_production_consumer_health_intake_review.sql"), "utf8");
+const governedCatalogOverlay = readFileSync(path.join(root, "infra", "aws-clinical-core", "production-migrations",
+  "20260826100000_production_governed_catalog.sql"), "utf8");
 assert(overlay.includes("_organization_id uuid") && overlay.includes("_first_name text")
   && overlay.includes("_last_name text") && overlay.includes("_date_of_birth date")
   && overlay.includes("_sex text") && overlay.includes("_mrn text")
@@ -233,6 +235,22 @@ assert(patientAppIntakeOverlay.includes("clinical_core.get_patient_app_intake")
 "patient app intake lacks consent status, patient access, review task, or current-version projection");
 assert(!/insert\s+into\s+clinical_core\.patient_records/i.test(patientAppIntakeOverlay),
 "patient app intake must not silently overwrite the practitioner-authored patient record");
+for (const operation of [
+  "get_product_catalog", "get_product_label_detail", "verify_product_label_version",
+  "get_protocol_template_detail", "compare_protocol_template_versions",
+  "record_protocol_template_safety_review", "supersede_protocol_template",
+]) assert(governedCatalogOverlay.includes(`clinical_core.${operation}`),
+  `missing governed catalog operation ${operation}`);
+for (const invariant of [
+  "catalog_history_append_only", "catalog_product_payload_no_commercial_data",
+  "protocol_item_dose_provenance", "organization_admin_required",
+  "unsourced_dose_blocks_passed_review", "protocol_template_supersession_cycle",
+]) assert(governedCatalogOverlay.includes(invariant), `missing governed catalog invariant ${invariant}`);
+assert(governedCatalogOverlay.includes("contains_phi boolean not null default false check (contains_phi = false)")
+  && governedCatalogOverlay.includes("data_classification text not null default 'reference_only'")
+  && !/insert\s+into\s+(?:clinical_reference|commercial_reference)\./i.test(
+    governedCatalogOverlay.replace(/\$([A-Za-z_][A-Za-z0-9_]*)?\$[\s\S]*?\$\1\$/g, "")),
+"governed catalog must remain reference-only and must not seed catalog or commercial rows");
 
 if (errors.length) {
   for (const error of errors) console.error(`ERROR: ${error}`);
@@ -240,4 +258,4 @@ if (errors.length) {
 }
 
 const releaseHash = createHash("sha256").update(combined).digest("hex");
-console.log(`Production clinical-core gate passed: 21 migrations, zero seeded rows (${releaseHash}).`);
+console.log(`Production clinical-core gate passed: 22 migrations, zero seeded rows (${releaseHash}).`);

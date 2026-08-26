@@ -473,3 +473,37 @@ SHA-256:
 PR #41 head `7bea773e4473d4293a0db3a2327b3a1998f2383d` passed every GitHub CI and
 browser check. These are closed-boundary and recovery proofs only; they do not
 authorize PHI or activate the provider.
+
+## Governed product and protocol-template catalog (2026-08-25; PHI disabled)
+
+Production migration `20260826100000` adds an empty, reference-only catalog in
+the dedicated `clinical_reference` and `commercial_reference` schemas. Aurora
+now has 22 migration-ledger entries plus eight clinical-reference tables and
+two isolated commercial tables. No product, template, offer, verification, or
+review row was seeded or retained.
+
+Seven Desktop operations are now AWS-native and activation-blocked:
+`get_product_catalog`, `get_product_label_detail`,
+`verify_product_label_version`, `get_protocol_template_detail`,
+`compare_protocol_template_versions`,
+`record_protocol_template_safety_review`, and
+`supersede_protocol_template`. The inventory is **61/223 implemented, zero
+enabled, and 162 not ported**.
+
+Catalog and template versions are immutable. Clinical payloads reject
+commercial destinations and tracking fields. Commercial offers remain in a
+separate schema and cannot affect clinical eligibility, ranking, safety, or
+evidence. Named owner/admin review is required for verification and template
+safety actions; a passed safety review is refused for an unsourced dose;
+supersession preserves prior versions and refuses cycles. This phase does not
+import or approve Claude's governed package, resolve the eight practitioner
+decisions, or permit product-bearing patient protocols.
+
+The deployed rollback-only exercise proved all seven functions plus the
+existing App-to-Desktop sync contract, then rolled every temporary row back.
+Evidence SHA-256:
+`5300158382e7a9be7435d69e76f2f239ad8e2b4f90c76e5d13b075386f9274ab`.
+An independent query confirmed zero rows across all ten new tables. Local
+verification passed 945 unit tests with 10 intentional skips and the complete
+210-page clinical build. `PHI_ALLOWED=false`, the private production API, and
+all human activation gates remain blocked.

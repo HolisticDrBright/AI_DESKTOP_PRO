@@ -22,6 +22,9 @@ const PROTOCOL = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 const PROTOCOL_VERSION = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
 const SYNC_EVENT = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
 const SYNC_CONFLICT = "ffffffff-ffff-4fff-8fff-ffffffffffff";
+const CATALOG_VERSION = "12121212-1212-4212-8212-121212121212";
+const TEMPLATE_VERSION = "13131313-1313-4313-8313-131313131313";
+const OTHER_TEMPLATE_VERSION = "14141414-1414-4414-8414-141414141414";
 
 const context: ProductionRequestContext = {
   actorPersonId: PERSON,
@@ -685,6 +688,72 @@ describe("AWS production Desktop adapter", () => {
       expect(test.calls[1]?.sql).toBe(operation.sql);
       expect(test.fallback.execute).not.toHaveBeenCalled();
     }
+  });
+
+  it("routes the seven governed catalog operations through AWS-native functions", async () => {
+    const operations: Array<{ functionName: string; args: Record<string, unknown>; sql: string }> = [
+      {
+        functionName: "get_product_catalog",
+        args: { _organization_id: ORG, _query: null, _status: null, _limit: 100 },
+        sql: "select clinical_core.get_product_catalog($1,$2,$3,$4) as data",
+      },
+      {
+        functionName: "get_product_label_detail",
+        args: { _label_version_id: CATALOG_VERSION },
+        sql: "select clinical_core.get_product_label_detail($1) as data",
+      },
+      {
+        functionName: "get_protocol_template_detail",
+        args: { _template_id: "tpl_foundation_protocol" },
+        sql: "select clinical_core.get_protocol_template_detail($1) as data",
+      },
+      {
+        functionName: "compare_protocol_template_versions",
+        args: { _left_version_id: TEMPLATE_VERSION, _right_version_id: OTHER_TEMPLATE_VERSION },
+        sql: "select clinical_core.compare_protocol_template_versions($1,$2) as data",
+      },
+      {
+        functionName: "record_protocol_template_safety_review",
+        args: { _version_id: TEMPLATE_VERSION, _outcome: "concerns", _note: "Requires practitioner review" },
+        sql: "select clinical_core.record_protocol_template_safety_review($1,$2,$3) as data",
+      },
+      {
+        functionName: "supersede_protocol_template",
+        args: { _template_id: "tpl_foundation_protocol", _successor_template_id: "tpl_foundation_protocol_v2", _reason: "Reviewed replacement" },
+        sql: "select clinical_core.supersede_protocol_template($1,$2,$3) as data",
+      },
+    ];
+    for (const operation of operations) {
+      const test = harness({ ok: true });
+      await expect(test.adapter.execute(context, {
+        kind: "rpc", functionName: operation.functionName, args: operation.args,
+      })).resolves.toEqual({ ok: true });
+      expect(test.calls[1]?.sql).toBe(operation.sql);
+      expect(test.fallback.execute).not.toHaveBeenCalled();
+    }
+
+    const verify = harness();
+    await expect(verify.adapter.execute(context, {
+      kind: "rpc", functionName: "verify_product_label_version",
+      args: { _label_version_id: CATALOG_VERSION, _verification_note: "Exact label reviewed" },
+    })).resolves.toBeNull();
+    expect(verify.calls[1]?.sql).toBe("select clinical_core.verify_product_label_version($1,$2)");
+  });
+
+  it("refuses malformed catalog identifiers and ungoverned review assertions before Aurora", async () => {
+    const test = harness();
+    await expect(test.adapter.execute(context, {
+      kind: "rpc", functionName: "get_protocol_template_detail", args: { _template_id: "not-governed" },
+    })).rejects.toEqual(new ProductionDesktopError("request_invalid"));
+    await expect(test.adapter.execute(context, {
+      kind: "rpc", functionName: "record_protocol_template_safety_review",
+      args: { _version_id: TEMPLATE_VERSION, _outcome: "auto_approved", _note: "No" },
+    })).rejects.toEqual(new ProductionDesktopError("request_invalid"));
+    await expect(test.adapter.execute(context, {
+      kind: "rpc", functionName: "verify_product_label_version",
+      args: { _label_version_id: CATALOG_VERSION, _verification_note: "" },
+    })).rejects.toEqual(new ProductionDesktopError("request_invalid"));
+    expect(test.calls).toHaveLength(3);
   });
 
   it("sanitizes protocol drafts and never trusts commercial or product-review assertions", async () => {
