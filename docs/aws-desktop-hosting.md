@@ -37,6 +37,12 @@ uses the synthetic AWS Cognito workforce pool. The server forwards the
 practitioner's Cognito access token only to the allowlisted synthetic AWS API
 Gateway origin, where tenant and role authorization are enforced.
 
+The owner-operated synthetic practitioner identity uses
+`info@AILongevityPro.app`. Password reset is delivered to that address so the
+owner chooses the password; no agent-generated password is shared. Because
+workforce MFA is mandatory, a first sign-in can enroll a software authenticator
+inside the Desktop and subsequent sign-ins require its six-digit code.
+
 ## Deployment boundary
 
 The container builds with `APP_EDITION=clinical`, so the repository's edition

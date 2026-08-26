@@ -37,6 +37,7 @@ export const AUTH_COOKIES = {
   mfaSession: "aidp_mfa",
   mfaUsername: "aidp_mfu",
   mfaEmail: "aidp_mfe",
+  mfaChallenge: "aidp_mfc",
 } as const;
 
 export interface AuthTokens {
@@ -62,6 +63,15 @@ export interface MfaChallenge {
   session: string;
   username: string;
   email: string;
+}
+
+export interface MfaSetupChallenge {
+  challenge: "MFA_SETUP";
+  session: string;
+  username: string;
+  email: string;
+  /** One-time authenticator seed returned only for the setup screen. */
+  secretCode: string;
 }
 
 function cognitoConfig(): { endpoint: string; clientId: string } {
@@ -140,7 +150,7 @@ function tokensFrom(result: CognitoAuthenticationResult | undefined, refreshToke
   };
 }
 
-export async function passwordSignIn(email: string, password: string): Promise<AuthTokens | MfaChallenge> {
+export async function passwordSignIn(email: string, password: string): Promise<AuthTokens | MfaChallenge | MfaSetupChallenge> {
   const { clientId } = cognitoConfig();
   const data = await cognitoRequest<CognitoAuthResponse>("InitiateAuth", {
     AuthFlow: "USER_PASSWORD_AUTH",
@@ -155,6 +165,21 @@ export async function passwordSignIn(email: string, password: string): Promise<A
       email,
     };
   }
+  if (data.ChallengeName === "MFA_SETUP" && data.Session) {
+    const setup = await cognitoRequest<{ SecretCode?: string; Session?: string }>("AssociateSoftwareToken", {
+      Session: data.Session,
+    });
+    if (!setup.SecretCode || !setup.Session) {
+      throw new AdapterError("unavailable", "Authenticator setup could not be started. Try signing in again.");
+    }
+    return {
+      challenge: "MFA_SETUP",
+      session: setup.Session,
+      username: data.ChallengeParameters?.USER_ID_FOR_SRP ?? email,
+      email,
+      secretCode: setup.SecretCode,
+    };
+  }
   if (data.ChallengeName) {
     throw new AdapterError("unauthenticated", "This workforce sign-in requires an unsupported account challenge. Contact an administrator.");
   }
@@ -166,9 +191,27 @@ export async function completeMfaSignIn(input: {
   username: string;
   email: string;
   code: string;
+  challenge?: "SOFTWARE_TOKEN_MFA" | "MFA_SETUP";
 }): Promise<AuthTokens> {
   const { clientId } = cognitoConfig();
   if (!/^\d{6}$/.test(input.code)) throw new AdapterError("invalid", "Enter the six-digit authenticator code.");
+  if (input.challenge === "MFA_SETUP") {
+    const verified = await cognitoRequest<{ Status?: string; Session?: string }>("VerifySoftwareToken", {
+      Session: input.session,
+      UserCode: input.code,
+      FriendlyDeviceName: "AI Desktop Pro",
+    });
+    if (verified.Status !== "SUCCESS" || !verified.Session) {
+      throw new AdapterError("unauthenticated", "Authenticator setup failed. Check the six-digit code and try again.");
+    }
+    const completed = await cognitoRequest<CognitoAuthResponse>("RespondToAuthChallenge", {
+      ClientId: clientId,
+      ChallengeName: "MFA_SETUP",
+      Session: verified.Session,
+      ChallengeResponses: { USERNAME: input.username },
+    });
+    return tokensFrom(completed.AuthenticationResult, "", input.email);
+  }
   const data = await cognitoRequest<CognitoAuthResponse>("RespondToAuthChallenge", {
     ClientId: clientId,
     ChallengeName: "SOFTWARE_TOKEN_MFA",

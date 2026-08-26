@@ -25,7 +25,8 @@ export function LoginForm() {
   const [session, setSession] = useState<SessionInfo | null>(null);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [mfaRequired, setMfaRequired] = useState(false);
+  const [mfaMode, setMfaMode] = useState<"verify" | "setup" | null>(null);
+  const [mfaSecret, setMfaSecret] = useState("");
   const [mfaCode, setMfaCode] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -75,13 +76,13 @@ export function LoginForm() {
     setPending(true);
     setError(null);
     try {
-      const res = await fetch(mfaRequired ? "/api/auth/mfa" : "/api/auth/login", {
+      const res = await fetch(mfaMode ? "/api/auth/mfa" : "/api/auth/login", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(mfaRequired ? { code: mfaCode } : { email, password }),
+        body: JSON.stringify(mfaMode ? { code: mfaCode } : { email, password }),
       });
       const json = (await res.json().catch(() => ({}))) as {
-        data?: { email?: string; mfaRequired?: boolean };
+        data?: { email?: string; mfaRequired?: boolean; mfaSetup?: boolean; secretCode?: string };
         error?: { message?: string };
       };
       if (!res.ok) {
@@ -89,7 +90,8 @@ export function LoginForm() {
         return;
       }
       if (json.data?.mfaRequired) {
-        setMfaRequired(true);
+        setMfaMode(json.data.mfaSetup ? "setup" : "verify");
+        setMfaSecret(json.data.secretCode ?? "");
         setPassword("");
         return;
       }
@@ -147,10 +149,10 @@ export function LoginForm() {
     <Card className="px-4 py-[16px]">
       <p className="mt-0 mb-[12px] text-[12.5px] leading-[1.5] text-subtle">
         Live mode — sign in with your practitioner account for the clinical project. Access is
-        enforced by the backend and row-level security, not by this screen.
+        enforced by AWS identity and organization membership, not by this screen.
       </p>
       <form onSubmit={submit} className="flex flex-col gap-3">
-        {!mfaRequired && <label className="block">
+        {!mfaMode && <label className="block">
           <span className="mb-[4px] block text-[10.5px] font-bold tracking-[0.04em] text-faint uppercase">Email</span>
           <input
             type="email"
@@ -161,7 +163,7 @@ export function LoginForm() {
             className={inputCls}
           />
         </label>}
-        {!mfaRequired && <label className="block">
+        {!mfaMode && <label className="block">
           <span className="mb-[4px] block text-[10.5px] font-bold tracking-[0.04em] text-faint uppercase">Password</span>
           <input
             type="password"
@@ -172,7 +174,20 @@ export function LoginForm() {
             className={inputCls}
           />
         </label>}
-        {mfaRequired && (
+        {mfaMode === "setup" && (
+          <div className="rounded-lg border border-line bg-subtle px-3 py-3 text-[12px] leading-[1.5] text-body">
+            <p className="mt-0 mb-2 font-semibold">Set up your authenticator</p>
+            <ol className="m-0 space-y-1 pl-4">
+              <li>Open your authenticator app and choose to add an account manually.</li>
+              <li>Enter this one-time setup key:</li>
+            </ol>
+            <code className="mt-2 block break-all rounded bg-card px-2 py-2 font-mono text-[12px] font-semibold select-all">
+              {mfaSecret}
+            </code>
+            <p className="mt-2 mb-0 text-subtle">Then enter the current six-digit code below.</p>
+          </div>
+        )}
+        {mfaMode && (
           <label className="block">
             <span className="mb-[4px] block text-[10.5px] font-bold tracking-[0.04em] text-faint uppercase">
               Authenticator code
@@ -200,7 +215,7 @@ export function LoginForm() {
           className="mt-1 flex h-10 items-center justify-center gap-[7px] rounded-lg border-none bg-action text-[13px] font-semibold text-white hover:bg-action-deep focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink disabled:cursor-not-allowed disabled:opacity-60"
         >
           <LogIn size={14} strokeWidth={2} aria-hidden />
-          {pending ? "Signing in…" : mfaRequired ? "Verify and sign in" : "Sign in"}
+          {pending ? "Signing in…" : mfaMode === "setup" ? "Finish setup and sign in" : mfaMode ? "Verify and sign in" : "Sign in"}
         </button>
       </form>
 

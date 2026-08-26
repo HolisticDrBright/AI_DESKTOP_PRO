@@ -94,6 +94,41 @@ describe("Desktop-owned practitioner auth", () => {
     });
   });
 
+  test("a new workforce account can enroll mandatory software-token MFA", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response({
+        ChallengeName: "MFA_SETUP",
+        ChallengeParameters: { USER_ID_FOR_SRP: "opaque-user" },
+        Session: "password-session",
+      }))
+      .mockResolvedValueOnce(response({ SecretCode: "SYNTHETICSETUPKEY", Session: "associate-session" }))
+      .mockResolvedValueOnce(response({ Status: "SUCCESS", Session: "verified-session" }))
+      .mockResolvedValueOnce(response({
+        AuthenticationResult: { IdToken: "setup-id", RefreshToken: "setup-refresh", ExpiresIn: 900 },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const challenge = await passwordSignIn("practitioner@example.test", "not-logged");
+    expect(challenge).toMatchObject({
+      challenge: "MFA_SETUP",
+      username: "opaque-user",
+      secretCode: "SYNTHETICSETUPKEY",
+    });
+    if (!("challenge" in challenge) || challenge.challenge !== "MFA_SETUP") {
+      throw new Error("expected MFA setup challenge");
+    }
+    await expect(completeMfaSignIn({ ...challenge, code: "123456" })).resolves.toMatchObject({
+      accessToken: "setup-id",
+      refreshToken: "setup-refresh",
+    });
+    expect(fetchMock.mock.calls.map((call) => call[1]?.headers?.["x-amz-target"])).toEqual([
+      "AWSCognitoIdentityProviderService.InitiateAuth",
+      "AWSCognitoIdentityProviderService.AssociateSoftwareToken",
+      "AWSCognitoIdentityProviderService.VerifySoftwareToken",
+      "AWSCognitoIdentityProviderService.RespondToAuthChallenge",
+    ]);
+  });
+
   test("cookie session preserves the selected organization and detects expiry", () => {
     const values = new Map<string, string>([
       [AUTH_COOKIES.access, "access-token"],

@@ -42,13 +42,20 @@ export async function POST(req: NextRequest) {
     const session = store.get(AUTH_COOKIES.mfaSession)?.value ?? "";
     const username = store.get(AUTH_COOKIES.mfaUsername)?.value ?? "";
     const email = store.get(AUTH_COOKIES.mfaEmail)?.value ?? "";
-    if (!session || !username || !email) {
+    const challenge = store.get(AUTH_COOKIES.mfaChallenge)?.value ?? "";
+    if (!session || !username || !email || !["SOFTWARE_TOKEN_MFA", "MFA_SETUP"].includes(challenge)) {
       throw new AdapterError("unauthenticated", "The MFA sign-in attempt expired. Start again.");
     }
     if (typeof body.code !== "string") {
       throw new AdapterError("invalid", "Enter the six-digit authenticator code.");
     }
-    const tokens = await completeMfaSignIn({ session, username, email, code: body.code });
+    const tokens = await completeMfaSignIn({
+      session,
+      username,
+      email,
+      code: body.code,
+      challenge: challenge as "SOFTWARE_TOKEN_MFA" | "MFA_SETUP",
+    });
 
     let orgId: string | null = null;
     try {
@@ -66,7 +73,12 @@ export async function POST(req: NextRequest) {
     res.cookies.set(AUTH_COOKIES.expires, String(tokens.expiresAt), cookieOptions(twelveHours));
     res.cookies.set(AUTH_COOKIES.email, tokens.email, cookieOptions(twelveHours));
     if (orgId) res.cookies.set(AUTH_COOKIES.org, orgId, cookieOptions(twelveHours));
-    for (const name of [AUTH_COOKIES.mfaSession, AUTH_COOKIES.mfaUsername, AUTH_COOKIES.mfaEmail]) {
+    for (const name of [
+      AUTH_COOKIES.mfaSession,
+      AUTH_COOKIES.mfaUsername,
+      AUTH_COOKIES.mfaEmail,
+      AUTH_COOKIES.mfaChallenge,
+    ]) {
       res.cookies.set(name, "", { httpOnly: true, sameSite: "lax", path: "/", maxAge: 0 });
     }
     return res;

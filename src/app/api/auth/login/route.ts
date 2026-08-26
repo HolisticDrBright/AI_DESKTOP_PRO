@@ -72,11 +72,19 @@ export async function POST(req: NextRequest) {
     }
     const tokens = await passwordSignIn(body.email.trim(), body.password);
     if ("challenge" in tokens) {
-      const res = NextResponse.json({ data: { mfaRequired: true } }, { status: 202 });
+      const setup = tokens.challenge === "MFA_SETUP";
+      const res = NextResponse.json({
+        data: {
+          mfaRequired: true,
+          mfaSetup: setup,
+          ...(setup ? { secretCode: tokens.secretCode } : {}),
+        },
+      }, { status: 202 });
       const fiveMinutes = 5 * 60;
       res.cookies.set(AUTH_COOKIES.mfaSession, tokens.session, cookieOptions(fiveMinutes));
       res.cookies.set(AUTH_COOKIES.mfaUsername, tokens.username, cookieOptions(fiveMinutes));
       res.cookies.set(AUTH_COOKIES.mfaEmail, tokens.email, cookieOptions(fiveMinutes));
+      res.cookies.set(AUTH_COOKIES.mfaChallenge, tokens.challenge, cookieOptions(fiveMinutes));
       return res;
     }
 
