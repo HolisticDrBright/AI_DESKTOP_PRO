@@ -25,7 +25,7 @@ export async function runSyntheticApiAcceptance(input: {
   isolationWorkforceIdToken: string;
   manifest: SyntheticAcceptanceManifest;
   fetch?: FetchLike;
-}): Promise<{ passed: 35; externalRequests: 35 }> {
+}): Promise<{ passed: 46; externalRequests: 46 }> {
   const fetcher = input.fetch ?? fetch;
   const origin = validateConfiguration(input);
   let operationIndex = 0;
@@ -178,6 +178,69 @@ export async function runSyntheticApiAcceptance(input: {
     || !recordsPage.items.some((row) => record(row) && row.versionId === recorded.versionId)
     || recordsPage.nextCursor !== null) throw new SyntheticAcceptanceError("workflow_failed");
 
+  const intakeTimestamp = new Date().toISOString();
+  const intakeRecords = [
+    {
+      collection: "wellness_profiles", stableRecordId: "81818181-8181-4181-8181-818181818181",
+      payload: { id: "synthetic_wellness_profile", height: 68, weight: 150,
+        goals: ["synthetic-goal"], onboardingCompleted: true, role: "patient" },
+    },
+    {
+      collection: "lifestyle_profiles", stableRecordId: "82828282-8282-4282-8282-828282828282",
+      payload: { id: "synthetic_lifestyle_profile", sleepHours: 7, sleepQuality: "good",
+        stressLevel: "moderate", dietType: "balanced", cookingSkill: "intermediate",
+        shoppingCadence: "weekly", exerciseFrequency: "3_per_week", exerciseTypes: ["walking"] },
+    },
+    {
+      collection: "contraindications", stableRecordId: "83838383-8383-4383-8383-838383838383",
+      payload: { id: "synthetic_contraindications", pregnant: false, pregnancyStatus: "not_pregnant",
+        nursing: false, medications: ["synthetic-medication"], allergies: [], conditions: [] },
+    },
+    {
+      collection: "questionnaire_responses", stableRecordId: "84848484-8484-4484-8484-848484848484",
+      payload: { id: "synthetic_questionnaire_response", questionId: "synthetic-question",
+        categoryId: "synthetic-category", severity: 2, timestamp: intakeTimestamp },
+    },
+    {
+      collection: "clinical_intakes", stableRecordId: "85858585-8585-4585-8585-858585858585",
+      payload: { id: "synthetic_clinical_intake", chiefComplaint: "Synthetic acceptance concern",
+        associatedSymptoms: ["synthetic fatigue"], energyLevel: 6, sleepQuality: 7,
+        digestiveFunction: 6, stressPerception: 4, temperatureSensitivity: "neutral",
+        painQuality: "none", createdAt: intakeTimestamp, updatedAt: intakeTimestamp },
+    },
+  ] as const;
+  const intakeWrites: Array<{ request: Record<string, unknown>; versionId: string }> = [];
+  for (const [index, intakeRecord] of intakeRecords.entries()) {
+    const request = {
+      connectionId: string(claimed.connectionId), stableRecordId: intakeRecord.stableRecordId,
+      collection: intakeRecord.collection, recordKey: `record:intake:${intakeRecord.collection}`,
+      resourceVersion: "acceptance-v1", idempotencyKey: `write:intake:${index}:${Date.now()}`,
+      payload: intakeRecord.payload,
+    };
+    const written = data(await call("/clinical-core/consumer/records", input.consumerIdToken, 202, request),
+      ["versionId", "stableRecordId", "recordKey", "resourceVersion", "payload", "payloadSha256", "deleted", "receivedAt", "duplicate"]);
+    if (written.stableRecordId !== intakeRecord.stableRecordId || written.duplicate !== false) {
+      throw new SyntheticAcceptanceError("workflow_failed");
+    }
+    intakeWrites.push({ request, versionId: string(written.versionId) });
+  }
+  const intakeReplay = data(await call(
+    "/clinical-core/consumer/records", input.consumerIdToken, 202, intakeWrites[4]!.request,
+  ), ["versionId", "stableRecordId", "recordKey", "resourceVersion", "payload", "payloadSha256", "deleted", "receivedAt", "duplicate"]);
+  if (intakeReplay.versionId !== intakeWrites[4]!.versionId || intakeReplay.duplicate !== true) {
+    throw new SyntheticAcceptanceError("workflow_failed");
+  }
+  for (const [index, intakeRecord] of intakeRecords.entries()) {
+    const page = data(await call(
+      `/clinical-core/consumer/records?connectionId=${encodeURIComponent(string(claimed.connectionId))}&collection=${intakeRecord.collection}&limit=100`,
+      input.consumerIdToken, 200,
+    ), ["items", "nextCursor"]);
+    if (!Array.isArray(page.items)
+      || !page.items.some((row) => record(row) && row.versionId === intakeWrites[index]!.versionId)) {
+      throw new SyntheticAcceptanceError("workflow_failed");
+    }
+  }
+
   const privacyRequest = data(await call("/clinical-core/consumer/privacy/requests", input.consumerIdToken, 201, {
     connectionId: string(claimed.connectionId), kind: "export", detail: "Synthetic acceptance export",
   }), ["requestId", "kind", "status", "detail", "submittedAt", "resolvedAt"]);
@@ -295,7 +358,7 @@ export async function runSyntheticApiAcceptance(input: {
     kind: "rpc", functionName: "list_patient_lab_observations",
     args: { _organization_id: input.manifest.fixture.organizationId, _patient_id: input.manifest.fixture.patientRecordId },
   });
-  return { passed: 35, externalRequests: 35 };
+  return { passed: 46, externalRequests: 46 };
 }
 
 function validateConfiguration(input: { apiOrigin: string; workforceIdToken: string; consumerIdToken: string; isolationWorkforceIdToken: string; manifest: SyntheticAcceptanceManifest }) {

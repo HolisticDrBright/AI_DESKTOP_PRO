@@ -71,6 +71,19 @@ describe("deployed synthetic Cognito-to-Aurora acceptance harness", () => {
       json(202, { data: { versionId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", stableRecordId: "88888888-8888-4888-8888-888888888888", recordKey: "record:acceptance:1", resourceVersion: "acceptance-v1", payload: { id: "synthetic_protocol_acceptance" }, payloadSha256: "a".repeat(64), deleted: false, receivedAt: "2026-08-11T20:05:00Z", duplicate: false } }),
       json(202, { data: { versionId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", stableRecordId: "88888888-8888-4888-8888-888888888888", recordKey: "record:acceptance:1", resourceVersion: "acceptance-v1", payload: { id: "synthetic_protocol_acceptance" }, payloadSha256: "a".repeat(64), deleted: false, receivedAt: "2026-08-11T20:05:00Z", duplicate: true } }),
       json(200, { data: { items: [{ versionId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" }], nextCursor: null } }),
+      ...(["81818181-8181-4181-8181-818181818181", "82828282-8282-4282-8282-828282828282",
+        "83838383-8383-4383-8383-838383838383", "84848484-8484-4484-8484-848484848484",
+        "85858585-8585-4585-8585-858585858585"].map((stableRecordId, index) => json(202, { data: {
+        versionId: `${index + 1}aaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa`,
+        stableRecordId,
+        recordKey: `record:intake:${index}`, resourceVersion: "acceptance-v1",
+        payload: { id: `synthetic_intake_${index}` }, payloadSha256: "b".repeat(64),
+        deleted: false, receivedAt: "2026-08-11T20:05:30Z", duplicate: false,
+      } }))),
+      json(202, { data: { versionId: "5aaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", stableRecordId: "85858585-8585-4585-8585-858585858585", recordKey: "record:intake:clinical_intakes", resourceVersion: "acceptance-v1", payload: { id: "synthetic_clinical_intake" }, payloadSha256: "b".repeat(64), deleted: false, receivedAt: "2026-08-11T20:05:30Z", duplicate: true } }),
+      ...([0, 1, 2, 3, 4].map((index) => json(200, { data: {
+        items: [{ versionId: `${index + 1}aaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa` }], nextCursor: null,
+      } }))),
       json(201, { data: { requestId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd", kind: "export", status: "submitted", detail: "Synthetic acceptance export", submittedAt: "2026-08-11T20:06:00Z", resolvedAt: null } }),
       json(200, { data: [{ requestId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd", kind: "export", status: "submitted", detail: "Synthetic acceptance export", submittedAt: "2026-08-11T20:06:00Z", resolvedAt: null }] }),
       json(400, { error: "request_invalid" }),
@@ -99,8 +112,8 @@ describe("deployed synthetic Cognito-to-Aurora acceptance harness", () => {
       isolationWorkforceIdToken: token("c"),
       manifest,
       fetch: fetcher,
-    })).resolves.toEqual({ passed: 35, externalRequests: 35 });
-    expect(calls).toHaveLength(35);
+    })).resolves.toEqual({ passed: 46, externalRequests: 46 });
+    expect(calls).toHaveLength(46);
     expect(calls[0]!.body).toBeNull();
     expect(calls[1]!.body).toBeNull();
     expect(calls[2]!.body).not.toHaveProperty("patientName");
@@ -109,14 +122,20 @@ describe("deployed synthetic Cognito-to-Aurora acceptance harness", () => {
     expect(calls[12]!.url).toContain("consent-artifact?scope=lab_results_import");
     expect(calls[13]!.body).toEqual(expect.objectContaining({ scope: "lab_results_import" }));
     expect(calls[21]!.body).toEqual(calls[20]!.body);
-    expect(calls[25]!.body).toHaveProperty("payload.email", "refused@example.test");
-    expect(calls[27]!.body).toEqual(calls[26]!.body);
-    expect(calls[28]!.url).toContain("state=review_pending");
-    expect(calls[30]!.url).toContain(encodeURIComponent(manifest.fixture.patientRecordId));
-    expect(calls[31]!.body).toMatchObject({ kind: "rpc", functionName: "list_patient_lab_observations" });
-    expect(calls[32]!.body).toMatchObject({ kind: "select", table: "patient_profiles" });
-    expect(calls[33]!.body).toMatchObject({ kind: "select", table: "lab_documents" });
-    expect(calls[34]!.authorization).toContain(token("c"));
+    expect(calls[23]!.body).toMatchObject({ collection: "wellness_profiles" });
+    expect(calls[27]!.body).toMatchObject({ collection: "clinical_intakes" });
+    expect(calls[28]!.body).toEqual(calls[27]!.body);
+    expect(calls.slice(29, 34).every((call) => call.url.includes("/consumer/records?"))).toBe(true);
+    expect(calls[34]!.body).toEqual(expect.objectContaining({ kind: "export" }));
+    expect(calls[35]!.url).toContain("/consumer/privacy/requests?");
+    expect(calls[36]!.body).toHaveProperty("payload.email", "refused@example.test");
+    expect(calls[38]!.body).toEqual(calls[37]!.body);
+    expect(calls[39]!.url).toContain("state=review_pending");
+    expect(calls[41]!.url).toContain(encodeURIComponent(manifest.fixture.patientRecordId));
+    expect(calls[42]!.body).toMatchObject({ kind: "rpc", functionName: "list_patient_lab_observations" });
+    expect(calls[43]!.body).toMatchObject({ kind: "select", table: "patient_profiles" });
+    expect(calls[44]!.body).toMatchObject({ kind: "select", table: "lab_documents" });
+    expect(calls[45]!.authorization).toContain(token("c"));
     expect(calls.every((call) => call.url.startsWith("https://abc123.execute-api.us-east-2.amazonaws.com/clinical-core/"))).toBe(true);
   });
 
