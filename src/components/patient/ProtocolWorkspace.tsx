@@ -123,6 +123,7 @@ type DraftForm = {
 
 type SaveState =
   | { kind: "idle" }
+  | { kind: "dirty" }
   | { kind: "saving" }
   | { kind: "saved"; at: string }
   | { kind: "conflict" }
@@ -602,6 +603,11 @@ function DraftEditor({
 
   const patch = (next: Partial<DraftForm>) => {
     dirty.current = true;
+    // A prior successful save must stop reading "Saved" as soon as the
+    // practitioner changes another field. Otherwise callers can run a
+    // persisted-data safety check during the debounce window and unknowingly
+    // check the previous version of the draft. A conflict remains sticky.
+    setSave((current) => (current.kind === "conflict" ? current : { kind: "dirty" }));
     setForm((f) => ({ ...f, ...next }));
   };
 
@@ -864,6 +870,18 @@ function SaveBadge({ state }: { state: SaveState }) {
       >
         <Loader2 size={12} className="animate-spin" aria-hidden />
         Saving…
+      </span>
+    );
+  }
+  if (state.kind === "dirty") {
+    return (
+      <span
+        data-testid="pd-save-state"
+        data-state="dirty"
+        role="status"
+        className="text-[11.5px] font-semibold text-warning-deep"
+      >
+        Unsaved changes
       </span>
     );
   }
