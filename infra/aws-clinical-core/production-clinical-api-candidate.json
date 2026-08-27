@@ -26,7 +26,7 @@
     "ActivationState": { "Type": "String", "Default": "blocked", "AllowedValues": ["blocked", "approved"] },
     "ActivationEvidenceSha256": { "Type": "String", "Default": "", "AllowedPattern": "^$|^[0-9a-f]{64}$" },
     "PilotScope": { "Type": "String", "Default": "lab_intake_only", "AllowedValues": ["lab_intake_only"] },
-    "PilotOrganizationId": { "Type": "String", "Default": "", "AllowedPattern": "^$|^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$" }
+    "PilotOrganizationId": { "Type": "String", "Default": "00000000-0000-0000-0000-000000000000", "AllowedPattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" }
   },
   "Rules": {
     "ActivationMustBeCoherent": {
@@ -61,7 +61,7 @@
         "Assert": {
           "Fn::Or": [
             { "Fn::Equals": [{ "Ref": "PhiAllowed" }, "false"] },
-            { "Fn::Not": [{ "Fn::Equals": [{ "Ref": "PilotOrganizationId" }, ""] }] }
+            { "Fn::Not": [{ "Fn::Equals": [{ "Ref": "PilotOrganizationId" }, "00000000-0000-0000-0000-000000000000"] }] }
           ]
         },
         "AssertDescription": "PHI activation requires one explicit pilot organization UUID."

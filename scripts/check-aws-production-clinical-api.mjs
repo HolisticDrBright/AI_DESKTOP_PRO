@@ -105,7 +105,7 @@ assert(candidate.Parameters?.PhiAllowed?.Default === "false"
   && candidate.Parameters?.ActivationState?.Default === "blocked"
   && candidate.Parameters?.ActivationEvidenceSha256?.Default === ""
   && candidate.Parameters?.PilotScope?.Default === "lab_intake_only"
-  && candidate.Parameters?.PilotOrganizationId?.Default === "",
+  && candidate.Parameters?.PilotOrganizationId?.Default === "00000000-0000-0000-0000-000000000000",
 "candidate activation parameters must default to blocked with no evidence");
 assert(candidate.Rules?.ActivationMustBeCoherent && candidate.Rules?.BlockedStateCannotCarryEvidence
   && candidate.Rules?.ActivationRequiresNamedPilotOrganization

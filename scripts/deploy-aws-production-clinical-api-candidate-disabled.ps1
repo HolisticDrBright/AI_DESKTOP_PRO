@@ -92,7 +92,9 @@ $parameters = @(
   "LambdaCodeKey=$artifactKey",
   "SourceVersion=$SourceVersion",
   "PhiAllowed=false",
-  "ActivationState=blocked"
+  "ActivationState=blocked",
+  "PilotScope=lab_intake_only",
+  "PilotOrganizationId=00000000-0000-0000-0000-000000000000"
 )
 aws cloudformation deploy --profile $AwsProfile --region $Region `
   --stack-name $ExtensionStackName `
@@ -110,6 +112,8 @@ function DeployedOutput([string]$key) {
 if ((DeployedOutput "PhiAllowed") -ne "false" `
   -or (DeployedOutput "ActivationState") -ne "blocked" `
   -or (DeployedOutput "DataPlaneEnabled") -ne "false" `
+  -or (DeployedOutput "PilotScope") -ne "lab_intake_only" `
+  -or (DeployedOutput "PilotOrganizationId") -ne "00000000-0000-0000-0000-000000000000" `
   -or (DeployedOutput "SourceVersion") -ne $SourceVersion) {
   throw "Deployed candidate did not preserve the closed boundary."
 }
