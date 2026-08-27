@@ -16,6 +16,8 @@ function required(name: string): string {
 }
 
 const phiAllowed = required("PHI_ALLOWED") === "true";
+const pilotScope = required("PILOT_SCOPE");
+if (pilotScope !== "lab_intake_only") throw new Error("production_pilot_scope_invalid");
 const database = createRdsDataClinicalCoreDatabase({
   clusterArn: required("CLINICAL_DATABASE_CLUSTER_ARN"),
   secretArn: required("CLINICAL_DATABASE_SECRET_ARN"),
@@ -35,6 +37,10 @@ export const handler = createAwsProductionIdentityApiHandler({
     consumerAudience: required("CLINICAL_CONSUMER_AUDIENCE"),
     phiAllowed,
     activationState: required("ACTIVATION_STATE") === "approved" ? "approved" : "blocked",
+    pilotScope,
+    ...(process.env.PILOT_ORGANIZATION_ID?.trim()
+      ? { pilotOrganizationId: process.env.PILOT_ORGANIZATION_ID.trim() }
+      : {}),
     ...(process.env.ACTIVATION_EVIDENCE_SHA256
       ? { activationEvidenceSha256: process.env.ACTIVATION_EVIDENCE_SHA256 }
       : {}),

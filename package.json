@@ -36,6 +36,8 @@
     "preflight:aws-synthetic": "node scripts/preflight-aws-synthetic.mjs",
     "check:aws-production-readiness": "node scripts/check-aws-production-readiness.mjs",
     "test:aws-production-readiness": "node scripts/check-aws-production-readiness.test.mjs",
+    "check:aws-first-real-data-pilot": "node scripts/check-aws-first-real-data-pilot.mjs",
+    "test:aws-first-real-data-pilot": "node scripts/check-aws-first-real-data-pilot.test.mjs",
     "build:aws-production-foundation": "node scripts/build-aws-production-foundation.mjs",
     "check:aws-production-foundation": "node scripts/check-aws-production-foundation.mjs",
     "test:aws-production-foundation": "node scripts/check-aws-production-foundation.test.mjs",

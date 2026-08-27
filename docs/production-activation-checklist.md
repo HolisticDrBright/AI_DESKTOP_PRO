@@ -2,6 +2,8 @@
 
 No item in this document is implied complete by synthetic acceptance. Production and PHI remain disabled until every blocking item is checked, evidenced, and signed by the named owner.
 
+For the narrower first supervised lab/intake pilot, use `docs/first-real-data-pilot.md` and the separate machine gate `scripts/check-aws-first-real-data-pilot.mjs`. That pilot gate deliberately keeps billing, messaging, scheduling, programs, protocol activation, product recommendations, Junction, Passio, and clinical AI disabled; it does not waive legal, security, privacy, clinical-safety, recovery, or named-approval requirements.
+
 ## 1. Legal and vendor agreements
 
 - [ ] Verify the AWS Organizations BAA is `Active` in the management account and applies to the intended production member account. Save the agreement and record account IDs, effective date, and reviewer.

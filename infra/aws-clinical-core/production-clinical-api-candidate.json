@@ -24,7 +24,9 @@
     "SourceVersion": { "Type": "String", "AllowedPattern": "^[0-9a-f]{40}$" },
     "PhiAllowed": { "Type": "String", "Default": "false", "AllowedValues": ["false", "true"] },
     "ActivationState": { "Type": "String", "Default": "blocked", "AllowedValues": ["blocked", "approved"] },
-    "ActivationEvidenceSha256": { "Type": "String", "Default": "", "AllowedPattern": "^$|^[0-9a-f]{64}$" }
+    "ActivationEvidenceSha256": { "Type": "String", "Default": "", "AllowedPattern": "^$|^[0-9a-f]{64}$" },
+    "PilotScope": { "Type": "String", "Default": "lab_intake_only", "AllowedValues": ["lab_intake_only"] },
+    "PilotOrganizationId": { "Type": "String", "Default": "", "AllowedPattern": "^$|^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$" }
   },
   "Rules": {
     "ActivationMustBeCoherent": {
@@ -52,6 +54,17 @@
           ]
         },
         "AssertDescription": "Blocked deployments must not imply approval evidence."
+      }]
+    },
+    "ActivationRequiresNamedPilotOrganization": {
+      "Assertions": [{
+        "Assert": {
+          "Fn::Or": [
+            { "Fn::Equals": [{ "Ref": "PhiAllowed" }, "false"] },
+            { "Fn::Not": [{ "Fn::Equals": [{ "Ref": "PilotOrganizationId" }, ""] }] }
+          ]
+        },
+        "AssertDescription": "PHI activation requires one explicit pilot organization UUID."
       }]
     }
   },
@@ -181,6 +194,8 @@
             "PHI_ALLOWED": { "Ref": "PhiAllowed" },
             "ACTIVATION_STATE": { "Ref": "ActivationState" },
             "ACTIVATION_EVIDENCE_SHA256": { "Ref": "ActivationEvidenceSha256" },
+            "PILOT_SCOPE": { "Ref": "PilotScope" },
+            "PILOT_ORGANIZATION_ID": { "Ref": "PilotOrganizationId" },
             "SOURCE_VERSION": { "Ref": "SourceVersion" }
           }
         }
@@ -274,6 +289,8 @@
     "SourceVersion": { "Value": { "Ref": "SourceVersion" } },
     "PhiAllowed": { "Value": { "Ref": "PhiAllowed" } },
     "ActivationState": { "Value": { "Ref": "ActivationState" } },
+    "PilotScope": { "Value": { "Ref": "PilotScope" } },
+    "PilotOrganizationId": { "Value": { "Ref": "PilotOrganizationId" } },
     "DataPlaneEnabled": { "Value": { "Fn::If": ["DataPlaneEnabled", "true", "false"] } }
   }
 }

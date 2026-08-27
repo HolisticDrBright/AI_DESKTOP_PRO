@@ -40,6 +40,11 @@ import {
   validateDesktopCompatibilityRequest,
   type DesktopCompatibilityAdapter,
 } from "./aws-desktop-compatibility";
+import {
+  isProductionPilotDesktopRequestAllowed,
+  isProductionPilotRouteAllowed,
+  PRODUCTION_PILOT_SCOPE,
+} from "./production-pilot-policy";
 
 export type ApiGatewayV2Event = {
   routeKey?: string;
@@ -109,6 +114,8 @@ export type ProductionIdentityApiConfiguration = IdentityApiConfiguration & {
   phiAllowed: boolean;
   activationState: "blocked" | "approved";
   activationEvidenceSha256?: string;
+  pilotScope: typeof PRODUCTION_PILOT_SCOPE;
+  pilotOrganizationId?: string;
 };
 
 export function createAwsIdentityApiHandler(input: {
@@ -132,7 +139,10 @@ export function createAwsProductionIdentityApiHandler(input: {
   validateConfiguration(input.configuration);
   if (input.configuration.phiAllowed === true
     && (input.configuration.activationState !== "approved"
-      || !SHA256.test(input.configuration.activationEvidenceSha256 ?? ""))) {
+      || !SHA256.test(input.configuration.activationEvidenceSha256 ?? "")
+      || input.configuration.pilotScope !== PRODUCTION_PILOT_SCOPE
+      || !UUID.test(input.configuration.pilotOrganizationId ?? "")
+      || input.configuration.pilotOrganizationId === "00000000-0000-0000-0000-000000000000")) {
     throw new Error("production_api_configuration_invalid");
   }
   const activated = input.configuration.phiAllowed === true
@@ -143,7 +153,14 @@ export function createAwsProductionIdentityApiHandler(input: {
       error: "production_not_activated", phiAllowed: false,
     });
   }
-  return createIdentityApiHandler<ProductionClinicalRequestContext>({ ...input, boundary: "production" });
+  return createIdentityApiHandler<ProductionClinicalRequestContext>({
+    ...input,
+    boundary: "production",
+    productionPilot: {
+      scope: input.configuration.pilotScope,
+      organizationId: input.configuration.pilotOrganizationId!,
+    },
+  });
 }
 
 function createIdentityApiHandler<Context extends ClinicalRequestContext>(input: {
@@ -154,6 +171,7 @@ function createIdentityApiHandler<Context extends ClinicalRequestContext>(input:
   desktopCompatibilityAdapter?: DesktopCompatibilityAdapter<Context>;
   configuration: IdentityApiConfiguration;
   boundary: "synthetic" | "production";
+  productionPilot?: { scope: typeof PRODUCTION_PILOT_SCOPE; organizationId: string };
 }) {
   const adapter = input.adapter ?? (input.database && input.boundary === "synthetic"
     ? createAwsSyntheticIdentityConsentAdapter(input.database) as AwsIdentityConsentAdapter<Context>
@@ -177,7 +195,16 @@ function createIdentityApiHandler<Context extends ClinicalRequestContext>(input:
     try {
       const route = event.routeKey ? ROUTES[event.routeKey] : undefined;
       if (!route) return response(404, { error: "route_not_found" });
-      const context = contextFromClaims(event, route, input.configuration, input.boundary) as Context;
+      if (input.productionPilot && !isProductionPilotRouteAllowed(event.routeKey)) {
+        return response(403, { error: "pilot_scope_refused" });
+      }
+      const context = contextFromClaims(
+        event,
+        route,
+        input.configuration,
+        input.boundary,
+        input.productionPilot?.organizationId,
+      ) as Context;
       if (["get_connection", "import_lab", "list_lab_imports", "review_lab", "list_labs"].includes(route.operation)
         && !clinicalStateAdapter) throw new Error("clinical_state_api_adapter_required");
       if (["record_clinical", "list_clinical", "list_consent_history", "submit_privacy_request", "list_privacy_requests"].includes(route.operation)
@@ -196,6 +223,7 @@ function createIdentityApiHandler<Context extends ClinicalRequestContext>(input:
             authenticated: true,
             phiAllowed: input.boundary === "production",
             realPatientDataAllowed: input.boundary === "production",
+            ...(input.productionPilot ? { pilotScope: input.productionPilot.scope } : {}),
           },
         });
       }
@@ -261,6 +289,9 @@ function createIdentityApiHandler<Context extends ClinicalRequestContext>(input:
       if (route.operation === "desktop_compatibility") {
         const body = parseBody(event);
         const request = validateDesktopCompatibilityRequest(context, body);
+        if (input.productionPilot && !isProductionPilotDesktopRequestAllowed(request)) {
+          return response(403, { error: "pilot_scope_refused" });
+        }
         if (request.kind === "rpc" && request.functionName === "list_patient_lab_observations") {
           if (!clinicalStateAdapter) throw new Error("clinical_state_api_adapter_required");
           const patientRecordId = request.args._patient_id;
@@ -506,6 +537,7 @@ function contextFromClaims(
   route: RouteDefinition,
   configuration: IdentityApiConfiguration,
   boundary: "synthetic" | "production",
+  productionPilotOrganizationId?: string,
 ): ClinicalRequestContext {
   const claims = event.requestContext?.authorizer?.jwt?.claims;
   if (!claims) throw new IdentityApiError("identity_refused");
@@ -524,6 +556,7 @@ function contextFromClaims(
         || claim(claims, "custom:synthetic_attested") === "true")
     || !UUID.test(personId)
     || !UUID.test(organizationId)
+    || (boundary === "production" && organizationId !== productionPilotOrganizationId)
     || !SUBJECT.test(subject)
   ) throw new IdentityApiError("identity_refused");
   const base = {

@@ -25,6 +25,8 @@ const approved: ProductionClinicalApiConfiguration = {
   phiAllowed: true,
   activationState: "approved",
   activationEvidenceSha256: EVIDENCE,
+  pilotScope: "lab_intake_only",
+  pilotOrganizationId: ORG,
 };
 
 function event(overrides: Record<string, unknown> = {}): ApiGatewayV2Event {
@@ -74,6 +76,8 @@ function fullProductionInput(configurationOverrides: Partial<ProductionIdentityA
       phiAllowed: true,
       activationState: "approved" as const,
       activationEvidenceSha256: EVIDENCE,
+      pilotScope: "lab_intake_only" as const,
+      pilotOrganizationId: ORG,
       ...configurationOverrides,
     },
     connection,
@@ -104,6 +108,26 @@ describe("AWS production clinical API", () => {
       containsPhi: true,
       productionBound: true,
     }), expect.objectContaining({ functionName: "list_patient_lab_observations" }));
+  });
+
+  it("limits an approved pilot to its named organization", async () => {
+    const service = adapter();
+    const result = await createAwsProductionClinicalApiHandler({ adapter: service, configuration: approved })(event({
+      "custom:organization_id": "55555555-5555-4555-8555-555555555555",
+    }));
+    expect(result.statusCode).toBe(403);
+    expect(result.body).toBe('{"error":"identity_refused"}');
+    expect(service.execute).not.toHaveBeenCalled();
+  });
+
+  it("refuses Desktop operations outside the lab and intake pilot", async () => {
+    const service = adapter();
+    const request = event();
+    request.body = JSON.stringify({ kind: "rpc", functionName: "book_appointment", args: { _organization_id: ORG } });
+    const result = await createAwsProductionClinicalApiHandler({ adapter: service, configuration: approved })(request);
+    expect(result.statusCode).toBe(403);
+    expect(result.body).toBe('{"error":"pilot_scope_refused"}');
+    expect(service.execute).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -181,5 +205,35 @@ describe("AWS production App and Desktop API", () => {
   it("refuses a PHI-enabled App/Desktop configuration without signed evidence", () => {
     const input = fullProductionInput({ activationEvidenceSha256: "missing" });
     expect(() => createAwsProductionIdentityApiHandler(input)).toThrow("production_api_configuration_invalid");
+  });
+
+  it("refuses a production consumer from an organization outside the pilot", async () => {
+    const input = fullProductionInput();
+    const result = await createAwsProductionIdentityApiHandler(input)({
+      routeKey: "GET /clinical-core/consumer/connection",
+      requestContext: { authorizer: { jwt: { claims: {
+        iss: CONSUMER_ISSUER, aud: CONSUMER_AUDIENCE, token_use: "id",
+        sub: "production-consumer-001", "custom:person_id": PERSON,
+        "custom:organization_id": "55555555-5555-4555-8555-555555555555",
+        "custom:production_bound": "true",
+      } } } },
+    });
+    expect(result.statusCode).toBe(403);
+    expect(input.connection).not.toHaveBeenCalled();
+  });
+
+  it("refuses non-pilot Desktop functionality even after production activation", async () => {
+    const input = fullProductionInput();
+    const result = await createAwsProductionIdentityApiHandler(input)({
+      routeKey: "POST /clinical-core/workforce/data-compatibility",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ kind: "rpc", functionName: "book_appointment", args: { _organization_id: ORG } }),
+      requestContext: { authorizer: { jwt: { claims: {
+        iss: ISSUER, aud: AUDIENCE, token_use: "id", sub: "production-subject-001",
+        "custom:person_id": PERSON, "custom:organization_id": ORG, "custom:production_bound": "true",
+      } } } },
+    });
+    expect(result.statusCode).toBe(403);
+    expect(result.body).toBe('{"error":"pilot_scope_refused"}');
   });
 });

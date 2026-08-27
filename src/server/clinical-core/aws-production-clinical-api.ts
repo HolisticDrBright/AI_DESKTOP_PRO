@@ -12,6 +12,10 @@ import {
   type ProductionRequestContext,
 } from "./aws-production-desktop";
 import type { ApiGatewayV2Event, ApiGatewayV2Response } from "./aws-identity-api";
+import {
+  isProductionPilotDesktopRequestAllowed,
+  PRODUCTION_PILOT_SCOPE,
+} from "./production-pilot-policy";
 
 export type ProductionClinicalApiConfiguration = {
   workforceIssuer: string;
@@ -19,6 +23,8 @@ export type ProductionClinicalApiConfiguration = {
   phiAllowed: boolean;
   activationState: "blocked" | "approved";
   activationEvidenceSha256?: string;
+  pilotScope: typeof PRODUCTION_PILOT_SCOPE;
+  pilotOrganizationId?: string;
 };
 
 const ROUTE = "POST /clinical-core/workforce/data-compatibility";
@@ -42,6 +48,9 @@ export function createAwsProductionClinicalApiHandler(input: {
     try {
       const context = productionContext(event, input.configuration);
       const request = validateDesktopCompatibilityRequest(context, parseBody(event));
+      if (!isProductionPilotDesktopRequestAllowed(request)) {
+        return response(403, { error: "pilot_scope_refused" });
+      }
       const data = await input.adapter.execute(context, request as DesktopCompatibilityRequest);
       return response(200, { data });
     } catch (error) {
@@ -66,7 +75,8 @@ function productionContext(
   const identitySubject = get("sub");
   if (get("iss") !== configuration.workforceIssuer || get("aud") !== configuration.workforceAudience
     || get("token_use") !== "id" || get("custom:production_bound") !== "true"
-    || !UUID.test(actorPersonId) || !UUID.test(organizationId) || !SUBJECT.test(identitySubject)) {
+    || !UUID.test(actorPersonId) || !UUID.test(organizationId)
+    || organizationId !== configuration.pilotOrganizationId || !SUBJECT.test(identitySubject)) {
     throw new ProductionApiError("identity_refused");
   }
   return {
@@ -104,7 +114,10 @@ function validateConfiguration(configuration: ProductionClinicalApiConfiguration
   if (!/^https:\/\/cognito-idp\.[a-z0-9-]+\.amazonaws\.com\/[A-Za-z0-9_-]+$/.test(configuration.workforceIssuer)
     || !/^[A-Za-z0-9]{20,128}$/.test(configuration.workforceAudience)
     || (configuration.phiAllowed && (configuration.activationState !== "approved"
-      || !SHA256.test(configuration.activationEvidenceSha256 ?? "")))) {
+      || !SHA256.test(configuration.activationEvidenceSha256 ?? "")
+      || configuration.pilotScope !== PRODUCTION_PILOT_SCOPE
+      || !UUID.test(configuration.pilotOrganizationId ?? "")
+      || configuration.pilotOrganizationId === "00000000-0000-0000-0000-000000000000"))) {
     throw new Error("production_api_configuration_invalid");
   }
 }

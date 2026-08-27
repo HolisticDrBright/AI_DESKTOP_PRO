@@ -13,6 +13,7 @@ const fn = template.Resources?.ProductionClinicalApiFunction;
 const handler = readFileSync(new URL("../src/server/clinical-core/aws-production-clinical-api.ts", import.meta.url), "utf8");
 const identityHandler = readFileSync(new URL("../src/server/clinical-core/aws-identity-api.ts", import.meta.url), "utf8");
 const runtime = readFileSync(new URL("../src/server/clinical-core/aws-production-clinical-lambda.ts", import.meta.url), "utf8");
+const pilotPolicy = readFileSync(new URL("../src/server/clinical-core/production-pilot-policy.ts", import.meta.url), "utf8");
 const candidateResources = Object.values(candidate.Resources ?? {});
 const candidateRole = candidate.Resources?.ProductionClinicalApiRole;
 const candidateFunction = candidate.Resources?.ProductionClinicalApiFunction;
@@ -70,8 +71,26 @@ assert(identityHandler.includes("createAwsProductionIdentityApiHandler")
   && identityHandler.includes('environment: "production-clinical"')
   && identityHandler.includes('containsPhi: true'),
 "candidate App/Desktop API must bind both identity planes to the production PHI context");
+assert(identityHandler.includes("isProductionPilotRouteAllowed")
+  && identityHandler.includes("isProductionPilotDesktopRequestAllowed")
+  && identityHandler.includes("pilotOrganizationId"),
+"candidate App/Desktop API must enforce route, operation, and organization pilot scope");
+for (const forbiddenPilotCapability of [
+  "book_appointment", "send_message", "start_card_payment", "activate_protocol_version",
+]) {
+  assert(!pilotPolicy.includes(`\"${forbiddenPilotCapability}\"`),
+    `pilot policy must refuse ${forbiddenPilotCapability}`);
+}
+for (const requiredPilotCapability of [
+  "create_sync_invitation", "set_sync_consent_scope", "list_patient_lab_observations",
+  "get_patient_app_intake", "list_review_queue", "resolve_review_queue_item",
+]) {
+  assert(pilotPolicy.includes(`\"${requiredPilotCapability}\"`),
+    `pilot policy is missing ${requiredPilotCapability}`);
+}
 assert(runtime.includes('required("PHI_ALLOWED") === "true"')
   && runtime.includes('required("ACTIVATION_STATE")')
+  && runtime.includes('required("PILOT_SCOPE")')
   && runtime.includes('required("CLINICAL_CONSUMER_ISSUER")')
   && runtime.includes('required("CLINICAL_CONSUMER_AUDIENCE")')
   && runtime.includes("createAwsProductionIdentityConsentAdapter")
@@ -84,14 +103,19 @@ assert(candidate.Metadata?.ClinicalCore?.Environment === "production-clinical"
 "candidate template must default to the closed production boundary");
 assert(candidate.Parameters?.PhiAllowed?.Default === "false"
   && candidate.Parameters?.ActivationState?.Default === "blocked"
-  && candidate.Parameters?.ActivationEvidenceSha256?.Default === "",
+  && candidate.Parameters?.ActivationEvidenceSha256?.Default === ""
+  && candidate.Parameters?.PilotScope?.Default === "lab_intake_only"
+  && candidate.Parameters?.PilotOrganizationId?.Default === "",
 "candidate activation parameters must default to blocked with no evidence");
 assert(candidate.Rules?.ActivationMustBeCoherent && candidate.Rules?.BlockedStateCannotCarryEvidence
+  && candidate.Rules?.ActivationRequiresNamedPilotOrganization
   && candidate.Conditions?.DataPlaneEnabled,
 "candidate must have independent coherent-activation rules and a data-plane condition");
 assert(candidateFunction?.Properties?.Environment?.Variables?.PHI_ALLOWED?.Ref === "PhiAllowed"
   && candidateFunction.Properties.Environment.Variables.ACTIVATION_STATE?.Ref === "ActivationState"
   && candidateFunction.Properties.Environment.Variables.ACTIVATION_EVIDENCE_SHA256?.Ref === "ActivationEvidenceSha256"
+  && candidateFunction.Properties.Environment.Variables.PILOT_SCOPE?.Ref === "PilotScope"
+  && candidateFunction.Properties.Environment.Variables.PILOT_ORGANIZATION_ID?.Ref === "PilotOrganizationId"
   && candidateFunction.Properties.Environment.Variables.SOURCE_VERSION?.Ref === "SourceVersion",
 "candidate function must receive every activation and provenance gate");
 const candidatePolicies = candidateRole?.Properties?.Policies ?? [];
@@ -115,4 +139,4 @@ if (errors.length) {
   errors.forEach((error) => console.error(`ERROR: ${error}`));
   process.exit(1);
 }
-console.log("Production clinical API gates passed: deployed boundary is PHI-disabled/log-only; candidate has 21 JWT routes and conditionally absent data permissions.");
+console.log("Production clinical API gates passed: deployed boundary is PHI-disabled/log-only; candidate is one-organization lab/intake pilot scoped with 21 JWT routes and conditionally absent data permissions.");
