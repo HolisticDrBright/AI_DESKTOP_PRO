@@ -104,12 +104,14 @@ export async function applyProductionClinicalCoreMigrations(
             'review_safety_block','list_clinical_pathways','create_clinical_pathway_draft',
             'update_clinical_pathway_draft','approve_clinical_pathway_version',
             'stage_clinical_knowledge_import','review_clinical_knowledge_import_item',
-            'list_clinical_knowledge_import_batches','list_clinical_knowledge_import_items'))::int as contract_count,
+            'list_clinical_knowledge_import_batches','list_clinical_knowledge_import_items',
+            'add_org_member','activate_my_memberships'))::int as contract_count,
       (
         (select count(*) from clinical_core.organizations)
         + (select count(*) from clinical_core.persons)
         + (select count(*) from clinical_core.identities)
         + (select count(*) from clinical_core.organization_memberships)
+        + (select count(*) from clinical_core.workforce_identity_directory)
         + (select count(*) from clinical_core.patient_records)
         + (select count(*) from clinical_core.patient_connections)
         + (select count(*) from clinical_core.consent_artifacts)
@@ -165,7 +167,7 @@ export async function applyProductionClinicalCoreMigrations(
         + (select count(*) from clinical_core.sync_inbound_lab_imports)
       )::int as clinical_row_count`);
     const row = verification.rows[0];
-    if (!row || Number(row.table_count) !== 60 || Number(row.contract_count) !== 54
+    if (!row || Number(row.table_count) !== 61 || Number(row.contract_count) !== 56
       || Number(row.clinical_row_count) !== 0) {
       throw new ProductionClinicalCoreMigrationError("verification_failed");
     }

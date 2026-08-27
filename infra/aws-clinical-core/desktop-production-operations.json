@@ -40,9 +40,21 @@
     },
     {
       "kind": "rpc",
+      "name": "activate_my_memberships",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826160000_production_workforce_invitation_claims.sql"
+    },
+    {
+      "kind": "rpc",
       "name": "list_org_members",
       "implementation": "native_production_function",
       "source": "infra/aws-clinical-core/production-migrations/20260821070000_production_workforce_memberships.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "add_org_member",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826160000_production_workforce_invitation_claims.sql"
     },
     {
       "kind": "rpc",

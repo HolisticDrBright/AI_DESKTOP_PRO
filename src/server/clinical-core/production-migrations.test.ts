@@ -30,8 +30,8 @@ function databaseFor(options: {
       }
       if (sql.startsWith("select\n      (select count(*)")) {
         return { rows: [{
-          table_count: 60,
-          contract_count: 54,
+          table_count: 61,
+          contract_count: 56,
           clinical_row_count: 0,
           ...options.verification,
         }] as unknown as Row[] };
@@ -150,6 +150,25 @@ describe("production clinical-core migrations", () => {
     expect(repair).not.toContain("{1,1990}");
   });
 
+  it("keeps workforce invitations Cognito-bound without storing email addresses or creating accounts", () => {
+    const sql = readFileSync(path.join(
+      process.cwd(), "infra", "aws-clinical-core", "production-migrations",
+      "20260826160000_production_workforce_invitation_claims.sql",
+    ), "utf8");
+    expect(sql).toContain("clinical_core.workforce_identity_directory");
+    expect(sql).toContain("email_sha256");
+    expect(sql).toContain("workforce_identity_not_registered");
+    expect(sql).toContain("status = 'pending'");
+    expect(sql).toContain("clinical_private.require_organization_admin");
+    expect(sql).not.toContain("create user");
+    expect(sql).not.toContain("email_canonical");
+    const repair = readFileSync(path.join(
+      process.cwd(), "infra", "aws-clinical-core", "production-migrations",
+      "20260826161000_production_workforce_email_digest_repair.sql",
+    ), "utf8");
+    expect(repair).toContain("public.digest(_normalized_email,'sha256')");
+  });
+
   it("keeps patient sync durable, consent-bound, review-gated, and delivery disabled", () => {
     const sql = readFileSync(path.join(
       process.cwd(), "infra", "aws-clinical-core", "production-migrations",
@@ -211,8 +230,8 @@ describe("production clinical-core migrations", () => {
     expect(result).toEqual({
       applied: [migration.version],
       alreadyApplied: [],
-      tableCount: 60,
-      contractCount: 54,
+      tableCount: 61,
+      contractCount: 56,
       clinicalRowCount: 0,
     });
     expect(harness.statements.map(({ sql }) => sql)).toContain("create table clinical_core.example(id uuid)");
@@ -229,7 +248,7 @@ describe("production clinical-core migrations", () => {
   });
 
   it("refuses to commit when any clinical record exists", async () => {
-    const harness = databaseFor({ verification: { table_count: 60, contract_count: 54, clinical_row_count: 1 } });
+    const harness = databaseFor({ verification: { table_count: 61, contract_count: 56, clinical_row_count: 1 } });
     await expect(applyProductionClinicalCoreMigrations(harness.database, [migration]))
       .rejects.toMatchObject({ category: "verification_failed" });
   });

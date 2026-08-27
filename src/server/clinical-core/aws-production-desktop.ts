@@ -28,7 +28,9 @@ const CORE_RPCS = new Set([
   "record_registered_audit_event",
   "list_audit_events",
   "list_my_organizations",
+  "activate_my_memberships",
   "list_org_members",
+  "add_org_member",
   "set_org_member_role",
   "remove_org_member",
   "create_review_task",
@@ -213,6 +215,13 @@ async function executeCoreRpc(
     exactKeys(args, []);
     return (await tx.query("select * from clinical_core.list_my_organizations()", [])).rows;
   }
+  if (name === "activate_my_memberships") {
+    exactKeys(args, []);
+    const row = first(await tx.query<{ activated: number }>(
+      "select clinical_core.activate_my_memberships() as activated", [],
+    ));
+    return row.activated;
+  }
   if (name === "list_org_members") {
     exactKeys(args, ["_organization_id"]);
     if (args._organization_id !== context.organizationId) throw invalid();
@@ -220,6 +229,19 @@ async function executeCoreRpc(
       "select * from clinical_core.list_org_members($1)",
       [clinicalUuid(context.organizationId)],
     )).rows;
+  }
+  if (name === "add_org_member") {
+    exactKeys(args, ["_organization_id", "_email", "_role"]);
+    if (args._organization_id !== context.organizationId) throw invalid();
+    const email = requiredString(args._email, 320).trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw invalid();
+    const role = requiredString(args._role, 16);
+    if (!["owner", "admin", "practitioner", "staff", "member"].includes(role)) throw invalid();
+    const row = first(await tx.query<{ membership_id: string }>(
+      "select clinical_core.add_org_member($1,$2,$3) as membership_id",
+      [clinicalUuid(context.organizationId), email, role],
+    ));
+    return row.membership_id;
   }
   if (name === "set_org_member_role") {
     exactKeys(args, ["_membership_id", "_role"]);

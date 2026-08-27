@@ -638,3 +638,28 @@ contracts, and **0 clinical/reference rows**. Local verification passed **956
 tests with 10 intentional skips**, TypeScript, lint with zero errors, the full
 210-page clinical build, and every AWS/data-plane gate. `PHI_ALLOWED=false`;
 the production API and all real-data routes remain disabled.
+
+## AWS-native workforce invitation claims (2026-08-26; PHI disabled)
+
+Production migrations `20260826160000` and `20260826161000` add an empty
+Cognito-bound workforce identity directory and two AWS-native Desktop
+operations: `add_org_member` and `activate_my_memberships`. The second
+immutable migration schema-qualifies the pgcrypto digest call under the
+security-definer function's empty search path. Aurora now reports **30
+migrations, 61 clinical/audit tables, 56 counted contracts, and zero retained
+rows**. The operation inventory is **92/223 implemented, zero enabled, and 131
+not ported**.
+
+Desktop cannot create an AWS account, password, or email alias. An owner/admin
+may invite only a workforce identity already registered by the approved
+Cognito identity-admin process. The database stores a one-way normalized-email
+SHA-256 digest, not the email address. Unknown identities fail closed; pending
+memberships are claimed only by the exact bound Cognito subject. Existing
+last-owner, self-suspension, and role protections remain in force.
+
+Rollback-only AWS verification exercised registered identity lookup,
+owner/admin invitation, invited-user claim, membership activation, and audit,
+then rolled back every temporary row together with the complete prior
+App-to-Desktop acceptance suite. Evidence SHA-256:
+`ebd9c20c122949c0146f03203eaa5503dff0d744e72a921987f10a00aeb6b989`.
+`PHI_ALLOWED=false`; no production route or real patient data was enabled.

@@ -16,7 +16,7 @@ const errors = [];
 const assert = (condition, message) => { if (!condition) errors.push(message); };
 
 assert(manifest.contract_version === "clinical-core-migrations/1", "generated manifest contract is invalid");
-assert(manifest.migrations.length === 28, "expected seven transformed migrations and twenty-one production overlays");
+assert(manifest.migrations.length === 30, "expected seven transformed migrations and twenty-three production overlays");
 assert(new Set(manifest.migrations.map((entry) => entry.version)).size === manifest.migrations.length,
   "migration versions must be unique");
 
@@ -95,6 +95,10 @@ const clinicalKnowledgeImportOverlay = readFileSync(path.join(root, "infra", "aw
   "20260826150000_production_clinical_knowledge_import_review.sql"), "utf8");
 const clinicalKnowledgeImportRepair = readFileSync(path.join(root, "infra", "aws-clinical-core", "production-migrations",
   "20260826151000_production_knowledge_import_url_validation_repair.sql"), "utf8");
+const workforceInvitationOverlay = readFileSync(path.join(root, "infra", "aws-clinical-core", "production-migrations",
+  "20260826160000_production_workforce_invitation_claims.sql"), "utf8");
+const workforceEmailDigestRepair = readFileSync(path.join(root, "infra", "aws-clinical-core", "production-migrations",
+  "20260826161000_production_workforce_email_digest_repair.sql"), "utf8");
 assert(overlay.includes("_organization_id uuid") && overlay.includes("_first_name text")
   && overlay.includes("_last_name text") && overlay.includes("_date_of_birth date")
   && overlay.includes("_sex text") && overlay.includes("_mrn text")
@@ -140,6 +144,16 @@ assert(!membershipOverlay.includes("add_org_member")
   && !membershipOverlay.includes("activate_my_memberships")
   && !membershipOverlay.includes("_email"),
 "production membership overlay must not recreate legacy email invitation or self-activation");
+assert(workforceInvitationOverlay.includes("workforce_identity_directory")
+  && workforceInvitationOverlay.includes("email_sha256")
+  && !workforceInvitationOverlay.includes("email_canonical")
+  && workforceInvitationOverlay.includes("workforce_identity_not_registered")
+  && workforceInvitationOverlay.includes("status = 'pending'")
+  && workforceInvitationOverlay.includes("clinical_private.require_organization_admin"),
+"AWS workforce invitation must resolve a pre-registered identity by digest and remain admin-gated");
+assert(workforceEmailDigestRepair.includes("public.digest(_normalized_email,'sha256')")
+  && workforceEmailDigestRepair.includes("set search_path = ''"),
+"AWS workforce email lookup must schema-qualify pgcrypto under an empty search path");
 for (const operation of ["create_review_task", "list_review_queue", "resolve_review_queue_item"]) {
   assert(reviewQueueOverlay.includes(`clinical_core.${operation}`), `missing production review operation ${operation}`);
 }
@@ -333,4 +347,4 @@ if (errors.length) {
 }
 
 const releaseHash = createHash("sha256").update(combined).digest("hex");
-console.log(`Production clinical-core gate passed: 28 migrations, zero seeded rows (${releaseHash}).`);
+console.log(`Production clinical-core gate passed: ${manifest.migrations.length} migrations, zero seeded rows (${releaseHash}).`);

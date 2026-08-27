@@ -9,6 +9,7 @@ import { createRdsDataAdministrativeDatabase } from "./rds-data-database";
 const ORG = "71000000-0000-4000-8000-000000000001";
 const OTHER_ORG = "71000000-0000-4000-8000-000000000002";
 const WORKFORCE = "72000000-0000-4000-8000-000000000001";
+const INVITED_WORKFORCE = "72000000-0000-4000-8000-000000000002";
 const CONSUMER = "73000000-0000-4000-8000-000000000001";
 const LAB_ARTIFACT = "74000000-0000-4000-8000-000000000001";
 const PROTOCOL_ARTIFACT = "74000000-0000-4000-8000-000000000002";
@@ -32,6 +33,7 @@ const DISMISSED_QUESTION = "78000000-0000-4000-8000-000000000008";
 const CLINICAL_PATHWAY = "79000000-0000-4000-8000-000000000001";
 const CLINICAL_PATHWAY_VERSION_ONE = "79000000-0000-4000-8000-000000000002";
 const WORKFORCE_SUBJECT = "acceptance-workforce-subject-01";
+const INVITED_WORKFORCE_SUBJECT = "acceptance-workforce-subject-02";
 const CONSUMER_SUBJECT = "acceptance-consumer-subject-01";
 const LAB_HASH = "b".repeat(64);
 const RECORD_HASH = "c".repeat(64);
@@ -98,6 +100,7 @@ type AcceptanceEvidence = {
   knowledgeImportHumanReviewed: boolean;
   knowledgeImportNonApproving: boolean;
   knowledgeImportCommercialSeparated: boolean;
+  workforceInvitationClaimed: boolean;
 };
 
 function required(name: string): string {
@@ -163,6 +166,39 @@ async function acceptance(tx: ClinicalCoreTransaction): Promise<AcceptanceEviden
     organization_id,person_id,role,status
   ) values ($1,$2,'admin','active')`, [clinicalUuid(ORG), clinicalUuid(WORKFORCE)]);
 
+  await setContext(tx, WORKFORCE, ORG, "workforce", WORKFORCE_SUBJECT, "clinical_data");
+  acceptanceStage = "workforce_invitation_claim";
+  await tx.query(`insert into clinical_core.persons(
+    id,subject_key,data_classification,contains_phi,status
+  ) values ($1,'subject_acceptance_workforce_02','clinical_phi',true,'active')`, [
+    clinicalUuid(INVITED_WORKFORCE),
+  ]);
+  await tx.query(`insert into clinical_core.identities(
+    person_id,identity_pool,identity_subject,production_bound,status
+  ) values ($1,'workforce',$2,true,'active')`, [
+    clinicalUuid(INVITED_WORKFORCE), INVITED_WORKFORCE_SUBJECT,
+  ]);
+  await tx.query(`insert into clinical_core.workforce_identity_directory(
+    person_id,identity_subject,email_sha256,status
+  ) values ($1,$2,encode(public.digest('invited@example.test','sha256'),'hex'),'active')`, [
+    clinicalUuid(INVITED_WORKFORCE), INVITED_WORKFORCE_SUBJECT,
+  ]);
+  const invitedMembership = row(await tx.query<{ membership_id: string }>(
+    "select clinical_core.add_org_member($1,'invited@example.test','staff') as membership_id",
+    [clinicalUuid(ORG)],
+  ));
+  await setContext(tx, INVITED_WORKFORCE, ORG, "workforce", INVITED_WORKFORCE_SUBJECT, "clinical_data");
+  const activatedMemberships = row(await tx.query<{ activated: number }>(
+    "select clinical_core.activate_my_memberships() as activated", [],
+  ));
+  const claimedMembership = row(await tx.query<{ id: string; role: string; status: string }>(
+    `select id,role,status from clinical_core.organization_memberships
+     where organization_id=$1 and person_id=$2`,
+    [clinicalUuid(ORG), clinicalUuid(INVITED_WORKFORCE)],
+  ));
+  const workforceInvitationClaimed = invitedMembership.membership_id === claimedMembership.id
+    && claimedMembership.role === "staff" && claimedMembership.status === "active"
+    && Number(activatedMemberships.activated) === 1;
   await setContext(tx, WORKFORCE, ORG, "workforce", WORKFORCE_SUBJECT, "clinical_data");
   acceptanceStage = "seed_governed_catalog";
   await tx.query(`insert into clinical_reference.catalog_import_batches(
@@ -1014,6 +1050,7 @@ async function acceptance(tx: ClinicalCoreTransaction): Promise<AcceptanceEviden
       && productCandidate.review_status === "needs_review"
       && reviewedKnowledgeProduct.appliedRefType === "product_label_candidate",
     knowledgeImportCommercialSeparated,
+    workforceInvitationClaimed,
   };
 }
 

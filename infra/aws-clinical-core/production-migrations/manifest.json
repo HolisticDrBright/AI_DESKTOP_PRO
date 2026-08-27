@@ -84,6 +84,14 @@
     {
       "version": "20260826151000",
       "file": "20260826151000_production_knowledge_import_url_validation_repair.sql"
+    },
+    {
+      "version": "20260826160000",
+      "file": "20260826160000_production_workforce_invitation_claims.sql"
+    },
+    {
+      "version": "20260826161000",
+      "file": "20260826161000_production_workforce_email_digest_repair.sql"
     }
   ]
 }

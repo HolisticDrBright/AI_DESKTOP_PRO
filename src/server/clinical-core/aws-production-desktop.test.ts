@@ -359,17 +359,42 @@ describe("AWS production Desktop adapter", () => {
     expect(removeTest.calls[1]?.sql).toBe("select clinical_core.remove_org_member($1)");
   });
 
-  it("keeps legacy email invitation and self-activation outside the production core", async () => {
-    const test = harness();
-    await expect(test.adapter.execute(context, {
+  it("invites only an existing AWS workforce identity and claims pending memberships", async () => {
+    const invite = harness({ membership_id: MEMBERSHIP });
+    await expect(invite.adapter.execute(context, {
       kind: "rpc",
       functionName: "add_org_member",
       args: { _organization_id: ORG, _email: "person@example.test", _role: "staff" },
-    })).resolves.toEqual({ delegated: true });
-    await expect(test.adapter.execute(context, {
+    })).resolves.toBe(MEMBERSHIP);
+    expect(invite.calls[1]?.sql).toBe(
+      "select clinical_core.add_org_member($1,$2,$3) as membership_id",
+    );
+    expect(invite.fallback.execute).not.toHaveBeenCalled();
+
+    const claim = harness({ activated: 1 });
+    await expect(claim.adapter.execute(context, {
       kind: "rpc", functionName: "activate_my_memberships", args: {},
-    })).resolves.toEqual({ delegated: true });
-    expect(test.fallback.execute).toHaveBeenCalledTimes(2);
+    })).resolves.toBe(1);
+    expect(claim.calls[1]?.sql).toBe(
+      "select clinical_core.activate_my_memberships() as activated",
+    );
+    expect(claim.fallback.execute).not.toHaveBeenCalled();
+  });
+
+  it("refuses invalid or cross-tenant workforce invitations before Aurora", async () => {
+    const test = harness();
+    await expect(test.adapter.execute(context, {
+      kind: "rpc", functionName: "add_org_member",
+      args: { _organization_id: ORG, _email: "not-an-email", _role: "staff" },
+    })).rejects.toEqual(new ProductionDesktopError("request_invalid"));
+    await expect(test.adapter.execute(context, {
+      kind: "rpc", functionName: "add_org_member",
+      args: {
+        _organization_id: "99999999-9999-4999-8999-999999999999",
+        _email: "person@example.test", _role: "staff",
+      },
+    })).rejects.toEqual(new ProductionDesktopError("request_invalid"));
+    expect(test.calls).toHaveLength(2);
   });
 
   it("creates a review task with a bounded production payload", async () => {
