@@ -48,10 +48,12 @@ export function PatientAppIntakeCard({ patientId }: { patientId: string }) {
   const lifestyle = data.lifestyleProfile?.payload;
   const contraindications = data.contraindications?.payload;
   const intake = data.clinicalIntake?.payload;
+  const latestWearable = data.wearableDailyRecords[0]?.payload;
   const lastReceived = [
     data.wellnessProfile?.receivedAt, data.lifestyleProfile?.receivedAt,
     data.contraindications?.receivedAt, data.clinicalIntake?.receivedAt,
     ...data.questionnaireResponses.map((entry) => entry.receivedAt),
+    ...data.wearableDailyRecords.map((entry) => entry.receivedAt),
   ].filter((value): value is string => Boolean(value)).sort().at(-1);
 
   return (
@@ -61,9 +63,14 @@ export function PatientAppIntakeCard({ patientId }: { patientId: string }) {
           <ClipboardCheck size={13} strokeWidth={2} className="text-brand" aria-hidden />
           V2 health profile and intake
         </CardTitle>
-        <Pill tone={data.sharingStatus === "granted" ? "positive" : "warning"}>
-          sharing {data.sharingStatus.replace("_", " ")}
-        </Pill>
+        <div className="flex flex-wrap gap-2">
+          <Pill tone={data.sharingStatus === "granted" ? "positive" : "warning"}>
+            intake {data.sharingStatus.replace("_", " ")}
+          </Pill>
+          <Pill tone={data.wearablesSharingStatus === "granted" ? "positive" : "warning"}>
+            wearables {data.wearablesSharingStatus.replace("_", " ")}
+          </Pill>
+        </div>
       </div>
       <div className="mb-3 flex items-start gap-2 rounded-[10px] border border-hairline-2 bg-sunken px-3 py-[10px] text-[11.5px] leading-[1.5] text-subtle">
         <ShieldCheck size={14} className="mt-[1px] shrink-0 text-brand" aria-hidden />
@@ -101,9 +108,26 @@ export function PatientAppIntakeCard({ patientId }: { patientId: string }) {
               Duration {intake?.chiefComplaint?.duration ?? "not reported"} · severity {numeric(intake?.chiefComplaint?.severity, "/10")} · {data.questionnaireResponses.length} questionnaire answers received
             </p>
           </section>
+          <section aria-labelledby="v2-wearables-heading" className="rounded-lg border border-hairline-2 p-3 lg:col-span-2">
+            <h3 id="v2-wearables-heading" className="m-0 mb-2 text-[12px] font-bold">Patient-supplied wearable measurements</h3>
+            {latestWearable ? (
+              <dl className="m-0 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-[11.5px] sm:grid-cols-[auto_1fr_auto_1fr]">
+                <dt className="text-faint">Latest day</dt><dd className="m-0">{latestWearable.date ?? "Not reported"}</dd>
+                <dt className="text-faint">Source</dt><dd className="m-0">{latestWearable.source ?? "Not reported"}</dd>
+                <dt className="text-faint">Sleep</dt><dd className="m-0">{numeric(latestWearable.sleepDurationMinutes, " min")}</dd>
+                <dt className="text-faint">Steps</dt><dd className="m-0">{numeric(latestWearable.steps)}</dd>
+                <dt className="text-faint">HRV</dt><dd className="m-0">{numeric(latestWearable.hrv, " ms")}</dd>
+                <dt className="text-faint">Resting HR</dt><dd className="m-0">{numeric(latestWearable.restingHr, " bpm")}</dd>
+                <dt className="text-faint">Data quality</dt><dd className="m-0">{numeric(latestWearable.dataQualityScore, "%")}</dd>
+                <dt className="text-faint">Days received</dt><dd className="m-0">{data.wearableDailyRecords.length}</dd>
+              </dl>
+            ) : (
+              <p className="m-0 text-[12px] text-faint">No wearable measurements received.</p>
+            )}
+            <p className="m-0 mt-2 text-[11.5px] text-subtle">Review and reconcile these measurements before using them as practitioner-verified chart data.</p>
+          </section>
         </div>
       )}
     </Card>
   );
 }
-

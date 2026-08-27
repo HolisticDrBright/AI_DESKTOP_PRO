@@ -114,6 +114,21 @@ describe("AWS consumer clinical record adapter", () => {
     expect(fixture.calls).toHaveLength(0);
   });
 
+  test("accepts a bounded patient-supplied wearable day without identity fields", async () => {
+    const fixture = database();
+    await expect(createAwsConsumerClinicalRecordsAdapter(fixture.db).recordVersion(context(), {
+      connectionId: CONNECTION, stableRecordId: RECORD, collection: "wearable_daily_records",
+      recordKey: "wearable:2026-08-27", resourceVersion: "wearable-v1",
+      idempotencyKey: "wearable:synthetic:0001",
+      payload: {
+        id: "device:healthkit:2026-08-27", source: "apple_health", date: "2026-08-27",
+        sleepDurationMinutes: 420, hrv: 61, restingHr: 52, steps: 9000,
+        dataQualityScore: 67,
+      }, deleted: false,
+    })).resolves.toMatchObject({ versionId: VERSION_ID });
+    expect(fixture.calls.some((call) => call.sql.includes("record_consumer_clinical_version"))).toBe(true);
+  });
+
   test("returns only bounded, current record payloads", async () => {
     const fixture = database();
     const rows = await createAwsConsumerClinicalRecordsAdapter(fixture.db).listRecords(context(), {

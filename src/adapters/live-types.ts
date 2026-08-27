@@ -316,6 +316,13 @@ export interface LivePatientAppIntake {
   questionnaireResponses: LivePatientAppIntakeRecord<{
     questionId?: string; categoryId?: string; severity?: number; timestamp?: string;
   }>[];
+  wearablesSharingStatus: 'granted' | 'revoked' | 'not_granted';
+  wearableDailyRecords: LivePatientAppIntakeRecord<{
+    id?: string; source?: string; date?: string; sleepDurationMinutes?: number;
+    hrv?: number; restingHr?: number; respiratoryRate?: number; steps?: number;
+    activeMinutes?: number; vo2Max?: number; weight?: number; bodyFatPercent?: number;
+    spo2?: number; dataQualityScore?: number;
+  }>[];
   generatedAt: string;
 }
 

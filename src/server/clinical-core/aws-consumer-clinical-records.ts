@@ -14,7 +14,7 @@ export const CONSUMER_CLINICAL_COLLECTIONS = [
   "protocols", "daily_adherence", "symptom_logs", "hormone_entries",
   "meal_logs", "subjective_rollups", "weekly_checkins",
   "wellness_profiles", "lifestyle_profiles", "contraindications",
-  "questionnaire_responses", "clinical_intakes",
+  "questionnaire_responses", "clinical_intakes", "wearable_daily_records",
 ] as const;
 export type ConsumerClinicalCollection = (typeof CONSUMER_CLINICAL_COLLECTIONS)[number];
 export type PrivacyRequestKind = "export" | "correction" | "deletion";
@@ -134,6 +134,20 @@ const COLLECTION_KEYS: Record<ConsumerClinicalCollection, { allowed: readonly st
   clinical_intakes: {
     allowed: ["id","chiefComplaint","associatedSymptoms","energyLevel","sleepQuality","digestiveFunction","stressPerception","temperatureSensitivity","painQuality","createdAt","updatedAt"],
     required: ["id","chiefComplaint","associatedSymptoms","energyLevel","sleepQuality","digestiveFunction","stressPerception","temperatureSensitivity","createdAt","updatedAt"],
+  },
+  wearable_daily_records: {
+    allowed: [
+      "id","source","date","sleepDurationMinutes","sleepEfficiency","deepSleepMinutes","remSleepMinutes",
+      "lightSleepMinutes","sleepLatencyMinutes","wakeAfterSleepOnset","awakenings","sleepScore","bedtime",
+      "wakeTime","hrv","restingHr","avgHr","nighttimeHr","respiratoryRate","tempDeviation","skinTemp",
+      "readinessScore","stressScoreDevice","steps","distanceKm","caloriesBurned","activeMinutes",
+      "sedentaryMinutes","vo2Max","workoutMinutes","workoutType","trainingLoad","strainScore","weight",
+      "bodyFatPercent","spo2","glucoseAvg","bloodPressureSystolic","bloodPressureDiastolic","cyclePhase",
+      "cycleDayEstimate","hydrationMl","alcoholUnits","caffeineMg","caffeineLastTime","energyScore",
+      "stressScoreSubjective","sorenessScore","moodScore","libidoScore","bowelScore","cravingsScore",
+      "adherenceScore","subjectiveReadiness","symptomFlags","dataQualityScore",
+    ],
+    required: ["id","source","date","dataQualityScore"],
   },
 };
 

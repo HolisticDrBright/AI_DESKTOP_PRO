@@ -113,6 +113,8 @@ const programsWorkspace = readFileSync(path.join(root, "infra", "aws-clinical-co
   "20260827140000_production_programs.sql"), "utf8");
 const inboxWorkspace = readFileSync(path.join(root, "infra", "aws-clinical-core", "production-migrations",
   "20260827150000_production_inbox.sql"), "utf8");
+const wearableRecordsOverlay = readFileSync(path.join(root, "infra", "aws-clinical-core", "production-migrations",
+  "20260827160000_production_consumer_wearable_records.sql"), "utf8");
 assert(overlay.includes("_organization_id uuid") && overlay.includes("_first_name text")
   && overlay.includes("_last_name text") && overlay.includes("_date_of_birth date")
   && overlay.includes("_sex text") && overlay.includes("_mrn text")
@@ -275,6 +277,14 @@ assert(patientAppIntakeOverlay.includes("clinical_core.get_patient_app_intake")
 "patient app intake lacks consent status, patient access, review task, or current-version projection");
 assert(!/insert\s+into\s+clinical_core\.patient_records/i.test(patientAppIntakeOverlay),
 "patient app intake must not silently overwrite the practitioner-authored patient record");
+for (const invariant of [
+  "'wearable_daily_records'", "when 'wearable_daily_records' then 'wearables'",
+  "Patient app wearable update", "wearablesSharingStatus", "wearableDailyRecords",
+  "clinical_private.require_clinical_patient", "limit 30",
+]) assert(wearableRecordsOverlay.includes(invariant), `missing consumer wearable invariant ${invariant}`);
+assert(!/insert\s+into\s+clinical_core\.consumer_clinical_record_versions/i.test(
+  wearableRecordsOverlay.replace(/\$([A-Za-z_][A-Za-z0-9_]*)?\$[\s\S]*?\$\1\$/g, "")),
+"consumer wearable migration must not seed patient-supplied records");
 for (const operation of [
   "get_product_catalog", "get_product_label_detail", "verify_product_label_version",
   "get_protocol_template_detail", "compare_protocol_template_versions",

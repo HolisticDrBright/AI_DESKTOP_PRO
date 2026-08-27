@@ -831,12 +831,14 @@ describe("AWS production Desktop adapter", () => {
       patientId: PATIENT, connectionState: "verified", sharingStatus: "granted",
       wellnessProfile: { payload: { goals: ["synthetic longevity"] }, receivedAt: "2026-08-25T10:00:00Z" },
       lifestyleProfile: null, contraindications: null, clinicalIntake: null,
-      questionnaireResponses: [], generatedAt: "2026-08-25T10:00:01Z",
+      questionnaireResponses: [], wearablesSharingStatus: "granted",
+      wearableDailyRecords: [{ payload: { date: "2026-08-25", steps: 9000 }, receivedAt: "2026-08-25T10:00:00Z" }],
+      generatedAt: "2026-08-25T10:00:01Z",
     });
     await expect(test.adapter.execute(context, {
       kind: "rpc", functionName: "get_patient_app_intake",
       args: { _organization_id: ORG, _patient_id: PATIENT },
-    })).resolves.toMatchObject({ patientId: PATIENT, sharingStatus: "granted" });
+    })).resolves.toMatchObject({ patientId: PATIENT, sharingStatus: "granted", wearablesSharingStatus: "granted" });
     expect(test.calls[1]?.sql).toBe("select clinical_core.get_patient_app_intake($1,$2) as data");
     expect(test.fallback.execute).not.toHaveBeenCalled();
   });
