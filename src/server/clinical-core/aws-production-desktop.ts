@@ -47,6 +47,30 @@ const NUTRITION_RPC_KEYS: Readonly<Record<string, readonly string[]>> = {
   submit_nutrition_plan_version: ["_organization_id", "_plan_version_id"],
   upsert_nutrition_template: ["_expected_version", "_name", "_organization_id", "_pattern", "_summary", "_template_id"],
 };
+const BILLING_RPC_KEYS: Readonly<Record<string, readonly string[]>> = {
+  adjust_inventory_stock: ["_delta", "_kind", "_location_id", "_organization_id", "_product_id", "_reason"],
+  apply_patient_credit: ["_amount_minor", "_expected_version", "_invoice_id", "_organization_id"],
+  archive_billing_product: ["_expected_version", "_organization_id", "_product_id"],
+  create_invoice_draft: ["_appointment_id", "_location_id", "_organization_id", "_patient_id"],
+  finalize_invoice: ["_expected_version", "_invoice_id", "_organization_id"],
+  get_billing_invoice: ["_invoice_id", "_organization_id"],
+  get_billing_workspace: ["_from", "_location_id", "_method", "_organization_id", "_practitioner_user_id", "_status", "_to"],
+  get_inventory_history: ["_limit", "_location_id", "_organization_id", "_product_id"],
+  get_patient_billing: ["_organization_id", "_patient_id"],
+  grant_patient_credit: ["_amount_minor", "_organization_id", "_patient_id", "_reason"],
+  list_billing_catalog: ["_include_archived", "_kind", "_limit", "_location_id", "_organization_id", "_query", "_stock_filter", "_supplier_id"],
+  receive_inventory_stock: ["_location_id", "_organization_id", "_product_id", "_quantity", "_reference", "_supplier_id", "_unit_cost_minor"],
+  record_manual_payment: ["_amount_minor", "_expected_version", "_idempotency_key", "_invoice_id", "_method", "_organization_id", "_reference"],
+  refund_payment: ["_amount_minor", "_method", "_organization_id", "_payment_id", "_reason"],
+  return_inventory_stock: ["_condition", "_invoice_id", "_location_id", "_organization_id", "_product_id", "_quantity", "_reason"],
+  save_invoice_draft: ["_expected_version", "_invoice_id", "_lines", "_location_id", "_organization_id"],
+  start_card_payment: ["_expected_version", "_idempotency_key", "_invoice_id", "_organization_id"],
+  upsert_billing_location: ["_archive", "_id", "_name", "_organization_id"],
+  upsert_billing_product: ["_amount_minor", "_barcode", "_catalog_product_id", "_cost_minor", "_currency", "_description", "_expected_version", "_id", "_kind", "_name", "_organization_id", "_reorder_threshold", "_sku", "_supplier_id", "_tax_rate_id", "_track_inventory"],
+  upsert_supplier: ["_archive", "_contact_email", "_id", "_name", "_notes", "_organization_id", "_phone"],
+  upsert_tax_rate: ["_active", "_id", "_name", "_organization_id", "_rate_bps"],
+  void_invoice: ["_expected_version", "_invoice_id", "_organization_id", "_reason"],
+};
 const CORE_RPCS = new Set([
   "create_patient_profile",
   "review_biomarker",
@@ -169,6 +193,7 @@ const CORE_RPCS = new Set([
   "supersede_knowledge_reference",
   "supersede_product_label_version",
   ...Object.keys(NUTRITION_RPC_KEYS),
+  ...Object.keys(BILLING_RPC_KEYS),
 ]);
 const CORE_SELECTS = new Set([
   "patient_profiles",
@@ -1168,6 +1193,15 @@ async function executeCoreRpc(
     exactKeys(args, [...nutritionKeys]);
     const row = first(await tx.query<{ data: unknown }>(
       "select clinical_core.invoke_nutrition_operation($1,$2::jsonb) as data",
+      [name, JSON.stringify(boundedJsonObject(args, 1_048_576))],
+    ));
+    return decodeJson(row.data);
+  }
+  const billingKeys = BILLING_RPC_KEYS[name];
+  if (billingKeys) {
+    exactKeys(args, [...billingKeys]);
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.invoke_billing_operation($1,$2::jsonb) as data",
       [name, JSON.stringify(boundedJsonObject(args, 1_048_576))],
     ));
     return decodeJson(row.data);

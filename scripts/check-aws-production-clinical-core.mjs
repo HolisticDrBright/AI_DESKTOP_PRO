@@ -16,7 +16,7 @@ const errors = [];
 const assert = (condition, message) => { if (!condition) errors.push(message); };
 
 assert(manifest.contract_version === "clinical-core-migrations/1", "generated manifest contract is invalid");
-assert(manifest.migrations.length === 33, "expected seven transformed migrations and twenty-six production overlays");
+assert(manifest.migrations.length === 34, "expected seven transformed migrations and twenty-seven production overlays");
 assert(new Set(manifest.migrations.map((entry) => entry.version)).size === manifest.migrations.length,
   "migration versions must be unique");
 
@@ -105,6 +105,8 @@ const importReviewWorkspace = readFileSync(path.join(root, "infra", "aws-clinica
   "20260827100000_production_import_review_workspace.sql"), "utf8");
 const nutritionWorkspace = readFileSync(path.join(root, "infra", "aws-clinical-core", "production-migrations",
   "20260827110000_production_nutrition_workspace.sql"), "utf8");
+const billingInventory = readFileSync(path.join(root, "infra", "aws-clinical-core", "production-migrations",
+  "20260827120000_production_billing_inventory.sql"), "utf8");
 assert(overlay.includes("_organization_id uuid") && overlay.includes("_first_name text")
   && overlay.includes("_last_name text") && overlay.includes("_date_of_birth date")
   && overlay.includes("_sex text") && overlay.includes("_mrn text")
@@ -391,6 +393,16 @@ for (const invariant of [
 assert(!/insert\s+into\s+clinical_core\.nutrition_/i.test(
   nutritionWorkspace.replace(/\$([A-Za-z_][A-Za-z0-9_]*)?\$[\s\S]*?\$\1\$/g, "")),
 "nutrition migration must not seed templates, plans, flags, or check-ins");
+for (const invariant of [
+  "invoke_billing_operation", "card_payment_provider_not_approved",
+  "billing_provider_registrations", "check(enabled=false)",
+  "inventory_ledger_append_only", "billing_refunds_append_only",
+  "patient_credit_entries_append_only", "billing_events_append_only",
+  "from public,clinical_core_api",
+]) assert(billingInventory.includes(invariant), `missing billing invariant ${invariant}`);
+assert(!/insert\s+into\s+clinical_core\.(?:billing_|inventory_|patient_credit_)/i.test(
+  billingInventory.replace(/\$([A-Za-z_][A-Za-z0-9_]*)?\$[\s\S]*?\$\1\$/g, "")),
+"billing migration must not seed products, invoices, payments, credits, or providers");
 assert(governedCatalogOverlay.includes("contains_phi boolean not null default false check (contains_phi = false)")
   && governedCatalogOverlay.includes("data_classification text not null default 'reference_only'")
   && !/insert\s+into\s+(?:clinical_reference|commercial_reference)\./i.test(

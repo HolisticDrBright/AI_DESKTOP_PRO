@@ -5,6 +5,35 @@
     {
       "kind": "rpc",
       "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260827120000_production_billing_inventory.sql",
+      "names": [
+        "adjust_inventory_stock",
+        "apply_patient_credit",
+        "archive_billing_product",
+        "create_invoice_draft",
+        "finalize_invoice",
+        "get_billing_invoice",
+        "get_billing_workspace",
+        "get_inventory_history",
+        "get_patient_billing",
+        "grant_patient_credit",
+        "list_billing_catalog",
+        "receive_inventory_stock",
+        "record_manual_payment",
+        "refund_payment",
+        "return_inventory_stock",
+        "save_invoice_draft",
+        "start_card_payment",
+        "upsert_billing_location",
+        "upsert_billing_product",
+        "upsert_supplier",
+        "upsert_tax_rate",
+        "void_invoice"
+      ]
+    },
+    {
+      "kind": "rpc",
+      "implementation": "native_production_function",
       "source": "infra/aws-clinical-core/production-migrations/20260827110000_production_nutrition_workspace.sql",
       "names": [
         "activate_nutrition_plan_version",
