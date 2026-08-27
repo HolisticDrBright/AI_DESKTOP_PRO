@@ -2,14 +2,14 @@
   "schemaVersion": "desktop-operation-port-inventory/1",
   "generatedFrom": {
     "operationManifestSha256": "8cd2bed9d9db0f17aab030e397cbb07cc4fe50647f4eaf5e4ba83816a4a4fbff",
-    "productionOperationManifestSha256": "a139aec20302ac855231ea2197b521601db7e7d182a2c330c5c6077e71ff30a7",
+    "productionOperationManifestSha256": "372129dfc5f5abdf32d7836c7561aed99d68d4543329fa6ac02d26e36a708437",
     "legacyDefinitionSetSha256": "dce8bb87ed890c305c656ee61b8438da0cb518647ea2df65f4bdf26e55277e96"
   },
   "counts": {
     "rpc": 218,
     "select": 5,
     "total": 223,
-    "productionImplemented": 92,
+    "productionImplemented": 101,
     "productionEnabled": 0
   },
   "operations": [
@@ -1446,7 +1446,13 @@
         }
       ],
       "syntheticBoundary": "registry_disabled",
-      "productionStatus": "not_ported"
+      "productionStatus": "implemented_activation_blocked",
+      "productionEvidence": {
+        "implementation": "native_production_function",
+        "source": "infra/aws-clinical-core/production-migrations/20260826170000_production_knowledge_import_compatibility.sql",
+        "sourceSha256": "e8f14e58d18d1ac75e7374c06bc44b8f861f065c609b500445acf2f2ed310653",
+        "activationState": "phi_disabled"
+      }
     },
     {
       "kind": "rpc",
@@ -1705,7 +1711,13 @@
         }
       ],
       "syntheticBoundary": "registry_disabled",
-      "productionStatus": "not_ported"
+      "productionStatus": "implemented_activation_blocked",
+      "productionEvidence": {
+        "implementation": "native_production_function",
+        "source": "infra/aws-clinical-core/production-migrations/20260826170000_production_knowledge_import_compatibility.sql",
+        "sourceSha256": "e8f14e58d18d1ac75e7374c06bc44b8f861f065c609b500445acf2f2ed310653",
+        "activationState": "phi_disabled"
+      }
     },
     {
       "kind": "rpc",
@@ -3774,7 +3786,13 @@
         }
       ],
       "syntheticBoundary": "registry_disabled",
-      "productionStatus": "not_ported"
+      "productionStatus": "implemented_activation_blocked",
+      "productionEvidence": {
+        "implementation": "native_production_function",
+        "source": "infra/aws-clinical-core/production-migrations/20260826170000_production_knowledge_import_compatibility.sql",
+        "sourceSha256": "e8f14e58d18d1ac75e7374c06bc44b8f861f065c609b500445acf2f2ed310653",
+        "activationState": "phi_disabled"
+      }
     },
     {
       "kind": "rpc",
@@ -4771,7 +4789,13 @@
         }
       ],
       "syntheticBoundary": "registry_disabled",
-      "productionStatus": "not_ported"
+      "productionStatus": "implemented_activation_blocked",
+      "productionEvidence": {
+        "implementation": "native_production_function",
+        "source": "infra/aws-clinical-core/production-migrations/20260826170000_production_knowledge_import_compatibility.sql",
+        "sourceSha256": "e8f14e58d18d1ac75e7374c06bc44b8f861f065c609b500445acf2f2ed310653",
+        "activationState": "phi_disabled"
+      }
     },
     {
       "kind": "rpc",
@@ -5536,7 +5560,13 @@
         }
       ],
       "syntheticBoundary": "registry_disabled",
-      "productionStatus": "not_ported"
+      "productionStatus": "implemented_activation_blocked",
+      "productionEvidence": {
+        "implementation": "native_production_function",
+        "source": "infra/aws-clinical-core/production-migrations/20260826170000_production_knowledge_import_compatibility.sql",
+        "sourceSha256": "e8f14e58d18d1ac75e7374c06bc44b8f861f065c609b500445acf2f2ed310653",
+        "activationState": "phi_disabled"
+      }
     },
     {
       "kind": "rpc",
@@ -5969,7 +5999,13 @@
         }
       ],
       "syntheticBoundary": "registry_disabled",
-      "productionStatus": "not_ported"
+      "productionStatus": "implemented_activation_blocked",
+      "productionEvidence": {
+        "implementation": "native_production_function",
+        "source": "infra/aws-clinical-core/production-migrations/20260826170000_production_knowledge_import_compatibility.sql",
+        "sourceSha256": "e8f14e58d18d1ac75e7374c06bc44b8f861f065c609b500445acf2f2ed310653",
+        "activationState": "phi_disabled"
+      }
     },
     {
       "kind": "rpc",
@@ -6428,7 +6464,13 @@
         }
       ],
       "syntheticBoundary": "registry_disabled",
-      "productionStatus": "not_ported"
+      "productionStatus": "implemented_activation_blocked",
+      "productionEvidence": {
+        "implementation": "native_production_function",
+        "source": "infra/aws-clinical-core/production-migrations/20260826170000_production_knowledge_import_compatibility.sql",
+        "sourceSha256": "e8f14e58d18d1ac75e7374c06bc44b8f861f065c609b500445acf2f2ed310653",
+        "activationState": "phi_disabled"
+      }
     },
     {
       "kind": "rpc",
@@ -7211,7 +7253,13 @@
         }
       ],
       "syntheticBoundary": "registry_disabled",
-      "productionStatus": "not_ported"
+      "productionStatus": "implemented_activation_blocked",
+      "productionEvidence": {
+        "implementation": "native_production_function",
+        "source": "infra/aws-clinical-core/production-migrations/20260826170000_production_knowledge_import_compatibility.sql",
+        "sourceSha256": "e8f14e58d18d1ac75e7374c06bc44b8f861f065c609b500445acf2f2ed310653",
+        "activationState": "phi_disabled"
+      }
     },
     {
       "kind": "rpc",
@@ -7727,7 +7775,13 @@
         }
       ],
       "syntheticBoundary": "registry_disabled",
-      "productionStatus": "not_ported"
+      "productionStatus": "implemented_activation_blocked",
+      "productionEvidence": {
+        "implementation": "native_production_function",
+        "source": "infra/aws-clinical-core/production-migrations/20260826170000_production_knowledge_import_compatibility.sql",
+        "sourceSha256": "e8f14e58d18d1ac75e7374c06bc44b8f861f065c609b500445acf2f2ed310653",
+        "activationState": "phi_disabled"
+      }
     },
     {
       "kind": "rpc",
@@ -11368,7 +11422,7 @@
       "productionEvidence": {
         "implementation": "native_production_adapter",
         "source": "src/server/clinical-core/aws-production-desktop.ts",
-        "sourceSha256": "c9747d41c05ad88ab7143c6507ba23c09a17395c0e787be24a459a3ec210d6bd",
+        "sourceSha256": "4f9cf2f5bba6be536b3552f4ee89e6749e9fbbaf8a5280a9aa8487215268b3d5",
         "activationState": "phi_disabled"
       }
     },
@@ -11396,7 +11450,7 @@
       "productionEvidence": {
         "implementation": "native_production_adapter",
         "source": "src/server/clinical-core/aws-production-desktop.ts",
-        "sourceSha256": "c9747d41c05ad88ab7143c6507ba23c09a17395c0e787be24a459a3ec210d6bd",
+        "sourceSha256": "4f9cf2f5bba6be536b3552f4ee89e6749e9fbbaf8a5280a9aa8487215268b3d5",
         "activationState": "phi_disabled"
       }
     },
@@ -11424,7 +11478,7 @@
       "productionEvidence": {
         "implementation": "native_production_adapter",
         "source": "src/server/clinical-core/aws-production-desktop.ts",
-        "sourceSha256": "c9747d41c05ad88ab7143c6507ba23c09a17395c0e787be24a459a3ec210d6bd",
+        "sourceSha256": "4f9cf2f5bba6be536b3552f4ee89e6749e9fbbaf8a5280a9aa8487215268b3d5",
         "activationState": "phi_disabled"
       }
     },
@@ -11452,7 +11506,7 @@
       "productionEvidence": {
         "implementation": "native_production_adapter",
         "source": "src/server/clinical-core/aws-production-desktop.ts",
-        "sourceSha256": "c9747d41c05ad88ab7143c6507ba23c09a17395c0e787be24a459a3ec210d6bd",
+        "sourceSha256": "4f9cf2f5bba6be536b3552f4ee89e6749e9fbbaf8a5280a9aa8487215268b3d5",
         "activationState": "phi_disabled"
       }
     },
@@ -11493,7 +11547,7 @@
       "productionEvidence": {
         "implementation": "native_production_adapter",
         "source": "src/server/clinical-core/aws-production-desktop.ts",
-        "sourceSha256": "c9747d41c05ad88ab7143c6507ba23c09a17395c0e787be24a459a3ec210d6bd",
+        "sourceSha256": "4f9cf2f5bba6be536b3552f4ee89e6749e9fbbaf8a5280a9aa8487215268b3d5",
         "activationState": "phi_disabled"
       }
     }

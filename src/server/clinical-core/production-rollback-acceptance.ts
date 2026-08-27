@@ -100,6 +100,12 @@ type AcceptanceEvidence = {
   knowledgeImportHumanReviewed: boolean;
   knowledgeImportNonApproving: boolean;
   knowledgeImportCommercialSeparated: boolean;
+  knowledgeImportCompatibilityPreviewed: boolean;
+  knowledgeImportConflictProtected: boolean;
+  knowledgeImportCommitDraftOnly: boolean;
+  knowledgeImportCancellationGoverned: boolean;
+  researchHandoffReviewGoverned: boolean;
+  knowledgeImportCommercialDisclosureSeparated: boolean;
   workforceInvitationClaimed: boolean;
 };
 
@@ -536,6 +542,92 @@ async function acceptance(tx: ClinicalCoreTransaction): Promise<AcceptanceEviden
     end;
   end $probe$`);
   const knowledgeImportCommercialSeparated = true;
+
+  acceptanceStage = "preview_knowledge_import_compatibility";
+  const compatibilityItems = [knowledgeImportItems[0], {
+    ...knowledgeImportItems[0], displayName: "Incoming duplicate pathway",
+    payload: { ...knowledgeImportItems[0]?.payload, name: "Incoming duplicate pathway" },
+  }];
+  const compatibilityPreview = json(row(await tx.query<{ data: unknown }>(
+    `select clinical_core.preview_knowledge_import($1,'obsidian_export',$2,$3,$4::jsonb,true,
+      'rollback-governed.json',2048,'v2','{}'::text[],null,false) as data`, [
+      clinicalUuid(ORG), "Rollback-only governed compatibility package",
+      "clinical-knowledge-import-v1", JSON.stringify(compatibilityItems),
+    ],
+  )).data);
+  const compatibilityBatchId = String(compatibilityPreview.batchId ?? "");
+  const compatibilityDetail = json(row(await tx.query<{ data: unknown }>(
+    "select clinical_core.get_knowledge_import_preview($1) as data",
+    [clinicalUuid(compatibilityBatchId)],
+  )).data);
+  const compatibilityRows = jsonArray(compatibilityDetail.items);
+  const compatibilityConflict = compatibilityRows.find((item) => item.changeKind === "conflict");
+  if (!compatibilityConflict?.id) throw new Error("knowledge_import_compatibility_conflict_missing");
+  const conflictResolution = json(row(await tx.query<{ data: unknown }>(
+    "select clinical_core.resolve_knowledge_import_conflict($1,'take_incoming',$2) as data", [
+      clinicalUuid(String(compatibilityConflict.id)), "Reviewed both duplicate rows; incoming source retained",
+    ],
+  )).data);
+  const compatibilityCommit = json(row(await tx.query<{ data: unknown }>(
+    "select clinical_core.commit_knowledge_import($1,$2::jsonb,$3) as data", [
+      clinicalUuid(compatibilityBatchId), JSON.stringify({ added: 1, changed: 0 }),
+      "Explicitly reviewed for draft-only application",
+    ],
+  )).data);
+
+  acceptanceStage = "cancel_knowledge_import_compatibility";
+  const cancelledPreview = json(row(await tx.query<{ data: unknown }>(
+    `select clinical_core.preview_knowledge_import($1,'other',$2,$3,$4::jsonb,true,
+      'rollback-cancel.json',1024,'v1','{}'::text[],null,false) as data`, [
+      clinicalUuid(ORG), "Rollback-only cancelled compatibility package",
+      "clinical-knowledge-import-v1", JSON.stringify([knowledgeImportItems[1]]),
+    ],
+  )).data);
+  const cancelledImport = json(row(await tx.query<{ data: unknown }>(
+    "select clinical_core.cancel_knowledge_import($1,$2) as data", [
+      clinicalUuid(String(cancelledPreview.batchId ?? "")), "Cancelled after governed preview review",
+    ],
+  )).data);
+
+  acceptanceStage = "review_research_handoff_compatibility";
+  const researchPreview = json(row(await tx.query<{ data: unknown }>(
+    `select clinical_core.preview_knowledge_import($1,'research_handoff',$2,$3,$4::jsonb,true,
+      'rollback-research.json',1024,'v1','{}'::text[],null,false) as data`, [
+      clinicalUuid(ORG), "Rollback-only research handoff",
+      "clinical-knowledge-import-v1", JSON.stringify([{
+        ...knowledgeImportItems[1], externalKey: "rollback_research_product",
+        payload: { ...knowledgeImportItems[1]?.payload, productCode: "rollback_research_product" },
+      }]),
+    ],
+  )).data);
+  const researchDetail = json(row(await tx.query<{ data: unknown }>(
+    "select clinical_core.get_knowledge_import_preview($1) as data",
+    [clinicalUuid(String(researchPreview.batchId ?? ""))],
+  )).data);
+  const researchItem = jsonArray(researchDetail.items)[0];
+  if (!researchItem?.id) throw new Error("research_handoff_item_missing");
+  const researchReview = json(row(await tx.query<{ data: unknown }>(
+    "select clinical_core.record_research_handoff_item_review($1,'verified',$2) as data", [
+      clinicalUuid(String(researchItem.id)), "Verified against the rollback-only handoff source",
+    ],
+  )).data);
+  const researchRead = json(row(await tx.query<{ data: unknown }>(
+    "select clinical_core.get_research_handoff_review($1,array[$2]::text[]) as data", [
+      clinicalUuid(ORG), "rollback_research_product",
+    ],
+  )).data);
+  const researchCommit = json(row(await tx.query<{ data: unknown }>(
+    "select clinical_core.commit_knowledge_import($1,$2::jsonb,$3) as data", [
+      clinicalUuid(String(researchPreview.batchId ?? "")), JSON.stringify({ added: 1, changed: 0 }),
+      "Practitioner verified research handoff for draft import",
+    ],
+  )).data);
+  const labelCommercialLinks = json(row(await tx.query<{ data: unknown }>(
+    "select clinical_core.list_label_commercial_links($1) as data", [clinicalUuid(CATALOG_PRODUCT_VERSION)],
+  )).data);
+  const protocolCommercialLinks = json(row(await tx.query<{ data: unknown }>(
+    "select clinical_core.list_protocol_commercial_links($1) as data", [clinicalUuid(TEMPLATE_VERSION_TWO)],
+  )).data);
 
   acceptanceStage = "seed_reasoning_lens_review";
   acceptanceStage = "seed_lens_paradigm";
@@ -1050,6 +1142,18 @@ async function acceptance(tx: ClinicalCoreTransaction): Promise<AcceptanceEviden
       && productCandidate.review_status === "needs_review"
       && reviewedKnowledgeProduct.appliedRefType === "product_label_candidate",
     knowledgeImportCommercialSeparated,
+    knowledgeImportCompatibilityPreviewed: compatibilityPreview.added === 1
+      && compatibilityPreview.conflicts === 1 && compatibilityRows.length === 2,
+    knowledgeImportConflictProtected: conflictResolution.resolution === "take_incoming",
+    knowledgeImportCommitDraftOnly: compatibilityCommit.approvalState === "draft"
+      && compatibilityCommit.applied === 1,
+    knowledgeImportCancellationGoverned: cancelledImport.status === "cancelled",
+    researchHandoffReviewGoverned: researchReview.verdict === "verified"
+      && jsonArray(researchRead.records).length === 1 && researchCommit.approvalState === "draft",
+    knowledgeImportCommercialDisclosureSeparated:
+      jsonArray(labelCommercialLinks.links).length === 1
+      && jsonArray(protocolCommercialLinks.links).length === 1
+      && !JSON.stringify(compatibilityDetail).includes("example.test/catalog"),
     workforceInvitationClaimed,
   };
 }

@@ -663,3 +663,33 @@ then rolled back every temporary row together with the complete prior
 App-to-Desktop acceptance suite. Evidence SHA-256:
 `ebd9c20c122949c0146f03203eaa5503dff0d744e72a921987f10a00aeb6b989`.
 `PHI_ALLOWED=false`; no production route or real patient data was enabled.
+## Desktop knowledge-import compatibility (2026-08-27; PHI disabled)
+
+Production migration `20260826170000` ports the nine remaining Desktop
+knowledge-import RPCs to the AWS clinical core. The compatibility surface now
+supports governed preview, bounded detail reads, explicit duplicate conflict
+resolution, draft-only commit, cancellation, research-handoff review, and
+separate product/protocol commercial disclosures.
+
+The migration creates no rows and does not import the frozen catalog. All
+staged content is `reference_only`, permanently records `contains_phi=false`,
+requires the caller's no-PHI attestation, refuses commercial-only or embedded
+commercial payloads, and cannot approve a pathway or verify a product label.
+Research handoff items require an attributed practitioner verdict before a
+draft-only commit. Conflict resolutions and research reviews are append-only.
+
+AWS application result:
+
+- account `173535830222`, region `us-east-2`;
+- `PHI_ALLOWED=false`, `DataPlaneEnabled=false`, activation remains blocked;
+- migration `20260826170000` applied; 63 tables and 65 production contracts;
+- zero clinical rows after schema verification;
+- rollback-only acceptance passed all prior safeguards plus the nine
+  compatibility operations, then rolled every temporary record back;
+- rollback evidence SHA-256:
+  `bcdd4b6dcadaca3bee6ae8fe982f65fb5fa341cbf782acdc1338af1b7447de12`.
+
+The Desktop inventory is now 101 of 223 live operations implemented on AWS,
+with all 101 marked `implemented_activation_blocked`, zero production-enabled,
+and 122 operations still not ported. This is production-capability progress,
+not authorization to process PHI.

@@ -30,8 +30,8 @@ function databaseFor(options: {
       }
       if (sql.startsWith("select\n      (select count(*)")) {
         return { rows: [{
-          table_count: 61,
-          contract_count: 56,
+          table_count: 63,
+          contract_count: 65,
           clinical_row_count: 0,
           ...options.verification,
         }] as unknown as Row[] };
@@ -150,6 +150,33 @@ describe("production clinical-core migrations", () => {
     expect(repair).not.toContain("{1,1990}");
   });
 
+  it("keeps the Desktop knowledge-import compatibility surface reference-only and activation-neutral", () => {
+    const sql = readFileSync(path.join(
+      process.cwd(), "infra", "aws-clinical-core", "production-migrations",
+      "20260826170000_production_knowledge_import_compatibility.sql",
+    ), "utf8");
+    for (const table of ["knowledge_import_conflict_resolutions", "research_handoff_item_reviews"]) {
+      expect(sql).toContain(`alter table clinical_core.${table} enable row level security`);
+      expect(sql).toContain(`${table}_append_only`);
+    }
+    for (const contract of [
+      "preview_knowledge_import", "get_knowledge_import_preview", "resolve_knowledge_import_conflict",
+      "commit_knowledge_import", "cancel_knowledge_import", "list_label_commercial_links",
+      "list_protocol_commercial_links", "get_research_handoff_review",
+      "record_research_handoff_item_review",
+    ]) expect(sql).toContain(`function clinical_core.${contract}`);
+    for (const invariant of [
+      "knowledge_import_no_phi_attestation_required", "knowledge_import_commercial_only_refused",
+      "knowledge_import_commercial_data_refused", "knowledge_import_conflicts_unresolved",
+      "research_handoff_review_required", "approvalState','draft",
+      "Commercial links are disclosed separately",
+    ]) expect(sql).toContain(invariant);
+    const topLevel = sql.replace(/\$([A-Za-z_][A-Za-z0-9_]*)?\$[\s\S]*?\$\1\$/g, "");
+    expect(topLevel).not.toMatch(/insert\s+into\s+(?:clinical_core|clinical_reference|commercial_reference)\./i);
+    expect(sql).not.toMatch(/grant\s+(?:all|select|insert|update|delete)\s+on[\s\S]*?\s+to\s+public/i);
+    expect(sql).not.toContain("set contains_phi=true");
+  });
+
   it("keeps workforce invitations Cognito-bound without storing email addresses or creating accounts", () => {
     const sql = readFileSync(path.join(
       process.cwd(), "infra", "aws-clinical-core", "production-migrations",
@@ -230,8 +257,8 @@ describe("production clinical-core migrations", () => {
     expect(result).toEqual({
       applied: [migration.version],
       alreadyApplied: [],
-      tableCount: 61,
-      contractCount: 56,
+      tableCount: 63,
+      contractCount: 65,
       clinicalRowCount: 0,
     });
     expect(harness.statements.map(({ sql }) => sql)).toContain("create table clinical_core.example(id uuid)");

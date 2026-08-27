@@ -543,6 +543,60 @@
       "source": "infra/aws-clinical-core/production-migrations/20260826150000_production_clinical_knowledge_import_review.sql"
     },
     {
+      "kind": "rpc",
+      "name": "preview_knowledge_import",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826170000_production_knowledge_import_compatibility.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "get_knowledge_import_preview",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826170000_production_knowledge_import_compatibility.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "resolve_knowledge_import_conflict",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826170000_production_knowledge_import_compatibility.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "commit_knowledge_import",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826170000_production_knowledge_import_compatibility.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "cancel_knowledge_import",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826170000_production_knowledge_import_compatibility.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "list_label_commercial_links",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826170000_production_knowledge_import_compatibility.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "list_protocol_commercial_links",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826170000_production_knowledge_import_compatibility.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "get_research_handoff_review",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826170000_production_knowledge_import_compatibility.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "record_research_handoff_item_review",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826170000_production_knowledge_import_compatibility.sql"
+    },
+    {
       "kind": "select",
       "name": "clinical_knowledge_import_batches",
       "implementation": "native_production_adapter",

@@ -216,6 +216,99 @@ describe("AWS production Desktop adapter", () => {
     );
   });
 
+  it("routes the governed preview, conflict, commit, and cancellation workflow through AWS", async () => {
+    const preview = harness({ batchId: IMPORT_BATCH, added: 1, conflicts: 0 });
+    await expect(preview.adapter.execute(context, {
+      kind: "rpc", functionName: "preview_knowledge_import",
+      args: {
+        _organization_id: ORG, _source_kind: "obsidian_export", _source_name: "Governed source",
+        _schema_version: "clinical-knowledge-import-v1", _items: [{
+          entityType: "pathway", externalKey: "pathway_test", displayName: "Test pathway",
+          sourceSheet: "Clinical", warnings: [], payload: {
+            code: "pathway_test", name: "Test pathway", domainCode: "testing",
+            sourceRefs: [{ label: "Reviewed source" }], content: {
+              differentiatingQuestions: [], labStrategy: [], productCandidates: [], nutrition: [],
+              lifestyle: [], safetyStops: ["Practitioner review required"],
+            },
+          },
+        }], _attests_no_phi: true, _source_filename: "governed.json",
+        _source_byte_size: 1024, _source_revision: "v1", _source_restricted_flags: [],
+        _source_restricted_reason: null, _commercial_only: false,
+      },
+    })).resolves.toMatchObject({ batchId: IMPORT_BATCH, added: 1 });
+    expect(preview.calls[1]?.sql).toContain("clinical_core.preview_knowledge_import");
+    expect(preview.calls[1]?.values).toEqual(expect.arrayContaining([true, false]));
+
+    const conflict = harness({ ok: true, itemId: IMPORT_ITEM, resolution: "skip" });
+    await conflict.adapter.execute(context, { kind: "rpc", functionName: "resolve_knowledge_import_conflict",
+      args: { _item_id: IMPORT_ITEM, _resolution: "skip", _note: "Duplicate reviewed and skipped" },
+    });
+    expect(conflict.calls[1]?.sql).toContain("clinical_core.resolve_knowledge_import_conflict");
+
+    const commit = harness({ ok: true, batchId: IMPORT_BATCH, approvalState: "draft" });
+    await commit.adapter.execute(context, { kind: "rpc", functionName: "commit_knowledge_import",
+      args: { _batch_id: IMPORT_BATCH, _expected_counts: { added: 1, changed: 0 },
+        _note: "Reviewed for draft import only" },
+    });
+    expect(commit.calls[1]?.values[1]).toBe(JSON.stringify({ added: 1, changed: 0 }));
+
+    const cancel = harness({ ok: true, batchId: IMPORT_BATCH, status: "cancelled" });
+    await cancel.adapter.execute(context, { kind: "rpc", functionName: "cancel_knowledge_import",
+      args: { _batch_id: IMPORT_BATCH, _reason: "Cancelled during governed review" },
+    });
+    expect(cancel.calls[1]?.sql).toContain("clinical_core.cancel_knowledge_import");
+  });
+
+  it("keeps research review and commercial disclosure in separate AWS calls", async () => {
+    const handoff = harness({ batches: [], records: [], evidence: [], commercial: [] });
+    await handoff.adapter.execute(context, { kind: "rpc", functionName: "get_research_handoff_review",
+      args: { _organization_id: ORG, _prh_ids: ["prh-001", "prh-002"] },
+    });
+    expect(handoff.calls[1]?.sql).toContain("clinical_core.get_research_handoff_review");
+
+    const review = harness({ ok: true, itemId: IMPORT_ITEM, verdict: "verified" });
+    await review.adapter.execute(context, { kind: "rpc", functionName: "record_research_handoff_item_review",
+      args: { _item_id: IMPORT_ITEM, _verdict: "verified", _note: "Verified against the governed handoff" },
+    });
+    expect(review.calls[1]?.sql).toContain("clinical_core.record_research_handoff_item_review");
+
+    const label = harness({ labelVersionId: CATALOG_VERSION, links: [] });
+    await label.adapter.execute(context, { kind: "rpc", functionName: "list_label_commercial_links",
+      args: { _label_version_id: CATALOG_VERSION },
+    });
+    expect(label.calls[1]?.sql).toBe("select clinical_core.list_label_commercial_links($1) as data");
+
+    const protocol = harness({ protocolVersionId: TEMPLATE_VERSION, links: [] });
+    await protocol.adapter.execute(context, { kind: "rpc", functionName: "list_protocol_commercial_links",
+      args: { _version_id: TEMPLATE_VERSION },
+    });
+    expect(protocol.calls[1]?.sql).toBe("select clinical_core.list_protocol_commercial_links($1) as data");
+  });
+
+  it("refuses a PHI-attested, commercial-only, or cross-tenant compatibility preview before Aurora", async () => {
+    const test = harness();
+    const args = {
+      _organization_id: ORG, _source_kind: "other", _source_name: "Governed source",
+      _schema_version: "clinical-knowledge-import-v1", _items: [{
+        entityType: "pathway", externalKey: "pathway_test", displayName: "Test pathway", warnings: [],
+        payload: { code: "pathway_test", name: "Test pathway", domainCode: "testing", sourceRefs: [],
+          content: {} },
+      }], _attests_no_phi: true, _source_filename: null, _source_byte_size: null,
+      _source_revision: null, _source_restricted_flags: [], _source_restricted_reason: null,
+      _commercial_only: false,
+    };
+    await expect(test.adapter.execute(context, { kind: "rpc", functionName: "preview_knowledge_import",
+      args: { ...args, _attests_no_phi: false },
+    })).rejects.toEqual(new ProductionDesktopError("request_invalid"));
+    await expect(test.adapter.execute(context, { kind: "rpc", functionName: "preview_knowledge_import",
+      args: { ...args, _commercial_only: true },
+    })).rejects.toEqual(new ProductionDesktopError("request_invalid"));
+    await expect(test.adapter.execute(context, { kind: "rpc", functionName: "preview_knowledge_import",
+      args: { ...args, _organization_id: PATIENT },
+    })).rejects.toEqual(new ProductionDesktopError("request_invalid"));
+    expect(test.calls).toHaveLength(3);
+  });
+
   it("refuses missing attestation, commercial payloads, and weak review claims before Aurora", async () => {
     const test = harness();
     const base = {

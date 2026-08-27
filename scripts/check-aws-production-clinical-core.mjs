@@ -16,7 +16,7 @@ const errors = [];
 const assert = (condition, message) => { if (!condition) errors.push(message); };
 
 assert(manifest.contract_version === "clinical-core-migrations/1", "generated manifest contract is invalid");
-assert(manifest.migrations.length === 30, "expected seven transformed migrations and twenty-three production overlays");
+assert(manifest.migrations.length === 31, "expected seven transformed migrations and twenty-four production overlays");
 assert(new Set(manifest.migrations.map((entry) => entry.version)).size === manifest.migrations.length,
   "migration versions must be unique");
 
@@ -99,6 +99,8 @@ const workforceInvitationOverlay = readFileSync(path.join(root, "infra", "aws-cl
   "20260826160000_production_workforce_invitation_claims.sql"), "utf8");
 const workforceEmailDigestRepair = readFileSync(path.join(root, "infra", "aws-clinical-core", "production-migrations",
   "20260826161000_production_workforce_email_digest_repair.sql"), "utf8");
+const knowledgeImportCompatibility = readFileSync(path.join(root, "infra", "aws-clinical-core", "production-migrations",
+  "20260826170000_production_knowledge_import_compatibility.sql"), "utf8");
 assert(overlay.includes("_organization_id uuid") && overlay.includes("_first_name text")
   && overlay.includes("_last_name text") && overlay.includes("_date_of_birth date")
   && overlay.includes("_sex text") && overlay.includes("_mrn text")
@@ -335,6 +337,23 @@ assert(clinicalKnowledgeImportRepair.includes("drop constraint product_label_can
   && clinicalKnowledgeImportRepair.includes("char_length(coalesce(_payload->>'sourceUrl','')) not between 9 and 2000")
   && !clinicalKnowledgeImportRepair.includes("{1,1990}"),
 "knowledge import URL repair must use scalar length bounds supported by PostgreSQL");
+for (const operation of [
+  "preview_knowledge_import", "get_knowledge_import_preview", "resolve_knowledge_import_conflict",
+  "commit_knowledge_import", "cancel_knowledge_import", "list_label_commercial_links",
+  "list_protocol_commercial_links", "get_research_handoff_review",
+  "record_research_handoff_item_review",
+]) assert(knowledgeImportCompatibility.includes(`clinical_core.${operation}`),
+  `missing Desktop knowledge-import compatibility operation ${operation}`);
+for (const invariant of [
+  "knowledge_import_no_phi_attestation_required", "knowledge_import_commercial_only_refused",
+  "knowledge_import_commercial_data_refused", "knowledge_import_conflicts_unresolved",
+  "research_handoff_review_required", "approvalState','draft",
+  "knowledge_import_conflict_resolutions_append_only", "research_handoff_item_reviews_append_only",
+]) assert(knowledgeImportCompatibility.includes(invariant),
+  `missing Desktop knowledge-import compatibility invariant ${invariant}`);
+assert(!/insert\s+into\s+(?:clinical_core|clinical_reference|commercial_reference)\./i.test(
+  knowledgeImportCompatibility.replace(/\$([A-Za-z_][A-Za-z0-9_]*)?\$[\s\S]*?\$\1\$/g, "")),
+"Desktop knowledge-import compatibility migration must not seed clinical, reference, or commercial rows");
 assert(governedCatalogOverlay.includes("contains_phi boolean not null default false check (contains_phi = false)")
   && governedCatalogOverlay.includes("data_classification text not null default 'reference_only'")
   && !/insert\s+into\s+(?:clinical_reference|commercial_reference)\./i.test(
