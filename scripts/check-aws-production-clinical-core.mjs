@@ -16,7 +16,7 @@ const errors = [];
 const assert = (condition, message) => { if (!condition) errors.push(message); };
 
 assert(manifest.contract_version === "clinical-core-migrations/1", "generated manifest contract is invalid");
-assert(manifest.migrations.length === 31, "expected seven transformed migrations and twenty-four production overlays");
+assert(manifest.migrations.length === 32, "expected seven transformed migrations and twenty-five production overlays");
 assert(new Set(manifest.migrations.map((entry) => entry.version)).size === manifest.migrations.length,
   "migration versions must be unique");
 
@@ -101,6 +101,8 @@ const workforceEmailDigestRepair = readFileSync(path.join(root, "infra", "aws-cl
   "20260826161000_production_workforce_email_digest_repair.sql"), "utf8");
 const knowledgeImportCompatibility = readFileSync(path.join(root, "infra", "aws-clinical-core", "production-migrations",
   "20260826170000_production_knowledge_import_compatibility.sql"), "utf8");
+const importReviewWorkspace = readFileSync(path.join(root, "infra", "aws-clinical-core", "production-migrations",
+  "20260827100000_production_import_review_workspace.sql"), "utf8");
 assert(overlay.includes("_organization_id uuid") && overlay.includes("_first_name text")
   && overlay.includes("_last_name text") && overlay.includes("_date_of_birth date")
   && overlay.includes("_sex text") && overlay.includes("_mrn text")
@@ -354,6 +356,29 @@ for (const invariant of [
 assert(!/insert\s+into\s+(?:clinical_core|clinical_reference|commercial_reference)\./i.test(
   knowledgeImportCompatibility.replace(/\$([A-Za-z_][A-Za-z0-9_]*)?\$[\s\S]*?\$\1\$/g, "")),
 "Desktop knowledge-import compatibility migration must not seed clinical, reference, or commercial rows");
+for (const operation of [
+  "approve_knowledge_reference", "attach_commercial_link_to_verified_product",
+  "bulk_apply_org_tag", "bulk_assign_reviewer", "bulk_mark_duplicate",
+  "clear_catalog_product_restriction", "complete_catalog_product_review",
+  "create_knowledge_reference_draft", "create_product_label_draft",
+  "get_catalog_review_queue", "get_import_provenance", "get_import_source_inventory",
+  "get_restricted_review_history_v2", "get_restricted_review_queue",
+  "list_knowledge_references", "list_product_label_versions", "list_warning_resolutions",
+  "record_import_source_file", "record_restricted_review_outcome_v2",
+  "record_warning_resolution", "resolve_knowledge_import_ambiguity",
+  "revoke_commercial_link", "supersede_knowledge_reference",
+  "supersede_product_label_version",
+]) assert(importReviewWorkspace.includes(`'${operation}'`),
+  `missing import-review operation ${operation}`);
+for (const invariant of [
+  "data_classification='reference_only'", "contains_phi=false",
+  "verified_product_label_required", "restrictionsPreserved", "clinicalDataUnchanged",
+  "restricted_review_decisions_append_only", "warning_resolutions_append_only",
+  "clinical_private.require_knowledge_editor", "from public,clinical_core_api",
+]) assert(importReviewWorkspace.includes(invariant), `missing import-review invariant ${invariant}`);
+assert(!/insert\s+into\s+(?:clinical_core|clinical_reference|commercial_reference)\./i.test(
+  importReviewWorkspace.replace(/\$([A-Za-z_][A-Za-z0-9_]*)?\$[\s\S]*?\$\1\$/g, "")),
+"import-review migration must not seed clinical, reference, or commercial rows");
 assert(governedCatalogOverlay.includes("contains_phi boolean not null default false check (contains_phi = false)")
   && governedCatalogOverlay.includes("data_classification text not null default 'reference_only'")
   && !/insert\s+into\s+(?:clinical_reference|commercial_reference)\./i.test(

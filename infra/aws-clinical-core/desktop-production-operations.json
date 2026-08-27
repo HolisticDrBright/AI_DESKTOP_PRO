@@ -597,6 +597,150 @@
       "source": "infra/aws-clinical-core/production-migrations/20260826170000_production_knowledge_import_compatibility.sql"
     },
     {
+      "kind": "rpc",
+      "name": "approve_knowledge_reference",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260827100000_production_import_review_workspace.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "attach_commercial_link_to_verified_product",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260827100000_production_import_review_workspace.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "bulk_apply_org_tag",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260827100000_production_import_review_workspace.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "bulk_assign_reviewer",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260827100000_production_import_review_workspace.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "bulk_mark_duplicate",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260827100000_production_import_review_workspace.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "clear_catalog_product_restriction",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260827100000_production_import_review_workspace.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "complete_catalog_product_review",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260827100000_production_import_review_workspace.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "create_knowledge_reference_draft",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260827100000_production_import_review_workspace.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "create_product_label_draft",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260827100000_production_import_review_workspace.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "get_catalog_review_queue",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260827100000_production_import_review_workspace.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "get_import_provenance",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260827100000_production_import_review_workspace.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "get_import_source_inventory",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260827100000_production_import_review_workspace.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "get_restricted_review_history_v2",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260827100000_production_import_review_workspace.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "get_restricted_review_queue",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260827100000_production_import_review_workspace.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "list_knowledge_references",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260827100000_production_import_review_workspace.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "list_product_label_versions",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260827100000_production_import_review_workspace.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "list_warning_resolutions",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260827100000_production_import_review_workspace.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "record_import_source_file",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260827100000_production_import_review_workspace.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "record_restricted_review_outcome_v2",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260827100000_production_import_review_workspace.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "record_warning_resolution",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260827100000_production_import_review_workspace.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "resolve_knowledge_import_ambiguity",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260827100000_production_import_review_workspace.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "revoke_commercial_link",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260827100000_production_import_review_workspace.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "supersede_knowledge_reference",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260827100000_production_import_review_workspace.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "supersede_product_label_version",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260827100000_production_import_review_workspace.sql"
+    },
+    {
       "kind": "select",
       "name": "clinical_knowledge_import_batches",
       "implementation": "native_production_adapter",

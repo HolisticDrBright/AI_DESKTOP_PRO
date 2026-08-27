@@ -96,6 +96,10 @@
     {
       "version": "20260826170000",
       "file": "20260826170000_production_knowledge_import_compatibility.sql"
+    },
+    {
+      "version": "20260827100000",
+      "file": "20260827100000_production_import_review_workspace.sql"
     }
   ]
 }

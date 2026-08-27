@@ -118,6 +118,30 @@ const CORE_RPCS = new Set([
   "list_protocol_commercial_links",
   "get_research_handoff_review",
   "record_research_handoff_item_review",
+  "approve_knowledge_reference",
+  "attach_commercial_link_to_verified_product",
+  "bulk_apply_org_tag",
+  "bulk_assign_reviewer",
+  "bulk_mark_duplicate",
+  "clear_catalog_product_restriction",
+  "complete_catalog_product_review",
+  "create_knowledge_reference_draft",
+  "create_product_label_draft",
+  "get_catalog_review_queue",
+  "get_import_provenance",
+  "get_import_source_inventory",
+  "get_restricted_review_history_v2",
+  "get_restricted_review_queue",
+  "list_knowledge_references",
+  "list_product_label_versions",
+  "list_warning_resolutions",
+  "record_import_source_file",
+  "record_restricted_review_outcome_v2",
+  "record_warning_resolution",
+  "resolve_knowledge_import_ambiguity",
+  "revoke_commercial_link",
+  "supersede_knowledge_reference",
+  "supersede_product_label_version",
 ]);
 const CORE_SELECTS = new Set([
   "patient_profiles",
@@ -126,6 +150,32 @@ const CORE_SELECTS = new Set([
   "clinical_knowledge_import_batches",
   "clinical_knowledge_import_items",
 ]);
+const IMPORT_REVIEW_RPC_KEYS: Readonly<Record<string, readonly string[]>> = {
+  approve_knowledge_reference: ["_organization_id", "_reference_id", "_verification_reason"],
+  attach_commercial_link_to_verified_product: ["_organization_id", "_label_version_id", "_incoming_sku", "_incoming_upc", "_incoming_manufacturer", "_incoming_product_name", "_affiliate_url", "_discount_code", "_disclosure", "_match_reason"],
+  bulk_apply_org_tag: ["_organization_id", "_item_ids", "_tag", "_reason"],
+  bulk_assign_reviewer: ["_organization_id", "_item_ids", "_assignee", "_reason"],
+  bulk_mark_duplicate: ["_organization_id", "_item_ids", "_duplicate_of_item_id", "_reason"],
+  clear_catalog_product_restriction: ["_product_id", "_note"],
+  complete_catalog_product_review: ["_product_id", "_note"],
+  create_knowledge_reference_draft: ["_organization_id", "_claim", "_reference_type", "_clinical_domain", "_structured_claim", "_population", "_intervention", "_outcome_field", "_evidence_grade", "_citation", "_source_kind", "_source_version", "_publication_date", "_jurisdiction", "_limitations", "_contradictions", "_restricted_flags"],
+  create_product_label_draft: ["_organization_id", "_product_code", "_product_name", "_brand", "_exact_label", "_source_url", "_serving_size", "_ingredients", "_other_ingredients", "_allergens", "_contraindications", "_warnings_text", "_storage_instructions", "_observed_date", "_jurisdiction", "_label_image_ref"],
+  get_catalog_review_queue: ["_organization_id"],
+  get_import_provenance: ["_organization_id", "_ref_type", "_ref_id", "_limit"],
+  get_import_source_inventory: ["_organization_id"],
+  get_restricted_review_history_v2: ["_organization_id", "_subject_type", "_subject_id"],
+  get_restricted_review_queue: ["_organization_id"],
+  list_knowledge_references: ["_organization_id"],
+  list_product_label_versions: ["_organization_id", "_product_code"],
+  list_warning_resolutions: ["_organization_id", "_subject_type", "_subject_id"],
+  record_import_source_file: ["_organization_id", "_declared_name", "_source_kind", "_availability", "_content_sha256", "_byte_size", "_unavailable_reason"],
+  record_restricted_review_outcome_v2: ["_organization_id", "_subject_type", "_subject_id", "_outcome", "_reason", "_jurisdiction"],
+  record_warning_resolution: ["_organization_id", "_subject_type", "_subject_id", "_warning_key", "_disposition", "_reason"],
+  resolve_knowledge_import_ambiguity: ["_item_id", "_resolution", "_note", "_existing_product_id"],
+  revoke_commercial_link: ["_organization_id", "_link_id", "_reason"],
+  supersede_knowledge_reference: ["_organization_id", "_supersedes_id", "_new_claim", "_reason"],
+  supersede_product_label_version: ["_organization_id", "_supersedes_id", "_exact_label", "_reason", "_serving_size", "_ingredients", "_other_ingredients", "_allergens", "_contraindications", "_warnings_text", "_storage_instructions", "_source_url", "_observed_date"],
+};
 
 export function createAwsProductionDesktopAdapter(
   database: ClinicalCoreDatabase,
@@ -703,6 +753,13 @@ async function executeCoreRpc(
     return decodeJson(row.data);
   }
   if (name === "verify_product_label_version") {
+    if (Object.hasOwn(args, "_organization_id")) {
+      const row = first(await tx.query<{ data: unknown }>(
+        "select clinical_core.invoke_import_review_operation($1,$2::jsonb) as data",
+        [name, JSON.stringify(boundedJsonObject(args, 524_288))],
+      ));
+      return decodeJson(row.data);
+    }
     exactKeys(args, ["_label_version_id", "_verification_note"]);
     await tx.query("select clinical_core.verify_product_label_version($1,$2)", [
       clinicalUuid(requiredUuid(args._label_version_id)), requiredString(args._verification_note, 2000),
@@ -1067,6 +1124,15 @@ async function executeCoreRpc(
     const row = first(await tx.query<{ data: unknown }>(
       "select clinical_core.record_research_handoff_item_review($1,$2,$3) as data",
       [clinicalUuid(requiredUuid(args._item_id)), verdict, note],
+    ));
+    return decodeJson(row.data);
+  }
+  const importReviewKeys = IMPORT_REVIEW_RPC_KEYS[name];
+  if (importReviewKeys) {
+    exactKeys(args, [...importReviewKeys]);
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.invoke_import_review_operation($1,$2::jsonb) as data",
+      [name, JSON.stringify(boundedJsonObject(args, 524_288))],
     ));
     return decodeJson(row.data);
   }
