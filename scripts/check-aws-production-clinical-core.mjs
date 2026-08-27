@@ -16,7 +16,7 @@ const errors = [];
 const assert = (condition, message) => { if (!condition) errors.push(message); };
 
 assert(manifest.contract_version === "clinical-core-migrations/1", "generated manifest contract is invalid");
-assert(manifest.migrations.length === 37, "expected seven transformed migrations and thirty production overlays");
+assert(manifest.migrations.length === 39, "expected eight transformed migrations and thirty-one production overlays");
 assert(new Set(manifest.migrations.map((entry) => entry.version)).size === manifest.migrations.length,
   "migration versions must be unique");
 
@@ -278,10 +278,12 @@ assert(patientAppIntakeOverlay.includes("clinical_core.get_patient_app_intake")
 assert(!/insert\s+into\s+clinical_core\.patient_records/i.test(patientAppIntakeOverlay),
 "patient app intake must not silently overwrite the practitioner-authored patient record");
 for (const invariant of [
-  "'wearable_daily_records'", "when 'wearable_daily_records' then 'wearables'",
   "Patient app wearable update", "wearablesSharingStatus", "wearableDailyRecords",
   "clinical_private.require_clinical_patient", "limit 30",
 ]) assert(wearableRecordsOverlay.includes(invariant), `missing consumer wearable invariant ${invariant}`);
+assert(combined.includes("'wearable_daily_records'")
+  && combined.includes("when 'wearable_daily_records' then 'wearables'"),
+"generated production schema lacks the consent-scoped wearable collection");
 assert(!/insert\s+into\s+clinical_core\.consumer_clinical_record_versions/i.test(
   wearableRecordsOverlay.replace(/\$([A-Za-z_][A-Za-z0-9_]*)?\$[\s\S]*?\$\1\$/g, "")),
 "consumer wearable migration must not seed patient-supplied records");

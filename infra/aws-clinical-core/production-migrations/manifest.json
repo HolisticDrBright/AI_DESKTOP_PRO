@@ -120,6 +120,10 @@
     {
       "version": "20260827150000",
       "file": "20260827150000_production_inbox.sql"
+    },
+    {
+      "version": "20260827160000",
+      "file": "20260827160000_production_consumer_wearable_records.sql"
     }
   ]
 }

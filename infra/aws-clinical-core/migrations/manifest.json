@@ -28,6 +28,10 @@
     {
       "version": "20260821045000",
       "file": "20260821045000_consumer_health_intake_records.sql"
+    },
+    {
+      "version": "20260821046000",
+      "file": "20260821046000_consumer_wearable_records.sql"
     }
   ]
 }
