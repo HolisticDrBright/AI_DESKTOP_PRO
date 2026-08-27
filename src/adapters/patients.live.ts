@@ -2,9 +2,9 @@ if (typeof window !== "undefined") {
   throw new Error("This module is server-only and must not run in the browser.");
 }
 import { resolveOrgId } from "./config";
-import { clinicalSelect } from "./supabase-rest.server";
+import { clinicalRpc, clinicalSelect } from "./aws-clinical-data.server";
 import { getClinicalAccessToken } from "./session.server";
-import type { PatientDirectoryEntry } from "./types";
+import type { CreatePatientInput, CreatePatientResult, PatientDirectoryEntry } from "./types";
 import { calendarAge, displaySex, formatDateOnly } from "@/lib/dates";
 
 /**
@@ -98,5 +98,31 @@ export const patientsLive = {
       token,
     );
     return rows[0] ? toDirectoryEntry(rows[0]) : undefined;
+  },
+
+  async create(
+    input: CreatePatientInput,
+    sessionToken?: string | null,
+    orgId?: string | null,
+  ): Promise<CreatePatientResult> {
+    const token = await getClinicalAccessToken(sessionToken);
+    const row = await clinicalRpc<ClinicalPatientRow>(
+      "create_patient_profile",
+      {
+        _organization_id: resolveOrgId(orgId),
+        _first_name: input.firstName,
+        _last_name: input.lastName,
+        _date_of_birth: input.dateOfBirth || null,
+        _sex: input.sex,
+        _mrn: input.mrn || null,
+        _email: input.email || null,
+        _phone: input.phone || null,
+      },
+      token,
+    );
+    return {
+      patient: toDirectoryEntry(row),
+      message: "Patient profile created.",
+    };
   },
 };

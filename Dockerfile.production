@@ -1,0 +1,30 @@
+FROM public.ecr.aws/docker/library/node:22-bookworm-slim AS dependencies
+
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci
+
+FROM public.ecr.aws/docker/library/node:22-bookworm-slim AS builder
+
+WORKDIR /app
+ENV NEXT_TELEMETRY_DISABLED=1 \
+    APP_EDITION=clinical \
+    NEXT_PUBLIC_APP_ENV=production \
+    NEXT_PUBLIC_USE_LIVE_API=true
+COPY --from=dependencies /app/node_modules ./node_modules
+COPY . .
+RUN npm run build
+
+FROM gcr.io/distroless/nodejs22-debian12:nonroot AS runtime
+
+WORKDIR /app
+ENV NODE_ENV=production \
+    NEXT_TELEMETRY_DISABLED=1 \
+    HOSTNAME=0.0.0.0 \
+    PORT=3000
+COPY --from=builder --chown=nonroot:nonroot /app/public ./public
+COPY --from=builder --chown=nonroot:nonroot /app/.next/standalone ./
+COPY --from=builder --chown=nonroot:nonroot /app/.next/static ./.next/static
+COPY --from=builder --chown=nonroot:nonroot /app/scripts/container-server.mjs ./server-entry.mjs
+EXPOSE 3000
+CMD ["server-entry.mjs"]

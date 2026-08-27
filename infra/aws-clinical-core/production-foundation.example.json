@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "account_name": "AI Longevity Pro Clinical Production",
+  "account_email": "info+aws-prod@AILongevityPro.app",
+  "production_account_id": "000000000000",
+  "management_account_id": "449901517958",
+  "synthetic_account_id": "588966314750",
+  "region": "us-east-2",
+  "aws_profile": "REPLACE_WITH_DEDICATED_PRODUCTION_PROFILE",
+  "budget_alert_email": "REPLACE_WITH_CONTROLLED_BILLING_EMAIL",
+  "baa_evidence_reference": "REPLACE_WITH_CONTROLLED_EVIDENCE_REFERENCE",
+  "endpoint_names": {
+    "desktop": "desktop.ailongevitypro.app",
+    "clinical_api": "clinical-api.ailongevitypro.app",
+    "workforce_auth": "staff-auth.ailongevitypro.app",
+    "consumer_auth": "app-auth.ailongevitypro.app"
+  },
+  "phi_allowed": false
+}

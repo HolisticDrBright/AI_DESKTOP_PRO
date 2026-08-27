@@ -1,0 +1,239 @@
+if (typeof window !== "undefined") {
+  throw new Error("clinical-core/production-migrations is server-only.");
+}
+
+import type { ClinicalCoreDatabase } from "./database";
+import type { ClinicalCoreMigration } from "./migrations";
+import { splitPostgresStatements } from "./migrations";
+
+export class ProductionClinicalCoreMigrationError extends Error {
+  constructor(
+    readonly category: "history_mismatch" | "migration_failed" | "verification_failed",
+    readonly version?: string,
+    readonly statementIndex?: number,
+  ) {
+    super(category);
+    this.name = "ProductionClinicalCoreMigrationError";
+  }
+}
+
+export type ProductionClinicalCoreMigrationResult = {
+  applied: string[];
+  alreadyApplied: string[];
+  tableCount: number;
+  contractCount: number;
+  clinicalRowCount: number;
+};
+
+/**
+ * Apply the portable production schema atomically. No organization, identity,
+ * patient, consent, clinical, or provider rows may exist at this readiness
+ * stage; that invariant is checked before the transaction can commit.
+ */
+export async function applyProductionClinicalCoreMigrations(
+  database: ClinicalCoreDatabase,
+  migrations: ClinicalCoreMigration[],
+): Promise<ProductionClinicalCoreMigrationResult> {
+  return database.transaction(async (tx) => {
+    await tx.query("select pg_advisory_xact_lock(hashtext($1))", [
+      "ai-desktop-pro:production-clinical-core-migrations",
+    ]);
+    await tx.query("create schema if not exists clinical_core");
+    await tx.query(`create table if not exists clinical_core.schema_migrations (
+      version text primary key,
+      name text not null,
+      sha256 text not null check (sha256 ~ '^[0-9a-f]{64}$'),
+      applied_at timestamptz not null default clock_timestamp()
+    )`);
+    const existing = await tx.query<{ version: string; sha256: string }>(
+      "select version, sha256 from clinical_core.schema_migrations order by version",
+    );
+    const byVersion = new Map(existing.rows.map((row) => [row.version, row.sha256]));
+    const applied: string[] = [];
+    const alreadyApplied: string[] = [];
+
+    for (const migration of migrations) {
+      const recorded = byVersion.get(migration.version);
+      if (recorded) {
+        if (recorded !== migration.sha256) {
+          throw new ProductionClinicalCoreMigrationError("history_mismatch", migration.version);
+        }
+        alreadyApplied.push(migration.version);
+        continue;
+      }
+      const statements = splitPostgresStatements(migration.sql);
+      for (const [index, statement] of statements.entries()) {
+        try {
+          await tx.query(statement);
+        } catch {
+          throw new ProductionClinicalCoreMigrationError("migration_failed", migration.version, index + 1);
+        }
+      }
+      await tx.query(
+        "insert into clinical_core.schema_migrations(version,name,sha256) values ($1,$2,$3)",
+        [migration.version, migration.name, migration.sha256],
+      );
+      applied.push(migration.version);
+    }
+
+    const verification = await tx.query<{
+      table_count: number;
+      contract_count: number;
+      clinical_row_count: number;
+    }>(`select
+      (select count(*) from information_schema.tables
+        where table_schema in ('clinical_core','clinical_audit')
+          and table_name <> 'schema_migrations')::int as table_count,
+      (select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+        where n.nspname = 'clinical_core'
+          and p.proname in ('create_patient_profile','review_biomarker','get_patient_protocol',
+            'create_protocol_draft','save_protocol_draft','approve_protocol_version',
+            'activate_protocol_version','set_protocol_lifecycle','revise_protocol_version',
+            'queue_sync_export','withdraw_sync_resource','retry_sync_event','cancel_sync_event',
+            'resolve_sync_conflict','review_sync_inbound','record_sync_inbound_correction',
+            'register_sync_provider','review_sync_provider','claim_sync_outbound','recheck_sync_export',
+            'record_sync_delivery','record_sync_inbound','record_sync_lab_result',
+            'record_sync_worker_cycle','register_sync_callback_nonce',
+            'list_protocol_templates','create_protocol_template','approve_protocol_template_version',
+            'archive_protocol_template','search_protocol_catalog','check_protocol_interactions',
+            'review_protocol_item_interactions','get_reasoning_workspace','review_hypothesis',
+            'list_desktop_lens_paradigms','list_desktop_lens_domains',
+            'list_desktop_lens_knowledge_sources','get_desktop_lens_evaluation',
+            'list_desktop_question_answers','set_question_status','dismiss_question','answer_question',
+            'correct_question_answer','record_question_note_use','submit_question_feedback',
+            'review_safety_block','list_clinical_pathways','create_clinical_pathway_draft',
+            'update_clinical_pathway_draft','approve_clinical_pathway_version',
+            'stage_clinical_knowledge_import','review_clinical_knowledge_import_item',
+            'list_clinical_knowledge_import_batches','list_clinical_knowledge_import_items',
+            'preview_knowledge_import','get_knowledge_import_preview',
+            'resolve_knowledge_import_conflict','commit_knowledge_import','cancel_knowledge_import',
+            'list_label_commercial_links','list_protocol_commercial_links',
+            'get_research_handoff_review','record_research_handoff_item_review',
+            'invoke_import_review_operation','invoke_nutrition_operation','invoke_billing_operation','invoke_plan_operation',
+            'invoke_program_operation','invoke_inbox_operation',
+            'add_org_member','activate_my_memberships'))::int as contract_count,
+      (
+        (select count(*) from clinical_core.organizations)
+        + (select count(*) from clinical_core.persons)
+        + (select count(*) from clinical_core.identities)
+        + (select count(*) from clinical_core.organization_memberships)
+        + (select count(*) from clinical_core.workforce_identity_directory)
+        + (select count(*) from clinical_core.patient_records)
+        + (select count(*) from clinical_core.patient_connections)
+        + (select count(*) from clinical_core.consent_artifacts)
+        + (select count(*) from clinical_core.consent_grants)
+        + (select count(*) from clinical_core.sync_providers)
+        + (select count(*) from clinical_core.lab_import_events)
+        + (select count(*) from clinical_core.lab_observations)
+        + (select count(*) from clinical_core.consumer_clinical_record_versions)
+        + (select count(*) from clinical_core.privacy_requests)
+        + (select count(*) from clinical_core.review_queue_items)
+        + (select count(*) from clinical_core.appointments)
+        + (select count(*) from clinical_core.appointment_status_events)
+        + (select count(*) from clinical_core.encounters)
+        + (select count(*) from clinical_core.clinical_notes)
+        + (select count(*) from clinical_core.clinical_note_versions)
+        + (select count(*) from clinical_core.note_signatures)
+        + (select count(*) from clinical_core.note_addenda)
+        + (select count(*) from clinical_core.note_provenance_refs)
+        + (select count(*) from clinical_core.patient_protocols)
+        + (select count(*) from clinical_core.patient_protocol_versions)
+        + (select count(*) from clinical_core.patient_protocol_phases)
+        + (select count(*) from clinical_core.patient_protocol_items)
+        + (select count(*) from clinical_core.protocol_templates)
+        + (select count(*) from clinical_core.protocol_template_versions)
+        + (select count(*) from clinical_core.reasoning_snapshots)
+        + (select count(*) from clinical_core.clinical_facts)
+        + (select count(*) from clinical_core.clinical_hypotheses)
+        + (select count(*) from clinical_core.evidence_items)
+        + (select count(*) from clinical_core.missing_data_recommendations)
+        + (select count(*) from clinical_core.hypothesis_reviews)
+        + (select count(*) from clinical_core.lens_evaluations)
+        + (select count(*) from clinical_core.differential_questions)
+        + (select count(*) from clinical_core.question_status_transitions)
+        + (select count(*) from clinical_core.question_answers)
+        + (select count(*) from clinical_core.question_feedback)
+        + (select count(*) from clinical_core.lens_safety_blocks)
+        + (select count(*) from clinical_core.clinical_pathways)
+        + (select count(*) from clinical_core.clinical_pathway_versions)
+        + (select count(*) from clinical_core.clinical_knowledge_import_batches)
+        + (select count(*) from clinical_core.clinical_knowledge_import_items)
+        + (select count(*) from clinical_core.knowledge_import_conflict_resolutions)
+        + (select count(*) from clinical_core.research_handoff_item_reviews)
+        + (select count(*) from clinical_core.nutrition_templates)
+        + (select count(*) from clinical_core.nutrition_template_versions)
+        + (select count(*) from clinical_core.nutrition_plans)
+        + (select count(*) from clinical_core.nutrition_plan_versions)
+        + (select count(*) from clinical_core.nutrition_constraints)
+        + (select count(*) from clinical_core.nutrition_safety_flags)
+        + (select count(*) from clinical_core.nutrition_amendments)
+        + (select count(*) from clinical_core.nutrition_checkins)
+        + (select count(*) from clinical_core.nutrition_events)
+        + (select count(*) from clinical_core.billing_suppliers)
+        + (select count(*) from clinical_core.billing_locations)
+        + (select count(*) from clinical_core.billing_tax_rates)
+        + (select count(*) from clinical_core.billing_products)
+        + (select count(*) from clinical_core.inventory_stock)
+        + (select count(*) from clinical_core.inventory_ledger)
+        + (select count(*) from clinical_core.billing_invoices)
+        + (select count(*) from clinical_core.billing_payments)
+        + (select count(*) from clinical_core.billing_refunds)
+        + (select count(*) from clinical_core.patient_credit_entries)
+        + (select count(*) from clinical_core.billing_provider_registrations)
+        + (select count(*) from clinical_core.billing_events)
+        + (select count(*) from clinical_core.billing_plans)
+        + (select count(*) from clinical_core.billing_plan_versions)
+        + (select count(*) from clinical_core.plan_acceptances)
+        + (select count(*) from clinical_core.patient_memberships)
+        + (select count(*) from clinical_core.entitlements)
+        + (select count(*) from clinical_core.entitlement_ledger)
+        + (select count(*) from clinical_core.entitlement_reservations)
+        + (select count(*) from clinical_core.org_billing_policies)
+        + (select count(*) from clinical_core.reconciliation_exceptions)
+        + (select count(*) from clinical_core.plan_events)
+        + (select count(*) from clinical_core.program_templates)
+        + (select count(*) from clinical_core.program_template_versions)
+        + (select count(*) from clinical_core.programs)
+        + (select count(*) from clinical_core.program_versions)
+        + (select count(*) from clinical_core.program_offers)
+        + (select count(*) from clinical_core.program_enrollments)
+        + (select count(*) from clinical_core.program_progress)
+        + (select count(*) from clinical_core.program_version_events)
+        + (select count(*) from clinical_core.communication_preferences)
+        + (select count(*) from clinical_core.conversations)
+        + (select count(*) from clinical_core.messages)
+        + (select count(*) from clinical_core.message_draft_revisions)
+        + (select count(*) from clinical_core.message_attachments)
+        + (select count(*) from clinical_core.conversation_reads)
+        + (select count(*) from clinical_core.messaging_provider_registrations)
+        + (select count(*) from clinical_core.message_outbox)
+        + (select count(*) from clinical_core.message_ai_reviews)
+        + (select count(*) from clinical_core.conversation_events)
+        + (select count(*) from clinical_reference.product_label_candidates)
+        + (select count(*) from clinical_core.sync_outbound_events)
+        + (select count(*) from clinical_core.sync_inbound_events)
+        + (select count(*) from clinical_core.sync_inbound_corrections)
+        + (select count(*) from clinical_core.sync_dead_letters)
+        + (select count(*) from clinical_core.sync_conflicts)
+        + (select count(*) from clinical_core.sync_resource_acks)
+        + (select count(*) from clinical_core.sync_delivery_attempts)
+        + (select count(*) from clinical_core.sync_delivery_events)
+        + (select count(*) from clinical_core.sync_worker_cycles)
+        + (select count(*) from clinical_core.sync_circuit_states)
+        + (select count(*) from clinical_core.sync_callback_nonces)
+        + (select count(*) from clinical_core.sync_inbound_lab_imports)
+      )::int as clinical_row_count`);
+    const row = verification.rows[0];
+    if (!row || Number(row.table_count) !== 112 || Number(row.contract_count) !== 71
+      || Number(row.clinical_row_count) !== 0) {
+      throw new ProductionClinicalCoreMigrationError("verification_failed");
+    }
+    return {
+      applied,
+      alreadyApplied,
+      tableCount: Number(row.table_count),
+      contractCount: Number(row.contract_count),
+      clinicalRowCount: Number(row.clinical_row_count),
+    };
+  });
+}

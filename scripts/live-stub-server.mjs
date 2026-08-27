@@ -22,7 +22,7 @@
  *        npx next start -p 3114
  */
 import { createServer } from "node:http";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 
 const PORT = Number(process.env.STUB_PORT ?? 3999);
 
@@ -1729,7 +1729,7 @@ let syncCircuit = null;             // { provider, state, failureCount, openedAt
 const syncNonces = new Set();       // `${provider}:${nonce}` callback replay protection
 
 const SYNC_SCOPE_LIST = ["programs","protocols_supplements","nutrition","appointments",
-  "messaging","forms_checkins","symptoms_adherence","wearables","lab_summaries",
+  "messaging","forms_checkins","symptoms_adherence","wearables","lab_summaries","lab_results_import",
   "billing_links","research_n_of_1"];
 const SYNC_OUT_SCOPE = {
   program_enrollment: "programs", protocol_version: "protocols_supplements",
@@ -1742,6 +1742,7 @@ const SYNC_IN_SCOPE = {
   checkin_response: "forms_checkins", protocol_adherence: "symptoms_adherence",
   supplement_adherence: "symptoms_adherence", symptom_report: "symptoms_adherence",
   outcome_report: "symptoms_adherence", wearable_summary: "wearables",
+  lab_result: "lab_results_import",
   patient_message: "messaging", appointment_request: "appointments",
 };
 
@@ -1812,6 +1813,37 @@ function syncApplyDelivery(e, providerEventId, kind, errorSafe) {
   return { ok: true, duplicate: false, state: e.state };
 }
 
+// verify_sync_invitation semantics shared by the __control provider stand-in
+// and the worker's service-role REST boundary: hashed single-use expiring
+// token + unique external-subject binding.
+function syncApplyVerify(token, subject) {
+  const normalizedToken = String(token).toUpperCase().replace(/[\s-]/g, "");
+  const inv = syncInvitations.get(sha256hex(normalizedToken));
+  if (!inv) return { status: 404, body: { code: "P0002", message: "invitation not found" } };
+  if (inv.usedAt) return { status: 400, body: { code: "22023", message: "this invitation was already used" } };
+  if (inv.supersededAt) return { status: 400, body: { code: "22023", message: "this invitation was superseded" } };
+  if (new Date(inv.expiresAt).getTime() < Date.now()) {
+    return { status: 400, body: { code: "22023", message: "this invitation has expired" } };
+  }
+  const conn = syncConnections.get(inv.connectionId);
+  if (!conn || conn.state !== "invitation_pending") {
+    return { status: 400, body: { code: "22023", message: "connection is not awaiting verification" } };
+  }
+  if (!subject) return { status: 400, body: { code: "22023", message: "external subject required" } };
+  const taken = [...syncConnections.values()].some(
+    (c) => c.externalSubjectId === subject && c.state !== "revoked" && c.id !== conn.id,
+  );
+  if (taken) return { status: 409, body: { code: "23505", message: "external subject already bound" } };
+  inv.usedAt = nowIso();
+  conn.state = "verified";
+  conn.externalSubjectId = subject;
+  conn.verifiedAt = nowIso();
+  conn.version += 1;
+  syncEvent(conn.id, "verified", "invitation_pending", "verified", null);
+  return { status: 200, body: { ok: true, connectionId: conn.id,
+    organizationId: conn.organizationId, contractVersion: "patient-sync/1" } };
+}
+
 // record_sync_inbound semantics shared by the __control provider stand-in and
 // the worker's service-role REST boundary: verified connection, consent scope,
 // idempotency, stale-version conflicts, urgent invariant, review tasks.
@@ -1845,7 +1877,7 @@ function syncApplyInbound(conn, {
     return { status: 200, body: { ok: true, duplicate: true } };
   }
   let state = "processed";
-  if (["patient_message", "appointment_request", "symptom_report"].includes(resourceType)) {
+  if (["patient_message", "appointment_request", "symptom_report", "lab_result"].includes(resourceType)) {
     state = "review_pending";
   } else if (resourceVersion && externalResourceId
     && [...syncInbound.values()].some((i) => i.connectionId === conn.id
@@ -2915,6 +2947,43 @@ function parseMultipart(buffer, contentType) {
 createServer(async (req, res) => {
   const url = new URL(req.url, `http://127.0.0.1:${PORT}`);
 
+  // AWS Cognito-shaped identity fixture. Production can never reach this path:
+  // auth.server.ts selects it only when the local contract-fixture boundary
+  // has independently accepted loopback + explicit opt-in + non-deployment.
+  if (url.pathname === "/" && req.method === "POST") {
+    const operation = String(req.headers["x-amz-target"] ?? "").split(".").pop();
+    const body = await readBody(req);
+    if (operation === "InitiateAuth") {
+      const params = body.AuthParameters ?? {};
+      if (params.REFRESH_TOKEN === "revoked-refresh-token") {
+        return json(res, 400, { __type: "NotAuthorizedException", message: "Token revoked" });
+      }
+      const email = params.USERNAME ?? "practitioner@fixture.local";
+      const suffix =
+        email === "no-orgs@fixture.local" ? "--noorg"
+        : email === "dual-org@fixture.local" ? "--multi"
+        : "";
+      return json(res, 200, {
+        AuthenticationResult: {
+          IdToken: `fixture-access-token${suffix}`,
+          AccessToken: `fixture-cognito-access-token${suffix}`,
+          ...(params.REFRESH_TOKEN ? {} : { RefreshToken: "fixture-refresh-token" }),
+          ExpiresIn: 3600,
+        },
+      });
+    }
+    if (operation === "ForgotPassword" || operation === "RevokeToken") {
+      return json(res, 200, {});
+    }
+    if (operation === "ConfirmForgotPassword") {
+      if (body.ConfirmationCode !== "123456" || !body.Password) {
+        return json(res, 400, { __type: "CodeMismatchException", message: "Invalid code" });
+      }
+      return json(res, 200, {});
+    }
+    return json(res, 400, { __type: "InvalidParameterException", message: "Unsupported fixture operation" });
+  }
+
   // Supabase-auth-shaped token endpoint (identity only, fixture tokens).
   // Handles both password and refresh_token grants; echoes a stable email so
   // the desktop's cookie-session sign-in flow can be exercised end-to-end.
@@ -3518,36 +3587,15 @@ createServer(async (req, res) => {
   // unique external-subject binding.
   if (url.pathname === "/__control/sync-verify" && req.method === "POST") {
     const body = await readBody(req);
-    const inv = syncInvitations.get(sha256hex(String(body.token ?? "")));
-    if (!inv) return json(res, 404, { code: "P0002", message: "invitation not found" });
-    if (inv.usedAt) return json(res, 400, { code: "22023", message: "this invitation was already used" });
-    if (inv.supersededAt) return json(res, 400, { code: "22023", message: "this invitation was superseded" });
-    if (new Date(inv.expiresAt).getTime() < Date.now()) {
-      return json(res, 400, { code: "22023", message: "this invitation has expired" });
-    }
-    const conn = syncConnections.get(inv.connectionId);
-    if (!conn || conn.state !== "invitation_pending") {
-      return json(res, 400, { code: "22023", message: "connection is not awaiting verification" });
-    }
-    const subject = String(body.subject ?? "");
-    if (!subject) return json(res, 400, { code: "22023", message: "external subject required" });
-    const taken = [...syncConnections.values()].some(
-      (c) => c.externalSubjectId === subject && c.state !== "revoked" && c.id !== conn.id,
-    );
-    if (taken) return json(res, 409, { code: "23505", message: "external subject already bound" });
-    inv.usedAt = nowIso();
-    conn.state = "verified";
-    conn.externalSubjectId = subject;
-    conn.verifiedAt = nowIso();
-    conn.version += 1;
-    syncEvent(conn.id, "verified", "invitation_pending", "verified", null);
-    return json(res, 200, { ok: true, connectionId: conn.id });
+    const r = syncApplyVerify(String(body.token ?? ""), String(body.subject ?? ""));
+    return json(res, r.status, r.body);
   }
 
   // Force-expire an invitation (time travel for the expiry proof).
   if (url.pathname === "/__control/sync-expire-invitation" && req.method === "POST") {
     const body = await readBody(req);
-    const inv = syncInvitations.get(sha256hex(String(body.token ?? "")));
+    const normalizedToken = String(body.token ?? "").toUpperCase().replace(/[\s-]/g, "");
+    const inv = syncInvitations.get(sha256hex(normalizedToken));
     if (!inv) return json(res, 404, { code: "P0002", message: "invitation not found" });
     inv.expiresAt = new Date(Date.now() - 60e3).toISOString();
     return json(res, 200, { ok: true });
@@ -7588,9 +7636,10 @@ createServer(async (req, res) => {
       for (const i of syncInvitations.values()) {
         if (i.connectionId === conn.id && !i.usedAt && !i.supersededAt) i.supersededAt = nowIso();
       }
-      // 256-bit opaque token; ONLY its hash is stored, mirroring the backend.
-      const token = [...Array(64)].map(() => "0123456789abcdef"[Math.floor(Math.random() * 16)]).join("");
-      const inv = { id: syncId(), connectionId: conn.id, expiresAt: iso(-7 * 864e5),
+      // Human-entered 65-bit code; ONLY its hash is stored, mirroring the backend.
+      const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+      const token = [...randomBytes(13)].map((byte) => alphabet[byte & 31]).join("");
+      const inv = { id: syncId(), connectionId: conn.id, expiresAt: iso(-48 * 60 * 60 * 1_000),
         createdAt: nowIso(), usedAt: null, supersededAt: null };
       syncInvitations.set(sha256hex(token), inv);
       syncEvent(conn.id, "invitation_created", null, inv.id, null);
@@ -7877,6 +7926,7 @@ createServer(async (req, res) => {
       const events = claimable.map((e) => {
         e.state = "sending"; e.attempts += 1;
         e.leaseExpiresAt = new Date(Date.now() + leaseMs).toISOString();
+        const eventConn = syncConnections.get(e.connectionId);
         return {
           eventId: e.id, eventUid: e.eventUid, contractVersion: "patient-sync/1",
           connectionId: e.connectionId, idempotencyKey: e.idempotencyKey,
@@ -7884,7 +7934,9 @@ createServer(async (req, res) => {
           resourceVersion: e.resourceVersion, occurredAt: e.occurredAt,
           producer: "desktop", provenance: { producer: "desktop" },
           payload: e.payload, payloadHash: e.payloadHash,
-          correlationId: null, attempts: e.attempts, leaseExpiresAt: e.leaseExpiresAt,
+          correlationId: null, causationId: null,
+          organizationId: eventConn?.organizationId ?? "org-fixture",
+          attempts: e.attempts, leaseExpiresAt: e.leaseExpiresAt,
         };
       });
       const queuedAges = [...syncOutbound.values()]
@@ -7953,6 +8005,13 @@ createServer(async (req, res) => {
         updatedAt: nowIso(),
       };
       return json(res, 200, { ok: true, cycleId: syncId() });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/verify_sync_invitation" && req.method === "POST") {
+      if (!isServiceRole) return json(res, 403, { code: "42501", message: "service role required" });
+      const body = await readBody(req);
+      const r = syncApplyVerify(String(body._token ?? ""), String(body._external_subject_id ?? ""));
+      return json(res, r.status, r.body);
     }
 
     if (url.pathname === "/rest/v1/rpc/record_sync_inbound" && req.method === "POST") {
@@ -8063,12 +8122,56 @@ createServer(async (req, res) => {
       if (action === "reject") i.rejectionReason = String(body._note).trim();
       i.reviewedAt = nowIso();
       i.reviewNote = String(body._note ?? "").trim() || null;
+      if (action === "accept" && i.resourceType === "lab_result") {
+        const panel = i.payload?.panel ?? {};
+        const result = i.payload?.result ?? {};
+        const source = i.payload?.source ?? {};
+        let report = labReports.find((item) => item.sourceRecordId === source.panelId);
+        if (!report) {
+          report = {
+            id: syncId(),
+            name: String(panel.name ?? "Imported lab panel"),
+            lab: String(panel.sourceLabel ?? "AI Longevity Pro"),
+            collectedAt: String(panel.collectedAt ?? i.occurredAt),
+            uploadedAt: nowIso(),
+            markerCount: 0,
+            sourceRecordId: source.panelId,
+          };
+          labReports.push(report);
+        }
+        let marker = labMarkers.find((item) => item.sourceRecordId === i.externalResourceId);
+        if (!marker) {
+          const numeric = Number(result.value);
+          marker = {
+            id: syncId(), sourceRecordId: i.externalResourceId,
+            name: String(result.name ?? "Unnamed marker"), unit: String(result.unit ?? ""),
+            current: numeric, currentDisplay: `${numeric} ${String(result.unit ?? "")}`.trim(),
+            labRangeText: result.referenceRange
+              ? `${result.referenceRange.min ?? ""}–${result.referenceRange.max ?? ""}` : "Not provided by lab",
+            optimalRange: { unit: String(result.unit ?? ""), source: "Not configured" },
+            status: ["optimal", "normal"].includes(String(result.sourceStatus)) ? String(result.sourceStatus) : "unknown",
+            trend: "needs-review", series: [{ date: String(panel.collectedAt ?? i.occurredAt), value: numeric }],
+            confidence: null, confidenceBand: "unknown", reviewState: "awaiting-review",
+            collectedAt: String(panel.collectedAt ?? i.occurredAt),
+            source: { reportName: report.name, location: "AI Longevity Pro signed import",
+              snippet: `${String(result.name ?? "Unnamed marker")} ${numeric} ${String(result.unit ?? "")}`.trim(),
+              confidenceNote: "Imported from the connected patient app; clinician verification required.", documentId: report.id },
+            provenance: { sourceType: "patient_reported", sourceName: "AI Longevity Pro",
+              lastUpdated: nowIso() }, relatedSystems: [], relatedContext: [], relatedHypotheses: [],
+            relatedProtocols: [], seeds: [],
+          };
+          labMarkers.push(marker);
+          report.markerCount += 1;
+        }
+      }
       for (const t of queue.values()) {
         if (t.itemType === "sync_review" && t.refId === i.id && t.status === "open") t.status = "resolved";
       }
       syncEvent(conn.id, "inbound_reviewed", i.resourceType, action, i.reviewNote);
       return json(res, 200, { ok: true, state: i.state,
-        message: action === "accept" ? "Accepted." : "Rejected." });
+        message: action === "accept" && i.resourceType === "lab_result"
+          ? "Accepted and staged in Labs for marker review."
+          : action === "accept" ? "Accepted." : "Rejected." });
     }
 
     if (url.pathname === "/rest/v1/rpc/record_sync_inbound_correction" && req.method === "POST") {

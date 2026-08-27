@@ -36,6 +36,7 @@ export default defineConfig({
   testDir: "./e2e",
   workers: 1, // session-state flows stay deterministic
   timeout: DEV_SERVER ? 90_000 : 30_000,
+  expect: { timeout: DEV_SERVER ? 20_000 : 5_000 },
   retries: 0,
   reporter: [["list"]],
   use: {

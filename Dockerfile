@@ -1,0 +1,55 @@
+FROM public.ecr.aws/docker/library/node:22-bookworm-slim AS dependencies
+
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci
+
+FROM public.ecr.aws/docker/library/node:22-bookworm-slim AS builder
+
+WORKDIR /app
+ENV NEXT_TELEMETRY_DISABLED=1
+ARG APP_EDITION=clinical
+ARG APP_RUNTIME_ENV=staging
+ARG NEXT_PUBLIC_APP_ENV=staging
+ARG NEXT_PUBLIC_USE_LIVE_API=true
+ARG CLINICAL_DATA_PLANE=aws
+ARG CLINICAL_AWS_REGION=us-east-2
+ARG CLINICAL_AWS_API_ORIGIN
+ARG CLINICAL_AWS_ALLOWED_API_HOSTS
+ARG CLINICAL_AWS_WORKFORCE_API_ORIGIN
+ARG CLINICAL_AWS_WORKFORCE_USER_POOL_ID
+ARG CLINICAL_AWS_WORKFORCE_CLIENT_ID
+ARG CLINICAL_AWS_RUNTIME_MODE=synthetic
+ARG AWS_CLINICAL_ADAPTER_READY=true
+ARG PHI_ALLOWED=false
+ENV APP_EDITION=$APP_EDITION \
+    APP_RUNTIME_ENV=$APP_RUNTIME_ENV \
+    NEXT_PUBLIC_APP_ENV=$NEXT_PUBLIC_APP_ENV \
+    NEXT_PUBLIC_USE_LIVE_API=$NEXT_PUBLIC_USE_LIVE_API \
+    CLINICAL_DATA_PLANE=$CLINICAL_DATA_PLANE \
+    CLINICAL_AWS_REGION=$CLINICAL_AWS_REGION \
+    CLINICAL_AWS_API_ORIGIN=$CLINICAL_AWS_API_ORIGIN \
+    CLINICAL_AWS_ALLOWED_API_HOSTS=$CLINICAL_AWS_ALLOWED_API_HOSTS \
+    CLINICAL_AWS_WORKFORCE_API_ORIGIN=$CLINICAL_AWS_WORKFORCE_API_ORIGIN \
+    CLINICAL_AWS_WORKFORCE_USER_POOL_ID=$CLINICAL_AWS_WORKFORCE_USER_POOL_ID \
+    CLINICAL_AWS_WORKFORCE_CLIENT_ID=$CLINICAL_AWS_WORKFORCE_CLIENT_ID \
+    CLINICAL_AWS_RUNTIME_MODE=$CLINICAL_AWS_RUNTIME_MODE \
+    AWS_CLINICAL_ADAPTER_READY=$AWS_CLINICAL_ADAPTER_READY \
+    PHI_ALLOWED=$PHI_ALLOWED
+COPY --from=dependencies /app/node_modules ./node_modules
+COPY . .
+RUN npm run build
+
+FROM gcr.io/distroless/nodejs22-debian12:nonroot AS runtime
+
+WORKDIR /app
+ENV NODE_ENV=production \
+    NEXT_TELEMETRY_DISABLED=1 \
+    HOSTNAME=0.0.0.0 \
+    PORT=3000
+COPY --from=builder --chown=nonroot:nonroot /app/public ./public
+COPY --from=builder --chown=nonroot:nonroot /app/.next/standalone ./
+COPY --from=builder --chown=nonroot:nonroot /app/.next/static ./.next/static
+COPY --from=builder --chown=nonroot:nonroot /app/scripts/app-runner-server.mjs ./app-runner-server.mjs
+EXPOSE 3000
+CMD ["app-runner-server.mjs"]

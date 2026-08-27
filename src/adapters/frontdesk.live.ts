@@ -2,7 +2,7 @@ if (typeof window !== "undefined") {
   throw new Error("This module is server-only and must not run in the browser.");
 }
 import { getClinicalAccessToken } from "./session.server";
-import { clinicalRpc } from "./supabase-rest.server";
+import { clinicalRpc } from "./aws-clinical-data.server";
 import type { LiveAppointmentStatus, LiveTransitionResult } from "./live-types";
 
 /**

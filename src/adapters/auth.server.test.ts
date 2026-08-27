@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import {
   AUTH_COOKIES,
+  completeMfaSignIn,
   passwordSignIn,
   readAuthSession,
   refreshSession,
@@ -15,64 +16,117 @@ function response(body: unknown, status = 200) {
 }
 
 beforeEach(() => {
-  process.env.CLINICAL_SUPABASE_URL = "https://clinical.example.test";
-  process.env.CLINICAL_SUPABASE_ANON_KEY = "publishable-test-key";
+  process.env.CLINICAL_AWS_REGION = "us-east-2";
+  process.env.CLINICAL_AWS_WORKFORCE_CLIENT_ID = "clientexample123";
   vi.restoreAllMocks();
 });
 
 describe("Desktop-owned practitioner auth", () => {
-  test("password sign-in uses the Supabase password grant without exposing credentials", async () => {
+  test("password sign-in uses the Cognito workforce flow without returning tokens to the browser", async () => {
     const fetchMock = vi.fn().mockResolvedValue(response({
-      access_token: "access-token",
-      refresh_token: "refresh-token",
-      expires_in: 3600,
-      user: { email: "practitioner@example.test" },
+      AuthenticationResult: {
+        IdToken: "id-token",
+        AccessToken: "provider-access-token",
+        RefreshToken: "refresh-token",
+        ExpiresIn: 900,
+      },
     }));
     vi.stubGlobal("fetch", fetchMock);
 
     const tokens = await passwordSignIn("practitioner@example.test", "not-logged");
 
     expect(tokens).toMatchObject({
-      accessToken: "access-token",
+      accessToken: "id-token",
       refreshToken: "refresh-token",
       email: "practitioner@example.test",
     });
-    expect(fetchMock.mock.calls[0]?.[0]).toBe(
-      "https://clinical.example.test/auth/v1/token?grant_type=password",
-    );
-  });
-
-  test("refresh uses token rotation and returns the replacement token pair", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response({
-      access_token: "replacement-access",
-      refresh_token: "replacement-refresh",
-      expires_in: 1800,
-      user: { email: "practitioner@example.test" },
-    })));
-
-    await expect(refreshSession("old-refresh")).resolves.toMatchObject({
-      accessToken: "replacement-access",
-      refreshToken: "replacement-refresh",
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://cognito-idp.us-east-2.amazonaws.com/");
+    expect(fetchMock.mock.calls[0]?.[1]?.headers).toMatchObject({
+      "x-amz-target": "AWSCognitoIdentityProviderService.InitiateAuth",
     });
   });
 
-  test("provider sign-out revokes only the current session", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+  test("refresh preserves Cognito's existing refresh token and returns a fresh ID token", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response({
+      AuthenticationResult: { IdToken: "replacement-id", AccessToken: "replacement-access", ExpiresIn: 900 },
+    })));
+
+    await expect(refreshSession("old-refresh")).resolves.toMatchObject({
+      accessToken: "replacement-id",
+      refreshToken: "old-refresh",
+    });
+  });
+
+  test("provider sign-out revokes the current Cognito refresh token", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(response({}));
     vi.stubGlobal("fetch", fetchMock);
 
     await signOutSession("access-token");
 
-    expect(fetchMock.mock.calls[0]?.[0]).toBe(
-      "https://clinical.example.test/auth/v1/logout?scope=local",
-    );
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://cognito-idp.us-east-2.amazonaws.com/");
     expect(fetchMock.mock.calls[0]?.[1]?.headers).toMatchObject({
-      Authorization: "Bearer access-token",
+      "x-amz-target": "AWSCognitoIdentityProviderService.RevokeToken",
     });
   });
 
   test("an already revoked provider token is still a successful sign-out", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response({}, 401)));
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response({ __type: "NotAuthorizedException" }, 400)));
     await expect(signOutSession("expired-token")).resolves.toBeUndefined();
+  });
+
+  test("mandatory software-token MFA is completed server-side", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response({
+        ChallengeName: "SOFTWARE_TOKEN_MFA",
+        ChallengeParameters: { USER_ID_FOR_SRP: "opaque-user" },
+        Session: "short-lived-session",
+      }))
+      .mockResolvedValueOnce(response({
+        AuthenticationResult: { IdToken: "mfa-id", RefreshToken: "mfa-refresh", ExpiresIn: 900 },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    const challenge = await passwordSignIn("practitioner@example.test", "not-logged");
+    expect(challenge).toMatchObject({ challenge: "SOFTWARE_TOKEN_MFA", username: "opaque-user" });
+    if (!("challenge" in challenge)) throw new Error("expected MFA challenge");
+    await expect(completeMfaSignIn({ ...challenge, code: "123456" })).resolves.toMatchObject({
+      accessToken: "mfa-id",
+      refreshToken: "mfa-refresh",
+    });
+  });
+
+  test("a new workforce account can enroll mandatory software-token MFA", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response({
+        ChallengeName: "MFA_SETUP",
+        ChallengeParameters: { USER_ID_FOR_SRP: "opaque-user" },
+        Session: "password-session",
+      }))
+      .mockResolvedValueOnce(response({ SecretCode: "SYNTHETICSETUPKEY", Session: "associate-session" }))
+      .mockResolvedValueOnce(response({ Status: "SUCCESS", Session: "verified-session" }))
+      .mockResolvedValueOnce(response({
+        AuthenticationResult: { IdToken: "setup-id", RefreshToken: "setup-refresh", ExpiresIn: 900 },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const challenge = await passwordSignIn("practitioner@example.test", "not-logged");
+    expect(challenge).toMatchObject({
+      challenge: "MFA_SETUP",
+      username: "opaque-user",
+      secretCode: "SYNTHETICSETUPKEY",
+    });
+    if (!("challenge" in challenge) || challenge.challenge !== "MFA_SETUP") {
+      throw new Error("expected MFA setup challenge");
+    }
+    await expect(completeMfaSignIn({ ...challenge, code: "123456" })).resolves.toMatchObject({
+      accessToken: "setup-id",
+      refreshToken: "setup-refresh",
+    });
+    expect(fetchMock.mock.calls.map((call) => call[1]?.headers?.["x-amz-target"])).toEqual([
+      "AWSCognitoIdentityProviderService.InitiateAuth",
+      "AWSCognitoIdentityProviderService.AssociateSoftwareToken",
+      "AWSCognitoIdentityProviderService.VerifySoftwareToken",
+      "AWSCognitoIdentityProviderService.RespondToAuthChallenge",
+    ]);
   });
 
   test("cookie session preserves the selected organization and detects expiry", () => {

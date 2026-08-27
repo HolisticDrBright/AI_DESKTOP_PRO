@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "environment": "production-clinical",
+  "aws_account_id": "000000000000",
+  "synthetic_account_id": "588966314750",
+  "region": "us-east-2",
+  "aws_organizations_baa": {
+    "status": "active",
+    "effective_date": "2026-08-18",
+    "evidence_reference": "REPLACE_WITH_CONTROLLED_EVIDENCE_REFERENCE"
+  },
+  "controls": {
+    "dedicated_production_account": "blocked",
+    "hipaa_eligible_service_review": "blocked",
+    "risk_analysis": "blocked",
+    "vendor_baa_inventory": "blocked",
+    "workforce_cognito": "blocked",
+    "consumer_cognito": "blocked",
+    "tenant_isolation": "blocked",
+    "consent_enforcement": "blocked",
+    "durable_audit": "blocked",
+    "organization_cloudtrail": "blocked",
+    "guardduty": "blocked",
+    "security_hub": "blocked",
+    "aws_config": "blocked",
+    "access_analyzer": "blocked",
+    "backup_restore_rehearsal": "blocked",
+    "incident_response_rehearsal": "blocked",
+    "vulnerability_gate": "blocked",
+    "mobile_secure_storage_review": "blocked",
+    "junction_approval": "blocked",
+    "passio_approval": "blocked",
+    "clinical_ai_approval": "blocked",
+    "desktop_compatibility_contract": "blocked"
+  },
+  "runtime_boundaries": {
+    "desktop_compute": "blocked",
+    "patient_api_compute": "blocked",
+    "clinical_database": "blocked",
+    "workforce_identity": "blocked",
+    "consumer_identity": "blocked",
+    "object_storage": "blocked",
+    "app_runner_removed": "blocked",
+    "fly_removed": "blocked",
+    "supabase_saas_removed": "blocked",
+    "migration_reconciled": "blocked",
+    "desktop_operations_migrated": "blocked",
+    "forbidden_phi_services_absent": "blocked"
+  },
+  "approvals": {
+    "legal_compliance": { "status": "blocked", "reviewer": "", "reviewed_at": "" },
+    "security": { "status": "blocked", "reviewer": "", "reviewed_at": "" },
+    "clinical_safety": { "status": "blocked", "reviewer": "", "reviewed_at": "" },
+    "engineering": { "status": "blocked", "reviewer": "", "reviewed_at": "" }
+  },
+  "phi_activation": "blocked"
+}

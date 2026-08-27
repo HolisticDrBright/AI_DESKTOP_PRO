@@ -16,7 +16,10 @@ export default async function PatientsPage() {
   try {
     const session = await getRequestSession();
     const entries = await api.patients.list(session.token, session.orgId);
-    return <LiveClientDirectory entries={entries} />;
+    const syntheticOnly =
+      process.env.APP_RUNTIME_ENV === "staging" ||
+      process.env.CLINICAL_DATA_PLANE === "supabase_staging";
+    return <LiveClientDirectory entries={entries} syntheticOnly={syntheticOnly} />;
   } catch (e) {
     const code = isAdapterError(e) ? e.code : "unknown";
     const message = isAdapterError(e) ? e.safeMessage : "Unable to load the directory right now.";

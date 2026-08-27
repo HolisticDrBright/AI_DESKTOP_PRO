@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { AUTH_COOKIES, cookieOptions, refreshSession } from "@/adapters/auth.server";
 import { AdapterError } from "@/adapters/errors";
+import { evaluateContractFixtureBoundary } from "@/server/runtime/contractFixture";
 
 /**
  * Global authentication lifecycle (P0). LIVE mode only — the demo runs with no
@@ -31,7 +32,9 @@ const REFRESH_WINDOW_MS = 10 * 60_000;
  * every page requires a practitioner session.
  */
 const HAS_ENV_FALLBACK = Boolean(
-  process.env.CLINICAL_DEMO_EMAIL && process.env.CLINICAL_DEMO_PASSWORD,
+  evaluateContractFixtureBoundary().allowed &&
+    process.env.CLINICAL_DEMO_EMAIL &&
+    process.env.CLINICAL_DEMO_PASSWORD,
 );
 
 type Tokens = Awaited<ReturnType<typeof refreshSession>>;
@@ -58,6 +61,16 @@ function loginRedirect(req: NextRequest): NextResponse {
 }
 
 export async function middleware(req: NextRequest) {
+  if (process.env.PRODUCTION_WORKLOAD_MODE === "readiness_only") {
+    if (req.nextUrl.pathname === "/api/health") return NextResponse.next();
+    return NextResponse.json(
+      { error: "production_not_activated", phiAllowed: false },
+      {
+        status: 503,
+        headers: { "cache-control": "no-store", "retry-after": "3600" },
+      },
+    );
+  }
   if (!LIVE) return NextResponse.next();
 
   const { pathname } = req.nextUrl;

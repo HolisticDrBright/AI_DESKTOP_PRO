@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Users } from "lucide-react";
 import type { PatientDirectoryEntry } from "@/adapters/types";
+import { AddPatientDialog } from "@/components/clients/AddPatientDialog";
 import { Card } from "@/components/ui/bits";
 import { ClinicalEmpty } from "@/components/ui/ClinicalStates";
 import { patientPath } from "@/lib/routes";
@@ -12,14 +13,24 @@ import { patientPath } from "@/lib/routes";
  * screen never fabricates them). Server-rendered; errors are handled by the
  * page around it.
  */
-export function LiveClientDirectory({ entries }: { entries: PatientDirectoryEntry[] }) {
+export function LiveClientDirectory({
+  entries,
+  syntheticOnly,
+}: {
+  entries: PatientDirectoryEntry[];
+  syntheticOnly: boolean;
+}) {
   if (entries.length === 0) {
     return (
-      <section data-screen-label="Clients" className="px-6 pt-[22px] pb-6">
+      <section data-screen-label="Patients" className="px-6 pt-[22px] pb-6">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <h1 className="m-0 text-[17px] font-bold">Patients</h1>
+          <AddPatientDialog syntheticOnly={syntheticOnly} />
+        </div>
         <ClinicalEmpty
           icon={<Users size={20} strokeWidth={1.75} className="text-slate-badge" aria-hidden />}
           title="No accessible patients"
-          message="No patient records are visible to your account in this organization. Seed the demo practice or ask an administrator to assign you to a patient."
+          message="No patient records are visible to your account in this organization. Create a patient or ask an administrator to assign an existing patient to you."
         />
       </section>
     );
@@ -30,12 +41,15 @@ export function LiveClientDirectory({ entries }: { entries: PatientDirectoryEntr
   const td = "whitespace-nowrap px-[12px] py-[9px] align-middle text-[12.5px]";
 
   return (
-    <section data-screen-label="Clients" className="px-6 pt-[22px] pb-6">
-      <div className="mb-3 flex items-baseline justify-between">
-        <h1 className="m-0 text-[17px] font-bold tracking-[-0.01em]">Clients</h1>
-        <span className="text-[11.5px] text-subtle">
-          {entries.length} patient{entries.length === 1 ? "" : "s"} · live record, scoped to your access
-        </span>
+    <section data-screen-label="Patients" className="px-6 pt-[22px] pb-6">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 className="m-0 text-[17px] font-bold">Patients</h1>
+          <span className="text-[11.5px] text-subtle">
+            {entries.length} patient{entries.length === 1 ? "" : "s"} · live record, scoped to your access
+          </span>
+        </div>
+        <AddPatientDialog syntheticOnly={syntheticOnly} />
       </div>
 
       <Card className="overflow-hidden">

@@ -1,0 +1,891 @@
+{
+  "schemaVersion": "desktop-production-operations/1",
+  "activationState": "phi_disabled",
+  "operationGroups": [
+    {
+      "kind": "rpc",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260827150000_production_inbox.sql",
+      "names": [
+        "append_message_to_note",
+        "cancel_message_draft",
+        "create_conversation",
+        "create_task_from_message",
+        "get_conversation",
+        "get_inbox_today_summary",
+        "get_patient_messages",
+        "list_inbox",
+        "mark_conversation_read",
+        "register_message_attachment",
+        "review_ai_suggestion",
+        "save_message_draft",
+        "send_message",
+        "set_communication_preferences",
+        "update_conversation_workflow"
+      ]
+    },
+    {
+      "kind": "rpc",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260827140000_production_programs.sql",
+      "names": [
+        "approve_program_template_version",
+        "approve_program_version",
+        "archive_program",
+        "archive_program_template",
+        "create_program",
+        "create_program_template",
+        "enroll_patient_in_program",
+        "get_patient_programs",
+        "get_program_studio",
+        "list_program_templates",
+        "list_programs",
+        "publish_program_version",
+        "record_program_progress",
+        "return_program_version",
+        "review_program_progress",
+        "revise_program_version",
+        "save_program_draft",
+        "set_program_enrollment_status",
+        "submit_program_version",
+        "upsert_program_offer"
+      ]
+    },
+    {
+      "kind": "rpc",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260827130000_production_plans_entitlements.sql",
+      "names": [
+        "assign_complimentary_plan",
+        "create_plan_version",
+        "expire_entitlements",
+        "get_patient_entitlements",
+        "get_reconciliation_workspace",
+        "grant_entitlements_for_invoice",
+        "list_plans",
+        "publish_plan_version",
+        "purchase_package",
+        "reserve_entitlement_for_appointment",
+        "resolve_reconciliation_exception",
+        "restore_entitlement",
+        "revoke_entitlements_for_refund",
+        "set_membership_lifecycle",
+        "set_org_billing_policy",
+        "settle_entitlement_for_appointment",
+        "upsert_plan"
+      ]
+    },
+    {
+      "kind": "rpc",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260827120000_production_billing_inventory.sql",
+      "names": [
+        "adjust_inventory_stock",
+        "apply_patient_credit",
+        "archive_billing_product",
+        "create_invoice_draft",
+        "finalize_invoice",
+        "get_billing_invoice",
+        "get_billing_workspace",
+        "get_inventory_history",
+        "get_patient_billing",
+        "grant_patient_credit",
+        "list_billing_catalog",
+        "receive_inventory_stock",
+        "record_manual_payment",
+        "refund_payment",
+        "return_inventory_stock",
+        "save_invoice_draft",
+        "start_card_payment",
+        "upsert_billing_location",
+        "upsert_billing_product",
+        "upsert_supplier",
+        "upsert_tax_rate",
+        "void_invoice"
+      ]
+    },
+    {
+      "kind": "rpc",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260827110000_production_nutrition_workspace.sql",
+      "names": [
+        "activate_nutrition_plan_version",
+        "add_nutrition_amendment",
+        "approve_nutrition_plan_version",
+        "archive_nutrition_template",
+        "create_nutrition_plan",
+        "create_nutrition_template_version",
+        "evaluate_nutrition_plan_safety",
+        "get_nutrition_adherence_summary",
+        "get_nutrition_version_content",
+        "get_patient_nutrition",
+        "install_nutrition_starter_template",
+        "list_nutrition_templates",
+        "publish_nutrition_template_version",
+        "raise_nutrition_safety_flag",
+        "record_nutrition_checkin",
+        "resolve_nutrition_safety_flag",
+        "review_nutrition_checkin",
+        "revise_nutrition_plan_version",
+        "save_nutrition_plan_version",
+        "save_nutrition_template_content",
+        "set_nutrition_plan_constraints",
+        "set_nutrition_plan_lifecycle",
+        "submit_nutrition_plan_version",
+        "upsert_nutrition_template"
+      ]
+    }
+  ],
+  "operations": [
+    {
+      "kind": "rpc",
+      "name": "create_patient_profile",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821050000_production_patient_directory.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "review_biomarker",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821050000_production_patient_directory.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "list_patient_lab_observations",
+      "implementation": "generated_production_function",
+      "source": "infra/aws-clinical-core/migrations/20260821010000_governed_synthetic_lab_import.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "list_audit_events",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821060000_production_registered_audit_actions.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "record_registered_audit_event",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821060000_production_registered_audit_actions.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "list_my_organizations",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821070000_production_workforce_memberships.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "activate_my_memberships",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826160000_production_workforce_invitation_claims.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "list_org_members",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821070000_production_workforce_memberships.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "add_org_member",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826160000_production_workforce_invitation_claims.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "set_org_member_role",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821070000_production_workforce_memberships.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "remove_org_member",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821070000_production_workforce_memberships.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "create_review_task",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821080000_production_review_queue.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "list_review_queue",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821080000_production_review_queue.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "resolve_review_queue_item",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821080000_production_review_queue.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "get_desktop_calendar",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821090000_production_scheduling.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "book_appointment",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821090000_production_scheduling.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "update_appointment_status",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821090000_production_scheduling.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "reschedule_appointment",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821090000_production_scheduling.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "transition_appointment",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821090000_production_scheduling.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "correct_appointment_status",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821090000_production_scheduling.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "start_encounter",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821100000_production_encounters_notes.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "set_encounter_status",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821100000_production_encounters_notes.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "save_note_draft",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821100000_production_encounters_notes.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "mark_note_ready",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821100000_production_encounters_notes.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "sign_note",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821100000_production_encounters_notes.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "add_note_addendum",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821100000_production_encounters_notes.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "mark_note_error",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821100000_production_encounters_notes.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "get_desktop_encounter",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821100000_production_encounters_notes.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "list_desktop_patient_encounters",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821100000_production_encounters_notes.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "get_desktop_note",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821100000_production_encounters_notes.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "get_desktop_patient_timeline",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821100000_production_encounters_notes.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "get_patient_overview",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821110000_production_patient_overview.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "get_patient_app_intake",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260825140000_production_consumer_health_intake_review.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "get_patient_sync_overview",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821120000_production_patient_sync_control.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "get_org_sync_operations",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821120000_production_patient_sync_control.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "create_sync_invitation",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821121000_production_patient_sync_invitation_pgcrypto.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "pause_sync_connection",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821120000_production_patient_sync_control.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "resume_sync_connection",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821120000_production_patient_sync_control.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "revoke_sync_connection",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821120000_production_patient_sync_control.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "set_sync_consent_scope",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260821120000_production_patient_sync_control.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "get_patient_protocol",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260824130000_production_patient_protocols.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "create_protocol_draft",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260824130000_production_patient_protocols.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "save_protocol_draft",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260824130000_production_patient_protocols.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "approve_protocol_version",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260824130000_production_patient_protocols.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "activate_protocol_version",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260824130000_production_patient_protocols.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "set_protocol_lifecycle",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260824130000_production_patient_protocols.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "revise_protocol_version",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260824130000_production_patient_protocols.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "queue_sync_export",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260825100000_production_patient_sync_delivery_controls.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "withdraw_sync_resource",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260825100000_production_patient_sync_delivery_controls.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "retry_sync_event",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260825100000_production_patient_sync_delivery_controls.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "cancel_sync_event",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260825100000_production_patient_sync_delivery_controls.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "resolve_sync_conflict",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260825100000_production_patient_sync_delivery_controls.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "review_sync_inbound",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260825100000_production_patient_sync_delivery_controls.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "record_sync_inbound_correction",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260825100000_production_patient_sync_delivery_controls.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "get_product_catalog",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826100000_production_governed_catalog.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "get_product_label_detail",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826100000_production_governed_catalog.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "verify_product_label_version",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826100000_production_governed_catalog.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "get_protocol_template_detail",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826100000_production_governed_catalog.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "compare_protocol_template_versions",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826100000_production_governed_catalog.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "record_protocol_template_safety_review",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826100000_production_governed_catalog.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "supersede_protocol_template",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826100000_production_governed_catalog.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "approve_protocol_template_version",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826110000_production_protocol_templates_and_interactions.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "archive_protocol_template",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826110000_production_protocol_templates_and_interactions.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "check_protocol_interactions",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826110000_production_protocol_templates_and_interactions.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "create_protocol_template",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826110000_production_protocol_templates_and_interactions.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "list_protocol_templates",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826110000_production_protocol_templates_and_interactions.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "review_protocol_item_interactions",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826110000_production_protocol_templates_and_interactions.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "search_protocol_catalog",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826110000_production_protocol_templates_and_interactions.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "answer_question",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826130000_production_reasoning_lens_review.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "correct_question_answer",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826130000_production_reasoning_lens_review.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "dismiss_question",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826130000_production_reasoning_lens_review.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "get_desktop_lens_evaluation",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826130000_production_reasoning_lens_review.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "get_reasoning_workspace",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826130000_production_reasoning_lens_review.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "list_desktop_lens_domains",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826130000_production_reasoning_lens_review.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "list_desktop_lens_knowledge_sources",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826130000_production_reasoning_lens_review.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "list_desktop_lens_paradigms",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826130000_production_reasoning_lens_review.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "list_desktop_question_answers",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826130000_production_reasoning_lens_review.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "record_question_note_use",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826130000_production_reasoning_lens_review.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "review_hypothesis",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826130000_production_reasoning_lens_review.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "review_safety_block",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826130000_production_reasoning_lens_review.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "set_question_status",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826130000_production_reasoning_lens_review.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "submit_question_feedback",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826130000_production_reasoning_lens_review.sql"
+    },
+    {
+      "kind": "select",
+      "name": "lab_documents",
+      "implementation": "native_production_adapter",
+      "source": "src/server/clinical-core/aws-production-desktop.ts"
+    },
+    {
+      "kind": "select",
+      "name": "patient_profiles",
+      "implementation": "native_production_adapter",
+      "source": "src/server/clinical-core/aws-production-desktop.ts"
+    },
+    {
+      "kind": "select",
+      "name": "clinical_pathways",
+      "implementation": "native_production_adapter",
+      "source": "src/server/clinical-core/aws-production-desktop.ts"
+    },
+    {
+      "kind": "rpc",
+      "name": "create_clinical_pathway_draft",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826140000_production_clinical_pathway_registry.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "update_clinical_pathway_draft",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826140000_production_clinical_pathway_registry.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "approve_clinical_pathway_version",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826140000_production_clinical_pathway_registry.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "stage_clinical_knowledge_import",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826150000_production_clinical_knowledge_import_review.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "review_clinical_knowledge_import_item",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826150000_production_clinical_knowledge_import_review.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "preview_knowledge_import",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826170000_production_knowledge_import_compatibility.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "get_knowledge_import_preview",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826170000_production_knowledge_import_compatibility.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "resolve_knowledge_import_conflict",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826170000_production_knowledge_import_compatibility.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "commit_knowledge_import",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826170000_production_knowledge_import_compatibility.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "cancel_knowledge_import",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826170000_production_knowledge_import_compatibility.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "list_label_commercial_links",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826170000_production_knowledge_import_compatibility.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "list_protocol_commercial_links",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826170000_production_knowledge_import_compatibility.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "get_research_handoff_review",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826170000_production_knowledge_import_compatibility.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "record_research_handoff_item_review",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260826170000_production_knowledge_import_compatibility.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "approve_knowledge_reference",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260827100000_production_import_review_workspace.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "attach_commercial_link_to_verified_product",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260827100000_production_import_review_workspace.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "bulk_apply_org_tag",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260827100000_production_import_review_workspace.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "bulk_assign_reviewer",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260827100000_production_import_review_workspace.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "bulk_mark_duplicate",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260827100000_production_import_review_workspace.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "clear_catalog_product_restriction",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260827100000_production_import_review_workspace.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "complete_catalog_product_review",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260827100000_production_import_review_workspace.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "create_knowledge_reference_draft",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260827100000_production_import_review_workspace.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "create_product_label_draft",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260827100000_production_import_review_workspace.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "get_catalog_review_queue",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260827100000_production_import_review_workspace.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "get_import_provenance",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260827100000_production_import_review_workspace.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "get_import_source_inventory",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260827100000_production_import_review_workspace.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "get_restricted_review_history_v2",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260827100000_production_import_review_workspace.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "get_restricted_review_queue",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260827100000_production_import_review_workspace.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "list_knowledge_references",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260827100000_production_import_review_workspace.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "list_product_label_versions",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260827100000_production_import_review_workspace.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "list_warning_resolutions",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260827100000_production_import_review_workspace.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "record_import_source_file",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260827100000_production_import_review_workspace.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "record_restricted_review_outcome_v2",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260827100000_production_import_review_workspace.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "record_warning_resolution",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260827100000_production_import_review_workspace.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "resolve_knowledge_import_ambiguity",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260827100000_production_import_review_workspace.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "revoke_commercial_link",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260827100000_production_import_review_workspace.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "supersede_knowledge_reference",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260827100000_production_import_review_workspace.sql"
+    },
+    {
+      "kind": "rpc",
+      "name": "supersede_product_label_version",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260827100000_production_import_review_workspace.sql"
+    },
+    {
+      "kind": "select",
+      "name": "clinical_knowledge_import_batches",
+      "implementation": "native_production_adapter",
+      "source": "src/server/clinical-core/aws-production-desktop.ts"
+    },
+    {
+      "kind": "select",
+      "name": "clinical_knowledge_import_items",
+      "implementation": "native_production_adapter",
+      "source": "src/server/clinical-core/aws-production-desktop.ts"
+    }
+  ]
+}

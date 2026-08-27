@@ -177,6 +177,10 @@ export function RecordingScribePanel({
   const pumpingRef = useRef(false);
   const heartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const startedAtRef = useRef<number>(0);
+  // React Strict Mode and a fast mutation can overlap consent reads. Only the
+  // newest request may publish state; otherwise an older pre-mutation response
+  // can erase a participant that the server has already persisted.
+  const consentLoadSeqRef = useRef(0);
   const phaseRef = useRef<CapturePhase>("idle");
   phaseRef.current = phase;
 
@@ -186,11 +190,13 @@ export function RecordingScribePanel({
   }, []);
 
   const loadConsent = useCallback(async () => {
+    const requestSeq = ++consentLoadSeqRef.current;
     const res = await fetch(`/api/live/scribe/consent?encounterId=${encounterId}`);
     const json = (await res.json().catch(() => ({}))) as {
       data?: { participants: Participant[]; documents: ConsentDoc[]; provider: ProviderInfo };
       error?: { message?: string };
     };
+    if (requestSeq !== consentLoadSeqRef.current) return null;
     if (!res.ok || !json.data) {
       setError(json.error?.message ?? "Consent state is unavailable.");
       return null;

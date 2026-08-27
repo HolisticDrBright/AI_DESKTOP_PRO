@@ -123,6 +123,10 @@ test("2: search and filters narrow the queue", async ({ page }) => {
 
 test("3: deterministic urgent invariant — visible without any AI, never a diagnosis", async ({ page }) => {
   await openThread(page, THREAD_C);
+  // The read mutation is server-owned and completes independently of the
+  // detail render. Wait for its persisted list state so the next proof does
+  // not race the unread-count refresh under the development server.
+  await expect(page.getByTestId(`thread-${THREAD_C}`).getByText("1", { exact: true })).toHaveCount(0);
   const panel = page.getByTestId("urgent-panel");
   await expect(panel).toBeVisible();
   await expect(panel.getByRole("alert")).toContainText("Urgent language detected");

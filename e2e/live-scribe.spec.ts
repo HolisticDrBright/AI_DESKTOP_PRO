@@ -34,20 +34,27 @@ test.describe.configure({ mode: "serial" });
 test.beforeAll(resetBackend);
 
 const PATIENT_URL = "/patients/aaaaaaaa-1111-2222-3333-444444444401/chart";
+const pageReadyTimeout = process.env.E2E_DEV_SERVER === "1" ? 20_000 : 5_000;
 
 /** Start a FRESH encounter (no appointment → a new encounter every time). */
 async function openNewEncounter(page: Page): Promise<void> {
   await page.goto(PATIENT_URL);
   await page.getByRole("button", { name: "Start encounter" }).first().click();
   await page.waitForURL("**/encounter/**");
-  await expect(page.getByTestId("scribe-panel")).toBeVisible();
+  await expect(page.getByTestId("scribe-panel")).toBeVisible({ timeout: pageReadyTimeout });
 }
 
 async function addParticipant(page: Page, name: string, kind: string): Promise<void> {
-  await page.getByTestId("participant-name").fill(name);
+  const nameInput = page.getByTestId("participant-name");
+  await nameInput.fill(name);
   await page.getByTestId("participant-kind").selectOption(kind);
   await page.getByTestId("add-participant-btn").click();
-  await expect(page.getByText(name)).toBeVisible();
+  // The local dev server compiles this API route on first use. The input is
+  // cleared only after the write succeeds; the participant appears only
+  // after the authoritative server list is read back.
+  const persistedTimeout = process.env.E2E_DEV_SERVER === "1" ? 20_000 : 5_000;
+  await expect(nameInput).toHaveValue("", { timeout: persistedTimeout });
+  await expect(page.getByText(name)).toBeVisible({ timeout: persistedTimeout });
 }
 
 async function grant(page: Page, kind: string, scope: string): Promise<void> {
@@ -70,7 +77,7 @@ const phase = (page: Page) => page.getByTestId("recording-status");
 test("milestone workflow: consent → record → pause/resume → transcribe → correct → draft → sign → verified deletion → audit", async ({
   page,
 }) => {
-  test.setTimeout(60_000);
+  test.setTimeout(120_000);
 
   // ---- no-tracker boundary: every request must stay on the app origin ----
   const offOrigin: string[] = [];
@@ -87,8 +94,8 @@ test("milestone workflow: consent → record → pause/resume → transcribe →
   expect(csp).toContain("connect-src 'self'");
   expect(csp).toContain("frame-src 'none'");
 
-  await expect(page.getByTestId("scribe-panel")).toBeVisible();
-  await expect(page.getByTestId("scribe-provider")).toContainText("fixture");
+  await expect(page.getByTestId("scribe-panel")).toBeVisible({ timeout: pageReadyTimeout });
+  await expect(page.getByTestId("scribe-provider")).toContainText("fixture", { timeout: pageReadyTimeout });
 
   // Recording cannot start until EVERY participant consents.
   await addParticipant(page, "Pat Fixture", "patient");
@@ -328,7 +335,7 @@ test("a second tab cannot start a competing capture for the same encounter", asy
 
   const second = await context.newPage();
   await second.goto(encounterUrl);
-  await expect(second.getByTestId("scribe-panel")).toBeVisible();
+  await expect(second.getByTestId("scribe-panel")).toBeVisible({ timeout: pageReadyTimeout });
   // The second tab discovers the live capture: no fresh Start, recovery only.
   await expect(second.getByTestId("recover-recording")).toBeVisible({ timeout: 10_000 });
   await expect(second.getByTestId("start-recording")).toHaveCount(0);

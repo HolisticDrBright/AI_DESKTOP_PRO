@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "vitest";
 import {
   evaluateContractFixtureBoundary,
+  getContractFixtureTransport,
   isContractFixtureAllowed,
 } from "./contractFixture";
 
@@ -163,5 +164,16 @@ describe("isContractFixtureAllowed", () => {
     expect(isContractFixtureAllowed(localEnv())).toBe(true);
     setEnv("NODE_ENV", "production");
     expect(isContractFixtureAllowed(localEnv())).toBe(false);
+  });
+
+  test("transport exposes a credential only for the approved loopback fixture", () => {
+    setEnv("NODE_ENV", "development");
+    expect(getContractFixtureTransport(localEnv())).toBeNull();
+    expect(getContractFixtureTransport(localEnv({ CLINICAL_SUPABASE_ANON_KEY: "fixture-only" })))
+      .toEqual({ origin: "http://127.0.0.1:3920", credential: "fixture-only" });
+
+    setEnv("NODE_ENV", "production");
+    expect(getContractFixtureTransport(localEnv({ CLINICAL_SUPABASE_ANON_KEY: "fixture-only" })))
+      .toBeNull();
   });
 });

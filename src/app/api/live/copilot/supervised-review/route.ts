@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { AdapterError } from "@/adapters/errors";
 import { getRequestSession } from "@/server/session";
 import { liveGuard, runLive } from "../../route-helpers";
-import { clinicalRpc } from "@/adapters/supabase-rest.server";
+import { clinicalRpc } from "@/adapters/aws-clinical-data.server";
 import { getClinicalAccessToken } from "@/adapters/session.server";
 import { resolveOrgId } from "@/adapters/config";
 

@@ -1,0 +1,129 @@
+{
+  "contract_version": "clinical-core-production-overlays/1",
+  "migrations": [
+    {
+      "version": "20260821050000",
+      "file": "20260821050000_production_patient_directory.sql"
+    },
+    {
+      "version": "20260821060000",
+      "file": "20260821060000_production_registered_audit_actions.sql"
+    },
+    {
+      "version": "20260821070000",
+      "file": "20260821070000_production_workforce_memberships.sql"
+    },
+    {
+      "version": "20260821080000",
+      "file": "20260821080000_production_review_queue.sql"
+    },
+    {
+      "version": "20260821090000",
+      "file": "20260821090000_production_scheduling.sql"
+    },
+    {
+      "version": "20260821100000",
+      "file": "20260821100000_production_encounters_notes.sql"
+    },
+    {
+      "version": "20260821110000",
+      "file": "20260821110000_production_patient_overview.sql"
+    },
+    {
+      "version": "20260821120000",
+      "file": "20260821120000_production_patient_sync_control.sql"
+    },
+    {
+      "version": "20260821121000",
+      "file": "20260821121000_production_patient_sync_invitation_pgcrypto.sql"
+    },
+    {
+      "version": "20260824130000",
+      "file": "20260824130000_production_patient_protocols.sql"
+    },
+    {
+      "version": "20260825100000",
+      "file": "20260825100000_production_patient_sync_delivery_controls.sql"
+    },
+    {
+      "version": "20260825120000",
+      "file": "20260825120000_production_patient_sync_worker.sql"
+    },
+    {
+      "version": "20260825123000",
+      "file": "20260825123000_production_sync_lab_summary_observed_at.sql"
+    },
+    {
+      "version": "20260825140000",
+      "file": "20260825140000_production_consumer_health_intake_review.sql"
+    },
+    {
+      "version": "20260826100000",
+      "file": "20260826100000_production_governed_catalog.sql"
+    },
+    {
+      "version": "20260826110000",
+      "file": "20260826110000_production_protocol_templates_and_interactions.sql"
+    },
+    {
+      "version": "20260826120000",
+      "file": "20260826120000_production_protocol_audit_vocabulary_repair.sql"
+    },
+    {
+      "version": "20260826130000",
+      "file": "20260826130000_production_reasoning_lens_review.sql"
+    },
+    {
+      "version": "20260826140000",
+      "file": "20260826140000_production_clinical_pathway_registry.sql"
+    },
+    {
+      "version": "20260826150000",
+      "file": "20260826150000_production_clinical_knowledge_import_review.sql"
+    },
+    {
+      "version": "20260826151000",
+      "file": "20260826151000_production_knowledge_import_url_validation_repair.sql"
+    },
+    {
+      "version": "20260826160000",
+      "file": "20260826160000_production_workforce_invitation_claims.sql"
+    },
+    {
+      "version": "20260826161000",
+      "file": "20260826161000_production_workforce_email_digest_repair.sql"
+    },
+    {
+      "version": "20260826170000",
+      "file": "20260826170000_production_knowledge_import_compatibility.sql"
+    },
+    {
+      "version": "20260827100000",
+      "file": "20260827100000_production_import_review_workspace.sql"
+    },
+    {
+      "version": "20260827110000",
+      "file": "20260827110000_production_nutrition_workspace.sql"
+    },
+    {
+      "version": "20260827120000",
+      "file": "20260827120000_production_billing_inventory.sql"
+    },
+    {
+      "version": "20260827130000",
+      "file": "20260827130000_production_plans_entitlements.sql"
+    },
+    {
+      "version": "20260827140000",
+      "file": "20260827140000_production_programs.sql"
+    },
+    {
+      "version": "20260827150000",
+      "file": "20260827150000_production_inbox.sql"
+    },
+    {
+      "version": "20260827160000",
+      "file": "20260827160000_production_consumer_wearable_records.sql"
+    }
+  ]
+}

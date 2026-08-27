@@ -285,6 +285,47 @@ export interface LivePatientOverview {
   generatedAt: string;
 }
 
+export interface LivePatientAppIntakeRecord<T> {
+  payload: T;
+  receivedAt: string;
+  resourceVersion: string;
+  recordId: string;
+}
+
+export interface LivePatientAppIntake {
+  patientId: string;
+  connectionState: 'verified' | 'paused' | 'revoked' | 'not_connected';
+  sharingStatus: 'granted' | 'revoked' | 'not_granted';
+  wellnessProfile: LivePatientAppIntakeRecord<{
+    height?: number; weight?: number; goals?: string[]; onboardingCompleted?: boolean;
+  }> | null;
+  lifestyleProfile: LivePatientAppIntakeRecord<{
+    sleepHours?: number; sleepQuality?: number; stressLevel?: number; dietType?: string;
+    exerciseFrequency?: number; exerciseTypes?: string[];
+  }> | null;
+  contraindications: LivePatientAppIntakeRecord<{
+    pregnancyStatus?: string; nursing?: boolean; medications?: string[];
+    allergies?: string[]; conditions?: string[];
+  }> | null;
+  clinicalIntake: LivePatientAppIntakeRecord<{
+    chiefComplaint?: { description?: string; duration?: string; severity?: number };
+    associatedSymptoms?: { name?: string; severity?: number }[];
+    energyLevel?: number; sleepQuality?: number; digestiveFunction?: number;
+    stressPerception?: number; temperatureSensitivity?: string; painQuality?: string;
+  }> | null;
+  questionnaireResponses: LivePatientAppIntakeRecord<{
+    questionId?: string; categoryId?: string; severity?: number; timestamp?: string;
+  }>[];
+  wearablesSharingStatus: 'granted' | 'revoked' | 'not_granted';
+  wearableDailyRecords: LivePatientAppIntakeRecord<{
+    id?: string; source?: string; date?: string; sleepDurationMinutes?: number;
+    hrv?: number; restingHr?: number; respiratoryRate?: number; steps?: number;
+    activeMinutes?: number; vo2Max?: number; weight?: number; bodyFatPercent?: number;
+    spo2?: number; dataQualityScore?: number;
+  }>[];
+  generatedAt: string;
+}
+
 /* ────────────────────────────────────────────────────────────────────────────
  * Clinical reasoning workspace (Phase 1 vertical slice).
  *
@@ -1209,6 +1250,7 @@ export type LiveSyncScope =
   | "symptoms_adherence"
   | "wearables"
   | "lab_summaries"
+  | "lab_results_import"
   | "billing_links"
   | "research_n_of_1";
 
@@ -1498,6 +1540,7 @@ export interface PatientSyncInboundEnvelopeV1 {
     | "symptom_report"
     | "outcome_report"
     | "wearable_summary"
+    | "lab_result"
     | "patient_message"
     | "appointment_request"
     | "consent_change"

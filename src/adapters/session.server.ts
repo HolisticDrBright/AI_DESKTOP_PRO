@@ -2,12 +2,13 @@ if (typeof window !== "undefined") {
   throw new Error("This module is server-only and must not run in the browser.");
 }
 import { AdapterError } from "./errors";
+import { evaluateContractFixtureBoundary } from "@/server/runtime/contractFixture";
 
 /**
  * Access-token source for live clinical server adapters, in strict order:
  *
- *  1. The signed-in practitioner's session (httpOnly cookies set by
- *     /api/auth/login — real Supabase Auth). This is the product path.
+ *  1. The signed-in practitioner's Cognito session (httpOnly cookies set by
+ *     /api/auth/login). This is the product path.
  *  2. ⚠️ LOCAL/E2E FALLBACK ONLY: env demo credentials
  *     (CLINICAL_DEMO_EMAIL/PASSWORD). Kept so the contract-fixture e2e suite
  *     and headless local runs work without a browser session. Do NOT set
@@ -24,11 +25,13 @@ import { AdapterError } from "./errors";
 let cached: { token: string; expiresAt: number } | null = null;
 
 async function envFallbackToken(): Promise<string | null> {
-  const url = process.env.CLINICAL_SUPABASE_URL;
+  const fixture = evaluateContractFixtureBoundary();
+  if (!fixture.allowed) return null;
+  const url = fixture.backendOrigin;
   const anon = process.env.CLINICAL_SUPABASE_ANON_KEY;
   const email = process.env.CLINICAL_DEMO_EMAIL;
   const password = process.env.CLINICAL_DEMO_PASSWORD;
-  if (!url || !anon || !email || !password) return null;
+  if (!anon || !email || !password) return null;
 
   const now = Date.now();
   if (cached && cached.expiresAt - 30_000 > now) return cached.token;

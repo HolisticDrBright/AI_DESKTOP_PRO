@@ -1,0 +1,265 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Private PHI-disabled production readiness workload for AI Desktop Pro. This stack cannot activate PHI.",
+  "Metadata": {
+    "ClinicalCore": {
+      "Environment": "production-clinical",
+      "Mode": "readiness_only",
+      "ContainsPhi": false,
+      "PhiActivation": "blocked"
+    }
+  },
+  "Parameters": {
+    "VpcId": { "Type": "AWS::EC2::VPC::Id" },
+    "VpcCidr": { "Type": "String", "AllowedPattern": "^10\\.[0-9]{1,3}\\.[0-9]{1,3}\\.0/[0-9]{1,2}$" },
+    "PrivateSubnetIds": { "Type": "List<AWS::EC2::Subnet::Id>" },
+    "PrivateRouteTableId": { "Type": "String" },
+    "EcsClusterArn": { "Type": "String" },
+    "EcsClusterName": { "Type": "String" },
+    "DesktopRepositoryUri": { "Type": "String" },
+    "DesktopRepositoryArn": { "Type": "String" },
+    "TaskExecutionRoleArn": { "Type": "String" },
+    "ClinicalCoreKeyArn": { "Type": "String" },
+    "ClinicalApiOrigin": { "Type": "String", "AllowedPattern": "^https://[a-z0-9.-]+$" },
+    "ClinicalApiHost": { "Type": "String", "AllowedPattern": "^[a-z0-9.-]+$" },
+    "WorkforceUserPoolId": { "Type": "String" },
+    "WorkforceClientId": { "Type": "String" },
+    "ConsumerUserPoolId": { "Type": "String" },
+    "ConsumerClientId": { "Type": "String" },
+    "ImageTag": { "Type": "String", "AllowedPattern": "^[a-f0-9]{40}$" },
+    "SourceVersion": { "Type": "String", "AllowedPattern": "^[a-f0-9]{40}$" },
+    "DeployService": { "Type": "String", "Default": "false", "AllowedValues": ["false", "true"] }
+  },
+  "Conditions": { "ShouldDeployService": { "Fn::Equals": [{ "Ref": "DeployService" }, "true"] } },
+  "Resources": {
+    "WorkloadSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "No-ingress security group for PHI-disabled Desktop readiness task",
+        "VpcId": { "Ref": "VpcId" },
+        "SecurityGroupIngress": [],
+        "SecurityGroupEgress": [
+          { "IpProtocol": "tcp", "FromPort": 443, "ToPort": 443, "CidrIp": "0.0.0.0/0", "Description": "AWS service endpoints only; private subnets have no internet route" },
+          { "IpProtocol": "udp", "FromPort": 53, "ToPort": 53, "CidrIp": { "Ref": "VpcCidr" }, "Description": "VPC DNS" },
+          { "IpProtocol": "tcp", "FromPort": 53, "ToPort": 53, "CidrIp": { "Ref": "VpcCidr" }, "Description": "VPC DNS fallback" }
+        ],
+        "Tags": [
+          { "Key": "Environment", "Value": "production-clinical" },
+          { "Key": "PhiAllowed", "Value": "false" },
+          { "Key": "Mode", "Value": "readiness_only" }
+        ]
+      }
+    },
+    "EndpointSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "TLS from the readiness workload to private AWS endpoints",
+        "VpcId": { "Ref": "VpcId" },
+        "SecurityGroupIngress": [
+          { "IpProtocol": "tcp", "FromPort": 443, "ToPort": 443, "SourceSecurityGroupId": { "Ref": "WorkloadSecurityGroup" } }
+        ],
+        "SecurityGroupEgress": []
+      }
+    },
+    "EcrApiEndpoint": {
+      "Type": "AWS::EC2::VPCEndpoint",
+      "Properties": {
+        "VpcId": { "Ref": "VpcId" }, "VpcEndpointType": "Interface", "PrivateDnsEnabled": true,
+        "ServiceName": { "Fn::Sub": "com.amazonaws.${AWS::Region}.ecr.api" },
+        "SubnetIds": { "Ref": "PrivateSubnetIds" }, "SecurityGroupIds": [{ "Ref": "EndpointSecurityGroup" }]
+      }
+    },
+    "EcrDockerEndpoint": {
+      "Type": "AWS::EC2::VPCEndpoint",
+      "Properties": {
+        "VpcId": { "Ref": "VpcId" }, "VpcEndpointType": "Interface", "PrivateDnsEnabled": true,
+        "ServiceName": { "Fn::Sub": "com.amazonaws.${AWS::Region}.ecr.dkr" },
+        "SubnetIds": { "Ref": "PrivateSubnetIds" }, "SecurityGroupIds": [{ "Ref": "EndpointSecurityGroup" }]
+      }
+    },
+    "LogsEndpoint": {
+      "Type": "AWS::EC2::VPCEndpoint",
+      "Properties": {
+        "VpcId": { "Ref": "VpcId" }, "VpcEndpointType": "Interface", "PrivateDnsEnabled": true,
+        "ServiceName": { "Fn::Sub": "com.amazonaws.${AWS::Region}.logs" },
+        "SubnetIds": { "Ref": "PrivateSubnetIds" }, "SecurityGroupIds": [{ "Ref": "EndpointSecurityGroup" }]
+      }
+    },
+    "S3Endpoint": {
+      "Type": "AWS::EC2::VPCEndpoint",
+      "Properties": {
+        "VpcId": { "Ref": "VpcId" }, "VpcEndpointType": "Gateway",
+        "ServiceName": { "Fn::Sub": "com.amazonaws.${AWS::Region}.s3" },
+        "RouteTableIds": [{ "Ref": "PrivateRouteTableId" }]
+      }
+    },
+    "RuntimeLogGroup": {
+      "Type": "AWS::Logs::LogGroup",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "LogGroupName": "/aws/ecs/ai-desktop-pro/production-readiness",
+        "RetentionInDays": 365,
+        "KmsKeyId": { "Ref": "ClinicalCoreKeyArn" }
+      }
+    },
+    "ReadinessTaskRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [{ "Effect": "Allow", "Principal": { "Service": "ecs-tasks.amazonaws.com" }, "Action": "sts:AssumeRole" }]
+        },
+        "Description": "Intentionally policy-free role for the PHI-disabled readiness container"
+      }
+    },
+    "BuildRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [{ "Effect": "Allow", "Principal": { "Service": "codebuild.amazonaws.com" }, "Action": "sts:AssumeRole" }]
+        },
+        "Policies": [{
+          "PolicyName": "BuildAndPublishExactDesktopImage",
+          "PolicyDocument": {
+            "Version": "2012-10-17",
+            "Statement": [
+              { "Effect": "Allow", "Action": ["logs:CreateLogStream", "logs:PutLogEvents"], "Resource": { "Fn::Sub": "${BuildLogGroup.Arn}:*" } },
+              { "Effect": "Allow", "Action": "ecr:GetAuthorizationToken", "Resource": "*" },
+              { "Effect": "Allow", "Action": ["ecr:BatchCheckLayerAvailability", "ecr:CompleteLayerUpload", "ecr:InitiateLayerUpload", "ecr:PutImage", "ecr:UploadLayerPart"], "Resource": { "Ref": "DesktopRepositoryArn" } }
+            ]
+          }
+        }]
+      }
+    },
+    "BuildLogGroup": {
+      "Type": "AWS::Logs::LogGroup",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "LogGroupName": "/aws/codebuild/ai-desktop-pro-production-readiness",
+        "RetentionInDays": 365,
+        "KmsKeyId": { "Ref": "ClinicalCoreKeyArn" }
+      }
+    },
+    "ImageBuildProject": {
+      "Type": "AWS::CodeBuild::Project",
+      "Properties": {
+        "Name": "ai-desktop-pro-production-readiness",
+        "ServiceRole": { "Fn::GetAtt": ["BuildRole", "Arn"] },
+        "Artifacts": { "Type": "NO_ARTIFACTS" },
+        "Source": {
+          "Type": "NO_SOURCE",
+          "BuildSpec": { "Fn::Sub": "version: 0.2\nenv:\n  shell: bash\nphases:\n  pre_build:\n    commands:\n      - set -euo pipefail\n      - git clone --filter=blob:none https://github.com/HolisticDrBright/AI_DESKTOP_PRO.git source\n      - cd source && git checkout --detach ${SourceVersion}\n      - test \"$(git rev-parse HEAD)\" = \"${SourceVersion}\"\n      - aws ecr get-login-password --region ${AWS::Region} | docker login --username AWS --password-stdin ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com\n  build:\n    commands:\n      - docker build --pull --file Dockerfile.production --tag ${DesktopRepositoryUri}:${ImageTag} .\n      - docker run --detach --rm --name desktop-readiness -p 127.0.0.1:3000:3000 -e APP_RUNTIME_ENV=production-clinical -e CLINICAL_DATA_PLANE=aws_production -e CLINICAL_COMPUTE=ecs_fargate -e CLINICAL_AWS_REGION=${AWS::Region} -e CLINICAL_AWS_API_ORIGIN=${ClinicalApiOrigin} -e CLINICAL_AWS_ALLOWED_API_HOSTS=${ClinicalApiHost} -e CLINICAL_AWS_WORKFORCE_USER_POOL_ID=${WorkforceUserPoolId} -e CLINICAL_AWS_WORKFORCE_CLIENT_ID=${WorkforceClientId} -e CLINICAL_AWS_CONSUMER_USER_POOL_ID=${ConsumerUserPoolId} -e CLINICAL_AWS_CONSUMER_CLIENT_ID=${ConsumerClientId} -e AWS_CLINICAL_ADAPTER_READY=false -e PHI_ALLOWED=false -e PRODUCTION_WORKLOAD_MODE=readiness_only ${DesktopRepositoryUri}:${ImageTag}\n      - for attempt in $(seq 1 30); do curl -fsS http://127.0.0.1:3000/api/health && break; sleep 2; done\n      - test \"$(curl -sS -o /tmp/refusal.json -w '%{http_code}' http://127.0.0.1:3000/)\" = 503\n      - grep -q '\"production_not_activated\"' /tmp/refusal.json\n      - grep -q '\"phiAllowed\":false' /tmp/refusal.json\n      - docker stop desktop-readiness\n  post_build:\n    commands:\n      - docker push ${DesktopRepositoryUri}:${ImageTag}\n" }
+        },
+        "Environment": {
+          "Type": "LINUX_CONTAINER", "ComputeType": "BUILD_GENERAL1_MEDIUM", "Image": "aws/codebuild/standard:7.0", "PrivilegedMode": true
+        },
+        "LogsConfig": {
+          "CloudWatchLogs": { "Status": "ENABLED", "GroupName": { "Ref": "BuildLogGroup" }, "StreamName": "exact-commit" }
+        },
+        "TimeoutInMinutes": 60,
+        "QueuedTimeoutInMinutes": 60,
+        "EncryptionKey": { "Ref": "ClinicalCoreKeyArn" },
+        "Tags": [{ "Key": "PhiAllowed", "Value": "false" }, { "Key": "Mode", "Value": "readiness_only" }]
+      }
+    },
+    "ReadinessTaskDefinition": {
+      "Type": "AWS::ECS::TaskDefinition",
+      "Condition": "ShouldDeployService",
+      "Properties": {
+        "Family": "ai-desktop-pro-production-readiness",
+        "RequiresCompatibilities": ["FARGATE"],
+        "NetworkMode": "awsvpc",
+        "Cpu": "512", "Memory": "1024",
+        "ExecutionRoleArn": { "Ref": "TaskExecutionRoleArn" },
+        "TaskRoleArn": { "Fn::GetAtt": ["ReadinessTaskRole", "Arn"] },
+        "RuntimePlatform": { "CpuArchitecture": "X86_64", "OperatingSystemFamily": "LINUX" },
+        "ContainerDefinitions": [{
+          "Name": "desktop-readiness",
+          "Image": { "Fn::Sub": "${DesktopRepositoryUri}:${ImageTag}" },
+          "Essential": true,
+          "User": "65532",
+          "ReadonlyRootFilesystem": true,
+          "LinuxParameters": { "InitProcessEnabled": true, "Capabilities": { "Drop": ["ALL"] } },
+          "PortMappings": [{ "ContainerPort": 3000, "Protocol": "tcp" }],
+          "Environment": [
+            { "Name": "APP_RUNTIME_ENV", "Value": "production-clinical" },
+            { "Name": "CLINICAL_DATA_PLANE", "Value": "aws_production" },
+            { "Name": "CLINICAL_COMPUTE", "Value": "ecs_fargate" },
+            { "Name": "CLINICAL_AWS_REGION", "Value": { "Ref": "AWS::Region" } },
+            { "Name": "CLINICAL_AWS_API_ORIGIN", "Value": { "Ref": "ClinicalApiOrigin" } },
+            { "Name": "CLINICAL_AWS_ALLOWED_API_HOSTS", "Value": { "Ref": "ClinicalApiHost" } },
+            { "Name": "CLINICAL_AWS_WORKFORCE_USER_POOL_ID", "Value": { "Ref": "WorkforceUserPoolId" } },
+            { "Name": "CLINICAL_AWS_WORKFORCE_CLIENT_ID", "Value": { "Ref": "WorkforceClientId" } },
+            { "Name": "CLINICAL_AWS_CONSUMER_USER_POOL_ID", "Value": { "Ref": "ConsumerUserPoolId" } },
+            { "Name": "CLINICAL_AWS_CONSUMER_CLIENT_ID", "Value": { "Ref": "ConsumerClientId" } },
+            { "Name": "AWS_CLINICAL_ADAPTER_READY", "Value": "false" },
+            { "Name": "PHI_ALLOWED", "Value": "false" },
+            { "Name": "PRODUCTION_WORKLOAD_MODE", "Value": "readiness_only" }
+          ],
+          "HealthCheck": {
+            "Command": ["CMD", "/nodejs/bin/node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"],
+            "Interval": 30, "Timeout": 5, "Retries": 3, "StartPeriod": 60
+          },
+          "LogConfiguration": {
+            "LogDriver": "awslogs",
+            "Options": { "awslogs-group": { "Ref": "RuntimeLogGroup" }, "awslogs-region": { "Ref": "AWS::Region" }, "awslogs-stream-prefix": "desktop" }
+          }
+        }],
+        "Tags": [{ "Key": "Environment", "Value": "production-clinical" }, { "Key": "PhiAllowed", "Value": "false" }, { "Key": "Mode", "Value": "readiness_only" }]
+      }
+    },
+    "ReadinessService": {
+      "Type": "AWS::ECS::Service",
+      "Condition": "ShouldDeployService",
+      "DependsOn": ["EcrApiEndpoint", "EcrDockerEndpoint", "LogsEndpoint", "S3Endpoint"],
+      "Properties": {
+        "ServiceName": "ai-desktop-pro-production-readiness",
+        "Cluster": { "Ref": "EcsClusterArn" },
+        "TaskDefinition": { "Ref": "ReadinessTaskDefinition" },
+        "DesiredCount": 1,
+        "LaunchType": "FARGATE",
+        "PlatformVersion": "LATEST",
+        "EnableExecuteCommand": false,
+        "DeploymentConfiguration": {
+          "MinimumHealthyPercent": 100, "MaximumPercent": 200,
+          "DeploymentCircuitBreaker": { "Enable": true, "Rollback": true }
+        },
+        "NetworkConfiguration": {
+          "AwsvpcConfiguration": {
+            "AssignPublicIp": "DISABLED",
+            "Subnets": { "Ref": "PrivateSubnetIds" },
+            "SecurityGroups": [{ "Ref": "WorkloadSecurityGroup" }]
+          }
+        },
+        "PropagateTags": "TASK_DEFINITION",
+        "Tags": [{ "Key": "PhiAllowed", "Value": "false" }, { "Key": "Mode", "Value": "readiness_only" }]
+      }
+    },
+    "ReadinessRunningTaskAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Condition": "ShouldDeployService",
+      "Properties": {
+        "AlarmName": "ai-desktop-pro-production-readiness-running-task",
+        "AlarmDescription": "The private PHI-disabled Desktop readiness task is not running.",
+        "Namespace": "ECS/ContainerInsights", "MetricName": "RunningTaskCount", "Statistic": "Minimum",
+        "Period": 300, "EvaluationPeriods": 1, "DatapointsToAlarm": 1, "Threshold": 1,
+        "ComparisonOperator": "LessThanThreshold", "TreatMissingData": "breaching",
+        "Dimensions": [
+          { "Name": "ClusterName", "Value": { "Ref": "EcsClusterName" } },
+          { "Name": "ServiceName", "Value": { "Fn::GetAtt": ["ReadinessService", "Name"] } }
+        ]
+      }
+    }
+  },
+  "Outputs": {
+    "PhiAllowed": { "Value": "false" },
+    "WorkloadMode": { "Value": "readiness_only" },
+    "BuildProjectName": { "Value": { "Ref": "ImageBuildProject" } },
+    "EndpointSecurityGroupId": { "Value": { "Ref": "EndpointSecurityGroup" } },
+    "ServiceName": { "Condition": "ShouldDeployService", "Value": { "Fn::GetAtt": ["ReadinessService", "Name"] } },
+    "ImageReference": { "Value": { "Fn::Sub": "${DesktopRepositoryUri}:${ImageTag}" } }
+  }
+}

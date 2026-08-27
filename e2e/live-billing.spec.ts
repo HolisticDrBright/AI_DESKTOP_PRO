@@ -102,7 +102,7 @@ test("1: the billing workspace shows real persisted figures", async ({ page }) =
 
 test("2: checkout from an appointment opens a draft with the booked service", async ({ page }) => {
   await page.goto("/calendar");
-  const appointment = page.getByText("Billing Walkthrough").first();
+  const appointment = page.getByRole("button", { name: /Billing Walkthrough/ }).first();
   await appointment.click();
   // Arrive first — checkout opens once the patient is actually here. The
   // status change re-renders the calendar, so re-open the appointment before
@@ -110,8 +110,12 @@ test("2: checkout from an appointment opens a draft with the booked service", as
   const arrive = page.getByTestId("appt-arrive");
   if (await arrive.isVisible().catch(() => false)) {
     await arrive.click();
-    await expect(arrive).toHaveCount(0);
-    await appointment.click();
+    // Wait for the persisted transition and its refetch to finish. Merely
+    // waiting for the optimistic Arrive button to disappear races onChanged(),
+    // which can close a drawer that the test has just reopened.
+    await expect(page.getByText(/Arrived recorded/).first()).toBeVisible();
+    await expect(page.getByRole("dialog", { name: "Appointment details" })).toHaveCount(0);
+    await page.getByRole("button", { name: /Billing Walkthrough/ }).first().click();
   }
   await expect(page.getByTestId("appt-checkout")).toBeVisible();
   await page.getByTestId("appt-checkout").click();

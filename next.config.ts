@@ -42,9 +42,16 @@ const EDITION: AppEdition = resolveEdition(process.env.APP_EDITION, EDITION_LOCK
  *  - The e2e suite additionally fails if ANY non-allowlisted network request
  *    is observed on these routes (e2e/live-scribe.spec.ts).
  */
+// Next's development runtime evaluates its generated source maps in the
+// browser. Without this development-only allowance, encounter pages render
+// their server shell but never hydrate under `next dev` (including the local
+// contract-fixture browser suite). Production builds retain the strict
+// no-eval policy below.
+const DEVELOPMENT_SCRIPT_EVAL = process.env.NODE_ENV === "development" ? " 'unsafe-eval'" : "";
+
 const RECORDING_CSP = [
   "default-src 'self'",
-  "script-src 'self' 'unsafe-inline'", // Next.js inline runtime; no external scripts
+  `script-src 'self' 'unsafe-inline'${DEVELOPMENT_SCRIPT_EVAL}`, // no external scripts
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data:",
   "font-src 'self' data:",
@@ -60,6 +67,9 @@ const RECORDING_CSP = [
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  // Produce the traced, minimal Node runtime used by the AWS-hosted clinical
+  // container. Build-time edition checks remain authoritative.
+  output: "standalone",
   /**
    * Publish the validated edition to the browser bundle. `src/lib/edition.ts`
    * reads these two and nothing else.

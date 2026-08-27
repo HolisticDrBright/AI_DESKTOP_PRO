@@ -19,12 +19,13 @@ function requestBody(fetchMock: ReturnType<typeof vi.fn>, index = 0) {
 }
 
 beforeEach(() => {
-  process.env.CLINICAL_SUPABASE_URL = "https://clinical.example.test";
+  process.env.CLINICAL_CONTRACT_FIXTURE = "1";
+  process.env.CLINICAL_SUPABASE_URL = "http://127.0.0.1:3999";
   process.env.CLINICAL_SUPABASE_ANON_KEY = "publishable-test-key";
   vi.restoreAllMocks();
 });
 
-describe("encountersLive Desktop Supabase boundary", () => {
+describe("encountersLive Desktop AWS clinical boundary", () => {
   test("starts and transitions an encounter through the audited database state machine", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(response(ENCOUNTER_ID))
@@ -42,7 +43,7 @@ describe("encountersLive Desktop Supabase boundary", () => {
     }, TOKEN)).resolves.toEqual({ ok: true });
 
     expect(fetchMock.mock.calls[0]?.[0]).toBe(
-      "https://clinical.example.test/rest/v1/rpc/start_encounter",
+      "http://127.0.0.1:3999/rest/v1/rpc/start_encounter",
     );
     expect(requestBody(fetchMock)).toEqual({
       _organization_id: ORG_ID,
@@ -51,7 +52,7 @@ describe("encountersLive Desktop Supabase boundary", () => {
       _appointment_id: "50000000-0000-4000-8000-000000000001",
     });
     expect(fetchMock.mock.calls[1]?.[0]).toBe(
-      "https://clinical.example.test/rest/v1/rpc/set_encounter_status",
+      "http://127.0.0.1:3999/rest/v1/rpc/set_encounter_status",
     );
   });
 
@@ -98,7 +99,7 @@ describe("encountersLive Desktop Supabase boundary", () => {
     ]);
 
     expect(fetchMock.mock.calls[0]?.[0]).toBe(
-      "https://clinical.example.test/rest/v1/rpc/get_desktop_encounter",
+      "http://127.0.0.1:3999/rest/v1/rpc/get_desktop_encounter",
     );
     expect(requestBody(fetchMock, 1)).toEqual({
       _patient_id: PATIENT_ID,
@@ -214,10 +215,10 @@ describe("encountersLive Desktop Supabase boundary", () => {
     }, TOKEN)).resolves.toEqual({ ok: true });
 
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
-      "https://clinical.example.test/rest/v1/rpc/mark_note_ready",
-      "https://clinical.example.test/rest/v1/rpc/sign_note",
-      "https://clinical.example.test/rest/v1/rpc/add_note_addendum",
-      "https://clinical.example.test/rest/v1/rpc/mark_note_error",
+      "http://127.0.0.1:3999/rest/v1/rpc/mark_note_ready",
+      "http://127.0.0.1:3999/rest/v1/rpc/sign_note",
+      "http://127.0.0.1:3999/rest/v1/rpc/add_note_addendum",
+      "http://127.0.0.1:3999/rest/v1/rpc/mark_note_error",
     ]);
   });
 

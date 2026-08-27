@@ -4,8 +4,8 @@ import { AdapterError, HTTP_STATUS, toAdapterError } from "@/adapters/errors";
 import { USE_LIVE_API } from "@/adapters/mode";
 
 /**
- * POST { accessToken, password } → set the new password using the one-time
- * RECOVERY token from the emailed link. On success every auth cookie is
+ * POST { email, confirmationCode, password } → set the new password using the
+ * one-time Cognito code. On success every auth cookie is
  * cleared — the practitioner signs in fresh with the new password.
  */
 export async function POST(req: NextRequest) {
@@ -17,16 +17,20 @@ export async function POST(req: NextRequest) {
   }
   try {
     const body = (await req.json().catch(() => ({}))) as {
-      accessToken?: unknown;
+      email?: unknown;
+      confirmationCode?: unknown;
       password?: unknown;
     };
-    if (typeof body.accessToken !== "string" || !body.accessToken) {
-      throw new AdapterError("invalid", "Open this page from your reset email link.");
+    if (typeof body.email !== "string" || !body.email.includes("@")) {
+      throw new AdapterError("invalid", "Enter the email address for the workforce account.");
     }
-    if (typeof body.password !== "string" || body.password.length < 8) {
-      throw new AdapterError("invalid", "Choose a password of at least 8 characters.");
+    if (typeof body.confirmationCode !== "string" || !/^\d{6}$/.test(body.confirmationCode)) {
+      throw new AdapterError("invalid", "Enter the six-digit code from the reset email.");
     }
-    await completePasswordReset(body.accessToken, body.password);
+    if (typeof body.password !== "string" || body.password.length < 14) {
+      throw new AdapterError("invalid", "Choose a password of at least 14 characters.");
+    }
+    await completePasswordReset(body.email.trim(), body.confirmationCode, body.password);
 
     const res = NextResponse.json({ data: { ok: true } });
     for (const name of Object.values(AUTH_COOKIES)) {

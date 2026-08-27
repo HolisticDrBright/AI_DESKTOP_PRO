@@ -43,6 +43,20 @@ const LICENSE_KEY = "PASSIO_LICENSE_KEY";
 const CUSTOMER_ID = "PASSIO_CUSTOMER_ID";
 const ENABLE_FLAG = "PASSIO_ENABLED";
 
+let testGovernanceApproved = false;
+
+/** Test-only seam. Runtime approval must come from the future durable AWS registry. */
+export function __setPassioGovernanceForTest(approved: boolean): void {
+  if (process.env.NODE_ENV !== "test") throw new Error("test_connector_registry_refused");
+  testGovernanceApproved = approved;
+}
+
+function governanceApproved(): boolean {
+  // Credentials and environment flags are configuration, never authorization.
+  // Production remains unavailable until the durable AWS registry read lands.
+  return process.env.NODE_ENV === "test" && testGovernanceApproved;
+}
+
 const API_BASE = "https://api.passiolife.com/v2/products/napi";
 const TOKEN_BASE = "https://api.passiolife.com/v2/token-cache/napi/oauth/token";
 
@@ -63,6 +77,7 @@ export function getPassioConfig(): PassioConfigReport {
   const problems: string[] = [];
   if (!env(LICENSE_KEY)) problems.push(`${LICENSE_KEY} is missing.`);
   if (!env(CUSTOMER_ID)) problems.push(`${CUSTOMER_ID} is missing.`);
+  if (!governanceApproved()) problems.push("Governed Passio approval is missing.");
 
   return {
     mode: problems.length === 0 ? "live" : "disabled",

@@ -3,14 +3,18 @@ if (typeof window !== "undefined") {
 }
 import type { VerifiedEvent } from "./stripe-boundary";
 import { mapSubscriptionStatus } from "./stripe-boundary";
+import {
+  DynamoDBClient,
+  PutItemCommand,
+  type AttributeValue,
+} from "@aws-sdk/client-dynamodb";
 
 /**
- * The service_role processor boundary (server-only).
+ * The AWS billing-ledger processor boundary (server-only).
  *
- * Holds the ONLY calls to `record_billing_webhook` and
- * `attach_payment_processor_ref`. Deliberately NOT imported by any adapter or
- * client module, so a compromised browser cannot even name these RPCs — a
- * property `payments-boundary.test.ts` asserts from the outside.
+ * Writes only minimum-necessary, PHI-free processor metadata into the
+ * encrypted AWS billing ledger. Deliberately NOT imported by any adapter or
+ * client module, so a compromised browser cannot reach this boundary.
  *
  * Everything here assumes the event has ALREADY been signature-verified and
  * livemode-checked by `stripe-boundary.verifyWebhookSignature`. This module's
@@ -22,33 +26,24 @@ export interface WebhookOutcome {
   detail?: string;
 }
 
-function serviceRoleConfig(): { url: string; key: string } | null {
-  const url = (process.env.CLINICAL_SUPABASE_URL ?? "").trim();
-  const key = (process.env.CLINICAL_SUPABASE_SERVICE_ROLE_KEY ?? "").trim();
-  if (!url || !key) return null;
-  return { url, key };
+function billingConfig(): { tableName: string; region: string } {
+  const tableName = (process.env.CLINICAL_AWS_BILLING_LEDGER_TABLE ?? "").trim();
+  const region = (process.env.CLINICAL_AWS_REGION ?? process.env.AWS_REGION ?? "").trim();
+  if (!/^[A-Za-z0-9_.-]{3,255}$/.test(tableName) || !/^[a-z]{2}-[a-z]+-\d$/.test(region)) {
+    throw new Error("The AWS processor boundary is not configured.");
+  }
+  return { tableName, region };
 }
 
-/** Call a service_role-only RPC. Never reachable from a browser session. */
-async function serviceRpc<T>(fn: string, args: Record<string, unknown>): Promise<T> {
-  const config = serviceRoleConfig();
-  if (!config) {
-    throw new Error("The processor boundary is not configured.");
-  }
-  const res = await fetch(`${config.url}/rest/v1/rpc/${fn}`, {
-    method: "POST",
-    headers: {
-      apikey: config.key,
-      authorization: `Bearer ${config.key}`,
-      "content-type": "application/json",
-    },
-    body: JSON.stringify(args),
-  });
-  if (!res.ok) {
-    // The server message may reference stored values; keep it out of logs.
-    throw new Error(`processor rpc ${fn} failed with ${res.status}`);
-  }
-  return (await res.json()) as T;
+function isConditionalFailure(error: unknown): boolean {
+  return Boolean(error) && typeof error === "object"
+    && (error as { name?: string }).name === "ConditionalCheckFailedException";
+}
+
+function bounded(value: unknown, pattern: RegExp, label: string): string {
+  const text = typeof value === "string" ? value.trim() : "";
+  if (!pattern.test(text)) throw new Error(`Invalid ${label}.`);
+  return text;
 }
 
 /**
@@ -89,27 +84,33 @@ export async function recordBillingWebhook(event: VerifiedEvent): Promise<Webhoo
         ? object.amount_paid
         : null;
 
-  const result = await serviceRpc<WebhookOutcome>("record_billing_webhook", {
-    _event_id: event.id,
-    _event_type: event.type,
-    _processor_ref:
-      typeof object.payment_intent === "string"
-        ? object.payment_intent
-        : typeof object.id === "string"
-          ? object.id
-          : null,
-    _amount_minor: amountMinor,
-    _currency: typeof object.currency === "string" ? object.currency.toUpperCase() : null,
-  });
-
-  // An event we do not handle is still recorded above; say so plainly.
-  if (!HANDLED.has(event.type)) {
-    return { outcome: "ignored", detail: "event type not handled by this build" };
+  const eventId = bounded(event.id, /^[A-Za-z0-9_.:-]{3,255}$/, "event id");
+  const eventType = bounded(event.type, /^[a-z0-9_.]{3,160}$/, "event type");
+  const processorRef = typeof object.payment_intent === "string"
+    ? object.payment_intent : typeof object.id === "string" ? object.id : null;
+  const outcome: WebhookOutcome = !HANDLED.has(event.type)
+    ? { outcome: "ignored", detail: "event type not handled by this build" }
+    : rawStatus && !mappedStatus
+      ? { outcome: "ignored", detail: "unrecognised subscription status" }
+      : { outcome: "processed" };
+  const config = billingConfig();
+  const item: Record<string, AttributeValue> = {
+    pk: { S: `EVENT#${eventId}` }, sk: { S: "EVENT" },
+    event_type: { S: eventType }, outcome: { S: outcome.outcome },
+    received_at: { S: new Date().toISOString() }, data_classification: { S: "billing_metadata_no_phi" },
+  };
+  if (processorRef) item.processor_ref = { S: bounded(processorRef, /^[A-Za-z0-9_.:-]{2,255}$/, "processor reference") };
+  if (amountMinor !== null && Number.isSafeInteger(amountMinor)) item.amount_minor = { N: String(amountMinor) };
+  if (typeof object.currency === "string" && /^[a-zA-Z]{3}$/.test(object.currency)) item.currency = { S: object.currency.toUpperCase() };
+  try {
+    await new DynamoDBClient({ region: config.region }).send(new PutItemCommand({
+      TableName: config.tableName, Item: item, ConditionExpression: "attribute_not_exists(pk)",
+    }));
+  } catch (error) {
+    if (isConditionalFailure(error)) return { outcome: "duplicate" };
+    throw new Error("AWS billing ledger write failed.");
   }
-  if (rawStatus && !mappedStatus) {
-    return { outcome: "ignored", detail: "unrecognised subscription status" };
-  }
-  return result;
+  return outcome;
 }
 
 /**
@@ -120,8 +121,21 @@ export async function attachProcessorRef(
   paymentId: string,
   processorRef: string,
 ): Promise<void> {
-  await serviceRpc("attach_payment_processor_ref", {
-    _payment_id: paymentId,
-    _processor_ref: processorRef,
-  });
+  const payment = bounded(paymentId, /^[0-9a-f]{8}-[0-9a-f-]{27,45}$/i, "payment id");
+  const reference = bounded(processorRef, /^[A-Za-z0-9_.:-]{2,255}$/, "processor reference");
+  const config = billingConfig();
+  try {
+    await new DynamoDBClient({ region: config.region }).send(new PutItemCommand({
+      TableName: config.tableName,
+      Item: {
+        pk: { S: `PAYMENT#${payment}` }, sk: { S: "PROCESSOR_REF" }, processor_ref: { S: reference },
+        attached_at: { S: new Date().toISOString() }, data_classification: { S: "billing_metadata_no_phi" },
+      },
+      ConditionExpression: "attribute_not_exists(pk) OR processor_ref = :processor_ref",
+      ExpressionAttributeValues: { ":processor_ref": { S: reference } },
+    }));
+  } catch (error) {
+    if (isConditionalFailure(error)) throw new Error("Processor reference conflict.");
+    throw new Error("AWS billing ledger write failed.");
+  }
 }

@@ -1,0 +1,21 @@
+{
+  "schema_version": "aws-clinical-core-deployment/1",
+  "environment": "synthetic-staging",
+  "data_classification": "synthetic_only",
+  "contains_phi": false,
+  "real_patient_data_allowed": false,
+  "vendor_phi_enabled": false,
+  "aws_baa_status": "pending-organization-acceptance",
+  "aws_account_id": "000000000000",
+  "aws_region": "us-east-2",
+  "budget_alert_email": "replace@example.com",
+  "allowed_client_origins": [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000"
+  ],
+  "approvals": {
+    "infrastructure_owner": "",
+    "security_reviewer": "",
+    "reviewed_at": ""
+  }
+}

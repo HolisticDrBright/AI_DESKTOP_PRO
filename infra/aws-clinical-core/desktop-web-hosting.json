@@ -1,0 +1,164 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Synthetic-only hosted practitioner web interface for AI Desktop Pro",
+  "Parameters": {
+    "SourceVersion": { "Type": "String" },
+    "ImageTag": { "Type": "String", "AllowedPattern": "^[a-f0-9]{7,40}$" },
+    "ClinicalCoreKeyArn": { "Type": "String" },
+    "ClinicalApiOrigin": { "Type": "String", "AllowedPattern": "^https://[a-z0-9]+\\.execute-api\\.[a-z0-9-]+\\.amazonaws\\.com$" },
+    "ClinicalApiHost": { "Type": "String", "AllowedPattern": "^[a-z0-9]+\\.execute-api\\.[a-z0-9-]+\\.amazonaws\\.com$" },
+    "WorkforceUserPoolId": { "Type": "String", "AllowedPattern": "^[a-z0-9-]+_[A-Za-z0-9]+$" },
+    "WorkforceUserPoolClientId": { "Type": "String", "AllowedPattern": "^[a-z0-9]{8,128}$" },
+    "DeployService": { "Type": "String", "Default": "false", "AllowedValues": ["true", "false"] }
+  },
+  "Conditions": {
+    "ShouldDeployService": { "Fn::Equals": [{ "Ref": "DeployService" }, "true"] }
+  },
+  "Resources": {
+    "DesktopWebRepository": {
+      "Type": "AWS::ECR::Repository",
+      "Properties": {
+        "RepositoryName": "ai-desktop-pro-web",
+        "ImageTagMutability": "IMMUTABLE",
+        "ImageScanningConfiguration": { "ScanOnPush": true },
+        "EncryptionConfiguration": { "EncryptionType": "AES256" },
+        "LifecyclePolicy": {
+          "LifecyclePolicyText": "{\"rules\":[{\"rulePriority\":1,\"description\":\"Retain five hosted images\",\"selection\":{\"tagStatus\":\"any\",\"countType\":\"imageCountMoreThan\",\"countNumber\":5},\"action\":{\"type\":\"expire\"}}]}"
+        },
+        "Tags": [
+          { "Key": "Application", "Value": "AI Desktop Pro" },
+          { "Key": "Environment", "Value": "synthetic-staging" },
+          { "Key": "DataClassification", "Value": "synthetic_only" }
+        ]
+      }
+    },
+    "DesktopWebBuildRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [{ "Effect": "Allow", "Principal": { "Service": "codebuild.amazonaws.com" }, "Action": "sts:AssumeRole" }]
+        },
+        "Policies": [{
+          "PolicyName": "BuildAndPushDesktopWeb",
+          "PolicyDocument": {
+            "Version": "2012-10-17",
+            "Statement": [
+              { "Effect": "Allow", "Action": ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"], "Resource": "*" },
+              { "Effect": "Allow", "Action": "ecr:GetAuthorizationToken", "Resource": "*" },
+              { "Effect": "Allow", "Action": ["ecr:BatchCheckLayerAvailability", "ecr:CompleteLayerUpload", "ecr:GetDownloadUrlForLayer", "ecr:InitiateLayerUpload", "ecr:PutImage", "ecr:UploadLayerPart"], "Resource": { "Fn::GetAtt": ["DesktopWebRepository", "Arn"] } }
+            ]
+          }
+        }]
+      }
+    },
+    "DesktopWebBuildProject": {
+      "Type": "AWS::CodeBuild::Project",
+      "Properties": {
+        "Name": "ai-desktop-pro-synthetic-web",
+        "Description": "Build the synthetic-only clinical Desktop web image",
+        "ServiceRole": { "Fn::GetAtt": ["DesktopWebBuildRole", "Arn"] },
+        "Source": {
+          "Type": "GITHUB",
+          "Location": "https://github.com/HolisticDrBright/AI_DESKTOP_PRO.git",
+          "GitCloneDepth": 1,
+          "ReportBuildStatus": false,
+          "BuildSpec": { "Fn::Sub": "version: 0.2\nphases:\n  pre_build:\n    commands:\n      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $ECR_REGISTRY\n  build:\n    commands:\n      - docker build --build-arg APP_EDITION=clinical --build-arg APP_RUNTIME_ENV=staging --build-arg NEXT_PUBLIC_APP_ENV=staging --build-arg NEXT_PUBLIC_USE_LIVE_API=true --build-arg CLINICAL_DATA_PLANE=aws --build-arg CLINICAL_AWS_REGION=$AWS_DEFAULT_REGION --build-arg CLINICAL_AWS_API_ORIGIN=$CLINICAL_AWS_API_ORIGIN --build-arg CLINICAL_AWS_ALLOWED_API_HOSTS=$CLINICAL_AWS_ALLOWED_API_HOSTS --build-arg CLINICAL_AWS_WORKFORCE_API_ORIGIN=$CLINICAL_AWS_API_ORIGIN --build-arg CLINICAL_AWS_WORKFORCE_USER_POOL_ID=$CLINICAL_AWS_WORKFORCE_USER_POOL_ID --build-arg CLINICAL_AWS_WORKFORCE_CLIENT_ID=$CLINICAL_AWS_WORKFORCE_CLIENT_ID --build-arg CLINICAL_AWS_RUNTIME_MODE=synthetic --build-arg AWS_CLINICAL_ADAPTER_READY=true --build-arg PHI_ALLOWED=false -t $ECR_REPOSITORY_URI:$IMAGE_TAG .\n      - docker run --detach --name desktop-smoke --publish 3000:3000 --env APP_EDITION=clinical --env APP_RUNTIME_ENV=staging --env NEXT_PUBLIC_APP_ENV=staging --env NEXT_PUBLIC_USE_LIVE_API=true --env CLINICAL_DATA_PLANE=aws --env CLINICAL_AWS_REGION=$AWS_DEFAULT_REGION --env CLINICAL_AWS_API_ORIGIN=$CLINICAL_AWS_API_ORIGIN --env CLINICAL_AWS_ALLOWED_API_HOSTS=$CLINICAL_AWS_ALLOWED_API_HOSTS --env CLINICAL_AWS_WORKFORCE_API_ORIGIN=$CLINICAL_AWS_API_ORIGIN --env CLINICAL_AWS_WORKFORCE_USER_POOL_ID=$CLINICAL_AWS_WORKFORCE_USER_POOL_ID --env CLINICAL_AWS_WORKFORCE_CLIENT_ID=$CLINICAL_AWS_WORKFORCE_CLIENT_ID --env CLINICAL_AWS_RUNTIME_MODE=synthetic --env AWS_CLINICAL_ADAPTER_READY=true --env PHI_ALLOWED=false $ECR_REPOSITORY_URI:$IMAGE_TAG\n      - for attempt in $(seq 1 30); do if curl --fail --silent http://127.0.0.1:3000/api/health; then break; fi; if [ $attempt -eq 30 ]; then docker logs desktop-smoke; exit 1; fi; sleep 1; done\n      - docker stop desktop-smoke\n  post_build:\n    commands:\n      - docker push $ECR_REPOSITORY_URI:$IMAGE_TAG\n" }
+        },
+        "SourceVersion": { "Ref": "SourceVersion" },
+        "Artifacts": { "Type": "NO_ARTIFACTS" },
+        "Environment": {
+          "Type": "LINUX_CONTAINER",
+          "ComputeType": "BUILD_GENERAL1_SMALL",
+          "Image": "aws/codebuild/standard:7.0",
+          "PrivilegedMode": true,
+          "EnvironmentVariables": [
+            { "Name": "ECR_REGISTRY", "Value": { "Fn::Sub": "${AWS::AccountId}.dkr.ecr.${AWS::Region}.${AWS::URLSuffix}" } },
+            { "Name": "ECR_REPOSITORY_URI", "Value": { "Fn::GetAtt": ["DesktopWebRepository", "RepositoryUri"] } },
+            { "Name": "IMAGE_TAG", "Value": { "Ref": "ImageTag" } },
+            { "Name": "CLINICAL_AWS_API_ORIGIN", "Value": { "Ref": "ClinicalApiOrigin" } },
+            { "Name": "CLINICAL_AWS_ALLOWED_API_HOSTS", "Value": { "Ref": "ClinicalApiHost" } },
+            { "Name": "CLINICAL_AWS_WORKFORCE_USER_POOL_ID", "Value": { "Ref": "WorkforceUserPoolId" } },
+            { "Name": "CLINICAL_AWS_WORKFORCE_CLIENT_ID", "Value": { "Ref": "WorkforceUserPoolClientId" } }
+          ]
+        },
+        "TimeoutInMinutes": 30,
+        "QueuedTimeoutInMinutes": 30,
+        "Tags": [
+          { "Key": "Application", "Value": "AI Desktop Pro" },
+          { "Key": "Environment", "Value": "synthetic-staging" }
+        ]
+      }
+    },
+    "DesktopWebEcrAccessRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [{ "Effect": "Allow", "Principal": { "Service": "build.apprunner.amazonaws.com" }, "Action": "sts:AssumeRole" }]
+        },
+        "ManagedPolicyArns": [{ "Fn::Sub": "arn:${AWS::Partition}:iam::aws:policy/service-role/AWSAppRunnerServicePolicyForECRAccess" }]
+      }
+    },
+    "DesktopWebService": {
+      "Condition": "ShouldDeployService",
+      "Type": "AWS::AppRunner::Service",
+      "Properties": {
+        "ServiceName": "ai-desktop-pro-synthetic-staging",
+        "EncryptionConfiguration": { "KmsKey": { "Ref": "ClinicalCoreKeyArn" } },
+        "SourceConfiguration": {
+          "AutoDeploymentsEnabled": false,
+          "AuthenticationConfiguration": { "AccessRoleArn": { "Fn::GetAtt": ["DesktopWebEcrAccessRole", "Arn"] } },
+          "ImageRepository": {
+            "ImageIdentifier": { "Fn::Sub": "${DesktopWebRepository.RepositoryUri}:${ImageTag}" },
+            "ImageRepositoryType": "ECR",
+            "ImageConfiguration": {
+              "Port": "3000",
+              "RuntimeEnvironmentVariables": [
+                { "Name": "APP_EDITION", "Value": "clinical" },
+                { "Name": "APP_RUNTIME_ENV", "Value": "staging" },
+                { "Name": "NEXT_PUBLIC_APP_ENV", "Value": "staging" },
+                { "Name": "NEXT_PUBLIC_USE_LIVE_API", "Value": "true" },
+                { "Name": "CLINICAL_DATA_PLANE", "Value": "aws" },
+                { "Name": "CLINICAL_AWS_REGION", "Value": { "Ref": "AWS::Region" } },
+                { "Name": "CLINICAL_AWS_API_ORIGIN", "Value": { "Ref": "ClinicalApiOrigin" } },
+                { "Name": "CLINICAL_AWS_ALLOWED_API_HOSTS", "Value": { "Ref": "ClinicalApiHost" } },
+                { "Name": "CLINICAL_AWS_WORKFORCE_API_ORIGIN", "Value": { "Ref": "ClinicalApiOrigin" } },
+                { "Name": "CLINICAL_AWS_WORKFORCE_USER_POOL_ID", "Value": { "Ref": "WorkforceUserPoolId" } },
+                { "Name": "CLINICAL_AWS_WORKFORCE_CLIENT_ID", "Value": { "Ref": "WorkforceUserPoolClientId" } },
+                { "Name": "CLINICAL_AWS_RUNTIME_MODE", "Value": "synthetic" },
+                { "Name": "AWS_CLINICAL_ADAPTER_READY", "Value": "true" },
+                { "Name": "PHI_ALLOWED", "Value": "false" }
+              ]
+            }
+          }
+        },
+        "InstanceConfiguration": {
+          "Cpu": "0.5 vCPU",
+          "Memory": "1 GB"
+        },
+        "HealthCheckConfiguration": {
+          "Protocol": "HTTP",
+          "Path": "/api/health",
+          "Interval": 10,
+          "Timeout": 5,
+          "HealthyThreshold": 1,
+          "UnhealthyThreshold": 5
+        },
+        "NetworkConfiguration": { "EgressConfiguration": { "EgressType": "DEFAULT" }, "IngressConfiguration": { "IsPubliclyAccessible": true } },
+        "Tags": [
+          { "Key": "Application", "Value": "AI Desktop Pro" },
+          { "Key": "Environment", "Value": "synthetic-staging" },
+          { "Key": "DataClassification", "Value": "synthetic_only" },
+          { "Key": "RealPatientDataAllowed", "Value": "false" }
+        ]
+      }
+    }
+  },
+  "Outputs": {
+    "BuildProjectName": { "Value": { "Ref": "DesktopWebBuildProject" } },
+    "RepositoryUri": { "Value": { "Fn::GetAtt": ["DesktopWebRepository", "RepositoryUri"] } },
+    "ServiceUrl": { "Condition": "ShouldDeployService", "Value": { "Fn::GetAtt": ["DesktopWebService", "ServiceUrl"] } },
+    "ServiceArn": { "Condition": "ShouldDeployService", "Value": { "Fn::GetAtt": ["DesktopWebService", "ServiceArn"] } }
+  }
+}

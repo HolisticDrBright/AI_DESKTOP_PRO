@@ -10,21 +10,24 @@ if (typeof window !== "undefined") {
  * secret ever reaching the client bundle.
  */
 export interface LiveServerStatus {
-  clinicalSupabaseConfigured: boolean;
-  trpcConfigured: boolean;
-  demoSessionConfigured: boolean;
+  clinicalAwsConfigured: boolean;
+  transitionTrpcConfigured: boolean;
+  localFixtureSessionConfigured: boolean;
   orgConfigured: boolean;
 }
 
 export function getLiveServerStatus(): LiveServerStatus {
   return {
-    clinicalSupabaseConfigured: Boolean(
-      process.env.CLINICAL_SUPABASE_URL && process.env.CLINICAL_SUPABASE_ANON_KEY,
+    clinicalAwsConfigured: Boolean(
+      process.env.CLINICAL_AWS_REGION &&
+        process.env.CLINICAL_AWS_API_ORIGIN &&
+        process.env.CLINICAL_AWS_WORKFORCE_USER_POOL_ID &&
+        process.env.CLINICAL_AWS_WORKFORCE_CLIENT_ID &&
+        process.env.AWS_CLINICAL_ADAPTER_READY === "true",
     ),
-    trpcConfigured: Boolean(process.env.TRPC_BASE_URL),
-    demoSessionConfigured: Boolean(
-      process.env.CLINICAL_SUPABASE_URL &&
-        process.env.CLINICAL_SUPABASE_ANON_KEY &&
+    transitionTrpcConfigured: Boolean(process.env.TRPC_BASE_URL),
+    localFixtureSessionConfigured: Boolean(
+      process.env.CLINICAL_CONTRACT_FIXTURE === "1" &&
         process.env.CLINICAL_DEMO_EMAIL &&
         process.env.CLINICAL_DEMO_PASSWORD,
     ),

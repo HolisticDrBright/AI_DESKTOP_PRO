@@ -1,0 +1,71 @@
+{
+  "schema_version": "first-real-data-pilot-readiness/1",
+  "environment": "production-clinical",
+  "scope": "lab_intake_only",
+  "aws_account_id": "173535830222",
+  "synthetic_account_id": "588966314750",
+  "region": "us-east-2",
+  "pilot_organization_id": "00000000-0000-0000-0000-000000000000",
+  "controlled_identity_record": "REPLACE_WITH_CONTROLLED_EVIDENCE_REFERENCE",
+  "aws_organizations_baa": {
+    "status": "active",
+    "effective_date": "2026-08-18",
+    "evidence_reference": "REPLACE_WITH_CONTROLLED_EVIDENCE_REFERENCE"
+  },
+  "controls": {
+    "hipaa_eligible_service_review": "blocked",
+    "risk_analysis": "blocked",
+    "minimum_necessary_data_flow": "blocked",
+    "vendor_inventory_for_enabled_path": "blocked",
+    "privacy_and_consent_review": "blocked",
+    "workforce_cognito": "blocked",
+    "consumer_cognito": "blocked",
+    "tenant_and_role_isolation": "blocked",
+    "delivery_time_consent": "blocked",
+    "durable_audit": "blocked",
+    "security_monitoring": "blocked",
+    "backup_restore_rehearsal": "blocked",
+    "incident_response_rehearsal": "blocked",
+    "vulnerability_gate": "blocked",
+    "mobile_secure_storage_review": "blocked",
+    "clinical_safety_review": "blocked",
+    "exact_build_synthetic_e2e": "blocked",
+    "rollback_rehearsal": "blocked",
+    "pilot_observation_and_kill_switch": "blocked"
+  },
+  "runtime_boundaries": {
+    "desktop_compute": "ecs_fargate",
+    "patient_api_compute": "ecs_fargate",
+    "clinical_database": "aurora_postgresql",
+    "workforce_identity": "cognito",
+    "consumer_identity": "cognito",
+    "object_storage": "s3_kms",
+    "desktop_scope": "lab_intake_only",
+    "organization_scope": "single_named_organization",
+    "supabase_phi_path": "disabled",
+    "fly_phi_path": "disabled",
+    "app_runner_phi_path": "disabled",
+    "junction": "disabled",
+    "passio": "disabled",
+    "clinical_ai": "disabled",
+    "billing": "disabled",
+    "messaging": "disabled",
+    "protocol_activation": "disabled"
+  },
+  "evidence": {
+    "desktop_source_commit": "REPLACE_WITH_40_CHARACTER_COMMIT",
+    "v2_source_commit": "REPLACE_WITH_40_CHARACTER_COMMIT",
+    "desktop_image_digest": "REPLACE_WITH_SHA256_IMAGE_DIGEST",
+    "patient_api_image_digest": "REPLACE_WITH_SHA256_IMAGE_DIGEST",
+    "synthetic_e2e_sha256": "REPLACE_WITH_64_CHARACTER_SHA256",
+    "rollback_sha256": "REPLACE_WITH_64_CHARACTER_SHA256"
+  },
+  "approvals": {
+    "legal_compliance": { "status": "blocked", "reviewer": "", "reviewed_at": "" },
+    "security": { "status": "blocked", "reviewer": "", "reviewed_at": "" },
+    "clinical_safety": { "status": "blocked", "reviewer": "", "reviewed_at": "" },
+    "engineering": { "status": "blocked", "reviewer": "", "reviewed_at": "" },
+    "pilot_owner": { "status": "blocked", "reviewer": "", "reviewed_at": "" }
+  },
+  "phi_activation": "blocked"
+}

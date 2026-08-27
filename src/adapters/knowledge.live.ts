@@ -11,7 +11,7 @@ import type {
   KnowledgePathwayContent,
   KnowledgePathwayVersion,
 } from "./clinical-knowledge.types";
-import { clinicalRpc, clinicalSelect } from "./supabase-rest.server";
+import { clinicalRpc, clinicalSelect } from "./aws-clinical-data.server";
 
 interface DatabasePathwayVersion {
   id: string;

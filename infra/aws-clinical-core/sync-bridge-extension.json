@@ -1,0 +1,230 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Synthetic-only signed patient-sync bridge between AI Desktop Pro and AI Longevity Pro V2.",
+  "Metadata": {
+    "ClinicalCore": {
+      "ContractVersion": "patient-sync/1",
+      "Environment": "synthetic-staging",
+      "DataClassification": "synthetic_only",
+      "ContainsPhi": false,
+      "RealPatientDataAllowed": false
+    }
+  },
+  "Parameters": {
+    "ClinicalApiId": { "Type": "String", "AllowedPattern": "^[a-z0-9]{10}$" },
+    "ClinicalCoreKeyArn": { "Type": "String", "AllowedPattern": "^arn:(aws|aws-us-gov|aws-cn):kms:[a-z0-9-]+:[0-9]{12}:key/[0-9a-f-]{36}$" },
+    "LambdaCodeBucket": { "Type": "String", "AllowedPattern": "^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$" },
+    "LambdaCodeKey": { "Type": "String", "AllowedPattern": "^[A-Za-z0-9!_.*'()/\\-]{1,1024}$" },
+    "SupabaseUrl": { "Type": "String", "AllowedPattern": "^https://[a-z0-9-]+\\.supabase\\.co$" },
+    "OrganizationId": { "Type": "String", "AllowedPattern": "^[0-9a-f-]{36}$" },
+    "V2BaseUrl": { "Type": "String", "AllowedPattern": "^https://[A-Za-z0-9.-]+$" },
+    "V2InboundKeyId": { "Type": "String", "Default": "desktop-to-v2-2026-08", "AllowedPattern": "^[A-Za-z0-9._-]{8,80}$" },
+    "DesktopCallbackKeyId": { "Type": "String", "Default": "v2-to-desktop-2026-08", "AllowedPattern": "^[A-Za-z0-9._-]{8,80}$" }
+  },
+  "Resources": {
+    "SyncBridgeSecret": {
+      "Type": "AWS::SecretsManager::Secret",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "Name": "ai-clinical-core/synthetic-staging/patient-sync",
+        "Description": "Server-only synthetic patient-sync credentials. Never exposed to either client bundle.",
+        "KmsKeyId": { "Ref": "ClinicalCoreKeyArn" },
+        "SecretString": "{\"configured\":false}",
+        "Tags": [
+          { "Key": "Environment", "Value": "synthetic-staging" },
+          { "Key": "DataClassification", "Value": "synthetic_only" }
+        ]
+      }
+    },
+    "SyncBridgeApiLogGroup": {
+      "Type": "AWS::Logs::LogGroup",
+      "DeletionPolicy": "Delete",
+      "UpdateReplacePolicy": "Delete",
+      "Properties": {
+        "LogGroupName": { "Fn::Sub": "/ai-clinical-core/synthetic-staging/patient-sync-api-${ClinicalApiId}" },
+        "KmsKeyId": { "Ref": "ClinicalCoreKeyArn" },
+        "RetentionInDays": 14
+      }
+    },
+    "SyncBridgeWorkerLogGroup": {
+      "Type": "AWS::Logs::LogGroup",
+      "DeletionPolicy": "Delete",
+      "UpdateReplacePolicy": "Delete",
+      "Properties": {
+        "LogGroupName": { "Fn::Sub": "/ai-clinical-core/synthetic-staging/patient-sync-worker-${ClinicalApiId}" },
+        "KmsKeyId": { "Ref": "ClinicalCoreKeyArn" },
+        "RetentionInDays": 14
+      }
+    },
+    "SyncBridgeRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [{ "Effect": "Allow", "Principal": { "Service": "lambda.amazonaws.com" }, "Action": "sts:AssumeRole" }]
+        },
+        "Policies": [
+          {
+            "PolicyName": "ReadPatientSyncSecret",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                { "Effect": "Allow", "Action": "secretsmanager:GetSecretValue", "Resource": { "Ref": "SyncBridgeSecret" } },
+                { "Effect": "Allow", "Action": "kms:Decrypt", "Resource": { "Ref": "ClinicalCoreKeyArn" } }
+              ]
+            }
+          },
+          {
+            "PolicyName": "WritePatientSyncLogs",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [{
+                "Effect": "Allow",
+                "Action": ["logs:CreateLogStream", "logs:PutLogEvents"],
+                "Resource": [
+                  { "Fn::GetAtt": ["SyncBridgeApiLogGroup", "Arn"] },
+                  { "Fn::GetAtt": ["SyncBridgeWorkerLogGroup", "Arn"] }
+                ]
+              }]
+            }
+          }
+        ]
+      }
+    },
+    "SyncBridgeApiFunction": {
+      "Type": "AWS::Lambda::Function",
+      "Properties": {
+        "FunctionName": { "Fn::Sub": "${ClinicalApiId}-synthetic-patient-sync-api" },
+        "Runtime": "nodejs22.x",
+        "Architectures": ["arm64"],
+        "Handler": "index.apiHandler",
+        "Role": { "Fn::GetAtt": ["SyncBridgeRole", "Arn"] },
+        "MemorySize": 256,
+        "Timeout": 20,
+        "LoggingConfig": { "LogGroup": { "Ref": "SyncBridgeApiLogGroup" }, "LogFormat": "JSON", "ApplicationLogLevel": "ERROR", "SystemLogLevel": "WARN" },
+        "Code": { "S3Bucket": { "Ref": "LambdaCodeBucket" }, "S3Key": { "Ref": "LambdaCodeKey" } },
+        "Environment": { "Variables": {
+          "SYNC_BRIDGE_SECRET_ARN": { "Ref": "SyncBridgeSecret" },
+          "SYNC_SUPABASE_URL": { "Ref": "SupabaseUrl" },
+          "SYNC_ORGANIZATION_ID": { "Ref": "OrganizationId" },
+          "SYNC_CALLBACK_KEY_ID": { "Ref": "DesktopCallbackKeyId" }
+        } },
+        "Tags": [
+          { "Key": "Environment", "Value": "synthetic-staging" },
+          { "Key": "DataClassification", "Value": "synthetic_only" }
+        ]
+      }
+    },
+    "SyncBridgeWorkerFunction": {
+      "Type": "AWS::Lambda::Function",
+      "Properties": {
+        "FunctionName": { "Fn::Sub": "${ClinicalApiId}-synthetic-patient-sync-worker" },
+        "Runtime": "nodejs22.x",
+        "Architectures": ["arm64"],
+        "Handler": "index.workerHandler",
+        "Role": { "Fn::GetAtt": ["SyncBridgeRole", "Arn"] },
+        "MemorySize": 384,
+        "Timeout": 55,
+        "LoggingConfig": { "LogGroup": { "Ref": "SyncBridgeWorkerLogGroup" }, "LogFormat": "JSON", "ApplicationLogLevel": "ERROR", "SystemLogLevel": "WARN" },
+        "Code": { "S3Bucket": { "Ref": "LambdaCodeBucket" }, "S3Key": { "Ref": "LambdaCodeKey" } },
+        "Environment": { "Variables": {
+          "SYNC_BRIDGE_SECRET_ARN": { "Ref": "SyncBridgeSecret" },
+          "SYNC_SUPABASE_URL": { "Ref": "SupabaseUrl" },
+          "SYNC_ORGANIZATION_ID": { "Ref": "OrganizationId" },
+          "SYNC_V2_BASE_URL": { "Ref": "V2BaseUrl" },
+          "SYNC_V2_KEY_ID": { "Ref": "V2InboundKeyId" },
+          "SYNC_WORKER_BATCH": "10",
+          "SYNC_WORKER_LEASE_SECONDS": "120"
+        } },
+        "Tags": [
+          { "Key": "Environment", "Value": "synthetic-staging" },
+          { "Key": "DataClassification", "Value": "synthetic_only" }
+        ]
+      }
+    },
+    "SyncBridgeIntegration": {
+      "Type": "AWS::ApiGatewayV2::Integration",
+      "Properties": {
+        "ApiId": { "Ref": "ClinicalApiId" },
+        "IntegrationType": "AWS_PROXY",
+        "IntegrationUri": { "Fn::GetAtt": ["SyncBridgeApiFunction", "Arn"] },
+        "PayloadFormatVersion": "2.0",
+        "TimeoutInMillis": 20000
+      }
+    },
+    "SyncVerifyRoute": {
+      "Type": "AWS::ApiGatewayV2::Route",
+      "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "POST /sync/verify", "Target": { "Fn::Sub": "integrations/${SyncBridgeIntegration}" } }
+    },
+    "SyncCallbackRoute": {
+      "Type": "AWS::ApiGatewayV2::Route",
+      "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "POST /sync/callback", "Target": { "Fn::Sub": "integrations/${SyncBridgeIntegration}" } }
+    },
+    "SyncBridgeInvokePermission": {
+      "Type": "AWS::Lambda::Permission",
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": { "Ref": "SyncBridgeApiFunction" },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": { "Fn::Sub": "arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${ClinicalApiId}/*/POST/sync/*" }
+      }
+    },
+    "SyncWorkerSchedule": {
+      "Type": "AWS::Events::Rule",
+      "Properties": {
+        "Description": "Runs one bounded patient-sync delivery cycle each minute.",
+        "ScheduleExpression": "rate(1 minute)",
+        "State": "ENABLED",
+        "Targets": [{ "Arn": { "Fn::GetAtt": ["SyncBridgeWorkerFunction", "Arn"] }, "Id": "PatientSyncWorker" }]
+      }
+    },
+    "SyncWorkerSchedulePermission": {
+      "Type": "AWS::Lambda::Permission",
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": { "Ref": "SyncBridgeWorkerFunction" },
+        "Principal": "events.amazonaws.com",
+        "SourceArn": { "Fn::GetAtt": ["SyncWorkerSchedule", "Arn"] }
+      }
+    },
+    "SyncApiErrorAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmName": { "Fn::Sub": "${ClinicalApiId}-synthetic-patient-sync-api-errors" },
+        "Namespace": "AWS/Lambda",
+        "MetricName": "Errors",
+        "Dimensions": [{ "Name": "FunctionName", "Value": { "Ref": "SyncBridgeApiFunction" } }],
+        "Statistic": "Sum",
+        "Period": 300,
+        "EvaluationPeriods": 1,
+        "Threshold": 1,
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "TreatMissingData": "notBreaching"
+      }
+    },
+    "SyncWorkerErrorAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmName": { "Fn::Sub": "${ClinicalApiId}-synthetic-patient-sync-worker-errors" },
+        "Namespace": "AWS/Lambda",
+        "MetricName": "Errors",
+        "Dimensions": [{ "Name": "FunctionName", "Value": { "Ref": "SyncBridgeWorkerFunction" } }],
+        "Statistic": "Sum",
+        "Period": 300,
+        "EvaluationPeriods": 1,
+        "Threshold": 1,
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "TreatMissingData": "notBreaching"
+      }
+    }
+  },
+  "Outputs": {
+    "ContractVersion": { "Value": "patient-sync/1" },
+    "DataClassification": { "Value": "synthetic_only" },
+    "PhiAllowed": { "Value": "false" },
+    "CallbackBaseUrl": { "Value": { "Fn::Sub": "https://${ClinicalApiId}.execute-api.${AWS::Region}.${AWS::URLSuffix}" } },
+    "SyncBridgeSecretArn": { "Value": { "Ref": "SyncBridgeSecret" } },
+    "WorkerFunctionName": { "Value": { "Ref": "SyncBridgeWorkerFunction" } }
+  }
+}

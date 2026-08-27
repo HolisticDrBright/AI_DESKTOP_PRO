@@ -1,0 +1,882 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Synthetic-only AWS clinical-core baseline for AI Desktop Pro and AI Longevity Pro V2.",
+  "Metadata": {
+    "ClinicalCore": {
+      "ContractVersion": "clinical-core/1",
+      "Environment": "synthetic-staging",
+      "DataClassification": "synthetic_only",
+      "ContainsPhi": false
+    }
+  },
+  "Parameters": {
+    "ProjectName": {
+      "Type": "String",
+      "Default": "ai-clinical-core",
+      "AllowedPattern": "^[a-z][a-z0-9-]{2,30}$"
+    },
+    "EnvironmentName": {
+      "Type": "String",
+      "Default": "synthetic-staging",
+      "AllowedValues": ["synthetic-staging"]
+    },
+    "DataClassification": {
+      "Type": "String",
+      "Default": "synthetic_only",
+      "AllowedValues": ["synthetic_only"]
+    },
+    "BudgetAlertEmail": {
+      "Type": "String",
+      "AllowedPattern": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$",
+      "Description": "Operator address for account-level AWS budget alerts."
+    },
+    "DatabaseName": {
+      "Type": "String",
+      "Default": "clinical_core",
+      "AllowedPattern": "^[A-Za-z][A-Za-z0-9_]{0,62}$"
+    },
+    "MaxAuroraAcu": {
+      "Type": "Number",
+      "Default": 2,
+      "AllowedValues": [1, 2, 4]
+    },
+    "AllowedClientOrigins": {
+      "Type": "CommaDelimitedList",
+      "Default": "http://localhost:3000,http://127.0.0.1:3000"
+    }
+  },
+  "Resources": {
+    "ClinicalCoreKey": {
+      "Type": "AWS::KMS::Key",
+      "Properties": {
+        "Description": { "Fn::Sub": "${ProjectName}-${EnvironmentName} encryption" },
+        "EnableKeyRotation": true,
+        "PendingWindowInDays": 30,
+        "KeyPolicy": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Sid": "AccountAdministration",
+              "Effect": "Allow",
+              "Principal": { "AWS": { "Fn::Sub": "arn:${AWS::Partition}:iam::${AWS::AccountId}:root" } },
+              "Action": "kms:*",
+              "Resource": "*"
+            },
+            {
+              "Sid": "CloudTrailEncryption",
+              "Effect": "Allow",
+              "Principal": { "Service": "cloudtrail.amazonaws.com" },
+              "Action": ["kms:GenerateDataKey*", "kms:DescribeKey"],
+              "Resource": "*",
+              "Condition": {
+                "StringEquals": { "aws:SourceAccount": { "Ref": "AWS::AccountId" } },
+                "StringLike": {
+                  "kms:EncryptionContext:aws:cloudtrail:arn": {
+                    "Fn::Sub": "arn:${AWS::Partition}:cloudtrail:*:${AWS::AccountId}:trail/*"
+                  }
+                }
+              }
+            },
+            {
+              "Sid": "CloudWatchLogsEncryption",
+              "Effect": "Allow",
+              "Principal": { "Service": { "Fn::Sub": "logs.${AWS::Region}.amazonaws.com" } },
+              "Action": ["kms:Encrypt*", "kms:Decrypt*", "kms:ReEncrypt*", "kms:GenerateDataKey*", "kms:DescribeKey"],
+              "Resource": "*",
+              "Condition": {
+                "ArnLike": {
+                  "kms:EncryptionContext:aws:logs:arn": {
+                    "Fn::Sub": "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:*"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "Tags": [
+          { "Key": "Environment", "Value": { "Ref": "EnvironmentName" } },
+          { "Key": "DataClassification", "Value": { "Ref": "DataClassification" } }
+        ]
+      },
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain"
+    },
+    "ClinicalCoreKeyAlias": {
+      "Type": "AWS::KMS::Alias",
+      "Properties": {
+        "AliasName": { "Fn::Sub": "alias/${ProjectName}-${EnvironmentName}" },
+        "TargetKeyId": { "Ref": "ClinicalCoreKey" }
+      }
+    },
+    "ClinicalDocumentsBucket": {
+      "Type": "AWS::S3::Bucket",
+      "Properties": {
+        "BucketEncryption": {
+          "ServerSideEncryptionConfiguration": [
+            {
+              "BucketKeyEnabled": true,
+              "ServerSideEncryptionByDefault": {
+                "KMSMasterKeyID": { "Fn::GetAtt": ["ClinicalCoreKey", "Arn"] },
+                "SSEAlgorithm": "aws:kms"
+              }
+            }
+          ]
+        },
+        "OwnershipControls": { "Rules": [{ "ObjectOwnership": "BucketOwnerEnforced" }] },
+        "PublicAccessBlockConfiguration": {
+          "BlockPublicAcls": true,
+          "BlockPublicPolicy": true,
+          "IgnorePublicAcls": true,
+          "RestrictPublicBuckets": true
+        },
+        "VersioningConfiguration": { "Status": "Enabled" },
+        "LifecycleConfiguration": {
+          "Rules": [
+            {
+              "Id": "BoundSyntheticHistory",
+              "Status": "Enabled",
+              "AbortIncompleteMultipartUpload": { "DaysAfterInitiation": 7 },
+              "NoncurrentVersionExpiration": { "NoncurrentDays": 30 }
+            }
+          ]
+        },
+        "Tags": [
+          { "Key": "Environment", "Value": { "Ref": "EnvironmentName" } },
+          { "Key": "DataClassification", "Value": { "Ref": "DataClassification" } }
+        ]
+      },
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain"
+    },
+    "ClinicalDocumentsBucketPolicy": {
+      "Type": "AWS::S3::BucketPolicy",
+      "Properties": {
+        "Bucket": { "Ref": "ClinicalDocumentsBucket" },
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Sid": "DenyInsecureTransport",
+              "Effect": "Deny",
+              "Principal": "*",
+              "Action": "s3:*",
+              "Resource": [
+                { "Fn::GetAtt": ["ClinicalDocumentsBucket", "Arn"] },
+                { "Fn::Sub": "${ClinicalDocumentsBucket.Arn}/*" }
+              ],
+              "Condition": { "Bool": { "aws:SecureTransport": "false" } }
+            },
+            {
+              "Sid": "DenyUnapprovedObjectEncryption",
+              "Effect": "Deny",
+              "Principal": "*",
+              "Action": "s3:PutObject",
+              "Resource": { "Fn::Sub": "${ClinicalDocumentsBucket.Arn}/*" },
+              "Condition": {
+                "StringNotEquals": { "s3:x-amz-server-side-encryption": "aws:kms" }
+              }
+            },
+            {
+              "Sid": "DenyWrongEncryptionKey",
+              "Effect": "Deny",
+              "Principal": "*",
+              "Action": "s3:PutObject",
+              "Resource": { "Fn::Sub": "${ClinicalDocumentsBucket.Arn}/*" },
+              "Condition": {
+                "StringNotEquals": {
+                  "s3:x-amz-server-side-encryption-aws-kms-key-id": {
+                    "Fn::GetAtt": ["ClinicalCoreKey", "Arn"]
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "AuditBucket": {
+      "Type": "AWS::S3::Bucket",
+      "Properties": {
+        "BucketEncryption": {
+          "ServerSideEncryptionConfiguration": [
+            {
+              "BucketKeyEnabled": true,
+              "ServerSideEncryptionByDefault": {
+                "KMSMasterKeyID": { "Fn::GetAtt": ["ClinicalCoreKey", "Arn"] },
+                "SSEAlgorithm": "aws:kms"
+              }
+            }
+          ]
+        },
+        "OwnershipControls": { "Rules": [{ "ObjectOwnership": "BucketOwnerEnforced" }] },
+        "PublicAccessBlockConfiguration": {
+          "BlockPublicAcls": true,
+          "BlockPublicPolicy": true,
+          "IgnorePublicAcls": true,
+          "RestrictPublicBuckets": true
+        },
+        "VersioningConfiguration": { "Status": "Enabled" },
+        "LifecycleConfiguration": {
+          "Rules": [
+            {
+              "Id": "ArchiveAuditLogs",
+              "Status": "Enabled",
+              "Transitions": [{ "StorageClass": "STANDARD_IA", "TransitionInDays": 30 }],
+              "ExpirationInDays": 365
+            }
+          ]
+        },
+        "Tags": [
+          { "Key": "Environment", "Value": { "Ref": "EnvironmentName" } },
+          { "Key": "DataClassification", "Value": { "Ref": "DataClassification" } }
+        ]
+      },
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain"
+    },
+    "AuditBucketPolicy": {
+      "Type": "AWS::S3::BucketPolicy",
+      "Properties": {
+        "Bucket": { "Ref": "AuditBucket" },
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Sid": "CloudTrailAclCheck",
+              "Effect": "Allow",
+              "Principal": { "Service": "cloudtrail.amazonaws.com" },
+              "Action": "s3:GetBucketAcl",
+              "Resource": { "Fn::GetAtt": ["AuditBucket", "Arn"] },
+              "Condition": { "StringEquals": { "aws:SourceAccount": { "Ref": "AWS::AccountId" } } }
+            },
+            {
+              "Sid": "CloudTrailWrite",
+              "Effect": "Allow",
+              "Principal": { "Service": "cloudtrail.amazonaws.com" },
+              "Action": "s3:PutObject",
+              "Resource": { "Fn::Sub": "${AuditBucket.Arn}/AWSLogs/${AWS::AccountId}/*" },
+              "Condition": {
+                "StringEquals": {
+                  "s3:x-amz-acl": "bucket-owner-full-control",
+                  "aws:SourceAccount": { "Ref": "AWS::AccountId" }
+                }
+              }
+            },
+            {
+              "Sid": "DenyInsecureTransport",
+              "Effect": "Deny",
+              "Principal": "*",
+              "Action": "s3:*",
+              "Resource": [
+                { "Fn::GetAtt": ["AuditBucket", "Arn"] },
+                { "Fn::Sub": "${AuditBucket.Arn}/*" }
+              ],
+              "Condition": { "Bool": { "aws:SecureTransport": "false" } }
+            }
+          ]
+        }
+      }
+    },
+    "AuditLogGroup": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "LogGroupName": { "Fn::Sub": "/${ProjectName}/${EnvironmentName}/cloudtrail-v2" },
+        "KmsKeyId": { "Fn::GetAtt": ["ClinicalCoreKey", "Arn"] },
+        "RetentionInDays": 30
+      },
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain"
+    },
+    "CloudTrailLogsRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": { "Service": "cloudtrail.amazonaws.com" },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "WriteOnlyAuditLogs",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": ["logs:CreateLogStream", "logs:PutLogEvents"],
+                  "Resource": { "Fn::GetAtt": ["AuditLogGroup", "Arn"] }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "AuditTrail": {
+      "Type": "AWS::CloudTrail::Trail",
+      "DependsOn": "AuditBucketPolicy",
+      "Properties": {
+        "TrailName": { "Fn::Sub": "${ProjectName}-${EnvironmentName}" },
+        "S3BucketName": { "Ref": "AuditBucket" },
+        "KMSKeyId": { "Fn::GetAtt": ["ClinicalCoreKey", "Arn"] },
+        "CloudWatchLogsLogGroupArn": { "Fn::GetAtt": ["AuditLogGroup", "Arn"] },
+        "CloudWatchLogsRoleArn": { "Fn::GetAtt": ["CloudTrailLogsRole", "Arn"] },
+        "EnableLogFileValidation": true,
+        "IncludeGlobalServiceEvents": true,
+        "IsLogging": true,
+        "IsMultiRegionTrail": true,
+        "EventSelectors": [
+          {
+            "IncludeManagementEvents": true,
+            "ReadWriteType": "All",
+            "DataResources": [
+              {
+                "Type": "AWS::S3::Object",
+                "Values": [{ "Fn::Sub": "${ClinicalDocumentsBucket.Arn}/" }]
+              }
+            ]
+          }
+        ],
+        "Tags": [
+          { "Key": "Environment", "Value": { "Ref": "EnvironmentName" } },
+          { "Key": "DataClassification", "Value": { "Ref": "DataClassification" } }
+        ]
+      }
+    },
+    "WorkforceUserPool": {
+      "Type": "AWS::Cognito::UserPool",
+      "Properties": {
+        "UserPoolName": { "Fn::Sub": "${ProjectName}-${EnvironmentName}-workforce" },
+        "DeletionProtection": "ACTIVE",
+        "UsernameAttributes": ["email"],
+        "UsernameConfiguration": { "CaseSensitive": false },
+        "AutoVerifiedAttributes": ["email"],
+        "MfaConfiguration": "ON",
+        "EnabledMfas": ["SOFTWARE_TOKEN_MFA"],
+        "Schema": [
+          {
+            "Name": "person_id",
+            "AttributeDataType": "String",
+            "Mutable": false,
+            "Required": false,
+            "StringAttributeConstraints": { "MinLength": "36", "MaxLength": "36" }
+          },
+          {
+            "Name": "organization_id",
+            "AttributeDataType": "String",
+            "Mutable": false,
+            "Required": false,
+            "StringAttributeConstraints": { "MinLength": "36", "MaxLength": "36" }
+          },
+          {
+            "Name": "synthetic_attested",
+            "AttributeDataType": "String",
+            "Mutable": false,
+            "Required": false,
+            "StringAttributeConstraints": { "MinLength": "4", "MaxLength": "4" }
+          }
+        ],
+        "AccountRecoverySetting": {
+          "RecoveryMechanisms": [{ "Name": "verified_email", "Priority": 1 }]
+        },
+        "Policies": {
+          "PasswordPolicy": {
+            "MinimumLength": 14,
+            "RequireLowercase": true,
+            "RequireNumbers": true,
+            "RequireSymbols": true,
+            "RequireUppercase": true,
+            "TemporaryPasswordValidityDays": 1
+          }
+        },
+        "UserPoolTags": {
+          "Environment": { "Ref": "EnvironmentName" },
+          "DataClassification": { "Ref": "DataClassification" }
+        }
+      },
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain"
+    },
+    "WorkforceUserPoolClient": {
+      "Type": "AWS::Cognito::UserPoolClient",
+      "Properties": {
+        "ClientName": { "Fn::Sub": "${ProjectName}-${EnvironmentName}-desktop" },
+        "UserPoolId": { "Ref": "WorkforceUserPool" },
+        "GenerateSecret": false,
+        "PreventUserExistenceErrors": "ENABLED",
+        "EnableTokenRevocation": true,
+        "ExplicitAuthFlows": ["ALLOW_USER_SRP_AUTH", "ALLOW_USER_PASSWORD_AUTH", "ALLOW_ADMIN_USER_PASSWORD_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"],
+        "AccessTokenValidity": 15,
+        "IdTokenValidity": 15,
+        "RefreshTokenValidity": 12,
+        "TokenValidityUnits": { "AccessToken": "minutes", "IdToken": "minutes", "RefreshToken": "hours" }
+      }
+    },
+    "ConsumerUserPool": {
+      "Type": "AWS::Cognito::UserPool",
+      "Properties": {
+        "UserPoolName": { "Fn::Sub": "${ProjectName}-${EnvironmentName}-consumer" },
+        "DeletionProtection": "ACTIVE",
+        "UsernameAttributes": ["email"],
+        "UsernameConfiguration": { "CaseSensitive": false },
+        "AutoVerifiedAttributes": ["email"],
+        "MfaConfiguration": "OPTIONAL",
+        "EnabledMfas": ["SOFTWARE_TOKEN_MFA"],
+        "Schema": [
+          {
+            "Name": "person_id",
+            "AttributeDataType": "String",
+            "Mutable": false,
+            "Required": false,
+            "StringAttributeConstraints": { "MinLength": "36", "MaxLength": "36" }
+          },
+          {
+            "Name": "organization_id",
+            "AttributeDataType": "String",
+            "Mutable": false,
+            "Required": false,
+            "StringAttributeConstraints": { "MinLength": "36", "MaxLength": "36" }
+          },
+          {
+            "Name": "synthetic_attested",
+            "AttributeDataType": "String",
+            "Mutable": false,
+            "Required": false,
+            "StringAttributeConstraints": { "MinLength": "4", "MaxLength": "4" }
+          }
+        ],
+        "AccountRecoverySetting": {
+          "RecoveryMechanisms": [{ "Name": "verified_email", "Priority": 1 }]
+        },
+        "Policies": {
+          "PasswordPolicy": {
+            "MinimumLength": 12,
+            "RequireLowercase": true,
+            "RequireNumbers": true,
+            "RequireSymbols": true,
+            "RequireUppercase": true,
+            "TemporaryPasswordValidityDays": 1
+          }
+        },
+        "UserPoolTags": {
+          "Environment": { "Ref": "EnvironmentName" },
+          "DataClassification": { "Ref": "DataClassification" }
+        }
+      },
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain"
+    },
+    "ConsumerUserPoolClient": {
+      "Type": "AWS::Cognito::UserPoolClient",
+      "Properties": {
+        "ClientName": { "Fn::Sub": "${ProjectName}-${EnvironmentName}-v2" },
+        "UserPoolId": { "Ref": "ConsumerUserPool" },
+        "GenerateSecret": false,
+        "PreventUserExistenceErrors": "ENABLED",
+        "EnableTokenRevocation": true,
+        "ExplicitAuthFlows": ["ALLOW_USER_SRP_AUTH", "ALLOW_USER_PASSWORD_AUTH", "ALLOW_ADMIN_USER_PASSWORD_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"],
+        "AccessTokenValidity": 15,
+        "IdTokenValidity": 15,
+        "RefreshTokenValidity": 12,
+        "TokenValidityUnits": { "AccessToken": "minutes", "IdToken": "minutes", "RefreshToken": "hours" }
+      }
+    },
+    "ClinicalVpc": {
+      "Type": "AWS::EC2::VPC",
+      "Properties": {
+        "CidrBlock": "10.40.0.0/24",
+        "EnableDnsHostnames": true,
+        "EnableDnsSupport": true,
+        "InstanceTenancy": "default",
+        "Tags": [
+          { "Key": "Name", "Value": { "Fn::Sub": "${ProjectName}-${EnvironmentName}" } },
+          { "Key": "Environment", "Value": { "Ref": "EnvironmentName" } },
+          { "Key": "DataClassification", "Value": { "Ref": "DataClassification" } }
+        ]
+      }
+    },
+    "DatabaseSubnetA": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "VpcId": { "Ref": "ClinicalVpc" },
+        "CidrBlock": "10.40.0.0/26",
+        "AvailabilityZone": { "Fn::Select": [0, { "Fn::GetAZs": "" }] },
+        "MapPublicIpOnLaunch": false,
+        "Tags": [{ "Key": "Name", "Value": { "Fn::Sub": "${ProjectName}-${EnvironmentName}-db-a" } }]
+      }
+    },
+    "DatabaseSubnetB": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "VpcId": { "Ref": "ClinicalVpc" },
+        "CidrBlock": "10.40.0.64/26",
+        "AvailabilityZone": { "Fn::Select": [1, { "Fn::GetAZs": "" }] },
+        "MapPublicIpOnLaunch": false,
+        "Tags": [{ "Key": "Name", "Value": { "Fn::Sub": "${ProjectName}-${EnvironmentName}-db-b" } }]
+      }
+    },
+    "DatabaseSubnetGroup": {
+      "Type": "AWS::RDS::DBSubnetGroup",
+      "Properties": {
+        "DBSubnetGroupDescription": "Private subnets for the synthetic clinical-core database",
+        "SubnetIds": [{ "Ref": "DatabaseSubnetA" }, { "Ref": "DatabaseSubnetB" }]
+      }
+    },
+    "DatabaseSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Aurora has no ingress until a reviewed application migration adds it",
+        "VpcId": { "Ref": "ClinicalVpc" },
+        "SecurityGroupEgress": [
+          {
+            "Description": "Private VPC only; the VPC has no internet route",
+            "IpProtocol": "-1",
+            "CidrIp": "10.40.0.0/24"
+          }
+        ],
+        "Tags": [
+          { "Key": "Environment", "Value": { "Ref": "EnvironmentName" } },
+          { "Key": "DataClassification", "Value": { "Ref": "DataClassification" } }
+        ]
+      }
+    },
+    "ClinicalDatabaseCluster": {
+      "Type": "AWS::RDS::DBCluster",
+      "Properties": {
+        "Engine": "aurora-postgresql",
+        "DatabaseName": { "Ref": "DatabaseName" },
+        "MasterUsername": "clinical_admin",
+        "ManageMasterUserPassword": true,
+        "MasterUserSecret": { "KmsKeyId": { "Fn::GetAtt": ["ClinicalCoreKey", "Arn"] } },
+        "Port": 5432,
+        "BackupRetentionPeriod": 7,
+        "CopyTagsToSnapshot": true,
+        "DeletionProtection": true,
+        "EnableHttpEndpoint": true,
+        "EnableIAMDatabaseAuthentication": true,
+        "StorageEncrypted": true,
+        "KmsKeyId": { "Fn::GetAtt": ["ClinicalCoreKey", "Arn"] },
+        "DBSubnetGroupName": { "Ref": "DatabaseSubnetGroup" },
+        "VpcSecurityGroupIds": [{ "Ref": "DatabaseSecurityGroup" }],
+        "ServerlessV2ScalingConfiguration": {
+          "MinCapacity": 0,
+          "MaxCapacity": { "Ref": "MaxAuroraAcu" },
+          "SecondsUntilAutoPause": 900
+        },
+        "Tags": [
+          { "Key": "Environment", "Value": { "Ref": "EnvironmentName" } },
+          { "Key": "DataClassification", "Value": { "Ref": "DataClassification" } }
+        ]
+      },
+      "DeletionPolicy": "Snapshot",
+      "UpdateReplacePolicy": "Snapshot"
+    },
+    "ClinicalDatabaseWriter": {
+      "Type": "AWS::RDS::DBInstance",
+      "Properties": {
+        "DBClusterIdentifier": { "Ref": "ClinicalDatabaseCluster" },
+        "DBInstanceClass": "db.serverless",
+        "Engine": "aurora-postgresql",
+        "AutoMinorVersionUpgrade": true,
+        "MonitoringInterval": 0,
+        "PubliclyAccessible": false,
+        "Tags": [
+          { "Key": "Environment", "Value": { "Ref": "EnvironmentName" } },
+          { "Key": "DataClassification", "Value": { "Ref": "DataClassification" } }
+        ]
+      },
+      "DeletionPolicy": "Snapshot",
+      "UpdateReplacePolicy": "Snapshot"
+    },
+    "ClinicalDeadLetterQueue": {
+      "Type": "AWS::SQS::Queue",
+      "Properties": {
+        "QueueName": { "Fn::Sub": "${ProjectName}-${EnvironmentName}-dead-letter" },
+        "KmsMasterKeyId": { "Ref": "ClinicalCoreKey" },
+        "MessageRetentionPeriod": 1209600,
+        "Tags": [
+          { "Key": "Environment", "Value": { "Ref": "EnvironmentName" } },
+          { "Key": "DataClassification", "Value": { "Ref": "DataClassification" } }
+        ]
+      }
+    },
+    "ClinicalEventsQueue": {
+      "Type": "AWS::SQS::Queue",
+      "Properties": {
+        "QueueName": { "Fn::Sub": "${ProjectName}-${EnvironmentName}-events" },
+        "KmsMasterKeyId": { "Ref": "ClinicalCoreKey" },
+        "MessageRetentionPeriod": 345600,
+        "VisibilityTimeout": 60,
+        "RedrivePolicy": {
+          "deadLetterTargetArn": { "Fn::GetAtt": ["ClinicalDeadLetterQueue", "Arn"] },
+          "maxReceiveCount": 5
+        },
+        "Tags": [
+          { "Key": "Environment", "Value": { "Ref": "EnvironmentName" } },
+          { "Key": "DataClassification", "Value": { "Ref": "DataClassification" } }
+        ]
+      }
+    },
+    "ClinicalQueuePolicy": {
+      "Type": "AWS::SQS::QueuePolicy",
+      "Properties": {
+        "Queues": [{ "Ref": "ClinicalEventsQueue" }, { "Ref": "ClinicalDeadLetterQueue" }],
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Sid": "DenyInsecureTransportEvents",
+              "Effect": "Deny",
+              "Principal": "*",
+              "Action": "sqs:*",
+              "Resource": { "Fn::GetAtt": ["ClinicalEventsQueue", "Arn"] },
+              "Condition": { "Bool": { "aws:SecureTransport": "false" } }
+            },
+            {
+              "Sid": "DenyInsecureTransportDeadLetter",
+              "Effect": "Deny",
+              "Principal": "*",
+              "Action": "sqs:*",
+              "Resource": { "Fn::GetAtt": ["ClinicalDeadLetterQueue", "Arn"] },
+              "Condition": { "Bool": { "aws:SecureTransport": "false" } }
+            }
+          ]
+        }
+      }
+    },
+    "ClinicalEventBus": {
+      "Type": "AWS::Events::EventBus",
+      "Properties": {
+        "Name": { "Fn::Sub": "${ProjectName}-${EnvironmentName}" },
+        "Tags": [
+          { "Key": "Environment", "Value": { "Ref": "EnvironmentName" } },
+          { "Key": "DataClassification", "Value": { "Ref": "DataClassification" } }
+        ]
+      }
+    },
+    "PostureFunctionRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": { "Service": "lambda.amazonaws.com" },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "WriteOnlyFunctionLogs",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": ["logs:CreateLogStream", "logs:PutLogEvents"],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/${ProjectName}/${EnvironmentName}/posture:*"
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "Tags": [
+          { "Key": "Environment", "Value": { "Ref": "EnvironmentName" } },
+          { "Key": "DataClassification", "Value": { "Ref": "DataClassification" } }
+        ]
+      }
+    },
+    "PostureLogGroup": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "LogGroupName": { "Fn::Sub": "/${ProjectName}/${EnvironmentName}/posture" },
+        "KmsKeyId": { "Fn::GetAtt": ["ClinicalCoreKey", "Arn"] },
+        "RetentionInDays": 30
+      },
+      "DeletionPolicy": "Delete",
+      "UpdateReplacePolicy": "Delete"
+    },
+    "PostureFunction": {
+      "Type": "AWS::Lambda::Function",
+      "DependsOn": "PostureLogGroup",
+      "Properties": {
+        "FunctionName": { "Fn::Sub": "${ProjectName}-${EnvironmentName}-posture" },
+        "Runtime": "nodejs22.x",
+        "Handler": "index.handler",
+        "Role": { "Fn::GetAtt": ["PostureFunctionRole", "Arn"] },
+        "MemorySize": 128,
+        "Timeout": 5,
+        "Environment": {
+          "Variables": {
+            "CLINICAL_CORE_CONTRACT_VERSION": "clinical-core/1",
+            "CLINICAL_CORE_ENVIRONMENT": { "Ref": "EnvironmentName" },
+            "CLINICAL_CORE_DATA_CLASSIFICATION": { "Ref": "DataClassification" },
+            "CLINICAL_CORE_PHI_ALLOWED": "false",
+            "CLINICAL_CORE_STATUS": "synthetic_staging_not_configured"
+          }
+        },
+        "Code": {
+          "ZipFile": "exports.handler = async () => ({ statusCode: 200, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' }, body: JSON.stringify({ contractVersion: process.env.CLINICAL_CORE_CONTRACT_VERSION, environment: process.env.CLINICAL_CORE_ENVIRONMENT, dataClassification: process.env.CLINICAL_CORE_DATA_CLASSIFICATION, phiAllowed: false, status: process.env.CLINICAL_CORE_STATUS || 'synthetic_staging_not_configured' }) });"
+        },
+        "Tags": [
+          { "Key": "Environment", "Value": { "Ref": "EnvironmentName" } },
+          { "Key": "DataClassification", "Value": { "Ref": "DataClassification" } }
+        ]
+      }
+    },
+    "ClinicalApiAccessLogGroup": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "LogGroupName": { "Fn::Sub": "/${ProjectName}/${EnvironmentName}/api-access" },
+        "KmsKeyId": { "Fn::GetAtt": ["ClinicalCoreKey", "Arn"] },
+        "RetentionInDays": 30
+      },
+      "DeletionPolicy": "Delete",
+      "UpdateReplacePolicy": "Delete"
+    },
+    "ClinicalApi": {
+      "Type": "AWS::ApiGatewayV2::Api",
+      "Properties": {
+        "Name": { "Fn::Sub": "${ProjectName}-${EnvironmentName}" },
+        "ProtocolType": "HTTP",
+        "CorsConfiguration": {
+          "AllowOrigins": { "Ref": "AllowedClientOrigins" },
+          "AllowMethods": ["GET", "POST", "OPTIONS"],
+          "AllowHeaders": ["authorization", "content-type"],
+          "MaxAge": 300
+        },
+        "Tags": {
+          "Environment": { "Ref": "EnvironmentName" },
+          "DataClassification": { "Ref": "DataClassification" }
+        }
+      }
+    },
+    "PostureIntegration": {
+      "Type": "AWS::ApiGatewayV2::Integration",
+      "Properties": {
+        "ApiId": { "Ref": "ClinicalApi" },
+        "IntegrationType": "AWS_PROXY",
+        "IntegrationUri": { "Fn::GetAtt": ["PostureFunction", "Arn"] },
+        "PayloadFormatVersion": "2.0",
+        "TimeoutInMillis": 5000
+      }
+    },
+    "PostureRoute": {
+      "Type": "AWS::ApiGatewayV2::Route",
+      "Properties": {
+        "ApiId": { "Ref": "ClinicalApi" },
+        "RouteKey": "GET /posture",
+        "Target": { "Fn::Sub": "integrations/${PostureIntegration}" }
+      }
+    },
+    "ClinicalApiStage": {
+      "Type": "AWS::ApiGatewayV2::Stage",
+      "Properties": {
+        "ApiId": { "Ref": "ClinicalApi" },
+        "StageName": "$default",
+        "AutoDeploy": true,
+        "AccessLogSettings": {
+          "DestinationArn": {
+            "Fn::Sub": "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/${ProjectName}/${EnvironmentName}/api-access"
+          },
+          "Format": "{\"requestId\":\"$context.requestId\",\"routeKey\":\"$context.routeKey\",\"status\":\"$context.status\",\"responseLength\":\"$context.responseLength\"}"
+        },
+        "DefaultRouteSettings": {
+          "DetailedMetricsEnabled": true,
+          "ThrottlingBurstLimit": 20,
+          "ThrottlingRateLimit": 10
+        },
+        "Tags": {
+          "Environment": { "Ref": "EnvironmentName" },
+          "DataClassification": { "Ref": "DataClassification" }
+        }
+      }
+    },
+    "PostureInvokePermission": {
+      "Type": "AWS::Lambda::Permission",
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": { "Ref": "PostureFunction" },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": { "Fn::Sub": "arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${ClinicalApi}/*/GET/posture" }
+      }
+    },
+    "PostureFunctionErrorAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmName": { "Fn::Sub": "${ProjectName}-${EnvironmentName}-posture-errors" },
+        "Namespace": "AWS/Lambda",
+        "MetricName": "Errors",
+        "Dimensions": [{ "Name": "FunctionName", "Value": { "Ref": "PostureFunction" } }],
+        "Statistic": "Sum",
+        "Period": 300,
+        "EvaluationPeriods": 1,
+        "DatapointsToAlarm": 1,
+        "Threshold": 1,
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "TreatMissingData": "notBreaching"
+      }
+    },
+    "MonthlyBudget": {
+      "Type": "AWS::Budgets::Budget",
+      "Properties": {
+        "Budget": {
+          "BudgetName": { "Fn::Sub": "${ProjectName}-${EnvironmentName}-monthly" },
+          "BudgetLimit": { "Amount": 100, "Unit": "USD" },
+          "BudgetType": "COST",
+          "TimeUnit": "MONTHLY"
+        },
+        "NotificationsWithSubscribers": [
+          {
+            "Notification": {
+              "ComparisonOperator": "GREATER_THAN",
+              "NotificationType": "FORECASTED",
+              "Threshold": 80,
+              "ThresholdType": "PERCENTAGE"
+            },
+            "Subscribers": [{ "Address": { "Ref": "BudgetAlertEmail" }, "SubscriptionType": "EMAIL" }]
+          },
+          {
+            "Notification": {
+              "ComparisonOperator": "GREATER_THAN",
+              "NotificationType": "ACTUAL",
+              "Threshold": 100,
+              "ThresholdType": "PERCENTAGE"
+            },
+            "Subscribers": [{ "Address": { "Ref": "BudgetAlertEmail" }, "SubscriptionType": "EMAIL" }]
+          }
+        ]
+      }
+    }
+  },
+  "Outputs": {
+    "ContractVersion": { "Value": "clinical-core/1" },
+    "Environment": { "Value": { "Ref": "EnvironmentName" } },
+    "DataClassification": { "Value": { "Ref": "DataClassification" } },
+    "PhiAllowed": { "Value": "false" },
+    "ApiOrigin": { "Value": { "Fn::Sub": "https://${ClinicalApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}" } },
+    "PostureUrl": { "Value": { "Fn::Sub": "https://${ClinicalApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}/posture" } },
+    "ClinicalApiId": { "Value": { "Ref": "ClinicalApi" } },
+    "WorkforceUserPoolId": { "Value": { "Ref": "WorkforceUserPool" } },
+    "WorkforceUserPoolClientId": { "Value": { "Ref": "WorkforceUserPoolClient" } },
+    "ConsumerUserPoolId": { "Value": { "Ref": "ConsumerUserPool" } },
+    "ConsumerUserPoolClientId": { "Value": { "Ref": "ConsumerUserPoolClient" } },
+    "DatabaseSecretArn": { "Value": { "Fn::GetAtt": ["ClinicalDatabaseCluster", "MasterUserSecret.SecretArn"] } },
+    "DatabaseClusterArn": { "Value": { "Fn::Sub": "arn:${AWS::Partition}:rds:${AWS::Region}:${AWS::AccountId}:cluster:${ClinicalDatabaseCluster}" } },
+    "DatabaseName": { "Value": { "Ref": "DatabaseName" } },
+    "ClinicalCoreKeyArn": { "Value": { "Fn::GetAtt": ["ClinicalCoreKey", "Arn"] } },
+    "ClinicalDocumentsBucketName": { "Value": { "Ref": "ClinicalDocumentsBucket" } },
+    "ClinicalEventsQueueUrl": { "Value": { "Ref": "ClinicalEventsQueue" } },
+    "ClinicalEventBusArn": { "Value": { "Fn::GetAtt": ["ClinicalEventBus", "Arn"] } },
+    "MonthlyBudgetUsd": { "Value": "100" }
+  }
+}

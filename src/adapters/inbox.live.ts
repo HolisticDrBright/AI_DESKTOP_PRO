@@ -3,7 +3,7 @@ if (typeof window !== "undefined") {
 }
 import { resolveOrgId } from "./config";
 import { getClinicalAccessToken } from "./session.server";
-import { clinicalRpc } from "./supabase-rest.server";
+import { clinicalRpc } from "./aws-clinical-data.server";
 import type {
   LiveConversation,
   LiveInbox,

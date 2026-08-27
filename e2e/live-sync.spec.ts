@@ -97,8 +97,9 @@ test("2: a scoped invitation with a ONE-TIME code and honest no-delivery copy", 
   await expect(page.getByTestId("sync-one-time-token")).toContainText(
     "this code was not transmitted anywhere",
   );
+  await expect(page.getByTestId("sync-copy-token")).toHaveText("Copy code");
   token = (await page.getByTestId("sync-token-value").textContent())?.trim() ?? "";
-  expect(token).toMatch(/^[0-9a-f]{64}$/);
+  expect(token).toMatch(/^[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{5}$/);
   // The code is one-time: a reload shows only the invitation facts, never the code.
   await page.goto(SYNC_TAB);
   await expect(page.getByTestId("sync-state-invitation_pending")).toBeVisible();
@@ -109,7 +110,7 @@ test("2: a scoped invitation with a ONE-TIME code and honest no-delivery copy", 
 test("3: token expiry, supersession, and unknown-token refusal via the test provider", async ({ page }) => {
   // Unknown token.
   const unknown = await page.request.post(`${STUB}/__control/sync-verify`, {
-    data: { token: "f".repeat(64), subject: "alp-e2e-subject" },
+    data: { token: "ZZZZ-ZZZZ-ZZZZZ", subject: "alp-e2e-subject" },
   });
   expect(unknown.status()).toBe(404);
 
@@ -257,6 +258,71 @@ test("10: inbound data displays with full provenance, as untrusted plain text", 
   await expect(page.getByTestId("sync-inbound-payload").first()).toContainText(
     "adherence: took the evening stack",
   );
+});
+
+test("10b: governed lab import requires separate consent, dedupes, and stages clinician review", async ({ page }) => {
+  const labEvent = {
+    providerEventId: "alp-lab-synthetic-hdl-v1",
+    resourceType: "lab_result",
+    externalResourceId: "synthetic-panel-1:hdl",
+    resourceVersion: "2026-08-18T20:00:00.000Z",
+    occurredAt: "2026-08-17T08:00:00.000Z",
+    payload: {
+      schemaVersion: "lab-result/1",
+      source: {
+        system: "ai_longevity_pro_v2",
+        recordType: "lab_panels",
+        panelId: "synthetic-panel-1",
+        markerId: "hdl",
+        recordVersion: "2026-08-18T20:00:00.000Z",
+      },
+      panel: {
+        name: "Synthetic lipid panel",
+        collectedAt: "2026-08-17T08:00:00.000Z",
+        sourceLabel: "Synthetic Test Lab",
+      },
+      result: {
+        name: "Synthetic HDL Cholesterol",
+        value: 62,
+        unit: "mg/dL",
+        sourceStatus: "normal",
+        referenceRange: { min: 40, max: 120 },
+      },
+    },
+  };
+
+  const refused = await page.request.post(`${STUB}/__control/sync-inbound`, { data: labEvent });
+  expect(refused.status()).toBe(403);
+  expect(await refused.text()).toContain("lab_results_import");
+
+  await page.goto(SYNC_TAB);
+  await page.getByTestId("sync-grant-scope").selectOption("lab_results_import");
+  await page.getByTestId("sync-grant-submit").click();
+  await expect(page.getByTestId("sync-scope-granted-lab_results_import")).toBeVisible();
+
+  const imported = await page.request.post(`${STUB}/__control/sync-inbound`, { data: labEvent });
+  expect(await imported.json()).toMatchObject({
+    ok: true,
+    duplicate: false,
+    state: "review_pending",
+  });
+  const replay = await page.request.post(`${STUB}/__control/sync-inbound`, { data: labEvent });
+  expect(await replay.json()).toMatchObject({ ok: true, duplicate: true });
+
+  await page.goto(SYNC_TAB);
+  const inbound = page.getByTestId("sync-inbound").locator("li", {
+    hasText: "Synthetic HDL Cholesterol",
+  });
+  await expect(inbound).toHaveCount(1);
+  await expect(inbound).toContainText("provider event alp-lab-synthetic-hdl-v1");
+  await inbound.locator('[data-testid^="sync-accept-"]').click();
+  await expect(page.getByText("Accepted and staged in Labs for marker review.").first()).toBeVisible();
+
+  await page.goto(`/patients/${PATIENT_1}/labs`);
+  const markerRow = page.getByRole("row", { name: /Synthetic HDL Cholesterol/ });
+  await expect(markerRow).toHaveCount(1);
+  await expect(markerRow).toContainText("AI Longevity Pro signed import");
+  await expect(markerRow).toContainText("Awaiting");
 });
 
 test("11: revoking ONE scope stops only that scope", async ({ page }) => {

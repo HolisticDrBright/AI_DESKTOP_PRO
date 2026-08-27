@@ -11,7 +11,7 @@ import {
 import type { LabWorkspace } from "./labs.types";
 import type { LiveReviewResult, LiveUploadResult, ReviewDecision } from "./live-types";
 import { getClinicalAccessToken } from "./session.server";
-import { clinicalRpc, clinicalSelect } from "./supabase-rest.server";
+import { clinicalRpc, clinicalSelect } from "./aws-clinical-data.server";
 import { backendUpload } from "./trpc.server";
 
 /**

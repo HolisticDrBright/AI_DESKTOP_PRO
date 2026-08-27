@@ -17,7 +17,7 @@ if (typeof window !== "undefined") {
 }
 
 import { createHash } from "node:crypto";
-import { clinicalRpc } from "@/adapters/supabase-rest.server";
+import { clinicalRpc } from "@/adapters/aws-clinical-data.server";
 import type { CopilotInputSnapshot } from "./safety";
 
 export type CopilotInputRecord = {

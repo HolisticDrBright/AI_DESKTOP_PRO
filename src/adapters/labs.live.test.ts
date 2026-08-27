@@ -13,12 +13,13 @@ function response(body: unknown, status = 200) {
 }
 
 beforeEach(() => {
-  process.env.CLINICAL_SUPABASE_URL = "https://clinical.example.test";
+  process.env.CLINICAL_CONTRACT_FIXTURE = "1";
+  process.env.CLINICAL_SUPABASE_URL = "http://127.0.0.1:3999";
   process.env.CLINICAL_SUPABASE_ANON_KEY = "publishable-test-key";
   vi.restoreAllMocks();
 });
 
-describe("labsLive Supabase boundary", () => {
+describe("labsLive AWS clinical boundary", () => {
   test("loads the selected patient's workspace through RLS-scoped direct contracts", async () => {
     const fetchMock = vi.fn().mockImplementation((input: string) => {
       const url = new URL(input);
@@ -85,7 +86,7 @@ describe("labsLive Supabase boundary", () => {
     ).toBe(`eq.${PATIENT_ID}`);
   });
 
-  test("reviews a marker through the atomic Supabase RPC", async () => {
+  test("reviews a marker through the atomic contract RPC", async () => {
     const fetchMock = vi.fn().mockResolvedValue(response({
       review_status: "accepted",
       reviewed_at: "2026-07-28T20:00:00Z",
@@ -101,7 +102,7 @@ describe("labsLive Supabase boundary", () => {
       previousStatus: "unreviewed",
     });
     expect(fetchMock.mock.calls[0]?.[0]).toBe(
-      "https://clinical.example.test/rest/v1/rpc/review_biomarker",
+      "http://127.0.0.1:3999/rest/v1/rpc/review_biomarker",
     );
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
       _observation_id: "observation-1",

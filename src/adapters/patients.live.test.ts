@@ -24,12 +24,13 @@ const patientRow = {
 };
 
 beforeEach(() => {
-  process.env.CLINICAL_SUPABASE_URL = "https://clinical.example.test";
+  process.env.CLINICAL_CONTRACT_FIXTURE = "1";
+  process.env.CLINICAL_SUPABASE_URL = "http://127.0.0.1:3999";
   process.env.CLINICAL_SUPABASE_ANON_KEY = "publishable-test-key";
   vi.restoreAllMocks();
 });
 
-describe("patientsLive Supabase boundary", () => {
+describe("patientsLive AWS clinical boundary", () => {
   test("lists only the selected organization's RLS-visible patients", async () => {
     const fetchMock = vi.fn().mockResolvedValue(response([patientRow]));
     vi.stubGlobal("fetch", fetchMock);
@@ -68,6 +69,44 @@ describe("patientsLive Supabase boundary", () => {
     await expect(
       patientsLive.get(PATIENT_ID, TOKEN, ORG_ID),
     ).resolves.toBeUndefined();
+  });
+
+  test("creates a patient only through the governed organization-scoped RPC", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(response(patientRow));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await patientsLive.create(
+      {
+        firstName: "Avery",
+        lastName: "Morgan",
+        dateOfBirth: "1985-04-12",
+        sex: "female",
+        mrn: "A-100",
+        email: "synthetic@example.invalid",
+        phone: "555-0100",
+        attestsSynthetic: true,
+      },
+      TOKEN,
+      ORG_ID,
+    );
+
+    expect(result.patient).toMatchObject({ id: PATIENT_ID, name: "Avery Morgan", mrn: "A-100" });
+    const requestUrl = new URL(fetchMock.mock.calls[0]?.[0] as string);
+    expect(requestUrl.pathname).toBe("/rest/v1/rpc/create_patient_profile");
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
+      method: "POST",
+      headers: expect.objectContaining({ Authorization: `Bearer ${TOKEN}` }),
+    });
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+      _organization_id: ORG_ID,
+      _first_name: "Avery",
+      _last_name: "Morgan",
+      _date_of_birth: "1985-04-12",
+      _sex: "female",
+      _mrn: "A-100",
+      _email: "synthetic@example.invalid",
+      _phone: "555-0100",
+    });
   });
 
   test("refuses all directory access without a practitioner session", async () => {

@@ -23,6 +23,7 @@ import type {
   LiveTaskResult,
   LiveUploadResult,
   LivePatientOverview,
+  LivePatientAppIntake,
   LiveReasoningWorkspace,
   LiveHypothesisReviewResult,
   LiveAppointmentStatus,
@@ -101,6 +102,7 @@ import type {
   LiveProtocolTemplateDetail,
   LiveTemplateComparison,
 } from "./live-types";
+import type { CreatePatientInput, CreatePatientResult } from "./types";
 
 interface Envelope<T> {
   data?: T;
@@ -141,6 +143,9 @@ async function liveFetch<T>(
 }
 
 export const liveClient = {
+  createPatient: (input: CreatePatientInput) =>
+    liveFetch<CreatePatientResult>("patients/create", { method: "POST", body: input }),
+
   labsWorkspace: (patientId: string) =>
     liveFetch<LabWorkspace>("labs/workspace", { method: "POST", body: { patientId } }),
 
@@ -243,6 +248,9 @@ export const liveClient = {
 
   patientOverview: (patientId: string) =>
     liveFetch<LivePatientOverview>("patients/overview", { method: "POST", body: { patientId } }),
+
+  patientAppIntake: (patientId: string) =>
+    liveFetch<LivePatientAppIntake>("patients/app-intake", { method: "POST", body: { patientId } }),
 
   reasoningWorkspace: (patientId: string) =>
     liveFetch<LiveReasoningWorkspace>("reasoning/workspace", { method: "POST", body: { patientId } }),

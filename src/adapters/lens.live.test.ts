@@ -19,12 +19,13 @@ function requestBody(fetchMock: ReturnType<typeof vi.fn>, index = 0) {
 }
 
 beforeEach(() => {
-  process.env.CLINICAL_SUPABASE_URL = "https://clinical.example.test";
+  process.env.CLINICAL_CONTRACT_FIXTURE = "1";
+  process.env.CLINICAL_SUPABASE_URL = "http://127.0.0.1:3999";
   process.env.CLINICAL_SUPABASE_ANON_KEY = "publishable-test-key";
   vi.restoreAllMocks();
 });
 
-describe("lensLive Desktop Supabase boundary", () => {
+describe("lensLive Desktop AWS clinical boundary", () => {
   test("reads reference data through the bounded Desktop RPCs", async () => {
     const paradigm = {
       code: "western_conventional",
@@ -63,9 +64,9 @@ describe("lensLive Desktop Supabase boundary", () => {
     await expect(lensLive.knowledgeSources(TOKEN)).resolves.toEqual([source]);
 
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
-      "https://clinical.example.test/rest/v1/rpc/list_desktop_lens_paradigms",
-      "https://clinical.example.test/rest/v1/rpc/list_desktop_lens_domains",
-      "https://clinical.example.test/rest/v1/rpc/list_desktop_lens_knowledge_sources",
+      "http://127.0.0.1:3999/rest/v1/rpc/list_desktop_lens_paradigms",
+      "http://127.0.0.1:3999/rest/v1/rpc/list_desktop_lens_domains",
+      "http://127.0.0.1:3999/rest/v1/rpc/list_desktop_lens_knowledge_sources",
     ]);
   });
 
@@ -110,7 +111,7 @@ describe("lensLive Desktop Supabase boundary", () => {
     }, TOKEN)).resolves.toBeNull();
 
     expect(fetchMock.mock.calls[0]?.[0]).toBe(
-      "https://clinical.example.test/rest/v1/rpc/get_desktop_lens_evaluation",
+      "http://127.0.0.1:3999/rest/v1/rpc/get_desktop_lens_evaluation",
     );
     expect(requestBody(fetchMock)).toEqual({
       _encounter_id: ENCOUNTER_ID,
@@ -156,11 +157,11 @@ describe("lensLive Desktop Supabase boundary", () => {
     ]);
 
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
-      "https://clinical.example.test/rest/v1/rpc/set_question_status",
-      "https://clinical.example.test/rest/v1/rpc/dismiss_question",
-      "https://clinical.example.test/rest/v1/rpc/answer_question",
-      "https://clinical.example.test/rest/v1/rpc/correct_question_answer",
-      "https://clinical.example.test/rest/v1/rpc/list_desktop_question_answers",
+      "http://127.0.0.1:3999/rest/v1/rpc/set_question_status",
+      "http://127.0.0.1:3999/rest/v1/rpc/dismiss_question",
+      "http://127.0.0.1:3999/rest/v1/rpc/answer_question",
+      "http://127.0.0.1:3999/rest/v1/rpc/correct_question_answer",
+      "http://127.0.0.1:3999/rest/v1/rpc/list_desktop_question_answers",
     ]);
     expect(requestBody(fetchMock, 0)).toEqual({
       _question_id: QUESTION_ID,
@@ -210,9 +211,9 @@ describe("lensLive Desktop Supabase boundary", () => {
     }, TOKEN)).rejects.toMatchObject({ code: "conflict" });
 
     expect(fetchMock.mock.calls.map(([url]) => url).slice(0, 3)).toEqual([
-      "https://clinical.example.test/rest/v1/rpc/record_question_note_use",
-      "https://clinical.example.test/rest/v1/rpc/submit_question_feedback",
-      "https://clinical.example.test/rest/v1/rpc/review_safety_block",
+      "http://127.0.0.1:3999/rest/v1/rpc/record_question_note_use",
+      "http://127.0.0.1:3999/rest/v1/rpc/submit_question_feedback",
+      "http://127.0.0.1:3999/rest/v1/rpc/review_safety_block",
     ]);
     expect(requestBody(fetchMock, 2)).toEqual({
       _block_id: BLOCK_ID,

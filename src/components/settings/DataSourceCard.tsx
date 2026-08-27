@@ -134,13 +134,13 @@ export async function DataSourceCard() {
               )}
             </div>
             <StatusRow
-              label="Clinical Supabase boundary"
-              ok={server.clinicalSupabaseConfigured}
+              label="AWS clinical boundary"
+              ok={server.clinicalAwsConfigured}
             />
-            <StatusRow label="Transitional tRPC endpoint" ok={server.trpcConfigured} />
+            <StatusRow label="Transitional tRPC endpoint" ok={server.transitionTrpcConfigured} />
             <StatusRow
-              label="Env fallback session (local/e2e only)"
-              ok={server.demoSessionConfigured}
+              label="Loopback fixture session (local/e2e only)"
+              ok={server.localFixtureSessionConfigured}
               okText="Present"
               offText="Not set (expected in production)"
             />

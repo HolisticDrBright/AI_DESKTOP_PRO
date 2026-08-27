@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, "claude/**"]
+    branches: [main, "claude/**", "agent/**"]
   pull_request:
 
 # This repository builds the CLINICAL edition only. Every job that builds the
@@ -23,6 +23,47 @@ jobs:
       - run: npm run typecheck
       - run: npm run lint
       - run: npm run test:unit
+      - name: AWS clinical-core synthetic safety gate
+        run: npm run check:aws-clinical-core
+      - name: AWS identity, invitation, and consent safety gate
+        run: npm run check:aws-identity-consent
+      - name: AWS authenticated synthetic API safety gate
+        run: npm run check:aws-authenticated-api
+      - name: AWS deployed synthetic acceptance harness gate
+        run: npm run check:aws-deployment-acceptance
+      - name: AWS governed catalog and read API safety gates
+        run: |
+          npm run check:aws-governed-catalog
+          npm run check:aws-governed-catalog-api
+      - name: CloudFormation schema and reference lint
+        run: |
+          pip install --disable-pip-version-check --quiet cfn-lint==1.55.0
+          cfn-lint infra/aws-clinical-core/template.json infra/aws-clinical-core/identity-api-extension.json infra/aws-clinical-core/catalog-api-extension.json infra/aws-clinical-core/production-readiness-workload.json infra/aws-clinical-core/production-clinical-api-disabled.json infra/aws-clinical-core/production-clinical-api-candidate.json
+      - name: Build the authenticated API Lambda artifact
+        run: npm run build:aws-authenticated-api
+      - name: Build governed catalog and deployment artifacts
+        run: |
+          npm run build:aws-governed-catalog-api
+          npm run build:aws-deployment-tools
+      - name: AWS production provider-removal and foundation gates
+        run: |
+          npm run check:aws-data-plane-migration
+          npm run check:aws-desktop-compatibility-contract
+          npm run check:aws-desktop-operation-inventory
+          npm run check:aws-production-clinical-core
+          npm run check:aws-production-clinical-api
+          npm run check:aws-production-closed-boundary-exercise
+          npm run check:aws-production-pitr-recovery-exercise
+          npm run build:aws-production-clinical-api
+          npm run build:aws-production-rollback-acceptance
+          npm run build:aws-production-clinical-core-verifier
+          npm run build:aws-production-migration-operator
+          npm run build:aws-production-foundation
+          npm run check:aws-production-foundation
+          npm run test:aws-production-foundation
+          npm run test:aws-production-readiness
+          npm run check:aws-production-container
+          npm run check:aws-production-readiness-workload
       - name: Mock-import graph (no production path to fixtures)
         run: npm run check:mock-imports
       - name: Build refuses without an explicit edition
@@ -80,7 +121,9 @@ jobs:
           node scripts/live-stub-server.mjs &
           sleep 2
           E2E_LIVE=1 \
+          E2E_DEV_SERVER=1 \
           APP_EDITION=clinical \
+          CLINICAL_CONTRACT_FIXTURE=1 \
           TRPC_BASE_URL=http://127.0.0.1:3999/api/trpc \
           CLINICAL_SUPABASE_URL=http://127.0.0.1:3999 \
           CLINICAL_SUPABASE_ANON_KEY=stub \

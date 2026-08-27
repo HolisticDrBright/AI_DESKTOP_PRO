@@ -315,21 +315,24 @@ test("password reset: enumeration-safe request + recovery-token completion", asy
   await page.getByRole("button", { name: /Forgot password/ }).click();
   await expect(page.getByText(/If an account exists for that email/)).toBeVisible();
 
-  // Complete via the emailed link's fragment token (fixture recovery token).
-  await page.goto("/reset#access_token=recovery-token-fixture&type=recovery");
+  // Complete with the workforce email and one-time Cognito code.
+  await page.goto("/reset");
+  await page.getByLabel("Workforce email").fill("practitioner@fixture.local");
+  await page.getByLabel("Six-digit reset code").fill("123456");
   await page.getByLabel("New password").fill("brand-new-password-1");
   await page.getByLabel("Confirm password").fill("brand-new-password-1");
   await page.getByRole("button", { name: "Set new password" }).click();
   await expect(page.getByText("Password updated")).toBeVisible();
 
-  // A bad/expired token is rejected honestly. (Navigate away first — a
-  // fragment-only change would not remount the page.)
+  // A bad/expired code is rejected honestly.
   await page.goto("/login");
-  await page.goto("/reset#access_token=expired-recovery-token&type=recovery");
+  await page.goto("/reset");
+  await page.getByLabel("Workforce email").fill("practitioner@fixture.local");
+  await page.getByLabel("Six-digit reset code").fill("654321");
   await page.getByLabel("New password").fill("brand-new-password-1");
   await page.getByLabel("Confirm password").fill("brand-new-password-1");
   await page.getByRole("button", { name: "Set new password" }).click();
-  await expect(page.getByText(/invalid or has expired/)).toBeVisible();
+  await expect(page.getByText(/verification failed|invalid or has expired/i)).toBeVisible();
   await context.clearCookies();
 });
 

@@ -12,12 +12,13 @@ function response(body: unknown, status = 200) {
 }
 
 beforeEach(() => {
-  process.env.CLINICAL_SUPABASE_URL = "https://clinical.example.test";
+  process.env.CLINICAL_CONTRACT_FIXTURE = "1";
+  process.env.CLINICAL_SUPABASE_URL = "http://127.0.0.1:3999";
   process.env.CLINICAL_SUPABASE_ANON_KEY = "publishable-test-key";
   vi.restoreAllMocks();
 });
 
-describe("scheduleLive Desktop Supabase boundary", () => {
+describe("scheduleLive Desktop AWS clinical boundary", () => {
   test("maps the bounded calendar, practitioners, and scheduling-safe patients", async () => {
     const fetchMock = vi.fn().mockResolvedValue(response({
       appointments: [{
@@ -78,7 +79,7 @@ describe("scheduleLive Desktop Supabase boundary", () => {
       patients: [{ id: "patient-1", name: "Avery Morgan" }],
     });
     expect(fetchMock.mock.calls[0]?.[0]).toBe(
-      "https://clinical.example.test/rest/v1/rpc/get_desktop_calendar",
+      "http://127.0.0.1:3999/rest/v1/rpc/get_desktop_calendar",
     );
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
       _organization_id: ORG_ID,
@@ -109,7 +110,7 @@ describe("scheduleLive Desktop Supabase boundary", () => {
       message: "Appointment booked.",
     });
     expect(fetchMock.mock.calls[0]?.[0]).toBe(
-      "https://clinical.example.test/rest/v1/rpc/book_appointment",
+      "http://127.0.0.1:3999/rest/v1/rpc/book_appointment",
     );
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
       _organization_id: ORG_ID,
@@ -172,7 +173,7 @@ describe("scheduleLive Desktop Supabase boundary", () => {
       message: "Appointment rescheduled.",
     });
     expect(fetchMock.mock.calls[0]?.[0]).toBe(
-      "https://clinical.example.test/rest/v1/rpc/reschedule_appointment",
+      "http://127.0.0.1:3999/rest/v1/rpc/reschedule_appointment",
     );
   });
 });

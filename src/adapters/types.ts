@@ -87,6 +87,23 @@ export interface PatientDirectoryEntry {
   nextVisit: string;
 }
 
+export interface CreatePatientInput {
+  firstName: string;
+  lastName: string;
+  dateOfBirth?: string | null;
+  sex: "male" | "female" | "other" | "unknown";
+  mrn?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  /** Required by the hosted synthetic-staging route; ignored in production. */
+  attestsSynthetic?: boolean;
+}
+
+export interface CreatePatientResult {
+  patient: PatientDirectoryEntry;
+  message: string;
+}
+
 export interface HealthScore {
   value: number;
   band: string; // e.g. "Good"

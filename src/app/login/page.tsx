@@ -5,8 +5,8 @@ import { Card } from "@/components/ui/bits";
 import { LoginForm } from "@/components/auth/LoginForm";
 
 /**
- * Practitioner sign-in for LIVE mode (real Supabase Auth against the clinical
- * project, handled server-side — tokens live in httpOnly cookies). Demo mode
+ * Practitioner sign-in for LIVE mode (AWS Cognito workforce identity,
+ * handled server-side — tokens live in httpOnly cookies). Demo mode
  * needs no sign-in, and this page says so instead of pretending otherwise.
  */
 export default function LoginPage() {
@@ -26,8 +26,8 @@ export default function LoginPage() {
             data is synthetic and session-only, so no sign-in is required.
           </p>
           <p className="mt-[8px] mb-0 text-[12px] leading-[1.5] text-subtle">
-            Live mode (NEXT_PUBLIC_USE_LIVE_API=true) uses real practitioner sign-in against the
-            clinical project. See Settings → Data source &amp; environment.
+            Live mode (NEXT_PUBLIC_USE_LIVE_API=true) uses Cognito workforce sign-in against the
+            governed AWS clinical boundary. See Settings → Data source &amp; environment.
           </p>
           <Link
             href="/"
