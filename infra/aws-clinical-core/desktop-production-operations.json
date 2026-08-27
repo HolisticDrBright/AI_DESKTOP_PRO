@@ -5,6 +5,28 @@
     {
       "kind": "rpc",
       "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260827150000_production_inbox.sql",
+      "names": [
+        "append_message_to_note",
+        "cancel_message_draft",
+        "create_conversation",
+        "create_task_from_message",
+        "get_conversation",
+        "get_inbox_today_summary",
+        "get_patient_messages",
+        "list_inbox",
+        "mark_conversation_read",
+        "register_message_attachment",
+        "review_ai_suggestion",
+        "save_message_draft",
+        "send_message",
+        "set_communication_preferences",
+        "update_conversation_workflow"
+      ]
+    },
+    {
+      "kind": "rpc",
+      "implementation": "native_production_function",
       "source": "infra/aws-clinical-core/production-migrations/20260827140000_production_programs.sql",
       "names": [
         "approve_program_template_version",

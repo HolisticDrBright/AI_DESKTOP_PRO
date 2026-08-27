@@ -112,6 +112,23 @@ const PROGRAM_RPC_KEYS: Readonly<Record<string, readonly string[]>> = {
   submit_program_version: ["_version_id"],
   upsert_program_offer: ["_access_duration_days", "_currency", "_enrollment_open", "_name", "_offer_id", "_payment_mode", "_price_cents", "_program_id", "_status"],
 };
+const INBOX_RPC_KEYS: Readonly<Record<string, readonly string[]>> = {
+  append_message_to_note: ["_encounter_id", "_message_id", "_section"],
+  cancel_message_draft: ["_message_id"],
+  create_conversation: ["_category", "_organization_id", "_patient_id", "_priority", "_subject"],
+  create_task_from_message: ["_message_id", "_priority", "_title"],
+  get_conversation: ["_conversation_id"],
+  get_inbox_today_summary: ["_organization_id"],
+  get_patient_messages: ["_patient_id"],
+  list_inbox: ["_assigned_to_me", "_category", "_due_only", "_limit", "_organization_id", "_priority", "_query", "_queue", "_status", "_unread_only"],
+  mark_conversation_read: ["_conversation_id"],
+  register_message_attachment: ["_byte_size", "_content_type", "_conversation_id", "_file_name", "_message_id", "_sha256"],
+  review_ai_suggestion: ["_decision", "_review_id"],
+  save_message_draft: ["_body", "_conversation_id", "_expected_version", "_message_id"],
+  send_message: ["_channel", "_idempotency_key", "_message_id"],
+  set_communication_preferences: ["_consent_id", "_do_not_contact", "_email_ok", "_note", "_patient_id", "_preferred_channel", "_push_ok", "_sms_ok"],
+  update_conversation_workflow: ["_action", "_at", "_conversation_id", "_expected_version", "_note", "_value"],
+};
 const CORE_RPCS = new Set([
   "create_patient_profile",
   "review_biomarker",
@@ -237,6 +254,7 @@ const CORE_RPCS = new Set([
   ...Object.keys(BILLING_RPC_KEYS),
   ...Object.keys(PLAN_RPC_KEYS),
   ...Object.keys(PROGRAM_RPC_KEYS),
+  ...Object.keys(INBOX_RPC_KEYS),
 ]);
 const CORE_SELECTS = new Set([
   "patient_profiles",
@@ -1264,6 +1282,15 @@ async function executeCoreRpc(
     const row = first(await tx.query<{ data: unknown }>(
       "select clinical_core.invoke_program_operation($1,$2::jsonb) as data",
       [name, JSON.stringify(boundedJsonObject(args, 1_048_576))],
+    ));
+    return decodeJson(row.data);
+  }
+  const inboxKeys = INBOX_RPC_KEYS[name];
+  if (inboxKeys) {
+    exactKeys(args, [...inboxKeys]);
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.invoke_inbox_operation($1,$2::jsonb) as data",
+      [name, JSON.stringify(boundedJsonObject(args, 524_288))],
     ));
     return decodeJson(row.data);
   }

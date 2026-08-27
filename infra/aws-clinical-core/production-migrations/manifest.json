@@ -116,6 +116,10 @@
     {
       "version": "20260827140000",
       "file": "20260827140000_production_programs.sql"
+    },
+    {
+      "version": "20260827150000",
+      "file": "20260827150000_production_inbox.sql"
     }
   ]
 }

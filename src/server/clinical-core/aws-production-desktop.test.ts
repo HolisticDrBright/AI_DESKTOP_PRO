@@ -1260,10 +1260,10 @@ describe("AWS production Desktop adapter", () => {
     })).rejects.toEqual(new ProductionDesktopError("request_invalid"));
   });
 
-  it("delegates every non-core operation to the disabled reviewed registry", async () => {
+  it("delegates an unknown compatibility operation to the disabled reviewed registry", async () => {
     const test = harness();
     await expect(test.adapter.execute(context, {
-      kind: "rpc", functionName: "create_conversation", args: { _organization_id: ORG },
+      kind: "rpc", functionName: "legacy_registry_probe", args: { _organization_id: ORG },
     })).resolves.toEqual({ delegated: true });
     expect(test.fallback.execute).toHaveBeenCalledOnce();
   });

@@ -19,8 +19,8 @@ if (committed.operations?.some((operation) => operation.kind === "rpc"
   && operation.legacyDefinitions.length === 0
   && !operation.productionEvidence)) errors.push("an RPC has no extracted legacy or native-production definition");
 if (committed.operations?.some((operation) => operation.callSites.length === 0)) errors.push("an operation has no live adapter call site");
-if (committed.counts?.productionImplemented !== 208 || committed.counts?.productionEnabled !== 0) {
-  errors.push("production operation evidence must show two hundred eight implemented core operations and zero enabled operations");
+if (committed.counts?.productionImplemented !== 223 || committed.counts?.productionEnabled !== 0) {
+  errors.push("production operation evidence must show all two hundred twenty-three implemented core operations and zero enabled operations");
 }
 const implemented = committed.operations?.filter((operation) => operation.productionStatus === "implemented_activation_blocked") ?? [];
 if (implemented.some((operation) => operation.productionEvidence?.activationState !== "phi_disabled"
@@ -35,5 +35,5 @@ if (errors.length) {
   const providerBound = committed.operations.filter((operation) => operation.legacyDefinitions.some(
     (definition) => Object.values(definition.providerDependencies).some(Boolean),
   )).length;
-  console.log(`Desktop operation inventory passed: 223 live operations, 208 implemented but activation-blocked, 0 enabled; ${providerBound} require provider-specific rewrites.`);
+  console.log(`Desktop operation inventory passed: 223 live operations, all 223 implemented but activation-blocked, 0 enabled; ${providerBound} require provider-specific rewrites.`);
 }

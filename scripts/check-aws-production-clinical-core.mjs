@@ -16,7 +16,7 @@ const errors = [];
 const assert = (condition, message) => { if (!condition) errors.push(message); };
 
 assert(manifest.contract_version === "clinical-core-migrations/1", "generated manifest contract is invalid");
-assert(manifest.migrations.length === 36, "expected seven transformed migrations and twenty-nine production overlays");
+assert(manifest.migrations.length === 37, "expected seven transformed migrations and thirty production overlays");
 assert(new Set(manifest.migrations.map((entry) => entry.version)).size === manifest.migrations.length,
   "migration versions must be unique");
 
@@ -111,6 +111,8 @@ const plansEntitlements = readFileSync(path.join(root, "infra", "aws-clinical-co
   "20260827130000_production_plans_entitlements.sql"), "utf8");
 const programsWorkspace = readFileSync(path.join(root, "infra", "aws-clinical-core", "production-migrations",
   "20260827140000_production_programs.sql"), "utf8");
+const inboxWorkspace = readFileSync(path.join(root, "infra", "aws-clinical-core", "production-migrations",
+  "20260827150000_production_inbox.sql"), "utf8");
 assert(overlay.includes("_organization_id uuid") && overlay.includes("_first_name text")
   && overlay.includes("_last_name text") && overlay.includes("_date_of_birth date")
   && overlay.includes("_sex text") && overlay.includes("_mrn text")
@@ -425,6 +427,15 @@ for (const invariant of [
 assert(!/insert\s+into\s+clinical_core\.program/i.test(
   programsWorkspace.replace(/\$([A-Za-z_][A-Za-z0-9_]*)?\$[\s\S]*?\$\1\$/g, "")),
 "programs migration must not seed templates, programs, enrollments, or progress");
+for (const invariant of [
+  "invoke_inbox_operation", "provider_not_configured", "sent',false",
+  "communication_consent_required", "check(enabled=false)",
+  "message_draft_revisions_append_only", "message_ai_reviews_append_only",
+  "conversation_events_append_only", "registration_only", "from public,clinical_core_api",
+]) assert(inboxWorkspace.includes(invariant), `missing inbox invariant ${invariant}`);
+assert(!/insert\s+into\s+clinical_core\.(?:communication_preferences|conversations|messages|message_|conversation_)/i.test(
+  inboxWorkspace.replace(/\$([A-Za-z_][A-Za-z0-9_]*)?\$[\s\S]*?\$\1\$/g, "")),
+"inbox migration must not seed preferences, conversations, messages, providers, or events");
 assert(governedCatalogOverlay.includes("contains_phi boolean not null default false check (contains_phi = false)")
   && governedCatalogOverlay.includes("data_classification text not null default 'reference_only'")
   && !/insert\s+into\s+(?:clinical_reference|commercial_reference)\./i.test(
