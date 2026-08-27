@@ -54,6 +54,42 @@ function QueryDatabase([string]$resourceArn, [string]$secretArn, [string]$databa
   }
 }
 
+function DatabaseInventory([string]$resourceArn, [string]$secretArn, [string]$database) {
+  $summary = QueryDatabase $resourceArn $secretArn $database @"
+select
+  (select count(*)::int from clinical_core.schema_migrations),
+  (select count(*)::int from information_schema.tables
+    where table_schema in ('clinical_core','clinical_audit','clinical_reference','commercial_reference')
+      and table_name <> 'schema_migrations')
+"@
+  $migrationCount = [int64]$summary.records[0][0].longValue
+  $tableCount = [int64]$summary.records[0][1].longValue
+  $tableList = QueryDatabase $resourceArn $secretArn $database @"
+select table_schema,table_name from information_schema.tables
+where table_schema in ('clinical_core','clinical_audit','clinical_reference','commercial_reference')
+  and table_name <> 'schema_migrations'
+order by table_schema,table_name
+"@
+  $countStatements = @()
+  foreach ($record in @($tableList.records)) {
+    $schema = [string]$record[0].stringValue
+    $table = [string]$record[1].stringValue
+    if ($schema -notmatch '^[a-z_]+$' -or $table -notmatch '^[a-z_]+$') {
+      throw "Recovery inventory returned an unsafe database identifier."
+    }
+    $countStatements += "select count(*)::bigint as retained_rows from `"$schema`".`"$table`""
+  }
+  if ($countStatements.Count -ne $tableCount) {
+    throw "Recovery inventory table enumeration did not match the table count."
+  }
+  $retainedRows = 0L
+  if ($countStatements.Count -gt 0) {
+    $counts = QueryDatabase $resourceArn $secretArn $database ($countStatements -join " union all ")
+    foreach ($record in @($counts.records)) { $retainedRows += [int64]$record[0].longValue }
+  }
+  return @($migrationCount,$tableCount,$retainedRows)
+}
+
 try {
   $outputs = aws cloudformation describe-stacks --region $Region --stack-name $FoundationStackName `
     --query "Stacks[0].Outputs" --output json | ConvertFrom-Json
@@ -83,47 +119,9 @@ try {
   }
   if (-not $source.LatestRestorableTime) { throw "Source cluster has no latest restorable time." }
 
-  $sourceCounts = QueryDatabase $clusterArn $secretArn $database @"
-select
-  (select count(*)::int from clinical_core.schema_migrations),
-  (select count(*)::int from information_schema.tables
-    where table_schema in ('clinical_core','clinical_private','clinical_audit')
-      and table_name <> 'schema_migrations'),
-  (select count(*)::int from clinical_core.organizations),
-  (select count(*)::int from clinical_core.persons),
-  (select count(*)::int from clinical_core.patient_records),
-  (select count(*)::int from clinical_core.lab_import_events),
-  (select count(*)::int from clinical_core.consumer_clinical_record_versions),
-  (select count(*)::int from clinical_core.review_queue_items),
-  (select count(*)::int from clinical_core.appointments),
-  (select count(*)::int from clinical_core.appointment_status_events),
-  (select count(*)::int from clinical_core.encounters),
-  (select count(*)::int from clinical_core.clinical_notes),
-  (select count(*)::int from clinical_core.clinical_note_versions),
-  (select count(*)::int from clinical_core.note_signatures),
-  (select count(*)::int from clinical_core.note_addenda),
-  (select count(*)::int from clinical_core.note_provenance_refs),
-  (select count(*)::int from clinical_core.patient_protocols),
-  (select count(*)::int from clinical_core.patient_protocol_versions),
-  (select count(*)::int from clinical_core.patient_protocol_phases),
-  (select count(*)::int from clinical_core.patient_protocol_items),
-  (select count(*)::int from clinical_core.sync_outbound_events),
-  (select count(*)::int from clinical_core.sync_inbound_events),
-  (select count(*)::int from clinical_core.sync_inbound_corrections),
-  (select count(*)::int from clinical_core.sync_dead_letters),
-  (select count(*)::int from clinical_core.sync_conflicts),
-  (select count(*)::int from clinical_core.sync_resource_acks),
-  (select count(*)::int from clinical_core.sync_delivery_attempts),
-  (select count(*)::int from clinical_core.sync_delivery_events),
-  (select count(*)::int from clinical_core.sync_worker_cycles),
-  (select count(*)::int from clinical_core.sync_circuit_states),
-  (select count(*)::int from clinical_core.sync_callback_nonces),
-  (select count(*)::int from clinical_core.sync_inbound_lab_imports),
-  (select count(*)::int from clinical_audit.events)
-"@
-  $sourceVector = @($sourceCounts.records[0] | ForEach-Object { [int64]$_.longValue })
-  if (($sourceVector -join ",") -ne "19,42,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0") {
-    throw "Source database is not the reviewed empty 19-migration/42-table state."
+  $sourceVector = DatabaseInventory $clusterArn $secretArn $database
+  if (($sourceVector -join ",") -ne "37,133,0") {
+    throw "Source database is not the reviewed empty 37-migration/133-table state."
   }
 
   $securityGroups = @($source.VpcSecurityGroups | ForEach-Object { $_.VpcSecurityGroupId })
@@ -165,45 +163,7 @@ select
   aws rds wait db-instance-available --db-instance-identifier $restoreInstanceId --region $Region
   if ($LASTEXITCODE -ne 0) { throw "Restored writer did not become available." }
 
-  $restoredCounts = QueryDatabase $restored.DBClusterArn $secretArn $database @"
-select
-  (select count(*)::int from clinical_core.schema_migrations),
-  (select count(*)::int from information_schema.tables
-    where table_schema in ('clinical_core','clinical_private','clinical_audit')
-      and table_name <> 'schema_migrations'),
-  (select count(*)::int from clinical_core.organizations),
-  (select count(*)::int from clinical_core.persons),
-  (select count(*)::int from clinical_core.patient_records),
-  (select count(*)::int from clinical_core.lab_import_events),
-  (select count(*)::int from clinical_core.consumer_clinical_record_versions),
-  (select count(*)::int from clinical_core.review_queue_items),
-  (select count(*)::int from clinical_core.appointments),
-  (select count(*)::int from clinical_core.appointment_status_events),
-  (select count(*)::int from clinical_core.encounters),
-  (select count(*)::int from clinical_core.clinical_notes),
-  (select count(*)::int from clinical_core.clinical_note_versions),
-  (select count(*)::int from clinical_core.note_signatures),
-  (select count(*)::int from clinical_core.note_addenda),
-  (select count(*)::int from clinical_core.note_provenance_refs),
-  (select count(*)::int from clinical_core.patient_protocols),
-  (select count(*)::int from clinical_core.patient_protocol_versions),
-  (select count(*)::int from clinical_core.patient_protocol_phases),
-  (select count(*)::int from clinical_core.patient_protocol_items),
-  (select count(*)::int from clinical_core.sync_outbound_events),
-  (select count(*)::int from clinical_core.sync_inbound_events),
-  (select count(*)::int from clinical_core.sync_inbound_corrections),
-  (select count(*)::int from clinical_core.sync_dead_letters),
-  (select count(*)::int from clinical_core.sync_conflicts),
-  (select count(*)::int from clinical_core.sync_resource_acks),
-  (select count(*)::int from clinical_core.sync_delivery_attempts),
-  (select count(*)::int from clinical_core.sync_delivery_events),
-  (select count(*)::int from clinical_core.sync_worker_cycles),
-  (select count(*)::int from clinical_core.sync_circuit_states),
-  (select count(*)::int from clinical_core.sync_callback_nonces),
-  (select count(*)::int from clinical_core.sync_inbound_lab_imports),
-  (select count(*)::int from clinical_audit.events)
-"@
-  $restoredVector = @($restoredCounts.records[0] | ForEach-Object { [int64]$_.longValue })
+  $restoredVector = DatabaseInventory $restored.DBClusterArn $secretArn $database
   if (($restoredVector -join ",") -ne ($sourceVector -join ",")) {
     throw "Restored database does not match the reviewed empty source state."
   }
@@ -223,7 +183,7 @@ select
     restoredClusterPrivate = $true
     migrationCount = $restoredVector[0]
     tableCount = $restoredVector[1]
-    clinicalRowCount = ($restoredVector[2..32] | Measure-Object -Sum).Sum
+    clinicalRowCount = $restoredVector[2]
     restoreVerificationSeconds = [math]::Round(($verifiedAt - $exerciseStarted).TotalSeconds, 1)
     temporaryResourcesDeleted = $false
   }

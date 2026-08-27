@@ -4,8 +4,8 @@ const script = fs.readFileSync("scripts/run-aws-production-pitr-recovery-exercis
 const required = [
   "ConfirmPhiDisabledRecoveryExercise", "173535830222", 'PhiAllowed', 'production-clinical',
   'clinical_phi_target', 'BackupRetentionPeriod -ne 35', 'restore-db-cluster-to-point-in-time',
-  'full-copy', 'use-latest-restorable-time', '19,42,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0',
-  'patient_protocols', 'patient_protocol_versions', 'patient_protocol_phases', 'patient_protocol_items',
+  'full-copy', 'use-latest-restorable-time', '37,133,0', 'DatabaseInventory',
+  "'clinical_core','clinical_audit','clinical_reference','commercial_reference'", 'union all',
   'temporaryResourcesDeleted', 'skip-final-snapshot', 'evidenceSha256',
 ];
 const missing = required.filter((marker) => !script.includes(marker));
