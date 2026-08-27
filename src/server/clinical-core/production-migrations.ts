@@ -109,7 +109,8 @@ export async function applyProductionClinicalCoreMigrations(
             'resolve_knowledge_import_conflict','commit_knowledge_import','cancel_knowledge_import',
             'list_label_commercial_links','list_protocol_commercial_links',
             'get_research_handoff_review','record_research_handoff_item_review',
-            'invoke_import_review_operation','add_org_member','activate_my_memberships'))::int as contract_count,
+            'invoke_import_review_operation','invoke_nutrition_operation',
+            'add_org_member','activate_my_memberships'))::int as contract_count,
       (
         (select count(*) from clinical_core.organizations)
         + (select count(*) from clinical_core.persons)
@@ -158,6 +159,15 @@ export async function applyProductionClinicalCoreMigrations(
         + (select count(*) from clinical_core.clinical_knowledge_import_items)
         + (select count(*) from clinical_core.knowledge_import_conflict_resolutions)
         + (select count(*) from clinical_core.research_handoff_item_reviews)
+        + (select count(*) from clinical_core.nutrition_templates)
+        + (select count(*) from clinical_core.nutrition_template_versions)
+        + (select count(*) from clinical_core.nutrition_plans)
+        + (select count(*) from clinical_core.nutrition_plan_versions)
+        + (select count(*) from clinical_core.nutrition_constraints)
+        + (select count(*) from clinical_core.nutrition_safety_flags)
+        + (select count(*) from clinical_core.nutrition_amendments)
+        + (select count(*) from clinical_core.nutrition_checkins)
+        + (select count(*) from clinical_core.nutrition_events)
         + (select count(*) from clinical_reference.product_label_candidates)
         + (select count(*) from clinical_core.sync_outbound_events)
         + (select count(*) from clinical_core.sync_inbound_events)
@@ -173,7 +183,7 @@ export async function applyProductionClinicalCoreMigrations(
         + (select count(*) from clinical_core.sync_inbound_lab_imports)
       )::int as clinical_row_count`);
     const row = verification.rows[0];
-    if (!row || Number(row.table_count) !== 63 || Number(row.contract_count) !== 66
+    if (!row || Number(row.table_count) !== 72 || Number(row.contract_count) !== 67
       || Number(row.clinical_row_count) !== 0) {
       throw new ProductionClinicalCoreMigrationError("verification_failed");
     }

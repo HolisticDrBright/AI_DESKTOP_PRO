@@ -30,8 +30,8 @@ function databaseFor(options: {
       }
       if (sql.startsWith("select\n      (select count(*)")) {
         return { rows: [{
-          table_count: 63,
-          contract_count: 66,
+          table_count: 72,
+          contract_count: 67,
           clinical_row_count: 0,
           ...options.verification,
         }] as unknown as Row[] };
@@ -257,8 +257,8 @@ describe("production clinical-core migrations", () => {
     expect(result).toEqual({
       applied: [migration.version],
       alreadyApplied: [],
-      tableCount: 63,
-      contractCount: 66,
+      tableCount: 72,
+      contractCount: 67,
       clinicalRowCount: 0,
     });
     expect(harness.statements.map(({ sql }) => sql)).toContain("create table clinical_core.example(id uuid)");

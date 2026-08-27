@@ -100,6 +100,10 @@
     {
       "version": "20260827100000",
       "file": "20260827100000_production_import_review_workspace.sql"
+    },
+    {
+      "version": "20260827110000",
+      "file": "20260827110000_production_nutrition_workspace.sql"
     }
   ]
 }

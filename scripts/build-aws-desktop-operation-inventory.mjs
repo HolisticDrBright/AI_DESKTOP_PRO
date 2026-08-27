@@ -170,7 +170,11 @@ export function buildDesktopOperationInventory() {
     || productionManifest.activationState !== "phi_disabled"
     || !Array.isArray(productionManifest.operations)) throw new Error("production operation manifest invalid");
   const productionPorts = new Map();
-  for (const port of productionManifest.operations) {
+  const groupedPorts = (productionManifest.operationGroups ?? []).flatMap((group) => {
+    if (!Array.isArray(group.names) || group.names.length < 1) throw new Error("production operation group invalid");
+    return group.names.map((name) => ({ ...group, name, names: undefined }));
+  });
+  for (const port of [...productionManifest.operations, ...groupedPorts]) {
     const key = `${port.kind}:${port.name}`;
     if (productionPorts.has(key) || !["rpc", "select"].includes(port.kind)
       || typeof port.name !== "string" || typeof port.source !== "string"

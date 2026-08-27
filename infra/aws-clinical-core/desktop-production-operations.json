@@ -1,6 +1,39 @@
 {
   "schemaVersion": "desktop-production-operations/1",
   "activationState": "phi_disabled",
+  "operationGroups": [
+    {
+      "kind": "rpc",
+      "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260827110000_production_nutrition_workspace.sql",
+      "names": [
+        "activate_nutrition_plan_version",
+        "add_nutrition_amendment",
+        "approve_nutrition_plan_version",
+        "archive_nutrition_template",
+        "create_nutrition_plan",
+        "create_nutrition_template_version",
+        "evaluate_nutrition_plan_safety",
+        "get_nutrition_adherence_summary",
+        "get_nutrition_version_content",
+        "get_patient_nutrition",
+        "install_nutrition_starter_template",
+        "list_nutrition_templates",
+        "publish_nutrition_template_version",
+        "raise_nutrition_safety_flag",
+        "record_nutrition_checkin",
+        "resolve_nutrition_safety_flag",
+        "review_nutrition_checkin",
+        "revise_nutrition_plan_version",
+        "save_nutrition_plan_version",
+        "save_nutrition_template_content",
+        "set_nutrition_plan_constraints",
+        "set_nutrition_plan_lifecycle",
+        "submit_nutrition_plan_version",
+        "upsert_nutrition_template"
+      ]
+    }
+  ],
   "operations": [
     {
       "kind": "rpc",

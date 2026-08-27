@@ -21,6 +21,32 @@ export class ProductionDesktopError extends Error {
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const NUTRITION_RPC_KEYS: Readonly<Record<string, readonly string[]>> = {
+  activate_nutrition_plan_version: ["_organization_id", "_plan_version_id"],
+  add_nutrition_amendment: ["_body", "_organization_id", "_plan_version_id", "_reason"],
+  approve_nutrition_plan_version: ["_note", "_organization_id", "_plan_version_id"],
+  archive_nutrition_template: ["_organization_id", "_reason", "_template_id"],
+  create_nutrition_plan: ["_organization_id", "_patient_id", "_source_template_version_id", "_title"],
+  create_nutrition_template_version: ["_caution_populations", "_copy_from_version_id", "_education_vs_advice_note", "_evidence_grade", "_evidence_summary", "_intended_use", "_missing_information_required", "_organization_id", "_patient_education", "_prerequisites", "_purpose", "_requires_practitioner_review", "_template_id"],
+  evaluate_nutrition_plan_safety: ["_organization_id", "_plan_version_id"],
+  get_nutrition_adherence_summary: ["_days", "_organization_id", "_patient_id"],
+  get_nutrition_version_content: ["_organization_id", "_plan_version_id", "_template_version_id"],
+  get_patient_nutrition: ["_organization_id", "_patient_id"],
+  install_nutrition_starter_template: ["_content", "_content_hash", "_meta", "_name", "_organization_id", "_pattern", "_slug", "_summary"],
+  list_nutrition_templates: ["_include_archived", "_organization_id"],
+  publish_nutrition_template_version: ["_organization_id", "_template_version_id"],
+  raise_nutrition_safety_flag: ["_detail", "_kind", "_organization_id", "_plan_version_id", "_severity"],
+  record_nutrition_checkin: ["_diet_adherence_pct", "_digestive_tolerance", "_energy_rating", "_hunger_rating", "_meal_plan_adherence_pct", "_observed_on", "_organization_id", "_patient_id", "_patient_note", "_plan_version_id", "_satiety_rating", "_source", "_symptoms", "_weight_unit", "_weight_value"],
+  resolve_nutrition_safety_flag: ["_action", "_flag_id", "_organization_id", "_reason"],
+  review_nutrition_checkin: ["_checkin_id", "_organization_id", "_state"],
+  revise_nutrition_plan_version: ["_organization_id", "_plan_version_id", "_reason"],
+  save_nutrition_plan_version: ["_autosave", "_carbohydrate_g", "_carbohydrate_pct", "_content", "_energy_target_unit", "_energy_target_value", "_expected_version", "_fasting_instructions", "_fat_g", "_fat_pct", "_fiber_g", "_goals", "_meal_timing_guidance", "_organization_id", "_patient_instructions", "_plan_version_id", "_practitioner_rationale", "_protein_g", "_protein_pct"],
+  save_nutrition_template_content: ["_content", "_organization_id", "_template_version_id"],
+  set_nutrition_plan_constraints: ["_constraints", "_organization_id", "_plan_version_id"],
+  set_nutrition_plan_lifecycle: ["_action", "_organization_id", "_plan_id", "_reason"],
+  submit_nutrition_plan_version: ["_organization_id", "_plan_version_id"],
+  upsert_nutrition_template: ["_expected_version", "_name", "_organization_id", "_pattern", "_summary", "_template_id"],
+};
 const CORE_RPCS = new Set([
   "create_patient_profile",
   "review_biomarker",
@@ -142,6 +168,7 @@ const CORE_RPCS = new Set([
   "revoke_commercial_link",
   "supersede_knowledge_reference",
   "supersede_product_label_version",
+  ...Object.keys(NUTRITION_RPC_KEYS),
 ]);
 const CORE_SELECTS = new Set([
   "patient_profiles",
@@ -1133,6 +1160,15 @@ async function executeCoreRpc(
     const row = first(await tx.query<{ data: unknown }>(
       "select clinical_core.invoke_import_review_operation($1,$2::jsonb) as data",
       [name, JSON.stringify(boundedJsonObject(args, 524_288))],
+    ));
+    return decodeJson(row.data);
+  }
+  const nutritionKeys = NUTRITION_RPC_KEYS[name];
+  if (nutritionKeys) {
+    exactKeys(args, [...nutritionKeys]);
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.invoke_nutrition_operation($1,$2::jsonb) as data",
+      [name, JSON.stringify(boundedJsonObject(args, 1_048_576))],
     ));
     return decodeJson(row.data);
   }
