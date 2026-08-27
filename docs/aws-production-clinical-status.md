@@ -688,6 +688,11 @@ AWS application result:
   compatibility operations, then rolled every temporary record back;
 - rollback evidence SHA-256:
   `bcdd4b6dcadaca3bee6ae8fe982f65fb5fa341cbf782acdc1338af1b7447de12`.
+- exact pushed source `e56c8f37dc17fac40714f70d89debdd60837ad98`
+  is deployed to the production API candidate; artifact SHA-256
+  `052d03f8fe05e2384d208587e7755283c047edb32268be5b870f1406da4e0034`;
+  the candidate still has logging-only IAM, no clinical data permission, and
+  returns the required bounded HTTP 503 refusal.
 
 The Desktop inventory is now 101 of 223 live operations implemented on AWS,
 with all 101 marked `implemented_activation_blocked`, zero production-enabled,
