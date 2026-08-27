@@ -5,6 +5,33 @@
     {
       "kind": "rpc",
       "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260827140000_production_programs.sql",
+      "names": [
+        "approve_program_template_version",
+        "approve_program_version",
+        "archive_program",
+        "archive_program_template",
+        "create_program",
+        "create_program_template",
+        "enroll_patient_in_program",
+        "get_patient_programs",
+        "get_program_studio",
+        "list_program_templates",
+        "list_programs",
+        "publish_program_version",
+        "record_program_progress",
+        "return_program_version",
+        "review_program_progress",
+        "revise_program_version",
+        "save_program_draft",
+        "set_program_enrollment_status",
+        "submit_program_version",
+        "upsert_program_offer"
+      ]
+    },
+    {
+      "kind": "rpc",
+      "implementation": "native_production_function",
       "source": "infra/aws-clinical-core/production-migrations/20260827130000_production_plans_entitlements.sql",
       "names": [
         "assign_complimentary_plan",

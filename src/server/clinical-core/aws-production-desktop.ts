@@ -90,6 +90,28 @@ const PLAN_RPC_KEYS: Readonly<Record<string, readonly string[]>> = {
   settle_entitlement_for_appointment: ["_appointment_id", "_organization_id", "_outcome", "_reason"],
   upsert_plan: ["_archive", "_description", "_expected_version", "_id", "_kind", "_name", "_organization_id", "_plan_type"],
 };
+const PROGRAM_RPC_KEYS: Readonly<Record<string, readonly string[]>> = {
+  approve_program_template_version: ["_version_id"],
+  approve_program_version: ["_note", "_version_id"],
+  archive_program: ["_archived", "_program_id"],
+  archive_program_template: ["_archived", "_template_id"],
+  create_program: ["_from_template_id", "_name", "_organization_id"],
+  create_program_template: ["_description", "_from_version_id", "_name", "_organization_id"],
+  enroll_patient_in_program: ["_activate", "_comp_reason", "_offer_id", "_patient_id", "_program_id"],
+  get_patient_programs: ["_patient_id"],
+  get_program_studio: ["_program_id"],
+  list_program_templates: ["_include_archived", "_organization_id"],
+  list_programs: ["_limit", "_organization_id", "_query", "_status"],
+  publish_program_version: ["_version_id"],
+  record_program_progress: ["_block_id", "_enrollment_id", "_kind", "_lesson_id", "_needs_review", "_payload"],
+  return_program_version: ["_note", "_version_id"],
+  review_program_progress: ["_progress_id"],
+  revise_program_version: ["_version_id"],
+  save_program_draft: ["_expected_updated_at", "_payload", "_version_id"],
+  set_program_enrollment_status: ["_enrollment_id", "_reason", "_status"],
+  submit_program_version: ["_version_id"],
+  upsert_program_offer: ["_access_duration_days", "_currency", "_enrollment_open", "_name", "_offer_id", "_payment_mode", "_price_cents", "_program_id", "_status"],
+};
 const CORE_RPCS = new Set([
   "create_patient_profile",
   "review_biomarker",
@@ -214,6 +236,7 @@ const CORE_RPCS = new Set([
   ...Object.keys(NUTRITION_RPC_KEYS),
   ...Object.keys(BILLING_RPC_KEYS),
   ...Object.keys(PLAN_RPC_KEYS),
+  ...Object.keys(PROGRAM_RPC_KEYS),
 ]);
 const CORE_SELECTS = new Set([
   "patient_profiles",
@@ -1232,6 +1255,15 @@ async function executeCoreRpc(
     const row = first(await tx.query<{ data: unknown }>(
       "select clinical_core.invoke_plan_operation($1,$2::jsonb) as data",
       [name, JSON.stringify(boundedJsonObject(args, 524_288))],
+    ));
+    return decodeJson(row.data);
+  }
+  const programKeys = PROGRAM_RPC_KEYS[name];
+  if (programKeys) {
+    exactKeys(args, [...programKeys]);
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.invoke_program_operation($1,$2::jsonb) as data",
+      [name, JSON.stringify(boundedJsonObject(args, 1_048_576))],
     ));
     return decodeJson(row.data);
   }

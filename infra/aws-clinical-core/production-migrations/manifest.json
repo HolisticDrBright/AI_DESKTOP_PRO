@@ -112,6 +112,10 @@
     {
       "version": "20260827130000",
       "file": "20260827130000_production_plans_entitlements.sql"
+    },
+    {
+      "version": "20260827140000",
+      "file": "20260827140000_production_programs.sql"
     }
   ]
 }
