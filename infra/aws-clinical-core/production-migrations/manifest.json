@@ -108,6 +108,10 @@
     {
       "version": "20260827120000",
       "file": "20260827120000_production_billing_inventory.sql"
+    },
+    {
+      "version": "20260827130000",
+      "file": "20260827130000_production_plans_entitlements.sql"
     }
   ]
 }

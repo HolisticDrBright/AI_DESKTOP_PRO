@@ -5,6 +5,30 @@
     {
       "kind": "rpc",
       "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260827130000_production_plans_entitlements.sql",
+      "names": [
+        "assign_complimentary_plan",
+        "create_plan_version",
+        "expire_entitlements",
+        "get_patient_entitlements",
+        "get_reconciliation_workspace",
+        "grant_entitlements_for_invoice",
+        "list_plans",
+        "publish_plan_version",
+        "purchase_package",
+        "reserve_entitlement_for_appointment",
+        "resolve_reconciliation_exception",
+        "restore_entitlement",
+        "revoke_entitlements_for_refund",
+        "set_membership_lifecycle",
+        "set_org_billing_policy",
+        "settle_entitlement_for_appointment",
+        "upsert_plan"
+      ]
+    },
+    {
+      "kind": "rpc",
+      "implementation": "native_production_function",
       "source": "infra/aws-clinical-core/production-migrations/20260827120000_production_billing_inventory.sql",
       "names": [
         "adjust_inventory_stock",

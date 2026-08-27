@@ -71,6 +71,25 @@ const BILLING_RPC_KEYS: Readonly<Record<string, readonly string[]>> = {
   upsert_tax_rate: ["_active", "_id", "_name", "_organization_id", "_rate_bps"],
   void_invoice: ["_expected_version", "_invoice_id", "_organization_id", "_reason"],
 };
+const PLAN_RPC_KEYS: Readonly<Record<string, readonly string[]>> = {
+  assign_complimentary_plan: ["_expires_at", "_organization_id", "_patient_id", "_plan_type", "_reason", "_version_id"],
+  create_plan_version: ["_credit_mode", "_credit_quantity", "_currency", "_eligible_location_ids", "_eligible_practitioner_ids", "_eligible_product_ids", "_expires_after_days", "_grace_period_days", "_included_credits", "_interval_count", "_interval_unit", "_minimum_commitment_periods", "_organization_id", "_plan_id", "_plan_type", "_price_minor", "_terms_summary", "_transfer_policy", "_trial_days"],
+  expire_entitlements: ["_organization_id"],
+  get_patient_entitlements: ["_organization_id", "_patient_id"],
+  get_reconciliation_workspace: ["_organization_id", "_status"],
+  grant_entitlements_for_invoice: ["_invoice_id", "_organization_id"],
+  list_plans: ["_include_archived", "_organization_id"],
+  publish_plan_version: ["_organization_id", "_plan_type", "_version_id"],
+  purchase_package: ["_acceptance_method", "_organization_id", "_package_version_id", "_patient_id"],
+  reserve_entitlement_for_appointment: ["_appointment_id", "_entitlement_id", "_organization_id", "_quantity"],
+  resolve_reconciliation_exception: ["_exception_id", "_expected_version", "_organization_id", "_reason", "_resolution"],
+  restore_entitlement: ["_entitlement_id", "_organization_id", "_quantity", "_reason"],
+  revoke_entitlements_for_refund: ["_invoice_id", "_organization_id", "_reason"],
+  set_membership_lifecycle: ["_action", "_expected_version", "_organization_id", "_patient_membership_id", "_reason"],
+  set_org_billing_policy: ["_consume_on", "_late_cancel_policy", "_late_cancel_window_hours", "_no_show_policy", "_organization_id"],
+  settle_entitlement_for_appointment: ["_appointment_id", "_organization_id", "_outcome", "_reason"],
+  upsert_plan: ["_archive", "_description", "_expected_version", "_id", "_kind", "_name", "_organization_id", "_plan_type"],
+};
 const CORE_RPCS = new Set([
   "create_patient_profile",
   "review_biomarker",
@@ -194,6 +213,7 @@ const CORE_RPCS = new Set([
   "supersede_product_label_version",
   ...Object.keys(NUTRITION_RPC_KEYS),
   ...Object.keys(BILLING_RPC_KEYS),
+  ...Object.keys(PLAN_RPC_KEYS),
 ]);
 const CORE_SELECTS = new Set([
   "patient_profiles",
@@ -1203,6 +1223,15 @@ async function executeCoreRpc(
     const row = first(await tx.query<{ data: unknown }>(
       "select clinical_core.invoke_billing_operation($1,$2::jsonb) as data",
       [name, JSON.stringify(boundedJsonObject(args, 1_048_576))],
+    ));
+    return decodeJson(row.data);
+  }
+  const planKeys = PLAN_RPC_KEYS[name];
+  if (planKeys) {
+    exactKeys(args, [...planKeys]);
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.invoke_plan_operation($1,$2::jsonb) as data",
+      [name, JSON.stringify(boundedJsonObject(args, 524_288))],
     ));
     return decodeJson(row.data);
   }

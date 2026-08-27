@@ -16,7 +16,7 @@ const errors = [];
 const assert = (condition, message) => { if (!condition) errors.push(message); };
 
 assert(manifest.contract_version === "clinical-core-migrations/1", "generated manifest contract is invalid");
-assert(manifest.migrations.length === 34, "expected seven transformed migrations and twenty-seven production overlays");
+assert(manifest.migrations.length === 35, "expected seven transformed migrations and twenty-eight production overlays");
 assert(new Set(manifest.migrations.map((entry) => entry.version)).size === manifest.migrations.length,
   "migration versions must be unique");
 
@@ -107,6 +107,8 @@ const nutritionWorkspace = readFileSync(path.join(root, "infra", "aws-clinical-c
   "20260827110000_production_nutrition_workspace.sql"), "utf8");
 const billingInventory = readFileSync(path.join(root, "infra", "aws-clinical-core", "production-migrations",
   "20260827120000_production_billing_inventory.sql"), "utf8");
+const plansEntitlements = readFileSync(path.join(root, "infra", "aws-clinical-core", "production-migrations",
+  "20260827130000_production_plans_entitlements.sql"), "utf8");
 assert(overlay.includes("_organization_id uuid") && overlay.includes("_first_name text")
   && overlay.includes("_last_name text") && overlay.includes("_date_of_birth date")
   && overlay.includes("_sex text") && overlay.includes("_mrn text")
@@ -403,6 +405,15 @@ for (const invariant of [
 assert(!/insert\s+into\s+clinical_core\.(?:billing_|inventory_|patient_credit_)/i.test(
   billingInventory.replace(/\$([A-Za-z_][A-Za-z0-9_]*)?\$[\s\S]*?\$\1\$/g, "")),
 "billing migration must not seed products, invoices, payments, credits, or providers");
+for (const invariant of [
+  "invoke_plan_operation", "paid_invoice_required", "published_package_not_found",
+  "plan_acceptances_append_only", "entitlement_ledger_append_only", "plan_events_append_only",
+  "granted_quantity=remaining_quantity+reserved_quantity+consumed_quantity+expired_quantity+refunded_quantity",
+  "from public,clinical_core_api",
+]) assert(plansEntitlements.includes(invariant), `missing plans invariant ${invariant}`);
+assert(!/insert\s+into\s+clinical_core\.(?:billing_plan|plan_acceptance|patient_membership|entitlement|reconciliation_exception)/i.test(
+  plansEntitlements.replace(/\$([A-Za-z_][A-Za-z0-9_]*)?\$[\s\S]*?\$\1\$/g, "")),
+"plans migration must not seed plans, memberships, entitlements, or exceptions");
 assert(governedCatalogOverlay.includes("contains_phi boolean not null default false check (contains_phi = false)")
   && governedCatalogOverlay.includes("data_classification text not null default 'reference_only'")
   && !/insert\s+into\s+(?:clinical_reference|commercial_reference)\./i.test(

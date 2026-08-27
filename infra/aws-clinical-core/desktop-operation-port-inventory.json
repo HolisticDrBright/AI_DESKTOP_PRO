@@ -2,14 +2,14 @@
   "schemaVersion": "desktop-operation-port-inventory/1",
   "generatedFrom": {
     "operationManifestSha256": "8cd2bed9d9db0f17aab030e397cbb07cc4fe50647f4eaf5e4ba83816a4a4fbff",
-    "productionOperationManifestSha256": "00123dbab7177cb5098053ca5e18f6aa78906d947094b49c46ff7733a7f75500",
+    "productionOperationManifestSha256": "f58dd2f552f9a4b7f66a68fb1edfd5a786b20367ccb6a16b5d74775520be4d7b",
     "legacyDefinitionSetSha256": "dce8bb87ed890c305c656ee61b8438da0cb518647ea2df65f4bdf26e55277e96"
   },
   "counts": {
     "rpc": 218,
     "select": 5,
     "total": 223,
-    "productionImplemented": 171,
+    "productionImplemented": 188,
     "productionEnabled": 0
   },
   "operations": [
@@ -1195,7 +1195,13 @@
         }
       ],
       "syntheticBoundary": "registry_disabled",
-      "productionStatus": "not_ported"
+      "productionStatus": "implemented_activation_blocked",
+      "productionEvidence": {
+        "implementation": "native_production_function",
+        "source": "infra/aws-clinical-core/production-migrations/20260827130000_production_plans_entitlements.sql",
+        "sourceSha256": "8f823a2a690ad1c0764f81b6ebf46d6e65371c448e32465e945253384f45fbb9",
+        "activationState": "phi_disabled"
+      }
     },
     {
       "kind": "rpc",
@@ -2494,7 +2500,13 @@
         }
       ],
       "syntheticBoundary": "registry_disabled",
-      "productionStatus": "not_ported"
+      "productionStatus": "implemented_activation_blocked",
+      "productionEvidence": {
+        "implementation": "native_production_function",
+        "source": "infra/aws-clinical-core/production-migrations/20260827130000_production_plans_entitlements.sql",
+        "sourceSha256": "8f823a2a690ad1c0764f81b6ebf46d6e65371c448e32465e945253384f45fbb9",
+        "activationState": "phi_disabled"
+      }
     },
     {
       "kind": "rpc",
@@ -3142,7 +3154,13 @@
         }
       ],
       "syntheticBoundary": "registry_disabled",
-      "productionStatus": "not_ported"
+      "productionStatus": "implemented_activation_blocked",
+      "productionEvidence": {
+        "implementation": "native_production_function",
+        "source": "infra/aws-clinical-core/production-migrations/20260827130000_production_plans_entitlements.sql",
+        "sourceSha256": "8f823a2a690ad1c0764f81b6ebf46d6e65371c448e32465e945253384f45fbb9",
+        "activationState": "phi_disabled"
+      }
     },
     {
       "kind": "rpc",
@@ -4262,7 +4280,13 @@
         }
       ],
       "syntheticBoundary": "registry_disabled",
-      "productionStatus": "not_ported"
+      "productionStatus": "implemented_activation_blocked",
+      "productionEvidence": {
+        "implementation": "native_production_function",
+        "source": "infra/aws-clinical-core/production-migrations/20260827130000_production_plans_entitlements.sql",
+        "sourceSha256": "8f823a2a690ad1c0764f81b6ebf46d6e65371c448e32465e945253384f45fbb9",
+        "activationState": "phi_disabled"
+      }
     },
     {
       "kind": "rpc",
@@ -4929,7 +4953,13 @@
         }
       ],
       "syntheticBoundary": "registry_disabled",
-      "productionStatus": "not_ported"
+      "productionStatus": "implemented_activation_blocked",
+      "productionEvidence": {
+        "implementation": "native_production_function",
+        "source": "infra/aws-clinical-core/production-migrations/20260827130000_production_plans_entitlements.sql",
+        "sourceSha256": "8f823a2a690ad1c0764f81b6ebf46d6e65371c448e32465e945253384f45fbb9",
+        "activationState": "phi_disabled"
+      }
     },
     {
       "kind": "rpc",
@@ -5142,7 +5172,13 @@
         }
       ],
       "syntheticBoundary": "registry_disabled",
-      "productionStatus": "not_ported"
+      "productionStatus": "implemented_activation_blocked",
+      "productionEvidence": {
+        "implementation": "native_production_function",
+        "source": "infra/aws-clinical-core/production-migrations/20260827130000_production_plans_entitlements.sql",
+        "sourceSha256": "8f823a2a690ad1c0764f81b6ebf46d6e65371c448e32465e945253384f45fbb9",
+        "activationState": "phi_disabled"
+      }
     },
     {
       "kind": "rpc",
@@ -6041,7 +6077,13 @@
         }
       ],
       "syntheticBoundary": "registry_disabled",
-      "productionStatus": "not_ported"
+      "productionStatus": "implemented_activation_blocked",
+      "productionEvidence": {
+        "implementation": "native_production_function",
+        "source": "infra/aws-clinical-core/production-migrations/20260827130000_production_plans_entitlements.sql",
+        "sourceSha256": "8f823a2a690ad1c0764f81b6ebf46d6e65371c448e32465e945253384f45fbb9",
+        "activationState": "phi_disabled"
+      }
     },
     {
       "kind": "rpc",
@@ -6816,7 +6858,13 @@
         }
       ],
       "syntheticBoundary": "registry_disabled",
-      "productionStatus": "not_ported"
+      "productionStatus": "implemented_activation_blocked",
+      "productionEvidence": {
+        "implementation": "native_production_function",
+        "source": "infra/aws-clinical-core/production-migrations/20260827130000_production_plans_entitlements.sql",
+        "sourceSha256": "8f823a2a690ad1c0764f81b6ebf46d6e65371c448e32465e945253384f45fbb9",
+        "activationState": "phi_disabled"
+      }
     },
     {
       "kind": "rpc",
@@ -6912,7 +6960,13 @@
         }
       ],
       "syntheticBoundary": "registry_disabled",
-      "productionStatus": "not_ported"
+      "productionStatus": "implemented_activation_blocked",
+      "productionEvidence": {
+        "implementation": "native_production_function",
+        "source": "infra/aws-clinical-core/production-migrations/20260827130000_production_plans_entitlements.sql",
+        "sourceSha256": "8f823a2a690ad1c0764f81b6ebf46d6e65371c448e32465e945253384f45fbb9",
+        "activationState": "phi_disabled"
+      }
     },
     {
       "kind": "rpc",
@@ -7965,7 +8019,13 @@
         }
       ],
       "syntheticBoundary": "registry_disabled",
-      "productionStatus": "not_ported"
+      "productionStatus": "implemented_activation_blocked",
+      "productionEvidence": {
+        "implementation": "native_production_function",
+        "source": "infra/aws-clinical-core/production-migrations/20260827130000_production_plans_entitlements.sql",
+        "sourceSha256": "8f823a2a690ad1c0764f81b6ebf46d6e65371c448e32465e945253384f45fbb9",
+        "activationState": "phi_disabled"
+      }
     },
     {
       "kind": "rpc",
@@ -8186,7 +8246,13 @@
         }
       ],
       "syntheticBoundary": "registry_disabled",
-      "productionStatus": "not_ported"
+      "productionStatus": "implemented_activation_blocked",
+      "productionEvidence": {
+        "implementation": "native_production_function",
+        "source": "infra/aws-clinical-core/production-migrations/20260827130000_production_plans_entitlements.sql",
+        "sourceSha256": "8f823a2a690ad1c0764f81b6ebf46d6e65371c448e32465e945253384f45fbb9",
+        "activationState": "phi_disabled"
+      }
     },
     {
       "kind": "rpc",
@@ -8342,7 +8408,13 @@
         }
       ],
       "syntheticBoundary": "registry_disabled",
-      "productionStatus": "not_ported"
+      "productionStatus": "implemented_activation_blocked",
+      "productionEvidence": {
+        "implementation": "native_production_function",
+        "source": "infra/aws-clinical-core/production-migrations/20260827130000_production_plans_entitlements.sql",
+        "sourceSha256": "8f823a2a690ad1c0764f81b6ebf46d6e65371c448e32465e945253384f45fbb9",
+        "activationState": "phi_disabled"
+      }
     },
     {
       "kind": "rpc",
@@ -9298,7 +9370,13 @@
         }
       ],
       "syntheticBoundary": "registry_disabled",
-      "productionStatus": "not_ported"
+      "productionStatus": "implemented_activation_blocked",
+      "productionEvidence": {
+        "implementation": "native_production_function",
+        "source": "infra/aws-clinical-core/production-migrations/20260827130000_production_plans_entitlements.sql",
+        "sourceSha256": "8f823a2a690ad1c0764f81b6ebf46d6e65371c448e32465e945253384f45fbb9",
+        "activationState": "phi_disabled"
+      }
     },
     {
       "kind": "rpc",
@@ -10030,7 +10108,13 @@
         }
       ],
       "syntheticBoundary": "registry_disabled",
-      "productionStatus": "not_ported"
+      "productionStatus": "implemented_activation_blocked",
+      "productionEvidence": {
+        "implementation": "native_production_function",
+        "source": "infra/aws-clinical-core/production-migrations/20260827130000_production_plans_entitlements.sql",
+        "sourceSha256": "8f823a2a690ad1c0764f81b6ebf46d6e65371c448e32465e945253384f45fbb9",
+        "activationState": "phi_disabled"
+      }
     },
     {
       "kind": "rpc",
@@ -10189,7 +10273,13 @@
         }
       ],
       "syntheticBoundary": "registry_disabled",
-      "productionStatus": "not_ported"
+      "productionStatus": "implemented_activation_blocked",
+      "productionEvidence": {
+        "implementation": "native_production_function",
+        "source": "infra/aws-clinical-core/production-migrations/20260827130000_production_plans_entitlements.sql",
+        "sourceSha256": "8f823a2a690ad1c0764f81b6ebf46d6e65371c448e32465e945253384f45fbb9",
+        "activationState": "phi_disabled"
+      }
     },
     {
       "kind": "rpc",
@@ -10501,7 +10591,13 @@
         }
       ],
       "syntheticBoundary": "registry_disabled",
-      "productionStatus": "not_ported"
+      "productionStatus": "implemented_activation_blocked",
+      "productionEvidence": {
+        "implementation": "native_production_function",
+        "source": "infra/aws-clinical-core/production-migrations/20260827130000_production_plans_entitlements.sql",
+        "sourceSha256": "8f823a2a690ad1c0764f81b6ebf46d6e65371c448e32465e945253384f45fbb9",
+        "activationState": "phi_disabled"
+      }
     },
     {
       "kind": "rpc",
@@ -11463,7 +11559,13 @@
         }
       ],
       "syntheticBoundary": "registry_disabled",
-      "productionStatus": "not_ported"
+      "productionStatus": "implemented_activation_blocked",
+      "productionEvidence": {
+        "implementation": "native_production_function",
+        "source": "infra/aws-clinical-core/production-migrations/20260827130000_production_plans_entitlements.sql",
+        "sourceSha256": "8f823a2a690ad1c0764f81b6ebf46d6e65371c448e32465e945253384f45fbb9",
+        "activationState": "phi_disabled"
+      }
     },
     {
       "kind": "rpc",
@@ -11842,7 +11944,7 @@
       "productionEvidence": {
         "implementation": "native_production_adapter",
         "source": "src/server/clinical-core/aws-production-desktop.ts",
-        "sourceSha256": "69d0f715e651bb15d37f90a2e9af4bfe2751cdf28b664761c0e10a5fdff5d2f7",
+        "sourceSha256": "513328a58f0451a31fe22f2dd52ba28d96736e9e4865c09ed17e01946a2326d3",
         "activationState": "phi_disabled"
       }
     },
@@ -11870,7 +11972,7 @@
       "productionEvidence": {
         "implementation": "native_production_adapter",
         "source": "src/server/clinical-core/aws-production-desktop.ts",
-        "sourceSha256": "69d0f715e651bb15d37f90a2e9af4bfe2751cdf28b664761c0e10a5fdff5d2f7",
+        "sourceSha256": "513328a58f0451a31fe22f2dd52ba28d96736e9e4865c09ed17e01946a2326d3",
         "activationState": "phi_disabled"
       }
     },
@@ -11898,7 +12000,7 @@
       "productionEvidence": {
         "implementation": "native_production_adapter",
         "source": "src/server/clinical-core/aws-production-desktop.ts",
-        "sourceSha256": "69d0f715e651bb15d37f90a2e9af4bfe2751cdf28b664761c0e10a5fdff5d2f7",
+        "sourceSha256": "513328a58f0451a31fe22f2dd52ba28d96736e9e4865c09ed17e01946a2326d3",
         "activationState": "phi_disabled"
       }
     },
@@ -11926,7 +12028,7 @@
       "productionEvidence": {
         "implementation": "native_production_adapter",
         "source": "src/server/clinical-core/aws-production-desktop.ts",
-        "sourceSha256": "69d0f715e651bb15d37f90a2e9af4bfe2751cdf28b664761c0e10a5fdff5d2f7",
+        "sourceSha256": "513328a58f0451a31fe22f2dd52ba28d96736e9e4865c09ed17e01946a2326d3",
         "activationState": "phi_disabled"
       }
     },
@@ -11967,7 +12069,7 @@
       "productionEvidence": {
         "implementation": "native_production_adapter",
         "source": "src/server/clinical-core/aws-production-desktop.ts",
-        "sourceSha256": "69d0f715e651bb15d37f90a2e9af4bfe2751cdf28b664761c0e10a5fdff5d2f7",
+        "sourceSha256": "513328a58f0451a31fe22f2dd52ba28d96736e9e4865c09ed17e01946a2326d3",
         "activationState": "phi_disabled"
       }
     }

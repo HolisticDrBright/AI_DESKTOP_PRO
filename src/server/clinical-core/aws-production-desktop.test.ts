@@ -1263,7 +1263,7 @@ describe("AWS production Desktop adapter", () => {
   it("delegates every non-core operation to the disabled reviewed registry", async () => {
     const test = harness();
     await expect(test.adapter.execute(context, {
-      kind: "rpc", functionName: "list_plans", args: { _organization_id: ORG },
+      kind: "rpc", functionName: "create_program", args: { _organization_id: ORG },
     })).resolves.toEqual({ delegated: true });
     expect(test.fallback.execute).toHaveBeenCalledOnce();
   });
