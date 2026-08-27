@@ -138,6 +138,22 @@ describe("AWS clinical-core migration runner", () => {
     expect(() => loadClinicalCoreMigrations(directory)).toThrow(ClinicalCoreMigrationError);
   });
 
+  test("uses the same migration identity for LF and CRLF checkouts", () => {
+    const directory = mkdtempSync(path.join(tmpdir(), "clinical-core-line-endings-"));
+    temporaryDirectories.push(directory);
+    const migrationPath = path.join(directory, "20260812010000_first.sql");
+    writeFileSync(path.join(directory, "manifest.json"), JSON.stringify({
+      contract_version: "clinical-core-migrations/1",
+      migrations: [{ version: "20260812010000", file: "20260812010000_first.sql" }],
+    }));
+    writeFileSync(migrationPath, "select 1;\nselect 2;\n");
+    const lf = loadClinicalCoreMigrations(directory)[0]!;
+    writeFileSync(migrationPath, "select 1;\r\nselect 2;\r\n");
+    const crlf = loadClinicalCoreMigrations(directory)[0]!;
+    expect(crlf.sha256).toBe(lf.sha256);
+    expect(crlf.sql).toBe(lf.sql);
+  });
+
   test("the committed migration contains no transaction-control statements", () => {
     const sql = readFileSync(
       path.join(process.cwd(), "infra/aws-clinical-core/migrations/20260812010000_synthetic_identity_consent.sql"),

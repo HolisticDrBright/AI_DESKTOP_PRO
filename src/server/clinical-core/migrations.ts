@@ -66,7 +66,9 @@ export function loadClinicalCoreMigrations(
     }
     previous = entry.version;
     seen.add(entry.version);
-    const sql = readFileSync(path.join(directory, entry.file), "utf8");
+    // Git may materialize SQL with CRLF on Windows. Migration identity must be
+    // tied to the repository content, not to the operator's checkout platform.
+    const sql = readFileSync(path.join(directory, entry.file), "utf8").replace(/\r\n?/g, "\n");
     if (!sql.trim()) throw new ClinicalCoreMigrationError("manifest_invalid");
     return {
       version: entry.version,
