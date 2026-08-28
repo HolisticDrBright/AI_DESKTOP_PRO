@@ -1,6 +1,6 @@
 {
   "schema_version": "external-provider-readiness/1",
-  "observed_at": "2026-08-28T18:30:00Z",
+  "observed_at": "2026-08-28T18:58:00Z",
   "production_aws_account_id": "173535830222",
   "providers": {
     "consumer_identity": {
@@ -12,7 +12,7 @@
       "provider": "amazon_ses",
       "domain": "ailongevitypro.app",
       "identity_status": "pending_dns_verification",
-      "production_access": "pending_aws_review",
+      "production_access": "denied_case_178794181600116",
       "enabled": false
     },
     "secure_in_app_messaging": {

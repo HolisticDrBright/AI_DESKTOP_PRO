@@ -16,8 +16,10 @@ registration is intentionally not deployed while PHI activation is blocked.
 
 Amazon SES is the selected transactional-email provider in the dedicated
 production AWS account. The `ailongevitypro.app` domain identity exists, but it
-is pending three DKIM DNS records and AWS production-access review. No sender is
-enabled until both are complete. Email notifications must contain only the
+is pending three DKIM DNS records. AWS denied production-access request
+`178794181600116`; the request should be resubmitted only after the domain is
+verified and the sending use case is ready for review. No sender is enabled
+until DNS verification and AWS production access are both complete. Email notifications must contain only the
 minimum necessary content and direct the user to authenticated in-app content.
 
 Secure in-app messaging uses the AWS clinical API and encrypted outbox model.
