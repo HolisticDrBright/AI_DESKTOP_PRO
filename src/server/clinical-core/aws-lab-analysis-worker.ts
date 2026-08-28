@@ -371,19 +371,19 @@ async function executePass(job: Job, pass: number): Promise<unknown | null> {
     activeProtocol: job.longitudinalContext?.activeProtocol ?? null,
   });
   const result = {
-    analysisId: randomUUID(), reviewState: "draft_for_practitioner_review", generatedAt,
-    summary: `AI-assisted functional-medicine draft for practitioner review. ${biomarkers.length} reported biomarker(s) were retained; ${flagged.length} are outside an available governed functional range or reporting laboratory range. ${aiSynthesis.summary} Uncertainty: ${aiSynthesis.uncertainty}`,
+    analysisId: randomUUID(), reviewState: "consumer_education", generatedAt,
+    summary: `AI-assisted consumer laboratory interpretation. ${biomarkers.length} reported biomarker(s) were retained; ${flagged.length} are outside an available governed functional range or reporting laboratory range. ${aiSynthesis.summary} Uncertainty: ${aiSynthesis.uncertainty}`,
     biomarkers: resultBiomarkers,
     recommendations: [],
     priorityActions: aiSynthesis.priorityActions,
     citations: biomarkers.filter((row) => row.sourceId && row.sourceVersion).map((row) => ({ sourceId: row.sourceId!, sourceVersion: row.sourceVersion!, claimIds: [] })).filter((row, index, all) => all.findIndex((candidate) => candidate.sourceId === row.sourceId) === index),
     longitudinalReview: {
-      reviewState: "draft_for_practitioner_review",
+      reviewState: "consumer_education",
       panelCount: (job.longitudinalContext?.priorPanels.length ?? 0) + 1,
       generatedAt,
       summary: aiSynthesis.longitudinalSummary,
       planImpact: {
-        status: "review_required",
+        status: "consumer_information",
         headline: aiSynthesis.planImpact.headline,
         changes: aiSynthesis.planImpact.changes.map((change, index) => ({
           changeId: stableUuid(`plan-impact:${jobId}:${index}:${change.kind}`),

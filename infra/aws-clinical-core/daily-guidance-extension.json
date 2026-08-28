@@ -1,0 +1,75 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Synthetic-only, Cognito-authenticated AWS daily-guidance AI endpoint for AI Longevity Pro.",
+  "Metadata": { "ClinicalCore": { "ContractVersion": "daily-guidance/1", "DataClassification": "synthetic_only", "PhiAllowed": false } },
+  "Parameters": {
+    "ClinicalApiId": { "Type": "String", "AllowedPattern": "^[a-z0-9]{10}$" },
+    "ConsumerUserPoolId": { "Type": "String", "AllowedPattern": "^[a-z0-9-]+_[A-Za-z0-9]+$" },
+    "ConsumerUserPoolClientId": { "Type": "String", "AllowedPattern": "^[A-Za-z0-9]{20,128}$" },
+    "ClinicalCoreKeyArn": { "Type": "String", "AllowedPattern": "^arn:(aws|aws-us-gov|aws-cn):kms:[a-z0-9-]+:[0-9]{12}:key/[0-9a-f-]{36}$" },
+    "LambdaCodeBucket": { "Type": "String", "AllowedPattern": "^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$" },
+    "LambdaCodeKey": { "Type": "String", "AllowedPattern": "^[A-Za-z0-9!_.*'()/\\-]{1,1024}$" },
+    "OpenAISecretArn": { "Type": "String", "AllowedPattern": "^arn:(aws|aws-us-gov|aws-cn):secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+$" },
+    "OpenAIModel": { "Type": "String", "AllowedPattern": "^[A-Za-z0-9._:-]{3,100}$" }
+  },
+  "Resources": {
+    "DailyGuidanceLogGroup": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": { "LogGroupName": { "Fn::Sub": "/ai-clinical-core/synthetic-staging/${ClinicalApiId}/daily-guidance" }, "RetentionInDays": 365, "KmsKeyId": { "Ref": "ClinicalCoreKeyArn" } },
+      "DeletionPolicy": "Retain", "UpdateReplacePolicy": "Retain"
+    },
+    "DailyGuidanceRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Principal": { "Service": "lambda.amazonaws.com" }, "Action": "sts:AssumeRole" }] },
+        "Policies": [
+          { "PolicyName": "EncryptedGuidanceLogs", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": ["logs:CreateLogStream", "logs:PutLogEvents"], "Resource": { "Fn::GetAtt": ["DailyGuidanceLogGroup", "Arn"] } }] } },
+          { "PolicyName": "GuidanceOpenAISecret", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": "secretsmanager:GetSecretValue", "Resource": { "Ref": "OpenAISecretArn" } }] } }
+        ]
+      }
+    },
+    "DailyGuidanceFunction": {
+      "Type": "AWS::Lambda::Function",
+      "DependsOn": ["DailyGuidanceLogGroup"],
+      "Properties": {
+        "FunctionName": { "Fn::Sub": "${ClinicalApiId}-synthetic-daily-guidance" }, "Runtime": "nodejs22.x", "Architectures": ["arm64"],
+        "Handler": "index.handler", "Role": { "Fn::GetAtt": ["DailyGuidanceRole", "Arn"] }, "MemorySize": 512, "Timeout": 35,
+        "LoggingConfig": { "LogGroup": { "Ref": "DailyGuidanceLogGroup" }, "LogFormat": "JSON", "ApplicationLogLevel": "WARN", "SystemLogLevel": "WARN" },
+        "Code": { "S3Bucket": { "Ref": "LambdaCodeBucket" }, "S3Key": { "Ref": "LambdaCodeKey" } },
+        "Environment": { "Variables": {
+          "CLINICAL_CONSUMER_ISSUER": { "Fn::Sub": "https://cognito-idp.${AWS::Region}.${AWS::URLSuffix}/${ConsumerUserPoolId}" },
+          "CLINICAL_CONSUMER_AUDIENCE": { "Ref": "ConsumerUserPoolClientId" }, "RUNTIME_MODE": "synthetic", "PHI_ALLOWED": "false",
+          "DAILY_GUIDANCE_OPENAI_SECRET_ARN": { "Ref": "OpenAISecretArn" }, "DAILY_GUIDANCE_OPENAI_MODEL": { "Ref": "OpenAIModel" }
+        } }
+      }
+    },
+    "DailyGuidanceAuthorizer": {
+      "Type": "AWS::ApiGatewayV2::Authorizer",
+      "Properties": {
+        "ApiId": { "Ref": "ClinicalApiId" }, "AuthorizerType": "JWT", "Name": "synthetic-daily-guidance-consumer",
+        "IdentitySource": ["$request.header.Authorization"],
+        "JwtConfiguration": { "Issuer": { "Fn::Sub": "https://cognito-idp.${AWS::Region}.${AWS::URLSuffix}/${ConsumerUserPoolId}" }, "Audience": [{ "Ref": "ConsumerUserPoolClientId" }] }
+      }
+    },
+    "DailyGuidanceIntegration": {
+      "Type": "AWS::ApiGatewayV2::Integration",
+      "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "IntegrationType": "AWS_PROXY", "IntegrationUri": { "Fn::GetAtt": ["DailyGuidanceFunction", "Arn"] }, "PayloadFormatVersion": "2.0", "TimeoutInMillis": 30000 }
+    },
+    "DailyGuidanceRoute": {
+      "Type": "AWS::ApiGatewayV2::Route",
+      "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "POST /clinical-core/consumer/daily-guidance", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "DailyGuidanceAuthorizer" }, "Target": { "Fn::Sub": "integrations/${DailyGuidanceIntegration}" } }
+    },
+    "DailyGuidanceInvokePermission": {
+      "Type": "AWS::Lambda::Permission",
+      "Properties": { "Action": "lambda:InvokeFunction", "FunctionName": { "Ref": "DailyGuidanceFunction" }, "Principal": "apigateway.amazonaws.com", "SourceArn": { "Fn::Sub": "arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${ClinicalApiId}/*/POST/clinical-core/consumer/daily-guidance" } }
+    },
+    "DailyGuidanceErrorAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": { "AlarmName": { "Fn::Sub": "${ClinicalApiId}-synthetic-daily-guidance-errors" }, "Namespace": "AWS/Lambda", "MetricName": "Errors", "Dimensions": [{ "Name": "FunctionName", "Value": { "Ref": "DailyGuidanceFunction" } }], "Statistic": "Sum", "Period": 300, "EvaluationPeriods": 1, "DatapointsToAlarm": 1, "Threshold": 1, "ComparisonOperator": "GreaterThanOrEqualToThreshold", "TreatMissingData": "notBreaching" }
+    }
+  },
+  "Outputs": {
+    "ContractVersion": { "Value": "daily-guidance/1" }, "DataClassification": { "Value": "synthetic_only" }, "PhiAllowed": { "Value": "false" },
+    "FunctionName": { "Value": { "Ref": "DailyGuidanceFunction" } }, "Route": { "Value": "POST /clinical-core/consumer/daily-guidance" }
+  }
+}

@@ -30,6 +30,7 @@
     "build:aws-authenticated-api": "node scripts/build-aws-authenticated-api.mjs",
     "build:aws-governed-catalog-api": "node scripts/build-aws-governed-catalog-api.mjs",
     "build:aws-lab-analysis": "node scripts/build-aws-lab-analysis.mjs",
+    "build:aws-daily-guidance": "node scripts/build-aws-daily-guidance.mjs",
     "build:aws-sync-bridge": "node scripts/build-aws-sync-bridge.mjs",
     "build:aws-deployment-tools": "node scripts/build-aws-deployment-tools.mjs",
     "check:aws-deployment-acceptance": "node scripts/check-aws-deployment-acceptance.mjs",
