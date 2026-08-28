@@ -33,6 +33,16 @@
       "credentials_present": false,
       "enabled": false,
       "reason": "provider_account_app_store_payment_policy_and_phi_free_metadata_review_required"
+    },
+    "fullscript": {
+      "provider": "fullscript_integrate",
+      "sandbox_boundary": "implemented_credentials_not_installed",
+      "oauth_owner": "desktop_workforce_only",
+      "mobile_secret_allowed": false,
+      "products": "catalog_and_practitioner_treatment_plan_workflow_no_consumer_deep_link",
+      "labs": "catalog_checkout_order_status_and_result_pull",
+      "production_enabled": false,
+      "reason": "production_application_restricted_endpoint_commercial_approval_baa_and_phi_activation_required"
     }
   },
   "desktop_operation_inventory": {

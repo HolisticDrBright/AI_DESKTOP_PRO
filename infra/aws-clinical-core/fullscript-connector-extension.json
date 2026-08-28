@@ -1,0 +1,152 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Encrypted Fullscript OAuth connector resources. Sandbox-first; no PHI activation.",
+  "Metadata": {
+    "ClinicalCore": {
+      "ContractVersion": "fullscript-connector/1",
+      "ContainsPhi": true,
+      "ProductionActivation": "separate_governed_change"
+    }
+  },
+  "Parameters": {
+    "EnvironmentName": {
+      "Type": "String",
+      "AllowedValues": ["synthetic-staging", "production-clinical"]
+    },
+    "FullscriptEnvironment": {
+      "Type": "String",
+      "Default": "sandbox_us",
+      "AllowedValues": ["sandbox_us", "production_us"]
+    },
+    "FullscriptClientId": {
+      "Type": "String",
+      "NoEcho": true,
+      "AllowedPattern": "^[A-Za-z0-9._~-]{16,512}$"
+    },
+    "FullscriptClientSecret": {
+      "Type": "String",
+      "NoEcho": true,
+      "AllowedPattern": "^[A-Za-z0-9._~-]{16,512}$"
+    },
+    "RedirectUri": {
+      "Type": "String",
+      "AllowedPattern": "^https://[^?#]+/api/live/fullscript/oauth/callback$"
+    },
+    "ClinicalCoreKeyArn": {
+      "Type": "String",
+      "AllowedPattern": "^arn:(aws|aws-us-gov|aws-cn):kms:[a-z0-9-]+:[0-9]{12}:key/[0-9a-f-]{36}$"
+    }
+  },
+  "Conditions": {
+    "IsProduction": { "Fn::Equals": [{ "Ref": "FullscriptEnvironment" }, "production_us"] }
+  },
+  "Rules": {
+    "ProductionRequiresProductionEnvironment": {
+      "RuleCondition": { "Fn::Equals": [{ "Ref": "FullscriptEnvironment" }, "production_us"] },
+      "Assertions": [{
+        "Assert": { "Fn::Equals": [{ "Ref": "EnvironmentName" }, "production-clinical"] },
+        "AssertDescription": "Production Fullscript credentials cannot be placed in synthetic staging."
+      }]
+    }
+  },
+  "Resources": {
+    "ClientIdSecret": {
+      "Type": "AWS::SecretsManager::Secret",
+      "Properties": {
+        "Name": { "Fn::Sub": "ai-clinical-core/${EnvironmentName}/fullscript/client-id" },
+        "Description": "Fullscript OAuth client ID; inject into FULLSCRIPT_CLIENT_ID.",
+        "KmsKeyId": { "Ref": "ClinicalCoreKeyArn" },
+        "SecretString": { "Ref": "FullscriptClientId" },
+        "Tags": [
+          { "Key": "clinical-boundary", "Value": { "Ref": "EnvironmentName" } },
+          { "Key": "provider", "Value": "fullscript" }
+        ]
+      },
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain"
+    },
+    "ClientSecret": {
+      "Type": "AWS::SecretsManager::Secret",
+      "Properties": {
+        "Name": { "Fn::Sub": "ai-clinical-core/${EnvironmentName}/fullscript/client-secret" },
+        "Description": "Fullscript OAuth client secret; inject into FULLSCRIPT_CLIENT_SECRET.",
+        "KmsKeyId": { "Ref": "ClinicalCoreKeyArn" },
+        "SecretString": { "Ref": "FullscriptClientSecret" },
+        "Tags": [
+          { "Key": "clinical-boundary", "Value": { "Ref": "EnvironmentName" } },
+          { "Key": "provider", "Value": "fullscript" }
+        ]
+      },
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain"
+    },
+    "OauthStateSecret": {
+      "Type": "AWS::SecretsManager::Secret",
+      "Properties": {
+        "Name": { "Fn::Sub": "ai-clinical-core/${EnvironmentName}/fullscript/oauth-state" },
+        "Description": "Generated Fullscript OAuth state signing secret; inject into FULLSCRIPT_OAUTH_STATE_SECRET.",
+        "KmsKeyId": { "Ref": "ClinicalCoreKeyArn" },
+        "GenerateSecretString": {
+          "ExcludePunctuation": true,
+          "PasswordLength": 64
+        },
+        "Tags": [
+          { "Key": "clinical-boundary", "Value": { "Ref": "EnvironmentName" } },
+          { "Key": "provider", "Value": "fullscript" }
+        ]
+      },
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain"
+    },
+    "TokenTable": {
+      "Type": "AWS::DynamoDB::Table",
+      "Properties": {
+        "TableName": { "Fn::Sub": "${EnvironmentName}-fullscript-oauth" },
+        "BillingMode": "PAY_PER_REQUEST",
+        "AttributeDefinitions": [
+          { "AttributeName": "pk", "AttributeType": "S" },
+          { "AttributeName": "sk", "AttributeType": "S" }
+        ],
+        "KeySchema": [
+          { "AttributeName": "pk", "KeyType": "HASH" },
+          { "AttributeName": "sk", "KeyType": "RANGE" }
+        ],
+        "SSESpecification": {
+          "SSEEnabled": true,
+          "SSEType": "KMS",
+          "KMSMasterKeyId": { "Ref": "ClinicalCoreKeyArn" }
+        },
+        "PointInTimeRecoverySpecification": { "PointInTimeRecoveryEnabled": true },
+        "DeletionProtectionEnabled": true,
+        "TimeToLiveSpecification": { "AttributeName": "ttl", "Enabled": true },
+        "Tags": [
+          { "Key": "clinical-boundary", "Value": { "Ref": "EnvironmentName" } },
+          { "Key": "provider", "Value": "fullscript" },
+          { "Key": "phi", "Value": "possible" }
+        ]
+      },
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain"
+    }
+  },
+  "Outputs": {
+    "ContractVersion": { "Value": "fullscript-connector/1" },
+    "FullscriptEnvironment": { "Value": { "Ref": "FullscriptEnvironment" } },
+    "AuthorizeUrl": {
+      "Value": {
+        "Fn::If": [
+          "IsProduction",
+          "https://api-us.fullscript.io/api/oauth/authorize",
+          "https://api-us-snd.fullscript.io/api/oauth/authorize"
+        ]
+      }
+    },
+    "RedirectUri": { "Value": { "Ref": "RedirectUri" } },
+    "ClientIdSecretArn": { "Value": { "Ref": "ClientIdSecret" } },
+    "ClientSecretArn": { "Value": { "Ref": "ClientSecret" } },
+    "OauthStateSecretArn": { "Value": { "Ref": "OauthStateSecret" } },
+    "TokenTableName": { "Value": { "Ref": "TokenTable" } },
+    "LabOrderingEnabled": { "Value": "false" },
+    "PhiAllowed": { "Value": "false" }
+  }
+}
