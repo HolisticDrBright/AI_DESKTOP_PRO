@@ -9,10 +9,17 @@
     "ClinicalApiHost": { "Type": "String", "AllowedPattern": "^[a-z0-9]+\\.execute-api\\.[a-z0-9-]+\\.amazonaws\\.com$" },
     "WorkforceUserPoolId": { "Type": "String", "AllowedPattern": "^[a-z0-9-]+_[A-Za-z0-9]+$" },
     "WorkforceUserPoolClientId": { "Type": "String", "AllowedPattern": "^[a-z0-9]{8,128}$" },
+    "FullscriptEnabled": { "Type": "String", "Default": "false", "AllowedValues": ["true", "false"] },
+    "FullscriptClientIdSecretArn": { "Type": "String", "Default": "", "AllowedPattern": "^$|^arn:(aws|aws-us-gov|aws-cn):secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+$" },
+    "FullscriptClientSecretArn": { "Type": "String", "Default": "", "AllowedPattern": "^$|^arn:(aws|aws-us-gov|aws-cn):secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+$" },
+    "FullscriptOauthStateSecretArn": { "Type": "String", "Default": "", "AllowedPattern": "^$|^arn:(aws|aws-us-gov|aws-cn):secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+$" },
+    "FullscriptTokenTableName": { "Type": "String", "Default": "disabled", "AllowedPattern": "^[A-Za-z0-9_.-]{3,255}$" },
+    "FullscriptRedirectUri": { "Type": "String", "Default": "https://disabled.invalid/api/live/fullscript/oauth/callback", "AllowedPattern": "^https://[^?#]+/api/live/fullscript/oauth/callback$" },
     "DeployService": { "Type": "String", "Default": "false", "AllowedValues": ["true", "false"] }
   },
   "Conditions": {
-    "ShouldDeployService": { "Fn::Equals": [{ "Ref": "DeployService" }, "true"] }
+    "ShouldDeployService": { "Fn::Equals": [{ "Ref": "DeployService" }, "true"] },
+    "FullscriptConfigured": { "Fn::Equals": [{ "Ref": "FullscriptEnabled" }, "true"] }
   },
   "Resources": {
     "DesktopWebRepository": {
@@ -100,6 +107,49 @@
         "ManagedPolicyArns": [{ "Fn::Sub": "arn:${AWS::Partition}:iam::aws:policy/service-role/AWSAppRunnerServicePolicyForECRAccess" }]
       }
     },
+    "DesktopWebInstanceRole": {
+      "Condition": "FullscriptConfigured",
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [{ "Effect": "Allow", "Principal": { "Service": "tasks.apprunner.amazonaws.com" }, "Action": "sts:AssumeRole" }]
+        },
+        "Policies": [{
+          "PolicyName": "UseFullscriptSandboxConnector",
+          "PolicyDocument": {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Effect": "Allow",
+                "Action": "secretsmanager:GetSecretValue",
+                "Resource": [
+                  { "Ref": "FullscriptClientIdSecretArn" },
+                  { "Ref": "FullscriptClientSecretArn" },
+                  { "Ref": "FullscriptOauthStateSecretArn" }
+                ]
+              },
+              {
+                "Effect": "Allow",
+                "Action": "kms:Decrypt",
+                "Resource": { "Ref": "ClinicalCoreKeyArn" }
+              },
+              {
+                "Effect": "Allow",
+                "Action": ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:DeleteItem"],
+                "Resource": { "Fn::Sub": "arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${FullscriptTokenTableName}" }
+              }
+            ]
+          }
+        }],
+        "Tags": [
+          { "Key": "Application", "Value": "AI Desktop Pro" },
+          { "Key": "Environment", "Value": "synthetic-staging" },
+          { "Key": "Provider", "Value": "Fullscript" },
+          { "Key": "RealPatientDataAllowed", "Value": "false" }
+        ]
+      }
+    },
     "DesktopWebService": {
       "Condition": "ShouldDeployService",
       "Type": "AWS::AppRunner::Service",
@@ -114,6 +164,17 @@
             "ImageRepositoryType": "ECR",
             "ImageConfiguration": {
               "Port": "3000",
+              "RuntimeEnvironmentSecrets": {
+                "Fn::If": [
+                  "FullscriptConfigured",
+                  [
+                    { "Name": "FULLSCRIPT_CLIENT_ID", "Value": { "Ref": "FullscriptClientIdSecretArn" } },
+                    { "Name": "FULLSCRIPT_CLIENT_SECRET", "Value": { "Ref": "FullscriptClientSecretArn" } },
+                    { "Name": "FULLSCRIPT_OAUTH_STATE_SECRET", "Value": { "Ref": "FullscriptOauthStateSecretArn" } }
+                  ],
+                  { "Ref": "AWS::NoValue" }
+                ]
+              },
               "RuntimeEnvironmentVariables": [
                 { "Name": "APP_EDITION", "Value": "clinical" },
                 { "Name": "APP_RUNTIME_ENV", "Value": "staging" },
@@ -128,6 +189,12 @@
                 { "Name": "CLINICAL_AWS_WORKFORCE_CLIENT_ID", "Value": { "Ref": "WorkforceUserPoolClientId" } },
                 { "Name": "CLINICAL_AWS_RUNTIME_MODE", "Value": "synthetic" },
                 { "Name": "AWS_CLINICAL_ADAPTER_READY", "Value": "true" },
+                { "Name": "FULLSCRIPT_ENVIRONMENT", "Value": { "Fn::If": ["FullscriptConfigured", "sandbox_us", "disabled"] } },
+                { "Name": "FULLSCRIPT_OAUTH_AUTHORIZE_URL", "Value": { "Fn::If": ["FullscriptConfigured", "https://api-us-snd.fullscript.io/api/oauth/authorize", "disabled"] } },
+                { "Name": "FULLSCRIPT_REDIRECT_URI", "Value": { "Ref": "FullscriptRedirectUri" } },
+                { "Name": "FULLSCRIPT_TOKEN_TABLE", "Value": { "Ref": "FullscriptTokenTableName" } },
+                { "Name": "FULLSCRIPT_LAB_ORDERING_ENABLED", "Value": "false" },
+                { "Name": "FULLSCRIPT_PRODUCTION_APPROVED", "Value": "false" },
                 { "Name": "PHI_ALLOWED", "Value": "false" }
               ]
             }
@@ -135,7 +202,8 @@
         },
         "InstanceConfiguration": {
           "Cpu": "0.5 vCPU",
-          "Memory": "1 GB"
+          "Memory": "1 GB",
+          "InstanceRoleArn": { "Fn::If": ["FullscriptConfigured", { "Fn::GetAtt": ["DesktopWebInstanceRole", "Arn"] }, { "Ref": "AWS::NoValue" }] }
         },
         "HealthCheckConfiguration": {
           "Protocol": "HTTP",

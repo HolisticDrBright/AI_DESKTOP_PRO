@@ -19,6 +19,18 @@ need(serialized.includes('"Value":"aws"'), "synthetic Desktop must select the AW
 need(serialized.includes('"Name":"CLINICAL_AWS_RUNTIME_MODE","Value":"synthetic"'), "runtime must remain synthetic");
 need(serialized.includes('"Name":"PHI_ALLOWED","Value":"false"'), "PHI must remain disabled");
 need(serialized.includes('"RealPatientDataAllowed","Value":"false"'), "service must retain the no-real-data tag");
+for (const required of [
+  "FULLSCRIPT_CLIENT_ID", "FULLSCRIPT_CLIENT_SECRET", "FULLSCRIPT_OAUTH_STATE_SECRET",
+  "FULLSCRIPT_TOKEN_TABLE", "FULLSCRIPT_REDIRECT_URI", "FULLSCRIPT_LAB_ORDERING_ENABLED",
+  "FULLSCRIPT_PRODUCTION_APPROVED",
+]) need(serialized.includes(required), `hosting template is missing ${required}`);
+need(serialized.includes("tasks.apprunner.amazonaws.com"), "Fullscript must use a dedicated App Runner instance role");
+for (const action of ["secretsmanager:GetSecretValue", "kms:Decrypt", "dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:DeleteItem"])
+  need(serialized.includes(action), `Fullscript instance role is missing ${action}`);
+need(!serialized.includes("dynamodb:Scan"), "Fullscript instance role must not scan the token table");
+need(!serialized.includes("dynamodb:Query"), "Fullscript instance role must not query across token partitions");
+need(serialized.includes('"Name":"FULLSCRIPT_LAB_ORDERING_ENABLED","Value":"false"'), "Fullscript lab ordering must remain disabled");
+need(serialized.includes('"Name":"FULLSCRIPT_PRODUCTION_APPROVED","Value":"false"'), "Fullscript production must remain disabled");
 need(dockerfile.includes("FROM gcr.io/distroless/nodejs22-debian12:nonroot AS runtime"), "runtime must remain non-root distroless");
 
 if (errors.length) {
