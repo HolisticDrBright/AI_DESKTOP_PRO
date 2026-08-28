@@ -131,6 +131,11 @@ describe("AWS synthetic clinical-core infrastructure", () => {
     expect(resources.PostureFunction.Properties).not.toHaveProperty("ReservedConcurrentExecutions");
     expect(resources.WorkforceUserPoolClient.Properties.ExplicitAuthFlows).toContain("ALLOW_ADMIN_USER_PASSWORD_AUTH");
     expect(resources.ConsumerUserPoolClient.Properties.ExplicitAuthFlows).toContain("ALLOW_ADMIN_USER_PASSWORD_AUTH");
+    expect(resources.ConsumerUserPoolClient.Properties.WriteAttributes).toEqual(["email"]);
+    expect(resources.ConsumerUserPoolClient.Properties.ReadAttributes).toContain("custom:person_id");
+    expect(resources.ConsumerUserPool.Properties.Schema).toContainEqual(expect.objectContaining({
+      Name: "production_bound", Mutable: false,
+    }));
     expect(resources.ClinicalApiStage.Properties.DefaultRouteSettings).toMatchObject({
       ThrottlingBurstLimit: 20,
       ThrottlingRateLimit: 10,

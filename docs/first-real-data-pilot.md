@@ -17,6 +17,17 @@ The pilot is limited to one explicitly named production organization and the `la
 
 Billing, messaging, scheduling, programs, protocol activation, product recommendations, Junction, Passio, and clinical AI are outside this pilot. They must remain disabled even if credentials exist.
 
+An expanded candidate policy is also implemented as
+`lab_intake_wearables_cycle_ai`, but it is not the active manifest and does not
+authorize PHI. It adds separate gates for Apple Health and Android Health
+Connect physical-device evidence, reproductive-health consent and withdrawal,
+AI-provider BAA/retention review, measured-data-only guidance, minimum-necessary
+review, and AI safety/escalation. It also restricts record collections and
+consent scopes at the API, rather than treating the shared records route as
+permission for every collection. Use
+`infra/aws-clinical-core/first-real-data-pilot-expanded.example.json` only after
+each additional control has real evidence and human approval.
+
 ## Machine-enforced protections
 
 - The production API requires `PHI_ALLOWED=true`, `ACTIVATION_STATE=approved`, and a 64-character reviewed evidence hash.

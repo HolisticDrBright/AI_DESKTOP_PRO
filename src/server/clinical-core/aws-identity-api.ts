@@ -42,8 +42,11 @@ import {
 } from "./aws-desktop-compatibility";
 import {
   isProductionPilotDesktopRequestAllowed,
+  isProductionPilotCollectionAllowed,
+  isProductionPilotConsentScopeAllowed,
+  isProductionPilotScope,
   isProductionPilotRouteAllowed,
-  PRODUCTION_PILOT_SCOPE,
+  type ProductionPilotScope,
 } from "./production-pilot-policy";
 
 export type ApiGatewayV2Event = {
@@ -114,7 +117,7 @@ export type ProductionIdentityApiConfiguration = IdentityApiConfiguration & {
   phiAllowed: boolean;
   activationState: "blocked" | "approved";
   activationEvidenceSha256?: string;
-  pilotScope: typeof PRODUCTION_PILOT_SCOPE;
+  pilotScope: ProductionPilotScope;
   pilotOrganizationId?: string;
 };
 
@@ -140,7 +143,7 @@ export function createAwsProductionIdentityApiHandler(input: {
   if (input.configuration.phiAllowed === true
     && (input.configuration.activationState !== "approved"
       || !SHA256.test(input.configuration.activationEvidenceSha256 ?? "")
-      || input.configuration.pilotScope !== PRODUCTION_PILOT_SCOPE
+      || !isProductionPilotScope(input.configuration.pilotScope)
       || !UUID.test(input.configuration.pilotOrganizationId ?? "")
       || input.configuration.pilotOrganizationId === "00000000-0000-0000-0000-000000000000")) {
     throw new Error("production_api_configuration_invalid");
@@ -171,7 +174,7 @@ function createIdentityApiHandler<Context extends ClinicalRequestContext>(input:
   desktopCompatibilityAdapter?: DesktopCompatibilityAdapter<Context>;
   configuration: IdentityApiConfiguration;
   boundary: "synthetic" | "production";
-  productionPilot?: { scope: typeof PRODUCTION_PILOT_SCOPE; organizationId: string };
+  productionPilot?: { scope: ProductionPilotScope; organizationId: string };
 }) {
   const adapter = input.adapter ?? (input.database && input.boundary === "synthetic"
     ? createAwsSyntheticIdentityConsentAdapter(input.database) as AwsIdentityConsentAdapter<Context>
@@ -233,6 +236,9 @@ function createIdentityApiHandler<Context extends ClinicalRequestContext>(input:
         if (!CONSENT_SCOPES.includes(scope as (typeof CONSENT_SCOPES)[number])) {
           throw new IdentityApiError("request_invalid");
         }
+        if (input.productionPilot && !isProductionPilotConsentScopeAllowed(input.productionPilot.scope, scope)) {
+          return response(403, { error: "pilot_scope_refused" });
+        }
         return response(200, { data: await adapter.getCurrentConsentArtifact({
           context,
           scope: scope as (typeof CONSENT_SCOPES)[number],
@@ -267,6 +273,9 @@ function createIdentityApiHandler<Context extends ClinicalRequestContext>(input:
         const cursor = decodeCursor(event.queryStringParameters?.cursor);
         if (!UUID.test(connectionId) || !CONSUMER_CLINICAL_COLLECTIONS.includes(collection as ConsumerClinicalCollection)
           || !Number.isSafeInteger(limit) || limit < 1 || limit > 200) throw new IdentityApiError("request_invalid");
+        if (input.productionPilot && !isProductionPilotCollectionAllowed(
+          input.productionPilot.scope, collection as ConsumerClinicalCollection,
+        )) return response(403, { error: "pilot_scope_refused" });
         const rows = await clinicalRecordsAdapter!.listRecords(context, {
           connectionId, collection: collection as ConsumerClinicalCollection, limit,
           ...(cursor ? { afterReceivedAt: cursor.receivedAt, afterId: cursor.id } : {}),
@@ -340,6 +349,9 @@ function createIdentityApiHandler<Context extends ClinicalRequestContext>(input:
             || !["self", "guardian", "healthcare_proxy", "legal_representative"].includes(representativeAuthority)) {
             throw new IdentityApiError("request_invalid");
           }
+          if (input.productionPilot && !isProductionPilotConsentScopeAllowed(input.productionPilot.scope, scope)) {
+            return response(403, { error: "pilot_scope_refused" });
+          }
           return response(201, { data: await adapter.recordConsent({
             context,
             connectionId: requiredString(body, "connectionId", UUID),
@@ -356,6 +368,9 @@ function createIdentityApiHandler<Context extends ClinicalRequestContext>(input:
           if (!CONSENT_SCOPES.includes(scope as (typeof CONSENT_SCOPES)[number])
             || !["patient_request", "scope_changed", "connection_revoked"].includes(reasonCode)) {
             throw new IdentityApiError("request_invalid");
+          }
+          if (input.productionPilot && !isProductionPilotConsentScopeAllowed(input.productionPilot.scope, scope)) {
+            return response(403, { error: "pilot_scope_refused" });
           }
           return response(201, { data: await adapter.revokeConsent({
             context,
@@ -387,6 +402,9 @@ function createIdentityApiHandler<Context extends ClinicalRequestContext>(input:
           if (!CONSUMER_CLINICAL_COLLECTIONS.includes(collection as ConsumerClinicalCollection)) {
             throw new IdentityApiError("request_invalid");
           }
+          if (input.productionPilot && !isProductionPilotCollectionAllowed(
+            input.productionPilot.scope, collection as ConsumerClinicalCollection,
+          )) return response(403, { error: "pilot_scope_refused" });
           const payload = requiredObject(body, "payload");
           const deleted = body.deleted === undefined ? false : requiredBoolean(body, "deleted");
           return response(202, { data: await clinicalRecordsAdapter!.recordVersion(context, {

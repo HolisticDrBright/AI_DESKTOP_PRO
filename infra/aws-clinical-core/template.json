@@ -379,6 +379,13 @@
             "Mutable": false,
             "Required": false,
             "StringAttributeConstraints": { "MinLength": "4", "MaxLength": "4" }
+          },
+          {
+            "Name": "production_bound",
+            "AttributeDataType": "String",
+            "Mutable": false,
+            "Required": false,
+            "StringAttributeConstraints": { "MinLength": "4", "MaxLength": "4" }
           }
         ],
         "AccountRecoverySetting": {
@@ -414,6 +421,8 @@
         "AccessTokenValidity": 15,
         "IdTokenValidity": 15,
         "RefreshTokenValidity": 12,
+        "ReadAttributes": ["email", "email_verified", "custom:person_id", "custom:organization_id", "custom:synthetic_attested", "custom:production_bound"],
+        "WriteAttributes": ["email"],
         "TokenValidityUnits": { "AccessToken": "minutes", "IdToken": "minutes", "RefreshToken": "hours" }
       }
     },
@@ -444,6 +453,13 @@
           },
           {
             "Name": "synthetic_attested",
+            "AttributeDataType": "String",
+            "Mutable": false,
+            "Required": false,
+            "StringAttributeConstraints": { "MinLength": "4", "MaxLength": "4" }
+          },
+          {
+            "Name": "production_bound",
             "AttributeDataType": "String",
             "Mutable": false,
             "Required": false,
@@ -483,6 +499,8 @@
         "AccessTokenValidity": 15,
         "IdTokenValidity": 15,
         "RefreshTokenValidity": 12,
+        "ReadAttributes": ["email", "email_verified", "custom:person_id", "custom:organization_id", "custom:synthetic_attested", "custom:production_bound"],
+        "WriteAttributes": ["email"],
         "TokenValidityUnits": { "AccessToken": "minutes", "IdToken": "minutes", "RefreshToken": "hours" }
       }
     },

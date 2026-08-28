@@ -14,6 +14,7 @@ export const CONSENT_SCOPES = [
   "forms_checkins",
   "symptoms_adherence",
   "wearables",
+  "reproductive_health",
   "lab_summaries",
   "lab_results_import",
   "billing_links",

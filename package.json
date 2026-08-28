@@ -31,6 +31,7 @@
     "build:aws-governed-catalog-api": "node scripts/build-aws-governed-catalog-api.mjs",
     "build:aws-lab-analysis": "node scripts/build-aws-lab-analysis.mjs",
     "build:aws-daily-guidance": "node scripts/build-aws-daily-guidance.mjs",
+    "build:aws-consumer-account": "node scripts/build-aws-consumer-account.mjs",
     "build:aws-sync-bridge": "node scripts/build-aws-sync-bridge.mjs",
     "build:aws-deployment-tools": "node scripts/build-aws-deployment-tools.mjs",
     "check:aws-deployment-acceptance": "node scripts/check-aws-deployment-acceptance.mjs",
@@ -63,6 +64,7 @@
     "test:aws-data-plane-migration": "node scripts/check-aws-data-plane-migration.test.mjs"
   },
   "dependencies": {
+    "@aws-sdk/client-cognito-identity-provider": "^3.1120.0",
     "@aws-sdk/client-dynamodb": "^3.1109.0",
     "@aws-sdk/client-rds-data": "^3.1108.0",
     "@aws-sdk/client-s3": "^3.1109.0",
@@ -94,6 +96,8 @@
     "vitest": "4.1.5"
   },
   "overrides": {
-    "postcss": "^8.5.10"
+    "nanoid": "3.3.18",
+    "postcss": "8.5.23",
+    "sharp": "0.35.0"
   }
 }

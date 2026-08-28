@@ -32,6 +32,14 @@
     {
       "version": "20260821046000",
       "file": "20260821046000_consumer_wearable_records.sql"
+    },
+    {
+      "version": "20260821047000",
+      "file": "20260821047000_self_service_consumer_identity.sql"
+    },
+    {
+      "version": "20260821048000",
+      "file": "20260821048000_reproductive_health_consent.sql"
     }
   ]
 }

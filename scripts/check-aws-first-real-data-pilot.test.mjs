@@ -49,6 +49,25 @@ function run(manifest) {
 }
 
 assert.equal(run(base).status, 0);
+const expandedControls = [
+  "apple_health_physical_device_e2e", "android_health_connect_physical_device_e2e",
+  "reproductive_health_consent_review", "reproductive_health_withdrawal_e2e",
+  "ai_provider_baa_and_retention_review", "measured_data_only_ai_e2e",
+  "cycle_and_wearable_minimum_necessary_review", "ai_safety_and_escalation_review",
+];
+const expanded = {
+  ...base,
+  scope: "lab_intake_wearables_cycle_ai",
+  controls: { ...base.controls, ...Object.fromEntries(expandedControls.map((name) => [name, "approved"])) },
+  runtime_boundaries: {
+    ...boundaries,
+    desktop_scope: "lab_intake_wearables_cycle_ai", clinical_ai: "governed_aws_endpoint",
+    wearables: "device_health_import", reproductive_health: "explicit_consent",
+    daily_guidance_inputs: "measured_data_only",
+  },
+};
+assert.equal(run(expanded).status, 0);
+assert.notEqual(run({ ...expanded, controls: { ...expanded.controls, measured_data_only_ai_e2e: "blocked" } }).status, 0);
 assert.notEqual(run({ ...base, scope: "all_features" }).status, 0);
 assert.notEqual(run({ ...base, aws_account_id: base.synthetic_account_id }).status, 0);
 assert.notEqual(run({ ...base, pilot_organization_id: "00000000-0000-0000-0000-000000000000" }).status, 0);

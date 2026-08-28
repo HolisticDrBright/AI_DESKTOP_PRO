@@ -1,0 +1,48 @@
+{
+  "schema_version": "external-provider-readiness/1",
+  "observed_at": "2026-08-28T18:30:00Z",
+  "production_aws_account_id": "173535830222",
+  "providers": {
+    "consumer_identity": {
+      "provider": "amazon_cognito",
+      "synthetic_registration": "deployed",
+      "production_registration": "blocked_phi_disabled"
+    },
+    "transactional_email": {
+      "provider": "amazon_ses",
+      "domain": "ailongevitypro.app",
+      "identity_status": "pending_dns_verification",
+      "production_access": "pending_aws_review",
+      "enabled": false
+    },
+    "secure_in_app_messaging": {
+      "provider": "aws_clinical_api",
+      "boundary": "implemented_activation_blocked",
+      "enabled": false
+    },
+    "sms": {
+      "provider": "none",
+      "aws_account_tier": "sandbox",
+      "phi_allowed": false,
+      "enabled": false,
+      "reason": "aws_sns_sms_excluded_from_hipaa_eligibility"
+    },
+    "subscription_payments": {
+      "provider": "unselected",
+      "stripe_boundary": "test_mode_only",
+      "credentials_present": false,
+      "enabled": false,
+      "reason": "provider_account_app_store_payment_policy_and_phi_free_metadata_review_required"
+    }
+  },
+  "desktop_operation_inventory": {
+    "total": 223,
+    "production_implemented": 223,
+    "production_enabled": 0,
+    "legacy_auth_uid_dependencies": 138,
+    "legacy_auth_users_dependencies": 2,
+    "external_network_dependencies": 0,
+    "interpretation": "The 138 count is identity-context replacement, not 138 external provider integrations."
+  },
+  "phi_allowed": false
+}

@@ -8,6 +8,7 @@ import { createAwsProductionClinicalStateAdapter } from "./aws-clinical-state";
 import { createAwsProductionConsumerClinicalRecordsAdapter } from "./aws-consumer-clinical-records";
 import { createAwsProductionDesktopAdapter } from "./aws-production-desktop";
 import { createRdsDataClinicalCoreDatabase } from "./rds-data-database";
+import { isProductionPilotScope } from "./production-pilot-policy";
 
 function required(name: string): string {
   const value = process.env[name]?.trim();
@@ -17,7 +18,7 @@ function required(name: string): string {
 
 const phiAllowed = required("PHI_ALLOWED") === "true";
 const pilotScope = required("PILOT_SCOPE");
-if (pilotScope !== "lab_intake_only") throw new Error("production_pilot_scope_invalid");
+if (!isProductionPilotScope(pilotScope)) throw new Error("production_pilot_scope_invalid");
 const database = createRdsDataClinicalCoreDatabase({
   clusterArn: required("CLINICAL_DATABASE_CLUSTER_ARN"),
   secretArn: required("CLINICAL_DATABASE_SECRET_ARN"),

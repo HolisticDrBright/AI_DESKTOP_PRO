@@ -22,7 +22,13 @@ const requiredControls = [
   "vulnerability_gate", "mobile_secure_storage_review", "clinical_safety_review",
   "exact_build_synthetic_e2e", "rollback_rehearsal", "pilot_observation_and_kill_switch",
 ];
-const requiredBoundaries = {
+const expandedControls = [
+  "apple_health_physical_device_e2e", "android_health_connect_physical_device_e2e",
+  "reproductive_health_consent_review", "reproductive_health_withdrawal_e2e",
+  "ai_provider_baa_and_retention_review", "measured_data_only_ai_e2e",
+  "cycle_and_wearable_minimum_necessary_review", "ai_safety_and_escalation_review",
+];
+const baseBoundaries = {
   desktop_compute: "ecs_fargate",
   patient_api_compute: "ecs_fargate",
   clinical_database: "aurora_postgresql",
@@ -41,11 +47,19 @@ const requiredBoundaries = {
   messaging: "disabled",
   protocol_activation: "disabled",
 };
+const expandedBoundaries = {
+  ...baseBoundaries,
+  desktop_scope: "lab_intake_wearables_cycle_ai",
+  clinical_ai: "governed_aws_endpoint",
+  wearables: "device_health_import",
+  reproductive_health: "explicit_consent",
+  daily_guidance_inputs: "measured_data_only",
+};
 const requiredApprovals = ["legal_compliance", "security", "clinical_safety", "engineering", "pilot_owner"];
 
 if (manifest.schema_version !== "first-real-data-pilot-readiness/1") blockers.push("schema_version");
 if (manifest.environment !== "production-clinical") blockers.push("environment");
-if (manifest.scope !== "lab_intake_only") blockers.push("scope");
+if (!["lab_intake_only", "lab_intake_wearables_cycle_ai"].includes(manifest.scope)) blockers.push("scope");
 if (!/^\d{12}$/.test(manifest.aws_account_id ?? "") || manifest.aws_account_id === manifest.synthetic_account_id) {
   blockers.push("dedicated_production_account");
 }
@@ -60,7 +74,10 @@ if (manifest.aws_organizations_baa?.status !== "active"
   || !String(manifest.aws_organizations_baa?.evidence_reference ?? "").trim()
   || String(manifest.aws_organizations_baa?.evidence_reference).startsWith("REPLACE_")) blockers.push("aws_baa_evidence");
 
-for (const control of requiredControls) {
+const controlsForScope = manifest.scope === "lab_intake_wearables_cycle_ai"
+  ? [...requiredControls, ...expandedControls] : requiredControls;
+const requiredBoundaries = manifest.scope === "lab_intake_wearables_cycle_ai" ? expandedBoundaries : baseBoundaries;
+for (const control of controlsForScope) {
   if (manifest.controls?.[control] !== "approved") blockers.push(`control:${control}`);
 }
 for (const [boundary, expected] of Object.entries(requiredBoundaries)) {
@@ -94,7 +111,7 @@ console.log(JSON.stringify({
   account: manifest.aws_account_id,
   region: manifest.region,
   pilotOrganizationId: manifest.pilot_organization_id,
-  controls: requiredControls.length,
+  controls: controlsForScope.length,
   runtimeBoundaries: Object.keys(requiredBoundaries).length,
   approvals: requiredApprovals.length,
 }));

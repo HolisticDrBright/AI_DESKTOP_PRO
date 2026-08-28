@@ -14,7 +14,8 @@ import {
 import type { ApiGatewayV2Event, ApiGatewayV2Response } from "./aws-identity-api";
 import {
   isProductionPilotDesktopRequestAllowed,
-  PRODUCTION_PILOT_SCOPE,
+  isProductionPilotScope,
+  type ProductionPilotScope,
 } from "./production-pilot-policy";
 
 export type ProductionClinicalApiConfiguration = {
@@ -23,7 +24,7 @@ export type ProductionClinicalApiConfiguration = {
   phiAllowed: boolean;
   activationState: "blocked" | "approved";
   activationEvidenceSha256?: string;
-  pilotScope: typeof PRODUCTION_PILOT_SCOPE;
+  pilotScope: ProductionPilotScope;
   pilotOrganizationId?: string;
 };
 
@@ -115,7 +116,7 @@ function validateConfiguration(configuration: ProductionClinicalApiConfiguration
     || !/^[A-Za-z0-9]{20,128}$/.test(configuration.workforceAudience)
     || (configuration.phiAllowed && (configuration.activationState !== "approved"
       || !SHA256.test(configuration.activationEvidenceSha256 ?? "")
-      || configuration.pilotScope !== PRODUCTION_PILOT_SCOPE
+      || !isProductionPilotScope(configuration.pilotScope)
       || !UUID.test(configuration.pilotOrganizationId ?? "")
       || configuration.pilotOrganizationId === "00000000-0000-0000-0000-000000000000"))) {
     throw new Error("production_api_configuration_invalid");

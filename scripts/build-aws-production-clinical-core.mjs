@@ -30,6 +30,7 @@ function transformToProduction(sql) {
     ["synthetic_context_refused", "production_context_refused"],
     ["synthetic_label", "organization_label"],
     ["^syn_[A-Za-z0-9_-]{8,96}$", "^subject_[A-Za-z0-9_-]{8,96}$"],
+    ["'syn_'", "'subject_'"],
     ["contains_phi boolean not null default false check (contains_phi = false)",
       "contains_phi boolean not null default true check (contains_phi = true)"],
     ["contains_phi = false", "contains_phi = true"],
