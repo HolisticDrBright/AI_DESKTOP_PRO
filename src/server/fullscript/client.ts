@@ -44,6 +44,29 @@ const ENVIRONMENTS: Record<FullscriptEnvironment, { apiOrigin: string; authorize
 };
 
 const OPAQUE = /^[A-Za-z0-9._~-]{16,512}$/;
+const CALLBACK_PATH = "/api/live/fullscript/oauth/callback";
+
+export function fullscriptIntegrationReturnUrl(
+  requestUrl: string,
+  configuredRedirectUri = process.env.FULLSCRIPT_REDIRECT_URI,
+): URL {
+  const configured = configuredRedirectUri?.trim() ?? "";
+  try {
+    const callback = new URL(configured);
+    if (callback.protocol === "https:"
+      && !callback.username
+      && !callback.password
+      && !callback.hash
+      && callback.pathname === CALLBACK_PATH) {
+      return new URL("/integrations", callback.origin);
+    }
+  } catch {
+    // A missing or malformed provider configuration falls back to the request
+    // origin so local development remains usable. Deployed configuration is
+    // validated separately and never reaches this fallback.
+  }
+  return new URL("/integrations", requestUrl);
+}
 
 export function readFullscriptConfiguration(
   env: NodeJS.ProcessEnv = process.env,

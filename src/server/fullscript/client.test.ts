@@ -3,6 +3,7 @@ import { describe, expect, test, vi } from "vitest";
 import {
   createFullscriptAuthorization,
   exchangeFullscriptAuthorizationCode,
+  fullscriptIntegrationReturnUrl,
   FullscriptApiClient,
   readFullscriptConfiguration,
   revokeFullscriptToken,
@@ -25,6 +26,18 @@ function json(body: unknown, status = 200) {
 }
 
 describe("Fullscript server boundary", () => {
+  test("returns OAuth users to the configured public Desktop origin behind a reverse proxy", () => {
+    expect(fullscriptIntegrationReturnUrl(
+      "https://0.0.0.0:3000/api/live/fullscript/oauth/callback",
+      "https://desktop.example.test/api/live/fullscript/oauth/callback",
+    ).href).toBe("https://desktop.example.test/integrations");
+
+    expect(fullscriptIntegrationReturnUrl(
+      "https://localhost:3000/api/live/fullscript/oauth/callback",
+      "not-a-url",
+    ).href).toBe("https://localhost:3000/integrations");
+  });
+
   test("accepts only the canonical sandbox OAuth host and refuses premature production", () => {
     expect(configuration.apiOrigin).toBe("https://api-us-snd.fullscript.io/api");
     expect(() => readFullscriptConfiguration({
