@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { ClinicalEmpty } from "@/components/ui/ClinicalStates";
 import { SyncOperationsPanel } from "@/components/sync/SyncOperationsPanel";
+import { FullscriptIntegrationPanel } from "@/components/integrations/FullscriptIntegrationPanel";
 
 export const metadata: Metadata = { title: "Integrations — AI Longevity Pro" };
 
@@ -24,10 +25,11 @@ export default function IntegrationsPage() {
         sub="Patient-app synchronization operations and connector posture"
       />
       <SyncOperationsPanel />
+      <FullscriptIntegrationPanel />
       <div className="mt-4">
         <ClinicalEmpty
           title="Other connector families aren't configured yet"
-          message="EHR, lab-vendor, wearable, automation, and webhook connectors have no live backend yet. No connection is shown because none exists — this screen never fakes a connector."
+          message="EHR, other lab-vendor, wearable, automation, and general webhook connectors have no live backend yet. No connection is shown because none exists — this screen never fakes a connector."
         />
       </div>
     </section>
