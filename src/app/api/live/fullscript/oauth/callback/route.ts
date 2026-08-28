@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { exchangeFullscriptAuthorizationCode, readFullscriptConfiguration, verifyFullscriptState } from "@/server/fullscript/client";
+import { exchangeFullscriptAuthorizationCode, fullscriptIntegrationReturnUrl, readFullscriptConfiguration, verifyFullscriptState } from "@/server/fullscript/client";
 import { createAwsFullscriptTokenStore } from "@/server/fullscript/token-store";
 
 export async function GET(request: NextRequest) {
-  const target = new URL("/integrations", request.url);
+  const target = fullscriptIntegrationReturnUrl(request.url);
   try {
     const code = request.nextUrl.searchParams.get("code") ?? "";
     const state = request.nextUrl.searchParams.get("state") ?? "";
