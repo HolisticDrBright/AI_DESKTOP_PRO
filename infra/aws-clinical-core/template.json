@@ -43,6 +43,18 @@
     "AllowedClientOrigins": {
       "Type": "CommaDelimitedList",
       "Default": "http://localhost:3000,http://127.0.0.1:3000"
+    },
+    "IdentityEmailDomain": {
+      "Type": "String",
+      "Default": "ailongevitypro.app",
+      "AllowedPattern": "^[A-Za-z0-9.-]+$",
+      "Description": "Verified SES domain used only for transactional identity email."
+    },
+    "IdentityEmailConfigurationSet": {
+      "Type": "String",
+      "Default": "ai-longevity-auth",
+      "AllowedPattern": "^[A-Za-z0-9_-]{1,64}$",
+      "Description": "SES configuration set for authentication-email reputation and suppression controls."
     }
   },
   "Resources": {
@@ -356,6 +368,13 @@
         "UsernameAttributes": ["email"],
         "UsernameConfiguration": { "CaseSensitive": false },
         "AutoVerifiedAttributes": ["email"],
+        "EmailConfiguration": {
+          "ConfigurationSet": { "Ref": "IdentityEmailConfigurationSet" },
+          "EmailSendingAccount": "DEVELOPER",
+          "From": { "Fn::Sub": "AI Longevity Pro <no-reply@${IdentityEmailDomain}>" },
+          "ReplyToEmailAddress": { "Fn::Sub": "info@${IdentityEmailDomain}" },
+          "SourceArn": { "Fn::Sub": "arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:identity/${IdentityEmailDomain}" }
+        },
         "MfaConfiguration": "ON",
         "EnabledMfas": ["SOFTWARE_TOKEN_MFA"],
         "Schema": [
@@ -434,6 +453,13 @@
         "UsernameAttributes": ["email"],
         "UsernameConfiguration": { "CaseSensitive": false },
         "AutoVerifiedAttributes": ["email"],
+        "EmailConfiguration": {
+          "ConfigurationSet": { "Ref": "IdentityEmailConfigurationSet" },
+          "EmailSendingAccount": "DEVELOPER",
+          "From": { "Fn::Sub": "AI Longevity Pro <no-reply@${IdentityEmailDomain}>" },
+          "ReplyToEmailAddress": { "Fn::Sub": "info@${IdentityEmailDomain}" },
+          "SourceArn": { "Fn::Sub": "arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:identity/${IdentityEmailDomain}" }
+        },
         "MfaConfiguration": "OPTIONAL",
         "EnabledMfas": ["SOFTWARE_TOKEN_MFA"],
         "Schema": [
