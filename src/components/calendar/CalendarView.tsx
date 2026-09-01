@@ -230,7 +230,13 @@ type TelehealthCalendarRow = {
 async function addTelehealthAppointments(week: LiveCalendar): Promise<LiveCalendar> {
   const response = await fetch("/api/live/telehealth-requests", { cache: "no-store" });
   const payload = await response.json().catch(() => null) as { data?: unknown } | null;
-  if (!response.ok || !Array.isArray(payload?.data)) throw new Error("The telehealth calendar could not be loaded.");
+  // Patient-booked telehealth visits supplement the established clinical
+  // calendar. A separately deployed appointment service must never blank the
+  // practitioner calendar when it is unavailable, not yet deployed, or the
+  // session boundary refuses that secondary request. The telehealth queue
+  // remains the explicit place to diagnose and retry that service.
+  if (!response.ok) return week;
+  if (!Array.isArray(payload?.data)) throw new Error("The telehealth calendar response was invalid.");
   const ids = new Set(week.appointments.map((appointment) => appointment.id));
   const appointments = [...week.appointments];
   for (const candidate of payload.data) {
