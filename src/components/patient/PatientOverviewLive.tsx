@@ -24,6 +24,7 @@ import type {
 import { ClinicalError, ClinicalLoading } from "@/components/ui/ClinicalStates";
 import { PatientProgramsLive } from "@/components/programs/PatientProgramsLive";
 import { PatientAppIntakeCard } from "@/components/patient/PatientAppIntakeCard";
+import { PatientRelationshipsCard } from "@/components/patient/PatientRelationshipsCard";
 import { Card, CardTitle } from "@/components/ui/bits";
 import { Pill } from "@/components/ui/Pill";
 import { patientPath } from "@/lib/routes";
@@ -359,6 +360,8 @@ export function PatientOverviewLive({ patientId }: { patientId: string }) {
             </dd>
           </dl>
         </Card>
+
+        <PatientRelationshipsCard patientId={patientId} />
 
         <Card className="px-4 py-[13px]">
           <CardTitle className="mb-1">Care team</CardTitle>

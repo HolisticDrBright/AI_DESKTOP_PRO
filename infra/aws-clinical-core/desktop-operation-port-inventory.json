@@ -1,15 +1,15 @@
 {
   "schemaVersion": "desktop-operation-port-inventory/1",
   "generatedFrom": {
-    "operationManifestSha256": "8cd2bed9d9db0f17aab030e397cbb07cc4fe50647f4eaf5e4ba83816a4a4fbff",
-    "productionOperationManifestSha256": "ee90974ae44d3157a2f0aff3b66bbf8d2ed5044c2e9cb04f787ebbcae63527ed",
-    "legacyDefinitionSetSha256": "dce8bb87ed890c305c656ee61b8438da0cb518647ea2df65f4bdf26e55277e96"
+    "operationManifestSha256": "57a9674138661932c3e27e09d37cabd4cbbf7bf6f336b8666e721ca1bd59d0a6",
+    "productionOperationManifestSha256": "6c76fe027ca28064897b1c95ac3f50893e9170ede5e5b10b0f1b43e296b387d2",
+    "legacyDefinitionSetSha256": "2c472d26e98365b7ba9c966f6223cb634cd076f52aece75f17d65fd1e9f4a739"
   },
   "counts": {
-    "rpc": 218,
+    "rpc": 221,
     "select": 5,
-    "total": 223,
-    "productionImplemented": 223,
+    "total": 226,
+    "productionImplemented": 226,
     "productionEnabled": 0
   },
   "operations": [
@@ -2477,6 +2477,64 @@
     },
     {
       "kind": "rpc",
+      "name": "create_patient_relationship_invitation",
+      "domains": [
+        "relationships"
+      ],
+      "callSites": [
+        {
+          "adapter": "relationships.live.ts",
+          "domain": "relationships",
+          "line": 43,
+          "argumentKeys": [
+            "_display_name",
+            "_email",
+            "_expires_in_days",
+            "_organization_id",
+            "_patient_id",
+            "_relationship_type",
+            "_requested_scopes"
+          ]
+        }
+      ],
+      "legacyDefinitions": [
+        {
+          "schema": "public",
+          "signature": "_organization_id uuid,_patient_id uuid,_display_name text,_email text, _relationship_type text,_requested_scopes text[],_expires_in_days integer",
+          "declaration": "returns jsonb language plpgsql security definer set search_path=''",
+          "source": "supabase/migrations/20260831120000_patient_relationship_access.sql",
+          "line": 94,
+          "sha256": "841927fea180b80beee6895f3382a2efcfeb7d02199a93e2cc9b7cbb156945af",
+          "tableDependencies": [
+            "public.audit_events",
+            "public.patient_profiles",
+            "public.patient_relationships"
+          ],
+          "functionDependencies": [
+            "string_agg"
+          ],
+          "providerDependencies": {
+            "authUid": true,
+            "authJwt": false,
+            "authUsers": false,
+            "storage": false,
+            "realtime": false,
+            "vault": false,
+            "networkExtension": false
+          }
+        }
+      ],
+      "syntheticBoundary": "registry_disabled",
+      "productionStatus": "implemented_activation_blocked",
+      "productionEvidence": {
+        "implementation": "native_production_function",
+        "source": "infra/aws-clinical-core/production-migrations/20260831120000_production_patient_relationship_access.sql",
+        "sourceSha256": "9227d1694a6721530bf194b31c2882cac0ba5a9fa9c7fe0d4928ce02f14e62d5",
+        "activationState": "phi_disabled"
+      }
+    },
+    {
+      "kind": "rpc",
       "name": "create_plan_version",
       "domains": [
         "plans"
@@ -4649,6 +4707,58 @@
         "implementation": "native_production_function",
         "source": "infra/aws-clinical-core/production-migrations/20260824130000_production_patient_protocols.sql",
         "sourceSha256": "2295d0c887a688bf624567c0a0c0080d2db1ed1e27c5b44be9c87ed4be29bcc6",
+        "activationState": "phi_disabled"
+      }
+    },
+    {
+      "kind": "rpc",
+      "name": "get_patient_relationships",
+      "domains": [
+        "relationships"
+      ],
+      "callSites": [
+        {
+          "adapter": "relationships.live.ts",
+          "domain": "relationships",
+          "line": 23,
+          "argumentKeys": [
+            "_organization_id",
+            "_patient_id"
+          ]
+        }
+      ],
+      "legacyDefinitions": [
+        {
+          "schema": "public",
+          "signature": "_organization_id uuid,_patient_id uuid",
+          "declaration": "returns jsonb language plpgsql stable security definer set search_path=''",
+          "source": "supabase/migrations/20260831120000_patient_relationship_access.sql",
+          "line": 70,
+          "sha256": "7f7f731762fc86fa24c97fc48fa4340d24bfd74bbcd505e26700e3f75689be7e",
+          "tableDependencies": [
+            "public.patient_profiles",
+            "public.patient_relationships"
+          ],
+          "functionDependencies": [
+            "coalesce"
+          ],
+          "providerDependencies": {
+            "authUid": false,
+            "authJwt": false,
+            "authUsers": false,
+            "storage": false,
+            "realtime": false,
+            "vault": false,
+            "networkExtension": false
+          }
+        }
+      ],
+      "syntheticBoundary": "registry_disabled",
+      "productionStatus": "implemented_activation_blocked",
+      "productionEvidence": {
+        "implementation": "native_production_function",
+        "source": "infra/aws-clinical-core/production-migrations/20260831120000_production_patient_relationship_access.sql",
+        "sourceSha256": "9227d1694a6721530bf194b31c2882cac0ba5a9fa9c7fe0d4928ce02f14e62d5",
         "activationState": "phi_disabled"
       }
     },
@@ -9542,6 +9652,58 @@
     },
     {
       "kind": "rpc",
+      "name": "revoke_patient_relationship",
+      "domains": [
+        "relationships"
+      ],
+      "callSites": [
+        {
+          "adapter": "relationships.live.ts",
+          "domain": "relationships",
+          "line": 63,
+          "argumentKeys": [
+            "_expected_version",
+            "_reason",
+            "_relationship_id"
+          ]
+        }
+      ],
+      "legacyDefinitions": [
+        {
+          "schema": "public",
+          "signature": "_relationship_id uuid,_expected_version integer,_reason text",
+          "declaration": "returns jsonb language plpgsql security definer set search_path=''",
+          "source": "supabase/migrations/20260831120000_patient_relationship_access.sql",
+          "line": 197,
+          "sha256": "af193606d6315a6697f86d440e10b26175f45733f774f8c84a5b2dd8bad0db7b",
+          "tableDependencies": [
+            "public.audit_events",
+            "public.patient_profiles",
+            "public.patient_relationships"
+          ],
+          "functionDependencies": [],
+          "providerDependencies": {
+            "authUid": true,
+            "authJwt": false,
+            "authUsers": false,
+            "storage": false,
+            "realtime": false,
+            "vault": false,
+            "networkExtension": false
+          }
+        }
+      ],
+      "syntheticBoundary": "registry_disabled",
+      "productionStatus": "implemented_activation_blocked",
+      "productionEvidence": {
+        "implementation": "native_production_function",
+        "source": "infra/aws-clinical-core/production-migrations/20260831120000_production_patient_relationship_access.sql",
+        "sourceSha256": "9227d1694a6721530bf194b31c2882cac0ba5a9fa9c7fe0d4928ce02f14e62d5",
+        "activationState": "phi_disabled"
+      }
+    },
+    {
+      "kind": "rpc",
       "name": "revoke_sync_connection",
       "domains": [
         "patient-sync"
@@ -12154,7 +12316,7 @@
       "productionEvidence": {
         "implementation": "native_production_adapter",
         "source": "src/server/clinical-core/aws-production-desktop.ts",
-        "sourceSha256": "0164d4abed6601531bdc0e56afbedfd14e90031e91ef18c5f32aabf27980ffda",
+        "sourceSha256": "2c910f03cb336d1e3b4c4ce47a926cf6eb6de06790bc47c5919974721293a9a5",
         "activationState": "phi_disabled"
       }
     },
@@ -12182,7 +12344,7 @@
       "productionEvidence": {
         "implementation": "native_production_adapter",
         "source": "src/server/clinical-core/aws-production-desktop.ts",
-        "sourceSha256": "0164d4abed6601531bdc0e56afbedfd14e90031e91ef18c5f32aabf27980ffda",
+        "sourceSha256": "2c910f03cb336d1e3b4c4ce47a926cf6eb6de06790bc47c5919974721293a9a5",
         "activationState": "phi_disabled"
       }
     },
@@ -12210,7 +12372,7 @@
       "productionEvidence": {
         "implementation": "native_production_adapter",
         "source": "src/server/clinical-core/aws-production-desktop.ts",
-        "sourceSha256": "0164d4abed6601531bdc0e56afbedfd14e90031e91ef18c5f32aabf27980ffda",
+        "sourceSha256": "2c910f03cb336d1e3b4c4ce47a926cf6eb6de06790bc47c5919974721293a9a5",
         "activationState": "phi_disabled"
       }
     },
@@ -12238,7 +12400,7 @@
       "productionEvidence": {
         "implementation": "native_production_adapter",
         "source": "src/server/clinical-core/aws-production-desktop.ts",
-        "sourceSha256": "0164d4abed6601531bdc0e56afbedfd14e90031e91ef18c5f32aabf27980ffda",
+        "sourceSha256": "2c910f03cb336d1e3b4c4ce47a926cf6eb6de06790bc47c5919974721293a9a5",
         "activationState": "phi_disabled"
       }
     },
@@ -12279,7 +12441,7 @@
       "productionEvidence": {
         "implementation": "native_production_adapter",
         "source": "src/server/clinical-core/aws-production-desktop.ts",
-        "sourceSha256": "0164d4abed6601531bdc0e56afbedfd14e90031e91ef18c5f32aabf27980ffda",
+        "sourceSha256": "2c910f03cb336d1e3b4c4ce47a926cf6eb6de06790bc47c5919974721293a9a5",
         "activationState": "phi_disabled"
       }
     }

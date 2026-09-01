@@ -285,6 +285,61 @@ export interface LivePatientOverview {
   generatedAt: string;
 }
 
+export const PATIENT_RELATIONSHIP_SCOPES = [
+  "protocols_supplements",
+  "laboratory_results",
+  "medical_records",
+] as const;
+export type LivePatientRelationshipScope = (typeof PATIENT_RELATIONSHIP_SCOPES)[number];
+
+export const PATIENT_RELATIONSHIP_TYPES = [
+  "parent",
+  "adult_child",
+  "spouse_partner",
+  "sibling",
+  "family_caregiver",
+  "other",
+] as const;
+export type LivePatientRelationshipType = (typeof PATIENT_RELATIONSHIP_TYPES)[number];
+
+export interface LivePatientRelationship {
+  id: string;
+  displayName: string;
+  maskedEmail: string;
+  relationshipType: LivePatientRelationshipType;
+  authorityBasis: "patient_authorized";
+  status: "pending_patient_approval" | "pending_recipient_claim" | "active" | "revoked" | "expired";
+  requestedScopes: LivePatientRelationshipScope[];
+  grantedScopes: LivePatientRelationshipScope[];
+  patientApprovedAt: string | null;
+  recipientClaimedAt: string | null;
+  expiresAt: string;
+  revokedAt: string | null;
+  createdAt: string;
+  version: number;
+}
+
+export interface LivePatientRelationships {
+  patientId: string;
+  relationships: LivePatientRelationship[];
+  generatedAt: string;
+  /** Added by the Desktop route so the dialog can refuse real identity data in staging. */
+  syntheticOnly?: boolean;
+}
+
+export interface LivePatientRelationshipInvitationResult {
+  relationship: LivePatientRelationship;
+  /** Returned once. The database stores only its hash. */
+  invitationCode: string;
+  deliveryState: "manual_secure_delivery_required";
+}
+
+export interface LivePatientRelationshipMutationResult {
+  relationshipId: string;
+  status: "revoked";
+  version: number;
+}
+
 export interface LivePatientAppIntakeRecord<T> {
   payload: T;
   receivedAt: string;

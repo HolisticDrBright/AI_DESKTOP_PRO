@@ -81,6 +81,8 @@ const existingAccountEmails = new Set([
   "colleague@fixture.local",
   "new-nurse@fixture.local",
 ]);
+let relationshipSeq = 0;
+const patientRelationships = new Map();
 
 function memberOrgIdsForBearer(bearerToken) {
   if (revokedBearers.has(bearerToken) || bearerToken.endsWith("--noorg")) return [];
@@ -2790,7 +2792,7 @@ resetCopilotFixtures();
  * ===================================================================== */
 
 const SNAPSHOT_COLLECTIONS = {
-  revokedBearers, members, queue, labMarkers, labReports,
+  revokedBearers, members, patientRelationships, queue, labMarkers, labReports,
   encounters, emrNotes,
   scribeParticipants, scribeRecordings, scribeSessions, scribeTokens,
   scribeTranscripts, scribeGenerations, scribeAccessLog,
@@ -2853,6 +2855,7 @@ function resetAllFixtures() {
 
   // `let` bindings the snapshot cannot rebind.
   memberSeq = 2;
+  relationshipSeq = 0;
   emrSeq = 0;
   scribeSeq = 0;
   lensSeq = 0;
@@ -7383,6 +7386,116 @@ createServer(async (req, res) => {
           ],
         },
         generatedAt: iso(0),
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/get_patient_relationships" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!memberOrgIds.includes(body._organization_id)) {
+        return json(res, 403, { code: "42501", message: "active organization membership required" });
+      }
+      const patient = PATIENTS.find((item) =>
+        item.id === body._patient_id && item.organization_id === body._organization_id,
+      );
+      if (!patient) return json(res, 403, { code: "42501", message: "not authorized for this patient" });
+      const relationships = [...patientRelationships.values()]
+        .filter((item) => item.patientId === patient.id && item.organizationId === body._organization_id)
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+      return json(res, 200, { patientId: patient.id, relationships, generatedAt: iso(0) });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/create_patient_relationship_invitation" && req.method === "POST") {
+      const body = await readBody(req);
+      const patient = PATIENTS.find((item) =>
+        item.id === body._patient_id && item.organization_id === body._organization_id,
+      );
+      if (!memberOrgIds.includes(body._organization_id) || !patient) {
+        return json(res, 403, { code: "42501", message: "not authorized for this patient" });
+      }
+      const email = String(body._email ?? "").trim().toLowerCase();
+      const requestedScopes = Array.isArray(body._requested_scopes) ? body._requested_scopes : [];
+      const allowedScopes = ["protocols_supplements", "laboratory_results", "medical_records"];
+      if (!/^\S+@\S+\.\S+$/.test(email) || requestedScopes.length < 1
+        || requestedScopes.some((scope) => !allowedScopes.includes(scope))
+        || new Set(requestedScopes).size !== requestedScopes.length
+        || ![30, 90, 365].includes(body._expires_in_days)) {
+        return json(res, 400, { code: "22023", message: "relationship_invitation_invalid" });
+      }
+      if ([...patientRelationships.values()].some((item) =>
+        item.patientId === patient.id && item.emailHash === createHash("sha256").update(email).digest("hex")
+        && !["revoked", "expired"].includes(item.status),
+      )) return json(res, 409, { code: "23505", message: "relationship_already_exists" });
+      relationshipSeq += 1;
+      const invitationCode = [...randomBytes(10)]
+        .map((byte) => "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"[byte % 32]).join("");
+      const createdAt = new Date().toISOString();
+      const relationship = {
+        id: `relationship-${relationshipSeq}`,
+        organizationId: body._organization_id,
+        patientId: patient.id,
+        displayName: String(body._display_name).trim(),
+        maskedEmail: `${email.slice(0, 1)}***@${email.split("@")[1]}`,
+        emailHash: createHash("sha256").update(email).digest("hex"),
+        relationshipType: body._relationship_type,
+        authorityBasis: "patient_authorized",
+        status: "pending_patient_approval",
+        requestedScopes,
+        grantedScopes: [],
+        patientApprovedAt: null,
+        recipientClaimedAt: null,
+        expiresAt: new Date(Date.now() + 7 * 864e5).toISOString(),
+        revokedAt: null,
+        createdAt,
+        version: 1,
+      };
+      patientRelationships.set(relationship.id, relationship);
+      pushAudit("relationship.invited", "patient_relationship", relationship.id,
+        "Family access approval requested", { requested_scopes: requestedScopes }, patient.id, body._organization_id);
+      const safeRelationship = {
+        id: relationship.id,
+        displayName: relationship.displayName,
+        maskedEmail: relationship.maskedEmail,
+        relationshipType: relationship.relationshipType,
+        authorityBasis: relationship.authorityBasis,
+        status: relationship.status,
+        requestedScopes: relationship.requestedScopes,
+        grantedScopes: relationship.grantedScopes,
+        patientApprovedAt: relationship.patientApprovedAt,
+        recipientClaimedAt: relationship.recipientClaimedAt,
+        expiresAt: relationship.expiresAt,
+        revokedAt: relationship.revokedAt,
+        createdAt: relationship.createdAt,
+        version: relationship.version,
+      };
+      return json(res, 200, {
+        relationship: safeRelationship,
+        invitationCode,
+        deliveryState: "manual_secure_delivery_required",
+      });
+    }
+
+    if (url.pathname === "/rest/v1/rpc/revoke_patient_relationship" && req.method === "POST") {
+      const body = await readBody(req);
+      const relationship = patientRelationships.get(String(body._relationship_id ?? ""));
+      if (!relationship || !memberOrgIds.includes(relationship.organizationId)) {
+        return json(res, 403, { code: "42501", message: "relationship_revoke_refused" });
+      }
+      if (relationship.version !== body._expected_version || ["revoked", "expired"].includes(relationship.status)) {
+        return json(res, 409, { code: "40001", message: "relationship_version_conflict" });
+      }
+      if (String(body._reason ?? "").trim().length < 3) {
+        return json(res, 400, { code: "22023", message: "relationship_revocation_reason_required" });
+      }
+      relationship.status = "revoked";
+      relationship.grantedScopes = [];
+      relationship.revokedAt = new Date().toISOString();
+      relationship.version += 1;
+      pushAudit("relationship.revoked", "patient_relationship", relationship.id,
+        "Family access revoked", { reason_present: true }, relationship.patientId, relationship.organizationId);
+      return json(res, 200, {
+        relationshipId: relationship.id,
+        status: relationship.status,
+        version: relationship.version,
       });
     }
 

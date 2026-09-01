@@ -124,6 +124,10 @@
     {
       "version": "20260827160000",
       "file": "20260827160000_production_consumer_wearable_records.sql"
+    },
+    {
+      "version": "20260831120000",
+      "file": "20260831120000_production_patient_relationship_access.sql"
     }
   ]
 }

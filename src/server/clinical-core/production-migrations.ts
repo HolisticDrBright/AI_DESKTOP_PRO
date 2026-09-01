@@ -86,7 +86,8 @@ export async function applyProductionClinicalCoreMigrations(
           and table_name <> 'schema_migrations')::int as table_count,
       (select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
         where n.nspname = 'clinical_core'
-          and p.proname in ('create_patient_profile','review_biomarker','get_patient_protocol',
+          and p.proname in ('create_patient_profile','create_patient_relationship_invitation',
+            'get_patient_relationships','revoke_patient_relationship','review_biomarker','get_patient_protocol',
             'create_protocol_draft','save_protocol_draft','approve_protocol_version',
             'activate_protocol_version','set_protocol_lifecycle','revise_protocol_version',
             'queue_sync_export','withdraw_sync_resource','retry_sync_event','cancel_sync_event',
@@ -119,6 +120,7 @@ export async function applyProductionClinicalCoreMigrations(
         + (select count(*) from clinical_core.organization_memberships)
         + (select count(*) from clinical_core.workforce_identity_directory)
         + (select count(*) from clinical_core.patient_records)
+        + (select count(*) from clinical_core.patient_relationships)
         + (select count(*) from clinical_core.patient_connections)
         + (select count(*) from clinical_core.consent_artifacts)
         + (select count(*) from clinical_core.consent_grants)
@@ -222,9 +224,10 @@ export async function applyProductionClinicalCoreMigrations(
         + (select count(*) from clinical_core.sync_circuit_states)
         + (select count(*) from clinical_core.sync_callback_nonces)
         + (select count(*) from clinical_core.sync_inbound_lab_imports)
+        + (select count(*) from clinical_audit.patient_relationship_events)
       )::int as clinical_row_count`);
     const row = verification.rows[0];
-    if (!row || Number(row.table_count) !== 112 || Number(row.contract_count) !== 71
+    if (!row || Number(row.table_count) !== 114 || Number(row.contract_count) !== 74
       || Number(row.clinical_row_count) !== 0) {
       throw new ProductionClinicalCoreMigrationError("verification_failed");
     }

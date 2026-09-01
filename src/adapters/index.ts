@@ -60,6 +60,8 @@ import type {
   LiveMembershipAction,
   LivePackageKind,
   LivePlanType,
+  LivePatientRelationshipScope,
+  LivePatientRelationshipType,
 } from "./live-types";
 
 /** Context passed to lab marker mutations so the audit entry is meaningful. */
@@ -105,6 +107,21 @@ export const api = {
      * invents a number.
      */
     overview: async (patientId: string) => liveClient.patientOverview(patientId),
+    relationships: async (patientId: string) => liveClient.patientRelationships(patientId),
+    inviteRelationship: async (input: {
+      patientId: string;
+      displayName: string;
+      email: string;
+      relationshipType: LivePatientRelationshipType;
+      requestedScopes: LivePatientRelationshipScope[];
+      expiresInDays: 30 | 90 | 365;
+      attestsSynthetic: boolean;
+    }) => liveClient.invitePatientRelationship(input),
+    revokeRelationship: async (input: {
+      relationshipId: string;
+      expectedVersion: number;
+      reason: string;
+    }) => liveClient.revokePatientRelationship(input),
     /** LIVE: consent-scoped, patient-reported V2 profile and health intake. */
     appIntake: async (patientId: string) => liveClient.patientAppIntake(patientId),
     /**

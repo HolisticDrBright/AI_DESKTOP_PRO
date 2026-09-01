@@ -16,7 +16,7 @@ const errors = [];
 const assert = (condition, message) => { if (!condition) errors.push(message); };
 
 assert(manifest.contract_version === "clinical-core-migrations/1", "generated manifest contract is invalid");
-assert(manifest.migrations.length === 41, "expected ten transformed migrations and thirty-one production overlays");
+assert(manifest.migrations.length === 42, "expected ten transformed migrations and thirty-two production overlays");
 assert(new Set(manifest.migrations.map((entry) => entry.version)).size === manifest.migrations.length,
   "migration versions must be unique");
 
@@ -115,6 +115,8 @@ const inboxWorkspace = readFileSync(path.join(root, "infra", "aws-clinical-core"
   "20260827150000_production_inbox.sql"), "utf8");
 const wearableRecordsOverlay = readFileSync(path.join(root, "infra", "aws-clinical-core", "production-migrations",
   "20260827160000_production_consumer_wearable_records.sql"), "utf8");
+const patientRelationshipOverlay = readFileSync(path.join(root, "infra", "aws-clinical-core", "production-migrations",
+  "20260831120000_production_patient_relationship_access.sql"), "utf8");
 assert(overlay.includes("_organization_id uuid") && overlay.includes("_first_name text")
   && overlay.includes("_last_name text") && overlay.includes("_date_of_birth date")
   && overlay.includes("_sex text") && overlay.includes("_mrn text")
@@ -287,6 +289,19 @@ assert(combined.includes("'wearable_daily_records'")
 assert(!/insert\s+into\s+clinical_core\.consumer_clinical_record_versions/i.test(
   wearableRecordsOverlay.replace(/\$([A-Za-z_][A-Za-z0-9_]*)?\$[\s\S]*?\$\1\$/g, "")),
 "consumer wearable migration must not seed patient-supplied records");
+for (const invariant of [
+  "clinical_private.patient_relationship_scope_allowed", "status='active'",
+  "access_expires_at>now()", "_scope=any(relationship.granted_scopes)",
+  "manual_secure_delivery_required", "granted_scopes='{}'",
+  "patient_relationship_events_append_only",
+]) assert(patientRelationshipOverlay.includes(invariant), `missing patient relationship invariant ${invariant}`);
+for (const operation of [
+  "get_patient_relationships", "create_patient_relationship_invitation", "revoke_patient_relationship",
+]) assert(patientRelationshipOverlay.includes(`clinical_core.${operation}`),
+  `missing patient relationship operation ${operation}`);
+assert(!/insert\s+into\s+clinical_core\.patient_relationships/i.test(
+  patientRelationshipOverlay.replace(/\$([A-Za-z_][A-Za-z0-9_]*)?\$[\s\S]*?\$\1\$/g, "")),
+"patient relationship migration must not seed family identities or access");
 for (const operation of [
   "get_product_catalog", "get_product_label_detail", "verify_product_label_version",
   "get_protocol_template_detail", "compare_protocol_template_versions",

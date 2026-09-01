@@ -23,6 +23,11 @@ import type {
   LiveTaskResult,
   LiveUploadResult,
   LivePatientOverview,
+  LivePatientRelationships,
+  LivePatientRelationshipInvitationResult,
+  LivePatientRelationshipMutationResult,
+  LivePatientRelationshipScope,
+  LivePatientRelationshipType,
   LivePatientAppIntake,
   LiveReasoningWorkspace,
   LiveHypothesisReviewResult,
@@ -248,6 +253,34 @@ export const liveClient = {
 
   patientOverview: (patientId: string) =>
     liveFetch<LivePatientOverview>("patients/overview", { method: "POST", body: { patientId } }),
+
+  patientRelationships: (patientId: string) =>
+    liveFetch<LivePatientRelationships>("patients/relationships", {
+      method: "POST",
+      body: { action: "list", patientId },
+    }),
+
+  invitePatientRelationship: (input: {
+    patientId: string;
+    displayName: string;
+    email: string;
+    relationshipType: LivePatientRelationshipType;
+    requestedScopes: LivePatientRelationshipScope[];
+    expiresInDays: 30 | 90 | 365;
+    attestsSynthetic: boolean;
+  }) => liveFetch<LivePatientRelationshipInvitationResult>("patients/relationships", {
+    method: "POST",
+    body: { action: "invite", ...input },
+  }),
+
+  revokePatientRelationship: (input: {
+    relationshipId: string;
+    expectedVersion: number;
+    reason: string;
+  }) => liveFetch<LivePatientRelationshipMutationResult>("patients/relationships", {
+    method: "POST",
+    body: { action: "revoke", ...input },
+  }),
 
   patientAppIntake: (patientId: string) =>
     liveFetch<LivePatientAppIntake>("patients/app-intake", { method: "POST", body: { patientId } }),
