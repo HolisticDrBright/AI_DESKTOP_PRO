@@ -15,6 +15,8 @@ export const CONSUMER_CLINICAL_COLLECTIONS = [
   "meal_logs", "subjective_rollups", "weekly_checkins",
   "wellness_profiles", "lifestyle_profiles", "contraindications",
   "questionnaire_responses", "clinical_intakes", "wearable_daily_records",
+  "reproductive_profiles",
+  "adverse_event_reports",
 ] as const;
 export type ConsumerClinicalCollection = (typeof CONSUMER_CLINICAL_COLLECTIONS)[number];
 export type PrivacyRequestKind = "export" | "correction" | "deletion";
@@ -132,7 +134,7 @@ const COLLECTION_KEYS: Record<ConsumerClinicalCollection, { allowed: readonly st
     required: ["id","questionId","categoryId","severity","timestamp"],
   },
   clinical_intakes: {
-    allowed: ["id","chiefComplaint","associatedSymptoms","energyLevel","sleepQuality","digestiveFunction","stressPerception","temperatureSensitivity","painQuality","createdAt","updatedAt"],
+    allowed: ["id","chiefComplaint","associatedSymptoms","energyLevel","sleepQuality","digestiveFunction","stressPerception","temperatureSensitivity","painQuality","tcmDifferentiationResponses","createdAt","updatedAt"],
     required: ["id","chiefComplaint","associatedSymptoms","energyLevel","sleepQuality","digestiveFunction","stressPerception","temperatureSensitivity","createdAt","updatedAt"],
   },
   wearable_daily_records: {
@@ -148,6 +150,14 @@ const COLLECTION_KEYS: Record<ConsumerClinicalCollection, { allowed: readonly st
       "adherenceScore","subjectiveReadiness","symptomFlags","dataQualityScore",
     ],
     required: ["id","source","date","dataQualityScore"],
+  },
+  reproductive_profiles: {
+    allowed: ["id","consent","stage","typicalCycleLength","cycleDay","postpartumWeeks","updatedAt"],
+    required: ["id","consent","stage","updatedAt"],
+  },
+  adverse_event_reports: {
+    allowed: ["id","event_type","symptom","severity","onset_at","suspected_product_id","suspected_product_name","actions_taken","notes","safety_answers"],
+    required: ["id","event_type","symptom","severity","onset_at","actions_taken","safety_answers"],
   },
 };
 
@@ -305,6 +315,16 @@ export function validateCollectionPayload(collection: ConsumerClinicalCollection
     const candidate = value[key];
     if (candidate !== undefined && candidate !== null
       && (typeof candidate !== "string" || candidate.length > 40 || !Number.isFinite(new Date(candidate).getTime()))) {
+      throw new ConsumerClinicalError("request_invalid");
+    }
+  }
+  if (collection === "adverse_event_reports") {
+    if (!["new_symptom", "possible_adverse_reaction"].includes(String(value.event_type))
+      || typeof value.symptom !== "string" || value.symptom.trim().length < 2 || value.symptom.length > 200
+      || !Number.isInteger(value.severity) || Number(value.severity) < 1 || Number(value.severity) > 10
+      || typeof value.onset_at !== "string" || !validDate(value.onset_at)
+      || !Array.isArray(value.actions_taken) || value.actions_taken.length > 20
+      || !value.safety_answers || typeof value.safety_answers !== "object" || Array.isArray(value.safety_answers)) {
       throw new ConsumerClinicalError("request_invalid");
     }
   }

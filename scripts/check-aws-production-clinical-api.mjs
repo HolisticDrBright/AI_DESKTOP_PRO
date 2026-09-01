@@ -39,6 +39,13 @@ const expectedRoutes = new Set([
   "POST /clinical-core/consumer/privacy/requests",
   "GET /clinical-core/consumer/privacy/requests",
   "POST /clinical-core/workforce/data-compatibility",
+    "GET /clinical-core/consumer/family/requests",
+    "POST /clinical-core/consumer/family/approve",
+    "POST /clinical-core/consumer/family/claim",
+    "GET /clinical-core/consumer/family/delegated",
+    "GET /clinical-core/consumer/family/delegated/records",
+    "POST /clinical-core/consumer/family/revoke",
+    "GET /clinical-core/consumer/chat-context",
 ]);
 
 assert(template.Metadata?.ClinicalCore?.Environment === "production-clinical", "environment marker missing");
@@ -127,7 +134,7 @@ const candidateRoutes = candidateResources.filter((resource) => resource.Type ==
 assert(candidateRoutes.length === expectedRoutes.size
   && candidateRoutes.every((route) => expectedRoutes.has(route.Properties?.RouteKey))
   && new Set(candidateRoutes.map((route) => route.Properties?.RouteKey)).size === expectedRoutes.size,
-"candidate must expose exactly the 21 reviewed routes, without wildcard routes");
+"candidate must expose exactly the 28 reviewed routes, without wildcard routes");
 assert(candidateRoutes.every((route) => route.Properties?.AuthorizationType === "JWT"),
 "every candidate route must require JWT authorization");
 const candidateSerialized = JSON.stringify(candidate).toLowerCase();
@@ -139,4 +146,4 @@ if (errors.length) {
   errors.forEach((error) => console.error(`ERROR: ${error}`));
   process.exit(1);
 }
-console.log("Production clinical API gates passed: deployed boundary is PHI-disabled/log-only; candidate is one-organization lab/intake pilot scoped with 21 JWT routes and conditionally absent data permissions.");
+console.log("Production clinical API gates passed: deployed boundary is PHI-disabled/log-only; candidate is one-organization lab/intake pilot scoped with 28 JWT routes and conditionally absent data permissions.");

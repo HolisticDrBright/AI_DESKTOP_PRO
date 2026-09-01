@@ -130,6 +130,7 @@ const INBOX_RPC_KEYS: Readonly<Record<string, readonly string[]>> = {
   update_conversation_workflow: ["_action", "_at", "_conversation_id", "_expected_version", "_note", "_value"],
 };
 const CORE_RPCS = new Set([
+  "create_patient_relationship_invitation",
   "create_patient_profile",
   "review_biomarker",
   "list_patient_lab_observations",
@@ -162,6 +163,7 @@ const CORE_RPCS = new Set([
   "get_desktop_note",
   "get_desktop_patient_timeline",
   "get_patient_overview",
+  "get_patient_relationships",
   "get_patient_app_intake",
   "get_patient_sync_overview",
   "get_org_sync_operations",
@@ -169,6 +171,7 @@ const CORE_RPCS = new Set([
   "pause_sync_connection",
   "resume_sync_connection",
   "revoke_sync_connection",
+  "revoke_patient_relationship",
   "set_sync_consent_scope",
   "queue_sync_export",
   "withdraw_sync_resource",
@@ -319,6 +322,28 @@ async function executeCoreRpc(
   name: string,
   args: Record<string, unknown>,
 ): Promise<unknown> {
+  if (name === "create_patient_relationship_invitation") {
+    exactKeys(args, [
+      "_organization_id", "_patient_id", "_display_name", "_email",
+      "_relationship_type", "_requested_scopes", "_expires_in_days",
+    ]);
+    if (args._organization_id !== context.organizationId) throw invalid();
+    const email = requiredString(args._email, 320).trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw invalid();
+    const relationshipType = requiredString(args._relationship_type, 32);
+    if (!["parent", "adult_child", "spouse_partner", "sibling", "family_caregiver", "other"].includes(relationshipType)) throw invalid();
+    const scopes = relationshipScopes(args._requested_scopes);
+    const expiresInDays = boundedInteger(args._expires_in_days, 30, 365);
+    if (![30, 90, 365].includes(expiresInDays)) throw invalid();
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.create_patient_relationship_invitation($1,$2,$3,$4,$5,$6::text[],$7) as data",
+      [
+        clinicalUuid(context.organizationId), clinicalUuid(requiredUuid(args._patient_id)),
+        requiredString(args._display_name, 120), email, relationshipType, scopes, expiresInDays,
+      ],
+    ));
+    return decodeJson(row.data);
+  }
   if (name === "create_patient_profile") {
     exactKeys(args, [
       "_organization_id", "_first_name", "_last_name", "_date_of_birth",
@@ -644,6 +669,15 @@ async function executeCoreRpc(
     ));
     return decodeJson(row.data);
   }
+  if (name === "get_patient_relationships") {
+    exactKeys(args, ["_organization_id", "_patient_id"]);
+    if (args._organization_id !== context.organizationId) throw invalid();
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.get_patient_relationships($1,$2) as data",
+      [clinicalUuid(context.organizationId), clinicalUuid(requiredUuid(args._patient_id))],
+    ));
+    return decodeJson(row.data);
+  }
   if (name === "get_patient_app_intake") {
     exactKeys(args, ["_organization_id", "_patient_id"]);
     if (args._organization_id !== context.organizationId) throw invalid();
@@ -693,6 +727,18 @@ async function executeCoreRpc(
       "select clinical_core.revoke_sync_connection($1,$2,$3) as data",
       [
         clinicalUuid(requiredUuid(args._connection_id)), boundedInteger(args._expected_version, 1, 1_000_000),
+        requiredString(args._reason, 500),
+      ],
+    ));
+    return decodeJson(row.data);
+  }
+  if (name === "revoke_patient_relationship") {
+    exactKeys(args, ["_relationship_id", "_expected_version", "_reason"]);
+    const row = first(await tx.query<{ data: unknown }>(
+      "select clinical_core.revoke_patient_relationship($1,$2,$3) as data",
+      [
+        clinicalUuid(requiredUuid(args._relationship_id)),
+        boundedInteger(args._expected_version, 1, 1_000_000),
         requiredString(args._reason, 500),
       ],
     ));
@@ -1386,6 +1432,14 @@ function assertContext(context: ProductionRequestContext) {
 
 function exactKeys(value: Record<string, unknown>, expected: string[]) {
   if (JSON.stringify(Object.keys(value).sort()) !== JSON.stringify([...expected].sort())) throw invalid();
+}
+
+function relationshipScopes(value: unknown): string[] {
+  const allowed = new Set(["protocols_supplements", "laboratory_results", "medical_records"]);
+  if (!Array.isArray(value) || value.length < 1 || value.length > allowed.size) throw invalid();
+  const scopes = value.map((scope) => requiredString(scope, 32));
+  if (new Set(scopes).size !== scopes.length || scopes.some((scope) => !allowed.has(scope))) throw invalid();
+  return scopes;
 }
 
 function requiredString(value: unknown, max: number): string {

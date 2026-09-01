@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import {
   isProductionPilotCollectionAllowed,
   isProductionPilotConsentScopeAllowed,
+  isProductionPilotDesktopRequestAllowed,
   isProductionPilotScope,
 } from "./production-pilot-policy";
 
@@ -20,5 +21,15 @@ describe("production pilot policy", () => {
     expect(isProductionPilotCollectionAllowed("lab_intake_wearables_cycle_ai", "protocols")).toBe(false);
     expect(isProductionPilotConsentScopeAllowed("lab_intake_wearables_cycle_ai", "reproductive_health")).toBe(true);
     expect(isProductionPilotConsentScopeAllowed("lab_intake_wearables_cycle_ai", "billing_links")).toBe(false);
+  });
+
+  test("keeps caregiver operations outside the current real-data pilot", () => {
+    for (const functionName of [
+      "create_patient_relationship_invitation",
+      "get_patient_relationships",
+      "revoke_patient_relationship",
+    ]) {
+      expect(isProductionPilotDesktopRequestAllowed({ kind: "rpc", functionName, args: {} })).toBe(false);
+    }
   });
 });

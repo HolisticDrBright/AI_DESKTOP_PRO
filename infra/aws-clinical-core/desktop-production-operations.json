@@ -5,6 +5,16 @@
     {
       "kind": "rpc",
       "implementation": "native_production_function",
+      "source": "infra/aws-clinical-core/production-migrations/20260831120000_production_patient_relationship_access.sql",
+      "names": [
+        "create_patient_relationship_invitation",
+        "get_patient_relationships",
+        "revoke_patient_relationship"
+      ]
+    },
+    {
+      "kind": "rpc",
+      "implementation": "native_production_function",
       "source": "infra/aws-clinical-core/production-migrations/20260827150000_production_inbox.sql",
       "names": [
         "append_message_to_note",

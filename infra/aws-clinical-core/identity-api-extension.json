@@ -323,6 +323,13 @@
         "Target": { "Fn::Sub": "integrations/${IdentityApiIntegration}" }
       }
     },
+    "ConsumerFamilyRequestsRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "GET /clinical-core/consumer/family/requests", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "ConsumerJwtAuthorizer" }, "Target": { "Fn::Sub": "integrations/${IdentityApiIntegration}" } } },
+    "ConsumerFamilyApproveRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "POST /clinical-core/consumer/family/approve", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "ConsumerJwtAuthorizer" }, "Target": { "Fn::Sub": "integrations/${IdentityApiIntegration}" } } },
+    "ConsumerFamilyClaimRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "POST /clinical-core/consumer/family/claim", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "ConsumerJwtAuthorizer" }, "Target": { "Fn::Sub": "integrations/${IdentityApiIntegration}" } } },
+    "ConsumerDelegatedListRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "GET /clinical-core/consumer/family/delegated", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "ConsumerJwtAuthorizer" }, "Target": { "Fn::Sub": "integrations/${IdentityApiIntegration}" } } },
+    "ConsumerDelegatedRecordsRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "GET /clinical-core/consumer/family/delegated/records", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "ConsumerJwtAuthorizer" }, "Target": { "Fn::Sub": "integrations/${IdentityApiIntegration}" } } },
+    "ConsumerFamilyRevokeRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "POST /clinical-core/consumer/family/revoke", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "ConsumerJwtAuthorizer" }, "Target": { "Fn::Sub": "integrations/${IdentityApiIntegration}" } } },
+    "ConsumerChatContextRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "GET /clinical-core/consumer/chat-context", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "ConsumerJwtAuthorizer" }, "Target": { "Fn::Sub": "integrations/${IdentityApiIntegration}" } } },
     "WorkforceDesktopCompatibilityRoute": {
       "Type": "AWS::ApiGatewayV2::Route",
       "Properties": {
@@ -355,7 +362,7 @@
   "Outputs": {
     "ContractVersion": { "Value": "clinical-core-authenticated-api/1" },
     "IdentityApiFunctionArn": { "Value": { "Fn::GetAtt": ["IdentityApiFunction", "Arn"] } },
-    "RoutesEnabled": { "Value": "21" },
+    "RoutesEnabled": { "Value": "28" },
     "PhiAllowed": { "Value": "false" }
   }
 }

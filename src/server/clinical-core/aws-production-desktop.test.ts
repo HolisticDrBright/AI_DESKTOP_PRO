@@ -34,6 +34,7 @@ const PATHWAY = "20202020-2020-4020-8020-202020202020";
 const PATHWAY_VERSION = "21212121-2121-4121-8121-212121212121";
 const IMPORT_BATCH = "22222222-3333-4333-8333-222222222222";
 const IMPORT_ITEM = "23232323-2323-4323-8323-232323232323";
+const RELATIONSHIP = "24242424-2424-4424-8424-242424242424";
 
 const context: ProductionRequestContext = {
   actorPersonId: PERSON,
@@ -84,6 +85,66 @@ describe("AWS production Desktop adapter", () => {
     expect(test.calls[0]?.values).toEqual(expect.arrayContaining(["production-clinical", "clinical_phi"]));
     expect(test.calls[1]?.sql).toContain("clinical_core.create_patient_profile");
     expect(test.fallback.execute).not.toHaveBeenCalled();
+  });
+
+  it("routes scoped family invitations, reads, and revocation through exact production functions", async () => {
+    const invite = harness({ invitationCode: "A1B2C3D4E5", deliveryState: "manual_secure_delivery_required" });
+    await expect(invite.adapter.execute(context, {
+      kind: "rpc",
+      functionName: "create_patient_relationship_invitation",
+      args: {
+        _organization_id: ORG,
+        _patient_id: PATIENT,
+        _display_name: "Synthetic Caregiver",
+        _email: "caregiver@example.invalid",
+        _relationship_type: "adult_child",
+        _requested_scopes: ["protocols_supplements", "laboratory_results"],
+        _expires_in_days: 90,
+      },
+    })).resolves.toMatchObject({ invitationCode: "A1B2C3D4E5" });
+    expect(invite.calls[1]?.sql).toBe(
+      "select clinical_core.create_patient_relationship_invitation($1,$2,$3,$4,$5,$6::text[],$7) as data",
+    );
+
+    const list = harness({ patientId: PATIENT, relationships: [] });
+    await expect(list.adapter.execute(context, {
+      kind: "rpc",
+      functionName: "get_patient_relationships",
+      args: { _organization_id: ORG, _patient_id: PATIENT },
+    })).resolves.toMatchObject({ patientId: PATIENT });
+    expect(list.calls[1]?.sql).toBe("select clinical_core.get_patient_relationships($1,$2) as data");
+
+    const revoke = harness({ relationshipId: RELATIONSHIP, status: "revoked", version: 2 });
+    await expect(revoke.adapter.execute(context, {
+      kind: "rpc",
+      functionName: "revoke_patient_relationship",
+      args: { _relationship_id: RELATIONSHIP, _expected_version: 1, _reason: "Patient withdrew access" },
+    })).resolves.toMatchObject({ status: "revoked" });
+    expect(revoke.calls[1]?.sql).toBe("select clinical_core.revoke_patient_relationship($1,$2,$3) as data");
+  });
+
+  it("rejects duplicate, unknown, or overbroad relationship scopes before querying", async () => {
+    const test = harness();
+    for (const requestedScopes of [
+      ["medical_records", "medical_records"],
+      ["medical_records", "billing"],
+      [],
+    ]) {
+      await expect(test.adapter.execute(context, {
+        kind: "rpc",
+        functionName: "create_patient_relationship_invitation",
+        args: {
+          _organization_id: ORG,
+          _patient_id: PATIENT,
+          _display_name: "Synthetic Caregiver",
+          _email: "caregiver@example.invalid",
+          _relationship_type: "adult_child",
+          _requested_scopes: requestedScopes,
+          _expires_in_days: 90,
+        },
+      })).rejects.toEqual(new ProductionDesktopError("request_invalid"));
+    }
+    expect(test.calls.filter(({ sql }) => sql.includes("create_patient_relationship_invitation"))).toHaveLength(0);
   });
 
   it("reviews an observation without sending note content to a separate channel", async () => {

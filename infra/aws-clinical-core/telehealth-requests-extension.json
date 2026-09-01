@@ -1,0 +1,88 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Synthetic-only patient-safe availability, atomic slot holds, governed cancellation/rescheduling, reminders, and disabled-by-default Zoom boundary.",
+  "Metadata": { "ClinicalCore": { "ContractVersion": "telehealth-requests/4", "DataClassification": "synthetic_only", "PhiAllowed": false, "ZoomEnabled": false, "RemindersEnabled": false, "StripeTestEnabled": false } },
+  "Parameters": {
+    "ClinicalApiId": { "Type": "String", "AllowedPattern": "^[a-z0-9]{10}$" },
+    "ConsumerUserPoolId": { "Type": "String" }, "ConsumerUserPoolClientId": { "Type": "String" },
+    "WorkforceUserPoolId": { "Type": "String" }, "WorkforceUserPoolClientId": { "Type": "String" },
+    "ClinicalCoreKeyArn": { "Type": "String" }, "LambdaCodeBucket": { "Type": "String" }, "LambdaCodeKey": { "Type": "String" },
+    "ZoomEnabled": { "Type": "String", "AllowedValues": ["false", "true"], "Default": "false" },
+    "ZoomBaaVerified": { "Type": "String", "AllowedValues": ["false", "true"], "Default": "false" },
+    "ZoomSecretArn": { "Type": "String", "Default": "", "NoEcho": true },
+    "RemindersEnabled": { "Type": "String", "AllowedValues": ["false", "true"], "Default": "false" },
+    "ReminderSender": { "Type": "String", "Default": "" },
+    "ReminderConfigurationSet": { "Type": "String", "Default": "alp-transactional" },
+    "StripeTestEnabled": { "Type": "String", "AllowedValues": ["false", "true"], "Default": "false" },
+    "StripeSecretArn": { "Type": "String", "Default": "", "NoEcho": true },
+    "StripeSuccessUrl": { "Type": "String", "Default": "https://ailongevitypro.app/appointments/payment-complete" },
+    "StripeCancelUrl": { "Type": "String", "Default": "https://ailongevitypro.app/appointments/payment-cancelled" }
+  },
+  "Conditions": { "UseZoom": { "Fn::And": [{ "Fn::Equals": [{ "Ref": "ZoomEnabled" }, "true"] }, { "Fn::Equals": [{ "Ref": "ZoomBaaVerified" }, "true"] }, { "Fn::Not": [{ "Fn::Equals": [{ "Ref": "ZoomSecretArn" }, ""] }] }] }, "UseStripe": { "Fn::And": [{ "Fn::Equals": [{ "Ref": "StripeTestEnabled" }, "true"] }, { "Fn::Not": [{ "Fn::Equals": [{ "Ref": "StripeSecretArn" }, ""] }] }] } },
+  "Resources": {
+    "TelehealthTable": { "Type": "AWS::DynamoDB::Table", "DeletionPolicy": "Retain", "UpdateReplacePolicy": "Retain", "Properties": {
+      "BillingMode": "PAY_PER_REQUEST", "PointInTimeRecoverySpecification": { "PointInTimeRecoveryEnabled": true },
+      "SSESpecification": { "SSEEnabled": true, "SSEType": "KMS", "KMSMasterKeyId": { "Ref": "ClinicalCoreKeyArn" } },
+      "AttributeDefinitions": [{ "AttributeName": "pk", "AttributeType": "S" }, { "AttributeName": "sk", "AttributeType": "S" }, { "AttributeName": "gsi1pk", "AttributeType": "S" }, { "AttributeName": "gsi1sk", "AttributeType": "S" }],
+      "KeySchema": [{ "AttributeName": "pk", "KeyType": "HASH" }, { "AttributeName": "sk", "KeyType": "RANGE" }],
+      "GlobalSecondaryIndexes": [{ "IndexName": "ByConsumer", "KeySchema": [{ "AttributeName": "gsi1pk", "KeyType": "HASH" }, { "AttributeName": "gsi1sk", "KeyType": "RANGE" }], "Projection": { "ProjectionType": "ALL" } }]
+    } },
+    "TelehealthLogGroup": { "Type": "AWS::Logs::LogGroup", "DeletionPolicy": "Retain", "UpdateReplacePolicy": "Retain", "Properties": { "LogGroupName": { "Fn::Sub": "/ai-clinical-core/synthetic-staging/${ClinicalApiId}/telehealth-requests" }, "RetentionInDays": 365, "KmsKeyId": { "Ref": "ClinicalCoreKeyArn" } } },
+    "ReminderScheduleGroup": { "Type": "AWS::Scheduler::ScheduleGroup", "Properties": { "Name": { "Fn::Sub": "${ClinicalApiId}-telehealth-reminders" } } },
+    "ReminderInvokeRole": { "Type": "AWS::IAM::Role", "Properties": {
+      "RoleName": { "Fn::Sub": "${ClinicalApiId}-telehealth-reminders" },
+      "AssumeRolePolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Principal": { "Service": "scheduler.amazonaws.com" }, "Action": "sts:AssumeRole" }] },
+      "Policies": [{ "PolicyName": "InvokeTelehealthReminder", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": "lambda:InvokeFunction", "Resource": { "Fn::Sub": "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${ClinicalApiId}-synthetic-telehealth-requests" } }] } }]
+    } },
+    "TelehealthRole": { "Type": "AWS::IAM::Role", "Properties": {
+      "AssumeRolePolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Principal": { "Service": "lambda.amazonaws.com" }, "Action": "sts:AssumeRole" }] },
+      "Policies": [
+        { "PolicyName": "EncryptedLogs", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": ["logs:CreateLogStream", "logs:PutLogEvents"], "Resource": { "Fn::GetAtt": ["TelehealthLogGroup", "Arn"] } }] } },
+        { "PolicyName": "AppointmentQueue", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": ["dynamodb:PutItem", "dynamodb:Query", "dynamodb:UpdateItem", "dynamodb:TransactWriteItems"], "Resource": [{ "Fn::GetAtt": ["TelehealthTable", "Arn"] }, { "Fn::Sub": "${TelehealthTable.Arn}/index/ByConsumer" }] }] } },
+        { "PolicyName": "AppointmentQueueKms", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": ["kms:Decrypt", "kms:Encrypt", "kms:GenerateDataKey", "kms:DescribeKey"], "Resource": { "Ref": "ClinicalCoreKeyArn" } }] } },
+        { "PolicyName": "AppointmentReminders", "PolicyDocument": { "Version": "2012-10-17", "Statement": [
+          { "Effect": "Allow", "Action": ["scheduler:CreateSchedule", "scheduler:DeleteSchedule", "scheduler:GetSchedule", "scheduler:UpdateSchedule"], "Resource": { "Fn::Sub": "arn:${AWS::Partition}:scheduler:${AWS::Region}:${AWS::AccountId}:schedule/${ReminderScheduleGroup}/*" } },
+          { "Effect": "Allow", "Action": "iam:PassRole", "Resource": { "Fn::Sub": "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ClinicalApiId}-telehealth-reminders" }, "Condition": { "StringEquals": { "iam:PassedToService": "scheduler.amazonaws.com" } } },
+          { "Effect": "Allow", "Action": "ses:SendEmail", "Resource": [{ "Fn::Sub": "arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:identity/ailongevitypro.app" }, { "Fn::Sub": "arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:configuration-set/${ReminderConfigurationSet}" }] }
+        ] } },
+        { "Fn::If": ["UseZoom", { "PolicyName": "ExactZoomSecret", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": "secretsmanager:GetSecretValue", "Resource": { "Ref": "ZoomSecretArn" } }] } }, { "Ref": "AWS::NoValue" }] },
+        { "Fn::If": ["UseStripe", { "PolicyName": "ExactStripeTestSecret", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": "secretsmanager:GetSecretValue", "Resource": { "Ref": "StripeSecretArn" } }] } }, { "Ref": "AWS::NoValue" }] }
+      ]
+    } },
+    "TelehealthFunction": { "Type": "AWS::Lambda::Function", "DependsOn": ["TelehealthLogGroup"], "Properties": {
+      "FunctionName": { "Fn::Sub": "${ClinicalApiId}-synthetic-telehealth-requests" }, "Runtime": "nodejs22.x", "Architectures": ["arm64"], "Handler": "index.handler", "Role": { "Fn::GetAtt": ["TelehealthRole", "Arn"] }, "MemorySize": 512, "Timeout": 30,
+      "LoggingConfig": { "LogGroup": { "Ref": "TelehealthLogGroup" }, "LogFormat": "JSON", "ApplicationLogLevel": "WARN", "SystemLogLevel": "WARN" },
+      "Code": { "S3Bucket": { "Ref": "LambdaCodeBucket" }, "S3Key": { "Ref": "LambdaCodeKey" } },
+      "Environment": { "Variables": {
+        "TELEHEALTH_TABLE_NAME": { "Ref": "TelehealthTable" }, "RUNTIME_MODE": "synthetic", "PHI_ALLOWED": "false",
+        "CLINICAL_CONSUMER_ISSUER": { "Fn::Sub": "https://cognito-idp.${AWS::Region}.${AWS::URLSuffix}/${ConsumerUserPoolId}" }, "CLINICAL_CONSUMER_AUDIENCE": { "Ref": "ConsumerUserPoolClientId" },
+        "CLINICAL_WORKFORCE_ISSUER": { "Fn::Sub": "https://cognito-idp.${AWS::Region}.${AWS::URLSuffix}/${WorkforceUserPoolId}" }, "CLINICAL_WORKFORCE_AUDIENCE": { "Ref": "WorkforceUserPoolClientId" },
+        "ZOOM_ENABLED": { "Ref": "ZoomEnabled" }, "ZOOM_BAA_VERIFIED": { "Ref": "ZoomBaaVerified" }, "ZOOM_SECRET_ARN": { "Ref": "ZoomSecretArn" },
+        "REMINDERS_ENABLED": { "Ref": "RemindersEnabled" }, "REMINDER_SENDER": { "Ref": "ReminderSender" }, "REMINDER_CONFIGURATION_SET": { "Ref": "ReminderConfigurationSet" },
+        "REMINDER_SCHEDULE_GROUP": { "Ref": "ReminderScheduleGroup" }, "REMINDER_SCHEDULER_ROLE_ARN": { "Fn::Sub": "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ClinicalApiId}-telehealth-reminders" },
+        "REMINDER_TARGET_ARN": { "Fn::Sub": "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${ClinicalApiId}-synthetic-telehealth-requests" },
+        "STRIPE_TEST_ENABLED": { "Ref": "StripeTestEnabled" }, "STRIPE_SECRET_ARN": { "Ref": "StripeSecretArn" }, "STRIPE_SUCCESS_URL": { "Ref": "StripeSuccessUrl" }, "STRIPE_CANCEL_URL": { "Ref": "StripeCancelUrl" }
+      } }
+    } },
+    "ConsumerAuthorizer": { "Type": "AWS::ApiGatewayV2::Authorizer", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "AuthorizerType": "JWT", "Name": "synthetic-telehealth-consumer", "IdentitySource": ["$request.header.Authorization"], "JwtConfiguration": { "Issuer": { "Fn::Sub": "https://cognito-idp.${AWS::Region}.${AWS::URLSuffix}/${ConsumerUserPoolId}" }, "Audience": [{ "Ref": "ConsumerUserPoolClientId" }] } } },
+    "WorkforceAuthorizer": { "Type": "AWS::ApiGatewayV2::Authorizer", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "AuthorizerType": "JWT", "Name": "synthetic-telehealth-workforce", "IdentitySource": ["$request.header.Authorization"], "JwtConfiguration": { "Issuer": { "Fn::Sub": "https://cognito-idp.${AWS::Region}.${AWS::URLSuffix}/${WorkforceUserPoolId}" }, "Audience": [{ "Ref": "WorkforceUserPoolClientId" }] } } },
+    "Integration": { "Type": "AWS::ApiGatewayV2::Integration", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "IntegrationType": "AWS_PROXY", "IntegrationUri": { "Fn::GetAtt": ["TelehealthFunction", "Arn"] }, "PayloadFormatVersion": "2.0", "TimeoutInMillis": 29000 } },
+    "ConsumerCreateRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "POST /clinical-core/consumer/appointments/requests", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "ConsumerAuthorizer" }, "Target": { "Fn::Sub": "integrations/${Integration}" } } },
+    "ConsumerListRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "GET /clinical-core/consumer/appointments/requests", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "ConsumerAuthorizer" }, "Target": { "Fn::Sub": "integrations/${Integration}" } } },
+    "ConsumerActionRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "POST /clinical-core/consumer/appointments/actions", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "ConsumerAuthorizer" }, "Target": { "Fn::Sub": "integrations/${Integration}" } } },
+    "ConsumerAvailabilityRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "POST /clinical-core/consumer/appointments/availability", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "ConsumerAuthorizer" }, "Target": { "Fn::Sub": "integrations/${Integration}" } } },
+    "ConsumerHoldRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "POST /clinical-core/consumer/appointments/holds", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "ConsumerAuthorizer" }, "Target": { "Fn::Sub": "integrations/${Integration}" } } },
+    "WorkforceListRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "GET /clinical-core/workforce/appointments/requests", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "WorkforceAuthorizer" }, "Target": { "Fn::Sub": "integrations/${Integration}" } } },
+    "WorkforceActionRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "POST /clinical-core/workforce/appointments/actions", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "WorkforceAuthorizer" }, "Target": { "Fn::Sub": "integrations/${Integration}" } } },
+    "WorkforceSlotListRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "GET /clinical-core/workforce/appointments/slots", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "WorkforceAuthorizer" }, "Target": { "Fn::Sub": "integrations/${Integration}" } } },
+    "WorkforceSlotCreateRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "POST /clinical-core/workforce/appointments/slots", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "WorkforceAuthorizer" }, "Target": { "Fn::Sub": "integrations/${Integration}" } } },
+    "ConsumerPaymentProfileRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "GET /clinical-core/consumer/appointments/payment-methods", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "ConsumerAuthorizer" }, "Target": { "Fn::Sub": "integrations/${Integration}" } } },
+    "ConsumerPaymentSetupRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "POST /clinical-core/consumer/appointments/payment-methods/setup", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "ConsumerAuthorizer" }, "Target": { "Fn::Sub": "integrations/${Integration}" } } },
+    "ConsumerPaymentAuthorizeRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "POST /clinical-core/consumer/appointments/payment-authorizations", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "ConsumerAuthorizer" }, "Target": { "Fn::Sub": "integrations/${Integration}" } } },
+    "WorkforcePaymentRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "POST /clinical-core/workforce/appointments/payments", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "WorkforceAuthorizer" }, "Target": { "Fn::Sub": "integrations/${Integration}" } } },
+    "StripeWebhookRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "POST /clinical-core/webhooks/stripe/appointments", "AuthorizationType": "NONE", "Target": { "Fn::Sub": "integrations/${Integration}" } } },
+    "InvokePermission": { "Type": "AWS::Lambda::Permission", "Properties": { "Action": "lambda:InvokeFunction", "FunctionName": { "Ref": "TelehealthFunction" }, "Principal": "apigateway.amazonaws.com", "SourceArn": { "Fn::Sub": "arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${ClinicalApiId}/*/*/clinical-core/*/appointments/*" } } },
+    "WebhookInvokePermission": { "Type": "AWS::Lambda::Permission", "Properties": { "Action": "lambda:InvokeFunction", "FunctionName": { "Ref": "TelehealthFunction" }, "Principal": "apigateway.amazonaws.com", "SourceArn": { "Fn::Sub": "arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${ClinicalApiId}/*/POST/clinical-core/webhooks/stripe/appointments" } } }
+  },
+  "Outputs": { "ContractVersion": { "Value": "telehealth-requests/4" }, "PhiAllowed": { "Value": "false" }, "ZoomEnabled": { "Value": { "Ref": "ZoomEnabled" } }, "RemindersEnabled": { "Value": { "Ref": "RemindersEnabled" } }, "StripeTestEnabled": { "Value": { "Ref": "StripeTestEnabled" } }, "FunctionName": { "Value": { "Ref": "TelehealthFunction" } } }
+}

@@ -40,6 +40,14 @@
     {
       "version": "20260821048000",
       "file": "20260821048000_reproductive_health_consent.sql"
+    },
+    {
+      "version": "20260821049000",
+      "file": "20260821049000_patient_chat_context.sql"
+    },
+    {
+      "version": "20260821049500",
+      "file": "20260821049500_consumer_family_access.sql"
     }
   ]
 }

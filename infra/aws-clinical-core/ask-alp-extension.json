@@ -1,0 +1,76 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Synthetic-only, Cognito-authenticated direct OpenAI generation endpoint for Ask ALP.",
+  "Metadata": { "ClinicalCore": { "ContractVersion": "patient-chat-generation/1", "DataClassification": "synthetic_only", "PhiAllowed": false, "ProviderStorage": false } },
+  "Parameters": {
+    "ClinicalApiId": { "Type": "String", "AllowedPattern": "^[a-z0-9]{10}$" },
+    "ConsumerUserPoolId": { "Type": "String", "AllowedPattern": "^[a-z0-9-]+_[A-Za-z0-9]+$" },
+    "ConsumerUserPoolClientId": { "Type": "String", "AllowedPattern": "^[A-Za-z0-9]{20,128}$" },
+    "ClinicalCoreKeyArn": { "Type": "String", "AllowedPattern": "^arn:(aws|aws-us-gov|aws-cn):kms:[a-z0-9-]+:[0-9]{12}:key/[0-9a-f-]{36}$" },
+    "LambdaCodeBucket": { "Type": "String", "AllowedPattern": "^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$" },
+    "LambdaCodeKey": { "Type": "String", "AllowedPattern": "^[A-Za-z0-9!_.*'()/\\-]{1,1024}$" },
+    "OpenAISecretArn": { "Type": "String", "AllowedPattern": "^arn:(aws|aws-us-gov|aws-cn):secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+$" },
+    "OpenAIModel": { "Type": "String", "AllowedPattern": "^[A-Za-z0-9._:-]{3,100}$" },
+    "ApprovedPromptSha256": { "Type": "String", "AllowedPattern": "^[0-9a-f]{64}$", "NoEcho": true }
+  },
+  "Resources": {
+    "AskAlpLogGroup": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": { "LogGroupName": { "Fn::Sub": "/ai-clinical-core/synthetic-staging/${ClinicalApiId}/ask-alp" }, "RetentionInDays": 365, "KmsKeyId": { "Ref": "ClinicalCoreKeyArn" } },
+      "DeletionPolicy": "Retain", "UpdateReplacePolicy": "Retain"
+    },
+    "AskAlpRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Principal": { "Service": "lambda.amazonaws.com" }, "Action": "sts:AssumeRole" }] },
+        "Policies": [
+          { "PolicyName": "EncryptedAskAlpLogs", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": ["logs:CreateLogStream", "logs:PutLogEvents"], "Resource": { "Fn::GetAtt": ["AskAlpLogGroup", "Arn"] } }] } },
+          { "PolicyName": "AskAlpOpenAISecret", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": "secretsmanager:GetSecretValue", "Resource": { "Ref": "OpenAISecretArn" } }] } }
+        ]
+      }
+    },
+    "AskAlpFunction": {
+      "Type": "AWS::Lambda::Function", "DependsOn": ["AskAlpLogGroup"],
+      "Properties": {
+        "FunctionName": { "Fn::Sub": "${ClinicalApiId}-synthetic-ask-alp" }, "Runtime": "nodejs22.x", "Architectures": ["arm64"],
+        "Handler": "index.handler", "Role": { "Fn::GetAtt": ["AskAlpRole", "Arn"] }, "MemorySize": 512, "Timeout": 35,
+        "LoggingConfig": { "LogGroup": { "Ref": "AskAlpLogGroup" }, "LogFormat": "JSON", "ApplicationLogLevel": "WARN", "SystemLogLevel": "WARN" },
+        "Code": { "S3Bucket": { "Ref": "LambdaCodeBucket" }, "S3Key": { "Ref": "LambdaCodeKey" } },
+        "Environment": { "Variables": {
+          "CLINICAL_CONSUMER_ISSUER": { "Fn::Sub": "https://cognito-idp.${AWS::Region}.${AWS::URLSuffix}/${ConsumerUserPoolId}" },
+          "CLINICAL_CONSUMER_AUDIENCE": { "Ref": "ConsumerUserPoolClientId" }, "RUNTIME_MODE": "synthetic", "PHI_ALLOWED": "false",
+          "ASK_ALP_OPENAI_SECRET_ARN": { "Ref": "OpenAISecretArn" }, "ASK_ALP_OPENAI_MODEL": { "Ref": "OpenAIModel" },
+          "ASK_ALP_APPROVED_PROMPT_SHA256": { "Ref": "ApprovedPromptSha256" }
+        } }
+      }
+    },
+    "AskAlpAuthorizer": {
+      "Type": "AWS::ApiGatewayV2::Authorizer",
+      "Properties": {
+        "ApiId": { "Ref": "ClinicalApiId" }, "AuthorizerType": "JWT", "Name": "synthetic-ask-alp-consumer",
+        "IdentitySource": ["$request.header.Authorization"],
+        "JwtConfiguration": { "Issuer": { "Fn::Sub": "https://cognito-idp.${AWS::Region}.${AWS::URLSuffix}/${ConsumerUserPoolId}" }, "Audience": [{ "Ref": "ConsumerUserPoolClientId" }] }
+      }
+    },
+    "AskAlpIntegration": {
+      "Type": "AWS::ApiGatewayV2::Integration",
+      "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "IntegrationType": "AWS_PROXY", "IntegrationUri": { "Fn::GetAtt": ["AskAlpFunction", "Arn"] }, "PayloadFormatVersion": "2.0", "TimeoutInMillis": 30000 }
+    },
+    "AskAlpRoute": {
+      "Type": "AWS::ApiGatewayV2::Route",
+      "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "POST /clinical-core/consumer/ask-alp/generate", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "AskAlpAuthorizer" }, "Target": { "Fn::Sub": "integrations/${AskAlpIntegration}" } }
+    },
+    "AskAlpInvokePermission": {
+      "Type": "AWS::Lambda::Permission",
+      "Properties": { "Action": "lambda:InvokeFunction", "FunctionName": { "Ref": "AskAlpFunction" }, "Principal": "apigateway.amazonaws.com", "SourceArn": { "Fn::Sub": "arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${ClinicalApiId}/*/POST/clinical-core/consumer/ask-alp/generate" } }
+    },
+    "AskAlpErrorAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": { "AlarmName": { "Fn::Sub": "${ClinicalApiId}-synthetic-ask-alp-errors" }, "Namespace": "AWS/Lambda", "MetricName": "Errors", "Dimensions": [{ "Name": "FunctionName", "Value": { "Ref": "AskAlpFunction" } }], "Statistic": "Sum", "Period": 300, "EvaluationPeriods": 1, "DatapointsToAlarm": 1, "Threshold": 1, "ComparisonOperator": "GreaterThanOrEqualToThreshold", "TreatMissingData": "notBreaching" }
+    }
+  },
+  "Outputs": {
+    "ContractVersion": { "Value": "patient-chat-generation/1" }, "DataClassification": { "Value": "synthetic_only" }, "PhiAllowed": { "Value": "false" },
+    "FunctionName": { "Value": { "Ref": "AskAlpFunction" } }, "Route": { "Value": "POST /clinical-core/consumer/ask-alp/generate" }
+  }
+}

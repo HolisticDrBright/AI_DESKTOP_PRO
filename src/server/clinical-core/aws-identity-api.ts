@@ -2,6 +2,8 @@ if (typeof window !== "undefined") {
   throw new Error("clinical-core/aws-identity-api is server-only.");
 }
 
+import { createHash } from "node:crypto";
+
 import {
   ClinicalCoreAdapterError,
   CONSENT_SCOPES,
@@ -48,6 +50,18 @@ import {
   isProductionPilotRouteAllowed,
   type ProductionPilotScope,
 } from "./production-pilot-policy";
+import {
+  createAwsFamilyAccessAdapter,
+  FamilyAccessError,
+  FAMILY_ACCESS_SCOPES,
+  type FamilyAccessAdapter,
+  type FamilyAccessScope,
+} from "./aws-family-access";
+import {
+  createAwsChatContextAdapter,
+  ChatContextError,
+  type ChatContextAdapter,
+} from "./aws-chat-context";
 
 export type ApiGatewayV2Event = {
   routeKey?: string;
@@ -80,7 +94,9 @@ type RouteDefinition = {
     | "get_consent_artifact"
     | "get_connection" | "import_lab" | "list_lab_imports" | "review_lab" | "list_labs"
     | "record_clinical" | "list_clinical" | "list_consent_history"
-    | "submit_privacy_request" | "list_privacy_requests" | "desktop_compatibility";
+      | "submit_privacy_request" | "list_privacy_requests" | "desktop_compatibility"
+      | "list_family_requests" | "approve_family" | "claim_family"
+      | "list_delegated" | "read_delegated" | "revoke_family" | "get_chat_context";
 };
 
 const ROUTES: Readonly<Record<string, RouteDefinition>> = {
@@ -105,6 +121,13 @@ const ROUTES: Readonly<Record<string, RouteDefinition>> = {
   "POST /clinical-core/consumer/privacy/requests": { pool: "consumer", purpose: "consent_management", operation: "submit_privacy_request" },
   "GET /clinical-core/consumer/privacy/requests": { pool: "consumer", purpose: "consent_management", operation: "list_privacy_requests" },
   "POST /clinical-core/workforce/data-compatibility": { pool: "workforce", purpose: "clinical_data", operation: "desktop_compatibility" },
+  "GET /clinical-core/consumer/family/requests": { pool: "consumer", purpose: "consent_management", operation: "list_family_requests" },
+  "POST /clinical-core/consumer/family/approve": { pool: "consumer", purpose: "consent_management", operation: "approve_family" },
+  "POST /clinical-core/consumer/family/claim": { pool: "consumer", purpose: "identity_link", operation: "claim_family" },
+  "GET /clinical-core/consumer/family/delegated": { pool: "consumer", purpose: "clinical_data", operation: "list_delegated" },
+  "GET /clinical-core/consumer/family/delegated/records": { pool: "consumer", purpose: "clinical_data", operation: "read_delegated" },
+  "POST /clinical-core/consumer/family/revoke": { pool: "consumer", purpose: "consent_management", operation: "revoke_family" },
+  "GET /clinical-core/consumer/chat-context": { pool: "consumer", purpose: "clinical_data", operation: "get_chat_context" },
 };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -127,6 +150,8 @@ export function createAwsIdentityApiHandler(input: {
   clinicalStateAdapter?: AwsSyntheticClinicalStateAdapter;
   clinicalRecordsAdapter?: AwsConsumerClinicalRecordsAdapter;
   desktopCompatibilityAdapter?: DesktopCompatibilityAdapter;
+  familyAccessAdapter?: FamilyAccessAdapter<SyntheticRequestContext>;
+  chatContextAdapter?: ChatContextAdapter<SyntheticRequestContext>;
   configuration: IdentityApiConfiguration;
 }) {
   return createIdentityApiHandler<SyntheticRequestContext>({ ...input, boundary: "synthetic" });
@@ -137,6 +162,8 @@ export function createAwsProductionIdentityApiHandler(input: {
   clinicalStateAdapter: AwsClinicalStateAdapter<ProductionClinicalRequestContext>;
   clinicalRecordsAdapter: AwsClinicalRecordsAdapter<ProductionClinicalRequestContext>;
   desktopCompatibilityAdapter: DesktopCompatibilityAdapter<ProductionClinicalRequestContext>;
+  familyAccessAdapter?: FamilyAccessAdapter<ProductionClinicalRequestContext>;
+  chatContextAdapter?: ChatContextAdapter<ProductionClinicalRequestContext>;
   configuration: ProductionIdentityApiConfiguration;
 }) {
   validateConfiguration(input.configuration);
@@ -172,6 +199,8 @@ function createIdentityApiHandler<Context extends ClinicalRequestContext>(input:
   clinicalStateAdapter?: AwsClinicalStateAdapter<Context>;
   clinicalRecordsAdapter?: AwsClinicalRecordsAdapter<Context>;
   desktopCompatibilityAdapter?: DesktopCompatibilityAdapter<Context>;
+  familyAccessAdapter?: FamilyAccessAdapter<Context>;
+  chatContextAdapter?: ChatContextAdapter<Context>;
   configuration: IdentityApiConfiguration;
   boundary: "synthetic" | "production";
   productionPilot?: { scope: ProductionPilotScope; organizationId: string };
@@ -191,6 +220,10 @@ function createIdentityApiHandler<Context extends ClinicalRequestContext>(input:
     ?? (input.database && input.boundary === "synthetic"
       ? createAwsDesktopCompatibilityAdapter(input.database) as DesktopCompatibilityAdapter<Context>
       : undefined);
+  const familyAccessAdapter = input.familyAccessAdapter
+    ?? (input.database ? createAwsFamilyAccessAdapter<Context>(input.database) : undefined);
+  const chatContextAdapter = input.chatContextAdapter
+    ?? (input.database ? createAwsChatContextAdapter<Context>(input.database) : undefined);
   if (!adapter) throw new Error("identity_api_adapter_required");
   validateConfiguration(input.configuration);
 
@@ -214,6 +247,11 @@ function createIdentityApiHandler<Context extends ClinicalRequestContext>(input:
         && !clinicalRecordsAdapter) throw new Error("consumer_clinical_api_adapter_required");
       if (route.operation === "desktop_compatibility" && !desktopCompatibilityAdapter) {
         throw new Error("desktop_compatibility_adapter_required");
+      }
+      if (["list_family_requests", "approve_family", "claim_family", "list_delegated", "read_delegated", "revoke_family"].includes(route.operation)
+        && !familyAccessAdapter) throw new Error("family_access_adapter_required");
+      if (route.operation === "get_chat_context" && !chatContextAdapter) {
+        throw new Error("chat_context_adapter_required");
       }
       if (route.operation === "posture") {
         if (event.body) throw new IdentityApiError("request_invalid");
@@ -322,6 +360,29 @@ function createIdentityApiHandler<Context extends ClinicalRequestContext>(input:
         }
         return response(200, { data: await desktopCompatibilityAdapter!.execute(context, request) });
       }
+      if (route.operation === "list_family_requests") {
+        if (event.body) throw new IdentityApiError("request_invalid");
+        return response(200, { data: await familyAccessAdapter!.listPatientRequests(context) });
+      }
+      if (route.operation === "list_delegated") {
+        if (event.body) throw new IdentityApiError("request_invalid");
+        return response(200, { data: await familyAccessAdapter!.listDelegated(context) });
+      }
+      if (route.operation === "get_chat_context") {
+        if (event.body) throw new IdentityApiError("request_invalid");
+        return response(200, { data: await chatContextAdapter!.getContext(context) });
+      }
+      if (route.operation === "read_delegated") {
+        if (event.body) throw new IdentityApiError("request_invalid");
+        const relationshipId = event.queryStringParameters?.relationshipId ?? "";
+        const scope = event.queryStringParameters?.scope ?? "";
+        if (!UUID.test(relationshipId) || !FAMILY_ACCESS_SCOPES.includes(scope as FamilyAccessScope)) {
+          throw new IdentityApiError("request_invalid");
+        }
+        return response(200, { data: await familyAccessAdapter!.readDelegated(context, {
+          relationshipId, scope: scope as FamilyAccessScope,
+        }) });
+      }
       const body = parseBody(event);
 
       switch (route.operation) {
@@ -428,6 +489,31 @@ function createIdentityApiHandler<Context extends ClinicalRequestContext>(input:
             ...(body.detail !== undefined && body.detail !== null ? { detail: requiredString(body, "detail") } : {}),
           }) });
         }
+        case "approve_family": {
+          exactKeys(body, ["relationshipId", "expectedVersion", "grantedScopes", "consentVersion"],
+            ["relationshipId", "expectedVersion", "grantedScopes", "consentVersion"]);
+          const grantedScopes = requiredStringArray(body, "grantedScopes", FAMILY_ACCESS_SCOPES);
+          return response(200, { data: await familyAccessAdapter!.approve(context, {
+            relationshipId: requiredString(body, "relationshipId", UUID),
+            expectedVersion: requiredInteger(body, "expectedVersion", 1, 1_000_000),
+            grantedScopes,
+            consentVersion: requiredString(body, "consentVersion", /^[A-Za-z0-9._:-]{1,100}$/),
+          }) });
+        }
+        case "claim_family": {
+          exactKeys(body, ["code"], ["code"]);
+          return response(200, { data: await familyAccessAdapter!.claim(context, {
+            code: requiredString(body, "code", /^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{10}$/),
+            verifiedEmailSha256: verifiedEmailSha256(event),
+          }) });
+        }
+        case "revoke_family": {
+          exactKeys(body, ["relationshipId", "expectedVersion"], ["relationshipId", "expectedVersion"]);
+          return response(200, { data: await familyAccessAdapter!.revoke(context, {
+            relationshipId: requiredString(body, "relationshipId", UUID),
+            expectedVersion: requiredInteger(body, "expectedVersion", 1, 1_000_000),
+          }) });
+        }
       }
     } catch (error) {
       if (error instanceof IdentityApiError) return response(error.category === "identity_refused" ? 403 : 400, { error: error.category });
@@ -451,6 +537,17 @@ function createIdentityApiHandler<Context extends ClinicalRequestContext>(input:
       }
       if (error instanceof DesktopCompatibilityError) {
         return response(error.category === "operation_refused" ? 403 : 503, { error: error.category });
+      }
+      if (error instanceof FamilyAccessError) {
+        const status = error.category === "family_access_refused" ? 403
+          : error.category === "invitation_invalid" ? 404
+            : error.category === "conflict" ? 409 : 503;
+        return response(status, { error: error.category });
+      }
+      if (error instanceof ChatContextError) {
+        const status = error.category === "chat_context_refused" ? 403
+          : error.category === "consent_required" ? 409 : 503;
+        return response(status, { error: error.category });
       }
       return response(503, { error: "service_unavailable" });
     }
@@ -635,6 +732,32 @@ function requiredBoolean(body: Record<string, unknown>, key: string): boolean {
   const value = body[key];
   if (typeof value !== "boolean") throw new IdentityApiError("request_invalid");
   return value;
+}
+
+function requiredInteger(body: Record<string, unknown>, key: string, min: number, max: number): number {
+  const value = body[key];
+  if (!Number.isSafeInteger(value) || (value as number) < min || (value as number) > max) {
+    throw new IdentityApiError("request_invalid");
+  }
+  return value as number;
+}
+
+function requiredStringArray<T extends string>(body: Record<string, unknown>, key: string, allowed: readonly T[]): T[] {
+  const value = body[key];
+  if (!Array.isArray(value) || value.length < 1 || value.length > allowed.length
+    || value.some((entry) => typeof entry !== "string" || !allowed.includes(entry as T))
+    || new Set(value).size !== value.length) throw new IdentityApiError("request_invalid");
+  return value as T[];
+}
+
+function verifiedEmailSha256(event: ApiGatewayV2Event): string {
+  const claims = event.requestContext?.authorizer?.jwt?.claims;
+  const verified = claims?.email_verified;
+  const email = typeof claims?.email === "string" ? claims.email.trim().toLowerCase() : "";
+  if (!((verified === true) || verified === "true") || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 320) {
+    throw new IdentityApiError("identity_refused");
+  }
+  return createHash("sha256").update(email).digest("hex");
 }
 
 function encodeCursor(receivedAt: string, id: string): string {
