@@ -28,6 +28,7 @@ export default async function InboxPage({
         title="Inbox"
         sub="Org-scoped patient communication — threads, drafts, triage, and workflow"
       />
+      <div className="mb-4"><a className="inline-flex rounded-lg border px-3 py-2 text-sm font-semibold text-primary" href="/telehealth-requests">Open telehealth scheduling requests</a></div>
       <InboxWorkspace initialThreadId={thread} />
     </section>
   );
