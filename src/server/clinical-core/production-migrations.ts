@@ -112,7 +112,10 @@ export async function applyProductionClinicalCoreMigrations(
             'get_research_handoff_review','record_research_handoff_item_review',
             'invoke_import_review_operation','invoke_nutrition_operation','invoke_billing_operation','invoke_plan_operation',
             'invoke_program_operation','invoke_inbox_operation',
-            'add_org_member','activate_my_memberships'))::int as contract_count,
+            'add_org_member','activate_my_memberships','list_my_patient_relationship_requests',
+            'approve_patient_relationship','claim_patient_relationship_invitation',
+            'list_my_delegated_patient_access','get_delegated_patient_records',
+            'revoke_my_patient_relationship','get_patient_chat_context'))::int as contract_count,
       (
         (select count(*) from clinical_core.organizations)
         + (select count(*) from clinical_core.persons)
@@ -227,7 +230,7 @@ export async function applyProductionClinicalCoreMigrations(
         + (select count(*) from clinical_audit.patient_relationship_events)
       )::int as clinical_row_count`);
     const row = verification.rows[0];
-    if (!row || Number(row.table_count) !== 114 || Number(row.contract_count) !== 74
+    if (!row || Number(row.table_count) !== 114 || Number(row.contract_count) !== 81
       || Number(row.clinical_row_count) !== 0) {
       throw new ProductionClinicalCoreMigrationError("verification_failed");
     }

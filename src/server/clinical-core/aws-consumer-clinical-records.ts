@@ -15,6 +15,7 @@ export const CONSUMER_CLINICAL_COLLECTIONS = [
   "meal_logs", "subjective_rollups", "weekly_checkins",
   "wellness_profiles", "lifestyle_profiles", "contraindications",
   "questionnaire_responses", "clinical_intakes", "wearable_daily_records",
+  "reproductive_profiles",
 ] as const;
 export type ConsumerClinicalCollection = (typeof CONSUMER_CLINICAL_COLLECTIONS)[number];
 export type PrivacyRequestKind = "export" | "correction" | "deletion";
@@ -132,7 +133,7 @@ const COLLECTION_KEYS: Record<ConsumerClinicalCollection, { allowed: readonly st
     required: ["id","questionId","categoryId","severity","timestamp"],
   },
   clinical_intakes: {
-    allowed: ["id","chiefComplaint","associatedSymptoms","energyLevel","sleepQuality","digestiveFunction","stressPerception","temperatureSensitivity","painQuality","createdAt","updatedAt"],
+    allowed: ["id","chiefComplaint","associatedSymptoms","energyLevel","sleepQuality","digestiveFunction","stressPerception","temperatureSensitivity","painQuality","tcmDifferentiationResponses","createdAt","updatedAt"],
     required: ["id","chiefComplaint","associatedSymptoms","energyLevel","sleepQuality","digestiveFunction","stressPerception","temperatureSensitivity","createdAt","updatedAt"],
   },
   wearable_daily_records: {
@@ -148,6 +149,10 @@ const COLLECTION_KEYS: Record<ConsumerClinicalCollection, { allowed: readonly st
       "adherenceScore","subjectiveReadiness","symptomFlags","dataQualityScore",
     ],
     required: ["id","source","date","dataQualityScore"],
+  },
+  reproductive_profiles: {
+    allowed: ["id","consent","stage","typicalCycleLength","cycleDay","postpartumWeeks","updatedAt"],
+    required: ["id","consent","stage","updatedAt"],
   },
 };
 
