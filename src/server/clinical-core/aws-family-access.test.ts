@@ -1,12 +1,12 @@
 import { describe, expect, test, vi } from "vitest";
 import { createAwsIdentityApiHandler, type ApiGatewayV2Event } from "./aws-identity-api";
-import type { AwsSyntheticIdentityConsentAdapter } from "./aws-identity-consent";
+import type { AwsSyntheticIdentityConsentAdapter, ClinicalRequestContext } from "./aws-identity-consent";
 import type { FamilyAccessAdapter } from "./aws-family-access";
 
 const PERSON="11111111-1111-4111-8111-111111111111",ORG="22222222-2222-4222-8222-222222222222",REL="33333333-3333-4333-8333-333333333333";
 const ISSUER="https://cognito-idp.us-east-2.amazonaws.com/us-east-2_Consumer",AUD="consumerclient0000000000000";
 const identity:AwsSyntheticIdentityConsentAdapter={getCurrentConsentArtifact:vi.fn(),issueInvitation:vi.fn(),claimInvitation:vi.fn(),recordConsent:vi.fn(),revokeConsent:vi.fn()};
-const family:FamilyAccessAdapter<any>={listPatientRequests:vi.fn(async()=>({relationships:[]})),approve:vi.fn(async()=>({relationshipId:REL,status:"pending_recipient_claim"})),claim:vi.fn(async()=>({relationshipId:REL,status:"active"})),listDelegated:vi.fn(async()=>({relationships:[]})),readDelegated:vi.fn(async()=>({relationshipId:REL,scope:"laboratory_results",readOnly:true,items:[]})),revoke:vi.fn(async()=>({relationshipId:REL,status:"revoked"}))};
+const family:FamilyAccessAdapter<ClinicalRequestContext>={listPatientRequests:vi.fn(async()=>({relationships:[]})),approve:vi.fn(async()=>({relationshipId:REL,status:"pending_recipient_claim"})),claim:vi.fn(async()=>({relationshipId:REL,status:"active"})),listDelegated:vi.fn(async()=>({relationships:[]})),readDelegated:vi.fn(async()=>({relationshipId:REL,scope:"laboratory_results",readOnly:true,items:[]})),revoke:vi.fn(async()=>({relationshipId:REL,status:"revoked"}))};
 function event(routeKey:string,body?:Record<string,unknown>,query?:Record<string,string>,overrides:Record<string,unknown>={}):ApiGatewayV2Event{return{routeKey,headers:{"content-type":"application/json"},body:body===undefined?undefined:JSON.stringify(body),queryStringParameters:query,requestContext:{authorizer:{jwt:{claims:{iss:ISSUER,aud:AUD,token_use:"id",sub:"synthetic-subject-001","custom:person_id":PERSON,"custom:organization_id":ORG,"custom:synthetic_attested":"true",email:"recipient@brightlongevity.test",email_verified:"true",...overrides}}}}};}
 const run=()=>createAwsIdentityApiHandler({adapter:identity,familyAccessAdapter:family,configuration:{workforceIssuer:"https://cognito-idp.us-east-2.amazonaws.com/us-east-2_Workforce",workforceAudience:"workforceclient000000000000",consumerIssuer:ISSUER,consumerAudience:AUD}});
 
