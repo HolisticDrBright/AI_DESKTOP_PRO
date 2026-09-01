@@ -8,6 +8,7 @@ vi.mock("@aws-sdk/client-dynamodb", () => ({
 
 vi.mock("@aws-sdk/lib-dynamodb", () => ({
   DynamoDBDocumentClient: { from: () => ({ send }) },
+  GetCommand: class GetCommand { constructor(readonly input: unknown) {} },
   PutCommand: class PutCommand { constructor(readonly input: unknown) {} },
   QueryCommand: class QueryCommand { constructor(readonly input: unknown) {} },
   TransactWriteCommand: class TransactWriteCommand { constructor(readonly input: unknown) {} },
@@ -17,6 +18,17 @@ vi.mock("@aws-sdk/lib-dynamodb", () => ({
 vi.mock("@aws-sdk/client-secrets-manager", () => ({
   SecretsManagerClient: class SecretsManagerClient { send = vi.fn(); },
   GetSecretValueCommand: class GetSecretValueCommand { constructor(readonly input: unknown) {} },
+}));
+
+vi.mock("@aws-sdk/client-sesv2", () => ({
+  SESv2Client: class SESv2Client { send = vi.fn(); },
+  SendEmailCommand: class SendEmailCommand { constructor(readonly input: unknown) {} },
+}));
+
+vi.mock("@aws-sdk/client-scheduler", () => ({
+  SchedulerClient: class SchedulerClient { send = vi.fn(); },
+  CreateScheduleCommand: class CreateScheduleCommand { constructor(readonly input: unknown) {} },
+  DeleteScheduleCommand: class DeleteScheduleCommand { constructor(readonly input: unknown) {} },
 }));
 
 import { createTelehealthHandler, type TelehealthConfiguration } from "./aws-telehealth-requests";
@@ -32,6 +44,16 @@ const config: TelehealthConfiguration = {
   zoomEnabled: false,
   zoomBaaVerified: false,
   zoomSecretArn: "",
+  remindersEnabled: false,
+  reminderSender: "",
+  reminderConfigurationSet: "",
+  reminderScheduleGroup: "",
+  reminderSchedulerRoleArn: "",
+  reminderTargetArn: "",
+  stripeTestEnabled: false,
+  stripeSecretArn: "",
+  stripeSuccessUrl: "",
+  stripeCancelUrl: "",
 };
 
 const claims = {
@@ -39,6 +61,7 @@ const claims = {
   aud: config.consumerAudience,
   token_use: "id",
   sub: "synthetic-consumer-1234",
+  email: "synthetic.consumer@example.test",
   "custom:person_id": "11111111-1111-4111-8111-111111111111",
   "custom:organization_id": "22222222-2222-4222-8222-222222222222",
   "custom:synthetic_attested": "true",
@@ -90,7 +113,7 @@ describe("AWS telehealth request boundary", () => {
       slotId: "33333333-3333-4333-8333-333333333333",
       organizationId: claims["custom:organization_id"],
       start: "2026-09-03T17:00:00.000Z", end: "2026-09-03T17:45:00.000Z", timeZone: "America/Los_Angeles",
-      visitTypes: ["follow_up"], priceMinor: 15000, currency: "USD", cancellationPolicy: "Cancel at least 24 hours before the visit.",
+      visitTypes: ["follow_up"], priceMinor: 15000, currency: "USD", cancellationPolicy: "Cancel at least 24 hours before the visit.", cancellationWindowHours: 24,
       status: "held", heldBy: claims["custom:person_id"], holdId: "44444444-4444-4444-8444-444444444444",
       holdExpiresAt: Math.floor(Date.now() / 1000) + 600, createdAt: "2026-09-01T00:00:00.000Z", createdBy: "synthetic-workforce-1234",
     }] }).mockResolvedValueOnce({});
@@ -113,10 +136,27 @@ describe("AWS telehealth request boundary", () => {
       .toThrow("telehealth_configuration_invalid");
   });
 
+  it("will not enable Stripe without an exact test secret and hosted return URLs", () => {
+    expect(() => createTelehealthHandler({ ...config, stripeTestEnabled: true }))
+      .toThrow("telehealth_configuration_invalid");
+  });
+
+  it("will not enable reminders without the exact sender, scheduler group, role, and target", () => {
+    expect(() => createTelehealthHandler({ ...config, remindersEnabled: true }))
+      .toThrow("telehealth_configuration_invalid");
+  });
+
+  it("reports card setup as unavailable rather than inventing a card", async () => {
+    const result = await createTelehealthHandler(config)(event("POST /clinical-core/consumer/appointments/payment-methods/setup", {}));
+    expect(result.statusCode).toBe(503);
+    expect(JSON.parse(result.body ?? "{}")).toEqual({ error: "provider_unavailable" });
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it("shows only real, unbooked staff-published openings", async () => {
     const future = new Date(Date.now() + 86_400_000).toISOString();
     const end = new Date(Date.now() + 86_400_000 + 2_700_000).toISOString();
-    const base = { pk: `ORG#${claims["custom:organization_id"]}`, organizationId: claims["custom:organization_id"], start: future, end, timeZone: "America/Los_Angeles", visitTypes: ["follow_up"], priceMinor: 15000, currency: "USD", cancellationPolicy: "Cancel at least 24 hours before the visit.", heldBy: null, holdId: null, createdAt: new Date().toISOString(), createdBy: workforceClaims.sub };
+    const base = { pk: `ORG#${claims["custom:organization_id"]}`, organizationId: claims["custom:organization_id"], start: future, end, timeZone: "America/Los_Angeles", visitTypes: ["follow_up"], priceMinor: 15000, currency: "USD", cancellationPolicy: "Cancel at least 24 hours before the visit.", cancellationWindowHours: 24, heldBy: null, holdId: null, createdAt: new Date().toISOString(), createdBy: workforceClaims.sub };
     send.mockResolvedValueOnce({ Items: [
       { ...base, sk: `SLOT#${future}#33333333-3333-4333-8333-333333333333`, slotId: "33333333-3333-4333-8333-333333333333", status: "available", holdExpiresAt: null },
       { ...base, sk: `SLOT#${future}#44444444-4444-4444-8444-444444444444`, slotId: "44444444-4444-4444-8444-444444444444", status: "booked", holdExpiresAt: null },
@@ -129,7 +169,7 @@ describe("AWS telehealth request boundary", () => {
 
   it("creates a ten-minute ownership-bound slot hold", async () => {
     const future = new Date(Date.now() + 86_400_000).toISOString();
-    send.mockResolvedValueOnce({ Items: [{ pk: `ORG#${claims["custom:organization_id"]}`, sk: `SLOT#${future}#33333333-3333-4333-8333-333333333333`, slotId: "33333333-3333-4333-8333-333333333333", organizationId: claims["custom:organization_id"], start: future, end: new Date(Date.now()+90_000_000).toISOString(), timeZone: "America/Los_Angeles", visitTypes: ["follow_up"], priceMinor: 15000, currency: "USD", cancellationPolicy: "Cancel at least 24 hours before the visit.", status: "available", heldBy: null, holdId: null, holdExpiresAt: null, createdAt: new Date().toISOString(), createdBy: workforceClaims.sub }] }).mockResolvedValueOnce({});
+    send.mockResolvedValueOnce({ Items: [{ pk: `ORG#${claims["custom:organization_id"]}`, sk: `SLOT#${future}#33333333-3333-4333-8333-333333333333`, slotId: "33333333-3333-4333-8333-333333333333", organizationId: claims["custom:organization_id"], start: future, end: new Date(Date.now()+90_000_000).toISOString(), timeZone: "America/Los_Angeles", visitTypes: ["follow_up"], priceMinor: 15000, currency: "USD", cancellationPolicy: "Cancel at least 24 hours before the visit.", cancellationWindowHours: 24, status: "available", heldBy: null, holdId: null, holdExpiresAt: null, createdAt: new Date().toISOString(), createdBy: workforceClaims.sub }] }).mockResolvedValueOnce({});
     const result = await createTelehealthHandler(config)(event("POST /clinical-core/consumer/appointments/holds", { slotId: "33333333-3333-4333-8333-333333333333", visitType: "follow_up" }));
     const payload = JSON.parse(result.body ?? "{}") as { data: { holdId: string; expiresAt: string } };
     expect(result.statusCode).toBe(201);

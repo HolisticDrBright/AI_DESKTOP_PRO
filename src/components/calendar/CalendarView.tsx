@@ -217,6 +217,46 @@ function mapLiveWeek(live: LiveCalendar): {
   };
 }
 
+type TelehealthCalendarRow = {
+  appointmentId: string | null;
+  consumerPersonId: string;
+  status: "requested" | "awaiting_provider" | "scheduled" | "reschedule_requested" | "cancelled";
+  scheduledStart: string | null;
+  scheduledEnd: string | null;
+  joinUrl: string | null;
+  version: number;
+};
+
+async function addTelehealthAppointments(week: LiveCalendar): Promise<LiveCalendar> {
+  const response = await fetch("/api/live/telehealth-requests", { cache: "no-store" });
+  const payload = await response.json().catch(() => null) as { data?: unknown } | null;
+  if (!response.ok || !Array.isArray(payload?.data)) throw new Error("The telehealth calendar could not be loaded.");
+  const ids = new Set(week.appointments.map((appointment) => appointment.id));
+  const appointments = [...week.appointments];
+  for (const candidate of payload.data) {
+    if (!candidate || typeof candidate !== "object") continue;
+    const row = candidate as Partial<TelehealthCalendarRow>;
+    if (!row.appointmentId || ids.has(row.appointmentId) || !row.scheduledStart || !row.scheduledEnd || row.status === "cancelled") continue;
+    ids.add(row.appointmentId);
+    appointments.push({
+      id: row.appointmentId,
+      patientId: null,
+      patientName: `Consumer ${String(row.consumerPersonId ?? "").slice(0, 8)}…`,
+      practitionerUserId: null,
+      practitionerName: null,
+      title: "Patient-booked telehealth visit",
+      appointmentType: "telehealth",
+      location: "Telehealth",
+      telehealthUrl: typeof row.joinUrl === "string" ? row.joinUrl : null,
+      status: row.status === "scheduled" ? "confirmed" : "scheduled",
+      version: typeof row.version === "number" ? row.version : 1,
+      startsAt: row.scheduledStart,
+      endsAt: row.scheduledEnd,
+    });
+  }
+  return { ...week, appointments };
+}
+
 /* ------------------------------------------------------------- root screen */
 
 type ViewMode = "week" | "day";
@@ -267,6 +307,7 @@ export function CalendarView({
     const from = new Date(weekStartIso);
     api.schedule
       .getWeek(from.toISOString(), addDays(from, 7).toISOString())
+      .then(addTelehealthAppointments)
       .then((week) => {
         if (!alive) return;
         setLiveWeek(mapLiveWeek(week));

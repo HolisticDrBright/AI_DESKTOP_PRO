@@ -15,6 +15,12 @@ type Row = {
   joinUrl: string | null;
   version: number;
   updatedAt: string;
+  priceMinor: number;
+  cancellationFeeDueMinor: number;
+  paymentAuthorizationStatus: "not_authorized" | "authorized" | "withdrawn";
+  paymentStatus: "not_due" | "processing" | "paid" | "failed" | "refunded" | "partially_refunded";
+  paidMinor: number;
+  refundedMinor: number;
 };
 
 function messageFrom(body: unknown, fallback: string) {
@@ -49,7 +55,7 @@ export function TelehealthRequestQueue() {
     const start = new Date(slotStart); const amount = Math.round(Number(price) * 100);
     if (!slotStart || !Number.isFinite(start.getTime()) || !Number.isInteger(amount) || amount < 0) { setError("Enter a valid future start time and visit price."); return; }
     const end = new Date(start.getTime() + 45 * 60_000); setPublishing(true); setError(null);
-    try { const response = await fetch("/api/live/telehealth-slots", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ start: start.toISOString(), end: end.toISOString(), timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "America/Los_Angeles", visitTypes: ["initial","follow_up","urgent_question"], priceMinor: amount, currency: "USD", cancellationPolicy: "Cancel or reschedule at least 24 hours before the appointment to avoid the visit fee." }) }); const body = await response.json(); if (!response.ok) throw new Error(messageFrom(body,"The opening could not be published.")); setSlotStart(""); setPrice(""); }
+    try { const response = await fetch("/api/live/telehealth-slots", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ start: start.toISOString(), end: end.toISOString(), timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "America/Los_Angeles", visitTypes: ["initial","follow_up","urgent_question"], priceMinor: amount, currency: "USD", cancellationPolicy: "Cancel or reschedule at least 24 hours before the appointment to avoid the visit fee.", cancellationWindowHours: 24 }) }); const body = await response.json(); if (!response.ok) throw new Error(messageFrom(body,"The opening could not be published.")); setSlotStart(""); setPrice(""); }
     catch(reason){setError(reason instanceof Error?reason.message:"The opening could not be published.");} finally {setPublishing(false);}
   };
 
@@ -80,6 +86,20 @@ export function TelehealthRequestQueue() {
     } finally { setBusyId(null); }
   };
 
+  const paymentAction = async (row: Row, kind: "charge" | "refund") => {
+    const amountMinor = kind === "charge" ? (row.cancellationFeeDueMinor || row.priceMinor) : row.paidMinor - row.refundedMinor;
+    if (amountMinor < 1) return;
+    const message = kind === "charge" ? `Confirm the visit was delivered and charge ${(amountMinor/100).toFixed(2)} in Stripe test mode?` : `Issue a full test-mode refund of ${(amountMinor/100).toFixed(2)}?`;
+    if (!window.confirm(message)) return;
+    setBusyId(row.requestId); setError(null);
+    try { const response = await fetch("/api/live/telehealth-payments", { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ requestId: row.requestId, action: kind, expectedVersion: row.version, amountMinor,
+        ...(kind === "charge" ? { serviceDelivered: row.cancellationFeeDueMinor === 0 } : { reason: "Full refund approved in Desktop telehealth queue." }) }) });
+      const body = await response.json(); if (!response.ok) throw new Error(messageFrom(body, "The payment action was not completed.")); await refresh(); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : "The payment action was not completed."); }
+    finally { setBusyId(null); }
+  };
+
   if (loading) return <p className="text-sm text-muted-foreground">Loading requests…</p>;
 
   return <div className="space-y-3">
@@ -103,6 +123,10 @@ export function TelehealthRequestQueue() {
         {row.note ? <p className="mt-3 text-sm">{row.note}</p> : null}
         {row.scheduledStart ? <p className="mt-3 text-sm font-medium">Selected: {new Date(row.scheduledStart).toLocaleString()}</p> : null}
         {row.joinUrl ? <a className="mt-3 inline-flex rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground" href={row.joinUrl} target="_blank" rel="noreferrer">Open meeting</a> : null}
+        <div className="mt-3 rounded-lg border bg-muted/30 p-3 text-xs"><p className="font-semibold">Payment: {row.paymentStatus.replaceAll("_", " ")}</p><p className="mt-1 text-muted-foreground">Card authorization: {row.paymentAuthorizationStatus.replaceAll("_", " ")}</p>
+          {row.paymentAuthorizationStatus === "authorized" && !["paid","processing","refunded"].includes(row.paymentStatus) ? <button disabled={busyId===row.requestId} className="mt-2 rounded-lg border px-3 py-2 font-semibold" onClick={()=>void paymentAction(row,"charge")}>{row.cancellationFeeDueMinor>0?"Charge cancellation fee":"Complete visit and charge test card"}</button>:null}
+          {["paid","partially_refunded"].includes(row.paymentStatus) && row.paidMinor>row.refundedMinor ? <button disabled={busyId===row.requestId} className="mt-2 rounded-lg border px-3 py-2 font-semibold" onClick={()=>void paymentAction(row,"refund")}>Refund remaining test charge</button>:null}
+        </div>
         {canSchedule ? <div className="mt-4 space-y-2">
           <p className="text-xs font-semibold">Choose one of the patient’s preferred times</p>
           <div className="flex flex-wrap gap-2">
