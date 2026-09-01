@@ -213,6 +213,28 @@ describe("AWS telehealth request boundary", () => {
     expect(JSON.parse(result.body ?? "{}")).toEqual({ error: "conflict" });
     expect(send).toHaveBeenCalledTimes(1);
   });
+
+  it("aliases DynamoDB's reserved timeZone name when scheduling the canonical appointment", async () => {
+    send.mockResolvedValueOnce({ Items: [{
+      pk: `ORG#${workforceClaims["custom:organization_id"]}`, sk: "REQ#2026-09-01T00:00:00.000Z#33333333-3333-4333-8333-333333333333",
+      gsi1pk: `PERSON#${claims["custom:person_id"]}`, gsi1sk: "REQ#2026-09-01T00:00:00.000Z#33333333-3333-4333-8333-333333333333",
+      requestId: "33333333-3333-4333-8333-333333333333", organizationId: workforceClaims["custom:organization_id"], consumerPersonId: claims["custom:person_id"],
+      consumerEmail: claims.email, status: "requested", visitType: "follow_up", preferredSlots: ["2026-09-03T17:00:00.000Z"], timeZone: "America/Los_Angeles",
+      note: null, scheduledStart: null, scheduledEnd: null, joinUrl: null, providerMeetingId: null, version: 1, createdAt: "2026-09-01T00:00:00.000Z",
+      updatedAt: "2026-09-01T00:00:00.000Z", lastActionBy: "consumer", slotId: "55555555-5555-4555-8555-555555555555", appointmentId: null,
+      priceMinor: 15000, currency: "USD", cancellationPolicy: "Cancel at least 24 hours before the visit.", cancellationWindowHours: 24, cancellationFeeDueMinor: 0,
+      reminderStatus: "disabled", paymentPolicyVersion: "telehealth-payments/1", paymentAuthorizationStatus: "not_authorized", paymentStatus: "not_due",
+      paymentIntentId: null, paidMinor: 0, refundedMinor: 0,
+    }] }).mockResolvedValueOnce({});
+    const result = await createTelehealthHandler(config)(event("POST /clinical-core/workforce/appointments/actions", {
+      requestId: "33333333-3333-4333-8333-333333333333", action: "schedule", expectedVersion: 1,
+      scheduledStart: "2026-09-03T17:00:00.000Z", scheduledEnd: "2026-09-03T17:45:00.000Z", timeZone: "America/Los_Angeles",
+    }, workforceClaims));
+    expect(result.statusCode).toBe(200);
+    const command = send.mock.calls[1]?.[0] as { input?: { TransactItems?: Array<{ Update?: { UpdateExpression?: string; ExpressionAttributeNames?: Record<string,string> } }> } };
+    expect(command.input?.TransactItems?.[0]?.Update?.UpdateExpression).toContain("#timeZone=:zone");
+    expect(command.input?.TransactItems?.[0]?.Update?.ExpressionAttributeNames).toMatchObject({ "#timeZone": "timeZone" });
+  });
 });
 
 const CONSUMER_AVAILABILITY_TEST = "POST /clinical-core/consumer/appointments/availability";

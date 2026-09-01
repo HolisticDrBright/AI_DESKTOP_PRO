@@ -67,10 +67,10 @@ export function createTelehealthHandler(config: TelehealthConfiguration) {
   validateConfiguration(config);
   return async (event: ApiGatewayV2Event): Promise<ApiGatewayV2Response> => {
     if (config.runtimeMode === "production" && !config.phiAllowed) return response(503, { error: "production_not_activated", phiAllowed: false });
+    const route = event.routeKey ?? "internal";
     try {
       const reminder = event as unknown as ReminderEvent;
       if (reminder.internalEvent === "send_appointment_reminder") return response(200, { data: await sendAppointmentReminder(config, reminder) });
-      const route = event.routeKey ?? "";
       if (route === STRIPE_WEBHOOK) return response(200, { data: await handleStripeWebhook(config, event) });
       const pool = route.includes("/workforce/") ? "workforce" : "consumer";
       const actor = identity(event, config, pool);
@@ -89,6 +89,8 @@ export function createTelehealthHandler(config: TelehealthConfiguration) {
       if (route === WORKFORCE_PAYMENT) return response(200, { data: await workforcePayment(config, actor, body(event)) });
       return response(404, { error: "route_not_found" });
     } catch (error) {
+      console.warn(JSON.stringify({ event: "telehealth_request_refused", route, errorName: error instanceof Error ? error.name : "UnknownError",
+        errorMessage: error instanceof Error ? error.message.replace(/[\r\n]/g, " ").slice(0, 300) : "unknown" }));
       const category = error instanceof TelehealthError ? error.category : "service_unavailable";
       const status = category === "identity_refused" ? 403 : category === "not_found" ? 404 : category === "conflict" ? 409
         : category === "provider_unavailable" || category === "service_unavailable" ? 503 : 400;
@@ -253,8 +255,8 @@ async function rescheduleRequest(config: TelehealthConfiguration, item: Appointm
     joinUrl: null, providerMeetingId: null, version: version + 1, updatedAt, lastActionBy: "consumer" as const };
   const actions: ConstructorParameters<typeof TransactWriteCommand>[0]["TransactItems"] = [
     { Update: { TableName: config.tableName, Key: { pk: item.pk, sk: item.sk },
-      UpdateExpression: "SET #version=:next,#status=:status,preferredSlots=:slots,scheduledStart=:start,scheduledEnd=:end,timeZone=:zone,slotId=:slot,priceMinor=:price,cancellationPolicy=:policy,cancellationWindowHours=:window,cancellationFeeDueMinor=:zero,joinUrl=:none,providerMeetingId=:none,updatedAt=:updated,lastActionBy=:by",
-      ConditionExpression: "#version=:expected", ExpressionAttributeNames: { "#version": "version", "#status": "status" }, ExpressionAttributeValues: {
+      UpdateExpression: "SET #version=:next,#status=:status,preferredSlots=:slots,scheduledStart=:start,scheduledEnd=:end,#timeZone=:zone,slotId=:slot,priceMinor=:price,cancellationPolicy=:policy,cancellationWindowHours=:window,cancellationFeeDueMinor=:zero,joinUrl=:none,providerMeetingId=:none,updatedAt=:updated,lastActionBy=:by",
+      ConditionExpression: "#version=:expected", ExpressionAttributeNames: { "#version": "version", "#status": "status", "#timeZone": "timeZone" }, ExpressionAttributeValues: {
         ":expected": version, ":next": version + 1, ":status": "reschedule_requested", ":slots": [replacement.start], ":start": replacement.start, ":end": replacement.end,
         ":zone": replacement.timeZone, ":slot": replacement.slotId, ":price": replacement.priceMinor, ":policy": replacement.cancellationPolicy,
         ":window": replacement.cancellationWindowHours, ":zero": 0, ":none": null, ":updated": updatedAt, ":by": "consumer",
@@ -309,7 +311,7 @@ async function scheduleRequest(config: TelehealthConfiguration, item: Appointmen
     cancellationPolicy: item.cancellationPolicy, cancellationWindowHours: item.cancellationWindowHours,
     cancellationFeeDueMinor: item.cancellationFeeDueMinor, updatedAt };
   try { await document.send(new TransactWriteCommand({ TransactItems: [
-    { Update: { TableName: config.tableName, Key: { pk: item.pk, sk: item.sk }, UpdateExpression: "SET #version=:next,#status=:status,scheduledStart=:start,scheduledEnd=:end,joinUrl=:join,providerMeetingId=:meeting,timeZone=:zone,appointmentId=:appointment,updatedAt=:updated,lastActionBy=:by", ConditionExpression: "#version=:expected", ExpressionAttributeNames: { "#version": "version", "#status": "status" }, ExpressionAttributeValues: { ":expected": version, ":next": version + 1, ":status": values.status, ":start": values.scheduledStart, ":end": values.scheduledEnd, ":join": values.joinUrl, ":meeting": values.providerMeetingId, ":zone": values.timeZone, ":appointment": appointmentId, ":updated": updatedAt, ":by": "workforce" } } },
+    { Update: { TableName: config.tableName, Key: { pk: item.pk, sk: item.sk }, UpdateExpression: "SET #version=:next,#status=:status,scheduledStart=:start,scheduledEnd=:end,joinUrl=:join,providerMeetingId=:meeting,#timeZone=:zone,appointmentId=:appointment,updatedAt=:updated,lastActionBy=:by", ConditionExpression: "#version=:expected", ExpressionAttributeNames: { "#version": "version", "#status": "status", "#timeZone": "timeZone" }, ExpressionAttributeValues: { ":expected": version, ":next": version + 1, ":status": values.status, ":start": values.scheduledStart, ":end": values.scheduledEnd, ":join": values.joinUrl, ":meeting": values.providerMeetingId, ":zone": values.timeZone, ":appointment": appointmentId, ":updated": updatedAt, ":by": "workforce" } } },
     { Put: { TableName: config.tableName, Item: appointment } },
   ] })); } catch(error) { if ((error as { name?: string }).name === "TransactionCanceledException" || (error as { name?: string }).name === "ConditionalCheckFailedException") throw new TelehealthError("conflict"); throw error; }
   if (config.remindersEnabled) {
