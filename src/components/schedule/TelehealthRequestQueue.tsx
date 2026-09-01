@@ -27,6 +27,9 @@ export function TelehealthRequestQueue() {
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [slotStart, setSlotStart] = useState("");
+  const [price, setPrice] = useState("");
+  const [publishing, setPublishing] = useState(false);
 
   const refresh = useCallback(async () => {
     setLoading(true); setError(null);
@@ -41,6 +44,14 @@ export function TelehealthRequestQueue() {
   }, []);
 
   useEffect(() => { void refresh(); }, [refresh]);
+
+  const publishOpening = async () => {
+    const start = new Date(slotStart); const amount = Math.round(Number(price) * 100);
+    if (!slotStart || !Number.isFinite(start.getTime()) || !Number.isInteger(amount) || amount < 0) { setError("Enter a valid future start time and visit price."); return; }
+    const end = new Date(start.getTime() + 45 * 60_000); setPublishing(true); setError(null);
+    try { const response = await fetch("/api/live/telehealth-slots", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ start: start.toISOString(), end: end.toISOString(), timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "America/Los_Angeles", visitTypes: ["initial","follow_up","urgent_question"], priceMinor: amount, currency: "USD", cancellationPolicy: "Cancel or reschedule at least 24 hours before the appointment to avoid the visit fee." }) }); const body = await response.json(); if (!response.ok) throw new Error(messageFrom(body,"The opening could not be published.")); setSlotStart(""); setPrice(""); }
+    catch(reason){setError(reason instanceof Error?reason.message:"The opening could not be published.");} finally {setPublishing(false);}
+  };
 
   const action = async (row: Row, kind: "schedule" | "reschedule" | "cancel", selectedSlot?: string) => {
     setBusyId(row.requestId); setError(null);
@@ -72,6 +83,11 @@ export function TelehealthRequestQueue() {
   if (loading) return <p className="text-sm text-muted-foreground">Loading requests…</p>;
 
   return <div className="space-y-3">
+    <section className="rounded-xl border bg-card p-4" aria-label="Publish patient-bookable opening">
+      <h2 className="font-semibold">Publish an available telehealth time</h2>
+      <p className="mt-1 text-xs text-muted-foreground">Only times published here appear in the patient app. Overlapping openings are refused.</p>
+      <div className="mt-3 flex flex-wrap gap-2"><input aria-label="Opening start" type="datetime-local" value={slotStart} onChange={(event)=>setSlotStart(event.target.value)} className="rounded-lg border bg-background px-3 py-2 text-sm"/><input aria-label="Visit price" inputMode="decimal" placeholder="Price, e.g. 150" value={price} onChange={(event)=>setPrice(event.target.value)} className="w-40 rounded-lg border bg-background px-3 py-2 text-sm"/><button disabled={publishing} className="rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-50" onClick={()=>void publishOpening()}>{publishing?"Publishing…":"Publish opening"}</button></div>
+    </section>
     {error ? <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">{error}</div> : null}
     {rows.length === 0 ? <p className="text-sm text-muted-foreground">No appointment requests.</p> : rows.map((row) => {
       const canSchedule = row.status === "requested" || row.status === "reschedule_requested" || row.status === "awaiting_provider";

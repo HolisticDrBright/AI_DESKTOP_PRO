@@ -1,7 +1,7 @@
 {
   "AWSTemplateFormatVersion": "2010-09-09",
-  "Description": "Synthetic-only V2 to Desktop appointment-request queue with a disabled-by-default Zoom provider boundary.",
-  "Metadata": { "ClinicalCore": { "ContractVersion": "telehealth-requests/1", "DataClassification": "synthetic_only", "PhiAllowed": false, "ZoomEnabled": false } },
+  "Description": "Synthetic-only patient-safe availability, atomic slot holds, appointment requests, and disabled-by-default Zoom provider boundary.",
+  "Metadata": { "ClinicalCore": { "ContractVersion": "telehealth-requests/2", "DataClassification": "synthetic_only", "PhiAllowed": false, "ZoomEnabled": false } },
   "Parameters": {
     "ClinicalApiId": { "Type": "String", "AllowedPattern": "^[a-z0-9]{10}$" },
     "ConsumerUserPoolId": { "Type": "String" }, "ConsumerUserPoolClientId": { "Type": "String" },
@@ -25,7 +25,7 @@
       "AssumeRolePolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Principal": { "Service": "lambda.amazonaws.com" }, "Action": "sts:AssumeRole" }] },
       "Policies": [
         { "PolicyName": "EncryptedLogs", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": ["logs:CreateLogStream", "logs:PutLogEvents"], "Resource": { "Fn::GetAtt": ["TelehealthLogGroup", "Arn"] } }] } },
-        { "PolicyName": "AppointmentQueue", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": ["dynamodb:PutItem", "dynamodb:Query", "dynamodb:UpdateItem"], "Resource": [{ "Fn::GetAtt": ["TelehealthTable", "Arn"] }, { "Fn::Sub": "${TelehealthTable.Arn}/index/ByConsumer" }] }] } },
+        { "PolicyName": "AppointmentQueue", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": ["dynamodb:PutItem", "dynamodb:Query", "dynamodb:UpdateItem", "dynamodb:TransactWriteItems"], "Resource": [{ "Fn::GetAtt": ["TelehealthTable", "Arn"] }, { "Fn::Sub": "${TelehealthTable.Arn}/index/ByConsumer" }] }] } },
         { "PolicyName": "AppointmentQueueKms", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": ["kms:Decrypt", "kms:Encrypt", "kms:GenerateDataKey", "kms:DescribeKey"], "Resource": { "Ref": "ClinicalCoreKeyArn" } }] } },
         { "Fn::If": ["UseZoom", { "PolicyName": "ExactZoomSecret", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": "secretsmanager:GetSecretValue", "Resource": { "Ref": "ZoomSecretArn" } }] } }, { "Ref": "AWS::NoValue" }] }
       ]
@@ -47,9 +47,13 @@
     "ConsumerCreateRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "POST /clinical-core/consumer/appointments/requests", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "ConsumerAuthorizer" }, "Target": { "Fn::Sub": "integrations/${Integration}" } } },
     "ConsumerListRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "GET /clinical-core/consumer/appointments/requests", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "ConsumerAuthorizer" }, "Target": { "Fn::Sub": "integrations/${Integration}" } } },
     "ConsumerActionRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "POST /clinical-core/consumer/appointments/actions", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "ConsumerAuthorizer" }, "Target": { "Fn::Sub": "integrations/${Integration}" } } },
+    "ConsumerAvailabilityRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "POST /clinical-core/consumer/appointments/availability", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "ConsumerAuthorizer" }, "Target": { "Fn::Sub": "integrations/${Integration}" } } },
+    "ConsumerHoldRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "POST /clinical-core/consumer/appointments/holds", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "ConsumerAuthorizer" }, "Target": { "Fn::Sub": "integrations/${Integration}" } } },
     "WorkforceListRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "GET /clinical-core/workforce/appointments/requests", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "WorkforceAuthorizer" }, "Target": { "Fn::Sub": "integrations/${Integration}" } } },
     "WorkforceActionRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "POST /clinical-core/workforce/appointments/actions", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "WorkforceAuthorizer" }, "Target": { "Fn::Sub": "integrations/${Integration}" } } },
+    "WorkforceSlotListRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "GET /clinical-core/workforce/appointments/slots", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "WorkforceAuthorizer" }, "Target": { "Fn::Sub": "integrations/${Integration}" } } },
+    "WorkforceSlotCreateRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "POST /clinical-core/workforce/appointments/slots", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "WorkforceAuthorizer" }, "Target": { "Fn::Sub": "integrations/${Integration}" } } },
     "InvokePermission": { "Type": "AWS::Lambda::Permission", "Properties": { "Action": "lambda:InvokeFunction", "FunctionName": { "Ref": "TelehealthFunction" }, "Principal": "apigateway.amazonaws.com", "SourceArn": { "Fn::Sub": "arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${ClinicalApiId}/*/*/clinical-core/*/appointments/*" } } }
   },
-  "Outputs": { "ContractVersion": { "Value": "telehealth-requests/1" }, "PhiAllowed": { "Value": "false" }, "ZoomEnabled": { "Value": { "Ref": "ZoomEnabled" } }, "FunctionName": { "Value": { "Ref": "TelehealthFunction" } } }
+  "Outputs": { "ContractVersion": { "Value": "telehealth-requests/2" }, "PhiAllowed": { "Value": "false" }, "ZoomEnabled": { "Value": { "Ref": "ZoomEnabled" } }, "FunctionName": { "Value": { "Ref": "TelehealthFunction" } } }
 }

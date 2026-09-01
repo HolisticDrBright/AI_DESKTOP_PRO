@@ -2,7 +2,7 @@ if (typeof window !== "undefined") throw new Error("aws-telehealth-requests is s
 
 import { randomUUID } from "node:crypto";
 import { GetSecretValueCommand, SecretsManagerClient } from "@aws-sdk/client-secrets-manager";
-import { DynamoDBDocumentClient, PutCommand, QueryCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, PutCommand, QueryCommand, TransactWriteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import type { ApiGatewayV2Event, ApiGatewayV2Response } from "./aws-identity-api";
 
@@ -14,8 +14,12 @@ const MAX_BODY = 16_384;
 const CONSUMER_CREATE = "POST /clinical-core/consumer/appointments/requests";
 const CONSUMER_LIST = "GET /clinical-core/consumer/appointments/requests";
 const CONSUMER_ACTION = "POST /clinical-core/consumer/appointments/actions";
+const CONSUMER_AVAILABILITY = "POST /clinical-core/consumer/appointments/availability";
+const CONSUMER_HOLD = "POST /clinical-core/consumer/appointments/holds";
 const WORKFORCE_LIST = "GET /clinical-core/workforce/appointments/requests";
 const WORKFORCE_ACTION = "POST /clinical-core/workforce/appointments/actions";
+const WORKFORCE_SLOT_LIST = "GET /clinical-core/workforce/appointments/slots";
+const WORKFORCE_SLOT_CREATE = "POST /clinical-core/workforce/appointments/slots";
 
 export type TelehealthConfiguration = {
   tableName: string; consumerIssuer: string; consumerAudience: string; workforceIssuer: string; workforceAudience: string;
@@ -28,6 +32,14 @@ type AppointmentItem = {
   visitType: "initial" | "follow_up" | "urgent_question"; preferredSlots: string[]; timeZone: string; note: string | null;
   scheduledStart: string | null; scheduledEnd: string | null; joinUrl: string | null; providerMeetingId: string | null;
   version: number; createdAt: string; updatedAt: string; lastActionBy: "consumer" | "workforce";
+  slotId: string; appointmentId: string | null; priceMinor: number; currency: "USD"; cancellationPolicy: string;
+};
+
+type BookingSlot = {
+  pk: string; sk: string; slotId: string; organizationId: string; start: string; end: string; timeZone: string;
+  visitTypes: AppointmentItem["visitType"][]; priceMinor: number; currency: "USD"; cancellationPolicy: string;
+  status: "available" | "held" | "booked"; heldBy: string | null; holdId: string | null; holdExpiresAt: number | null;
+  createdAt: string; createdBy: string;
 };
 
 export function createTelehealthHandler(config: TelehealthConfiguration) {
@@ -38,11 +50,15 @@ export function createTelehealthHandler(config: TelehealthConfiguration) {
       const route = event.routeKey ?? "";
       const pool = route.includes("/workforce/") ? "workforce" : "consumer";
       const actor = identity(event, config, pool);
+      if (route === CONSUMER_AVAILABILITY) return response(200, { data: await listAvailability(config, actor, body(event)) });
+      if (route === CONSUMER_HOLD) return response(201, { data: await holdSlot(config, actor, body(event)) });
       if (route === CONSUMER_CREATE) return response(201, { data: await createRequest(config, actor, body(event)) });
       if (route === CONSUMER_LIST) return response(200, { data: await listConsumer(config, actor) });
       if (route === CONSUMER_ACTION) return response(200, { data: await consumerAction(config, actor, body(event)) });
       if (route === WORKFORCE_LIST) return response(200, { data: await listWorkforce(config, actor) });
       if (route === WORKFORCE_ACTION) return response(200, { data: await workforceAction(config, actor, body(event)) });
+      if (route === WORKFORCE_SLOT_LIST) return response(200, { data: await listWorkforceSlots(config, actor) });
+      if (route === WORKFORCE_SLOT_CREATE) return response(201, { data: await publishSlot(config, actor, body(event)) });
       return response(404, { error: "route_not_found" });
     } catch (error) {
       const category = error instanceof TelehealthError ? error.category : "service_unavailable";
@@ -54,27 +70,76 @@ export function createTelehealthHandler(config: TelehealthConfiguration) {
 }
 
 async function createRequest(config: TelehealthConfiguration, actor: Actor, value: Record<string, unknown>) {
-  exact(value, ["visitType", "preferredSlots", "timeZone", "note"], ["visitType", "preferredSlots", "timeZone"]);
+  exact(value, ["visitType", "slotId", "holdId", "note"], ["visitType", "slotId", "holdId"]);
   const visitType = value.visitType;
-  const preferredSlots = value.preferredSlots;
-  const timeZone = value.timeZone;
-  if (!["initial", "follow_up", "urgent_question"].includes(String(visitType)) || !Array.isArray(preferredSlots)
-    || preferredSlots.length < 1 || preferredSlots.length > 3 || preferredSlots.some((slot) => typeof slot !== "string" || !date(slot))
-    || typeof timeZone !== "string" || !/^[A-Za-z_]+\/[A-Za-z_+-]+$/.test(timeZone)
+  if (!["initial", "follow_up", "urgent_question"].includes(String(visitType)) || !UUID.test(String(value.slotId)) || !UUID.test(String(value.holdId))
     || !(value.note === undefined || value.note === null || (typeof value.note === "string" && value.note.length <= 500))) throw new TelehealthError("request_invalid");
+  const slot = await findSlot(config, actor.organizationId, String(value.slotId));
+  const nowEpoch = Math.floor(Date.now() / 1000);
+  if (slot.status !== "held" || slot.heldBy !== actor.personId || slot.holdId !== value.holdId || !slot.holdExpiresAt || slot.holdExpiresAt <= nowEpoch
+    || !slot.visitTypes.includes(visitType as AppointmentItem["visitType"])) throw new TelehealthError("conflict");
   const now = new Date().toISOString(); const requestId = randomUUID();
   const item: AppointmentItem = {
     pk: `ORG#${actor.organizationId}`, sk: `REQ#${now}#${requestId}`,
     gsi1pk: `PERSON#${actor.personId}`, gsi1sk: `REQ#${now}#${requestId}`,
     requestId, organizationId: actor.organizationId, consumerPersonId: actor.personId,
-    status: "requested", visitType: visitType as AppointmentItem["visitType"], preferredSlots: preferredSlots as string[], timeZone,
+    status: "requested", visitType: visitType as AppointmentItem["visitType"], preferredSlots: [slot.start], timeZone: slot.timeZone,
     note: typeof value.note === "string" && value.note.trim() ? value.note.trim() : null,
     scheduledStart: null, scheduledEnd: null, joinUrl: null, providerMeetingId: null,
     version: 1, createdAt: now, updatedAt: now, lastActionBy: "consumer",
+    slotId: slot.slotId, appointmentId: null, priceMinor: slot.priceMinor, currency: slot.currency, cancellationPolicy: slot.cancellationPolicy,
   };
-  await document.send(new PutCommand({ TableName: config.tableName, Item: item, ConditionExpression: "attribute_not_exists(pk) AND attribute_not_exists(sk)" }));
+  await document.send(new TransactWriteCommand({ TransactItems: [
+    { Put: { TableName: config.tableName, Item: item, ConditionExpression: "attribute_not_exists(pk) AND attribute_not_exists(sk)" } },
+    { Update: { TableName: config.tableName, Key: { pk: slot.pk, sk: slot.sk }, UpdateExpression: "SET #status=:booked", ConditionExpression: "#status=:held AND heldBy=:person AND holdId=:hold AND holdExpiresAt>:now", ExpressionAttributeNames: { "#status": "status" }, ExpressionAttributeValues: { ":booked": "booked", ":held": "held", ":person": actor.personId, ":hold": value.holdId, ":now": nowEpoch } } },
+  ] }));
   return publicItem(item, "consumer");
 }
+
+async function publishSlot(config: TelehealthConfiguration, actor: Actor, value: Record<string, unknown>) {
+  exact(value, ["start", "end", "timeZone", "visitTypes", "priceMinor", "currency", "cancellationPolicy"], ["start", "end", "timeZone", "visitTypes", "priceMinor", "currency", "cancellationPolicy"]);
+  const start = String(value.start); const end = String(value.end); const timeZone = zone(value.timeZone);
+  const visitTypes = value.visitTypes;
+  if (!date(start) || !date(end) || new Date(end) <= new Date(start) || new Date(start).getTime() <= Date.now()
+    || new Date(start).getTime() > Date.now() + 180 * 86_400_000 || !Array.isArray(visitTypes) || visitTypes.length < 1
+    || visitTypes.some((v) => !["initial", "follow_up", "urgent_question"].includes(String(v)))
+    || !Number.isInteger(value.priceMinor) || Number(value.priceMinor) < 0 || Number(value.priceMinor) > 1_000_000
+    || value.currency !== "USD" || typeof value.cancellationPolicy !== "string" || value.cancellationPolicy.length < 10 || value.cancellationPolicy.length > 1000) throw new TelehealthError("request_invalid");
+  const existing = await rawSlots(config, actor.organizationId);
+  if (existing.some((slot) => slot.status !== "booked" && new Date(slot.start) < new Date(end) && new Date(slot.end) > new Date(start))) throw new TelehealthError("conflict");
+  const slotId = randomUUID(); const now = new Date().toISOString();
+  const slot: BookingSlot = { pk: `ORG#${actor.organizationId}`, sk: `SLOT#${start}#${slotId}`, slotId, organizationId: actor.organizationId, start, end, timeZone,
+    visitTypes: visitTypes as BookingSlot["visitTypes"], priceMinor: Number(value.priceMinor), currency: "USD", cancellationPolicy: value.cancellationPolicy,
+    status: "available", heldBy: null, holdId: null, holdExpiresAt: null, createdAt: now, createdBy: actor.subject };
+  await document.send(new PutCommand({ TableName: config.tableName, Item: slot, ConditionExpression: "attribute_not_exists(pk) AND attribute_not_exists(sk)" }));
+  return publicSlot(slot, true);
+}
+
+async function rawSlots(config: TelehealthConfiguration, organizationId: string) {
+  const result = await document.send(new QueryCommand({ TableName: config.tableName, KeyConditionExpression: "pk=:org AND begins_with(sk,:slot)", ExpressionAttributeValues: { ":org": `ORG#${organizationId}`, ":slot": "SLOT#" }, ScanIndexForward: true, Limit: 500 }));
+  return (result.Items ?? []) as BookingSlot[];
+}
+async function listWorkforceSlots(config: TelehealthConfiguration, actor: Actor) { return (await rawSlots(config, actor.organizationId)).map((slot) => publicSlot(slot, true)); }
+async function listAvailability(config: TelehealthConfiguration, actor: Actor, value: Record<string, unknown>) {
+  exact(value, ["visitType"], ["visitType"]); const visitType = String(value.visitType);
+  if (!["initial", "follow_up", "urgent_question"].includes(visitType)) throw new TelehealthError("request_invalid");
+  const now = Date.now(); const epoch = Math.floor(now / 1000);
+  return (await rawSlots(config, actor.organizationId)).filter((slot) => new Date(slot.start).getTime() > now && slot.visitTypes.includes(visitType as AppointmentItem["visitType"])
+    && (slot.status === "available" || (slot.status === "held" && (slot.holdExpiresAt ?? 0) <= epoch))).map((slot) => publicSlot(slot, false));
+}
+async function findSlot(config: TelehealthConfiguration, organizationId: string, slotId: string) {
+  const slot = (await rawSlots(config, organizationId)).find((candidate) => candidate.slotId === slotId); if (!slot) throw new TelehealthError("not_found"); return slot;
+}
+async function holdSlot(config: TelehealthConfiguration, actor: Actor, value: Record<string, unknown>) {
+  exact(value, ["slotId", "visitType"], ["slotId", "visitType"]); if (!UUID.test(String(value.slotId))) throw new TelehealthError("request_invalid");
+  const slot = await findSlot(config, actor.organizationId, String(value.slotId));
+  if (!slot.visitTypes.includes(value.visitType as AppointmentItem["visitType"])) throw new TelehealthError("request_invalid");
+  const holdId = randomUUID(); const now = Math.floor(Date.now() / 1000); const expiresAt = now + 600;
+  try { await document.send(new UpdateCommand({ TableName: config.tableName, Key: { pk: slot.pk, sk: slot.sk }, UpdateExpression: "SET #status=:held,heldBy=:person,holdId=:hold,holdExpiresAt=:expires", ConditionExpression: "#status=:available OR (#status=:held AND holdExpiresAt<=:now)", ExpressionAttributeNames: { "#status": "status" }, ExpressionAttributeValues: { ":held": "held", ":available": "available", ":person": actor.personId, ":hold": holdId, ":expires": expiresAt, ":now": now } })); }
+  catch (error) { if ((error as { name?: string }).name === "ConditionalCheckFailedException") throw new TelehealthError("conflict"); throw error; }
+  return { holdId, slotId: slot.slotId, expiresAt: new Date(expiresAt * 1000).toISOString(), slot: publicSlot({ ...slot, status: "held", heldBy: actor.personId, holdId, holdExpiresAt: expiresAt }, false) };
+}
+function publicSlot(slot: BookingSlot, workforce: boolean) { const result: Record<string, unknown> = { slotId: slot.slotId, start: slot.start, end: slot.end, timeZone: slot.timeZone, visitTypes: slot.visitTypes, priceMinor: slot.priceMinor, currency: slot.currency, cancellationPolicy: slot.cancellationPolicy, status: slot.status }; if (workforce) Object.assign(result, { heldBy: slot.heldBy, holdExpiresAt: slot.holdExpiresAt ? new Date(slot.holdExpiresAt * 1000).toISOString() : null }); return result; }
 
 async function listConsumer(config: TelehealthConfiguration, actor: Actor) {
   const result = await document.send(new QueryCommand({ TableName: config.tableName, IndexName: "ByConsumer", KeyConditionExpression: "gsi1pk = :person", ExpressionAttributeValues: { ":person": `PERSON#${actor.personId}` }, ScanIndexForward: false, Limit: 100 }));
@@ -123,10 +188,25 @@ async function workforceAction(config: TelehealthConfiguration, actor: Actor, va
     if (!config.zoomBaaVerified) throw new TelehealthError("provider_unavailable");
     meeting = await createZoomMeeting(config, { requestId: item.requestId, start, durationMinutes: Math.ceil((+new Date(end) - +new Date(start)) / 60_000), timeZone });
   }
-  return update(config, item, Number(value.expectedVersion), {
+  return scheduleRequest(config, item, Number(value.expectedVersion), {
     status: meeting ? "scheduled" : "awaiting_provider", scheduledStart: start, scheduledEnd: end,
     joinUrl: meeting?.joinUrl ?? null, providerMeetingId: meeting?.providerMeetingId ?? null, timeZone,
-  }, "workforce");
+  });
+}
+
+async function scheduleRequest(config: TelehealthConfiguration, item: AppointmentItem, version: number, values: Partial<AppointmentItem>) {
+  if (version !== item.version) throw new TelehealthError("conflict");
+  const appointmentId = item.appointmentId ?? randomUUID(); const updatedAt = new Date().toISOString();
+  const next = { ...item, ...values, appointmentId, version: version + 1, updatedAt, lastActionBy: "workforce" as const };
+  const appointment = { pk: item.pk, sk: `APPT#${appointmentId}`, appointmentId, organizationId: item.organizationId, consumerPersonId: item.consumerPersonId,
+    requestId: item.requestId, slotId: item.slotId, status: values.status, visitType: item.visitType, start: values.scheduledStart, end: values.scheduledEnd,
+    timeZone: values.timeZone, joinUrl: values.joinUrl, providerMeetingId: values.providerMeetingId, priceMinor: item.priceMinor, currency: item.currency,
+    cancellationPolicy: item.cancellationPolicy, updatedAt };
+  try { await document.send(new TransactWriteCommand({ TransactItems: [
+    { Update: { TableName: config.tableName, Key: { pk: item.pk, sk: item.sk }, UpdateExpression: "SET #version=:next,#status=:status,scheduledStart=:start,scheduledEnd=:end,joinUrl=:join,providerMeetingId=:meeting,timeZone=:zone,appointmentId=:appointment,updatedAt=:updated,lastActionBy=:by", ConditionExpression: "#version=:expected", ExpressionAttributeNames: { "#version": "version", "#status": "status" }, ExpressionAttributeValues: { ":expected": version, ":next": version + 1, ":status": values.status, ":start": values.scheduledStart, ":end": values.scheduledEnd, ":join": values.joinUrl, ":meeting": values.providerMeetingId, ":zone": values.timeZone, ":appointment": appointmentId, ":updated": updatedAt, ":by": "workforce" } } },
+    { Put: { TableName: config.tableName, Item: appointment } },
+  ] })); } catch(error) { if ((error as { name?: string }).name === "TransactionCanceledException" || (error as { name?: string }).name === "ConditionalCheckFailedException") throw new TelehealthError("conflict"); throw error; }
+  return publicItem(next, "workforce");
 }
 
 async function update(config: TelehealthConfiguration, item: AppointmentItem, version: number, values: Partial<AppointmentItem>, by: "consumer" | "workforce") {
