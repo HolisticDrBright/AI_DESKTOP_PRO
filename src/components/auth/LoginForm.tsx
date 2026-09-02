@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { LogIn, LogOut } from "lucide-react";
 import { Card } from "@/components/ui/bits";
@@ -221,10 +222,17 @@ export function LoginForm() {
 
       <div className="mt-3 border-t border-hairline pt-3">
         {resetSent ? (
-          <p className="m-0 text-[12px] leading-[1.5] text-body" role="status">
-            If an account exists for that email, a six-digit reset code is on its way. Enter it
-            on the reset-password screen.
-          </p>
+          <div className="text-[12px] leading-[1.5] text-body" role="status">
+            <p className="m-0">
+              If an account exists for that email, a six-digit reset code is on its way.
+            </p>
+            <Link
+              href="/reset"
+              className="mt-2 inline-flex font-semibold text-action hover:underline focus-visible:outline-2 focus-visible:outline-action"
+            >
+              Enter the reset code and choose a new password
+            </Link>
+          </div>
         ) : (
           <button
             type="button"
