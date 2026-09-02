@@ -11,6 +11,12 @@ function pause(milliseconds: number) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
+function localRedirect(path: string) {
+  // A relative Location keeps the browser on the public App Runner origin.
+  // req.url contains App Runner's internal 0.0.0.0:3000 address.
+  return new NextResponse(null, { status: 307, headers: { location: path } });
+}
+
 /**
  * Recover an authenticated practitioner whose sole organization was not
  * written to the session during sign-in (for example while Aurora was waking).
@@ -22,9 +28,7 @@ export async function GET(req: NextRequest) {
   const session = await getRequestSession();
 
   if (!session.signedIn || !session.token) {
-    const login = new URL("/login", req.url);
-    login.searchParams.set("next", nextPath);
-    return NextResponse.redirect(login);
+    return localRedirect(`/login?next=${encodeURIComponent(nextPath)}`);
   }
 
   let organizations: Awaited<ReturnType<typeof organizationsLive.mine>> | null = null;
@@ -41,10 +45,10 @@ export async function GET(req: NextRequest) {
 
   const available = (organizations ?? []).filter((org) => org.organizationId);
   if (available.length !== 1 || !available[0]?.organizationId) {
-    return NextResponse.redirect(new URL("/settings#practice-preferences", req.url));
+    return localRedirect("/settings#practice-preferences");
   }
 
-  const response = NextResponse.redirect(new URL(nextPath, req.url));
+  const response = localRedirect(nextPath);
   response.cookies.set(AUTH_COOKIES.org, available[0].organizationId, cookieOptions(WEEK));
   return response;
 }
