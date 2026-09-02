@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { shouldShowOrgSwitcher } from "./org-switcher-visibility";
 
 interface OrgOption {
   organizationId: string;
@@ -47,7 +48,11 @@ export function OrgSwitcher({
     }
   };
 
-  if (organizations.length <= 1) return null;
+  // A single membership still needs a selector when the session has no active
+  // organization cookie (for example after identity repair or a transient
+  // database wake-up during sign-in). Hiding it here previously left every
+  // org-scoped screen unusable with no recovery path.
+  if (!shouldShowOrgSwitcher(organizations.length, activeOrgId)) return null;
 
   return (
     <span className="flex items-center gap-2">

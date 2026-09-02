@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { Bell, ChevronDown, MessageCircle, Search, Sparkles, UserRound } from "lucide-react";
+import { SignOutButton } from "@/components/auth/SignOutButton";
 import { useShellUi } from "@/lib/providers";
 import { Popover, PopoverHeader } from "@/components/ui/Popover";
 
@@ -137,6 +138,9 @@ export function TopBar() {
             <PopoverHeader title="Account" note="Session & organization" />
             <Link href="/settings" onClick={close} className={menuLink}>Settings &amp; session</Link>
             <Link href="/audit-log" onClick={close} className={menuLink}>Audit log</Link>
+            <span className="flex border-t border-hairline px-[13px] py-[9px]">
+              <SignOutButton />
+            </span>
             <span className={menuNote}>
               Your signed-in identity and active organization are shown in Settings, read from the
               real session.

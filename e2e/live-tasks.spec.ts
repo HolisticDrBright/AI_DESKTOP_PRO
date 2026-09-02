@@ -315,8 +315,12 @@ test("password reset: enumeration-safe request + recovery-token completion", asy
   await page.getByRole("button", { name: /Forgot password/ }).click();
   await expect(page.getByText(/If an account exists for that email/)).toBeVisible();
 
+  // The confirmation links directly to the code-entry form so the user isn't
+  // stranded on a sign-in form that has nowhere to enter the emailed code.
+  await page.getByRole("link", { name: /Enter the reset code/ }).click();
+  await page.waitForURL("**/reset");
+
   // Complete with the workforce email and one-time Cognito code.
-  await page.goto("/reset");
   await page.getByLabel("Workforce email").fill("practitioner@fixture.local");
   await page.getByLabel("Six-digit reset code").fill("123456");
   await page.getByLabel("New password").fill("brand-new-password-1");
