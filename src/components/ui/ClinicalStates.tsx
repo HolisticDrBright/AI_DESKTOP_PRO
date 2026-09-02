@@ -1,4 +1,5 @@
 import { AlertTriangle, Inbox, Loader2 } from "lucide-react";
+import { isMissingOrganizationMessage } from "@/adapters/organization-recovery";
 import { Card } from "@/components/ui/bits";
 
 /**
@@ -57,6 +58,12 @@ export function ClinicalError({
   actionHref?: string;
   actionLabel?: string;
 }) {
+  const organizationMissing = isMissingOrganizationMessage(message);
+  const resolvedActionHref = organizationMissing
+    ? "/api/auth/org/auto?next=/patients"
+    : actionHref;
+  const resolvedActionLabel = organizationMissing ? "Connect clinic" : actionLabel;
+
   return (
     <Card className="px-6 py-[56px]">
       <div
@@ -70,12 +77,12 @@ export function ClinicalError({
         <h2 className="m-0 text-[15px] font-bold">This didn&apos;t load</h2>
         <p className="m-0 max-w-[440px] text-[12.5px] leading-[1.5] text-subtle">{message}</p>
         <div className="mt-[2px] flex items-center gap-2">
-          {actionHref && actionLabel && (
+          {resolvedActionHref && resolvedActionLabel && (
             <a
-              href={actionHref}
+              href={resolvedActionHref}
               className="flex h-8 items-center rounded-lg border-none bg-action px-4 text-[12.5px] font-semibold text-white hover:bg-action-deep focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink"
             >
-              {actionLabel}
+              {resolvedActionLabel}
             </a>
           )}
           {onRetry && (
