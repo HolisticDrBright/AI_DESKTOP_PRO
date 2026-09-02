@@ -25,6 +25,7 @@ export async function DataSourceCard() {
   // Organizations for the signed-in practitioner (tolerated failure: the row
   // shows the honest state; service configuration has its own rows below).
   let organizations: { organizationId: string; name: string | null; role: string }[] = [];
+  let organizationLookupFailed = false;
   if (mode.live && session?.signedIn && session.accessToken) {
     try {
       const orgs = await organizationsLive.mine(session.accessToken);
@@ -33,6 +34,7 @@ export async function DataSourceCard() {
         .map((o) => ({ organizationId: o.organizationId, name: o.name, role: o.role }));
     } catch {
       organizations = [];
+      organizationLookupFailed = true;
     }
   }
   const activeOrg = organizations.find((o) => o.organizationId === session?.orgId) ?? null;
@@ -125,9 +127,19 @@ export async function DataSourceCard() {
                       ? `${activeOrg.name ?? activeOrg.organizationId} · ${activeOrg.role}`
                       : organizations.length > 0
                         ? "None selected"
+                        : organizationLookupFailed
+                          ? "Temporarily unavailable"
                         : "No memberships found"}
                   </span>
                   <OrgSwitcher organizations={organizations} activeOrgId={session.orgId} />
+                  {organizationLookupFailed && (
+                    <Link
+                      href="/api/auth/org/auto?next=/patients"
+                      className="rounded-lg border border-action/30 bg-action-tint px-2 py-1 text-[11px] font-semibold text-action hover:text-action-deep focus-visible:outline-2 focus-visible:outline-action"
+                    >
+                      Retry connection
+                    </Link>
+                  )}
                 </span>
               ) : (
                 <span className="text-[12px] font-semibold text-faint">Sign in first</span>
