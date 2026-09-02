@@ -48,6 +48,10 @@
     {
       "version": "20260821049500",
       "file": "20260821049500_consumer_family_access.sql"
+    },
+    {
+      "version": "20260821049700",
+      "file": "20260821049700_synthetic_workforce_organization_directory.sql"
     }
   ]
 }
