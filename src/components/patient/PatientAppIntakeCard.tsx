@@ -49,6 +49,7 @@ export function PatientAppIntakeCard({ patientId }: { patientId: string }) {
   const contraindications = data.contraindications?.payload;
   const intake = data.clinicalIntake?.payload;
   const latestWearable = data.wearableDailyRecords[0]?.payload;
+  const labImports = data.labImports ?? [];
   const lastReceived = [
     data.wellnessProfile?.receivedAt, data.lifestyleProfile?.receivedAt,
     data.contraindications?.receivedAt, data.clinicalIntake?.receivedAt,
@@ -125,6 +126,25 @@ export function PatientAppIntakeCard({ patientId }: { patientId: string }) {
               <p className="m-0 text-[12px] text-faint">No wearable measurements received.</p>
             )}
             <p className="m-0 mt-2 text-[11.5px] text-subtle">Review and reconcile these measurements before using them as practitioner-verified chart data.</p>
+          </section>
+          <section aria-labelledby="v2-labs-heading" className="rounded-lg border border-hairline-2 p-3 lg:col-span-2">
+            <h3 id="v2-labs-heading" className="m-0 mb-2 text-[12px] font-bold">Laboratory markers received from V2</h3>
+            {labImports.length > 0 ? (
+              <div className="overflow-x-auto">
+                <table className="w-full border-collapse text-left text-[11.5px]">
+                  <thead><tr className="border-b border-hairline-2 text-faint"><th className="py-2 pr-3">Marker</th><th className="py-2 pr-3">Result</th><th className="py-2 pr-3">Panel</th><th className="py-2">Review state</th></tr></thead>
+                  <tbody>{labImports.map((entry) => (
+                    <tr key={entry.eventId} className="border-b border-hairline-2 last:border-0">
+                      <td className="py-2 pr-3 font-medium text-body">{entry.markerName}</td>
+                      <td className="py-2 pr-3">{entry.value} {entry.unit ?? ''}</td>
+                      <td className="py-2 pr-3 text-subtle">{entry.panelName}</td>
+                      <td className="py-2"><Pill tone={entry.state === 'accepted' ? 'positive' : entry.state === 'rejected' ? 'critical' : 'warning'}>{entry.state.replace('_', ' ')}</Pill></td>
+                    </tr>
+                  ))}</tbody>
+                </table>
+              </div>
+            ) : <p className="m-0 text-[12px] text-faint">No laboratory markers received.</p>}
+            <p className="m-0 mt-2 text-[11.5px] text-subtle">Pending markers are patient-supplied and remain outside the accepted laboratory record until reviewed.</p>
           </section>
         </div>
       )}

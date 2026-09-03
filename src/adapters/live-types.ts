@@ -378,6 +378,11 @@ export interface LivePatientAppIntake {
     activeMinutes?: number; vo2Max?: number; weight?: number; bodyFatPercent?: number;
     spo2?: number; dataQualityScore?: number;
   }>[];
+  labImports?: {
+    eventId: string; panelName: string; markerName: string; value: number;
+    unit: string | null; sourceStatus: string | null; collectedAt: string;
+    state: 'review_pending' | 'conflict' | 'accepted' | 'rejected'; receivedAt: string;
+  }[];
   generatedAt: string;
 }
 
