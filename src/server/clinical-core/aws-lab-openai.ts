@@ -5,8 +5,9 @@ import type { LongitudinalContext, PatientContext } from "./aws-lab-analysis-api
 const secrets = new SecretsManagerClient({});
 const OPENAI_ORIGIN = "https://api.openai.com";
 const OPENAI_RESPONSES_URL = `${OPENAI_ORIGIN}/v1/responses`;
-const REQUEST_TIMEOUT_MS = 90_000;
+const REQUEST_TIMEOUT_MS = 180_000;
 const MAX_RESPONSE_BYTES = 1024 * 1024;
+const MAX_OUTPUT_TOKENS = 10_000;
 const LEGACY_SECRET_FIELD = "ai-longevity-pro/synthetic-staging/openai";
 const SAFE_FAILURE_CODES = new Set([
   "openai_secret_malformed",
@@ -21,6 +22,8 @@ const SAFE_FAILURE_CODES = new Set([
   "openai_response_too_large",
   "openai_response_malformed",
   "openai_response_incomplete",
+  "openai_response_incomplete_max_tokens",
+  "openai_response_incomplete_content_filter",
   "openai_output_missing",
   "openai_output_malformed",
   "openai_output_keys_refused",
@@ -92,20 +95,20 @@ const LAB_SYNTHESIS_SCHEMA = {
   additionalProperties: false,
   required: ["summary", "uncertainty", "priorityActions", "referencedBiomarkerIds", "longitudinalSummary", "planImpact", "generatedPlan"],
   properties: {
-    summary: { type: "string", minLength: 1, maxLength: 4000 },
-    uncertainty: { type: "string", minLength: 1, maxLength: 1000 },
+    summary: { type: "string", minLength: 1, maxLength: 1800 },
+    uncertainty: { type: "string", minLength: 1, maxLength: 600 },
     priorityActions: {
       type: "array",
-      maxItems: 8,
-      items: { type: "string", minLength: 1, maxLength: 350 },
+      maxItems: 6,
+      items: { type: "string", minLength: 1, maxLength: 280 },
     },
     referencedBiomarkerIds: {
       type: "array",
       minItems: 1,
-      maxItems: 40,
+      maxItems: 24,
       items: { type: "string" },
     },
-    longitudinalSummary: { type: "string", minLength: 1, maxLength: 4000 },
+    longitudinalSummary: { type: "string", minLength: 1, maxLength: 1800 },
     planImpact: {
       type: "object",
       additionalProperties: false,
@@ -114,17 +117,17 @@ const LAB_SYNTHESIS_SCHEMA = {
         headline: { type: "string", minLength: 1, maxLength: 300 },
         changes: {
           type: "array",
-          maxItems: 20,
+          maxItems: 8,
           items: {
             type: "object",
             additionalProperties: false,
             required: ["kind", "label", "rationale", "biomarkerIds", "protocolItemIds"],
             properties: {
               kind: { type: "string", enum: ["continue_review", "discuss_addition", "reassess"] },
-              label: { type: "string", minLength: 1, maxLength: 180 },
-              rationale: { type: "string", minLength: 1, maxLength: 1000 },
-              biomarkerIds: { type: "array", maxItems: 40, items: { type: "string" } },
-              protocolItemIds: { type: "array", maxItems: 40, items: { type: "string" } },
+              label: { type: "string", minLength: 1, maxLength: 140 },
+              rationale: { type: "string", minLength: 1, maxLength: 500 },
+              biomarkerIds: { type: "array", maxItems: 8, items: { type: "string" } },
+              protocolItemIds: { type: "array", maxItems: 8, items: { type: "string" } },
             },
           },
         },
@@ -135,25 +138,25 @@ const LAB_SYNTHESIS_SCHEMA = {
       additionalProperties: false,
       required: ["title", "summary", "confidence", "tasks"],
       properties: {
-        title: { type: "string", minLength: 1, maxLength: 180 },
-        summary: { type: "string", minLength: 1, maxLength: 2000 },
+        title: { type: "string", minLength: 1, maxLength: 140 },
+        summary: { type: "string", minLength: 1, maxLength: 1200 },
         confidence: { type: "string", enum: ["low", "medium", "high"] },
         tasks: {
           type: "array",
           minItems: 1,
-          maxItems: 8,
+          maxItems: 6,
           items: {
             type: "object",
             additionalProperties: false,
             required: ["kind", "name", "frequency", "timing", "rationale", "biomarkerIds", "symptomCategoryIds"],
             properties: {
               kind: { type: "string", enum: ["nutrition", "exercise", "sleep", "stress", "hydration", "monitoring", "follow_up"] },
-              name: { type: "string", minLength: 1, maxLength: 180 },
-              frequency: { type: "string", minLength: 1, maxLength: 120 },
-              timing: { type: "string", minLength: 1, maxLength: 120 },
-              rationale: { type: "string", minLength: 1, maxLength: 700 },
-              biomarkerIds: { type: "array", maxItems: 20, items: { type: "string" } },
-              symptomCategoryIds: { type: "array", maxItems: 8, items: { type: "string" } },
+              name: { type: "string", minLength: 1, maxLength: 140 },
+              frequency: { type: "string", minLength: 1, maxLength: 100 },
+              timing: { type: "string", minLength: 1, maxLength: 100 },
+              rationale: { type: "string", minLength: 1, maxLength: 500 },
+              biomarkerIds: { type: "array", maxItems: 8, items: { type: "string" } },
+              symptomCategoryIds: { type: "array", maxItems: 4, items: { type: "string" } },
             },
           },
         },
@@ -177,9 +180,77 @@ const SYSTEM_INSTRUCTION = [
   "Every plan-impact change must cite only supplied biomarkerId and protocol itemId values. An empty active plan means protocolItemIds must be empty.",
   "Do not recommend products, supplements, herbs, medications, peptides, doses, purchases, affiliate links, or treatment changes. Product additions are handled by a separate signed catalog and interaction gate.",
   "Do not claim external research or citations. Reference only biomarkerId values supplied in the request.",
-  "Keep the consumer interpretation concise. Cite only the most clinically relevant biomarkerId values, up to 40, rather than listing every supplied marker.",
+  "Keep the consumer interpretation concise. Cite only the most clinically relevant biomarkerId values, up to 24, rather than listing every supplied marker.",
+  "Keep the complete JSON response concise enough to finish in one response. Return no more than 6 priority actions, 8 plan-impact changes, and 6 plan tasks. Group related biomarkers into one action rather than repeating the same advice marker by marker.",
   "Reply only with JSON matching the required schema.",
 ].join(" ");
+
+function idArraySchema(ids: string[], maxItems: number, minItems?: number) {
+  const values = [...new Set(ids)];
+  return {
+    type: "array",
+    ...(minItems === undefined ? {} : { minItems }),
+    maxItems: Math.min(maxItems, values.length),
+    items: values.length > 0 ? { type: "string", enum: values } : { type: "string" },
+  } as const;
+}
+
+function constrainedLabSynthesisSchema(input: {
+  biomarkers: LabSynthesisBiomarker[];
+  patientContext?: PatientContext;
+  activeProtocol?: LongitudinalContext["activeProtocol"];
+}) {
+  const biomarkerIds = input.biomarkers.map((row) => row.biomarkerId);
+  const protocolItemIds = input.activeProtocol?.items.map((row) => row.itemId) ?? [];
+  const symptomCategoryIds = input.patientContext?.topSymptomSignals.map((row) => row.categoryId) ?? [];
+  const planImpact = LAB_SYNTHESIS_SCHEMA.properties.planImpact;
+  const changes = planImpact.properties.changes;
+  const change = changes.items;
+  const generatedPlan = LAB_SYNTHESIS_SCHEMA.properties.generatedPlan;
+  const tasks = generatedPlan.properties.tasks;
+  const task = tasks.items;
+  return {
+    ...LAB_SYNTHESIS_SCHEMA,
+    properties: {
+      ...LAB_SYNTHESIS_SCHEMA.properties,
+      referencedBiomarkerIds: idArraySchema(biomarkerIds, 24, 1),
+      planImpact: {
+        ...planImpact,
+        properties: {
+          ...planImpact.properties,
+          changes: {
+            ...changes,
+            items: {
+              ...change,
+              properties: {
+                ...change.properties,
+                biomarkerIds: idArraySchema(biomarkerIds, 8),
+                protocolItemIds: idArraySchema(protocolItemIds, 8),
+              },
+            },
+          },
+        },
+      },
+      generatedPlan: {
+        ...generatedPlan,
+        properties: {
+          ...generatedPlan.properties,
+          tasks: {
+            ...tasks,
+            items: {
+              ...task,
+              properties: {
+                ...task.properties,
+                biomarkerIds: idArraySchema(biomarkerIds, 8),
+                symptomCategoryIds: idArraySchema(symptomCategoryIds, 4),
+              },
+            },
+          },
+        },
+      },
+    },
+  } as const;
+}
 
 function required(name: string): string {
   const value = process.env[name];
@@ -233,12 +304,12 @@ export function buildLabSynthesisRequest(input: {
         type: "json_schema",
         name: "functional_lab_synthesis_v1",
         strict: true,
-        schema: LAB_SYNTHESIS_SCHEMA,
+        schema: constrainedLabSynthesisSchema(input),
       },
     },
     store: false,
     reasoning: { effort: "none" },
-    max_output_tokens: 6000,
+    max_output_tokens: MAX_OUTPUT_TOKENS,
     metadata: {
       contract: "lab-analysis-openai/1",
       input_sha256: createHash("sha256").update(JSON.stringify(payload)).digest("hex"),
@@ -274,7 +345,15 @@ export function parseLabSynthesisResponse(input: {
   if (!input.response || typeof input.response !== "object" || Array.isArray(input.response)) throw new Error("openai_response_malformed");
   const response = input.response as Record<string, unknown>;
   if (response.model !== input.expectedModel) throw new Error("openai_model_substitution_refused");
-  if (response.status !== undefined && response.status !== "completed") throw new Error("openai_response_incomplete");
+  if (response.status !== undefined && response.status !== "completed") {
+    const details = response.incomplete_details;
+    const reason = details && typeof details === "object" && !Array.isArray(details)
+      ? (details as Record<string, unknown>).reason
+      : undefined;
+    if (reason === "max_output_tokens" || reason === "max_tokens") throw new Error("openai_response_incomplete_max_tokens");
+    if (reason === "content_filter") throw new Error("openai_response_incomplete_content_filter");
+    throw new Error("openai_response_incomplete");
+  }
   let parsed: unknown;
   try {
     parsed = JSON.parse(outputText(response));
@@ -286,51 +365,51 @@ export function parseLabSynthesisResponse(input: {
   const row = parsed as Record<string, unknown>;
   const keys = Object.keys(row).sort();
   if (keys.join("|") !== ["priorityActions", "referencedBiomarkerIds", "summary", "uncertainty", "longitudinalSummary", "planImpact", "generatedPlan"].sort().join("|")) throw new Error("openai_output_keys_refused");
-  if (typeof row.summary !== "string" || row.summary.length < 1 || row.summary.length > 4000) throw new Error("openai_summary_refused");
-  if (typeof row.uncertainty !== "string" || row.uncertainty.length < 1 || row.uncertainty.length > 1000) throw new Error("openai_uncertainty_refused");
-  if (!Array.isArray(row.priorityActions) || row.priorityActions.length > 8
-    || row.priorityActions.some((value) => typeof value !== "string" || value.length < 1 || value.length > 350)) throw new Error("openai_actions_refused");
-  if (!Array.isArray(row.referencedBiomarkerIds) || row.referencedBiomarkerIds.length < 1 || row.referencedBiomarkerIds.length > 40
+  if (typeof row.summary !== "string" || row.summary.length < 1 || row.summary.length > 1800) throw new Error("openai_summary_refused");
+  if (typeof row.uncertainty !== "string" || row.uncertainty.length < 1 || row.uncertainty.length > 600) throw new Error("openai_uncertainty_refused");
+  if (!Array.isArray(row.priorityActions) || row.priorityActions.length > 6
+    || row.priorityActions.some((value) => typeof value !== "string" || value.length < 1 || value.length > 280)) throw new Error("openai_actions_refused");
+  if (!Array.isArray(row.referencedBiomarkerIds) || row.referencedBiomarkerIds.length < 1 || row.referencedBiomarkerIds.length > 24
     || row.referencedBiomarkerIds.some((value) => typeof value !== "string")) throw new Error("openai_biomarker_references_refused");
   if (row.referencedBiomarkerIds.some((value) => !input.allowedBiomarkerIds.has(value as string))) throw new Error("openai_unknown_biomarker_reference_refused");
-  if (typeof row.longitudinalSummary !== "string" || row.longitudinalSummary.length < 1 || row.longitudinalSummary.length > 4000) throw new Error("openai_summary_refused");
+  if (typeof row.longitudinalSummary !== "string" || row.longitudinalSummary.length < 1 || row.longitudinalSummary.length > 1800) throw new Error("openai_summary_refused");
   if (!row.planImpact || typeof row.planImpact !== "object" || Array.isArray(row.planImpact)) throw new Error("openai_output_malformed");
   const planImpact = row.planImpact as Record<string, unknown>;
   if (Object.keys(planImpact).sort().join("|") !== ["changes", "headline"].sort().join("|")
     || typeof planImpact.headline !== "string" || planImpact.headline.length < 1 || planImpact.headline.length > 300
-    || !Array.isArray(planImpact.changes) || planImpact.changes.length > 20) throw new Error("openai_output_malformed");
+    || !Array.isArray(planImpact.changes) || planImpact.changes.length > 8) throw new Error("openai_output_malformed");
   const allowedProtocolItemIds = input.allowedProtocolItemIds ?? new Set<string>();
   const changes = planImpact.changes.map((candidate): PlanImpactChange => {
     if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) throw new Error("openai_output_malformed");
     const change = candidate as Record<string, unknown>;
     if (Object.keys(change).sort().join("|") !== ["biomarkerIds", "kind", "label", "protocolItemIds", "rationale"].sort().join("|")
       || !["continue_review", "discuss_addition", "reassess"].includes(String(change.kind))
-      || typeof change.label !== "string" || change.label.length < 1 || change.label.length > 180
-      || typeof change.rationale !== "string" || change.rationale.length < 1 || change.rationale.length > 1000
-      || !Array.isArray(change.biomarkerIds) || change.biomarkerIds.length > 40 || change.biomarkerIds.some((id) => typeof id !== "string" || !input.allowedBiomarkerIds.has(id))
-      || !Array.isArray(change.protocolItemIds) || change.protocolItemIds.length > 40 || change.protocolItemIds.some((id) => typeof id !== "string" || !allowedProtocolItemIds.has(id))) throw new Error("openai_unknown_biomarker_reference_refused");
+      || typeof change.label !== "string" || change.label.length < 1 || change.label.length > 140
+      || typeof change.rationale !== "string" || change.rationale.length < 1 || change.rationale.length > 500
+      || !Array.isArray(change.biomarkerIds) || change.biomarkerIds.length > 8 || change.biomarkerIds.some((id) => typeof id !== "string" || !input.allowedBiomarkerIds.has(id))
+      || !Array.isArray(change.protocolItemIds) || change.protocolItemIds.length > 8 || change.protocolItemIds.some((id) => typeof id !== "string" || !allowedProtocolItemIds.has(id))) throw new Error("openai_unknown_biomarker_reference_refused");
     return change as unknown as PlanImpactChange;
   });
   if (!row.generatedPlan || typeof row.generatedPlan !== "object" || Array.isArray(row.generatedPlan)) throw new Error("openai_plan_refused");
   const generatedPlan = row.generatedPlan as Record<string, unknown>;
   if (Object.keys(generatedPlan).sort().join("|") !== ["confidence", "summary", "tasks", "title"].sort().join("|")
-    || typeof generatedPlan.title !== "string" || generatedPlan.title.length < 1 || generatedPlan.title.length > 180
-    || typeof generatedPlan.summary !== "string" || generatedPlan.summary.length < 1 || generatedPlan.summary.length > 2000
+    || typeof generatedPlan.title !== "string" || generatedPlan.title.length < 1 || generatedPlan.title.length > 140
+    || typeof generatedPlan.summary !== "string" || generatedPlan.summary.length < 1 || generatedPlan.summary.length > 1200
     || !["low", "medium", "high"].includes(String(generatedPlan.confidence))
-    || !Array.isArray(generatedPlan.tasks) || generatedPlan.tasks.length < 1 || generatedPlan.tasks.length > 8) throw new Error("openai_plan_refused");
+    || !Array.isArray(generatedPlan.tasks) || generatedPlan.tasks.length < 1 || generatedPlan.tasks.length > 6) throw new Error("openai_plan_refused");
   const allowedSymptoms = input.allowedSymptomCategoryIds ?? new Set<string>();
   const tasks = generatedPlan.tasks.map((candidate): LabPlanTask => {
     if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) throw new Error("openai_plan_refused");
     const task = candidate as Record<string, unknown>;
     if (Object.keys(task).sort().join("|") !== ["biomarkerIds", "frequency", "kind", "name", "rationale", "symptomCategoryIds", "timing"].sort().join("|")
       || !["nutrition", "exercise", "sleep", "stress", "hydration", "monitoring", "follow_up"].includes(String(task.kind))
-      || typeof task.name !== "string" || task.name.length < 1 || task.name.length > 180
-      || typeof task.frequency !== "string" || task.frequency.length < 1 || task.frequency.length > 120
-      || typeof task.timing !== "string" || task.timing.length < 1 || task.timing.length > 120
-      || typeof task.rationale !== "string" || task.rationale.length < 1 || task.rationale.length > 700
-      || !Array.isArray(task.biomarkerIds) || task.biomarkerIds.length > 20
+      || typeof task.name !== "string" || task.name.length < 1 || task.name.length > 140
+      || typeof task.frequency !== "string" || task.frequency.length < 1 || task.frequency.length > 100
+      || typeof task.timing !== "string" || task.timing.length < 1 || task.timing.length > 100
+      || typeof task.rationale !== "string" || task.rationale.length < 1 || task.rationale.length > 500
+      || !Array.isArray(task.biomarkerIds) || task.biomarkerIds.length > 8
       || task.biomarkerIds.some((id) => typeof id !== "string" || !input.allowedBiomarkerIds.has(id))
-      || !Array.isArray(task.symptomCategoryIds) || task.symptomCategoryIds.length > 8
+      || !Array.isArray(task.symptomCategoryIds) || task.symptomCategoryIds.length > 4
       || task.symptomCategoryIds.some((id) => typeof id !== "string" || !allowedSymptoms.has(id))) throw new Error("openai_plan_refused");
     if (task.biomarkerIds.length + task.symptomCategoryIds.length === 0) throw new Error("openai_plan_refused");
     return task as unknown as LabPlanTask;

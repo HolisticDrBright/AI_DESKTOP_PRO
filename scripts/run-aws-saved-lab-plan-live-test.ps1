@@ -1,7 +1,9 @@
 param(
   [string]$ApiOrigin = "https://wxv734oi12.execute-api.us-east-2.amazonaws.com",
   [string]$Profile = "ai-synthetic-member",
-  [string]$Region = "us-east-2"
+  [string]$Region = "us-east-2",
+  [ValidateRange(3, 30)]
+  [int]$MarkerCount = 3
 )
 
 $ErrorActionPreference = "Stop"
@@ -20,6 +22,21 @@ try {
   $headers = @{ Authorization = "Bearer $($auth.AuthenticationResult.IdToken)"; Accept = "application/json" }
   $panelId = "synthetic-saved-panel-$([guid]::NewGuid().ToString('N').Substring(0,8))"
   $today = (Get-Date).ToUniversalTime().ToString("yyyy-MM-dd")
+  $markers = @(
+    @{ markerId = "saved-glucose"; canonicalName = "Glucose"; value = 104; unit = "mg/dL"; labMin = 70; labMax = 99 },
+    @{ markerId = "saved-tsh"; canonicalName = "TSH"; value = 3.4; unit = "uIU/mL"; labMin = 0.4; labMax = 4.5 },
+    @{ markerId = "saved-vitamin-d"; canonicalName = "Vitamin D"; value = 32; unit = "ng/mL"; labMin = 30; labMax = 100 }
+  )
+  for ($index = 4; $index -le $MarkerCount; $index += 1) {
+    $markers += @{
+      markerId = "saved-synthetic-marker-$index"
+      canonicalName = "Synthetic measured marker $index"
+      value = 40 + $index
+      unit = "unit-$index"
+      labMin = 35
+      labMax = 50
+    }
+  }
   $createBody = @{
     panelId = $panelId; panelName = "Synthetic Saved Lab Values"; testDate = $today
     dataClassification = "synthetic_only"; attestsSyntheticOnly = $true
@@ -30,11 +47,7 @@ try {
       lifestyle = @{ sleepHours = 6.5; sleepQuality = 5; stressLevel = 6; dietType = "omnivore"; exerciseFrequency = 3 }
     }
     longitudinalContext = @{ incomingPanel = @{ panelId = $panelId; panelName = "Synthetic Saved Lab Values"; testDate = $today }; priorPanels = @(); activeProtocol = $null }
-    biomarkers = @(
-      @{ markerId = "saved-glucose"; canonicalName = "Glucose"; value = 104; unit = "mg/dL"; labMin = 70; labMax = 99 },
-      @{ markerId = "saved-tsh"; canonicalName = "TSH"; value = 3.4; unit = "uIU/mL"; labMin = 0.4; labMax = 4.5 },
-      @{ markerId = "saved-vitamin-d"; canonicalName = "Vitamin D"; value = 32; unit = "ng/mL"; labMin = 30; labMax = 100 }
-    )
+    biomarkers = $markers
   } | ConvertTo-Json -Depth 8
   $created = Invoke-RestMethod -Method Post -Uri "$ApiOrigin/clinical-core/consumer/labs/plan-jobs" -Headers $headers -ContentType "application/json" -Body $createBody
   if ($created.data.state -ne "queued" -or -not $created.data.jobId) { throw "Saved-lab plan job was not queued." }
@@ -45,7 +58,7 @@ try {
   } while ($current.data.state -notin @("completed", "needs_review", "failed") -and (Get-Date) -lt $deadline)
   if ($current.data.state -ne "completed" -or -not $current.data.result.generatedPlan) { throw "Saved-lab plan job ended in state $($current.data.state)." }
   $unexpectedVerification = @($current.data.result.biomarkers | Where-Object verificationState -ne "needs_human_review").Count
-  $accepted = $current.data.result.biomarkers.Count -eq 3 `
+  $accepted = $current.data.result.biomarkers.Count -eq $markers.Count `
     -and $unexpectedVerification -eq 0 `
     -and $current.data.result.generatedPlan.sourcePanelId -eq $panelId `
     -and $current.data.result.generatedPlan.tasks.Count -ge 1

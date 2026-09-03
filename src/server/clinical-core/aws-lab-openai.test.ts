@@ -55,18 +55,23 @@ describe("AWS lab OpenAI boundary", () => {
       },
       activeProtocol: { protocolId: "protocol-1", protocolName: "Synthetic plan", version: 1, items: [{ itemId: "item-1", kind: "supplement", name: "Synthetic support item" }] },
     });
-    expect(body).toMatchObject({ model: "gpt-5.1-2025-11-13", store: false, reasoning: { effort: "none" }, max_output_tokens: 6000 });
+    expect(body).toMatchObject({ model: "gpt-5.1-2025-11-13", store: false, reasoning: { effort: "none" }, max_output_tokens: 10_000 });
     expect(body.text.format).toMatchObject({ type: "json_schema", strict: true });
     expect(body).not.toHaveProperty("tools");
     expect(body).not.toHaveProperty("background");
     expect(JSON.stringify(body)).not.toMatch(/affiliate_url|commercial_link|patient_name/i);
     expect(JSON.stringify(body)).toContain("Synthetic fatigue");
     expect(JSON.stringify(body)).not.toMatch(/firstName|lastName|email|dateOfBirth/);
-    expect(body.text.format.schema.properties.summary.maxLength).toBe(4000);
-    expect(body.text.format.schema.properties.priorityActions.maxItems).toBe(8);
-    expect(body.text.format.schema.properties.referencedBiomarkerIds.maxItems).toBe(40);
-    expect(body.text.format.schema.properties.planImpact.properties.changes.maxItems).toBe(20);
-    expect(body.text.format.schema.properties.generatedPlan.properties.tasks.maxItems).toBe(8);
+    expect(body.text.format.schema.properties.summary.maxLength).toBe(1800);
+    expect(body.text.format.schema.properties.priorityActions.maxItems).toBe(6);
+    expect(body.text.format.schema.properties.referencedBiomarkerIds.maxItems).toBe(1);
+    expect(body.text.format.schema.properties.planImpact.properties.changes.maxItems).toBe(8);
+    expect(body.text.format.schema.properties.generatedPlan.properties.tasks.maxItems).toBe(6);
+    expect(body.text.format.schema.properties.referencedBiomarkerIds.items).toMatchObject({ enum: [marker.biomarkerId] });
+    expect(body.text.format.schema.properties.planImpact.properties.changes.items.properties.biomarkerIds.items).toMatchObject({ enum: [marker.biomarkerId] });
+    expect(body.text.format.schema.properties.planImpact.properties.changes.items.properties.protocolItemIds.items).toMatchObject({ enum: ["item-1"] });
+    expect(body.text.format.schema.properties.generatedPlan.properties.tasks.items.properties.biomarkerIds.items).toMatchObject({ enum: [marker.biomarkerId] });
+    expect(body.text.format.schema.properties.generatedPlan.properties.tasks.items.properties.symptomCategoryIds.maxItems).toBe(0);
   });
 
   test("accepts a bounded synthesis that references only supplied markers", () => {
@@ -96,6 +101,8 @@ describe("AWS lab OpenAI boundary", () => {
     };
     expect(() => parseLabSynthesisResponse({ response: response(valid, "another-model"), expectedModel: "gpt-5.1-2025-11-13", allowedBiomarkerIds: new Set([marker.biomarkerId]) })).toThrow("openai_model_substitution_refused");
     expect(() => parseLabSynthesisResponse({ response: { ...response(valid), status: "incomplete" }, expectedModel: "gpt-5.1-2025-11-13", allowedBiomarkerIds: new Set([marker.biomarkerId]) })).toThrow("openai_response_incomplete");
+    expect(() => parseLabSynthesisResponse({ response: { ...response(valid), status: "incomplete", incomplete_details: { reason: "max_output_tokens" } }, expectedModel: "gpt-5.1-2025-11-13", allowedBiomarkerIds: new Set([marker.biomarkerId]) })).toThrow("openai_response_incomplete_max_tokens");
+    expect(() => parseLabSynthesisResponse({ response: { ...response(valid), status: "incomplete", incomplete_details: { reason: "content_filter" } }, expectedModel: "gpt-5.1-2025-11-13", allowedBiomarkerIds: new Set([marker.biomarkerId]) })).toThrow("openai_response_incomplete_content_filter");
     expect(() => parseLabSynthesisResponse({ response: response({ ...valid, referencedBiomarkerIds: ["unknown"] }), expectedModel: "gpt-5.1-2025-11-13", allowedBiomarkerIds: new Set([marker.biomarkerId]) })).toThrow("openai_unknown_biomarker_reference_refused");
     expect(() => parseLabSynthesisResponse({ response: response({ ...valid, priorityActions: ["Take 500 mg daily."] }), expectedModel: "gpt-5.1-2025-11-13", allowedBiomarkerIds: new Set([marker.biomarkerId]) })).toThrow("openai_dose_directive_refused");
     expect(() => parseLabSynthesisResponse({ response: response({ ...valid, summary: "Glucose is 104 mg/dL." }), expectedModel: "gpt-5.1-2025-11-13", allowedBiomarkerIds: new Set([marker.biomarkerId]) })).not.toThrow();
