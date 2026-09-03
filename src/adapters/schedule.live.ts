@@ -11,6 +11,24 @@ import type {
 } from "./live-types";
 import { getClinicalAccessToken } from "./session.server";
 import { clinicalRpc } from "./aws-clinical-data.server";
+import { isAdapterError } from "./errors";
+
+async function calendarRead<T>(read: () => Promise<T>): Promise<T> {
+  const waits = [0, 150, 400];
+  let lastError: unknown;
+  for (const wait of waits) {
+    if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+    try {
+      return await read();
+    } catch (error) {
+      lastError = error;
+      // Calendar reads are idempotent. Retry only transient service failures;
+      // access refusals and invalid requests must remain fail-closed.
+      if (!isAdapterError(error) || error.code !== "unavailable") throw error;
+    }
+  }
+  throw lastError;
+}
 
 interface CalendarRpcAppointment {
   id: string;
@@ -57,11 +75,12 @@ export const scheduleLive = {
     orgId?: string | null,
   ): Promise<LiveCalendar> {
     const token = await getClinicalAccessToken(sessionToken);
-    const result = await clinicalRpc<CalendarRpcResult>("get_desktop_calendar", {
-      _organization_id: resolveOrgId(orgId),
+    const organizationId = resolveOrgId(orgId);
+    const result = await calendarRead(() => clinicalRpc<CalendarRpcResult>("get_desktop_calendar", {
+      _organization_id: organizationId,
       _from: fromIso,
       _to: toIso,
-    }, token);
+    }, token));
     return {
       appointments: result.appointments.map((row) => ({
         id: row.id,

@@ -277,9 +277,12 @@ const HOUR_PX = 54;
 
 export function CalendarView({
   initialApptId,
+  initialCalendar = null,
 }: {
   /** Deep link (?appt=) that opens the detail drawer on load. */
   initialApptId?: string;
+  /** Server-loaded window so a transient browser bridge failure cannot blank the calendar. */
+  initialCalendar?: LiveCalendar | null;
 }) {
   // Live only: the anchored week is fetched from the record per anchor change.
   const [liveWeek, setLiveWeek] = useState<ReturnType<typeof mapLiveWeek> | null>(null);
@@ -294,6 +297,7 @@ export function CalendarView({
   const [practitionerId, setPractitionerId] = useState("");
   const [selection, setSelection] = useState<Selection | null>(null);
   const deepLinked = useRef(false);
+  const initialCalendarRef = useRef(initialCalendar);
 
   // Resolve "now" on the client only (avoids hydration mismatch from the clock).
   useEffect(() => {
@@ -309,10 +313,31 @@ export function CalendarView({
   useEffect(() => {
     if (!weekStartIso) return;
     let alive = true;
-    setLiveState("loading");
     const from = new Date(weekStartIso);
+    const to = addDays(from, 7);
+    const serverWindow = initialCalendarRef.current;
+    if (serverWindow && reloadKey === 0) {
+      initialCalendarRef.current = null;
+      const exactWeek = {
+        ...serverWindow,
+        appointments: serverWindow.appointments.filter((appointment) => {
+          if (!appointment.startsAt) return false;
+          const startsAt = Date.parse(appointment.startsAt);
+          return Number.isFinite(startsAt) && startsAt >= from.getTime() && startsAt < to.getTime();
+        }),
+      };
+      setLiveWeek(mapLiveWeek(exactWeek));
+      setLiveState("ready");
+      // The secondary telehealth service enriches the already-visible calendar;
+      // its availability never controls whether the main calendar renders.
+      addTelehealthAppointments(exactWeek).then((week) => {
+        if (alive) setLiveWeek(mapLiveWeek(week));
+      }).catch(() => undefined);
+      return () => { alive = false; };
+    }
+    setLiveState("loading");
     api.schedule
-      .getWeek(from.toISOString(), addDays(from, 7).toISOString())
+      .getWeek(from.toISOString(), to.toISOString())
       .then(addTelehealthAppointments)
       .then((week) => {
         if (!alive) return;

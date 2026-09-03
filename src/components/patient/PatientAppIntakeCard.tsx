@@ -8,6 +8,8 @@ import type { LivePatientAppIntake } from "@/adapters/live-types";
 import { Card, CardTitle } from "@/components/ui/bits";
 import { ClinicalError, ClinicalLoading } from "@/components/ui/ClinicalStates";
 import { Pill } from "@/components/ui/Pill";
+import type { Tone } from "@/adapters/types";
+import { importedLabStatus, rangeGeometry, rangeText } from "./lab-range";
 
 function dateLabel(value: string | undefined): string {
   if (!value) return "Not received";
@@ -22,6 +24,65 @@ function textList(values: string[] | undefined): string {
 
 function numeric(value: number | undefined, suffix = ""): string {
   return typeof value === "number" && Number.isFinite(value) ? `${value}${suffix}` : "Not reported";
+}
+
+type ImportedLab = NonNullable<LivePatientAppIntake["labImports"]>[number];
+
+const RANGE_TONE: Record<ReturnType<typeof importedLabStatus>["status"], Tone> = {
+  below: "warning",
+  within: "positive",
+  above: "warning",
+  critical: "critical",
+  unknown: "slate",
+};
+
+function LabRangeDisplay({ entry }: { entry: ImportedLab }) {
+  const range = {
+    value: entry.value,
+    referenceMin: entry.referenceMin,
+    referenceMax: entry.referenceMax,
+    functionalMin: entry.functionalMin,
+    functionalMax: entry.functionalMax,
+    sourceStatus: entry.sourceStatus,
+  };
+  const interpretation = importedLabStatus(range);
+  const geometry = rangeGeometry(range);
+  const labText = rangeText(entry.referenceMin, entry.referenceMax);
+  const functionalText = rangeText(entry.functionalMin, entry.functionalMax);
+  const hasLabRange = geometry.referenceStartPercent !== null && geometry.referenceWidthPercent !== null;
+  const hasFunctionalRange = geometry.functionalStartPercent !== null && geometry.functionalWidthPercent !== null;
+  const label = `${entry.markerName}: ${entry.value} ${entry.unit ?? ""}; ${interpretation.label}; laboratory range ${labText}; functional range ${functionalText}`;
+
+  return (
+    <div className="min-w-[250px] py-1" role="img" aria-label={label}>
+      <div className="mb-1 flex flex-wrap items-center justify-between gap-1.5">
+        <Pill tone={RANGE_TONE[interpretation.status]}>{interpretation.label}</Pill>
+        <span className="text-[10.5px] text-faint">Lab {labText}</span>
+      </div>
+      <div className="relative h-3 rounded-full bg-[rgba(100,116,139,0.16)]" aria-hidden>
+        {hasLabRange ? (
+          <span
+            className="absolute top-0 h-3 rounded-full bg-[rgba(25,151,133,0.28)]"
+            style={{ left: `${geometry.referenceStartPercent}%`, width: `${geometry.referenceWidthPercent}%` }}
+          />
+        ) : null}
+        {hasFunctionalRange ? (
+          <span
+            className="absolute top-[3px] h-[6px] rounded-full bg-positive"
+            style={{ left: `${geometry.functionalStartPercent}%`, width: `${geometry.functionalWidthPercent}%` }}
+          />
+        ) : null}
+        <span
+          className="absolute top-1/2 h-5 w-[3px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-ink shadow-[0_0_0_2px_white]"
+          style={{ left: `${geometry.resultPercent}%` }}
+        />
+      </div>
+      <div className="mt-1 flex justify-between gap-2 text-[10px] text-faint">
+        <span>Result marker</span>
+        <span>{hasFunctionalRange ? `Functional ${functionalText}` : "Functional range not provided"}</span>
+      </div>
+    </div>
+  );
 }
 
 type PatientAppIntakeFocus = "all" | "labs" | "wearables";
@@ -155,11 +216,13 @@ export function PatientAppIntakeCard({
             {labImports.length > 0 ? (
               <div className="overflow-x-auto">
                 <table className="w-full border-collapse text-left text-[11.5px]">
-                  <thead><tr className="border-b border-hairline-2 text-faint"><th className="py-2 pr-3">Marker</th><th className="py-2 pr-3">Result</th><th className="py-2 pr-3">Panel</th><th className="py-2">Review state</th></tr></thead>
+                  <caption className="sr-only">Patient-supplied laboratory results with reporting-laboratory and governed functional ranges</caption>
+                  <thead><tr className="border-b border-hairline-2 text-faint"><th scope="col" className="py-2 pr-3">Marker</th><th scope="col" className="py-2 pr-3">Result</th><th scope="col" className="py-2 pr-3">Range position</th><th scope="col" className="py-2 pr-3">Panel</th><th scope="col" className="py-2">Import review</th></tr></thead>
                   <tbody>{labImports.map((entry) => (
                     <tr key={entry.eventId} className="border-b border-hairline-2 last:border-0">
-                      <td className="py-2 pr-3 font-medium text-body">{entry.markerName}</td>
-                      <td className="py-2 pr-3">{entry.value} {entry.unit ?? ''}</td>
+                      <th scope="row" className="py-2 pr-3 text-left font-medium text-body">{entry.markerName}</th>
+                      <td className="py-2 pr-3 font-semibold text-body">{entry.value} {entry.unit ?? ''}</td>
+                      <td className="py-2 pr-4"><LabRangeDisplay entry={entry} /></td>
                       <td className="py-2 pr-3 text-subtle">{entry.panelName}</td>
                       <td className="py-2"><Pill tone={entry.state === 'accepted' ? 'positive' : entry.state === 'rejected' ? 'critical' : 'warning'}>{entry.state.replace('_', ' ')}</Pill></td>
                     </tr>
@@ -167,7 +230,7 @@ export function PatientAppIntakeCard({
                 </table>
               </div>
             ) : <p className="m-0 text-[12px] text-faint">No laboratory markers received.</p>}
-            <p className="m-0 mt-2 text-[11.5px] text-subtle">Pending markers are patient-supplied and remain outside the accepted laboratory record until reviewed.</p>
+            <p className="m-0 mt-2 text-[11.5px] text-subtle">Range position is shown independently from import review. The laboratory interval comes from the transferred source. A functional interval appears only when V2 transfers a governed range with provenance; none is invented. Pending markers remain patient-supplied until reconciled.</p>
           </section> : null}
         </div>
       )}

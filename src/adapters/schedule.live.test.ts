@@ -88,6 +88,26 @@ describe("scheduleLive Desktop AWS clinical boundary", () => {
     });
   });
 
+  test("retries transient calendar reads but never retries an access refusal", async () => {
+    const calendar = { appointments: [], practitioners: [], patients: [] };
+    const transient = vi.fn()
+      .mockResolvedValueOnce(response({ message: "temporary" }, 503))
+      .mockResolvedValueOnce(response({ message: "temporary" }, 503))
+      .mockResolvedValueOnce(response(calendar));
+    vi.stubGlobal("fetch", transient);
+    await expect(scheduleLive.getCalendar(
+      "2026-09-07T00:00:00Z", "2026-09-14T00:00:00Z", TOKEN, ORG_ID,
+    )).resolves.toEqual(calendar);
+    expect(transient).toHaveBeenCalledTimes(3);
+
+    const refused = vi.fn().mockResolvedValue(response({ code: "42501" }, 403));
+    vi.stubGlobal("fetch", refused);
+    await expect(scheduleLive.getCalendar(
+      "2026-09-07T00:00:00Z", "2026-09-14T00:00:00Z", TOKEN, ORG_ID,
+    )).rejects.toMatchObject({ code: "forbidden" });
+    expect(refused).toHaveBeenCalledTimes(1);
+  });
+
   test("books through the atomic appointment RPC", async () => {
     const fetchMock = vi.fn().mockResolvedValue(response({
       id: "appointment-2",

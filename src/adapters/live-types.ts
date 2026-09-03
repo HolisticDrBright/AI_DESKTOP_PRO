@@ -381,6 +381,9 @@ export interface LivePatientAppIntake {
   labImports?: {
     eventId: string; panelName: string; markerName: string; value: number;
     unit: string | null; sourceStatus: string | null; collectedAt: string;
+    referenceMin?: number | null; referenceMax?: number | null;
+    functionalMin?: number | null; functionalMax?: number | null;
+    functionalSourceVersion?: string | null; functionalPopulation?: string | null;
     state: 'review_pending' | 'conflict' | 'accepted' | 'rejected'; receivedAt: string;
   }[];
   generatedAt: string;

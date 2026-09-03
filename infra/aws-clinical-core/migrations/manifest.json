@@ -97,6 +97,11 @@
       "version": "20260903170000",
       "file": "20260903170000_register_synthetic_desktop_calendar.sql",
       "production_transform": false
+    },
+    {
+      "version": "20260903180000",
+      "file": "20260903180000_synthetic_patient_app_lab_ranges.sql",
+      "production_transform": false
     }
   ]
 }
