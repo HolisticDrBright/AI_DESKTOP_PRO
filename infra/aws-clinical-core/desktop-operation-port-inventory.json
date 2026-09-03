@@ -1303,7 +1303,7 @@
         {
           "adapter": "schedule.live.ts",
           "domain": "schedule",
-          "line": 100,
+          "line": 119,
           "argumentKeys": [
             "_appointment_type",
             "_ends_at",
@@ -3585,7 +3585,7 @@
         {
           "adapter": "schedule.live.ts",
           "domain": "schedule",
-          "line": 60,
+          "line": 79,
           "argumentKeys": [
             "_from",
             "_organization_id",
@@ -8175,7 +8175,7 @@
         {
           "adapter": "schedule.live.ts",
           "domain": "schedule",
-          "line": 160,
+          "line": 179,
           "argumentKeys": [
             "_appointment_id",
             "_ends_at",
@@ -11553,7 +11553,7 @@
         {
           "adapter": "schedule.live.ts",
           "domain": "schedule",
-          "line": 132,
+          "line": 151,
           "argumentKeys": [
             "_appointment_id",
             "_status"
