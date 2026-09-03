@@ -74,10 +74,16 @@ describe("AWS consumer clinical record adapter", () => {
       payload: {
         id: "protocol_local_1", status: "active", name: "Synthetic protocol",
         start_date: "2026-08-21", version: 1, supplements_json: [],
-        peptides_json: [], lifestyle_tasks_json: [],
+        peptides_json: [], lifestyle_tasks_json: [], generation_json: {
+          source: "aws_lab_analysis", sourceAnalysisId: "22222222-2222-4222-8222-222222222222",
+          sourcePanelId: "panel-new", inputSnapshotSha256: "a".repeat(64), confidence: "medium",
+          biomarkerIds: [], symptomCategoryIds: ["sleep"], productSelectionState: "awaiting_governed_catalog_approval",
+          model: "gpt-5.1-2025-11-13", promptVersion: "lab-plan/1",
+        },
       }, deleted: false,
     });
     expect(result).toMatchObject({ versionId: VERSION_ID, stableRecordId: RECORD, duplicate: false });
+    expect(result.payload.generation_json).toMatchObject({ source: "aws_lab_analysis", promptVersion: "lab-plan/1" });
     const write = fixture.calls.find((call) => call.sql.includes("record_consumer_clinical_version"))!;
     expect(write.parameters.at(-2)).toMatch(/^[0-9a-f]{64}$/);
     expect(write.parameters).not.toContain("synthetic-subject-001");

@@ -25,6 +25,17 @@ const planImpact = {
   }],
 };
 
+const generatedPlan = {
+  title: "Synthetic lab and symptom plan",
+  summary: "A measured-data plan for the current synthetic result.",
+  confidence: "medium",
+  tasks: [{
+    kind: "nutrition", name: "Build a balanced breakfast", frequency: "Daily", timing: "Morning",
+    rationale: "Supports the pattern represented by the supplied marker.",
+    biomarkerIds: [marker.biomarkerId], symptomCategoryIds: [],
+  }],
+};
+
 describe("AWS lab OpenAI boundary", () => {
   test("accepts the configured JSON secret shapes without exposing the bearer", () => {
     const key = `sk-${"x".repeat(40)}`;
@@ -55,6 +66,7 @@ describe("AWS lab OpenAI boundary", () => {
     expect(body.text.format.schema.properties.priorityActions.maxItems).toBe(8);
     expect(body.text.format.schema.properties.referencedBiomarkerIds.maxItems).toBe(40);
     expect(body.text.format.schema.properties.planImpact.properties.changes.maxItems).toBe(20);
+    expect(body.text.format.schema.properties.generatedPlan.properties.tasks.maxItems).toBe(8);
   });
 
   test("accepts a bounded synthesis that references only supplied markers", () => {
@@ -66,6 +78,7 @@ describe("AWS lab OpenAI boundary", () => {
         referencedBiomarkerIds: [marker.biomarkerId],
         longitudinalSummary: "Only one comparable observation is available.",
         planImpact,
+        generatedPlan,
       }),
       expectedModel: "gpt-5.1-2025-11-13",
       allowedBiomarkerIds: new Set([marker.biomarkerId]),
@@ -79,6 +92,7 @@ describe("AWS lab OpenAI boundary", () => {
       summary: "Review the supplied result.", uncertainty: "Context is limited.",
       priorityActions: ["Discuss this marker with a practitioner."], referencedBiomarkerIds: [marker.biomarkerId],
       longitudinalSummary: "Only one comparable observation is available.", planImpact,
+      generatedPlan,
     };
     expect(() => parseLabSynthesisResponse({ response: response(valid, "another-model"), expectedModel: "gpt-5.1-2025-11-13", allowedBiomarkerIds: new Set([marker.biomarkerId]) })).toThrow("openai_model_substitution_refused");
     expect(() => parseLabSynthesisResponse({ response: { ...response(valid), status: "incomplete" }, expectedModel: "gpt-5.1-2025-11-13", allowedBiomarkerIds: new Set([marker.biomarkerId]) })).toThrow("openai_response_incomplete");

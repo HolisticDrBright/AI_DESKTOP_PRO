@@ -828,7 +828,22 @@ async function executeCoreRpc(
       "select clinical_core.get_patient_protocol($1,$2) as data",
       [clinicalUuid(context.organizationId), clinicalUuid(requiredUuid(args._patient_id))],
     ));
-    return decodeJson(row.data);
+    const data = decodeJson(row.data) as Record<string, unknown>;
+    const consumerRows = await tx.query<{ payload_json: string; received_at: string }>(
+      `select v.payload::text as payload_json, v.received_at::text
+       from clinical_core.consumer_clinical_record_versions v
+       where v.organization_id=$1 and v.patient_record_id=$2
+         and v.collection='protocols' and v.deleted=false and v.payload->>'status'='active'
+         and exists (select 1 from clinical_core.current_consent c
+           where c.connection_id=v.connection_id and c.scope='protocols_supplements' and c.status='granted')
+       order by v.received_at desc, v.id desc limit 1`,
+      [clinicalUuid(context.organizationId), clinicalUuid(requiredUuid(args._patient_id))],
+    );
+    const candidate = consumerRows.rows[0];
+    return {
+      ...data,
+      consumerGenerated: candidate ? consumerGeneratedProtocol(candidate.payload_json, candidate.received_at) : null,
+    };
   }
   if (name === "create_protocol_draft") {
     exactKeys(args, ["_organization_id", "_patient_id", "_title", "_from_template_id"]);
@@ -1549,6 +1564,49 @@ function requiredTimestamp(value: unknown): string {
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T/.test(value)
     || !Number.isFinite(Date.parse(value))) throw invalid();
   return value;
+}
+
+export function consumerGeneratedProtocol(payloadJson: string, receivedAt: string): Record<string, unknown> | null {
+  let payload: Record<string, unknown>;
+  try {
+    const parsed = JSON.parse(payloadJson);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    payload = parsed as Record<string, unknown>;
+  } catch { return null; }
+  const generation = payload.generation_json;
+  if (!generation || typeof generation !== "object" || Array.isArray(generation)) return null;
+  const source = generation as Record<string, unknown>;
+  const tasks = payload.lifestyle_tasks_json;
+  if (source.source !== "aws_lab_analysis" || source.promptVersion !== "lab-plan/1"
+    || !UUID.test(String(source.sourceAnalysisId ?? ""))
+    || typeof source.sourcePanelId !== "string" || source.sourcePanelId.length > 160
+    || !["low", "medium", "high"].includes(String(source.confidence))
+    || source.productSelectionState !== "awaiting_governed_catalog_approval"
+    || typeof payload.id !== "string" || payload.id.length > 160
+    || typeof payload.name !== "string" || payload.name.length > 180
+    || typeof payload.description !== "string" || payload.description.length > 2000
+    || !Number.isInteger(payload.version) || Number(payload.version) < 1
+    || payload.status !== "active" || !Array.isArray(tasks) || tasks.length > 8
+    || !Number.isFinite(Date.parse(receivedAt))) return null;
+  const safeTasks = tasks.map((candidate) => {
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return null;
+    const task = candidate as Record<string, unknown>;
+    if (typeof task.id !== "string" || task.id.length > 160
+      || typeof task.name !== "string" || task.name.length > 180
+      || typeof task.frequency !== "string" || task.frequency.length > 120
+      || (task.timing !== undefined && typeof task.timing !== "string")
+      || (task.notes !== undefined && typeof task.notes !== "string")
+      || /https?:\/\//i.test(JSON.stringify(task))) return null;
+    return { id: task.id, name: task.name, frequency: task.frequency,
+      timing: task.timing ?? null, notes: task.notes ?? null };
+  });
+  if (safeTasks.some((task) => task === null)) return null;
+  return {
+    id: payload.id, name: payload.name, summary: payload.description, version: payload.version,
+    status: "active", generatedAt: typeof payload.start_date === "string" ? payload.start_date : receivedAt,
+    receivedAt, sourceAnalysisId: source.sourceAnalysisId, sourcePanelId: source.sourcePanelId,
+    confidence: source.confidence, productSelectionState: source.productSelectionState, tasks: safeTasks,
+  };
 }
 
 function optionalTimestamp(value: unknown): string | null {

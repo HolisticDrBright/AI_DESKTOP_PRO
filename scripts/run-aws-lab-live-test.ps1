@@ -52,7 +52,21 @@ try {
 
   $documentId = [guid]::NewGuid().ToString()
   $headers = @{ Authorization = "Bearer $token"; Accept = "application/json" }
-  $createBody = @{ dataClassification = "synthetic_only"; attestsSyntheticOnly = $true; panelId = "synthetic-functional-panel"; documents = @(@{ clientDocumentId = $documentId; fileName = "synthetic-functional-lab.png"; contentType = "image/png"; byteSize = (Get-Item $imagePath).Length }) } | ConvertTo-Json -Depth 5
+  $createBody = @{
+    dataClassification = "synthetic_only"; attestsSyntheticOnly = $true; panelId = "synthetic-functional-panel"
+    patientContext = @{
+      ageYears = 41; sex = "female"; pregnancyStatus = "not_pregnant"; nursing = $false
+      mainComplaint = "Synthetic low energy and disrupted sleep"; complaintDuration = "3 months"; complaintSeverity = 5
+      conditions = @(); medications = @(); allergies = @()
+      topSymptomSignals = @(@{ categoryId = "sleep"; percentage = 65 })
+      lifestyle = @{ sleepHours = 6.5; sleepQuality = 5; stressLevel = 6; dietType = "omnivore"; exerciseFrequency = 3 }
+    }
+    longitudinalContext = @{
+      incomingPanel = @{ panelId = "synthetic-functional-panel"; panelName = "Synthetic Functional Lab"; testDate = (Get-Date).ToUniversalTime().ToString("yyyy-MM-dd") }
+      priorPanels = @(); activeProtocol = $null
+    }
+    documents = @(@{ clientDocumentId = $documentId; fileName = "synthetic-functional-lab.png"; contentType = "image/png"; byteSize = (Get-Item $imagePath).Length })
+  } | ConvertTo-Json -Depth 8
   $created = Invoke-RestMethod -Method Post -Uri "$ApiOrigin/clinical-core/consumer/labs/jobs" -Headers $headers -ContentType "application/json" -Body $createBody
   $target = $created.data.documents[0]
   if (-not $target.uploadUrl) { throw "AWS did not provide an upload URL." }
@@ -69,7 +83,14 @@ try {
   } while ($state -notin @("completed", "needs_review", "failed") -and (Get-Date) -lt $deadline)
   if ($state -ne "completed") { throw "Synthetic lab analysis ended in state $state." }
   $result = $current.data.result
-  if ($current.data.passesCompleted -ne 5 -or $current.data.progressPercent -ne 100 -or $result.biomarkers.Count -lt 8 -or $result.recommendations.Count -ne 0 -or -not $result.summary.StartsWith("AI-assisted functional-medicine draft for practitioner review.")) { throw "Synthetic lab result failed acceptance checks." }
+  $plan = $result.generatedPlan
+  if ($current.data.passesCompleted -ne 5 -or $current.data.progressPercent -ne 100 `
+    -or $result.biomarkers.Count -lt 8 -or $result.recommendations.Count -ne 0 `
+    -or -not $result.summary.StartsWith("AI-assisted consumer laboratory interpretation.") `
+    -or -not $plan -or $plan.tasks.Count -lt 1 -or $plan.sourceAnalysisId -ne $result.analysisId `
+    -or $plan.sourcePanelId -ne "synthetic-functional-panel" `
+    -or $plan.productSelectionState -ne "awaiting_governed_catalog_approval" `
+    -or $plan.safety.noMedicationHormoneOrPeptideChanges -ne $true) { throw "Synthetic lab result failed acceptance checks." }
 
   $idempotent = Invoke-RestMethod -Method Post -Uri "$ApiOrigin/clinical-core/consumer/labs/jobs/$($created.data.jobId)/complete-upload" -Headers $headers -ContentType "application/json" -Body $completeBody
   if ($idempotent.data.state -ne "completed") { throw "Completed upload retry was not idempotent." }
@@ -90,7 +111,7 @@ try {
   }
   if (-not $deleteIsDurable) { throw "Deleted lab job remained readable." }
 
-  [pscustomobject]@{ Contract = $current.data.contractVersion; State = $state; Passes = $current.data.passesCompleted; Biomarkers = $result.biomarkers.Count; AiSynthesis = $true; Recommendations = $result.recommendations.Count; ReviewState = $result.reviewState; IdempotentRetry = $true; FreshSessionResume = $true; Deleted = $true } | Format-List
+  [pscustomobject]@{ Contract = $current.data.contractVersion; State = $state; Passes = $current.data.passesCompleted; Biomarkers = $result.biomarkers.Count; AiSynthesis = $true; PlanTasks = $plan.tasks.Count; PlanVersion = $plan.version; PlanUsesSymptoms = @($plan.symptomCategoryIds).Count -gt 0; Recommendations = $result.recommendations.Count; ReviewState = $result.reviewState; IdempotentRetry = $true; FreshSessionResume = $true; Deleted = $true } | Format-List
 } finally {
   Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue
 }

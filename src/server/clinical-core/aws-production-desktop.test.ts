@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { DesktopCompatibilityAdapter } from "./aws-desktop-compatibility";
 import {
+  consumerGeneratedProtocol,
   createAwsProductionDesktopAdapter,
   ProductionDesktopError,
   type ProductionRequestContext,
@@ -48,6 +49,54 @@ const context: ProductionRequestContext = {
   realPatientData: true,
   productionBound: true,
 };
+
+describe("consumer-generated plan projection", () => {
+  const generated = {
+    id: "plan_syn_001",
+    name: "Updated lab and symptom plan",
+    description: "Generated only from the latest measured biomarkers and reported symptoms.",
+    start_date: "2026-09-03",
+    status: "active",
+    version: 2,
+    lifestyle_tasks_json: [{
+      id: "task_syn_001",
+      name: "Keep a regular sleep window",
+      frequency: "Daily",
+      timing: "Evening",
+      notes: "Tied to the reported sleep pattern.",
+    }],
+    generation_json: {
+      source: "aws_lab_analysis",
+      sourceAnalysisId: "29292929-2929-4929-8929-292929292929",
+      sourcePanelId: "panel_syn_001",
+      confidence: "medium",
+      productSelectionState: "awaiting_governed_catalog_approval",
+      promptVersion: "lab-plan/1",
+    },
+  };
+
+  it("accepts a bounded, provenance-linked plan", () => {
+    expect(consumerGeneratedProtocol(JSON.stringify(generated), "2026-09-03T07:00:00.000Z"))
+      .toMatchObject({
+        id: "plan_syn_001",
+        version: 2,
+        sourceAnalysisId: "29292929-2929-4929-8929-292929292929",
+        productSelectionState: "awaiting_governed_catalog_approval",
+      });
+  });
+
+  it("refuses unsafe links and untrusted provenance", () => {
+    const unsafe = {
+      ...generated,
+      lifestyle_tasks_json: [{ ...generated.lifestyle_tasks_json[0], notes: "Buy at https://example.test" }],
+    };
+    expect(consumerGeneratedProtocol(JSON.stringify(unsafe), "2026-09-03T07:00:00.000Z")).toBeNull();
+    expect(consumerGeneratedProtocol(JSON.stringify({
+      ...generated,
+      generation_json: { ...generated.generation_json, source: "untrusted" },
+    }), "2026-09-03T07:00:00.000Z")).toBeNull();
+  });
+});
 
 function harness(response: unknown = { id: PATIENT, first_name: "Test", last_name: "Patient" }) {
   const calls: Array<{ sql: string; values: readonly unknown[] }> = [];
@@ -1002,7 +1051,9 @@ describe("AWS production Desktop adapter", () => {
       const test = harness({ ok: true });
       await expect(test.adapter.execute(context, {
         kind: "rpc", functionName: operation.functionName, args: operation.args,
-      })).resolves.toEqual({ ok: true });
+      })).resolves.toEqual(operation.functionName === "get_patient_protocol"
+        ? { ok: true, consumerGenerated: null }
+        : { ok: true });
       expect(test.calls[1]?.sql).toBe(operation.sql);
       expect(test.fallback.execute).not.toHaveBeenCalled();
     }

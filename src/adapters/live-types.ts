@@ -578,6 +578,20 @@ export interface LivePatientProtocol {
   approved: LiveProtocolVersion | null;
   active: LiveProtocolVersion | null;
   history: LiveProtocolHistoryEntry[];
+  consumerGenerated: {
+    id: string;
+    name: string;
+    summary: string;
+    version: number;
+    status: "active";
+    generatedAt: string;
+    receivedAt: string;
+    sourceAnalysisId: string;
+    sourcePanelId: string;
+    confidence: "low" | "medium" | "high";
+    productSelectionState: "awaiting_governed_catalog_approval";
+    tasks: Array<{ id: string; name: string; frequency: string; timing: string | null; notes: string | null }>;
+  } | null;
   generatedAt: string;
 }
 

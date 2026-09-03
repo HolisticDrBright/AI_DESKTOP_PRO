@@ -370,12 +370,49 @@ async function executePass(job: Job, pass: number): Promise<unknown | null> {
     biomarkers: [...currentForSynthesis, ...priorForSynthesis],
     activeProtocol: job.longitudinalContext?.activeProtocol ?? null,
   });
+  const analysisId = randomUUID();
+  const sourcePanelId = job.longitudinalContext?.incomingPanel.panelId ?? jobId;
+  const symptomCategoryIds = job.patientContext?.topSymptomSignals.map((row) => row.categoryId) ?? [];
+  const inputSnapshotSha256 = createHash("sha256").update(JSON.stringify({
+    biomarkers: currentForSynthesis,
+    patientContext: job.patientContext ?? null,
+    priorPanels: job.longitudinalContext?.priorPanels ?? [],
+  })).digest("hex");
   const result = {
-    analysisId: randomUUID(), reviewState: "consumer_education", generatedAt,
+    analysisId, reviewState: "consumer_education", generatedAt,
     summary: `AI-assisted consumer laboratory interpretation. ${biomarkers.length} reported biomarker(s) were retained; ${flagged.length} are outside an available governed functional range or reporting laboratory range. ${aiSynthesis.summary} Uncertainty: ${aiSynthesis.uncertainty}`,
     biomarkers: resultBiomarkers,
     recommendations: [],
     priorityActions: aiSynthesis.priorityActions,
+    generatedPlan: {
+      planId: stableUuid(`generated-plan:${analysisId}`),
+      generationMode: "automatic_consumer_wellness",
+      version: (job.longitudinalContext?.activeProtocol?.version ?? 0) + 1,
+      sourceAnalysisId: analysisId,
+      sourcePanelId,
+      supersedesProtocolId: job.longitudinalContext?.activeProtocol?.protocolId ?? null,
+      generatedAt,
+      title: aiSynthesis.generatedPlan.title,
+      summary: aiSynthesis.generatedPlan.summary,
+      confidence: aiSynthesis.generatedPlan.confidence,
+      inputSnapshotSha256,
+      biomarkerIds: [...new Set(aiSynthesis.generatedPlan.tasks.flatMap((task) => task.biomarkerIds))],
+      symptomCategoryIds: [...new Set(aiSynthesis.generatedPlan.tasks.flatMap((task) => task.symptomCategoryIds))]
+        .filter((id) => symptomCategoryIds.includes(id)),
+      tasks: aiSynthesis.generatedPlan.tasks.map((task, index) => ({
+        taskId: stableUuid(`generated-plan-task:${analysisId}:${index}`),
+        ...task,
+      })),
+      supplementRecommendations: [],
+      productSelectionState: "awaiting_governed_catalog_approval",
+      safety: {
+        medicationOrAllergyReviewRequired: Boolean((job.patientContext?.medications.length ?? 0) + (job.patientContext?.allergies.length ?? 0)),
+        pregnancyOrNursingReviewRequired: job.patientContext?.pregnancyStatus === "pregnant"
+          || job.patientContext?.pregnancyStatus === "unsure" || job.patientContext?.nursing === true,
+        noMedicationHormoneOrPeptideChanges: true,
+      },
+      provider: { model: aiSynthesis.providerModel, promptVersion: "lab-plan/1" },
+    },
     citations: biomarkers.filter((row) => row.sourceId && row.sourceVersion).map((row) => ({ sourceId: row.sourceId!, sourceVersion: row.sourceVersion!, claimIds: [] })).filter((row, index, all) => all.findIndex((candidate) => candidate.sourceId === row.sourceId) === index),
     longitudinalReview: {
       reviewState: "consumer_education",
