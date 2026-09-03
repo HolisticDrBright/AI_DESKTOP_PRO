@@ -34,6 +34,7 @@ import { Card } from "@/components/ui/bits";
 import { cn } from "@/lib/cn";
 import { useFeedback } from "@/lib/feedback";
 import { toneColor, toneText, toneTint } from "@/lib/tones";
+import { calendarSlotFromOffset } from "./calendar-slot";
 
 /* --------------------------------------------------------------- date utils */
 
@@ -273,6 +274,12 @@ interface Selection {
   status: AppointmentStatus;
 }
 
+interface BookingSeed {
+  date: Date;
+  startMin: number;
+  practitionerId: string;
+}
+
 const HOUR_PX = 54;
 
 export function CalendarView({
@@ -289,7 +296,7 @@ export function CalendarView({
   const [liveState, setLiveState] = useState<"loading" | "ready" | "error">("loading");
   const [liveError, setLiveError] = useState<{ message: string; code?: string }>({ message: "" });
   const [reloadKey, setReloadKey] = useState(0);
-  const [bookingOpen, setBookingOpen] = useState(false);
+  const [bookingSeed, setBookingSeed] = useState<BookingSeed | null>(null);
 
   const [now, setNow] = useState<Date | null>(null);
   const [anchor, setAnchor] = useState<Date | null>(null);
@@ -413,7 +420,7 @@ export function CalendarView({
 
   const onChanged = () => {
     setSelection(null);
-    setBookingOpen(false);
+    setBookingSeed(null);
     setReloadKey((k) => k + 1);
   };
 
@@ -451,7 +458,11 @@ export function CalendarView({
         practitionerId={practitionerId}
         setPractitionerId={setPractitionerId}
         showPractitioner={view === "week"}
-        onNew={() => setBookingOpen(true)}
+        onNew={() => setBookingSeed({
+          date: anchor,
+          startMin: 9 * 60,
+          practitionerId: practitionerId || data.practitioners[0]?.id || "",
+        })}
       />
 
       <div className="mt-3 grid grid-cols-[220px_minmax(0,1fr)] items-start gap-4">
@@ -476,6 +487,7 @@ export function CalendarView({
               practitionerId={practitionerId}
               statusOf={statusOf}
               onSelect={setSelection}
+              onCreate={setBookingSeed}
             />
           ) : (
             <DayGrid
@@ -487,6 +499,7 @@ export function CalendarView({
               now={now}
               statusOf={statusOf}
               onSelect={setSelection}
+              onCreate={setBookingSeed}
             />
           )}
         </Card>
@@ -501,12 +514,14 @@ export function CalendarView({
           onChanged={onChanged}
         />
       )}
-      {bookingOpen && (
+      {bookingSeed && (
         <BookingDrawer
           practitioners={data.practitioners}
           patientOptions={liveWeek?.patients ?? []}
-          defaultDate={anchor}
-          onClose={() => setBookingOpen(false)}
+          defaultDate={bookingSeed.date}
+          defaultStartMin={bookingSeed.startMin}
+          defaultPractitionerId={bookingSeed.practitionerId}
+          onClose={() => setBookingSeed(null)}
           onBooked={onChanged}
         />
       )}
@@ -721,7 +736,7 @@ function HourLines({ hours }: { hours: number[] }) {
       {hours.map((h, i) => (
         <div
           key={h}
-          className="absolute right-0 left-0 border-t border-hairline-2"
+          className="pointer-events-none absolute right-0 left-0 border-t border-hairline-2"
           style={{ top: i * HOUR_PX }}
           aria-hidden
         />
@@ -766,8 +781,9 @@ function AppointmentBlock({
   return (
     <button
       onClick={() => onSelect({ appt, date, status: effective })}
+      data-calendar-appointment
       className={cn(
-        "absolute right-[3px] left-[3px] overflow-hidden rounded-[7px] border-l-[3px] px-[7px] py-[3px] text-left transition focus-visible:z-30 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-action",
+        "absolute right-[3px] left-[3px] z-10 overflow-hidden rounded-[7px] border-l-[3px] px-[7px] py-[3px] text-left transition focus-visible:z-30 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-action",
         done ? "opacity-60" : "hover:brightness-[0.98]",
         live && "ring-2 ring-critical/50",
       )}
@@ -810,6 +826,39 @@ function EmptyColumnNote() {
   );
 }
 
+function CreateSlotButton({
+  date,
+  practitionerId,
+  dayStart,
+  dayEnd,
+  pxPerMin,
+  onCreate,
+}: {
+  date: Date;
+  practitionerId: string;
+  dayStart: number;
+  dayEnd: number;
+  pxPerMin: number;
+  onCreate: (seed: BookingSeed) => void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={`Add an appointment or break on ${date.toLocaleDateString()}`}
+      title="Click a time to add an appointment or break"
+      className="absolute inset-0 z-0 cursor-crosshair border-0 bg-transparent p-0 hover:bg-action-tint/20 focus-visible:z-[5] focus-visible:outline-2 focus-visible:outline-inset focus-visible:outline-action"
+      onClick={(event) => {
+        const rect = event.currentTarget.getBoundingClientRect();
+        const startMin = calendarSlotFromOffset(
+          event.detail === 0 ? Number.NaN : event.clientY - rect.top,
+          { dayStart, dayEnd, pxPerMin },
+        );
+        onCreate({ date, startMin, practitionerId });
+      }}
+    />
+  );
+}
+
 /* --------------------------------------------------------------- week grid */
 
 function WeekGrid({
@@ -822,6 +871,7 @@ function WeekGrid({
   practitionerId,
   statusOf,
   onSelect,
+  onCreate,
 }: {
   data: CalendarData;
   weekDates: Date[];
@@ -832,6 +882,7 @@ function WeekGrid({
   practitionerId: string;
   statusOf: (appt: Appointment) => AppointmentStatus;
   onSelect: (s: Selection) => void;
+  onCreate: (seed: BookingSeed) => void;
 }) {
   const nowTop = (now.getHours() * 60 + now.getMinutes() - data.dayStart) * pxPerMin;
   const nowVisible = nowTop >= 0 && nowTop <= gridHeight;
@@ -884,6 +935,14 @@ function WeekGrid({
                 style={{ height: gridHeight }}
               >
                 <HourLines hours={hours} />
+                <CreateSlotButton
+                  date={d}
+                  practitionerId={practitionerId}
+                  dayStart={data.dayStart}
+                  dayEnd={data.dayEnd}
+                  pxPerMin={pxPerMin}
+                  onCreate={onCreate}
+                />
                 {appts.length === 0 && <EmptyColumnNote />}
                 {appts.map((a) => (
                   <AppointmentBlock
@@ -918,6 +977,7 @@ function DayGrid({
   now,
   statusOf,
   onSelect,
+  onCreate,
 }: {
   data: CalendarData;
   date: Date;
@@ -927,6 +987,7 @@ function DayGrid({
   now: Date;
   statusOf: (appt: Appointment) => AppointmentStatus;
   onSelect: (s: Selection) => void;
+  onCreate: (seed: BookingSeed) => void;
 }) {
   const weekday = isoWeekday(date);
   const today = sameDay(date, now);
@@ -968,6 +1029,14 @@ function DayGrid({
                 style={{ height: gridHeight }}
               >
                 <HourLines hours={hours} />
+                <CreateSlotButton
+                  date={date}
+                  practitionerId={p.id}
+                  dayStart={data.dayStart}
+                  dayEnd={data.dayEnd}
+                  pxPerMin={pxPerMin}
+                  onCreate={onCreate}
+                />
                 {appts.length === 0 && <EmptyColumnNote />}
                 {appts.map((a) => (
                   <AppointmentBlock
@@ -1343,24 +1412,28 @@ function BookingDrawer({
   practitioners,
   patientOptions,
   defaultDate,
+  defaultStartMin,
+  defaultPractitionerId,
   onClose,
   onBooked,
 }: {
   practitioners: Practitioner[];
   patientOptions: { id: string; name: string }[];
   defaultDate: Date;
+  defaultStartMin: number;
+  defaultPractitionerId: string;
   onClose: () => void;
   onBooked: () => void;
 }) {
   const { announce } = useFeedback();
   const headingRef = useRef<HTMLHeadingElement>(null);
   const [patientId, setPatientId] = useState(patientOptions[0]?.id ?? "");
-  const [practitionerId, setPractitionerId] = useState(practitioners[0]?.id ?? "");
-  const [type, setType] = useState<AppointmentType>("follow-up");
-  const [dateStr, setDateStr] = useState(
-    `${defaultDate.getFullYear()}-${String(defaultDate.getMonth() + 1).padStart(2, "0")}-${String(defaultDate.getDate()).padStart(2, "0")}`,
+  const [practitionerId, setPractitionerId] = useState(
+    defaultPractitionerId || practitioners[0]?.id || "",
   );
-  const [timeStr, setTimeStr] = useState("09:00");
+  const [type, setType] = useState<AppointmentType>("follow-up");
+  const [dateStr, setDateStr] = useState(fmtDateInput(defaultDate));
+  const [timeStr, setTimeStr] = useState(fmtTimeInput(defaultStartMin));
   const [durationMin, setDurationMin] = useState(45);
   const [location, setLocation] = useState("");
   const [working, setWorking] = useState(false);

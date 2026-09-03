@@ -217,6 +217,20 @@ test("live calendar shows real appointments and check-in persists with audit", a
 
 test("booking, rescheduling, and no-show persist to the live week", async ({ page }) => {
   await page.goto("/calendar");
+
+  // A practitioner can start a booking directly from the calendar surface.
+  // The drawer is seeded from the clicked day/time; closing it leaves no
+  // record behind and the toolbar path remains independently covered below.
+  await page
+    .getByRole("button", { name: /Add an appointment or break on/ })
+    .first()
+    .click({ position: { x: 8, y: 100 } });
+  const clickedSlotDialog = page.getByRole("dialog", { name: "New appointment" });
+  await expect(clickedSlotDialog.getByLabel("Date")).not.toHaveValue("");
+  await expect(clickedSlotDialog.getByLabel("Start time")).not.toHaveValue("");
+  await expect(clickedSlotDialog.getByLabel("Type")).toContainText("Break / admin");
+  await clickedSlotDialog.getByRole("button", { name: "Close booking" }).click();
+
   await page.getByRole("button", { name: "New" }).click();
   const dialog = page.getByRole("dialog", { name: "New appointment" });
   await dialog.getByLabel("Patient").selectOption({ label: "Sample Client" });

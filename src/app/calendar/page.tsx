@@ -36,7 +36,8 @@ export default async function Page({
       <div className="px-5 pt-4">
         <ClinicalNote>
           <strong>ALP clinical calendar.</strong> Appointments shown here are stored in the governed
-          AWS clinical service. Google Calendar is not connected to this environment.
+          AWS clinical service. Click any open time to add an appointment or choose “Break / admin.”
+          Google Calendar is not connected to this environment.
         </ClinicalNote>
       </div>
       <CalendarView initialApptId={initialApptId} initialCalendar={initialCalendar} />
