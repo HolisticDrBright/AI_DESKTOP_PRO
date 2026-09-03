@@ -99,7 +99,9 @@ export default async function PatientTabPage({
   }
 
   if (tab === "app-sync") {
-    return <PatientSyncPanel patientId={patientId} />;
+    const syntheticOnly =
+      process.env.CLINICAL_AWS_RUNTIME_MODE === "synthetic" && process.env.PHI_ALLOWED !== "true";
+    return <PatientSyncPanel patientId={patientId} syntheticOnly={syntheticOnly} />;
   }
 
   if (tab === "billing") {

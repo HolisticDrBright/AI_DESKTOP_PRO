@@ -24,6 +24,7 @@ import {
   ClinicalNote,
 } from "@/components/ui/ClinicalStates";
 import { useFeedback } from "@/lib/feedback";
+import { SyntheticPatientConnectionPanel } from "./SyntheticPatientConnectionPanel";
 
 const INPUT =
   "h-8 rounded-lg border border-line bg-card px-3 text-[12.5px] text-body outline-none focus-visible:outline-2 focus-visible:outline-action";
@@ -93,7 +94,7 @@ function StatePill({ state }: { state: string }) {
  * is a persisted row; sending fails closed without a provider; nothing is
  * ever shown as delivered or acknowledged without provider evidence.
  */
-export function PatientSyncPanel({ patientId }: { patientId: string }) {
+function LivePatientSyncPanel({ patientId }: { patientId: string }) {
   const { announce } = useFeedback();
   const [data, setData] = useState<LivePatientSync | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -933,4 +934,16 @@ export function PatientSyncPanel({ patientId }: { patientId: string }) {
       </div>
     </div>
   );
+}
+
+export function PatientSyncPanel({
+  patientId,
+  syntheticOnly = false,
+}: {
+  patientId: string;
+  syntheticOnly?: boolean;
+}) {
+  return syntheticOnly
+    ? <SyntheticPatientConnectionPanel patientId={patientId} />
+    : <LivePatientSyncPanel patientId={patientId} />;
 }

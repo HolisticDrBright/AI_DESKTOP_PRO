@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { getSyntheticClinicalCorePosture } from "./synthetic-api-client";
+import {
+  getSyntheticClinicalCorePosture,
+  issueSyntheticPatientInvitation,
+} from "./synthetic-api-client";
 
 const token = `ey.${"a".repeat(140)}.sig`;
 
@@ -54,5 +57,49 @@ describe("Desktop synthetic clinical-core client", () => {
     await expect(getSyntheticClinicalCorePosture("workforce", token)).rejects.toMatchObject({
       code: "synthetic_clinical_core_unavailable",
     });
+  });
+
+  test("issues only a short-lived AWS invitation for a UUID test chart", async () => {
+    process.env.CLINICAL_AWS_RUNTIME_MODE = "synthetic";
+    process.env.CLINICAL_AWS_API_ORIGIN = "https://wxv734oi12.execute-api.us-east-2.amazonaws.com";
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ data: {
+      invitationId: "10000000-0000-4000-8000-000000000001",
+      connectionId: "20000000-0000-4000-8000-000000000001",
+      expiresAt: "2026-09-03T12:00:00.000Z",
+      token: "ABCDEFGHJKLMN",
+    } }), { status: 201, headers: { "content-type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(issueSyntheticPatientInvitation(
+      token,
+      "30000000-0000-4000-8000-000000000001",
+    )).resolves.toMatchObject({ token: "ABCDEFGHJKLMN" });
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://wxv734oi12.execute-api.us-east-2.amazonaws.com/clinical-core/workforce/invitations");
+    expect(init.method).toBe("POST");
+    const body = JSON.parse(String(init.body)) as Record<string, string>;
+    expect(body).toEqual({
+      patientRecordId: "30000000-0000-4000-8000-000000000001",
+      expiresAt: expect.any(String),
+    });
+    expect(new Date(body.expiresAt).getTime() - Date.now()).toBeGreaterThan(23 * 60 * 60 * 1_000);
+  });
+
+  test("refuses malformed invitation responses and non-UUID chart identifiers", async () => {
+    process.env.CLINICAL_AWS_RUNTIME_MODE = "synthetic";
+    process.env.CLINICAL_AWS_API_ORIGIN = "https://wxv734oi12.execute-api.us-east-2.amazonaws.com";
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ data: {
+      token: "made-up-code",
+    } }), { status: 201, headers: { "content-type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(issueSyntheticPatientInvitation(token, "not-a-uuid")).rejects.toMatchObject({
+      code: "synthetic_clinical_core_unavailable",
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+    await expect(issueSyntheticPatientInvitation(
+      token,
+      "30000000-0000-4000-8000-000000000001",
+    )).rejects.toMatchObject({ code: "synthetic_clinical_core_unavailable" });
   });
 });

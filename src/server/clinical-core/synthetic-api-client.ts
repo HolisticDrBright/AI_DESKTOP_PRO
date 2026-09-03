@@ -24,6 +24,8 @@ export class SyntheticClinicalCoreUnavailable extends Error {
 
 const API_HOST = /^[a-z0-9]{10}\.execute-api\.[a-z0-9-]+\.amazonaws\.com$/;
 const MAX_RESPONSE_BYTES = 16_384;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const INVITATION_CODE = /^[A-HJ-NP-Z2-9]{13}$/;
 
 function apiOrigin(): string {
   if (process.env.CLINICAL_AWS_RUNTIME_MODE !== "synthetic") throw new SyntheticClinicalCoreUnavailable();
@@ -90,5 +92,66 @@ export async function getSyntheticClinicalCorePosture(
     ? (parsed as Record<string, unknown>).data
     : undefined;
   if (!isPosture(data, pool)) throw new SyntheticClinicalCoreUnavailable();
+  return data;
+}
+
+export interface SyntheticPatientInvitation {
+  invitationId: string;
+  connectionId: string;
+  expiresAt: string;
+  token: string;
+}
+
+function isInvitation(value: unknown): value is SyntheticPatientInvitation {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const row = value as Record<string, unknown>;
+  return typeof row.invitationId === "string" && UUID.test(row.invitationId)
+    && typeof row.connectionId === "string" && UUID.test(row.connectionId)
+    && typeof row.expiresAt === "string" && Number.isFinite(new Date(row.expiresAt).getTime())
+    && typeof row.token === "string" && INVITATION_CODE.test(row.token)
+    && Object.keys(row).length === 4;
+}
+
+/** Issue one hash-at-rest, short-lived AWS invitation for an anonymous test chart. */
+export async function issueSyntheticPatientInvitation(
+  authorization: string,
+  patientRecordId: string,
+): Promise<SyntheticPatientInvitation> {
+  if (!UUID.test(patientRecordId)) throw new SyntheticClinicalCoreUnavailable();
+  let response: Response;
+  try {
+    response = await fetch(`${apiOrigin()}/clinical-core/workforce/invitations`, {
+      method: "POST",
+      redirect: "manual",
+      cache: "no-store",
+      signal: AbortSignal.timeout(10_000),
+      headers: {
+        authorization: `Bearer ${bearer(authorization)}`,
+        accept: "application/json",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        patientRecordId,
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1_000).toISOString(),
+      }),
+    });
+  } catch {
+    throw new SyntheticClinicalCoreUnavailable();
+  }
+  if (!response.ok || !response.headers.get("content-type")?.toLowerCase().includes("application/json")) {
+    throw new SyntheticClinicalCoreUnavailable();
+  }
+  const raw = await response.text();
+  if (new TextEncoder().encode(raw).byteLength > MAX_RESPONSE_BYTES) throw new SyntheticClinicalCoreUnavailable();
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new SyntheticClinicalCoreUnavailable();
+  }
+  const data = parsed && typeof parsed === "object" && !Array.isArray(parsed)
+    ? (parsed as Record<string, unknown>).data
+    : undefined;
+  if (!isInvitation(data)) throw new SyntheticClinicalCoreUnavailable();
   return data;
 }
