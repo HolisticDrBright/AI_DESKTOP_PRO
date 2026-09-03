@@ -90,7 +90,7 @@ const MAX_PAYLOAD_BYTES = 16_384;
 const MAX_DEPTH = 8;
 const COLLECTION_KEYS: Record<ConsumerClinicalCollection, { allowed: readonly string[]; required: readonly string[] }> = {
   protocols: {
-    allowed: ["id","name","description","start_date","end_date","status","version","supplements_json","peptides_json","fasting_plan_json","lifestyle_tasks_json"],
+    allowed: ["id","name","description","start_date","end_date","status","version","supplements_json","peptides_json","fasting_plan_json","lifestyle_tasks_json","generation_json"],
     required: ["id","name","start_date","status","version","supplements_json","peptides_json","lifestyle_tasks_json"],
   },
   daily_adherence: {
