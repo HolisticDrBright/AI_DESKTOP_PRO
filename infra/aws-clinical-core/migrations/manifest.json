@@ -55,7 +55,8 @@
     },
     {
       "version": "20260821049800",
-      "file": "20260821049800_synthetic_patient_directory_create.sql"
+      "file": "20260821049800_synthetic_patient_directory_create.sql",
+      "production_transform": false
     }
   ]
 }
