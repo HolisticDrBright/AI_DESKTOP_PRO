@@ -14,8 +14,8 @@ jobs:
     name: Typecheck, lint, unit, build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: "22"
           cache: npm
@@ -87,8 +87,8 @@ jobs:
     name: Browser suite (clinical backend-down)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: "22"
           cache: npm
@@ -108,8 +108,8 @@ jobs:
     name: Browser suite (live mode vs contract fixture)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: "22"
           cache: npm
@@ -142,8 +142,8 @@ jobs:
     name: Browser suite (copilot provider readiness — live state machine)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: "22"
           cache: npm
@@ -180,8 +180,8 @@ jobs:
     name: Browser suite (copilot fixture refused in a deployed runtime)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: "22"
           cache: npm
@@ -216,8 +216,8 @@ jobs:
     name: Browser suite (governed synthetic refused in a deployed runtime)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: "22"
           cache: npm
@@ -253,14 +253,14 @@ jobs:
     name: Browser suite (deployed backend — gated on secrets)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - id: gate
         name: Check deployed-backend secrets
         env:
           HAS: ${{ secrets.DEPLOYED_TRPC_BASE_URL != '' && secrets.DEPLOYED_CLINICAL_SUPABASE_URL != '' }}
         run: echo "run=$HAS" >> "$GITHUB_OUTPUT"
       - if: steps.gate.outputs.run == 'true'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "22"
           cache: npm
