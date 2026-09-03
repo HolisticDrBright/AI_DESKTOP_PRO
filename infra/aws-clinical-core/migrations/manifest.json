@@ -72,6 +72,11 @@
       "version": "20260903020000",
       "file": "20260903020000_synthetic_patient_app_intake_read.sql",
       "production_transform": false
+    },
+    {
+      "version": "20260903030000",
+      "file": "20260903030000_register_synthetic_patient_app_intake.sql",
+      "production_transform": false
     }
   ]
 }
