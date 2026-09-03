@@ -44,7 +44,7 @@ afterEach(() => {
 describe("AWS clinical-core migration runner", () => {
   test("loads ordered migrations and computes their content hash", () => {
     const migrations = loadClinicalCoreMigrations();
-    expect(migrations).toHaveLength(19);
+    expect(migrations).toHaveLength(20);
     expect(migrations[0]).toMatchObject({
       version: "20260812010000",
       name: "synthetic_identity_consent",
@@ -155,13 +155,20 @@ describe("AWS clinical-core migration runner", () => {
     expect(migrations[18]!.sql).toContain("_identity_pool = 'workforce'");
     expect(migrations[18]!.sql).toContain("alias.reviewed_at is not null");
     expect(migrations[18]!.sql).toContain("revoke all on clinical_core.synthetic_workforce_identity_aliases from public, clinical_core_api");
+    expect(migrations[19]).toMatchObject({
+      version: "20260903070000",
+      name: "governed_patient_chat",
+    });
+    expect(migrations[19]!.sql).toContain("create table clinical_core.patient_chat_conversations");
+    expect(migrations[19]!.sql).toContain("clinical_core.patient_chat_request");
+    expect(migrations[19]!.sql).toContain("contains_phi=false");
   });
 
   test("serializes and applies a missing migration in one transaction", async () => {
     const db = migrationDatabase();
     const result = await applyClinicalCoreMigrations(db.database);
     expect(result).toEqual({
-      applied: ["20260812010000", "20260812220000", "20260821010000", "20260821020000", "20260821030000", "20260821040000", "20260821045000", "20260821046000", "20260821047000", "20260821048000", "20260821049000", "20260821049500", "20260821049700", "20260821049800", "20260821049900", "20260903010000", "20260903020000", "20260903030000", "20260903060000"],
+      applied: ["20260812010000", "20260812220000", "20260821010000", "20260821020000", "20260821030000", "20260821040000", "20260821045000", "20260821046000", "20260821047000", "20260821048000", "20260821049000", "20260821049500", "20260821049700", "20260821049800", "20260821049900", "20260903010000", "20260903020000", "20260903030000", "20260903060000", "20260903070000"],
       alreadyApplied: [],
     });
     expect(db.transactions()).toBe(1);

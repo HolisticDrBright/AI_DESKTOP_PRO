@@ -62,6 +62,11 @@ import {
   ChatContextError,
   type ChatContextAdapter,
 } from "./aws-chat-context";
+import {
+  createAwsPatientChatAdapter,
+  PatientChatError,
+  type PatientChatAdapter,
+} from "./aws-patient-chat";
 
 export type ApiGatewayV2Event = {
   routeKey?: string;
@@ -96,7 +101,8 @@ type RouteDefinition = {
     | "record_clinical" | "list_clinical" | "list_consent_history"
       | "submit_privacy_request" | "list_privacy_requests" | "desktop_compatibility"
       | "list_family_requests" | "approve_family" | "claim_family"
-      | "list_delegated" | "read_delegated" | "revoke_family" | "get_chat_context";
+      | "list_delegated" | "read_delegated" | "revoke_family" | "get_chat_context"
+      | "consumer_chat" | "workforce_chat";
 };
 
 const ROUTES: Readonly<Record<string, RouteDefinition>> = {
@@ -128,6 +134,8 @@ const ROUTES: Readonly<Record<string, RouteDefinition>> = {
   "GET /clinical-core/consumer/family/delegated/records": { pool: "consumer", purpose: "clinical_data", operation: "read_delegated" },
   "POST /clinical-core/consumer/family/revoke": { pool: "consumer", purpose: "consent_management", operation: "revoke_family" },
   "GET /clinical-core/consumer/chat-context": { pool: "consumer", purpose: "clinical_data", operation: "get_chat_context" },
+  "POST /clinical-core/consumer/chat": { pool: "consumer", purpose: "clinical_data", operation: "consumer_chat" },
+  "POST /clinical-core/workforce/chat": { pool: "workforce", purpose: "clinical_data", operation: "workforce_chat" },
 };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -152,6 +160,7 @@ export function createAwsIdentityApiHandler(input: {
   desktopCompatibilityAdapter?: DesktopCompatibilityAdapter;
   familyAccessAdapter?: FamilyAccessAdapter<SyntheticRequestContext>;
   chatContextAdapter?: ChatContextAdapter<SyntheticRequestContext>;
+  patientChatAdapter?: PatientChatAdapter<SyntheticRequestContext>;
   configuration: IdentityApiConfiguration;
 }) {
   return createIdentityApiHandler<SyntheticRequestContext>({ ...input, boundary: "synthetic" });
@@ -164,6 +173,7 @@ export function createAwsProductionIdentityApiHandler(input: {
   desktopCompatibilityAdapter: DesktopCompatibilityAdapter<ProductionClinicalRequestContext>;
   familyAccessAdapter?: FamilyAccessAdapter<ProductionClinicalRequestContext>;
   chatContextAdapter?: ChatContextAdapter<ProductionClinicalRequestContext>;
+  patientChatAdapter?: PatientChatAdapter<ProductionClinicalRequestContext>;
   configuration: ProductionIdentityApiConfiguration;
 }) {
   validateConfiguration(input.configuration);
@@ -201,6 +211,7 @@ function createIdentityApiHandler<Context extends ClinicalRequestContext>(input:
   desktopCompatibilityAdapter?: DesktopCompatibilityAdapter<Context>;
   familyAccessAdapter?: FamilyAccessAdapter<Context>;
   chatContextAdapter?: ChatContextAdapter<Context>;
+  patientChatAdapter?: PatientChatAdapter<Context>;
   configuration: IdentityApiConfiguration;
   boundary: "synthetic" | "production";
   productionPilot?: { scope: ProductionPilotScope; organizationId: string };
@@ -224,6 +235,8 @@ function createIdentityApiHandler<Context extends ClinicalRequestContext>(input:
     ?? (input.database ? createAwsFamilyAccessAdapter<Context>(input.database) : undefined);
   const chatContextAdapter = input.chatContextAdapter
     ?? (input.database ? createAwsChatContextAdapter<Context>(input.database) : undefined);
+  const patientChatAdapter = input.patientChatAdapter
+    ?? (input.database ? createAwsPatientChatAdapter<Context>(input.database) : undefined);
   if (!adapter) throw new Error("identity_api_adapter_required");
   validateConfiguration(input.configuration);
 
@@ -252,6 +265,9 @@ function createIdentityApiHandler<Context extends ClinicalRequestContext>(input:
         && !familyAccessAdapter) throw new Error("family_access_adapter_required");
       if (route.operation === "get_chat_context" && !chatContextAdapter) {
         throw new Error("chat_context_adapter_required");
+      }
+      if (["consumer_chat", "workforce_chat"].includes(route.operation) && !patientChatAdapter) {
+        throw new Error("patient_chat_adapter_required");
       }
       if (route.operation === "posture") {
         if (event.body) throw new IdentityApiError("request_invalid");
@@ -371,6 +387,11 @@ function createIdentityApiHandler<Context extends ClinicalRequestContext>(input:
       if (route.operation === "get_chat_context") {
         if (event.body) throw new IdentityApiError("request_invalid");
         return response(200, { data: await chatContextAdapter!.getContext(context) });
+      }
+      if (route.operation === "consumer_chat" || route.operation === "workforce_chat") {
+        const body = parseBody(event);
+        validatePatientChatRequest(body, route.operation === "workforce_chat");
+        return response(200, { data: await patientChatAdapter!.request(context, body) });
       }
       if (route.operation === "read_delegated") {
         if (event.body) throw new IdentityApiError("request_invalid");
@@ -549,9 +570,40 @@ function createIdentityApiHandler<Context extends ClinicalRequestContext>(input:
           : error.category === "consent_required" ? 409 : 503;
         return response(status, { error: error.category });
       }
+      if (error instanceof PatientChatError) {
+        const status = error.category === "chat_refused" ? 403
+          : error.category === "request_invalid" ? 400
+            : error.category === "not_found" ? 404 : 503;
+        return response(status, { error: error.category });
+      }
       return response(503, { error: "service_unavailable" });
     }
   };
+}
+
+const CONSUMER_CHAT_ACTIONS = new Set([
+  "active_prompt", "active_rules", "create_conversation", "get_conversation",
+  "list_conversations", "list_messages", "append_message", "delete_conversation", "escalate",
+]);
+const WORKFORCE_CHAT_ACTIONS = new Set([
+  "active_prompt", "active_rules", "configuration_status", "activate_configuration",
+  "list_escalated", "list_samples", "review",
+]);
+
+function validatePatientChatRequest(body: Record<string, unknown>, workforce: boolean): void {
+  const action = typeof body.action === "string" ? body.action : "";
+  if (!(workforce ? WORKFORCE_CHAT_ACTIONS : CONSUMER_CHAT_ACTIONS).has(action)) {
+    throw new IdentityApiError("request_invalid");
+  }
+  if (action === "append_message") {
+    if (typeof body.content !== "string" || body.content.length < 1 || body.content.length > 12_000
+      || !["user", "assistant"].includes(String(body.role ?? ""))) throw new IdentityApiError("request_invalid");
+  }
+  for (const key of ["conversationId"] as const) {
+    if (key in body && (typeof body[key] !== "string" || !UUID.test(body[key] as string))) {
+      throw new IdentityApiError("request_invalid");
+    }
+  }
 }
 
 function equalityUuid(value: string | null, required = false): string | undefined {

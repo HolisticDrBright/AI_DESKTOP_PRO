@@ -22,7 +22,11 @@ export function createAwsChatContextAdapter<Context extends ClinicalRequestConte
       const result = await tx.query<{ data: unknown }>(
         "select clinical_core.get_patient_chat_context() as data",
       );
-      const data = result.rows[0]?.data;
+      const raw = result.rows[0]?.data;
+      let data: unknown = raw;
+      if (typeof raw === "string") {
+        try { data = JSON.parse(raw); } catch { throw new ChatContextError("database_unavailable"); }
+      }
       if (!data || typeof data !== "object" || Array.isArray(data)) {
         throw new ChatContextError("database_unavailable");
       }

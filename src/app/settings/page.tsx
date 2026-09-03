@@ -42,6 +42,7 @@ const GROUPS: {
     links: [
       { label: "Team & permissions", detail: "Staff roles, membership, and access boundaries", href: "/team", icon: UsersRound },
       { label: "Security & governance", detail: "Audit history and governed AI features", href: "/settings/governance", icon: ShieldCheck },
+      { label: "Ask ALP activation", detail: "Review and sign the exact patient-chat safety configuration", href: "/settings/ask-alp", icon: MessageSquare },
     ],
   },
   {

@@ -186,6 +186,31 @@ describe("authenticated synthetic identity API", () => {
     expect(api.service.issueInvitation).not.toHaveBeenCalled();
   });
 
+  test("routes consumer and workforce Ask ALP requests through the AWS clinical boundary", async () => {
+    const service = adapter();
+    const patientChatAdapter = { request: vi.fn(async (_context, request: Record<string, unknown>) => ({
+      acceptedAction: request.action,
+    })) };
+    const run = createAwsIdentityApiHandler({
+      adapter: service,
+      patientChatAdapter,
+      configuration: {
+        workforceIssuer: WORKFORCE_ISSUER, workforceAudience: WORKFORCE_AUD,
+        consumerIssuer: CONSUMER_ISSUER, consumerAudience: CONSUMER_AUD,
+      },
+    });
+    const consumer = await run(event("POST /clinical-core/consumer/chat", "consumer", { action: "list_conversations" }));
+    const workforce = await run(event("POST /clinical-core/workforce/chat", "workforce", { action: "configuration_status" }));
+    expect(consumer.statusCode).toBe(200);
+    expect(workforce.statusCode).toBe(200);
+    expect(patientChatAdapter.request).toHaveBeenNthCalledWith(1,
+      expect.objectContaining({ identityPool: "consumer", actorPersonId: PERSON }),
+      { action: "list_conversations" });
+    expect(patientChatAdapter.request).toHaveBeenNthCalledWith(2,
+      expect.objectContaining({ identityPool: "workforce", organizationId: ORG }),
+      { action: "configuration_status" });
+  });
+
   test("routes reviewed Desktop operations through the workforce-only compatibility adapter", async () => {
     const service = adapter();
     const desktopCompatibilityAdapter = { execute: vi.fn(async () => [{ id: "synthetic-patient" }]) };
