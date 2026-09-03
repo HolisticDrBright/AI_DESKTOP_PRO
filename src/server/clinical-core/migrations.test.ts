@@ -44,7 +44,7 @@ afterEach(() => {
 describe("AWS clinical-core migration runner", () => {
   test("loads ordered migrations and computes their content hash", () => {
     const migrations = loadClinicalCoreMigrations();
-    expect(migrations).toHaveLength(15);
+    expect(migrations).toHaveLength(16);
     expect(migrations[0]).toMatchObject({
       version: "20260812010000",
       name: "synthetic_identity_consent",
@@ -127,13 +127,19 @@ describe("AWS clinical-core migration runner", () => {
       name: "synthetic_patient_directory_request_repair",
     });
     expect(migrations[14]!.sql).toContain("from jsonb_object_keys(_request)");
+    expect(migrations[15]).toMatchObject({
+      version: "20260903010000",
+      name: "synthetic_wearable_consent_artifact",
+    });
+    expect(migrations[15]!.sql).toContain("'synthetic-wearables/1'");
+    expect(migrations[15]!.sql).toContain("organization.contains_phi = false");
   });
 
   test("serializes and applies a missing migration in one transaction", async () => {
     const db = migrationDatabase();
     const result = await applyClinicalCoreMigrations(db.database);
     expect(result).toEqual({
-      applied: ["20260812010000", "20260812220000", "20260821010000", "20260821020000", "20260821030000", "20260821040000", "20260821045000", "20260821046000", "20260821047000", "20260821048000", "20260821049000", "20260821049500", "20260821049700", "20260821049800", "20260821049900"],
+      applied: ["20260812010000", "20260812220000", "20260821010000", "20260821020000", "20260821030000", "20260821040000", "20260821045000", "20260821046000", "20260821047000", "20260821048000", "20260821049000", "20260821049500", "20260821049700", "20260821049800", "20260821049900", "20260903010000"],
       alreadyApplied: [],
     });
     expect(db.transactions()).toBe(1);
