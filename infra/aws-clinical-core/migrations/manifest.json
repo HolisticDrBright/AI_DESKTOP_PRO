@@ -102,6 +102,21 @@
       "version": "20260903180000",
       "file": "20260903180000_synthetic_patient_app_lab_ranges.sql",
       "production_transform": false
+    },
+    {
+      "version": "20260903200000",
+      "file": "20260903200000_synthetic_desktop_programs_inbox.sql",
+      "production_transform": false
+    },
+    {
+      "version": "20260903201000",
+      "file": "20260903201000_register_synthetic_desktop_programs_inbox.sql",
+      "production_transform": false
+    },
+    {
+      "version": "20260903202000",
+      "file": "20260903202000_synthetic_desktop_programs_inbox_handler_hashes.sql",
+      "production_transform": false
     }
   ]
 }
