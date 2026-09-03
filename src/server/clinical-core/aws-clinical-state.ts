@@ -130,7 +130,7 @@ function createAwsClinicalStateAdapter<Context extends ClinicalRequestContext>(
         state: LabImportResult["state"];
         duplicate: boolean;
       }>(
-        "select * from clinical_core.record_lab_import($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::timestamptz,$16::timestamptz,$17)",
+        "select * from clinical_core.record_lab_import($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::numeric,$11,$12::numeric,$13::numeric,$14,$15::timestamptz,$16::timestamptz,$17)",
         [
           clinicalUuid(payload.connectionId), payload.provider, payload.providerEventId,
           payload.source.panelId, payload.source.markerId, payload.resourceVersion,

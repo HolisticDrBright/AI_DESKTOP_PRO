@@ -62,6 +62,16 @@
       "version": "20260821049900",
       "file": "20260821049900_synthetic_patient_directory_request_repair.sql",
       "production_transform": false
+    },
+    {
+      "version": "20260903010000",
+      "file": "20260903010000_synthetic_wearable_consent_artifact.sql",
+      "production_transform": false
+    },
+    {
+      "version": "20260903020000",
+      "file": "20260903020000_synthetic_patient_app_intake_read.sql",
+      "production_transform": false
     }
   ]
 }

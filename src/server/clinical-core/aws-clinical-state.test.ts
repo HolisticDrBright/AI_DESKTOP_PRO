@@ -84,6 +84,9 @@ describe("AWS synthetic clinical state adapter", () => {
     expect(result).toEqual({ eventId: EVENT, state: "review_pending", duplicate: false });
     expect(fixture.calls[0]!.sql).toContain("set_request_context");
     const call = fixture.calls.find((entry) => entry.sql.includes("record_lab_import"))!;
+    expect(call.sql).toContain("$10::numeric");
+    expect(call.sql).toContain("$12::numeric");
+    expect(call.sql).toContain("$13::numeric");
     expect(call.parameters).toContain("alp_patient_sync");
     expect(call.parameters.at(-1)).toMatch(/^[0-9a-f]{64}$/);
     expect(JSON.stringify(call.parameters)).not.toContain("interpretation");
