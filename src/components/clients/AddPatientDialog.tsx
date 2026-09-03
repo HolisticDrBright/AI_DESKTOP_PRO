@@ -68,7 +68,7 @@ export function AddPatientDialog({ syntheticOnly }: { syntheticOnly: boolean }) 
           : form,
       );
       setOpen(false);
-      router.push(patientPath(result.patient.id));
+      router.push(patientPath(result.patient.id, syntheticOnly ? "app-sync" : "chart"));
       router.refresh();
     } catch (cause) {
       setError(errorMessage(cause));
@@ -79,7 +79,7 @@ export function AddPatientDialog({ syntheticOnly }: { syntheticOnly: boolean }) 
   return (
     <>
       <Btn variant="primary" onClick={() => setOpen(true)} data-testid="add-patient-open">
-        <UserPlus size={14} strokeWidth={2} aria-hidden /> Add patient
+        <UserPlus size={14} strokeWidth={2} aria-hidden /> {syntheticOnly ? "Add test patient" : "Add patient"}
       </Btn>
 
       {open && (
@@ -99,10 +99,12 @@ export function AddPatientDialog({ syntheticOnly }: { syntheticOnly: boolean }) 
             <div className="flex items-start justify-between border-b border-line px-5 py-4">
               <div>
                 <h2 id="add-patient-title" className="m-0 text-[17px] font-bold text-ink">
-                  Add patient
+                  {syntheticOnly ? "Create test chart" : "Add patient"}
                 </h2>
                 <p className="mt-1 mb-0 text-[12px] text-subtle">
-                  Create the chart first, then connect the patient app with a one-time invitation.
+                  {syntheticOnly
+                    ? "Create an anonymous chart, then continue directly to its patient-app connection."
+                    : "Create the chart first, then connect the patient app with a one-time invitation."}
                 </p>
               </div>
               <button
@@ -240,7 +242,7 @@ export function AddPatientDialog({ syntheticOnly }: { syntheticOnly: boolean }) 
                 </Btn>
                 <Btn type="submit" variant="primary" disabled={busy} data-testid="add-patient-submit">
                   <UserPlus size={14} strokeWidth={2} aria-hidden />
-                  {busy ? "Creating…" : "Create patient"}
+                  {busy ? "Creating…" : syntheticOnly ? "Create and connect" : "Create patient"}
                 </Btn>
               </div>
             </form>
