@@ -55,6 +55,15 @@ export type LongitudinalContext = {
   };
 };
 
+export type StructuredLabBiomarker = {
+  markerId: string;
+  canonicalName: string;
+  value: number;
+  unit: string;
+  labMin: number | null;
+  labMax: number | null;
+};
+
 type Job = {
   pk: string;
   ownerSub: string;
@@ -68,6 +77,7 @@ type Job = {
   updatedAt: string;
   expiresAt: number;
   documents: Array<DocumentInput & { objectKey: string }>;
+  structuredBiomarkers?: StructuredLabBiomarker[];
   panelId?: string;
   patientContext?: PatientContext;
   longitudinalContext?: LongitudinalContext;
@@ -202,6 +212,26 @@ function safeLongitudinalBiomarker(value: unknown): LongitudinalBiomarker {
     || !safeNullableNumber(row.functionalMin) || !safeNullableNumber(row.functionalMax)
     || !["optimal", "normal", "suboptimal", "critical"].includes(String(row.status))) throw new Error("longitudinal_context_invalid");
   return row as LongitudinalBiomarker;
+}
+
+export function safeStructuredLabBiomarkers(value: unknown): StructuredLabBiomarker[] {
+  if (!Array.isArray(value) || value.length < 1 || value.length > 1000) throw new Error("structured_biomarkers_invalid");
+  const biomarkers = value.map((candidate) => {
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) throw new Error("structured_biomarkers_invalid");
+    const row = candidate as Record<string, unknown>;
+    const expected = ["markerId", "canonicalName", "value", "unit", "labMin", "labMax"];
+    if (Object.keys(row).some((key) => !expected.includes(key))
+      || !boundedString(row.markerId, 160) || !boundedString(row.canonicalName, 160)
+      || typeof row.value !== "number" || !Number.isFinite(row.value)
+      || !boundedString(row.unit, 80) || !safeNullableNumber(row.labMin) || !safeNullableNumber(row.labMax)
+      || (row.labMin !== null && row.labMax !== null && Number(row.labMin) > Number(row.labMax))) {
+      throw new Error("structured_biomarkers_invalid");
+    }
+    return row as StructuredLabBiomarker;
+  });
+  const keys = biomarkers.map((row) => `${row.canonicalName.trim().toLowerCase()}|${row.unit.trim().toLowerCase()}`);
+  if (new Set(keys).size !== keys.length) throw new Error("structured_biomarkers_duplicate");
+  return biomarkers;
 }
 
 export function safeLongitudinalContext(value: unknown): LongitudinalContext | undefined {
@@ -391,6 +421,50 @@ async function createJob(event: ApiEvent, identity: Claims) {
   return json(200, { contractVersion: CONTRACT_VERSION, jobId, state: "awaiting_upload", documents: targets });
 }
 
+async function createPlanJob(event: ApiEvent, identity: Claims) {
+  const input = body(event);
+  const expected = ["panelId", "panelName", "testDate", "patientContext", "longitudinalContext", "dataClassification", "attestsSyntheticOnly", "biomarkers"];
+  if (Object.keys(input).some((key) => !expected.includes(key))
+    || input.dataClassification !== "synthetic_only" || input.attestsSyntheticOnly !== true
+    || !boundedString(input.panelId, 160) || !boundedString(input.panelName, 180) || !safeDate(input.testDate)) return refusal();
+  const structuredBiomarkers = safeStructuredLabBiomarkers(input.biomarkers);
+  const patientContext = safePatientContext(input.patientContext);
+  const longitudinalContext = safeLongitudinalContext(input.longitudinalContext);
+  if (longitudinalContext && (longitudinalContext.incomingPanel.panelId !== input.panelId
+    || longitudinalContext.incomingPanel.panelName !== input.panelName
+    || longitudinalContext.incomingPanel.testDate !== input.testDate)) return refusal();
+  const jobId = randomUUID();
+  const now = new Date().toISOString();
+  const job: Job = {
+    pk: `job#${jobId}`,
+    ownerSub: identity.sub,
+    organizationId: identity["custom:organization_id"],
+    personId: identity["custom:person_id"],
+    state: "queued",
+    passesCompleted: 0,
+    progressPercent: 5,
+    attempt: 1,
+    createdAt: now,
+    updatedAt: now,
+    expiresAt: Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60,
+    documents: [],
+    structuredBiomarkers,
+    panelId: input.panelId,
+    ...(patientContext ? { patientContext } : {}),
+    ...(longitudinalContext ? { longitudinalContext } : {}),
+    failureCategory: null,
+    result: null,
+  };
+  await db.send(new PutCommand({ TableName: required("LAB_JOB_TABLE"), Item: job, ConditionExpression: "attribute_not_exists(pk)" }));
+  await sfn.send(new StartExecutionCommand({
+    stateMachineArn: required("LAB_STATE_MACHINE_ARN"),
+    name: `lab-plan-${jobId}`,
+    input: JSON.stringify({ jobId }),
+  }));
+  console.info(JSON.stringify({ event: "structured_lab_plan_job_created", jobId, markerCount: structuredBiomarkers.length }));
+  return json(200, { contractVersion: CONTRACT_VERSION, jobId, state: "queued" });
+}
+
 async function completeUpload(event: ApiEvent, identity: Claims, jobId: string) {
   const input = body(event);
   const job = await ownedJob(jobId, identity.sub!);
@@ -434,6 +508,7 @@ export async function createAwsLabAnalysisApiHandler(event: ApiEvent) {
     const method = event?.requestContext?.http?.method;
     const path = event?.rawPath;
     if (method === "POST" && (path === "/clinical-core/consumer/labs/jobs" || path === "/clinical-core/synthetic-session/labs/jobs")) return createJob(event, identity);
+    if (method === "POST" && (path === "/clinical-core/consumer/labs/plan-jobs" || path === "/clinical-core/synthetic-session/labs/plan-jobs")) return createPlanJob(event, identity);
     const match = typeof path === "string" ? path.match(/^\/clinical-core\/(?:consumer|synthetic-session)\/labs\/jobs\/([0-9a-f-]{36})(\/complete-upload)?$/i) : null;
     if (!match) return refusal(404);
     if (method === "POST" && match[2]) return completeUpload(event, identity, match[1]);

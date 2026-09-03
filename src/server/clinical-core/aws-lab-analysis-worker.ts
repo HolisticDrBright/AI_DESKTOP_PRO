@@ -9,7 +9,7 @@ import {
   TextractClient,
 } from "@aws-sdk/client-textract";
 import { synthesizeLabWithOpenAI } from "./aws-lab-openai";
-import type { LongitudinalContext, PatientContext } from "./aws-lab-analysis-api";
+import type { LongitudinalContext, PatientContext, StructuredLabBiomarker } from "./aws-lab-analysis-api";
 
 const db = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const s3 = new S3Client({});
@@ -19,7 +19,7 @@ const PASS_PROGRESS = [20, 40, 60, 80, 95];
 const UUID_NS = "ai-longevity-pro-synthetic-lab-v1";
 
 type StoredDocument = { clientDocumentId: string; contentType: string; objectKey: string };
-type Job = { pk: string; state: string; documents: StoredDocument[]; patientContext?: PatientContext; longitudinalContext?: LongitudinalContext };
+type Job = { pk: string; state: string; documents: StoredDocument[]; structuredBiomarkers?: StructuredLabBiomarker[]; patientContext?: PatientContext; longitudinalContext?: LongitudinalContext };
 type ExtractedCell = { text: string; confidence: number; column: number };
 type ExtractedRow = { cells: ExtractedCell[]; page: number | null; documentId: string };
 export type Extracted = {
@@ -282,6 +282,30 @@ export function normalizeExtractedLabLines(extracted: Extracted): Biomarker[] {
   }
   return output.filter((row, index) => output.findIndex((candidate) => candidate.canonicalName === row.canonicalName) === index);
 }
+export function normalizeStructuredLabBiomarkers(rows: StructuredLabBiomarker[], documentId: string): Biomarker[] {
+  return rows.map((row) => {
+    const rule = matchingRule(row.canonicalName);
+    return {
+      canonicalName: rule?.name ?? row.canonicalName.trim(),
+      reportedName: row.canonicalName.trim(),
+      value: row.value,
+      unit: row.unit.trim().toLowerCase().replace(/[μµ]/g, "u"),
+      labMin: row.labMin,
+      labMax: row.labMax,
+      functionalMin: rule?.min ?? null,
+      functionalMax: rule?.max ?? null,
+      sourceId: rule ? stableUuid(`range:${rule.name}`) : null,
+      sourceVersion: rule ? "synthetic-functional-ranges/1" : null,
+      population: rule ? "Synthetic adult test fixture; practitioner verification required" : null,
+      // These values came from the patient's saved parsed record. They are
+      // measured-data inputs, but this recovery pass does not independently
+      // re-read the source document, so the UI must retain the review label.
+      confidence: 0.79,
+      documentId,
+      page: null,
+    };
+  });
+}
 export function functionalRangeStatus(value: number, min: number, max: number) {
   if (value >= min && value <= max) return "optimal";
   const span = Math.max(max - min, Math.abs(max), 1);
@@ -295,6 +319,10 @@ function reportedRangeStatus(value: number, min: number | null, max: number | nu
 async function executePass(job: Job, pass: number): Promise<unknown | null> {
   const jobId = job.pk.slice(4);
   if (pass === 0) {
+    if (job.structuredBiomarkers) {
+      await writeArtifact(jobId, "extracted", { lines: [], tableRows: [], source: "saved_measured_biomarkers" });
+      return null;
+    }
     const lines: Extracted["lines"] = [];
     const tableRows: ExtractedRow[] = [];
     for (const document of job.documents) {
@@ -306,14 +334,19 @@ async function executePass(job: Job, pass: number): Promise<unknown | null> {
     return null;
   }
   if (pass === 1) {
+    if (job.structuredBiomarkers) {
+      await writeArtifact(jobId, "verified", { lines: [], source: "saved_measured_biomarkers", independentlyVerified: false });
+      return null;
+    }
     const extracted = await readArtifact(jobId, "extracted") as Extracted;
     const verified = extracted.lines.map((line) => ({ ...line, normalizedText: line.text.replace(/\s+/g, " ").trim(), needsHumanReview: line.confidence < 80 }));
     await writeArtifact(jobId, "verified", { lines: verified });
     return null;
   }
   if (pass === 2) {
-    const extracted = await readArtifact(jobId, "extracted") as Extracted;
-    const biomarkers = normalizeExtractedLabLines(extracted);
+    const biomarkers = job.structuredBiomarkers
+      ? normalizeStructuredLabBiomarkers(job.structuredBiomarkers, jobId)
+      : normalizeExtractedLabLines(await readArtifact(jobId, "extracted") as Extracted);
     if (!biomarkers.length) throw Object.assign(new Error("no_supported_biomarkers"), { category: "document_unreadable" });
     await writeArtifact(jobId, "normalized", { biomarkers });
     return null;
@@ -468,6 +501,7 @@ export async function createAwsLabAnalysisWorker(event: { jobId?: string; pass?:
         ...(terminal ? { ":result": output } : {}),
       },
     }));
+    console.info(JSON.stringify({ event: "lab_analysis_pass_completed", jobId, pass, terminal }));
     return { jobId, pass, completed: true };
   } catch (error) {
     const detail = error && typeof error === "object" ? error as Record<string, unknown> : {};

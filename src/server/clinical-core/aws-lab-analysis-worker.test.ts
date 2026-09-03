@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { functionalRangeStatus, normalizeExtractedLabLines, normalizeExtractedLabTables } from "./aws-lab-analysis-worker";
+import { functionalRangeStatus, normalizeExtractedLabLines, normalizeExtractedLabTables, normalizeStructuredLabBiomarkers } from "./aws-lab-analysis-worker";
 
 const documentId = "22222222-2222-4222-8222-222222222222";
 
@@ -75,5 +75,15 @@ describe("synthetic AWS functional lab rules", () => {
     expect(biomarkers).toHaveLength(1);
     expect(biomarkers[0].canonicalName).toBe("Valid Marker");
     expect(biomarkers.every((row) => row.canonicalName.length > 0)).toBe(true);
+  });
+
+  test("rebuilds governed ranges from saved measured biomarkers without claiming document verification", () => {
+    const biomarkers = normalizeStructuredLabBiomarkers([
+      { markerId: "local-glucose", canonicalName: "Glucose", value: 104, unit: "mg/dL", labMin: 70, labMax: 99 },
+      { markerId: "local-custom", canonicalName: "Custom Marker", value: 12, unit: "ng/mL", labMin: 5, labMax: 20 },
+    ], documentId);
+
+    expect(biomarkers[0]).toMatchObject({ canonicalName: "Glucose", functionalMin: 75, functionalMax: 90, confidence: 0.79 });
+    expect(biomarkers[1]).toMatchObject({ canonicalName: "Custom Marker", functionalMin: null, functionalMax: null, confidence: 0.79 });
   });
 });

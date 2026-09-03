@@ -38,6 +38,12 @@ The high-volume regression sends four synthetic table images containing 80 uniqu
 .\scripts\run-aws-lab-80-marker-test.ps1
 ```
 
+Existing saved measured markers can be reprocessed into a governed plan without inventing a source document. The recovery route recomputes governed functional ranges in AWS, preserves reporting-lab ranges, labels every marker as needing source-document review, and runs the same interpretation and plan synthesis passes:
+
+```powershell
+.\scripts\run-aws-saved-lab-plan-live-test.ps1
+```
+
 Both tests use generated synthetic records only. Never use a real patient report in this stack, even if the AWS account has a BAA; the deployed resources are explicitly tagged and constrained as `synthetic_only` with `PhiAllowed=false`.
 
 Verified on 2026-08-14 against the deployed synthetic stack:

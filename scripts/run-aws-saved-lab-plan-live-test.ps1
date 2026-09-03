@@ -1,0 +1,58 @@
+param(
+  [string]$ApiOrigin = "https://wxv734oi12.execute-api.us-east-2.amazonaws.com",
+  [string]$Profile = "ai-synthetic-member",
+  [string]$Region = "us-east-2"
+)
+
+$ErrorActionPreference = "Stop"
+$credentialPath = Join-Path $env:USERPROFILE ".ai-longevity-pro-synthetic-lab-test.dpapi.json"
+if (-not (Test-Path -LiteralPath $credentialPath)) { throw "Prepare the synthetic lab test account first." }
+$record = Get-Content -LiteralPath $credentialPath -Raw | ConvertFrom-Json
+$password = [System.Net.NetworkCredential]::new("", ($record.password | ConvertTo-SecureString)).Password
+$clientId = $record.client_id
+$temp = Join-Path $env:TEMP ("ai-saved-lab-plan-test-" + [guid]::NewGuid().ToString("N"))
+New-Item -ItemType Directory -Path $temp | Out-Null
+$authPath = Join-Path $temp "auth.json"
+try {
+  [ordered]@{ AuthFlow = "USER_PASSWORD_AUTH"; ClientId = $clientId; AuthParameters = @{ USERNAME = $record.email; PASSWORD = $password } } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $authPath -Encoding utf8NoBOM
+  $auth = aws cognito-idp initiate-auth --cli-input-json ("file://" + $authPath.Replace("\", "/")) --profile $Profile --region $Region --output json | ConvertFrom-Json
+  if ($LASTEXITCODE -ne 0 -or -not $auth.AuthenticationResult.IdToken) { throw "Synthetic Cognito sign-in failed." }
+  $headers = @{ Authorization = "Bearer $($auth.AuthenticationResult.IdToken)"; Accept = "application/json" }
+  $panelId = "synthetic-saved-panel-$([guid]::NewGuid().ToString('N').Substring(0,8))"
+  $today = (Get-Date).ToUniversalTime().ToString("yyyy-MM-dd")
+  $createBody = @{
+    panelId = $panelId; panelName = "Synthetic Saved Lab Values"; testDate = $today
+    dataClassification = "synthetic_only"; attestsSyntheticOnly = $true
+    patientContext = @{
+      ageYears = 41; sex = "female"; pregnancyStatus = "not_pregnant"; nursing = $false
+      mainComplaint = "Synthetic low energy"; complaintDuration = "3 months"; complaintSeverity = 5
+      conditions = @(); medications = @(); allergies = @(); topSymptomSignals = @(@{ categoryId = "sleep"; percentage = 65 })
+      lifestyle = @{ sleepHours = 6.5; sleepQuality = 5; stressLevel = 6; dietType = "omnivore"; exerciseFrequency = 3 }
+    }
+    longitudinalContext = @{ incomingPanel = @{ panelId = $panelId; panelName = "Synthetic Saved Lab Values"; testDate = $today }; priorPanels = @(); activeProtocol = $null }
+    biomarkers = @(
+      @{ markerId = "saved-glucose"; canonicalName = "Glucose"; value = 104; unit = "mg/dL"; labMin = 70; labMax = 99 },
+      @{ markerId = "saved-tsh"; canonicalName = "TSH"; value = 3.4; unit = "uIU/mL"; labMin = 0.4; labMax = 4.5 },
+      @{ markerId = "saved-vitamin-d"; canonicalName = "Vitamin D"; value = 32; unit = "ng/mL"; labMin = 30; labMax = 100 }
+    )
+  } | ConvertTo-Json -Depth 8
+  $created = Invoke-RestMethod -Method Post -Uri "$ApiOrigin/clinical-core/consumer/labs/plan-jobs" -Headers $headers -ContentType "application/json" -Body $createBody
+  if ($created.data.state -ne "queued" -or -not $created.data.jobId) { throw "Saved-lab plan job was not queued." }
+  $deadline = (Get-Date).AddMinutes(4)
+  do {
+    Start-Sleep -Seconds 2
+    $current = Invoke-RestMethod -Method Get -Uri "$ApiOrigin/clinical-core/consumer/labs/jobs/$($created.data.jobId)" -Headers $headers
+  } while ($current.data.state -notin @("completed", "needs_review", "failed") -and (Get-Date) -lt $deadline)
+  if ($current.data.state -ne "completed" -or -not $current.data.result.generatedPlan) { throw "Saved-lab plan job ended in state $($current.data.state)." }
+  $unexpectedVerification = @($current.data.result.biomarkers | Where-Object verificationState -ne "needs_human_review").Count
+  $accepted = $current.data.result.biomarkers.Count -eq 3 `
+    -and $unexpectedVerification -eq 0 `
+    -and $current.data.result.generatedPlan.sourcePanelId -eq $panelId `
+    -and $current.data.result.generatedPlan.tasks.Count -ge 1
+  if (-not $accepted) { throw "Saved-lab plan result failed acceptance checks." }
+  $deleted = Invoke-RestMethod -Method Delete -Uri "$ApiOrigin/clinical-core/consumer/labs/jobs/$($created.data.jobId)" -Headers $headers
+  if ($deleted.data.deleted -ne $true) { throw "Saved-lab plan job cleanup failed." }
+  [pscustomobject]@{ State = $current.data.state; Markers = $current.data.result.biomarkers.Count; PlanTasks = $current.data.result.generatedPlan.tasks.Count; MeasuredOnly = $true; ReviewProvenanceRetained = $true; Deleted = $true } | Format-List
+} finally {
+  Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue
+}
