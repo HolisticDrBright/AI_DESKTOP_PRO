@@ -44,7 +44,7 @@ afterEach(() => {
 describe("AWS clinical-core migration runner", () => {
   test("loads ordered migrations and computes their content hash", () => {
     const migrations = loadClinicalCoreMigrations();
-    expect(migrations).toHaveLength(17);
+    expect(migrations).toHaveLength(18);
     expect(migrations[0]).toMatchObject({
       version: "20260812010000",
       name: "synthetic_identity_consent",
@@ -140,13 +140,20 @@ describe("AWS clinical-core migration runner", () => {
     expect(migrations[16]!.sql).toContain("clinical_core.get_patient_app_intake");
     expect(migrations[16]!.sql).toContain("'labImports'");
     expect(migrations[16]!.sql).toContain("p.contains_phi = false");
+    expect(migrations[17]).toMatchObject({
+      version: "20260903030000",
+      name: "register_synthetic_patient_app_intake",
+    });
+    expect(migrations[17]!.sql).toContain("clinical_compatibility.get_patient_app_intake_v1");
+    expect(migrations[17]!.sql).toContain("'rpc', 'get_patient_app_intake'");
+    expect(migrations[17]!.sql).toContain("enabled = false");
   });
 
   test("serializes and applies a missing migration in one transaction", async () => {
     const db = migrationDatabase();
     const result = await applyClinicalCoreMigrations(db.database);
     expect(result).toEqual({
-      applied: ["20260812010000", "20260812220000", "20260821010000", "20260821020000", "20260821030000", "20260821040000", "20260821045000", "20260821046000", "20260821047000", "20260821048000", "20260821049000", "20260821049500", "20260821049700", "20260821049800", "20260821049900", "20260903010000", "20260903020000"],
+      applied: ["20260812010000", "20260812220000", "20260821010000", "20260821020000", "20260821030000", "20260821040000", "20260821045000", "20260821046000", "20260821047000", "20260821048000", "20260821049000", "20260821049500", "20260821049700", "20260821049800", "20260821049900", "20260903010000", "20260903020000", "20260903030000"],
       alreadyApplied: [],
     });
     expect(db.transactions()).toBe(1);
