@@ -24,7 +24,15 @@ function numeric(value: number | undefined, suffix = ""): string {
   return typeof value === "number" && Number.isFinite(value) ? `${value}${suffix}` : "Not reported";
 }
 
-export function PatientAppIntakeCard({ patientId }: { patientId: string }) {
+type PatientAppIntakeFocus = "all" | "labs" | "wearables";
+
+export function PatientAppIntakeCard({
+  patientId,
+  focus = "all",
+}: {
+  patientId: string;
+  focus?: PatientAppIntakeFocus;
+}) {
   const [data, setData] = useState<LivePatientAppIntake | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
@@ -50,6 +58,14 @@ export function PatientAppIntakeCard({ patientId }: { patientId: string }) {
   const intake = data.clinicalIntake?.payload;
   const latestWearable = data.wearableDailyRecords[0]?.payload;
   const labImports = data.labImports ?? [];
+  const showProfile = focus === "all";
+  const showWearables = focus === "all" || focus === "wearables";
+  const showLabs = focus === "all" || focus === "labs";
+  const heading = focus === "labs"
+    ? "Laboratory markers received from V2"
+    : focus === "wearables"
+      ? "Wearable measurements received from V2"
+      : "V2 health profile and intake";
   const lastReceived = [
     data.wellnessProfile?.receivedAt, data.lifestyleProfile?.receivedAt,
     data.contraindications?.receivedAt, data.clinicalIntake?.receivedAt,
@@ -62,15 +78,19 @@ export function PatientAppIntakeCard({ patientId }: { patientId: string }) {
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <CardTitle>
           <ClipboardCheck size={13} strokeWidth={2} className="text-brand" aria-hidden />
-          V2 health profile and intake
+          {heading}
         </CardTitle>
         <div className="flex flex-wrap gap-2">
-          <Pill tone={data.sharingStatus === "granted" ? "positive" : "warning"}>
-            intake {data.sharingStatus.replace("_", " ")}
-          </Pill>
-          <Pill tone={data.wearablesSharingStatus === "granted" ? "positive" : "warning"}>
-            wearables {data.wearablesSharingStatus.replace("_", " ")}
-          </Pill>
+          {showProfile ? (
+            <Pill tone={data.sharingStatus === "granted" ? "positive" : "warning"}>
+              intake {data.sharingStatus.replace("_", " ")}
+            </Pill>
+          ) : null}
+          {showWearables ? (
+            <Pill tone={data.wearablesSharingStatus === "granted" ? "positive" : "warning"}>
+              wearables {data.wearablesSharingStatus.replace("_", " ")}
+            </Pill>
+          ) : null}
         </div>
       </div>
       <div className="mb-3 flex items-start gap-2 rounded-[10px] border border-hairline-2 bg-sunken px-3 py-[10px] text-[11.5px] leading-[1.5] text-subtle">
@@ -81,7 +101,7 @@ export function PatientAppIntakeCard({ patientId }: { patientId: string }) {
         <p className="m-0 text-[12px] text-faint">No verified V2 connection exists for this patient.</p>
       ) : (
         <div className="grid gap-3 lg:grid-cols-2">
-          <section aria-labelledby="v2-profile-heading" className="rounded-lg border border-hairline-2 p-3">
+          {showProfile ? <section aria-labelledby="v2-profile-heading" className="rounded-lg border border-hairline-2 p-3">
             <h3 id="v2-profile-heading" className="m-0 mb-2 text-[12px] font-bold">Wellness and lifestyle</h3>
             <dl className="m-0 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-[11.5px]">
               <dt className="text-faint">Height</dt><dd className="m-0">{numeric(profile?.height, " in")}</dd>
@@ -91,8 +111,8 @@ export function PatientAppIntakeCard({ patientId }: { patientId: string }) {
               <dt className="text-faint">Stress</dt><dd className="m-0">{numeric(lifestyle?.stressLevel, "/10")}</dd>
               <dt className="text-faint">Exercise</dt><dd className="m-0">{numeric(lifestyle?.exerciseFrequency, "×/week")} · {textList(lifestyle?.exerciseTypes)}</dd>
             </dl>
-          </section>
-          <section aria-labelledby="v2-safety-heading" className="rounded-lg border border-hairline-2 p-3">
+          </section> : null}
+          {showProfile ? <section aria-labelledby="v2-safety-heading" className="rounded-lg border border-hairline-2 p-3">
             <h3 id="v2-safety-heading" className="m-0 mb-2 text-[12px] font-bold">Patient-reported safety history</h3>
             <dl className="m-0 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-[11.5px]">
               <dt className="text-faint">Conditions</dt><dd className="m-0">{textList(contraindications?.conditions)}</dd>
@@ -101,15 +121,15 @@ export function PatientAppIntakeCard({ patientId }: { patientId: string }) {
               <dt className="text-faint">Pregnancy</dt><dd className="m-0">{contraindications?.pregnancyStatus ?? "Not reported"}</dd>
               <dt className="text-faint">Nursing</dt><dd className="m-0">{typeof contraindications?.nursing === "boolean" ? (contraindications.nursing ? "Yes" : "No") : "Not reported"}</dd>
             </dl>
-          </section>
-          <section aria-labelledby="v2-intake-heading" className="rounded-lg border border-hairline-2 p-3 lg:col-span-2">
+          </section> : null}
+          {showProfile ? <section aria-labelledby="v2-intake-heading" className="rounded-lg border border-hairline-2 p-3 lg:col-span-2">
             <h3 id="v2-intake-heading" className="m-0 mb-2 text-[12px] font-bold">Health intake</h3>
             <p className="m-0 text-[12px] font-medium text-body">{intake?.chiefComplaint?.description ?? "No chief complaint received."}</p>
             <p className="m-0 mt-1 text-[11.5px] text-subtle">
               Duration {intake?.chiefComplaint?.duration ?? "not reported"} · severity {numeric(intake?.chiefComplaint?.severity, "/10")} · {data.questionnaireResponses.length} questionnaire answers received
             </p>
-          </section>
-          <section aria-labelledby="v2-wearables-heading" className="rounded-lg border border-hairline-2 p-3 lg:col-span-2">
+          </section> : null}
+          {showWearables ? <section aria-labelledby="v2-wearables-heading" className="rounded-lg border border-hairline-2 p-3 lg:col-span-2">
             <h3 id="v2-wearables-heading" className="m-0 mb-2 text-[12px] font-bold">Patient-supplied wearable measurements</h3>
             {latestWearable ? (
               <dl className="m-0 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-[11.5px] sm:grid-cols-[auto_1fr_auto_1fr]">
@@ -126,8 +146,8 @@ export function PatientAppIntakeCard({ patientId }: { patientId: string }) {
               <p className="m-0 text-[12px] text-faint">No wearable measurements received.</p>
             )}
             <p className="m-0 mt-2 text-[11.5px] text-subtle">Review and reconcile these measurements before using them as practitioner-verified chart data.</p>
-          </section>
-          <section aria-labelledby="v2-labs-heading" className="rounded-lg border border-hairline-2 p-3 lg:col-span-2">
+          </section> : null}
+          {showLabs ? <section aria-labelledby="v2-labs-heading" className="rounded-lg border border-hairline-2 p-3 lg:col-span-2">
             <h3 id="v2-labs-heading" className="m-0 mb-2 text-[12px] font-bold">Laboratory markers received from V2</h3>
             {labImports.length > 0 ? (
               <div className="overflow-x-auto">
@@ -145,7 +165,7 @@ export function PatientAppIntakeCard({ patientId }: { patientId: string }) {
               </div>
             ) : <p className="m-0 text-[12px] text-faint">No laboratory markers received.</p>}
             <p className="m-0 mt-2 text-[11.5px] text-subtle">Pending markers are patient-supplied and remain outside the accepted laboratory record until reviewed.</p>
-          </section>
+          </section> : null}
         </div>
       )}
     </Card>

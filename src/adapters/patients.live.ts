@@ -42,12 +42,17 @@ function initials(first: string, last: string): string {
   return `${first[0] ?? ""}${last[0] ?? ""}`.toUpperCase() || "?";
 }
 
+function isSyntheticV2Link(row: ClinicalPatientRow): boolean {
+  return row.mrn?.startsWith("patient_syn_link_") === true;
+}
+
 function toDirectoryEntry(row: ClinicalPatientRow, i = 0): PatientDirectoryEntry {
+  const v2Link = isSyntheticV2Link(row);
   return {
     id: row.id,
     mrn: row.mrn ?? row.id.slice(0, 8),
-    name: `${row.first_name} ${row.last_name}`.trim(),
-    initials: initials(row.first_name, row.last_name),
+    name: v2Link ? `V2 connection test · ${row.mrn}` : `${row.first_name} ${row.last_name}`.trim(),
+    initials: v2Link ? "V2" : initials(row.first_name, row.last_name),
     // Calendar-date parsing (no UTC shift) + no guessing: unknown stays unknown.
     sex: displaySex(row.sex),
     age: calendarAge(row.date_of_birth),
@@ -83,7 +88,9 @@ export const patientsLive = {
       patientParams(resolveOrgId(orgId)),
       token,
     );
-    return rows.map((r, i) => toDirectoryEntry(r, i));
+    return rows
+      .toSorted((a, b) => Number(isSyntheticV2Link(b)) - Number(isSyntheticV2Link(a)))
+      .map((r, i) => toDirectoryEntry(r, i));
   },
 
   async get(

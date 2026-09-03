@@ -52,6 +52,25 @@ describe("patientsLive AWS clinical boundary", () => {
     });
   });
 
+  test("puts synthetic V2 connection charts first and labels them clearly", async () => {
+    const linked = {
+      ...patientRow,
+      id: "20000000-0000-4000-8000-000000000002",
+      mrn: "patient_syn_link_80322acc2236",
+      first_name: "Synthetic",
+      last_name: "patient_syn_link_80322acc2236",
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response([patientRow, linked])));
+
+    const rows = await patientsLive.list(TOKEN, ORG_ID);
+
+    expect(rows.map((row) => row.id)).toEqual([linked.id, PATIENT_ID]);
+    expect(rows[0]).toMatchObject({
+      name: "V2 connection test · patient_syn_link_80322acc2236",
+      initials: "V2",
+    });
+  });
+
   test("a direct patient URL is constrained by both patient and selected organization", async () => {
     const fetchMock = vi.fn().mockResolvedValue(response([patientRow]));
     vi.stubGlobal("fetch", fetchMock);

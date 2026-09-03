@@ -5,7 +5,7 @@ import { api } from "@/adapters";
 import { getRequestSession } from "@/server/session";
 import { isPatientTabId, LEGACY_PATIENT_TABS, patientPath } from "@/lib/routes";
 import type { PatientTabId } from "@/adapters/types";
-import { ClinicalEmpty } from "@/components/ui/ClinicalStates";
+import { ClinicalEmpty, ClinicalNote } from "@/components/ui/ClinicalStates";
 import { PatientTimeline } from "@/components/encounter/PatientTimeline";
 import { PatientOverviewLive } from "@/components/patient/PatientOverviewLive";
 import { LabsHub } from "@/components/patient/LabsHub";
@@ -15,6 +15,7 @@ import { PatientSyncPanel } from "@/components/sync/PatientSyncPanel";
 import { PatientBillingLive } from "@/components/billing/PatientBillingLive";
 import { PatientPlansLive } from "@/components/plans/PatientPlansLive";
 import { PatientNutritionLive } from "@/components/nutrition/PatientNutritionLive";
+import { PatientAppIntakeCard } from "@/components/patient/PatientAppIntakeCard";
 
 /** Tabs with live data sources; the rest state their demo-only status in live mode. */
 const LIVE_READY: Partial<Record<PatientTabId, true>> = {
@@ -77,8 +78,22 @@ export default async function PatientTabPage({
   const patient = await api.patients.get(patientId, session.token, session.orgId);
   if (!patient) notFound();
   const name = patient.name;
+  const syntheticOnly =
+    process.env.CLINICAL_AWS_RUNTIME_MODE === "synthetic" && process.env.PHI_ALLOWED !== "true";
 
   if (tab === "overview") {
+    if (syntheticOnly) {
+      return (
+        <div className="flex flex-col gap-3 pt-4 pb-8">
+          <ClinicalNote>
+            <strong>Connected V2 data.</strong> This staging overview shows the patient-supplied
+            intake, wearable measurements, and laboratory markers received from the linked V2 test
+            account. Pending imports are visible here before they become verified chart records.
+          </ClinicalNote>
+          <PatientAppIntakeCard patientId={patientId} />
+        </div>
+      );
+    }
     return <PatientOverviewLive patientId={patientId} />;
   }
 
@@ -87,6 +102,17 @@ export default async function PatientTabPage({
   }
 
   if (tab === "labs") {
+    if (syntheticOnly) {
+      return (
+        <div className="flex flex-col gap-3 pt-4 pb-8">
+          <ClinicalNote>
+            These are patient-supplied V2 laboratory imports. They remain clearly marked as
+            pending until the governed review workflow accepts or rejects them.
+          </ClinicalNote>
+          <PatientAppIntakeCard patientId={patientId} focus="labs" />
+        </div>
+      );
+    }
     return <LabsHub patientId={patientId} patientName={name} view={view} />;
   }
 
@@ -99,9 +125,24 @@ export default async function PatientTabPage({
   }
 
   if (tab === "app-sync") {
-    const syntheticOnly =
-      process.env.CLINICAL_AWS_RUNTIME_MODE === "synthetic" && process.env.PHI_ALLOWED !== "true";
-    return <PatientSyncPanel patientId={patientId} syntheticOnly={syntheticOnly} />;
+    return syntheticOnly ? (
+      <div className="flex flex-col gap-3 pb-8">
+        <PatientSyncPanel patientId={patientId} syntheticOnly />
+        <PatientAppIntakeCard patientId={patientId} />
+      </div>
+    ) : <PatientSyncPanel patientId={patientId} />;
+  }
+
+  if (tab === "tracking" && syntheticOnly) {
+    return (
+      <div className="flex flex-col gap-3 pt-4 pb-8">
+        <ClinicalNote>
+          Wearable measurements shown here came from the linked V2 account. Missing values stay
+          missing; Desktop does not substitute mock measurements or hidden defaults.
+        </ClinicalNote>
+        <PatientAppIntakeCard patientId={patientId} focus="wearables" />
+      </div>
+    );
   }
 
   if (tab === "billing") {
