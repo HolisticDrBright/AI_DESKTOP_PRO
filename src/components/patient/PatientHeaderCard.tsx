@@ -1,6 +1,8 @@
-import { Mars, Venus } from "lucide-react";
+import { Link2, Mars, Venus } from "lucide-react";
 import type { PatientDirectoryEntry } from "@/adapters/types";
 import { InitialsAvatar } from "@/components/ui/bits";
+import { BtnLink } from "@/components/ui/Btn";
+import { patientPath } from "@/lib/routes";
 import { PatientHeaderActions } from "./PatientHeaderActions";
 
 export function PatientHeaderCard({ patient }: { patient: PatientDirectoryEntry }) {
@@ -61,7 +63,12 @@ export function PatientHeaderCard({ patient }: { patient: PatientDirectoryEntry 
         </div>
       </div>
 
-      <PatientHeaderActions patientName={patient.name} />
+      <div className="flex items-center gap-2">
+        <BtnLink href={patientPath(patient.id, "app-sync")}>
+          <Link2 size={13} strokeWidth={2} aria-hidden /> Patient App
+        </BtnLink>
+        <PatientHeaderActions patientName={patient.name} />
+      </div>
     </div>
   );
 }
