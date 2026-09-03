@@ -1,4 +1,3 @@
-import { NextRequest } from "next/server";
 import { importReviewLive } from "@/adapters/import-review.live";
 import { getRequestSession } from "@/server/session";
 import { liveGuard, runLive } from "../../route-helpers";
@@ -12,7 +11,7 @@ import { liveGuard, runLive } from "../../route-helpers";
  * deliberately omits raw source text — that stays behind the preview
  * detail path with its own audit.
  */
-export async function GET(_req: NextRequest) {
+export async function GET() {
   const blocked = liveGuard();
   if (blocked) return blocked;
   return runLive(async () => {

@@ -21,11 +21,10 @@
  */
 
 import { execFileSync, spawn } from "node:child_process";
-import { openSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { openSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
-const NEXT_ENTRY = join(process.cwd(), "node_modules", "next", "dist", "bin", "next");
 const PLAYWRIGHT_ENTRY = join(process.cwd(), "node_modules", "@playwright", "test", "cli.js");
 
 const specs = readdirSync("e2e").filter((f) => f.endsWith(".spec.ts")).sort();

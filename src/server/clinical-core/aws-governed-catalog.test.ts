@@ -160,7 +160,8 @@ describe("AWS governed catalog seed boundary", () => {
   test("refuses commercial data inside the clinical payload", () => {
     const value = manifest();
     value.products[0]!.clinicalPayload = { nested: { affiliateUrl: "https://example.invalid" } };
-    const { contentSha256: _hash, ...productContent } = value.products[0]!;
+    const productContent = structuredClone(value.products[0]!);
+    Reflect.deleteProperty(productContent, "contentSha256");
     value.products[0]!.contentSha256 = catalogSha256(productContentForHash(productContent));
     expect(() => validateGovernedCatalogManifest(value)).toThrow(/manifest_invalid/);
   });

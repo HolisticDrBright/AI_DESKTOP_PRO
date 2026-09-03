@@ -4981,7 +4981,10 @@ createServer(async (req, res) => {
       const records = all
         .filter((r) => (!refType || r.refType === refType) && (!refId || r.refId === refId))
         .slice(0, limit)
-        .map(({ organizationId, ...rest }) => rest);
+        .map(({ organizationId, ...rest }) => {
+          void organizationId;
+          return rest;
+        });
       return json(res, 200, {
         records,
         total: all.length,

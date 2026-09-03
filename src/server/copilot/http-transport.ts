@@ -82,7 +82,7 @@ export class TransportError extends Error {
  */
 export const refusalTransport: Transport = {
   kind: "real",
-  async send(_req: TransportRequest): Promise<TransportResponse> {
+  async send(): Promise<TransportResponse> {
     throw new Error("openai_transport_refused_by_default");
   },
 };

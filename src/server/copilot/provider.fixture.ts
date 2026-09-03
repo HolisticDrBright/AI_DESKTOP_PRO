@@ -26,6 +26,7 @@ export const fixtureProvider: CopilotProvider = {
   name: "fixture",
   model: "fixture-copilot-v1",
   async draft({ runType, lens, inputSnapshot, allowedCitationIds }) {
+    void inputSnapshot;
     const allowedList = Array.from(allowedCitationIds);
     // Fixture content by run type — deliberately structural, no medical
     // claims. Real draft bodies land in Phase 10B behind a real provider.

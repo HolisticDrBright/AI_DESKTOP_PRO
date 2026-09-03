@@ -107,7 +107,6 @@ function functionDefinitions() {
       const schema = (match[1] ?? "public").toLowerCase();
       const signature = normalized(sql.slice(open + 1, close));
       const declaration = normalized(sql.slice(close + 1, close + 1 + asMatch.index));
-      const body = sql.slice(bodyStart, bodyEnd);
       const full = sql.slice(start, semicolon + 1);
       const tableDependencies = [...new Set([...full.matchAll(
         /\b(?:from|join|insert\s+into|update|delete\s+from)\s+((?:[a-z][a-z0-9_]*\.)?[a-z][a-z0-9_]*)/gi,

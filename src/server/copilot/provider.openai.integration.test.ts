@@ -4,7 +4,7 @@ import { buildEmptySnapshot } from "./input-builder";
 import { assembleRetrieval } from "./retrieval";
 import { buildMinimizedEnvelope } from "./data-minimizer";
 import { SecretResolver, type SecretsVaultClient } from "./secrets";
-import type { Transport, TransportRequest, TransportResponse } from "./http-transport";
+import type { Transport, TransportResponse } from "./http-transport";
 import { createOpenAIAdapter, type OpenAIProviderApproval } from "./provider.openai";
 
 const ARN = "arn:aws:secretsmanager:us-east-1:123456789012:secret:openai-hipaa-live";
@@ -44,7 +44,7 @@ function fakeSecrets(): SecretsVaultClient {
 function fakeTransport(response: TransportResponse): Transport {
   return {
     kind: "fake",
-    async send(_req: TransportRequest): Promise<TransportResponse> {
+    async send(): Promise<TransportResponse> {
       return response;
     },
   };

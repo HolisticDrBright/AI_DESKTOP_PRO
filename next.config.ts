@@ -67,6 +67,10 @@ const RECORDING_CSP = [
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  // Keep standalone tracing anchored to this repository. Developer machines
+  // may have unrelated lockfiles above the checkout; those must not widen the
+  // deployment trace or create invalid cross-workspace symlinks.
+  outputFileTracingRoot: process.cwd(),
   // Produce the traced, minimal Node runtime used by the AWS-hosted clinical
   // container. Build-time edition checks remain authoritative.
   output: "standalone",

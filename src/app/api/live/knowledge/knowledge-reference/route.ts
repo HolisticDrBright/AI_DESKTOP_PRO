@@ -52,7 +52,7 @@ export async function POST(req: NextRequest) {
   });
 }
 
-export async function GET(_req: NextRequest) {
+export async function GET() {
   const blocked = liveGuard();
   if (blocked) return blocked;
   return runLive(async () => {

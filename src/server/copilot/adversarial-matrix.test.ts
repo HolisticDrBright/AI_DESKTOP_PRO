@@ -376,7 +376,8 @@ describe("Lens invariance — safety-critical categories are lens-agnostic", () 
     const s = buildEmptySnapshot().snapshot;
     s.transcriptRevisions = [{ id: "tx", content: "crushing chest pain" }];
     const items = runSafetyCore(s);
-    for (const _lens of paradigms) {
+    for (const lens of paradigms) {
+      expect(lens).toBeDefined();
       // No re-invocation needed — the core does not read a lens. Signature
       // proof: runSafetyCore.length === 1.
       expect(runSafetyCore.length).toBe(1);

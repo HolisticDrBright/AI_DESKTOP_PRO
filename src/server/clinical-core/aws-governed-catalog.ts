@@ -743,8 +743,9 @@ function result(
 }
 
 function withoutHash<T extends { contentSha256?: string; manifestSha256?: string }>(value: T) {
-  const { contentSha256: _content, manifestSha256: _manifest, ...rest } = value;
-  return rest;
+  return Object.fromEntries(
+    Object.entries(value).filter(([key]) => key !== "contentSha256" && key !== "manifestSha256"),
+  ) as Omit<T, "contentSha256" | "manifestSha256">;
 }
 
 function invalid(): never {
