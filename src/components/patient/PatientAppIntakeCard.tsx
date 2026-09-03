@@ -29,15 +29,18 @@ type PatientAppIntakeFocus = "all" | "labs" | "wearables";
 export function PatientAppIntakeCard({
   patientId,
   focus = "all",
+  initialData = null,
 }: {
   patientId: string;
   focus?: PatientAppIntakeFocus;
+  initialData?: LivePatientAppIntake | null;
 }) {
-  const [data, setData] = useState<LivePatientAppIntake | null>(null);
+  const [data, setData] = useState<LivePatientAppIntake | null>(initialData);
   const [error, setError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
+    if (initialData && reloadKey === 0) return;
     let active = true;
     setError(null);
     liveClient.patientAppIntake(patientId).then((value) => {
@@ -47,7 +50,7 @@ export function PatientAppIntakeCard({
       setError(isAdapterError(cause) ? cause.safeMessage : "Unable to load the patient-reported app intake.");
     });
     return () => { active = false; };
-  }, [patientId, reloadKey]);
+  }, [initialData, patientId, reloadKey]);
 
   if (error) return <ClinicalError message={error} onRetry={() => setReloadKey((value) => value + 1)} />;
   if (!data) return <ClinicalLoading label="Loading patient-reported V2 intake…" />;

@@ -87,6 +87,16 @@
       "version": "20260903070000",
       "file": "20260903070000_governed_patient_chat.sql",
       "production_transform": false
+    },
+    {
+      "version": "20260903163000",
+      "file": "20260903163000_synthetic_desktop_calendar.sql",
+      "production_transform": false
+    },
+    {
+      "version": "20260903170000",
+      "file": "20260903170000_register_synthetic_desktop_calendar.sql",
+      "production_transform": false
     }
   ]
 }

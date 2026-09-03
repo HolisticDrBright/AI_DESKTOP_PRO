@@ -160,6 +160,7 @@ export function AskAlpActivation() {
 
       <Card className="p-4">
         <label htmlFor="ask-alp-confirmation" className="block text-[12px] font-bold text-ink">Type the exact confirmation</label>
+        <p className="m-0 mt-1 text-[11px] leading-[1.5] text-body">Copy or type the phrase shown immediately below. It is not sent by email and it is not an authenticator code.</p>
         <p className="m-0 mt-1 font-mono text-[11px] text-subtle">{candidate.confirmation}</p>
         <input id="ask-alp-confirmation" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} autoComplete="off" className="mt-3 h-9 w-full rounded-md border border-line bg-card px-3 font-mono text-[12px] text-body outline-none focus-visible:outline-2 focus-visible:outline-action" />
         {error && <p role="alert" className="m-0 mt-3 text-[11.5px] font-semibold text-critical">{error}</p>}

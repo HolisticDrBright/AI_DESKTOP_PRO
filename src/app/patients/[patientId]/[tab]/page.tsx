@@ -16,6 +16,8 @@ import { PatientBillingLive } from "@/components/billing/PatientBillingLive";
 import { PatientPlansLive } from "@/components/plans/PatientPlansLive";
 import { PatientNutritionLive } from "@/components/nutrition/PatientNutritionLive";
 import { PatientAppIntakeCard } from "@/components/patient/PatientAppIntakeCard";
+import { patientAppIntakeLive } from "@/adapters/patient-app-intake.live";
+import type { LivePatientAppIntake } from "@/adapters/live-types";
 
 /** Tabs with live data sources; the rest state their demo-only status in live mode. */
 const LIVE_READY: Partial<Record<PatientTabId, true>> = {
@@ -80,6 +82,23 @@ export default async function PatientTabPage({
   const name = patient.name;
   const syntheticOnly =
     process.env.CLINICAL_AWS_RUNTIME_MODE === "synthetic" && process.env.PHI_ALLOWED !== "true";
+  const showsPatientAppData = syntheticOnly && ["overview", "labs", "tracking", "app-sync"].includes(tab);
+  let initialAppIntake: LivePatientAppIntake | null = null;
+  if (showsPatientAppData) {
+    try {
+      initialAppIntake = await patientAppIntakeLive.get(patientId, session.orgId, session.token);
+      console.info("[patient-app-intake:ssr] loaded", {
+        connectionState: initialAppIntake.connectionState,
+        questionnaireCount: initialAppIntake.questionnaireResponses.length,
+        wearableDayCount: initialAppIntake.wearableDailyRecords.length,
+        labImportCount: initialAppIntake.labImports?.length ?? 0,
+      });
+    } catch (error) {
+      console.error("[patient-app-intake:ssr] failed", {
+        errorName: error instanceof Error ? error.name : "unknown",
+      });
+    }
+  }
 
   if (tab === "overview") {
     if (syntheticOnly) {
@@ -90,7 +109,7 @@ export default async function PatientTabPage({
             intake, wearable measurements, and laboratory markers received from the linked V2 test
             account. Pending imports are visible here before they become verified chart records.
           </ClinicalNote>
-          <PatientAppIntakeCard patientId={patientId} />
+          <PatientAppIntakeCard patientId={patientId} initialData={initialAppIntake} />
         </div>
       );
     }
@@ -109,7 +128,7 @@ export default async function PatientTabPage({
             These are patient-supplied V2 laboratory imports. They remain clearly marked as
             pending until the governed review workflow accepts or rejects them.
           </ClinicalNote>
-          <PatientAppIntakeCard patientId={patientId} focus="labs" />
+          <PatientAppIntakeCard patientId={patientId} focus="labs" initialData={initialAppIntake} />
         </div>
       );
     }
@@ -128,7 +147,7 @@ export default async function PatientTabPage({
     return syntheticOnly ? (
       <div className="flex flex-col gap-3 pb-8">
         <PatientSyncPanel patientId={patientId} syntheticOnly />
-        <PatientAppIntakeCard patientId={patientId} />
+        <PatientAppIntakeCard patientId={patientId} initialData={initialAppIntake} />
       </div>
     ) : <PatientSyncPanel patientId={patientId} />;
   }
@@ -140,7 +159,7 @@ export default async function PatientTabPage({
           Wearable measurements shown here came from the linked V2 account. Missing values stay
           missing; Desktop does not substitute mock measurements or hidden defaults.
         </ClinicalNote>
-        <PatientAppIntakeCard patientId={patientId} focus="wearables" />
+        <PatientAppIntakeCard patientId={patientId} focus="wearables" initialData={initialAppIntake} />
       </div>
     );
   }
