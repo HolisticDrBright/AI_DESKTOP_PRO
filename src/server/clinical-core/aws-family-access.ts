@@ -45,7 +45,12 @@ export function createAwsFamilyAccessAdapter<Context extends ClinicalRequestCont
 
 async function scalar(tx: ClinicalCoreTransaction, sql: string, params: readonly unknown[]): Promise<Record<string, unknown>> {
   const result = await tx.query<{ data: unknown }>(sql, params);
-  const value = result.rows[0]?.data;
+  const raw = result.rows[0]?.data;
+  let value = raw;
+  if (typeof raw === "string") {
+    try { value = JSON.parse(raw) as unknown; }
+    catch { throw new FamilyAccessError("database_unavailable"); }
+  }
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new FamilyAccessError("database_unavailable");
   return value as Record<string, unknown>;
 }

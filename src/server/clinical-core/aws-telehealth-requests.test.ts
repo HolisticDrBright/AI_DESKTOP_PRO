@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
 
 const { send } = vi.hoisted(() => ({ send: vi.fn() }));
 
@@ -144,6 +145,17 @@ describe("AWS telehealth request boundary", () => {
   it("will not enable reminders without the exact sender, scheduler group, role, and target", () => {
     expect(() => createTelehealthHandler({ ...config, remindersEnabled: true }))
       .toThrow("telehealth_configuration_invalid");
+  });
+
+  it("grants the runtime the exact table read needed for payment profiles", () => {
+    const template = JSON.parse(readFileSync(
+      "infra/aws-clinical-core/telehealth-requests-extension.json",
+      "utf8",
+    )) as { Resources: { TelehealthRole: { Properties: { Policies: Array<Record<string, unknown>> } } } };
+    const appointmentPolicy = template.Resources.TelehealthRole.Properties.Policies.find(
+      (policy) => policy.PolicyName === "AppointmentQueue",
+    ) as { PolicyDocument?: { Statement?: Array<{ Action?: string[] }> } } | undefined;
+    expect(appointmentPolicy?.PolicyDocument?.Statement?.[0]?.Action).toContain("dynamodb:GetItem");
   });
 
   it("reports card setup as unavailable rather than inventing a card", async () => {

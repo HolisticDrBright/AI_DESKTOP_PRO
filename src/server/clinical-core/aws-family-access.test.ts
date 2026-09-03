@@ -1,7 +1,8 @@
 import { describe, expect, test, vi } from "vitest";
 import { createAwsIdentityApiHandler, type ApiGatewayV2Event } from "./aws-identity-api";
 import type { AwsSyntheticIdentityConsentAdapter, ClinicalRequestContext } from "./aws-identity-consent";
-import type { FamilyAccessAdapter } from "./aws-family-access";
+import { createAwsFamilyAccessAdapter, type FamilyAccessAdapter } from "./aws-family-access";
+import type { ClinicalCoreDatabase } from "./database";
 
 const PERSON="11111111-1111-4111-8111-111111111111",ORG="22222222-2222-4222-8222-222222222222",REL="33333333-3333-4333-8333-333333333333";
 const ISSUER="https://cognito-idp.us-east-2.amazonaws.com/us-east-2_Consumer",AUD="consumerclient0000000000000";
@@ -14,4 +15,25 @@ describe("consumer family-access API",()=>{
   test("patient approval passes only the explicitly selected requested scopes",async()=>{const result=await run()(event("POST /clinical-core/consumer/family/approve",{relationshipId:REL,expectedVersion:1,grantedScopes:["laboratory_results"],consentVersion:"family-access-2026-09-01"}));expect(result.statusCode).toBe(200);expect(family.approve).toHaveBeenCalledWith(expect.objectContaining({identityPool:"consumer",purpose:"consent_management"}),expect.objectContaining({grantedScopes:["laboratory_results"]}));});
   test("claim requires the confirmed JWT email and never accepts an email from the body",async()=>{const ok=await run()(event("POST /clinical-core/consumer/family/claim",{code:"ABCDEFGH23"}));const bad=await run()(event("POST /clinical-core/consumer/family/claim",{code:"ABCDEFGH23"},undefined,{email_verified:"false"}));expect(ok.statusCode).toBe(200);expect(bad.statusCode).toBe(403);expect(family.claim).toHaveBeenCalledWith(expect.anything(),expect.objectContaining({verifiedEmailSha256:expect.stringMatching(/^[0-9a-f]{64}$/)}));});
   test("delegated reads require one exact allowed scope",async()=>{const ok=await run()(event("GET /clinical-core/consumer/family/delegated/records",undefined,{relationshipId:REL,scope:"medical_records"}));const bad=await run()(event("GET /clinical-core/consumer/family/delegated/records",undefined,{relationshipId:REL,scope:"wearables"}));expect(ok.statusCode).toBe(200);expect(bad.statusCode).toBe(400);expect(family.readDelegated).toHaveBeenCalledWith(expect.anything(),{relationshipId:REL,scope:"medical_records"});});
+
+  test("decodes Aurora Data API jsonb text before returning family records", async () => {
+    const query = vi.fn()
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ data: '{"relationships":[],"generatedAt":"2026-09-03T00:00:00.000Z"}' }] });
+    const database: ClinicalCoreDatabase = {
+      transaction: async (work) => work({ query }),
+    };
+    const adapter = createAwsFamilyAccessAdapter(database);
+    await expect(adapter.listPatientRequests({
+      actorPersonId: PERSON,
+      organizationId: ORG,
+      identityPool: "consumer",
+      identitySubject: "synthetic-subject-001",
+      purpose: "consent_management",
+      environment: "synthetic-staging",
+      dataClassification: "synthetic_only",
+      containsPhi: false,
+      realPatientData: false,
+    })).resolves.toEqual({ relationships: [], generatedAt: "2026-09-03T00:00:00.000Z" });
+  });
 });
