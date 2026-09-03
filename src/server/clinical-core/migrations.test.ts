@@ -44,7 +44,7 @@ afterEach(() => {
 describe("AWS clinical-core migration runner", () => {
   test("loads ordered migrations and computes their content hash", () => {
     const migrations = loadClinicalCoreMigrations();
-    expect(migrations).toHaveLength(13);
+    expect(migrations).toHaveLength(14);
     expect(migrations[0]).toMatchObject({
       version: "20260812010000",
       name: "synthetic_identity_consent",
@@ -115,13 +115,20 @@ describe("AWS clinical-core migration runner", () => {
     expect(migrations[12]!.sql).toContain("clinical_compatibility.list_my_organizations_v1");
     expect(migrations[12]!.sql).toContain("membership.person_id = clinical_private.actor_person_id()");
     expect(migrations[12]!.sql).toContain("organization.contains_phi = false");
+    expect(migrations[13]).toMatchObject({
+      version: "20260821049800",
+      name: "synthetic_patient_directory_create",
+    });
+    expect(migrations[13]!.sql).toContain("clinical_compatibility.create_patient_profile_v1");
+    expect(migrations[13]!.sql).toContain("_date_of_birth', null");
+    expect(migrations[13]!.sql).toContain("synthetic_patient.created");
   });
 
   test("serializes and applies a missing migration in one transaction", async () => {
     const db = migrationDatabase();
     const result = await applyClinicalCoreMigrations(db.database);
     expect(result).toEqual({
-      applied: ["20260812010000", "20260812220000", "20260821010000", "20260821020000", "20260821030000", "20260821040000", "20260821045000", "20260821046000", "20260821047000", "20260821048000", "20260821049000", "20260821049500", "20260821049700"],
+      applied: ["20260812010000", "20260812220000", "20260821010000", "20260821020000", "20260821030000", "20260821040000", "20260821045000", "20260821046000", "20260821047000", "20260821048000", "20260821049000", "20260821049500", "20260821049700", "20260821049800"],
       alreadyApplied: [],
     });
     expect(db.transactions()).toBe(1);
