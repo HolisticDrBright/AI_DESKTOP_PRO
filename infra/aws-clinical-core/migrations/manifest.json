@@ -77,6 +77,11 @@
       "version": "20260903030000",
       "file": "20260903030000_register_synthetic_patient_app_intake.sql",
       "production_transform": false
+    },
+    {
+      "version": "20260903060000",
+      "file": "20260903060000_synthetic_workforce_identity_aliases.sql",
+      "production_transform": false
     }
   ]
 }
