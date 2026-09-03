@@ -117,6 +117,16 @@
       "version": "20260903202000",
       "file": "20260903202000_synthetic_desktop_programs_inbox_handler_hashes.sql",
       "production_transform": false
+    },
+    {
+      "version": "20260903210000",
+      "file": "20260903210000_synthetic_review_billing_workspaces.sql",
+      "production_transform": false
+    },
+    {
+      "version": "20260903211000",
+      "file": "20260903211000_register_synthetic_review_billing.sql",
+      "production_transform": false
     }
   ]
 }
