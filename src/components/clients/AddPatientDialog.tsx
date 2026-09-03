@@ -41,7 +41,7 @@ export function AddPatientDialog({ syntheticOnly }: { syntheticOnly: boolean }) 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (busy) return;
-    if (!form.firstName.trim() || !form.lastName.trim()) {
+    if (!syntheticOnly && (!form.firstName.trim() || !form.lastName.trim())) {
       setError("Enter a first and last name.");
       return;
     }
@@ -53,7 +53,20 @@ export function AddPatientDialog({ syntheticOnly }: { syntheticOnly: boolean }) 
     setBusy(true);
     setError(null);
     try {
-      const result = await api.patients.create(form);
+      const result = await api.patients.create(
+        syntheticOnly
+          ? {
+              firstName: "Synthetic",
+              lastName: "link-test",
+              dateOfBirth: null,
+              sex: "unknown",
+              mrn: null,
+              email: null,
+              phone: null,
+              attestsSynthetic: true,
+            }
+          : form,
+      );
       setOpen(false);
       router.push(patientPath(result.patient.id));
       router.refresh();
@@ -108,11 +121,11 @@ export function AddPatientDialog({ syntheticOnly }: { syntheticOnly: boolean }) 
               <div className="grid gap-4 px-5 py-4 sm:grid-cols-2">
                 {syntheticOnly && (
                   <div className="sm:col-span-2 rounded-lg border border-warning/35 bg-warning-tint px-3 py-2.5 text-[12px] leading-5 text-warning-deep">
-                    <strong>Synthetic staging only.</strong> Use fictional names and test information. Do not enter your real name, date of birth, email, phone number, or medical information.
+                    <strong>Synthetic staging only.</strong> This creates an anonymous test chart with a generated label. No name, date of birth, email, phone number, or medical information is requested or stored.
                   </div>
                 )}
 
-                <label>
+                {!syntheticOnly && <label>
                   <span className={LABEL}>First name *</span>
                   <input
                     className={INPUT}
@@ -122,8 +135,8 @@ export function AddPatientDialog({ syntheticOnly }: { syntheticOnly: boolean }) 
                     onChange={(event) => set("firstName", event.target.value)}
                     data-testid="add-patient-first-name"
                   />
-                </label>
-                <label>
+                </label>}
+                {!syntheticOnly && <label>
                   <span className={LABEL}>Last name *</span>
                   <input
                     className={INPUT}
@@ -133,8 +146,8 @@ export function AddPatientDialog({ syntheticOnly }: { syntheticOnly: boolean }) 
                     onChange={(event) => set("lastName", event.target.value)}
                     data-testid="add-patient-last-name"
                   />
-                </label>
-                <label>
+                </label>}
+                {!syntheticOnly && <label>
                   <span className={LABEL}>Date of birth</span>
                   <input
                     type="date"
@@ -144,8 +157,8 @@ export function AddPatientDialog({ syntheticOnly }: { syntheticOnly: boolean }) 
                     onChange={(event) => set("dateOfBirth", event.target.value || null)}
                     data-testid="add-patient-dob"
                   />
-                </label>
-                <label>
+                </label>}
+                {!syntheticOnly && <label>
                   <span className={LABEL}>Recorded sex</span>
                   <select
                     className={INPUT}
@@ -158,8 +171,8 @@ export function AddPatientDialog({ syntheticOnly }: { syntheticOnly: boolean }) 
                     <option value="male">Male</option>
                     <option value="other">Other</option>
                   </select>
-                </label>
-                <label>
+                </label>}
+                {!syntheticOnly && <label>
                   <span className={LABEL}>MRN</span>
                   <input
                     className={INPUT}
@@ -170,9 +183,9 @@ export function AddPatientDialog({ syntheticOnly }: { syntheticOnly: boolean }) 
                     onChange={(event) => set("mrn", event.target.value || null)}
                     data-testid="add-patient-mrn"
                   />
-                </label>
-                <div className="hidden sm:block" aria-hidden />
-                <label>
+                </label>}
+                {!syntheticOnly && <div className="hidden sm:block" aria-hidden />}
+                {!syntheticOnly && <label>
                   <span className={LABEL}>Email</span>
                   <input
                     type="email"
@@ -184,8 +197,8 @@ export function AddPatientDialog({ syntheticOnly }: { syntheticOnly: boolean }) 
                     onChange={(event) => set("email", event.target.value || null)}
                     data-testid="add-patient-email"
                   />
-                </label>
-                <label>
+                </label>}
+                {!syntheticOnly && <label>
                   <span className={LABEL}>Phone</span>
                   <input
                     type="tel"
@@ -197,7 +210,7 @@ export function AddPatientDialog({ syntheticOnly }: { syntheticOnly: boolean }) 
                     onChange={(event) => set("phone", event.target.value || null)}
                     data-testid="add-patient-phone"
                   />
-                </label>
+                </label>}
 
                 {syntheticOnly && (
                   <label className="sm:col-span-2 flex cursor-pointer items-start gap-2.5 rounded-lg border border-line bg-sunken px-3 py-2.5">

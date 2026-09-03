@@ -45,6 +45,24 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const session = await getRequestSession();
+    if (syntheticOnly) {
+      return patientsLive.create(
+        {
+          firstName: "Synthetic",
+          lastName: "link-test",
+          dateOfBirth: null,
+          sex: "unknown",
+          mrn: null,
+          email: null,
+          phone: null,
+          attestsSynthetic: true,
+        },
+        session.token,
+        session.orgId,
+      );
+    }
+
     const sex = body.sex;
     if (typeof sex !== "string" || !SEX_VALUES.has(sex as CreatePatientInput["sex"])) {
       throw new AdapterError("invalid", "Select a valid recorded sex value.");
@@ -55,7 +73,6 @@ export async function POST(req: NextRequest) {
       throw new AdapterError("invalid", "Enter the date of birth as YYYY-MM-DD.");
     }
 
-    const session = await getRequestSession();
     return patientsLive.create(
       {
         firstName: requiredString(body.firstName),

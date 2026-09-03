@@ -66,7 +66,7 @@ rmSync(outputDirectory, { recursive: true, force: true });
 mkdirSync(outputDirectory, { recursive: true });
 
 const migrations = [];
-for (const entry of sourceManifest.migrations) {
+for (const entry of sourceManifest.migrations.filter((migration) => migration.production_transform !== false)) {
   const source = readFileSync(path.join(sourceDirectory, entry.file), "utf8");
   const outputFile = renameFile(entry.file);
   const output = transformToProduction(source);

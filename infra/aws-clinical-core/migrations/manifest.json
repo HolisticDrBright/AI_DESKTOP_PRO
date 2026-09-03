@@ -52,6 +52,16 @@
     {
       "version": "20260821049700",
       "file": "20260821049700_synthetic_workforce_organization_directory.sql"
+    },
+    {
+      "version": "20260821049800",
+      "file": "20260821049800_synthetic_patient_directory_create.sql",
+      "production_transform": false
+    },
+    {
+      "version": "20260821049900",
+      "file": "20260821049900_synthetic_patient_directory_request_repair.sql",
+      "production_transform": false
     }
   ]
 }
