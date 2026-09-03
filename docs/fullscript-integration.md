@@ -1,5 +1,19 @@
 # Fullscript integration
 
+## Sandbox account boundary
+
+The synthetic Desktop is intentionally configured against Fullscript Integrate's
+U.S. sandbox (`api-us-snd.fullscript.io`). A normal production Fullscript
+practitioner login is not evidence of a sandbox identity and may be rejected by
+that sign-in page. The OAuth account used during synthetic testing must be a
+sandbox Practitioner or Staff identity associated with the API client in
+[Fullscript Integrate](https://fullscript.dev).
+
+Do not point the synthetic deployment at the production authorization endpoint.
+Production requires Fullscript's integration review, production OAuth client
+credentials, the correct redirect registration, and the separate PHI/provider
+activation gate.
+
 Status: implementation-ready US sandbox boundary. Fullscript production and PHI use remain disabled.
 
 ## Architecture

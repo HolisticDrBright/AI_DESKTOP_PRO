@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { ExternalLink, FlaskConical, PackageSearch, ShieldCheck } from "lucide-react";
 import { Card, CardTitle } from "@/components/ui/bits";
 import { Btn } from "@/components/ui/Btn";
+import { FULLSCRIPT_INTEGRATE_URL, fullscriptConnectionCopy } from "@/lib/fullscript-presentation";
 
 type Posture = {
   configured: boolean;
@@ -18,6 +19,9 @@ type Posture = {
 export function FullscriptIntegrationPanel() {
   const [posture, setPosture] = useState<Posture | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const environment = posture?.environment ?? null;
+  const postureLoaded = posture !== null;
+  const copy = fullscriptConnectionCopy(environment);
   const load = useCallback(async () => {
     setError(null);
     const response = await fetch("/api/live/fullscript/status", { cache: "no-store" });
@@ -26,6 +30,12 @@ export function FullscriptIntegrationPanel() {
     setPosture(payload.data);
   }, []);
   useEffect(() => { void load().catch((e) => setError(e instanceof Error ? e.message : "Fullscript is unavailable.")); }, [load]);
+  useEffect(() => {
+    if (typeof window === "undefined" || !postureLoaded) return;
+    if (new URL(window.location.href).searchParams.get("fullscript") === "connection_failed") {
+      setError(copy.failure);
+    }
+  }, [copy.failure, postureLoaded]);
 
   const connect = useCallback(async () => {
     setError(null);
@@ -55,12 +65,18 @@ export function FullscriptIntegrationPanel() {
       <p className="mt-2 text-[12px] text-subtle">
         OAuth is practitioner-scoped. The client secret and refresh tokens stay on the AWS server and never enter Desktop or the mobile app.
       </p>
+      <p className="mt-2 text-[11.5px] text-subtle">{copy.guidance}</p>
+      {posture?.environment === "sandbox_us" ? (
+        <a className="mt-2 inline-flex text-[11.5px] font-semibold text-link hover:underline" href={FULLSCRIPT_INTEGRATE_URL} target="_blank" rel="noreferrer">
+          Open Fullscript Integrate sandbox access
+        </a>
+      ) : null}
       <div className="mt-3 grid gap-2 sm:grid-cols-3">
         <p className="m-0 flex items-center gap-1.5 text-[11.5px]"><PackageSearch size={13} aria-hidden /> Catalog search and exact product details</p>
         <p className="m-0 flex items-center gap-1.5 text-[11.5px]"><ExternalLink size={13} aria-hidden /> Fresh practitioner treatment-plan links</p>
         <p className="m-0 flex items-center gap-1.5 text-[11.5px]"><FlaskConical size={13} aria-hidden /> Lab catalog, checkout, status, and results</p>
       </div>
-      {!posture?.connected ? <Btn className="mt-3" size="sm" disabled={!posture?.configured} onClick={() => void connect()}>Connect Fullscript</Btn> : null}
+      {!posture?.connected ? <Btn className="mt-3" size="sm" disabled={!posture?.configured} onClick={() => void connect()}>{copy.button}</Btn> : null}
       {posture?.connected ? (
         <div className="mt-3 flex flex-wrap items-center gap-3">
           <p className="m-0 text-[11px] text-positive-deep">Authorized as {posture.resourceOwnerType ?? "Fullscript user"}. Scopes: {posture.scopes?.join(", ") || "not reported"}.</p>

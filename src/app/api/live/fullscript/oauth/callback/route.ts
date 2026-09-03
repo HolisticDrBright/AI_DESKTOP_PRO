@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { exchangeFullscriptAuthorizationCode, fullscriptIntegrationReturnUrl, readFullscriptConfiguration, verifyFullscriptState } from "@/server/fullscript/client";
+import { exchangeFullscriptAuthorizationCode, fullscriptIntegrationReturnUrl, FullscriptUnavailableError, readFullscriptConfiguration, verifyFullscriptState } from "@/server/fullscript/client";
 import { createAwsFullscriptTokenStore } from "@/server/fullscript/token-store";
 
 export async function GET(request: NextRequest) {
@@ -20,7 +20,10 @@ export async function GET(request: NextRequest) {
       connectedAt: new Date().toISOString(),
     });
     target.searchParams.set("fullscript", "connected");
-  } catch {
+  } catch (error) {
+    console.error("[fullscript.oauth.callback] authorization failed", {
+      category: error instanceof FullscriptUnavailableError ? error.code : "unexpected",
+    });
     target.searchParams.set("fullscript", "connection_failed");
   }
   return NextResponse.redirect(target, { status: 303 });
