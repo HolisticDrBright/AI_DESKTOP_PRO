@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { functionalRangeStatus, normalizeExtractedLabLines, normalizeExtractedLabTables, normalizeStructuredLabBiomarkers } from "./aws-lab-analysis-worker";
+import { buildMeasuredSupplementConsiderations, functionalRangeStatus, normalizeExtractedLabLines, normalizeExtractedLabTables, normalizeStructuredLabBiomarkers } from "./aws-lab-analysis-worker";
 
 const documentId = "22222222-2222-4222-8222-222222222222";
 
@@ -85,5 +85,24 @@ describe("synthetic AWS functional lab rules", () => {
 
     expect(biomarkers[0]).toMatchObject({ canonicalName: "Glucose", functionalMin: 75, functionalMax: 90, confidence: 0.79 });
     expect(biomarkers[1]).toMatchObject({ canonicalName: "Custom Marker", functionalMin: null, functionalMax: null, confidence: 0.79 });
+  });
+
+  test("creates cited review-before-starting considerations only for measured values below a reporting-lab bound", () => {
+    const output = buildMeasuredSupplementConsiderations([
+      { canonicalName: "Vitamin D", value: 18, unit: "ng/mL", labMin: 30 },
+      { canonicalName: "Vitamin B12", value: 450, unit: "pg/mL", labMin: 200 },
+      { canonicalName: "Magnesium", value: 1.5, unit: "mg/dL", labMin: null },
+    ]);
+
+    expect(output.recommendations).toHaveLength(1);
+    expect(output.recommendations[0]).toMatchObject({
+      name: "Vitamin D support consideration",
+      dose: null,
+      interactionReview: "required_before_starting",
+      recommendationStatus: "suggested",
+    });
+    expect(output.recommendations[0]?.reason).toContain("18 ng/mL");
+    expect(output.citations[0]?.url).toBe("https://ods.od.nih.gov/factsheets/VitaminD-HealthProfessional/");
+    expect(output.citations[0]?.claimIds).toEqual(output.recommendations[0]?.citationIds);
   });
 });

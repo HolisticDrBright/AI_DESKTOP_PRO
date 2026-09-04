@@ -282,6 +282,109 @@ export function normalizeExtractedLabLines(extracted: Extracted): Biomarker[] {
   }
   return output.filter((row, index) => output.findIndex((candidate) => candidate.canonicalName === row.canonicalName) === index);
 }
+
+type MeasuredSupplementConsideration = {
+  recommendationId: string;
+  kind: "supplement";
+  productId: null;
+  labelVersionId: null;
+  name: string;
+  brand: null;
+  dose: null;
+  timing: null;
+  reason: string;
+  mechanism: string;
+  clinicalEligibility: "measured_low_candidate";
+  labelVerification: "not_applicable_no_product_selected";
+  interactionReview: "required_before_starting";
+  recommendationStatus: "suggested";
+  citationIds: string[];
+};
+
+type SupplementEvidenceCitation = {
+  sourceId: string;
+  sourceVersion: string;
+  claimIds: string[];
+  title: string;
+  url: string;
+};
+
+const SUPPLEMENT_CONSIDERATION_RULES = [
+  {
+    key: "vitamin-d", aliases: ["vitamin d", "25 oh vitamin d", "25 hydroxy vitamin d"],
+    name: "Vitamin D support consideration",
+    mechanism: "Vitamin D supports calcium metabolism, bone health, and neuromuscular function. The appropriate product and dose depend on the full clinical context.",
+    title: "NIH Office of Dietary Supplements — Vitamin D Fact Sheet for Health Professionals",
+    url: "https://ods.od.nih.gov/factsheets/VitaminD-HealthProfessional/",
+  },
+  {
+    key: "vitamin-b12", aliases: ["vitamin b12", "b12", "cobalamin"],
+    name: "Vitamin B12 support consideration",
+    mechanism: "Vitamin B12 is required for red blood cell formation and neurologic function. Cause, medication interactions, product form, and dose need review before starting.",
+    title: "NIH Office of Dietary Supplements — Vitamin B12 Fact Sheet for Health Professionals",
+    url: "https://ods.od.nih.gov/factsheets/VitaminB12-HealthProfessional/",
+  },
+  {
+    key: "folate", aliases: ["folate", "folic acid", "vitamin b9"],
+    name: "Folate support consideration",
+    mechanism: "Folate supports one-carbon metabolism and blood cell formation. Vitamin B12 status and medication interactions should be considered before supplementation.",
+    title: "NIH Office of Dietary Supplements — Folate Fact Sheet for Health Professionals",
+    url: "https://ods.od.nih.gov/factsheets/Folate-HealthProfessional/",
+  },
+  {
+    key: "iron", aliases: ["iron", "ferritin"],
+    name: "Iron status support consideration",
+    mechanism: "Iron is required for oxygen transport. Low iron markers have multiple possible causes, and unnecessary iron can be harmful, so confirm the pattern and safety before starting a product.",
+    title: "NIH Office of Dietary Supplements — Iron Fact Sheet for Health Professionals",
+    url: "https://ods.od.nih.gov/factsheets/Iron-HealthProfessional/",
+  },
+] as const;
+
+function normalizedMarkerName(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+export function buildMeasuredSupplementConsiderations(biomarkers: Array<{
+  canonicalName: string; value: number; unit: string; labMin: number | null;
+}>): { recommendations: MeasuredSupplementConsideration[]; citations: SupplementEvidenceCitation[] } {
+  const recommendations: MeasuredSupplementConsideration[] = [];
+  const citations: SupplementEvidenceCitation[] = [];
+  const used = new Set<string>();
+  for (const biomarker of biomarkers) {
+    if (biomarker.labMin === null || biomarker.value >= biomarker.labMin) continue;
+    const markerName = normalizedMarkerName(biomarker.canonicalName);
+    const rule = SUPPLEMENT_CONSIDERATION_RULES.find((candidate) => candidate.aliases.some((alias) => alias === markerName));
+    if (!rule || used.has(rule.key)) continue;
+    used.add(rule.key);
+    const sourceId = stableUuid(`supplement-evidence-source:${rule.key}`);
+    const claimId = stableUuid(`supplement-evidence-claim:${rule.key}:below-reporting-lab-range`);
+    citations.push({
+      sourceId,
+      sourceVersion: "nih-ods-health-professional/current",
+      claimIds: [claimId],
+      title: rule.title,
+      url: rule.url,
+    });
+    recommendations.push({
+      recommendationId: stableUuid(`supplement-consideration:${rule.key}:${biomarker.canonicalName}:${biomarker.unit}`),
+      kind: "supplement",
+      productId: null,
+      labelVersionId: null,
+      name: rule.name,
+      brand: null,
+      dose: null,
+      timing: null,
+      reason: `${biomarker.canonicalName} measured ${biomarker.value} ${biomarker.unit}, below the reporting laboratory lower bound of ${biomarker.labMin} ${biomarker.unit}. This is a consideration, not an instruction to start or change treatment.`,
+      mechanism: rule.mechanism,
+      clinicalEligibility: "measured_low_candidate",
+      labelVerification: "not_applicable_no_product_selected",
+      interactionReview: "required_before_starting",
+      recommendationStatus: "suggested",
+      citationIds: [claimId],
+    });
+  }
+  return { recommendations, citations };
+}
 export function normalizeStructuredLabBiomarkers(rows: StructuredLabBiomarker[], documentId: string): Biomarker[] {
   return rows.map((row) => {
     const rule = matchingRule(row.canonicalName);
@@ -406,6 +509,7 @@ async function executePass(job: Job, pass: number): Promise<unknown | null> {
   const analysisId = randomUUID();
   const sourcePanelId = job.longitudinalContext?.incomingPanel.panelId ?? jobId;
   const symptomCategoryIds = job.patientContext?.topSymptomSignals.map((row) => row.categoryId) ?? [];
+  const supplementConsiderations = buildMeasuredSupplementConsiderations(currentForSynthesis);
   const inputSnapshotSha256 = createHash("sha256").update(JSON.stringify({
     biomarkers: currentForSynthesis,
     patientContext: job.patientContext ?? null,
@@ -415,7 +519,7 @@ async function executePass(job: Job, pass: number): Promise<unknown | null> {
     analysisId, reviewState: "consumer_education", generatedAt,
     summary: `AI-assisted consumer laboratory interpretation. ${biomarkers.length} reported biomarker(s) were retained; ${flagged.length} are outside an available governed functional range or reporting laboratory range. ${aiSynthesis.summary} Uncertainty: ${aiSynthesis.uncertainty}`,
     biomarkers: resultBiomarkers,
-    recommendations: [],
+    recommendations: supplementConsiderations.recommendations,
     priorityActions: aiSynthesis.priorityActions,
     generatedPlan: {
       planId: stableUuid(`generated-plan:${analysisId}`),
@@ -436,7 +540,7 @@ async function executePass(job: Job, pass: number): Promise<unknown | null> {
         taskId: stableUuid(`generated-plan-task:${analysisId}:${index}`),
         ...task,
       })),
-      supplementRecommendations: [],
+      supplementRecommendations: supplementConsiderations.recommendations,
       productSelectionState: "awaiting_governed_catalog_approval",
       safety: {
         medicationOrAllergyReviewRequired: Boolean((job.patientContext?.medications.length ?? 0) + (job.patientContext?.allergies.length ?? 0)),
@@ -446,7 +550,10 @@ async function executePass(job: Job, pass: number): Promise<unknown | null> {
       },
       provider: { model: aiSynthesis.providerModel, promptVersion: "lab-plan/1" },
     },
-    citations: biomarkers.filter((row) => row.sourceId && row.sourceVersion).map((row) => ({ sourceId: row.sourceId!, sourceVersion: row.sourceVersion!, claimIds: [] })).filter((row, index, all) => all.findIndex((candidate) => candidate.sourceId === row.sourceId) === index),
+    citations: [
+      ...biomarkers.filter((row) => row.sourceId && row.sourceVersion).map((row) => ({ sourceId: row.sourceId!, sourceVersion: row.sourceVersion!, claimIds: [] })).filter((row, index, all) => all.findIndex((candidate) => candidate.sourceId === row.sourceId) === index),
+      ...supplementConsiderations.citations,
+    ],
     longitudinalReview: {
       reviewState: "consumer_education",
       panelCount: (job.longitudinalContext?.priorPanels.length ?? 0) + 1,

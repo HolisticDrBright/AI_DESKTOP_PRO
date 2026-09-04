@@ -42,7 +42,7 @@ try {
       "Glucose 104 mg/dL Reference 70-99", "Hemoglobin A1c 5.7 % Reference 4.0-5.6",
       "Fasting Insulin 9.2 uIU/mL Reference 2.0-20.0", "TSH 3.4 uIU/mL Reference 0.4-4.5",
       "Free T3 2.8 pg/mL Reference 2.3-4.2", "Free T4 1.0 ng/dL Reference 0.8-1.8",
-      "Vitamin D 32 ng/mL Reference 30-100", "hs-CRP 2.4 mg/L Reference 0.0-3.0",
+      "Vitamin D 18 ng/mL Reference 30-100", "hs-CRP 2.4 mg/L Reference 0.0-3.0",
       "Triglycerides 145 mg/dL Reference 0-149", "HDL Cholesterol 48 mg/dL Reference 40-100",
       "LDL Cholesterol 118 mg/dL Reference 0-129"
     )
@@ -85,11 +85,14 @@ try {
   $result = $current.data.result
   $plan = $result.generatedPlan
   if ($current.data.passesCompleted -ne 5 -or $current.data.progressPercent -ne 100 `
-    -or $result.biomarkers.Count -lt 8 -or $result.recommendations.Count -ne 0 `
+    -or $result.biomarkers.Count -lt 8 -or $result.recommendations.Count -lt 1 `
     -or -not $result.summary.StartsWith("AI-assisted consumer laboratory interpretation.") `
     -or -not $plan -or $plan.tasks.Count -lt 1 -or $plan.sourceAnalysisId -ne $result.analysisId `
     -or $plan.sourcePanelId -ne "synthetic-functional-panel" `
     -or $plan.productSelectionState -ne "awaiting_governed_catalog_approval" `
+    -or $plan.supplementRecommendations.Count -lt 1 `
+    -or $plan.supplementRecommendations[0].recommendationStatus -ne "suggested" `
+    -or $plan.supplementRecommendations[0].dose -ne $null `
     -or $plan.safety.noMedicationHormoneOrPeptideChanges -ne $true) { throw "Synthetic lab result failed acceptance checks." }
 
   $idempotent = Invoke-RestMethod -Method Post -Uri "$ApiOrigin/clinical-core/consumer/labs/jobs/$($created.data.jobId)/complete-upload" -Headers $headers -ContentType "application/json" -Body $completeBody
