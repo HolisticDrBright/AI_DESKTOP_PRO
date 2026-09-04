@@ -1,6 +1,10 @@
 import { describe, expect, test } from "vitest";
 import type { ClinicalCoreDatabase, ClinicalCoreQueryResult } from "./database";
-import { reviewGovernedCatalogVersion } from "./aws-governed-catalog-review";
+import { approveGovernedCatalogRelease, reviewGovernedCatalogVersion } from "./aws-governed-catalog-review";
+import {
+  GOVERNED_CATALOG_CONTRACT, catalogSha256, manifestContentForHash, productContentForHash,
+  type GovernedCatalogSeedManifest,
+} from "./aws-governed-catalog";
 
 function database(subject: Record<string, unknown>) {
   const calls: Array<{ sql: string; parameters: readonly unknown[] }> = [];
@@ -35,6 +39,53 @@ const common = {
 };
 
 describe("governed catalog review activation", () => {
+  test("bulk approval activates clinical products without commercial offers", async () => {
+    const productBase = {
+      stableId: "prd_bulk_synthetic", version: 2, displayName: "Bulk synthetic",
+      productType: "supplement" as const, accessTier: "open" as const,
+      declaredRestricted: false, directOrderAllowed: false,
+      clinicalPayload: { selectionPriorityGroup: "original_primary" },
+      sourceRefs: ["synthetic:test"],
+    };
+    const product = { ...productBase, contentSha256: catalogSha256(productContentForHash(productBase)) };
+    const manifestBase = {
+      contractVersion: GOVERNED_CATALOG_CONTRACT,
+      sourcePackageId: "synthetic.bulk.release", sourcePackageVersion: 1,
+      targetEnvironment: "synthetic-staging" as const, dataClassification: "reference_only" as const,
+      containsPhi: false as const, products: [product], productLabels: [], commercialOffers: [],
+      protocolTemplates: [], safetyRules: [], knowledgeSources: [],
+    };
+    const manifest: GovernedCatalogSeedManifest = {
+      ...manifestBase, manifestSha256: catalogSha256(manifestContentForHash(manifestBase)),
+    };
+    const calls: Array<{ sql: string; parameters: readonly unknown[] }> = [];
+    const db: ClinicalCoreDatabase = {
+      async transaction(work) {
+        return work({
+          async query<Row extends Record<string, unknown> = Record<string, unknown>>(sql: string, parameters: readonly unknown[] = []) {
+            calls.push({ sql, parameters });
+            if (sql.includes("select r.stable_id") || sql.includes("returning r.stable_id")) {
+              return { rows: [{ stable_id: "prd_bulk_synthetic" } as unknown as Row] };
+            }
+            return { rows: [] };
+          },
+        });
+      },
+    };
+    await expect(approveGovernedCatalogRelease(db, {
+      manifest,
+      reviewerPersonId: "11111111-1111-4111-8111-111111111111",
+      reason: "Owner-approved catalog availability; commercial activation remains separate.",
+      environment: "synthetic-staging",
+    })).resolves.toMatchObject({ outcome: "approved", counts: { products: 1, commercialOffers: 0 } });
+    expect(calls.some((call) => call.sql.includes("catalog_review_events"))).toBe(true);
+    expect(calls.some((call) => call.sql.includes("affiliate_offers"))).toBe(false);
+    const lookup = calls.find((call) => call.sql.includes("select r.stable_id"));
+    expect(JSON.parse(String(lookup?.parameters[0]))).toEqual([
+      { stable_id: "prd_bulk_synthetic", version: 2 },
+    ]);
+  });
+
   test("records named approval before making a safe product version selectable", async () => {
     const db = database({
       environment: "production-clinical",

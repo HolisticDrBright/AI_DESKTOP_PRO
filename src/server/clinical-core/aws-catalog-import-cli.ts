@@ -2,8 +2,9 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { applyGovernedCatalogMigrations } from "./catalog-migrations";
 import { importGovernedCatalog, validateGovernedCatalogManifest } from "./aws-governed-catalog";
-import { reviewGovernedCatalogVersion, type CatalogReviewInput } from "./aws-governed-catalog-review";
+import { approveGovernedCatalogRelease, reviewGovernedCatalogVersion, type CatalogReviewInput } from "./aws-governed-catalog-review";
 import { loadAndAdaptGovernedCatalogSourcePackage } from "./aws-governed-catalog-seed-adapter";
+import { loadAndBuildExpandedCatalogRelease } from "./aws-expanded-catalog-release";
 import { createRdsDataAdministrativeDatabase } from "./rds-data-database";
 
 async function main() {
@@ -33,6 +34,31 @@ async function main() {
         protocolSteps: manifest.protocolTemplates.reduce((count, template) => count + template.steps.length, 0),
         safetyRules: manifest.safetyRules.length,
         knowledgeSources: manifest.knowledgeSources.length,
+      },
+      reviewStatus: "needs_review",
+    }));
+    return;
+  }
+  if (command === "adapt-expanded") {
+    const outputFile = resolve(required("CLINICAL_CATALOG_OUTPUT"));
+    const manifest = loadAndBuildExpandedCatalogRelease({
+      originalDirectory: required("CLINICAL_CATALOG_ORIGINAL_SOURCE_DIR"),
+      originalManifestFileSha256: required("CLINICAL_CATALOG_ORIGINAL_SOURCE_MANIFEST_SHA256"),
+      candidateDirectory: required("CLINICAL_CATALOG_CANDIDATE_SOURCE_DIR"),
+      candidateManifestFileSha256: required("CLINICAL_CATALOG_CANDIDATE_SOURCE_MANIFEST_SHA256"),
+      approvalFile: required("CLINICAL_CATALOG_CANDIDATE_APPROVAL"),
+      targetEnvironment: environment as "synthetic-staging" | "production-clinical",
+    });
+    writeFileSync(outputFile, `${JSON.stringify(manifest, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
+    console.log(JSON.stringify({
+      ok: true,
+      outputFile,
+      manifestSha256: manifest.manifestSha256,
+      counts: {
+        products: manifest.products.length,
+        originalProducts: manifest.products.filter((product) => product.clinicalPayload.selectionPriorityGroup === "original_primary").length,
+        expandedProducts: manifest.products.filter((product) => product.clinicalPayload.selectionPriorityGroup === "expanded_secondary").length,
+        commercialOffers: manifest.commercialOffers.length,
       },
       reviewStatus: "needs_review",
     }));
@@ -70,6 +96,18 @@ async function main() {
     const review = JSON.parse(readFileSync(resolve(file), "utf8")) as CatalogReviewInput;
     if (review.environment !== environment) throw new Error("catalog_environment_mismatch");
     const result = await reviewGovernedCatalogVersion(database, review);
+    console.log(JSON.stringify({ ok: true, ...result }));
+    return;
+  }
+  if (command === "approve-release") {
+    const file = required("CLINICAL_CATALOG_MANIFEST");
+    const manifest = validateGovernedCatalogManifest(JSON.parse(readFileSync(resolve(file), "utf8")));
+    const result = await approveGovernedCatalogRelease(database, {
+      manifest,
+      reviewerPersonId: required("CLINICAL_CATALOG_REVIEWER_PERSON_ID"),
+      reason: required("CLINICAL_CATALOG_REVIEW_REASON"),
+      environment: environment as "synthetic-staging" | "production-clinical",
+    });
     console.log(JSON.stringify({ ok: true, ...result }));
     return;
   }

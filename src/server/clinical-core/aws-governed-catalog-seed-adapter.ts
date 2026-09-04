@@ -87,7 +87,7 @@ export function adaptGovernedCatalogSourcePackage(input: {
     || !["synthetic-staging", "production-clinical"].includes(input.targetEnvironment)) invalid();
   const sourceManifest = input.sourceManifest as SourceManifest;
   if (sourceManifest.package !== "ai-longevity-pro-v2-governed-catalog"
-    || sourceManifest.schemaVersion !== "1.0.0") invalid();
+    || !["1.0.0", "1.1.0"].includes(sourceManifest.schemaVersion ?? "")) invalid();
   for (const file of SOURCE_FILES) {
     const expected = sourceManifest.files?.[file];
     if (!expected || !SHA256.test(expected.sha256) || !positiveInteger(expected.records)

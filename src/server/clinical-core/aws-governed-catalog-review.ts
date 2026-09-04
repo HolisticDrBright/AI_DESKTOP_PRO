@@ -4,6 +4,7 @@ if (typeof window !== "undefined") {
 
 import { clinicalUuid, type ClinicalCoreDatabase, type ClinicalCoreTransaction } from "./database";
 import type { CatalogEnvironment } from "./aws-governed-catalog-reader";
+import { validateGovernedCatalogManifest, type GovernedCatalogSeedManifest } from "./aws-governed-catalog";
 
 export type CatalogReviewSubject =
   | "product_version"
@@ -31,6 +32,19 @@ export type CatalogReviewResult = {
   outcome: CatalogReviewOutcome;
   selectable: boolean;
   reviewedAt: string;
+};
+
+export type CatalogReleaseApprovalResult = {
+  manifestSha256: string;
+  outcome: "approved";
+  counts: {
+    products: number;
+    productLabels: number;
+    protocolTemplates: number;
+    safetyRules: number;
+    knowledgeSources: number;
+    commercialOffers: 0;
+  };
 };
 
 export class GovernedCatalogReviewError extends Error {
@@ -89,6 +103,126 @@ export async function reviewGovernedCatalogVersion(
     if (error instanceof GovernedCatalogReviewError) throw error;
     throw new GovernedCatalogReviewError("database_unavailable");
   }
+}
+
+/**
+ * Approves a validated, clinical-only release in bounded set operations. The
+ * caller's product-availability approval is intentionally not reused as
+ * approval for commercial destinations, doses, or unresolved label evidence.
+ */
+export async function approveGovernedCatalogRelease(
+  database: ClinicalCoreDatabase,
+  input: {
+    manifest: GovernedCatalogSeedManifest;
+    reviewerPersonId: string;
+    reason: string;
+    environment: CatalogEnvironment;
+  },
+): Promise<CatalogReleaseApprovalResult> {
+  const manifest = validateGovernedCatalogManifest(input.manifest);
+  if (!UUID.test(input.reviewerPersonId)
+    || input.reason.trim().length < 1 || input.reason.length > 2_000
+    || manifest.targetEnvironment !== input.environment
+    || manifest.commercialOffers.length !== 0
+    || manifest.products.some((product) => product.directOrderAllowed)) {
+    throw new GovernedCatalogReviewError("review_request_invalid");
+  }
+
+  const readyLabels = manifest.productLabels.filter((label) => label.labelFound
+    && !label.physicalLabelRequired && !label.substantiveConflict && !label.practitionerDecisionRequired);
+  const groups: Array<{
+    subjectType: CatalogReviewSubject;
+    registry: string;
+    versionTable: string;
+    versionForeignKey: string;
+    subjects: Array<{ stableId: string; version: number }>;
+  }> = [
+    { subjectType: "safety_rule_version", registry: "clinical_reference.safety_rules", versionTable: "clinical_reference.safety_rule_versions", versionForeignKey: "rule_stable_id", subjects: manifest.safetyRules.map(key) },
+    { subjectType: "knowledge_source_version", registry: "clinical_reference.knowledge_sources", versionTable: "clinical_reference.knowledge_source_versions", versionForeignKey: "source_stable_id", subjects: manifest.knowledgeSources.map(key) },
+    { subjectType: "product_label_version", registry: "clinical_reference.product_labels", versionTable: "clinical_reference.product_label_versions", versionForeignKey: "label_stable_id", subjects: readyLabels.map(key) },
+    { subjectType: "product_version", registry: "clinical_reference.catalog_products", versionTable: "clinical_reference.catalog_product_versions", versionForeignKey: "product_stable_id", subjects: manifest.products.map(key) },
+    { subjectType: "protocol_template_version", registry: "clinical_reference.protocol_templates", versionTable: "clinical_reference.protocol_template_versions", versionForeignKey: "template_stable_id", subjects: manifest.protocolTemplates.map(key) },
+  ];
+
+  try {
+    await database.transaction(async (tx) => {
+      await tx.query("select pg_advisory_xact_lock(hashtext($1))", [`catalog-release-review:${manifest.manifestSha256}`]);
+      for (const group of groups) await approveGroup(tx, group, input);
+    });
+  } catch (error) {
+    if (error instanceof GovernedCatalogReviewError) throw error;
+    throw new GovernedCatalogReviewError("database_unavailable");
+  }
+
+  return {
+    manifestSha256: manifest.manifestSha256,
+    outcome: "approved",
+    counts: {
+      products: manifest.products.length,
+      productLabels: readyLabels.length,
+      protocolTemplates: manifest.protocolTemplates.length,
+      safetyRules: manifest.safetyRules.length,
+      knowledgeSources: manifest.knowledgeSources.length,
+      commercialOffers: 0,
+    },
+  };
+}
+
+async function approveGroup(
+  tx: ClinicalCoreTransaction,
+  group: {
+    subjectType: CatalogReviewSubject;
+    registry: string;
+    versionTable: string;
+    versionForeignKey: string;
+    subjects: Array<{ stableId: string; version: number }>;
+  },
+  input: { reviewerPersonId: string; reason: string },
+) {
+  if (group.subjects.length === 0) return;
+  const payload = JSON.stringify(group.subjects.map((subject) => ({
+    stable_id: subject.stableId,
+    version: subject.version,
+  })));
+  const found = await tx.query<{ stable_id: string }>(
+    `with requested as (
+       select stable_id, version
+       from jsonb_to_recordset($1::jsonb) as x(stable_id text, version integer)
+     )
+     select r.stable_id
+     from requested q
+     join ${group.registry} r on r.stable_id = q.stable_id
+     join ${group.versionTable} v on v.${group.versionForeignKey} = q.stable_id and v.version = q.version`,
+    [payload],
+  );
+  if (found.rows.length !== group.subjects.length) throw new GovernedCatalogReviewError("review_subject_not_found");
+  await tx.query(
+    `with requested as (
+       select stable_id, version
+       from jsonb_to_recordset($1::jsonb) as x(stable_id text, version integer)
+     )
+     insert into clinical_reference.catalog_review_events
+       (subject_type, subject_stable_id, subject_version, outcome, reviewer_person_id, reason)
+     select $2, stable_id, version, 'approved', $3, $4 from requested`,
+    [payload, group.subjectType, clinicalUuid(input.reviewerPersonId), input.reason.trim()],
+  );
+  const activated = await tx.query<{ stable_id: string }>(
+    `with requested as (
+       select stable_id, version
+       from jsonb_to_recordset($1::jsonb) as x(stable_id text, version integer)
+     )
+     update ${group.registry} r
+     set review_status = 'approved', active_version = q.version, updated_at = clock_timestamp()
+     from requested q
+     where r.stable_id = q.stable_id
+     returning r.stable_id`,
+    [payload],
+  );
+  if (activated.rows.length !== group.subjects.length) throw new GovernedCatalogReviewError("database_unavailable");
+}
+
+function key(value: { stableId: string; version: number }) {
+  return { stableId: value.stableId, version: value.version };
 }
 
 async function verifySubject(tx: ClinicalCoreTransaction, input: CatalogReviewInput) {
