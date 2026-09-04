@@ -128,12 +128,20 @@ if (process.argv.includes("--verify-ask-alp") || process.argv.includes("--verify
       headers: { authorization: `Bearer ${token}`, accept: "application/json" },
     });
     const body = await response.json();
+    const catalogInput = encodeURIComponent(JSON.stringify({ json: { limit: 10, activeOnly: true } }));
+    const catalogResponse = await fetch(`${v2Origin}/api/trpc/supplements.getProducts?input=${catalogInput}`, {
+      headers: { authorization: `Bearer ${token}`, accept: "application/json" },
+    });
+    const catalogBody = await catalogResponse.json();
     v2BridgeVerification = {
       status: response.status,
       enabled: body?.result?.data?.json?.enabled ?? null,
       reason: body?.result?.data?.json?.reason ?? null,
       errorCode: body?.error?.data?.json?.code ?? null,
       errorMessage: body?.error?.json?.message ?? null,
+      catalogStatus: catalogResponse.status,
+      catalogProducts: Array.isArray(catalogBody?.result?.data?.json?.products) ? catalogBody.result.data.json.products.length : null,
+      catalogErrorCode: catalogBody?.error?.data?.json?.code ?? null,
     };
   }
 }

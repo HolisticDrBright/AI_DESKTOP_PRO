@@ -25,7 +25,7 @@ try {
   $markers = @(
     @{ markerId = "saved-glucose"; canonicalName = "Glucose"; value = 104; unit = "mg/dL"; labMin = 70; labMax = 99 },
     @{ markerId = "saved-tsh"; canonicalName = "TSH"; value = 3.4; unit = "uIU/mL"; labMin = 0.4; labMax = 4.5 },
-    @{ markerId = "saved-vitamin-d"; canonicalName = "Vitamin D"; value = 32; unit = "ng/mL"; labMin = 30; labMax = 100 }
+    @{ markerId = "saved-alt"; canonicalName = "ALT"; value = 24; unit = "U/L"; labMin = 7; labMax = 56 }
   )
   for ($index = 4; $index -le $MarkerCount; $index += 1) {
     $markers += @{
@@ -46,7 +46,17 @@ try {
       conditions = @(); medications = @(); allergies = @(); topSymptomSignals = @(@{ categoryId = "sleep"; percentage = 65 })
       lifestyle = @{ sleepHours = 6.5; sleepQuality = 5; stressLevel = 6; dietType = "omnivore"; exerciseFrequency = 3 }
     }
-    longitudinalContext = @{ incomingPanel = @{ panelId = $panelId; panelName = "Synthetic Saved Lab Values"; testDate = $today }; priorPanels = @(); activeProtocol = $null }
+    longitudinalContext = @{
+      incomingPanel = @{ panelId = $panelId; panelName = "Synthetic Saved Lab Values"; testDate = $today }
+      priorPanels = @(@{
+        panelId = "synthetic-prior-nutrients"; panelName = "Synthetic Prior Nutrient Panel"; testDate = "2026-08-01"
+        biomarkers = @(
+          @{ biomarkerId = "00000000-0000-4000-8000-000000000031"; canonicalName = "Vitamin D"; value = 42; unit = "ng/mL"; labMin = 30; labMax = 100; functionalMin = 50; functionalMax = 80; status = "suboptimal" },
+          @{ biomarkerId = "00000000-0000-4000-8000-000000000032"; canonicalName = "Triglycerides"; value = 180; unit = "mg/dL"; labMin = 0; labMax = 150; functionalMin = 40; functionalMax = 100; status = "critical" }
+        )
+      })
+      activeProtocol = $null
+    }
     biomarkers = $markers
   } | ConvertTo-Json -Depth 8
   $created = Invoke-RestMethod -Method Post -Uri "$ApiOrigin/clinical-core/consumer/labs/plan-jobs" -Headers $headers -ContentType "application/json" -Body $createBody
@@ -61,11 +71,12 @@ try {
   $accepted = $current.data.result.biomarkers.Count -eq $markers.Count `
     -and $unexpectedVerification -eq 0 `
     -and $current.data.result.generatedPlan.sourcePanelId -eq $panelId `
-    -and $current.data.result.generatedPlan.tasks.Count -ge 1
+    -and $current.data.result.generatedPlan.tasks.Count -ge 1 `
+    -and $current.data.result.generatedPlan.supplementRecommendations.Count -eq 2
   if (-not $accepted) { throw "Saved-lab plan result failed acceptance checks." }
   $deleted = Invoke-RestMethod -Method Delete -Uri "$ApiOrigin/clinical-core/consumer/labs/jobs/$($created.data.jobId)" -Headers $headers
   if ($deleted.data.deleted -ne $true) { throw "Saved-lab plan job cleanup failed." }
-  [pscustomobject]@{ State = $current.data.state; Markers = $current.data.result.biomarkers.Count; PlanTasks = $current.data.result.generatedPlan.tasks.Count; MeasuredOnly = $true; ReviewProvenanceRetained = $true; Deleted = $true } | Format-List
+  [pscustomobject]@{ State = $current.data.state; Markers = $current.data.result.biomarkers.Count; PlanTasks = $current.data.result.generatedPlan.tasks.Count; HistoricalSupplementConsiderations = $current.data.result.generatedPlan.supplementRecommendations.Count; MeasuredOnly = $true; ReviewProvenanceRetained = $true; Deleted = $true } | Format-List
 } finally {
   Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue
 }
