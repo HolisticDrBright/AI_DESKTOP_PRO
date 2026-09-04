@@ -72,6 +72,17 @@ describe("AWS lab OpenAI boundary", () => {
     expect(body.text.format.schema.properties.planImpact.properties.changes.items.properties.protocolItemIds.items).toMatchObject({ enum: ["item-1"] });
     expect(body.text.format.schema.properties.generatedPlan.properties.tasks.items.properties.biomarkerIds.items).toMatchObject({ enum: [marker.biomarkerId] });
     expect(body.text.format.schema.properties.generatedPlan.properties.tasks.items.properties.symptomCategoryIds.maxItems).toBe(0);
+    const userPayload = JSON.parse(body.input[1].content);
+    expect(userPayload.biomarkers[0].rangeAssessment).toEqual({
+      reportingDirection: "within",
+      functionalDirection: "unknown",
+      primaryDirection: "within",
+      primaryBasis: "reporting_laboratory",
+      sourceStatusAlignment: "aligned",
+    });
+    expect(userPayload.relationshipGroups).toEqual([]);
+    expect(body.input[0].content).toContain("generic abnormal, suboptimal, critical, or flagged status never means deficient");
+    expect(body.input[0].content).toContain("grouping aids, not diagnoses");
   });
 
   test("accepts a bounded synthesis that references only supplied markers", () => {
@@ -90,6 +101,32 @@ describe("AWS lab OpenAI boundary", () => {
       allowedProtocolItemIds: new Set(["item-1"]),
     });
     expect(parsed.providerModel).toBe("gpt-5.1-2025-11-13");
+  });
+
+  test("supplies exact-direction, non-diagnostic relationship groups to the model", () => {
+    const ferritin = { ...marker, canonicalName: "Ferritin", value: 300, labMin: 20, labMax: 250, status: "critical" };
+    const iron = {
+      ...marker,
+      biomarkerId: "22222222-2222-4222-8222-222222222222",
+      canonicalName: "Serum Iron",
+      value: 190,
+      unit: "mcg/dL",
+      labMin: 50,
+      labMax: 170,
+      status: "critical",
+    };
+    const body = buildLabSynthesisRequest({ model: "gpt-5.1-2025-11-13", biomarkers: [ferritin, iron], jobId: "job" });
+    const userPayload = JSON.parse(body.input[1].content);
+    expect(userPayload.biomarkers.map((row: { rangeAssessment: { primaryDirection: string } }) => row.rangeAssessment.primaryDirection))
+      .toEqual(["above", "above"]);
+    expect(userPayload.relationshipGroups).toEqual([
+      expect.objectContaining({
+        groupId: "iron_studies",
+        biomarkerIds: [ferritin.biomarkerId, iron.biomarkerId],
+        outsideRangeBiomarkerIds: [ferritin.biomarkerId, iron.biomarkerId],
+        instruction: "review_together_not_a_diagnosis",
+      }),
+    ]);
   });
 
   test("refuses substituted models, hallucinated ids, and treatment directives", () => {

@@ -120,4 +120,17 @@ describe("synthetic AWS functional lab rules", () => {
     expect(output.recommendations[0]?.reason).toContain("below the available governed functional range");
     expect(output.recommendations.some((row) => row.name.includes("Iron"))).toBe(false);
   });
+
+  test("never converts high or within-range nutrient measurements into deficiency support", () => {
+    const output = buildMeasuredSupplementConsiderations([
+      { canonicalName: "Vitamin D", value: 120, unit: "ng/mL", labMin: 30, labMax: 100, functionalMin: 40, functionalMax: 80 },
+      { canonicalName: "Vitamin B12", value: 1400, unit: "pg/mL", labMin: 200, labMax: 900, functionalMin: 350, functionalMax: 800 },
+      { canonicalName: "Folate", value: 30, unit: "ng/mL", labMin: 3, labMax: 17, functionalMin: 5, functionalMax: 15 },
+      { canonicalName: "Iron", value: 200, unit: "mcg/dL", labMin: 50, labMax: 170, functionalMin: 60, functionalMax: 150 },
+      { canonicalName: "Ferritin", value: 100, unit: "ng/mL", labMin: 20, labMax: 250, functionalMin: 40, functionalMax: 150 },
+      { canonicalName: "Omega 3 Index", value: 10, unit: "%", labMin: 4, labMax: 12, functionalMin: 8, functionalMax: 12 },
+    ]);
+    expect(output.recommendations).toEqual([]);
+    expect(output.citations).toEqual([]);
+  });
 });

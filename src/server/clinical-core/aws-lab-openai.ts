@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { GetSecretValueCommand, SecretsManagerClient } from "@aws-sdk/client-secrets-manager";
 import type { LongitudinalContext, PatientContext } from "./aws-lab-analysis-api";
+import { buildDirectionalLabContext } from "./aws-lab-directional-context";
 
 const secrets = new SecretsManagerClient({});
 const OPENAI_ORIGIN = "https://api.openai.com";
@@ -171,7 +172,10 @@ const SYSTEM_INSTRUCTION = [
   "Patient-reported context is supporting context only. It may guide safety cautions and questions for a healthcare professional, but it must never overwrite a laboratory value or establish a diagnosis.",
   "When pregnancy is pregnant or unsure, nursing is true, or medications/allergies are recorded, explicitly call for appropriate safety or interaction review before any change in care.",
   "Distinguish the reporting laboratory range from a governed functional range. Never invent a functional range.",
+  "Every biomarker includes a deterministic rangeAssessment. Treat its reportingDirection and functionalDirection as authoritative descriptions of the supplied ranges; primaryDirection is the governed presentation direction. A generic abnormal, suboptimal, critical, or flagged status never means deficient.",
+  "Never describe an above marker as low, depleted, insufficient, or deficient. Never describe a below marker as high, elevated, excessive, or overloaded. If sourceStatusAlignment is conflicts, explicitly identify the status mismatch instead of trusting the source status.",
   "Discuss cautious patterns, relationships, differential possibilities, and useful questions; do not diagnose.",
+  "relationshipGroups identify measured markers that may be educationally reviewed together. They are grouping aids, not diagnoses. Explain concordant, discordant, or incomplete relationships using the exact supplied directions and cite only the group's biomarkerIds. Do not infer a condition from a group label.",
   "Review all supplied panels together in test-date order. Distinguish a repeated-marker trend from a one-time finding and state when measurements are not comparable.",
   "Return plan-impact information. It may label an existing plan item continue_review or reassess, or identify a discuss_addition topic. It must never directly change a plan.",
   "Also return a practical consumer wellness plan based only on the supplied measured biomarkers and patient-reported symptom signals. Every plan task must cite at least one supplied biomarkerId or symptom categoryId.",
@@ -285,11 +289,13 @@ export function buildLabSynthesisRequest(input: {
   patientContext?: PatientContext;
   activeProtocol?: LongitudinalContext["activeProtocol"];
 }) {
+  const directionalContext = buildDirectionalLabContext(input.biomarkers);
   const payload = {
     reviewState: "consumer_education",
     interpretationFrameworks: ["functional_medicine"],
     biomarkerCount: input.biomarkers.length,
-    biomarkers: input.biomarkers,
+    biomarkers: directionalContext.biomarkers,
+    relationshipGroups: directionalContext.relationshipGroups,
     patientReportedContext: input.patientContext ?? null,
     activeProtocol: input.activeProtocol ?? null,
   };
