@@ -8,6 +8,7 @@ param(
   [string]$FoundationStackName = "ai-clinical-core-synthetic-staging",
   [string]$Profile = "ai-synthetic-member",
   [string]$Region = "us-east-2",
+  [switch]$CommercialActivationOnly,
   [switch]$ConfirmSyntheticOnly
 )
 
@@ -54,15 +55,17 @@ try {
   $env:CLINICAL_DATABASE_CLUSTER_ARN = Output 'DatabaseClusterArn'
   $env:CLINICAL_DATABASE_SECRET_ARN = Output 'DatabaseSecretArn'
   $env:CLINICAL_DATABASE_NAME = Output 'DatabaseName'
-  node dist/aws-clinical-core/deployment-tools/catalogOperator.js migrate
-  if ($LASTEXITCODE -ne 0) { throw "Catalog migration failed." }
   $env:CLINICAL_CATALOG_MANIFEST = $manifestFile
-  node dist/aws-clinical-core/deployment-tools/catalogOperator.js import
-  if ($LASTEXITCODE -ne 0) { throw "Expanded catalog import failed." }
   $env:CLINICAL_CATALOG_REVIEWER_PERSON_ID = $ReviewerPersonId
-  $env:CLINICAL_CATALOG_REVIEW_REASON = "Catalog owner approved all 710 expanded products for governed catalog availability. Original governed products remain primary; expanded products fill uncovered measured needs. Automatic doses, peptides, research products, and patient-specific safety remain separately gated."
-  node dist/aws-clinical-core/deployment-tools/catalogOperator.js approve-release
-  if ($LASTEXITCODE -ne 0) { throw "Expanded catalog approval failed." }
+  if (-not $CommercialActivationOnly) {
+    node dist/aws-clinical-core/deployment-tools/catalogOperator.js migrate
+    if ($LASTEXITCODE -ne 0) { throw "Catalog migration failed." }
+    node dist/aws-clinical-core/deployment-tools/catalogOperator.js import
+    if ($LASTEXITCODE -ne 0) { throw "Expanded catalog import failed." }
+    $env:CLINICAL_CATALOG_REVIEW_REASON = "Catalog owner approved all 710 expanded products for governed catalog availability. Original governed products remain primary; expanded products fill uncovered measured needs. Automatic doses, peptides, research products, and patient-specific safety remain separately gated."
+    node dist/aws-clinical-core/deployment-tools/catalogOperator.js approve-release
+    if ($LASTEXITCODE -ne 0) { throw "Expanded catalog approval failed." }
+  }
   $selection = (node dist/aws-clinical-core/deployment-tools/catalogOperator.js commercial-selection-hash | ConvertFrom-Json)
   if ($LASTEXITCODE -ne 0 -or -not $selection.ok -or $selection.count -ne 598) {
     throw "Expanded catalog commercial selection did not match the approved 598 open ordinary products."
