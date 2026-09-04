@@ -127,7 +127,9 @@ export function catalogOwnerCommercialSelection(manifestInput: GovernedCatalogSe
   const selection = manifest.commercialOffers
     .filter((offer) => offer.trackingMetadata.approval === "catalog_owner_commercial_activation"
       && offer.trackingMetadata.approvalVersion === "1.0.0")
-    .sort((a, b) => a.stableId.localeCompare(b.stableId))
+    // Match PostgreSQL's explicit C collation below. localeCompare can vary by
+    // host locale and must not participate in an approval-set hash.
+    .sort((a, b) => (a.stableId < b.stableId ? -1 : a.stableId > b.stableId ? 1 : 0))
     .map((offer) => ({
       offerStableId: offer.stableId,
       offerVersion: offer.version,
@@ -257,7 +259,7 @@ export async function activateLabelReadyCommercialOffers(
                and lv.label_found = true and lv.physical_label_required = false
                and lv.substantive_conflict = false and lv.practitioner_decision_required = false
            )
-         order by o.stable_id`,
+         order by o.stable_id collate "C"`,
         [input.environment],
       );
       const selectionSha256 = catalogSha256(found.rows.map((row) => ({
@@ -389,7 +391,7 @@ export async function activateCatalogOwnerCommercialOffers(
            and p.environment = $1 and p.review_status = 'approved'
            and pv.product_type = 'supplement' and pv.access_tier = 'open'
            and pv.declared_restricted = false and pv.direct_order_allowed = true
-         order by o.stable_id`,
+         order by o.stable_id collate "C"`,
         [input.environment],
       );
       const selection = found.rows.map((row) => ({
