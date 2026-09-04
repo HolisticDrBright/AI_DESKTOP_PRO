@@ -122,19 +122,19 @@ function sourcePackage() {
   };
 }
 
-function writeSourcePackage() {
+function writeSourcePackage(options: { schemaVersion?: "1.0.0" | "1.1.0"; crlfFiles?: boolean } = {}) {
   const directory = mkdtempSync(join(tmpdir(), "governed-catalog-source-"));
   const files = sourcePackage();
   const manifestFiles: Record<string, { records: number; sha256: string }> = {};
   for (const [file, value] of Object.entries(files)) {
     const bytes = JSON.stringify(value, null, 2);
-    writeFileSync(join(directory, file), bytes);
+    writeFileSync(join(directory, file), options.crlfFiles ? bytes.replace(/\n/g, "\r\n") : bytes);
     const records = Array.isArray(value) ? value.length : value.records.length;
     manifestFiles[file] = { records, sha256: sha256(bytes) };
   }
   const manifest = JSON.stringify({
     package: "ai-longevity-pro-v2-governed-catalog",
-    schemaVersion: "1.0.0",
+    schemaVersion: options.schemaVersion ?? "1.0.0",
     files: manifestFiles,
   }, null, 2);
   writeFileSync(join(directory, "manifest.json"), manifest);
@@ -150,13 +150,13 @@ describe("Claude source package to AWS governed catalog adapter", () => {
         expectedManifestFileSha256: process.env.GOVERNED_CATALOG_SOURCE_MANIFEST_SHA256!,
         targetEnvironment: "synthetic-staging",
       });
-      expect(manifest.products).toHaveLength(133);
-      expect(manifest.productLabels).toHaveLength(91);
-      expect(manifest.commercialOffers).toHaveLength(91);
+      expect(manifest.products).toHaveLength(137);
+      expect(manifest.productLabels).toHaveLength(98);
+      expect(manifest.commercialOffers).toHaveLength(95);
       expect(manifest.protocolTemplates).toHaveLength(32);
       expect(manifest.protocolTemplates.flatMap((template) => template.steps)).toHaveLength(163);
       expect(manifest.safetyRules).toHaveLength(55);
-      expect(manifest.knowledgeSources).toHaveLength(76);
+      expect(manifest.knowledgeSources).toHaveLength(77);
     },
   );
 
@@ -201,6 +201,21 @@ describe("Claude source package to AWS governed catalog adapter", () => {
       })).toThrowError(expect.objectContaining<Partial<GovernedCatalogSourcePackageError>>({
         category: "source_package_hash_mismatch",
       }));
+    } finally {
+      rmSync(source.directory, { recursive: true, force: true });
+    }
+  });
+
+  test("accepts the pinned v1.1 package when Git materializes JSON with CRLF", () => {
+    const source = writeSourcePackage({ schemaVersion: "1.1.0", crlfFiles: true });
+    try {
+      const manifest = loadAndAdaptGovernedCatalogSourcePackage({
+        directory: source.directory,
+        expectedManifestFileSha256: source.manifestSha256,
+        targetEnvironment: "synthetic-staging",
+      });
+      expect(manifest.products).toHaveLength(1);
+      expect(manifest.products[0]?.stableId).toBe("prd_aff_synthetic_omega_001");
     } finally {
       rmSync(source.directory, { recursive: true, force: true });
     }

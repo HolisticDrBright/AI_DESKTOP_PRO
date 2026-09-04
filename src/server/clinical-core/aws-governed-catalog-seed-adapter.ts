@@ -62,7 +62,7 @@ export function loadAndAdaptGovernedCatalogSourcePackage(options: {
   const files = Object.fromEntries(SOURCE_FILES.map((file) => {
     const bytes = readFileSync(resolve(directory, file));
     const expected = sourceManifest.files?.[file];
-    if (!expected || expected.sha256 !== byteSha256(bytes)) {
+    if (!expected || !matchesPinnedTextHash(bytes, expected.sha256)) {
       throw new GovernedCatalogSourcePackageError("source_package_hash_mismatch");
     }
     const records = parseJson(bytes);
@@ -203,12 +203,12 @@ export function adaptGovernedCatalogSourcePackage(input: {
       version: 1,
       productStableId: productStableId(label.id),
       labelFound: label.labelFound,
-      physicalLabelRequired: label.phase9f.physicalLabelRequired || labelCrosscheck.physicalLabelRequired,
+      physicalLabelRequired: Boolean(label.phase9f?.physicalLabelRequired) || labelCrosscheck.physicalLabelRequired,
       substantiveConflict: labelCrosscheck.verdict === "substantive_conflict",
       practitionerDecisionRequired: Boolean(label.practitionerDecisionRequired),
       labelPayload: safeLabelEvidence(label),
       crosscheckPayload: labelCrosscheck,
-      sourceRefs: [packageRef, `label-research:${label.phase9f.prhId}`],
+      sourceRefs: [packageRef, `label-research:${label.phase9f?.prhId ?? labelCrosscheck.prhId ?? label.id}`],
     };
     return { ...base, contentSha256: catalogSha256(productLabelContentForHash(base)) };
   });
@@ -408,7 +408,7 @@ type SourceLabel = {
   warnings?: string | null;
   notes?: string | null;
   practitionerDecisionRequired?: boolean;
-  phase9f: Record<string, unknown> & {
+  phase9f?: Record<string, unknown> & {
     prhId: string;
     disposition: string;
     evidenceArchived: boolean;
@@ -419,7 +419,7 @@ type SourceLabel = {
 
 type SourceLabelCrosscheckRecord = Record<string, unknown> & {
   id: string;
-  prhId: string;
+  prhId?: string;
   verdict: string;
   evidenceArchived: boolean;
   physicalLabelRequired: boolean;
@@ -483,9 +483,10 @@ function asLabel(value: unknown): SourceLabel {
     || !text(value.researchDate) || !text(value.researchMethod)
     || !["high", "medium", "low"].includes(String(value.confidence))
     || !Array.isArray(value.ingredients) || value.ingredients.some((item) => !isRecord(item) || !text(item.name))
-    || !isRecord(value.phase9f) || !text(value.phase9f.prhId) || !text(value.phase9f.disposition)
-    || typeof value.phase9f.evidenceArchived !== "boolean"
-    || typeof value.phase9f.physicalLabelRequired !== "boolean"
+    || (value.phase9f !== undefined && (!isRecord(value.phase9f)
+      || !text(value.phase9f.prhId) || !text(value.phase9f.disposition)
+      || typeof value.phase9f.evidenceArchived !== "boolean"
+      || typeof value.phase9f.physicalLabelRequired !== "boolean"))
     || !optionalSourceText(value.labelSourceUrl)) invalid();
   return value as unknown as SourceLabel;
 }
@@ -493,7 +494,7 @@ function asLabel(value: unknown): SourceLabel {
 function asLabelCrosscheck(value: unknown): SourceLabelCrosscheck {
   if (!isRecord(value) || !isRecord(value.meta) || !Array.isArray(value.records)) invalid();
   const records = value.records.map((row) => {
-    if (!isRecord(row) || !text(row.id) || !text(row.prhId) || !text(row.verdict)
+    if (!isRecord(row) || !text(row.id) || (row.prhId !== undefined && !text(row.prhId)) || !text(row.verdict)
       || typeof row.evidenceArchived !== "boolean" || typeof row.physicalLabelRequired !== "boolean"
       || typeof row.jurisdictionReview !== "boolean") invalid();
     return row as SourceLabelCrosscheckRecord;
@@ -559,12 +560,18 @@ function byteSha256(value: Buffer): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
+function matchesPinnedTextHash(value: Buffer, expected: string): boolean {
+  if (byteSha256(value) === expected) return true;
+  const normalized = value.toString("utf8").replace(/\r\n?/g, "\n");
+  return createHash("sha256").update(normalized, "utf8").digest("hex") === expected;
+}
+
 function safeHttpsUrl(value: unknown): value is string {
   try { return typeof value === "string" && new URL(value).protocol === "https:"; } catch { return false; }
 }
 
 function safeLabelEvidence(label: SourceLabel, crosscheck?: SourceLabelCrosscheckRecord): Record<string, unknown> {
-  const phase9f = { ...label.phase9f };
+  const phase9f = { ...(label.phase9f ?? {}) };
   const officialProductUrl = phase9f.officialProductUrl;
   delete phase9f.officialProductUrl;
   return compactObject({
@@ -584,10 +591,10 @@ function labelReviewState(label?: SourceLabel, crosscheck?: SourceLabelCrosschec
   const reasons = new Set<string>();
   if (!label) reasons.add("label_evidence_missing");
   if (label && !label.labelFound) reasons.add("label_not_found");
-  if (label?.phase9f.physicalLabelRequired || crosscheck?.physicalLabelRequired) reasons.add("physical_label_required");
+  if (label?.phase9f?.physicalLabelRequired || crosscheck?.physicalLabelRequired) reasons.add("physical_label_required");
   if (label?.practitionerDecisionRequired || crosscheck?.verdict === "substantive_conflict") reasons.add("substantive_conflict");
   if (label?.labelSourceUrl && !safeHttpsUrl(label.labelSourceUrl)) reasons.add("label_source_url_invalid");
-  if (label?.phase9f.officialProductUrl && !safeHttpsUrl(label.phase9f.officialProductUrl)) reasons.add("official_product_url_invalid");
+  if (label?.phase9f?.officialProductUrl && !safeHttpsUrl(label.phase9f.officialProductUrl)) reasons.add("official_product_url_invalid");
   return { approvalBlocked: reasons.size > 0, reasons: [...reasons].sort() };
 }
 

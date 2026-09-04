@@ -146,7 +146,7 @@ export class GovernedCatalogError extends Error {
     | "manifest_hash_mismatch"
     | "content_hash_mismatch"
     | "catalog_conflict"
-    | "database_unavailable") {
+    | "database_unavailable", readonly subjectStableId?: string) {
     super(category);
     this.name = "GovernedCatalogError";
   }
@@ -711,7 +711,7 @@ async function assertVersionCompatible(
   const existing = await tx.query<{ content_sha256: string }>(sql, parameters);
   const row = existing.rows[0];
   if (!row) return false;
-  if (row.content_sha256 !== expectedHash) throw new GovernedCatalogError("catalog_conflict");
+  if (row.content_sha256 !== expectedHash) throw new GovernedCatalogError("catalog_conflict", String(parameters[0] ?? ""));
   return true;
 }
 
@@ -730,7 +730,7 @@ async function assertRegistryEnvironment(
     `select environment from ${table} where stable_id = $1`,
     [stableId],
   );
-  if (existing.rows[0]?.environment !== environment) throw new GovernedCatalogError("catalog_conflict");
+  if (existing.rows[0]?.environment !== environment) throw new GovernedCatalogError("catalog_conflict", stableId);
 }
 
 function result(

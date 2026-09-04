@@ -8,8 +8,12 @@ import { resolve } from "node:path";
 import {
   GOVERNED_CATALOG_CONTRACT,
   catalogSha256,
+  knowledgeSourceContentForHash,
   manifestContentForHash,
+  productLabelContentForHash,
   productContentForHash,
+  safetyRuleContentForHash,
+  templateContentForHash,
   validateGovernedCatalogManifest,
   type CatalogProductSeed,
   type GovernedCatalogSeedManifest,
@@ -53,7 +57,7 @@ export function loadAndBuildExpandedCatalogRelease(options: {
   const originalProducts = original.products.map((product): CatalogProductSeed => {
     const base = {
       ...product,
-      version: 3,
+      version: 4,
       directOrderAllowed: false,
       clinicalPayload: {
         ...product.clinicalPayload,
@@ -73,6 +77,10 @@ export function loadAndBuildExpandedCatalogRelease(options: {
     productsRef: `candidate-products-sha256:${byteSha256(productBytes)}`,
     originalByAuthoringId,
   }));
+  const productLabels = original.productLabels.map((label) => reversion(label, 2, productLabelContentForHash));
+  const protocolTemplates = original.protocolTemplates.map((template) => reversion(template, 10, templateContentForHash));
+  const safetyRules = original.safetyRules.map((rule) => reversion(rule, 2, safetyRuleContentForHash));
+  const knowledgeSources = original.knowledgeSources.map((source) => reversion(source, 2, knowledgeSourceContentForHash));
 
   const base = {
     contractVersion: GOVERNED_CATALOG_CONTRACT,
@@ -82,18 +90,28 @@ export function loadAndBuildExpandedCatalogRelease(options: {
     dataClassification: "reference_only" as const,
     containsPhi: false as const,
     products: [...originalProducts, ...candidateProducts],
-    productLabels: original.productLabels,
+    productLabels,
     // Catalog availability and commercial activation are separate decisions.
     // This release intentionally activates no destination or affiliate offer.
     commercialOffers: [],
-    protocolTemplates: original.protocolTemplates,
-    safetyRules: original.safetyRules,
-    knowledgeSources: original.knowledgeSources,
+    protocolTemplates,
+    safetyRules,
+    knowledgeSources,
   };
   return validateGovernedCatalogManifest({
     ...base,
     manifestSha256: catalogSha256(manifestContentForHash(base)),
   });
+}
+
+function reversion<T extends { version: number; contentSha256: string }>(
+  value: T,
+  version: number,
+  contentForHash: (input: Omit<T, "contentSha256">) => unknown,
+): T {
+  const { contentSha256: _previousHash, ...withoutHash } = value;
+  const content = { ...withoutHash, version } as Omit<T, "contentSha256">;
+  return { ...content, contentSha256: catalogSha256(contentForHash(content)) } as T;
 }
 
 function candidateProduct(value: unknown, index: number, refs: {

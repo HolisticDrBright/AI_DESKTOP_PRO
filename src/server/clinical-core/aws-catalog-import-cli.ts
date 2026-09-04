@@ -99,6 +99,43 @@ async function main() {
     console.log(JSON.stringify({ ok: true, ...result }));
     return;
   }
+  if (command === "preflight-conflicts") {
+    const file = required("CLINICAL_CATALOG_MANIFEST");
+    const manifest = validateGovernedCatalogManifest(JSON.parse(readFileSync(resolve(file), "utf8")));
+    const groups = [
+      { domain: "products", table: "clinical_reference.catalog_product_versions", foreignKey: "product_stable_id", values: manifest.products },
+      { domain: "labels", table: "clinical_reference.product_label_versions", foreignKey: "label_stable_id", values: manifest.productLabels },
+      { domain: "offers", table: "commercial_reference.affiliate_offer_versions", foreignKey: "offer_stable_id", values: manifest.commercialOffers },
+      { domain: "templates", table: "clinical_reference.protocol_template_versions", foreignKey: "template_stable_id", values: manifest.protocolTemplates },
+      { domain: "safety", table: "clinical_reference.safety_rule_versions", foreignKey: "rule_stable_id", values: manifest.safetyRules },
+      { domain: "sources", table: "clinical_reference.knowledge_source_versions", foreignKey: "source_stable_id", values: manifest.knowledgeSources },
+    ] as const;
+    const conflicts = await database.transaction(async (tx) => {
+      const found: Array<{ domain: string; stableId: string }> = [];
+      for (const group of groups) {
+        if (group.values.length === 0) continue;
+        const payload = JSON.stringify(group.values.map((value) => ({
+          stable_id: value.stableId, version: value.version, content_sha256: value.contentSha256,
+        })));
+        const result = await tx.query<{ stable_id: string }>(
+          `with requested as (
+             select stable_id, version, content_sha256
+             from jsonb_to_recordset($1::jsonb)
+               as x(stable_id text, version integer, content_sha256 text)
+           )
+           select v.${group.foreignKey} as stable_id
+           from requested q
+           join ${group.table} v on v.${group.foreignKey} = q.stable_id and v.version = q.version
+           where v.content_sha256 <> q.content_sha256`,
+          [payload],
+        );
+        found.push(...result.rows.map((row) => ({ domain: group.domain, stableId: row.stable_id })));
+      }
+      return found;
+    });
+    console.log(JSON.stringify({ ok: conflicts.length === 0, conflicts }));
+    return;
+  }
   if (command === "approve-release") {
     const file = required("CLINICAL_CATALOG_MANIFEST");
     const manifest = validateGovernedCatalogManifest(JSON.parse(readFileSync(resolve(file), "utf8")));
@@ -124,6 +161,10 @@ main().catch((error) => {
   const category = error instanceof Error && /^[a-z_]+$/.test(error.message)
     ? error.message
     : "catalog_operation_failed";
-  console.error(JSON.stringify({ ok: false, error: category }));
+  const subjectStableId = error && typeof error === "object" && "subjectStableId" in error
+    && typeof error.subjectStableId === "string" && /^[a-z]{3}_[a-z0-9_-]{3,96}$/.test(error.subjectStableId)
+    ? error.subjectStableId
+    : undefined;
+  console.error(JSON.stringify({ ok: false, error: category, ...(subjectStableId ? { subjectStableId } : {}) }));
   process.exitCode = 1;
 });
