@@ -1,5 +1,7 @@
 import { randomBytes, randomUUID } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import {
   AdminCreateUserCommand, AdminGetUserCommand, AdminSetUserPasswordCommand,
   CognitoIdentityProviderClient, InitiateAuthCommand,
@@ -70,8 +72,11 @@ let hostedVerification = null;
 let telehealthVerification = null;
 let catalogVerification = null;
 let v2BridgeVerification = null;
+let v2ConsumerFlowVerification = null;
+let v2RecommendationVerification = null;
 if (process.argv.includes("--verify-ask-alp") || process.argv.includes("--verify-telehealth")
-  || process.argv.includes("--verify-catalog") || process.argv.includes("--verify-v2-bridge")) {
+  || process.argv.includes("--verify-catalog") || process.argv.includes("--verify-v2-bridge")
+  || process.argv.includes("--verify-v2-consumer-flow") || process.argv.includes("--verify-v2-recommendations")) {
   const auth = await cognito.send(new InitiateAuthCommand({ ClientId: clientId, AuthFlow: "USER_PASSWORD_AUTH",
     AuthParameters: { USERNAME: records[0].email, PASSWORD: records[0].password } }));
   const token = auth.AuthenticationResult?.IdToken;
@@ -144,10 +149,48 @@ if (process.argv.includes("--verify-ask-alp") || process.argv.includes("--verify
       catalogErrorCode: catalogBody?.error?.data?.json?.code ?? null,
     };
   }
+  if (process.argv.includes("--verify-v2-consumer-flow")) {
+    const verifier = process.env.V2_CONSUMER_FLOW_SCRIPT;
+    if (!verifier) throw new Error("v2_consumer_flow_script_missing");
+    const result = spawnSync(process.execPath, [resolve(verifier)], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        V2_API_ORIGIN: process.env.V2_API_ORIGIN ?? "https://expo-sunlit-resonance-4543.fly.dev",
+        V2_CONSUMER_ID_TOKEN: token,
+      },
+    });
+    if (result.status !== 0) {
+      throw new Error(`v2_consumer_flow_failed:${result.stderr.trim() || result.stdout.trim()}`);
+    }
+    v2ConsumerFlowVerification = JSON.parse(result.stdout);
+  }
+  if (process.argv.includes("--verify-v2-recommendations")) {
+    const expoDirectory = process.env.V2_EXPO_DIRECTORY;
+    if (!expoDirectory) throw new Error("v2_expo_directory_missing");
+    const result = spawnSync(process.execPath, [
+      resolve(expoDirectory, "node_modules/vitest/vitest.mjs"),
+      "run", "__tests__/hosted-governed-recommendations.integration.test.ts",
+    ], {
+      cwd: resolve(expoDirectory),
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        RUN_HOSTED_CATALOG_RECOMMENDATION_TEST: "true",
+        V2_API_ORIGIN: process.env.V2_API_ORIGIN ?? "https://expo-sunlit-resonance-4543.fly.dev",
+        V2_CONSUMER_ID_TOKEN: token,
+      },
+    });
+    if (result.status !== 0) {
+      throw new Error(`v2_recommendation_verification_failed:${result.stderr?.trim() || result.stdout?.trim() || result.error?.message || "unknown"}`);
+    }
+    v2RecommendationVerification = { passed: true, tokenPrinted: false };
+  }
 }
 
 console.log(JSON.stringify({
   personaCount: records.length, modes: records.map((row) => row.mode),
   credentialsSecretId, passwordsPrinted: false, hostedVerification, telehealthVerification,
-  catalogVerification, v2BridgeVerification,
+  catalogVerification, v2BridgeVerification, v2ConsumerFlowVerification, v2RecommendationVerification,
 }, null, 2));

@@ -16,7 +16,7 @@ const errors = [];
 const assert = (condition, message) => { if (!condition) errors.push(message); };
 
 assert(manifest.contract_version === "clinical-core-migrations/1", "generated manifest contract is invalid");
-assert(manifest.migrations.length === 47, "expected thirteen transformed migrations and thirty-four production overlays");
+assert(manifest.migrations.length === 49, "expected thirteen transformed migrations and thirty-six production overlays");
 assert(!manifest.migrations.some((entry) => entry.file.includes("synthetic_patient_directory_create")),
   "synthetic-only patient creation must never enter the production migration artifact");
 assert(new Set(manifest.migrations.map((entry) => entry.version)).size === manifest.migrations.length,

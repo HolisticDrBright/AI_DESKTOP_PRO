@@ -127,6 +127,11 @@
       "version": "20260903211000",
       "file": "20260903211000_register_synthetic_review_billing.sql",
       "production_transform": false
+    },
+    {
+      "version": "20260904090000",
+      "file": "20260904090000_independent_consumer_chat_context.sql",
+      "production_transform": false
     }
   ]
 }

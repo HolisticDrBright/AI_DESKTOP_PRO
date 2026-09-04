@@ -136,6 +136,14 @@
     {
       "version": "20260901033256",
       "file": "20260901033256_production_patient_chat_context.sql"
+    },
+    {
+      "version": "20260901195500",
+      "file": "20260901195500_production_ask_alp_health_reports.sql"
+    },
+    {
+      "version": "20260904090000",
+      "file": "20260904090000_production_independent_consumer_chat_context.sql"
     }
   ]
 }
