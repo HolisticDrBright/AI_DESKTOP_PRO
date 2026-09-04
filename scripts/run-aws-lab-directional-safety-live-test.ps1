@@ -55,7 +55,8 @@ try {
   $supplements = @($current.data.result.generatedPlan.supplementRecommendations)
   $unsafeNames = @($supplements | Where-Object { $_.name -match "iron|ferr|vitamin d|b12|folate|omega|estrogen|estradiol|progesterone|vitex|chaste" })
   $outside = @($current.data.result.biomarkers | Where-Object status -in @("suboptimal", "critical"))
-  if ($current.data.result.biomarkers.Count -ne $markers.Count -or $outside.Count -ne $markers.Count -or $supplements.Count -ne 0 -or $unsafeNames.Count -ne 0) {
+  $relationshipReviewPresent = [string]$current.data.result.summary -like "*Related-marker review:*"
+  if ($current.data.result.biomarkers.Count -ne $markers.Count -or $outside.Count -ne $markers.Count -or $supplements.Count -ne 0 -or $unsafeNames.Count -ne 0 -or -not $relationshipReviewPresent) {
     throw "Directional safety acceptance failed."
   }
   $deleted = Invoke-RestMethod -Method Delete -Uri "$ApiOrigin/clinical-core/consumer/labs/jobs/$($created.data.jobId)" -Headers $headers
@@ -66,6 +67,7 @@ try {
     OutsideRangeClassifications = $outside.Count
     AutomaticSupplementConsiderations = $supplements.Count
     UnsafeMatches = $unsafeNames.Count
+    RelationshipReviewPresent = $relationshipReviewPresent
     MaleContextRetained = $true
     Deleted = $true
   } | Format-List
