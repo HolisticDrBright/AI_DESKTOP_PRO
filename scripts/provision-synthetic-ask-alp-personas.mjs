@@ -68,7 +68,10 @@ try {
 
 let hostedVerification = null;
 let telehealthVerification = null;
-if (process.argv.includes("--verify-ask-alp") || process.argv.includes("--verify-telehealth")) {
+let catalogVerification = null;
+let v2BridgeVerification = null;
+if (process.argv.includes("--verify-ask-alp") || process.argv.includes("--verify-telehealth")
+  || process.argv.includes("--verify-catalog") || process.argv.includes("--verify-v2-bridge")) {
   const auth = await cognito.send(new InitiateAuthCommand({ ClientId: clientId, AuthFlow: "USER_PASSWORD_AUTH",
     AuthParameters: { USERNAME: records[0].email, PASSWORD: records[0].password } }));
   const token = auth.AuthenticationResult?.IdToken;
@@ -105,9 +108,38 @@ if (process.argv.includes("--verify-ask-alp") || process.argv.includes("--verify
     if (!cancelledResponse.ok || cancelled?.status !== "cancelled") throw new Error("telehealth_cancel_failed");
     telehealthVerification = { createStatus: createdResponse.status, listStatus: listedResponse.status, cancelStatus: cancelledResponse.status, finalState: cancelled.status, zoomLinkCreated: Boolean(cancelled.joinUrl) };
   }
+  if (process.argv.includes("--verify-catalog")) {
+    const response = await fetch(`${apiOrigin}/clinical-core/consumer/catalog/products?limit=10`, {
+      headers: { authorization: `Bearer ${token}`, accept: "application/json" },
+    });
+    const body = await response.json();
+    catalogVerification = {
+      status: response.status,
+      contractVersion: body?.contractVersion ?? null,
+      environment: body?.environment ?? null,
+      products: Array.isArray(body?.data?.products) ? body.data.products.length : null,
+      error: typeof body?.error === "string" ? body.error : null,
+    };
+  }
+  if (process.argv.includes("--verify-v2-bridge")) {
+    const v2Origin = process.env.V2_API_ORIGIN ?? "https://expo-sunlit-resonance-4543.fly.dev";
+    const input = encodeURIComponent(JSON.stringify({ json: null }));
+    const response = await fetch(`${v2Origin}/api/trpc/chat.getAvailability?input=${input}`, {
+      headers: { authorization: `Bearer ${token}`, accept: "application/json" },
+    });
+    const body = await response.json();
+    v2BridgeVerification = {
+      status: response.status,
+      enabled: body?.result?.data?.json?.enabled ?? null,
+      reason: body?.result?.data?.json?.reason ?? null,
+      errorCode: body?.error?.data?.json?.code ?? null,
+      errorMessage: body?.error?.json?.message ?? null,
+    };
+  }
 }
 
 console.log(JSON.stringify({
   personaCount: records.length, modes: records.map((row) => row.mode),
   credentialsSecretId, passwordsPrinted: false, hostedVerification, telehealthVerification,
+  catalogVerification, v2BridgeVerification,
 }, null, 2));

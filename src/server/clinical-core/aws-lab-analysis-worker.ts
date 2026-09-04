@@ -311,32 +311,43 @@ type SupplementEvidenceCitation = {
 
 const SUPPLEMENT_CONSIDERATION_RULES = [
   {
-    key: "vitamin-d", aliases: ["vitamin d", "25 oh vitamin d", "25 hydroxy vitamin d"],
+    key: "vitamin-d", signals: [{ aliases: ["vitamin d", "vitamin d3", "25 oh vitamin d", "25 hydroxy vitamin d"], direction: "below" as const }],
     name: "Vitamin D support consideration",
     mechanism: "Vitamin D supports calcium metabolism, bone health, and neuromuscular function. The appropriate product and dose depend on the full clinical context.",
     title: "NIH Office of Dietary Supplements — Vitamin D Fact Sheet for Health Professionals",
     url: "https://ods.od.nih.gov/factsheets/VitaminD-HealthProfessional/",
   },
   {
-    key: "vitamin-b12", aliases: ["vitamin b12", "b12", "cobalamin"],
+    key: "vitamin-b12", signals: [{ aliases: ["vitamin b12", "b12", "cobalamin"], direction: "below" as const }],
     name: "Vitamin B12 support consideration",
     mechanism: "Vitamin B12 is required for red blood cell formation and neurologic function. Cause, medication interactions, product form, and dose need review before starting.",
     title: "NIH Office of Dietary Supplements — Vitamin B12 Fact Sheet for Health Professionals",
     url: "https://ods.od.nih.gov/factsheets/VitaminB12-HealthProfessional/",
   },
   {
-    key: "folate", aliases: ["folate", "folic acid", "vitamin b9"],
+    key: "folate", signals: [{ aliases: ["folate", "folic acid", "vitamin b9"], direction: "below" as const }],
     name: "Folate support consideration",
     mechanism: "Folate supports one-carbon metabolism and blood cell formation. Vitamin B12 status and medication interactions should be considered before supplementation.",
     title: "NIH Office of Dietary Supplements — Folate Fact Sheet for Health Professionals",
     url: "https://ods.od.nih.gov/factsheets/Folate-HealthProfessional/",
   },
   {
-    key: "iron", aliases: ["iron", "ferritin"],
+    key: "iron", signals: [{ aliases: ["iron", "ferritin"], direction: "below" as const }],
     name: "Iron status support consideration",
     mechanism: "Iron is required for oxygen transport. Low iron markers have multiple possible causes, and unnecessary iron can be harmful, so confirm the pattern and safety before starting a product.",
     title: "NIH Office of Dietary Supplements — Iron Fact Sheet for Health Professionals",
     url: "https://ods.od.nih.gov/factsheets/Iron-HealthProfessional/",
+  },
+  {
+    key: "omega-3",
+    signals: [
+      { aliases: ["omega 3", "omega 3 index", "eicosapentaenoate epa 20 5n3", "docosahexaenoate dha 22 6n3", "eicosapentaenoic acid epa", "docosahexaenoic acid dha"], direction: "below" as const },
+      { aliases: ["triglyceride", "triglycerides"], direction: "above" as const },
+    ],
+    name: "Omega-3 support consideration",
+    mechanism: "EPA and DHA intake can affect omega-3 status and triglyceride levels. Product form, seafood intake, bleeding risk, medications, and the appropriate dose need review before starting.",
+    title: "NIH Office of Dietary Supplements — Omega-3 Fatty Acids Fact Sheet for Health Professionals",
+    url: "https://ods.od.nih.gov/factsheets/Omega3FattyAcids-HealthProfessional/",
   },
 ] as const;
 
@@ -345,16 +356,25 @@ function normalizedMarkerName(value: string): string {
 }
 
 export function buildMeasuredSupplementConsiderations(biomarkers: Array<{
-  canonicalName: string; value: number; unit: string; labMin: number | null;
+  canonicalName: string; value: number; unit: string; labMin: number | null; labMax?: number | null;
+  functionalMin?: number | null; functionalMax?: number | null;
 }>): { recommendations: MeasuredSupplementConsideration[]; citations: SupplementEvidenceCitation[] } {
   const recommendations: MeasuredSupplementConsideration[] = [];
   const citations: SupplementEvidenceCitation[] = [];
   const used = new Set<string>();
   for (const biomarker of biomarkers) {
-    if (biomarker.labMin === null || biomarker.value >= biomarker.labMin) continue;
     const markerName = normalizedMarkerName(biomarker.canonicalName);
-    const rule = SUPPLEMENT_CONSIDERATION_RULES.find((candidate) => candidate.aliases.some((alias) => alias === markerName));
-    if (!rule || used.has(rule.key)) continue;
+    const matched = SUPPLEMENT_CONSIDERATION_RULES.flatMap((rule) => rule.signals.map((signal) => ({ rule, signal })))
+      .find(({ signal }) => signal.aliases.some((alias) => alias === markerName));
+    if (!matched) continue;
+    const { rule, signal } = matched;
+    const functionalBound = signal.direction === "below" ? biomarker.functionalMin : biomarker.functionalMax;
+    const labBound = signal.direction === "below" ? biomarker.labMin : biomarker.labMax;
+    const functionalTriggered = functionalBound !== null && functionalBound !== undefined
+      && (signal.direction === "below" ? biomarker.value < functionalBound : biomarker.value > functionalBound);
+    const labTriggered = labBound !== null && labBound !== undefined
+      && (signal.direction === "below" ? biomarker.value < labBound : biomarker.value > labBound);
+    if ((!functionalTriggered && !labTriggered) || used.has(rule.key)) continue;
     used.add(rule.key);
     const sourceId = stableUuid(`supplement-evidence-source:${rule.key}`);
     const claimId = stableUuid(`supplement-evidence-claim:${rule.key}:below-reporting-lab-range`);
@@ -374,7 +394,7 @@ export function buildMeasuredSupplementConsiderations(biomarkers: Array<{
       brand: null,
       dose: null,
       timing: null,
-      reason: `${biomarker.canonicalName} measured ${biomarker.value} ${biomarker.unit}, below the reporting laboratory lower bound of ${biomarker.labMin} ${biomarker.unit}. This is a consideration, not an instruction to start or change treatment.`,
+      reason: `${biomarker.canonicalName} measured ${biomarker.value} ${biomarker.unit}, ${signal.direction} the available ${functionalTriggered ? "governed functional" : "reporting laboratory"} range. This is a consideration, not an instruction to start or change treatment.`,
       mechanism: rule.mechanism,
       clinicalEligibility: "measured_low_candidate",
       labelVerification: "not_applicable_no_product_selected",
@@ -509,7 +529,11 @@ async function executePass(job: Job, pass: number): Promise<unknown | null> {
   const analysisId = randomUUID();
   const sourcePanelId = job.longitudinalContext?.incomingPanel.panelId ?? jobId;
   const symptomCategoryIds = job.patientContext?.topSymptomSignals.map((row) => row.categoryId) ?? [];
-  const supplementConsiderations = buildMeasuredSupplementConsiderations(currentForSynthesis);
+  const newestMeasurements = [...currentForSynthesis, ...priorForSynthesis].filter((row, index, rows) => {
+    const key = `${normalizedMarkerName(row.canonicalName)}|${row.unit.trim().toLowerCase()}`;
+    return rows.findIndex((candidate) => `${normalizedMarkerName(candidate.canonicalName)}|${candidate.unit.trim().toLowerCase()}` === key) === index;
+  });
+  const supplementConsiderations = buildMeasuredSupplementConsiderations(newestMeasurements);
   const inputSnapshotSha256 = createHash("sha256").update(JSON.stringify({
     biomarkers: currentForSynthesis,
     patientContext: job.patientContext ?? null,

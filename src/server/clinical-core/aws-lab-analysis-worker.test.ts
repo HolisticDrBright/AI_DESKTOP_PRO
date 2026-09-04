@@ -105,4 +105,19 @@ describe("synthetic AWS functional lab rules", () => {
     expect(output.citations[0]?.url).toBe("https://ods.od.nih.gov/factsheets/VitaminD-HealthProfessional/");
     expect(output.citations[0]?.claimIds).toEqual(output.recommendations[0]?.citationIds);
   });
+
+  test("uses functional ranges and a measured high triglyceride signal without recommending iron for a high result", () => {
+    const output = buildMeasuredSupplementConsiderations([
+      { canonicalName: "Vitamin D", value: 42, unit: "ng/mL", labMin: 30, labMax: 100, functionalMin: 50, functionalMax: 80 },
+      { canonicalName: "Triglycerides", value: 180, unit: "mg/dL", labMin: 0, labMax: 150, functionalMin: 40, functionalMax: 100 },
+      { canonicalName: "Ferritin", value: 280, unit: "ng/mL", labMin: 20, labMax: 250, functionalMin: 40, functionalMax: 150 },
+    ]);
+
+    expect(output.recommendations.map((row) => row.name)).toEqual([
+      "Vitamin D support consideration",
+      "Omega-3 support consideration",
+    ]);
+    expect(output.recommendations[0]?.reason).toContain("below the available governed functional range");
+    expect(output.recommendations.some((row) => row.name.includes("Iron"))).toBe(false);
+  });
 });
