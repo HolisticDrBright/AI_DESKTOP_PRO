@@ -35,6 +35,8 @@ describe("AWS Ask ALP OpenAI boundary", () => {
     const body = buildAskAlpOpenAIRequest(request(), MODEL);
     expect(body.store).toBe(false);
     expect(body.text.format.strict).toBe(true);
+    expect(body.max_output_tokens).toBe(1200);
+    expect(JSON.stringify(body)).toContain("no more than 800 words");
     expect(body).not.toHaveProperty("tools");
     expect(JSON.stringify(body)).toContain("NON-OVERRIDABLE APPLICATION POLICY");
   });
