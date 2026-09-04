@@ -10,12 +10,14 @@ import {
   catalogSha256,
   knowledgeSourceContentForHash,
   manifestContentForHash,
+  offerContentForHash,
   productLabelContentForHash,
   productContentForHash,
   safetyRuleContentForHash,
   templateContentForHash,
   validateGovernedCatalogManifest,
   type CatalogProductSeed,
+  type CommercialOfferSeed,
   type GovernedCatalogSeedManifest,
 } from "./aws-governed-catalog";
 import { GovernedCatalogSourcePackageError, loadAndAdaptGovernedCatalogSourcePackage } from "./aws-governed-catalog-seed-adapter";
@@ -57,8 +59,7 @@ export function loadAndBuildExpandedCatalogRelease(options: {
   const originalProducts = original.products.map((product): CatalogProductSeed => {
     const base = {
       ...product,
-      version: 4,
-      directOrderAllowed: false,
+      version: 5,
       clinicalPayload: {
         ...product.clinicalPayload,
         selectionPriorityGroup: "original_primary",
@@ -77,6 +78,10 @@ export function loadAndBuildExpandedCatalogRelease(options: {
     productsRef: `candidate-products-sha256:${byteSha256(productBytes)}`,
     originalByAuthoringId,
   }));
+  const candidateOffers = candidates.flatMap((value, index) => candidateCommercialOffer(value, index, {
+    packageRef: `candidate-manifest-sha256:${candidateManifestFileSha256}`,
+    productsRef: `candidate-products-sha256:${byteSha256(productBytes)}`,
+  }));
   const productLabels = original.productLabels.map((label) => reversion(label, 2, productLabelContentForHash));
   const protocolTemplates = original.protocolTemplates.map((template) => reversion(template, 10, templateContentForHash));
   const safetyRules = original.safetyRules.map((rule) => reversion(rule, 2, safetyRuleContentForHash));
@@ -85,15 +90,16 @@ export function loadAndBuildExpandedCatalogRelease(options: {
   const base = {
     contractVersion: GOVERNED_CATALOG_CONTRACT,
     sourcePackageId: `ai-longevity-pro-v2-expanded-catalog.${candidateManifestFileSha256.slice(0, 16)}`,
-    sourcePackageVersion: 2,
+    sourcePackageVersion: 3,
     targetEnvironment: options.targetEnvironment,
     dataClassification: "reference_only" as const,
     containsPhi: false as const,
     products: [...originalProducts, ...candidateProducts],
     productLabels,
-    // Catalog availability and commercial activation are separate decisions.
-    // This release intentionally activates no destination or affiliate offer.
-    commercialOffers: [],
+    // Import source-provided destinations as pending commercial records. The
+    // release approval still activates clinical records only; a second,
+    // exact-selection-hash operation activates these URLs in synthetic staging.
+    commercialOffers: candidateOffers,
     protocolTemplates,
     safetyRules,
     knowledgeSources,
@@ -131,6 +137,8 @@ function candidateProduct(value: unknown, index: number, refs: {
   if (!ORDINARY_TYPES.has(productType) && !AUTO_EXCLUDED.has(productType)) invalid();
   const ordinary = ORDINARY_TYPES.has(productType);
   const open = ordinary && value.suggestedAccess === "open";
+  const affiliate = record(value.affiliate) && text(value.affiliate.url)
+    && text(value.affiliate.channel) && httpsUrl(value.affiliate.url);
   const stableId = normalizedId("prd", String(value.id));
   const duplicateAuthoringId = record(value.existingCatalog) && text(value.existingCatalog.duplicateOfId)
     ? value.existingCatalog.duplicateOfId
@@ -141,13 +149,13 @@ function candidateProduct(value: unknown, index: number, refs: {
   const tier = ["core", "situational", "niche"].includes(String(value.tier)) ? String(value.tier) : "niche";
   const base = {
     stableId,
-    version: 1,
+    version: 2,
     displayName: String(value.name),
     productType: productType === "oral_peptide" ? "oral_peptide" as const
       : ordinary ? "supplement" as const : "practitioner_only" as const,
     accessTier: open ? "open" as const : "practitioner_gated" as const,
     declaredRestricted: !open,
-    directOrderAllowed: false,
+    directOrderAllowed: open && affiliate,
     clinicalPayload: compact({
       authoringId: value.id,
       brand: value.brand,
@@ -177,6 +185,35 @@ function candidateProduct(value: unknown, index: number, refs: {
   return { ...base, contentSha256: catalogSha256(productContentForHash(base)) };
 }
 
+function candidateCommercialOffer(value: unknown, index: number, refs: {
+  packageRef: string;
+  productsRef: string;
+}): CommercialOfferSeed[] {
+  if (!record(value) || !text(value.id) || !text(value.productType) || !text(value.suggestedAccess)
+    || !record(value.affiliate) || !text(value.affiliate.url) || !text(value.affiliate.channel)
+    || !httpsUrl(value.affiliate.url)) invalid();
+  const ordinary = ORDINARY_TYPES.has(String(value.productType));
+  if (!ordinary || value.suggestedAccess !== "open") return [];
+  const base: Omit<CommercialOfferSeed, "contentSha256"> = {
+    stableId: normalizedId("off", String(value.id)),
+    version: 1,
+    productStableId: normalizedId("prd", String(value.id)),
+    destinationUrl: String(value.affiliate.url),
+    trackingMetadata: compact({
+      supplier: value.affiliate.supplier,
+      channel: value.affiliate.channel,
+      code: value.affiliate.code,
+      destinationScope: value.affiliate.destinationScope,
+      approval: "catalog_owner_commercial_activation",
+      approvalVersion: "1.0.0",
+      sourceRefs: [refs.packageRef, refs.productsRef, `candidate-row:${index + 1}`],
+    }),
+    declaredRestricted: false,
+    directOrderAllowed: true,
+  };
+  return [{ ...base, contentSha256: catalogSha256(offerContentForHash(base)) }];
+}
+
 function assertApproval(approval: Approval, manifestHash: string, productsHash: string) {
   if (approval.approvalVersion !== "1.0.0"
     || approval.decision !== "approved_for_governed_catalog_availability"
@@ -191,7 +228,13 @@ function assertApproval(approval: Approval, manifestHash: string, productsHash: 
     || approval.boundaries?.noAutomaticHormoneOrMedicationChange !== true
     || approval.boundaries?.pregnancyOrNursingRequiresExplicitVerifiedSafety !== true
     || approval.boundaries?.medicationAllergyAndConditionScreeningRequired !== true
-    || approval.boundaries?.commercialOffersRequireSeparateLabelAndDestinationApproval !== true) invalid();
+    || approval.boundaries?.commercialOffersRequireSeparateLabelAndDestinationApproval !== true
+    || approval.commercialActivation?.decision !== "approved_for_synthetic_open_product_links"
+    || approval.commercialActivation?.offerCount !== 598
+    || approval.commercialActivation?.sourceProvidedHttpsDestinationsOnly !== true
+    || approval.commercialActivation?.ordinaryOpenProductsOnly !== true
+    || approval.commercialActivation?.excludesPeptidesTopicalsBundlesKitsAndRestrictedProducts !== true
+    || approval.commercialActivation?.doesNotApproveDoseOrPatientSpecificAppropriateness !== true) invalid();
 }
 
 type CandidateManifest = {
@@ -207,6 +250,7 @@ type Approval = {
   allProductsApproved?: boolean;
   selectionPolicy?: { primary?: string; secondary?: string };
   boundaries?: Record<string, unknown>;
+  commercialActivation?: Record<string, unknown>;
 };
 
 function normalizedId(prefix: string, source: string): string {
@@ -222,5 +266,9 @@ function compact(value: Record<string, unknown>): Record<string, unknown> {
 }
 function record(value: unknown): value is Record<string, unknown> { return Boolean(value) && typeof value === "object" && !Array.isArray(value); }
 function text(value: unknown): value is string { return typeof value === "string" && value.trim().length > 0; }
+function httpsUrl(value: unknown): value is string {
+  if (typeof value !== "string" || value.length > 2_000) return false;
+  try { return new URL(value).protocol === "https:"; } catch { return false; }
+}
 function invalid(): never { throw new GovernedCatalogSourcePackageError("source_package_invalid"); }
 function hashMismatch(): never { throw new GovernedCatalogSourcePackageError("source_package_hash_mismatch"); }

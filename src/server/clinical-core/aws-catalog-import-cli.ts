@@ -3,8 +3,10 @@ import { resolve } from "node:path";
 import { applyGovernedCatalogMigrations } from "./catalog-migrations";
 import { importGovernedCatalog, validateGovernedCatalogManifest } from "./aws-governed-catalog";
 import {
+  activateCatalogOwnerCommercialOffers,
   activateLabelReadyCommercialOffers,
   approveGovernedCatalogRelease,
+  catalogOwnerCommercialSelection,
   reviewGovernedCatalogVersion,
   type CatalogReviewInput,
 } from "./aws-governed-catalog-review";
@@ -67,6 +69,12 @@ async function main() {
       },
       reviewStatus: "needs_review",
     }));
+    return;
+  }
+  if (command === "commercial-selection-hash") {
+    const file = required("CLINICAL_CATALOG_MANIFEST");
+    const manifest = validateGovernedCatalogManifest(JSON.parse(readFileSync(resolve(file), "utf8")));
+    console.log(JSON.stringify({ ok: true, ...catalogOwnerCommercialSelection(manifest) }));
     return;
   }
   const database = createRdsDataAdministrativeDatabase({
@@ -159,6 +167,17 @@ async function main() {
       reason: required("CLINICAL_CATALOG_REVIEW_REASON"),
       environment: environment as "synthetic-staging" | "production-clinical",
       expectedSelectionSha256: required("CLINICAL_CATALOG_EXPECTED_SELECTION_SHA256"),
+    });
+    console.log(JSON.stringify({ ok: true, ...result }));
+    return;
+  }
+  if (command === "activate-owner-approved-commercial") {
+    const result = await activateCatalogOwnerCommercialOffers(database, {
+      reviewerPersonId: required("CLINICAL_CATALOG_REVIEWER_PERSON_ID"),
+      reason: required("CLINICAL_CATALOG_REVIEW_REASON"),
+      environment: environment as "synthetic-staging" | "production-clinical",
+      expectedSelectionSha256: required("CLINICAL_CATALOG_EXPECTED_SELECTION_SHA256"),
+      expectedCount: Number(required("CLINICAL_CATALOG_EXPECTED_SELECTION_COUNT")),
     });
     console.log(JSON.stringify({ ok: true, ...result }));
     return;

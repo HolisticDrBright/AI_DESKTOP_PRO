@@ -1,12 +1,14 @@
 import { describe, expect, test } from "vitest";
 import type { ClinicalCoreDatabase, ClinicalCoreQueryResult } from "./database";
 import {
+  activateCatalogOwnerCommercialOffers,
   activateLabelReadyCommercialOffers,
   approveGovernedCatalogRelease,
+  catalogOwnerCommercialSelection,
   reviewGovernedCatalogVersion,
 } from "./aws-governed-catalog-review";
 import {
-  GOVERNED_CATALOG_CONTRACT, catalogSha256, manifestContentForHash, productContentForHash,
+  GOVERNED_CATALOG_CONTRACT, catalogSha256, manifestContentForHash, offerContentForHash, productContentForHash,
   type GovernedCatalogSeedManifest,
 } from "./aws-governed-catalog";
 
@@ -43,6 +45,74 @@ const common = {
 };
 
 describe("governed catalog review activation", () => {
+  test("activates only the exact catalog-owner-approved synthetic URL set", async () => {
+    const row = {
+      offer_stable_id: "off_candidate_omega", offer_version: 1,
+      offer_content_sha256: "b".repeat(64), product_stable_id: "prd_candidate_omega",
+      product_version: 2,
+    };
+    const selectionSha256 = catalogSha256([{
+      offerStableId: row.offer_stable_id, offerVersion: row.offer_version,
+      offerContentSha256: row.offer_content_sha256,
+      productStableId: row.product_stable_id, productVersion: row.product_version,
+    }]);
+    const calls: string[] = [];
+    const db: ClinicalCoreDatabase = {
+      async transaction(work) {
+        return work({ async query<Row extends Record<string, unknown> = Record<string, unknown>>(sql: string) {
+          calls.push(sql);
+          if (sql.includes("from commercial_reference.affiliate_offers o")) return { rows: [row as unknown as Row] };
+          if (sql.includes("returning subject_stable_id") || sql.includes("returning o.stable_id")) {
+            return { rows: [{ offer_stable_id: row.offer_stable_id } as unknown as Row] };
+          }
+          return { rows: [] };
+        } });
+      },
+    };
+    await expect(activateCatalogOwnerCommercialOffers(db, {
+      reviewerPersonId: "11111111-1111-4111-8111-111111111111",
+      reason: "Owner-approved exact source-provided synthetic product destinations.",
+      environment: "synthetic-staging",
+      expectedSelectionSha256: selectionSha256,
+      expectedCount: 1,
+    })).resolves.toMatchObject({ offersActivated: 1, selectionSha256 });
+    expect(calls.some((sql) => sql.includes("tracking_metadata->>'approval'"))).toBe(true);
+    expect(calls.some((sql) => sql.includes("affiliate_offer_version"))).toBe(true);
+  });
+
+  test("derives the same commercial selection hash from an immutable manifest", () => {
+    const productBase = {
+      stableId: "prd_candidate_omega", version: 2, displayName: "Candidate Omega",
+      productType: "supplement" as const, accessTier: "open" as const,
+      declaredRestricted: false, directOrderAllowed: true,
+      clinicalPayload: {}, sourceRefs: ["synthetic:test"],
+    };
+    const product = { ...productBase, contentSha256: catalogSha256(productContentForHash(productBase)) };
+    const offerBase = {
+      stableId: "off_candidate_omega", version: 1, productStableId: product.stableId,
+      destinationUrl: "https://example.test/omega",
+      trackingMetadata: { approval: "catalog_owner_commercial_activation", approvalVersion: "1.0.0" },
+      declaredRestricted: false, directOrderAllowed: true,
+    };
+    const offer = { ...offerBase, contentSha256: catalogSha256(offerContentForHash(offerBase)) };
+    const base = {
+      contractVersion: GOVERNED_CATALOG_CONTRACT,
+      sourcePackageId: "synthetic.commercial.release", sourcePackageVersion: 1,
+      targetEnvironment: "synthetic-staging" as const, dataClassification: "reference_only" as const,
+      containsPhi: false as const, products: [product], productLabels: [], commercialOffers: [offer],
+      protocolTemplates: [], safetyRules: [], knowledgeSources: [],
+    };
+    const manifest = { ...base, manifestSha256: catalogSha256(manifestContentForHash(base)) };
+    expect(catalogOwnerCommercialSelection(manifest)).toEqual({
+      count: 1,
+      selectionSha256: catalogSha256([{
+        offerStableId: offer.stableId, offerVersion: offer.version,
+        offerContentSha256: offer.contentSha256,
+        productStableId: product.stableId, productVersion: product.version,
+      }]),
+    });
+  });
+
   test("activates only the exact attested set of label-ready commercial offers", async () => {
     const row = {
       offer_stable_id: "off_label_ready_omega", offer_version: 1,

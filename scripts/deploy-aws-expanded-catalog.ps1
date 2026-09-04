@@ -60,9 +60,18 @@ try {
   node dist/aws-clinical-core/deployment-tools/catalogOperator.js import
   if ($LASTEXITCODE -ne 0) { throw "Expanded catalog import failed." }
   $env:CLINICAL_CATALOG_REVIEWER_PERSON_ID = $ReviewerPersonId
-  $env:CLINICAL_CATALOG_REVIEW_REASON = "Catalog owner approved all 710 expanded products for governed catalog availability. Original governed products remain primary; expanded products fill uncovered needs. Commercial offers, automatic doses, peptides, research products, and patient-specific safety remain separately gated."
+  $env:CLINICAL_CATALOG_REVIEW_REASON = "Catalog owner approved all 710 expanded products for governed catalog availability. Original governed products remain primary; expanded products fill uncovered measured needs. Automatic doses, peptides, research products, and patient-specific safety remain separately gated."
   node dist/aws-clinical-core/deployment-tools/catalogOperator.js approve-release
   if ($LASTEXITCODE -ne 0) { throw "Expanded catalog approval failed." }
+  $selection = (node dist/aws-clinical-core/deployment-tools/catalogOperator.js commercial-selection-hash | ConvertFrom-Json)
+  if ($LASTEXITCODE -ne 0 -or -not $selection.ok -or $selection.count -ne 598) {
+    throw "Expanded catalog commercial selection did not match the approved 598 open ordinary products."
+  }
+  $env:CLINICAL_CATALOG_EXPECTED_SELECTION_SHA256 = $selection.selectionSha256
+  $env:CLINICAL_CATALOG_EXPECTED_SELECTION_COUNT = [string]$selection.count
+  $env:CLINICAL_CATALOG_REVIEW_REASON = "Catalog owner separately approved the exact source-provided HTTPS destinations for 598 ordinary open products in synthetic staging. This does not approve dosing, hormones, peptides, restricted products, or patient-specific appropriateness."
+  node dist/aws-clinical-core/deployment-tools/catalogOperator.js activate-owner-approved-commercial
+  if ($LASTEXITCODE -ne 0) { throw "Expanded catalog commercial activation failed." }
 } finally {
   foreach ($name in @(
     'AWS_PROFILE','AWS_REGION','CLINICAL_CATALOG_ENVIRONMENT','CLINICAL_CATALOG_ORIGINAL_SOURCE_DIR',
@@ -70,7 +79,8 @@ try {
     'CLINICAL_CATALOG_CANDIDATE_SOURCE_MANIFEST_SHA256','CLINICAL_CATALOG_CANDIDATE_APPROVAL',
     'CLINICAL_CATALOG_OUTPUT','CLINICAL_DATABASE_CLUSTER_ARN','CLINICAL_DATABASE_SECRET_ARN',
     'CLINICAL_DATABASE_NAME','CLINICAL_CATALOG_MANIFEST','CLINICAL_CATALOG_REVIEWER_PERSON_ID',
-    'CLINICAL_CATALOG_REVIEW_REASON'
+    'CLINICAL_CATALOG_REVIEW_REASON','CLINICAL_CATALOG_EXPECTED_SELECTION_SHA256',
+    'CLINICAL_CATALOG_EXPECTED_SELECTION_COUNT'
   )) { Remove-Item "Env:$name" -ErrorAction SilentlyContinue }
   $resolvedTemp = [IO.Path]::GetFullPath($tempDirectory)
   $resolvedRoot = [IO.Path]::GetFullPath($tempRoot)
@@ -79,4 +89,4 @@ try {
   }
 }
 
-Write-Host "Expanded catalog imported and owner-approved in synthetic-only AWS. Commercial offers remain disabled."
+Write-Host "Expanded catalog imported and owner-approved in synthetic-only AWS. The exact 598 open ordinary source-provided HTTPS destinations are active; restricted products remain link-disabled."

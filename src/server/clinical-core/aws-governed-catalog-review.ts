@@ -118,10 +118,34 @@ export async function reviewGovernedCatalogVersion(
   }
 }
 
+export function catalogOwnerCommercialSelection(manifestInput: GovernedCatalogSeedManifest): {
+  count: number;
+  selectionSha256: string;
+} {
+  const manifest = validateGovernedCatalogManifest(manifestInput);
+  const productVersions = new Map(manifest.products.map((product) => [product.stableId, product.version]));
+  const selection = manifest.commercialOffers
+    .filter((offer) => offer.trackingMetadata.approval === "catalog_owner_commercial_activation"
+      && offer.trackingMetadata.approvalVersion === "1.0.0")
+    .sort((a, b) => a.stableId.localeCompare(b.stableId))
+    .map((offer) => ({
+      offerStableId: offer.stableId,
+      offerVersion: offer.version,
+      offerContentSha256: offer.contentSha256,
+      productStableId: offer.productStableId,
+      productVersion: productVersions.get(offer.productStableId) ?? 0,
+    }));
+  if (selection.some((row) => row.productVersion < 1)) {
+    throw new GovernedCatalogReviewError("review_precondition_failed");
+  }
+  return { count: selection.length, selectionSha256: catalogSha256(selection) };
+}
+
 /**
- * Approves a validated, clinical-only release in bounded set operations. The
- * caller's product-availability approval is intentionally not reused as
- * approval for commercial destinations, doses, or unresolved label evidence.
+ * Approves the clinical subjects in a validated release in bounded set
+ * operations. Pending commercial destinations may travel in the same immutable
+ * manifest, but are deliberately omitted from these approval groups and need a
+ * separate exact-selection-hash activation.
  */
 export async function approveGovernedCatalogRelease(
   database: ClinicalCoreDatabase,
@@ -135,9 +159,7 @@ export async function approveGovernedCatalogRelease(
   const manifest = validateGovernedCatalogManifest(input.manifest);
   if (!UUID.test(input.reviewerPersonId)
     || input.reason.trim().length < 1 || input.reason.length > 2_000
-    || manifest.targetEnvironment !== input.environment
-    || manifest.commercialOffers.length !== 0
-    || manifest.products.some((product) => product.directOrderAllowed)) {
+    || manifest.targetEnvironment !== input.environment) {
     throw new GovernedCatalogReviewError("review_request_invalid");
   }
 
@@ -307,6 +329,114 @@ export async function activateLabelReadyCommercialOffers(
         selectionSha256,
         productsActivated: found.rows.length,
         offersActivated: found.rows.length,
+      };
+    });
+  } catch (error) {
+    if (error instanceof GovernedCatalogReviewError) throw error;
+    throw new GovernedCatalogReviewError("database_unavailable");
+  }
+}
+
+/**
+ * Activates the catalog owner's separately approved, source-provided HTTPS
+ * destinations for ordinary open products. This path is intentionally limited
+ * to synthetic staging; it does not approve a dose, a clinical claim, a
+ * restricted product, or patient-specific appropriateness.
+ */
+export async function activateCatalogOwnerCommercialOffers(
+  database: ClinicalCoreDatabase,
+  input: {
+    reviewerPersonId: string;
+    reason: string;
+    environment: CatalogEnvironment;
+    expectedSelectionSha256: string;
+    expectedCount: number;
+  },
+): Promise<CommercialCatalogActivationResult> {
+  if (!UUID.test(input.reviewerPersonId)
+    || input.reason.trim().length < 1 || input.reason.length > 2_000
+    || input.environment !== "synthetic-staging"
+    || !/^[0-9a-f]{64}$/.test(input.expectedSelectionSha256)
+    || !Number.isInteger(input.expectedCount) || input.expectedCount < 1 || input.expectedCount > 5_000) {
+    throw new GovernedCatalogReviewError("review_request_invalid");
+  }
+  try {
+    return await database.transaction(async (tx) => {
+      await tx.query("select pg_advisory_xact_lock(hashtext($1))", [
+        `catalog-owner-commercial-activation:${input.environment}`,
+      ]);
+      const found = await tx.query<{
+        offer_stable_id: string;
+        offer_version: number;
+        offer_content_sha256: string;
+        product_stable_id: string;
+        product_version: number;
+      }>(
+        `select o.stable_id as offer_stable_id, ov.version as offer_version,
+                ov.content_sha256 as offer_content_sha256,
+                p.stable_id as product_stable_id, p.active_version as product_version
+         from commercial_reference.affiliate_offers o
+         join commercial_reference.affiliate_offer_versions ov
+           on ov.offer_stable_id = o.stable_id
+         join clinical_reference.catalog_products p on p.stable_id = ov.product_stable_id
+         join clinical_reference.catalog_product_versions pv
+           on pv.product_stable_id = p.stable_id and pv.version = p.active_version
+         where ov.environment = $1
+           and o.review_status = 'needs_review' and o.active_version is null
+           and ov.direct_order_allowed = true and ov.declared_restricted = false
+           and ov.tracking_metadata->>'approval' = 'catalog_owner_commercial_activation'
+           and ov.tracking_metadata->>'approvalVersion' = '1.0.0'
+           and p.environment = $1 and p.review_status = 'approved'
+           and pv.product_type = 'supplement' and pv.access_tier = 'open'
+           and pv.declared_restricted = false and pv.direct_order_allowed = true
+         order by o.stable_id`,
+        [input.environment],
+      );
+      const selection = found.rows.map((row) => ({
+        offerStableId: row.offer_stable_id,
+        offerVersion: Number(row.offer_version),
+        offerContentSha256: row.offer_content_sha256,
+        productStableId: row.product_stable_id,
+        productVersion: Number(row.product_version),
+      }));
+      const selectionSha256 = catalogSha256(selection);
+      if (selection.length !== input.expectedCount || selectionSha256 !== input.expectedSelectionSha256) {
+        throw new GovernedCatalogReviewError("review_precondition_failed");
+      }
+      const payload = JSON.stringify(selection.map((row) => ({
+        offer_stable_id: row.offerStableId,
+        offer_version: row.offerVersion,
+      })));
+      const events = await tx.query<{ offer_stable_id: string }>(
+        `with requested as (
+           select offer_stable_id, offer_version
+           from jsonb_to_recordset($1::jsonb) as x(offer_stable_id text, offer_version integer)
+         )
+         insert into clinical_reference.catalog_review_events
+           (subject_type, subject_stable_id, subject_version, outcome, reviewer_person_id, reason)
+         select 'affiliate_offer_version', offer_stable_id, offer_version, 'approved', $2, $3
+         from requested returning subject_stable_id as offer_stable_id`,
+        [payload, clinicalUuid(input.reviewerPersonId), input.reason.trim()],
+      );
+      const activated = await tx.query<{ offer_stable_id: string }>(
+        `with requested as (
+           select offer_stable_id, offer_version
+           from jsonb_to_recordset($1::jsonb) as x(offer_stable_id text, offer_version integer)
+         )
+         update commercial_reference.affiliate_offers o
+         set review_status='approved', active_version=requested.offer_version, updated_at=clock_timestamp()
+         from requested where o.stable_id=requested.offer_stable_id
+         returning o.stable_id as offer_stable_id`,
+        [payload],
+      );
+      if (events.rows.length !== selection.length || activated.rows.length !== selection.length) {
+        throw new GovernedCatalogReviewError("database_unavailable");
+      }
+      return {
+        outcome: "approved",
+        selectionSha256,
+        productsActivated: selection.length,
+        offersActivated: selection.length,
       };
     });
   } catch (error) {
