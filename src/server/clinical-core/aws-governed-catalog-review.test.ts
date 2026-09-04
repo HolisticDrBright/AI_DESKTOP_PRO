@@ -1,6 +1,10 @@
 import { describe, expect, test } from "vitest";
 import type { ClinicalCoreDatabase, ClinicalCoreQueryResult } from "./database";
-import { approveGovernedCatalogRelease, reviewGovernedCatalogVersion } from "./aws-governed-catalog-review";
+import {
+  activateLabelReadyCommercialOffers,
+  approveGovernedCatalogRelease,
+  reviewGovernedCatalogVersion,
+} from "./aws-governed-catalog-review";
 import {
   GOVERNED_CATALOG_CONTRACT, catalogSha256, manifestContentForHash, productContentForHash,
   type GovernedCatalogSeedManifest,
@@ -39,6 +43,42 @@ const common = {
 };
 
 describe("governed catalog review activation", () => {
+  test("activates only the exact attested set of label-ready commercial offers", async () => {
+    const row = {
+      offer_stable_id: "off_label_ready_omega", offer_version: 1,
+      offer_content_sha256: "a".repeat(64), product_stable_id: "prd_label_ready_omega",
+      product_version: 4, display_name: "Synthetic Omega", product_type: "supplement",
+      access_tier: "open", declared_restricted: false, direct_order_allowed: false,
+      clinical_payload_json: JSON.stringify({ autoSelectionEligible: true }),
+      source_refs_json: JSON.stringify(["synthetic:test"]),
+      import_batch_id: "22222222-2222-4222-8222-222222222222",
+    };
+    const selectionSha256 = catalogSha256([{
+      offerStableId: row.offer_stable_id, offerVersion: row.offer_version,
+      offerContentSha256: row.offer_content_sha256,
+      productStableId: row.product_stable_id, productVersion: row.product_version,
+    }]);
+    const calls: Array<{ sql: string; parameters: readonly unknown[] }> = [];
+    const db: ClinicalCoreDatabase = {
+      async transaction(work) {
+        return work({ async query<Row extends Record<string, unknown> = Record<string, unknown>>(sql: string, parameters: readonly unknown[] = []) {
+          calls.push({ sql, parameters });
+          if (sql.includes("from commercial_reference.affiliate_offers o")) return { rows: [row as unknown as Row] };
+          return { rows: [] };
+        } });
+      },
+    };
+    await expect(activateLabelReadyCommercialOffers(db, {
+      reviewerPersonId: "11111111-1111-4111-8111-111111111111",
+      reason: "Owner-approved synthetic purchase links after label and destination review.",
+      environment: "synthetic-staging",
+      expectedSelectionSha256: selectionSha256,
+    })).resolves.toMatchObject({ productsActivated: 1, offersActivated: 1, selectionSha256 });
+    expect(calls.some((call) => call.sql.includes("catalog_product_versions"))).toBe(true);
+    expect(calls.some((call) => call.sql.includes("affiliate_offer_version"))).toBe(true);
+    expect(calls.some((call) => call.sql.includes("update commercial_reference.affiliate_offers"))).toBe(true);
+  });
+
   test("bulk approval activates clinical products without commercial offers", async () => {
     const productBase = {
       stableId: "prd_bulk_synthetic", version: 2, displayName: "Bulk synthetic",

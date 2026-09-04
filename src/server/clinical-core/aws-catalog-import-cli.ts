@@ -2,7 +2,12 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { applyGovernedCatalogMigrations } from "./catalog-migrations";
 import { importGovernedCatalog, validateGovernedCatalogManifest } from "./aws-governed-catalog";
-import { approveGovernedCatalogRelease, reviewGovernedCatalogVersion, type CatalogReviewInput } from "./aws-governed-catalog-review";
+import {
+  activateLabelReadyCommercialOffers,
+  approveGovernedCatalogRelease,
+  reviewGovernedCatalogVersion,
+  type CatalogReviewInput,
+} from "./aws-governed-catalog-review";
 import { loadAndAdaptGovernedCatalogSourcePackage } from "./aws-governed-catalog-seed-adapter";
 import { loadAndBuildExpandedCatalogRelease } from "./aws-expanded-catalog-release";
 import { createRdsDataAdministrativeDatabase } from "./rds-data-database";
@@ -144,6 +149,16 @@ async function main() {
       reviewerPersonId: required("CLINICAL_CATALOG_REVIEWER_PERSON_ID"),
       reason: required("CLINICAL_CATALOG_REVIEW_REASON"),
       environment: environment as "synthetic-staging" | "production-clinical",
+    });
+    console.log(JSON.stringify({ ok: true, ...result }));
+    return;
+  }
+  if (command === "activate-label-ready-commercial") {
+    const result = await activateLabelReadyCommercialOffers(database, {
+      reviewerPersonId: required("CLINICAL_CATALOG_REVIEWER_PERSON_ID"),
+      reason: required("CLINICAL_CATALOG_REVIEW_REASON"),
+      environment: environment as "synthetic-staging" | "production-clinical",
+      expectedSelectionSha256: required("CLINICAL_CATALOG_EXPECTED_SELECTION_SHA256"),
     });
     console.log(JSON.stringify({ ok: true, ...result }));
     return;

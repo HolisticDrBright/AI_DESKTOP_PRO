@@ -39,6 +39,10 @@ describe("AWS Ask ALP OpenAI boundary", () => {
     expect(JSON.stringify(body)).toContain("no more than 800 words");
     expect(body).not.toHaveProperty("tools");
     expect(JSON.stringify(body)).toContain("NON-OVERRIDABLE APPLICATION POLICY");
+    expect(JSON.stringify(body)).toContain("Answer the user's exact question first");
+    expect(JSON.stringify(body)).toContain("find those markers case-insensitively");
+    expect(JSON.stringify(body)).toContain("Do not substitute unrelated markers");
+    expect(JSON.stringify(body)).toContain("does not require practitioner approval or escalation");
   });
 
   it("refuses model substitution and unsafe dose or peptide directives", () => {

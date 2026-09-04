@@ -4,7 +4,13 @@ if (typeof window !== "undefined") {
 
 import { clinicalUuid, type ClinicalCoreDatabase, type ClinicalCoreTransaction } from "./database";
 import type { CatalogEnvironment } from "./aws-governed-catalog-reader";
-import { validateGovernedCatalogManifest, type GovernedCatalogSeedManifest } from "./aws-governed-catalog";
+import {
+  catalogSha256,
+  productContentForHash,
+  validateGovernedCatalogManifest,
+  type CatalogProductSeed,
+  type GovernedCatalogSeedManifest,
+} from "./aws-governed-catalog";
 
 export type CatalogReviewSubject =
   | "product_version"
@@ -45,6 +51,13 @@ export type CatalogReleaseApprovalResult = {
     knowledgeSources: number;
     commercialOffers: 0;
   };
+};
+
+export type CommercialCatalogActivationResult = {
+  outcome: "approved";
+  selectionSha256: string;
+  productsActivated: number;
+  offersActivated: number;
 };
 
 export class GovernedCatalogReviewError extends Error {
@@ -166,6 +179,172 @@ export async function approveGovernedCatalogRelease(
       commercialOffers: 0,
     },
   };
+}
+
+/**
+ * Activates only unrestricted direct-order offers whose exact product already
+ * has a clean, approved label. The caller must attest the deterministic set
+ * hash so a changing database selection cannot be approved accidentally.
+ */
+export async function activateLabelReadyCommercialOffers(
+  database: ClinicalCoreDatabase,
+  input: {
+    reviewerPersonId: string;
+    reason: string;
+    environment: CatalogEnvironment;
+    expectedSelectionSha256: string;
+  },
+): Promise<CommercialCatalogActivationResult> {
+  if (!UUID.test(input.reviewerPersonId)
+    || input.reason.trim().length < 1 || input.reason.length > 2_000
+    || !["synthetic-staging", "production-clinical"].includes(input.environment)
+    || !/^[0-9a-f]{64}$/.test(input.expectedSelectionSha256)) {
+    throw new GovernedCatalogReviewError("review_request_invalid");
+  }
+  try {
+    return await database.transaction(async (tx) => {
+      await tx.query("select pg_advisory_xact_lock(hashtext($1))", [
+        `catalog-commercial-activation:${input.environment}`,
+      ]);
+      const found = await tx.query<CommercialActivationRow>(
+        `select o.stable_id as offer_stable_id, ov.version as offer_version,
+                ov.content_sha256 as offer_content_sha256,
+                p.stable_id as product_stable_id, p.active_version as product_version,
+                pv.display_name, pv.product_type, pv.access_tier,
+                pv.declared_restricted, pv.direct_order_allowed,
+                pv.clinical_payload::text as clinical_payload_json,
+                pv.source_refs::text as source_refs_json,
+                pv.import_batch_id::text as import_batch_id
+         from commercial_reference.affiliate_offers o
+         join commercial_reference.affiliate_offer_versions ov
+           on ov.offer_stable_id = o.stable_id
+         join clinical_reference.catalog_products p on p.stable_id = ov.product_stable_id
+         join clinical_reference.catalog_product_versions pv
+           on pv.product_stable_id = p.stable_id and pv.version = p.active_version
+         where ov.environment = $1
+           and o.review_status = 'needs_review' and o.active_version is null
+           and ov.direct_order_allowed = true and ov.declared_restricted = false
+           and p.environment = $1 and p.review_status = 'approved'
+           and pv.product_type = 'supplement' and pv.access_tier = 'open'
+           and pv.declared_restricted = false
+           and exists (
+             select 1 from clinical_reference.product_labels l
+             join clinical_reference.product_label_versions lv
+               on lv.label_stable_id = l.stable_id and lv.version = l.active_version
+             where l.product_stable_id = p.stable_id and l.review_status = 'approved'
+               and lv.label_found = true and lv.physical_label_required = false
+               and lv.substantive_conflict = false and lv.practitioner_decision_required = false
+           )
+         order by o.stable_id`,
+        [input.environment],
+      );
+      const selectionSha256 = catalogSha256(found.rows.map((row) => ({
+        offerStableId: row.offer_stable_id,
+        offerVersion: Number(row.offer_version),
+        offerContentSha256: row.offer_content_sha256,
+        productStableId: row.product_stable_id,
+        productVersion: Number(row.product_version),
+      })));
+      if (found.rows.length < 1 || selectionSha256 !== input.expectedSelectionSha256) {
+        throw new GovernedCatalogReviewError("review_precondition_failed");
+      }
+
+      for (const row of found.rows) {
+        let productVersion = Number(row.product_version);
+        if (!row.direct_order_allowed) {
+          productVersion += 1;
+          const product: Omit<CatalogProductSeed, "contentSha256"> = {
+            stableId: row.product_stable_id,
+            version: productVersion,
+            displayName: row.display_name,
+            productType: row.product_type,
+            accessTier: row.access_tier,
+            declaredRestricted: false,
+            directOrderAllowed: true,
+            clinicalPayload: parsedRecord(row.clinical_payload_json),
+            sourceRefs: parsedStrings(row.source_refs_json),
+          };
+          const contentSha256 = catalogSha256(productContentForHash(product));
+          await tx.query(
+            `insert into clinical_reference.catalog_product_versions
+              (product_stable_id, version, display_name, product_type, access_tier,
+               declared_restricted, direct_order_allowed, content_sha256, clinical_payload,
+               source_refs, review_status, import_batch_id)
+             values ($1,$2,$3,$4,$5,false,true,$6,$7::jsonb,$8::jsonb,'needs_review',$9)`,
+            [row.product_stable_id, productVersion, row.display_name, row.product_type,
+              row.access_tier, contentSha256, row.clinical_payload_json,
+              row.source_refs_json, clinicalUuid(row.import_batch_id)],
+          );
+          await tx.query(
+            `insert into clinical_reference.catalog_review_events
+              (subject_type, subject_stable_id, subject_version, outcome, reviewer_person_id, reason)
+             values ('product_version',$1,$2,'approved',$3,$4)`,
+            [row.product_stable_id, productVersion, clinicalUuid(input.reviewerPersonId), input.reason.trim()],
+          );
+          await tx.query(
+            `update clinical_reference.catalog_products
+             set review_status='approved', active_version=$2, updated_at=clock_timestamp()
+             where stable_id=$1`,
+            [row.product_stable_id, productVersion],
+          );
+        }
+        await tx.query(
+          `insert into clinical_reference.catalog_review_events
+            (subject_type, subject_stable_id, subject_version, outcome, reviewer_person_id, reason)
+           values ('affiliate_offer_version',$1,$2,'approved',$3,$4)`,
+          [row.offer_stable_id, Number(row.offer_version),
+            clinicalUuid(input.reviewerPersonId), input.reason.trim()],
+        );
+        await tx.query(
+          `update commercial_reference.affiliate_offers
+           set review_status='approved', active_version=$2, updated_at=clock_timestamp()
+           where stable_id=$1`,
+          [row.offer_stable_id, Number(row.offer_version)],
+        );
+      }
+      return {
+        outcome: "approved",
+        selectionSha256,
+        productsActivated: found.rows.length,
+        offersActivated: found.rows.length,
+      };
+    });
+  } catch (error) {
+    if (error instanceof GovernedCatalogReviewError) throw error;
+    throw new GovernedCatalogReviewError("database_unavailable");
+  }
+}
+
+type CommercialActivationRow = {
+  offer_stable_id: string;
+  offer_version: number;
+  offer_content_sha256: string;
+  product_stable_id: string;
+  product_version: number;
+  display_name: string;
+  product_type: CatalogProductSeed["productType"];
+  access_tier: CatalogProductSeed["accessTier"];
+  declared_restricted: boolean;
+  direct_order_allowed: boolean;
+  clinical_payload_json: string;
+  source_refs_json: string;
+  import_batch_id: string;
+};
+
+function parsedRecord(value: string): Record<string, unknown> {
+  const parsed: unknown = JSON.parse(value);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new GovernedCatalogReviewError("review_precondition_failed");
+  }
+  return parsed as Record<string, unknown>;
+}
+
+function parsedStrings(value: string): string[] {
+  const parsed: unknown = JSON.parse(value);
+  if (!Array.isArray(parsed) || parsed.length < 1 || parsed.some((entry) => typeof entry !== "string")) {
+    throw new GovernedCatalogReviewError("review_precondition_failed");
+  }
+  return parsed;
 }
 
 async function approveGroup(
