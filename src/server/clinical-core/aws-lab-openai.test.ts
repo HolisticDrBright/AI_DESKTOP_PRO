@@ -81,6 +81,7 @@ describe("AWS lab OpenAI boundary", () => {
       sourceStatusAlignment: "aligned",
     });
     expect(userPayload.relationshipGroups).toEqual([]);
+    expect(body.text.format.schema.properties.relationshipFindings).toMatchObject({ minItems: 0, maxItems: 0 });
     expect(body.input[0].content).toContain("generic abnormal, suboptimal, critical, or flagged status never means deficient");
     expect(body.input[0].content).toContain("grouping aids, not diagnoses");
   });
@@ -93,6 +94,7 @@ describe("AWS lab OpenAI boundary", () => {
         priorityActions: ["Discuss the result in the context of symptoms and prior trends."],
         referencedBiomarkerIds: [marker.biomarkerId],
         longitudinalSummary: "Only one comparable observation is available.",
+        relationshipFindings: [],
         planImpact,
         generatedPlan,
       }),
@@ -127,13 +129,37 @@ describe("AWS lab OpenAI boundary", () => {
         instruction: "review_together_not_a_diagnosis",
       }),
     ]);
+    expect(body.text.format.schema.properties.relationshipFindings).toMatchObject({ minItems: 1, maxItems: 1 });
+    const relationshipFinding = {
+      groupId: "iron_studies",
+      summary: "Both supplied iron-study markers are above their reporting ranges and should be reviewed together.",
+      uncertainty: "Two measurements do not establish a cause or diagnosis.",
+      confidence: "medium",
+      biomarkerIds: [ferritin.biomarkerId, iron.biomarkerId],
+    };
+    const parsed = parseLabSynthesisResponse({
+      response: response({
+        summary: "Both measured markers are above their reporting ranges.",
+        uncertainty: "Cause cannot be established from these measurements alone.",
+        priorityActions: ["Review the complete iron-study context and trend."],
+        referencedBiomarkerIds: [ferritin.biomarkerId, iron.biomarkerId],
+        longitudinalSummary: "Only one date is available.",
+        relationshipFindings: [relationshipFinding],
+        planImpact: { headline: "Review this measured relationship.", changes: [] },
+        generatedPlan: { ...generatedPlan, tasks: [{ ...generatedPlan.tasks[0], biomarkerIds: [ferritin.biomarkerId, iron.biomarkerId] }] },
+      }),
+      expectedModel: "gpt-5.1-2025-11-13",
+      allowedBiomarkerIds: new Set([ferritin.biomarkerId, iron.biomarkerId]),
+      allowedRelationshipGroups: new Map([["iron_studies", new Set([ferritin.biomarkerId, iron.biomarkerId])]]),
+    });
+    expect(parsed.relationshipFindings).toEqual([relationshipFinding]);
   });
 
   test("refuses substituted models, hallucinated ids, and treatment directives", () => {
     const valid = {
       summary: "Review the supplied result.", uncertainty: "Context is limited.",
       priorityActions: ["Discuss this marker with a practitioner."], referencedBiomarkerIds: [marker.biomarkerId],
-      longitudinalSummary: "Only one comparable observation is available.", planImpact,
+      longitudinalSummary: "Only one comparable observation is available.", relationshipFindings: [], planImpact,
       generatedPlan,
     };
     expect(() => parseLabSynthesisResponse({ response: response(valid, "another-model"), expectedModel: "gpt-5.1-2025-11-13", allowedBiomarkerIds: new Set([marker.biomarkerId]) })).toThrow("openai_model_substitution_refused");

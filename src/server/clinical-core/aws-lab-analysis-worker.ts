@@ -541,7 +541,7 @@ async function executePass(job: Job, pass: number): Promise<unknown | null> {
   })).digest("hex");
   const result = {
     analysisId, reviewState: "consumer_education", generatedAt,
-    summary: `AI-assisted consumer laboratory interpretation. ${biomarkers.length} reported biomarker(s) were retained; ${flagged.length} are outside an available governed functional range or reporting laboratory range. ${aiSynthesis.summary} Uncertainty: ${aiSynthesis.uncertainty}`,
+    summary: `AI-assisted consumer laboratory interpretation. ${biomarkers.length} reported biomarker(s) were retained; ${flagged.length} are outside an available governed functional range or reporting laboratory range. ${aiSynthesis.summary}${aiSynthesis.relationshipFindings.length > 0 ? ` Related-marker review: ${aiSynthesis.relationshipFindings.map((finding) => `${finding.summary} Uncertainty: ${finding.uncertainty}`).join(" ")}` : ""} Uncertainty: ${aiSynthesis.uncertainty}`,
     biomarkers: resultBiomarkers,
     recommendations: supplementConsiderations.recommendations,
     priorityActions: aiSynthesis.priorityActions,

@@ -65,6 +65,14 @@ type PlanImpactChange = {
   protocolItemIds: string[];
 };
 
+type LabRelationshipFinding = {
+  groupId: string;
+  summary: string;
+  uncertainty: string;
+  confidence: "low" | "medium";
+  biomarkerIds: string[];
+};
+
 export type LabPlanTask = {
   kind: "nutrition" | "exercise" | "sleep" | "stress" | "hydration" | "monitoring" | "follow_up";
   name: string;
@@ -81,6 +89,7 @@ export type LabAiSynthesis = {
   priorityActions: string[];
   referencedBiomarkerIds: string[];
   longitudinalSummary: string;
+  relationshipFindings: LabRelationshipFinding[];
   planImpact: { headline: string; changes: PlanImpactChange[] };
   generatedPlan: {
     title: string;
@@ -94,7 +103,7 @@ export type LabAiSynthesis = {
 const LAB_SYNTHESIS_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["summary", "uncertainty", "priorityActions", "referencedBiomarkerIds", "longitudinalSummary", "planImpact", "generatedPlan"],
+  required: ["summary", "uncertainty", "priorityActions", "referencedBiomarkerIds", "longitudinalSummary", "relationshipFindings", "planImpact", "generatedPlan"],
   properties: {
     summary: { type: "string", minLength: 1, maxLength: 1800 },
     uncertainty: { type: "string", minLength: 1, maxLength: 600 },
@@ -110,6 +119,22 @@ const LAB_SYNTHESIS_SCHEMA = {
       items: { type: "string" },
     },
     longitudinalSummary: { type: "string", minLength: 1, maxLength: 1800 },
+    relationshipFindings: {
+      type: "array",
+      maxItems: 6,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["groupId", "summary", "uncertainty", "confidence", "biomarkerIds"],
+        properties: {
+          groupId: { type: "string", minLength: 1, maxLength: 80 },
+          summary: { type: "string", minLength: 1, maxLength: 600 },
+          uncertainty: { type: "string", minLength: 1, maxLength: 300 },
+          confidence: { type: "string", enum: ["low", "medium"] },
+          biomarkerIds: { type: "array", minItems: 2, maxItems: 40, items: { type: "string" } },
+        },
+      },
+    },
     planImpact: {
       type: "object",
       additionalProperties: false,
@@ -176,6 +201,7 @@ const SYSTEM_INSTRUCTION = [
   "Never describe an above marker as low, depleted, insufficient, or deficient. Never describe a below marker as high, elevated, excessive, or overloaded. If sourceStatusAlignment is conflicts, explicitly identify the status mismatch instead of trusting the source status.",
   "Discuss cautious patterns, relationships, differential possibilities, and useful questions; do not diagnose.",
   "relationshipGroups identify measured markers that may be educationally reviewed together. They are grouping aids, not diagnoses. Explain concordant, discordant, or incomplete relationships using the exact supplied directions and cite only the group's biomarkerIds. Do not infer a condition from a group label.",
+  "When relationshipGroups is nonempty, return at least one relationshipFinding for the most relevant group. A relationship finding must state uncertainty, use only that group's biomarkerIds, and cannot claim a diagnosis or causal certainty.",
   "Review all supplied panels together in test-date order. Distinguish a repeated-marker trend from a one-time finding and state when measurements are not comparable.",
   "Return plan-impact information. It may label an existing plan item continue_review or reassess, or identify a discuss_addition topic. It must never directly change a plan.",
   "Also return a practical consumer wellness plan based only on the supplied measured biomarkers and patient-reported symptom signals. Every plan task must cite at least one supplied biomarkerId or symptom categoryId.",
@@ -207,6 +233,9 @@ function constrainedLabSynthesisSchema(input: {
   const biomarkerIds = input.biomarkers.map((row) => row.biomarkerId);
   const protocolItemIds = input.activeProtocol?.items.map((row) => row.itemId) ?? [];
   const symptomCategoryIds = input.patientContext?.topSymptomSignals.map((row) => row.categoryId) ?? [];
+  const relationshipGroups = buildDirectionalLabContext(input.biomarkers).relationshipGroups.slice(0, 6);
+  const relationshipGroupIds = relationshipGroups.map((row) => row.groupId);
+  const relationshipBiomarkerIds = [...new Set(relationshipGroups.flatMap((row) => row.biomarkerIds))];
   const planImpact = LAB_SYNTHESIS_SCHEMA.properties.planImpact;
   const changes = planImpact.properties.changes;
   const change = changes.items;
@@ -218,6 +247,21 @@ function constrainedLabSynthesisSchema(input: {
     properties: {
       ...LAB_SYNTHESIS_SCHEMA.properties,
       referencedBiomarkerIds: idArraySchema(biomarkerIds, 24, 1),
+      relationshipFindings: {
+        ...LAB_SYNTHESIS_SCHEMA.properties.relationshipFindings,
+        minItems: relationshipGroups.length > 0 ? 1 : 0,
+        maxItems: Math.min(6, relationshipGroups.length),
+        items: {
+          ...LAB_SYNTHESIS_SCHEMA.properties.relationshipFindings.items,
+          properties: {
+            ...LAB_SYNTHESIS_SCHEMA.properties.relationshipFindings.items.properties,
+            groupId: relationshipGroupIds.length > 0
+              ? { type: "string", enum: relationshipGroupIds }
+              : { type: "string" },
+            biomarkerIds: idArraySchema(relationshipBiomarkerIds, 40, relationshipGroups.length > 0 ? 2 : undefined),
+          },
+        },
+      },
       planImpact: {
         ...planImpact,
         properties: {
@@ -347,6 +391,7 @@ export function parseLabSynthesisResponse(input: {
   allowedBiomarkerIds: ReadonlySet<string>;
   allowedProtocolItemIds?: ReadonlySet<string>;
   allowedSymptomCategoryIds?: ReadonlySet<string>;
+  allowedRelationshipGroups?: ReadonlyMap<string, ReadonlySet<string>>;
 }): LabAiSynthesis {
   if (!input.response || typeof input.response !== "object" || Array.isArray(input.response)) throw new Error("openai_response_malformed");
   const response = input.response as Record<string, unknown>;
@@ -370,7 +415,7 @@ export function parseLabSynthesisResponse(input: {
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("openai_output_malformed");
   const row = parsed as Record<string, unknown>;
   const keys = Object.keys(row).sort();
-  if (keys.join("|") !== ["priorityActions", "referencedBiomarkerIds", "summary", "uncertainty", "longitudinalSummary", "planImpact", "generatedPlan"].sort().join("|")) throw new Error("openai_output_keys_refused");
+  if (keys.join("|") !== ["priorityActions", "referencedBiomarkerIds", "summary", "uncertainty", "longitudinalSummary", "relationshipFindings", "planImpact", "generatedPlan"].sort().join("|")) throw new Error("openai_output_keys_refused");
   if (typeof row.summary !== "string" || row.summary.length < 1 || row.summary.length > 1800) throw new Error("openai_summary_refused");
   if (typeof row.uncertainty !== "string" || row.uncertainty.length < 1 || row.uncertainty.length > 600) throw new Error("openai_uncertainty_refused");
   if (!Array.isArray(row.priorityActions) || row.priorityActions.length > 6
@@ -379,6 +424,23 @@ export function parseLabSynthesisResponse(input: {
     || row.referencedBiomarkerIds.some((value) => typeof value !== "string")) throw new Error("openai_biomarker_references_refused");
   if (row.referencedBiomarkerIds.some((value) => !input.allowedBiomarkerIds.has(value as string))) throw new Error("openai_unknown_biomarker_reference_refused");
   if (typeof row.longitudinalSummary !== "string" || row.longitudinalSummary.length < 1 || row.longitudinalSummary.length > 1800) throw new Error("openai_summary_refused");
+  const allowedRelationshipGroups = input.allowedRelationshipGroups ?? new Map<string, ReadonlySet<string>>();
+  if (!Array.isArray(row.relationshipFindings) || row.relationshipFindings.length > 6
+    || (allowedRelationshipGroups.size > 0 && row.relationshipFindings.length < 1)
+    || (allowedRelationshipGroups.size === 0 && row.relationshipFindings.length > 0)) throw new Error("openai_output_malformed");
+  const relationshipFindings = row.relationshipFindings.map((candidate): LabRelationshipFinding => {
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) throw new Error("openai_output_malformed");
+    const finding = candidate as Record<string, unknown>;
+    const allowedIds = allowedRelationshipGroups.get(String(finding.groupId));
+    if (Object.keys(finding).sort().join("|") !== ["biomarkerIds", "confidence", "groupId", "summary", "uncertainty"].sort().join("|")
+      || !allowedIds
+      || typeof finding.summary !== "string" || finding.summary.length < 1 || finding.summary.length > 600
+      || typeof finding.uncertainty !== "string" || finding.uncertainty.length < 1 || finding.uncertainty.length > 300
+      || !["low", "medium"].includes(String(finding.confidence))
+      || !Array.isArray(finding.biomarkerIds) || finding.biomarkerIds.length < 2 || finding.biomarkerIds.length > 40
+      || finding.biomarkerIds.some((id) => typeof id !== "string" || !allowedIds.has(id))) throw new Error("openai_unknown_biomarker_reference_refused");
+    return finding as unknown as LabRelationshipFinding;
+  });
   if (!row.planImpact || typeof row.planImpact !== "object" || Array.isArray(row.planImpact)) throw new Error("openai_output_malformed");
   const planImpact = row.planImpact as Record<string, unknown>;
   if (Object.keys(planImpact).sort().join("|") !== ["changes", "headline"].sort().join("|")
@@ -422,7 +484,7 @@ export function parseLabSynthesisResponse(input: {
   });
   const planText = `${generatedPlan.title} ${generatedPlan.summary} ${tasks.map((task) => `${task.name} ${task.frequency} ${task.timing} ${task.rationale}`).join(" ")}`;
   if (/\b(?:start|stop|increase|decrease|change|switch|add)\b.{0,35}\b(?:medication|hormone|peptide|supplement|dose|dosage|treatment)\b/i.test(planText)) throw new Error("openai_treatment_change_refused");
-  const combined = `${row.summary} ${row.uncertainty} ${row.longitudinalSummary} ${planImpact.headline} ${changes.map((change) => `${change.label} ${change.rationale}`).join(" ")} ${(row.priorityActions as string[]).join(" ")} ${planText}`;
+  const combined = `${row.summary} ${row.uncertainty} ${row.longitudinalSummary} ${relationshipFindings.map((finding) => `${finding.summary} ${finding.uncertainty}`).join(" ")} ${planImpact.headline} ${changes.map((change) => `${change.label} ${change.rationale}`).join(" ")} ${(row.priorityActions as string[]).join(" ")} ${planText}`;
   if (/https?:\/\//i.test(combined)) throw new Error("openai_link_refused");
   if (/\b(?:affiliate|buy|purchase)\b/i.test(combined)) throw new Error("openai_commercial_language_refused");
   if (/\btake\s+\d|\b\d+(?:\.\d+)?\s*(?:mg|mcg|iu)\s*(?:\/\s*day|per\s+day|daily|twice|once)/i.test(combined)) throw new Error("openai_dose_directive_refused");
@@ -433,6 +495,7 @@ export function parseLabSynthesisResponse(input: {
     priorityActions: row.priorityActions as string[],
     referencedBiomarkerIds: row.referencedBiomarkerIds as string[],
     longitudinalSummary: row.longitudinalSummary,
+    relationshipFindings,
     planImpact: { headline: planImpact.headline, changes },
     generatedPlan: {
       title: generatedPlan.title,
@@ -489,6 +552,8 @@ export async function synthesizeLabWithOpenAI(input: {
       allowedBiomarkerIds: new Set(input.biomarkers.map((row) => row.biomarkerId)),
       allowedProtocolItemIds: new Set(input.activeProtocol?.items.map((row) => row.itemId) ?? []),
       allowedSymptomCategoryIds: new Set(input.patientContext?.topSymptomSignals.map((row) => row.categoryId) ?? []),
+      allowedRelationshipGroups: new Map(buildDirectionalLabContext(input.biomarkers).relationshipGroups
+        .slice(0, 6).map((row) => [row.groupId, new Set(row.biomarkerIds)])),
     });
   } catch (error) {
     if (controller.signal.aborted) throw Object.assign(new Error("openai_timeout"), { category: "provider_unavailable" });
