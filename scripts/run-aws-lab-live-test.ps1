@@ -24,7 +24,7 @@ New-Item -ItemType Directory -Path $temp | Out-Null
 $authPath = Join-Path $temp "auth.json"
 $imagePath = Join-Path $temp "synthetic-functional-lab.png"
 try {
-  [ordered]@{ AuthFlow = "USER_PASSWORD_AUTH"; ClientId = $clientId; AuthParameters = @{ USERNAME = $record.email; PASSWORD = $password } } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $authPath -Encoding utf8NoBOM
+  [ordered]@{ AuthFlow = "USER_PASSWORD_AUTH"; ClientId = $clientId; AuthParameters = @{ USERNAME = $record.email; PASSWORD = $password } } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $authPath -Encoding Ascii
   $auth = aws cognito-idp initiate-auth --cli-input-json ("file://" + $authPath.Replace("\", "/")) --profile $Profile --region $Region --output json | ConvertFrom-Json
   if ($LASTEXITCODE -ne 0 -or -not $auth.AuthenticationResult.IdToken) { throw "Synthetic Cognito sign-in failed." }
   $token = $auth.AuthenticationResult.IdToken
@@ -71,9 +71,22 @@ try {
   $target = $created.data.documents[0]
   if (-not $target.uploadUrl) { throw "AWS did not provide an upload URL." }
   $uploadHeaders = @{}; foreach ($property in $target.requiredHeaders.PSObject.Properties) { $uploadHeaders[$property.Name] = [string]$property.Value }
-  $response = Invoke-WebRequest -Method Put -Uri $target.uploadUrl -Headers $uploadHeaders -InFile $imagePath -ContentType "image/png"
-  if ($response.StatusCode -lt 200 -or $response.StatusCode -ge 300) { throw "Synthetic S3 upload failed." }
-  $completeBody = @{ uploadedDocuments = @(@{ clientDocumentId = $documentId; etag = [string]$response.Headers.ETag }) } | ConvertTo-Json -Depth 4
+  Add-Type -AssemblyName System.Net.Http
+  $httpClient = [System.Net.Http.HttpClient]::new()
+  $uploadRequest = [System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::Put, [string]$target.uploadUrl)
+  $uploadRequest.Content = [System.Net.Http.ByteArrayContent]::new([System.IO.File]::ReadAllBytes($imagePath))
+  $uploadRequest.Content.Headers.ContentType = [System.Net.Http.Headers.MediaTypeHeaderValue]::new("image/png")
+  foreach ($key in $uploadHeaders.Keys) {
+    if ($key -ieq "content-type") { continue }
+    if (-not $uploadRequest.Headers.TryAddWithoutValidation($key, $uploadHeaders[$key])) {
+      $null = $uploadRequest.Content.Headers.TryAddWithoutValidation($key, $uploadHeaders[$key])
+    }
+  }
+  $response = $httpClient.SendAsync($uploadRequest).GetAwaiter().GetResult()
+  if ([int]$response.StatusCode -lt 200 -or [int]$response.StatusCode -ge 300) { throw "Synthetic S3 upload failed." }
+  $etag = $response.Headers.ETag.Tag
+  $httpClient.Dispose()
+  $completeBody = @{ uploadedDocuments = @(@{ clientDocumentId = $documentId; etag = [string]$etag }) } | ConvertTo-Json -Depth 4
   $null = Invoke-RestMethod -Method Post -Uri "$ApiOrigin/clinical-core/consumer/labs/jobs/$($created.data.jobId)/complete-upload" -Headers $headers -ContentType "application/json" -Body $completeBody
   $deadline = (Get-Date).AddMinutes(4)
   do {
