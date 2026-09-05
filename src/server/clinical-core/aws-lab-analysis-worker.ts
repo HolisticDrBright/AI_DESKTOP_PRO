@@ -283,6 +283,71 @@ export function normalizeExtractedLabLines(extracted: Extracted): Biomarker[] {
   return output.filter((row, index) => output.findIndex((candidate) => candidate.canonicalName === row.canonicalName) === index);
 }
 
+const COMPOSITE_REPORT_PANEL = /(?:truage|epigenetic|biological age|methylation|pace of aging)/i;
+const COMPOSITE_OR_SUMMARY_ROW = /(?:score|percentile|age acceleration|pace of aging|biological age|system age|change from|years? younger|years? older)/i;
+const PLAUSIBLE_VALUE_RULES: Array<{ name: RegExp; min: number; max: number }> = [
+  { name: /^(?:glucose)$/i, min: 10, max: 1_500 },
+  { name: /^(?:hemoglobin a1c|hba1c|a1c)$/i, min: 1, max: 25 },
+  { name: /^(?:fasting insulin|insulin)$/i, min: 0, max: 2_000 },
+  { name: /^(?:homa[- ]?ir)$/i, min: 0, max: 100 },
+  { name: /^(?:hs[- ]?crp|high sensitivity crp|c-reactive protein)$/i, min: 0, max: 1_000 },
+  { name: /^(?:myeloperoxidase|mpo)$/i, min: 0, max: 100_000 },
+  { name: /^(?:homocysteine)$/i, min: 0, max: 500 },
+  { name: /^(?:ferritin)$/i, min: 0, max: 100_000 },
+  { name: /^(?:iron)$/i, min: 0, max: 5_000 },
+];
+
+function plausibleClinicalValue(name: string, value: number): boolean {
+  const rule = PLAUSIBLE_VALUE_RULES.find((candidate) => candidate.name.test(name.trim()));
+  return !rule || (value >= rule.min && value <= rule.max);
+}
+
+function rangeKey(row: Pick<Biomarker, "labMin" | "labMax">): string | null {
+  return row.labMin === null && row.labMax === null ? null : `${row.labMin ?? ""}|${row.labMax ?? ""}`;
+}
+
+/**
+ * Saved measurements can predate the current parser. Keep the measured value,
+ * but never preserve a range that is degenerate or repeated across unrelated
+ * analytes/units (a common OCR column-association failure). Physiologically
+ * impossible conventional values and report-summary pseudo rows are excluded.
+ */
+export function sanitizeMeasuredLabBiomarkers(
+  rows: Biomarker[],
+  panelName = "",
+): Biomarker[] {
+  const rangeUses = new Map<string, { signatures: Set<string>; units: Set<string> }>();
+  for (const row of rows) {
+    const key = rangeKey(row);
+    if (!key) continue;
+    const uses = rangeUses.get(key) ?? { signatures: new Set<string>(), units: new Set<string>() };
+    uses.signatures.add(`${normalizedMarkerName(row.canonicalName)}|${row.unit.trim().toLowerCase()}`);
+    uses.units.add(row.unit.trim().toLowerCase());
+    rangeUses.set(key, uses);
+  }
+
+  return rows.flatMap((row) => {
+    const canonicalName = row.canonicalName.trim();
+    const unit = row.unit.trim().toLowerCase().replace(/[μµ]/g, "u");
+    if (!canonicalName || !Number.isFinite(row.value) || !plausibleClinicalValue(canonicalName, row.value)) return [];
+    if (COMPOSITE_OR_SUMMARY_ROW.test(canonicalName)) return [];
+    if (COMPOSITE_REPORT_PANEL.test(panelName) && unit === "not reported"
+      && PLAUSIBLE_VALUE_RULES.some((candidate) => candidate.name.test(canonicalName))) return [];
+
+    const key = rangeKey(row);
+    const degenerate = row.labMin !== null && row.labMax !== null && row.labMin === row.labMax;
+    const uses = key === null ? undefined : rangeUses.get(key);
+    const implausiblyRepeated = (uses?.signatures.size ?? 0) >= 5 && (uses?.units.size ?? 0) >= 3;
+    return [{
+      ...row,
+      canonicalName,
+      unit,
+      labMin: degenerate || implausiblyRepeated ? null : row.labMin,
+      labMax: degenerate || implausiblyRepeated ? null : row.labMax,
+    }];
+  });
+}
+
 type MeasuredSupplementConsideration = {
   recommendationId: string;
   kind: "supplement";
@@ -405,8 +470,8 @@ export function buildMeasuredSupplementConsiderations(biomarkers: Array<{
   }
   return { recommendations, citations };
 }
-export function normalizeStructuredLabBiomarkers(rows: StructuredLabBiomarker[], documentId: string): Biomarker[] {
-  return rows.map((row) => {
+export function normalizeStructuredLabBiomarkers(rows: StructuredLabBiomarker[], documentId: string, panelName = ""): Biomarker[] {
+  return sanitizeMeasuredLabBiomarkers(rows.map((row) => {
     const rule = matchingRule(row.canonicalName);
     return {
       canonicalName: rule?.name ?? row.canonicalName.trim(),
@@ -427,7 +492,7 @@ export function normalizeStructuredLabBiomarkers(rows: StructuredLabBiomarker[],
       documentId,
       page: null,
     };
-  });
+  }), panelName);
 }
 export function functionalRangeStatus(value: number, min: number, max: number) {
   if (value >= min && value <= max) return "optimal";
@@ -468,8 +533,8 @@ async function executePass(job: Job, pass: number): Promise<unknown | null> {
   }
   if (pass === 2) {
     const biomarkers = job.structuredBiomarkers
-      ? normalizeStructuredLabBiomarkers(job.structuredBiomarkers, jobId)
-      : normalizeExtractedLabLines(await readArtifact(jobId, "extracted") as Extracted);
+      ? normalizeStructuredLabBiomarkers(job.structuredBiomarkers, jobId, job.longitudinalContext?.incomingPanel.panelName)
+      : sanitizeMeasuredLabBiomarkers(normalizeExtractedLabLines(await readArtifact(jobId, "extracted") as Extracted));
     if (!biomarkers.length) throw Object.assign(new Error("no_supported_biomarkers"), { category: "document_unreadable" });
     await writeArtifact(jobId, "normalized", { biomarkers });
     return null;
@@ -486,7 +551,7 @@ async function executePass(job: Job, pass: number): Promise<unknown | null> {
     return null;
   }
   const { biomarkers } = await readArtifact(jobId, "interpreted") as { biomarkers: Array<Biomarker & { status: string }> };
-  const flagged = biomarkers.filter((row) => row.status !== "optimal");
+  const flagged = biomarkers.filter((row) => row.status === "suboptimal" || row.status === "critical");
   const generatedAt = new Date().toISOString();
   const resultBiomarkers = biomarkers.map((row) => ({
     biomarkerId: stableUuid(`biomarker:${row.canonicalName}:${row.unit}`),
@@ -515,8 +580,30 @@ async function executePass(job: Job, pass: number): Promise<unknown | null> {
     panelId: job.longitudinalContext?.incomingPanel.panelId ?? jobId,
     testDate: job.longitudinalContext?.incomingPanel.testDate ?? generatedAt.slice(0, 10),
   }));
-  const priorForSynthesis = (job.longitudinalContext?.priorPanels ?? []).flatMap((panel) => panel.biomarkers.map((row) => ({
-    ...row,
+  const priorForSynthesis = (job.longitudinalContext?.priorPanels ?? []).flatMap((panel) => sanitizeMeasuredLabBiomarkers(
+    panel.biomarkers.map((row) => ({
+      ...row,
+      reportedName: row.canonicalName,
+      sourceId: null,
+      sourceVersion: null,
+      population: null,
+      confidence: 0.79,
+      documentId: panel.panelId,
+      page: null,
+    })),
+    panel.panelName,
+  ).map((row) => ({
+    biomarkerId: stableUuid(`prior-biomarker:${panel.panelId}:${row.canonicalName}:${row.unit}`),
+    canonicalName: row.canonicalName,
+    value: row.value,
+    unit: row.unit,
+    labMin: row.labMin,
+    labMax: row.labMax,
+    functionalMin: row.functionalMin,
+    functionalMax: row.functionalMax,
+    status: row.functionalMin !== null && row.functionalMax !== null
+      ? functionalRangeStatus(row.value, row.functionalMin, row.functionalMax)
+      : reportedRangeStatus(row.value, row.labMin, row.labMax),
     panelId: panel.panelId,
     testDate: panel.testDate,
   })));

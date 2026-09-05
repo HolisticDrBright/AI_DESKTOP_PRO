@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { buildMeasuredSupplementConsiderations, functionalRangeStatus, normalizeExtractedLabLines, normalizeExtractedLabTables, normalizeStructuredLabBiomarkers } from "./aws-lab-analysis-worker";
+import { buildMeasuredSupplementConsiderations, functionalRangeStatus, normalizeExtractedLabLines, normalizeExtractedLabTables, normalizeStructuredLabBiomarkers, sanitizeMeasuredLabBiomarkers } from "./aws-lab-analysis-worker";
 
 const documentId = "22222222-2222-4222-8222-222222222222";
 
@@ -85,6 +85,72 @@ describe("synthetic AWS functional lab rules", () => {
 
     expect(biomarkers[0]).toMatchObject({ canonicalName: "Glucose", functionalMin: 75, functionalMax: 90, confidence: 0.79 });
     expect(biomarkers[1]).toMatchObject({ canonicalName: "Custom Marker", functionalMin: null, functionalMax: null, confidence: 0.79 });
+  });
+
+  test("keeps the March synthetic findings while discarding an OCR range copied across unrelated rows", () => {
+    const rows = [
+      ["hs-CRP", 0.6, "mg/L"],
+      ["MPO", 671, "pmol/L"],
+      ["Homocysteine", 10, "umol/L"],
+      ["Ferritin", 213, "ng/mL"],
+      ["Iron", 128, "ug/dL"],
+      ["Fasting Insulin", 10.7, "uIU/mL"],
+      ["HOMA-IR", 2.3, "ratio"],
+    ] as const;
+    const biomarkers = normalizeStructuredLabBiomarkers(rows.map(([canonicalName, value, unit], index) => ({
+      markerId: `marker-${index}`,
+      canonicalName,
+      value,
+      unit,
+      labMin: 2,
+      labMax: 23,
+    })), documentId, "March 2025 Blood Test");
+
+    expect(biomarkers).toHaveLength(7);
+    expect(biomarkers.every((row) => row.labMin === null && row.labMax === null)).toBe(true);
+    expect(biomarkers.find((row) => row.canonicalName === "Glucose")).toBeUndefined();
+    expect(biomarkers.find((row) => row.canonicalName === "Ferritin")?.value).toBe(213);
+  });
+
+  test("rejects impossible conventional values and ambiguous TruAge pseudo-markers", () => {
+    const biomarkers = normalizeStructuredLabBiomarkers([
+      { markerId: "glucose", canonicalName: "Glucose", value: -6, unit: "mg/dL", labMin: null, labMax: null },
+      { markerId: "hscrp", canonicalName: "hs-CRP", value: 35, unit: "not reported", labMin: null, labMax: null },
+      { markerId: "insulin", canonicalName: "Fasting Insulin", value: 2, unit: "not reported", labMin: 2, labMax: 2 },
+      { markerId: "age", canonicalName: "Inflammation score", value: 35, unit: "score", labMin: null, labMax: null },
+    ], documentId, "Advanced TruAge Report");
+
+    expect(biomarkers).toEqual([]);
+  });
+
+  test("preserves exact March-style source ranges and classifies the broader pattern", () => {
+    const rows = [
+      { canonicalName: "hs-CRP", value: 0.6, unit: "mg/L", labMin: null, labMax: 0.9 },
+      { canonicalName: "MPO", value: 671, unit: "pmol/L", labMin: null, labMax: 599.9 },
+      { canonicalName: "Homocysteine", value: 10, unit: "umol/L", labMin: null, labMax: 9 },
+      { canonicalName: "Ferritin", value: 213, unit: "ng/mL", labMin: 30, labMax: 400 },
+      { canonicalName: "Iron", value: 128, unit: "ug/dL", labMin: 59, labMax: 158 },
+      { canonicalName: "Fasting Insulin", value: 10.7, unit: "uIU/mL", labMin: 2.6, labMax: 24.9 },
+      { canonicalName: "HOMA-IR", value: 2.3, unit: "ratio", labMin: 0.7, labMax: 2 },
+    ].map((row, index) => ({
+      ...row,
+      reportedName: row.canonicalName,
+      functionalMin: null,
+      functionalMax: null,
+      sourceId: null,
+      sourceVersion: null,
+      population: null,
+      confidence: 0.99,
+      documentId,
+      page: 1,
+    }));
+    const biomarkers = sanitizeMeasuredLabBiomarkers(rows);
+
+    expect(biomarkers).toHaveLength(7);
+    expect(biomarkers.find((row) => row.canonicalName === "MPO")).toMatchObject({ labMax: 599.9 });
+    expect(biomarkers.find((row) => row.canonicalName === "Homocysteine")).toMatchObject({ labMax: 9 });
+    expect(biomarkers.find((row) => row.canonicalName === "HOMA-IR")).toMatchObject({ labMin: 0.7, labMax: 2 });
+    expect(biomarkers.find((row) => row.canonicalName === "Ferritin")).toMatchObject({ labMin: 30, labMax: 400 });
   });
 
   test("creates cited review-before-starting considerations only for measured values below a reporting-lab bound", () => {
