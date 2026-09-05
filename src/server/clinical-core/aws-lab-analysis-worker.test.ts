@@ -119,11 +119,11 @@ describe("synthetic AWS functional lab rules", () => {
       ["Homocysteine", 10, "umol/L"],
       ["Ferritin", 213, "ng/mL"],
       ["Iron", 128, "ug/dL"],
-    ].map(([canonicalName, value, unit], index) => ({
+    ].map(([canonicalName, value, unit]) => ({
       canonicalName: String(canonicalName), reportedName: String(canonicalName), value: Number(value), unit: String(unit),
       labMin: 2, labMax: 23, functionalMin: 2, functionalMax: 23,
       sourceId: null, sourceVersion: null, population: null, confidence: 0.79,
-      documentId, page: index + 1,
+      documentId, page: 1,
     }));
 
     const biomarkers = sanitizeMeasuredLabBiomarkers(rows);
