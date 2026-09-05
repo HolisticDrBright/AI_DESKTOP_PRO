@@ -40,7 +40,7 @@ import path from "node:path";
  *      oversize, and wrong content types are refused
  *  14. signed inbound data arrives for review — never written to the chart
  *  15. the fixture refuses every deployed environment with no override
- *  16. an unapproved provider (Phase 6B) is refused by the entry point
+ *  16. the alp provider without complete configuration is refused by the entry point
  *  17. SYNC_PROVIDER=none idles cleanly; the web app stays healthy
  *  18. a down backend fails the worker without fabricating any UI state
  *  19. worker RPCs are service-role only — client credentials are refused
@@ -527,10 +527,11 @@ test("15: the fixture refuses every deployed environment with no override", asyn
   }
 });
 
-test("16: an unapproved provider (Phase 6B) is refused by the entry point", async () => {
+test("16: the alp provider without complete configuration is refused by the entry point", async () => {
   const run = await runWorker({ SYNC_PROVIDER: "alp" });
   expect(run.code).toBe(1);
   expect(run.output).toContain('"event":"worker_refused"');
+  expect(run.output).toContain("alp configuration incomplete");
 });
 
 test("17: SYNC_PROVIDER=none idles cleanly; the web app stays healthy", async ({ page }) => {

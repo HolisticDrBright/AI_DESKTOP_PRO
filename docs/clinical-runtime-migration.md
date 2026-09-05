@@ -232,9 +232,9 @@ committed under their authoring timestamps rather than their recorded ones.
 They have been renamed to the recorded versions — this is a correctness fix,
 not cosmetics: a `supabase db push` against filenames absent from the ledger
 would try to apply them a second time. Separately, `20260730231721`
-(`desktop_sync_claim_wire_fields`) is applied on staging but its file lives on
-the still-open Desktop-sync PR branch, not on `main`; that resolves when that
-PR merges and is deliberately untouched here.
+(`desktop_sync_claim_wire_fields`) was applied on staging while its file lived
+only on the Phase 6B bridge branch (PR #21); that file, the `alp` provider, and
+its tests reached `main` in `0f1ab7f`, so the repo and the ledger agree again.
 
 Local filenames match recorded versions. All function contracts: SECURITY
 DEFINER + `search_path=''` + explicit `auth.uid()` / `private.is_org_member` /
