@@ -112,6 +112,26 @@ describe("synthetic AWS functional lab rules", () => {
     expect(biomarkers.find((row) => row.canonicalName === "Ferritin")?.value).toBe(213);
   });
 
+  test("discards an unproven functional range copied from the same corrupt OCR column", () => {
+    const rows = [
+      ["Vitamin D", 35, "ng/mL"],
+      ["MPO", 671, "pmol/L"],
+      ["Homocysteine", 10, "umol/L"],
+      ["Ferritin", 213, "ng/mL"],
+      ["Iron", 128, "ug/dL"],
+    ].map(([canonicalName, value, unit], index) => ({
+      canonicalName: String(canonicalName), reportedName: String(canonicalName), value: Number(value), unit: String(unit),
+      labMin: 2, labMax: 23, functionalMin: 2, functionalMax: 23,
+      sourceId: null, sourceVersion: null, population: null, confidence: 0.79,
+      documentId, page: index + 1,
+    }));
+
+    const biomarkers = sanitizeMeasuredLabBiomarkers(rows);
+    expect(biomarkers).toHaveLength(5);
+    expect(biomarkers.every((row) => row.labMin === null && row.labMax === null)).toBe(true);
+    expect(biomarkers.every((row) => row.functionalMin === null && row.functionalMax === null)).toBe(true);
+  });
+
   test("rejects impossible conventional values and ambiguous TruAge pseudo-markers", () => {
     const biomarkers = normalizeStructuredLabBiomarkers([
       { markerId: "glucose", canonicalName: "Glucose", value: -6, unit: "mg/dL", labMin: null, labMax: null },

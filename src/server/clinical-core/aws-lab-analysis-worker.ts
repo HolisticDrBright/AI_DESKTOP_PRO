@@ -338,12 +338,20 @@ export function sanitizeMeasuredLabBiomarkers(
     const degenerate = row.labMin !== null && row.labMax !== null && row.labMin === row.labMax;
     const uses = key === null ? undefined : rangeUses.get(key);
     const implausiblyRepeated = (uses?.signatures.size ?? 0) >= 5 && (uses?.units.size ?? 0) >= 3;
+    const questionableRange = degenerate || implausiblyRepeated;
+    const unprovenFunctionalRangeWasCopied = questionableRange
+      && !row.sourceId
+      && !row.sourceVersion
+      && row.functionalMin === row.labMin
+      && row.functionalMax === row.labMax;
     return [{
       ...row,
       canonicalName,
       unit,
-      labMin: degenerate || implausiblyRepeated ? null : row.labMin,
-      labMax: degenerate || implausiblyRepeated ? null : row.labMax,
+      labMin: questionableRange ? null : row.labMin,
+      labMax: questionableRange ? null : row.labMax,
+      functionalMin: unprovenFunctionalRangeWasCopied ? null : row.functionalMin,
+      functionalMax: unprovenFunctionalRangeWasCopied ? null : row.functionalMax,
     }];
   });
 }
