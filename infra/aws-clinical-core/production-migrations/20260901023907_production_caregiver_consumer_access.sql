@@ -1,4 +1,4 @@
-+-- Consumer completion of the patient-authorized family/caregiver workflow.
+-- Consumer completion of the patient-authorized family/caregiver workflow.
 -- This migration creates no relationship, identity, consent, or clinical row.
 -- Every read is scope-specific and is audited without clinical content.
 

@@ -16,7 +16,9 @@ const errors = [];
 const assert = (condition, message) => { if (!condition) errors.push(message); };
 
 assert(manifest.contract_version === "clinical-core-migrations/1", "generated manifest contract is invalid");
-assert(manifest.migrations.length === 49, "expected thirteen transformed migrations and thirty-six production overlays");
+assert(manifest.migrations.length === 46, "expected ten transformed migrations and thirty-six production overlays");
+assert(!manifest.migrations.some(entry => ['20260821049000', '20260821049500', '20260821049700'].includes(entry.version)),
+  "synthetic chat/family/directory variants must not shadow the dedicated production contracts");
 assert(!manifest.migrations.some((entry) => entry.file.includes("synthetic_patient_directory_create")),
   "synthetic-only patient creation must never enter the production migration artifact");
 assert(new Set(manifest.migrations.map((entry) => entry.version)).size === manifest.migrations.length,
@@ -32,6 +34,9 @@ for (const entry of manifest.migrations) {
   assert(sql.trim().length > 0, `${entry.file} is empty`);
   combined += `\n${sql}`;
 }
+assert((combined.match(/create table clinical_core\.patient_relationships\s*\(/gi) ?? []).length === 1,
+  "family relationships must have exactly one authoritative table definition");
+assert(!/^\+--/m.test(combined), "a patch marker was included as SQL");
 
 for (const [pattern, description] of [
   [/synthetic/i, "production artifact contains a synthetic marker"],
