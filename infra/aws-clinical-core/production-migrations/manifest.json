@@ -148,6 +148,10 @@
     {
       "version": "20260908090000",
       "file": "20260908090000_production_owned_consumer_records.sql"
+    },
+    {
+      "version": "20260908100000",
+      "file": "20260908100000_production_owned_storage_reads.sql"
     }
   ]
 }

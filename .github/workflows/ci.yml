@@ -46,6 +46,7 @@ jobs:
           npm run build:aws-governed-catalog-api
           npm run build:aws-deployment-tools
           npm run build:aws-chat-transcription
+          node scripts/build-aws-personal-storage.mjs
           npm run check:aws-chat-transcription
       - name: AWS production provider-removal and foundation gates
         run: |

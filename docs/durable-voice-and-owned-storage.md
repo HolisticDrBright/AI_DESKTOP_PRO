@@ -4,6 +4,11 @@ Status: **partial commercial engineering, not commercial activation**. Core rema
 $19.99/month; peptide and longevity add-ons remain outside initial launch. PHI is
 disabled. No paid mobile build was started. No clinical approval was created.
 
+Follow-up: [Personal consumer API and V2 integration](personal-consumer-api-readiness.md)
+supersedes the next-step list below: source now includes separate HTTP routes,
+V2 personal storage/consent and partial AI context. Its 35-check rollback pass
+does not imply those routes or the 48-migration candidate have been deployed.
+
 ## Durable voice: implemented and hosted in synthetic AWS
 
 Desktop runtime source `56cad47e6e2ccd66f5d47b89a65671c1db9a4cc3` adds a durable

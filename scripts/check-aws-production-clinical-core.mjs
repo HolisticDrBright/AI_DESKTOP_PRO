@@ -16,7 +16,7 @@ const errors = [];
 const assert = (condition, message) => { if (!condition) errors.push(message); };
 
 assert(manifest.contract_version === "clinical-core-migrations/1", "generated manifest contract is invalid");
-assert(manifest.migrations.length === 47, "expected ten transformed migrations and thirty-seven production overlays");
+assert(manifest.migrations.length === 48, "expected ten transformed migrations and thirty-eight production overlays");
 assert(!manifest.migrations.some(entry => ['20260821049000', '20260821049500', '20260821049700'].includes(entry.version)),
   "synthetic chat/family/directory variants must not shadow the dedicated production contracts");
 assert(!manifest.migrations.some((entry) => entry.file.includes("synthetic_patient_directory_create")),

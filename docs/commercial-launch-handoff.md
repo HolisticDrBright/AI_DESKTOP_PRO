@@ -6,7 +6,7 @@ It does not sign agreements or approve clinical policy on anyone's behalf.
 
 September 8 follow-up: [Production identity repair](production-identity-repair.md) records the repaired registration/bootstrap/session path, disabled AWS deployment and physical Aurora rollback evidence. Production lab/voice conversion and standalone Core data scope remain engineering work.
 
-Latest September 8 follow-up: [Durable voice and independent consumer storage](durable-voice-and-owned-storage.md) records the hosted synthetic voice job/cleanup pass and 26 successful rollback-only Aurora ownership checks. The new personal-storage schema is **not persistently applied or connected to V2**. V2 voice changes are source-only; no paid mobile build was made. These results do not complete commercial readiness.
+Latest September 8 follow-up: [Personal consumer API and V2 integration](personal-consumer-api-readiness.md) records the new independently owned API, V2 consent/storage routing, partial personal AI context and 35 rollback-only Aurora assertions. The 48-migration source candidate is **not persistently applied or publicly activated**; persistent Aurora remains at 46. V2 changes are source-only; no paid mobile build was made. [Durable voice](durable-voice-and-owned-storage.md) retains the earlier hosted synthetic voice evidence. These results do not complete commercial readiness.
 
 ## Engineering completed in this release
 

@@ -3,6 +3,9 @@ import { readFileSync } from "node:fs";
 import { clinicalUuid } from "./database";
 import { splitPostgresStatements } from "./migrations";
 import { createRdsDataAdministrativeDatabase } from "./rds-data-database";
+import { createOwnedConsumerApi } from "./owned-consumer-api";
+import { createOwnedConsumerRecordsAdapter } from "./owned-consumer-records";
+import type { ApiGatewayV2Event } from "./aws-identity-api";
 
 class RolledBack extends Error {}
 async function run() {
@@ -22,8 +25,9 @@ async function run() {
     await database.transaction(async tx => {
       stage = "migration";
       for (const statement of splitPostgresStatements(sql)) await tx.query(statement);
+      for (const statement of splitPostgresStatements(readFileSync("infra/aws-clinical-core/production-migrations/20260908100000_production_owned_storage_reads.sql","utf8"))) await tx.query(statement);
       // Fictional approval metadata is exclusively inside this rolled-back transaction.
-      await tx.query("insert into clinical_private.consumer_storage_consent_releases(scope,version,content_sha256,approved_by,approved_at) values ('forms_checkins','acceptance-only',$1,'ROLLBACK TEST - NOT A HUMAN APPROVAL',clock_timestamp()),('wearables','acceptance-only',$1,'ROLLBACK TEST - NOT A HUMAN APPROVAL',clock_timestamp())", ["0".repeat(64)]);
+      await tx.query("insert into clinical_private.consumer_storage_consent_releases(scope,version,content_sha256,content,approved_by,approved_at) values ('forms_checkins','acceptance-only',encode(public.digest($1,'sha256'),'hex'),$1,'ROLLBACK TEST - NOT A HUMAN APPROVAL',clock_timestamp()),('wearables','acceptance-only',encode(public.digest($1,'sha256'),'hex'),$1,'ROLLBACK TEST - NOT A HUMAN APPROVAL',clock_timestamp())", ["Fictional rollback-only consent copy; not approved for use."]);
       await tx.query("set local role clinical_core_api");
       for (const [person, subject] of [[a, subA], [b, subB]]) {
         await tx.query("select * from clinical_private.bootstrap_self_service_consumer($1,$2,$3)", [clinicalUuid(person),clinicalUuid(org),subject]);
@@ -88,6 +92,37 @@ async function run() {
       await check("select jsonb_array_length(clinical_core.list_owned_consumer_records('wellness_profiles',10))=0 as ok");
       stage = "direct_write_denied";
       await tx.query("do $$ begin begin delete from clinical_core.owned_consumer_record_versions; raise exception 'direct_delete_allowed'; exception when insufficient_privilege then null; end; end $$"); checks++;
+      stage="api_to_database";
+      const issuer="https://cognito-idp.us-east-2.amazonaws.com/rollback"; const audience="12345678901234567890";
+      const api=createOwnedConsumerApi({configuration:{consumerIssuer:issuer,consumerAudience:audience,phiAllowed:true,activationState:"approved",activationEvidenceSha256:"0".repeat(64),allowedScopes:["forms_checkins","ai_context"]},adapter:()=>createOwnedConsumerRecordsAdapter({transaction:work=>work(tx)})});
+      const apiEvent=(who:string,subject:string,route:string,query?:Record<string,string>,body?:unknown):ApiGatewayV2Event=>({routeKey:route,queryStringParameters:query,headers:{"content-type":"application/json"},...(body?{body:JSON.stringify(body)}:{}),requestContext:{authorizer:{jwt:{claims:{iss:issuer,aud:audience,sub:subject,token_use:"id",email_verified:"true",exp:Math.floor(Date.now()/1000)+600,iat:Math.floor(Date.now()/1000),"custom:person_id":who,"custom:organization_id":org,"custom:production_bound":"true"}}}}});
+      const apiId=randomUUID(); const apiRequest=randomUUID();
+      const apiBody={collection:"wellness_profiles",recordId:apiId,requestId:apiRequest,expectedRevision:0,consentRevision:3,deleted:false,payload:{id:apiId,goals:[],onboardingCompleted:false,role:"patient"}};
+      for (const duplicate of [false,true]) {
+        const r=await api(apiEvent(a,subA,"POST /clinical-core/consumer/personal/records",undefined,apiBody));
+        if (r.statusCode!==200 || JSON.parse(r.body).data.duplicate!==duplicate) { console.error(JSON.stringify({apiStatus:r.statusCode,code:JSON.parse(r.body).error})); throw new Error("api_write_failed"); } checks++;
+      }
+      const own=await api(apiEvent(a,subA,"GET /clinical-core/consumer/personal/record",{collection:"wellness_profiles",recordId:apiId}));
+      if(own.statusCode!==200 || JSON.parse(own.body).data.payload.id!==apiId) throw new Error("api_read_failed"); checks++;
+      const other=await api(apiEvent(b,subB,"GET /clinical-core/consumer/personal/record",{collection:"wellness_profiles",recordId:apiId}));
+      if(other.statusCode!==200 || JSON.parse(other.body).data!==null) throw new Error("api_owner_leak"); checks++;
+      const consentResponse=await api(apiEvent(a,subA,"GET /clinical-core/consumer/personal/consent",{scope:"forms_checkins"}));
+      const consentData=JSON.parse(consentResponse.body).data;
+      if(consentResponse.statusCode!==200 || consentData.history.length!==3 || consentData.activeRevision!==3 || !consentData.release.content.includes("Fictional rollback-only")) throw new Error("api_consent_failed"); checks++;
+      stage='personal_ai_context';
+      const deniedContext=await api(apiEvent(a,subA,'GET /clinical-core/consumer/personal/chat-context'));
+      if(deniedContext.statusCode!==403)throw new Error('ai_consent_not_enforced');checks++;
+      await tx.query('reset role');
+      await tx.query("insert into clinical_private.consumer_storage_consent_releases(scope,version,content_sha256,content,approved_by,approved_at) select 'ai_context',version,content_sha256,content,approved_by,approved_at from clinical_private.consumer_storage_consent_releases where scope='forms_checkins'");
+      await tx.query('set local role clinical_core_api');
+      const aiGrant=await api(apiEvent(a,subA,'POST /clinical-core/consumer/personal/consent',undefined,{scope:'ai_context',status:'granted',releaseVersion:'acceptance-only',expectedRevision:0}));
+      if(aiGrant.statusCode!==200)throw new Error('ai_grant_failed');checks++;
+      const aiResult=await api(apiEvent(a,subA,'GET /clinical-core/consumer/personal/chat-context'));
+      const aiData=JSON.parse(aiResult.body).data;
+      if(aiResult.statusCode!==200||!aiData.profile||aiData.profile.sex!==null||aiData.labs.length!==0)throw new Error('owned_ai_context_failed');checks++;
+      const otherAi=await api(apiEvent(b,subB,'GET /clinical-core/consumer/personal/chat-context'));
+      if(otherAi.statusCode!==403)throw new Error('cross_owner_ai_consent_leak');checks++;
+      await context(a,subA);
       await tx.query("select set_config('clinical.claim.identity_pool','workforce',true)");
       await refused("clinical_private.owned_consumer_actor()", "42501");
       throw new RolledBack();

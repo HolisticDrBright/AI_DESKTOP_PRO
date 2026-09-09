@@ -1,9 +1,10 @@
 import { canonicalPayload, CONSUMER_CLINICAL_COLLECTIONS, validateCollectionPayload, type ConsumerClinicalCollection } from "./aws-consumer-clinical-records";
 import type { ProductionClinicalRequestContext } from "./aws-identity-consent";
+import { createHash } from "node:crypto";
 import { clinicalUuid, ClinicalCoreDatabaseRejection, type ClinicalCoreDatabase, type ClinicalCoreTransaction } from "./database";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-export const OWNED_STORAGE_SCOPES = ["forms_checkins","symptoms_adherence","nutrition","protocols_supplements","wearables","reproductive_health"] as const;
+export const OWNED_STORAGE_SCOPES = ["forms_checkins","symptoms_adherence","nutrition","protocols_supplements","wearables","reproductive_health","ai_context"] as const;
 export type OwnedStorageScope = typeof OWNED_STORAGE_SCOPES[number];
 export type OwnedRecordWrite = {
   collection: ConsumerClinicalCollection; recordId: string; expectedRevision: number;
@@ -11,6 +12,13 @@ export type OwnedRecordWrite = {
 };
 type WriteResult = { recordId: string; revision: number; duplicate: boolean; receivedAt: string };
 export type OwnedRecord = { recordId: string; revision: number; payload: Record<string, unknown>; receivedAt: string };
+export type StorageConsentState = {
+  scope: OwnedStorageScope;
+  release: {version:string;content:string;contentSha256:string;approvedAt:string} | null;
+  current: {revision:number;status:"granted"|"revoked";releaseVersion:string;recordedAt:string} | null;
+  history: Array<{revision:number;status:"granted"|"revoked";releaseVersion:string;recordedAt:string}>;
+  historyLimit: number; activeRevision: number | null;
+};
 export class OwnedStorageError extends Error {
   constructor(readonly code: "request_invalid" | "owner_required" | "storage_unavailable" | "consent_required" | "conflict") { super(code); }
 }
@@ -43,6 +51,45 @@ export function createOwnedConsumerRecordsAdapter(database: ClinicalCoreDatabase
     });
   };
   return {
+    async recent(context:ProductionClinicalRequestContext,input:{collection:ConsumerClinicalCollection;limit:number}):Promise<OwnedRecord[]> {
+      exactKeys(input,['collection','limit']);collection(input.collection);if(!Number.isInteger(input.limit)||input.limit<1||input.limit>100)invalid();
+      return run(context,'clinical_data',async tx=>{
+        const result=await tx.query<{result:unknown}>('select clinical_core.recent_owned_consumer_records($1,$2::integer) as result',[input.collection,input.limit]);
+        const values=parsed(result.rows[0]?.result);if(!Array.isArray(values)||values.length>input.limit)unavailable();
+        return values.map(raw=>{const v=object(raw);if(typeof v.recordId!=='string'||!UUID.test(v.recordId)||!revision(v.revision,1)||!date(v.receivedAt))unavailable();const payload=object(v.payload);try{validateCollectionPayload(input.collection,payload);}catch{unavailable();}return {recordId:v.recordId as string,revision:v.revision as number,payload,receivedAt:v.receivedAt as string};});
+      });
+    },
+    async get(context: ProductionClinicalRequestContext,input: {collection:ConsumerClinicalCollection;recordId:string}): Promise<(OwnedRecord & {deleted:boolean}) | null> {
+      exactKeys(input,["collection","recordId"]); collection(input.collection);
+      if (!UUID.test(input.recordId)) invalid();
+      return run(context,"clinical_data",async tx => {
+        const result = await tx.query<{result:unknown}>("select clinical_core.get_owned_consumer_record($1,$2) as result",[input.collection,clinicalUuid(input.recordId)]);
+        const raw = parsed(result.rows[0]?.result); if (raw === null) return null;
+        const value = object(raw);
+        if (value.recordId !== input.recordId || !revision(value.revision,1) || typeof value.deleted !== "boolean" || !date(value.receivedAt)) unavailable();
+        const payload = object(value.payload);
+        try { const encoded=canonicalPayload(payload); if (value.deleted ? encoded !== "{}" : false) unavailable(); if (!value.deleted) validateCollectionPayload(input.collection,payload); } catch { unavailable(); }
+        return {recordId:input.recordId,revision:value.revision as number,deleted:value.deleted as boolean,payload,receivedAt:value.receivedAt as string};
+      });
+    },
+    async consentState(context:ProductionClinicalRequestContext,scope:OwnedStorageScope): Promise<StorageConsentState> {
+      if (!OWNED_STORAGE_SCOPES.includes(scope)) invalid();
+      return run(context,"consent_management",async tx => {
+        const result=await tx.query<{result:unknown}>("select clinical_core.get_owned_storage_consent_state($1) as result",[scope]);
+        const value=object(result.rows[0]?.result);
+        if (value.scope !== scope || value.historyLimit !== 100 || !Array.isArray(value.history) || value.history.length>100
+          || (value.activeRevision !== null && !revision(value.activeRevision,1))) unavailable();
+        const entry=(raw:unknown) => { const v=object(raw); if (!revision(v.revision,1) || !["granted","revoked"].includes(v.status as string) || typeof v.releaseVersion !== "string" || !date(v.recordedAt)) unavailable(); return {revision:v.revision as number,status:v.status as "granted"|"revoked",releaseVersion:v.releaseVersion as string,recordedAt:v.recordedAt as string}; };
+        let release:StorageConsentState["release"]=null;
+        if (value.release !== null) {
+          const r=object(value.release);
+          if (typeof r.version !== "string" || typeof r.content !== "string" || r.content.length<1 || r.content.length>12000 || !date(r.approvedAt)
+            || r.contentSha256 !== createHash("sha256").update(r.content).digest("hex")) unavailable();
+          release={version:r.version as string,content:r.content as string,contentSha256:r.contentSha256 as string,approvedAt:r.approvedAt as string};
+        }
+        return {scope,release,current:value.current===null?null:entry(value.current),history:value.history.map(entry),historyLimit:100,activeRevision:value.activeRevision as number|null};
+      });
+    },
     async write(context: ProductionClinicalRequestContext, input: OwnedRecordWrite): Promise<WriteResult> {
       exactKeys(input,["collection","recordId","expectedRevision","requestId","payload","deleted","consentRevision"]);
       collection(input.collection);
@@ -57,7 +104,7 @@ export function createOwnedConsumerRecordsAdapter(database: ClinicalCoreDatabase
       } catch { invalid(); }
       if (input.deleted && payload !== "{}") invalid();
       return run(context,"clinical_data",async tx => {
-        const result = await tx.query<{ result: unknown }>("select clinical_core.write_owned_consumer_record($1,$2,$3,$4,$5::jsonb,$6,$7) as result", [
+        const result = await tx.query<{ result: unknown }>("select clinical_core.write_owned_consumer_record($1,$2,$3::integer,$4,$5::jsonb,$6,$7::integer) as result", [
           input.collection,clinicalUuid(input.recordId),input.expectedRevision,clinicalUuid(input.requestId),payload,input.deleted,input.consentRevision,
         ]);
         const value = object(result.rows[0]?.result);
@@ -76,7 +123,7 @@ export function createOwnedConsumerRecordsAdapter(database: ClinicalCoreDatabase
         if (!date(input.after.receivedAt) || !UUID.test(input.after.recordId)) invalid();
       }
       return run(context,"clinical_data",async tx => {
-        const result = await tx.query<{ result: unknown }>("select clinical_core.list_owned_consumer_records($1,$2,$3::timestamptz,$4) as result", [
+        const result = await tx.query<{ result: unknown }>("select clinical_core.list_owned_consumer_records($1,$2::integer,$3::timestamptz,$4::uuid) as result", [
           input.collection,input.limit,input.after?.receivedAt ?? null,input.after ? clinicalUuid(input.after.recordId) : null,
         ]);
         const data = parsed(result.rows[0]?.result);
@@ -97,7 +144,7 @@ export function createOwnedConsumerRecordsAdapter(database: ClinicalCoreDatabase
       if (!OWNED_STORAGE_SCOPES.includes(input.scope) || !["granted","revoked"].includes(input.status)
         || !revision(input.expectedRevision,0) || (input.status === "granted" && !/^[A-Za-z0-9._/-]{1,80}$/.test(input.releaseVersion ?? ""))) invalid();
       return run(context,"consent_management",async tx => {
-        const result = await tx.query<{ result: unknown }>("select clinical_core.set_owned_consumer_consent($1,$2,$3,$4) as result", [input.scope,input.status,input.releaseVersion ?? null,input.expectedRevision]);
+        const result = await tx.query<{ result: unknown }>("select clinical_core.set_owned_consumer_consent($1,$2,$3,$4::integer) as result", [input.scope,input.status,input.releaseVersion ?? null,input.expectedRevision]);
         const value = object(result.rows[0]?.result);
         if (value.scope !== input.scope || value.status !== input.status || value.revision !== input.expectedRevision+1 || typeof value.releaseVersion !== "string") unavailable();
         return { scope: input.scope,status: input.status,revision: value.revision as number,releaseVersion: value.releaseVersion as string };
