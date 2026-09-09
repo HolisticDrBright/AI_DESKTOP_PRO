@@ -144,6 +144,10 @@
     {
       "version": "20260904090000",
       "file": "20260904090000_production_independent_consumer_chat_context.sql"
+    },
+    {
+      "version": "20260908090000",
+      "file": "20260908090000_production_owned_consumer_records.sql"
     }
   ]
 }
