@@ -12,6 +12,9 @@ export type ConsumerAccountConfiguration = {
   boundary: ConsumerAccountBoundary;
   termsVersion: string;
   privacyVersion: string;
+  activationState?: "blocked" | "approved";
+  consumerIssuer?: string;
+  consumerAudience?: string;
 };
 
 export type RegistrationClaims = {
@@ -21,6 +24,7 @@ export type RegistrationClaims = {
 };
 
 export interface ConsumerAccountProvider {
+  getConfirmedIdentity?(subject: string): Promise<RegistrationClaims>;
   register(input: {
     email: string;
     password: string;
@@ -63,8 +67,36 @@ export function createConsumerAccountApiHandler(input: {
 }) {
   assertConfiguration(input.configuration);
   return async (event: ApiGatewayV2Event): Promise<ApiGatewayV2Response> => {
+    if (input.configuration.boundary === "production" && input.configuration.activationState !== "approved") {
+      return response(503, { error: "consumer_account_not_activated" });
+    }
     try {
+      if (event.routeKey === "POST /clinical-core/consumer/account/bootstrap") {
+        const jwt = event.requestContext?.authorizer?.jwt?.claims ?? {};
+        const c = input.configuration;
+        const boundaryValid = c.boundary === "production"
+          ? jwt["custom:production_bound"] === "true" && jwt["custom:synthetic_attested"] !== "true"
+          : jwt["custom:synthetic_attested"] === "true" && jwt["custom:production_bound"] !== "true";
+        if (!c.consumerIssuer || !c.consumerAudience || jwt.iss !== c.consumerIssuer || jwt.aud !== c.consumerAudience
+          || jwt.token_use !== "id" || ![true, "true"].includes(jwt.email_verified as boolean | string)
+          || typeof jwt.sub !== "string" || !boundaryValid || !input.provider.getConfirmedIdentity
+          || (event.body && event.body !== "{}")) return response(403, { error: "identity_refused" });
+        const binding = await input.provider.getConfirmedIdentity(jwt.sub);
+        if (binding.subject !== jwt.sub || binding.personId !== jwt["custom:person_id"]
+          || binding.organizationId !== jwt["custom:organization_id"]) return response(403, { error: "identity_refused" });
+        await bootstrap(input.database, binding);
+        return response(200, { state: "ready", contractVersion: "consumer-account/1", clinicalAccessGranted: false });
+      }
       const body = parseBody(event.body);
+      const fields: Record<string, string[]> = {
+        "POST /clinical-core/public/consumer/register": ["email", "password", "acceptsTerms", "acceptsPrivacy", "termsVersion", "privacyVersion", "attestsSyntheticOnly"],
+        "POST /clinical-core/public/consumer/registration/confirm": ["email", "code"],
+        "POST /clinical-core/public/consumer/registration/resend": ["email"],
+        "POST /clinical-core/public/consumer/recovery/request": ["email"],
+        "POST /clinical-core/public/consumer/recovery/confirm": ["email", "code", "password"],
+      };
+      const allowed = fields[event.routeKey ?? ""];
+      if (allowed && Object.keys(body).some(key => !allowed.includes(key))) throw new ConsumerAccountRequestError("request_invalid");
       switch (event.routeKey) {
         case "POST /clinical-core/public/consumer/register": {
           const email = normalizedEmail(body.email);
@@ -168,7 +200,7 @@ function validPassword(value: unknown): string {
 }
 
 function assertConfiguration(value: ConsumerAccountConfiguration): void {
-  if (!VERSION.test(value.termsVersion) || !VERSION.test(value.privacyVersion)) throw new Error("consumer_account_configuration_invalid");
+  if (!["synthetic", "production"].includes(value.boundary) || !VERSION.test(value.termsVersion) || !VERSION.test(value.privacyVersion)) throw new Error("consumer_account_configuration_invalid");
 }
 
 function boundedCategory(error: unknown): ConsumerAccountRequestError["category"] {
