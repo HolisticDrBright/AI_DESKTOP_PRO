@@ -82,7 +82,9 @@ try {
   if (-not $accepted) { throw "Saved-lab plan result failed acceptance checks." }
   $deleted = Invoke-RestMethod -Method Delete -Uri "$ApiOrigin/clinical-core/consumer/labs/jobs/$($created.data.jobId)" -Headers $headers
   if ($deleted.data.deleted -ne $true) { throw "Saved-lab plan job cleanup failed." }
-  [pscustomobject]@{ State = $current.data.state; Markers = $current.data.result.biomarkers.Count; PlanTasks = $current.data.result.generatedPlan.tasks.Count; HistoricalSupplementConsiderations = $current.data.result.generatedPlan.supplementRecommendations.Count; MeasuredOnly = $true; ReviewProvenanceRetained = $true; Deleted = $true } | Format-List
+  $afterDelete = Invoke-WebRequest -Method Get -Uri "$ApiOrigin/clinical-core/consumer/labs/jobs/$($created.data.jobId)" -Headers $headers -SkipHttpErrorCheck
+  if ($afterDelete.StatusCode -ne 404) { throw 'Deleted job is still readable.' }
+  [pscustomobject]@{ State = $current.data.state; Markers = $current.data.result.biomarkers.Count; PlanTasks = $current.data.result.generatedPlan.tasks.Count; HistoricalSupplementConsiderations = $current.data.result.generatedPlan.supplementRecommendations.Count; MeasuredOnly = $true; ReviewProvenanceRetained = $true; Deleted = $true; PostDeleteReadStatus = $afterDelete.StatusCode } | Format-List
 } finally {
   if ($created.data.jobId -and $deleted.data.deleted -ne $true) {
     # Do not delete an active job while its worker can still write artifacts.

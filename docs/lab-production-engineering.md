@@ -30,6 +30,16 @@ Local typechecks, lint and regression suites cover parsing, signature/hash valid
 
 `scripts/run-aws-saved-lab-plan-live-test.ps1` submits fictional saved markers, checks a generated plan and source-review labels, then removes the test job. It reports incomplete cleanup if a job is still active. This does not certify clinical product selection or physical UI behavior.
 
+## Hosted evidence recorded September 8
+
+- Runtime code: `866a79ab84c3b07e682d9b6b3f59d383e1268363`; the subsequent deployment-script-only commit `8ba1e2ea42ede4d069fb6e51bc7105e14edeee3b` does not change the bundles.
+- Stack `ai-clinical-core-synthetic-staging-lab-analysis`: UPDATE_COMPLETE. Account 588966314750, us-east-2. `PhiAllowed=false`, `DataClassification=synthetic_only`, `LabRangeMode=synthetic_fixture` independently rechecked. No production clinical activation or public Desktop UI deployment.
+- API ZIP SHA-256: `101a19abee56b07028305fd12e21fcfafd44ff535bb28454dc794c37c80f6458`; worker ZIP: `fe0c5e5498c88e0bd26d0ade5621944c5feb13e1919dfe31c1dc60a4bbb13f72`. Both exactly match the deployed Lambda CodeSha256 values; update status Successful.
+- First authenticated hosted test: 3 fictional current markers retained, 6 plan tasks, 2 historical supplement considerations, source-review provenance retained, job deleted.
+- Expanded authenticated hosted test: all 30 fictional current markers retained, 6 plan tasks, 2 historical considerations, source-review provenance retained, job deleted and subsequent GET returned 404.
+- These consideration counts are fixture expectations, not clinical product-selection approval or a prescription. No real user lab payload or provider secret value was read or printed.
+- Final local Desktop run: 1,121 passed / 10 skipped, typecheck passed, lint zero errors / four existing warnings. V2: 372 passed / one skipped, typecheck/lint passed; exact commit `92356dd4c69ee2af68ed9b602fb2e3d1b757109f` GitHub run `34295860233` passed. Desktop run `34295955899` has unit/typecheck/lint/build and four executed browser suites passing; its long fixture suite was still in progress at evidence capture. The secrets-gated backend job is not physical user acceptance.
+
 ## Remaining engineering
 
 - Convert the lab API/ownership/consent contract and routing to the approved standalone production consumer model; this extension is still synthetic-only.
