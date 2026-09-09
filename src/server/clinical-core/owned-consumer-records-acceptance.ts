@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { clinicalUuid } from "./database";
+import { clinicalUuid, type ClinicalCoreDatabase } from "./database";
 import { splitPostgresStatements } from "./migrations";
 import { createRdsDataAdministrativeDatabase } from "./rds-data-database";
 import { createOwnedConsumerApi } from "./owned-consumer-api";
@@ -26,6 +26,7 @@ async function run() {
       stage = "migration";
       for (const statement of splitPostgresStatements(sql)) await tx.query(statement);
       for (const statement of splitPostgresStatements(readFileSync("infra/aws-clinical-core/production-migrations/20260908100000_production_owned_storage_reads.sql","utf8"))) await tx.query(statement);
+      for (const statement of splitPostgresStatements(readFileSync("infra/aws-clinical-core/production-migrations/20260908110000_production_owned_lab_history.sql","utf8"))) await tx.query(statement);
       // Fictional approval metadata is exclusively inside this rolled-back transaction.
       await tx.query("insert into clinical_private.consumer_storage_consent_releases(scope,version,content_sha256,content,approved_by,approved_at) values ('forms_checkins','acceptance-only',encode(public.digest($1,'sha256'),'hex'),$1,'ROLLBACK TEST - NOT A HUMAN APPROVAL',clock_timestamp()),('wearables','acceptance-only',encode(public.digest($1,'sha256'),'hex'),$1,'ROLLBACK TEST - NOT A HUMAN APPROVAL',clock_timestamp())", ["Fictional rollback-only consent copy; not approved for use."]);
       await tx.query("set local role clinical_core_api");
@@ -94,7 +95,18 @@ async function run() {
       await tx.query("do $$ begin begin delete from clinical_core.owned_consumer_record_versions; raise exception 'direct_delete_allowed'; exception when insufficient_privilege then null; end; end $$"); checks++;
       stage="api_to_database";
       const issuer="https://cognito-idp.us-east-2.amazonaws.com/rollback"; const audience="12345678901234567890";
-      const api=createOwnedConsumerApi({configuration:{consumerIssuer:issuer,consumerAudience:audience,phiAllowed:true,activationState:"approved",activationEvidenceSha256:"0".repeat(64),allowedScopes:["forms_checkins","ai_context"]},adapter:()=>createOwnedConsumerRecordsAdapter({transaction:work=>work(tx)})});
+      // Real HTTP requests have independent transactions. Preserve that
+      // rollback behavior within this one rollback-only fixture transaction.
+      let queue:Promise<unknown>=Promise.resolve();
+      const apiDatabase:ClinicalCoreDatabase={transaction(work){
+        const result=queue.then(async()=>{
+          await tx.query('savepoint acceptance_api_request');
+          try{const value=await work(tx);await tx.query('release savepoint acceptance_api_request');return value;}
+          catch(error){await tx.query('rollback to savepoint acceptance_api_request');await tx.query('release savepoint acceptance_api_request');throw error;}
+        });
+        queue=result.catch(()=>undefined);return result;
+      }};
+      const api=createOwnedConsumerApi({configuration:{consumerIssuer:issuer,consumerAudience:audience,phiAllowed:true,activationState:"approved",activationEvidenceSha256:"0".repeat(64),allowedScopes:["forms_checkins","ai_context","lab_history"]},adapter:()=>createOwnedConsumerRecordsAdapter(apiDatabase)});
       const apiEvent=(who:string,subject:string,route:string,query?:Record<string,string>,body?:unknown):ApiGatewayV2Event=>({routeKey:route,queryStringParameters:query,headers:{"content-type":"application/json"},...(body?{body:JSON.stringify(body)}:{}),requestContext:{authorizer:{jwt:{claims:{iss:issuer,aud:audience,sub:subject,token_use:"id",email_verified:"true",exp:Math.floor(Date.now()/1000)+600,iat:Math.floor(Date.now()/1000),"custom:person_id":who,"custom:organization_id":org,"custom:production_bound":"true"}}}}});
       const apiId=randomUUID(); const apiRequest=randomUUID();
       const apiBody={collection:"wellness_profiles",recordId:apiId,requestId:apiRequest,expectedRevision:0,consentRevision:3,deleted:false,payload:{id:apiId,goals:[],onboardingCompleted:false,role:"patient"}};
@@ -122,6 +134,29 @@ async function run() {
       if(aiResult.statusCode!==200||!aiData.profile||aiData.profile.sex!==null||aiData.labs.length!==0)throw new Error('owned_ai_context_failed');checks++;
       const otherAi=await api(apiEvent(b,subB,'GET /clinical-core/consumer/personal/chat-context'));
       if(otherAi.statusCode!==403)throw new Error('cross_owner_ai_consent_leak');checks++;
+      stage='personal_lab_history';
+      await tx.query('reset role');
+      await tx.query("insert into clinical_private.consumer_storage_consent_releases(scope,version,content_sha256,content,approved_by,approved_at) select 'lab_history',version,content_sha256,content,approved_by,approved_at from clinical_private.consumer_storage_consent_releases where scope='forms_checkins'");
+      await tx.query('set local role clinical_core_api');
+      const labId=randomUUID();
+      const labBody={collection:'lab_observations',recordId:labId,requestId:randomUUID(),expectedRevision:0,consentRevision:1,deleted:false,payload:{id:labId,panelId:randomUUID(),markerId:randomUUID(),panelName:'Fictional rollback panel',name:'Ferritin',value:0,unit:'ng/mL',drawnAt:'2026-01-01T00:00:00.000Z',reportedRange:{low:1,high:2},sourceStatus:'consumer_import_unverified'}};
+      if((await api(apiEvent(a,subA,'POST /clinical-core/consumer/personal/records',undefined,labBody))).statusCode!==403)throw new Error('lab_consent_missing');checks++;
+      for(const [who,subject] of [[a,subA],[b,subB]]){
+        if((await api(apiEvent(who,subject,'POST /clinical-core/consumer/personal/consent',undefined,{scope:'lab_history',status:'granted',releaseVersion:'acceptance-only',expectedRevision:0}))).statusCode!==200)throw new Error('lab_grant_failed');checks++;
+      }
+      for(const duplicate of [false,true]){
+        const saved=await api(apiEvent(a,subA,'POST /clinical-core/consumer/personal/records',undefined,labBody));
+        if(saved.statusCode!==200||JSON.parse(saved.body).data.duplicate!==duplicate)throw new Error('lab_write_failed');checks++;
+      }
+      const labsContext=await api(apiEvent(a,subA,'GET /clinical-core/consumer/personal/chat-context'));
+      const lab=JSON.parse(labsContext.body).data?.labs?.[0];
+      if(labsContext.statusCode!==200||lab?.name!=='Ferritin'||lab.value!==0||lab.functionalRange!==null||lab.conventionalRange!==null||lab.sourceStatus!=='consumer_import_unverified')throw new Error('lab_context_failed');checks++;
+      const otherLab=await api(apiEvent(b,subB,'GET /clinical-core/consumer/personal/record',{collection:'lab_observations',recordId:labId}));
+      if(otherLab.statusCode!==200||JSON.parse(otherLab.body).data!==null)throw new Error('lab_cross_owner_leak');checks++;
+      await context(b,subB);await check("select count(*)::int=0 as ok from clinical_core.owned_consumer_record_versions where collection='lab_observations'");
+      if((await api(apiEvent(a,subA,'POST /clinical-core/consumer/personal/consent',undefined,{scope:'lab_history',status:'revoked',expectedRevision:1}))).statusCode!==200)throw new Error('lab_revoke_failed');checks++;
+      const withdrawn=await api(apiEvent(a,subA,'GET /clinical-core/consumer/personal/chat-context'));
+      if(withdrawn.statusCode!==200||JSON.parse(withdrawn.body).data.labs.length!==0)throw new Error('lab_withdrawal_leak');checks++;
       await context(a,subA);
       await tx.query("select set_config('clinical.claim.identity_pool','workforce',true)");
       await refused("clinical_private.owned_consumer_actor()", "42501");

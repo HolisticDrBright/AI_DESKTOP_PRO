@@ -13,6 +13,30 @@ export async function buildOwnedChatContext(adapter:ReturnType<typeof createOwne
   const used=new Map<OwnedStorageScope,number>();
   let cycle:Record<string,unknown>|null=null;let wearables:Record<string,unknown>|null=null;
   let recentReports:Record<string,unknown>[]=[];
+  let labs:Record<string,unknown>[]=[];
+  if(allowed.includes('lab_history')){
+    const consent=await adapter.consentState(consentContext,'lab_history');
+    if(consent.activeRevision){
+      used.set('lab_history',consent.activeRevision);
+      // Page through the owned history, not just the first 100 observations.
+      // Refuse oversized context instead of silently asserting missing markers.
+      const rows:OwnedRecord[]=[];
+      let after:{receivedAt:string;recordId:string}|undefined;
+      const seen=new Set<string>();
+      for(;;){
+        const page=await adapter.list(contextData,{collection:'lab_observations',limit:100,...(after?{after}:{})});
+        for(const row of page){if(seen.has(row.recordId))throw new OwnedStorageError('storage_unavailable');seen.add(row.recordId);rows.push(row);}
+        if(rows.length>1000)throw new OwnedStorageError('storage_unavailable');
+        if(page.length<100)break;
+        const last=page.at(-1)!;after={receivedAt:last.receivedAt,recordId:last.recordId};
+      }
+      labs=rows.map(row=>({name:row.payload.name,value:row.payload.value,unit:row.payload.unit,drawnAt:row.payload.drawnAt,
+        // Preserve imported ranges in history, but do not promote unverified
+        // ranges/statuses to the model's conventional or functional authority.
+        conventionalRange:null,functionalRange:null,sourceStatus:'consumer_import_unverified'}))
+        .sort((a,b)=>String(b.drawnAt).localeCompare(String(a.drawnAt))||String(a.name).localeCompare(String(b.name)));
+    }
+  }
   if(allowed.includes('forms_checkins')){
     const forms=await adapter.consentState(consentContext,'forms_checkins');formsRevision=forms.activeRevision;
     if(formsRevision){
@@ -54,7 +78,7 @@ export async function buildOwnedChatContext(adapter:ReturnType<typeof createOwne
   if(finalAi.activeRevision!==ai.activeRevision)throw new OwnedStorageError('consent_required');
   if(formsRevision && (await adapter.consentState(consentContext,'forms_checkins')).activeRevision!==formsRevision)throw new OwnedStorageError('consent_required');
   for(const [scope,revision]of used){if((await adapter.consentState(consentContext,scope)).activeRevision!==revision)throw new OwnedStorageError('consent_required');}
-  return {profile,cycle,wearables,labs:[],protocol:null,tcm:null,conversationMemory:null,promotedPatterns:[],careTeam:null,recentReports,governedOptions:[]};
+  return {profile,cycle,wearables,labs,protocol:null,tcm:null,conversationMemory:null,promotedPatterns:[],careTeam:null,recentReports,governedOptions:[]};
 }
 function reports(rows:OwnedRecord[],now:number):Record<string,unknown>[]{
   return rows.map(row=>{

@@ -42,10 +42,15 @@ Local typechecks, lint and regression suites cover parsing, signature/hash valid
 
 ## Remaining engineering
 
+Latest independent-history increment: [personal lab history](personal-lab-history-readiness.md).
+The new owned observation store feeds consented production chat without a clinic
+connection, but uploaded observations stay unverified. This does not convert the
+existing synthetic document/job API into a production clinical service.
+
 - Convert the lab API/ownership/consent contract and routing to the approved standalone production consumer model; this extension is still synthetic-only.
 - Supply and qualify an actually reviewed reference release and independently verified source extraction. Qualified measurements need an explicit data model if they are to be supported automatically.
 - Add a background recovery policy and concurrent worker leases where required. Current guards prevent terminal ledger corruption; they do not guarantee exactly-once external model calls.
-- Implement durable production voice start/status/cancel and late-transcript cleanup. The current synchronous transcription request is not a durable production workflow.
+- Qualify production voice identity, consent and retention. Durable synthetic voice start/status/cancel and late-transcript cleanup are implemented; that does not authorize a production voice deployment.
 - Finish end-to-end privacy fulfillment, provider acceptance, independent Core production scope, release/security/restore testing and physical iOS/Android acceptance.
 
 No claim is made that only human paperwork remains.

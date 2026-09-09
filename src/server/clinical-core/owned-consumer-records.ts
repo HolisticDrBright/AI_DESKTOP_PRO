@@ -1,10 +1,11 @@
-import { canonicalPayload, CONSUMER_CLINICAL_COLLECTIONS, validateCollectionPayload, type ConsumerClinicalCollection } from "./aws-consumer-clinical-records";
+import { canonicalPayload } from "./aws-consumer-clinical-records";
+import { OWNED_COLLECTIONS, validateOwnedPayload as validateCollectionPayload, type OwnedCollection as ConsumerClinicalCollection } from './owned-lab-observations';
 import type { ProductionClinicalRequestContext } from "./aws-identity-consent";
 import { createHash } from "node:crypto";
 import { clinicalUuid, ClinicalCoreDatabaseRejection, type ClinicalCoreDatabase, type ClinicalCoreTransaction } from "./database";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-export const OWNED_STORAGE_SCOPES = ["forms_checkins","symptoms_adherence","nutrition","protocols_supplements","wearables","reproductive_health","ai_context"] as const;
+export const OWNED_STORAGE_SCOPES = ["forms_checkins","symptoms_adherence","nutrition","protocols_supplements","wearables","reproductive_health","ai_context","lab_history"] as const;
 export type OwnedStorageScope = typeof OWNED_STORAGE_SCOPES[number];
 export type OwnedRecordWrite = {
   collection: ConsumerClinicalCollection; recordId: string; expectedRevision: number;
@@ -156,7 +157,7 @@ function invalid(): never { throw new OwnedStorageError("request_invalid"); }
 function unavailable(): never { throw new OwnedStorageError("storage_unavailable"); }
 function revision(value: unknown,min: number) { return typeof value === "number" && Number.isSafeInteger(value) && value>=min && value<2_147_483_647; }
 function date(value: unknown) { return typeof value === "string" && value.length<=40 && /^\d{4}-\d{2}-\d{2}T/.test(value) && Number.isFinite(Date.parse(value)); }
-function collection(value: ConsumerClinicalCollection) { if (!CONSUMER_CLINICAL_COLLECTIONS.includes(value)) invalid(); }
+function collection(value: ConsumerClinicalCollection) { if (!OWNED_COLLECTIONS.includes(value)) invalid(); }
 function exactKeys(value: object,allowed: string[]) { if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).some(key => !allowed.includes(key))) invalid(); }
 function parsed(value: unknown): unknown { try { return typeof value === "string" ? JSON.parse(value) : value; } catch { unavailable(); } }
 function object(value: unknown): Record<string, unknown> { const data = parsed(value); if (!data || typeof data !== "object" || Array.isArray(data)) unavailable(); return data as Record<string,unknown>; }

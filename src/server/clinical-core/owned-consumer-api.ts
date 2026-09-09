@@ -1,7 +1,7 @@
 import type { ApiGatewayV2Event,ApiGatewayV2Response } from "./aws-identity-api";
 import type { ProductionClinicalRequestContext } from "./aws-identity-consent";
 import { createOwnedConsumerRecordsAdapter,OwnedStorageError,OWNED_STORAGE_SCOPES,type OwnedStorageScope,type OwnedRecordWrite } from "./owned-consumer-records";
-import { CONSUMER_CLINICAL_COLLECTIONS,type ConsumerClinicalCollection } from "./aws-consumer-clinical-records";
+import { OWNED_COLLECTIONS as CONSUMER_CLINICAL_COLLECTIONS,type OwnedCollection as ConsumerClinicalCollection } from './owned-lab-observations';
 import {buildOwnedChatContext} from './owned-chat-context';
 
 export type OwnedConsumerApiConfiguration = {
@@ -13,6 +13,7 @@ const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]
 const BASE="/clinical-core/consumer/personal";
 export const OWNED_CONSUMER_ROUTES=[`GET ${BASE}/records`,`GET ${BASE}/record`,`POST ${BASE}/records`,`GET ${BASE}/consent`,`POST ${BASE}/consent`,`GET ${BASE}/chat-context`] as const;
 const COLLECTION_SCOPE:Record<ConsumerClinicalCollection,OwnedStorageScope>={
+  lab_observations:'lab_history',
   protocols:"protocols_supplements",daily_adherence:"symptoms_adherence",symptom_logs:"symptoms_adherence",
   hormone_entries:"reproductive_health",reproductive_profiles:"reproductive_health",meal_logs:"nutrition",
   subjective_rollups:"symptoms_adherence",weekly_checkins:"forms_checkins",wellness_profiles:"forms_checkins",

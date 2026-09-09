@@ -152,6 +152,10 @@
     {
       "version": "20260908100000",
       "file": "20260908100000_production_owned_storage_reads.sql"
+    },
+    {
+      "version": "20260908110000",
+      "file": "20260908110000_production_owned_lab_history.sql"
     }
   ]
 }

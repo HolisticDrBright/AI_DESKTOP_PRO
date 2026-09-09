@@ -1,5 +1,10 @@
 # Personal consumer API and V2 integration — September 8, 2026
 
+Latest increment: [personal lab history and account isolation](personal-lab-history-readiness.md).
+It supersedes the earlier empty-lab context and 48-migration/35-assertion counts
+below: source now has 49 migrations, with 45 rollback-only physical assertions.
+Production document jobs and verified extraction/ranges still remain unfinished.
+
 Status: **implemented candidate, not deployed or commercially activated**. Core
 remains $19.99/month, with peptide/longevity add-ons excluded from initial launch.
 PHI remains disabled. No paid EAS/TestFlight build, provider call with personal

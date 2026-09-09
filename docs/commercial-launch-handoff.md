@@ -60,6 +60,13 @@ Junction was removed from the selected wearable design. Do not buy or reactivate
 
 ## Remaining engineering (not completed by obtaining contracts)
 
+Latest source increment: [independent personal lab history](personal-lab-history-readiness.md).
+Lab-specific storage/AI consent, owner-only observation history, duplicate protection,
+production cache isolation and protection against client context overrides are
+implemented and rollback-tested. No production document analysis/verified ranges
+or installed mobile release is implied. Source migration count is 49; persistent
+Aurora stays at 46. The remaining list below still requires engineering work.
+
 1. **Functional production hosting and bootstrap.** Deploy the functional production services, controlled ingress/TLS/domains/rate limiting, real organization/identity bootstrap and approved migrations/configuration. The refreshed readiness containers intentionally expose only health checks. Production self-service identity creation and independent consumer operation need a physical acceptance pass; the current narrow pilot is not the full consumer launch.
 2. **Expanded production feature contracts.** Reconcile V2 and Desktop's scope gates and deploy separately approved lab analysis, catalog, Ask ALP, transcription, daily guidance, reproductive-health, telehealth and family routes required by the chosen commercial scope. Several current features run on synthetic services and cannot be made live by removing the banner. Retire synthetic Fly routing from the commercial release.
 3. **Consumer subscription activation and acceptance.** Core-only mobile purchasing/restore, server-verified Apple/Google subscriptions, durable AWS ownership/entitlements, replay/refund handling and paywalls are now implemented in V2. Its `expo/docs/core-launch-engineering.md` records the disabled Sandbox deployment and successful physical DynamoDB isolation/replay tests. Store products/credentials, matched test identity configuration, concurrency/alerts and actual store/device acceptance are still required. Desktop-owned production Ask ALP/daily-guidance now have Core entitlement guards in source, not yet deployed. The legacy add-on enrollment constant remains false intentionally; it does not control Core billing.
