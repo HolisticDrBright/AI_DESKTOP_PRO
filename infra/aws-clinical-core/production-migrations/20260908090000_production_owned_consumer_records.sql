@@ -45,6 +45,7 @@ create table clinical_audit.consumer_storage_events (
   id uuid primary key default gen_random_uuid(),
   owner_id uuid not null references clinical_core.persons(id),
   action text not null check (action in ('consent.granted','consent.revoked','record.written','record.deleted','records.listed')),
+  scope text not null,
   collection text,
   record_id uuid,
   revision integer,
@@ -126,8 +127,8 @@ begin
   _next:=coalesce(_current,0)+1;
   insert into clinical_core.consumer_storage_consents(owner_id,scope,revision,status,release_version)
     values(_actor,_scope,_next,_status,_version);
-  insert into clinical_audit.consumer_storage_events(owner_id,action,revision)
-    values(_actor,'consent.'||_status,_next);
+  insert into clinical_audit.consumer_storage_events(owner_id,action,scope,revision)
+    values(_actor,'consent.'||_status,_scope,_next);
   return jsonb_build_object('scope',_scope,'status',_status,'revision',_next,'releaseVersion',_version);
 end $$;
 
@@ -167,8 +168,8 @@ begin
     (owner_id,collection,record_id,revision,request_id,command_sha256,payload,deleted,consent_revision)
     values(_actor,_collection,_record_id,coalesce(_current,0)+1,_request_id,_hash,_payload,_deleted,_consent_revision)
     returning * into _saved;
-  insert into clinical_audit.consumer_storage_events(owner_id,action,collection,record_id,revision)
-    values(_actor,case when _deleted then 'record.deleted' else 'record.written' end,_collection,_record_id,_saved.revision);
+  insert into clinical_audit.consumer_storage_events(owner_id,action,scope,collection,record_id,revision)
+    values(_actor,case when _deleted then 'record.deleted' else 'record.written' end,_scope,_collection,_record_id,_saved.revision);
   return jsonb_build_object('recordId',_saved.record_id,'revision',_saved.revision,'duplicate',false,'receivedAt',_saved.received_at);
 end $$;
 
@@ -190,7 +191,8 @@ begin
       where owner_id=_actor and collection=_collection order by record_id,revision desc) latest
     where not deleted and (_after_time is null or (received_at,record_id)>(_after_time,_after_id))
     order by received_at,record_id limit _limit) r;
-  insert into clinical_audit.consumer_storage_events(owner_id,action,collection) values(_actor,'records.listed',_collection);
+  insert into clinical_audit.consumer_storage_events(owner_id,action,scope,collection)
+    values(_actor,'records.listed',clinical_private.consumer_collection_scope(_collection),_collection);
   return _records;
 end $$;
 

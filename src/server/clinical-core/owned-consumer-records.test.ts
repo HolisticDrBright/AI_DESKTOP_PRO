@@ -23,7 +23,7 @@ describe("independent consumer storage adapter",() => {
   });
   it("rejects owner injection, unsupported collections, missing fields and sensitive nested keys before DB access",async () => {
     const s = setup();
-    for (const value of [{...input,ownerId:id},{...input,connectionId:id},{...input,collection:"lab_defaults"},{...input,payload:{}},{...input,payload:{...payload,goals:[{password:"private"}]}}]) {
+    for (const value of [{...input,ownerId:id},{...input,connectionId:id},{...input,collection:"lab_defaults"},{...input,payload:{}},{...input,payload:{...payload,id:"d1c7f537-79e9-4c69-8c11-b4d5555e9999"}},{...input,payload:{...payload,goals:[{password:"private"}]}}]) {
       await expect(s.adapter.write(context,value as OwnedRecordWrite)).rejects.toThrow("request_invalid");
     }
     expect(s.transaction).not.toHaveBeenCalled();

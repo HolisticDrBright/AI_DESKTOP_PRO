@@ -50,6 +50,7 @@ export function createOwnedConsumerRecordsAdapter(database: ClinicalCoreDatabase
         || !revision(input.consentRevision,1) || typeof input.deleted !== "boolean"
         || !input.payload || typeof input.payload !== "object" || Array.isArray(input.payload)) invalid();
       let payload: string;
+      if (input.payload.id !== undefined && input.payload.id !== input.recordId) invalid();
       try {
         if (!input.deleted) validateCollectionPayload(input.collection,input.payload);
         payload = canonicalPayload(input.payload);
