@@ -21,6 +21,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
+      - name: Dependency security gate
+        run: npm audit --audit-level=high
       - run: npm run lint
       - run: npm run test:unit
       - name: AWS clinical-core synthetic safety gate
