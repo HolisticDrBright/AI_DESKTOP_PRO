@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { buildMeasuredSupplementConsiderations, functionalRangeStatus, normalizeExtractedLabLines, normalizeExtractedLabTables, normalizeStructuredLabBiomarkers, sanitizeMeasuredLabBiomarkers } from "./aws-lab-analysis-worker";
+import { assertExactExtractedMeasurements, buildMeasuredSupplementConsiderations, functionalRangeStatus, normalizeExtractedLabLines, normalizeExtractedLabTables, normalizeStructuredLabBiomarkers, reviewedMeasurementStatus, sanitizeMeasuredLabBiomarkers } from "./aws-lab-analysis-worker";
 
 const documentId = "22222222-2222-4222-8222-222222222222";
 
@@ -15,6 +15,7 @@ describe("synthetic AWS functional lab rules", () => {
     expect(biomarkers.map((row) => row.canonicalName)).toEqual(["Glucose", "Hemoglobin A1c", "TSH"]);
     expect(biomarkers.every((row) => row.sourceVersion === "synthetic-functional-ranges/1")).toBe(true);
     expect(biomarkers[0]).toMatchObject({ value: 104, unit: "mg/dl", labMin: 70, labMax: 99 });
+    expect(biomarkers[1]).toMatchObject({ value: 5.7, unit: "%" });
   });
 
   test("classifies functional ranges deterministically", () => {
@@ -75,6 +76,56 @@ describe("synthetic AWS functional lab rules", () => {
     expect(biomarkers).toHaveLength(1);
     expect(biomarkers[0].canonicalName).toBe("Valid Marker");
     expect(biomarkers.every((row) => row.canonicalName.length > 0)).toBe(true);
+  });
+
+  test("numbers within analyte names are not results and missing units are not invented", () => {
+    const biomarkers = normalizeExtractedLabLines({ lines: [
+      { text: "Free T3 3.2 pg/mL Reference 2.0-4.4", confidence: 99, page: 1, documentId },
+      { text: "Free T4 1.2 ng/dL Reference 0.8-1.8", confidence: 99, page: 1, documentId },
+      { text: "Vitamin D, 25-Hydroxy 29 ng/mL Reference 30-100", confidence: 99, page: 1, documentId },
+      { text: "Glucose 5.2 mmol/L Reference 3.9-5.5", confidence: 99, page: 1, documentId },
+      { text: "TSH 3.4 Reference 0.4-4.5", confidence: 99, page: 1, documentId },
+    ] });
+    expect(biomarkers.map(row => row.value)).toEqual([3.2, 1.2, 29, 5.2, 3.4]);
+    expect(biomarkers[3]).toMatchObject({ unit: "mmol/l", functionalMin: null, functionalMax: null, sourceId: null });
+    expect(biomarkers[4]).toMatchObject({ unit: "not reported", functionalMin: null, functionalMax: null });
+  });
+
+  test("ratio and derived-marker names do not inherit an unrelated analyte range", () => {
+    const rows = normalizeStructuredLabBiomarkers([
+      { markerId: "ratio", canonicalName: "LDL Cholesterol / HDL ratio", value: 2.1, unit: "ratio", labMin: null, labMax: 3.5 },
+      { markerId: "glucose", canonicalName: "Glucose", value: 5.2, unit: "mmol/L", labMin: 3.9, labMax: 5.5 },
+    ], documentId);
+    expect(rows[0]).toMatchObject({ canonicalName: "LDL Cholesterol / HDL ratio", functionalMin: null });
+    expect(rows[1]).toMatchObject({ value: 5.2, unit: "mmol/l", functionalMin: null });
+  });
+
+  test("does not convert censored results into exact numeric measurements", () => {
+    expect(normalizeExtractedLabTables({ lines: [], tableRows: [{ documentId, page: 1, cells: [
+      { text: "Glucose", column: 1, confidence: 99 }, { text: ">500", column: 2, confidence: 99 },
+      { text: "mg/dL", column: 3, confidence: 99 },
+    ] }] })).toEqual([]);
+  });
+
+  test("a censored measurement stops plan synthesis rather than disappearing silently", () => {
+    expect(() => assertExactExtractedMeasurements({ lines: [{ text: "Glucose >500 mg/dL", confidence: 99, page: 1, documentId }] })).toThrow("qualified_measurement_requires_review");
+    expect(() => assertExactExtractedMeasurements({ lines: [{ text: "Glucose 90 mg/dL Reference <100", confidence: 99, page: 1, documentId }] })).not.toThrow();
+  });
+
+  test("keeps clinically meaningful parenthetical analyte names", () => {
+    const rows = normalizeExtractedLabTables({ lines: [], tableRows: [{ documentId, page: 1, cells: [
+      { text: "Lipoprotein(a)", column: 1, confidence: 99 }, { text: "42", column: 2, confidence: 99 }, { text: "nmol/L", column: 3, confidence: 99 },
+    ] }] });
+    expect(rows[0]).toMatchObject({ canonicalName: "Lipoprotein(a)", unit: "nmol/l" });
+  });
+
+  test("reviewed status never invents a normal result or arithmetic critical threshold", () => {
+    const row = { canonicalName: "Fictional", reportedName: "Fictional", value: 40, unit: "widgets", labMin: null, labMax: null,
+      functionalMin: null, functionalMax: null, sourceId: null, sourceVersion: null, population: null, confidence: 1, documentId, page: 1 };
+    expect(reviewedMeasurementStatus(row)).toBe("unclassified");
+    expect(reviewedMeasurementStatus({ ...row, functionalMin: 10, functionalMax: 20 })).toBe("suboptimal");
+    expect(reviewedMeasurementStatus({ ...row, functionalMin: 10, functionalMax: 20, criticalAbove: 30 })).toBe("critical");
+    expect(reviewedMeasurementStatus({ ...row, functionalMin: 30, functionalMax: 50, labMax: 35 })).toBe("suboptimal");
   });
 
   test("rebuilds governed ranges from saved measured biomarkers without claiming document verification", () => {

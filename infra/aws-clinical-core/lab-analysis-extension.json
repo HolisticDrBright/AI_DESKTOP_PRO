@@ -11,6 +11,11 @@
     }
   },
   "Parameters": {
+    "LabRangeMode": { "Type": "String", "Default": "synthetic_fixture", "AllowedValues": ["synthetic_fixture", "reviewed_release"] },
+    "LabRangeReleaseBucket": { "Type": "String", "Default": "", "AllowedPattern": "^$|^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$" },
+    "LabRangeReleaseKey": { "Type": "String", "Default": "", "AllowedPattern": "^$|^reviewed-lab-ranges/[A-Za-z0-9_./-]+\\.json$" },
+    "LabRangeReleaseSha256": { "Type": "String", "Default": "", "AllowedPattern": "^$|^[a-f0-9]{64}$" },
+    "LabRangeSignerPublicKeyPem": { "Type": "String", "Default": "", "MaxLength": 512 },
     "ClinicalApiId": { "Type": "String", "AllowedPattern": "^[a-z0-9]{10}$" },
     "ConsumerUserPoolId": { "Type": "String", "AllowedPattern": "^[a-z0-9-]+_[A-Za-z0-9]+$" },
     "ConsumerUserPoolClientId": { "Type": "String", "AllowedPattern": "^[A-Za-z0-9]{20,128}$" },
@@ -26,6 +31,15 @@
     "OpenAISecretArn": { "Type": "String", "AllowedPattern": "^arn:(aws|aws-us-gov|aws-cn):secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+$" },
     "OpenAIModel": { "Type": "String", "Default": "gpt-5.1-2025-11-13", "AllowedValues": ["gpt-5.1-2025-11-13"] }
   },
+  "Rules": {
+    "ReviewedRangeMaterial": { "RuleCondition": { "Fn::Equals": [{ "Ref": "LabRangeMode" }, "reviewed_release"] }, "Assertions": [
+      { "Assert": { "Fn::Not": [{ "Fn::Equals": [{ "Ref": "LabRangeReleaseBucket" }, ""] }] }, "AssertDescription": "Reviewed range bucket is required." },
+      { "Assert": { "Fn::Not": [{ "Fn::Equals": [{ "Ref": "LabRangeReleaseKey" }, ""] }] }, "AssertDescription": "Reviewed range object is required." },
+      { "Assert": { "Fn::Not": [{ "Fn::Equals": [{ "Ref": "LabRangeReleaseSha256" }, ""] }] }, "AssertDescription": "Reviewed range hash is required." },
+      { "Assert": { "Fn::Not": [{ "Fn::Equals": [{ "Ref": "LabRangeSignerPublicKeyPem" }, ""] }] }, "AssertDescription": "Reviewed range public signing key is required." }
+    ] }
+  },
+  "Conditions": { "ReviewedRanges": { "Fn::Equals": [{ "Ref": "LabRangeMode" }, "reviewed_release"] } },
   "Resources": {
     "LabJobTable": {
       "Type": "AWS::DynamoDB::Table",
@@ -109,6 +123,7 @@
         "Policies": [
           { "PolicyName": "LabWorkerLedger", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": ["dynamodb:GetItem", "dynamodb:UpdateItem"], "Resource": { "Fn::GetAtt": ["LabJobTable", "Arn"] } }, { "Effect": "Allow", "Action": ["kms:Decrypt", "kms:GenerateDataKey"], "Resource": { "Ref": "ClinicalCoreKeyArn" } }] } },
           { "PolicyName": "LabWorkerDocuments", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": ["s3:GetObject", "s3:PutObject"], "Resource": { "Fn::Sub": "${LabDocumentsBucket.Arn}/synthetic-labs/*" } }, { "Effect": "Allow", "Action": ["kms:Decrypt", "kms:GenerateDataKey"], "Resource": { "Ref": "ClinicalCoreKeyArn" } }] } },
+          { "Fn::If": ["ReviewedRanges", { "PolicyName": "PinnedReviewedLabRanges", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": "s3:GetObject", "Resource": { "Fn::Sub": "arn:${AWS::Partition}:s3:::${LabRangeReleaseBucket}/${LabRangeReleaseKey}" } }] } }, { "Ref": "AWS::NoValue" }] },
           { "PolicyName": "LabWorkerTextract", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": ["textract:AnalyzeDocument", "textract:StartDocumentAnalysis", "textract:GetDocumentAnalysis"], "Resource": "*" }] } },
           { "PolicyName": "LabWorkerOpenAISecret", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": "secretsmanager:GetSecretValue", "Resource": { "Ref": "OpenAISecretArn" } }] } },
           { "PolicyName": "LabWorkerLogs", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": ["logs:CreateLogStream", "logs:PutLogEvents"], "Resource": { "Fn::GetAtt": ["LabWorkerLogGroup", "Arn"] } }] } }
@@ -129,7 +144,7 @@
         "Runtime": "nodejs22.x", "Architectures": ["arm64"], "Handler": "index.handler", "Role": { "Fn::GetAtt": ["LabApiRole", "Arn"] }, "MemorySize": 384, "Timeout": 20,
         "LoggingConfig": { "LogGroup": { "Ref": "LabApiLogGroup" }, "LogFormat": "JSON", "ApplicationLogLevel": "INFO", "SystemLogLevel": "WARN" },
         "Code": { "S3Bucket": { "Ref": "LambdaCodeBucket" }, "S3Key": { "Ref": "ApiCodeKey" } },
-        "Environment": { "Variables": { "LAB_JOB_TABLE": { "Ref": "LabJobTable" }, "LAB_DOCUMENT_BUCKET": { "Ref": "LabDocumentsBucket" }, "LAB_KMS_KEY_ARN": { "Ref": "ClinicalCoreKeyArn" }, "LAB_STATE_MACHINE_ARN": { "Fn::Sub": "arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:stateMachine:${ClinicalApiId}-synthetic-lab-analysis" } } }
+        "Environment": { "Variables": { "LAB_RANGE_MODE": { "Ref": "LabRangeMode" }, "LAB_RANGE_RELEASE_SHA256": { "Ref": "LabRangeReleaseSha256" }, "LAB_JOB_TABLE": { "Ref": "LabJobTable" }, "LAB_DOCUMENT_BUCKET": { "Ref": "LabDocumentsBucket" }, "LAB_KMS_KEY_ARN": { "Ref": "ClinicalCoreKeyArn" }, "LAB_STATE_MACHINE_ARN": { "Fn::Sub": "arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:stateMachine:${ClinicalApiId}-synthetic-lab-analysis" } } }
       }
     },
     "LabWorkerFunction": {
@@ -139,7 +154,7 @@
         "Runtime": "nodejs22.x", "Architectures": ["arm64"], "Handler": "index.handler", "Role": { "Fn::GetAtt": ["LabWorkerRole", "Arn"] }, "MemorySize": 1024, "Timeout": 300,
         "LoggingConfig": { "LogGroup": { "Ref": "LabWorkerLogGroup" }, "LogFormat": "JSON", "ApplicationLogLevel": "INFO", "SystemLogLevel": "WARN" },
         "Code": { "S3Bucket": { "Ref": "LambdaCodeBucket" }, "S3Key": { "Ref": "WorkerCodeKey" } },
-        "Environment": { "Variables": { "LAB_JOB_TABLE": { "Ref": "LabJobTable" }, "LAB_DOCUMENT_BUCKET": { "Ref": "LabDocumentsBucket" }, "LAB_KMS_KEY_ARN": { "Ref": "ClinicalCoreKeyArn" }, "LAB_OPENAI_SECRET_ARN": { "Ref": "OpenAISecretArn" }, "LAB_OPENAI_MODEL": { "Ref": "OpenAIModel" } } }
+        "Environment": { "Variables": { "LAB_RANGE_MODE": { "Ref": "LabRangeMode" }, "LAB_RANGE_RELEASE_SHA256": { "Ref": "LabRangeReleaseSha256" }, "LAB_RANGE_RELEASE_BUCKET": { "Ref": "LabRangeReleaseBucket" }, "LAB_RANGE_RELEASE_KEY": { "Ref": "LabRangeReleaseKey" }, "LAB_RANGE_SIGNER_PUBLIC_KEY_PEM": { "Ref": "LabRangeSignerPublicKeyPem" }, "LAB_JOB_TABLE": { "Ref": "LabJobTable" }, "LAB_DOCUMENT_BUCKET": { "Ref": "LabDocumentsBucket" }, "LAB_KMS_KEY_ARN": { "Ref": "ClinicalCoreKeyArn" }, "LAB_OPENAI_SECRET_ARN": { "Ref": "OpenAISecretArn" }, "LAB_OPENAI_MODEL": { "Ref": "OpenAIModel" } } }
       }
     },
     "LabSyntheticAuthorizerFunction": {

@@ -43,7 +43,7 @@ export type PatientContext = {
 export type LongitudinalBiomarker = {
   biomarkerId: string; canonicalName: string; value: number; unit: string;
   labMin: number | null; labMax: number | null; functionalMin: number | null; functionalMax: number | null;
-  status: "optimal" | "normal" | "suboptimal" | "critical";
+  status: "optimal" | "normal" | "suboptimal" | "critical" | "unclassified";
 };
 
 export type LongitudinalContext = {
@@ -83,6 +83,7 @@ type Job = {
   longitudinalContext?: LongitudinalContext;
   failureCategory: string | null;
   result: unknown | null;
+  rangeReleaseSha256?: string;
 };
 
 const db = DynamoDBDocumentClient.from(new DynamoDBClient({}));
@@ -210,8 +211,16 @@ function safeLongitudinalBiomarker(value: unknown): LongitudinalBiomarker {
     || !boundedString(row.canonicalName, 160) || typeof row.value !== "number" || !Number.isFinite(row.value)
     || !boundedString(row.unit, 80) || !safeNullableNumber(row.labMin) || !safeNullableNumber(row.labMax)
     || !safeNullableNumber(row.functionalMin) || !safeNullableNumber(row.functionalMax)
-    || !["optimal", "normal", "suboptimal", "critical"].includes(String(row.status))) throw new Error("longitudinal_context_invalid");
+    || !["optimal", "normal", "suboptimal", "critical", "unclassified"].includes(String(row.status))) throw new Error("longitudinal_context_invalid");
   return row as LongitudinalBiomarker;
+}
+
+function rangeReleaseStamp(): { rangeReleaseSha256?: string } {
+  if (process.env.LAB_RANGE_MODE && !["synthetic_fixture", "reviewed_release"].includes(process.env.LAB_RANGE_MODE)) throw new Error("lab_range_mode_invalid");
+  if (process.env.LAB_RANGE_MODE !== "reviewed_release") return {};
+  const hash = required("LAB_RANGE_RELEASE_SHA256");
+  if (!/^[a-f0-9]{64}$/.test(hash)) throw new Error("lab_range_release_refused");
+  return { rangeReleaseSha256: hash };
 }
 
 export function safeStructuredLabBiomarkers(value: unknown): StructuredLabBiomarker[] {
@@ -330,7 +339,8 @@ async function purgePrefix(bucket: string, prefix: string): Promise<void> {
       ...(page.DeleteMarkers ?? []).map((row) => ({ Key: row.Key!, VersionId: row.VersionId! })),
     ];
     if (objects.length > 0) {
-      await s3.send(new DeleteObjectsCommand({ Bucket: bucket, Delete: { Objects: objects, Quiet: true } }));
+      const deleted = await s3.send(new DeleteObjectsCommand({ Bucket: bucket, Delete: { Objects: objects, Quiet: true } }));
+      if (deleted.Errors?.length) throw new Error("lab_object_deletion_incomplete");
     }
     keyMarker = page.IsTruncated ? page.NextKeyMarker : undefined;
     versionIdMarker = page.IsTruncated ? page.NextVersionIdMarker : undefined;
@@ -385,6 +395,7 @@ async function createJob(event: ApiEvent, identity: Claims) {
     updatedAt: now,
     expiresAt: Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60,
     documents: stored,
+    ...rangeReleaseStamp(),
     ...(typeof input.panelId === "string" && input.panelId.length <= 160 ? { panelId: input.panelId } : {}),
     ...(patientContext ? { patientContext } : {}),
     ...(longitudinalContext ? { longitudinalContext } : {}),
@@ -449,6 +460,7 @@ async function createPlanJob(event: ApiEvent, identity: Claims) {
     expiresAt: Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60,
     documents: [],
     structuredBiomarkers,
+    ...rangeReleaseStamp(),
     panelId: input.panelId,
     ...(patientContext ? { patientContext } : {}),
     ...(longitudinalContext ? { longitudinalContext } : {}),
@@ -456,20 +468,30 @@ async function createPlanJob(event: ApiEvent, identity: Claims) {
     result: null,
   };
   await db.send(new PutCommand({ TableName: required("LAB_JOB_TABLE"), Item: job, ConditionExpression: "attribute_not_exists(pk)" }));
-  await sfn.send(new StartExecutionCommand({
-    stateMachineArn: required("LAB_STATE_MACHINE_ARN"),
-    name: `lab-plan-${jobId}`,
-    input: JSON.stringify({ jobId }),
-  }));
+  await ensureQueuedExecution(job);
   console.info(JSON.stringify({ event: "structured_lab_plan_job_created", jobId, markerCount: structuredBiomarkers.length }));
   return json(200, { contractVersion: CONTRACT_VERSION, jobId, state: "queued" });
+}
+
+/** A transient start failure must not lose the durable job ID or create another job on retry. */
+async function ensureQueuedExecution(job: Job): Promise<void> {
+  if (job.state !== "queued") return;
+  const jobId = job.pk.slice(4);
+  try {
+    await sfn.send(new StartExecutionCommand({ stateMachineArn: required("LAB_STATE_MACHINE_ARN"),
+      name: `${job.structuredBiomarkers ? "lab-plan" : "lab"}-${jobId}`, input: JSON.stringify({ jobId }) }));
+  } catch (error) {
+    if (error && typeof error === "object" && (error as { name?: string }).name === "ExecutionAlreadyExists") return;
+    // Polling retries this exact named execution; queued state remains truthful.
+    console.warn("lab_execution_start_pending");
+  }
 }
 
 async function completeUpload(event: ApiEvent, identity: Claims, jobId: string) {
   const input = body(event);
   const job = await ownedJob(jobId, identity.sub!);
   if (!job) return refusal(404);
-  if (job.state !== "awaiting_upload") return json(200, status(job));
+  if (job.state !== "awaiting_upload") { await ensureQueuedExecution(job); return json(200, status(job)); }
   if (!Array.isArray(input.uploadedDocuments)
     || input.uploadedDocuments.length !== job.documents.length) return refusal(409);
   const ids = new Set(input.uploadedDocuments.map((row) => (
@@ -494,11 +516,7 @@ async function completeUpload(event: ApiEvent, identity: Claims, jobId: string) 
     ExpressionAttributeNames: { "#state": "state" },
     ExpressionAttributeValues: { ":queued": "queued", ":progress": 5, ":now": updatedAt, ":awaiting": "awaiting_upload", ":owner": identity.sub },
   }));
-  await sfn.send(new StartExecutionCommand({
-    stateMachineArn: required("LAB_STATE_MACHINE_ARN"),
-    name: `lab-${jobId}`,
-    input: JSON.stringify({ jobId }),
-  }));
+  await ensureQueuedExecution({ ...job, state: "queued" });
   return json(200, status({ ...job, state: "queued", progressPercent: 5, updatedAt }));
 }
 
@@ -507,14 +525,15 @@ export async function createAwsLabAnalysisApiHandler(event: ApiEvent) {
     const identity = claims(event);
     const method = event?.requestContext?.http?.method;
     const path = event?.rawPath;
-    if (method === "POST" && (path === "/clinical-core/consumer/labs/jobs" || path === "/clinical-core/synthetic-session/labs/jobs")) return createJob(event, identity);
-    if (method === "POST" && (path === "/clinical-core/consumer/labs/plan-jobs" || path === "/clinical-core/synthetic-session/labs/plan-jobs")) return createPlanJob(event, identity);
+    if (method === "POST" && (path === "/clinical-core/consumer/labs/jobs" || path === "/clinical-core/synthetic-session/labs/jobs")) return await createJob(event, identity);
+    if (method === "POST" && (path === "/clinical-core/consumer/labs/plan-jobs" || path === "/clinical-core/synthetic-session/labs/plan-jobs")) return await createPlanJob(event, identity);
     const match = typeof path === "string" ? path.match(/^\/clinical-core\/(?:consumer|synthetic-session)\/labs\/jobs\/([0-9a-f-]{36})(\/complete-upload)?$/i) : null;
     if (!match) return refusal(404);
-    if (method === "POST" && match[2]) return completeUpload(event, identity, match[1]);
-    if (method === "DELETE" && !match[2]) return deleteJob(identity, match[1]);
+    if (method === "POST" && match[2]) return await completeUpload(event, identity, match[1]);
+    if (method === "DELETE" && !match[2]) return await deleteJob(identity, match[1]);
     if (method === "GET" && !match[2]) {
       const job = await ownedJob(match[1], identity.sub);
+      if (job) await ensureQueuedExecution(job);
       return job ? json(200, status(job)) : refusal(404);
     }
     return refusal(404);
