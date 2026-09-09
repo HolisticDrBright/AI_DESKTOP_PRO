@@ -49,9 +49,15 @@ foreach ($previous in $stack.Parameters) {
   if ($next.ParameterValue -ne $previous.ParameterValue) { throw "Existing configuration changed: $($previous.ParameterKey)" }
 }
 $allowedResources = @('LabApiFunction', 'LabWorkerFunction', 'LabWorkerRole', 'LabSyntheticAuthorizerFunction')
+$dependentResources = @('LabApiIntegration', 'LabStateMachineRole', 'LabStateMachine', 'LabSyntheticSessionAuthorizer')
+$allowedReferences = @('LabApiFunction.Arn', 'LabWorkerFunction.Arn', 'LabStateMachineRole.Arn', 'LabSyntheticAuthorizerFunction.Arn')
 foreach ($item in $change.Changes) {
   $resource = $item.ResourceChange
-  if ($resource.Action -ne 'Modify' -or $resource.Replacement -ne 'False' -or $resource.LogicalResourceId -notin $allowedResources) { throw "Unexpected resource change: $($resource.LogicalResourceId). Inspect before executing." }
+  $referenceOnly = $resource.LogicalResourceId -in $dependentResources -and @($resource.Details).Count -gt 0
+  foreach ($detail in $resource.Details) {
+    if ($detail.ChangeSource -ne 'ResourceAttribute' -or $detail.CausingEntity -notin $allowedReferences -or $detail.Target.RequiresRecreation -ne 'Never') { $referenceOnly = $false }
+  }
+  if ($resource.Action -ne 'Modify' -or $resource.Replacement -ne 'False' -or ($resource.LogicalResourceId -notin $allowedResources -and -not $referenceOnly)) { throw "Unexpected resource change: $($resource.LogicalResourceId). Inspect before executing." }
 }
 aws cloudformation execute-change-set --change-set-name $set.ChangeSetId --profile $profileName --region $regionName
 if ($LASTEXITCODE -ne 0) { throw 'Change-set execution failed.' }
