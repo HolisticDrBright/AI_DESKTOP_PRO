@@ -2,6 +2,8 @@ if (typeof window !== "undefined") throw new Error("aws-ask-alp-openai is server
 
 import { GetSecretValueCommand, SecretsManagerClient } from "@aws-sdk/client-secrets-manager";
 import { parseOpenAISecret } from "./aws-lab-openai";
+import {loadReviewedKnowledge} from './aws-reviewed-knowledge';
+import {KNOWLEDGE_MODEL_BOUNDARY,verifyPresentedKnowledge,assertKnowledgeCitations} from './reviewed-knowledge';
 import { AskAlpError, validateAskAlpResult, type AskAlpGenerationRequest, type AskAlpGenerationResult } from "./aws-ask-alp";
 
 const secrets = new SecretsManagerClient({});
@@ -10,6 +12,7 @@ const REQUEST_TIMEOUT_MS = 30_000;
 const MAX_RESPONSE_BYTES = 512 * 1024;
 
 const COMPILED_BOUNDARY = [
+  KNOWLEDGE_MODEL_BOUNDARY,
   "In personalPlan, null dose/frequency means not recorded, not permission to supply a default. Nonzero omittedSupplementCount or omittedTaskCount means the snapshot is partial; do not claim that unlisted items are absent from the full plan.",
   "personalPlan is consumer-saved, unverified history, not a clinician-approved protocol or a source of eligible product recommendations. Explain its recorded contents when asked, but do not infer clinical approval, safety, effectiveness, or verified AI-generation provenance. Payment or practitioner access is never evidence of clinical approval. Individual clinician approval is not required to explain a Core user's recorded plan or data.",
   "NON-OVERRIDABLE APPLICATION POLICY:",
@@ -89,10 +92,14 @@ export async function generateAskAlpWithOpenAI(input: { request: AskAlpGeneratio
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
+    const labs=input.request.context.labs;
+    const biomarkerNames=Array.isArray(labs)?labs.map(row=>String(row?.name??'')):[];
+    const reviewedKnowledge=verifyPresentedKnowledge(input.request.context.reviewedKnowledge,await loadReviewedKnowledge({biomarkerNames}));
+    const request={...input.request,context:{...input.request.context,reviewedKnowledge}};
     const response = await fetch(RESPONSES_URL, {
       method: "POST", redirect: "manual", signal: controller.signal,
       headers: { Authorization: `Bearer ${await apiKey(input.secretArn)}`, "content-type": "application/json", accept: "application/json" },
-      body: JSON.stringify(buildAskAlpOpenAIRequest(input.request, input.model)),
+      body: JSON.stringify(buildAskAlpOpenAIRequest(request, input.model)),
     });
     if (response.status >= 300 && response.status < 400) throw new AskAlpError("provider_unavailable");
     const raw = await response.text();
@@ -100,7 +107,9 @@ export async function generateAskAlpWithOpenAI(input: { request: AskAlpGeneratio
       || !response.headers.get("content-type")?.toLowerCase().includes("application/json")) throw new AskAlpError("provider_unavailable");
     let parsed: unknown;
     try { parsed = JSON.parse(raw); } catch { throw new AskAlpError("provider_unavailable"); }
-    return parseAskAlpOpenAIResponse(parsed, input.model);
+    const result=parseAskAlpOpenAIResponse(parsed,input.model);
+    assertKnowledgeCitations(result.answer,reviewedKnowledge);
+    return result;
   } catch (error) {
     if (error instanceof AskAlpError) throw error;
     throw new AskAlpError("provider_unavailable");

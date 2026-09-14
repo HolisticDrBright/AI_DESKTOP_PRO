@@ -11,6 +11,12 @@
     }
   },
   "Parameters": {
+    "KnowledgeReleaseMode": {"Type":"String","Default":"disabled","AllowedValues":["disabled","reviewed_release"]},
+    "KnowledgeReleaseBucket": {"Type":"String","Default":"","AllowedPattern":"^$|^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"},
+    "KnowledgeReleaseKey": {"Type":"String","Default":"","AllowedPattern":"^$|^reviewed-knowledge/[A-Za-z0-9_./-]+\\.json$"},
+    "KnowledgeReleaseObjectVersion": {"Type":"String","Default":"","MaxLength":1024},
+    "KnowledgeReleaseSha256": {"Type":"String","Default":"","AllowedPattern":"^$|^[a-f0-9]{64}$"},
+    "KnowledgeSignerPublicKeyPem": {"Type":"String","Default":"","MaxLength":512},
     "LabRangeMode": { "Type": "String", "Default": "synthetic_fixture", "AllowedValues": ["synthetic_fixture", "reviewed_release"] },
     "LabRangeReleaseBucket": { "Type": "String", "Default": "", "AllowedPattern": "^$|^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$" },
     "LabRangeReleaseKey": { "Type": "String", "Default": "", "AllowedPattern": "^$|^reviewed-lab-ranges/[A-Za-z0-9_./-]+\\.json$" },
@@ -32,6 +38,7 @@
     "OpenAIModel": { "Type": "String", "Default": "gpt-5.1-2025-11-13", "AllowedValues": ["gpt-5.1-2025-11-13"] }
   },
   "Rules": {
+    "ReviewedKnowledgeMaterial": {"RuleCondition":{"Fn::Equals":[{"Ref":"KnowledgeReleaseMode"},"reviewed_release"]},"Assertions":[{"Assert":{"Fn::Not":[{"Fn::Equals":[{"Ref":"KnowledgeReleaseBucket"},""]}]},"AssertDescription":"KnowledgeReleaseBucket is required for reviewed knowledge."},{"Assert":{"Fn::Not":[{"Fn::Equals":[{"Ref":"KnowledgeReleaseKey"},""]}]},"AssertDescription":"KnowledgeReleaseKey is required for reviewed knowledge."},{"Assert":{"Fn::Not":[{"Fn::Equals":[{"Ref":"KnowledgeReleaseObjectVersion"},""]}]},"AssertDescription":"KnowledgeReleaseObjectVersion is required for reviewed knowledge."},{"Assert":{"Fn::Not":[{"Fn::Equals":[{"Ref":"KnowledgeReleaseSha256"},""]}]},"AssertDescription":"KnowledgeReleaseSha256 is required for reviewed knowledge."},{"Assert":{"Fn::Not":[{"Fn::Equals":[{"Ref":"KnowledgeSignerPublicKeyPem"},""]}]},"AssertDescription":"KnowledgeSignerPublicKeyPem is required for reviewed knowledge."}]},
     "ReviewedRangeMaterial": { "RuleCondition": { "Fn::Equals": [{ "Ref": "LabRangeMode" }, "reviewed_release"] }, "Assertions": [
       { "Assert": { "Fn::Not": [{ "Fn::Equals": [{ "Ref": "LabRangeReleaseBucket" }, ""] }] }, "AssertDescription": "Reviewed range bucket is required." },
       { "Assert": { "Fn::Not": [{ "Fn::Equals": [{ "Ref": "LabRangeReleaseKey" }, ""] }] }, "AssertDescription": "Reviewed range object is required." },
@@ -39,7 +46,7 @@
       { "Assert": { "Fn::Not": [{ "Fn::Equals": [{ "Ref": "LabRangeSignerPublicKeyPem" }, ""] }] }, "AssertDescription": "Reviewed range public signing key is required." }
     ] }
   },
-  "Conditions": { "ReviewedRanges": { "Fn::Equals": [{ "Ref": "LabRangeMode" }, "reviewed_release"] } },
+  "Conditions": {"ReviewedRanges":{"Fn::Equals":[{"Ref":"LabRangeMode"},"reviewed_release"]},"ReviewedKnowledge":{"Fn::Equals":[{"Ref":"KnowledgeReleaseMode"},"reviewed_release"]}},
   "Resources": {
     "LabJobTable": {
       "Type": "AWS::DynamoDB::Table",
@@ -122,6 +129,7 @@
         "AssumeRolePolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Principal": { "Service": "lambda.amazonaws.com" }, "Action": "sts:AssumeRole" }] },
         "Policies": [
           { "PolicyName": "LabWorkerLedger", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": ["dynamodb:GetItem", "dynamodb:UpdateItem"], "Resource": { "Fn::GetAtt": ["LabJobTable", "Arn"] } }, { "Effect": "Allow", "Action": ["kms:Decrypt", "kms:GenerateDataKey"], "Resource": { "Ref": "ClinicalCoreKeyArn" } }] } },
+          {"Fn::If":["ReviewedKnowledge",{"PolicyName":"PinnedReviewedKnowledge","PolicyDocument":{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:GetObjectVersion","Resource":{"Fn::Sub":"arn:${AWS::Partition}:s3:::${KnowledgeReleaseBucket}/${KnowledgeReleaseKey}"},"Condition":{"StringEquals":{"s3:VersionId":{"Ref":"KnowledgeReleaseObjectVersion"}}}}]}},{"Ref":"AWS::NoValue"}]},
           { "PolicyName": "LabWorkerDocuments", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": ["s3:GetObject", "s3:PutObject"], "Resource": { "Fn::Sub": "${LabDocumentsBucket.Arn}/synthetic-labs/*" } }, { "Effect": "Allow", "Action": ["kms:Decrypt", "kms:GenerateDataKey"], "Resource": { "Ref": "ClinicalCoreKeyArn" } }] } },
           { "Fn::If": ["ReviewedRanges", { "PolicyName": "PinnedReviewedLabRanges", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": "s3:GetObject", "Resource": { "Fn::Sub": "arn:${AWS::Partition}:s3:::${LabRangeReleaseBucket}/${LabRangeReleaseKey}" } }] } }, { "Ref": "AWS::NoValue" }] },
           { "PolicyName": "LabWorkerTextract", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": ["textract:AnalyzeDocument", "textract:StartDocumentAnalysis", "textract:GetDocumentAnalysis"], "Resource": "*" }] } },
@@ -154,7 +162,7 @@
         "Runtime": "nodejs22.x", "Architectures": ["arm64"], "Handler": "index.handler", "Role": { "Fn::GetAtt": ["LabWorkerRole", "Arn"] }, "MemorySize": 1024, "Timeout": 300,
         "LoggingConfig": { "LogGroup": { "Ref": "LabWorkerLogGroup" }, "LogFormat": "JSON", "ApplicationLogLevel": "INFO", "SystemLogLevel": "WARN" },
         "Code": { "S3Bucket": { "Ref": "LambdaCodeBucket" }, "S3Key": { "Ref": "WorkerCodeKey" } },
-        "Environment": { "Variables": { "LAB_RANGE_MODE": { "Ref": "LabRangeMode" }, "LAB_RANGE_RELEASE_SHA256": { "Ref": "LabRangeReleaseSha256" }, "LAB_RANGE_RELEASE_BUCKET": { "Ref": "LabRangeReleaseBucket" }, "LAB_RANGE_RELEASE_KEY": { "Ref": "LabRangeReleaseKey" }, "LAB_RANGE_SIGNER_PUBLIC_KEY_PEM": { "Ref": "LabRangeSignerPublicKeyPem" }, "LAB_JOB_TABLE": { "Ref": "LabJobTable" }, "LAB_DOCUMENT_BUCKET": { "Ref": "LabDocumentsBucket" }, "LAB_KMS_KEY_ARN": { "Ref": "ClinicalCoreKeyArn" }, "LAB_OPENAI_SECRET_ARN": { "Ref": "OpenAISecretArn" }, "LAB_OPENAI_MODEL": { "Ref": "OpenAIModel" } } }
+        "Environment": {"Variables":{"LAB_RANGE_MODE":{"Ref":"LabRangeMode"},"LAB_RANGE_RELEASE_SHA256":{"Ref":"LabRangeReleaseSha256"},"LAB_RANGE_RELEASE_BUCKET":{"Ref":"LabRangeReleaseBucket"},"LAB_RANGE_RELEASE_KEY":{"Ref":"LabRangeReleaseKey"},"LAB_RANGE_SIGNER_PUBLIC_KEY_PEM":{"Ref":"LabRangeSignerPublicKeyPem"},"LAB_JOB_TABLE":{"Ref":"LabJobTable"},"LAB_DOCUMENT_BUCKET":{"Ref":"LabDocumentsBucket"},"LAB_KMS_KEY_ARN":{"Ref":"ClinicalCoreKeyArn"},"LAB_OPENAI_SECRET_ARN":{"Ref":"OpenAISecretArn"},"LAB_OPENAI_MODEL":{"Ref":"OpenAIModel"},"KNOWLEDGE_RELEASE_MODE":{"Ref":"KnowledgeReleaseMode"},"KNOWLEDGE_RELEASE_BUCKET":{"Ref":"KnowledgeReleaseBucket"},"KNOWLEDGE_RELEASE_KEY":{"Ref":"KnowledgeReleaseKey"},"KNOWLEDGE_RELEASE_OBJECT_VERSION":{"Ref":"KnowledgeReleaseObjectVersion"},"KNOWLEDGE_RELEASE_SHA256":{"Ref":"KnowledgeReleaseSha256"},"KNOWLEDGE_SIGNER_PUBLIC_KEY_PEM":{"Ref":"KnowledgeSignerPublicKeyPem"}}}
       }
     },
     "LabSyntheticAuthorizerFunction": {

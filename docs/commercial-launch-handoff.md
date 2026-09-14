@@ -4,6 +4,12 @@ Updated September 14, 2026. Status: **not ready for public launch or real health
 This document separates live evidence from code that exists and work still required.
 It does not sign agreements or approve clinical policy on anyone's behalf.
 
+Latest source phase: [reviewed educational knowledge integration](reviewed-knowledge-engineering.md).
+Signed, source-bound educational references can now flow through personal chat
+context and lab synthesis, with generation-side revalidation. Default OFF, no real
+clinical content signed, no deployment or PHI activation. This is not a new
+supplement recommendation or dosing/range rule engine.
+
 Latest source increment: [Core plan context and worker leases](core-plan-context-and-worker-leases.md).
 Core is independent AI guidance without per-patient clinician approval; the separate
 paid practitioner service requires actual review to label a protocol approved.

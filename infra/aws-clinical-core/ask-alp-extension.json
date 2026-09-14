@@ -3,6 +3,12 @@
   "Description": "Synthetic-only, Cognito-authenticated direct OpenAI generation endpoint for Ask ALP.",
   "Metadata": { "ClinicalCore": { "ContractVersion": "patient-chat-generation/1", "DataClassification": "synthetic_only", "PhiAllowed": false, "ProviderStorage": false } },
   "Parameters": {
+    "KnowledgeReleaseMode": {"Type":"String","Default":"disabled","AllowedValues":["disabled","reviewed_release"]},
+    "KnowledgeReleaseBucket": {"Type":"String","Default":"","AllowedPattern":"^$|^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"},
+    "KnowledgeReleaseKey": {"Type":"String","Default":"","AllowedPattern":"^$|^reviewed-knowledge/[A-Za-z0-9_./-]+\\.json$"},
+    "KnowledgeReleaseObjectVersion": {"Type":"String","Default":"","MaxLength":1024},
+    "KnowledgeReleaseSha256": {"Type":"String","Default":"","AllowedPattern":"^$|^[a-f0-9]{64}$"},
+    "KnowledgeSignerPublicKeyPem": {"Type":"String","Default":"","MaxLength":512},
     "ClinicalApiId": { "Type": "String", "AllowedPattern": "^[a-z0-9]{10}$" },
     "ConsumerUserPoolId": { "Type": "String", "AllowedPattern": "^[a-z0-9-]+_[A-Za-z0-9]+$" },
     "ConsumerUserPoolClientId": { "Type": "String", "AllowedPattern": "^[A-Za-z0-9]{20,128}$" },
@@ -13,6 +19,8 @@
     "OpenAIModel": { "Type": "String", "AllowedPattern": "^[A-Za-z0-9._:-]{3,100}$" },
     "ApprovedPromptSha256": { "Type": "String", "AllowedPattern": "^[0-9a-f]{64}$", "NoEcho": true }
   },
+  "Rules": {"ReviewedKnowledgeMaterial":{"RuleCondition":{"Fn::Equals":[{"Ref":"KnowledgeReleaseMode"},"reviewed_release"]},"Assertions":[{"Assert":{"Fn::Not":[{"Fn::Equals":[{"Ref":"KnowledgeReleaseBucket"},""]}]},"AssertDescription":"KnowledgeReleaseBucket is required for reviewed knowledge."},{"Assert":{"Fn::Not":[{"Fn::Equals":[{"Ref":"KnowledgeReleaseKey"},""]}]},"AssertDescription":"KnowledgeReleaseKey is required for reviewed knowledge."},{"Assert":{"Fn::Not":[{"Fn::Equals":[{"Ref":"KnowledgeReleaseObjectVersion"},""]}]},"AssertDescription":"KnowledgeReleaseObjectVersion is required for reviewed knowledge."},{"Assert":{"Fn::Not":[{"Fn::Equals":[{"Ref":"KnowledgeReleaseSha256"},""]}]},"AssertDescription":"KnowledgeReleaseSha256 is required for reviewed knowledge."},{"Assert":{"Fn::Not":[{"Fn::Equals":[{"Ref":"KnowledgeSignerPublicKeyPem"},""]}]},"AssertDescription":"KnowledgeSignerPublicKeyPem is required for reviewed knowledge."}]}},
+  "Conditions": {"ReviewedKnowledge":{"Fn::Equals":[{"Ref":"KnowledgeReleaseMode"},"reviewed_release"]}},
   "Resources": {
     "AskAlpLogGroup": {
       "Type": "AWS::Logs::LogGroup",
@@ -25,6 +33,7 @@
         "AssumeRolePolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Principal": { "Service": "lambda.amazonaws.com" }, "Action": "sts:AssumeRole" }] },
         "Policies": [
           { "PolicyName": "EncryptedAskAlpLogs", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": ["logs:CreateLogStream", "logs:PutLogEvents"], "Resource": { "Fn::GetAtt": ["AskAlpLogGroup", "Arn"] } }] } },
+          {"Fn::If":["ReviewedKnowledge",{"PolicyName":"PinnedReviewedKnowledge","PolicyDocument":{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:GetObjectVersion","Resource":{"Fn::Sub":"arn:${AWS::Partition}:s3:::${KnowledgeReleaseBucket}/${KnowledgeReleaseKey}"},"Condition":{"StringEquals":{"s3:VersionId":{"Ref":"KnowledgeReleaseObjectVersion"}}}}]}},{"Ref":"AWS::NoValue"}]},
           { "PolicyName": "AskAlpOpenAISecret", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": "secretsmanager:GetSecretValue", "Resource": { "Ref": "OpenAISecretArn" } }] } }
         ]
       }
@@ -37,6 +46,12 @@
         "LoggingConfig": { "LogGroup": { "Ref": "AskAlpLogGroup" }, "LogFormat": "JSON", "ApplicationLogLevel": "WARN", "SystemLogLevel": "WARN" },
         "Code": { "S3Bucket": { "Ref": "LambdaCodeBucket" }, "S3Key": { "Ref": "LambdaCodeKey" } },
         "Environment": { "Variables": {
+          "KNOWLEDGE_RELEASE_MODE": {"Ref":"KnowledgeReleaseMode"},
+          "KNOWLEDGE_RELEASE_BUCKET": {"Ref":"KnowledgeReleaseBucket"},
+          "KNOWLEDGE_RELEASE_KEY": {"Ref":"KnowledgeReleaseKey"},
+          "KNOWLEDGE_RELEASE_OBJECT_VERSION": {"Ref":"KnowledgeReleaseObjectVersion"},
+          "KNOWLEDGE_RELEASE_SHA256": {"Ref":"KnowledgeReleaseSha256"},
+          "KNOWLEDGE_SIGNER_PUBLIC_KEY_PEM": {"Ref":"KnowledgeSignerPublicKeyPem"},
           "CLINICAL_CONSUMER_ISSUER": { "Fn::Sub": "https://cognito-idp.${AWS::Region}.${AWS::URLSuffix}/${ConsumerUserPoolId}" },
           "CLINICAL_CONSUMER_AUDIENCE": { "Ref": "ConsumerUserPoolClientId" }, "RUNTIME_MODE": "synthetic", "PHI_ALLOWED": "false",
           "ASK_ALP_OPENAI_SECRET_ARN": { "Ref": "OpenAISecretArn" }, "ASK_ALP_OPENAI_MODEL": { "Ref": "OpenAIModel" },

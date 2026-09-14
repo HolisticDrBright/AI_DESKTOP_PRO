@@ -1,10 +1,11 @@
 import type {ProductionClinicalRequestContext} from './aws-identity-consent';
 import {createOwnedConsumerRecordsAdapter,OwnedStorageError,type OwnedRecord,type OwnedStorageScope} from './owned-consumer-records';
 import {personalPlanContext} from './owned-chat-personal-plan';
+import type {KnowledgeLoader} from './aws-reviewed-knowledge';
 
 /** Initial personal context contract. Does not manufacture lab observations,
  * diagnosed patterns, demographics, clinician approval, or recovery scores. */
-export async function buildOwnedChatContext(adapter:ReturnType<typeof createOwnedConsumerRecordsAdapter>,context:ProductionClinicalRequestContext,allowed:readonly OwnedStorageScope[],now=Date.now()){
+export async function buildOwnedChatContext(adapter:ReturnType<typeof createOwnedConsumerRecordsAdapter>,context:ProductionClinicalRequestContext,allowed:readonly OwnedStorageScope[],now=Date.now(),knowledgeLoader?:KnowledgeLoader){
   const consentContext={...context,purpose:'consent_management' as const};
   const ai=await adapter.consentState(consentContext,'ai_context');
   if(!ai.activeRevision)throw new OwnedStorageError('consent_required');
@@ -83,11 +84,12 @@ export async function buildOwnedChatContext(adapter:ReturnType<typeof createOwne
   }
   // Recheck the exact revisions after collection, so withdrawal/reconsent while
   // assembling does not release a snapshot authorized under an earlier grant.
+  const reviewedKnowledge=knowledgeLoader?await knowledgeLoader({biomarkerNames:labs.map(l=>String(l.name))}):null;
   const finalAi=await adapter.consentState(consentContext,'ai_context');
   if(finalAi.activeRevision!==ai.activeRevision)throw new OwnedStorageError('consent_required');
   if(formsRevision && (await adapter.consentState(consentContext,'forms_checkins')).activeRevision!==formsRevision)throw new OwnedStorageError('consent_required');
   for(const [scope,revision]of used){if((await adapter.consentState(consentContext,scope)).activeRevision!==revision)throw new OwnedStorageError('consent_required');}
-  return {profile,cycle,wearables,labs,personalPlan,protocol:null,tcm:null,conversationMemory:null,promotedPatterns:[],careTeam:null,recentReports,governedOptions:[]};
+  return {profile,cycle,wearables,labs,personalPlan,reviewedKnowledge,protocol:null,tcm:null,conversationMemory:null,promotedPatterns:[],careTeam:null,recentReports,governedOptions:[]};
 }
 function reports(rows:OwnedRecord[],now:number):Record<string,unknown>[]{
   return rows.map(row=>{

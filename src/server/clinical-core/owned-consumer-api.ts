@@ -3,6 +3,7 @@ import type { ProductionClinicalRequestContext } from "./aws-identity-consent";
 import { createOwnedConsumerRecordsAdapter,OwnedStorageError,OWNED_STORAGE_SCOPES,type OwnedStorageScope,type OwnedRecordWrite } from "./owned-consumer-records";
 import { OWNED_COLLECTIONS as CONSUMER_CLINICAL_COLLECTIONS,type OwnedCollection as ConsumerClinicalCollection } from './owned-lab-observations';
 import {buildOwnedChatContext} from './owned-chat-context';
+import type {KnowledgeLoader} from './aws-reviewed-knowledge';
 
 export type OwnedConsumerApiConfiguration = {
   consumerIssuer:string; consumerAudience:string;
@@ -23,7 +24,7 @@ const COLLECTION_SCOPE:Record<ConsumerClinicalCollection,OwnedStorageScope>={
 
 /** API Gateway MUST verify the JWT signature. This adds exact consumer claims,
  * expiry, scope and activation checks; it never decodes an unverified header. */
-export function createOwnedConsumerApi(input:{configuration:OwnedConsumerApiConfiguration;adapter:()=>ReturnType<typeof createOwnedConsumerRecordsAdapter>;now?:()=>number}) {
+export function createOwnedConsumerApi(input:{configuration:OwnedConsumerApiConfiguration;adapter:()=>ReturnType<typeof createOwnedConsumerRecordsAdapter>;now?:()=>number;knowledgeLoader?:KnowledgeLoader}) {
   const c=input.configuration;
   if (!/^https:\/\/cognito-idp\.[a-z0-9-]+\.amazonaws\.com\/[A-Za-z0-9_-]+$/.test(c.consumerIssuer)
     || !/^[a-zA-Z0-9]{20,128}$/.test(c.consumerAudience)) throw new Error("owned_api_configuration_invalid");
@@ -44,7 +45,7 @@ export function createOwnedConsumerApi(input:{configuration:OwnedConsumerApiConf
       if(route.endsWith('/chat-context')){
         exact(body,[]);
         if(!c.allowedScopes.includes('ai_context'))return response(403,{error:'feature_scope_not_enabled'});
-        return response(200,{data:await buildOwnedChatContext(input.adapter(),context,c.allowedScopes,input.now?.()??Date.now())});
+        return response(200,{data:await buildOwnedChatContext(input.adapter(),context,c.allowedScopes,input.now?.()??Date.now(),input.knowledgeLoader)});
       }
       const scope=consent?body.scope:COLLECTION_SCOPE[body.collection as ConsumerClinicalCollection];
       if (!scope || !OWNED_STORAGE_SCOPES.includes(scope as OwnedStorageScope)) invalid();

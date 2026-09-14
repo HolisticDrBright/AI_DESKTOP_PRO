@@ -10,6 +10,20 @@ function setup(data:Record<string,Record<string,unknown>[]>={},grants=['ai_conte
   return {consentState,recent,adapter:{consentState,recent} as unknown as ReturnType<typeof createOwnedConsumerRecordsAdapter>};
 }
 describe('owned AI context',()=>{
+  it('retrieves only from consented lab names and rechecks consent after reference loading',async()=>{
+    const s=setup({},['ai_context','lab_history']);
+    const list=vi.fn(async()=>[{recordId:'fictional-observation',revision:1,receivedAt:'2026-09-13T00:00:00Z',payload:{name:'Fictional marker',value:0,unit:'widgets',drawnAt:'2026-09-13T00:00:00Z'}}]);
+    const adapter={...s.adapter,list};
+    const loader=vi.fn(async()=>null);
+    await buildOwnedChatContext(adapter,context,['ai_context','lab_history'],now,loader);
+    expect(loader).toHaveBeenCalledWith({biomarkerNames:['Fictional marker']});
+    const denied=setup({},['ai_context']);
+    const noConsentLoader=vi.fn(async()=>null);
+    await buildOwnedChatContext(denied.adapter,context,['ai_context','lab_history'],now,noConsentLoader);
+    expect(noConsentLoader).toHaveBeenCalledWith({biomarkerNames:[]});
+    const withdrawingLoader=vi.fn(async()=>{s.consentState.mockResolvedValue({activeRevision:null});return null;});
+    await expect(buildOwnedChatContext(adapter,context,['ai_context','lab_history'],now,withdrawingLoader)).rejects.toThrow('consent_required');
+  });
   const plan={name:'Fictional Core plan',version:2,status:'active',
     supplements_json:[{name:'Fictional product',dose:'Recorded dose',frequency:'Recorded schedule',orderingLink:'https://example.invalid/private'}],
     lifestyle_tasks_json:[{name:'Fictional walking task',frequency:'daily'}],
