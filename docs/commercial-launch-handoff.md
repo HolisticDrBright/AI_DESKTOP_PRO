@@ -1,8 +1,15 @@
 # ALP commercial launch: owner actions and remaining engineering
 
-Updated September 8, 2026. Status: **not ready for public launch or real health data**.
+Updated September 14, 2026. Status: **not ready for public launch or real health data**.
 This document separates live evidence from code that exists and work still required.
 It does not sign agreements or approve clinical policy on anyone's behalf.
+
+Latest source increment: [Core plan context and worker leases](core-plan-context-and-worker-leases.md).
+Core is independent AI guidance without per-patient clinician approval; the separate
+paid practitioner service requires actual review to label a protocol approved.
+Its upgrade price is unspecified. The OpenAI Ironclad signature link is being
+re-requested: approval to sign is not an executed BAA. The new consented plan
+context and concurrency repair are source-only, not deployed or phone-verified.
 
 Security follow-up: [September 8 dependency repair](dependency-security-2026-09-08.md)
 patches critical Desktop framework/image dependencies in source. Rebuild and

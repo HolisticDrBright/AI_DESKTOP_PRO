@@ -232,7 +232,10 @@ describe("AWS clinical-core migration runner", () => {
     expect(db.calls[0]!.sql).toContain("pg_advisory_xact_lock");
     expect(db.calls.some((call) => call.sql.includes("create table clinical_core.persons"))).toBe(true);
     expect(db.calls.at(-1)!.sql).toContain("insert into clinical_core.schema_migrations");
-    expect(db.calls.some((call) => call.sql === loadClinicalCoreMigrations()[0]!.sql)).toBe(false);
+    // Load the comparison once, not every migration file for every SQL call.
+    // Preserve the split-statement assertion without filesystem-dependent timeouts.
+    const firstMigrationSql = loadClinicalCoreMigrations()[0]!.sql;
+    expect(db.calls.some((call) => call.sql === firstMigrationSql)).toBe(false);
     expect(db.calls.filter((call) => call.sql.startsWith("create table clinical_core.")).length).toBeGreaterThan(5);
   }, 15_000);
 

@@ -10,6 +10,43 @@ function setup(data:Record<string,Record<string,unknown>[]>={},grants=['ai_conte
   return {consentState,recent,adapter:{consentState,recent} as unknown as ReturnType<typeof createOwnedConsumerRecordsAdapter>};
 }
 describe('owned AI context',()=>{
+  const plan={name:'Fictional Core plan',version:2,status:'active',
+    supplements_json:[{name:'Fictional product',dose:'Recorded dose',frequency:'Recorded schedule',orderingLink:'https://example.invalid/private'}],
+    lifestyle_tasks_json:[{name:'Fictional walking task',frequency:'daily'}],
+    peptides_json:[{name:'Excluded peptide'}],generation_json:{source:'aws_lab_analysis',clinicianApproved:true},approved:true};
+  it('includes consented personal plan history without upgrading it to clinical approval or eligible products',async()=>{
+    const s=setup({protocols:[plan]},['ai_context','protocols_supplements']);
+    const r=await buildOwnedChatContext(s.adapter,context,['ai_context','protocols_supplements'],now);
+    expect(r.personalPlan).toMatchObject({contractVersion:'consumer-plan-context/1',reviewStatus:'not_clinician_reviewed',sourceStatus:'consumer_saved_unverified',name:plan.name,version:2,
+      recordedSupplements:[{name:'Fictional product',dose:'Recorded dose',frequency:'Recorded schedule'}]});
+    expect(r.protocol).toBeNull();expect(r.governedOptions).toEqual([]);
+    expect(JSON.stringify(r.personalPlan)).not.toMatch(/clinicianApproved|orderingLink|Excluded peptide|aws_lab_analysis/);
+  });
+  it.each([false,true])('does not read personal plans without both allowed scope and consent (grant=%s)',async grant=>{
+    const s=setup({protocols:[plan]},grant?['ai_context','protocols_supplements']:['ai_context']);
+    const r=await buildOwnedChatContext(s.adapter,context,grant?['ai_context']:['ai_context','protocols_supplements'],now);
+    expect(r.personalPlan).toBeNull();expect(s.recent).not.toHaveBeenCalled();
+  });
+  it('discards personal context when protocol consent changes during assembly',async()=>{
+    const s=setup({protocols:[plan]},['ai_context','protocols_supplements']);
+    s.consentState.mockImplementation(async(_ctx,scope)=>({activeRevision:scope==='protocols_supplements'&&s.recent.mock.calls.length?2:1}));
+    await expect(buildOwnedChatContext(s.adapter,context,['ai_context','protocols_supplements'],now)).rejects.toThrow('consent_required');
+  });
+  it('selects the most recently saved active plan, not a newer paused or archived plan',async()=>{
+    const s=setup({protocols:[{...plan,status:'archived'},{...plan,status:'paused'},plan]},['ai_context','protocols_supplements']);
+    expect((await buildOwnedChatContext(s.adapter,context,['ai_context','protocols_supplements'],now)).personalPlan?.recordId).toBe('2');
+    const empty=setup({protocols:[{...plan,status:'completed'}]},['ai_context','protocols_supplements']);
+    expect((await buildOwnedChatContext(empty.adapter,context,['ai_context','protocols_supplements'],now)).personalPlan).toBeNull();
+  });
+  it('rejects malformed saved product data rather than inventing instructions',async()=>{
+    const s=setup({protocols:[{...plan,supplements_json:[{name:'Fictional product',dose:999}]}]},['ai_context','protocols_supplements']);
+    await expect(buildOwnedChatContext(s.adapter,context,['ai_context','protocols_supplements'],now)).rejects.toThrow('storage_unavailable');
+  });
+  it('keeps absent recorded instructions unknown instead of inventing doses or dropping the plan',async()=>{
+    const s=setup({protocols:[{...plan,supplements_json:[{name:'Fictional product'}]}]},['ai_context','protocols_supplements']);
+    const r=await buildOwnedChatContext(s.adapter,context,['ai_context','protocols_supplements'],now);
+    expect(r.personalPlan?.recordedSupplements).toEqual([{name:'Fictional product',dose:null,frequency:null}]);
+  });
   it('preserves recorded medications without treating them as new recommendations',async()=>{
     const s=setup({contraindications:[{medications:['Fictional prescribed medication'],conditions:[],allergies:[]}]});
     const result=await buildOwnedChatContext(s.adapter,context,['ai_context','forms_checkins'],now);

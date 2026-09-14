@@ -10,6 +10,8 @@ const REQUEST_TIMEOUT_MS = 30_000;
 const MAX_RESPONSE_BYTES = 512 * 1024;
 
 const COMPILED_BOUNDARY = [
+  "In personalPlan, null dose/frequency means not recorded, not permission to supply a default. Nonzero omittedSupplementCount or omittedTaskCount means the snapshot is partial; do not claim that unlisted items are absent from the full plan.",
+  "personalPlan is consumer-saved, unverified history, not a clinician-approved protocol or a source of eligible product recommendations. Explain its recorded contents when asked, but do not infer clinical approval, safety, effectiveness, or verified AI-generation provenance. Payment or practitioner access is never evidence of clinical approval. Individual clinician approval is not required to explain a Core user's recorded plan or data.",
   "NON-OVERRIDABLE APPLICATION POLICY:",
   "Answer the consumer directly from only the structured context supplied with this request; missing data is unknown.",
   "Answer the user's exact question first. A safety disclosure may follow the explanation but must never replace an explanation that the supplied context supports.",

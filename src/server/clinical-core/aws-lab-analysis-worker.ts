@@ -17,6 +17,9 @@ const s3 = new S3Client({});
 const textract = new TextractClient({});
 const PASS_STATE = ["extracting", "verifying", "normalizing", "interpreting", "synthesizing"] as const;
 const PASS_PROGRESS = [20, 40, 60, 80, 95];
+// Must exceed the deployed Lambda timeout (300s), including a clock margin.
+// Expired leases recover crashed invocations, not concurrent live invocations.
+export const LAB_WORKER_LEASE_SECONDS = 360;
 const UUID_NS = "ai-longevity-pro-synthetic-lab-v1";
 
 type StoredDocument = { clientDocumentId: string; contentType: string; objectKey: string };
@@ -761,13 +764,14 @@ async function executePass(job: Job, pass: number): Promise<unknown | null> {
 export async function createAwsLabAnalysisWorker(event: { jobId?: string; pass?: number; fail?: boolean; failureCategory?: string }) {
   const jobId = event.jobId ?? ""; const pass = event.pass ?? -1;
   if (/^[0-9a-f-]{36}$/i.test(jobId) && event.fail === true) {
+    if (!Number.isInteger(pass) || pass < 0 || pass > 4) throw new Error("worker_failure_pass_required");
     const allowed = new Set(["document_unreadable", "verification_disagreement", "unsupported_document", "provider_unavailable", "safety_review_required", "internal_failure"]);
     const category = allowed.has(event.failureCategory ?? "") ? event.failureCategory : "internal_failure";
     try {
       await db.send(new UpdateCommand({ TableName: required("LAB_JOB_TABLE"), Key: { pk: `job#${jobId}` },
-        ConditionExpression: "attribute_exists(pk) AND #state <> :completed",
-        UpdateExpression: "SET #state = :failed, failureCategory = :category, updatedAt = :now", ExpressionAttributeNames: { "#state": "state" },
-        ExpressionAttributeValues: { ":failed": "failed", ":completed": "completed", ":category": category, ":now": new Date().toISOString() } }));
+        ConditionExpression: "attribute_exists(pk) AND #state <> :completed AND passesCompleted = :pass AND (attribute_not_exists(leaseUntil) OR leaseUntil <= :epoch)",
+        UpdateExpression: "SET #state = :failed, failureCategory = :category, updatedAt = :now REMOVE leaseToken, leaseUntil", ExpressionAttributeNames: { "#state": "state" },
+        ExpressionAttributeValues: { ":failed": "failed", ":completed": "completed", ":pass": pass, ":epoch": Date.now(), ":category": category, ":now": new Date().toISOString() } }));
     } catch (error) {
       if (!(error && typeof error === "object" && (error as { name?: string }).name === "ConditionalCheckFailedException")) throw error;
       return { jobId, skipped: true };
@@ -782,7 +786,21 @@ export async function createAwsLabAnalysisWorker(event: { jobId?: string; pass?:
   const allowedStartStates = new Set(["queued", PASS_STATE[pass], ...(pass > 0 ? [PASS_STATE[pass - 1]] : [])]);
   if (!job || !allowedStartStates.has(job.state)) throw new Error("job_state_invalid");
   const now = new Date().toISOString();
-  await db.send(new UpdateCommand({ TableName: required("LAB_JOB_TABLE"), Key: { pk: job.pk }, ConditionExpression: "attribute_exists(pk) AND #state = :expected", UpdateExpression: "SET #state = :state, progressPercent = :progress, updatedAt = :now", ExpressionAttributeNames: { "#state": "state" }, ExpressionAttributeValues: { ":state": PASS_STATE[pass], ":expected": job.state, ":progress": PASS_PROGRESS[pass], ":now": now } }));
+  const leaseToken = randomUUID();
+  const epoch = Date.now();
+  try {
+    await db.send(new UpdateCommand({ TableName: required("LAB_JOB_TABLE"), Key: { pk: job.pk },
+      ConditionExpression: "attribute_exists(pk) AND #state = :expected AND passesCompleted = :pass AND (attribute_not_exists(leaseUntil) OR leaseUntil <= :epoch)",
+      UpdateExpression: "SET #state = :state, progressPercent = :progress, updatedAt = :now, leaseToken = :token, leaseUntil = :until",
+      ExpressionAttributeNames: { "#state": "state" },
+      ExpressionAttributeValues: { ":state": PASS_STATE[pass], ":expected": job.state, ":pass": pass, ":epoch": epoch,
+        ":token": leaseToken, ":until": epoch + LAB_WORKER_LEASE_SECONDS * 1000, ":progress": PASS_PROGRESS[pass], ":now": now } }));
+  } catch (error) {
+    if (error && typeof error === "object" && (error as { name?: string }).name === "ConditionalCheckFailedException") {
+      throw Object.assign(new Error("lab_worker_busy"), { name: "lab_worker_busy" });
+    }
+    throw error;
+  }
   try {
     const output = await executePass(job, pass);
     const terminal = pass === 4;
@@ -790,14 +808,17 @@ export async function createAwsLabAnalysisWorker(event: { jobId?: string; pass?:
     await db.send(new UpdateCommand({
       TableName: required("LAB_JOB_TABLE"),
       Key: { pk: job.pk },
-      ConditionExpression: "attribute_exists(pk) AND #state = :running",
+      ConditionExpression: "attribute_exists(pk) AND #state = :running AND passesCompleted = :pass AND leaseToken = :token AND leaseUntil > :epoch",
       UpdateExpression: terminal
-        ? "SET #state = :state, passesCompleted = :completed, progressPercent = :progress, updatedAt = :now, #result = :result"
-        : "SET #state = :state, passesCompleted = :completed, progressPercent = :progress, updatedAt = :now",
+        ? "SET #state = :state, passesCompleted = :completed, progressPercent = :progress, updatedAt = :now, #result = :result REMOVE leaseToken, leaseUntil"
+        : "SET #state = :state, passesCompleted = :completed, progressPercent = :progress, updatedAt = :now REMOVE leaseToken, leaseUntil",
       ExpressionAttributeNames: { "#state": "state", ...(terminal ? { "#result": "result" } : {}) },
       ExpressionAttributeValues: {
         ":state": terminal ? "completed" : PASS_STATE[pass],
         ":running": PASS_STATE[pass],
+        ":pass": pass,
+        ":token": leaseToken,
+        ":epoch": Date.now(),
         ":completed": pass + 1,
         ":progress": terminal ? 100 : PASS_PROGRESS[pass],
         ":now": updatedAt,
@@ -807,6 +828,16 @@ export async function createAwsLabAnalysisWorker(event: { jobId?: string; pass?:
     console.info(JSON.stringify({ event: "lab_analysis_pass_completed", jobId, pass, terminal }));
     return { jobId, pass, completed: true };
   } catch (error) {
+    // Only the owner may release a lease. A delayed invocation cannot unlock
+    // a replacement worker, recreate a deleted row, or alter its result.
+    try {
+      await db.send(new UpdateCommand({ TableName: required("LAB_JOB_TABLE"), Key: { pk: job.pk },
+        ConditionExpression: "attribute_exists(pk) AND leaseToken = :token",
+        UpdateExpression: "REMOVE leaseToken, leaseUntil", ExpressionAttributeValues: { ":token": leaseToken } }));
+    } catch {
+      // Ambiguous network errors leave the lease to expire; never unlock blindly.
+      console.warn("lab_worker_lease_release_unconfirmed");
+    }
     const detail = error && typeof error === "object" ? error as Record<string, unknown> : {};
     const errorName = typeof detail.name === "string" ? detail.name : "UnknownError";
     const errorCode = typeof detail.Code === "string"

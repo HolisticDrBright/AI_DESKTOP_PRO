@@ -1,5 +1,6 @@
 import type {ProductionClinicalRequestContext} from './aws-identity-consent';
 import {createOwnedConsumerRecordsAdapter,OwnedStorageError,type OwnedRecord,type OwnedStorageScope} from './owned-consumer-records';
+import {personalPlanContext} from './owned-chat-personal-plan';
 
 /** Initial personal context contract. Does not manufacture lab observations,
  * diagnosed patterns, demographics, clinician approval, or recovery scores. */
@@ -14,6 +15,14 @@ export async function buildOwnedChatContext(adapter:ReturnType<typeof createOwne
   let cycle:Record<string,unknown>|null=null;let wearables:Record<string,unknown>|null=null;
   let recentReports:Record<string,unknown>[]=[];
   let labs:Record<string,unknown>[]=[];
+  let personalPlan:ReturnType<typeof personalPlanContext>=null;
+  if(allowed.includes('protocols_supplements')){
+    const consent=await adapter.consentState(consentContext,'protocols_supplements');
+    if(consent.activeRevision){
+      used.set('protocols_supplements',consent.activeRevision);
+      personalPlan=personalPlanContext(await adapter.recent(contextData,{collection:'protocols',limit:100}));
+    }
+  }
   if(allowed.includes('lab_history')){
     const consent=await adapter.consentState(consentContext,'lab_history');
     if(consent.activeRevision){
@@ -78,7 +87,7 @@ export async function buildOwnedChatContext(adapter:ReturnType<typeof createOwne
   if(finalAi.activeRevision!==ai.activeRevision)throw new OwnedStorageError('consent_required');
   if(formsRevision && (await adapter.consentState(consentContext,'forms_checkins')).activeRevision!==formsRevision)throw new OwnedStorageError('consent_required');
   for(const [scope,revision]of used){if((await adapter.consentState(consentContext,scope)).activeRevision!==revision)throw new OwnedStorageError('consent_required');}
-  return {profile,cycle,wearables,labs,protocol:null,tcm:null,conversationMemory:null,promotedPatterns:[],careTeam:null,recentReports,governedOptions:[]};
+  return {profile,cycle,wearables,labs,personalPlan,protocol:null,tcm:null,conversationMemory:null,promotedPatterns:[],careTeam:null,recentReports,governedOptions:[]};
 }
 function reports(rows:OwnedRecord[],now:number):Record<string,unknown>[]{
   return rows.map(row=>{

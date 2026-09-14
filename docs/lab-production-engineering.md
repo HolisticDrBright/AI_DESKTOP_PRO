@@ -49,7 +49,7 @@ existing synthetic document/job API into a production clinical service.
 
 - Convert the lab API/ownership/consent contract and routing to the approved standalone production consumer model; this extension is still synthetic-only.
 - Supply and qualify an actually reviewed reference release and independently verified source extraction. Qualified measurements need an explicit data model if they are to be supported automatically.
-- Add a background recovery policy and concurrent worker leases where required. Current guards prevent terminal ledger corruption; they do not guarantee exactly-once external model calls.
+- Concurrent worker leases and pass-bound failures are implemented in the [September 14 source increment](core-plan-context-and-worker-leases.md), not deployed. Qualify coordinated rollout, expired-lease recovery and background recovery operationally; this does not guarantee exactly-once external model calls.
 - Qualify production voice identity, consent and retention. Durable synthetic voice start/status/cancel and late-transcript cleanup are implemented; that does not authorize a production voice deployment.
 - Finish end-to-end privacy fulfillment, provider acceptance, independent Core production scope, release/security/restore testing and physical iOS/Android acceptance.
 

@@ -12,7 +12,8 @@ vi.mock("@aws-sdk/client-s3", () => {
 });
 vi.mock("@aws-sdk/client-sfn", () => ({ SFNClient: class { send = mock.sfn; }, StartExecutionCommand: class { constructor(public input: Record<string, unknown>) {} } }));
 import { createAwsLabAnalysisApiHandler } from "./aws-lab-analysis-api";
-import { createAwsLabAnalysisWorker } from "./aws-lab-analysis-worker";
+import { createAwsLabAnalysisWorker, LAB_WORKER_LEASE_SECONDS } from "./aws-lab-analysis-worker";
+import { readFileSync } from "node:fs";
 const sub = "11111111-1111-4111-8111-111111111111";
 const jobId = "22222222-2222-4222-8222-222222222222";
 function event(method: string, path: string, body?: unknown) {
@@ -80,8 +81,66 @@ describe("durable lab job lifecycle", () => {
   });
   test("late failure callbacks cannot recreate deleted jobs or overwrite completion", async () => {
     mock.db.mockRejectedValue(Object.assign(new Error("fixture"), { name: "ConditionalCheckFailedException" }));
-    expect(await createAwsLabAnalysisWorker({ jobId, fail: true })).toMatchObject({ skipped: true });
+    expect(await createAwsLabAnalysisWorker({ jobId, pass: 0, fail: true })).toMatchObject({ skipped: true });
     expect(mock.db.mock.calls[0][0].input.ConditionExpression).toContain("attribute_exists(pk)");
     expect(mock.db.mock.calls[0][0].input.ConditionExpression).toContain("#state <> :completed");
+    expect(mock.db.mock.calls[0][0].input.ConditionExpression).toContain("passesCompleted = :pass");
+    expect(mock.db.mock.calls[0][0].input.ConditionExpression).toContain("leaseUntil <= :epoch");
+  });
+  test("failure callbacks without an originating pass are refused", async () => {
+    await expect(createAwsLabAnalysisWorker({ jobId, fail: true })).rejects.toThrow("worker_failure_pass_required");
+    expect(mock.db).not.toHaveBeenCalled();
+  });
+  test("a lease contention does not execute extraction or overwrite the active lease", async () => {
+    mock.db.mockResolvedValueOnce({ Item: job() }).mockRejectedValueOnce(Object.assign(new Error("fixture"), { name: "ConditionalCheckFailedException" }));
+    await expect(createAwsLabAnalysisWorker({ jobId, pass: 0 })).rejects.toMatchObject({ name: "lab_worker_busy" });
+    expect(mock.s3).not.toHaveBeenCalled();
+    expect(mock.db).toHaveBeenCalledTimes(2);
+    const claim = mock.db.mock.calls[1][0].input;
+    expect(claim.ConditionExpression).toContain("passesCompleted = :pass");
+    expect(claim.ConditionExpression).toContain("leaseUntil <= :epoch");
+    expect(claim.ExpressionAttributeValues[":until"] - claim.ExpressionAttributeValues[":epoch"]).toBe(LAB_WORKER_LEASE_SECONDS * 1000);
+  });
+  test("successful completion is fenced to the same unexpired lease and pass", async () => {
+    mock.db.mockResolvedValueOnce({ Item: job() }).mockResolvedValue({});
+    expect(await createAwsLabAnalysisWorker({ jobId, pass: 0 })).toMatchObject({ completed: true });
+    const claim = mock.db.mock.calls[1][0].input;
+    const complete = mock.db.mock.calls[2][0].input;
+    expect(complete.ConditionExpression).toContain("leaseToken = :token AND leaseUntil > :epoch");
+    expect(complete.ConditionExpression).toContain("passesCompleted = :pass");
+    expect(complete.ExpressionAttributeValues[":token"]).toBe(claim.ExpressionAttributeValues[":token"]);
+    expect(complete.UpdateExpression).toContain("REMOVE leaseToken, leaseUntil");
+    expect(mock.s3).toHaveBeenCalledOnce();
+  });
+  test("provider failure only releases the failing worker's own lease", async () => {
+    mock.db.mockResolvedValueOnce({ Item: job() }).mockResolvedValue({});
+    mock.s3.mockRejectedValueOnce(new Error("fixture storage error"));
+    await expect(createAwsLabAnalysisWorker({ jobId, pass: 0 })).rejects.toThrow("internal_failure");
+    const claim = mock.db.mock.calls[1][0].input;
+    const release = mock.db.mock.calls[2][0].input;
+    expect(release.ConditionExpression).toBe("attribute_exists(pk) AND leaseToken = :token");
+    expect(release.ExpressionAttributeValues[":token"]).toBe(claim.ExpressionAttributeValues[":token"]);
+    expect(release.UpdateExpression).toBe("REMOVE leaseToken, leaseUntil");
+  });
+  test("a stale completion cannot report success or release a replacement owner's lease", async () => {
+    const rejected = Object.assign(new Error("fixture"), { name: "ConditionalCheckFailedException" });
+    mock.db.mockResolvedValueOnce({ Item: job() }).mockResolvedValueOnce({}).mockRejectedValue(rejected);
+    await expect(createAwsLabAnalysisWorker({ jobId, pass: 0 })).rejects.toThrow("internal_failure");
+    const complete = mock.db.mock.calls[2][0].input;
+    const release = mock.db.mock.calls[3][0].input;
+    expect(complete.ConditionExpression).toContain("leaseToken = :token");
+    expect(release.ExpressionAttributeValues[":token"]).toBe(complete.ExpressionAttributeValues[":token"]);
+  });
+  test("workflow retry horizon outlasts leases and failure callbacks bind the originating pass", () => {
+    const template = JSON.parse(readFileSync("infra/aws-clinical-core/lab-analysis-extension.json", "utf8"));
+    expect(template.Resources.LabWorkerFunction.Properties.Timeout).toBeLessThan(LAB_WORKER_LEASE_SECONDS);
+    const resource = Object.values(template.Resources).find((row) => (row as { Type: string }).Type === "AWS::StepFunctions::StateMachine") as { Properties: { DefinitionString: { "Fn::Sub": string } } };
+    const states = JSON.parse(resource.Properties.DefinitionString["Fn::Sub"]).States;
+    for (let pass = 0; pass < 5; pass++) {
+      const retry = states[`Pass${pass}`].Retry[0];
+      expect(retry.ErrorEquals).toEqual(["lab_worker_busy"]);
+      expect(retry.IntervalSeconds * retry.MaxAttempts).toBeGreaterThan(LAB_WORKER_LEASE_SECONDS);
+      expect(states[states[`Pass${pass}`].Catch[0].Next].Parameters.pass).toBe(pass);
+    }
   });
 });
