@@ -143,3 +143,23 @@ The follow-up web release is now deployed:
 Read docs/durable-lab-deletion-cleanup.md for tombstone/backup retention,
 operational replay and rollback boundaries. This is per-analysis object cleanup,
 not account-wide erasure or completion of original phases 2/3/6.
+
+### Live late-upload acceptance completed
+
+Both indexes subsequently became ACTIVE. The extended hosted script completed
+**23 checks**, including real Cognito authentication/isolation, immutable request
+replay, renewal/receipt recovery, encrypted non-overwriting fixture uploads,
+the awaiting-upload failure-callback fence, owned deletion and metadata-only
+durable watch. The previously issued URL successfully recreated the fixture
+after deletion; it was then removed automatically without another delete request.
+The deleted job still returned 404. This demonstrates the late-write path using
+actual AWS delivery/cleanup, not mocked storage.
+
+Both newly created synthetic test identities were signed out and disabled;
+audit/request/cleanup records retained intentionally. The failure queue reported
+zero visible and zero in-flight messages after the test. Foundation PHI false
+and synthetic_only reconfirmed. No complete-upload/model call, real data, email,
+payment, account-wide erasure or mobile build was performed. Notifications remain
+unconfigured pending an approved recipient. Backend CI35036314103 was still
+running at this final live-test capture; do not confuse this manual acceptance
+with a completed CI run or physical-device qualification.
