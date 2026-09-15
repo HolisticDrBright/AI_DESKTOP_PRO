@@ -56,6 +56,12 @@ describe('immutable lab creation request ledger',()=>{
     await expect(t.api.discover(scope,id)).rejects.toMatchObject({code:'lab_request_gone'});
     await expect(t.api.create(scope,request,'saved',{},job('new'))).rejects.toMatchObject({code:'lab_request_gone'});expect(t.rows.size).toBe(1);
   });
+  it('does not expose or replay a job after deletion has been claimed',async()=>{
+    const t=setup();await t.api.create(scope,request,'saved',{},job());t.rows.get('job#a')!.state='deleting';
+    await expect(t.api.discover(scope,id)).rejects.toMatchObject({code:'lab_request_gone'});
+    await expect(t.api.create(scope,request,'saved',{},job('replacement'))).rejects.toMatchObject({code:'lab_request_gone'});
+    expect(t.rows.has('job#replacement')).toBe(false);
+  });
   it('refuses expired jobs and requests even after TTL removes all metadata',async()=>{
     const t=setup();await t.api.create(scope,request,'saved',{},job());t.time(now+601_000);
     await expect(t.api.discover(scope,id)).rejects.toMatchObject({code:'lab_request_gone'});

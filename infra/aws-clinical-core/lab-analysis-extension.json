@@ -11,6 +11,7 @@
     }
   },
   "Parameters": {
+    "LabCleanupAlarmTopicArn": {"Type":"String","Default":"","AllowedPattern":"^$|^arn:aws:sns:[a-z0-9-]+:[0-9]{12}:[A-Za-z0-9_-]+$"},
     "KnowledgeReleaseMode": {"Type":"String","Default":"disabled","AllowedValues":["disabled","reviewed_release"]},
     "KnowledgeReleaseBucket": {"Type":"String","Default":"","AllowedPattern":"^$|^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"},
     "KnowledgeReleaseKey": {"Type":"String","Default":"","AllowedPattern":"^$|^reviewed-knowledge/[A-Za-z0-9_./-]+\\.json$"},
@@ -47,7 +48,7 @@
       { "Assert": { "Fn::Not": [{ "Fn::Equals": [{ "Ref": "LabRangeSignerPublicKeyPem" }, ""] }] }, "AssertDescription": "Reviewed range public signing key is required." }
     ] }
   },
-  "Conditions": {"ReviewedRanges":{"Fn::Equals":[{"Ref":"LabRangeMode"},"reviewed_release"]},"ReviewedKnowledge":{"Fn::Equals":[{"Ref":"KnowledgeReleaseMode"},"reviewed_release"]}},
+  "Conditions": {"HasCleanupAlarmTopic":{"Fn::Not":[{"Fn::Equals":[{"Ref":"LabCleanupAlarmTopicArn"},""]}]},"ReviewedRanges":{"Fn::Equals":[{"Ref":"LabRangeMode"},"reviewed_release"]},"ReviewedKnowledge":{"Fn::Equals":[{"Ref":"KnowledgeReleaseMode"},"reviewed_release"]}},
   "Resources": {
     "LabJobTable": {
       "Type": "AWS::DynamoDB::Table",
@@ -55,9 +56,9 @@
       "UpdateReplacePolicy": "Delete",
       "Properties": {
         "BillingMode": "PAY_PER_REQUEST",
-        "AttributeDefinitions": [{ "AttributeName": "pk", "AttributeType": "S" }, { "AttributeName": "inventoryOwner", "AttributeType": "S" }, { "AttributeName": "inventoryOrder", "AttributeType": "S" }],
+        "AttributeDefinitions": [{ "AttributeName": "pk", "AttributeType": "S" }, { "AttributeName": "inventoryOwner", "AttributeType": "S" }, { "AttributeName": "inventoryOrder", "AttributeType": "S" }, {"AttributeName":"cleanupPartition","AttributeType":"S"}, {"AttributeName":"cleanupDue","AttributeType":"S"}],
         "KeySchema": [{ "AttributeName": "pk", "KeyType": "HASH" }],
-        "GlobalSecondaryIndexes": [{ "IndexName": "LabOwnerInventory", "KeySchema": [{ "AttributeName": "inventoryOwner", "KeyType": "HASH" }, { "AttributeName": "inventoryOrder", "KeyType": "RANGE" }], "Projection": { "ProjectionType": "KEYS_ONLY" } }],
+        "GlobalSecondaryIndexes": [{ "IndexName": "LabOwnerInventory", "KeySchema": [{ "AttributeName": "inventoryOwner", "KeyType": "HASH" }, { "AttributeName": "inventoryOrder", "KeyType": "RANGE" }], "Projection": { "ProjectionType": "KEYS_ONLY" } }, {"IndexName":"LabCleanupDue","KeySchema":[{"AttributeName":"cleanupPartition","KeyType":"HASH"},{"AttributeName":"cleanupDue","KeyType":"RANGE"}],"Projection":{"ProjectionType":"KEYS_ONLY"}}],
         "PointInTimeRecoverySpecification": { "PointInTimeRecoveryEnabled": true },
         "SSESpecification": { "SSEEnabled": true, "SSEType": "KMS", "KMSMasterKeyId": { "Ref": "ClinicalCoreKeyArn" } },
         "TimeToLiveSpecification": { "AttributeName": "expiresAt", "Enabled": true },
@@ -72,6 +73,7 @@
       "DeletionPolicy": "Delete",
       "UpdateReplacePolicy": "Delete",
       "Properties": {
+        "NotificationConfiguration": {"EventBridgeConfiguration":{"EventBridgeEnabled":true}},
         "BucketEncryption": { "ServerSideEncryptionConfiguration": [{ "BucketKeyEnabled": true, "ServerSideEncryptionByDefault": { "KMSMasterKeyID": { "Ref": "ClinicalCoreKeyArn" }, "SSEAlgorithm": "aws:kms" } }] },
         "CorsConfiguration": { "CorsRules": [{ "AllowedHeaders": ["*"], "AllowedMethods": ["PUT"], "AllowedOrigins": ["http://localhost:8081", "http://127.0.0.1:8081", "http://localhost:19006", "http://127.0.0.1:19006"], "ExposedHeaders": ["ETag"], "MaxAge": 300 }] },
         "LifecycleConfiguration": { "Rules": [{ "Id": "ExpireSyntheticLabData", "Status": "Enabled", "ExpirationInDays": 7, "NoncurrentVersionExpiration": { "NoncurrentDays": 7 }, "AbortIncompleteMultipartUpload": { "DaysAfterInitiation": 1 } }] },
@@ -244,6 +246,97 @@
     "LabInventorySyntheticRoute": {"Type":"AWS::ApiGatewayV2::Route","Properties":{"ApiId":{"Ref":"ClinicalApiId"},"RouteKey":"GET /clinical-core/synthetic-session/labs/inventory","AuthorizationType":"CUSTOM","AuthorizerId":{"Ref":"LabSyntheticSessionAuthorizer"},"Target":{"Fn::Sub":"integrations/${LabApiIntegration}"}}},
     "LabRecoveryConsumerRoute": {"Type":"AWS::ApiGatewayV2::Route","Properties":{"ApiId":{"Ref":"ClinicalApiId"},"RouteKey":"GET /clinical-core/consumer/labs/jobs/{jobId}/recovery","AuthorizationType":"JWT","AuthorizerId":{"Ref":"LabConsumerAuthorizer"},"Target":{"Fn::Sub":"integrations/${LabApiIntegration}"}}},
     "LabRecoverySyntheticRoute": {"Type":"AWS::ApiGatewayV2::Route","Properties":{"ApiId":{"Ref":"ClinicalApiId"},"RouteKey":"GET /clinical-core/synthetic-session/labs/jobs/{jobId}/recovery","AuthorizationType":"CUSTOM","AuthorizerId":{"Ref":"LabSyntheticSessionAuthorizer"},"Target":{"Fn::Sub":"integrations/${LabApiIntegration}"}}},
+    "LabCleanupFailureQueue": {
+      "Type":"AWS::SQS::Queue",
+      "Properties":{"SqsManagedSseEnabled":true,"MessageRetentionPeriod":1209600,
+        "Tags":[{"Key":"Environment","Value":"synthetic-staging"},{"Key":"DataClassification","Value":"synthetic_only"}]}
+    },
+    "LabCleanupLogGroup": {
+      "Type":"AWS::Logs::LogGroup",
+      "Properties":{"LogGroupName":{"Fn::Sub":"/ai-clinical-core/synthetic-staging/lab-cleanup-${ClinicalApiId}"},"KmsKeyId":{"Ref":"ClinicalCoreKeyArn"},"RetentionInDays":14}
+    },
+    "LabCleanupRole": {
+      "Type":"AWS::IAM::Role",
+      "Properties":{
+        "AssumeRolePolicyDocument":{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"lambda.amazonaws.com"},"Action":"sts:AssumeRole"}]},
+        "Policies":[{"PolicyName":"ScopedLabCleanup","PolicyDocument":{"Version":"2012-10-17","Statement":[
+          {"Effect":"Allow","Action":["dynamodb:GetItem","dynamodb:UpdateItem","dynamodb:DeleteItem"],"Resource":{"Fn::GetAtt":["LabJobTable","Arn"]},"Condition":{"ForAllValues:StringLike":{"dynamodb:LeadingKeys":["job#*","cleanup#*"]}}},
+          {"Effect":"Allow","Action":["dynamodb:Query"],"Resource":{"Fn::Sub":"${LabJobTable.Arn}/index/LabCleanupDue"}},
+          {"Effect":"Allow","Action":["s3:ListBucketVersions"],"Resource":{"Fn::GetAtt":["LabDocumentsBucket","Arn"]},"Condition":{"StringLike":{"s3:prefix":["synthetic-labs/*"]}}},
+          {"Effect":"Allow","Action":["s3:DeleteObjectVersion"],"Resource":{"Fn::Sub":"${LabDocumentsBucket.Arn}/synthetic-labs/*"}},
+          {"Effect":"Allow","Action":["kms:Decrypt","kms:GenerateDataKey"],"Resource":{"Ref":"ClinicalCoreKeyArn"}},
+          {"Effect":"Allow","Action":["logs:CreateLogStream","logs:PutLogEvents"],"Resource":{"Fn::GetAtt":["LabCleanupLogGroup","Arn"]}},
+          {"Effect":"Allow","Action":["sqs:SendMessage"],"Resource":{"Fn::GetAtt":["LabCleanupFailureQueue","Arn"]}}
+        ]}}]
+      }
+    },
+    "LabCleanupFunction": {
+      "Type":"AWS::Lambda::Function",
+      "Properties":{
+        "FunctionName":{"Fn::Sub":"${ClinicalApiId}-synthetic-lab-cleanup"},
+        "Runtime":"nodejs22.x","Architectures":["arm64"],"Handler":"index.cleanup",
+        "Role":{"Fn::GetAtt":["LabCleanupRole","Arn"]},"MemorySize":256,"Timeout":120,
+        "Code":{"S3Bucket":{"Ref":"LambdaCodeBucket"},"S3Key":{"Ref":"ApiCodeKey"}},
+        "Environment":{"Variables":{"LAB_JOB_TABLE":{"Ref":"LabJobTable"},"LAB_DOCUMENT_BUCKET":{"Ref":"LabDocumentsBucket"},"PHI_ALLOWED":"false","DATA_CLASSIFICATION":"synthetic_only"}},
+        "LoggingConfig":{"LogGroup":{"Ref":"LabCleanupLogGroup"},"LogFormat":"JSON","ApplicationLogLevel":"INFO","SystemLogLevel":"WARN"}
+      }
+    },
+    "LabCleanupAsyncFailure": {
+      "Type":"AWS::Lambda::EventInvokeConfig",
+      "Properties":{"FunctionName":{"Ref":"LabCleanupFunction"},"Qualifier":"$LATEST","MaximumRetryAttempts":2,"MaximumEventAgeInSeconds":21600,
+        "DestinationConfig":{"OnFailure":{"Destination":{"Fn::GetAtt":["LabCleanupFailureQueue","Arn"]}}}}
+    },
+    "LabCleanupObjectRule": {
+      "Type":"AWS::Events::Rule",
+      "Properties":{
+        "State":"ENABLED",
+        "EventPattern":{"source":["aws.s3"],"detail-type":["Object Created"],"account":[{"Ref":"AWS::AccountId"}],
+          "detail":{"bucket":{"name":[{"Ref":"LabDocumentsBucket"}]},"object":{"key":[{"prefix":"synthetic-labs/"}]}}},
+        "Targets":[{"Id":"LabLateUploadCleanup","Arn":{"Fn::GetAtt":["LabCleanupFunction","Arn"]},
+          "InputTransformer":{"InputPathsMap":{"bucket":"$.detail.bucket.name","key":"$.detail.object.key"},"InputTemplate":"{\"kind\":\"created\",\"bucket\":<bucket>,\"key\":<key>}"},
+          "RetryPolicy":{"MaximumRetryAttempts":185,"MaximumEventAgeInSeconds":86400},
+          "DeadLetterConfig":{"Arn":{"Fn::GetAtt":["LabCleanupFailureQueue","Arn"]}}}]
+      }
+    },
+    "LabCleanupSweepRule": {
+      "Type":"AWS::Events::Rule",
+      "Properties":{"State":"ENABLED","ScheduleExpression":"rate(5 minutes)",
+        "Targets":[{"Id":"LabDeletionRetry","Arn":{"Fn::GetAtt":["LabCleanupFunction","Arn"]},"Input":"{\"kind\":\"sweep\"}",
+          "RetryPolicy":{"MaximumRetryAttempts":185,"MaximumEventAgeInSeconds":86400},
+          "DeadLetterConfig":{"Arn":{"Fn::GetAtt":["LabCleanupFailureQueue","Arn"]}}}]}
+    },
+    "LabCleanupFailureQueuePolicy": {
+      "Type":"AWS::SQS::QueuePolicy",
+      "Properties":{"Queues":[{"Ref":"LabCleanupFailureQueue"}],"PolicyDocument":{"Version":"2012-10-17","Statement":[
+        {"Effect":"Allow","Principal":{"Service":"events.amazonaws.com"},"Action":"sqs:SendMessage","Resource":{"Fn::GetAtt":["LabCleanupFailureQueue","Arn"]},
+          "Condition":{"ArnEquals":{"aws:SourceArn":[{"Fn::GetAtt":["LabCleanupObjectRule","Arn"]},{"Fn::GetAtt":["LabCleanupSweepRule","Arn"]}]}}},
+        {"Effect":"Deny","Principal":"*","Action":"sqs:*","Resource":{"Fn::GetAtt":["LabCleanupFailureQueue","Arn"]},"Condition":{"Bool":{"aws:SecureTransport":"false"}}}
+      ]}}
+    },
+    "LabCleanupObjectPermission": {
+      "Type":"AWS::Lambda::Permission",
+      "Properties":{"FunctionName":{"Ref":"LabCleanupFunction"},"Action":"lambda:InvokeFunction","Principal":"events.amazonaws.com",
+        "SourceArn":{"Fn::GetAtt":["LabCleanupObjectRule","Arn"]},"SourceAccount":{"Ref":"AWS::AccountId"}}
+    },
+    "LabCleanupSweepPermission": {
+      "Type":"AWS::Lambda::Permission",
+      "Properties":{"FunctionName":{"Ref":"LabCleanupFunction"},"Action":"lambda:InvokeFunction","Principal":"events.amazonaws.com",
+        "SourceArn":{"Fn::GetAtt":["LabCleanupSweepRule","Arn"]},"SourceAccount":{"Ref":"AWS::AccountId"}}
+    },
+    "LabCleanupFailureAlarm": {
+      "Type":"AWS::CloudWatch::Alarm",
+      "Properties":{"AlarmDescription":"Synthetic lab deletion cleanup failed; investigate the durable outbox and failure queue. No patient data in alarms.",
+        "Namespace":"AWS/Lambda","MetricName":"Errors","Dimensions":[{"Name":"FunctionName","Value":{"Ref":"LabCleanupFunction"}}],
+        "Statistic":"Sum","Period":300,"EvaluationPeriods":1,"Threshold":1,"ComparisonOperator":"GreaterThanOrEqualToThreshold","TreatMissingData":"notBreaching",
+        "AlarmActions":{"Fn::If":["HasCleanupAlarmTopic",[{"Ref":"LabCleanupAlarmTopicArn"}],{"Ref":"AWS::NoValue"}]}}
+    },
+    "LabCleanupQueueAlarm": {
+      "Type":"AWS::CloudWatch::Alarm",
+      "Properties":{"AlarmDescription":"Synthetic lab cleanup delivery or execution requires operator replay.",
+        "Namespace":"AWS/SQS","MetricName":"ApproximateNumberOfMessagesVisible","Dimensions":[{"Name":"QueueName","Value":{"Fn::GetAtt":["LabCleanupFailureQueue","QueueName"]}}],
+        "Statistic":"Maximum","Period":60,"EvaluationPeriods":1,"Threshold":1,"ComparisonOperator":"GreaterThanOrEqualToThreshold","TreatMissingData":"notBreaching",
+        "AlarmActions":{"Fn::If":["HasCleanupAlarmTopic",[{"Ref":"LabCleanupAlarmTopicArn"}],{"Ref":"AWS::NoValue"}]}}
+    },
     "LabApiInvokePermission": {
       "Type": "AWS::Lambda::Permission",
       "Properties": { "Action": "lambda:InvokeFunction", "FunctionName": { "Ref": "LabApiFunction" }, "Principal": "apigateway.amazonaws.com", "SourceArn": { "Fn::Sub": "arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${ClinicalApiId}/*/*/clinical-core/consumer/labs/*" } }
@@ -254,6 +347,9 @@
     }
   },
   "Outputs": {
+    "LabCleanupFunctionName":{"Value":{"Ref":"LabCleanupFunction"}},
+    "LabCleanupFailureQueueUrl":{"Value":{"Ref":"LabCleanupFailureQueue"}},
+    "LabCleanupNotificationsConfigured":{"Value":{"Fn::If":["HasCleanupAlarmTopic","true","false"]}},
     "ContractVersion": { "Value": "lab-analysis/1" },
     "LabJobTableName": { "Value": { "Ref": "LabJobTable" } },
     "LabDocumentsBucketName": { "Value": { "Ref": "LabDocumentsBucket" } },

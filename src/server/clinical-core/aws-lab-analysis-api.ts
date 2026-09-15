@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DeleteCommand, GetCommand, PutCommand, UpdateCommand, DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
-import { DeleteObjectsCommand, HeadObjectCommand, ListObjectsV2Command, ListObjectVersionsCommand, S3Client } from "@aws-sdk/client-s3";
+import { GetCommand, PutCommand, UpdateCommand, DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
+import { HeadObjectCommand, ListObjectsV2Command, S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { SFNClient, StartExecutionCommand } from "@aws-sdk/client-sfn";
@@ -9,6 +9,7 @@ import { collectionRangeContextSchema, type CollectionRangeContext } from "./lab
 import { resolveLabSourcePanel, type LabSourcePanel } from "./lab-source-panel";
 import { labRequestLedger, LabRequestError, requestIdentity, REQUEST_RECOVERY_VERSION, REQUEST_RETIREMENT_VERSION } from './lab-request-ledger';
 import { inventoryStamp, labRecoveryDescriptor, listLabInventory, LAB_INVENTORY_VERSION } from './lab-job-inventory';
+import { claimLabDeletion, reconcileLabDeletion } from './lab-deletion-cleanup';
 
 const CONTRACT_VERSION = "lab-analysis/1";
 const MAX_BODY_BYTES = 256 * 1024;
@@ -326,7 +327,7 @@ function status(job: Job) {
   };
 }
 
-async function ownedJob(jobId: string, identity: Claims): Promise<Job | null> {
+async function ownedJob(jobId: string, identity: Claims, includeDeleting = false): Promise<Job | null> {
   if (!/^[0-9a-f-]{36}$/i.test(jobId)) return null;
   const result = await db.send(new GetCommand({
     TableName: required("LAB_JOB_TABLE"),
@@ -334,59 +335,18 @@ async function ownedJob(jobId: string, identity: Claims): Promise<Job | null> {
     ConsistentRead: true,
   }));
   const job = result.Item as Job | undefined;
-  return job?.ownerSub === identity.sub && job.organizationId === identity['custom:organization_id']
+  return (includeDeleting || job?.state !== 'deleting') && job?.ownerSub === identity.sub && job.organizationId === identity['custom:organization_id']
     && job.personId === identity['custom:person_id'] ? job : null;
 }
 
-async function purgePrefix(bucket: string, prefix: string): Promise<void> {
-  let keyMarker: string | undefined;
-  let versionIdMarker: string | undefined;
-  do {
-    const page = await s3.send(new ListObjectVersionsCommand({
-      Bucket: bucket,
-      Prefix: prefix,
-      ...(keyMarker ? { KeyMarker: keyMarker } : {}),
-      ...(versionIdMarker ? { VersionIdMarker: versionIdMarker } : {}),
-    }));
-    const objects = [
-      ...(page.Versions ?? []).map((row) => ({ Key: row.Key!, VersionId: row.VersionId! })),
-      ...(page.DeleteMarkers ?? []).map((row) => ({ Key: row.Key!, VersionId: row.VersionId! })),
-    ];
-    if (objects.length > 0) {
-      const deleted = await s3.send(new DeleteObjectsCommand({ Bucket: bucket, Delete: { Objects: objects, Quiet: true } }));
-      if (deleted.Errors?.length) throw new Error("lab_object_deletion_incomplete");
-    }
-    keyMarker = page.IsTruncated ? page.NextKeyMarker : undefined;
-    versionIdMarker = page.IsTruncated ? page.NextVersionIdMarker : undefined;
-  } while (keyMarker || versionIdMarker);
-}
-
 async function deleteJob(identity: Claims, jobId: string) {
-  const job = await ownedJob(jobId, identity);
-  if (!job) return json(200, { contractVersion: CONTRACT_VERSION, jobId, deleted: true });
-  if (!["awaiting_upload", "completed", "needs_review", "failed", "deleting"].includes(job.state)) return refusal(409);
-
-  // Claim before purge, so upload completion cannot race a stale eligibility read.
-  await db.send(new UpdateCommand({
-    TableName: required('LAB_JOB_TABLE'), Key: {pk:job.pk},
-    UpdateExpression:'SET #state = :deleting, updatedAt = :now',
-    ConditionExpression:'ownerSub = :owner AND organizationId = :org AND personId = :person AND #state IN (:awaiting, :completed, :review, :failed, :deleting) AND (attribute_not_exists(leaseUntil) OR leaseUntil <= :epoch)',
-    ExpressionAttributeNames:{'#state':'state'},ExpressionAttributeValues:{':owner':identity.sub,':org':identity['custom:organization_id'],
-      ':person':identity['custom:person_id'],':awaiting':'awaiting_upload',':completed':'completed',':review':'needs_review',
-      ':failed':'failed',':deleting':'deleting',':now':new Date().toISOString(),':epoch':Date.now()},
-  }));
-
-  const bucket = required("LAB_DOCUMENT_BUCKET");
-  await purgePrefix(bucket, `synthetic-labs/${job.organizationId}/${job.ownerSub}/${jobId}/`);
-  await purgePrefix(bucket, `synthetic-labs/artifacts/${jobId}/`);
-  await db.send(new DeleteCommand({
-    TableName: required("LAB_JOB_TABLE"),
-    Key: { pk: job.pk },
-    ConditionExpression: "attribute_not_exists(pk) OR (ownerSub = :owner AND organizationId = :org AND personId = :person AND #state = :deleting)",
-    ExpressionAttributeNames:{'#state':'state'},
-    ExpressionAttributeValues: { ":owner": identity.sub,':org':identity['custom:organization_id'],':person':identity['custom:person_id'],':deleting':'deleting' },
-  }));
-  return json(200, { contractVersion: CONTRACT_VERSION, jobId, deleted: true });
+  const job = await ownedJob(jobId, identity, true);
+  if (job && !["awaiting_upload", "completed", "needs_review", "failed", "deleting"].includes(job.state)) return refusal(409);
+  const deps={db,s3,table:required('LAB_JOB_TABLE'),bucket:required('LAB_DOCUMENT_BUCKET')};
+  const scope={ownerSub:identity.sub,organizationId:identity['custom:organization_id'],personId:identity['custom:person_id']};
+  if(job)await claimLabDeletion(deps,scope,jobId);
+  const cleanup=await reconcileLabDeletion(deps,jobId,scope);
+  return json(200, { contractVersion: CONTRACT_VERSION, jobId, deleted: true, ...cleanup });
 }
 
 async function createJob(event: ApiEvent, identity: Claims) {

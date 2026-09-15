@@ -38,7 +38,7 @@ foreach ($resource in (AwsJson @('cloudformation','describe-stack-resources','--
   $resourceMap[$resource.LogicalResourceId] = $resource.PhysicalResourceId
 }
 # Preserve even out-of-band edits by refusing drift, rather than silently erasing them.
-foreach ($logical in @('LabApiFunction','LabWorkerFunction','LabSyntheticAuthorizerFunction')) {
+foreach ($logical in @($live.Resources.PSObject.Properties | Where-Object {$_.Value.Type -eq 'AWS::Lambda::Function'} | ForEach-Object Name)) {
   $actual = AwsJson @('lambda','get-function-configuration','--function-name',$resourceMap[$logical])
   $declared = $live.Resources.$logical.Properties.Environment.Variables
   if (@($actual.Environment.Variables.PSObject.Properties).Count -ne @($declared.PSObject.Properties).Count) { throw "Environment drift in $logical." }
@@ -68,9 +68,10 @@ foreach ($name in $parameters.Keys) {
   if ($candidate.Parameters.PSObject.Properties.Name -notcontains $name) { throw 'Candidate removed an existing parameter.' }
 }
 foreach ($name in $candidate.Parameters.PSObject.Properties.Name) {
-  if (-not $parameters.ContainsKey($name) -and $name -notin @('KnowledgeReleaseMode','KnowledgeReleaseBucket','KnowledgeReleaseKey','KnowledgeReleaseObjectVersion','KnowledgeReleaseSha256','KnowledgeSourcePackageSha256','KnowledgeSignerPublicKeyPem')) { throw 'Unreviewed new parameter.' }
+  if (-not $parameters.ContainsKey($name) -and $name -notin @('KnowledgeReleaseMode','KnowledgeReleaseBucket','KnowledgeReleaseKey','KnowledgeReleaseObjectVersion','KnowledgeReleaseSha256','KnowledgeSourcePackageSha256','KnowledgeSignerPublicKeyPem','LabCleanupAlarmTopicArn')) { throw 'Unreviewed new parameter.' }
 }
 if ($candidate.Parameters.KnowledgeReleaseMode.Default -ne 'disabled') { throw 'Knowledge activation is not authorized.' }
+if (-not $parameters.ContainsKey('LabCleanupAlarmTopicArn') -and $candidate.Parameters.LabCleanupAlarmTopicArn.Default -ne '') { throw 'An alarm recipient cannot be activated by a new default.' }
 & npm run typecheck
 if ($LASTEXITCODE -ne 0) { throw 'Typecheck failed.' }
 & npm run build:aws-lab-analysis

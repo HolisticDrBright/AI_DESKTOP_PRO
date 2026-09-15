@@ -773,9 +773,10 @@ export async function createAwsLabAnalysisWorker(event: { jobId?: string; pass?:
     const category = allowed.has(event.failureCategory ?? "") ? event.failureCategory : "internal_failure";
     try {
       await db.send(new UpdateCommand({ TableName: required("LAB_JOB_TABLE"), Key: { pk: `job#${jobId}` },
-        ConditionExpression: "attribute_exists(pk) AND #state <> :completed AND passesCompleted = :pass AND (attribute_not_exists(leaseUntil) OR leaseUntil <= :epoch)",
+        ConditionExpression: "attribute_exists(pk) AND #state IN (:queued, :running, :previous, :failed) AND passesCompleted = :pass AND (attribute_not_exists(leaseUntil) OR leaseUntil <= :epoch)",
         UpdateExpression: "SET #state = :failed, failureCategory = :category, updatedAt = :now REMOVE leaseToken, leaseUntil", ExpressionAttributeNames: { "#state": "state" },
-        ExpressionAttributeValues: { ":failed": "failed", ":completed": "completed", ":pass": pass, ":epoch": Date.now(), ":category": category, ":now": new Date().toISOString() } }));
+        ExpressionAttributeValues: { ":failed": "failed", ":queued": "queued", ":running": PASS_STATE[pass], ":previous": pass>0?PASS_STATE[pass-1]:"queued",
+          ":pass": pass, ":epoch": Date.now(), ":category": category, ":now": new Date().toISOString() } }));
     } catch (error) {
       if (!(error && typeof error === "object" && (error as { name?: string }).name === "ConditionalCheckFailedException")) throw error;
       return { jobId, skipped: true };

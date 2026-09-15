@@ -3,7 +3,8 @@ const mock = vi.hoisted(() => ({ db: vi.fn(), s3: vi.fn(), sfn: vi.fn() }));
 vi.mock("@aws-sdk/lib-dynamodb", () => {
   class Command { constructor(public input: Record<string, unknown>) {} }
   return { DynamoDBDocumentClient: { from: () => ({ send: mock.db }) },
-    GetCommand: class extends Command {}, PutCommand: class extends Command {}, UpdateCommand: class extends Command {}, DeleteCommand: class extends Command {} };
+    GetCommand: class extends Command {}, PutCommand: class extends Command {}, UpdateCommand: class extends Command {}, DeleteCommand: class extends Command {},
+    TransactWriteCommand: class extends Command {}, QueryCommand: class extends Command {} };
 });
 vi.mock("@aws-sdk/client-s3", () => {
   class Command { constructor(public input: Record<string, unknown>) {} }
@@ -73,12 +74,20 @@ describe("durable lab job lifecycle", () => {
     expect(mock.sfn).not.toHaveBeenCalled();
   });
   test("partial object deletion cannot remove the job or report success", async () => {
-    mock.db.mockResolvedValue({ Item: { ...job(), state: "completed" } });
+    const state={...job(),state:'completed'};
+    const cleanup={pk:'cleanup#'+jobId,ownerSub:sub,organizationId:sub,personId:sub,contractVersion:'lab-deletion-cleanup/1',
+      requestedAt:new Date().toISOString(),cleanupPartition:'pending',cleanupDue:new Date().toISOString()};
+    mock.db.mockImplementation(async command=>{
+      if(command.constructor.name==='TransactWriteCommand'){state.state='deleting';return {};}
+      if(command.constructor.name==='GetCommand')return {Item:command.input.Key.pk.startsWith('cleanup#')?cleanup:state};
+      return {};
+    });
     mock.s3.mockImplementation(async command => command.constructor.name === "ListObjectVersionsCommand"
-      ? { Versions: [{ Key: "fictional-key", VersionId: "fixture-version" }] } : { Errors: [{ Code: "AccessDenied" }] });
+      ? { Versions: [{ Key: `synthetic-labs/${sub}/${sub}/${jobId}/document/fixture.pdf`, VersionId: "fixture-version" }] } : { Errors: [{ Code: "AccessDenied" }] });
     const result = await createAwsLabAnalysisApiHandler(event("DELETE", `jobs/${jobId}`));
     expect(result.statusCode).toBe(400); expect(result.body).not.toContain('"deleted":true');
     expect(mock.db.mock.calls.some(([command]) => command.constructor.name === "DeleteCommand")).toBe(false);
+    expect(mock.s3.mock.calls.some(([command])=>command.constructor.name==='DeleteObjectsCommand')).toBe(true);
   });
   test("completed worker passes are idempotent and cannot downgrade the result", async () => {
     mock.db.mockResolvedValue({ Item: { ...job(), state: "completed", passesCompleted: 5 } });
@@ -94,9 +103,19 @@ describe("durable lab job lifecycle", () => {
     mock.db.mockRejectedValue(Object.assign(new Error("fixture"), { name: "ConditionalCheckFailedException" }));
     expect(await createAwsLabAnalysisWorker({ jobId, pass: 0, fail: true })).toMatchObject({ skipped: true });
     expect(mock.db.mock.calls[0][0].input.ConditionExpression).toContain("attribute_exists(pk)");
-    expect(mock.db.mock.calls[0][0].input.ConditionExpression).toContain("#state <> :completed");
+    expect(mock.db.mock.calls[0][0].input.ConditionExpression).toContain("#state IN (:queued, :running, :previous, :failed)");
     expect(mock.db.mock.calls[0][0].input.ConditionExpression).toContain("passesCompleted = :pass");
     expect(mock.db.mock.calls[0][0].input.ConditionExpression).toContain("leaseUntil <= :epoch");
+  });
+  test.each(['deleting','awaiting_upload','completed','needs_review'])('failure callback cannot revive or alter %s',async state=>{
+    mock.db.mockImplementation(async command=>{
+      const v=command.input.ExpressionAttributeValues;
+      const allowed=[v[':queued'],v[':running'],v[':previous'],v[':failed']];
+      expect(allowed).not.toContain(state);
+      throw Object.assign(new Error('fixture conditional refusal'),{name:'ConditionalCheckFailedException'});
+    });
+    expect(await createAwsLabAnalysisWorker({jobId,pass:0,fail:true})).toMatchObject({skipped:true});
+    expect(mock.s3).not.toHaveBeenCalled();
   });
   test("failure callbacks without an originating pass are refused", async () => {
     await expect(createAwsLabAnalysisWorker({ jobId, fail: true })).rejects.toThrow("worker_failure_pass_required");

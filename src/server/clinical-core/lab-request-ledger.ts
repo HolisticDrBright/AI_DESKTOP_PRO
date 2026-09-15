@@ -6,7 +6,7 @@ export const REQUEST_RETIREMENT_VERSION = 'lab-request-retirement/1';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 type RequestIdentity = { id: string; createdAt: string };
 type Scope = { ownerSub: string; organizationId: string; personId: string };
-type OwnedJob = Scope & { pk: string; expiresAt: number };
+type OwnedJob = Scope & { pk: string; expiresAt: number; state?: string };
 type Ledger = { pk: string; jobId?: string; fingerprint?: string; createdAt: string; expiresAt: number; retiredAt?: string };
 export class LabRequestError extends Error {
   constructor(public code: 'lab_request_not_found' | 'lab_request_gone' | 'lab_request_conflict' | 'lab_request_invalid' | 'lab_request_not_releasable', public statusCode: number) { super(code); }
@@ -34,7 +34,7 @@ export function labRequestLedger(db: DynamoDBDocumentClient, table: string, now=
     if(ledger.retiredAt || !ledger.jobId)throw new LabRequestError('lab_request_gone',410);
     const job=await read('job#'+ledger.jobId) as T|undefined;
     if (!job || job.ownerSub!==scope.ownerSub || job.organizationId!==scope.organizationId || job.personId!==scope.personId
-      || job.expiresAt<=Math.floor(now()/1000)) throw new LabRequestError('lab_request_gone',410);
+      || job.state==='deleting' || job.expiresAt<=Math.floor(now()/1000)) throw new LabRequestError('lab_request_gone',410);
     return job;
   };
   return {

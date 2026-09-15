@@ -1,4 +1,4 @@
-param([switch]$ConfirmSyntheticOnly,[switch]$CreateSyntheticTestUsers,[switch]$TestUploadRoundTrip,[string]$Profile='ai-synthetic-member')
+param([switch]$ConfirmSyntheticOnly,[switch]$CreateSyntheticTestUsers,[switch]$TestUploadRoundTrip,[switch]$TestLateUploadCleanup,[string]$Profile='ai-synthetic-member')
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 $common=@('--profile',$Profile,'--region','us-east-2','--no-cli-pager')
@@ -8,6 +8,7 @@ function AwsJson([string[]]$Arguments){
   if($raw){return ($raw|ConvertFrom-Json)}
 }
 if(-not $ConfirmSyntheticOnly -or -not $CreateSyntheticTestUsers){throw 'Explicit synthetic-only/test-identity confirmation required.'}
+if($TestLateUploadCleanup -and -not $TestUploadRoundTrip){throw 'Late-upload verification requires the fixture-upload switch.'}
 if((AwsJson @('sts','get-caller-identity')).Account -ne '588966314750'){throw 'Wrong account.'}
 $foundation=(AwsJson @('cloudformation','describe-stacks','--stack-name','ai-clinical-core-synthetic-staging')).Stacks[0]
 foreach($pair in @(@('PhiAllowed','false'),@('DataClassification','synthetic_only'),@('Environment','synthetic-staging'))){
@@ -21,6 +22,7 @@ $table=($resources|Where-Object LogicalResourceId -eq 'LabJobTable').PhysicalRes
 $documentBucket=($resources|Where-Object LogicalResourceId -eq 'LabDocumentsBucket').PhysicalResourceId
 $indexes=(AwsJson @('dynamodb','describe-table','--table-name',$table)).Table.GlobalSecondaryIndexes
 if(@($indexes|Where-Object {$_.IndexName -eq 'LabOwnerInventory' -and $_.IndexStatus -eq 'ACTIVE'}).Count -ne 1){throw 'Recovery index is not ACTIVE.'}
+if($TestLateUploadCleanup -and @($indexes|Where-Object {$_.IndexName -eq 'LabCleanupDue' -and $_.IndexStatus -eq 'ACTIVE'}).Count -ne 1){throw 'Cleanup index is not ACTIVE.'}
 $origin="https://$($p['ClinicalApiId']).execute-api.us-east-2.amazonaws.com"
 $prefix='/clinical-core/consumer/labs'
 $users=[System.Collections.Generic.List[string]]::new()
@@ -95,6 +97,17 @@ try{
   $created=CallApi 'POST' '/requests/documents' $a $requestBody
   Check ($created.Status -in @(200,201) -and $created.Json.data.contractVersion -eq 'lab-request-recovery/1') 'durable request creation without worker start'
   $jobId=$created.Json.data.jobId
+  if($TestLateUploadCleanup){
+    $workerName=($resources|Where-Object LogicalResourceId -eq 'LabWorkerFunction').PhysicalResourceId
+    $outputDirectory=Join-Path $PSScriptRoot '../test-results/hosted-lab-cleanup'
+    $null=New-Item -ItemType Directory -Path $outputDirectory -Force
+    $outputPath=Join-Path $outputDirectory ([guid]::NewGuid().ToString('N')+'.json')
+    $invocation=AwsJson @('lambda','invoke','--function-name',$workerName,'--cli-binary-format','raw-in-base64-out',
+      '--payload',(@{jobId=$jobId;pass=0;fail=$true;failureCategory='internal_failure'}|ConvertTo-Json -Compress),$outputPath)
+    if($invocation.PSObject.Properties.Name -contains 'FunctionError'){throw 'Synthetic failure-callback check failed.'}
+    $callback=Get-Content -LiteralPath $outputPath -Raw|ConvertFrom-Json
+    Check ($callback.skipped -eq $true -and $callback.jobId -eq $jobId) 'worker failure callback cannot alter an awaiting-upload job'
+  }
   $again=CallApi 'POST' '/requests/documents' $a $requestBody
   Check ($again.Status -in @(200,201) -and $again.Json.data.jobId -eq $jobId) 'same request returns same job'
   $changed=($requestBody|ConvertTo-Json -Depth 12|ConvertFrom-Json)
@@ -141,6 +154,25 @@ try{
     if($remaining.PSObject.Properties.Name -contains 'Versions'){$versions=@($remaining.Versions)}
     if($remaining.PSObject.Properties.Name -contains 'DeleteMarkers'){$markers=@($remaining.DeleteMarkers)}
     Check ($versions.Count -eq 0 -and $markers.Count -eq 0) 'fixture object versions removed'
+    if($TestLateUploadCleanup){
+      Check ($deleted.Json.data.cleanupStatus -eq 'late_upload_watch') 'durable late-upload watch acknowledged'
+      $ledger=AwsJson @('dynamodb','get-item','--table-name',$table,'--consistent-read','--key',(@{pk=@{S="cleanup#$jobId"}}|ConvertTo-Json -Compress))
+      $names=@($ledger.Item.PSObject.Properties.Name|Sort-Object)
+      Check (($names -join ',') -eq 'cleanupDue,cleanupPartition,contractVersion,lastVerifiedAt,organizationId,ownerSub,personId,pk,requestedAt') 'cleanup record contains metadata only and has no expiry'
+      Check ((PutFixture $target $fixture) -eq 200) 'previously issued URL can produce a late fixture after deletion'
+      $removedAutomatically=$false
+      for($attempt=0;$attempt -lt 50;$attempt++){
+        Start-Sleep -Seconds 5
+        $remaining=AwsJson @('s3api','list-object-versions','--bucket',$documentBucket,'--prefix',$objectKey)
+        $versions=@();$markers=@()
+        if($remaining.PSObject.Properties.Name -contains 'Versions'){$versions=@($remaining.Versions)}
+        if($remaining.PSObject.Properties.Name -contains 'DeleteMarkers'){$markers=@($remaining.DeleteMarkers)}
+        if($versions.Count -eq 0 -and $markers.Count -eq 0){$removedAutomatically=$true;break}
+      }
+      Check $removedAutomatically 'late fixture removed automatically without a second delete request'
+      $absent=CallApi 'GET' "/jobs/$jobId" $a
+      Check ($absent.Status -eq 404) 'late upload does not resurrect the deleted analysis'
+    }
   }
   $jobId=$null
   Write-Host "Hosted synthetic checks passed: $($passed.Count). Fixture upload enabled: $TestUploadRoundTrip. No AI generations, email sends, or real data."
