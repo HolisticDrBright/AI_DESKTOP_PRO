@@ -86,3 +86,29 @@ shell's static “Signed-in practitioner” subtitle was misleading without a se
 The follow-up source repair uses neutral “Session & organization” wording and
 adds a practitioner sign-in link to the menu. No new client identity inference
 or authorization bypass. This follow-up is NOT in the 2178788 image.
+
+## Final hosted web checkpoint
+
+The follow-up web release is now deployed:
+
+- Source 4ffd5f248432f93256ecbc6d2124ba1e798e21f0.
+- CodeBuild ai-desktop-pro-synthetic-web:ccef39f7-161c-435c-93ec-d981363a0cbf
+  SUCCEEDED, including same-image boot/health verification.
+- ECR digest sha256:d014a93ce3b0762015fdd5843ef66949c4d37a91c57c5a90c42cf809cfa959ab;
+  scan COMPLETE, zero findings.
+- App Runner operation 3f883ef5153d4fdaa8d8b105fe6816bf SUCCEEDED.
+  Service RUNNING on that exact source tag; PHI false, synthetic mode, staging.
+  The prior 2178788 deployment also succeeded. Backend remains exact 2178788;
+  4ffd5f2 changes only the shell label, smoke test and evidence documentation.
+- scripts/verify-hosted-synthetic-shell.mjs passed against the hosted service:
+  health 200; isolated signed-out session; login renders; Patients/Calendar
+  redirect to login; account sign-in link works; no false signed-in subtitle;
+  zero page exceptions, console errors or attempted writes. Screenshot inspected
+  at test-results/hosted-synthetic-shell/login.png (generated, not committed).
+- Desktop CI35032422373 for backend source 2178788 completed successfully.
+  V2 documentation checkpoint c85a15c / CI35033282022 also succeeded.
+  Desktop follow-up CI35033158376 was still running at this capture.
+- The preferred agent-browser CLI was unavailable. The same read-only browser
+  workflow was executed using the repository's existing Playwright engine.
+  This verifies public/signed-out boundaries, not authenticated practitioner
+  chart transfer or physical mobile behavior.
