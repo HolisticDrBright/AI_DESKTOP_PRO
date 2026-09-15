@@ -1,5 +1,12 @@
 # ALP commercial launch: owner actions and remaining engineering
 
+September 15 scope reconciliation: V2 `expo/docs/commercial-six-phase-ledger.md`
+keeps the original six phases fixed; individual source repairs do not complete a
+phase. Paired intake contracts now allow genuinely unasked observations to be
+absent. [Deletion state claim](lab-deletion-state-claim.md) repairs an upload-vs-
+purge race; it does not fulfill account deletion or guarantee erasure against
+outstanding upload URLs. These source repairs are not deployed.
+
 Latest September 15 source increment: [release unavailable lab requests](lab-request-retirement.md).
 Adds race-safe retirement with 22 authenticated routes and explicit V2 confirmation;
 active jobs and saved results remain protected. Also repairs a fixed-port CI collision.

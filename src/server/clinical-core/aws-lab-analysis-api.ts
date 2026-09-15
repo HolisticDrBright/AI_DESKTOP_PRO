@@ -323,7 +323,7 @@ function status(job: Job) {
   };
 }
 
-async function ownedJob(jobId: string, ownerSub: string): Promise<Job | null> {
+async function ownedJob(jobId: string, identity: Claims): Promise<Job | null> {
   if (!/^[0-9a-f-]{36}$/i.test(jobId)) return null;
   const result = await db.send(new GetCommand({
     TableName: required("LAB_JOB_TABLE"),
@@ -331,7 +331,8 @@ async function ownedJob(jobId: string, ownerSub: string): Promise<Job | null> {
     ConsistentRead: true,
   }));
   const job = result.Item as Job | undefined;
-  return job?.ownerSub === ownerSub ? job : null;
+  return job?.ownerSub === identity.sub && job.organizationId === identity['custom:organization_id']
+    && job.personId === identity['custom:person_id'] ? job : null;
 }
 
 async function purgePrefix(bucket: string, prefix: string): Promise<void> {
@@ -358,9 +359,19 @@ async function purgePrefix(bucket: string, prefix: string): Promise<void> {
 }
 
 async function deleteJob(identity: Claims, jobId: string) {
-  const job = await ownedJob(jobId, identity.sub);
+  const job = await ownedJob(jobId, identity);
   if (!job) return json(200, { contractVersion: CONTRACT_VERSION, jobId, deleted: true });
-  if (!["awaiting_upload", "completed", "needs_review", "failed"].includes(job.state)) return refusal(409);
+  if (!["awaiting_upload", "completed", "needs_review", "failed", "deleting"].includes(job.state)) return refusal(409);
+
+  // Claim before purge, so upload completion cannot race a stale eligibility read.
+  await db.send(new UpdateCommand({
+    TableName: required('LAB_JOB_TABLE'), Key: {pk:job.pk},
+    UpdateExpression:'SET #state = :deleting, updatedAt = :now',
+    ConditionExpression:'ownerSub = :owner AND organizationId = :org AND personId = :person AND #state IN (:awaiting, :completed, :review, :failed, :deleting) AND (attribute_not_exists(leaseUntil) OR leaseUntil <= :epoch)',
+    ExpressionAttributeNames:{'#state':'state'},ExpressionAttributeValues:{':owner':identity.sub,':org':identity['custom:organization_id'],
+      ':person':identity['custom:person_id'],':awaiting':'awaiting_upload',':completed':'completed',':review':'needs_review',
+      ':failed':'failed',':deleting':'deleting',':now':new Date().toISOString(),':epoch':Date.now()},
+  }));
 
   const bucket = required("LAB_DOCUMENT_BUCKET");
   await purgePrefix(bucket, `synthetic-labs/${job.organizationId}/${job.ownerSub}/${jobId}/`);
@@ -368,8 +379,9 @@ async function deleteJob(identity: Claims, jobId: string) {
   await db.send(new DeleteCommand({
     TableName: required("LAB_JOB_TABLE"),
     Key: { pk: job.pk },
-    ConditionExpression: "ownerSub = :owner",
-    ExpressionAttributeValues: { ":owner": identity.sub },
+    ConditionExpression: "attribute_not_exists(pk) OR (ownerSub = :owner AND organizationId = :org AND personId = :person AND #state = :deleting)",
+    ExpressionAttributeNames:{'#state':'state'},
+    ExpressionAttributeValues: { ":owner": identity.sub,':org':identity['custom:organization_id'],':person':identity['custom:person_id'],':deleting':'deleting' },
   }));
   return json(200, { contractVersion: CONTRACT_VERSION, jobId, deleted: true });
 }
@@ -467,7 +479,7 @@ async function verifyUploadedDocument(job: Job, document: Job['documents'][numbe
 }
 
 async function resumeUpload(identity: Claims, jobId: string) {
-  const job = await ownedJob(jobId, identity.sub);
+  const job = await ownedJob(jobId, identity);
   if (!job || job.organizationId !== identity['custom:organization_id'] || job.personId !== identity['custom:person_id']) return refusal(404);
   if (job.state !== 'awaiting_upload' || job.expiresAt <= Math.floor(Date.now() / 1000)
     || !job.documents.length || job.documents.some(d => !d.checksumSHA256)) return refusal(409);
@@ -548,7 +560,7 @@ async function ensureQueuedExecution(job: Job): Promise<void> {
 
 async function completeUpload(event: ApiEvent, identity: Claims, jobId: string) {
   const input = body(event);
-  const job = await ownedJob(jobId, identity.sub!);
+  const job = await ownedJob(jobId, identity);
   if (!job) return refusal(404);
   if (job.state !== "awaiting_upload") { await ensureQueuedExecution(job); return json(200, status(job)); }
   if (!Array.isArray(input.uploadedDocuments)
@@ -612,7 +624,7 @@ export async function createAwsLabAnalysisApiHandler(event: ApiEvent) {
     if (method === "POST" && match[2] === '/complete-upload') return await completeUpload(event, identity, match[1]);
     if (method === "DELETE" && !match[2]) return await deleteJob(identity, match[1]);
     if (method === "GET" && !match[2]) {
-      const job = await ownedJob(match[1], identity.sub);
+      const job = await ownedJob(match[1], identity);
       if (job) await ensureQueuedExecution(job);
       return job ? json(200, status(job)) : refusal(404);
     }
