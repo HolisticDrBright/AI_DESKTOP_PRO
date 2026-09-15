@@ -1,6 +1,7 @@
 import { createHash, createPublicKey, verify } from "node:crypto";
+import { matchPreciseLabRanges, preciseLabRangeReleaseSchema, type CollectionRangeContext, type PreciseLabRangeRelease } from "./lab-range-population";
 
-export type RangePopulation = { ageYears: number | null; sex: string | null; pregnancyStatus: string | null };
+export type RangePopulation = { ageYears: number | null; sex: string | null; pregnancyStatus: string | null; collection?: CollectionRangeContext };
 export type ReviewedLabRange = {
   id: string; canonicalName: string; aliases: string[]; unit: string;
   min: number; max: number;
@@ -10,7 +11,7 @@ export type ReviewedLabRange = {
   reviewedBy: string; reviewedAt: string;
 };
 export type LabRangeRelease = { schemaVersion: "lab-ranges/1"; version: string; expiresAt: string; ranges: ReviewedLabRange[] };
-export type VerifiedLabRangeRelease = { release: LabRangeRelease; sha256: string };
+export type VerifiedLabRangeRelease = { release: LabRangeRelease | PreciseLabRangeRelease; sha256: string };
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const text = (value: unknown, max: number): value is string => typeof value === "string" && value.trim().length > 0 && value.length <= max;
 const normalized = (value: string) => value.trim().toLowerCase().replace(/[µμ]/g, "u").replace(/\s+/g, " ");
@@ -30,6 +31,12 @@ export function verifyLabRangeRelease(envelope: unknown, trusted: { sha256: stri
   } catch { return fail(); }
   let release: LabRangeRelease;
   try { release = JSON.parse(signed.payload) as LabRangeRelease; } catch { return fail(); }
+  if ((release as { schemaVersion?: string })?.schemaVersion === "lab-ranges/2") {
+    const parsed = preciseLabRangeReleaseSchema.safeParse(release);
+    if (!parsed.success || Date.parse(parsed.data.expiresAt) <= now
+      || parsed.data.ranges.some(row => Date.parse(row.reviewedAt) > now || Date.parse(row.source.verifiedOn) > now)) return fail();
+    return { release: parsed.data, sha256: trusted.sha256 };
+  }
   if (!release || release.schemaVersion !== "lab-ranges/1" || !text(release.version, 80)
     || !Number.isFinite(Date.parse(release.expiresAt)) || Date.parse(release.expiresAt) <= now
     || !Array.isArray(release.ranges) || release.ranges.length > 5000) return fail();
@@ -65,6 +72,13 @@ export type RangeResolution = {
 export function resolveReviewedLabRange(catalog: VerifiedLabRangeRelease, name: string, unit: string, population: RangePopulation, now = Date.now()): RangeResolution {
   if (Date.parse(catalog.release.expiresAt) <= now) return fail();
   const empty = { functionalMin: null, functionalMax: null, sourceId: null, sourceVersion: null, population: null, criticalBelow: null, criticalAbove: null };
+  if (catalog.release.schemaVersion === "lab-ranges/2") {
+    const matches = matchPreciseLabRanges(catalog.release, name, unit, population.collection, "functional_target", now);
+    if (matches.length !== 1) return { ...empty, rangeReview: matches.length ? "ambiguous_reviewed_range" : "no_applicable_reviewed_range" };
+    const row = matches[0]!;
+    return { ...empty, functionalMin: row.min, functionalMax: row.max, sourceId: row.source.id,
+      sourceVersion: row.source.version, population: row.population.label, rangeReview: "matched" };
+  }
   const matches = catalog.release.ranges.filter(row => {
     const p = row.population;
     return [row.canonicalName, ...row.aliases].some(alias => normalized(alias) === normalized(name))

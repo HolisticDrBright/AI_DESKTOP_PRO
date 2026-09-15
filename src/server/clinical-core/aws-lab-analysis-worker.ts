@@ -549,7 +549,9 @@ export function normalizeStructuredLabBiomarkers(rows: StructuredLabBiomarker[],
       unit: row.unit.trim().toLowerCase().replace(/[μµ]/g, "u"),
       labMin: row.labMin,
       labMax: row.labMax,
-      ...rangeFor(row.canonicalName, row.unit.trim().toLowerCase().replace(/[μµ]/g, "u"), context),
+      ...rangeFor(row.canonicalName, row.unit.trim().toLowerCase().replace(/[μµ]/g, "u"), context ? {
+        ...context, population: { ...context.population, collection: row.collectionContext },
+      } : undefined),
       // These values came from the patient's saved parsed record. They are
       // measured-data inputs, but this recovery pass does not independently
       // re-read the source document, so the UI must retain the review label.

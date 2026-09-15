@@ -25,6 +25,7 @@ jobs:
         run: npm audit --audit-level=high
       - run: npm run lint
       - run: npm run test:unit
+      - run: npm run build:lab-range-tools
       - name: AWS clinical-core synthetic safety gate
         run: npm run check:aws-clinical-core
       - name: AWS identity, invitation, and consent safety gate

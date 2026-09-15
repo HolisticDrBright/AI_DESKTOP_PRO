@@ -5,6 +5,7 @@ import { DeleteObjectsCommand, HeadObjectCommand, ListObjectVersionsCommand, S3C
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { SFNClient, StartExecutionCommand } from "@aws-sdk/client-sfn";
+import { collectionRangeContextSchema, type CollectionRangeContext } from "./lab-range-population";
 
 const CONTRACT_VERSION = "lab-analysis/1";
 const MAX_BODY_BYTES = 256 * 1024;
@@ -62,6 +63,7 @@ export type StructuredLabBiomarker = {
   unit: string;
   labMin: number | null;
   labMax: number | null;
+  collectionContext?: CollectionRangeContext;
 };
 
 type Job = {
@@ -228,12 +230,15 @@ export function safeStructuredLabBiomarkers(value: unknown): StructuredLabBiomar
   const biomarkers = value.map((candidate) => {
     if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) throw new Error("structured_biomarkers_invalid");
     const row = candidate as Record<string, unknown>;
-    const expected = ["markerId", "canonicalName", "value", "unit", "labMin", "labMax"];
+    const expected = ["markerId", "canonicalName", "value", "unit", "labMin", "labMax", "collectionContext"];
     if (Object.keys(row).some((key) => !expected.includes(key))
       || !boundedString(row.markerId, 160) || !boundedString(row.canonicalName, 160)
       || typeof row.value !== "number" || !Number.isFinite(row.value)
       || !boundedString(row.unit, 80) || !safeNullableNumber(row.labMin) || !safeNullableNumber(row.labMax)
       || (row.labMin !== null && row.labMax !== null && Number(row.labMin) > Number(row.labMax))) {
+      throw new Error("structured_biomarkers_invalid");
+    }
+    if (row.collectionContext !== undefined && !collectionRangeContextSchema.safeParse(row.collectionContext).success) {
       throw new Error("structured_biomarkers_invalid");
     }
     return row as StructuredLabBiomarker;

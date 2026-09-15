@@ -2,6 +2,7 @@
 
 Updated September 14, 2026. Status: **not ready for public launch or real health data**.
 This document separates live evidence from code that exists and work still required.
+Latest source increment: [population-aware ranges and catalog-release reconciliation](population-range-catalog-release.md). Precise range matching, unsigned source-bound preparation and exact catalog serving-size reconciliation are implemented and locally tested; this does not complete production data capture, clinical release activation or commercial readiness.
 It does not sign agreements or approve clinical policy on anyone's behalf.
 
 Latest source phase: [reviewed educational knowledge integration](reviewed-knowledge-engineering.md).
