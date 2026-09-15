@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DeleteCommand, GetCommand, PutCommand, UpdateCommand, DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
-import { DeleteObjectsCommand, HeadObjectCommand, ListObjectVersionsCommand, S3Client } from "@aws-sdk/client-s3";
+import { DeleteObjectsCommand, HeadObjectCommand, ListObjectsV2Command, ListObjectVersionsCommand, S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { SFNClient, StartExecutionCommand } from "@aws-sdk/client-sfn";
@@ -25,6 +25,7 @@ type DocumentInput = {
   fileName: string;
   contentType: string;
   byteSize: number;
+  checksumSHA256?: string;
 };
 
 export type PatientContext = {
@@ -152,7 +153,8 @@ function safeDocument(value: unknown): DocumentInput {
     || !MIME_TYPES.has(row.contentType ?? "")
     || !Number.isInteger(row.byteSize)
     || (row.byteSize ?? 0) < 1
-    || (row.byteSize ?? 0) > MAX_DOCUMENT_BYTES) {
+    || (row.byteSize ?? 0) > MAX_DOCUMENT_BYTES
+    || (row.checksumSHA256 !== undefined && (typeof row.checksumSHA256 !== 'string' || !/^[A-Za-z0-9+/]{43}=$/.test(row.checksumSHA256)))) {
     throw new Error("document_invalid");
   }
   return row as DocumentInput;
@@ -383,8 +385,6 @@ async function createJob(event: ApiEvent, identity: Claims) {
   if (new Set(documents.map((row) => row.clientDocumentId)).size !== documents.length) return refusal();
   const jobId = randomUUID();
   const now = new Date().toISOString();
-  const bucket = required("LAB_DOCUMENT_BUCKET");
-  const kmsKey = required("LAB_KMS_KEY_ARN");
   const stored = documents.map((document) => ({
     ...document,
     objectKey: `synthetic-labs/${identity["custom:organization_id"]}/${identity.sub}/${jobId}/${document.clientDocumentId}/${document.fileName}`,
@@ -414,14 +414,21 @@ async function createJob(event: ApiEvent, identity: Claims) {
     Item: job,
     ConditionExpression: "attribute_not_exists(pk)",
   }));
+  const targets = await uploadTargets(job, stored);
+  return json(200, { contractVersion: CONTRACT_VERSION, jobId, state: "awaiting_upload", documents: targets });
+}
+
+async function uploadTargets(job: Job, documents: Job['documents']) {
+  const jobId = job.pk.slice(4), bucket = required('LAB_DOCUMENT_BUCKET'), kmsKey = required('LAB_KMS_KEY_ARN');
   const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
-  const targets = await Promise.all(stored.map(async (document) => {
+  return Promise.all(documents.map(async (document) => {
     const headers = {
       "content-type": document.contentType,
       "x-amz-server-side-encryption": "aws:kms",
       "x-amz-server-side-encryption-aws-kms-key-id": kmsKey,
       "x-amz-meta-job-id": jobId,
       "x-amz-meta-document-id": document.clientDocumentId,
+      ...(document.checksumSHA256 ? { 'x-amz-checksum-sha256': document.checksumSHA256, 'if-none-match': '*' } : {}),
     };
     const uploadUrl = await getSignedUrl(s3, new PutObjectCommand({
       Bucket: bucket,
@@ -430,13 +437,48 @@ async function createJob(event: ApiEvent, identity: Claims) {
       ServerSideEncryption: "aws:kms",
       SSEKMSKeyId: kmsKey,
       Metadata: { "job-id": jobId, "document-id": document.clientDocumentId },
+      ...(document.checksumSHA256 ? { ChecksumSHA256: document.checksumSHA256, IfNoneMatch: '*' } : {}),
     }), {
       expiresIn: 15 * 60,
-      unhoistableHeaders: new Set(["x-amz-meta-job-id", "x-amz-meta-document-id"]),
+      unhoistableHeaders: new Set(["x-amz-meta-job-id", "x-amz-meta-document-id", 'x-amz-checksum-sha256']),
+      signableHeaders: new Set(['if-none-match']),
     });
     return { clientDocumentId: document.clientDocumentId, uploadUrl, method: "PUT", requiredHeaders: headers, expiresAt };
   }));
-  return json(200, { contractVersion: CONTRACT_VERSION, jobId, state: "awaiting_upload", documents: targets });
+}
+
+async function verifyUploadedDocument(job: Job, document: Job['documents'][number]): Promise<boolean> {
+  let head;
+  try {
+    head = await s3.send(new HeadObjectCommand({ Bucket: required('LAB_DOCUMENT_BUCKET'), Key: document.objectKey,
+      ...(document.checksumSHA256 ? { ChecksumMode: 'ENABLED' as const } : {}) }));
+  } catch (error) {
+    // AccessDenied/transient failures do not mean the object is missing.
+    if ((error as { name?: string })?.name === 'NotFound') return false;
+    throw error;
+  }
+  if (head.ContentLength !== document.byteSize || head.ContentType !== document.contentType
+    || head.ServerSideEncryption !== 'aws:kms' || head.SSEKMSKeyId !== required('LAB_KMS_KEY_ARN')
+    || head.Metadata?.['job-id'] !== job.pk.slice(4) || head.Metadata?.['document-id'] !== document.clientDocumentId
+    || (document.checksumSHA256 && head.ChecksumSHA256 !== document.checksumSHA256)) throw new Error('lab_uploaded_object_invalid');
+  return true;
+}
+
+async function resumeUpload(identity: Claims, jobId: string) {
+  const job = await ownedJob(jobId, identity.sub);
+  if (!job || job.organizationId !== identity['custom:organization_id'] || job.personId !== identity['custom:person_id']) return refusal(404);
+  if (job.state !== 'awaiting_upload' || job.expiresAt <= Math.floor(Date.now() / 1000)
+    || !job.documents.length || job.documents.some(d => !d.checksumSHA256)) return refusal(409);
+  const missing: Job['documents'] = [], uploadedDocuments: { clientDocumentId: string }[] = [];
+  for (const document of job.documents) {
+    // A prefix-scoped list avoids treating a missing object's ambiguous HEAD 403
+    // as absence; all access/network failures still stop recovery.
+    const present = await s3.send(new ListObjectsV2Command({Bucket:required('LAB_DOCUMENT_BUCKET'),Prefix:document.objectKey,MaxKeys:1}));
+    if (present.Contents?.some(row=>row.Key===document.objectKey) && await verifyUploadedDocument(job, document)) uploadedDocuments.push({ clientDocumentId: document.clientDocumentId });
+    else missing.push(document);
+  }
+  const documents = await uploadTargets(job, missing);
+  return json(200, { contractVersion: CONTRACT_VERSION, jobId, state: 'awaiting_upload', documents, uploadedDocuments });
 }
 
 async function createPlanJob(event: ApiEvent, identity: Claims) {
@@ -510,12 +552,7 @@ async function completeUpload(event: ApiEvent, identity: Claims, jobId: string) 
   )));
   if (ids.size !== job.documents.length || job.documents.some((row) => !ids.has(row.clientDocumentId))) return refusal();
   for (const document of job.documents) {
-    const head = await s3.send(new HeadObjectCommand({ Bucket: required("LAB_DOCUMENT_BUCKET"), Key: document.objectKey }));
-    if (head.ContentLength !== document.byteSize
-      || head.ContentType !== document.contentType
-      || head.ServerSideEncryption !== "aws:kms"
-      || head.Metadata?.["job-id"] !== jobId
-      || head.Metadata?.["document-id"] !== document.clientDocumentId) return refusal(409);
+    if (!await verifyUploadedDocument(job, document)) return refusal(409);
   }
   const updatedAt = new Date().toISOString();
   await db.send(new UpdateCommand({
@@ -536,9 +573,10 @@ export async function createAwsLabAnalysisApiHandler(event: ApiEvent) {
     const path = event?.rawPath;
     if (method === "POST" && (path === "/clinical-core/consumer/labs/jobs" || path === "/clinical-core/synthetic-session/labs/jobs")) return await createJob(event, identity);
     if (method === "POST" && (path === "/clinical-core/consumer/labs/plan-jobs" || path === "/clinical-core/synthetic-session/labs/plan-jobs")) return await createPlanJob(event, identity);
-    const match = typeof path === "string" ? path.match(/^\/clinical-core\/(?:consumer|synthetic-session)\/labs\/jobs\/([0-9a-f-]{36})(\/complete-upload)?$/i) : null;
+    const match = typeof path === "string" ? path.match(/^\/clinical-core\/(?:consumer|synthetic-session)\/labs\/jobs\/([0-9a-f-]{36})(\/(?:complete-upload|resume-upload))?$/i) : null;
     if (!match) return refusal(404);
-    if (method === "POST" && match[2]) return await completeUpload(event, identity, match[1]);
+    if (method === "POST" && match[2] === '/resume-upload') return await resumeUpload(identity, match[1]);
+    if (method === "POST" && match[2] === '/complete-upload') return await completeUpload(event, identity, match[1]);
     if (method === "DELETE" && !match[2]) return await deleteJob(identity, match[1]);
     if (method === "GET" && !match[2]) {
       const job = await ownedJob(match[1], identity.sub);
