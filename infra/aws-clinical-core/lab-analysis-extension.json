@@ -55,8 +55,9 @@
       "UpdateReplacePolicy": "Delete",
       "Properties": {
         "BillingMode": "PAY_PER_REQUEST",
-        "AttributeDefinitions": [{ "AttributeName": "pk", "AttributeType": "S" }],
+        "AttributeDefinitions": [{ "AttributeName": "pk", "AttributeType": "S" }, { "AttributeName": "inventoryOwner", "AttributeType": "S" }, { "AttributeName": "inventoryOrder", "AttributeType": "S" }],
         "KeySchema": [{ "AttributeName": "pk", "KeyType": "HASH" }],
+        "GlobalSecondaryIndexes": [{ "IndexName": "LabOwnerInventory", "KeySchema": [{ "AttributeName": "inventoryOwner", "KeyType": "HASH" }, { "AttributeName": "inventoryOrder", "KeyType": "RANGE" }], "Projection": { "ProjectionType": "KEYS_ONLY" } }],
         "PointInTimeRecoverySpecification": { "PointInTimeRecoveryEnabled": true },
         "SSESpecification": { "SSEEnabled": true, "SSEType": "KMS", "KMSMasterKeyId": { "Ref": "ClinicalCoreKeyArn" } },
         "TimeToLiveSpecification": { "AttributeName": "expiresAt", "Enabled": true },
@@ -235,6 +236,14 @@
     "CreateRecoverableSyntheticPlanRoute": {"Type":"AWS::ApiGatewayV2::Route","Properties":{"ApiId":{"Ref":"ClinicalApiId"},"RouteKey":"POST /clinical-core/synthetic-session/labs/requests/saved","AuthorizationType":"CUSTOM","AuthorizerId":{"Ref":"LabSyntheticSessionAuthorizer"},"Target":{"Fn::Sub":"integrations/${LabApiIntegration}"}}},
     "RetireConsumerLabRequestRoute": {"Type":"AWS::ApiGatewayV2::Route","Properties":{"ApiId":{"Ref":"ClinicalApiId"},"RouteKey":"POST /clinical-core/consumer/labs/requests/{requestId}/retire","AuthorizationType":"JWT","AuthorizerId":{"Ref":"LabConsumerAuthorizer"},"Target":{"Fn::Sub":"integrations/${LabApiIntegration}"}}},
     "RetireSyntheticLabRequestRoute": {"Type":"AWS::ApiGatewayV2::Route","Properties":{"ApiId":{"Ref":"ClinicalApiId"},"RouteKey":"POST /clinical-core/synthetic-session/labs/requests/{requestId}/retire","AuthorizationType":"CUSTOM","AuthorizerId":{"Ref":"LabSyntheticSessionAuthorizer"},"Target":{"Fn::Sub":"integrations/${LabApiIntegration}"}}},
+    "LabInventoryQueryPolicy": {
+      "Type": "AWS::IAM::Policy",
+      "Properties": { "PolicyName": "LabOwnerInventoryQuery", "Roles": [{ "Ref": "LabApiRole" }], "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": ["dynamodb:Query"], "Resource": { "Fn::Sub": "${LabJobTable.Arn}/index/LabOwnerInventory" } }] } }
+    },
+    "LabInventoryConsumerRoute": {"Type":"AWS::ApiGatewayV2::Route","Properties":{"ApiId":{"Ref":"ClinicalApiId"},"RouteKey":"GET /clinical-core/consumer/labs/inventory","AuthorizationType":"JWT","AuthorizerId":{"Ref":"LabConsumerAuthorizer"},"Target":{"Fn::Sub":"integrations/${LabApiIntegration}"}}},
+    "LabInventorySyntheticRoute": {"Type":"AWS::ApiGatewayV2::Route","Properties":{"ApiId":{"Ref":"ClinicalApiId"},"RouteKey":"GET /clinical-core/synthetic-session/labs/inventory","AuthorizationType":"CUSTOM","AuthorizerId":{"Ref":"LabSyntheticSessionAuthorizer"},"Target":{"Fn::Sub":"integrations/${LabApiIntegration}"}}},
+    "LabRecoveryConsumerRoute": {"Type":"AWS::ApiGatewayV2::Route","Properties":{"ApiId":{"Ref":"ClinicalApiId"},"RouteKey":"GET /clinical-core/consumer/labs/jobs/{jobId}/recovery","AuthorizationType":"JWT","AuthorizerId":{"Ref":"LabConsumerAuthorizer"},"Target":{"Fn::Sub":"integrations/${LabApiIntegration}"}}},
+    "LabRecoverySyntheticRoute": {"Type":"AWS::ApiGatewayV2::Route","Properties":{"ApiId":{"Ref":"ClinicalApiId"},"RouteKey":"GET /clinical-core/synthetic-session/labs/jobs/{jobId}/recovery","AuthorizationType":"CUSTOM","AuthorizerId":{"Ref":"LabSyntheticSessionAuthorizer"},"Target":{"Fn::Sub":"integrations/${LabApiIntegration}"}}},
     "LabApiInvokePermission": {
       "Type": "AWS::Lambda::Permission",
       "Properties": { "Action": "lambda:InvokeFunction", "FunctionName": { "Ref": "LabApiFunction" }, "Principal": "apigateway.amazonaws.com", "SourceArn": { "Fn::Sub": "arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${ClinicalApiId}/*/*/clinical-core/consumer/labs/*" } }
@@ -249,7 +258,7 @@
     "LabJobTableName": { "Value": { "Ref": "LabJobTable" } },
     "LabDocumentsBucketName": { "Value": { "Ref": "LabDocumentsBucket" } },
     "LabStateMachineArn": { "Value": { "Ref": "LabStateMachine" } },
-    "RoutesEnabled": { "Value": "22" },
+    "RoutesEnabled": { "Value": "26" },
     "SyntheticAppSessionEnabled": { "Value": "true" },
     "PhiAllowed": { "Value": "false" },
     "DataClassification": { "Value": "synthetic_only" }

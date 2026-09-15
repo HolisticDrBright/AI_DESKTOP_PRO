@@ -89,10 +89,11 @@ export function labRequestLedger(db: DynamoDBDocumentClient, table: string, now=
       // After ledger TTL cleanup, an old request is still too old to recreate.
       if(age < -60_000 || age > 24*60*60*1000)throw new LabRequestError('lab_request_gone',410);
       const ledger:Ledger={pk,jobId:candidate.pk.slice(4),fingerprint,createdAt:request.createdAt,expiresAt:Math.floor(now()/1000)+90*24*60*60};
+      const stored = {...candidate,recoveryRequest:{...request,kind}};
       try {
         await db.send(new TransactWriteCommand({TransactItems:[
           {Put:{TableName:table,Item:ledger,ConditionExpression:'attribute_not_exists(pk)'}},
-          {Put:{TableName:table,Item:candidate,ConditionExpression:'attribute_not_exists(pk)'}},
+          {Put:{TableName:table,Item:stored,ConditionExpression:'attribute_not_exists(pk)'}},
         ]}));
       } catch(error) {
         // Includes a concurrent winner or a committed transaction whose response was lost.
@@ -100,7 +101,7 @@ export function labRequestLedger(db: DynamoDBDocumentClient, table: string, now=
         if(winner)return replay(winner);
         throw error; // Absence after an uncertain write is not permission for a new identity.
       }
-      return candidate;
+      return stored;
     },
   };
 }

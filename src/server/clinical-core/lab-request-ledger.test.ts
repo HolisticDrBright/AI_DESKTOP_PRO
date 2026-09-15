@@ -27,18 +27,18 @@ function setup(){
 describe('immutable lab creation request ledger',()=>{
   it('atomically stores a payload-free identity and job and replays canonical reordered inputs',async()=>{
     const t=setup();await t.api.create(scope,request,'saved',{b:2,a:1},job());
-    expect(await t.api.create(scope,request,'saved',{a:1,b:2},job('ignored'))).toEqual(job());
+    expect(await t.api.create(scope,request,'saved',{a:1,b:2},job('ignored'))).toEqual({...job(),recoveryRequest:{...request,kind:'saved'}});
     expect(t.rows.size).toBe(2);
     const ledger=[...t.rows.values()].find(r=>String(r.pk).startsWith('request#'))!;
     expect(Object.keys(ledger).sort()).toEqual(['pk','jobId','fingerprint','createdAt','expiresAt'].sort());
-    expect(await t.api.discover(scope,id)).toEqual(job());
+    expect(await t.api.discover(scope,id)).toEqual({...job(),recoveryRequest:{...request,kind:'saved'}});
   });
   it('returns one winner under concurrent creates',async()=>{
     const t=setup();const results=await Promise.all(['a','b','c'].map(x=>t.api.create(scope,request,'documents',{documents:['fictional']},job(x))));
     expect(new Set(results.map(r=>r.pk)).size).toBe(1);expect(t.rows.size).toBe(2);
   });
   it('recovers a committed transaction whose response was lost',async()=>{
-    const t=setup();t.lost();expect(await t.api.create(scope,request,'saved',{},job())).toEqual(job());expect(t.rows.size).toBe(2);
+    const t=setup();t.lost();expect(await t.api.create(scope,request,'saved',{},job())).toEqual({...job(),recoveryRequest:{...request,kind:'saved'}});expect(t.rows.size).toBe(2);
   });
   it.each([{input:{changed:true},kind:'saved',createdAt:request.createdAt},
     {input:{},kind:'documents',createdAt:request.createdAt},

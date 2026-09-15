@@ -59,7 +59,7 @@ describe('safe unavailable-request retirement',()=>{
   it.each(['completed','failed','needs_review'])('allows expired terminal %s without deleting saved results',async state=>{
     const t=setup();const stored={...job(state,now/1000-1),result:{fictional:'preserve'}};
     await t.api.create(scope,request,'saved',{},stored);await t.api.retire(scope,request);
-    expect(t.rows.get(stored.pk)).toEqual(stored);expect(t.rows.size).toBe(2);
+    expect(t.rows.get(stored.pk)).toEqual({...stored,recoveryRequest:{...request,kind:'saved'}});expect(t.rows.size).toBe(2);
   });
   it.each(['awaiting_upload','queued','extracting','verifying','normalizing','interpreting','synthesizing','unknown'])('protects even an expired active/unknown %s job',async state=>{
     const t=setup();await t.api.create(scope,request,'saved',{},job(state,now/1000-1));
@@ -74,7 +74,7 @@ describe('safe unavailable-request retirement',()=>{
   it.each(['ownerSub','organizationId','personId'] as const)('cannot retire another %s scope',async key=>{
     const t=setup();await t.api.create(scope,request,'saved',{},job());
     await t.api.retire({...scope,[key]:'other'},request);
-    expect(await t.api.discover(scope,request.id)).toEqual(job());
+    expect(await t.api.discover(scope,request.id)).toEqual({...job(),recoveryRequest:{...request,kind:'saved'}});
   });
   it('recovers a lost retirement acknowledgement but does not report permission failure as success',async()=>{
     const t=setup();t.lost();await t.api.retire(scope,request);expect(t.rows.size).toBe(1);

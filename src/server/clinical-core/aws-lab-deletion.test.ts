@@ -32,6 +32,6 @@ describe("AWS lab deletion boundary", () => {
     expect(source).toContain("dynamodb:DeleteItem");
     expect(source).toContain("s3:DeleteObjectVersion");
     expect(source).toContain("s3:ListBucketVersions");
-    expect(template.Outputs.RoutesEnabled.Value).toBe("22");
+    expect(template.Outputs.RoutesEnabled.Value).toBe("26");
   });
 });

@@ -1,5 +1,9 @@
 # ALP commercial launch: owner actions and remaining engineering
 
+Latest September 15 source increment: [cross-device lab recovery](cross-device-lab-recovery.md).
+New indexed requests support explicit V2 inventory/selection under 26 lab routes;
+backend-first deployment, legacy migration and physical acceptance remain.
+
 September 15 scope reconciliation: V2 `expo/docs/commercial-six-phase-ledger.md`
 keeps the original six phases fixed; individual source repairs do not complete a
 phase. Paired intake contracts now allow genuinely unasked observations to be

@@ -14,6 +14,8 @@ beforeEach(()=>{
   rows.clear();vi.clearAllMocks();vi.stubEnv('LAB_JOB_TABLE','fictional-table');vi.stubEnv('LAB_RANGE_MODE','synthetic_fixture');vi.stubEnv('LAB_STATE_MACHINE_ARN','fictional-machine');
   mock.db.mockImplementation(async c=>{
     if(c.constructor.name==='GetCommand')return {Item:rows.get(c.input.Key.pk)};
+    if(c.constructor.name==='QueryCommand')return {Items:[...rows.values()].filter(r=>r.inventoryOwner===c.input.ExpressionAttributeValues[':owner'])
+      .map(r=>({pk:r.pk,inventoryOwner:r.inventoryOwner,inventoryOrder:r.inventoryOrder}))};
     if(c.constructor.name==='TransactWriteCommand'){
       const puts=c.input.TransactItems.map((r:{Put:{Item:{pk:string}}})=>r.Put.Item);
       if(puts.some((r:{pk:string})=>rows.has(r.pk)))throw new Error('conditional collision');
@@ -24,6 +26,25 @@ beforeEach(()=>{
 });
 afterEach(()=>vi.unstubAllEnvs());
 describe('request-aware API integration',()=>{
+  it('lists an actually created job and retrieves recovery metadata without clinical payload or execution side effects',async()=>{
+    const body={...input(),sourcePanelSha256:'b'.repeat(64)};const created=await handler(event('POST','requests/saved',body));
+    const jobId=JSON.parse(created.body).data.jobId;mock.sfn.mockClear();
+    const listed=await handler(event('GET','inventory'));expect(listed.statusCode).toBe(200);
+    const page=JSON.parse(listed.body).data;expect(page.contractVersion).toBe('lab-job-inventory/1');
+    expect(page.jobs[0]).toMatchObject({jobId,panelId:id,canResume:true,request:{...body.request,kind:'saved'},sourcePanelSha256:'b'.repeat(64)});
+    expect(JSON.stringify(page)).not.toContain('Fictional');
+    const detail=await handler(event('GET',`jobs/${jobId}/recovery`));
+    expect(JSON.parse(detail.body).data.job).toEqual(page.jobs[0]);expect(mock.sfn).not.toHaveBeenCalled();
+    expect(JSON.parse((await handler(event('GET','inventory',undefined,{sub:id}))).body).data.jobs).toEqual([]);
+    expect((await handler(event('GET',`jobs/${jobId}/recovery`,undefined,{sub:id}))).statusCode).toBe(404);
+    rows.get('job#'+jobId)!.state='deleting';
+    expect((await handler(event('GET',`jobs/${jobId}/recovery`))).statusCode).toBe(404);
+  });
+  it('requires synthetic identity on inventory and rejects unrecognized query parameters',async()=>{
+    expect((await handler(event('GET','inventory',undefined,{'custom:synthetic_attested':'false'}))).statusCode).toBe(400);
+    expect((await handler({...event('GET','inventory'),queryStringParameters:{ownerSub:id}})).statusCode).toBe(400);
+    expect(mock.db).not.toHaveBeenCalled();
+  });
   it('retires a never-created request with a versioned acknowledgement and refuses late creation',async()=>{
     const body=input();const retired=await handler(event('POST',`requests/${id}/retire`,{request:body.request}));
     expect(retired.statusCode).toBe(200);expect(JSON.parse(retired.body).data).toEqual({contractVersion:'lab-request-retirement/1',requestId:id,status:'retired'});
@@ -69,7 +90,7 @@ describe('request-aware API integration',()=>{
   it('declares all ten recovery routes with existing scoped authorizers and no public routes',()=>{
     const template=JSON.parse(readFileSync('infra/aws-clinical-core/lab-analysis-extension.json','utf8'));
     const routes=Object.values(template.Resources).filter((r:unknown)=>(r as {Type:string}).Type==='AWS::ApiGatewayV2::Route') as {Properties:{RouteKey:string;AuthorizationType:string;AuthorizerId:{Ref:string}}}[];
-    expect(routes).toHaveLength(22);expect(routes.filter(r=>/\/requests\/|\/request-recovery$/.test(r.Properties.RouteKey))).toHaveLength(10);
+    expect(routes).toHaveLength(26);expect(routes.filter(r=>/\/requests\/|\/request-recovery$/.test(r.Properties.RouteKey))).toHaveLength(10);
     for(const {Properties:p} of routes){expect(p.AuthorizationType).toBe(p.RouteKey.includes('/consumer/')?'JWT':'CUSTOM');expect(template.Resources[p.AuthorizerId.Ref]).toBeDefined();}
     expect(template.Outputs.PhiAllowed.Value).toBe('false');
     const policy=template.Resources.LabApiRole.Properties.Policies.find((p:{PolicyName:string})=>p.PolicyName==='LabJobLedger');

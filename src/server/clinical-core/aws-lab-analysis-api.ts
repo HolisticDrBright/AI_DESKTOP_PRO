@@ -8,6 +8,7 @@ import { SFNClient, StartExecutionCommand } from "@aws-sdk/client-sfn";
 import { collectionRangeContextSchema, type CollectionRangeContext } from "./lab-range-population";
 import { resolveLabSourcePanel, type LabSourcePanel } from "./lab-source-panel";
 import { labRequestLedger, LabRequestError, requestIdentity, REQUEST_RECOVERY_VERSION, REQUEST_RETIREMENT_VERSION } from './lab-request-ledger';
+import { inventoryStamp, labRecoveryDescriptor, listLabInventory, LAB_INVENTORY_VERSION } from './lab-job-inventory';
 
 const CONTRACT_VERSION = "lab-analysis/1";
 const MAX_BODY_BYTES = 256 * 1024;
@@ -19,6 +20,7 @@ type Claims = { sub: string; "custom:person_id": string; "custom:organization_id
 type ApiEvent = {
   body?: unknown;
   rawPath?: unknown;
+  queryStringParameters?: Record<string, string | undefined>;
   requestContext?: { authorizer?: { jwt?: { claims?: unknown }; lambda?: unknown }; http?: { method?: unknown } };
 };
 type DocumentInput = {
@@ -85,6 +87,7 @@ type Job = {
   structuredBiomarkers?: StructuredLabBiomarker[];
   sourcePanel?: LabSourcePanel;
   panelId?: string;
+  sourcePanelSha256?: string;
   patientContext?: PatientContext;
   longitudinalContext?: LongitudinalContext;
   failureCategory: string | null;
@@ -408,6 +411,7 @@ async function createJob(event: ApiEvent, identity: Claims) {
     organizationId: identity["custom:organization_id"],
     personId: identity["custom:person_id"],
     state: "awaiting_upload",
+    ...inventoryStamp({ownerSub:identity.sub,organizationId:identity['custom:organization_id'],personId:identity['custom:person_id']}, now, `job#${jobId}`),
     passesCompleted: 0,
     progressPercent: 0,
     attempt: 1,
@@ -497,10 +501,11 @@ async function resumeUpload(identity: Claims, jobId: string) {
 
 async function createPlanJob(event: ApiEvent, identity: Claims) {
   const input = body(event);
-  const expected = ["request", "panelId", "panelName", "testDate", "patientContext", "longitudinalContext", "dataClassification", "attestsSyntheticOnly", "biomarkers"];
+  const expected = ["request", "panelId", "panelName", "testDate", "patientContext", "longitudinalContext", "dataClassification", "attestsSyntheticOnly", "biomarkers", "sourcePanelSha256"];
   if (Object.keys(input).some((key) => !expected.includes(key))
     || input.dataClassification !== "synthetic_only" || input.attestsSyntheticOnly !== true
-    || !boundedString(input.panelId, 160) || !boundedString(input.panelName, 180) || !safeDate(input.testDate)) return refusal();
+    || !boundedString(input.panelId, 160) || !boundedString(input.panelName, 180) || !safeDate(input.testDate)
+    || (input.sourcePanelSha256 !== undefined && (typeof input.sourcePanelSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(input.sourcePanelSha256)))) return refusal();
   const structuredBiomarkers = safeStructuredLabBiomarkers(input.biomarkers);
   const sourcePanel=resolveLabSourcePanel({sourcePanel:{panelId:input.panelId,panelName:input.panelName,testDate:input.testDate},structuredBiomarkers});
   const patientContext = safePatientContext(input.patientContext);
@@ -516,6 +521,7 @@ async function createPlanJob(event: ApiEvent, identity: Claims) {
     organizationId: identity["custom:organization_id"],
     personId: identity["custom:person_id"],
     state: "queued",
+    ...inventoryStamp({ownerSub:identity.sub,organizationId:identity['custom:organization_id'],personId:identity['custom:person_id']}, now, `job#${jobId}`),
     passesCompleted: 0,
     progressPercent: 5,
     attempt: 1,
@@ -527,6 +533,7 @@ async function createPlanJob(event: ApiEvent, identity: Claims) {
     ...(sourcePanel?{sourcePanel}:{}),
     ...rangeReleaseStamp(),
     panelId: input.panelId,
+    ...(typeof input.sourcePanelSha256 === 'string' ? {sourcePanelSha256:input.sourcePanelSha256} : {}),
     ...(patientContext ? { patientContext } : {}),
     ...(longitudinalContext ? { longitudinalContext } : {}),
     failureCategory: null,
@@ -591,6 +598,20 @@ export async function createAwsLabAnalysisApiHandler(event: ApiEvent) {
     const identity = claims(event);
     const method = event?.requestContext?.http?.method;
     const path = event?.rawPath;
+    if (method === 'GET' && typeof path === 'string') {
+      const scope = {ownerSub:identity.sub,organizationId:identity['custom:organization_id'],personId:identity['custom:person_id']};
+      if (/^\/clinical-core\/(?:consumer|synthetic-session)\/labs\/inventory$/.test(path)) {
+        const query = event.queryStringParameters ?? {};
+        if (Object.keys(query).some(k => k !== 'cursor')) return refusal();
+        return json(200, await listLabInventory(db, required('LAB_JOB_TABLE'), scope, query.cursor));
+      }
+      const recovery = path.match(/^\/clinical-core\/(?:consumer|synthetic-session)\/labs\/jobs\/([0-9a-f-]{36})\/recovery$/i);
+      if (recovery) {
+        const job = await ownedJob(recovery[1], identity);
+        const descriptor = job ? labRecoveryDescriptor(job, scope) : null;
+        return descriptor ? json(200, {contractVersion:LAB_INVENTORY_VERSION, job:descriptor}) : refusal(404);
+      }
+    }
     if(method==='POST' && typeof path==='string'){
       const retirement=path.match(/^\/clinical-core\/(?:consumer|synthetic-session)\/labs\/requests\/([0-9a-f-]{36})\/retire$/i);
       if(retirement){
