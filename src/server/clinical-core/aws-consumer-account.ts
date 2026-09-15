@@ -3,6 +3,7 @@ if (typeof window !== "undefined") {
 }
 
 import { randomUUID } from "node:crypto";
+import { isAdultRegistrationEligible } from "./adult-registration";
 import { clinicalUuid, type ClinicalCoreDatabase } from "./database";
 import type { ApiGatewayV2Event, ApiGatewayV2Response } from "./aws-identity-api";
 
@@ -50,7 +51,7 @@ export class ConsumerAccountProviderError extends Error {
 }
 
 class ConsumerAccountRequestError extends Error {
-  constructor(readonly category: "request_invalid" | "registration_refused" | "confirmation_invalid" | "provider_unavailable") {
+  constructor(readonly category: "request_invalid" | "registration_refused" | "adult_registration_required" | "confirmation_invalid" | "provider_unavailable") {
     super(category);
     this.name = "ConsumerAccountRequestError";
   }
@@ -89,7 +90,7 @@ export function createConsumerAccountApiHandler(input: {
       }
       const body = parseBody(event.body);
       const fields: Record<string, string[]> = {
-        "POST /clinical-core/public/consumer/register": ["email", "password", "acceptsTerms", "acceptsPrivacy", "termsVersion", "privacyVersion", "attestsSyntheticOnly"],
+        "POST /clinical-core/public/consumer/register": ["email", "password", "acceptsTerms", "acceptsPrivacy", "termsVersion", "privacyVersion", "attestsSyntheticOnly", "dateOfBirth", "attestsAdult", "registrationPolicy"],
         "POST /clinical-core/public/consumer/registration/confirm": ["email", "code"],
         "POST /clinical-core/public/consumer/registration/resend": ["email"],
         "POST /clinical-core/public/consumer/recovery/request": ["email"],
@@ -99,6 +100,9 @@ export function createConsumerAccountApiHandler(input: {
       if (allowed && Object.keys(body).some(key => !allowed.includes(key))) throw new ConsumerAccountRequestError("request_invalid");
       switch (event.routeKey) {
         case "POST /clinical-core/public/consumer/register": {
+          // Check before any provider/database call. The DOB is transient and is
+          // not forwarded to Cognito, clinical storage, logs, or the response.
+          if (!isAdultRegistrationEligible(body)) throw new ConsumerAccountRequestError("adult_registration_required");
           const email = normalizedEmail(body.email);
           const password = validPassword(body.password);
           if (body.acceptsTerms !== true || body.acceptsPrivacy !== true

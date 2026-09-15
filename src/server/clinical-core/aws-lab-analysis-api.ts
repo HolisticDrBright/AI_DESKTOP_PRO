@@ -6,6 +6,7 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { SFNClient, StartExecutionCommand } from "@aws-sdk/client-sfn";
 import { collectionRangeContextSchema, type CollectionRangeContext } from "./lab-range-population";
+import { resolveLabSourcePanel, type LabSourcePanel } from "./lab-source-panel";
 
 const CONTRACT_VERSION = "lab-analysis/1";
 const MAX_BODY_BYTES = 256 * 1024;
@@ -80,6 +81,7 @@ type Job = {
   expiresAt: number;
   documents: Array<DocumentInput & { objectKey: string }>;
   structuredBiomarkers?: StructuredLabBiomarker[];
+  sourcePanel?: LabSourcePanel;
   panelId?: string;
   patientContext?: PatientContext;
   longitudinalContext?: LongitudinalContext;
@@ -444,6 +446,7 @@ async function createPlanJob(event: ApiEvent, identity: Claims) {
     || input.dataClassification !== "synthetic_only" || input.attestsSyntheticOnly !== true
     || !boundedString(input.panelId, 160) || !boundedString(input.panelName, 180) || !safeDate(input.testDate)) return refusal();
   const structuredBiomarkers = safeStructuredLabBiomarkers(input.biomarkers);
+  const sourcePanel=resolveLabSourcePanel({sourcePanel:{panelId:input.panelId,panelName:input.panelName,testDate:input.testDate},structuredBiomarkers});
   const patientContext = safePatientContext(input.patientContext);
   const longitudinalContext = safeLongitudinalContext(input.longitudinalContext);
   if (longitudinalContext && (longitudinalContext.incomingPanel.panelId !== input.panelId
@@ -465,6 +468,7 @@ async function createPlanJob(event: ApiEvent, identity: Claims) {
     expiresAt: Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60,
     documents: [],
     structuredBiomarkers,
+    ...(sourcePanel?{sourcePanel}:{}),
     ...rangeReleaseStamp(),
     panelId: input.panelId,
     ...(patientContext ? { patientContext } : {}),

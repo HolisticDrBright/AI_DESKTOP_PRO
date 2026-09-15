@@ -29,6 +29,17 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllEnvs());
 
 describe("durable lab job lifecycle", () => {
+  test("persists source panel dates and rejects contradictory collection dates before writing",async()=>{
+    const body={panelId:"fixture-panel",panelName:"Fictional panel",testDate:"2026-01-01",dataClassification:"synthetic_only",attestsSyntheticOnly:true,
+      biomarkers:[{markerId:"fixture",canonicalName:"Fictional marker",value:0,unit:"widgets",labMin:null,labMax:null}]};
+    expect((await createAwsLabAnalysisApiHandler(event("POST","plan-jobs",body))).statusCode).toBe(200);
+    expect(mock.db.mock.calls.find(([c])=>c.constructor.name==="PutCommand")![0].input.Item.sourcePanel)
+      .toEqual({panelId:body.panelId,panelName:body.panelName,testDate:body.testDate});
+    mock.db.mockClear();mock.sfn.mockClear();
+    const context={dateOfBirth:"2000-01-01",observedOn:"2026-02-01",sex:null,pregnancyStatus:null,cyclePhase:null,reproductiveStage:null,contraception:null,pregnancyTrimester:null,assayId:null};
+    expect((await createAwsLabAnalysisApiHandler(event("POST","plan-jobs",{...body,biomarkers:[{...body.biomarkers[0],collectionContext:context}]}))).statusCode).toBe(400);
+    expect(mock.db).not.toHaveBeenCalled();expect(mock.sfn).not.toHaveBeenCalled();
+  });
   test("a misspelled reviewed range mode cannot fall back to synthetic ranges", async () => {
     vi.stubEnv("LAB_RANGE_MODE", "reviewed_releas");
     const response = await createAwsLabAnalysisApiHandler(event("POST", "plan-jobs", {

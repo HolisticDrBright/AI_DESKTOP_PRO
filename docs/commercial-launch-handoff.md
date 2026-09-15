@@ -2,6 +2,10 @@
 
 Updated September 14, 2026. Status: **not ready for public launch or real health data**.
 This document separates live evidence from code that exists and work still required.
+Latest increment: [adult registration and recoverable lab requests](registration-lab-recovery-phase.md).
+Adult 18+ self-service with separately verified guardian pediatric access is now the owner's confirmed launch policy.
+The new signup check, account-scoped pending-job repair and source-date repair are source-only;
+guardian verification and the remaining production engineering below are not completed.
 Latest source increment: [population-aware ranges and catalog-release reconciliation](population-range-catalog-release.md). Precise range matching, unsigned source-bound preparation and exact catalog serving-size reconciliation are implemented and locally tested; this does not complete production data capture, clinical release activation or commercial readiness.
 It does not sign agreements or approve clinical policy on anyone's behalf.
 

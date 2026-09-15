@@ -9,6 +9,7 @@ import {
   TextractClient,
 } from "@aws-sdk/client-textract";
 import { synthesizeLabWithOpenAI } from "./aws-lab-openai";
+import { resolveLabSourcePanel, type LabSourcePanel } from "./lab-source-panel";
 import type { LongitudinalContext, PatientContext, StructuredLabBiomarker } from "./aws-lab-analysis-api";
 import { resolveReviewedLabRange, verifyLabRangeRelease, type RangePopulation, type VerifiedLabRangeRelease } from "./lab-range-release";
 
@@ -23,7 +24,7 @@ export const LAB_WORKER_LEASE_SECONDS = 360;
 const UUID_NS = "ai-longevity-pro-synthetic-lab-v1";
 
 type StoredDocument = { clientDocumentId: string; contentType: string; objectKey: string };
-type Job = { pk: string; state: string; passesCompleted?: number; documents: StoredDocument[]; structuredBiomarkers?: StructuredLabBiomarker[]; patientContext?: PatientContext; longitudinalContext?: LongitudinalContext; rangeReleaseSha256?: string };
+type Job = { pk: string; state: string; passesCompleted?: number; documents: StoredDocument[]; structuredBiomarkers?: StructuredLabBiomarker[]; sourcePanel?: LabSourcePanel; patientContext?: PatientContext; longitudinalContext?: LongitudinalContext; rangeReleaseSha256?: string };
 export type LabRangeContext = { catalog: VerifiedLabRangeRelease; population: RangePopulation };
 type ExtractedCell = { text: string; confidence: number; column: number };
 type ExtractedRow = { cells: ExtractedCell[]; page: number | null; documentId: string };
@@ -579,6 +580,7 @@ export function reviewedMeasurementStatus(row: Biomarker): "optimal" | "normal" 
 }
 async function executePass(job: Job, pass: number): Promise<unknown | null> {
   const jobId = job.pk.slice(4);
+  const sourcePanel=resolveLabSourcePanel(job);
   const rangeContext = await reviewedRangeContext(job);
   if (pass === 0) {
     if (job.structuredBiomarkers) {
@@ -609,7 +611,7 @@ async function executePass(job: Job, pass: number): Promise<unknown | null> {
     const extracted = job.structuredBiomarkers ? undefined : await readArtifact(jobId, "extracted") as Extracted;
     if (extracted) assertExactExtractedMeasurements(extracted);
     const biomarkers = job.structuredBiomarkers
-      ? normalizeStructuredLabBiomarkers(job.structuredBiomarkers, jobId, job.longitudinalContext?.incomingPanel.panelName, rangeContext)
+      ? normalizeStructuredLabBiomarkers(job.structuredBiomarkers, jobId, sourcePanel?.panelName, rangeContext)
       : sanitizeMeasuredLabBiomarkers(normalizeExtractedLabLines(extracted!, rangeContext));
     if (!biomarkers.length) throw Object.assign(new Error("no_supported_biomarkers"), { category: "document_unreadable" });
     await writeArtifact(jobId, "normalized", { biomarkers });
@@ -654,8 +656,8 @@ async function executePass(job: Job, pass: number): Promise<unknown | null> {
     functionalMin: row.functionalRange?.min ?? null,
     functionalMax: row.functionalRange?.max ?? null,
     status: row.status,
-    panelId: job.longitudinalContext?.incomingPanel.panelId ?? jobId,
-    testDate: job.longitudinalContext?.incomingPanel.testDate,
+    panelId: sourcePanel?.panelId ?? jobId,
+    testDate: sourcePanel?.testDate,
   }));
   const priorForSynthesis = (job.longitudinalContext?.priorPanels ?? []).flatMap((panel) => sanitizeMeasuredLabBiomarkers(
     panel.biomarkers.map((row) => ({
@@ -692,7 +694,7 @@ async function executePass(job: Job, pass: number): Promise<unknown | null> {
     activeProtocol: job.longitudinalContext?.activeProtocol ?? null,
   });
   const analysisId = randomUUID();
-  const sourcePanelId = job.longitudinalContext?.incomingPanel.panelId ?? jobId;
+  const sourcePanelId = sourcePanel?.panelId ?? jobId;
   const symptomCategoryIds = job.patientContext?.topSymptomSignals.map((row) => row.categoryId) ?? [];
   const newestMeasurements = [...currentForSynthesis, ...priorForSynthesis].filter((row, index, rows) => {
     const key = `${normalizedMarkerName(row.canonicalName)}|${row.unit.trim().toLowerCase()}`;
