@@ -112,3 +112,34 @@ The follow-up web release is now deployed:
   workflow was executed using the repository's existing Playwright engine.
   This verifies public/signed-out boundaries, not authenticated practitioner
   chart transfer or physical mobile behavior.
+
+## Durable deletion deployment checkpoint
+
+- Backend source ae26677f4740baa1323f57a7646fbe3ab2c1672e, PR65.
+  Unit suite: 1,429 passed / 11 existing skips; typecheck, artifact build,
+  infrastructure lint and diff checks passed.
+- Reviewed change set recovery-ae26677f4740-20260915163526 executed in
+  account 588966314750 only. No resource removal/replacement; existing clinical,
+  identity and knowledge-release parameters preserved. Stack UPDATE_COMPLETE.
+- API, authorizer and cleanup ZIP SHA256:
+  97eaca4ab94973b7ece314dc676fd13a20d87bd49346fbf773cbf29f9a00fb5a.
+  Worker ZIP SHA256:
+  ac6ddbbdc73cb0d5725c1c1cfa199075df0a8b730f92c0d7ff90393230d38773.
+  All four functions Active/Successful with matching hashes.
+- The cleanup worker has no model credentials or object-body read/write access.
+  It requires a valid scoped deletion outbox; events alone do not authorize a
+  purge. Worker failure callbacks cannot overwrite deletion/awaiting-upload states.
+- LabOwnerInventory remained ACTIVE. LabCleanupDue was still CREATING/backfilling
+  after stack completion; acceptance was deliberately not started at that point.
+  Record its ACTIVE status and actual late-upload test results separately below.
+- Cleanup PHI_ALLOWED=false / synthetic_only. NotificationsConfigured=false:
+  alarms exist but no approved SNS recipient was supplied. Failure queue was
+  empty at the initial check. Shared concurrency is only 10; production capacity
+  qualification remains open. No paid mobile build or real-data activation.
+- App Runner web remains exact 4ffd5f2; this change deploys backend artifacts,
+  not a new web image. CI35033158376 and evidence CI35033922115 have succeeded;
+  new backend CI35036314103 was still running at the deployment checkpoint.
+
+Read docs/durable-lab-deletion-cleanup.md for tombstone/backup retention,
+operational replay and rollback boundaries. This is per-analysis object cleanup,
+not account-wide erasure or completion of original phases 2/3/6.
