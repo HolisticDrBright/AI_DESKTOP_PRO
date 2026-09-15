@@ -6,8 +6,8 @@ export const LAB_CLEANUP_INDEX = 'LabCleanupDue';
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const subject = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 type Scope = {ownerSub:string;organizationId:string;personId:string};
-type Cleanup = Scope & {pk:string;contractVersion:string;requestedAt:string;cleanupPartition:'pending'|'watching';cleanupDue:string;lastVerifiedAt?:string};
-type Dependencies = {db:DynamoDBDocumentClient;s3:S3Client;table:string;bucket:string;now?:()=>number};
+type Cleanup = Scope & {pk:string;contractVersion:string;requestedAt:string;cleanupPartition:'pending'|'watching';cleanupDue:string;lastVerifiedAt?:string;stopRequired?:true};
+type Dependencies = {db:DynamoDBDocumentClient;s3:S3Client;table:string;bucket:string;now?:()=>number;stopExecutions?:(jobId:string)=>Promise<void>};
 const invalid = ():never => {throw new Error('lab_cleanup_invalid');};
 const sameOwner = (a:Scope,b:Scope) => a.ownerSub===b.ownerSub && a.organizationId===b.organizationId && a.personId===b.personId;
 function validateScope(scope:Scope,jobId:string) {
@@ -15,11 +15,12 @@ function validateScope(scope:Scope,jobId:string) {
 }
 function validDate(value:unknown) {return typeof value==='string'&&Number.isFinite(Date.parse(value))&&new Date(value).toISOString()===value;}
 function validateCleanup(value:Record<string,unknown>,jobId:string):Cleanup {
-  const allowed=['pk','contractVersion','ownerSub','organizationId','personId','requestedAt','cleanupPartition','cleanupDue','lastVerifiedAt'];
+  const allowed=['pk','contractVersion','ownerSub','organizationId','personId','requestedAt','cleanupPartition','cleanupDue','lastVerifiedAt','stopRequired'];
   if(Object.keys(value).some(key=>!allowed.includes(key)) || value.pk!=='cleanup#'+jobId
     || value.contractVersion!==LAB_CLEANUP_VERSION || !['pending','watching'].includes(String(value.cleanupPartition))
     || !validDate(value.requestedAt)||!validDate(value.cleanupDue)
-    || value.lastVerifiedAt!==undefined&&!validDate(value.lastVerifiedAt))invalid();
+    || value.lastVerifiedAt!==undefined&&!validDate(value.lastVerifiedAt)
+    || value.stopRequired!==undefined&&value.stopRequired!==true)invalid();
   const row=value as Cleanup;validateScope(row,jobId);return row;
 }
 async function readCleanup(deps:Dependencies,jobId:string) {
@@ -29,19 +30,23 @@ async function readCleanup(deps:Dependencies,jobId:string) {
 }
 /** Atomically fences processing and persists a minimal outbox before any purge.
  * No health values, file names, credentials or automatic tombstone TTL. */
-export async function claimLabDeletion(deps:Dependencies,scope:Scope,jobId:string) {
+export async function claimLabDeletion(deps:Dependencies,scope:Scope,jobId:string,cancelActive=false) {
   validateScope(scope,jobId);
   const now=(deps.now??Date.now)(),iso=new Date(now).toISOString();
   await deps.db.send(new TransactWriteCommand({TransactItems:[
     {Update:{TableName:deps.table,Key:{pk:'job#'+jobId},
-      UpdateExpression:'SET #state = :deleting, updatedAt = :now',
-      ConditionExpression:'ownerSub = :owner AND organizationId = :org AND personId = :person AND #state IN (:awaiting, :completed, :review, :failed, :deleting) AND (attribute_not_exists(leaseUntil) OR leaseUntil <= :epoch)',
+      UpdateExpression:'SET #state = :deleting, updatedAt = :now'+(cancelActive?' REMOVE leaseToken, leaseUntil':''),
+      ConditionExpression:'ownerSub = :owner AND organizationId = :org AND personId = :person AND '+(cancelActive
+        ?'#state IN (:awaiting, :queued, :extracting, :verifying, :normalizing, :interpreting, :synthesizing, :deleting)'
+        :'#state IN (:awaiting, :completed, :review, :failed, :deleting) AND (attribute_not_exists(leaseUntil) OR leaseUntil <= :epoch)'),
       ExpressionAttributeNames:{'#state':'state'},ExpressionAttributeValues:{':owner':scope.ownerSub,':org':scope.organizationId,':person':scope.personId,
-        ':awaiting':'awaiting_upload',':completed':'completed',':review':'needs_review',':failed':'failed',':deleting':'deleting',':now':iso,':epoch':now}}},
+        ':awaiting':'awaiting_upload',':deleting':'deleting',':now':iso,...(cancelActive
+          ?{':queued':'queued',':extracting':'extracting',':verifying':'verifying',':normalizing':'normalizing',':interpreting':'interpreting',':synthesizing':'synthesizing'}
+          :{':completed':'completed',':review':'needs_review',':failed':'failed',':epoch':now})}}},
     {Update:{TableName:deps.table,Key:{pk:'cleanup#'+jobId},
-      UpdateExpression:'SET contractVersion = :version, ownerSub = :owner, organizationId = :org, personId = :person, requestedAt = if_not_exists(requestedAt, :now), cleanupPartition = :pending, cleanupDue = :now',
+      UpdateExpression:'SET contractVersion = :version, ownerSub = :owner, organizationId = :org, personId = :person, requestedAt = if_not_exists(requestedAt, :now), cleanupPartition = :pending, cleanupDue = :now'+(cancelActive?', stopRequired = :yes':''),
       ConditionExpression:'attribute_not_exists(pk) OR (ownerSub = :owner AND organizationId = :org AND personId = :person AND contractVersion = :version)',
-      ExpressionAttributeValues:{':version':LAB_CLEANUP_VERSION,':owner':scope.ownerSub,':org':scope.organizationId,':person':scope.personId,':now':iso,':pending':'pending'}}},
+      ExpressionAttributeValues:{':version':LAB_CLEANUP_VERSION,':owner':scope.ownerSub,':org':scope.organizationId,':person':scope.personId,':now':iso,':pending':'pending',...(cancelActive?{':yes':true}:{})}}},
   ]}));
 }
 async function purge(deps:Dependencies,prefix:string) {
@@ -63,13 +68,17 @@ async function purge(deps:Dependencies,prefix:string) {
 export async function reconcileLabDeletion(deps:Dependencies,jobId:string,expected?:Scope,objectKey?:string) {
   const record=await readCleanup(deps,jobId);
   if(!record)return null;
-  if(expected&&!sameOwner(record,expected))invalid();
+  if(expected&&!sameOwner(record,expected))return null;
   const sourcePrefix=`synthetic-labs/${record.organizationId}/${record.ownerSub}/${jobId}/`;
   const artifactPrefix=`synthetic-labs/artifacts/${jobId}/`;
   if(objectKey!==undefined&&!objectKey.startsWith(sourcePrefix)&&!objectKey.startsWith(artifactPrefix))invalid();
   const current=await deps.db.send(new GetCommand({TableName:deps.table,Key:{pk:'job#'+jobId},ConsistentRead:true}));
   if(current.Item&&(!sameOwner(current.Item as Scope,record)||current.Item.state!=='deleting'
     ||Number(current.Item.leaseUntil??0)>(deps.now??Date.now)()))throw new Error('lab_cleanup_state_conflict');
+  if(record.stopRequired){
+    if(!deps.stopExecutions)throw new Error('lab_cancellation_configuration_missing');
+    await deps.stopExecutions(jobId);
+  }
   await purge(deps,sourcePrefix);await purge(deps,artifactPrefix);
   await deps.db.send(new DeleteCommand({TableName:deps.table,Key:{pk:'job#'+jobId},
     ConditionExpression:'attribute_not_exists(pk) OR (ownerSub = :owner AND organizationId = :org AND personId = :person AND #state = :deleting AND (attribute_not_exists(leaseUntil) OR leaseUntil <= :epoch))',
@@ -77,11 +86,12 @@ export async function reconcileLabDeletion(deps:Dependencies,jobId:string,expect
       ':deleting':'deleting',':epoch':(deps.now??Date.now)()}}));
   const now=(deps.now??Date.now)(),lastVerifiedAt=new Date(now).toISOString();
   await deps.db.send(new UpdateCommand({TableName:deps.table,Key:{pk:record.pk},
-    UpdateExpression:'SET cleanupPartition = :watching, cleanupDue = :next, lastVerifiedAt = :now',
-    ConditionExpression:'ownerSub = :owner AND organizationId = :org AND personId = :person AND requestedAt = :requested AND contractVersion = :version',
+    UpdateExpression:'SET cleanupPartition = :watching, cleanupDue = :next, lastVerifiedAt = :now REMOVE stopRequired',
+    ConditionExpression:'ownerSub = :owner AND organizationId = :org AND personId = :person AND requestedAt = :requested AND contractVersion = :version AND '+(record.stopRequired?'stopRequired = :yes':'attribute_not_exists(stopRequired)'),
     ExpressionAttributeValues:{':owner':record.ownerSub,':org':record.organizationId,':person':record.personId,':requested':record.requestedAt,
       ':version':LAB_CLEANUP_VERSION,':watching':'watching',
-      ':next':new Date(now+(now-Date.parse(record.requestedAt)<60*60*1000?5*60*1000:24*60*60*1000)).toISOString(),':now':lastVerifiedAt}}));
+      ':next':new Date(now+(now-Date.parse(record.requestedAt)<60*60*1000?5*60*1000:24*60*60*1000)).toISOString(),':now':lastVerifiedAt,
+      ...(record.stopRequired?{':yes':true}:{})}}));
   return {cleanupVersion:LAB_CLEANUP_VERSION,cleanupStatus:'late_upload_watch' as const,lastVerifiedAt};
 }
 export async function sweepLabDeletions(deps:Dependencies) {

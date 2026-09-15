@@ -220,6 +220,9 @@
     "CreateLabPlanJobRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "POST /clinical-core/consumer/labs/plan-jobs", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "LabConsumerAuthorizer" }, "Target": { "Fn::Sub": "integrations/${LabApiIntegration}" } } },
     "CompleteLabUploadRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "POST /clinical-core/consumer/labs/jobs/{jobId}/complete-upload", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "LabConsumerAuthorizer" }, "Target": { "Fn::Sub": "integrations/${LabApiIntegration}" } } },
     "ResumeLabUploadRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "POST /clinical-core/consumer/labs/jobs/{jobId}/resume-upload", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "LabConsumerAuthorizer" }, "Target": { "Fn::Sub": "integrations/${LabApiIntegration}" } } },
+    "CancelConsumerLabJobRoute": {"Type":"AWS::ApiGatewayV2::Route","Properties":{"ApiId":{"Ref":"ClinicalApiId"},"RouteKey":"POST /clinical-core/consumer/labs/jobs/{jobId}/cancel","AuthorizationType":"JWT","AuthorizerId":{"Ref":"LabConsumerAuthorizer"},"Target":{"Fn::Sub":"integrations/${LabApiIntegration}"}}},
+    "CancelSyntheticLabJobRoute": {"Type":"AWS::ApiGatewayV2::Route","Properties":{"ApiId":{"Ref":"ClinicalApiId"},"RouteKey":"POST /clinical-core/synthetic-session/labs/jobs/{jobId}/cancel","AuthorizationType":"CUSTOM","AuthorizerId":{"Ref":"LabSyntheticSessionAuthorizer"},"Target":{"Fn::Sub":"integrations/${LabApiIntegration}"}}},
+    "LabCancellationPolicy": {"Type":"AWS::IAM::Policy","Properties":{"PolicyName":"StopOwnedLabExecutions","Roles":[{"Ref":"LabApiRole"},{"Ref":"LabCleanupRole"}],"PolicyDocument":{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"states:StopExecution","Resource":[{"Fn::Sub":"arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:execution:${ClinicalApiId}-synthetic-lab-analysis:lab-*"}]}]}}},
     "GetLabJobRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "GET /clinical-core/consumer/labs/jobs/{jobId}", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "LabConsumerAuthorizer" }, "Target": { "Fn::Sub": "integrations/${LabApiIntegration}" } } },
     "DeleteLabJobRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "DELETE /clinical-core/consumer/labs/jobs/{jobId}", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "LabConsumerAuthorizer" }, "Target": { "Fn::Sub": "integrations/${LabApiIntegration}" } } },
     "CreateLabJobSyntheticSessionRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "POST /clinical-core/synthetic-session/labs/jobs", "AuthorizationType": "CUSTOM", "AuthorizerId": { "Ref": "LabSyntheticSessionAuthorizer" }, "Target": { "Fn::Sub": "integrations/${LabApiIntegration}" } } },
@@ -277,7 +280,7 @@
         "Runtime":"nodejs22.x","Architectures":["arm64"],"Handler":"index.cleanup",
         "Role":{"Fn::GetAtt":["LabCleanupRole","Arn"]},"MemorySize":256,"Timeout":120,
         "Code":{"S3Bucket":{"Ref":"LambdaCodeBucket"},"S3Key":{"Ref":"ApiCodeKey"}},
-        "Environment":{"Variables":{"LAB_JOB_TABLE":{"Ref":"LabJobTable"},"LAB_DOCUMENT_BUCKET":{"Ref":"LabDocumentsBucket"},"PHI_ALLOWED":"false","DATA_CLASSIFICATION":"synthetic_only"}},
+        "Environment":{"Variables":{"LAB_JOB_TABLE":{"Ref":"LabJobTable"},"LAB_DOCUMENT_BUCKET":{"Ref":"LabDocumentsBucket"},"LAB_STATE_MACHINE_ARN":{"Fn::Sub":"arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:stateMachine:${ClinicalApiId}-synthetic-lab-analysis"},"PHI_ALLOWED":"false","DATA_CLASSIFICATION":"synthetic_only"}},
         "LoggingConfig":{"LogGroup":{"Ref":"LabCleanupLogGroup"},"LogFormat":"JSON","ApplicationLogLevel":"INFO","SystemLogLevel":"WARN"}
       }
     },
@@ -354,7 +357,7 @@
     "LabJobTableName": { "Value": { "Ref": "LabJobTable" } },
     "LabDocumentsBucketName": { "Value": { "Ref": "LabDocumentsBucket" } },
     "LabStateMachineArn": { "Value": { "Ref": "LabStateMachine" } },
-    "RoutesEnabled": { "Value": "26" },
+    "RoutesEnabled": { "Value": "28" },
     "SyntheticAppSessionEnabled": { "Value": "true" },
     "PhiAllowed": { "Value": "false" },
     "DataClassification": { "Value": "synthetic_only" }

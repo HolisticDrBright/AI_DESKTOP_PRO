@@ -90,7 +90,8 @@ describe('request-aware API integration',()=>{
   it('declares all ten recovery routes with existing scoped authorizers and no public routes',()=>{
     const template=JSON.parse(readFileSync('infra/aws-clinical-core/lab-analysis-extension.json','utf8'));
     const routes=Object.values(template.Resources).filter((r:unknown)=>(r as {Type:string}).Type==='AWS::ApiGatewayV2::Route') as {Properties:{RouteKey:string;AuthorizationType:string;AuthorizerId:{Ref:string}}}[];
-    expect(routes).toHaveLength(26);expect(routes.filter(r=>/\/requests\/|\/request-recovery$/.test(r.Properties.RouteKey))).toHaveLength(10);
+    expect(routes).toHaveLength(28);expect(routes.filter(r=>/\/requests\/|\/request-recovery$/.test(r.Properties.RouteKey))).toHaveLength(10);
+    expect(routes.filter(r=>r.Properties.RouteKey.endsWith('/cancel'))).toHaveLength(2);
     for(const {Properties:p} of routes){expect(p.AuthorizationType).toBe(p.RouteKey.includes('/consumer/')?'JWT':'CUSTOM');expect(template.Resources[p.AuthorizerId.Ref]).toBeDefined();}
     expect(template.Outputs.PhiAllowed.Value).toBe('false');
     const policy=template.Resources.LabApiRole.Properties.Policies.find((p:{PolicyName:string})=>p.PolicyName==='LabJobLedger');

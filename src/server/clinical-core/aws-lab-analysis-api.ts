@@ -10,6 +10,7 @@ import { resolveLabSourcePanel, type LabSourcePanel } from "./lab-source-panel";
 import { labRequestLedger, LabRequestError, requestIdentity, REQUEST_RECOVERY_VERSION, REQUEST_RETIREMENT_VERSION } from './lab-request-ledger';
 import { inventoryStamp, labRecoveryDescriptor, listLabInventory, LAB_INVENTORY_VERSION } from './lab-job-inventory';
 import { claimLabDeletion, reconcileLabDeletion } from './lab-deletion-cleanup';
+import { stopLabExecutions } from './lab-execution-stop';
 
 const CONTRACT_VERSION = "lab-analysis/1";
 const MAX_BODY_BYTES = 256 * 1024;
@@ -342,11 +343,34 @@ async function ownedJob(jobId: string, identity: Claims, includeDeleting = false
 async function deleteJob(identity: Claims, jobId: string) {
   const job = await ownedJob(jobId, identity, true);
   if (job && !["awaiting_upload", "completed", "needs_review", "failed", "deleting"].includes(job.state)) return refusal(409);
-  const deps={db,s3,table:required('LAB_JOB_TABLE'),bucket:required('LAB_DOCUMENT_BUCKET')};
+  const deps={db,s3,table:required('LAB_JOB_TABLE'),bucket:required('LAB_DOCUMENT_BUCKET'),
+    stopExecutions:(id:string)=>stopLabExecutions(sfn,required('LAB_STATE_MACHINE_ARN'),id)};
   const scope={ownerSub:identity.sub,organizationId:identity['custom:organization_id'],personId:identity['custom:person_id']};
   if(job)await claimLabDeletion(deps,scope,jobId);
   const cleanup=await reconcileLabDeletion(deps,jobId,scope);
   return json(200, { contractVersion: CONTRACT_VERSION, jobId, deleted: true, ...cleanup });
+}
+
+/** Cancellation is explicit removal of unfinished work, not deletion of a saved result.
+ * A running Lambda/provider request may finish, but cannot publish after the fence. */
+async function cancelJob(event:ApiEvent,identity:Claims,jobId:string){
+  const input=body(event);
+  if(Object.keys(input).sort().join(',')!=='confirmRemoveUnfinishedAnalysis' || input.confirmRemoveUnfinishedAnalysis!==true)return refusal();
+  const job=await ownedJob(jobId,identity,true);
+  if(job&&!['awaiting_upload','queued','extracting','verifying','normalizing','interpreting','synthesizing','deleting'].includes(job.state))return refusal(409);
+  const scope={ownerSub:identity.sub,organizationId:identity['custom:organization_id'],personId:identity['custom:person_id']};
+  const deps={db,s3,table:required('LAB_JOB_TABLE'),bucket:required('LAB_DOCUMENT_BUCKET'),
+    stopExecutions:(id:string)=>stopLabExecutions(sfn,required('LAB_STATE_MACHINE_ARN'),id)};
+  try{
+    if(job)await claimLabDeletion(deps,scope,jobId,true);
+    const cleanup=await reconcileLabDeletion(deps,jobId,scope);
+    if(!cleanup)return refusal(404);
+    return json(200,{contractVersion:'lab-cancellation/1',jobId,cancelled:true,deleted:true,...cleanup});
+  }catch(error){
+    if((error as {name?:unknown})?.name==='TransactionCanceledException')return refusal(409);
+    // The durable outbox remains for retry. Never acknowledge a partial purge/stop.
+    return refusal(503);
+  }
 }
 
 async function createJob(event: ApiEvent, identity: Claims) {
@@ -599,8 +623,9 @@ export async function createAwsLabAnalysisApiHandler(event: ApiEvent) {
     }
     if (method === "POST" && (path === "/clinical-core/consumer/labs/jobs" || path === "/clinical-core/synthetic-session/labs/jobs")) return await createJob(event, identity);
     if (method === "POST" && (path === "/clinical-core/consumer/labs/plan-jobs" || path === "/clinical-core/synthetic-session/labs/plan-jobs")) return await createPlanJob(event, identity);
-    const match = typeof path === "string" ? path.match(/^\/clinical-core\/(?:consumer|synthetic-session)\/labs\/jobs\/([0-9a-f-]{36})(\/(?:complete-upload|resume-upload))?$/i) : null;
+    const match = typeof path === "string" ? path.match(/^\/clinical-core\/(?:consumer|synthetic-session)\/labs\/jobs\/([0-9a-f-]{36})(\/(?:complete-upload|resume-upload|cancel))?$/i) : null;
     if (!match) return refusal(404);
+    if (method === 'POST' && match[2] === '/cancel') return await cancelJob(event,identity,match[1]);
     if (method === "POST" && match[2] === '/resume-upload') return await resumeUpload(identity, match[1]);
     if (method === "POST" && match[2] === '/complete-upload') return await completeUpload(event, identity, match[1]);
     if (method === "DELETE" && !match[2]) return await deleteJob(identity, match[1]);

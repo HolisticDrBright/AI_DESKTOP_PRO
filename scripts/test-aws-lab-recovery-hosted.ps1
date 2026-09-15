@@ -1,4 +1,4 @@
-param([switch]$ConfirmSyntheticOnly,[switch]$CreateSyntheticTestUsers,[switch]$TestUploadRoundTrip,[switch]$TestLateUploadCleanup,[string]$Profile='ai-synthetic-member')
+param([switch]$ConfirmSyntheticOnly,[switch]$CreateSyntheticTestUsers,[switch]$TestUploadRoundTrip,[switch]$TestLateUploadCleanup,[switch]$TestActiveCancellation,[string]$Profile='ai-synthetic-member')
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 $common=@('--profile',$Profile,'--region','us-east-2','--no-cli-pager')
@@ -9,6 +9,7 @@ function AwsJson([string[]]$Arguments){
 }
 if(-not $ConfirmSyntheticOnly -or -not $CreateSyntheticTestUsers){throw 'Explicit synthetic-only/test-identity confirmation required.'}
 if($TestLateUploadCleanup -and -not $TestUploadRoundTrip){throw 'Late-upload verification requires the fixture-upload switch.'}
+if($TestActiveCancellation -and (-not $TestUploadRoundTrip -or -not $TestLateUploadCleanup)){throw 'Cancellation acceptance requires the upload and late-cleanup checks.'}
 if((AwsJson @('sts','get-caller-identity')).Account -ne '588966314750'){throw 'Wrong account.'}
 $foundation=(AwsJson @('cloudformation','describe-stacks','--stack-name','ai-clinical-core-synthetic-staging')).Stacks[0]
 foreach($pair in @(@('PhiAllowed','false'),@('DataClassification','synthetic_only'),@('Environment','synthetic-staging'))){
@@ -145,8 +146,34 @@ try{
       $remote.Json.data.uploadedDocuments[0].clientDocumentId -eq $documentId) 'remote receipt recovered from verified stored object'
     # Never call complete-upload: this smoke must not invoke the analysis worker.
   }
-  $deleted=CallApi 'DELETE' "/jobs/$jobId" $a
-  Check ($deleted.Status -eq 200) 'owned test job deleted without analysis'
+  if($TestActiveCancellation){
+    # ONLY this newly created fixture. An unexpired lease makes Pass0 refuse
+    # before any document/provider access; no complete-upload route is called.
+    $key=@{pk=@{S="job#$jobId"}}|ConvertTo-Json -Compress
+    $names=@{'#state'='state';'#request'='recoveryRequest';'#id'='id'}|ConvertTo-Json -Compress
+    $values=@{':await'=@{S='awaiting_upload'};':queued'=@{S='queued'};':request'=@{S=$requestBody.request.id};
+      ':token'=@{S='synthetic-cancellation-fixture'};':until'=@{N=([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()+600000).ToString()}}|ConvertTo-Json -Compress
+    $null=AwsJson @('dynamodb','update-item','--table-name',$table,'--key',$key,
+      '--update-expression','SET #state = :queued, leaseToken = :token, leaseUntil = :until',
+      '--condition-expression','#state = :await AND #request.#id = :request','--expression-attribute-names',$names,'--expression-attribute-values',$values)
+    $machine=($stack.Outputs|Where-Object OutputKey -eq 'LabStateMachineArn').OutputValue
+    $execution=AwsJson @('stepfunctions','start-execution','--state-machine-arn',$machine,'--name',"lab-$jobId",'--input',(@{jobId=$jobId}|ConvertTo-Json -Compress))
+    $state=AwsJson @('stepfunctions','describe-execution','--execution-arn',$execution.executionArn,'--query','status')
+    Check ($state -eq 'RUNNING') 'synthetic lease-fenced workflow is running without model access'
+    $other=CallApi 'POST' "/jobs/$jobId/cancel" $b @{confirmRemoveUnfinishedAnalysis=$true}
+    Check ($other.Status -eq 404) 'second user cannot cancel the active workflow'
+    $invalid=CallApi 'POST' "/jobs/$jobId/cancel" $a @{confirmRemoveUnfinishedAnalysis=$false}
+    Check ($invalid.Status -eq 400) 'cancellation requires explicit removal confirmation'
+    $deleted=CallApi 'POST' "/jobs/$jobId/cancel" $a @{confirmRemoveUnfinishedAnalysis=$true}
+    Check ($deleted.Status -eq 200 -and $deleted.Json.data.contractVersion -eq 'lab-cancellation/1' -and $deleted.Json.data.cancelled -eq $true) 'owned active job cancellation acknowledged'
+    $state=AwsJson @('stepfunctions','describe-execution','--execution-arn',$execution.executionArn,'--query','status')
+    Check ($state -eq 'ABORTED') 'AWS confirms the exact workflow stopped'
+    $retry=CallApi 'POST' "/jobs/$jobId/cancel" $a @{confirmRemoveUnfinishedAnalysis=$true}
+    Check ($retry.Status -eq 200 -and $retry.Json.data.cancelled -eq $true) 'lost cancellation acknowledgement can be retried'
+  }else{
+    $deleted=CallApi 'DELETE' "/jobs/$jobId" $a
+    Check ($deleted.Status -eq 200) 'owned test job deleted without analysis'
+  }
   if($TestUploadRoundTrip){
     $objectKey=[uri]::UnescapeDataString(([uri]$target.uploadUrl).AbsolutePath.TrimStart('/'))
     $remaining=AwsJson @('s3api','list-object-versions','--bucket',$documentBucket,'--prefix',$objectKey)
@@ -178,7 +205,10 @@ try{
   Write-Host "Hosted synthetic checks passed: $($passed.Count). Fixture upload enabled: $TestUploadRoundTrip. No AI generations, email sends, or real data."
 }finally{
   if($jobId -and $tokens.Count){
-    try{$cleanup=CallApi 'DELETE' "/jobs/$jobId" $tokens[0];Write-Host "Test-job cleanup HTTP: $($cleanup.Status)"}catch{Write-Warning 'Test-job cleanup needs operator review; no forced deletion attempted.'}
+    try{
+      $cleanup=if($TestActiveCancellation){CallApi 'POST' "/jobs/$jobId/cancel" $tokens[0] @{confirmRemoveUnfinishedAnalysis=$true}}else{CallApi 'DELETE' "/jobs/$jobId" $tokens[0]}
+      Write-Host "Test-job cleanup HTTP: $($cleanup.Status)"
+    }catch{Write-Warning 'Test-job cleanup needs operator review; no forced deletion attempted.'}
   }
   $disabled=0
   foreach($username in $users){

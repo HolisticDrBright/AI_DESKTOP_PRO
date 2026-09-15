@@ -16,7 +16,7 @@ function setup() {
     if(command.constructor.name==='DeleteCommand'){expect(String(input.ConditionExpression)).toContain('leaseUntil <= :epoch');job=undefined;return {};}
     if(command.constructor.name==='UpdateCommand'){
       const values=input.ExpressionAttributeValues as Record<string,string>;
-      ledger={...ledger,cleanupPartition:'watching',cleanupDue:values[':next'],lastVerifiedAt:values[':now']};return {};
+      ledger={...ledger,cleanupPartition:'watching',cleanupDue:values[':next'],lastVerifiedAt:values[':now']};delete ledger.stopRequired;return {};
     }
     if(command.constructor.name==='TransactWriteCommand')return {};
     if(command.constructor.name==='QueryCommand')return {Items:[{pk:'cleanup#'+id}]};
@@ -58,7 +58,7 @@ it('unknown jobs and ordinary live objects cannot authorize deletion',async()=>{
   expect(h.s3).not.toHaveBeenCalled();expect(h.job).toBeDefined();
 });
 it.each(['ownerSub','organizationId','personId'])('refuses another request scope %s',async field=>{
-  const h=setup();await expect(reconcileLabDeletion(h.deps,id,{...scope,[field]:'30000000-0000-4000-8000-000000000001'})).rejects.toThrow();
+  const h=setup();expect(await reconcileLabDeletion(h.deps,id,{...scope,[field]:'30000000-0000-4000-8000-000000000001'})).toBeNull();
   expect(h.s3).not.toHaveBeenCalled();
 });
 it.each(['queued','extracting','completed'])('does not purge a job that is not deletion-claimed: %s',async state=>{
@@ -117,4 +117,21 @@ it('parses only owned source/artifact key shapes without decoding escaped separa
   expect(cleanupJobFromObjectKey('synthetic-labs/artifacts/'+id+'/result.json')).toBe(id);
   for(const key of ['unrelated/'+id,'synthetic-labs/artifacts/not-a-job/file',prefix.slice(0,-1),null,'x'.repeat(1025)])
     expect(cleanupJobFromObjectKey(key)).toBeNull();
+});
+it('retries a durable workflow-stop failure through the due sweep before any purge',async()=>{
+  const h=setup();h.ledger!.stopRequired=true;
+  const stop=vi.fn().mockRejectedValue(new Error('transient workflow failure'));
+  await expect(sweepLabDeletions({...h.deps,stopExecutions:stop})).rejects.toThrow('lab_cleanup_retry_required');
+  expect(h.s3).not.toHaveBeenCalled();expect(h.ledger?.stopRequired).toBe(true);expect(h.job).toBeDefined();
+  stop.mockResolvedValue(undefined);
+  await sweepLabDeletions({...h.deps,stopExecutions:stop});
+  expect(h.job).toBeUndefined();expect(h.objects).toEqual([]);expect(h.ledger?.stopRequired).toBeUndefined();
+});
+it('cannot silently skip a required stop or clear a newer concurrent stop requirement',async()=>{
+  const h=setup();h.ledger!.stopRequired=true;
+  await expect(reconcileLabDeletion(h.deps,id)).rejects.toThrow('lab_cancellation_configuration_missing');
+  expect(h.s3).not.toHaveBeenCalled();delete h.ledger!.stopRequired;
+  await reconcileLabDeletion(h.deps,id);
+  const update=h.db.mock.calls.find(([c])=>c.constructor.name==='UpdateCommand')![0];
+  expect(update.input.ConditionExpression).toContain('attribute_not_exists(stopRequired)');
 });
