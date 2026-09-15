@@ -5,10 +5,14 @@ export const LAB_INVENTORY_VERSION = 'lab-job-inventory/1';
 export const LAB_INVENTORY_INDEX = 'LabOwnerInventory';
 type Scope = { ownerSub: string; organizationId: string; personId: string };
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+// Cognito subjects are opaque identity keys: observed subjects are UUID-shaped
+// but do not necessarily carry RFC UUID version/variant bits. Never normalize
+// them or use this format check in place of verified claims and exact ownership.
+const cognitoSubject = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const states = new Set(['awaiting_upload','queued','extracting','verifying','normalizing','interpreting','synthesizing','completed','needs_review','failed']);
 const fail = (): never => { throw new Error('lab_inventory_invalid'); };
 export function inventoryStamp(scope: Scope, createdAt: string, pk: string) {
-  if (![scope.ownerSub,scope.organizationId,scope.personId].every(v => uuid.test(v))
+  if (!cognitoSubject.test(scope.ownerSub) || ![scope.organizationId,scope.personId].every(v => uuid.test(v))
     || !pk.startsWith('job#') || !uuid.test(pk.slice(4)) || !Number.isFinite(Date.parse(createdAt))
     || new Date(createdAt).toISOString() !== createdAt) fail();
   return { inventoryOwner: 'lab-owner#' + createHash('sha256').update(JSON.stringify([scope.ownerSub,scope.organizationId,scope.personId])).digest('hex'),

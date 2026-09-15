@@ -8,6 +8,24 @@ const row=()=>({...scope,pk:'job#'+id,createdAt:date,expiresAt:Math.floor(Date.n
   panelId:id,structuredBiomarkers:[{secret:'never disclose'}],result:{secret:'never disclose'},
   recoveryRequest:{id,createdAt:date,kind:'saved'},documents:[]});
 const key=()=>({pk:'job#'+id,...inventoryStamp(scope,date,'job#'+id)});
+it.each('0123456789abcdef'.split(''))('accepts verified Cognito subjects with opaque variant %s without sharing partitions', async variant=>{
+  const ownerSub='10000000-0000-7000-'+variant+'000-000000000001';
+  const caller={...scope,ownerSub};
+  const ownKey={pk:'job#'+id,...inventoryStamp(caller,date,'job#'+id)};
+  const send=vi.fn(async (command:{constructor:{name:string}})=>command.constructor.name==='QueryCommand'
+    ? {Items:[ownKey]} : {Item:{...row(),ownerSub}});
+  expect((await listLabInventory({send} as unknown as DynamoDBDocumentClient,'table',caller)).jobs).toHaveLength(1);
+  expect(labRecoveryDescriptor({...row(),ownerSub}, {...caller,ownerSub:other})).toBeNull();
+  expect(ownKey.inventoryOwner).not.toEqual(inventoryStamp({...caller,ownerSub:other},date,'job#'+id).inventoryOwner);
+});
+it.each(['not-a-sub','../owner','10000000-0000-7000-z000-000000000001',id+' '])('refuses malformed identity %s',ownerSub=>{
+  expect(()=>inventoryStamp({...scope,ownerSub},date,'job#'+id)).toThrow();
+});
+it('keeps application-generated identifiers strict',()=>{
+  const opaque='10000000-0000-7000-f000-000000000001';
+  for(const field of ['organizationId','personId'])expect(()=>inventoryStamp({...scope,[field]:opaque},date,'job#'+id)).toThrow();
+  expect(()=>inventoryStamp(scope,date,'job#'+opaque)).toThrow();
+});
 function setup(item:Record<string,unknown>|undefined=row()){
   const send=vi.fn(async (c:{constructor:{name:string};input:Record<string,unknown>}):Promise<{Items?:ReturnType<typeof key>[];LastEvaluatedKey?:ReturnType<typeof key>;Item?:Record<string,unknown>}>=>c.constructor.name==='QueryCommand'?{Items:[key()],LastEvaluatedKey:key()}:{Item:item});
   return {send,db:{send} as unknown as DynamoDBDocumentClient};
