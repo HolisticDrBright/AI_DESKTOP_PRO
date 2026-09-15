@@ -51,6 +51,12 @@ export function validateClinicalCoreTemplate(template) {
   assert(errors, resources.WorkforceUserPoolClient?.Properties?.GenerateSecret === false, "workforce public client must not carry a client secret");
   assert(errors, resources.ConsumerUserPoolClient?.Properties?.GenerateSecret === false, "consumer public client must not carry a client secret");
   for (const [name, pool] of [["workforce", workforce], ["consumer", consumer]]) {
+    const email = pool?.EmailConfiguration;
+    assert(errors, email?.EmailSendingAccount === "DEVELOPER", `${name} identity email must use the governed SES sender`);
+    assert(errors, email?.ConfigurationSet?.Ref === "IdentityEmailConfigurationSet", `${name} identity email must use the governed SES configuration set`);
+    assert(errors, email?.From?.["Fn::Sub"] === "AI Longevity Pro <no-reply@${IdentityEmailDomain}>", `${name} identity email must use the branded no-reply address`);
+    assert(errors, email?.ReplyToEmailAddress?.["Fn::Sub"] === "info@${IdentityEmailDomain}", `${name} identity email must reply to the controlled operator mailbox`);
+    assert(errors, /:ses:\$\{AWS::Region\}:\$\{AWS::AccountId\}:identity\/\$\{IdentityEmailDomain\}$/.test(email?.SourceArn?.["Fn::Sub"] ?? ""), `${name} identity email must reference the account SES domain identity`);
     for (const attribute of ["person_id", "organization_id", "synthetic_attested"]) {
       const schema = pool?.Schema?.find((entry) => entry.Name === attribute);
       assert(errors, schema?.Mutable === false && schema?.Required === false, `${name} ${attribute} must be immutable and operator-assigned`);
