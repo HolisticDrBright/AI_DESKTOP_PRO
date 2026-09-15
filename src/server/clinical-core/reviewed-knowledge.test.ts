@@ -29,7 +29,7 @@ describe('reviewed knowledge trust and retrieval',()=>{
   });
   it('revalidates an actual mocked generation request and rejects an invented returned citation',async()=>{
     const s=signed(release());
-    for(const [key,value] of Object.entries({KNOWLEDGE_RELEASE_MODE:'reviewed_release',KNOWLEDGE_RELEASE_BUCKET:'fictional-bucket',KNOWLEDGE_RELEASE_KEY:'reviewed-knowledge/fixture.json',KNOWLEDGE_RELEASE_OBJECT_VERSION:'fixture-version',KNOWLEDGE_RELEASE_SHA256:s.trusted.sha256,KNOWLEDGE_SIGNER_PUBLIC_KEY_PEM:publicKeyPem}))vi.stubEnv(key,value);
+    for(const [key,value] of Object.entries({KNOWLEDGE_RELEASE_MODE:'reviewed_release',KNOWLEDGE_RELEASE_BUCKET:'fictional-bucket',KNOWLEDGE_RELEASE_KEY:'reviewed-knowledge/fixture.json',KNOWLEDGE_RELEASE_OBJECT_VERSION:'fixture-version',KNOWLEDGE_RELEASE_SHA256:s.trusted.sha256,KNOWLEDGE_SOURCE_PACKAGE_SHA256:release().sourcePackageSha256,KNOWLEDGE_SIGNER_PUBLIC_KEY_PEM:publicKeyPem}))vi.stubEnv(key,value);
     const bytes=Buffer.from(JSON.stringify(s.envelope));mock.s3.mockImplementation(async()=>({VersionId:'fixture-version',ContentLength:bytes.length,Body:(async function*(){yield bytes;})()}));
     mock.secret.mockResolvedValue({SecretString:JSON.stringify({OPENAI_API_KEY:`sk-${'x'.repeat(40)}`})});
     let citation='fictional-education';
@@ -48,7 +48,8 @@ describe('reviewed knowledge trust and retrieval',()=>{
     expect(statement.Action).toBe('s3:GetObjectVersion');expect(JSON.stringify(statement.Resource)).not.toContain('*');
     expect(statement.Condition.StringEquals['s3:VersionId']).toEqual({Ref:'KnowledgeReleaseObjectVersion'});
     expect(t.Resources[fn].Properties.Environment.Variables.KNOWLEDGE_RELEASE_MODE).toEqual({Ref:'KnowledgeReleaseMode'});
-    expect(t.Rules.ReviewedKnowledgeMaterial.Assertions).toHaveLength(5);
+    expect(t.Resources[fn].Properties.Environment.Variables.KNOWLEDGE_SOURCE_PACKAGE_SHA256).toEqual({Ref:'KnowledgeSourcePackageSha256'});
+    expect(t.Rules.ReviewedKnowledgeMaterial.Assertions).toHaveLength(6);
   });
   it('verifies signed provenance, retrieves exact recorded aliases and feeds both model request builders',()=>{
     const knowledge=retrieveKnowledge(verifyRelease(release()),{biomarkerNames:[' FICTIONAL   MARKER ']},now)!;
@@ -104,7 +105,7 @@ describe('reviewed knowledge trust and retrieval',()=>{
   });
   it('loads only the pinned object version and refuses later deletion, oversized bodies or version substitution',async()=>{
     const s=signed(release());
-    for(const [key,value] of Object.entries({KNOWLEDGE_RELEASE_MODE:'reviewed_release',KNOWLEDGE_RELEASE_BUCKET:'fictional-bucket',KNOWLEDGE_RELEASE_KEY:'reviewed-knowledge/fixture.json',KNOWLEDGE_RELEASE_OBJECT_VERSION:'fixture-version',KNOWLEDGE_RELEASE_SHA256:s.trusted.sha256,KNOWLEDGE_SIGNER_PUBLIC_KEY_PEM:publicKeyPem}))vi.stubEnv(key,value);
+    for(const [key,value] of Object.entries({KNOWLEDGE_RELEASE_MODE:'reviewed_release',KNOWLEDGE_RELEASE_BUCKET:'fictional-bucket',KNOWLEDGE_RELEASE_KEY:'reviewed-knowledge/fixture.json',KNOWLEDGE_RELEASE_OBJECT_VERSION:'fixture-version',KNOWLEDGE_RELEASE_SHA256:s.trusted.sha256,KNOWLEDGE_SOURCE_PACKAGE_SHA256:release().sourcePackageSha256,KNOWLEDGE_SIGNER_PUBLIC_KEY_PEM:publicKeyPem}))vi.stubEnv(key,value);
     const raw=Buffer.from(JSON.stringify(s.envelope));
     mock.s3.mockImplementation(async()=>({VersionId:'fixture-version',ContentLength:raw.length,Body:(async function*(){yield raw;})()}));
     expect((await loadReviewedKnowledge({biomarkerNames:['Fictional marker']}))?.references).toHaveLength(1);
@@ -112,5 +113,14 @@ describe('reviewed knowledge trust and retrieval',()=>{
     mock.s3.mockRejectedValueOnce(new Error('private storage failure'));await expect(loadReviewedKnowledge({biomarkerNames:[]})).rejects.toThrow('knowledge_release_refused');
     mock.s3.mockResolvedValueOnce({VersionId:'substituted',ContentLength:10,Body:raw});await expect(loadReviewedKnowledge({biomarkerNames:[]})).rejects.toThrow();
     mock.s3.mockResolvedValueOnce({VersionId:'fixture-version',ContentLength:2_100_001,Body:raw});await expect(loadReviewedKnowledge({biomarkerNames:[]})).rejects.toThrow();
+  });
+  it.each(['', 'invalid', 'c'.repeat(64)])('refuses a missing, malformed or changed source digest: %s',async sourcePin=>{
+    const s=signed(release());
+    for(const [key,value] of Object.entries({KNOWLEDGE_RELEASE_MODE:'reviewed_release',KNOWLEDGE_RELEASE_BUCKET:'fictional-bucket',KNOWLEDGE_RELEASE_KEY:'reviewed-knowledge/fixture.json',KNOWLEDGE_RELEASE_OBJECT_VERSION:'fixture-version',KNOWLEDGE_RELEASE_SHA256:s.trusted.sha256,KNOWLEDGE_SOURCE_PACKAGE_SHA256:sourcePin,KNOWLEDGE_SIGNER_PUBLIC_KEY_PEM:publicKeyPem}))vi.stubEnv(key,value);
+    const raw=Buffer.from(JSON.stringify(s.envelope));
+    mock.s3.mockImplementation(async()=>({VersionId:'fixture-version',ContentLength:raw.length,Body:(async function*(){yield raw;})()}));
+    await expect(loadReviewedKnowledge({biomarkerNames:['Fictional marker']})).rejects.toThrow('knowledge_release_refused');
+    expect(mock.s3).toHaveBeenCalledTimes(sourcePin.length===64?1:0);
+    expect(mock.secret).not.toHaveBeenCalled();
   });
 });

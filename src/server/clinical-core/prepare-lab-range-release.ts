@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { calendarDate, preciseLabRangeReleaseSchema, type PreciseLabRangeRelease } from "./lab-range-population";
+import { verifyPediatricSourcePolicy } from "./pediatric-source-policy";
 
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
 const canonical = (value: string) => value.replace(/\r\n/g, "\n");
@@ -23,7 +24,7 @@ const fileTypes: Record<string, string> = { "hormone_population_ranges.json": "p
  */
 export function preparePreciseLabRangeRelease(input: {
   manifestText: string; expectedManifestSha256: string; sourceFile: string; sourceText: string;
-  candidate: unknown; parentSourceText?: string;
+  candidate: unknown; parentSourceText?: string; packageReviewText?: string; pediatricPolicy?: unknown;
 }, now = Date.now()): { release: PreciseLabRangeRelease; sourceFileSha256: string; status: "unsigned_not_deployed" } {
   if (typeof input.manifestText !== "string" || typeof input.sourceText !== "string"
     || Buffer.byteLength(input.manifestText) > 200_000 || Buffer.byteLength(input.sourceText) > 2_000_000
@@ -62,7 +63,12 @@ export function preparePreciseLabRangeRelease(input: {
   }
   const parsed = preciseLabRangeReleaseSchema.safeParse(input.candidate);
   if (!parsed.success || !parsed.data.ranges.length || Date.parse(parsed.data.expiresAt) <= now) return refuse();
+  const checkPediatric = expectedPackage === "pediatric-optimal-ranges"
+    ? verifyPediatricSourcePolicy({ manifest, packageReviewText: input.packageReviewText,
+      parentSourceText: input.parentSourceText, policy: input.pediatricPolicy, sourceFile: input.sourceFile,
+      rows: [...byId.values()] }, now) : null;
   for (const mapping of parsed.data.ranges) {
+    checkPediatric?.(mapping);
     const row = byId.get(mapping.source.recordId);
     if (!row || row.contentType !== fileTypes[input.sourceFile] || row.reviewStatus !== "approved" || sourceKinds[String(row.contentType)] !== mapping.rangeKind
       || mapping.source.packageSha256 !== input.expectedManifestSha256

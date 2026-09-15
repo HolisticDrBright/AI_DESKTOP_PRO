@@ -4,9 +4,10 @@ import { createHash } from "node:crypto";
 import { preparePreciseLabRangeRelease } from "./prepare-lab-range-release";
 
 // source directory, allowed JSON filename, numeric mapping file, exact manifest
-// SHA-256 (canonical LF), output file. Output is exclusive-create and unsigned.
+// SHA-256 (canonical LF), output file, then a required typed policy file for
+// pediatric sources. Output is exclusive-create and unsigned.
 try {
-  const [directory, sourceFile, candidateFile, manifestSha, outputFile, ...extra] = process.argv.slice(2);
+  const [directory, sourceFile, candidateFile, manifestSha, outputFile, pediatricPolicyFile, ...extra] = process.argv.slice(2);
   if (!directory || !sourceFile || !candidateFile || !manifestSha || !outputFile || extra.length
     || !["hormone_population_ranges.json", "conventional_intervals.json", "functional_statements.json", "optimal_ranges.json"].includes(sourceFile))
     throw new Error("invalid_arguments");
@@ -15,6 +16,11 @@ try {
     manifestText: readFileSync(resolve(folder, "manifest.json"), "utf8"), expectedManifestSha256: manifestSha,
     sourceFile, sourceText: readFileSync(resolve(folder, sourceFile), "utf8"),
     ...(sourceFile === "hormone_population_ranges.json" ? { parentSourceText: readFileSync(resolve(folder, "optimal_ranges.json"), "utf8") } : {}),
+    ...(["conventional_intervals.json", "functional_statements.json"].includes(sourceFile) ? {
+      parentSourceText: readFileSync(resolve(folder, "pediatric_optimal_ranges.json"), "utf8"),
+      packageReviewText: readFileSync(resolve(folder, "package_review.json"), "utf8"),
+      pediatricPolicy: pediatricPolicyFile ? JSON.parse(readFileSync(resolve(pediatricPolicyFile), "utf8")) : undefined,
+    } : {}),
     candidate: JSON.parse(readFileSync(resolve(candidateFile), "utf8")),
   });
   const payload = JSON.stringify(prepared.release);

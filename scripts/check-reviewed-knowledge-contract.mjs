@@ -11,7 +11,9 @@ async function compiled(path){const result=await build({entryPoints:[path],bundl
 const {prepareReviewedKnowledge}=await import(pathToFileURL(resolve(v2,'scripts/prepare-reviewed-knowledge.mjs')).href);
 const {verifyKnowledgeRelease,retrieveKnowledge,verifyPresentedKnowledge}=await compiled(resolve('src/server/clinical-core/reviewed-knowledge.ts'));
 const {reviewedKnowledgeSchema}=await compiled(resolve(v2,'expo/backend/chat/reviewed-knowledge.ts'));
-const source=JSON.stringify([{id:'fixture-001',contentType:'clinical_pearl',reviewStatus:'needs_review',contested:false,pearl:'Fictional authoring note.'}]);
+const source=JSON.stringify([{id:'fixture-001',contentType:'clinical_pearl',reviewStatus:'approved_patient_guidance',patientFacingEligible:true,
+  verification:'V',review:{decision:'patient',decidedBy:'Synthetic reviewer',decidedAt:'2026-09-01',via:'Synthetic review',note:null},
+  contested:false,pearl:'Fictional authoring note.'}]);
 const release=prepareReviewedKnowledge(source,{version:'fixture/1',issuedAt:'2026-09-14T00:00:00Z',expiresAt:'2027-09-14T00:00:00Z',sourcePackageSha256:createHash('sha256').update(source).digest('hex'),entries:[{
   id:'fixture-reference',sourcePearlId:'fixture-001',topic:'Fictional marker',summary:'Fictional reviewed explanation.',limitations:'Synthetic only, not clinical guidance.',biomarkerAliases:['Fictional marker'],use:'education_only',reviewStatus:'approved',contested:false,reviewedBy:'synthetic-reviewer',reviewedAt:'2026-09-13T00:00:00Z',sources:[{id:'fixture-source',title:'Fictional guideline',url:'https://example.org/fixture',evidenceType:'guideline'}],
 }]});

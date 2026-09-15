@@ -9,6 +9,8 @@ export const loadReviewedKnowledge:KnowledgeLoader=async query=>{
   if(mode==='disabled')return null;
   if(mode!=='reviewed_release')throw new Error('knowledge_release_refused');
   const bucket=env.KNOWLEDGE_RELEASE_BUCKET??'',key=env.KNOWLEDGE_RELEASE_KEY??'',version=env.KNOWLEDGE_RELEASE_OBJECT_VERSION??'';
+  const sourcePackageSha256=env.KNOWLEDGE_SOURCE_PACKAGE_SHA256??'';
+  if(!/^[a-f0-9]{64}$/.test(sourcePackageSha256))throw new Error('knowledge_release_refused');
   if(!/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/.test(bucket)||!/^reviewed-knowledge\/[A-Za-z0-9_./-]+\.json$/.test(key)||!version||version==='null'||version.length>1024)throw new Error('knowledge_release_refused');
   try{
     const object=await s3.send(new GetObjectCommand({Bucket:bucket,Key:key,VersionId:version}),{abortSignal:AbortSignal.timeout(10_000)});
@@ -16,6 +18,8 @@ export const loadReviewedKnowledge:KnowledgeLoader=async query=>{
     const chunks:Uint8Array[]=[];let size=0;
     for await(const chunk of object.Body as AsyncIterable<Uint8Array>){size+=chunk.byteLength;if(size>2_100_000)throw new Error();chunks.push(chunk);}
     const envelope=JSON.parse(Buffer.concat(chunks).toString('utf8'));
-    return retrieveKnowledge(verifyKnowledgeRelease(envelope,{sha256:env.KNOWLEDGE_RELEASE_SHA256??'',publicKeyPem:env.KNOWLEDGE_SIGNER_PUBLIC_KEY_PEM??''}),query);
+    const verified=verifyKnowledgeRelease(envelope,{sha256:env.KNOWLEDGE_RELEASE_SHA256??'',publicKeyPem:env.KNOWLEDGE_SIGNER_PUBLIC_KEY_PEM??''});
+    if(verified.release.sourcePackageSha256!==sourcePackageSha256)throw new Error('knowledge_release_refused');
+    return retrieveKnowledge(verified,query);
   }catch{throw new Error('knowledge_release_refused');}
 };

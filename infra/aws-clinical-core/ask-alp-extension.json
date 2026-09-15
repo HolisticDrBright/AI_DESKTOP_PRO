@@ -8,6 +8,7 @@
     "KnowledgeReleaseKey": {"Type":"String","Default":"","AllowedPattern":"^$|^reviewed-knowledge/[A-Za-z0-9_./-]+\\.json$"},
     "KnowledgeReleaseObjectVersion": {"Type":"String","Default":"","MaxLength":1024},
     "KnowledgeReleaseSha256": {"Type":"String","Default":"","AllowedPattern":"^$|^[a-f0-9]{64}$"},
+    "KnowledgeSourcePackageSha256": {"Type":"String","Default":"","AllowedPattern":"^$|^[a-f0-9]{64}$"},
     "KnowledgeSignerPublicKeyPem": {"Type":"String","Default":"","MaxLength":512},
     "ClinicalApiId": { "Type": "String", "AllowedPattern": "^[a-z0-9]{10}$" },
     "ConsumerUserPoolId": { "Type": "String", "AllowedPattern": "^[a-z0-9-]+_[A-Za-z0-9]+$" },
@@ -19,7 +20,7 @@
     "OpenAIModel": { "Type": "String", "AllowedPattern": "^[A-Za-z0-9._:-]{3,100}$" },
     "ApprovedPromptSha256": { "Type": "String", "AllowedPattern": "^[0-9a-f]{64}$", "NoEcho": true }
   },
-  "Rules": {"ReviewedKnowledgeMaterial":{"RuleCondition":{"Fn::Equals":[{"Ref":"KnowledgeReleaseMode"},"reviewed_release"]},"Assertions":[{"Assert":{"Fn::Not":[{"Fn::Equals":[{"Ref":"KnowledgeReleaseBucket"},""]}]},"AssertDescription":"KnowledgeReleaseBucket is required for reviewed knowledge."},{"Assert":{"Fn::Not":[{"Fn::Equals":[{"Ref":"KnowledgeReleaseKey"},""]}]},"AssertDescription":"KnowledgeReleaseKey is required for reviewed knowledge."},{"Assert":{"Fn::Not":[{"Fn::Equals":[{"Ref":"KnowledgeReleaseObjectVersion"},""]}]},"AssertDescription":"KnowledgeReleaseObjectVersion is required for reviewed knowledge."},{"Assert":{"Fn::Not":[{"Fn::Equals":[{"Ref":"KnowledgeReleaseSha256"},""]}]},"AssertDescription":"KnowledgeReleaseSha256 is required for reviewed knowledge."},{"Assert":{"Fn::Not":[{"Fn::Equals":[{"Ref":"KnowledgeSignerPublicKeyPem"},""]}]},"AssertDescription":"KnowledgeSignerPublicKeyPem is required for reviewed knowledge."}]}},
+  "Rules": {"ReviewedKnowledgeMaterial":{"RuleCondition":{"Fn::Equals":[{"Ref":"KnowledgeReleaseMode"},"reviewed_release"]},"Assertions":[{"Assert":{"Fn::Not":[{"Fn::Equals":[{"Ref":"KnowledgeReleaseBucket"},""]}]},"AssertDescription":"KnowledgeReleaseBucket is required for reviewed knowledge."},{"Assert":{"Fn::Not":[{"Fn::Equals":[{"Ref":"KnowledgeReleaseKey"},""]}]},"AssertDescription":"KnowledgeReleaseKey is required for reviewed knowledge."},{"Assert":{"Fn::Not":[{"Fn::Equals":[{"Ref":"KnowledgeReleaseObjectVersion"},""]}]},"AssertDescription":"KnowledgeReleaseObjectVersion is required for reviewed knowledge."},{"Assert":{"Fn::Not":[{"Fn::Equals":[{"Ref":"KnowledgeReleaseSha256"},""]}]},"AssertDescription":"KnowledgeReleaseSha256 is required for reviewed knowledge."},{"Assert":{"Fn::Not":[{"Fn::Equals":[{"Ref":"KnowledgeSourcePackageSha256"},""]}]},"AssertDescription":"KnowledgeSourcePackageSha256 is required for reviewed knowledge."},{"Assert":{"Fn::Not":[{"Fn::Equals":[{"Ref":"KnowledgeSignerPublicKeyPem"},""]}]},"AssertDescription":"KnowledgeSignerPublicKeyPem is required for reviewed knowledge."}]}},
   "Conditions": {"ReviewedKnowledge":{"Fn::Equals":[{"Ref":"KnowledgeReleaseMode"},"reviewed_release"]}},
   "Resources": {
     "AskAlpLogGroup": {
@@ -39,7 +40,7 @@
       }
     },
     "AskAlpFunction": {
-      "Type": "AWS::Lambda::Function", "DependsOn": ["AskAlpLogGroup"],
+      "Type": "AWS::Lambda::Function",
       "Properties": {
         "FunctionName": { "Fn::Sub": "${ClinicalApiId}-synthetic-ask-alp" }, "Runtime": "nodejs22.x", "Architectures": ["arm64"],
         "Handler": "index.handler", "Role": { "Fn::GetAtt": ["AskAlpRole", "Arn"] }, "MemorySize": 512, "Timeout": 35,
@@ -50,7 +51,7 @@
           "KNOWLEDGE_RELEASE_BUCKET": {"Ref":"KnowledgeReleaseBucket"},
           "KNOWLEDGE_RELEASE_KEY": {"Ref":"KnowledgeReleaseKey"},
           "KNOWLEDGE_RELEASE_OBJECT_VERSION": {"Ref":"KnowledgeReleaseObjectVersion"},
-          "KNOWLEDGE_RELEASE_SHA256": {"Ref":"KnowledgeReleaseSha256"},
+          "KNOWLEDGE_RELEASE_SHA256": {"Ref":"KnowledgeReleaseSha256"},"KNOWLEDGE_SOURCE_PACKAGE_SHA256":{"Ref":"KnowledgeSourcePackageSha256"},
           "KNOWLEDGE_SIGNER_PUBLIC_KEY_PEM": {"Ref":"KnowledgeSignerPublicKeyPem"},
           "CLINICAL_CONSUMER_ISSUER": { "Fn::Sub": "https://cognito-idp.${AWS::Region}.${AWS::URLSuffix}/${ConsumerUserPoolId}" },
           "CLINICAL_CONSUMER_AUDIENCE": { "Ref": "ConsumerUserPoolClientId" }, "RUNTIME_MODE": "synthetic", "PHI_ALLOWED": "false",
