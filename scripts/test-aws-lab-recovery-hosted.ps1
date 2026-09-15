@@ -1,4 +1,4 @@
-param([switch]$ConfirmSyntheticOnly,[switch]$CreateSyntheticTestUsers,[string]$Profile='ai-synthetic-member')
+param([switch]$ConfirmSyntheticOnly,[switch]$CreateSyntheticTestUsers,[switch]$TestUploadRoundTrip,[string]$Profile='ai-synthetic-member')
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 $common=@('--profile',$Profile,'--region','us-east-2','--no-cli-pager')
@@ -18,6 +18,7 @@ if($stack.StackStatus -ne 'UPDATE_COMPLETE'){throw 'Wait for the reviewed update
 $p=@{};foreach($entry in $stack.Parameters){$p[$entry.ParameterKey]=$entry.ParameterValue}
 $resources=(AwsJson @('cloudformation','describe-stack-resources','--stack-name',$stack.StackName)).StackResources
 $table=($resources|Where-Object LogicalResourceId -eq 'LabJobTable').PhysicalResourceId
+$documentBucket=($resources|Where-Object LogicalResourceId -eq 'LabDocumentsBucket').PhysicalResourceId
 $indexes=(AwsJson @('dynamodb','describe-table','--table-name',$table)).Table.GlobalSecondaryIndexes
 if(@($indexes|Where-Object {$_.IndexName -eq 'LabOwnerInventory' -and $_.IndexStatus -eq 'ACTIVE'}).Count -ne 1){throw 'Recovery index is not ACTIVE.'}
 $origin="https://$($p['ClinicalApiId']).execute-api.us-east-2.amazonaws.com"
@@ -47,6 +48,24 @@ function CallApi([string]$Method,[string]$Path,[string]$Token,[object]$Body=$nul
   }finally{$request.Dispose()}
 }
 function Check([bool]$Condition,[string]$Name){if(-not $Condition){throw "Hosted check failed: $Name (HTTP $script:lastHttpStatus)"};$passed.Add($Name);Write-Host "PASS $Name"}
+function PutFixture($Target,[byte[]]$Bytes){
+  $uri=[uri]$Target.uploadUrl
+  if($Target.method -ne 'PUT' -or $uri.Scheme -ne 'https' -or $uri.Port -ne 443 -or $uri.UserInfo -or $uri.Fragment -or
+    $uri.Host -ne "$documentBucket.s3.us-east-2.amazonaws.com" -or
+    -not $uri.AbsolutePath.EndsWith("/$jobId/$documentId/synthetic-recovery.pdf")){throw 'Untrusted upload target.'}
+  $request=[System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::Put,$uri)
+  $request.Content=[System.Net.Http.ByteArrayContent]::new($Bytes)
+  foreach($header in $Target.requiredHeaders.PSObject.Properties){
+    if($header.Name -eq 'content-type'){$request.Content.Headers.ContentType=[System.Net.Http.Headers.MediaTypeHeaderValue]::new($header.Value)}
+    elseif($header.Name -in @('x-amz-server-side-encryption','x-amz-server-side-encryption-aws-kms-key-id','x-amz-meta-job-id','x-amz-meta-document-id','x-amz-checksum-sha256','if-none-match')){
+      $null=$request.Headers.TryAddWithoutValidation($header.Name,[string]$header.Value)
+    }else{throw 'Unexpected upload header.'}
+  }
+  try{
+    $response=$client.SendAsync($request).GetAwaiter().GetResult()
+    try{$script:lastHttpStatus=[int]$response.StatusCode;return [int]$response.StatusCode}finally{$response.Dispose()}
+  }finally{$request.Dispose()}
+}
 try{
   $anonymous=CallApi 'GET' '/request-recovery' ''
   Check ($anonymous.Status -eq 401) 'anonymous capability access denied'
@@ -103,10 +122,28 @@ try{
     Start-Sleep -Seconds 1
   }
   Check $visible 'owned job appears in live index'
+  if($TestUploadRoundTrip){
+    $target=$resume.Json.data.documents[0]
+    Check ((PutFixture $target $fixture) -eq 200) 'encrypted checksum-bound fixture uploaded'
+    Check ((PutFixture $target $fixture) -eq 412) 'existing object cannot be overwritten'
+    $remote=CallApi 'POST' "/jobs/$jobId/resume-upload" $a
+    Check ($remote.Status -eq 200 -and @($remote.Json.data.documents).Count -eq 0 -and
+      @($remote.Json.data.uploadedDocuments).Count -eq 1 -and
+      $remote.Json.data.uploadedDocuments[0].clientDocumentId -eq $documentId) 'remote receipt recovered from verified stored object'
+    # Never call complete-upload: this smoke must not invoke the analysis worker.
+  }
   $deleted=CallApi 'DELETE' "/jobs/$jobId" $a
-  Check ($deleted.Status -eq 200) 'owned empty test job deleted without analysis'
+  Check ($deleted.Status -eq 200) 'owned test job deleted without analysis'
+  if($TestUploadRoundTrip){
+    $objectKey=[uri]::UnescapeDataString(([uri]$target.uploadUrl).AbsolutePath.TrimStart('/'))
+    $remaining=AwsJson @('s3api','list-object-versions','--bucket',$documentBucket,'--prefix',$objectKey)
+    $versions=@();$markers=@()
+    if($remaining.PSObject.Properties.Name -contains 'Versions'){$versions=@($remaining.Versions)}
+    if($remaining.PSObject.Properties.Name -contains 'DeleteMarkers'){$markers=@($remaining.DeleteMarkers)}
+    Check ($versions.Count -eq 0 -and $markers.Count -eq 0) 'fixture object versions removed'
+  }
   $jobId=$null
-  Write-Host "Hosted synthetic checks passed: $($passed.Count). No uploads, AI generations, email sends, or real data."
+  Write-Host "Hosted synthetic checks passed: $($passed.Count). Fixture upload enabled: $TestUploadRoundTrip. No AI generations, email sends, or real data."
 }finally{
   if($jobId -and $tokens.Count){
     try{$cleanup=CallApi 'DELETE' "/jobs/$jobId" $tokens[0];Write-Host "Test-job cleanup HTTP: $($cleanup.Status)"}catch{Write-Warning 'Test-job cleanup needs operator review; no forced deletion attempted.'}
