@@ -7,7 +7,7 @@ import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { SFNClient, StartExecutionCommand } from "@aws-sdk/client-sfn";
 import { collectionRangeContextSchema, type CollectionRangeContext } from "./lab-range-population";
 import { resolveLabSourcePanel, type LabSourcePanel } from "./lab-source-panel";
-import { labRequestLedger, LabRequestError, requestIdentity, REQUEST_RECOVERY_VERSION } from './lab-request-ledger';
+import { labRequestLedger, LabRequestError, requestIdentity, REQUEST_RECOVERY_VERSION, REQUEST_RETIREMENT_VERSION } from './lab-request-ledger';
 
 const CONTRACT_VERSION = "lab-analysis/1";
 const MAX_BODY_BYTES = 256 * 1024;
@@ -580,6 +580,15 @@ export async function createAwsLabAnalysisApiHandler(event: ApiEvent) {
     const method = event?.requestContext?.http?.method;
     const path = event?.rawPath;
     if(method==='POST' && typeof path==='string'){
+      const retirement=path.match(/^\/clinical-core\/(?:consumer|synthetic-session)\/labs\/requests\/([0-9a-f-]{36})\/retire$/i);
+      if(retirement){
+        const input=body(event);
+        if(Object.keys(input).some(k=>k!=='request'))return refusal();
+        const request=requestIdentity(input.request);
+        if(request.id!==retirement[1].toLowerCase())return refusal();
+        await labRequestLedger(db,required('LAB_JOB_TABLE')).retire({ownerSub:identity.sub,organizationId:identity['custom:organization_id'],personId:identity['custom:person_id']},request);
+        return json(200,{contractVersion:REQUEST_RETIREMENT_VERSION,requestId:request.id,status:'retired'});
+      }
       const recoveryCreate=path.match(/^\/clinical-core\/(?:consumer|synthetic-session)\/labs\/requests\/(documents|saved)$/);
       if(recoveryCreate){
         requestIdentity(body(event).request); // Dedicated routes cannot fall back to legacy creation.

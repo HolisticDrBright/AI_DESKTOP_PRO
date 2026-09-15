@@ -1,5 +1,10 @@
 # ALP commercial launch: owner actions and remaining engineering
 
+Latest September 15 source increment: [release unavailable lab requests](lab-request-retirement.md).
+Adds race-safe retirement with 22 authenticated routes and explicit V2 confirmation;
+active jobs and saved results remain protected. Also repairs a fixed-port CI collision.
+Not deployed, not a paid mobile build, and not commercial or PHI activation.
+
 Latest September 15 source increment: [pre-create lab request recovery](lab-request-creation-recovery.md).
 Atomic request/job persistence and scoped discovery now pair with V2's pre-POST
 checkpoint. Twenty authenticated lab routes require a coordinated backend-first

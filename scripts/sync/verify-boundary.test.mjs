@@ -11,9 +11,9 @@ import { SyncError } from "./errors.mjs";
 
 const SECRET = "verify-secret";
 const KEY_ID = "alp-key-1";
-// A fresh port per test: undici's keep-alive pool must never reuse a
-// connection to a previous test's closed server instance.
-let PORT = 39443;
+// Let the OS reserve a free port atomically; fixed ranges collide in parallel CI.
+// Close test HTTP connections so undici cannot reuse an earlier server's socket.
+let PORT;
 
 let server;
 let rpcCalls;
@@ -32,6 +32,7 @@ const post = async (path, body, { timestamp = Date.now(), nonce = `n-${Math.rand
     method: "POST",
     headers: {
       "content-type": "application/json",
+      connection: "close",
       "x-sync-signature": sign(rawBody, timestamp, nonce),
       "x-sync-key-id": KEY_ID,
       "x-sync-timestamp": String(timestamp),
@@ -43,7 +44,6 @@ const post = async (path, body, { timestamp = Date.now(), nonce = `n-${Math.rand
 };
 
 beforeEach(async () => {
-  PORT += 1;
   rpcCalls = [];
   rpcResult = {
     ok: true,
@@ -67,11 +67,21 @@ beforeEach(async () => {
     resolveSecret: (keyId) => (keyId === KEY_ID ? SECRET : null),
     logger: { log: () => undefined },
   });
-  await new Promise((resolve) => server.listen(PORT, "127.0.0.1", resolve));
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      server.removeListener('error', reject);
+      PORT = server.address().port;
+      resolve();
+    });
+  });
 });
 
 afterEach(async () => {
-  await new Promise((resolve) => server.close(resolve));
+  if (!server?.listening) return;
+  const closed = new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+  server.closeAllConnections();
+  await closed;
 });
 
 describe("/sync/verify", () => {
@@ -105,7 +115,7 @@ describe("/sync/verify", () => {
   it("refuses an unsigned verification attempt before anything is parsed", async () => {
     const response = await fetch(`http://127.0.0.1:${PORT}/sync/verify`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", connection: "close" },
       body: JSON.stringify({ token: "c".repeat(64), subject: "alp-user-3" }),
     });
     expect(response.status).toBe(401);
@@ -122,7 +132,7 @@ describe("/sync/verify", () => {
   });
 
   it("keeps the exact method + path binding — GET and other paths miss", async () => {
-    const get = await fetch(`http://127.0.0.1:${PORT}/sync/verify`);
+    const get = await fetch(`http://127.0.0.1:${PORT}/sync/verify`, { headers: { connection: "close" } });
     expect(get.status).toBe(404);
   });
 });

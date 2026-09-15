@@ -24,6 +24,19 @@ beforeEach(()=>{
 });
 afterEach(()=>vi.unstubAllEnvs());
 describe('request-aware API integration',()=>{
+  it('retires a never-created request with a versioned acknowledgement and refuses late creation',async()=>{
+    const body=input();const retired=await handler(event('POST',`requests/${id}/retire`,{request:body.request}));
+    expect(retired.statusCode).toBe(200);expect(JSON.parse(retired.body).data).toEqual({contractVersion:'lab-request-retirement/1',requestId:id,status:'retired'});
+    expect((await handler(event('POST','requests/saved',body))).statusCode).toBe(410);
+    expect(mock.sfn).not.toHaveBeenCalled();
+  });
+  it('refuses unsigned identities, mismatched IDs and extra retirement input',async()=>{
+    const body={request:input().request};
+    expect((await handler(event('POST',`requests/${id}/retire`,body,{'custom:synthetic_attested':'false'}))).statusCode).toBe(400);
+    expect((await handler(event('POST',`requests/${owner}/retire`,body))).statusCode).toBe(400);
+    expect((await handler(event('POST',`requests/${id}/retire`,{...body,deleteResults:true}))).statusCode).toBe(400);
+    expect(mock.db).not.toHaveBeenCalled();
+  });
   it('creates and discovers one saved plan and replays its actual terminal job without inventing queued state',async()=>{
     const body=input();const first=await handler(event('POST','requests/saved',body));expect(first.statusCode).toBe(200);
     const reference=JSON.parse(first.body).data;expect(reference).toEqual({contractVersion:'lab-request-recovery/1',requestId:id,jobId:expect.any(String)});
@@ -53,11 +66,14 @@ describe('request-aware API integration',()=>{
     expect((await handler(event('GET','request-recovery',undefined,{'custom:synthetic_attested':'false'}))).statusCode).toBe(400);
     expect(JSON.parse((await handler(event('GET','request-recovery'))).body).data.contractVersion).toBe('lab-request-recovery/1');
   });
-  it('declares all eight new routes with existing scoped authorizers and no public routes',()=>{
+  it('declares all ten recovery routes with existing scoped authorizers and no public routes',()=>{
     const template=JSON.parse(readFileSync('infra/aws-clinical-core/lab-analysis-extension.json','utf8'));
     const routes=Object.values(template.Resources).filter((r:unknown)=>(r as {Type:string}).Type==='AWS::ApiGatewayV2::Route') as {Properties:{RouteKey:string;AuthorizationType:string;AuthorizerId:{Ref:string}}}[];
-    expect(routes).toHaveLength(20);expect(routes.filter(r=>/\/requests\/|\/request-recovery$/.test(r.Properties.RouteKey))).toHaveLength(8);
+    expect(routes).toHaveLength(22);expect(routes.filter(r=>/\/requests\/|\/request-recovery$/.test(r.Properties.RouteKey))).toHaveLength(10);
     for(const {Properties:p} of routes){expect(p.AuthorizationType).toBe(p.RouteKey.includes('/consumer/')?'JWT':'CUSTOM');expect(template.Resources[p.AuthorizerId.Ref]).toBeDefined();}
     expect(template.Outputs.PhiAllowed.Value).toBe('false');
+    const policy=template.Resources.LabApiRole.Properties.Policies.find((p:{PolicyName:string})=>p.PolicyName==='LabJobLedger');
+    expect(policy.PolicyDocument.Statement[0].Action).toContain('dynamodb:ConditionCheckItem');
+    expect(policy.PolicyDocument.Statement[0].Resource).toEqual({'Fn::GetAtt':['LabJobTable','Arn']});
   });
 });

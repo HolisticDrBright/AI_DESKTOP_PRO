@@ -111,7 +111,7 @@
       "Properties": {
         "AssumeRolePolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Principal": { "Service": "lambda.amazonaws.com" }, "Action": "sts:AssumeRole" }] },
         "Policies": [
-          { "PolicyName": "LabJobLedger", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:DeleteItem"], "Resource": { "Fn::GetAtt": ["LabJobTable", "Arn"] } }, { "Effect": "Allow", "Action": ["kms:Decrypt", "kms:GenerateDataKey"], "Resource": { "Ref": "ClinicalCoreKeyArn" } }] } },
+          { "PolicyName": "LabJobLedger", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:DeleteItem", "dynamodb:ConditionCheckItem"], "Resource": { "Fn::GetAtt": ["LabJobTable", "Arn"] } }, { "Effect": "Allow", "Action": ["kms:Decrypt", "kms:GenerateDataKey"], "Resource": { "Ref": "ClinicalCoreKeyArn" } }] } },
           { "PolicyName": "LabDocumentUpload", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": ["s3:PutObject", "s3:GetObject", "s3:DeleteObject", "s3:DeleteObjectVersion"], "Resource": { "Fn::Sub": "${LabDocumentsBucket.Arn}/synthetic-labs/*" } }, { "Effect": "Allow", "Action": "s3:ListBucketVersions", "Resource": { "Fn::GetAtt": ["LabDocumentsBucket", "Arn"] }, "Condition": { "StringLike": { "s3:prefix": "synthetic-labs/*" } } }, { "Effect": "Allow", "Action": "kms:GenerateDataKey", "Resource": { "Ref": "ClinicalCoreKeyArn" } }] } },
           { "PolicyName": "LabUploadRecoveryExistence", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": "s3:ListBucket", "Resource": { "Fn::GetAtt": ["LabDocumentsBucket", "Arn"] }, "Condition": { "StringLike": { "s3:prefix": "synthetic-labs/*" } } }] } },
           { "PolicyName": "LabWorkflowStart", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": "states:StartExecution", "Resource": { "Fn::Sub": "arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:stateMachine:${ClinicalApiId}-synthetic-lab-analysis" } }] } },
@@ -233,6 +233,8 @@
     "CreateRecoverableConsumerPlanRoute": {"Type":"AWS::ApiGatewayV2::Route","Properties":{"ApiId":{"Ref":"ClinicalApiId"},"RouteKey":"POST /clinical-core/consumer/labs/requests/saved","AuthorizationType":"JWT","AuthorizerId":{"Ref":"LabConsumerAuthorizer"},"Target":{"Fn::Sub":"integrations/${LabApiIntegration}"}}},
     "CreateRecoverableSyntheticDocumentsRoute": {"Type":"AWS::ApiGatewayV2::Route","Properties":{"ApiId":{"Ref":"ClinicalApiId"},"RouteKey":"POST /clinical-core/synthetic-session/labs/requests/documents","AuthorizationType":"CUSTOM","AuthorizerId":{"Ref":"LabSyntheticSessionAuthorizer"},"Target":{"Fn::Sub":"integrations/${LabApiIntegration}"}}},
     "CreateRecoverableSyntheticPlanRoute": {"Type":"AWS::ApiGatewayV2::Route","Properties":{"ApiId":{"Ref":"ClinicalApiId"},"RouteKey":"POST /clinical-core/synthetic-session/labs/requests/saved","AuthorizationType":"CUSTOM","AuthorizerId":{"Ref":"LabSyntheticSessionAuthorizer"},"Target":{"Fn::Sub":"integrations/${LabApiIntegration}"}}},
+    "RetireConsumerLabRequestRoute": {"Type":"AWS::ApiGatewayV2::Route","Properties":{"ApiId":{"Ref":"ClinicalApiId"},"RouteKey":"POST /clinical-core/consumer/labs/requests/{requestId}/retire","AuthorizationType":"JWT","AuthorizerId":{"Ref":"LabConsumerAuthorizer"},"Target":{"Fn::Sub":"integrations/${LabApiIntegration}"}}},
+    "RetireSyntheticLabRequestRoute": {"Type":"AWS::ApiGatewayV2::Route","Properties":{"ApiId":{"Ref":"ClinicalApiId"},"RouteKey":"POST /clinical-core/synthetic-session/labs/requests/{requestId}/retire","AuthorizationType":"CUSTOM","AuthorizerId":{"Ref":"LabSyntheticSessionAuthorizer"},"Target":{"Fn::Sub":"integrations/${LabApiIntegration}"}}},
     "LabApiInvokePermission": {
       "Type": "AWS::Lambda::Permission",
       "Properties": { "Action": "lambda:InvokeFunction", "FunctionName": { "Ref": "LabApiFunction" }, "Principal": "apigateway.amazonaws.com", "SourceArn": { "Fn::Sub": "arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${ClinicalApiId}/*/*/clinical-core/consumer/labs/*" } }
@@ -247,7 +249,7 @@
     "LabJobTableName": { "Value": { "Ref": "LabJobTable" } },
     "LabDocumentsBucketName": { "Value": { "Ref": "LabDocumentsBucket" } },
     "LabStateMachineArn": { "Value": { "Ref": "LabStateMachine" } },
-    "RoutesEnabled": { "Value": "20" },
+    "RoutesEnabled": { "Value": "22" },
     "SyntheticAppSessionEnabled": { "Value": "true" },
     "PhiAllowed": { "Value": "false" },
     "DataClassification": { "Value": "synthetic_only" }
