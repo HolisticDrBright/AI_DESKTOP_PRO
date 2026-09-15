@@ -1,5 +1,10 @@
 # ALP commercial launch: owner actions and remaining engineering
 
+Latest September 15 source increment: [pre-create lab request recovery](lab-request-creation-recovery.md).
+Atomic request/job persistence and scoped discovery now pair with V2's pre-POST
+checkpoint. Twenty authenticated lab routes require a coordinated backend-first
+deployment. This is source-only progress, not a public launch or PHI activation.
+
 Updated September 14, 2026. Status: **not ready for public launch or real health data**.
 This document separates live evidence from code that exists and work still required.
 Latest increment: [adult registration and recoverable lab requests](registration-lab-recovery-phase.md).

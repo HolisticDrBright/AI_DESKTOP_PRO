@@ -7,6 +7,7 @@ import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { SFNClient, StartExecutionCommand } from "@aws-sdk/client-sfn";
 import { collectionRangeContextSchema, type CollectionRangeContext } from "./lab-range-population";
 import { resolveLabSourcePanel, type LabSourcePanel } from "./lab-source-panel";
+import { labRequestLedger, LabRequestError, requestIdentity, REQUEST_RECOVERY_VERSION } from './lab-request-ledger';
 
 const CONTRACT_VERSION = "lab-analysis/1";
 const MAX_BODY_BYTES = 256 * 1024;
@@ -409,11 +410,12 @@ async function createJob(event: ApiEvent, identity: Claims) {
     failureCategory: null,
     result: null,
   };
-  await db.send(new PutCommand({
-    TableName: required("LAB_JOB_TABLE"),
-    Item: job,
-    ConditionExpression: "attribute_not_exists(pk)",
-  }));
+  if(input.request!==undefined){
+    const {request,...intent}=input;
+    const saved=await labRequestLedger(db,required('LAB_JOB_TABLE')).create(job,request,'documents',intent,job);
+    return json(200,{contractVersion:REQUEST_RECOVERY_VERSION,requestId:requestIdentity(request).id,jobId:saved.pk.slice(4)});
+  }
+  await db.send(new PutCommand({TableName:required('LAB_JOB_TABLE'),Item:job,ConditionExpression:'attribute_not_exists(pk)'}));
   const targets = await uploadTargets(job, stored);
   return json(200, { contractVersion: CONTRACT_VERSION, jobId, state: "awaiting_upload", documents: targets });
 }
@@ -483,7 +485,7 @@ async function resumeUpload(identity: Claims, jobId: string) {
 
 async function createPlanJob(event: ApiEvent, identity: Claims) {
   const input = body(event);
-  const expected = ["panelId", "panelName", "testDate", "patientContext", "longitudinalContext", "dataClassification", "attestsSyntheticOnly", "biomarkers"];
+  const expected = ["request", "panelId", "panelName", "testDate", "patientContext", "longitudinalContext", "dataClassification", "attestsSyntheticOnly", "biomarkers"];
   if (Object.keys(input).some((key) => !expected.includes(key))
     || input.dataClassification !== "synthetic_only" || input.attestsSyntheticOnly !== true
     || !boundedString(input.panelId, 160) || !boundedString(input.panelName, 180) || !safeDate(input.testDate)) return refusal();
@@ -518,6 +520,12 @@ async function createPlanJob(event: ApiEvent, identity: Claims) {
     failureCategory: null,
     result: null,
   };
+  if(input.request!==undefined){
+    const {request,...intent}=input;
+    const saved=await labRequestLedger(db,required('LAB_JOB_TABLE')).create(job,request,'saved',intent,job);
+    await ensureQueuedExecution(saved);
+    return json(200,{contractVersion:REQUEST_RECOVERY_VERSION,requestId:requestIdentity(request).id,jobId:saved.pk.slice(4)});
+  }
   await db.send(new PutCommand({ TableName: required("LAB_JOB_TABLE"), Item: job, ConditionExpression: "attribute_not_exists(pk)" }));
   await ensureQueuedExecution(job);
   console.info(JSON.stringify({ event: "structured_lab_plan_job_created", jobId, markerCount: structuredBiomarkers.length }));
@@ -571,6 +579,22 @@ export async function createAwsLabAnalysisApiHandler(event: ApiEvent) {
     const identity = claims(event);
     const method = event?.requestContext?.http?.method;
     const path = event?.rawPath;
+    if(method==='POST' && typeof path==='string'){
+      const recoveryCreate=path.match(/^\/clinical-core\/(?:consumer|synthetic-session)\/labs\/requests\/(documents|saved)$/);
+      if(recoveryCreate){
+        requestIdentity(body(event).request); // Dedicated routes cannot fall back to legacy creation.
+        return recoveryCreate[1]==='documents'?await createJob(event,identity):await createPlanJob(event,identity);
+      }
+    }
+    if(method==='GET' && typeof path==='string'){
+      if(/^\/clinical-core\/(?:consumer|synthetic-session)\/labs\/request-recovery$/.test(path))return json(200,{contractVersion:REQUEST_RECOVERY_VERSION});
+      const discovery=path.match(/^\/clinical-core\/(?:consumer|synthetic-session)\/labs\/requests\/([0-9a-f-]{36})$/i);
+      if(discovery){
+        const job=await labRequestLedger(db,required('LAB_JOB_TABLE')).discover<Job>({ownerSub:identity.sub,organizationId:identity['custom:organization_id'],personId:identity['custom:person_id']},discovery[1]);
+        await ensureQueuedExecution(job);
+        return json(200,{contractVersion:REQUEST_RECOVERY_VERSION,requestId:discovery[1].toLowerCase(),jobId:job.pk.slice(4)});
+      }
+    }
     if (method === "POST" && (path === "/clinical-core/consumer/labs/jobs" || path === "/clinical-core/synthetic-session/labs/jobs")) return await createJob(event, identity);
     if (method === "POST" && (path === "/clinical-core/consumer/labs/plan-jobs" || path === "/clinical-core/synthetic-session/labs/plan-jobs")) return await createPlanJob(event, identity);
     const match = typeof path === "string" ? path.match(/^\/clinical-core\/(?:consumer|synthetic-session)\/labs\/jobs\/([0-9a-f-]{36})(\/(?:complete-upload|resume-upload))?$/i) : null;
@@ -584,7 +608,8 @@ export async function createAwsLabAnalysisApiHandler(event: ApiEvent) {
       return job ? json(200, status(job)) : refusal(404);
     }
     return refusal(404);
-  } catch {
+  } catch (error) {
+    if(error instanceof LabRequestError)return json(error.statusCode,{contractVersion:REQUEST_RECOVERY_VERSION,error:error.code});
     return refusal();
   }
 }
