@@ -286,10 +286,10 @@ try{
     $names=@{'#state'='state';'#request'='recoveryRequest';'#id'='id';'#result'='result'}|ConvertTo-Json -Compress
     $values=@{':await'=@{S='awaiting_upload'};':done'=@{S='completed'};':request'=@{S=$requestBody.request.id};
       ':result'=@{M=@{analysisId=@{S=$jobId};summary=@{S='Fictional hosted delivery acceptance'}}};
-      ':five'=@{N='5'};':hundred'=@{N='100'}}|ConvertTo-Json -Depth 8 -Compress
+      ':five'=@{N='5'};':hundred'=@{N='100'};':nullType'=@{S='NULL'}}|ConvertTo-Json -Depth 8 -Compress
     $null=AwsJson @('dynamodb','update-item','--table-name',$table,'--key',$key,
       '--update-expression','SET #state = :done, #result = :result, passesCompleted = :five, progressPercent = :hundred',
-      '--condition-expression','#state = :await AND #request.#id = :request AND attribute_not_exists(#result)',
+      '--condition-expression','#state = :await AND #request.#id = :request AND attribute_type(#result, :nullType)',
       '--expression-attribute-names',$names,'--expression-attribute-values',$values)
     $device='a'*64;$otherDevice='b'*64
     $ack=@{contractVersion='lab-delivery-ack/1';deviceBindingSha256=$device;disposition='applied'}
@@ -316,7 +316,17 @@ try{
     $digest=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($canonical))).ToLowerInvariant()
     Check ($receipt.resultSha256 -ceq $digest -and $receipt.bindingSha256 -ceq $device) 'receipt binds exact persisted fixture content and installation'
     $response=CallApi 'POST' "/jobs/$jobId/delivery" $a $ack
-    Check ($response.Status -eq 200 -and ($response.Json.data.acknowledgment|ConvertTo-Json -Compress) -ceq ($receipt|ConvertTo-Json -Compress)) 'lost acknowledgment retry returns original receipt'
+    # DynamoDB maps do not preserve JSON property order. Compare every receipt
+    # field (including the original timestamp), not serialized property order.
+    $same=$response.Status -eq 200
+    if($same){
+      $repeat=$response.Json.data.acknowledgment
+      $same=@($repeat.PSObject.Properties).Count -eq 4
+      foreach($field in @('bindingSha256','disposition','acknowledgedAt','resultSha256')){
+        if($repeat.$field -cne $receipt.$field){$same=$false}
+      }
+    }
+    Check $same 'lost acknowledgment retry returns original receipt'
     $opposite=$ack.Clone();$opposite.disposition='archived_not_applied'
     $response=CallApi 'POST' "/jobs/$jobId/delivery" $a $opposite
     Check ($response.Status -eq 409) 'existing persistence decision cannot be overwritten'
