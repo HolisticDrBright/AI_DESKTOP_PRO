@@ -1,4 +1,4 @@
-param([switch]$ConfirmSyntheticOnly,[switch]$CreateSyntheticTestUsers,[switch]$TestUploadRoundTrip,[switch]$TestLateUploadCleanup,[switch]$TestActiveCancellation,[string]$Profile='ai-synthetic-member')
+param([switch]$ConfirmSyntheticOnly,[switch]$CreateSyntheticTestUsers,[switch]$TestUploadRoundTrip,[switch]$TestLateUploadCleanup,[switch]$TestActiveCancellation,[switch]$TestLegacyInventoryMigration,[string]$Profile='ai-synthetic-member')
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 $common=@('--profile',$Profile,'--region','us-east-2','--no-cli-pager')
@@ -98,6 +98,45 @@ try{
   $created=CallApi 'POST' '/requests/documents' $a $requestBody
   Check ($created.Status -in @(200,201) -and $created.Json.data.contractVersion -eq 'lab-request-recovery/1') 'durable request creation without worker start'
   $jobId=$created.Json.data.jobId
+  if($TestLegacyInventoryMigration){
+    # Only the fixture just created by this invocation is made legacy-shaped.
+    # Its idempotency ledger, owner, source context and lifetime are unchanged.
+    $key=@{pk=@{S="job#$jobId"}}|ConvertTo-Json -Compress
+    $names=@{'#state'='state';'#request'='recoveryRequest';'#id'='id'}|ConvertTo-Json -Compress
+    $values=@{':await'=@{S='awaiting_upload'};':request'=@{S=$requestBody.request.id}}|ConvertTo-Json -Compress
+    $null=AwsJson @('dynamodb','update-item','--table-name',$table,'--key',$key,
+      '--update-expression','REMOVE inventoryOwner, inventoryOrder',
+      '--condition-expression','#state = :await AND #request.#id = :request AND attribute_exists(inventoryOwner) AND attribute_exists(inventoryOrder)',
+      '--expression-attribute-names',$names,'--expression-attribute-values',$values)
+    $indexMissing=$false
+    for($attempt=0;$attempt -lt 10;$attempt++){
+      $before=CallApi 'GET' '/inventory' $a
+      if($before.Status -eq 200 -and @($before.Json.data.jobs|Where-Object jobId -eq $jobId).Count -eq 0){$indexMissing=$true;break}
+      Start-Sleep -Seconds 1
+    }
+    Check $indexMissing 'legacy-shaped fixture initially absent from inventory'
+    $stillOwned=CallApi 'GET' "/jobs/$jobId" $a
+    Check ($stillOwned.Status -eq 200) 'legacy job remains recoverable by original identifier'
+    $migrationDirectory=Join-Path $PSScriptRoot '../test-results/lab-inventory-migration'
+    $null=New-Item -ItemType Directory -Path $migrationDirectory -Force
+    $planFile=Join-Path $migrationDirectory ([guid]::NewGuid().ToString('N')+'.json')
+    $source=(& git rev-parse HEAD).Trim()
+    $rawPlan=& node scripts/migrate-lab-inventory.mjs plan --confirm-synthetic-only --profile $Profile --source $source --file $planFile --only-job $jobId
+    if($LASTEXITCODE -ne 0){throw 'Synthetic fixture migration plan failed.'}
+    $planReport=$rawPlan|ConvertFrom-Json
+    $migrationPlan=Get-Content -LiteralPath $planFile -Raw|ConvertFrom-Json
+    Check ($planReport.candidates -eq 1 -and @($migrationPlan.entries).Count -eq 1 -and $migrationPlan.entries[0].pk -eq "job#$jobId") 'reviewed migration selects only this new fixture'
+    $actualHash=(Get-FileHash -LiteralPath $planFile -Algorithm SHA256).Hash.ToLowerInvariant()
+    Check ($actualHash -ceq $planReport.sha256) 'exact migration plan bytes verified'
+    $rawApply=& node scripts/migrate-lab-inventory.mjs apply --confirm-synthetic-only --profile $Profile --source $source --file $planFile --approved-sha256 $actualHash
+    if($LASTEXITCODE -ne 0){throw 'Synthetic fixture migration apply failed.'}
+    $migrationResult=$rawApply|ConvertFrom-Json
+    Check ($migrationResult.indexed -eq 1 -and $migrationResult.conflicts -eq 0) 'metadata-only migration conditionally indexed fixture'
+    $rawReplay=& node scripts/migrate-lab-inventory.mjs apply --confirm-synthetic-only --profile $Profile --source $source --file $planFile --approved-sha256 $actualHash
+    if($LASTEXITCODE -ne 0){throw 'Synthetic fixture migration replay failed.'}
+    Check (($rawReplay|ConvertFrom-Json).alreadyIndexed -eq 1) 'reviewed migration safely replays without another update'
+    # Existing checks below verify owner visibility and second-user exclusion.
+  }
   if($TestLateUploadCleanup){
     $workerName=($resources|Where-Object LogicalResourceId -eq 'LabWorkerFunction').PhysicalResourceId
     $outputDirectory=Join-Path $PSScriptRoot '../test-results/hosted-lab-cleanup'
