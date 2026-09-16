@@ -3,6 +3,7 @@ import { OWNED_COLLECTIONS, validateOwnedPayload as validateCollectionPayload, t
 import type { ProductionClinicalRequestContext } from "./aws-identity-consent";
 import { createHash } from "node:crypto";
 import { clinicalUuid, ClinicalCoreDatabaseRejection, type ClinicalCoreDatabase, type ClinicalCoreTransaction } from "./database";
+import { createOwnedPrivacyExport } from './owned-privacy-export';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 export const OWNED_STORAGE_SCOPES = ["forms_checkins","symptoms_adherence","nutrition","protocols_supplements","wearables","reproductive_health","ai_context","lab_history"] as const;
@@ -52,6 +53,7 @@ export function createOwnedConsumerRecordsAdapter(database: ClinicalCoreDatabase
     });
   };
   return {
+    ...createOwnedPrivacyExport((context, work) => run(context, 'consent_management', work)),
     async recent(context:ProductionClinicalRequestContext,input:{collection:ConsumerClinicalCollection;limit:number}):Promise<OwnedRecord[]> {
       exactKeys(input,['collection','limit']);collection(input.collection);if(!Number.isInteger(input.limit)||input.limit<1||input.limit>100)invalid();
       return run(context,'clinical_data',async tx=>{

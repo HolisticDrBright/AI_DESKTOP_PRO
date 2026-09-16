@@ -27,6 +27,7 @@ async function run() {
       for (const statement of splitPostgresStatements(sql)) await tx.query(statement);
       for (const statement of splitPostgresStatements(readFileSync("infra/aws-clinical-core/production-migrations/20260908100000_production_owned_storage_reads.sql","utf8"))) await tx.query(statement);
       for (const statement of splitPostgresStatements(readFileSync("infra/aws-clinical-core/production-migrations/20260908110000_production_owned_lab_history.sql","utf8"))) await tx.query(statement);
+      for (const statement of splitPostgresStatements(readFileSync("infra/aws-clinical-core/production-migrations/20260916010000_production_owned_privacy_export.sql","utf8"))) await tx.query(statement);
       // Fictional approval metadata is exclusively inside this rolled-back transaction.
       await tx.query("insert into clinical_private.consumer_storage_consent_releases(scope,version,content_sha256,content,approved_by,approved_at) values ('forms_checkins','acceptance-only',encode(public.digest($1,'sha256'),'hex'),$1,'ROLLBACK TEST - NOT A HUMAN APPROVAL',clock_timestamp()),('wearables','acceptance-only',encode(public.digest($1,'sha256'),'hex'),$1,'ROLLBACK TEST - NOT A HUMAN APPROVAL',clock_timestamp())", ["Fictional rollback-only consent copy; not approved for use."]);
       await tx.query("set local role clinical_core_api");
@@ -157,6 +158,52 @@ async function run() {
       if((await api(apiEvent(a,subA,'POST /clinical-core/consumer/personal/consent',undefined,{scope:'lab_history',status:'revoked',expectedRevision:1}))).statusCode!==200)throw new Error('lab_revoke_failed');checks++;
       const withdrawn=await api(apiEvent(a,subA,'GET /clinical-core/consumer/personal/chat-context'));
       if(withdrawn.statusCode!==200||JSON.parse(withdrawn.body).data.labs.length!==0)throw new Error('lab_withdrawal_leak');checks++;
+      stage='privacy_export';
+      await context(a,subA);
+      for(let i=0;i<3;i++)await tx.query("select clinical_core.write_owned_consumer_record('wellness_profiles',$1,0,$2,jsonb_build_object('historical_fixture',repeat('x',15000)),false,3)",[clinicalUuid(randomUUID()),clinicalUuid(randomUUID())]);
+      const exportRequest=randomUUID();
+      const startExport=()=>api(apiEvent(a,subA,'POST /clinical-core/consumer/personal/privacy-export',undefined,{requestId:exportRequest}));
+      const exportResponse=await startExport(); const manifest=JSON.parse(exportResponse.body).data;
+      if(exportResponse.statusCode!==200||manifest.coverage.completeAccountExport!==false||manifest.recordCount<4)throw new Error('privacy_manifest_failed');checks++;
+      const replay=await startExport();if(JSON.parse(replay.body).data.exportId!==manifest.exportId)throw new Error('privacy_retry_failed');checks++;
+      const throttled=await api(apiEvent(a,subA,'POST /clinical-core/consumer/personal/privacy-export',undefined,{requestId:randomUUID()}));
+      if(throttled.statusCode!==409)throw new Error('privacy_snapshot_limit_failed');checks++;
+      const foreign=await api(apiEvent(b,subB,'GET /clinical-core/consumer/personal/privacy-export',{exportId:manifest.exportId,section:'records'}));
+      if(foreign.statusCode!==400)throw new Error('privacy_cross_owner_failed');checks++;
+      const firstExport=await api(apiEvent(a,subA,'GET /clinical-core/consumer/personal/privacy-export',{exportId:manifest.exportId,section:'records',limit:'1'}));
+      if(firstExport.statusCode!==200||!JSON.parse(firstExport.body).data.nextCursor)throw new Error('privacy_page_failed');checks++;
+      const sizeBounded=await api(apiEvent(a,subA,'GET /clinical-core/consumer/personal/privacy-export',{exportId:manifest.exportId,section:'records',limit:'100'}));
+      const sized=JSON.parse(sizeBounded.body).data;
+      if(sizeBounded.statusCode!==200||!sized.nextCursor||sized.items.length>=manifest.recordCount||Buffer.byteLength(sizeBounded.body)>32768)throw new Error('privacy_data_api_row_bound_failed');checks++;
+      // Later consent/record revisions are not included in this fixed snapshot.
+      const later=await api(apiEvent(a,subA,'POST /clinical-core/consumer/personal/records',undefined,{...apiBody,requestId:randomUUID(),expectedRevision:1,payload:{...apiBody.payload,onboardingCompleted:true}}));
+      if(later.statusCode!==200)throw new Error('privacy_concurrent_write_failed');checks++;
+      const withdrawnForms=await api(apiEvent(a,subA,'POST /clinical-core/consumer/personal/consent',undefined,{scope:'forms_checkins',status:'revoked',expectedRevision:3}));
+      if(withdrawnForms.statusCode!==200)throw new Error('privacy_withdrawal_failed');checks++;
+      for(const section of ['records','consents']){
+        let cursor:string|undefined;const rows:Array<Record<string,unknown>>=[];
+        do{
+          const response=await api(apiEvent(a,subA,'GET /clinical-core/consumer/personal/privacy-export',{exportId:manifest.exportId,section,limit:'1',...(cursor?{cursor}:{})}));
+          const data=JSON.parse(response.body).data;
+          if(response.statusCode!==200||data.asOf!==manifest.asOf||rows.length>100)throw new Error('privacy_pagination_failed');
+          rows.push(...data.items);cursor=data.nextCursor??undefined;
+        }while(cursor);
+        if(rows.length!==(section==='records'?manifest.recordCount:manifest.consentCount))throw new Error('privacy_count_failed');checks++;
+        if(section==='records'){
+          if(!rows.some(r=>r.deleted===true)||!rows.some(r=>r.collection==='lab_observations')||rows.some(r=>r.recordId===apiId&&r.revision===2))throw new Error('privacy_history_failed');checks++;
+        }else if(!rows.some(r=>r.status==='revoked')||rows.some(r=>r.scope==='forms_checkins'&&r.revision===4))throw new Error('privacy_consent_snapshot_failed');
+      }
+      await context(a,subA);
+      await refused(`clinical_core.read_owned_privacy_export('${manifest.exportId}','records',1,null)`,'22023');
+      await context(a,subA,'consent_management');
+      await refused("(select id from clinical_private.owned_privacy_exports limit 1)",'42501');
+      await refused(`clinical_core.read_owned_privacy_export('${manifest.exportId}','records',101,null)`,'22023');
+      await refused(`clinical_core.read_owned_privacy_export('${manifest.exportId}','records',1,'{"key":"wellness_profiles","revision":1,"recordId":null}'::jsonb)`,'22023');
+      await tx.query('reset role');
+      await tx.query('update clinical_private.owned_privacy_exports set expires_at=clock_timestamp()-interval \'1 second\' where id=$1',[clinicalUuid(manifest.exportId)]);
+      await tx.query('set local role clinical_core_api');
+      const expired=await api(apiEvent(a,subA,'GET /clinical-core/consumer/personal/privacy-export',{exportId:manifest.exportId,section:'records'}));
+      if(expired.statusCode!==400)throw new Error('privacy_expiry_failed');checks++;
       await context(a,subA);
       await tx.query("select set_config('clinical.claim.identity_pool','workforce',true)");
       await refused("clinical_private.owned_consumer_actor()", "42501");
@@ -166,7 +213,7 @@ async function run() {
     if (!(error instanceof RolledBack)) { console.error(JSON.stringify({ failedStage: stage, passedChecks: checks })); throw error; }
   }
   const remaining = await database.transaction(async tx => tx.query<{ ok: boolean }>(
-    "select to_regclass('clinical_core.owned_consumer_record_versions') is null and not exists(select 1 from clinical_core.identities where identity_subject in ($1,$2)) as ok", [subA,subB]));
+    "select to_regclass('clinical_core.owned_consumer_record_versions') is null and to_regclass('clinical_private.owned_privacy_exports') is null and to_regclass('clinical_audit.owned_privacy_export_events') is null and not exists(select 1 from clinical_core.identities where identity_subject in ($1,$2)) as ok", [subA,subB]));
   if (remaining.rows[0]?.ok !== true) throw new Error("rollback_verification_failed");
   console.log(JSON.stringify({ checks, rollbackVerified: true, retainedSchema: false, retainedFixtureRows: 0, clinicConnectionRequired: false, phiAllowed: false }));
 }

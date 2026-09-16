@@ -12,7 +12,7 @@ export type OwnedConsumerApiConfiguration = {
 };
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const BASE="/clinical-core/consumer/personal";
-export const OWNED_CONSUMER_ROUTES=[`GET ${BASE}/records`,`GET ${BASE}/record`,`POST ${BASE}/records`,`GET ${BASE}/consent`,`POST ${BASE}/consent`,`GET ${BASE}/chat-context`] as const;
+export const OWNED_CONSUMER_ROUTES=[`GET ${BASE}/records`,`GET ${BASE}/record`,`POST ${BASE}/records`,`GET ${BASE}/consent`,`POST ${BASE}/consent`,`GET ${BASE}/chat-context`,`POST ${BASE}/privacy-export`,`GET ${BASE}/privacy-export`] as const;
 const COLLECTION_SCOPE:Record<ConsumerClinicalCollection,OwnedStorageScope>={
   lab_observations:'lab_history',
   protocols:"protocols_supplements",daily_adherence:"symptoms_adherence",symptom_logs:"symptoms_adherence",
@@ -37,11 +37,21 @@ export function createOwnedConsumerApi(input:{configuration:OwnedConsumerApiConf
       const route=event.routeKey??"";
       if (!(OWNED_CONSUMER_ROUTES as readonly string[]).includes(route)) return response(404,{error:"route_not_found"});
       const consent=route.endsWith("/consent");
-      const context=identity(event,c,consent?"consent_management":"clinical_data",input.now?.()??Date.now());
+      const privacy=route.endsWith('/privacy-export');
+      const context=identity(event,c,consent||privacy?"consent_management":"clinical_data",input.now?.()??Date.now());
       const post=route.startsWith("POST ");
       const q=event.queryStringParameters??{};
       if (post && Object.keys(q).length || !post && event.body) invalid();
       const body=post?parseBody(event):q;
+      // Privacy access does not require clinic membership or re-granting a
+      // withdrawn feature's consent. Identity + deployment gates still apply.
+      if(privacy){
+        const adapter=input.adapter();
+        if(post){exact(body,['requestId']);return response(200,{data:await adapter.startPrivacyExport(context,{requestId:String(body.requestId??'')})});}
+        exact(body,['exportId','section','limit','cursor']);
+        return response(200,{data:await adapter.readPrivacyExport(context,{exportId:String(body.exportId??''),section:body.section as 'records'|'consents',
+          limit:body.limit===undefined?25:Number(body.limit),...(body.cursor===undefined?{}:{cursor:body.cursor as string})})});
+      }
       if(route.endsWith('/chat-context')){
         exact(body,[]);
         if(!c.allowedScopes.includes('ai_context'))return response(403,{error:'feature_scope_not_enabled'});
