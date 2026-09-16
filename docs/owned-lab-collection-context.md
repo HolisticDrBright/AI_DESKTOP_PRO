@@ -1,6 +1,8 @@
 # Owned lab observations: collection context persistence
 
-September 16, 2026. Source engineering only; nothing deployed, no PHI, no signed release.
+September 16, 2026. Owned-storage deployment remains a separate candidate.
+The completed-age matcher is deployed to the synthetic lab backend only.
+No PHI or signed clinical release was activated.
 
 ## What changed
 
@@ -43,9 +45,42 @@ September 16 precision repair supersedes the prior DOB-only limitation:
 - Hosted runner gains opt-in `-TestRecordedAgeContext -TestSavedPlanGeneration`:
   malformed-context refusal with no durable request, persisted age precision,
   complete fictional saved-plan processing and cross-user denial/cleanup.
-  Deployment and hosted execution are tracked separately; this paragraph does
-  not claim they have run for the precision repair.
+  Actual synthetic hosted execution passed as recorded below.
 
 - Earlier isolated-container evidence reported timezone/demo-gate failures. The
   full local suite above ran with the repository's Pacific-time test command.
 - `check:aws-production-readiness`, `check:aws-first-real-data-pilot` and `check:aws-production-foundation` fail identically on the clean tree because they need locally reviewed manifests that are not in this container.
+
+## Exact synthetic deployment and hosted verification
+
+- Source **b61a9005359f39696ac7b2a8a0b8644a5fdeeb4c**, PR65,
+  deployed through recovery-b61a9005359f-20260916134019.
+  Stack UPDATE_COMPLETE in account588966314750/us-east-2.
+- Candidate/live templates canonically identical. Only API/worker artifact
+  parameters changed; all other parameters retained. No active workflows before
+  preparation. No database migration, resource removal, data-policy expansion
+  or production-account write.
+- All four runtime hashes verified: API/cleanup/session-authorizer ZIP
+  ca55bf261a19ff248134384137aadc9f91a2959a91052bf7bf63ac6648cc68a5;
+  worker ZIP6adbfe30411bd0b486677728a7bdb81de1a58ce565eb13d75be04afa50a6e95b.
+  PHI false, classification synthetic_only,30routes, knowledge disabled and
+  range mode synthetic_fixture remain unchanged.
+- Hosted runner with ConfirmSyntheticOnly, CreateSyntheticTestUsers,
+  TestReviewedContext, TestSavedPlanGeneration and TestRecordedAgeContext passed
+  **41 distinct checks /49 evaluations**. Three fictional markers each retain
+  completed40years with no invented DOB in their persisted request context.
+  Invalid both-age-and-DOB, negative-age and mismatched draw date each return400
+  and create no durable request (GET404).
+- One actual workflow/OpenAI synthetic plan completed; exact measured values,
+  units, unverified provenance and source-panel/context bindings preserved.
+  Other-user access refused; repeat results stable; API cleanup followed by404.
+  The unstarted recovery fixture also deleted. Two temporary identities signed
+  out/disabled. Audit, PITR/backups and cleanup metadata were not erased.
+- This proves deployed transport/persistence and synthetic processing. Matching
+  signed range fixtures is separately unit-tested, not a claim that clinical
+  source ranges are activated. No clinic-recipient context transfer, owned
+  production storage deployment, native UI test or paid mobile build occurred.
+- Paired V2 **1c9367c3f59ce57ff68ae16ba7cf40c2b85e3351**:
+  CI35147881790 passed. Desktop CI35147874061 main checks passed; final live
+  contract-fixture browser job was still running at capture. Its separate
+  deployed-backend job skips real tests when secrets are absent.
