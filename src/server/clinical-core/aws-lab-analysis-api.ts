@@ -11,6 +11,10 @@ import { labRequestLedger, LabRequestError, requestIdentity, REQUEST_RECOVERY_VE
 import { inventoryStamp, labRecoveryDescriptor, listLabInventory, LAB_INVENTORY_VERSION } from './lab-job-inventory';
 import { claimLabDeletion, reconcileLabDeletion } from './lab-deletion-cleanup';
 import { stopLabExecutions } from './lab-execution-stop';
+import { labObjectPrefix } from './lab-object-prefix';
+import { LabAuthorizationRevoked, type LabAuthorization, type LabAuthorizationPolicy } from './owned-lab-authorization';
+import { CoreSubscriptionError } from './core-subscription-guard';
+import { OwnedStorageError } from './owned-consumer-records';
 
 const CONTRACT_VERSION = "lab-analysis/1";
 const MAX_BODY_BYTES = 256 * 1024;
@@ -18,10 +22,11 @@ const MAX_DOCUMENT_BYTES = 25 * 1024 * 1024;
 const MAX_DOCUMENTS = 30;
 const MIME_TYPES = new Set(["application/pdf", "image/jpeg", "image/png"]);
 
-type Claims = { sub: string; "custom:person_id": string; "custom:organization_id": string; "custom:synthetic_attested": "true" } & Record<string, string | undefined>;
-type ApiEvent = {
+export type Claims = { sub: string; "custom:person_id": string; "custom:organization_id": string; "custom:synthetic_attested"?: string } & Record<string, string | undefined>;
+export type ApiEvent = {
   body?: unknown;
   rawPath?: unknown;
+  headers?: Record<string, string | undefined>;
   queryStringParameters?: Record<string, string | undefined>;
   requestContext?: { authorizer?: { jwt?: { claims?: unknown }; lambda?: unknown }; http?: { method?: unknown } };
 };
@@ -96,7 +101,27 @@ type Job = {
   failureCategory: string | null;
   result: unknown | null;
   rangeReleaseSha256?: string;
+  /** Absent means synthetic_only (pre-existing rows). A handler serves only its own classification. */
+  dataClassification?: LabDataClassification;
+  /** Production-owned jobs bind the owner's consent revisions at creation. */
+  authorization?: LabAuthorization;
 };
+export type LabDataClassification = 'synthetic_only' | 'personal_health_record';
+/** The synthetic handler keeps its attested-token path. The production mode is
+ * only reachable through the owned wrapper, which verifies a production-bound
+ * consumer identity, revalidates consent and binds it to every job. */
+export type LabApiOptions =
+  | { mode: 'synthetic' }
+  | { mode: 'production';
+      identity: (event: ApiEvent) => Claims;
+      capture: (event: ApiEvent, identity: Claims) => Promise<LabAuthorization>;
+      policy: LabAuthorizationPolicy;
+      requireCore: (headers: Record<string, string | undefined>) => Promise<void> };
+const CLASSIFICATION: Record<LabApiOptions['mode'], LabDataClassification> = { synthetic: 'synthetic_only', production: 'personal_health_record' };
+function classificationAccepted(input: Record<string, unknown>, options: LabApiOptions): boolean {
+  if (options.mode === 'synthetic') return input.dataClassification === 'synthetic_only' && input.attestsSyntheticOnly === true && input.attestsOwnerConsent === undefined;
+  return input.dataClassification === 'personal_health_record' && input.attestsOwnerConsent === true && input.attestsSyntheticOnly === undefined;
+}
 
 const db = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const s3 = new S3Client({});
@@ -120,7 +145,8 @@ function refusal(statusCode = 400) {
   return json(statusCode, { error: "lab_analysis_request_refused" });
 }
 
-function claims(event: ApiEvent): Claims {
+function claims(event: ApiEvent, options: LabApiOptions): Claims {
+  if (options.mode === 'production') return options.identity(event);
   const jwtClaims = event?.requestContext?.authorizer?.jwt?.claims;
   const lambdaClaims = event?.requestContext?.authorizer?.lambda;
   const value = jwtClaims ?? (lambdaClaims && typeof lambdaClaims === "object" && !Array.isArray(lambdaClaims)
@@ -342,7 +368,7 @@ function status(job: Job) {
   };
 }
 
-async function ownedJob(jobId: string, identity: Claims, includeDeleting = false): Promise<Job | null> {
+async function ownedJob(jobId: string, identity: Claims, options: LabApiOptions, includeDeleting = false): Promise<Job | null> {
   if (!/^[0-9a-f-]{36}$/i.test(jobId)) return null;
   const result = await db.send(new GetCommand({
     TableName: required("LAB_JOB_TABLE"),
@@ -350,12 +376,21 @@ async function ownedJob(jobId: string, identity: Claims, includeDeleting = false
     ConsistentRead: true,
   }));
   const job = result.Item as Job | undefined;
-  return (includeDeleting || job?.state !== 'deleting') && job?.ownerSub === identity.sub && job.organizationId === identity['custom:organization_id']
+  const owned = (includeDeleting || job?.state !== 'deleting') && job?.ownerSub === identity.sub && job.organizationId === identity['custom:organization_id']
     && job.personId === identity['custom:person_id'] ? job : null;
+  return owned ? classifiedJob(owned, options) : null;
+}
+/** A handler never serves another classification's rows, and a production job
+ * is re-authorized against current consent on every access. Cancellation and
+ * deletion remain available after withdrawal through the caller's includeRevoked. */
+async function classifiedJob(job: Job, options: LabApiOptions, includeRevoked = false): Promise<Job | null> {
+  if ((job.dataClassification ?? 'synthetic_only') !== CLASSIFICATION[options.mode]) return null;
+  if (options.mode === 'production' && !includeRevoked) await options.policy.verify(job);
+  return job;
 }
 
-async function deleteJob(identity: Claims, jobId: string) {
-  const job = await ownedJob(jobId, identity, true);
+async function deleteJob(identity: Claims, jobId: string, options: LabApiOptions) {
+  const job = await ownedJob(jobId, identity, options, true);
   if (job && !["awaiting_upload", "completed", "needs_review", "failed", "deleting"].includes(job.state)) return refusal(409);
   const deps={db,s3,table:required('LAB_JOB_TABLE'),bucket:required('LAB_DOCUMENT_BUCKET'),
     stopExecutions:(id:string)=>stopLabExecutions(sfn,required('LAB_STATE_MACHINE_ARN'),id)};
@@ -367,10 +402,10 @@ async function deleteJob(identity: Claims, jobId: string) {
 
 /** Cancellation is explicit removal of unfinished work, not deletion of a saved result.
  * A running Lambda/provider request may finish, but cannot publish after the fence. */
-async function cancelJob(event:ApiEvent,identity:Claims,jobId:string){
+async function cancelJob(event:ApiEvent,identity:Claims,jobId:string,options:LabApiOptions){
   const input=body(event);
   if(Object.keys(input).sort().join(',')!=='confirmRemoveUnfinishedAnalysis' || input.confirmRemoveUnfinishedAnalysis!==true)return refusal();
-  const job=await ownedJob(jobId,identity,true);
+  const job=await ownedJob(jobId,identity,options,true);
   if(job&&!['awaiting_upload','queued','extracting','verifying','normalizing','interpreting','synthesizing','deleting'].includes(job.state))return refusal(409);
   const scope={ownerSub:identity.sub,organizationId:identity['custom:organization_id'],personId:identity['custom:person_id']};
   const deps={db,s3,table:required('LAB_JOB_TABLE'),bucket:required('LAB_DOCUMENT_BUCKET'),
@@ -387,9 +422,9 @@ async function cancelJob(event:ApiEvent,identity:Claims,jobId:string){
   }
 }
 
-async function createJob(event: ApiEvent, identity: Claims) {
+async function createJob(event: ApiEvent, identity: Claims, options: LabApiOptions) {
   const input = body(event);
-  if (input.dataClassification !== "synthetic_only" || input.attestsSyntheticOnly !== true
+  if (!classificationAccepted(input, options)
     || !Array.isArray(input.documents) || input.documents.length < 1 || input.documents.length > MAX_DOCUMENTS) {
     return refusal();
   }
@@ -401,7 +436,7 @@ async function createJob(event: ApiEvent, identity: Claims) {
   const now = new Date().toISOString();
   const stored = documents.map((document) => ({
     ...document,
-    objectKey: `synthetic-labs/${identity["custom:organization_id"]}/${identity.sub}/${jobId}/${document.clientDocumentId}/${document.fileName}`,
+    objectKey: `${labObjectPrefix()}/${identity["custom:organization_id"]}/${identity.sub}/${jobId}/${document.clientDocumentId}/${document.fileName}`,
   }));
   const job: Job = {
     pk: `job#${jobId}`,
@@ -423,15 +458,30 @@ async function createJob(event: ApiEvent, identity: Claims) {
     ...(longitudinalContext ? { longitudinalContext } : {}),
     failureCategory: null,
     result: null,
+    ...(await productionBinding(event, identity, options)),
   };
   if(input.request!==undefined){
     const {request,...intent}=input;
     const saved=await labRequestLedger(db,required('LAB_JOB_TABLE')).create(job,request,'documents',intent,job);
+    // A replayed identity is re-authorized: a job bound to withdrawn consent is not handed back.
+    if(!await classifiedJob(saved,options))return refusal(404);
     return json(200,{contractVersion:REQUEST_RECOVERY_VERSION,requestId:requestIdentity(request).id,jobId:saved.pk.slice(4)});
   }
   await db.send(new PutCommand({TableName:required('LAB_JOB_TABLE'),Item:job,ConditionExpression:'attribute_not_exists(pk)'}));
   const targets = await uploadTargets(job, stored);
   return json(200, { contractVersion: CONTRACT_VERSION, jobId, state: "awaiting_upload", documents: targets });
+}
+
+/** Production creation requires server-verified paid Core and captures the
+ * owner's current consent revisions; the job carries them for every later
+ * upload, dispatch and read. Synthetic jobs carry neither. */
+async function productionBinding(event: ApiEvent, identity: Claims, options: LabApiOptions): Promise<Pick<Job, 'dataClassification' | 'authorization'>> {
+  if (options.mode === 'synthetic') return { dataClassification: 'synthetic_only' };
+  await options.requireCore(event.headers ?? {});
+  const authorization = await options.capture(event, identity);
+  if (authorization.identitySubject !== identity.sub || authorization.organizationId !== identity['custom:organization_id']
+    || authorization.personId !== identity['custom:person_id']) throw new LabAuthorizationRevoked();
+  return { dataClassification: 'personal_health_record', authorization };
 }
 
 async function uploadTargets(job: Job, documents: Job['documents']) {
@@ -480,8 +530,8 @@ async function verifyUploadedDocument(job: Job, document: Job['documents'][numbe
   return true;
 }
 
-async function resumeUpload(identity: Claims, jobId: string) {
-  const job = await ownedJob(jobId, identity);
+async function resumeUpload(identity: Claims, jobId: string, options: LabApiOptions) {
+  const job = await ownedJob(jobId, identity, options);
   if (!job || job.organizationId !== identity['custom:organization_id'] || job.personId !== identity['custom:person_id']) return refusal(404);
   if (job.state !== 'awaiting_upload' || job.expiresAt <= Math.floor(Date.now() / 1000)
     || !job.documents.length || job.documents.some(d => !d.checksumSHA256)) return refusal(409);
@@ -497,11 +547,11 @@ async function resumeUpload(identity: Claims, jobId: string) {
   return json(200, { contractVersion: CONTRACT_VERSION, jobId, state: 'awaiting_upload', documents, uploadedDocuments });
 }
 
-async function createPlanJob(event: ApiEvent, identity: Claims) {
+async function createPlanJob(event: ApiEvent, identity: Claims, options: LabApiOptions) {
   const input = body(event);
-  const expected = ["request", "panelId", "panelName", "testDate", "patientContext", "longitudinalContext", "dataClassification", "attestsSyntheticOnly", "biomarkers", "sourcePanelSha256","sourceContextSha256"];
+  const expected = ["request", "panelId", "panelName", "testDate", "patientContext", "longitudinalContext", "dataClassification", "attestsSyntheticOnly", "attestsOwnerConsent", "biomarkers", "sourcePanelSha256","sourceContextSha256"];
   if (Object.keys(input).some((key) => !expected.includes(key))
-    || input.dataClassification !== "synthetic_only" || input.attestsSyntheticOnly !== true
+    || !classificationAccepted(input, options)
     || !boundedString(input.panelId, 160) || !boundedString(input.panelName, 180) || !safeDate(input.testDate)
     || (input.sourcePanelSha256 !== undefined && (typeof input.sourcePanelSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(input.sourcePanelSha256)))) return refusal();
   const structuredBiomarkers = safeStructuredLabBiomarkers(input.biomarkers);
@@ -538,10 +588,12 @@ async function createPlanJob(event: ApiEvent, identity: Claims) {
     ...(longitudinalContext ? { longitudinalContext } : {}),
     failureCategory: null,
     result: null,
+    ...(await productionBinding(event, identity, options)),
   };
   if(input.request!==undefined){
     const {request,...intent}=input;
     const saved=await labRequestLedger(db,required('LAB_JOB_TABLE')).create(job,request,'saved',intent,job);
+    if(!await classifiedJob(saved,options))return refusal(404);
     await ensureQueuedExecution(saved);
     return json(200,{contractVersion:REQUEST_RECOVERY_VERSION,requestId:requestIdentity(request).id,jobId:saved.pk.slice(4)});
   }
@@ -565,9 +617,9 @@ async function ensureQueuedExecution(job: Job): Promise<void> {
   }
 }
 
-async function completeUpload(event: ApiEvent, identity: Claims, jobId: string) {
+async function completeUpload(event: ApiEvent, identity: Claims, jobId: string, options: LabApiOptions) {
   const input = body(event);
-  const job = await ownedJob(jobId, identity);
+  const job = await ownedJob(jobId, identity, options);
   if (!job) return refusal(404);
   if (job.state !== "awaiting_upload") { await ensureQueuedExecution(job); return json(200, status(job)); }
   if (!Array.isArray(input.uploadedDocuments)
@@ -593,9 +645,10 @@ async function completeUpload(event: ApiEvent, identity: Claims, jobId: string) 
   return json(200, status({ ...job, state: "queued", progressPercent: 5, updatedAt }));
 }
 
-export async function createAwsLabAnalysisApiHandler(event: ApiEvent) {
+export function createLabAnalysisApi(options: LabApiOptions) {
+  return async function labAnalysisApiHandler(event: ApiEvent) {
   try {
-    const identity = claims(event);
+    const identity = claims(event, options);
     const method = event?.requestContext?.http?.method;
     const path = event?.rawPath;
     if (method === 'GET' && typeof path === 'string') {
@@ -607,7 +660,7 @@ export async function createAwsLabAnalysisApiHandler(event: ApiEvent) {
       }
       const recovery = path.match(/^\/clinical-core\/(?:consumer|synthetic-session)\/labs\/jobs\/([0-9a-f-]{36})\/recovery$/i);
       if (recovery) {
-        const job = await ownedJob(recovery[1], identity);
+        const job = await ownedJob(recovery[1], identity, options);
         const descriptor = job ? labRecoveryDescriptor(job, scope) : null;
         return descriptor ? json(200, {contractVersion:LAB_INVENTORY_VERSION, job:descriptor}) : refusal(404);
       }
@@ -625,7 +678,7 @@ export async function createAwsLabAnalysisApiHandler(event: ApiEvent) {
       const recoveryCreate=path.match(/^\/clinical-core\/(?:consumer|synthetic-session)\/labs\/requests\/(documents|saved)$/);
       if(recoveryCreate){
         requestIdentity(body(event).request); // Dedicated routes cannot fall back to legacy creation.
-        return recoveryCreate[1]==='documents'?await createJob(event,identity):await createPlanJob(event,identity);
+        return recoveryCreate[1]==='documents'?await createJob(event,identity,options):await createPlanJob(event,identity,options);
       }
     }
     if(method==='GET' && typeof path==='string'){
@@ -633,26 +686,33 @@ export async function createAwsLabAnalysisApiHandler(event: ApiEvent) {
       const discovery=path.match(/^\/clinical-core\/(?:consumer|synthetic-session)\/labs\/requests\/([0-9a-f-]{36})$/i);
       if(discovery){
         const job=await labRequestLedger(db,required('LAB_JOB_TABLE')).discover<Job>({ownerSub:identity.sub,organizationId:identity['custom:organization_id'],personId:identity['custom:person_id']},discovery[1]);
+        if(!await classifiedJob(job,options))return refusal(404);
         await ensureQueuedExecution(job);
         return json(200,{contractVersion:REQUEST_RECOVERY_VERSION,requestId:discovery[1].toLowerCase(),jobId:job.pk.slice(4)});
       }
     }
-    if (method === "POST" && (path === "/clinical-core/consumer/labs/jobs" || path === "/clinical-core/synthetic-session/labs/jobs")) return await createJob(event, identity);
-    if (method === "POST" && (path === "/clinical-core/consumer/labs/plan-jobs" || path === "/clinical-core/synthetic-session/labs/plan-jobs")) return await createPlanJob(event, identity);
+    if (method === "POST" && (path === "/clinical-core/consumer/labs/jobs" || path === "/clinical-core/synthetic-session/labs/jobs")) return await createJob(event, identity, options);
+    if (method === "POST" && (path === "/clinical-core/consumer/labs/plan-jobs" || path === "/clinical-core/synthetic-session/labs/plan-jobs")) return await createPlanJob(event, identity, options);
     const match = typeof path === "string" ? path.match(/^\/clinical-core\/(?:consumer|synthetic-session)\/labs\/jobs\/([0-9a-f-]{36})(\/(?:complete-upload|resume-upload|cancel))?$/i) : null;
     if (!match) return refusal(404);
-    if (method === 'POST' && match[2] === '/cancel') return await cancelJob(event,identity,match[1]);
-    if (method === "POST" && match[2] === '/resume-upload') return await resumeUpload(identity, match[1]);
-    if (method === "POST" && match[2] === '/complete-upload') return await completeUpload(event, identity, match[1]);
-    if (method === "DELETE" && !match[2]) return await deleteJob(identity, match[1]);
+    if (method === 'POST' && match[2] === '/cancel') return await cancelJob(event,identity,match[1],options);
+    if (method === "POST" && match[2] === '/resume-upload') return await resumeUpload(identity, match[1], options);
+    if (method === "POST" && match[2] === '/complete-upload') return await completeUpload(event, identity, match[1], options);
+    if (method === "DELETE" && !match[2]) return await deleteJob(identity, match[1], options);
     if (method === "GET" && !match[2]) {
-      const job = await ownedJob(match[1], identity);
+      const job = await ownedJob(match[1], identity, options);
       if (job) await ensureQueuedExecution(job);
       return job ? json(200, status(job)) : refusal(404);
     }
     return refusal(404);
   } catch (error) {
     if(error instanceof LabRequestError)return json(error.statusCode,{contractVersion:REQUEST_RECOVERY_VERSION,error:error.code});
+    if(error instanceof LabAuthorizationRevoked)return json(403,{error:'lab_consent_required'});
+    if(error instanceof CoreSubscriptionError)return json(402,{error:'core_subscription_required'});
+    if(error instanceof OwnedStorageError&&error.code==='owner_required')return json(401,{error:'reauth_required'});
     return refusal();
   }
+  };
 }
+/** Synthetic handler: unchanged attested-token behavior and object namespace. */
+export const createAwsLabAnalysisApiHandler = createLabAnalysisApi({ mode: 'synthetic' });

@@ -18,11 +18,11 @@ describe("AWS lab deletion boundary", () => {
   });
 
   test("checks ownership, refuses active jobs, and purges source plus artifact versions", () => {
-    expect(api).toContain("const job = await ownedJob(jobId, identity)");
+    expect(api).toContain("const job = await ownedJob(jobId, identity, options)");
     expect(api).toContain('["awaiting_upload", "completed", "needs_review", "failed", "deleting"]');
     expect(cleanup).toContain("ListObjectVersionsCommand");
     expect(cleanup).toContain("DeleteObjectsCommand");
-    expect(cleanup).toContain("synthetic-labs/artifacts/${jobId}/");
+    expect(cleanup).toContain("${namespace}/artifacts/${jobId}/");expect(cleanup).toContain("labObjectPrefix()");
     expect(cleanup).toContain('organizationId = :org AND personId = :person');
     expect(cleanup).toContain('#state = :deleting');
     expect(api).toContain('claimLabDeletion');

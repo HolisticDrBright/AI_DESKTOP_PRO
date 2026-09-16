@@ -11,7 +11,11 @@ const sfn=new SFNClient({});
 function required(name:string){const value=process.env[name];if(!value)throw new Error('lab_cleanup_configuration_missing');return value;}
 export async function labCleanupHandler(event:unknown) {
   try{
-    if(process.env.PHI_ALLOWED!=='false'||process.env.DATA_CLASSIFICATION!=='synthetic_only')throw new Error('lab_cleanup_posture_invalid');
+    // Exactly one reviewed posture: synthetic fixtures, or the production-owned
+    // personal namespace. Mixed or partial postures refuse before any cleanup.
+    const env=process.env,synthetic=env.PHI_ALLOWED==='false'&&env.DATA_CLASSIFICATION==='synthetic_only'&&(env.LAB_OBJECT_PREFIX??'synthetic-labs')==='synthetic-labs';
+    const personal=env.PHI_ALLOWED==='true'&&env.DATA_CLASSIFICATION==='personal_health_record'&&env.LAB_OBJECT_PREFIX==='personal-labs';
+    if(!synthetic&&!personal)throw new Error('lab_cleanup_posture_invalid');
     const deps={db,s3,table:required('LAB_JOB_TABLE'),bucket:required('LAB_DOCUMENT_BUCKET'),
       stopExecutions:(id:string)=>stopLabExecutions(sfn,required('LAB_STATE_MACHINE_ARN'),id)};
     const value=event as Record<string,unknown>;

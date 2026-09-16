@@ -1,3 +1,4 @@
+import {labObjectPrefix} from './lab-object-prefix';
 import { DeleteCommand, GetCommand, QueryCommand, TransactWriteCommand, UpdateCommand, type DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { DeleteObjectsCommand, ListObjectVersionsCommand, type S3Client } from '@aws-sdk/client-s3';
 
@@ -69,8 +70,9 @@ export async function reconcileLabDeletion(deps:Dependencies,jobId:string,expect
   const record=await readCleanup(deps,jobId);
   if(!record)return null;
   if(expected&&!sameOwner(record,expected))return null;
-  const sourcePrefix=`synthetic-labs/${record.organizationId}/${record.ownerSub}/${jobId}/`;
-  const artifactPrefix=`synthetic-labs/artifacts/${jobId}/`;
+  const namespace=labObjectPrefix();
+  const sourcePrefix=`${namespace}/${record.organizationId}/${record.ownerSub}/${jobId}/`;
+  const artifactPrefix=`${namespace}/artifacts/${jobId}/`;
   if(objectKey!==undefined&&!objectKey.startsWith(sourcePrefix)&&!objectKey.startsWith(artifactPrefix))invalid();
   const current=await deps.db.send(new GetCommand({TableName:deps.table,Key:{pk:'job#'+jobId},ConsistentRead:true}));
   if(current.Item&&(!sameOwner(current.Item as Scope,record)||current.Item.state!=='deleting'
@@ -125,7 +127,7 @@ export async function sweepLabDeletions(deps:Dependencies) {
 export function cleanupJobFromObjectKey(key:unknown) {
   if(typeof key!=='string'||key.length>1024)return null;
   const parts=key.split('/');
-  if(parts[0]!=='synthetic-labs')return null;
+  if(parts[0]!==labObjectPrefix())return null;
   if(parts[1]==='artifacts')return uuid.test(parts[2]??'')&&parts.length>3?parts[2]:null;
   if(!uuid.test(parts[1]??'')||!subject.test(parts[2]??'')||!uuid.test(parts[3]??'')||parts.length<6)return null;
   return parts[3];

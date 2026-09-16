@@ -9,6 +9,8 @@ import {
   TextractClient,
 } from "@aws-sdk/client-textract";
 import { synthesizeLabWithOpenAI } from "./aws-lab-openai";
+import { labObjectPrefix } from "./lab-object-prefix";
+import { LabAuthorizationRevoked, type LabAuthorizationPolicy } from "./owned-lab-authorization";
 import { resolveLabSourcePanel, type LabSourcePanel } from "./lab-source-panel";
 import type { LongitudinalContext, PatientContext, StructuredLabBiomarker } from "./aws-lab-analysis-api";
 import { resolveReviewedLabRange, verifyLabRangeRelease, type RangePopulation, type VerifiedLabRangeRelease } from "./lab-range-release";
@@ -24,7 +26,7 @@ export const LAB_WORKER_LEASE_SECONDS = 360;
 const UUID_NS = "ai-longevity-pro-synthetic-lab-v1";
 
 type StoredDocument = { clientDocumentId: string; contentType: string; objectKey: string };
-type Job = { pk: string; state: string; passesCompleted?: number; documents: StoredDocument[]; structuredBiomarkers?: StructuredLabBiomarker[]; sourcePanel?: LabSourcePanel; patientContext?: PatientContext; longitudinalContext?: LongitudinalContext; rangeReleaseSha256?: string };
+type Job = { pk: string; ownerSub: string; organizationId: string; personId: string; authorization?: import("./owned-lab-authorization").LabAuthorization; state: string; passesCompleted?: number; documents: StoredDocument[]; structuredBiomarkers?: StructuredLabBiomarker[]; sourcePanel?: LabSourcePanel; patientContext?: PatientContext; longitudinalContext?: LongitudinalContext; rangeReleaseSha256?: string };
 export type LabRangeContext = { catalog: VerifiedLabRangeRelease; population: RangePopulation };
 type ExtractedCell = { text: string; confidence: number; column: number };
 type ExtractedRow = { cells: ExtractedCell[]; page: number | null; documentId: string };
@@ -75,11 +77,11 @@ async function streamText(body: unknown): Promise<string> {
   return (body as { transformToString(): Promise<string> }).transformToString();
 }
 async function readArtifact(jobId: string, name: string) {
-  const response = await s3.send(new GetObjectCommand({ Bucket: required("LAB_DOCUMENT_BUCKET"), Key: `synthetic-labs/artifacts/${jobId}/${name}.json` }));
+  const response = await s3.send(new GetObjectCommand({ Bucket: required("LAB_DOCUMENT_BUCKET"), Key: `${labObjectPrefix()}/artifacts/${jobId}/${name}.json` }));
   return JSON.parse(await streamText(response.Body));
 }
 async function writeArtifact(jobId: string, name: string, value: unknown) {
-  await s3.send(new PutObjectCommand({ Bucket: required("LAB_DOCUMENT_BUCKET"), Key: `synthetic-labs/artifacts/${jobId}/${name}.json`, Body: JSON.stringify(value), ContentType: "application/json", ServerSideEncryption: "aws:kms", SSEKMSKeyId: required("LAB_KMS_KEY_ARN") }));
+  await s3.send(new PutObjectCommand({ Bucket: required("LAB_DOCUMENT_BUCKET"), Key: `${labObjectPrefix()}/artifacts/${jobId}/${name}.json`, Body: JSON.stringify(value), ContentType: "application/json", ServerSideEncryption: "aws:kms", SSEKMSKeyId: required("LAB_KMS_KEY_ARN") }));
 }
 function tableRowsFromBlocks(blocks: TextractBlock[], documentId: string): ExtractedRow[] {
   const byId = new Map(blocks.filter((block) => block.Id).map((block) => [block.Id!, block]));
@@ -604,11 +606,30 @@ export function reviewedMeasurementStatus(row: Biomarker): "optimal" | "normal" 
   if (row.functionalMin !== null && row.functionalMax !== null) return row.value < row.functionalMin || row.value > row.functionalMax ? "suboptimal" : "optimal";
   return row.labMin !== null || row.labMax !== null ? "normal" : "unclassified";
 }
-async function executePass(job: Job, pass: number): Promise<unknown | null> {
+/** Production-owned jobs carry a consent-bound authorization. Verification runs
+ * before any provider dispatch (document extraction, AI synthesis) and again
+ * before the final result is stored. A synthetic worker must never process an
+ * authorized job, and a production worker must never process an unauthorized
+ * one: both fail closed rather than falling back. */
+export type LabWorkerOptions = { policy?: LabAuthorizationPolicy };
+async function verifyAuthorization(job: Job, options: LabWorkerOptions): Promise<void> {
+  if (options.policy) {
+    if (!job.authorization) throw Object.assign(new Error("lab_authorization_missing"), { category: "consent_withdrawn" });
+    try { await options.policy.verify(job); }
+    catch (error) {
+      if (error instanceof LabAuthorizationRevoked) throw Object.assign(new Error("lab_authorization_revoked"), { category: "consent_withdrawn" });
+      throw Object.assign(new Error("lab_authorization_unverifiable"), { category: "provider_unavailable" });
+    }
+  } else if (job.authorization) {
+    throw Object.assign(new Error("lab_authorization_policy_required"), { category: "consent_withdrawn" });
+  }
+}
+async function executePass(job: Job, pass: number, options: LabWorkerOptions = {}): Promise<unknown | null> {
   const jobId = job.pk.slice(4);
   const sourcePanel=resolveLabSourcePanel(job);
   const rangeContext = await reviewedRangeContext(job);
   if (pass === 0) {
+    await verifyAuthorization(job, options);
     if (job.structuredBiomarkers) {
       await writeArtifact(jobId, "extracted", { lines: [], tableRows: [], source: "saved_measured_biomarkers" });
       return null;
@@ -713,6 +734,7 @@ async function executePass(job: Job, pass: number): Promise<unknown | null> {
     panelId: panel.panelId,
     testDate: panel.testDate,
   })));
+  await verifyAuthorization(job, options);
   const aiSynthesis = await synthesizeLabWithOpenAI({
     jobId,
     patientContext: job.patientContext,
@@ -791,11 +813,11 @@ async function executePass(job: Job, pass: number): Promise<unknown | null> {
   return result;
 }
 
-export async function createAwsLabAnalysisWorker(event: { jobId?: string; pass?: number; fail?: boolean; failureCategory?: string }) {
+export async function createAwsLabAnalysisWorker(event: { jobId?: string; pass?: number; fail?: boolean; failureCategory?: string }, options: LabWorkerOptions = {}) {
   const jobId = event.jobId ?? ""; const pass = event.pass ?? -1;
   if (/^[0-9a-f-]{36}$/i.test(jobId) && event.fail === true) {
     if (!Number.isInteger(pass) || pass < 0 || pass > 4) throw new Error("worker_failure_pass_required");
-    const allowed = new Set(["document_unreadable", "verification_disagreement", "unsupported_document", "provider_unavailable", "safety_review_required", "internal_failure"]);
+    const allowed = new Set(["document_unreadable", "verification_disagreement", "unsupported_document", "provider_unavailable", "safety_review_required", "consent_withdrawn", "internal_failure"]);
     const category = allowed.has(event.failureCategory ?? "") ? event.failureCategory : "internal_failure";
     try {
       await db.send(new UpdateCommand({ TableName: required("LAB_JOB_TABLE"), Key: { pk: `job#${jobId}` },
@@ -833,8 +855,12 @@ export async function createAwsLabAnalysisWorker(event: { jobId?: string; pass?:
     throw error;
   }
   try {
-    const output = await executePass(job, pass);
+    await verifyAuthorization(job, options);
+    const output = await executePass(job, pass, options);
     const terminal = pass === 4;
+    // Consent may have been withdrawn while the provider worked: the result is
+    // withheld rather than stored.
+    if (terminal) await verifyAuthorization(job, options);
     const updatedAt = new Date().toISOString();
     await db.send(new UpdateCommand({
       TableName: required("LAB_JOB_TABLE"),
