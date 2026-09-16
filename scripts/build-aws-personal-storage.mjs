@@ -1,5 +1,6 @@
 import {build} from 'esbuild';
 import {mkdirSync,writeFileSync} from 'node:fs';
+import {personalStorageCandidate} from './personal-storage-candidate.mjs';
 const out='dist/aws-clinical-core/personal-storage';mkdirSync(out,{recursive:true});
 await build({entryPoints:['src/server/clinical-core/owned-consumer-api-lambda.ts'],outfile:`${out}/index.js`,bundle:true,platform:'node',target:'node22',format:'cjs',minify:true,legalComments:'none'});
 // Intentionally not an activation template. No data-plane IAM or credentials.
@@ -13,4 +14,5 @@ const template={AWSTemplateFormatVersion:'2010-09-09',Description:'Disabled inde
 },Outputs:{PhiAllowed:{Value:'false'},Activation:{Value:'blocked'}}};
 ['GET records','POST records','GET record','GET consent','POST consent','GET chat-context','POST privacy-export','GET privacy-export','GET active-plan','POST active-plan','POST active-plan/release','GET privacy-request','POST privacy-request','POST privacy-request/tombstone'].forEach((route,index)=>{const [method,resource]=route.split(' ');template.Resources[`Route${index}`]={Type:'AWS::ApiGatewayV2::Route',Properties:{ApiId:ref('ApiId'),RouteKey:`${method} /clinical-core/consumer/personal/${resource}`,AuthorizationType:'JWT',AuthorizerId:ref('ConsumerAuthorizerId'),Target:{'Fn::Join':['/',['integrations',ref('Integration')]]}}};});
 writeFileSync(`${out}/disabled-template.json`,JSON.stringify(template,null,2));
-console.log('Built personal storage Lambda and disabled, logs-only deployment template.');
+writeFileSync(`${out}/template.json`,JSON.stringify(personalStorageCandidate(template),null,2));
+console.log('Built personal storage Lambda, legacy disabled template and default-blocked production candidate. No deployment or activation.');
