@@ -236,3 +236,38 @@ See docs/lab-inventory-migration.md. Original phases remain partial/incomplete:
 production-owned processing, durable delivery, plan adoption, full privacy and
 guardian fulfillment, clinical activation, provider/store/device qualification
 and external/human requirements remain. No PHI or paid-build gate changed.
+
+## Reviewed plan-context deployment and live regression
+
+- Runtime source **fdc7d8d2a8c67dcee23da04118552b948cab709c** deployed via
+  exact change set recovery-fdc7d8d2a8c6-20260915183408. UPDATE_COMPLETE.
+  Live and candidate templates compared identically; only artifact-key parameters
+  changed. No data-resource removal/replacement or permission expansion. The two
+  conditional invocation-permission refreshes retain the same rule constraints.
+- API/authorizer/cleanup SHA256:
+  8273567ffc841bae0d2cadd539d35797d092445a5ad034ea67a24e15b2429c9a.
+  Worker SHA256:
+  47e11dddd4115b03e36be2a2476b453818df558137c618394270afca2ed469fe.
+  All four functions Active/Successful with exact matching hashes. Both indexes
+  ACTIVE; cleanup failure queue zero visible/zero in-flight at post-test inspection.
+- Test-harness source **661a0fb52a25e41c93b0388242a56a9ebc82f4bc** adds
+  -TestReviewedContext. Combined with upload/late-cleanup/active-cancellation,
+  **33 live synthetic checks passed**. New checks reject mismatched/missing
+  context fingerprints without creating durable requests, and preserve explicit
+  severity zero in an awaiting-upload job. This tests negative saved-plan inputs
+  and positive document-context storage, not successful model-generated plans.
+- The original ownership/replay/receipt tests passed, including actual encrypted
+  fixture upload, overwrite denial, RUNNING-to-ABORTED workflow cancellation under
+  a blocking lease, and automatic removal of a deliberately recreated late object.
+  Both newly created synthetic identities were signed out/disabled; test job/object
+  versions removed, minimal audit/request/cleanup metadata retained intentionally.
+- Foundation reconfirmed PHI false/synthetic_only; KnowledgeReleaseMode disabled,
+  LabRangeMode synthetic_fixture. No provider/model call, real data, email, payment,
+  production-account change or mobile build. App Runner web remains 4ffd5f2.
+- V2 **8f98681f5aa0b796bbcdbc3642b1ca201abcf7ee** CI35044461838 succeeded.
+  Desktop runtime CI35044460259 and harness CI35044720136 were still running at
+  live-test capture. Do not equate these hosted checks with finished CI or physical
+  device qualification. No installed mobile version changed.
+
+This closes the synthetic backend compatibility prerequisite for reviewed-input
+mobile requests, not the production pipeline or any whole commercial phase.
