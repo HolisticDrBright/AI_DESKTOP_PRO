@@ -197,3 +197,42 @@ with a completed CI run or physical-device qualification.
 Read docs/lab-active-cancellation.md. Active provider-call interruption/erasure is
 not claimed. This completes tested service behavior, not original phase 2 or
 commercial release qualification. PHI and clinical release gates remain unchanged.
+
+## Reviewed legacy inventory migration — September 15 follow-up
+
+- Operator source **096871a8475925d76433bbc5ab8d2cd7a553f19f** (initial
+  implementation ab2f8601e9fe539a8f15721c50246bec2ad3312d), existing PR65.
+  This is an administrative tool, not a new runtime deploy or API permission.
+  Deployed lab source remains be23130a2389d923f3b82fa0bcee5c0f9a25e1ce;
+  App Runner web remains 4ffd5f2.
+- Local full suite **1,484 passed /11 existing skips**, typecheck, applicable
+  lint, operator build and PowerShell syntax checks passed. Dedicated migration
+  suite 34 passed. No changes to runtime IAM, clinical gates or production account.
+- First hosted attempt migrated and replayed its one new fixture, but the older
+  changed-request-input test got 400 instead of expected 409. Investigation
+  reproduced PowerShell JSON DateTime coercion trimming .040Z to .04Z, violating
+  the canonical identity format. Fixed the test copy, not server validation.
+  The failed attempt cleaned its job (200) and disabled both test identities.
+- A fresh run with **-TestLegacyInventoryMigration passed all 19 live checks**:
+  fixture absent before indexing but available by original ID; exact one-job
+  reviewed plan/hash; conditional metadata-only indexing; already-indexed replay;
+  original request replay/conflict behavior; cross-user discovery/recovery/upload/
+  inventory denials; owner inventory visibility and normal deletion.
+- No object upload, analysis workflow, model call, email, payment or mobile build
+  in this run. Both newly created test identities globally signed out/disabled.
+  Audit/request/cleanup metadata remains retained; no account-erasure claim.
+- Subsequent read-only full job-metadata scan in this same synthetic table found
+  **zero job rows /zero migration candidates**. No blanket apply ran. Private plan
+  SHA256 e46fcb45c278f104e2b8a40e6a3641d76f5348fae214fc5a12ae47b9f0040f72,
+  test-results/lab-inventory-migration/existing-096871a.json (untracked artifact).
+  This is not a statement that personal lab-history/plan/clinic stores are empty.
+- V2 mobile cancellation source c190f208d9485ccc00d97b3cb557322149b2d964
+  CI35039672458 succeeded; Desktop cancellation CI35038029274 succeeded.
+  These supersede the preceding pending-CI/mobile-source notes. Mobile code is
+  still not installed/physically verified. Migration CI35040665492 was still
+  running at capture; do not infer a pass from local or hosted tests.
+
+See docs/lab-inventory-migration.md. Original phases remain partial/incomplete:
+production-owned processing, durable delivery, plan adoption, full privacy and
+guardian fulfillment, clinical activation, provider/store/device qualification
+and external/human requirements remain. No PHI or paid-build gate changed.
