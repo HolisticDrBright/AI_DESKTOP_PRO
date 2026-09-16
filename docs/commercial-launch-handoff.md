@@ -2,6 +2,12 @@
 
 ## Current checkpoint — September 15 synthetic generation acceptance
 
+Subsequent source candidate: [independent production voice](production-owned-voice-candidate.md),
+Desktop4a0080f / V248ba65a. Default blocked, not deployed;72rollback-only database
+assertions and separate module tests passed. Manifest now includes privacy export
+and voice consent (51source migrations). No physical/provider/payment acceptance
+or commercial-phase closure is claimed.
+
 The lab backend is now **883623f3dcc837eaf8d54c7bc779777d4ce3e574**.
 Saved-measurement generation and actual fictional image extraction/generation
 passed **46 distinct hosted checks** after repairing silent omission of noncatalog
