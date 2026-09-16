@@ -151,6 +151,8 @@ describe("Aurora RDS Data API transaction adapter", () => {
     ["production_patient_not_found", "operation_refused"],
     ["consumer_owner_required", "identity_refused"],
     ["consumer_storage_consent_required", "consent_required"],
+    ["owned_record_legal_hold", "legal_hold"],
+    ["privacy_request_held", "legal_hold"],
     ["reviewed_consent_release_required", "consent_required"],
     ["owned_record_revision_conflict", "conflict"],
     ["owned_record_idempotency_conflict", "conflict"],

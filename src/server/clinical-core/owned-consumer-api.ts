@@ -105,7 +105,7 @@ export function createOwnedConsumerApi(input:{configuration:OwnedConsumerApiConf
       return response(200,{data:{items,nextCursor:last?Buffer.from(JSON.stringify({receivedAt:last.receivedAt,recordId:last.recordId})).toString("base64url"):null}});
     } catch(error) {
       if (error instanceof OwnedStorageError) {
-        const status=error.code==="request_invalid"?400:error.code==="owner_required"?401:error.code==="consent_required"?403:error.code==="conflict"?409:503;
+        const status=error.code==="request_invalid"?400:error.code==="owner_required"?401:["consent_required","legal_hold"].includes(error.code)?403:error.code==="conflict"?409:503;
         return response(status,{error:error.code==="owner_required"?"reauth_required":error.code});
       }
       return response(503,{error:"storage_unavailable"});

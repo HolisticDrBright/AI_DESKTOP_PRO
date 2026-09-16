@@ -62,6 +62,7 @@ describe('production voice release candidate',()=>{
     expect(files).toContain('20260916030000_production_owned_active_plan.sql');
     expect(files).toContain('20260916040000_production_owned_privacy_requests.sql');
     expect(files).toContain('20260916050000_production_guardian_authority.sql');
+    expect(files).toContain('20260916070000_production_owned_deletion_hold_guard.sql');
   });
   it('built inventory tool refuses missing or malformed scope before AWS access',()=>{
     const usage=spawnSync(process.execPath,['dist/aws-clinical-core/owned-voice/inventory.cjs'],{encoding:'utf8'});

@@ -180,6 +180,10 @@
     {
       "version": "20260916060000",
       "file": "20260916060000_production_owned_reproductive_context_guard.sql"
+    },
+    {
+      "version": "20260916070000",
+      "file": "20260916070000_production_owned_deletion_hold_guard.sql"
     }
   ]
 }

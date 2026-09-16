@@ -37,6 +37,7 @@ async function run() {
       for (const statement of splitPostgresStatements(readFileSync("infra/aws-clinical-core/production-migrations/20260916040000_production_owned_privacy_requests.sql","utf8"))) await tx.query(statement);
       for (const statement of splitPostgresStatements(readFileSync("infra/aws-clinical-core/production-migrations/20260916050000_production_guardian_authority.sql","utf8"))) await tx.query(statement);
       for (const statement of splitPostgresStatements(readFileSync("infra/aws-clinical-core/production-migrations/20260916060000_production_owned_reproductive_context_guard.sql","utf8"))) await tx.query(statement);
+      for (const statement of splitPostgresStatements(readFileSync("infra/aws-clinical-core/production-migrations/20260916070000_production_owned_deletion_hold_guard.sql","utf8"))) await tx.query(statement);
       // Fictional approval metadata is exclusively inside this rolled-back transaction.
       await tx.query("insert into clinical_private.consumer_storage_consent_releases(scope,version,content_sha256,content,approved_by,approved_at) values ('forms_checkins','acceptance-only',encode(public.digest($1,'sha256'),'hex'),$1,'ROLLBACK TEST - NOT A HUMAN APPROVAL',clock_timestamp()),('wearables','acceptance-only',encode(public.digest($1,'sha256'),'hex'),$1,'ROLLBACK TEST - NOT A HUMAN APPROVAL',clock_timestamp())", ["Fictional rollback-only consent copy; not approved for use."]);
       await tx.query("set local role clinical_core_api");
@@ -156,7 +157,20 @@ async function run() {
       if((await api(apiEvent(a,subA,'POST /clinical-core/consumer/personal/consent',undefined,{scope:'nutrition',status:'revoked',expectedRevision:1}))).statusCode!==200)throw new Error('meal_revoke_failed');checks++;
       if((await readMeal()).statusCode!==403)throw new Error('meal_withdraw_read_allowed');checks++;
       if((await api(apiEvent(a,subA,'POST /clinical-core/consumer/personal/consent',undefined,{scope:'nutrition',status:'granted',releaseVersion:'acceptance-only',expectedRevision:2}))).statusCode!==200)throw new Error('meal_regrant_failed');checks++;
-      const removedMeal=await api(apiEvent(a,subA,mealRoute,undefined,{...mealBody,requestId:randomUUID(),expectedRevision:1,consentRevision:3,deleted:true,payload:{}}));
+      const removeMealBody={...mealBody,requestId:randomUUID(),expectedRevision:1,consentRevision:3,deleted:true,payload:{}};
+      // Fictional hold in the same rolled-back transaction; no workforce identity or real hold is changed.
+      await tx.query('reset role');
+      const holdId=randomUUID();
+      await tx.query("insert into clinical_private.owned_legal_holds(id,owner_id,reason_code,placed_by) values($1,$2,'owner_dispute',$2)",[clinicalUuid(holdId),clinicalUuid(a)]);
+      await tx.query('set local role clinical_core_api');
+      const heldMeal=await api(apiEvent(a,subA,mealRoute,undefined,removeMealBody));
+      if(heldMeal.statusCode!==403||JSON.parse(heldMeal.body).error!=='legal_hold')throw new Error('meal_legal_hold_bypassed');checks++;
+      const heldRead=await readMeal();
+      if(heldRead.statusCode!==200||JSON.parse(heldRead.body).data?.revision!==1)throw new Error('meal_hold_modified_record');checks++;
+      await tx.query('reset role');
+      await tx.query("update clinical_private.owned_legal_holds set released_by=$1,released_at=clock_timestamp() where id=$2",[clinicalUuid(a),clinicalUuid(holdId)]);
+      await tx.query('set local role clinical_core_api');
+      const removedMeal=await api(apiEvent(a,subA,mealRoute,undefined,removeMealBody));
       if(removedMeal.statusCode!==200||JSON.parse(removedMeal.body).data?.revision!==2)throw new Error('meal_tombstone_failed');checks++;
       const tombstone=await readMeal(),tombstoneData=JSON.parse(tombstone.body).data;
       if(tombstone.statusCode!==200||tombstoneData?.deleted!==true||Object.keys(tombstoneData.payload).length!==0)throw new Error('meal_tombstone_read_failed');checks++;

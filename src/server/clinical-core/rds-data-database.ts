@@ -209,6 +209,7 @@ function classifyDatabaseRejection(error: unknown): ClinicalCoreDatabaseRejectio
   if (record.name !== "DatabaseErrorException" || typeof record.message !== "string") return undefined;
   const message = record.message;
   // Exact server-authored codes only. Never forward SQL/provider detail.
+  if (/\b(owned_record_legal_hold|privacy_request_held)\b/.test(message)) return new ClinicalCoreDatabaseRejection("legal_hold");
   if (/\bconsumer_owner_required\b/.test(message)) return new ClinicalCoreDatabaseRejection("identity_refused");
   if (/\b(consumer_storage_consent_required|reviewed_consent_release_required)\b/.test(message)) return new ClinicalCoreDatabaseRejection("consent_required");
   if (/\b(owned_record_revision_conflict|owned_record_idempotency_conflict|consent_revision_conflict|privacy_export_conflict)\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");
