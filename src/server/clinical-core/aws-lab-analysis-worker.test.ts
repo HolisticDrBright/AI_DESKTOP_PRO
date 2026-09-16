@@ -4,6 +4,40 @@ import { assertExactExtractedMeasurements, buildMeasuredSupplementConsiderations
 const documentId = "22222222-2222-4222-8222-222222222222";
 
 describe("synthetic AWS functional lab rules", () => {
+  test('retains explicit noncatalog line measurements without manufacturing functional limits',()=>{
+    const values=[['ALT',24,'U/L','7-56'],['Ferritin',410,'ng/mL','30-400'],['MPO',3645,'pmol/L','0-599.9'],
+      ['Homocysteine',14,'umol/L','0-15'],['Vitamin B12',550,'pg/mL','200-900'],['WBC',5.4,'x10^9/L','4-11']];
+    const rows=normalizeExtractedLabLines({lines:values.map(([name,value,unit,range])=>({text:`${name} ${value} ${unit} Reference ${range}`,confidence:99,page:1,documentId}))});
+    expect(rows).toHaveLength(values.length);
+    values.forEach(([name,value,unit],index)=>expect(rows[index]).toMatchObject({canonicalName:name,value,unit:String(unit).toLowerCase(),documentId,
+      functionalMin:null,functionalMax:null,sourceId:null,sourceVersion:null}));
+  });
+
+  test('generic lines do not promote identifiers, dates, dosing text or unsupported units into labs',()=>{
+    const lines=['Patient ID 104 mg/dL Reference 70-99','Specimen date 2026 ng/mL Reference 1-3000',
+      'Dose Vitamin D 10000 IU Reference 1-20000','Reference 24 U/L Reference 7-56','Page 2 ratio Reference 1-9',
+      'Unknown 12 widgets Reference 1-20','Specimen date: 2026-09-01','Take Iron 65 mg/dL'];
+    expect(normalizeExtractedLabLines({lines:lines.map(text=>({text,confidence:99,page:1,documentId}))})).toEqual([]);
+  });
+
+  test('retains explicit unfamiliar measurements without a reference interval, keeping ranges unknown',()=>{
+    const extracted={lines:[{text:'ALT 24 U/L',confidence:99,page:1,documentId}]};
+    expect(normalizeExtractedLabLines(extracted)[0]).toMatchObject({canonicalName:'ALT',value:24,unit:'u/l',labMin:null,labMax:null,functionalMin:null,functionalMax:null});
+    expect(()=>assertExactExtractedMeasurements({lines:[{text:'Ferritin >1500 ng/mL',confidence:99,page:1,documentId}]})).toThrow('qualified_measurement_requires_review');
+  });
+
+  test.each(['Ferritin >1500 ng/mL Reference 30-400','MPO >=3000 pmol/L Reference 0-599.9','ALT <5 U/L Reference 7-56'])(
+    'qualified unknown measurement %s requires review rather than disappearing',text=>{
+      const extracted={lines:[{text,confidence:99,page:1,documentId}]};
+      expect(normalizeExtractedLabLines(extracted)).toEqual([]);
+      expect(()=>assertExactExtractedMeasurements(extracted)).toThrow('qualified_measurement_requires_review');
+    });
+
+  test('generic line values preserve zero and a one-sided printed reference without treating its bound as the result',()=>{
+    const extracted={lines:[{text:'Synthetic Marker 0 ng/mL Reference <10',confidence:99,page:2,documentId}]};
+    expect(()=>assertExactExtractedMeasurements(extracted)).not.toThrow();
+    expect(normalizeExtractedLabLines(extracted)[0]).toMatchObject({value:0,labMin:null,labMax:10,functionalMin:null,functionalMax:null,page:2});
+  });
   test("normalizes supported markers with governed range provenance", () => {
     const biomarkers = normalizeExtractedLabLines({ lines: [
       { text: "Glucose 104 mg/dL Reference 70-99", confidence: 99, page: 1, documentId },

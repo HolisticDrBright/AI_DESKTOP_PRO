@@ -305,10 +305,26 @@ export function normalizeExtractedLabTables(extracted: Extracted, context?: LabR
   });
 }
 
+/** Unknown range-catalog membership must not discard an explicit measurement.
+ * Require a numeric value and recognizable unit syntax. Printed reference ranges
+ * are optional; absence remains unknown. Headers/identifiers/instructions are
+ * not analytes. */
+function explicitLabLine(text:string){
+  const match=text.trim().match(/^(.{1,160}?)\s*[:=]?\s+([<>≤≥]=?\s*)?(-?\d+(?:\.\d+)?)\s+(?:[HL*]\s+)?(\S{1,40})(?:\s+(?:reference(?:\s+range)?|ref(?:\.|\s+range)?|range)\s*[:=]?\s*(.+))?$/i);
+  if(!match)return null;
+  const name=cleanAnalyteName(match[1]),unit=match[4].replace(/[μµ]/g,'u').toLowerCase();
+  if(!/[A-Za-z]/.test(name)||NON_ANALYTE_NAMES.test(name)||IDENTIFIER_TEXT.test(name)
+    ||/\b(?:patient|specimen|sample|collected|received|reported|order|account|provider|page|date|time|phone|fax|dose|dosage|serving|instructions?|take|prescribed)\b/i.test(name)
+    ||!(/^(?:[a-z][a-z0-9^.*-]*\/[a-z][a-z0-9^.*-]*|x?10\^\d+\/[a-z]+|%|ratio|index)$/.test(unit)))return null;
+  const range=parseRange(match[5]??'');
+  return {name,unit,value:Number(match[3]),qualified:Boolean(match[2]),range};
+}
+
 export function normalizeExtractedLabLines(extracted: Extracted, context?: LabRangeContext): Biomarker[] {
   const output: Biomarker[] = normalizeExtractedLabTables(extracted, context);
   for (const line of extracted.lines) {
     const lower = line.text.toLowerCase().replace(/[μµ]/g, "u");
+    let matched=false;
     for (const rule of RULES) {
       const alias = [...rule.aliases].sort((a, b) => b.length - a.length).find(candidate => lower.startsWith(candidate)
         && /^[\s:=]/.test(lower.slice(candidate.length)));
@@ -322,7 +338,17 @@ export function normalizeExtractedLabLines(extracted: Extracted, context?: LabRa
       const unit = unitToken && !/^(?:reference|range|ref|high|low|h|l)$/i.test(unitToken) ? unitToken : "not reported";
       const range = parseRange(remainder);
       output.push({ canonicalName: rule.name, reportedName: line.text.slice(0, 160), value, unit, labMin: range.min, labMax: range.max, ...rangeFor(rule.name, unit, context), confidence: Math.max(0, Math.min(1, line.confidence / 100)), documentId: line.documentId, page: line.page });
+      matched=true;
       break;
+    }
+    if(!matched){
+      const parsed=explicitLabLine(line.text);
+      if(parsed&&!parsed.qualified){
+        const canonicalName=matchingRule(parsed.name)?.name??parsed.name;
+        output.push({canonicalName,reportedName:line.text.slice(0,160),value:parsed.value,unit:parsed.unit,
+          labMin:parsed.range.min,labMax:parsed.range.max,...rangeFor(canonicalName,parsed.unit,context),
+          confidence:Math.max(0,Math.min(1,line.confidence/100)),documentId:line.documentId,page:line.page});
+      }
     }
   }
   return output.filter((row, index) => output.findIndex((candidate) => candidate.canonicalName === row.canonicalName) === index);
@@ -336,7 +362,7 @@ export function assertExactExtractedMeasurements(extracted: Extracted): void {
     const measured = cells.slice(index + 1).find(cell => STRICT_NUMBER.test(cell.text.trim()));
     return index >= 0 && measured !== undefined && /[<>≤≥]/.test(measured.text);
   });
-  const censoredLine = extracted.lines.some(line => RULES.some(rule => rule.aliases.some(alias => {
+  const censoredLine = extracted.lines.some(line => explicitLabLine(line.text)?.qualified || RULES.some(rule => rule.aliases.some(alias => {
     const lower = line.text.toLowerCase().trim();
     return lower.startsWith(alias) && /^\s*[:=]?\s*[<>≤≥]/.test(lower.slice(alias.length));
   })));

@@ -1,4 +1,4 @@
-param([switch]$ConfirmSyntheticOnly,[switch]$CreateSyntheticTestUsers,[switch]$TestUploadRoundTrip,[switch]$TestLateUploadCleanup,[switch]$TestActiveCancellation,[switch]$TestLegacyInventoryMigration,[switch]$TestReviewedContext,[string]$Profile='ai-synthetic-member')
+param([switch]$ConfirmSyntheticOnly,[switch]$CreateSyntheticTestUsers,[switch]$TestUploadRoundTrip,[switch]$TestLateUploadCleanup,[switch]$TestActiveCancellation,[switch]$TestLegacyInventoryMigration,[switch]$TestReviewedContext,[switch]$TestSavedPlanGeneration,[switch]$TestDocumentGeneration,[string]$Profile='ai-synthetic-member')
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 $common=@('--profile',$Profile,'--region','us-east-2','--no-cli-pager')
@@ -10,6 +10,7 @@ function AwsJson([string[]]$Arguments){
 if(-not $ConfirmSyntheticOnly -or -not $CreateSyntheticTestUsers){throw 'Explicit synthetic-only/test-identity confirmation required.'}
 if($TestLateUploadCleanup -and -not $TestUploadRoundTrip){throw 'Late-upload verification requires the fixture-upload switch.'}
 if($TestActiveCancellation -and (-not $TestUploadRoundTrip -or -not $TestLateUploadCleanup)){throw 'Cancellation acceptance requires the upload and late-cleanup checks.'}
+if($TestDocumentGeneration -and (-not $TestUploadRoundTrip -or $TestLateUploadCleanup -or $TestActiveCancellation)){throw 'Document generation requires upload roundtrip and a separate run from failure/cancellation fixtures.'}
 if((AwsJson @('sts','get-caller-identity')).Account -ne '588966314750'){throw 'Wrong account.'}
 $foundation=(AwsJson @('cloudformation','describe-stacks','--stack-name','ai-clinical-core-synthetic-staging')).Stacks[0]
 foreach($pair in @(@('PhiAllowed','false'),@('DataClassification','synthetic_only'),@('Environment','synthetic-staging'))){
@@ -33,6 +34,8 @@ $handler.AllowAutoRedirect=$false
 $client=[System.Net.Http.HttpClient]::new($handler)
 $client.Timeout=[TimeSpan]::FromSeconds(30)
 $jobId=$null
+$analysisJobId=$null
+$analysisRequestId=$null
 $passed=[System.Collections.Generic.List[string]]::new()
 $script:lastHttpStatus=0
 function CallApi([string]$Method,[string]$Path,[string]$Token,[object]$Body=$null){
@@ -55,7 +58,7 @@ function PutFixture($Target,[byte[]]$Bytes){
   $uri=[uri]$Target.uploadUrl
   if($Target.method -ne 'PUT' -or $uri.Scheme -ne 'https' -or $uri.Port -ne 443 -or $uri.UserInfo -or $uri.Fragment -or
     $uri.Host -ne "$documentBucket.s3.us-east-2.amazonaws.com" -or
-    -not $uri.AbsolutePath.EndsWith("/$jobId/$documentId/synthetic-recovery.pdf")){throw 'Untrusted upload target.'}
+    -not $uri.AbsolutePath.EndsWith("/$jobId/$documentId/$fixtureFileName")){throw 'Untrusted upload target.'}
   $request=[System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::Put,$uri)
   $request.Content=[System.Net.Http.ByteArrayContent]::new($Bytes)
   foreach($header in $Target.requiredHeaders.PSObject.Properties){
@@ -106,15 +109,86 @@ try{
       Check ($missing.Status -eq 404) "reviewed context $mode created no durable request"
     }
   }
+  if($TestSavedPlanGeneration){
+    # Explicit opt-in: one fictional saved-lab request uses the configured model.
+    # No real reports, uploaded documents, catalog approvals or activation changes.
+    $analysisRequestId=[guid]::NewGuid().ToString()
+    $analysisPanel=[guid]::NewGuid().ToString()
+    $canonicalHashScript='let s="";process.stdin.on("data",c=>s+=c);process.stdin.on("end",()=>{const f=v=>Array.isArray(v)?v.map(f):v&&typeof v==="object"?Object.fromEntries(Object.entries(v).sort(([a],[b])=>a<b?-1:a>b?1:0).map(([k,v])=>[k,f(v)])):v;process.stdout.write(require("node:crypto").createHash("sha256").update(JSON.stringify(f(JSON.parse(s)))).digest("hex"))})'
+    $contextHash=(@{contractVersion='plan-context/1';context=$reviewedContext}|ConvertTo-Json -Depth 10 -Compress)|& node -e $canonicalHashScript
+    if($LASTEXITCODE -ne 0 -or $contextHash -notmatch '^[a-f0-9]{64}$'){throw 'Fixture context hashing failed.'}
+    $fixtureMarkers=@(
+      @{markerId='fictional-glucose';canonicalName='Glucose';value=104;unit='mg/dL';labMin=70;labMax=99},
+      @{markerId='fictional-hdl';canonicalName='HDL Cholesterol';value=39;unit='mg/dL';labMin=40;labMax=90},
+      @{markerId='fictional-vitamin-d';canonicalName='Vitamin D';value=24;unit='ng/mL';labMin=30;labMax=100})
+    $sourceHash=(@{panelId=$analysisPanel;testDate='2026-09-01';biomarkers=$fixtureMarkers}|ConvertTo-Json -Depth 10 -Compress)|& node -e $canonicalHashScript
+    if($LASTEXITCODE -ne 0 -or $sourceHash -notmatch '^[a-f0-9]{64}$'){throw 'Fixture source hashing failed.'}
+    $generation=@{request=@{id=$analysisRequestId;createdAt=[DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ss.fffZ')};
+      panelId=$analysisPanel;panelName='Fictional hosted continuity test';testDate='2026-09-01';
+      dataClassification='synthetic_only';attestsSyntheticOnly=$true;patientContext=$reviewedContext;
+      sourceContextSha256=$contextHash;sourcePanelSha256=$sourceHash;biomarkers=$fixtureMarkers;
+      longitudinalContext=@{incomingPanel=@{panelId=$analysisPanel;panelName='Fictional hosted continuity test';testDate='2026-09-01'};priorPanels=@();activeProtocol=$null}}
+    $queued=CallApi 'POST' '/requests/saved' $a $generation
+    Check ($queued.Status -eq 200 -and $queued.Json.data.contractVersion -eq 'lab-request-recovery/1') 'fictional reviewed-input generation accepted'
+    $analysisJobId=$queued.Json.data.jobId
+    $replayed=CallApi 'POST' '/requests/saved' $a $generation
+    Check ($replayed.Status -eq 200 -and $replayed.Json.data.jobId -eq $analysisJobId) 'generation replay returns the same durable job'
+    $foreign=CallApi 'GET' "/jobs/$analysisJobId" $b
+    Check ($foreign.Status -eq 404) 'other user cannot read running analysis'
+    $deadline=[DateTime]::UtcNow.AddMinutes(5);$lastState=''
+    do{
+      $status=CallApi 'GET' "/jobs/$analysisJobId" $a
+      Check ($status.Status -eq 200) 'owned generation status readable'
+      $state=[string]$status.Json.data.state
+      if($state -ne $lastState){Write-Host "Fictional generation state: $state";$lastState=$state}
+      if($state -in @('completed','needs_review','failed')){break}
+      Start-Sleep -Seconds 4
+    }while([DateTime]::UtcNow -lt $deadline)
+    if($state -ne 'completed'){throw "Fictional generation did not complete: $state"}
+    $result=$status.Json.data.result
+    Check (@($result.biomarkers).Count -eq $fixtureMarkers.Count -and @($result.biomarkers|Where-Object verificationState -ne 'needs_human_review').Count -eq 0) 'all fictional measurements returned with unverified-source provenance'
+    foreach($marker in $fixtureMarkers){
+      $matches=@($result.biomarkers|Where-Object {$_.canonicalName -eq $marker.canonicalName -and $_.value -eq $marker.value -and $_.unit -eq $marker.unit})
+      Check ($matches.Count -eq 1) "fixture measurement preserved: $($marker.markerId)"
+    }
+    Check ($result.generatedPlan.sourcePanelId -eq $analysisPanel -and @($result.generatedPlan.tasks).Count -gt 0) 'plan belongs to the submitted panel and has explicit tasks'
+    $recovery=CallApi 'GET' "/jobs/$analysisJobId/recovery" $a
+    Check ($recovery.Status -eq 200 -and $recovery.Json.data.job.sourceContextSha256 -eq $contextHash -and $recovery.Json.data.job.sourcePanelSha256 -eq $sourceHash) 'completed recovery preserves reviewed context and declared source fingerprints'
+    $resumed=CallApi 'GET' "/jobs/$analysisJobId" $a
+    Check ($resumed.Status -eq 200 -and ($resumed.Json.data.result|ConvertTo-Json -Depth 40 -Compress) -ceq ($result|ConvertTo-Json -Depth 40 -Compress)) 'repeated result retrieval returns identical stored result'
+    $foreign=CallApi 'GET' "/jobs/$analysisJobId" $b
+    Check ($foreign.Status -eq 404) 'other user cannot read completed analysis'
+    $cleanup=CallApi 'DELETE' "/jobs/$analysisJobId" $a
+    Check ($cleanup.Status -eq 200) 'completed fictional model job removed'
+    $absent=CallApi 'GET' "/jobs/$analysisJobId" $a
+    Check ($absent.Status -eq 404) 'deleted generation result no longer readable'
+    $analysisJobId=$null;$analysisRequestId=$null
+  }
   $capability=CallApi 'GET' '/request-recovery' $a
   Check ($capability.Status -eq 200 -and $capability.Json.data.contractVersion -eq 'lab-request-recovery/1') 'real Cognito capability contract'
   $documentId=[guid]::NewGuid().ToString()
+  $fixtureFileName='synthetic-recovery.pdf';$fixtureType='application/pdf'
   $fixture=[Text.Encoding]::UTF8.GetBytes('%PDF-1.4 synthetic upload recovery fixture only')
+  if($TestDocumentGeneration){
+    # Render only literals in memory. No real image/report or filesystem discovery.
+    Add-Type -AssemblyName System.Drawing
+    $bitmap=[Drawing.Bitmap]::new(1600,700);$graphics=[Drawing.Graphics]::FromImage($bitmap)
+    $font=[Drawing.Font]::new('Arial',30,[Drawing.FontStyle]::Regular);$stream=[IO.MemoryStream]::new()
+    try{
+      $graphics.Clear([Drawing.Color]::White)
+      $lines=@('SYNTHETIC TEST ONLY - NO REAL PATIENT','Specimen date: 2026-09-01',
+        'Glucose 104 mg/dL Reference 70-99','Vitamin D 24 ng/mL Reference 30-100','ALT 24 U/L Reference 7-56')
+      for($line=0;$line -lt $lines.Count;$line++){$graphics.DrawString($lines[$line],$font,[Drawing.Brushes]::Black,70,60+$line*105)}
+      $bitmap.Save($stream,[Drawing.Imaging.ImageFormat]::Png);$fixture=$stream.ToArray()
+    }finally{$stream.Dispose();$font.Dispose();$graphics.Dispose();$bitmap.Dispose()}
+    $fixtureFileName='synthetic-recovery.png';$fixtureType='image/png'
+  }
   $requestBody=@{request=@{id=[guid]::NewGuid().ToString();createdAt=[DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ss.fffZ')};
     panelId=[guid]::NewGuid().ToString();dataClassification='synthetic_only';attestsSyntheticOnly=$true;
-    documents=@(@{clientDocumentId=$documentId;fileName='synthetic-recovery.pdf';contentType='application/pdf';byteSize=$fixture.Length;
+    documents=@(@{clientDocumentId=$documentId;fileName=$fixtureFileName;contentType=$fixtureType;byteSize=$fixture.Length;
       checksumSHA256=[Convert]::ToBase64String([Security.Cryptography.SHA256]::HashData($fixture))})}
   if($TestReviewedContext){$requestBody.patientContext=$reviewedContext}
+  if($TestDocumentGeneration){$requestBody.longitudinalContext=@{incomingPanel=@{panelId=$requestBody.panelId;panelName='Fictional document continuity test';testDate='2026-09-01'};priorPanels=@();activeProtocol=$null}}
   $created=CallApi 'POST' '/requests/documents' $a $requestBody
   Check ($created.Status -in @(200,201) -and $created.Json.data.contractVersion -eq 'lab-request-recovery/1') 'durable request creation without worker start'
   $jobId=$created.Json.data.jobId
@@ -211,7 +285,37 @@ try{
     Check ($remote.Status -eq 200 -and @($remote.Json.data.documents).Count -eq 0 -and
       @($remote.Json.data.uploadedDocuments).Count -eq 1 -and
       $remote.Json.data.uploadedDocuments[0].clientDocumentId -eq $documentId) 'remote receipt recovered from verified stored object'
-    # Never call complete-upload: this smoke must not invoke the analysis worker.
+    # Only the explicit document-generation option may start the provider.
+    if($TestDocumentGeneration){
+      $completeBody=@{uploadedDocuments=@($remote.Json.data.uploadedDocuments)}
+      $foreign=CallApi 'POST' "/jobs/$jobId/complete-upload" $b $completeBody
+      Check ($foreign.Status -eq 404) 'other user cannot start document analysis'
+      $started=CallApi 'POST' "/jobs/$jobId/complete-upload" $a $completeBody
+      Check ($started.Status -eq 200) 'checksum-verified fictional image submitted to extraction'
+      $deadline=[DateTime]::UtcNow.AddMinutes(5);$lastState=''
+      do{
+        $status=CallApi 'GET' "/jobs/$jobId" $a
+        if($status.Status -ne 200){throw 'Document generation status refused.'}
+        $state=[string]$status.Json.data.state
+        if($state -ne $lastState){Write-Host "Fictional document state: $state";$lastState=$state}
+        if($state -in @('completed','needs_review','failed')){break}
+        Start-Sleep -Seconds 4
+      }while([DateTime]::UtcNow -lt $deadline)
+      if($state -ne 'completed'){throw "Fictional document generation did not complete: $state"}
+      $result=$status.Json.data.result
+      # Only the literal fixture submitted above, never arbitrary account data.
+      Write-Host ("Fictional extraction diagnostics: "+(@{passes=$status.Json.data.passesCompleted;markers=@($result.biomarkers|Select-Object canonicalName,value,unit,verificationState)}|ConvertTo-Json -Depth 4 -Compress))
+      Check (@($result.biomarkers).Count -eq 3 -and $status.Json.data.passesCompleted -eq 5) 'all three fictional image measurements completed five analysis passes'
+      foreach($expected in @(@('Glucose',104,'mg/dL'),@('Vitamin D',24,'ng/mL'),@('ALT',24,'U/L'))){
+        $matches=@($result.biomarkers|Where-Object {$_.canonicalName -eq $expected[0] -and $_.value -eq $expected[1] -and $_.unit -eq $expected[2] -and $_.sourceDocumentId -eq $documentId -and $_.verificationState -eq 'needs_human_review'})
+        Check ($matches.Count -eq 1) "OCR preserves fixture value/unit/document provenance: $($expected[0])"
+      }
+      Check ($result.generatedPlan.sourcePanelId -eq $requestBody.panelId -and $result.generatedPlan.sourceAnalysisId -eq $result.analysisId -and @($result.generatedPlan.tasks).Count -gt 0) 'document plan retains exact analysis and panel provenance'
+      $repeat=CallApi 'POST' "/jobs/$jobId/complete-upload" $a $completeBody
+      Check ($repeat.Status -eq 200 -and $repeat.Json.data.state -eq 'completed' -and ($repeat.Json.data.result|ConvertTo-Json -Depth 40 -Compress) -ceq ($result|ConvertTo-Json -Depth 40 -Compress)) 'completed upload replay returns identical stored analysis without replacement'
+      $foreign=CallApi 'GET' "/jobs/$jobId" $b
+      Check ($foreign.Status -eq 404) 'other user cannot read extracted document result'
+    }
   }
   if($TestActiveCancellation){
     # ONLY this newly created fixture. An unexpired lease makes Pass0 refuse
@@ -239,7 +343,9 @@ try{
     Check ($retry.Status -eq 200 -and $retry.Json.data.cancelled -eq $true) 'lost cancellation acknowledgement can be retried'
   }else{
     $deleted=CallApi 'DELETE' "/jobs/$jobId" $a
-    Check ($deleted.Status -eq 200) 'owned test job deleted without analysis'
+    Check ($deleted.Status -eq 200) 'owned test job deleted'
+    $absent=CallApi 'GET' "/jobs/$jobId" $a
+    Check ($absent.Status -eq 404) 'deleted test job is no longer readable'
   }
   if($TestUploadRoundTrip){
     $objectKey=[uri]::UnescapeDataString(([uri]$target.uploadUrl).AbsolutePath.TrimStart('/'))
@@ -269,11 +375,24 @@ try{
     }
   }
   $jobId=$null
-  Write-Host "Hosted synthetic checks passed: $($passed.Count). Fixture upload enabled: $TestUploadRoundTrip. No AI generations, email sends, or real data."
+  Write-Host "Hosted synthetic check evaluations passed: $($passed.Count). Distinct checks: $(@($passed|Select-Object -Unique).Count). Fixture upload: $TestUploadRoundTrip. Fictional model tests: saved=$TestSavedPlanGeneration document=$TestDocumentGeneration. No email sends or real data."
 }finally{
+  if($analysisRequestId -and $tokens.Count){
+    try{
+      if(-not $analysisJobId){$found=CallApi 'GET' "/requests/$analysisRequestId" $tokens[0];if($found.Status -eq 200){$analysisJobId=$found.Json.data.jobId}}
+      if($analysisJobId){
+        $latest=CallApi 'GET' "/jobs/$analysisJobId" $tokens[0]
+        $cleanup=if($latest.Status -eq 200 -and $latest.Json.data.state -in @('completed','needs_review','failed')){CallApi 'DELETE' "/jobs/$analysisJobId" $tokens[0]}
+          else{CallApi 'POST' "/jobs/$analysisJobId/cancel" $tokens[0] @{confirmRemoveUnfinishedAnalysis=$true}}
+        Write-Host "Fictional model-job cleanup HTTP: $($cleanup.Status)"
+        if($cleanup.Status -notin @(200,404)){Write-Warning "Model fixture $analysisJobId needs cleanup review."}
+      }
+    }catch{Write-Warning "Model fixture request $analysisRequestId needs cleanup review; no forced deletion attempted."}
+  }
   if($jobId -and $tokens.Count){
     try{
-      $cleanup=if($TestActiveCancellation){CallApi 'POST' "/jobs/$jobId/cancel" $tokens[0] @{confirmRemoveUnfinishedAnalysis=$true}}else{CallApi 'DELETE' "/jobs/$jobId" $tokens[0]}
+      $latest=CallApi 'GET' "/jobs/$jobId" $tokens[0]
+      $cleanup=if($TestActiveCancellation -or ($TestDocumentGeneration -and $latest.Status -eq 200 -and $latest.Json.data.state -notin @('completed','needs_review','failed'))){CallApi 'POST' "/jobs/$jobId/cancel" $tokens[0] @{confirmRemoveUnfinishedAnalysis=$true}}else{CallApi 'DELETE' "/jobs/$jobId" $tokens[0]}
       Write-Host "Test-job cleanup HTTP: $($cleanup.Status)"
     }catch{Write-Warning 'Test-job cleanup needs operator review; no forced deletion attempted.'}
   }
