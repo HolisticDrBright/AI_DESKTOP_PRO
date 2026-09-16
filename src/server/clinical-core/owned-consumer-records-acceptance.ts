@@ -8,6 +8,8 @@ import { createOwnedConsumerRecordsAdapter } from "./owned-consumer-records";
 import type { ApiGatewayV2Event } from "./aws-identity-api";
 import {createOwnedVoiceApi,type OwnedVoiceEvent} from './owned-voice-api';
 import type {VoiceAuthorization} from './voice-authorization';
+import mealFixture from '@/contracts/personalMealBackup.fixture.json';
+import {personalMealBackupSchema} from '@/contracts/personalMealBackup';
 
 class RolledBack extends Error {}
 async function run() {
@@ -114,7 +116,7 @@ async function run() {
         });
         queue=result.catch(()=>undefined);return result;
       }};
-      const api=createOwnedConsumerApi({configuration:{consumerIssuer:issuer,consumerAudience:audience,phiAllowed:true,activationState:"approved",activationEvidenceSha256:"0".repeat(64),allowedScopes:["forms_checkins","ai_context","lab_history","voice_transcription","protocols_supplements"]},adapter:()=>createOwnedConsumerRecordsAdapter(apiDatabase)});
+      const api=createOwnedConsumerApi({configuration:{consumerIssuer:issuer,consumerAudience:audience,phiAllowed:true,activationState:"approved",activationEvidenceSha256:"0".repeat(64),allowedScopes:["forms_checkins","ai_context","lab_history","voice_transcription","protocols_supplements","nutrition"]},adapter:()=>createOwnedConsumerRecordsAdapter(apiDatabase)});
       const apiEvent=(who:string,subject:string,route:string,query?:Record<string,string>,body?:unknown):ApiGatewayV2Event=>({routeKey:route,queryStringParameters:query,headers:{"content-type":"application/json"},...(body?{body:JSON.stringify(body)}:{}),requestContext:{authorizer:{jwt:{claims:{iss:issuer,aud:audience,sub:subject,token_use:"id",email_verified:"true",exp:Math.floor(Date.now()/1000)+600,iat:Math.floor(Date.now()/1000),"custom:person_id":who,"custom:organization_id":org,"custom:production_bound":"true"}}}}});
       const apiId=randomUUID(); const apiRequest=randomUUID();
       const apiBody={collection:"wellness_profiles",recordId:apiId,requestId:apiRequest,expectedRevision:0,consentRevision:3,deleted:false,payload:{id:apiId,goals:[],onboardingCompleted:false,role:"patient"}};
@@ -129,6 +131,37 @@ async function run() {
       const consentResponse=await api(apiEvent(a,subA,"GET /clinical-core/consumer/personal/consent",{scope:"forms_checkins"}));
       const consentData=JSON.parse(consentResponse.body).data;
       if(consentResponse.statusCode!==200 || consentData.history.length!==3 || consentData.activeRevision!==3 || !consentData.release.content.includes("Fictional rollback-only")) throw new Error("api_consent_failed"); checks++;
+      stage='personal_meal_backup';
+      const mealId=randomUUID(),mealPayload={...personalMealBackupSchema.parse(mealFixture),id:mealId};
+      const mealBody={collection:'meal_logs',recordId:mealId,requestId:randomUUID(),expectedRevision:0,consentRevision:1,deleted:false,payload:mealPayload};
+      const mealRoute='POST /clinical-core/consumer/personal/records';
+      if((await api(apiEvent(a,subA,mealRoute,undefined,mealBody))).statusCode!==403)throw new Error('meal_missing_consent_allowed');checks++;
+      await tx.query('reset role');
+      await tx.query("insert into clinical_private.consumer_storage_consent_releases(scope,version,content_sha256,content,approved_by,approved_at) select 'nutrition',version,content_sha256,content,approved_by,approved_at from clinical_private.consumer_storage_consent_releases where scope='forms_checkins'");
+      await tx.query('set local role clinical_core_api');
+      for(const [who,subject] of [[a,subA],[b,subB]]){
+        if((await api(apiEvent(who,subject,'POST /clinical-core/consumer/personal/consent',undefined,{scope:'nutrition',status:'granted',releaseVersion:'acceptance-only',expectedRevision:0}))).statusCode!==200)throw new Error('meal_consent_failed');checks++;
+      }
+      for(const duplicate of [false,true]){
+        const r=await api(apiEvent(a,subA,mealRoute,undefined,mealBody));
+        if(r.statusCode!==200||JSON.parse(r.body).data?.duplicate!==duplicate)throw new Error('meal_write_failed');checks++;
+      }
+      if((await api(apiEvent(a,subA,mealRoute,undefined,{...mealBody,requestId:randomUUID(),payload:{...mealPayload,sugar_g:999}}))).statusCode!==400)throw new Error('meal_bad_totals_allowed');checks++;
+      if((await api(apiEvent(a,subA,mealRoute,undefined,{...mealBody,requestId:randomUUID()}))).statusCode!==409)throw new Error('meal_stale_revision_allowed');checks++;
+      const readMeal=(who=a,subject=subA)=>api(apiEvent(who,subject,'GET /clinical-core/consumer/personal/record',{collection:'meal_logs',recordId:mealId}));
+      const fullMeal=await readMeal();
+      if(fullMeal.statusCode!==200||JSON.stringify(personalMealBackupSchema.parse(JSON.parse(fullMeal.body).data?.payload))!==JSON.stringify(personalMealBackupSchema.parse(mealPayload)))throw new Error('meal_round_trip_failed');checks++;
+      const foreignMeal=await readMeal(b,subB);
+      if(foreignMeal.statusCode!==200||JSON.parse(foreignMeal.body).data!==null)throw new Error('meal_owner_leak');checks++;
+      if((await api(apiEvent(a,subA,'POST /clinical-core/consumer/personal/consent',undefined,{scope:'nutrition',status:'revoked',expectedRevision:1}))).statusCode!==200)throw new Error('meal_revoke_failed');checks++;
+      if((await readMeal()).statusCode!==403)throw new Error('meal_withdraw_read_allowed');checks++;
+      if((await api(apiEvent(a,subA,'POST /clinical-core/consumer/personal/consent',undefined,{scope:'nutrition',status:'granted',releaseVersion:'acceptance-only',expectedRevision:2}))).statusCode!==200)throw new Error('meal_regrant_failed');checks++;
+      const removedMeal=await api(apiEvent(a,subA,mealRoute,undefined,{...mealBody,requestId:randomUUID(),expectedRevision:1,consentRevision:3,deleted:true,payload:{}}));
+      if(removedMeal.statusCode!==200||JSON.parse(removedMeal.body).data?.revision!==2)throw new Error('meal_tombstone_failed');checks++;
+      const tombstone=await readMeal(),tombstoneData=JSON.parse(tombstone.body).data;
+      if(tombstone.statusCode!==200||tombstoneData?.deleted!==true||Object.keys(tombstoneData.payload).length!==0)throw new Error('meal_tombstone_read_failed');checks++;
+      const remainingMeals=await api(apiEvent(a,subA,'GET /clinical-core/consumer/personal/records',{collection:'meal_logs',limit:'10'}));
+      if(remainingMeals.statusCode!==200||JSON.parse(remainingMeals.body).data?.items.length!==0)throw new Error('meal_deleted_listed');checks++;
       stage='personal_ai_context';
       const deniedContext=await api(apiEvent(a,subA,'GET /clinical-core/consumer/personal/chat-context'));
       if(deniedContext.statusCode!==403)throw new Error('ai_consent_not_enforced');checks++;

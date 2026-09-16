@@ -3,6 +3,7 @@
 import { CONSUMER_CLINICAL_COLLECTIONS, validateCollectionPayload, type ConsumerClinicalCollection } from './aws-consumer-clinical-records';
 import { ageAtDrawCollectionContextSchema } from './lab-range-population';
 import type { z } from 'zod';
+import { personalMealBackupSchema } from '@/contracts/personalMealBackup';
 
 /** Owned storage refuses direct identifiers such as a date of birth, so the
  * personal copy carries the completed age at the draw instead. Restore keeps
@@ -36,6 +37,12 @@ export function withholdReproductiveContext(payload: Record<string,unknown>): Re
 }
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 export function validateOwnedPayload(collection: OwnedCollection, payload: Record<string,unknown>): void {
+  // Full meal copies are private owned storage only. The legacy clinic-sharing
+  // payload and consent contract are deliberately not expanded.
+  if(collection==='meal_logs' && Object.hasOwn(payload,'details')) {
+    if(!personalMealBackupSchema.safeParse(payload).success)throw new Error('owned_meal_backup_invalid');
+    return;
+  }
   if(collection!=='lab_observations') { validateCollectionPayload(collection as ConsumerClinicalCollection,payload); return; }
   const keys=['id','panelId','markerId','panelName','name','value','unit','drawnAt','reportedRange','sourceStatus'];
   const optional=['collectionContext'];

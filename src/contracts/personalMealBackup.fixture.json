@@ -1,0 +1,53 @@
+{
+  "id": "00000000-0000-4000-8000-000000000001",
+  "meal_time": "2026-09-01T12:00:00.000Z",
+  "meal_type": "lunch",
+  "notes": "Synthetic meal fixture",
+  "calories": 20,
+  "protein_g": 0,
+  "carbs_g": 5,
+  "fat_g": 0,
+  "fiber_g": 0,
+  "sugar_g": 1,
+  "sodium_mg": 0,
+  "glycemic_load_estimate": null,
+  "inflammatory_load_estimate": null,
+  "food_quality_score": null,
+  "tags_json": null,
+  "details": {
+    "version": "personal-meal/1",
+    "sourceStatus": "consumer_copy_unverified",
+    "adviceStatus": "historical_not_current_guidance",
+    "items": [
+      {
+        "id": "food-1",
+        "name": "Synthetic fixture food",
+        "catalogFoodId": "usda:123",
+        "portionQty": 20,
+        "portionUnit": "g",
+        "grams": 20,
+        "source": "usda_fdc_foundation",
+        "tags": [],
+        "calories": 20,
+        "protein_g": 0,
+        "carbs_g": 5,
+        "fat_g": 0,
+        "fiber_g": 0,
+        "sugar_g": 1,
+        "sodium_mg": 0
+      }
+    ],
+    "compliance": {
+      "AIP": {
+        "score": 80,
+        "violations": [],
+        "cautions": [
+          "Historical fixture assessment"
+        ]
+      }
+    },
+    "suggestions": [
+      "Historical synthetic suggestion"
+    ]
+  }
+}
