@@ -10,6 +10,8 @@ const stage = z.enum(["prepubertal", "reproductive", "irregular_cycles", "perime
 const contraception = z.enum(["none", "hormonal", "non_hormonal"]);
 const sha = z.string().regex(/^[a-f0-9]{64}$/);
 const unique = <T>(values: T[]) => new Set(values).size === values.length;
+/** Shared dimension vocabularies so stored owner context cannot drift from range populations. */
+export const collectionDimensions = { sex, pregnancy, phase, stage, contraception } as const;
 
 // Context must describe THIS observation, not today's profile. Null means unknown.
 // Source status is retained as reported, never upgraded to clinical verification.

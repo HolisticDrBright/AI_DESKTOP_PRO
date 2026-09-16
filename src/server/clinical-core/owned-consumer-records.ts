@@ -1,7 +1,7 @@
 import { createOwnedActivePlan } from './owned-active-plan';
 import { createOwnedPrivacyRequests } from './owned-privacy-requests';
 import { canonicalPayload } from "./aws-consumer-clinical-records";
-import { OWNED_COLLECTIONS, validateOwnedPayload as validateCollectionPayload, type OwnedCollection as ConsumerClinicalCollection } from './owned-lab-observations';
+import { OWNED_COLLECTIONS, hasReproductiveCollectionContext, validateOwnedPayload as validateCollectionPayload, withholdReproductiveContext, type OwnedCollection as ConsumerClinicalCollection } from './owned-lab-observations';
 import type { ProductionClinicalRequestContext } from "./aws-identity-consent";
 import { createHash } from "node:crypto";
 import { clinicalUuid, ClinicalCoreDatabaseRejection, type ClinicalCoreDatabase, type ClinicalCoreTransaction } from "./database";
@@ -63,7 +63,8 @@ export function createOwnedConsumerRecordsAdapter(database: ClinicalCoreDatabase
       return run(context,'clinical_data',async tx=>{
         const result=await tx.query<{result:unknown}>('select clinical_core.recent_owned_consumer_records($1,$2::integer) as result',[input.collection,input.limit]);
         const values=parsed(result.rows[0]?.result);if(!Array.isArray(values)||values.length>input.limit)unavailable();
-        return values.map(raw=>{const v=object(raw);if(typeof v.recordId!=='string'||!UUID.test(v.recordId)||!revision(v.revision,1)||!date(v.receivedAt))unavailable();const payload=object(v.payload);try{validateCollectionPayload(input.collection,payload);}catch{unavailable();}return {recordId:v.recordId as string,revision:v.revision as number,payload,receivedAt:v.receivedAt as string};});
+        const rows=values.map(raw=>{const v=object(raw);if(typeof v.recordId!=='string'||!UUID.test(v.recordId)||!revision(v.revision,1)||!date(v.receivedAt))unavailable();const payload=object(v.payload);try{validateCollectionPayload(input.collection,payload);}catch{unavailable();}return {recordId:v.recordId as string,revision:v.revision as number,payload,receivedAt:v.receivedAt as string};});
+        return redactWithdrawnContext(tx,input.collection,rows);
       });
     },
     async get(context: ProductionClinicalRequestContext,input: {collection:ConsumerClinicalCollection;recordId:string}): Promise<(OwnedRecord & {deleted:boolean}) | null> {
@@ -76,7 +77,8 @@ export function createOwnedConsumerRecordsAdapter(database: ClinicalCoreDatabase
         if (value.recordId !== input.recordId || !revision(value.revision,1) || typeof value.deleted !== "boolean" || !date(value.receivedAt)) unavailable();
         const payload = object(value.payload);
         try { const encoded=canonicalPayload(payload); if (value.deleted ? encoded !== "{}" : false) unavailable(); if (!value.deleted) validateCollectionPayload(input.collection,payload); } catch { unavailable(); }
-        return {recordId:input.recordId,revision:value.revision as number,deleted:value.deleted as boolean,payload,receivedAt:value.receivedAt as string};
+        const [row]=await redactWithdrawnContext(tx,input.collection,[{recordId:input.recordId,revision:value.revision as number,payload,receivedAt:value.receivedAt as string}]);
+        return {...row,deleted:value.deleted as boolean};
       });
     },
     async consentState(context:ProductionClinicalRequestContext,scope:OwnedStorageScope): Promise<StorageConsentState> {
@@ -110,7 +112,12 @@ export function createOwnedConsumerRecordsAdapter(database: ClinicalCoreDatabase
         payload = canonicalPayload(input.payload);
       } catch { invalid(); }
       if (input.deleted && payload !== "{}") invalid();
+      const reproductive = !input.deleted && input.collection === "lab_observations" && hasReproductiveCollectionContext(input.payload);
       return run(context,"clinical_data",async tx => {
+        // lab_history consent is checked by the SQL function; reproductive
+        // dimensions additionally need the owner's reproductive_health consent,
+        // read inside the same transaction so a withdrawal cannot race the write.
+        if (reproductive && !(await reproductiveConsentActive(tx))) throw new OwnedStorageError("consent_required");
         const result = await tx.query<{ result: unknown }>("select clinical_core.write_owned_consumer_record($1,$2,$3::integer,$4,$5::jsonb,$6,$7::integer) as result", [
           input.collection,clinicalUuid(input.recordId),input.expectedRevision,clinicalUuid(input.requestId),payload,input.deleted,input.consentRevision,
         ]);
@@ -135,13 +142,14 @@ export function createOwnedConsumerRecordsAdapter(database: ClinicalCoreDatabase
         ]);
         const data = parsed(result.rows[0]?.result);
         if (!Array.isArray(data) || data.length>input.limit) unavailable();
-        return (data as unknown[]).map(row => {
+        const rows = (data as unknown[]).map(row => {
           const value = object(row);
           if (typeof value.recordId !== "string" || !UUID.test(value.recordId) || !revision(value.revision,1) || !date(value.receivedAt)) unavailable();
           const payload = object(value.payload);
           try { canonicalPayload(payload); validateCollectionPayload(input.collection,payload); } catch { unavailable(); }
           return { recordId: value.recordId as string,revision: value.revision as number,payload,receivedAt: value.receivedAt as string };
         });
+        return redactWithdrawnContext(tx,input.collection,rows);
       });
     },
     async setConsent(context: ProductionClinicalRequestContext, input: {
@@ -158,6 +166,19 @@ export function createOwnedConsumerRecordsAdapter(database: ClinicalCoreDatabase
       });
     },
   };
+}
+async function reproductiveConsentActive(tx: ClinicalCoreTransaction): Promise<boolean> {
+  const result = await tx.query<{ result: unknown }>("select clinical_core.get_owned_storage_consent_state($1) as result",["reproductive_health"]);
+  const value = object(result.rows[0]?.result);
+  if (value.scope !== "reproductive_health" || !(value.activeRevision === null || revision(value.activeRevision,1))) unavailable();
+  return value.activeRevision !== null;
+}
+/** Reads never surface reproductive collection context after that consent is
+ * withdrawn; the stored record stays intact for a later re-grant or deletion. */
+async function redactWithdrawnContext(tx: ClinicalCoreTransaction, collection: ConsumerClinicalCollection, rows: OwnedRecord[]): Promise<OwnedRecord[]> {
+  if (collection !== "lab_observations" || !rows.some(row => hasReproductiveCollectionContext(row.payload))) return rows;
+  if (await reproductiveConsentActive(tx)) return rows;
+  return rows.map(row => ({ ...row, payload: withholdReproductiveContext(row.payload) }));
 }
 function invalid(): never { throw new OwnedStorageError("request_invalid"); }
 function unavailable(): never { throw new OwnedStorageError("storage_unavailable"); }

@@ -1,5 +1,5 @@
 import {describe,it,expect,vi} from 'vitest';
-import {validateOwnedPayload} from './owned-lab-observations';
+import {hasReproductiveCollectionContext,validateOwnedPayload,withholdReproductiveContext} from './owned-lab-observations';
 import {buildOwnedChatContext} from './owned-chat-context';
 import type {createOwnedConsumerRecordsAdapter} from './owned-consumer-records';
 import type {ProductionClinicalRequestContext} from './aws-identity-consent';
@@ -10,7 +10,20 @@ function fixture(granted=true,count=1){
   const list=vi.fn(async(_c:unknown,input:{after?:{recordId:string}})=>{const start=input.after?Number(input.after.recordId)+1:0;return rows.slice(start,start+100);});
   return {consentState,list,adapter:{consentState,list} as unknown as ReturnType<typeof createOwnedConsumerRecordsAdapter>};
 }
+const context={ageAtDraw:{value:36,unit:'years'},observedOn:'2026-01-01',sex:'female',pregnancyStatus:null,cyclePhase:null,reproductiveStage:null,contraception:null,pregnancyTrimester:null,assayId:null};
 describe('personal lab history',()=>{
+  it('accepts owner-recorded collection context only for this draw and only complete',()=>{
+    expect(()=>validateOwnedPayload('lab_observations',{...observation,collectionContext:context})).not.toThrow();
+    for(const bad of [null,{},{...context,observedOn:'2026-01-02'},{...context,dateOfBirth:'1990-01-01'},{...context,ageAtDraw:{value:126,unit:'years'}},{...context,ageAtDraw:{value:-1,unit:'days'}},{...context,pregnancyTrimester:2},{...context,extra:1},{...context,sex:'unknown'}])
+      expect(()=>validateOwnedPayload('lab_observations',{...observation,collectionContext:bad})).toThrow('owned_lab_observation_invalid');
+  });
+  it('detects reproductive dimensions and withholds the whole context, never a partial one',()=>{
+    expect(hasReproductiveCollectionContext({...observation,collectionContext:context})).toBe(false);
+    const reproductive={...observation,collectionContext:{...context,cyclePhase:'luteal'}};
+    expect(hasReproductiveCollectionContext(reproductive)).toBe(true);
+    expect(withholdReproductiveContext(reproductive)).toEqual(observation);
+    expect(withholdReproductiveContext({...observation,collectionContext:context})).toHaveProperty('collectionContext');
+  });
   it('retains measured zero and rejects fabricated authority, invalid dates and extra fields',()=>{
     expect(()=>validateOwnedPayload('lab_observations',observation)).not.toThrow();
     for(const patch of [{sourceStatus:'independently_verified'},{functionalRange:{low:1,high:2}},{value:NaN},{drawnAt:'2026-02-30T00:00:00.000Z'},{drawnAt:'2099-01-01T00:00:00.000Z'},{reportedRange:{low:2,high:1}},{ownerId:observation.id}])expect(()=>validateOwnedPayload('lab_observations',{...observation,...patch})).toThrow();

@@ -13,6 +13,35 @@ function setup(result: unknown = { recordId:id,revision:1,duplicate:false,receiv
   const transaction = vi.fn(async work => work({query}));
   return { adapter:createOwnedConsumerRecordsAdapter({transaction} as ClinicalCoreDatabase),query,transaction };
 }
+const observation={id,panelId:id,markerId:id,panelName:"Synthetic panel",name:"Ferritin",value:1,unit:null,drawnAt:"2026-01-01T00:00:00.000Z",reportedRange:null,sourceStatus:"consumer_import_unverified"};
+const reproductive={...observation,collectionContext:{ageAtDraw:{value:36,unit:"years"},observedOn:"2026-01-01",sex:"female",pregnancyStatus:"not_pregnant",cyclePhase:"luteal",reproductiveStage:"reproductive",contraception:"none",pregnancyTrimester:null,assayId:null}};
+const consentState=(activeRevision:number|null)=>({result:JSON.stringify({scope:"reproductive_health",activeRevision,current:null,release:null,history:[],historyLimit:100})});
+describe("reproductive collection context on owned lab observations",() => {
+  const labWrite:OwnedRecordWrite={...input,collection:"lab_observations",payload:reproductive};
+  const ctx={rows:[]};
+  it("refuses a write carrying reproductive context without active reproductive consent, inside the transaction",async () => {
+    const s=setup();s.query.mockResolvedValueOnce(ctx).mockResolvedValueOnce({rows:[consentState(null)]});
+    await expect(s.adapter.write(context,labWrite)).rejects.toThrow("consent_required");
+    expect(s.query).toHaveBeenCalledTimes(2);expect(s.query.mock.calls[1][1]).toEqual(["reproductive_health"]);
+  });
+  it("writes reproductive context once consent is active and never asks for non-reproductive context",async () => {
+    const s=setup();s.query.mockResolvedValueOnce(ctx).mockResolvedValueOnce({rows:[consentState(3)]});
+    await expect(s.adapter.write(context,labWrite)).resolves.toMatchObject({revision:1});
+    expect(s.query).toHaveBeenCalledTimes(3);
+    const plain=setup();await plain.adapter.write(context,{...labWrite,payload:{...reproductive,collectionContext:{...reproductive.collectionContext,pregnancyStatus:null,cyclePhase:null,reproductiveStage:null,contraception:null}}});
+    expect(plain.query).toHaveBeenCalledTimes(2);
+  });
+  it("withholds stored reproductive context on read after consent withdrawal and returns it when re-granted",async () => {
+    const stored={recordId:id,revision:1,receivedAt:time,payload:reproductive};
+    const s=setup();s.query.mockResolvedValueOnce(ctx).mockResolvedValueOnce({rows:[{result:JSON.stringify([stored])}]}).mockResolvedValueOnce({rows:[consentState(null)]});
+    const [row]=await s.adapter.list(context,{collection:"lab_observations",limit:10});
+    expect(row.payload).toEqual(observation);expect(row.payload).not.toHaveProperty("collectionContext");
+    const g=setup();g.query.mockResolvedValueOnce(ctx).mockResolvedValueOnce({rows:[{result:JSON.stringify([stored])}]}).mockResolvedValueOnce({rows:[consentState(2)]});
+    expect((await g.adapter.list(context,{collection:"lab_observations",limit:10}))[0].payload).toEqual(reproductive);
+    const one=setup();one.query.mockResolvedValueOnce(ctx).mockResolvedValueOnce({rows:[{result:JSON.stringify({...stored,deleted:false})}]}).mockResolvedValueOnce({rows:[consentState(null)]});
+    expect((await one.adapter.get(context,{collection:"lab_observations",recordId:id}))?.payload).toEqual(observation);
+  });
+});
 describe("independent consumer storage adapter",() => {
   it("uses authenticated owner context with no connection or recipient parameter",async () => {
     const s = setup();
