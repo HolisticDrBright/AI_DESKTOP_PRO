@@ -136,5 +136,9 @@ describe('reviewed legacy lab inventory migration',()=>{
     expect(api).not.toContain('lab-inventory-migration');expect(api).not.toContain('ScanCommand');
     const cli=readFileSync('scripts/migrate-lab-inventory.mjs','utf8');
     for(const guard of ['--approved-sha256','--confirm-synthetic-only','--source','committed_source_required','wrong_aws_account','synthetic_posture_not_verified'])expect(cli).toContain(guard);
+    const hosted=readFileSync('scripts/test-aws-lab-recovery-hosted.ps1','utf8');
+    expect(hosted).toContain('$changed=$requestBody.Clone()');
+    expect(hosted).toContain('$changed.documents=@($requestBody.documents|ForEach-Object {$_.Clone()})');
+    expect(hosted).not.toContain('$changed=($requestBody|ConvertTo-Json');
   });
 });

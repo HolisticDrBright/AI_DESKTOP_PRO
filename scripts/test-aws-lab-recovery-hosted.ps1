@@ -150,7 +150,10 @@ try{
   }
   $again=CallApi 'POST' '/requests/documents' $a $requestBody
   Check ($again.Status -in @(200,201) -and $again.Json.data.jobId -eq $jobId) 'same request returns same job'
-  $changed=($requestBody|ConvertTo-Json -Depth 12|ConvertFrom-Json)
+  # JSON roundtripping parses ISO strings as DateTime and trims fractional zeros
+  # (.040Z -> .04Z), unintentionally changing the immutable request identity.
+  $changed=$requestBody.Clone()
+  $changed.documents=@($requestBody.documents|ForEach-Object {$_.Clone()})
   $changed.documents[0].fileName='changed-synthetic-file.pdf'
   $conflict=CallApi 'POST' '/requests/documents' $a $changed
   Check ($conflict.Status -eq 409) 'changed request input refused'
