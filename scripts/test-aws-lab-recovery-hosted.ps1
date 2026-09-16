@@ -1,4 +1,4 @@
-param([switch]$ConfirmSyntheticOnly,[switch]$CreateSyntheticTestUsers,[switch]$TestUploadRoundTrip,[switch]$TestLateUploadCleanup,[switch]$TestActiveCancellation,[switch]$TestLegacyInventoryMigration,[string]$Profile='ai-synthetic-member')
+param([switch]$ConfirmSyntheticOnly,[switch]$CreateSyntheticTestUsers,[switch]$TestUploadRoundTrip,[switch]$TestLateUploadCleanup,[switch]$TestActiveCancellation,[switch]$TestLegacyInventoryMigration,[switch]$TestReviewedContext,[string]$Profile='ai-synthetic-member')
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 $common=@('--profile',$Profile,'--region','us-east-2','--no-cli-pager')
@@ -87,6 +87,25 @@ try{
     $tokens.Add($auth.AuthenticationResult.IdToken);$auth=$null
   }
   $a=$tokens[0];$b=$tokens[1]
+  $reviewedContext=@{ageYears=40;sex='male';pregnancyStatus='not_applicable';nursing=$false;
+    mainComplaint=$null;complaintDuration=$null;complaintSeverity=0;conditions=@();medications=@();allergies=@();topSymptomSignals=@();
+    lifestyle=@{sleepHours=7;sleepQuality=0;stressLevel=0;dietType='omnivore';exerciseFrequency=0}}
+  if($TestReviewedContext){
+    # Negative requests cannot dispatch a worker: the context binding must fail
+    # before request-ledger creation. Successful saved-plan dispatch is unit-tested,
+    # not exercised here, because it would run the provider.
+    foreach($mode in @('mismatch','missing-context')){
+      $invalidPlan=@{request=@{id=[guid]::NewGuid().ToString();createdAt=[DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ss.fffZ')};
+        panelId=[guid]::NewGuid().ToString();panelName='Synthetic context refusal';testDate='2026-09-01';
+        dataClassification='synthetic_only';attestsSyntheticOnly=$true;sourceContextSha256=('a'*64);
+        biomarkers=@(@{markerId='fictional';canonicalName='Fictional';value=1;unit='widgets';labMin=$null;labMax=$null})}
+      if($mode -eq 'mismatch'){$invalidPlan.patientContext=$reviewedContext}
+      $refused=CallApi 'POST' '/requests/saved' $a $invalidPlan
+      Check ($refused.Status -eq 400) "reviewed context $mode refused before dispatch"
+      $missing=CallApi 'GET' "/requests/$($invalidPlan.request.id)" $a
+      Check ($missing.Status -eq 404) "reviewed context $mode created no durable request"
+    }
+  }
   $capability=CallApi 'GET' '/request-recovery' $a
   Check ($capability.Status -eq 200 -and $capability.Json.data.contractVersion -eq 'lab-request-recovery/1') 'real Cognito capability contract'
   $documentId=[guid]::NewGuid().ToString()
@@ -95,9 +114,15 @@ try{
     panelId=[guid]::NewGuid().ToString();dataClassification='synthetic_only';attestsSyntheticOnly=$true;
     documents=@(@{clientDocumentId=$documentId;fileName='synthetic-recovery.pdf';contentType='application/pdf';byteSize=$fixture.Length;
       checksumSHA256=[Convert]::ToBase64String([Security.Cryptography.SHA256]::HashData($fixture))})}
+  if($TestReviewedContext){$requestBody.patientContext=$reviewedContext}
   $created=CallApi 'POST' '/requests/documents' $a $requestBody
   Check ($created.Status -in @(200,201) -and $created.Json.data.contractVersion -eq 'lab-request-recovery/1') 'durable request creation without worker start'
   $jobId=$created.Json.data.jobId
+  if($TestReviewedContext){
+    $storedContext=AwsJson @('dynamodb','get-item','--table-name',$table,'--consistent-read','--key',(@{pk=@{S="job#$jobId"}}|ConvertTo-Json -Compress),
+      '--projection-expression','patientContext, #state','--expression-attribute-names','{"#state":"state"}')
+    Check ($storedContext.Item.patientContext.M.complaintSeverity.N -eq '0' -and $storedContext.Item.'state'.S -eq 'awaiting_upload') 'explicit zero severity retained without worker start'
+  }
   if($TestLegacyInventoryMigration){
     # Only the fixture just created by this invocation is made legacy-shaped.
     # Its idempotency ledger, owner, source context and lifetime are unchanged.
