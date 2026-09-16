@@ -2547,15 +2547,16 @@ export interface LiveNutritionMutationResult {
 }
 
 /**
- * The Passio boundary as the browser is allowed to see it: whether it is
- * configured at all, and why not. Never a licence key.
+ * The external food-database boundary as the browser is allowed to see it.
+ * Passio was retired; Desktop has no outbound food lookup, so this reports
+ * disabled with the reason. Never a licence key.
  */
 export interface LiveNutritionProviderStatus {
   mode: "disabled" | "live";
   configured: boolean;
   problems: string[];
   /**
-   * Whether a real Passio request has EVER been executed by this deployment.
+   * Whether a real food-database request has EVER been executed by this deployment.
    * False until one actually runs — never inferred from configuration.
    */
   liveRequestExecuted: boolean;

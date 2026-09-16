@@ -87,7 +87,7 @@ export function NutritionTemplateLibrary() {
           <>
             <div className="space-y-1 text-sm">
               <div>
-                Passio food database:{" "}
+                External food database:{" "}
                 <span className="font-medium">
                   {provider.configured ? "configured" : "not configured"}
                 </span>

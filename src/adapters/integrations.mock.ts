@@ -77,7 +77,7 @@ export const CONNECTIONS: Connection[] = [
     statusDetail: "Deliberately unconnected until the PHI boundary review completes.",
   },
   {
-    id: "passio", name: "Passio Nutrition-AI", category: "Nutrition",
+    id: "food_catalog", name: "USDA food catalog (in-house)", category: "Nutrition",
     blurb: "Food recognition for photo/barcode/voice logging. API key lives SERVER-SIDE only — never in this client.",
     capabilities: ["Photo parse", "Barcode lookup", "Voice parse", "Label scan"],
     scopes: ["recognition:invoke"], direction: "import", environment: "sandbox",
