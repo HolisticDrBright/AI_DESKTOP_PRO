@@ -43,12 +43,16 @@ export function labRecoveryDescriptor(row: Record<string, unknown>, scope: Scope
     byteSize: Number(d.byteSize), contentType: String(d.contentType),
   })) : undefined;
   const panelId = typeof row.panelId === 'string' && uuid.test(row.panelId) ? row.panelId : undefined;
+  // A delivery claim exposes only the device binding digest, never the device or result.
+  const delivery = row.delivery as Record<string, unknown> | undefined;
+  if (delivery !== undefined && (typeof delivery !== 'object' || delivery === null || !/^[a-f0-9]{64}$/.test(String(delivery.bindingSha256)))) fail();
   return { jobId: row.pk.slice(4), createdAt: row.createdAt, expiresAt: Number(row.expiresAt),
     state: String(row.state), progressPercent: Number(row.progressPercent), kind,
     canResume: (kind !== 'saved' || Boolean(panelId && requestInfo)) && (row.state !== 'awaiting_upload' || Boolean(uploadManifest)),
     ...(panelId ? {panelId} : {}), ...(requestInfo ? {request:requestInfo} : {}), ...(uploadManifest ? {uploadManifest} : {}),
     ...(typeof row.sourcePanelSha256 === 'string' ? {sourcePanelSha256:row.sourcePanelSha256} : {}),
-    ...(typeof row.sourceContextSha256 === 'string' ? {sourceContextSha256:row.sourceContextSha256} : {}) };
+    ...(typeof row.sourceContextSha256 === 'string' ? {sourceContextSha256:row.sourceContextSha256} : {}),
+    ...(delivery ? {delivery:{bindingSha256:String(delivery.bindingSha256)}} : {}) };
 }
 export async function listLabInventory(db: DynamoDBDocumentClient, table: string, scope: Scope, cursor?: string) {
   const owner = inventoryStamp(scope, '2000-01-01T00:00:00.000Z', 'job#00000000-0000-4000-8000-000000000001').inventoryOwner;

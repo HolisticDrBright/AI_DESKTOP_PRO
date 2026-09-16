@@ -26,7 +26,7 @@ describe('production lab release candidate',()=>{
   });
   it('keeps only consumer JWT routes and binds identity to explicit production pool parameters',()=>{
     const routes=Object.values(template.Resources as Record<string,{Type:string;Properties:{RouteKey:string;AuthorizationType:string}}>).filter(r=>r.Type==='AWS::ApiGatewayV2::Route');
-    expect(routes).toHaveLength(14);
+    expect(routes).toHaveLength(15);
     expect(routes.every(r=>r.Properties.AuthorizationType==='JWT'&&r.Properties.RouteKey.includes('/clinical-core/consumer/labs'))).toBe(true);
     expect(template.Resources.LabConsumerAuthorizer.Properties.JwtConfiguration).toEqual({Issuer:{Ref:'ConsumerIssuer'},Audience:[{Ref:'ConsumerAudience'}]});
     expect(Object.keys(template.Resources).some(name=>name.includes('Synthetic'))).toBe(false);

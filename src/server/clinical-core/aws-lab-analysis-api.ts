@@ -105,7 +105,12 @@ type Job = {
   dataClassification?: LabDataClassification;
   /** Production-owned jobs bind the owner's consent revisions at creation. */
   authorization?: LabAuthorization;
+  /** Device-bound delivery claim recorded before a device commits the result locally. */
+  delivery?: LabDelivery;
 };
+export const LAB_DELIVERY_VERSION = 'lab-delivery/1';
+export type LabDelivery = { bindingSha256: string; deliveredAt: string; count: number };
+const DEVICE_BINDING = /^[a-f0-9]{64}$/;
 export type LabDataClassification = 'synthetic_only' | 'personal_health_record';
 /** The synthetic handler keeps its attested-token path. The production mode is
  * only reachable through the owned wrapper, which verifies a production-bound
@@ -365,7 +370,42 @@ function status(job: Job) {
     updatedAt: job.updatedAt,
     failureCategory: job.failureCategory,
     result: sanitizeStoredResult(job.result),
+    // Only present once a device has claimed delivery; older clients never see it.
+    ...(job.delivery ? { delivery: { bindingSha256: job.delivery.bindingSha256, deliveredAt: job.delivery.deliveredAt } } : {}),
   };
+}
+
+/** A completed result is claimed by exactly one device binding before that
+ * device commits it locally. The same device may claim again (retry after a
+ * failed local commit); a different device is refused so a result is never
+ * adopted twice. The claim never changes the result or the job's lifecycle. */
+async function recordDelivery(event: ApiEvent, identity: Claims, jobId: string, options: LabApiOptions) {
+  const input = body(event);
+  if (Object.keys(input).sort().join(',') !== 'contractVersion,deviceBindingSha256' || input.contractVersion !== LAB_DELIVERY_VERSION
+    || typeof input.deviceBindingSha256 !== 'string' || !DEVICE_BINDING.test(input.deviceBindingSha256)) return refusal();
+  const job = await ownedJob(jobId, identity, options);
+  if (!job) return refusal(404);
+  if (job.state !== 'completed' || !job.result) return refusal(409);
+  if (job.delivery && job.delivery.bindingSha256 !== input.deviceBindingSha256) return json(409, { contractVersion: LAB_DELIVERY_VERSION, error: 'lab_delivery_conflict' });
+  const deliveredAt = job.delivery?.deliveredAt ?? new Date().toISOString();
+  const delivery: LabDelivery = { bindingSha256: input.deviceBindingSha256, deliveredAt, count: (job.delivery?.count ?? 0) + 1 };
+  try {
+    await db.send(new UpdateCommand({
+      TableName: required('LAB_JOB_TABLE'), Key: { pk: job.pk },
+      UpdateExpression: 'SET delivery = :delivery, updatedAt = :now',
+      ConditionExpression: job.delivery
+        ? '#state = :completed AND ownerSub = :owner AND delivery.bindingSha256 = :binding AND delivery.#count = :previous'
+        : '#state = :completed AND ownerSub = :owner AND attribute_not_exists(delivery)',
+      ExpressionAttributeNames: { '#state': 'state', ...(job.delivery ? { '#count': 'count' } : {}) },
+      ExpressionAttributeValues: { ':delivery': delivery, ':now': new Date().toISOString(), ':completed': 'completed', ':owner': identity.sub,
+        ...(job.delivery ? { ':binding': input.deviceBindingSha256, ':previous': job.delivery.count } : {}) },
+    }));
+  } catch (error) {
+    // A concurrent claim from another device wins; never overwrite it.
+    if ((error as { name?: string })?.name === 'ConditionalCheckFailedException') return json(409, { contractVersion: LAB_DELIVERY_VERSION, error: 'lab_delivery_conflict' });
+    throw error;
+  }
+  return json(200, { contractVersion: LAB_DELIVERY_VERSION, jobId, delivery });
 }
 
 async function ownedJob(jobId: string, identity: Claims, options: LabApiOptions, includeDeleting = false): Promise<Job | null> {
@@ -693,8 +733,9 @@ export function createLabAnalysisApi(options: LabApiOptions) {
     }
     if (method === "POST" && (path === "/clinical-core/consumer/labs/jobs" || path === "/clinical-core/synthetic-session/labs/jobs")) return await createJob(event, identity, options);
     if (method === "POST" && (path === "/clinical-core/consumer/labs/plan-jobs" || path === "/clinical-core/synthetic-session/labs/plan-jobs")) return await createPlanJob(event, identity, options);
-    const match = typeof path === "string" ? path.match(/^\/clinical-core\/(?:consumer|synthetic-session)\/labs\/jobs\/([0-9a-f-]{36})(\/(?:complete-upload|resume-upload|cancel))?$/i) : null;
+    const match = typeof path === "string" ? path.match(/^\/clinical-core\/(?:consumer|synthetic-session)\/labs\/jobs\/([0-9a-f-]{36})(\/(?:complete-upload|resume-upload|cancel|delivery))?$/i) : null;
     if (!match) return refusal(404);
+    if (method === 'POST' && match[2] === '/delivery') return await recordDelivery(event,identity,match[1],options);
     if (method === 'POST' && match[2] === '/cancel') return await cancelJob(event,identity,match[1],options);
     if (method === "POST" && match[2] === '/resume-upload') return await resumeUpload(identity, match[1], options);
     if (method === "POST" && match[2] === '/complete-upload') return await completeUpload(event, identity, match[1], options);
