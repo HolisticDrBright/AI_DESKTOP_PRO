@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { clinicalUuid, type ClinicalCoreDatabase } from "./database";
 import { splitPostgresStatements } from "./migrations";
@@ -34,6 +34,7 @@ async function run() {
       for (const statement of splitPostgresStatements(readFileSync("infra/aws-clinical-core/production-migrations/20260916030000_production_owned_active_plan.sql","utf8"))) await tx.query(statement);
       for (const statement of splitPostgresStatements(readFileSync("infra/aws-clinical-core/production-migrations/20260916040000_production_owned_privacy_requests.sql","utf8"))) await tx.query(statement);
       for (const statement of splitPostgresStatements(readFileSync("infra/aws-clinical-core/production-migrations/20260916050000_production_guardian_authority.sql","utf8"))) await tx.query(statement);
+      for (const statement of splitPostgresStatements(readFileSync("infra/aws-clinical-core/production-migrations/20260916060000_production_owned_reproductive_context_guard.sql","utf8"))) await tx.query(statement);
       // Fictional approval metadata is exclusively inside this rolled-back transaction.
       await tx.query("insert into clinical_private.consumer_storage_consent_releases(scope,version,content_sha256,content,approved_by,approved_at) values ('forms_checkins','acceptance-only',encode(public.digest($1,'sha256'),'hex'),$1,'ROLLBACK TEST - NOT A HUMAN APPROVAL',clock_timestamp()),('wearables','acceptance-only',encode(public.digest($1,'sha256'),'hex'),$1,'ROLLBACK TEST - NOT A HUMAN APPROVAL',clock_timestamp())", ["Fictional rollback-only consent copy; not approved for use."]);
       await tx.query("set local role clinical_core_api");
@@ -113,7 +114,7 @@ async function run() {
         });
         queue=result.catch(()=>undefined);return result;
       }};
-      const api=createOwnedConsumerApi({configuration:{consumerIssuer:issuer,consumerAudience:audience,phiAllowed:true,activationState:"approved",activationEvidenceSha256:"0".repeat(64),allowedScopes:["forms_checkins","ai_context","lab_history","voice_transcription"]},adapter:()=>createOwnedConsumerRecordsAdapter(apiDatabase)});
+      const api=createOwnedConsumerApi({configuration:{consumerIssuer:issuer,consumerAudience:audience,phiAllowed:true,activationState:"approved",activationEvidenceSha256:"0".repeat(64),allowedScopes:["forms_checkins","ai_context","lab_history","voice_transcription","protocols_supplements"]},adapter:()=>createOwnedConsumerRecordsAdapter(apiDatabase)});
       const apiEvent=(who:string,subject:string,route:string,query?:Record<string,string>,body?:unknown):ApiGatewayV2Event=>({routeKey:route,queryStringParameters:query,headers:{"content-type":"application/json"},...(body?{body:JSON.stringify(body)}:{}),requestContext:{authorizer:{jwt:{claims:{iss:issuer,aud:audience,sub:subject,token_use:"id",email_verified:"true",exp:Math.floor(Date.now()/1000)+600,iat:Math.floor(Date.now()/1000),"custom:person_id":who,"custom:organization_id":org,"custom:production_bound":"true"}}}}});
       const apiId=randomUUID(); const apiRequest=randomUUID();
       const apiBody={collection:"wellness_profiles",recordId:apiId,requestId:apiRequest,expectedRevision:0,consentRevision:3,deleted:false,payload:{id:apiId,goals:[],onboardingCompleted:false,role:"patient"}};
@@ -161,6 +162,28 @@ async function run() {
       const otherLab=await api(apiEvent(b,subB,'GET /clinical-core/consumer/personal/record',{collection:'lab_observations',recordId:labId}));
       if(otherLab.statusCode!==200||JSON.parse(otherLab.body).data!==null)throw new Error('lab_cross_owner_leak');checks++;
       await context(b,subB);await check("select count(*)::int=0 as ok from clinical_core.owned_consumer_record_versions where collection='lab_observations'");
+      stage='reproductive_collection_context';
+      await tx.query('reset role');
+      await tx.query("insert into clinical_private.consumer_storage_consent_releases(scope,version,content_sha256,content,approved_by,approved_at) select 'reproductive_health',version,content_sha256,content,approved_by,approved_at from clinical_private.consumer_storage_consent_releases where scope='forms_checkins'");
+      await tx.query('set local role clinical_core_api');
+      const contextId=randomUUID();
+      const withContext={...labBody,recordId:contextId,requestId:randomUUID(),payload:{...labBody.payload,id:contextId,collectionContext:{ageAtDraw:{value:36,unit:'years'},observedOn:'2026-01-01',sex:'female',pregnancyStatus:'not_pregnant',cyclePhase:'luteal',reproductiveStage:'reproductive',contraception:'none',pregnancyTrimester:null,assayId:null}}};
+      const recordsRoute='POST /clinical-core/consumer/personal/records';
+      if((await api(apiEvent(a,subA,recordsRoute,undefined,withContext))).statusCode!==403)throw new Error('reproductive_missing_consent_allowed');checks++;
+      await context(a,subA,'consent_management');
+      await tx.query("select clinical_core.set_owned_consumer_consent('reproductive_health','granted','acceptance-only',0)");
+      if((await api(apiEvent(a,subA,recordsRoute,undefined,withContext))).statusCode!==200)throw new Error('reproductive_authorized_write_refused');checks++;
+      const readContext=()=>api(apiEvent(a,subA,'GET /clinical-core/consumer/personal/record',{collection:'lab_observations',recordId:contextId}));
+      let contextResponse=await readContext();
+      if(contextResponse.statusCode!==200||!JSON.parse(contextResponse.body).data?.payload?.collectionContext)throw new Error('reproductive_authorized_read_refused');checks++;
+      await context(a,subA,'consent_management');
+      await tx.query("select clinical_core.set_owned_consumer_consent('reproductive_health','revoked',null,1)");
+      contextResponse=await readContext();
+      if(contextResponse.statusCode!==200||JSON.parse(contextResponse.body).data?.payload?.collectionContext)throw new Error('reproductive_withdrawal_leak');checks++;
+      if((await api(apiEvent(a,subA,recordsRoute,undefined,{...withContext,expectedRevision:1,requestId:randomUUID()}))).statusCode!==403)throw new Error('reproductive_withdrawal_write_allowed');checks++;
+      await context(a,subA);
+      // Bypass the adapter: the database trigger must independently refuse it.
+      await refused(`clinical_core.write_owned_consumer_record('lab_observations','${contextId}',1,'${randomUUID()}','${JSON.stringify(withContext.payload)}'::jsonb,false,1)`,'42501');
       if((await api(apiEvent(a,subA,'POST /clinical-core/consumer/personal/consent',undefined,{scope:'lab_history',status:'revoked',expectedRevision:1}))).statusCode!==200)throw new Error('lab_revoke_failed');checks++;
       const withdrawn=await api(apiEvent(a,subA,'GET /clinical-core/consumer/personal/chat-context'));
       if(withdrawn.statusCode!==200||JSON.parse(withdrawn.body).data.labs.length!==0)throw new Error('lab_withdrawal_leak');checks++;
@@ -249,27 +272,42 @@ async function run() {
       await tx.query("insert into clinical_private.consumer_storage_consent_releases(scope,version,content_sha256,content,approved_by,approved_at) values ('protocols_supplements','acceptance-only',encode(public.digest($1,'sha256'),'hex'),$1,'ROLLBACK TEST - NOT A HUMAN APPROVAL',clock_timestamp())",["Fictional rollback-only plans consent copy; not approved for use."]);
       await tx.query('set local role clinical_core_api');
       await context(a,subA,'consent_management');
-      const plansConsent=Number((await tx.query<{result:{revision:number}}>("select clinical_core.set_owned_consumer_consent('protocols_supplements','granted','acceptance-only',0) as result")).rows[0]?.result?.revision);
+      stage='active_plan_consent';
+      const plansConsent=Number((await tx.query<{revision:number}>("select (clinical_core.set_owned_consumer_consent('protocols_supplements','granted','acceptance-only',0)->>'revision')::int as revision")).rows[0]?.revision);
+      if(!Number.isSafeInteger(plansConsent)||plansConsent<1)throw new Error('plans_consent_response_invalid');
       await context(a,subA);
       const planA=randomUUID(),planB=randomUUID(),adoptA=randomUUID(),adoptB=randomUUID(),releaseReq=randomUUID(),hash='a'.repeat(64);
+      stage='active_plan_initial_read';
       await check("select clinical_core.get_owned_active_plan()->'current' = 'null'::jsonb as ok");
-      await tx.query("select clinical_core.write_owned_consumer_record('protocols',$1,0,$2,'{\"name\":\"fictional\"}'::jsonb,false,$3)",[clinicalUuid(planA),clinicalUuid(randomUUID()),plansConsent]);
+      stage='active_plan_initial_write';
+      await tx.query("select clinical_core.write_owned_consumer_record('protocols',$1,0,$2,'{\"name\":\"fictional\"}'::jsonb,false,$3::integer)",[clinicalUuid(planA),clinicalUuid(randomUUID()),plansConsent]);
       await refused(`clinical_core.adopt_owned_active_plan('${planA}',2,'${hash}',${plansConsent},'${adoptA}',null,null)`,'40001');
       await refused(`clinical_core.adopt_owned_active_plan('${planB}',1,'${hash}',${plansConsent},'${adoptA}',null,null)`,'40001');
       await check(`select (clinical_core.adopt_owned_active_plan('${planA}',1,'${hash}',${plansConsent},'${adoptA}',null,null)->'current'->>'recordId')::uuid=$1 as ok`,[clinicalUuid(planA)]);
       await check(`select (clinical_core.adopt_owned_active_plan('${planA}',1,'${hash}',${plansConsent},'${adoptA}',null,null)->>'duplicate')::boolean as ok`);
       await refused(`clinical_core.adopt_owned_active_plan('${planA}',1,'${hash}',${plansConsent},'${randomUUID()}',null,null)`,'40001');
-      await tx.query("select clinical_core.write_owned_consumer_record('protocols',$1,0,$2,'{\"name\":\"fictional-b\"}'::jsonb,false,$3)",[clinicalUuid(planB),clinicalUuid(randomUUID()),plansConsent]);
+      await tx.query("select clinical_core.write_owned_consumer_record('protocols',$1,0,$2,'{\"name\":\"fictional-b\"}'::jsonb,false,$3::integer)",[clinicalUuid(planB),clinicalUuid(randomUUID()),plansConsent]);
       await refused(`clinical_core.adopt_owned_active_plan('${planB}',1,'${hash}',${plansConsent},'${adoptB}',null,null)`,'40001');
       await check(`select (clinical_core.adopt_owned_active_plan('${planB}',1,'${hash}',${plansConsent},'${adoptB}','${planA}',1)->'current'->'supersedes'->>'recordId')::uuid=$1 as ok`,[clinicalUuid(planA)]);
       await context(b,subB);
       await refused("clinical_core.get_owned_active_plan()",'42501');
       await check("select count(*)::int=0 as ok from clinical_core.owned_consumer_active_plans where owner_id=$1",[clinicalUuid(a)]);
       await context(a,subA);
-      await tx.query("select clinical_core.write_owned_consumer_record('protocols',$1,1,$2,'{}'::jsonb,true,$3)",[clinicalUuid(planB),clinicalUuid(randomUUID()),plansConsent]);
+      await tx.query("select clinical_core.write_owned_consumer_record('protocols',$1,1,$2,'{}'::jsonb,true,$3::integer)",[clinicalUuid(planB),clinicalUuid(randomUUID()),plansConsent]);
       await check("select clinical_core.get_owned_active_plan()->'current' = 'null'::jsonb as ok");
       await check("select clinical_core.get_owned_active_plan()->'history'->0->>'action'='record_deleted' as ok");
       await refused(`clinical_core.release_owned_active_plan('${releaseReq}','${planB}',1)`,'40001');
+      stage='active_plan_api_digest';
+      const adoptBody={recordId:planA,revision:1,contentSha256:createHash('sha256').update('{"name":"fictional"}').digest('hex'),consentRevision:plansConsent,requestId:randomUUID(),expectedPrevious:null};
+      const planRoute='POST /clinical-core/consumer/personal/active-plan';
+      if((await api(apiEvent(a,subA,planRoute,undefined,{...adoptBody,contentSha256:'f'.repeat(64)}))).statusCode!==409)throw new Error('active_plan_wrong_hash_allowed');checks++;
+      for(const duplicate of [false,true]){
+        const response=await api(apiEvent(a,subA,planRoute,undefined,adoptBody));
+        const data=JSON.parse(response.body).data;
+        if(response.statusCode!==200||data?.duplicate!==duplicate||data?.current?.contentSha256!==adoptBody.contentSha256)throw new Error('active_plan_api_adoption_failed');checks++;
+      }
+      const planRead=await api(apiEvent(a,subA,'GET /clinical-core/consumer/personal/active-plan'));
+      if(planRead.statusCode!==200||JSON.parse(planRead.body).data?.current?.recordId!==planA)throw new Error('active_plan_api_read_failed');checks++;
       stage='privacy_requests';
       await context(a,subA,'consent_management');
       const deletionReq=randomUUID();
@@ -282,7 +320,8 @@ async function run() {
       const ledger=JSON.parse(tombstoned.body).data;
       if(tombstoned.statusCode!==200||ledger.status!=='in_progress'||!(ledger.tombstoned>=1))throw new Error('privacy_tombstone_failed');checks++;
       await context(a,subA);
-      await check("select jsonb_array_length(clinical_core.list_owned_consumer_records('wellness_profiles',10))=0 as ok");
+      // Consent was withdrawn earlier; privacy cleanup must not regrant it.
+      await refused("clinical_core.list_owned_consumer_records('wellness_profiles',10)",'42501');
       await check("select clinical_core.get_owned_active_plan()->'current' = 'null'::jsonb as ok");
       await context(a,subA,'consent_management');
       // Workforce-only operations refuse the consumer; a held request cannot purge.

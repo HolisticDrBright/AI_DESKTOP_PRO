@@ -11,7 +11,7 @@ September 16, 2026. Source engineering only; nothing deployed, no PHI, no signed
 ## Consent enforcement
 
 - `lab_history` consent is enforced by the SQL write function as before.
-- A write whose context carries any reproductive dimension additionally requires an active `reproductive_health` consent. The adapter reads `clinical_core.get_owned_storage_consent_state('reproductive_health')` **inside the same transaction** as the write, so a withdrawal cannot race the write. Refusal maps to `consent_required` (HTTP 403).
+- A write whose context carries any reproductive dimension additionally requires active `reproductive_health` consent. Migration `20260916060000` supplies `owned_reproductive_context_allowed()` under the same owner lock used by consent withdrawal, plus a database insert trigger. The earlier consent-state helper was purpose-incompatible and was not race-safe merely by sharing a transaction. Refusal maps to `consent_required` (HTTP 403).
 - Reads (`list`, `recent`, `get`) withhold the whole `collectionContext` of any record with reproductive dimensions while reproductive consent is not active. A partial record whose nulls read as "not pregnant" is never returned. The stored record stays intact for a later re-grant, correction or deletion; withdrawal is not object erasure.
 - Non-reproductive context (age at draw, sex, assay) travels under `lab_history` consent only and is never withheld by the reproductive check.
 
@@ -19,7 +19,7 @@ September 16, 2026. Source engineering only; nothing deployed, no PHI, no signed
 
 - The chat-context builder still ignores `collectionContext`; it emits explicit lab fields only. Range matching against a signed `lab-ranges/2` release still needs a full `collectionRangeContextSchema` context with a date of birth, supplied per request by the device. A server-side age-at-draw matcher was deliberately not added so the reviewed range semantics stay unchanged.
 - The clinic-sharing `lab-result/1` import does not carry collection context. That transport hashes its canonical payload for de-duplication and its SQL signature would need a migration; it was left out of this increment.
-- No hosted, Aurora or physical-device verification. Unit tests cover the validator, the in-transaction consent read and the read-path withholding with mocked queries only.
+- September 16: real rollback-only Aurora verification now covers positive writes, missing/revoked consent, read withholding, and direct-SQL write refusal (107 assertions across the expanded suite). No retained schema/fixtures. Hosted, physical-device and independent concurrent-session verification remain open.
 
 ## Verification
 

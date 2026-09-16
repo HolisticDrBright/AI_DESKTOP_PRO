@@ -15,9 +15,12 @@ describe('owner deletion fulfillment',()=>{
     const lab=receipts.find(r=>r.store==='lab_jobs_and_documents')!;expect(lab).toMatchObject({outcome:'tombstoned',count:3});
     expect((s.lab.deleteOrCancel as ReturnType<typeof vi.fn>).mock.calls.map(c=>c[1])).toEqual([false,true,false]);
     expect(JSON.stringify(receipts)).not.toMatch(/10000001|queued/);
-    expect(receipts.find(r=>r.store==='identity')).toMatchObject({outcome:'purged',count:1});
+    expect(receipts.find(r=>r.store==='identity')).toMatchObject({outcome:'pending',count:0});
+    expect(s.identity.disable).not.toHaveBeenCalled();
+    expect(s.identity.globalSignOut).not.toHaveBeenCalled();
+    expect(s.identity.delete).not.toHaveBeenCalled();
     expect(receipts.find(r=>r.store==='voice_jobs_and_transcripts')?.outcome).toBe('not_enumerable');
-    expect(receipts.find(r=>r.store==='backups_and_audit')?.outcome).toBe('retained_by_policy');
+    expect(receipts.find(r=>r.store==='backups_and_audit')?.outcome).toBe('pending');
   });
   it('never deletes identity without explicit confirmation or while another store is pending',async()=>{
     const s=stores();const noConfirm=await fulfillOwnerDeletion({ownerScope:scope,lab:s.lab,identity:s.identity});
@@ -33,6 +36,16 @@ describe('owner deletion fulfillment',()=>{
     const result=await fulfillOwnerDeletion({ownerScope:scope,lab});
     expect(result.receipts.find(r=>r.store==='lab_jobs_and_documents')).toMatchObject({outcome:'pending'});
     const unattached=await fulfillOwnerDeletion({ownerScope:scope});
-    expect(unattached.receipts.map(r=>r.outcome)).toEqual(['pending','not_enumerable','pending','not_enumerable','retained_by_policy']);
+    expect(unattached.receipts).toHaveLength(9);
+    expect(unattached.receipts.every(r=>['pending','not_enumerable'].includes(r.outcome))).toBe(true);
+  });
+  it('blocks identity deletion even when lab inventory is empty and redacts provider failures',async()=>{
+    const s=stores();vi.mocked(s.lab.listOwnedJobs).mockResolvedValue({jobs:[],nextCursor:null});
+    await fulfillOwnerDeletion({ownerScope:scope,lab:s.lab,identity:s.identity,confirmIdentityDeletion:true});
+    expect(s.identity.disable).not.toHaveBeenCalled();expect(s.identity.delete).not.toHaveBeenCalled();
+    vi.mocked(s.lab.listOwnedJobs).mockRejectedValue(new Error('Bearer secret-token patient@example.test sensitive health payload'));
+    const result=await fulfillOwnerDeletion({ownerScope:scope,lab:s.lab});
+    expect(JSON.stringify(result)).not.toMatch(/secret-token|patient@example|sensitive health/);
+    expect(result.receipts[0].detail).toBe('privacy_fulfillment_retry_required');
   });
 });

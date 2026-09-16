@@ -176,6 +176,10 @@
     {
       "version": "20260916050000",
       "file": "20260916050000_production_guardian_authority.sql"
+    },
+    {
+      "version": "20260916060000",
+      "file": "20260916060000_production_owned_reproductive_context_guard.sql"
     }
   ]
 }

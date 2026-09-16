@@ -2,13 +2,15 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
+import {fileURLToPath} from 'node:url';
 import { executePlan, validatePlan } from "./run-aws-load-qualification.mjs";
 
-const script = new URL("./run-aws-load-qualification.mjs", import.meta.url).pathname.replace(/^\/(.:)/, "$1");
+const script = fileURLToPath(new URL("./run-aws-load-qualification.mjs", import.meta.url));
 const plan = JSON.parse(readFileSync("infra/aws-clinical-core/load-qualification-plan.json", "utf8"));
 assert.deepEqual(validatePlan(plan), []);
 assert.ok(validatePlan({ ...plan, scenarios: [{ ...plan.scenarios[0], expectedStatuses: [200] }] }).some(e => e.includes("refusals")));
 assert.ok(validatePlan({ ...plan, target: "production-clinical" }).some(e => e.includes("synthetic-staging")));
+assert.ok(validatePlan({...plan,scenarios:[{...plan.scenarios[0],bodyBytes:-1}]}).some(e=>e.includes('bodyBytes')));
 
 const dry = spawnSync(process.execPath, [script], { encoding: "utf8" });
 assert.equal(dry.status, 0, dry.stderr); assert.match(dry.stdout, /no request was sent/);

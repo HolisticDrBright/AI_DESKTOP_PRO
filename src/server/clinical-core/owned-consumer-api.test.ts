@@ -1,4 +1,5 @@
 import {describe,it,expect,vi} from "vitest";
+import {createHash} from 'node:crypto';
 import {createOwnedConsumerApi,type OwnedConsumerApiConfiguration} from "./owned-consumer-api";
 import {createOwnedConsumerRecordsAdapter} from "./owned-consumer-records";
 import {clinicalUuid,type ClinicalCoreDatabase} from "./database";
@@ -69,11 +70,12 @@ describe('authoritative active plan routes',()=>{
   });
   it('adopts and releases through the verified context with the exact database calls',async()=>{
     const t=setup(plansConfig);
-    (t.query as unknown as {mockResolvedValue:(v:unknown)=>void}).mockResolvedValue({rows:[{result:{current:{recordId:id,revision:1,contentSha256:'a'.repeat(64),consentRevision:1,adoptedAt:'2026-09-16T00:00:00.000Z',adoptionRequestId:id,supersedes:null},history:[],historyLimit:100,duplicate:false}}]});
+    const hash=createHash('sha256').update('{}').digest('hex');
+    (t.query as unknown as {mockImplementation:(v:unknown)=>void}).mockImplementation(async(sql:string)=>({rows:[{result:sql.includes('get_owned_consumer_record(')?{recordId:id,revision:1,deleted:false,payload:{}}:{current:{recordId:id,revision:1,contentSha256:hash,consentRevision:1,adoptedAt:'2026-09-16T00:00:00.000Z',adoptionRequestId:id,supersedes:null},history:[],historyLimit:100,duplicate:false}}]}));
     const adopt=event('POST /clinical-core/consumer/personal/active-plan');adopt.queryStringParameters=undefined;adopt.headers={'content-type':'application/json'};
-    adopt.body=JSON.stringify({recordId:id,revision:1,contentSha256:'a'.repeat(64),consentRevision:1,requestId:id,expectedPrevious:null});
+    adopt.body=JSON.stringify({recordId:id,revision:1,contentSha256:hash,consentRevision:1,requestId:id,expectedPrevious:null});
     const adopted=await t.handler(adopt);expect(adopted.statusCode).toBe(200);expect(JSON.parse(adopted.body).data.current.recordId).toBe(id);
-    expect((t.query as unknown as {mock:{calls:unknown[][]}}).mock.calls.find(([sql])=>String(sql).includes('adopt_owned_active_plan'))?.[1]).toEqual([clinicalUuid(id),1,'a'.repeat(64),1,clinicalUuid(id),null,null]);
+    expect((t.query as unknown as {mock:{calls:unknown[][]}}).mock.calls.find(([sql])=>String(sql).includes('adopt_owned_active_plan'))?.[1]).toEqual([clinicalUuid(id),1,hash,1,clinicalUuid(id),null,null]);
     (t.query as unknown as {mockResolvedValue:(v:unknown)=>void}).mockResolvedValue({rows:[{result:{current:null,history:[],historyLimit:100,duplicate:false}}]});
     const release=event('POST /clinical-core/consumer/personal/active-plan/release');release.queryStringParameters=undefined;release.headers={'content-type':'application/json'};
     release.body=JSON.stringify({requestId:id,expected:{recordId:id,revision:1}});

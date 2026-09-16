@@ -15,6 +15,12 @@ function setup(result:unknown){
   return {adapter:createOwnedConsumerRecordsAdapter({transaction} as unknown as ClinicalCoreDatabase),query,transaction};
 }
 describe('owned privacy requests',()=>{
+  it('decodes real Aurora Data API JSON text and refuses invalid JSON',async()=>{
+    const s=setup(JSON.stringify(request({duplicate:false})));
+    await expect(s.adapter.submitPrivacyRequest(context,{requestId:req,kind:'deletion'})).resolves.toMatchObject({status:'submitted'});
+    await expect(setup(JSON.stringify([request()])).adapter.listPrivacyRequests(context)).resolves.toHaveLength(1);
+    await expect(setup('{bad').adapter.listPrivacyRequests(context)).rejects.toMatchObject({code:'storage_unavailable'});
+  });
   it('submits deletion and correction requests under consent_management with exact parameters',async()=>{
     const s=setup(request({duplicate:false}));
     const state=await s.adapter.submitPrivacyRequest(context,{requestId:req,kind:'deletion'});

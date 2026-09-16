@@ -54,14 +54,16 @@ describe('production lab release candidate',()=>{
       PERSONAL_LAB_ACTIVATION:'blocked',PERSONAL_LAB_ALLOWED_SCOPES:'',LAB_OBJECT_PREFIX:'personal-labs',AWS_REGION:'us-east-2',
       LAB_JOB_TABLE:'fictional',LAB_DOCUMENT_BUCKET:'fictional',LAB_KMS_KEY_ARN:'fictional',LAB_STATE_MACHINE_ARN:'fictional'};
     const api=spawnSync(process.execPath,['-e',`const {handler}=require('./dist/aws-clinical-core/owned-lab/api/index.js');
-      handler({rawPath:'/clinical-core/consumer/labs/inventory',requestContext:{http:{method:'GET'},authorizer:{jwt:{claims:{}}}}}).then(r=>console.log(JSON.stringify(r)))`],{env,encoding:'utf8'});
+      handler({rawPath:'/clinical-core/consumer/labs/inventory',requestContext:{http:{method:'GET'},authorizer:{jwt:{claims:{}}}}}).then(r=>console.log(JSON.stringify(r)))`],{env,encoding:'utf8',timeout:10000});
     expect(api.status).toBe(0);const response=JSON.parse(api.stdout.trim().split('\n').pop()!);
     expect(response.statusCode).toBe(503);expect(JSON.parse(response.body)).toEqual({data:{error:'production_not_activated',phiAllowed:false}});
     const worker=spawnSync(process.execPath,['-e',`const {handler}=require('./dist/aws-clinical-core/owned-lab/worker/index.js');
-      handler({jobId:'22222222-2222-4222-8222-222222222222',pass:0}).then(()=>console.log('processed')).catch(e=>{console.log(e.message);})`],{env,encoding:'utf8'});
+      handler({jobId:'22222222-2222-4222-8222-222222222222',pass:0}).then(()=>console.log('processed')).catch(e=>{console.log(e.message);})`],{env,encoding:'utf8',timeout:10000});
+    expect(worker.status).toBe(0);
     expect(worker.stdout.trim()).toBe('production_not_activated');
     const wrongNamespace=spawnSync(process.execPath,['-e',`const {handler}=require('./dist/aws-clinical-core/owned-lab/api/index.js');
-      handler({rawPath:'/clinical-core/consumer/labs/inventory'}).then(()=>console.log('served')).catch(e=>console.log(e.message))`],{env:{...env,LAB_OBJECT_PREFIX:'synthetic-labs'},encoding:'utf8'});
+      handler({rawPath:'/clinical-core/consumer/labs/inventory'}).then(()=>console.log('served')).catch(e=>console.log(e.message))`],{env:{...env,LAB_OBJECT_PREFIX:'synthetic-labs'},encoding:'utf8',timeout:10000});
+    expect(wrongNamespace.status).toBe(0);
     expect(wrongNamespace.stdout.trim()).toBe('owned_lab_namespace_required');
-  });
+  },35000); // Three bounded native Node startups, not one in-process unit test.
 });

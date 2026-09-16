@@ -1,6 +1,8 @@
 import type {ProductionClinicalRequestContext} from './aws-identity-consent';
 import {clinicalUuid,type ClinicalCoreTransaction} from './database';
 import {OwnedStorageError} from './owned-consumer-records';
+import {createHash} from 'node:crypto';
+import {canonicalPayload} from './aws-consumer-clinical-records';
 
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 type Run=<T>(context:ProductionClinicalRequestContext,work:(tx:ClinicalCoreTransaction)=>Promise<T>)=>Promise<T>;
@@ -42,12 +44,22 @@ export function createOwnedActivePlan(run:Run){
         ||!UUID.test(input.requestId)||(input.expectedPrevious!==null&&(!object(input.expectedPrevious,false)
         ||Object.keys(input.expectedPrevious).sort().join(',')!=='recordId,revision'||!UUID.test(input.expectedPrevious.recordId)||!revision(input.expectedPrevious.revision))))invalid();
       return run(context,async tx=>{
-        const result=await tx.query<{result:unknown}>('select clinical_core.adopt_owned_active_plan($1,$2,$3,$4,$5,$6,$7) as result',
+        // Bind the caller's digest to the actual immutable record while holding
+        // the same owner lock used by writes, adoption, and consent withdrawal.
+        await tx.query('select pg_advisory_xact_lock(hashtextextended(clinical_private.owned_consumer_actor()::text,0))');
+        const stored=object((await tx.query<{result:unknown}>('select clinical_core.get_owned_consumer_record($1,$2) as result',
+          ['protocols',clinicalUuid(input.recordId)])).rows[0]?.result);
+        if(stored.recordId!==input.recordId||stored.revision!==input.revision||stored.deleted!==false
+          ||createHash('sha256').update(canonicalPayload(object(stored.payload))).digest('hex')!==input.contentSha256)throw new OwnedStorageError('conflict');
+        const result=await tx.query<{result:unknown}>('select clinical_core.adopt_owned_active_plan($1,$2::integer,$3,$4::integer,$5,$6,$7::integer) as result',
           [clinicalUuid(input.recordId),input.revision,input.contentSha256,input.consentRevision,clinicalUuid(input.requestId),
             input.expectedPrevious?clinicalUuid(input.expectedPrevious.recordId):null,input.expectedPrevious?.revision??null]);
         const value=object(result.rows[0]?.result);
         const state=parse(value,value.duplicate===true);
-        if(!state.current||state.current.recordId!==input.recordId||state.current.revision!==input.revision)unavailable();
+        if(!state.current||state.current.recordId!==input.recordId||state.current.revision!==input.revision
+          ||state.current.contentSha256!==input.contentSha256||state.current.consentRevision!==input.consentRevision
+          ||state.current.adoptionRequestId!==input.requestId
+          ||canonicalPayload({previous:state.current.supersedes})!==canonicalPayload({previous:input.expectedPrevious}))unavailable();
         return state;
       });
     },
@@ -56,7 +68,7 @@ export function createOwnedActivePlan(run:Run){
       if(!UUID.test(input.requestId)||!object(input.expected,false)||Object.keys(input.expected).sort().join(',')!=='recordId,revision'
         ||!UUID.test(input.expected.recordId)||!revision(input.expected.revision))invalid();
       return run(context,async tx=>{
-        const result=await tx.query<{result:unknown}>('select clinical_core.release_owned_active_plan($1,$2,$3) as result',
+        const result=await tx.query<{result:unknown}>('select clinical_core.release_owned_active_plan($1,$2,$3::integer) as result',
           [clinicalUuid(input.requestId),clinicalUuid(input.expected.recordId),input.expected.revision]);
         const value=object(result.rows[0]?.result);
         const state=parse(value,value.duplicate===true);
@@ -76,6 +88,7 @@ function pointer(v:Record<string,unknown>):ActivePlanPointer{
 }
 function exact(value:unknown,keys:string[]){const v=object(value,false);if(Object.keys(v).some(k=>!keys.includes(k)))invalid();}
 function object(value:unknown,strictResult=true):Record<string,unknown>{
+  if(strictResult&&typeof value==='string'){try{value=JSON.parse(value);}catch{unavailable();}}
   if(!value||typeof value!=='object'||Array.isArray(value)){if(strictResult)unavailable();invalid();}
   return value as Record<string,unknown>;
 }

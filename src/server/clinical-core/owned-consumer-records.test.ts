@@ -15,14 +15,14 @@ function setup(result: unknown = { recordId:id,revision:1,duplicate:false,receiv
 }
 const observation={id,panelId:id,markerId:id,panelName:"Synthetic panel",name:"Ferritin",value:1,unit:null,drawnAt:"2026-01-01T00:00:00.000Z",reportedRange:null,sourceStatus:"consumer_import_unverified"};
 const reproductive={...observation,collectionContext:{ageAtDraw:{value:36,unit:"years"},observedOn:"2026-01-01",sex:"female",pregnancyStatus:"not_pregnant",cyclePhase:"luteal",reproductiveStage:"reproductive",contraception:"none",pregnancyTrimester:null,assayId:null}};
-const consentState=(activeRevision:number|null)=>({result:JSON.stringify({scope:"reproductive_health",activeRevision,current:null,release:null,history:[],historyLimit:100})});
+const consentState=(activeRevision:number|null)=>({result:activeRevision!==null});
 describe("reproductive collection context on owned lab observations",() => {
   const labWrite:OwnedRecordWrite={...input,collection:"lab_observations",payload:reproductive};
   const ctx={rows:[]};
   it("refuses a write carrying reproductive context without active reproductive consent, inside the transaction",async () => {
     const s=setup();s.query.mockResolvedValueOnce(ctx).mockResolvedValueOnce({rows:[consentState(null)]});
     await expect(s.adapter.write(context,labWrite)).rejects.toThrow("consent_required");
-    expect(s.query).toHaveBeenCalledTimes(2);expect(s.query.mock.calls[1][1]).toEqual(["reproductive_health"]);
+    expect(s.query).toHaveBeenCalledTimes(2);expect(s.query.mock.calls[1][0]).toContain('owned_reproductive_context_allowed()');
   });
   it("writes reproductive context once consent is active and never asks for non-reproductive context",async () => {
     const s=setup();s.query.mockResolvedValueOnce(ctx).mockResolvedValueOnce({rows:[consentState(3)]});

@@ -116,7 +116,8 @@ export function createOwnedConsumerRecordsAdapter(database: ClinicalCoreDatabase
       return run(context,"clinical_data",async tx => {
         // lab_history consent is checked by the SQL function; reproductive
         // dimensions additionally need the owner's reproductive_health consent,
-        // read inside the same transaction so a withdrawal cannot race the write.
+        // checked under the same owner lock as consent withdrawal. A database
+        // trigger also enforces this for callers bypassing this adapter.
         if (reproductive && !(await reproductiveConsentActive(tx))) throw new OwnedStorageError("consent_required");
         const result = await tx.query<{ result: unknown }>("select clinical_core.write_owned_consumer_record($1,$2,$3::integer,$4,$5::jsonb,$6,$7::integer) as result", [
           input.collection,clinicalUuid(input.recordId),input.expectedRevision,clinicalUuid(input.requestId),payload,input.deleted,input.consentRevision,
@@ -168,10 +169,10 @@ export function createOwnedConsumerRecordsAdapter(database: ClinicalCoreDatabase
   };
 }
 async function reproductiveConsentActive(tx: ClinicalCoreTransaction): Promise<boolean> {
-  const result = await tx.query<{ result: unknown }>("select clinical_core.get_owned_storage_consent_state($1) as result",["reproductive_health"]);
-  const value = object(result.rows[0]?.result);
-  if (value.scope !== "reproductive_health" || !(value.activeRevision === null || revision(value.activeRevision,1))) unavailable();
-  return value.activeRevision !== null;
+  const result = await tx.query<{ result: unknown }>("select clinical_core.owned_reproductive_context_allowed() as result");
+  const value = result.rows[0]?.result;
+  if (typeof value !== 'boolean') unavailable();
+  return value;
 }
 /** Reads never surface reproductive collection context after that consent is
  * withdrawn; the stored record stays intact for a later re-grant or deletion. */

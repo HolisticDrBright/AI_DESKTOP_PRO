@@ -1,6 +1,7 @@
 import { readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { dirname, resolve } from "node:path";
+import { fileURLToPath } from 'node:url';
 
 /** Refusal-path load qualification runner.
  *
@@ -25,7 +26,7 @@ export function validatePlan(plan) {
     if (!Number.isInteger(s?.requests) || s.requests < 1 || s.requests > 5000) errors.push(`${s?.id}: requests must be 1..5000`);
     if (!Array.isArray(s?.expectedStatuses) || s.expectedStatuses.some(v => !Number.isInteger(v) || v < 400 || v > 599)) errors.push(`${s?.id}: expectedStatuses must all be refusals (400-599)`);
     if (!Number.isFinite(s?.slo?.p95Ms) || s.slo.p95Ms < 1 || !Number.isFinite(s?.slo?.maxErrorRate) || s.slo.maxErrorRate < 0 || s.slo.maxErrorRate > 0.05) errors.push(`${s?.id}: slo needs p95Ms and maxErrorRate <= 0.05`);
-    if (s?.bodyBytes !== undefined && (!Number.isInteger(s.bodyBytes) || s.bodyBytes > 1_000_000)) errors.push(`${s?.id}: bodyBytes must be <= 1000000`);
+    if (s?.bodyBytes !== undefined && (!Number.isInteger(s.bodyBytes) || s.bodyBytes < 0 || s.bodyBytes > 1_000_000)) errors.push(`${s?.id}: bodyBytes must be 0..1000000`);
   }
   return errors;
 }
@@ -44,6 +45,9 @@ export async function executePlan(plan, origin, options = {}) {
         try {
           const response = await fetchImpl(`${origin}${scenario.path}`, { method: scenario.method, redirect: "manual", signal: AbortSignal.timeout(15_000),
             headers: body ? { "content-type": "application/json" } : {}, body });
+          // We need status and timing only. Release connections without reading
+          // or retaining provider response content during a refusal-path test.
+          await response.body?.cancel();
           latencies.push(performance.now() - started);
           statuses[response.status] = (statuses[response.status] ?? 0) + 1;
           if (response.status >= 200 && response.status < 300) successes += 1;
@@ -62,7 +66,7 @@ export async function executePlan(plan, origin, options = {}) {
   return { ...report, evidenceSha256: createHash("sha256").update(JSON.stringify(report)).digest("hex") };
 }
 
-const isMain = process.argv[1] && resolve(process.argv[1]) === new URL(import.meta.url).pathname.replace(/^\/(.:)/, "$1");
+const isMain = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (isMain) {
   const args = process.argv.slice(2);
   const flag = name => args.includes(name);

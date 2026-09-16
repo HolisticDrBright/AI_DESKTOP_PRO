@@ -60,7 +60,7 @@ export function createOwnedPrivacyRequests(run:Run){
     async listPrivacyRequests(context:ProductionClinicalRequestContext):Promise<PrivacyRequest[]>{
       return run(context,async tx=>{
         const result=await tx.query<{result:unknown}>('select clinical_core.list_owned_privacy_requests() as result');
-        const rows=result.rows[0]?.result;
+        const rows=decoded(result.rows[0]?.result);
         if(!Array.isArray(rows)||rows.length>50)unavailable();
         return rows.map(parse);
       });
@@ -79,9 +79,11 @@ export function createOwnedPrivacyRequests(run:Run){
 }
 function exact(value:unknown,keys:string[]){const v=object(value,false);if(Object.keys(v).some(k=>!keys.includes(k)))invalid();}
 function object(value:unknown,strictResult=true):Record<string,unknown>{
+  if(strictResult)value=decoded(value);
   if(!value||typeof value!=='object'||Array.isArray(value)){if(strictResult)unavailable();invalid();}
   return value as Record<string,unknown>;
 }
+function decoded(value:unknown):unknown{try{return typeof value==='string'?JSON.parse(value):value;}catch{unavailable();}}
 function date(v:unknown){return typeof v==='string'&&v.length<=40&&Number.isFinite(Date.parse(v));}
 function invalid():never{throw new OwnedStorageError('request_invalid');}
 function unavailable():never{throw new OwnedStorageError('storage_unavailable');}

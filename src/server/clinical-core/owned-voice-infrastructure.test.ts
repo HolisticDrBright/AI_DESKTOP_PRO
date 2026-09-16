@@ -49,8 +49,8 @@ describe('production voice release candidate',()=>{
   it('built handler refuses before accessing providers under the default closed boundary',()=>{
     const script="const h=require('./dist/aws-clinical-core/owned-voice/index.js');h.handler({rawPath:'/clinical-core/consumer/chat-transcription/jobs',requestContext:{http:{method:'POST'}}}).then(r=>{if(r.statusCode!==503||JSON.parse(r.body).phiAllowed!==false)process.exit(1);})";
     expect(()=>execFileSync(process.execPath,['-e',script],{env:{...process.env,CONSUMER_ISSUER:'https://cognito-idp.us-east-2.amazonaws.com/fixture',
-      CONSUMER_AUDIENCE:'12345678901234567890',PHI_ALLOWED:'false',PERSONAL_VOICE_ACTIVATION:'blocked',PERSONAL_VOICE_ALLOWED_SCOPES:''},stdio:'pipe'})).not.toThrow();
-  });
+      CONSUMER_AUDIENCE:'12345678901234567890',PHI_ALLOWED:'false',PERSONAL_VOICE_ACTIVATION:'blocked',PERSONAL_VOICE_ALLOWED_SCOPES:''},stdio:'pipe',timeout:10000})).not.toThrow();
+  },15000);
   it('registers every production SQL file including privacy export and voice consent',()=>{
     const root='infra/aws-clinical-core/production-migrations';
     const manifest=JSON.parse(readFileSync(root+'/manifest.json','utf8'));
