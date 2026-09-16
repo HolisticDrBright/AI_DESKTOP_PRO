@@ -21,8 +21,11 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
+      - name: Dependency security gate
+        run: npm audit --audit-level=high
       - run: npm run lint
       - run: npm run test:unit
+      - run: npm run build:lab-range-tools
       - name: AWS clinical-core synthetic safety gate
         run: npm run check:aws-clinical-core
       - name: AWS identity, invitation, and consent safety gate
@@ -45,6 +48,9 @@ jobs:
         run: |
           npm run build:aws-governed-catalog-api
           npm run build:aws-deployment-tools
+          npm run build:aws-chat-transcription
+          node scripts/build-aws-personal-storage.mjs
+          npm run check:aws-chat-transcription
       - name: AWS production provider-removal and foundation gates
         run: |
           npm run check:aws-data-plane-migration

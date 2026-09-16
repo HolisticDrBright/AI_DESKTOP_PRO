@@ -149,6 +149,14 @@ describe("Aurora RDS Data API transaction adapter", () => {
     ["patient_access_refused", "identity_refused"],
     ["invitation_invalid_or_expired", "operation_refused"],
     ["production_patient_not_found", "operation_refused"],
+    ["consumer_owner_required", "identity_refused"],
+    ["consumer_storage_consent_required", "consent_required"],
+    ["reviewed_consent_release_required", "consent_required"],
+    ["owned_record_revision_conflict", "conflict"],
+    ["owned_record_idempotency_conflict", "conflict"],
+    ["consent_revision_conflict", "conflict"],
+    ["owned_record_request_invalid", "request_invalid"],
+    ["consent_request_invalid", "request_invalid"],
   ])("maps the authored %s marker without returning provider text", async (marker, category) => {
     const mock = client((call) => {
       if (call.name === "BeginTransactionCommand") return { transactionId: "tx-refused" };

@@ -3,6 +3,7 @@ if (typeof window !== "undefined") throw new Error("aws-ask-alp-api is server-on
 import type { ApiGatewayV2Event, ApiGatewayV2Response } from "./aws-identity-api";
 import { AskAlpError, validateAskAlpRequest, type AskAlpGenerationRequest, type AskAlpGenerationResult } from "./aws-ask-alp";
 import { generateAskAlpWithOpenAI } from "./aws-ask-alp-openai";
+import { CoreSubscriptionError, requireConsumerCore } from "./core-subscription-guard";
 
 const ROUTE = "POST /clinical-core/consumer/ask-alp/generate";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -24,9 +25,11 @@ export function createAwsAskAlpApiHandler(input: { configuration: AskAlpApiConfi
     if (input.configuration.runtimeMode === "production" && !input.configuration.phiAllowed) return response(503, { error: "production_not_activated", phiAllowed: false });
     try {
       assertIdentity(event, input.configuration);
+      if (input.configuration.runtimeMode === "production") await requireConsumerCore(event.headers ?? {});
       const request = validateAskAlpRequest(parseBody(event), input.configuration.approvedPromptSha256);
       return response(200, { data: await provider(request) });
     } catch (error) {
+      if (error instanceof CoreSubscriptionError) return response(402, { error: "core_subscription_required" });
       if (error instanceof AskAlpError) {
         const status = error.category === "prompt_not_approved" ? 409 : error.category === "provider_unavailable" ? 503 : error.category === "unsafe_output_refused" ? 502 : 400;
         return response(status, { error: error.category });

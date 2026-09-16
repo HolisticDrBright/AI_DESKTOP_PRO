@@ -31,7 +31,7 @@ export interface ClinicalCoreDatabase {
 
 /** A database-authored refusal with all provider and SQL text removed. */
 export class ClinicalCoreDatabaseRejection extends Error {
-  constructor(readonly category: "identity_refused" | "operation_refused") {
+  constructor(readonly category: "identity_refused" | "operation_refused" | "consent_required" | "conflict" | "request_invalid") {
     super(category);
     this.name = "ClinicalCoreDatabaseRejection";
   }

@@ -11,6 +11,19 @@
     }
   },
   "Parameters": {
+    "LabCleanupAlarmTopicArn": {"Type":"String","Default":"","AllowedPattern":"^$|^arn:aws:sns:[a-z0-9-]+:[0-9]{12}:[A-Za-z0-9_-]+$"},
+    "KnowledgeReleaseMode": {"Type":"String","Default":"disabled","AllowedValues":["disabled","reviewed_release"]},
+    "KnowledgeReleaseBucket": {"Type":"String","Default":"","AllowedPattern":"^$|^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"},
+    "KnowledgeReleaseKey": {"Type":"String","Default":"","AllowedPattern":"^$|^reviewed-knowledge/[A-Za-z0-9_./-]+\\.json$"},
+    "KnowledgeReleaseObjectVersion": {"Type":"String","Default":"","MaxLength":1024},
+    "KnowledgeReleaseSha256": {"Type":"String","Default":"","AllowedPattern":"^$|^[a-f0-9]{64}$"},
+    "KnowledgeSourcePackageSha256": {"Type":"String","Default":"","AllowedPattern":"^$|^[a-f0-9]{64}$"},
+    "KnowledgeSignerPublicKeyPem": {"Type":"String","Default":"","MaxLength":512},
+    "LabRangeMode": { "Type": "String", "Default": "synthetic_fixture", "AllowedValues": ["synthetic_fixture", "reviewed_release"] },
+    "LabRangeReleaseBucket": { "Type": "String", "Default": "", "AllowedPattern": "^$|^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$" },
+    "LabRangeReleaseKey": { "Type": "String", "Default": "", "AllowedPattern": "^$|^reviewed-lab-ranges/[A-Za-z0-9_./-]+\\.json$" },
+    "LabRangeReleaseSha256": { "Type": "String", "Default": "", "AllowedPattern": "^$|^[a-f0-9]{64}$" },
+    "LabRangeSignerPublicKeyPem": { "Type": "String", "Default": "", "MaxLength": 512 },
     "ClinicalApiId": { "Type": "String", "AllowedPattern": "^[a-z0-9]{10}$" },
     "ConsumerUserPoolId": { "Type": "String", "AllowedPattern": "^[a-z0-9-]+_[A-Za-z0-9]+$" },
     "ConsumerUserPoolClientId": { "Type": "String", "AllowedPattern": "^[A-Za-z0-9]{20,128}$" },
@@ -26,6 +39,16 @@
     "OpenAISecretArn": { "Type": "String", "AllowedPattern": "^arn:(aws|aws-us-gov|aws-cn):secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+$" },
     "OpenAIModel": { "Type": "String", "Default": "gpt-5.1-2025-11-13", "AllowedValues": ["gpt-5.1-2025-11-13"] }
   },
+  "Rules": {
+    "ReviewedKnowledgeMaterial": {"RuleCondition":{"Fn::Equals":[{"Ref":"KnowledgeReleaseMode"},"reviewed_release"]},"Assertions":[{"Assert":{"Fn::Not":[{"Fn::Equals":[{"Ref":"KnowledgeReleaseBucket"},""]}]},"AssertDescription":"KnowledgeReleaseBucket is required for reviewed knowledge."},{"Assert":{"Fn::Not":[{"Fn::Equals":[{"Ref":"KnowledgeReleaseKey"},""]}]},"AssertDescription":"KnowledgeReleaseKey is required for reviewed knowledge."},{"Assert":{"Fn::Not":[{"Fn::Equals":[{"Ref":"KnowledgeReleaseObjectVersion"},""]}]},"AssertDescription":"KnowledgeReleaseObjectVersion is required for reviewed knowledge."},{"Assert":{"Fn::Not":[{"Fn::Equals":[{"Ref":"KnowledgeReleaseSha256"},""]}]},"AssertDescription":"KnowledgeReleaseSha256 is required for reviewed knowledge."},{"Assert":{"Fn::Not":[{"Fn::Equals":[{"Ref":"KnowledgeSourcePackageSha256"},""]}]},"AssertDescription":"KnowledgeSourcePackageSha256 is required for reviewed knowledge."},{"Assert":{"Fn::Not":[{"Fn::Equals":[{"Ref":"KnowledgeSignerPublicKeyPem"},""]}]},"AssertDescription":"KnowledgeSignerPublicKeyPem is required for reviewed knowledge."}]},
+    "ReviewedRangeMaterial": { "RuleCondition": { "Fn::Equals": [{ "Ref": "LabRangeMode" }, "reviewed_release"] }, "Assertions": [
+      { "Assert": { "Fn::Not": [{ "Fn::Equals": [{ "Ref": "LabRangeReleaseBucket" }, ""] }] }, "AssertDescription": "Reviewed range bucket is required." },
+      { "Assert": { "Fn::Not": [{ "Fn::Equals": [{ "Ref": "LabRangeReleaseKey" }, ""] }] }, "AssertDescription": "Reviewed range object is required." },
+      { "Assert": { "Fn::Not": [{ "Fn::Equals": [{ "Ref": "LabRangeReleaseSha256" }, ""] }] }, "AssertDescription": "Reviewed range hash is required." },
+      { "Assert": { "Fn::Not": [{ "Fn::Equals": [{ "Ref": "LabRangeSignerPublicKeyPem" }, ""] }] }, "AssertDescription": "Reviewed range public signing key is required." }
+    ] }
+  },
+  "Conditions": {"HasCleanupAlarmTopic":{"Fn::Not":[{"Fn::Equals":[{"Ref":"LabCleanupAlarmTopicArn"},""]}]},"ReviewedRanges":{"Fn::Equals":[{"Ref":"LabRangeMode"},"reviewed_release"]},"ReviewedKnowledge":{"Fn::Equals":[{"Ref":"KnowledgeReleaseMode"},"reviewed_release"]}},
   "Resources": {
     "LabJobTable": {
       "Type": "AWS::DynamoDB::Table",
@@ -33,8 +56,9 @@
       "UpdateReplacePolicy": "Delete",
       "Properties": {
         "BillingMode": "PAY_PER_REQUEST",
-        "AttributeDefinitions": [{ "AttributeName": "pk", "AttributeType": "S" }],
+        "AttributeDefinitions": [{ "AttributeName": "pk", "AttributeType": "S" }, { "AttributeName": "inventoryOwner", "AttributeType": "S" }, { "AttributeName": "inventoryOrder", "AttributeType": "S" }, {"AttributeName":"cleanupPartition","AttributeType":"S"}, {"AttributeName":"cleanupDue","AttributeType":"S"}],
         "KeySchema": [{ "AttributeName": "pk", "KeyType": "HASH" }],
+        "GlobalSecondaryIndexes": [{ "IndexName": "LabOwnerInventory", "KeySchema": [{ "AttributeName": "inventoryOwner", "KeyType": "HASH" }, { "AttributeName": "inventoryOrder", "KeyType": "RANGE" }], "Projection": { "ProjectionType": "KEYS_ONLY" } }, {"IndexName":"LabCleanupDue","KeySchema":[{"AttributeName":"cleanupPartition","KeyType":"HASH"},{"AttributeName":"cleanupDue","KeyType":"RANGE"}],"Projection":{"ProjectionType":"KEYS_ONLY"}}],
         "PointInTimeRecoverySpecification": { "PointInTimeRecoveryEnabled": true },
         "SSESpecification": { "SSEEnabled": true, "SSEType": "KMS", "KMSMasterKeyId": { "Ref": "ClinicalCoreKeyArn" } },
         "TimeToLiveSpecification": { "AttributeName": "expiresAt", "Enabled": true },
@@ -49,6 +73,7 @@
       "DeletionPolicy": "Delete",
       "UpdateReplacePolicy": "Delete",
       "Properties": {
+        "NotificationConfiguration": {"EventBridgeConfiguration":{"EventBridgeEnabled":true}},
         "BucketEncryption": { "ServerSideEncryptionConfiguration": [{ "BucketKeyEnabled": true, "ServerSideEncryptionByDefault": { "KMSMasterKeyID": { "Ref": "ClinicalCoreKeyArn" }, "SSEAlgorithm": "aws:kms" } }] },
         "CorsConfiguration": { "CorsRules": [{ "AllowedHeaders": ["*"], "AllowedMethods": ["PUT"], "AllowedOrigins": ["http://localhost:8081", "http://127.0.0.1:8081", "http://localhost:19006", "http://127.0.0.1:19006"], "ExposedHeaders": ["ETag"], "MaxAge": 300 }] },
         "LifecycleConfiguration": { "Rules": [{ "Id": "ExpireSyntheticLabData", "Status": "Enabled", "ExpirationInDays": 7, "NoncurrentVersionExpiration": { "NoncurrentDays": 7 }, "AbortIncompleteMultipartUpload": { "DaysAfterInitiation": 1 } }] },
@@ -89,8 +114,9 @@
       "Properties": {
         "AssumeRolePolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Principal": { "Service": "lambda.amazonaws.com" }, "Action": "sts:AssumeRole" }] },
         "Policies": [
-          { "PolicyName": "LabJobLedger", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:DeleteItem"], "Resource": { "Fn::GetAtt": ["LabJobTable", "Arn"] } }, { "Effect": "Allow", "Action": ["kms:Decrypt", "kms:GenerateDataKey"], "Resource": { "Ref": "ClinicalCoreKeyArn" } }] } },
+          { "PolicyName": "LabJobLedger", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:DeleteItem", "dynamodb:ConditionCheckItem"], "Resource": { "Fn::GetAtt": ["LabJobTable", "Arn"] } }, { "Effect": "Allow", "Action": ["kms:Decrypt", "kms:GenerateDataKey"], "Resource": { "Ref": "ClinicalCoreKeyArn" } }] } },
           { "PolicyName": "LabDocumentUpload", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": ["s3:PutObject", "s3:GetObject", "s3:DeleteObject", "s3:DeleteObjectVersion"], "Resource": { "Fn::Sub": "${LabDocumentsBucket.Arn}/synthetic-labs/*" } }, { "Effect": "Allow", "Action": "s3:ListBucketVersions", "Resource": { "Fn::GetAtt": ["LabDocumentsBucket", "Arn"] }, "Condition": { "StringLike": { "s3:prefix": "synthetic-labs/*" } } }, { "Effect": "Allow", "Action": "kms:GenerateDataKey", "Resource": { "Ref": "ClinicalCoreKeyArn" } }] } },
+          { "PolicyName": "LabUploadRecoveryExistence", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": "s3:ListBucket", "Resource": { "Fn::GetAtt": ["LabDocumentsBucket", "Arn"] }, "Condition": { "StringLike": { "s3:prefix": "synthetic-labs/*" } } }] } },
           { "PolicyName": "LabWorkflowStart", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": "states:StartExecution", "Resource": { "Fn::Sub": "arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:stateMachine:${ClinicalApiId}-synthetic-lab-analysis" } }] } },
           { "PolicyName": "LabApiLogs", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": ["logs:CreateLogStream", "logs:PutLogEvents"], "Resource": { "Fn::GetAtt": ["LabApiLogGroup", "Arn"] } }] } }
         ]
@@ -108,7 +134,9 @@
         "AssumeRolePolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Principal": { "Service": "lambda.amazonaws.com" }, "Action": "sts:AssumeRole" }] },
         "Policies": [
           { "PolicyName": "LabWorkerLedger", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": ["dynamodb:GetItem", "dynamodb:UpdateItem"], "Resource": { "Fn::GetAtt": ["LabJobTable", "Arn"] } }, { "Effect": "Allow", "Action": ["kms:Decrypt", "kms:GenerateDataKey"], "Resource": { "Ref": "ClinicalCoreKeyArn" } }] } },
+          {"Fn::If":["ReviewedKnowledge",{"PolicyName":"PinnedReviewedKnowledge","PolicyDocument":{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:GetObjectVersion","Resource":{"Fn::Sub":"arn:${AWS::Partition}:s3:::${KnowledgeReleaseBucket}/${KnowledgeReleaseKey}"},"Condition":{"StringEquals":{"s3:VersionId":{"Ref":"KnowledgeReleaseObjectVersion"}}}}]}},{"Ref":"AWS::NoValue"}]},
           { "PolicyName": "LabWorkerDocuments", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": ["s3:GetObject", "s3:PutObject"], "Resource": { "Fn::Sub": "${LabDocumentsBucket.Arn}/synthetic-labs/*" } }, { "Effect": "Allow", "Action": ["kms:Decrypt", "kms:GenerateDataKey"], "Resource": { "Ref": "ClinicalCoreKeyArn" } }] } },
+          { "Fn::If": ["ReviewedRanges", { "PolicyName": "PinnedReviewedLabRanges", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": "s3:GetObject", "Resource": { "Fn::Sub": "arn:${AWS::Partition}:s3:::${LabRangeReleaseBucket}/${LabRangeReleaseKey}" } }] } }, { "Ref": "AWS::NoValue" }] },
           { "PolicyName": "LabWorkerTextract", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": ["textract:AnalyzeDocument", "textract:StartDocumentAnalysis", "textract:GetDocumentAnalysis"], "Resource": "*" }] } },
           { "PolicyName": "LabWorkerOpenAISecret", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": "secretsmanager:GetSecretValue", "Resource": { "Ref": "OpenAISecretArn" } }] } },
           { "PolicyName": "LabWorkerLogs", "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": ["logs:CreateLogStream", "logs:PutLogEvents"], "Resource": { "Fn::GetAtt": ["LabWorkerLogGroup", "Arn"] } }] } }
@@ -129,7 +157,7 @@
         "Runtime": "nodejs22.x", "Architectures": ["arm64"], "Handler": "index.handler", "Role": { "Fn::GetAtt": ["LabApiRole", "Arn"] }, "MemorySize": 384, "Timeout": 20,
         "LoggingConfig": { "LogGroup": { "Ref": "LabApiLogGroup" }, "LogFormat": "JSON", "ApplicationLogLevel": "INFO", "SystemLogLevel": "WARN" },
         "Code": { "S3Bucket": { "Ref": "LambdaCodeBucket" }, "S3Key": { "Ref": "ApiCodeKey" } },
-        "Environment": { "Variables": { "LAB_JOB_TABLE": { "Ref": "LabJobTable" }, "LAB_DOCUMENT_BUCKET": { "Ref": "LabDocumentsBucket" }, "LAB_KMS_KEY_ARN": { "Ref": "ClinicalCoreKeyArn" }, "LAB_STATE_MACHINE_ARN": { "Fn::Sub": "arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:stateMachine:${ClinicalApiId}-synthetic-lab-analysis" } } }
+        "Environment": { "Variables": { "LAB_RANGE_MODE": { "Ref": "LabRangeMode" }, "LAB_RANGE_RELEASE_SHA256": { "Ref": "LabRangeReleaseSha256" }, "LAB_JOB_TABLE": { "Ref": "LabJobTable" }, "LAB_DOCUMENT_BUCKET": { "Ref": "LabDocumentsBucket" }, "LAB_KMS_KEY_ARN": { "Ref": "ClinicalCoreKeyArn" }, "LAB_STATE_MACHINE_ARN": { "Fn::Sub": "arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:stateMachine:${ClinicalApiId}-synthetic-lab-analysis" } } }
       }
     },
     "LabWorkerFunction": {
@@ -139,7 +167,7 @@
         "Runtime": "nodejs22.x", "Architectures": ["arm64"], "Handler": "index.handler", "Role": { "Fn::GetAtt": ["LabWorkerRole", "Arn"] }, "MemorySize": 1024, "Timeout": 300,
         "LoggingConfig": { "LogGroup": { "Ref": "LabWorkerLogGroup" }, "LogFormat": "JSON", "ApplicationLogLevel": "INFO", "SystemLogLevel": "WARN" },
         "Code": { "S3Bucket": { "Ref": "LambdaCodeBucket" }, "S3Key": { "Ref": "WorkerCodeKey" } },
-        "Environment": { "Variables": { "LAB_JOB_TABLE": { "Ref": "LabJobTable" }, "LAB_DOCUMENT_BUCKET": { "Ref": "LabDocumentsBucket" }, "LAB_KMS_KEY_ARN": { "Ref": "ClinicalCoreKeyArn" }, "LAB_OPENAI_SECRET_ARN": { "Ref": "OpenAISecretArn" }, "LAB_OPENAI_MODEL": { "Ref": "OpenAIModel" } } }
+        "Environment": {"Variables":{"LAB_RANGE_MODE":{"Ref":"LabRangeMode"},"LAB_RANGE_RELEASE_SHA256":{"Ref":"LabRangeReleaseSha256"},"LAB_RANGE_RELEASE_BUCKET":{"Ref":"LabRangeReleaseBucket"},"LAB_RANGE_RELEASE_KEY":{"Ref":"LabRangeReleaseKey"},"LAB_RANGE_SIGNER_PUBLIC_KEY_PEM":{"Ref":"LabRangeSignerPublicKeyPem"},"LAB_JOB_TABLE":{"Ref":"LabJobTable"},"LAB_DOCUMENT_BUCKET":{"Ref":"LabDocumentsBucket"},"LAB_KMS_KEY_ARN":{"Ref":"ClinicalCoreKeyArn"},"LAB_OPENAI_SECRET_ARN":{"Ref":"OpenAISecretArn"},"LAB_OPENAI_MODEL":{"Ref":"OpenAIModel"},"KNOWLEDGE_RELEASE_MODE":{"Ref":"KnowledgeReleaseMode"},"KNOWLEDGE_RELEASE_BUCKET":{"Ref":"KnowledgeReleaseBucket"},"KNOWLEDGE_RELEASE_KEY":{"Ref":"KnowledgeReleaseKey"},"KNOWLEDGE_RELEASE_OBJECT_VERSION":{"Ref":"KnowledgeReleaseObjectVersion"},"KNOWLEDGE_RELEASE_SHA256":{"Ref":"KnowledgeReleaseSha256"},"KNOWLEDGE_SOURCE_PACKAGE_SHA256":{"Ref":"KnowledgeSourcePackageSha256"},"KNOWLEDGE_SIGNER_PUBLIC_KEY_PEM":{"Ref":"KnowledgeSignerPublicKeyPem"}}}
       }
     },
     "LabSyntheticAuthorizerFunction": {
@@ -165,7 +193,7 @@
         "StateMachineName": { "Fn::Sub": "${ClinicalApiId}-synthetic-lab-analysis" },
         "StateMachineType": "STANDARD",
         "RoleArn": { "Fn::GetAtt": ["LabStateMachineRole", "Arn"] },
-        "DefinitionString": { "Fn::Sub": "{\"StartAt\":\"Pass0\",\"States\":{\"Pass0\":{\"Type\":\"Task\",\"Resource\":\"${LabWorkerFunction.Arn}\",\"Parameters\":{\"jobId.$\":\"$.jobId\",\"pass\":0},\"ResultPath\":null,\"Retry\":[{\"ErrorEquals\":[\"States.TaskFailed\"],\"IntervalSeconds\":2,\"MaxAttempts\":2,\"BackoffRate\":2}],\"Catch\":[{\"ErrorEquals\":[\"States.ALL\"],\"ResultPath\":\"$.failure\",\"Next\":\"FailJob\"}],\"Next\":\"Pass1\"},\"Pass1\":{\"Type\":\"Task\",\"Resource\":\"${LabWorkerFunction.Arn}\",\"Parameters\":{\"jobId.$\":\"$.jobId\",\"pass\":1},\"ResultPath\":null,\"Retry\":[{\"ErrorEquals\":[\"States.TaskFailed\"],\"IntervalSeconds\":2,\"MaxAttempts\":2,\"BackoffRate\":2}],\"Catch\":[{\"ErrorEquals\":[\"States.ALL\"],\"ResultPath\":\"$.failure\",\"Next\":\"FailJob\"}],\"Next\":\"Pass2\"},\"Pass2\":{\"Type\":\"Task\",\"Resource\":\"${LabWorkerFunction.Arn}\",\"Parameters\":{\"jobId.$\":\"$.jobId\",\"pass\":2},\"ResultPath\":null,\"Retry\":[{\"ErrorEquals\":[\"States.TaskFailed\"],\"IntervalSeconds\":2,\"MaxAttempts\":2,\"BackoffRate\":2}],\"Catch\":[{\"ErrorEquals\":[\"States.ALL\"],\"ResultPath\":\"$.failure\",\"Next\":\"FailJob\"}],\"Next\":\"Pass3\"},\"Pass3\":{\"Type\":\"Task\",\"Resource\":\"${LabWorkerFunction.Arn}\",\"Parameters\":{\"jobId.$\":\"$.jobId\",\"pass\":3},\"ResultPath\":null,\"Retry\":[{\"ErrorEquals\":[\"States.TaskFailed\"],\"IntervalSeconds\":2,\"MaxAttempts\":2,\"BackoffRate\":2}],\"Catch\":[{\"ErrorEquals\":[\"States.ALL\"],\"ResultPath\":\"$.failure\",\"Next\":\"FailJob\"}],\"Next\":\"Pass4\"},\"Pass4\":{\"Type\":\"Task\",\"Resource\":\"${LabWorkerFunction.Arn}\",\"Parameters\":{\"jobId.$\":\"$.jobId\",\"pass\":4},\"ResultPath\":null,\"Retry\":[{\"ErrorEquals\":[\"States.TaskFailed\"],\"IntervalSeconds\":2,\"MaxAttempts\":2,\"BackoffRate\":2}],\"Catch\":[{\"ErrorEquals\":[\"States.ALL\"],\"ResultPath\":\"$.failure\",\"Next\":\"FailJob\"}],\"End\":true},\"FailJob\":{\"Type\":\"Task\",\"Resource\":\"${LabWorkerFunction.Arn}\",\"Parameters\":{\"jobId.$\":\"$.jobId\",\"fail\":true,\"failureCategory.$\":\"$.failure.Error\"},\"End\":true}}}" }
+        "DefinitionString": {"Fn::Sub":"{\"StartAt\":\"Pass0\",\"States\":{\"Pass0\":{\"Type\":\"Task\",\"Resource\":\"${LabWorkerFunction.Arn}\",\"Parameters\":{\"jobId.$\":\"$.jobId\",\"pass\":0},\"ResultPath\":null,\"Retry\":[{\"ErrorEquals\":[\"lab_worker_busy\"],\"IntervalSeconds\":60,\"MaxAttempts\":7,\"BackoffRate\":1},{\"ErrorEquals\":[\"States.TaskFailed\"],\"IntervalSeconds\":2,\"MaxAttempts\":2,\"BackoffRate\":2}],\"Catch\":[{\"ErrorEquals\":[\"States.ALL\"],\"ResultPath\":\"$.failure\",\"Next\":\"FailJob0\"}],\"Next\":\"Pass1\"},\"Pass1\":{\"Type\":\"Task\",\"Resource\":\"${LabWorkerFunction.Arn}\",\"Parameters\":{\"jobId.$\":\"$.jobId\",\"pass\":1},\"ResultPath\":null,\"Retry\":[{\"ErrorEquals\":[\"lab_worker_busy\"],\"IntervalSeconds\":60,\"MaxAttempts\":7,\"BackoffRate\":1},{\"ErrorEquals\":[\"States.TaskFailed\"],\"IntervalSeconds\":2,\"MaxAttempts\":2,\"BackoffRate\":2}],\"Catch\":[{\"ErrorEquals\":[\"States.ALL\"],\"ResultPath\":\"$.failure\",\"Next\":\"FailJob1\"}],\"Next\":\"Pass2\"},\"Pass2\":{\"Type\":\"Task\",\"Resource\":\"${LabWorkerFunction.Arn}\",\"Parameters\":{\"jobId.$\":\"$.jobId\",\"pass\":2},\"ResultPath\":null,\"Retry\":[{\"ErrorEquals\":[\"lab_worker_busy\"],\"IntervalSeconds\":60,\"MaxAttempts\":7,\"BackoffRate\":1},{\"ErrorEquals\":[\"States.TaskFailed\"],\"IntervalSeconds\":2,\"MaxAttempts\":2,\"BackoffRate\":2}],\"Catch\":[{\"ErrorEquals\":[\"States.ALL\"],\"ResultPath\":\"$.failure\",\"Next\":\"FailJob2\"}],\"Next\":\"Pass3\"},\"Pass3\":{\"Type\":\"Task\",\"Resource\":\"${LabWorkerFunction.Arn}\",\"Parameters\":{\"jobId.$\":\"$.jobId\",\"pass\":3},\"ResultPath\":null,\"Retry\":[{\"ErrorEquals\":[\"lab_worker_busy\"],\"IntervalSeconds\":60,\"MaxAttempts\":7,\"BackoffRate\":1},{\"ErrorEquals\":[\"States.TaskFailed\"],\"IntervalSeconds\":2,\"MaxAttempts\":2,\"BackoffRate\":2}],\"Catch\":[{\"ErrorEquals\":[\"States.ALL\"],\"ResultPath\":\"$.failure\",\"Next\":\"FailJob3\"}],\"Next\":\"Pass4\"},\"Pass4\":{\"Type\":\"Task\",\"Resource\":\"${LabWorkerFunction.Arn}\",\"Parameters\":{\"jobId.$\":\"$.jobId\",\"pass\":4},\"ResultPath\":null,\"Retry\":[{\"ErrorEquals\":[\"lab_worker_busy\"],\"IntervalSeconds\":60,\"MaxAttempts\":7,\"BackoffRate\":1},{\"ErrorEquals\":[\"States.TaskFailed\"],\"IntervalSeconds\":2,\"MaxAttempts\":2,\"BackoffRate\":2}],\"Catch\":[{\"ErrorEquals\":[\"States.ALL\"],\"ResultPath\":\"$.failure\",\"Next\":\"FailJob4\"}],\"End\":true},\"FailJob0\":{\"Type\":\"Task\",\"Resource\":\"${LabWorkerFunction.Arn}\",\"Parameters\":{\"jobId.$\":\"$.jobId\",\"fail\":true,\"failureCategory.$\":\"$.failure.Error\",\"pass\":0},\"End\":true},\"FailJob1\":{\"Type\":\"Task\",\"Resource\":\"${LabWorkerFunction.Arn}\",\"Parameters\":{\"jobId.$\":\"$.jobId\",\"fail\":true,\"failureCategory.$\":\"$.failure.Error\",\"pass\":1},\"End\":true},\"FailJob2\":{\"Type\":\"Task\",\"Resource\":\"${LabWorkerFunction.Arn}\",\"Parameters\":{\"jobId.$\":\"$.jobId\",\"fail\":true,\"failureCategory.$\":\"$.failure.Error\",\"pass\":2},\"End\":true},\"FailJob3\":{\"Type\":\"Task\",\"Resource\":\"${LabWorkerFunction.Arn}\",\"Parameters\":{\"jobId.$\":\"$.jobId\",\"fail\":true,\"failureCategory.$\":\"$.failure.Error\",\"pass\":3},\"End\":true},\"FailJob4\":{\"Type\":\"Task\",\"Resource\":\"${LabWorkerFunction.Arn}\",\"Parameters\":{\"jobId.$\":\"$.jobId\",\"fail\":true,\"failureCategory.$\":\"$.failure.Error\",\"pass\":4},\"End\":true}}}"}
       }
     },
     "LabConsumerAuthorizer": {
@@ -191,13 +219,127 @@
     "CreateLabJobRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "POST /clinical-core/consumer/labs/jobs", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "LabConsumerAuthorizer" }, "Target": { "Fn::Sub": "integrations/${LabApiIntegration}" } } },
     "CreateLabPlanJobRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "POST /clinical-core/consumer/labs/plan-jobs", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "LabConsumerAuthorizer" }, "Target": { "Fn::Sub": "integrations/${LabApiIntegration}" } } },
     "CompleteLabUploadRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "POST /clinical-core/consumer/labs/jobs/{jobId}/complete-upload", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "LabConsumerAuthorizer" }, "Target": { "Fn::Sub": "integrations/${LabApiIntegration}" } } },
+    "ResumeLabUploadRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "POST /clinical-core/consumer/labs/jobs/{jobId}/resume-upload", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "LabConsumerAuthorizer" }, "Target": { "Fn::Sub": "integrations/${LabApiIntegration}" } } },
+    "CancelConsumerLabJobRoute": {"Type":"AWS::ApiGatewayV2::Route","Properties":{"ApiId":{"Ref":"ClinicalApiId"},"RouteKey":"POST /clinical-core/consumer/labs/jobs/{jobId}/cancel","AuthorizationType":"JWT","AuthorizerId":{"Ref":"LabConsumerAuthorizer"},"Target":{"Fn::Sub":"integrations/${LabApiIntegration}"}}},
+    "CancelSyntheticLabJobRoute": {"Type":"AWS::ApiGatewayV2::Route","Properties":{"ApiId":{"Ref":"ClinicalApiId"},"RouteKey":"POST /clinical-core/synthetic-session/labs/jobs/{jobId}/cancel","AuthorizationType":"CUSTOM","AuthorizerId":{"Ref":"LabSyntheticSessionAuthorizer"},"Target":{"Fn::Sub":"integrations/${LabApiIntegration}"}}},
+    "LabCancellationPolicy": {"Type":"AWS::IAM::Policy","Properties":{"PolicyName":"StopOwnedLabExecutions","Roles":[{"Ref":"LabApiRole"},{"Ref":"LabCleanupRole"}],"PolicyDocument":{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"states:StopExecution","Resource":[{"Fn::Sub":"arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:execution:${ClinicalApiId}-synthetic-lab-analysis:lab-*"}]}]}}},
     "GetLabJobRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "GET /clinical-core/consumer/labs/jobs/{jobId}", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "LabConsumerAuthorizer" }, "Target": { "Fn::Sub": "integrations/${LabApiIntegration}" } } },
     "DeleteLabJobRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "DELETE /clinical-core/consumer/labs/jobs/{jobId}", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "LabConsumerAuthorizer" }, "Target": { "Fn::Sub": "integrations/${LabApiIntegration}" } } },
     "CreateLabJobSyntheticSessionRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "POST /clinical-core/synthetic-session/labs/jobs", "AuthorizationType": "CUSTOM", "AuthorizerId": { "Ref": "LabSyntheticSessionAuthorizer" }, "Target": { "Fn::Sub": "integrations/${LabApiIntegration}" } } },
     "CreateLabPlanJobSyntheticSessionRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "POST /clinical-core/synthetic-session/labs/plan-jobs", "AuthorizationType": "CUSTOM", "AuthorizerId": { "Ref": "LabSyntheticSessionAuthorizer" }, "Target": { "Fn::Sub": "integrations/${LabApiIntegration}" } } },
     "CompleteLabUploadSyntheticSessionRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "POST /clinical-core/synthetic-session/labs/jobs/{jobId}/complete-upload", "AuthorizationType": "CUSTOM", "AuthorizerId": { "Ref": "LabSyntheticSessionAuthorizer" }, "Target": { "Fn::Sub": "integrations/${LabApiIntegration}" } } },
+    "ResumeLabUploadSyntheticSessionRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "POST /clinical-core/synthetic-session/labs/jobs/{jobId}/resume-upload", "AuthorizationType": "CUSTOM", "AuthorizerId": { "Ref": "LabSyntheticSessionAuthorizer" }, "Target": { "Fn::Sub": "integrations/${LabApiIntegration}" } } },
     "GetLabJobSyntheticSessionRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "GET /clinical-core/synthetic-session/labs/jobs/{jobId}", "AuthorizationType": "CUSTOM", "AuthorizerId": { "Ref": "LabSyntheticSessionAuthorizer" }, "Target": { "Fn::Sub": "integrations/${LabApiIntegration}" } } },
     "DeleteLabJobSyntheticSessionRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "DELETE /clinical-core/synthetic-session/labs/jobs/{jobId}", "AuthorizationType": "CUSTOM", "AuthorizerId": { "Ref": "LabSyntheticSessionAuthorizer" }, "Target": { "Fn::Sub": "integrations/${LabApiIntegration}" } } },
+    "LabRequestRecoveryRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "GET /clinical-core/consumer/labs/request-recovery", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "LabConsumerAuthorizer" }, "Target": { "Fn::Sub": "integrations/${LabApiIntegration}" } } },
+    "LabRequestDiscoveryRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "GET /clinical-core/consumer/labs/requests/{requestId}", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "LabConsumerAuthorizer" }, "Target": { "Fn::Sub": "integrations/${LabApiIntegration}" } } },
+    "LabRequestRecoverySyntheticRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "GET /clinical-core/synthetic-session/labs/request-recovery", "AuthorizationType": "CUSTOM", "AuthorizerId": { "Ref": "LabSyntheticSessionAuthorizer" }, "Target": { "Fn::Sub": "integrations/${LabApiIntegration}" } } },
+    "LabRequestDiscoverySyntheticRoute": { "Type": "AWS::ApiGatewayV2::Route", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "GET /clinical-core/synthetic-session/labs/requests/{requestId}", "AuthorizationType": "CUSTOM", "AuthorizerId": { "Ref": "LabSyntheticSessionAuthorizer" }, "Target": { "Fn::Sub": "integrations/${LabApiIntegration}" } } },
+    "CreateRecoverableConsumerDocumentsRoute": {"Type":"AWS::ApiGatewayV2::Route","Properties":{"ApiId":{"Ref":"ClinicalApiId"},"RouteKey":"POST /clinical-core/consumer/labs/requests/documents","AuthorizationType":"JWT","AuthorizerId":{"Ref":"LabConsumerAuthorizer"},"Target":{"Fn::Sub":"integrations/${LabApiIntegration}"}}},
+    "CreateRecoverableConsumerPlanRoute": {"Type":"AWS::ApiGatewayV2::Route","Properties":{"ApiId":{"Ref":"ClinicalApiId"},"RouteKey":"POST /clinical-core/consumer/labs/requests/saved","AuthorizationType":"JWT","AuthorizerId":{"Ref":"LabConsumerAuthorizer"},"Target":{"Fn::Sub":"integrations/${LabApiIntegration}"}}},
+    "CreateRecoverableSyntheticDocumentsRoute": {"Type":"AWS::ApiGatewayV2::Route","Properties":{"ApiId":{"Ref":"ClinicalApiId"},"RouteKey":"POST /clinical-core/synthetic-session/labs/requests/documents","AuthorizationType":"CUSTOM","AuthorizerId":{"Ref":"LabSyntheticSessionAuthorizer"},"Target":{"Fn::Sub":"integrations/${LabApiIntegration}"}}},
+    "CreateRecoverableSyntheticPlanRoute": {"Type":"AWS::ApiGatewayV2::Route","Properties":{"ApiId":{"Ref":"ClinicalApiId"},"RouteKey":"POST /clinical-core/synthetic-session/labs/requests/saved","AuthorizationType":"CUSTOM","AuthorizerId":{"Ref":"LabSyntheticSessionAuthorizer"},"Target":{"Fn::Sub":"integrations/${LabApiIntegration}"}}},
+    "RetireConsumerLabRequestRoute": {"Type":"AWS::ApiGatewayV2::Route","Properties":{"ApiId":{"Ref":"ClinicalApiId"},"RouteKey":"POST /clinical-core/consumer/labs/requests/{requestId}/retire","AuthorizationType":"JWT","AuthorizerId":{"Ref":"LabConsumerAuthorizer"},"Target":{"Fn::Sub":"integrations/${LabApiIntegration}"}}},
+    "RetireSyntheticLabRequestRoute": {"Type":"AWS::ApiGatewayV2::Route","Properties":{"ApiId":{"Ref":"ClinicalApiId"},"RouteKey":"POST /clinical-core/synthetic-session/labs/requests/{requestId}/retire","AuthorizationType":"CUSTOM","AuthorizerId":{"Ref":"LabSyntheticSessionAuthorizer"},"Target":{"Fn::Sub":"integrations/${LabApiIntegration}"}}},
+    "LabInventoryQueryPolicy": {
+      "Type": "AWS::IAM::Policy",
+      "Properties": { "PolicyName": "LabOwnerInventoryQuery", "Roles": [{ "Ref": "LabApiRole" }], "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Action": ["dynamodb:Query"], "Resource": { "Fn::Sub": "${LabJobTable.Arn}/index/LabOwnerInventory" } }] } }
+    },
+    "LabInventoryConsumerRoute": {"Type":"AWS::ApiGatewayV2::Route","Properties":{"ApiId":{"Ref":"ClinicalApiId"},"RouteKey":"GET /clinical-core/consumer/labs/inventory","AuthorizationType":"JWT","AuthorizerId":{"Ref":"LabConsumerAuthorizer"},"Target":{"Fn::Sub":"integrations/${LabApiIntegration}"}}},
+    "LabInventorySyntheticRoute": {"Type":"AWS::ApiGatewayV2::Route","Properties":{"ApiId":{"Ref":"ClinicalApiId"},"RouteKey":"GET /clinical-core/synthetic-session/labs/inventory","AuthorizationType":"CUSTOM","AuthorizerId":{"Ref":"LabSyntheticSessionAuthorizer"},"Target":{"Fn::Sub":"integrations/${LabApiIntegration}"}}},
+    "LabRecoveryConsumerRoute": {"Type":"AWS::ApiGatewayV2::Route","Properties":{"ApiId":{"Ref":"ClinicalApiId"},"RouteKey":"GET /clinical-core/consumer/labs/jobs/{jobId}/recovery","AuthorizationType":"JWT","AuthorizerId":{"Ref":"LabConsumerAuthorizer"},"Target":{"Fn::Sub":"integrations/${LabApiIntegration}"}}},
+    "LabRecoverySyntheticRoute": {"Type":"AWS::ApiGatewayV2::Route","Properties":{"ApiId":{"Ref":"ClinicalApiId"},"RouteKey":"GET /clinical-core/synthetic-session/labs/jobs/{jobId}/recovery","AuthorizationType":"CUSTOM","AuthorizerId":{"Ref":"LabSyntheticSessionAuthorizer"},"Target":{"Fn::Sub":"integrations/${LabApiIntegration}"}}},
+    "LabCleanupFailureQueue": {
+      "Type":"AWS::SQS::Queue",
+      "Properties":{"SqsManagedSseEnabled":true,"MessageRetentionPeriod":1209600,
+        "Tags":[{"Key":"Environment","Value":"synthetic-staging"},{"Key":"DataClassification","Value":"synthetic_only"}]}
+    },
+    "LabCleanupLogGroup": {
+      "Type":"AWS::Logs::LogGroup",
+      "Properties":{"LogGroupName":{"Fn::Sub":"/ai-clinical-core/synthetic-staging/lab-cleanup-${ClinicalApiId}"},"KmsKeyId":{"Ref":"ClinicalCoreKeyArn"},"RetentionInDays":14}
+    },
+    "LabCleanupRole": {
+      "Type":"AWS::IAM::Role",
+      "Properties":{
+        "AssumeRolePolicyDocument":{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"lambda.amazonaws.com"},"Action":"sts:AssumeRole"}]},
+        "Policies":[{"PolicyName":"ScopedLabCleanup","PolicyDocument":{"Version":"2012-10-17","Statement":[
+          {"Effect":"Allow","Action":["dynamodb:GetItem","dynamodb:UpdateItem","dynamodb:DeleteItem"],"Resource":{"Fn::GetAtt":["LabJobTable","Arn"]},"Condition":{"ForAllValues:StringLike":{"dynamodb:LeadingKeys":["job#*","cleanup#*"]}}},
+          {"Effect":"Allow","Action":["dynamodb:Query"],"Resource":{"Fn::Sub":"${LabJobTable.Arn}/index/LabCleanupDue"}},
+          {"Effect":"Allow","Action":["s3:ListBucketVersions"],"Resource":{"Fn::GetAtt":["LabDocumentsBucket","Arn"]},"Condition":{"StringLike":{"s3:prefix":["synthetic-labs/*"]}}},
+          {"Effect":"Allow","Action":["s3:DeleteObjectVersion"],"Resource":{"Fn::Sub":"${LabDocumentsBucket.Arn}/synthetic-labs/*"}},
+          {"Effect":"Allow","Action":["kms:Decrypt","kms:GenerateDataKey"],"Resource":{"Ref":"ClinicalCoreKeyArn"}},
+          {"Effect":"Allow","Action":["logs:CreateLogStream","logs:PutLogEvents"],"Resource":{"Fn::GetAtt":["LabCleanupLogGroup","Arn"]}},
+          {"Effect":"Allow","Action":["sqs:SendMessage"],"Resource":{"Fn::GetAtt":["LabCleanupFailureQueue","Arn"]}}
+        ]}}]
+      }
+    },
+    "LabCleanupFunction": {
+      "Type":"AWS::Lambda::Function",
+      "Properties":{
+        "FunctionName":{"Fn::Sub":"${ClinicalApiId}-synthetic-lab-cleanup"},
+        "Runtime":"nodejs22.x","Architectures":["arm64"],"Handler":"index.cleanup",
+        "Role":{"Fn::GetAtt":["LabCleanupRole","Arn"]},"MemorySize":256,"Timeout":120,
+        "Code":{"S3Bucket":{"Ref":"LambdaCodeBucket"},"S3Key":{"Ref":"ApiCodeKey"}},
+        "Environment":{"Variables":{"LAB_JOB_TABLE":{"Ref":"LabJobTable"},"LAB_DOCUMENT_BUCKET":{"Ref":"LabDocumentsBucket"},"LAB_STATE_MACHINE_ARN":{"Fn::Sub":"arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:stateMachine:${ClinicalApiId}-synthetic-lab-analysis"},"PHI_ALLOWED":"false","DATA_CLASSIFICATION":"synthetic_only"}},
+        "LoggingConfig":{"LogGroup":{"Ref":"LabCleanupLogGroup"},"LogFormat":"JSON","ApplicationLogLevel":"INFO","SystemLogLevel":"WARN"}
+      }
+    },
+    "LabCleanupAsyncFailure": {
+      "Type":"AWS::Lambda::EventInvokeConfig",
+      "Properties":{"FunctionName":{"Ref":"LabCleanupFunction"},"Qualifier":"$LATEST","MaximumRetryAttempts":2,"MaximumEventAgeInSeconds":21600,
+        "DestinationConfig":{"OnFailure":{"Destination":{"Fn::GetAtt":["LabCleanupFailureQueue","Arn"]}}}}
+    },
+    "LabCleanupObjectRule": {
+      "Type":"AWS::Events::Rule",
+      "Properties":{
+        "State":"ENABLED",
+        "EventPattern":{"source":["aws.s3"],"detail-type":["Object Created"],"account":[{"Ref":"AWS::AccountId"}],
+          "detail":{"bucket":{"name":[{"Ref":"LabDocumentsBucket"}]},"object":{"key":[{"prefix":"synthetic-labs/"}]}}},
+        "Targets":[{"Id":"LabLateUploadCleanup","Arn":{"Fn::GetAtt":["LabCleanupFunction","Arn"]},
+          "InputTransformer":{"InputPathsMap":{"bucket":"$.detail.bucket.name","key":"$.detail.object.key"},"InputTemplate":"{\"kind\":\"created\",\"bucket\":<bucket>,\"key\":<key>}"},
+          "RetryPolicy":{"MaximumRetryAttempts":185,"MaximumEventAgeInSeconds":86400},
+          "DeadLetterConfig":{"Arn":{"Fn::GetAtt":["LabCleanupFailureQueue","Arn"]}}}]
+      }
+    },
+    "LabCleanupSweepRule": {
+      "Type":"AWS::Events::Rule",
+      "Properties":{"State":"ENABLED","ScheduleExpression":"rate(5 minutes)",
+        "Targets":[{"Id":"LabDeletionRetry","Arn":{"Fn::GetAtt":["LabCleanupFunction","Arn"]},"Input":"{\"kind\":\"sweep\"}",
+          "RetryPolicy":{"MaximumRetryAttempts":185,"MaximumEventAgeInSeconds":86400},
+          "DeadLetterConfig":{"Arn":{"Fn::GetAtt":["LabCleanupFailureQueue","Arn"]}}}]}
+    },
+    "LabCleanupFailureQueuePolicy": {
+      "Type":"AWS::SQS::QueuePolicy",
+      "Properties":{"Queues":[{"Ref":"LabCleanupFailureQueue"}],"PolicyDocument":{"Version":"2012-10-17","Statement":[
+        {"Effect":"Allow","Principal":{"Service":"events.amazonaws.com"},"Action":"sqs:SendMessage","Resource":{"Fn::GetAtt":["LabCleanupFailureQueue","Arn"]},
+          "Condition":{"ArnEquals":{"aws:SourceArn":[{"Fn::GetAtt":["LabCleanupObjectRule","Arn"]},{"Fn::GetAtt":["LabCleanupSweepRule","Arn"]}]}}},
+        {"Effect":"Deny","Principal":"*","Action":"sqs:*","Resource":{"Fn::GetAtt":["LabCleanupFailureQueue","Arn"]},"Condition":{"Bool":{"aws:SecureTransport":"false"}}}
+      ]}}
+    },
+    "LabCleanupObjectPermission": {
+      "Type":"AWS::Lambda::Permission",
+      "Properties":{"FunctionName":{"Ref":"LabCleanupFunction"},"Action":"lambda:InvokeFunction","Principal":"events.amazonaws.com",
+        "SourceArn":{"Fn::GetAtt":["LabCleanupObjectRule","Arn"]},"SourceAccount":{"Ref":"AWS::AccountId"}}
+    },
+    "LabCleanupSweepPermission": {
+      "Type":"AWS::Lambda::Permission",
+      "Properties":{"FunctionName":{"Ref":"LabCleanupFunction"},"Action":"lambda:InvokeFunction","Principal":"events.amazonaws.com",
+        "SourceArn":{"Fn::GetAtt":["LabCleanupSweepRule","Arn"]},"SourceAccount":{"Ref":"AWS::AccountId"}}
+    },
+    "LabCleanupFailureAlarm": {
+      "Type":"AWS::CloudWatch::Alarm",
+      "Properties":{"AlarmDescription":"Synthetic lab deletion cleanup failed; investigate the durable outbox and failure queue. No patient data in alarms.",
+        "Namespace":"AWS/Lambda","MetricName":"Errors","Dimensions":[{"Name":"FunctionName","Value":{"Ref":"LabCleanupFunction"}}],
+        "Statistic":"Sum","Period":300,"EvaluationPeriods":1,"Threshold":1,"ComparisonOperator":"GreaterThanOrEqualToThreshold","TreatMissingData":"notBreaching",
+        "AlarmActions":{"Fn::If":["HasCleanupAlarmTopic",[{"Ref":"LabCleanupAlarmTopicArn"}],{"Ref":"AWS::NoValue"}]}}
+    },
+    "LabCleanupQueueAlarm": {
+      "Type":"AWS::CloudWatch::Alarm",
+      "Properties":{"AlarmDescription":"Synthetic lab cleanup delivery or execution requires operator replay.",
+        "Namespace":"AWS/SQS","MetricName":"ApproximateNumberOfMessagesVisible","Dimensions":[{"Name":"QueueName","Value":{"Fn::GetAtt":["LabCleanupFailureQueue","QueueName"]}}],
+        "Statistic":"Maximum","Period":60,"EvaluationPeriods":1,"Threshold":1,"ComparisonOperator":"GreaterThanOrEqualToThreshold","TreatMissingData":"notBreaching",
+        "AlarmActions":{"Fn::If":["HasCleanupAlarmTopic",[{"Ref":"LabCleanupAlarmTopicArn"}],{"Ref":"AWS::NoValue"}]}}
+    },
     "LabApiInvokePermission": {
       "Type": "AWS::Lambda::Permission",
       "Properties": { "Action": "lambda:InvokeFunction", "FunctionName": { "Ref": "LabApiFunction" }, "Principal": "apigateway.amazonaws.com", "SourceArn": { "Fn::Sub": "arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${ClinicalApiId}/*/*/clinical-core/consumer/labs/*" } }
@@ -208,11 +350,14 @@
     }
   },
   "Outputs": {
+    "LabCleanupFunctionName":{"Value":{"Ref":"LabCleanupFunction"}},
+    "LabCleanupFailureQueueUrl":{"Value":{"Ref":"LabCleanupFailureQueue"}},
+    "LabCleanupNotificationsConfigured":{"Value":{"Fn::If":["HasCleanupAlarmTopic","true","false"]}},
     "ContractVersion": { "Value": "lab-analysis/1" },
     "LabJobTableName": { "Value": { "Ref": "LabJobTable" } },
     "LabDocumentsBucketName": { "Value": { "Ref": "LabDocumentsBucket" } },
     "LabStateMachineArn": { "Value": { "Ref": "LabStateMachine" } },
-    "RoutesEnabled": { "Value": "10" },
+    "RoutesEnabled": { "Value": "28" },
     "SyntheticAppSessionEnabled": { "Value": "true" },
     "PhiAllowed": { "Value": "false" },
     "DataClassification": { "Value": "synthetic_only" }

@@ -9,17 +9,23 @@ import {
   TextractClient,
 } from "@aws-sdk/client-textract";
 import { synthesizeLabWithOpenAI } from "./aws-lab-openai";
+import { resolveLabSourcePanel, type LabSourcePanel } from "./lab-source-panel";
 import type { LongitudinalContext, PatientContext, StructuredLabBiomarker } from "./aws-lab-analysis-api";
+import { resolveReviewedLabRange, verifyLabRangeRelease, type RangePopulation, type VerifiedLabRangeRelease } from "./lab-range-release";
 
 const db = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const s3 = new S3Client({});
 const textract = new TextractClient({});
 const PASS_STATE = ["extracting", "verifying", "normalizing", "interpreting", "synthesizing"] as const;
 const PASS_PROGRESS = [20, 40, 60, 80, 95];
+// Must exceed the deployed Lambda timeout (300s), including a clock margin.
+// Expired leases recover crashed invocations, not concurrent live invocations.
+export const LAB_WORKER_LEASE_SECONDS = 360;
 const UUID_NS = "ai-longevity-pro-synthetic-lab-v1";
 
 type StoredDocument = { clientDocumentId: string; contentType: string; objectKey: string };
-type Job = { pk: string; state: string; documents: StoredDocument[]; structuredBiomarkers?: StructuredLabBiomarker[]; patientContext?: PatientContext; longitudinalContext?: LongitudinalContext };
+type Job = { pk: string; state: string; passesCompleted?: number; documents: StoredDocument[]; structuredBiomarkers?: StructuredLabBiomarker[]; sourcePanel?: LabSourcePanel; patientContext?: PatientContext; longitudinalContext?: LongitudinalContext; rangeReleaseSha256?: string };
+export type LabRangeContext = { catalog: VerifiedLabRangeRelease; population: RangePopulation };
 type ExtractedCell = { text: string; confidence: number; column: number };
 type ExtractedRow = { cells: ExtractedCell[]; page: number | null; documentId: string };
 export type Extracted = {
@@ -31,6 +37,7 @@ export type Biomarker = {
   labMin: number | null; labMax: number | null; functionalMin: number | null; functionalMax: number | null;
   sourceId: string | null; sourceVersion: string | null; population: string | null; confidence: number;
   documentId: string; page: number | null;
+  rangeReview?: string; criticalBelow?: number | null; criticalAbove?: number | null;
 };
 
 type TextractBlock = {
@@ -47,7 +54,7 @@ const RULES = [
   { name: "TSH", aliases: ["tsh", "thyroid stimulating hormone"], units: ["uiu/ml", "miu/l"], min: 1, max: 2.5 },
   { name: "Free T3", aliases: ["free t3", "ft3"], units: ["pg/ml"], min: 3, max: 4.2 },
   { name: "Free T4", aliases: ["free t4", "ft4"], units: ["ng/dl"], min: 1.1, max: 1.5 },
-  { name: "Vitamin D", aliases: ["vitamin d", "25-oh vitamin d", "25 hydroxy vitamin d"], units: ["ng/ml"], min: 50, max: 80 },
+  { name: "Vitamin D", aliases: ["vitamin d, 25-hydroxy", "vitamin d 25 hydroxy", "vitamin d", "25-oh vitamin d", "25 hydroxy vitamin d"], units: ["ng/ml"], min: 50, max: 80 },
   { name: "hs-CRP", aliases: ["hs-crp", "high sensitivity crp", "c-reactive protein"], units: ["mg/l"], min: 0, max: 1 },
   { name: "Triglycerides", aliases: ["triglycerides"], units: ["mg/dl"], min: 50, max: 100 },
   { name: "HDL Cholesterol", aliases: ["hdl cholesterol", "hdl-c", "hdl"], units: ["mg/dl"], min: 60, max: 100 },
@@ -210,15 +217,50 @@ function cleanAnalyteName(value: string): string {
 function unitFromName(value: string): string | null {
   const matches = [...value.matchAll(/\(([^()]*)\)/g)];
   const candidate = matches.at(-1)?.[1]?.trim();
-  return candidate && /[%/A-Za-zµμ]/.test(candidate) ? candidate.replace(/[μµ]/g, "u").toLowerCase() : null;
+  return candidate && (/[%/]/.test(candidate) || /^(?:ratio|index)$/i.test(candidate)) ? candidate.replace(/[μµ]/g, "u").toLowerCase() : null;
+}
+
+function analyteNameWithoutUnit(value: string): string {
+  return unitFromName(value) ? value.replace(/\s*\([^()]*\)\s*$/, "").trim() : value.trim();
 }
 
 function matchingRule(value: string) {
   const normalized = value.toLowerCase().replace(/[μµ]/g, "u");
-  return RULES.find((rule) => rule.aliases.some((alias) => new RegExp(`(^|\\b)${alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(\\b|$)`, "i").test(normalized)));
+  const name = analyteNameWithoutUnit(normalized);
+  return RULES.find((rule) => rule.aliases.some((alias) => alias === name));
 }
 
-export function normalizeExtractedLabTables(extracted: Extracted): Biomarker[] {
+function fixtureRange(rule: typeof RULES[number] | undefined, unit: string) {
+  const matched = rule?.units.some(candidate => candidate.replace(/[μµ]/g, "u") === unit);
+  return {
+    functionalMin: matched ? rule!.min : null, functionalMax: matched ? rule!.max : null,
+    sourceId: matched ? stableUuid(`range:${rule!.name}`) : null,
+    sourceVersion: matched ? "synthetic-functional-ranges/1" : null,
+    population: matched ? "Synthetic adult test fixture; practitioner verification required" : null,
+  };
+}
+
+function rangeFor(name: string, unit: string, context?: LabRangeContext) {
+  return context ? resolveReviewedLabRange(context.catalog, name, unit, context.population) : fixtureRange(matchingRule(name), unit);
+}
+
+async function reviewedRangeContext(job: Job): Promise<LabRangeContext | undefined> {
+  if (process.env.LAB_RANGE_MODE && !["synthetic_fixture", "reviewed_release"].includes(process.env.LAB_RANGE_MODE)) throw new Error("lab_range_mode_invalid");
+  if (process.env.LAB_RANGE_MODE !== "reviewed_release") {
+    if (job.rangeReleaseSha256) throw new Error("lab_range_release_configuration_changed");
+    return undefined;
+  }
+  const hash = required("LAB_RANGE_RELEASE_SHA256");
+  if (job.rangeReleaseSha256 !== hash) throw new Error("lab_range_release_configuration_changed");
+  const artifact = await s3.send(new GetObjectCommand({ Bucket: required("LAB_RANGE_RELEASE_BUCKET"), Key: required("LAB_RANGE_RELEASE_KEY") }));
+  if ((artifact.ContentLength ?? Infinity) > 2_100_000) throw new Error("lab_range_release_refused");
+  const raw = await streamText(artifact.Body);
+  if (Buffer.byteLength(raw) > 2_100_000) throw new Error("lab_range_release_refused");
+  return { catalog: verifyLabRangeRelease(JSON.parse(raw), { sha256: hash, publicKeyPem: required("LAB_RANGE_SIGNER_PUBLIC_KEY_PEM") }),
+    population: { ageYears: job.patientContext?.ageYears ?? null, sex: job.patientContext?.sex ?? null, pregnancyStatus: job.patientContext?.pregnancyStatus ?? null } };
+}
+
+export function normalizeExtractedLabTables(extracted: Extracted, context?: LabRangeContext): Biomarker[] {
   const output: Biomarker[] = [];
   for (const row of extracted.tableRows ?? []) {
     const cells = row.cells.filter((cell) => cell.text.trim());
@@ -231,6 +273,8 @@ export function normalizeExtractedLabTables(extracted: Extracted): Biomarker[] {
     if (nameIndex < 0) continue;
     const valueIndex = cells.findIndex((cell, index) => index > nameIndex && STRICT_NUMBER.test(cell.text.trim()));
     if (valueIndex < 0) continue;
+    // A censored value (<5, >100) is not an exact measured 5 or 100.
+    if (/[<>≤≥]/.test(cells[valueIndex].text)) continue;
     const valueMatch = cells[valueIndex].text.trim().match(STRICT_NUMBER);
     if (!valueMatch) continue;
 
@@ -243,17 +287,14 @@ export function normalizeExtractedLabTables(extracted: Extracted): Biomarker[] {
       ?? rule?.units.find((candidate) => rowText.includes(candidate.replace(/[μµ]/g, "u")))
       ?? cells.slice(valueIndex + 1).map((cell) => cell.text.trim()).find((text) => /^[%A-Za-zµμ][%A-Za-z0-9µμ/^.-]{0,39}$/.test(text))?.replace(/[μµ]/g, "u").toLowerCase()
       ?? "not reported";
-    const canonicalName = rule?.name ?? reportedName.replace(/\s*\([^()]*\)\s*$/, "").trim();
+    const canonicalName = rule?.name ?? analyteNameWithoutUnit(reportedName);
     // OCR sometimes promotes a standalone result flag such as "(H)" into the
     // analyte column. It is not a biomarker and must not poison the full result.
-    if (!canonicalName || !/[A-Za-z]/.test(canonicalName)) continue;
+    if (!canonicalName || !/[A-Za-z]/.test(canonicalName) || /^\(?[HL]\)?$/i.test(canonicalName)) continue;
     output.push({
       canonicalName, reportedName, value: Number(valueMatch[1]), unit,
       labMin: range.min, labMax: range.max,
-      functionalMin: rule?.min ?? null, functionalMax: rule?.max ?? null,
-      sourceId: rule ? stableUuid(`range:${rule.name}`) : null,
-      sourceVersion: rule ? "synthetic-functional-ranges/1" : null,
-      population: rule ? "Synthetic adult test fixture; practitioner verification required" : null,
+      ...rangeFor(canonicalName, unit, context),
       confidence: Math.max(0, Math.min(1, Math.min(...cells.map((cell) => cell.confidence)) / 100)),
       documentId: row.documentId, page: row.page,
     });
@@ -264,23 +305,42 @@ export function normalizeExtractedLabTables(extracted: Extracted): Biomarker[] {
   });
 }
 
-export function normalizeExtractedLabLines(extracted: Extracted): Biomarker[] {
-  const output: Biomarker[] = normalizeExtractedLabTables(extracted);
+export function normalizeExtractedLabLines(extracted: Extracted, context?: LabRangeContext): Biomarker[] {
+  const output: Biomarker[] = normalizeExtractedLabTables(extracted, context);
   for (const line of extracted.lines) {
     const lower = line.text.toLowerCase().replace(/[μµ]/g, "u");
     for (const rule of RULES) {
-      if (!rule.aliases.some((alias) => new RegExp(`(^|\\b)${alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(\\b|$)`, "i").test(lower))) continue;
-      const numbers = [...line.text.matchAll(/-?\d+(?:\.\d+)?/g)].map((match) => Number(match[0]));
-      if (!numbers.length) continue;
-      const value = numbers[0];
-      const normalizedUnit = line.text.toLowerCase().replace(/[μµ]/g, "u");
-      const unit = rule.units.find((candidate) => normalizedUnit.includes(candidate.replace(/[μµ]/g, "u"))) ?? rule.units[0];
-      const range = parseRange(line.text.slice((line.text.match(/-?\d+(?:\.\d+)?/)?.index ?? 0) + String(value).length));
-      output.push({ canonicalName: rule.name, reportedName: line.text.slice(0, 160), value, unit, labMin: range.min, labMax: range.max, functionalMin: rule.min, functionalMax: rule.max, sourceId: stableUuid(`range:${rule.name}`), sourceVersion: "synthetic-functional-ranges/1", population: "Synthetic adult test fixture; practitioner verification required", confidence: Math.max(0, Math.min(1, line.confidence / 100)), documentId: line.documentId, page: line.page });
+      const alias = [...rule.aliases].sort((a, b) => b.length - a.length).find(candidate => lower.startsWith(candidate)
+        && /^[\s:=]/.test(lower.slice(candidate.length)));
+      if (!alias) continue;
+      const tail = lower.slice(alias.length);
+      const measured = tail.match(/^\s*[:=]?\s*(-?\d+(?:\.\d+)?)(?=\s|$)/);
+      if (!measured) continue;
+      const value = Number(measured[1]);
+      const remainder = tail.slice(measured[0].length).trim().replace(/^[hl*]\s+/i, "");
+      const unitToken = remainder.match(/^([%a-zµμ][%a-z0-9µμ/^.-]{0,39})(?=\s|$)/i)?.[1];
+      const unit = unitToken && !/^(?:reference|range|ref|high|low|h|l)$/i.test(unitToken) ? unitToken : "not reported";
+      const range = parseRange(remainder);
+      output.push({ canonicalName: rule.name, reportedName: line.text.slice(0, 160), value, unit, labMin: range.min, labMax: range.max, ...rangeFor(rule.name, unit, context), confidence: Math.max(0, Math.min(1, line.confidence / 100)), documentId: line.documentId, page: line.page });
       break;
     }
   }
   return output.filter((row, index) => output.findIndex((candidate) => candidate.canonicalName === row.canonicalName) === index);
+}
+
+/** Do not silently drop a potentially important above/below-limit measurement from a generated plan. */
+export function assertExactExtractedMeasurements(extracted: Extracted): void {
+  const censoredTable = (extracted.tableRows ?? []).some(row => {
+    const cells = row.cells.filter(cell => cell.text.trim());
+    const index = cells.findIndex(cell => /[A-Za-z]/.test(cell.text) && !NON_ANALYTE_NAMES.test(cleanAnalyteName(cell.text)) && !IDENTIFIER_TEXT.test(cell.text));
+    const measured = cells.slice(index + 1).find(cell => STRICT_NUMBER.test(cell.text.trim()));
+    return index >= 0 && measured !== undefined && /[<>≤≥]/.test(measured.text);
+  });
+  const censoredLine = extracted.lines.some(line => RULES.some(rule => rule.aliases.some(alias => {
+    const lower = line.text.toLowerCase().trim();
+    return lower.startsWith(alias) && /^\s*[:=]?\s*[<>≤≥]/.test(lower.slice(alias.length));
+  })));
+  if (censoredTable || censoredLine) throw Object.assign(new Error("qualified_measurement_requires_review"), { category: "verification_disagreement" });
 }
 
 const COMPOSITE_REPORT_PANEL = /(?:truage|epigenetic|biological age|methylation|pace of aging)/i;
@@ -297,8 +357,10 @@ const PLAUSIBLE_VALUE_RULES: Array<{ name: RegExp; min: number; max: number }> =
   { name: /^(?:iron)$/i, min: 0, max: 5_000 },
 ];
 
-function plausibleClinicalValue(name: string, value: number): boolean {
+function plausibleClinicalValue(name: string, value: number, unit: string): boolean {
   const rule = PLAUSIBLE_VALUE_RULES.find((candidate) => candidate.name.test(name.trim()));
+  const fixture = matchingRule(name);
+  if (rule && fixture && !fixture.units.some(candidate => candidate.replace(/[μµ]/g, "u") === unit)) return value >= 0;
   return !rule || (value >= rule.min && value <= rule.max);
 }
 
@@ -329,7 +391,7 @@ export function sanitizeMeasuredLabBiomarkers(
   return rows.flatMap((row) => {
     const canonicalName = row.canonicalName.trim();
     const unit = row.unit.trim().toLowerCase().replace(/[μµ]/g, "u");
-    if (!canonicalName || !Number.isFinite(row.value) || !plausibleClinicalValue(canonicalName, row.value)) return [];
+    if (!canonicalName || !Number.isFinite(row.value) || !plausibleClinicalValue(canonicalName, row.value, unit)) return [];
     if (COMPOSITE_OR_SUMMARY_ROW.test(canonicalName)) return [];
     if (COMPOSITE_REPORT_PANEL.test(panelName) && unit === "not reported"
       && PLAUSIBLE_VALUE_RULES.some((candidate) => candidate.name.test(canonicalName))) return [];
@@ -478,7 +540,7 @@ export function buildMeasuredSupplementConsiderations(biomarkers: Array<{
   }
   return { recommendations, citations };
 }
-export function normalizeStructuredLabBiomarkers(rows: StructuredLabBiomarker[], documentId: string, panelName = ""): Biomarker[] {
+export function normalizeStructuredLabBiomarkers(rows: StructuredLabBiomarker[], documentId: string, panelName = "", context?: LabRangeContext): Biomarker[] {
   return sanitizeMeasuredLabBiomarkers(rows.map((row) => {
     const rule = matchingRule(row.canonicalName);
     return {
@@ -488,11 +550,9 @@ export function normalizeStructuredLabBiomarkers(rows: StructuredLabBiomarker[],
       unit: row.unit.trim().toLowerCase().replace(/[μµ]/g, "u"),
       labMin: row.labMin,
       labMax: row.labMax,
-      functionalMin: rule?.min ?? null,
-      functionalMax: rule?.max ?? null,
-      sourceId: rule ? stableUuid(`range:${rule.name}`) : null,
-      sourceVersion: rule ? "synthetic-functional-ranges/1" : null,
-      population: rule ? "Synthetic adult test fixture; practitioner verification required" : null,
+      ...rangeFor(row.canonicalName, row.unit.trim().toLowerCase().replace(/[μµ]/g, "u"), context ? {
+        ...context, population: { ...context.population, collection: row.collectionContext },
+      } : undefined),
       // These values came from the patient's saved parsed record. They are
       // measured-data inputs, but this recovery pass does not independently
       // re-read the source document, so the UI must retain the review label.
@@ -512,8 +572,16 @@ function reportedRangeStatus(value: number, min: number | null, max: number | nu
   const anchor = Math.max(Math.abs(min ?? 0), Math.abs(max ?? 0), 1);
   return (min !== null && value < min - anchor) || (max !== null && value > max + anchor) ? "critical" : "suboptimal";
 }
+export function reviewedMeasurementStatus(row: Biomarker): "optimal" | "normal" | "suboptimal" | "critical" | "unclassified" {
+  if ((row.criticalBelow != null && row.value < row.criticalBelow) || (row.criticalAbove != null && row.value > row.criticalAbove)) return "critical";
+  if ((row.labMin !== null && row.value < row.labMin) || (row.labMax !== null && row.value > row.labMax)) return "suboptimal";
+  if (row.functionalMin !== null && row.functionalMax !== null) return row.value < row.functionalMin || row.value > row.functionalMax ? "suboptimal" : "optimal";
+  return row.labMin !== null || row.labMax !== null ? "normal" : "unclassified";
+}
 async function executePass(job: Job, pass: number): Promise<unknown | null> {
   const jobId = job.pk.slice(4);
+  const sourcePanel=resolveLabSourcePanel(job);
+  const rangeContext = await reviewedRangeContext(job);
   if (pass === 0) {
     if (job.structuredBiomarkers) {
       await writeArtifact(jobId, "extracted", { lines: [], tableRows: [], source: "saved_measured_biomarkers" });
@@ -540,9 +608,11 @@ async function executePass(job: Job, pass: number): Promise<unknown | null> {
     return null;
   }
   if (pass === 2) {
+    const extracted = job.structuredBiomarkers ? undefined : await readArtifact(jobId, "extracted") as Extracted;
+    if (extracted) assertExactExtractedMeasurements(extracted);
     const biomarkers = job.structuredBiomarkers
-      ? normalizeStructuredLabBiomarkers(job.structuredBiomarkers, jobId, job.longitudinalContext?.incomingPanel.panelName)
-      : sanitizeMeasuredLabBiomarkers(normalizeExtractedLabLines(await readArtifact(jobId, "extracted") as Extracted));
+      ? normalizeStructuredLabBiomarkers(job.structuredBiomarkers, jobId, sourcePanel?.panelName, rangeContext)
+      : sanitizeMeasuredLabBiomarkers(normalizeExtractedLabLines(extracted!, rangeContext));
     if (!biomarkers.length) throw Object.assign(new Error("no_supported_biomarkers"), { category: "document_unreadable" });
     await writeArtifact(jobId, "normalized", { biomarkers });
     return null;
@@ -551,7 +621,7 @@ async function executePass(job: Job, pass: number): Promise<unknown | null> {
     const { biomarkers } = await readArtifact(jobId, "normalized") as { biomarkers: Biomarker[] };
     const interpreted = biomarkers.map((row) => ({
       ...row,
-      status: row.functionalMin !== null && row.functionalMax !== null
+      status: rangeContext ? reviewedMeasurementStatus(row) : row.functionalMin !== null && row.functionalMax !== null
         ? functionalRangeStatus(row.value, row.functionalMin, row.functionalMax)
         : reportedRangeStatus(row.value, row.labMin, row.labMax),
     }));
@@ -571,7 +641,8 @@ async function executePass(job: Job, pass: number): Promise<unknown | null> {
     functionalRange: row.functionalMin !== null && row.functionalMax !== null && row.sourceId && row.sourceVersion && row.population ? { min: row.functionalMin, max: row.functionalMax, sourceId: row.sourceId, sourceVersion: row.sourceVersion, population: row.population } : null,
     status: row.status,
     extractionConfidence: row.confidence,
-    verificationState: row.confidence >= 0.8 ? "independently_verified" : "needs_human_review",
+      // OCR confidence or a saved numeric value is not independent source verification.
+      verificationState: "needs_human_review",
     sourceDocumentId: row.documentId,
     sourcePage: row.page,
   }));
@@ -585,16 +656,17 @@ async function executePass(job: Job, pass: number): Promise<unknown | null> {
     functionalMin: row.functionalRange?.min ?? null,
     functionalMax: row.functionalRange?.max ?? null,
     status: row.status,
-    panelId: job.longitudinalContext?.incomingPanel.panelId ?? jobId,
-    testDate: job.longitudinalContext?.incomingPanel.testDate ?? generatedAt.slice(0, 10),
+    panelId: sourcePanel?.panelId ?? jobId,
+    testDate: sourcePanel?.testDate,
   }));
   const priorForSynthesis = (job.longitudinalContext?.priorPanels ?? []).flatMap((panel) => sanitizeMeasuredLabBiomarkers(
     panel.biomarkers.map((row) => ({
       ...row,
       reportedName: row.canonicalName,
-      sourceId: null,
-      sourceVersion: null,
-      population: null,
+      // A client-supplied historical functional range is not an approved source.
+      ...rangeFor(row.canonicalName, row.unit.trim().toLowerCase().replace(/[μµ]/g, "u"), rangeContext ? {
+        ...rangeContext, population: { ageYears: null, sex: null, pregnancyStatus: null },
+      } : undefined),
       confidence: 0.79,
       documentId: panel.panelId,
       page: null,
@@ -609,7 +681,7 @@ async function executePass(job: Job, pass: number): Promise<unknown | null> {
     labMax: row.labMax,
     functionalMin: row.functionalMin,
     functionalMax: row.functionalMax,
-    status: row.functionalMin !== null && row.functionalMax !== null
+    status: rangeContext ? reviewedMeasurementStatus(row) : row.functionalMin !== null && row.functionalMax !== null
       ? functionalRangeStatus(row.value, row.functionalMin, row.functionalMax)
       : reportedRangeStatus(row.value, row.labMin, row.labMax),
     panelId: panel.panelId,
@@ -622,7 +694,7 @@ async function executePass(job: Job, pass: number): Promise<unknown | null> {
     activeProtocol: job.longitudinalContext?.activeProtocol ?? null,
   });
   const analysisId = randomUUID();
-  const sourcePanelId = job.longitudinalContext?.incomingPanel.panelId ?? jobId;
+  const sourcePanelId = sourcePanel?.panelId ?? jobId;
   const symptomCategoryIds = job.patientContext?.topSymptomSignals.map((row) => row.categoryId) ?? [];
   const newestMeasurements = [...currentForSynthesis, ...priorForSynthesis].filter((row, index, rows) => {
     const key = `${normalizedMarkerName(row.canonicalName)}|${row.unit.trim().toLowerCase()}`;
@@ -696,18 +768,44 @@ async function executePass(job: Job, pass: number): Promise<unknown | null> {
 export async function createAwsLabAnalysisWorker(event: { jobId?: string; pass?: number; fail?: boolean; failureCategory?: string }) {
   const jobId = event.jobId ?? ""; const pass = event.pass ?? -1;
   if (/^[0-9a-f-]{36}$/i.test(jobId) && event.fail === true) {
+    if (!Number.isInteger(pass) || pass < 0 || pass > 4) throw new Error("worker_failure_pass_required");
     const allowed = new Set(["document_unreadable", "verification_disagreement", "unsupported_document", "provider_unavailable", "safety_review_required", "internal_failure"]);
     const category = allowed.has(event.failureCategory ?? "") ? event.failureCategory : "internal_failure";
-    await db.send(new UpdateCommand({ TableName: required("LAB_JOB_TABLE"), Key: { pk: `job#${jobId}` }, UpdateExpression: "SET #state = :failed, failureCategory = :category, updatedAt = :now", ExpressionAttributeNames: { "#state": "state" }, ExpressionAttributeValues: { ":failed": "failed", ":category": category, ":now": new Date().toISOString() } }));
+    try {
+      await db.send(new UpdateCommand({ TableName: required("LAB_JOB_TABLE"), Key: { pk: `job#${jobId}` },
+        ConditionExpression: "attribute_exists(pk) AND #state IN (:queued, :running, :previous, :failed) AND passesCompleted = :pass AND (attribute_not_exists(leaseUntil) OR leaseUntil <= :epoch)",
+        UpdateExpression: "SET #state = :failed, failureCategory = :category, updatedAt = :now REMOVE leaseToken, leaseUntil", ExpressionAttributeNames: { "#state": "state" },
+        ExpressionAttributeValues: { ":failed": "failed", ":queued": "queued", ":running": PASS_STATE[pass], ":previous": pass>0?PASS_STATE[pass-1]:"queued",
+          ":pass": pass, ":epoch": Date.now(), ":category": category, ":now": new Date().toISOString() } }));
+    } catch (error) {
+      if (!(error && typeof error === "object" && (error as { name?: string }).name === "ConditionalCheckFailedException")) throw error;
+      return { jobId, skipped: true };
+    }
     return { jobId, failed: true };
   }
   if (!/^[0-9a-f-]{36}$/i.test(jobId) || !Number.isInteger(pass) || pass < 0 || pass > 4) throw new Error("worker_input_invalid");
   const response = await db.send(new GetCommand({ TableName: required("LAB_JOB_TABLE"), Key: { pk: `job#${jobId}` }, ConsistentRead: true }));
   const job = response.Item as Job | undefined;
+  if (job && (job.passesCompleted ?? 0) > pass) return { jobId, pass, completed: true };
+  if (job && (job.passesCompleted ?? 0) !== pass) throw new Error("job_pass_order_invalid");
   const allowedStartStates = new Set(["queued", PASS_STATE[pass], ...(pass > 0 ? [PASS_STATE[pass - 1]] : [])]);
   if (!job || !allowedStartStates.has(job.state)) throw new Error("job_state_invalid");
   const now = new Date().toISOString();
-  await db.send(new UpdateCommand({ TableName: required("LAB_JOB_TABLE"), Key: { pk: job.pk }, UpdateExpression: "SET #state = :state, progressPercent = :progress, updatedAt = :now", ExpressionAttributeNames: { "#state": "state" }, ExpressionAttributeValues: { ":state": PASS_STATE[pass], ":progress": PASS_PROGRESS[pass], ":now": now } }));
+  const leaseToken = randomUUID();
+  const epoch = Date.now();
+  try {
+    await db.send(new UpdateCommand({ TableName: required("LAB_JOB_TABLE"), Key: { pk: job.pk },
+      ConditionExpression: "attribute_exists(pk) AND #state = :expected AND passesCompleted = :pass AND (attribute_not_exists(leaseUntil) OR leaseUntil <= :epoch)",
+      UpdateExpression: "SET #state = :state, progressPercent = :progress, updatedAt = :now, leaseToken = :token, leaseUntil = :until",
+      ExpressionAttributeNames: { "#state": "state" },
+      ExpressionAttributeValues: { ":state": PASS_STATE[pass], ":expected": job.state, ":pass": pass, ":epoch": epoch,
+        ":token": leaseToken, ":until": epoch + LAB_WORKER_LEASE_SECONDS * 1000, ":progress": PASS_PROGRESS[pass], ":now": now } }));
+  } catch (error) {
+    if (error && typeof error === "object" && (error as { name?: string }).name === "ConditionalCheckFailedException") {
+      throw Object.assign(new Error("lab_worker_busy"), { name: "lab_worker_busy" });
+    }
+    throw error;
+  }
   try {
     const output = await executePass(job, pass);
     const terminal = pass === 4;
@@ -715,12 +813,17 @@ export async function createAwsLabAnalysisWorker(event: { jobId?: string; pass?:
     await db.send(new UpdateCommand({
       TableName: required("LAB_JOB_TABLE"),
       Key: { pk: job.pk },
+      ConditionExpression: "attribute_exists(pk) AND #state = :running AND passesCompleted = :pass AND leaseToken = :token AND leaseUntil > :epoch",
       UpdateExpression: terminal
-        ? "SET #state = :state, passesCompleted = :completed, progressPercent = :progress, updatedAt = :now, #result = :result"
-        : "SET #state = :state, passesCompleted = :completed, progressPercent = :progress, updatedAt = :now",
+        ? "SET #state = :state, passesCompleted = :completed, progressPercent = :progress, updatedAt = :now, #result = :result REMOVE leaseToken, leaseUntil"
+        : "SET #state = :state, passesCompleted = :completed, progressPercent = :progress, updatedAt = :now REMOVE leaseToken, leaseUntil",
       ExpressionAttributeNames: { "#state": "state", ...(terminal ? { "#result": "result" } : {}) },
       ExpressionAttributeValues: {
         ":state": terminal ? "completed" : PASS_STATE[pass],
+        ":running": PASS_STATE[pass],
+        ":pass": pass,
+        ":token": leaseToken,
+        ":epoch": Date.now(),
         ":completed": pass + 1,
         ":progress": terminal ? 100 : PASS_PROGRESS[pass],
         ":now": updatedAt,
@@ -730,6 +833,16 @@ export async function createAwsLabAnalysisWorker(event: { jobId?: string; pass?:
     console.info(JSON.stringify({ event: "lab_analysis_pass_completed", jobId, pass, terminal }));
     return { jobId, pass, completed: true };
   } catch (error) {
+    // Only the owner may release a lease. A delayed invocation cannot unlock
+    // a replacement worker, recreate a deleted row, or alter its result.
+    try {
+      await db.send(new UpdateCommand({ TableName: required("LAB_JOB_TABLE"), Key: { pk: job.pk },
+        ConditionExpression: "attribute_exists(pk) AND leaseToken = :token",
+        UpdateExpression: "REMOVE leaseToken, leaseUntil", ExpressionAttributeValues: { ":token": leaseToken } }));
+    } catch {
+      // Ambiguous network errors leave the lease to expire; never unlock blindly.
+      console.warn("lab_worker_lease_release_unconfirmed");
+    }
     const detail = error && typeof error === "object" ? error as Record<string, unknown> : {};
     const errorName = typeof detail.name === "string" ? detail.name : "UnknownError";
     const errorCode = typeof detail.Code === "string"

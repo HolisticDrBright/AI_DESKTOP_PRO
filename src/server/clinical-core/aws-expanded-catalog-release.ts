@@ -39,6 +39,7 @@ export function loadAndBuildExpandedCatalogRelease(options: {
     targetEnvironment: options.targetEnvironment,
     expectedManifestFileSha256: options.originalManifestFileSha256,
   });
+  const derivedVersion = original.sourcePackageVersion === 1 ? null : original.sourcePackageVersion + 1;
   const candidateDirectory = resolve(options.candidateDirectory);
   const candidateManifestBytes = readFileSync(resolve(candidateDirectory, "manifest.json"));
   const candidateManifestFileSha256 = byteSha256(candidateManifestBytes);
@@ -59,7 +60,7 @@ export function loadAndBuildExpandedCatalogRelease(options: {
   const originalProducts = original.products.map((product): CatalogProductSeed => {
     const base = {
       ...product,
-      version: 5,
+      version: derivedVersion ?? 5,
       clinicalPayload: {
         ...product.clinicalPayload,
         selectionPriorityGroup: "original_primary",
@@ -82,24 +83,25 @@ export function loadAndBuildExpandedCatalogRelease(options: {
     packageRef: `candidate-manifest-sha256:${candidateManifestFileSha256}`,
     productsRef: `candidate-products-sha256:${byteSha256(productBytes)}`,
   }));
-  const productLabels = original.productLabels.map((label) => reversion(label, 2, productLabelContentForHash));
-  const protocolTemplates = original.protocolTemplates.map((template) => reversion(template, 10, templateContentForHash));
-  const safetyRules = original.safetyRules.map((rule) => reversion(rule, 2, safetyRuleContentForHash));
-  const knowledgeSources = original.knowledgeSources.map((source) => reversion(source, 2, knowledgeSourceContentForHash));
+  const productLabels = original.productLabels.map((label) => reversion(label, derivedVersion ?? 2, productLabelContentForHash));
+  const protocolTemplates = original.protocolTemplates.map((template) => reversion(template, derivedVersion ?? 10, templateContentForHash));
+  const safetyRules = original.safetyRules.map((rule) => reversion(rule, derivedVersion ?? 2, safetyRuleContentForHash));
+  const knowledgeSources = original.knowledgeSources.map((source) => reversion(source, derivedVersion ?? 2, knowledgeSourceContentForHash));
 
   const base = {
     contractVersion: GOVERNED_CATALOG_CONTRACT,
     sourcePackageId: `ai-longevity-pro-v2-expanded-catalog.${candidateManifestFileSha256.slice(0, 16)}`,
-    sourcePackageVersion: 3,
+    sourcePackageVersion: derivedVersion ?? 3,
     targetEnvironment: options.targetEnvironment,
     dataClassification: "reference_only" as const,
     containsPhi: false as const,
-    products: [...originalProducts, ...candidateProducts],
+    products: [...originalProducts, ...candidateProducts.map(product => derivedVersion === null ? product
+      : reversion(product, derivedVersion, productContentForHash))],
     productLabels,
     // Import source-provided destinations as pending commercial records. The
     // release approval still activates clinical records only; a second,
     // exact-selection-hash operation activates these URLs in synthetic staging.
-    commercialOffers: candidateOffers,
+    commercialOffers: candidateOffers.map(offer => derivedVersion === null ? offer : reversion(offer, derivedVersion, offerContentForHash)),
     protocolTemplates,
     safetyRules,
     knowledgeSources,

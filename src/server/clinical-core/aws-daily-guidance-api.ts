@@ -1,4 +1,5 @@
 if (typeof window !== "undefined") throw new Error("aws-daily-guidance-api is server-only");
+import { CoreSubscriptionError, requireConsumerCore } from "./core-subscription-guard";
 
 import type { ApiGatewayV2Event, ApiGatewayV2Response } from "./aws-identity-api";
 import { DailyGuidanceError, validateDailyGuidanceInput, type DailyGuidanceInput, type DailyGuidanceResult } from "./aws-daily-guidance";
@@ -32,9 +33,11 @@ export function createAwsDailyGuidanceApiHandler(input: { configuration: DailyGu
     }
     try {
       assertIdentity(event, input.configuration);
+      if (input.configuration.runtimeMode === "production") await requireConsumerCore(event.headers ?? {});
       const request = validateDailyGuidanceInput(parseBody(event));
       return response(200, { data: await provider(request) });
     } catch (error) {
+      if (error instanceof CoreSubscriptionError) return response(402, { error: "core_subscription_required" });
       if (error instanceof DailyGuidanceError) {
         const status = error.category === "insufficient_measured_data" ? 422
           : error.category === "reproductive_consent_required" ? 409

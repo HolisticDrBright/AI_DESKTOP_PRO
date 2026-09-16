@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
@@ -7,6 +7,7 @@ import {
   GovernedCatalogSourcePackageError,
   loadAndAdaptGovernedCatalogSourcePackage,
 } from "./aws-governed-catalog-seed-adapter";
+import { loadAndBuildExpandedCatalogRelease } from "./aws-expanded-catalog-release";
 
 const workbookSha = "a".repeat(64);
 const affiliateSha = "b".repeat(64);
@@ -142,6 +143,22 @@ function writeSourcePackage(options: { schemaVersion?: "1.0.0" | "1.1.0"; crlfFi
 }
 
 describe("Claude source package to AWS governed catalog adapter", () => {
+  test.runIf(Boolean(process.env.GOVERNED_CATALOG_SOURCE_DIR && process.env.GOVERNED_CATALOG_CANDIDATE_DIR))(
+    "derived 710-product release retains the new source revision without overwriting older versions", () => {
+      const directory = process.env.GOVERNED_CATALOG_CANDIDATE_DIR!;
+      const r = loadAndBuildExpandedCatalogRelease({ originalDirectory: process.env.GOVERNED_CATALOG_SOURCE_DIR!,
+        originalManifestFileSha256: process.env.GOVERNED_CATALOG_SOURCE_MANIFEST_SHA256!,
+        candidateDirectory: directory, candidateManifestFileSha256: sha256(readFileSync(join(directory, "manifest.json"), "utf8")),
+        approvalFile: join(directory, "catalog-owner-approval.json"), targetEnvironment: "synthetic-staging" });
+      expect(r.sourcePackageVersion).toBe(102001);
+      expect(r.products).toHaveLength(847);
+      expect(r.products.every(row => row.version === 102001)).toBe(true);
+      expect(r.productLabels.every(row => row.version === 102001)).toBe(true);
+      expect(r.commercialOffers.every(row => row.version === 102001)).toBe(true);
+      expect(r.containsPhi).toBe(false);
+      expect(r.productLabels.filter(row => row.crosscheckPayload.reconciliation)).toHaveLength(3);
+      expect(r.products.filter(row => row.clinicalPayload.selectionPriorityGroup === "original_primary")).toHaveLength(137);
+    });
   test.runIf(Boolean(process.env.GOVERNED_CATALOG_SOURCE_DIR))(
     "adapts the externally handed-off package when its pinned path is available",
     () => {
@@ -156,7 +173,18 @@ describe("Claude source package to AWS governed catalog adapter", () => {
       expect(manifest.protocolTemplates).toHaveLength(32);
       expect(manifest.protocolTemplates.flatMap((template) => template.steps)).toHaveLength(163);
       expect(manifest.safetyRules).toHaveLength(55);
-      expect(manifest.knowledgeSources).toHaveLength(77);
+      // The 77 authoring rows include the same FDA source at rows 15 and 73.
+      expect(manifest.knowledgeSources).toHaveLength(76);
+      expect(manifest.knowledgeSources.find(row => row.sourcePayload.authoringCode === "SRC_FDA_COMPOUNDING_RISK")
+        ?.sourcePayload.reconciledDuplicateRows).toEqual([15, 73]);
+      if (manifest.sourcePackageVersion === 102000) {
+        const reconciled = manifest.productLabels.filter(row => row.crosscheckPayload.reconciliation);
+        expect(reconciled).toHaveLength(3);
+        expect(reconciled.every(row => !row.substantiveConflict && row.version === 102000)).toBe(true);
+        expect(reconciled.filter(row => row.physicalLabelRequired)).toHaveLength(2);
+        expect(reconciled.every(row => row.crosscheckPayload.verdict === "substantive_conflict")).toBe(true);
+        expect(manifest.productLabels.filter(row => row.substantiveConflict)).toHaveLength(4);
+      }
     },
   );
 

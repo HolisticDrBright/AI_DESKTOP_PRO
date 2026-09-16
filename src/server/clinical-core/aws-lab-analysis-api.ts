@@ -1,10 +1,16 @@
 import { randomUUID } from "node:crypto";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DeleteCommand, GetCommand, PutCommand, UpdateCommand, DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
-import { DeleteObjectsCommand, HeadObjectCommand, ListObjectVersionsCommand, S3Client } from "@aws-sdk/client-s3";
+import { GetCommand, PutCommand, UpdateCommand, DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
+import { HeadObjectCommand, ListObjectsV2Command, S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { SFNClient, StartExecutionCommand } from "@aws-sdk/client-sfn";
+import { collectionRangeContextSchema, type CollectionRangeContext } from "./lab-range-population";
+import { resolveLabSourcePanel, type LabSourcePanel } from "./lab-source-panel";
+import { labRequestLedger, LabRequestError, requestIdentity, REQUEST_RECOVERY_VERSION, REQUEST_RETIREMENT_VERSION } from './lab-request-ledger';
+import { inventoryStamp, labRecoveryDescriptor, listLabInventory, LAB_INVENTORY_VERSION } from './lab-job-inventory';
+import { claimLabDeletion, reconcileLabDeletion } from './lab-deletion-cleanup';
+import { stopLabExecutions } from './lab-execution-stop';
 
 const CONTRACT_VERSION = "lab-analysis/1";
 const MAX_BODY_BYTES = 256 * 1024;
@@ -16,6 +22,7 @@ type Claims = { sub: string; "custom:person_id": string; "custom:organization_id
 type ApiEvent = {
   body?: unknown;
   rawPath?: unknown;
+  queryStringParameters?: Record<string, string | undefined>;
   requestContext?: { authorizer?: { jwt?: { claims?: unknown }; lambda?: unknown }; http?: { method?: unknown } };
 };
 type DocumentInput = {
@@ -23,6 +30,7 @@ type DocumentInput = {
   fileName: string;
   contentType: string;
   byteSize: number;
+  checksumSHA256?: string;
 };
 
 export type PatientContext = {
@@ -43,7 +51,7 @@ export type PatientContext = {
 export type LongitudinalBiomarker = {
   biomarkerId: string; canonicalName: string; value: number; unit: string;
   labMin: number | null; labMax: number | null; functionalMin: number | null; functionalMax: number | null;
-  status: "optimal" | "normal" | "suboptimal" | "critical";
+  status: "optimal" | "normal" | "suboptimal" | "critical" | "unclassified";
 };
 
 export type LongitudinalContext = {
@@ -62,6 +70,7 @@ export type StructuredLabBiomarker = {
   unit: string;
   labMin: number | null;
   labMax: number | null;
+  collectionContext?: CollectionRangeContext;
 };
 
 type Job = {
@@ -78,11 +87,14 @@ type Job = {
   expiresAt: number;
   documents: Array<DocumentInput & { objectKey: string }>;
   structuredBiomarkers?: StructuredLabBiomarker[];
+  sourcePanel?: LabSourcePanel;
   panelId?: string;
+  sourcePanelSha256?: string;
   patientContext?: PatientContext;
   longitudinalContext?: LongitudinalContext;
   failureCategory: string | null;
   result: unknown | null;
+  rangeReleaseSha256?: string;
 };
 
 const db = DynamoDBDocumentClient.from(new DynamoDBClient({}));
@@ -147,7 +159,8 @@ function safeDocument(value: unknown): DocumentInput {
     || !MIME_TYPES.has(row.contentType ?? "")
     || !Number.isInteger(row.byteSize)
     || (row.byteSize ?? 0) < 1
-    || (row.byteSize ?? 0) > MAX_DOCUMENT_BYTES) {
+    || (row.byteSize ?? 0) > MAX_DOCUMENT_BYTES
+    || (row.checksumSHA256 !== undefined && (typeof row.checksumSHA256 !== 'string' || !/^[A-Za-z0-9+/]{43}=$/.test(row.checksumSHA256)))) {
     throw new Error("document_invalid");
   }
   return row as DocumentInput;
@@ -210,8 +223,16 @@ function safeLongitudinalBiomarker(value: unknown): LongitudinalBiomarker {
     || !boundedString(row.canonicalName, 160) || typeof row.value !== "number" || !Number.isFinite(row.value)
     || !boundedString(row.unit, 80) || !safeNullableNumber(row.labMin) || !safeNullableNumber(row.labMax)
     || !safeNullableNumber(row.functionalMin) || !safeNullableNumber(row.functionalMax)
-    || !["optimal", "normal", "suboptimal", "critical"].includes(String(row.status))) throw new Error("longitudinal_context_invalid");
+    || !["optimal", "normal", "suboptimal", "critical", "unclassified"].includes(String(row.status))) throw new Error("longitudinal_context_invalid");
   return row as LongitudinalBiomarker;
+}
+
+function rangeReleaseStamp(): { rangeReleaseSha256?: string } {
+  if (process.env.LAB_RANGE_MODE && !["synthetic_fixture", "reviewed_release"].includes(process.env.LAB_RANGE_MODE)) throw new Error("lab_range_mode_invalid");
+  if (process.env.LAB_RANGE_MODE !== "reviewed_release") return {};
+  const hash = required("LAB_RANGE_RELEASE_SHA256");
+  if (!/^[a-f0-9]{64}$/.test(hash)) throw new Error("lab_range_release_refused");
+  return { rangeReleaseSha256: hash };
 }
 
 export function safeStructuredLabBiomarkers(value: unknown): StructuredLabBiomarker[] {
@@ -219,12 +240,15 @@ export function safeStructuredLabBiomarkers(value: unknown): StructuredLabBiomar
   const biomarkers = value.map((candidate) => {
     if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) throw new Error("structured_biomarkers_invalid");
     const row = candidate as Record<string, unknown>;
-    const expected = ["markerId", "canonicalName", "value", "unit", "labMin", "labMax"];
+    const expected = ["markerId", "canonicalName", "value", "unit", "labMin", "labMax", "collectionContext"];
     if (Object.keys(row).some((key) => !expected.includes(key))
       || !boundedString(row.markerId, 160) || !boundedString(row.canonicalName, 160)
       || typeof row.value !== "number" || !Number.isFinite(row.value)
       || !boundedString(row.unit, 80) || !safeNullableNumber(row.labMin) || !safeNullableNumber(row.labMax)
       || (row.labMin !== null && row.labMax !== null && Number(row.labMin) > Number(row.labMax))) {
+      throw new Error("structured_biomarkers_invalid");
+    }
+    if (row.collectionContext !== undefined && !collectionRangeContextSchema.safeParse(row.collectionContext).success) {
       throw new Error("structured_biomarkers_invalid");
     }
     return row as StructuredLabBiomarker;
@@ -304,7 +328,7 @@ function status(job: Job) {
   };
 }
 
-async function ownedJob(jobId: string, ownerSub: string): Promise<Job | null> {
+async function ownedJob(jobId: string, identity: Claims, includeDeleting = false): Promise<Job | null> {
   if (!/^[0-9a-f-]{36}$/i.test(jobId)) return null;
   const result = await db.send(new GetCommand({
     TableName: required("LAB_JOB_TABLE"),
@@ -312,46 +336,41 @@ async function ownedJob(jobId: string, ownerSub: string): Promise<Job | null> {
     ConsistentRead: true,
   }));
   const job = result.Item as Job | undefined;
-  return job?.ownerSub === ownerSub ? job : null;
-}
-
-async function purgePrefix(bucket: string, prefix: string): Promise<void> {
-  let keyMarker: string | undefined;
-  let versionIdMarker: string | undefined;
-  do {
-    const page = await s3.send(new ListObjectVersionsCommand({
-      Bucket: bucket,
-      Prefix: prefix,
-      ...(keyMarker ? { KeyMarker: keyMarker } : {}),
-      ...(versionIdMarker ? { VersionIdMarker: versionIdMarker } : {}),
-    }));
-    const objects = [
-      ...(page.Versions ?? []).map((row) => ({ Key: row.Key!, VersionId: row.VersionId! })),
-      ...(page.DeleteMarkers ?? []).map((row) => ({ Key: row.Key!, VersionId: row.VersionId! })),
-    ];
-    if (objects.length > 0) {
-      await s3.send(new DeleteObjectsCommand({ Bucket: bucket, Delete: { Objects: objects, Quiet: true } }));
-    }
-    keyMarker = page.IsTruncated ? page.NextKeyMarker : undefined;
-    versionIdMarker = page.IsTruncated ? page.NextVersionIdMarker : undefined;
-  } while (keyMarker || versionIdMarker);
+  return (includeDeleting || job?.state !== 'deleting') && job?.ownerSub === identity.sub && job.organizationId === identity['custom:organization_id']
+    && job.personId === identity['custom:person_id'] ? job : null;
 }
 
 async function deleteJob(identity: Claims, jobId: string) {
-  const job = await ownedJob(jobId, identity.sub);
-  if (!job) return json(200, { contractVersion: CONTRACT_VERSION, jobId, deleted: true });
-  if (!["awaiting_upload", "completed", "needs_review", "failed"].includes(job.state)) return refusal(409);
+  const job = await ownedJob(jobId, identity, true);
+  if (job && !["awaiting_upload", "completed", "needs_review", "failed", "deleting"].includes(job.state)) return refusal(409);
+  const deps={db,s3,table:required('LAB_JOB_TABLE'),bucket:required('LAB_DOCUMENT_BUCKET'),
+    stopExecutions:(id:string)=>stopLabExecutions(sfn,required('LAB_STATE_MACHINE_ARN'),id)};
+  const scope={ownerSub:identity.sub,organizationId:identity['custom:organization_id'],personId:identity['custom:person_id']};
+  if(job)await claimLabDeletion(deps,scope,jobId);
+  const cleanup=await reconcileLabDeletion(deps,jobId,scope);
+  return json(200, { contractVersion: CONTRACT_VERSION, jobId, deleted: true, ...cleanup });
+}
 
-  const bucket = required("LAB_DOCUMENT_BUCKET");
-  await purgePrefix(bucket, `synthetic-labs/${job.organizationId}/${job.ownerSub}/${jobId}/`);
-  await purgePrefix(bucket, `synthetic-labs/artifacts/${jobId}/`);
-  await db.send(new DeleteCommand({
-    TableName: required("LAB_JOB_TABLE"),
-    Key: { pk: job.pk },
-    ConditionExpression: "ownerSub = :owner",
-    ExpressionAttributeValues: { ":owner": identity.sub },
-  }));
-  return json(200, { contractVersion: CONTRACT_VERSION, jobId, deleted: true });
+/** Cancellation is explicit removal of unfinished work, not deletion of a saved result.
+ * A running Lambda/provider request may finish, but cannot publish after the fence. */
+async function cancelJob(event:ApiEvent,identity:Claims,jobId:string){
+  const input=body(event);
+  if(Object.keys(input).sort().join(',')!=='confirmRemoveUnfinishedAnalysis' || input.confirmRemoveUnfinishedAnalysis!==true)return refusal();
+  const job=await ownedJob(jobId,identity,true);
+  if(job&&!['awaiting_upload','queued','extracting','verifying','normalizing','interpreting','synthesizing','deleting'].includes(job.state))return refusal(409);
+  const scope={ownerSub:identity.sub,organizationId:identity['custom:organization_id'],personId:identity['custom:person_id']};
+  const deps={db,s3,table:required('LAB_JOB_TABLE'),bucket:required('LAB_DOCUMENT_BUCKET'),
+    stopExecutions:(id:string)=>stopLabExecutions(sfn,required('LAB_STATE_MACHINE_ARN'),id)};
+  try{
+    if(job)await claimLabDeletion(deps,scope,jobId,true);
+    const cleanup=await reconcileLabDeletion(deps,jobId,scope);
+    if(!cleanup)return refusal(404);
+    return json(200,{contractVersion:'lab-cancellation/1',jobId,cancelled:true,deleted:true,...cleanup});
+  }catch(error){
+    if((error as {name?:unknown})?.name==='TransactionCanceledException')return refusal(409);
+    // The durable outbox remains for retry. Never acknowledge a partial purge/stop.
+    return refusal(503);
+  }
 }
 
 async function createJob(event: ApiEvent, identity: Claims) {
@@ -366,8 +385,6 @@ async function createJob(event: ApiEvent, identity: Claims) {
   if (new Set(documents.map((row) => row.clientDocumentId)).size !== documents.length) return refusal();
   const jobId = randomUUID();
   const now = new Date().toISOString();
-  const bucket = required("LAB_DOCUMENT_BUCKET");
-  const kmsKey = required("LAB_KMS_KEY_ARN");
   const stored = documents.map((document) => ({
     ...document,
     objectKey: `synthetic-labs/${identity["custom:organization_id"]}/${identity.sub}/${jobId}/${document.clientDocumentId}/${document.fileName}`,
@@ -378,6 +395,7 @@ async function createJob(event: ApiEvent, identity: Claims) {
     organizationId: identity["custom:organization_id"],
     personId: identity["custom:person_id"],
     state: "awaiting_upload",
+    ...inventoryStamp({ownerSub:identity.sub,organizationId:identity['custom:organization_id'],personId:identity['custom:person_id']}, now, `job#${jobId}`),
     passesCompleted: 0,
     progressPercent: 0,
     attempt: 1,
@@ -385,25 +403,34 @@ async function createJob(event: ApiEvent, identity: Claims) {
     updatedAt: now,
     expiresAt: Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60,
     documents: stored,
+    ...rangeReleaseStamp(),
     ...(typeof input.panelId === "string" && input.panelId.length <= 160 ? { panelId: input.panelId } : {}),
     ...(patientContext ? { patientContext } : {}),
     ...(longitudinalContext ? { longitudinalContext } : {}),
     failureCategory: null,
     result: null,
   };
-  await db.send(new PutCommand({
-    TableName: required("LAB_JOB_TABLE"),
-    Item: job,
-    ConditionExpression: "attribute_not_exists(pk)",
-  }));
+  if(input.request!==undefined){
+    const {request,...intent}=input;
+    const saved=await labRequestLedger(db,required('LAB_JOB_TABLE')).create(job,request,'documents',intent,job);
+    return json(200,{contractVersion:REQUEST_RECOVERY_VERSION,requestId:requestIdentity(request).id,jobId:saved.pk.slice(4)});
+  }
+  await db.send(new PutCommand({TableName:required('LAB_JOB_TABLE'),Item:job,ConditionExpression:'attribute_not_exists(pk)'}));
+  const targets = await uploadTargets(job, stored);
+  return json(200, { contractVersion: CONTRACT_VERSION, jobId, state: "awaiting_upload", documents: targets });
+}
+
+async function uploadTargets(job: Job, documents: Job['documents']) {
+  const jobId = job.pk.slice(4), bucket = required('LAB_DOCUMENT_BUCKET'), kmsKey = required('LAB_KMS_KEY_ARN');
   const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
-  const targets = await Promise.all(stored.map(async (document) => {
+  return Promise.all(documents.map(async (document) => {
     const headers = {
       "content-type": document.contentType,
       "x-amz-server-side-encryption": "aws:kms",
       "x-amz-server-side-encryption-aws-kms-key-id": kmsKey,
       "x-amz-meta-job-id": jobId,
       "x-amz-meta-document-id": document.clientDocumentId,
+      ...(document.checksumSHA256 ? { 'x-amz-checksum-sha256': document.checksumSHA256, 'if-none-match': '*' } : {}),
     };
     const uploadUrl = await getSignedUrl(s3, new PutObjectCommand({
       Bucket: bucket,
@@ -412,22 +439,59 @@ async function createJob(event: ApiEvent, identity: Claims) {
       ServerSideEncryption: "aws:kms",
       SSEKMSKeyId: kmsKey,
       Metadata: { "job-id": jobId, "document-id": document.clientDocumentId },
+      ...(document.checksumSHA256 ? { ChecksumSHA256: document.checksumSHA256, IfNoneMatch: '*' } : {}),
     }), {
       expiresIn: 15 * 60,
-      unhoistableHeaders: new Set(["x-amz-meta-job-id", "x-amz-meta-document-id"]),
+      unhoistableHeaders: new Set(["x-amz-meta-job-id", "x-amz-meta-document-id", 'x-amz-checksum-sha256']),
+      signableHeaders: new Set(['if-none-match']),
     });
     return { clientDocumentId: document.clientDocumentId, uploadUrl, method: "PUT", requiredHeaders: headers, expiresAt };
   }));
-  return json(200, { contractVersion: CONTRACT_VERSION, jobId, state: "awaiting_upload", documents: targets });
+}
+
+async function verifyUploadedDocument(job: Job, document: Job['documents'][number]): Promise<boolean> {
+  let head;
+  try {
+    head = await s3.send(new HeadObjectCommand({ Bucket: required('LAB_DOCUMENT_BUCKET'), Key: document.objectKey,
+      ...(document.checksumSHA256 ? { ChecksumMode: 'ENABLED' as const } : {}) }));
+  } catch (error) {
+    // AccessDenied/transient failures do not mean the object is missing.
+    if ((error as { name?: string })?.name === 'NotFound') return false;
+    throw error;
+  }
+  if (head.ContentLength !== document.byteSize || head.ContentType !== document.contentType
+    || head.ServerSideEncryption !== 'aws:kms' || head.SSEKMSKeyId !== required('LAB_KMS_KEY_ARN')
+    || head.Metadata?.['job-id'] !== job.pk.slice(4) || head.Metadata?.['document-id'] !== document.clientDocumentId
+    || (document.checksumSHA256 && head.ChecksumSHA256 !== document.checksumSHA256)) throw new Error('lab_uploaded_object_invalid');
+  return true;
+}
+
+async function resumeUpload(identity: Claims, jobId: string) {
+  const job = await ownedJob(jobId, identity);
+  if (!job || job.organizationId !== identity['custom:organization_id'] || job.personId !== identity['custom:person_id']) return refusal(404);
+  if (job.state !== 'awaiting_upload' || job.expiresAt <= Math.floor(Date.now() / 1000)
+    || !job.documents.length || job.documents.some(d => !d.checksumSHA256)) return refusal(409);
+  const missing: Job['documents'] = [], uploadedDocuments: { clientDocumentId: string }[] = [];
+  for (const document of job.documents) {
+    // A prefix-scoped list avoids treating a missing object's ambiguous HEAD 403
+    // as absence; all access/network failures still stop recovery.
+    const present = await s3.send(new ListObjectsV2Command({Bucket:required('LAB_DOCUMENT_BUCKET'),Prefix:document.objectKey,MaxKeys:1}));
+    if (present.Contents?.some(row=>row.Key===document.objectKey) && await verifyUploadedDocument(job, document)) uploadedDocuments.push({ clientDocumentId: document.clientDocumentId });
+    else missing.push(document);
+  }
+  const documents = await uploadTargets(job, missing);
+  return json(200, { contractVersion: CONTRACT_VERSION, jobId, state: 'awaiting_upload', documents, uploadedDocuments });
 }
 
 async function createPlanJob(event: ApiEvent, identity: Claims) {
   const input = body(event);
-  const expected = ["panelId", "panelName", "testDate", "patientContext", "longitudinalContext", "dataClassification", "attestsSyntheticOnly", "biomarkers"];
+  const expected = ["request", "panelId", "panelName", "testDate", "patientContext", "longitudinalContext", "dataClassification", "attestsSyntheticOnly", "biomarkers", "sourcePanelSha256"];
   if (Object.keys(input).some((key) => !expected.includes(key))
     || input.dataClassification !== "synthetic_only" || input.attestsSyntheticOnly !== true
-    || !boundedString(input.panelId, 160) || !boundedString(input.panelName, 180) || !safeDate(input.testDate)) return refusal();
+    || !boundedString(input.panelId, 160) || !boundedString(input.panelName, 180) || !safeDate(input.testDate)
+    || (input.sourcePanelSha256 !== undefined && (typeof input.sourcePanelSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(input.sourcePanelSha256)))) return refusal();
   const structuredBiomarkers = safeStructuredLabBiomarkers(input.biomarkers);
+  const sourcePanel=resolveLabSourcePanel({sourcePanel:{panelId:input.panelId,panelName:input.panelName,testDate:input.testDate},structuredBiomarkers});
   const patientContext = safePatientContext(input.patientContext);
   const longitudinalContext = safeLongitudinalContext(input.longitudinalContext);
   if (longitudinalContext && (longitudinalContext.incomingPanel.panelId !== input.panelId
@@ -441,6 +505,7 @@ async function createPlanJob(event: ApiEvent, identity: Claims) {
     organizationId: identity["custom:organization_id"],
     personId: identity["custom:person_id"],
     state: "queued",
+    ...inventoryStamp({ownerSub:identity.sub,organizationId:identity['custom:organization_id'],personId:identity['custom:person_id']}, now, `job#${jobId}`),
     passesCompleted: 0,
     progressPercent: 5,
     attempt: 1,
@@ -449,27 +514,46 @@ async function createPlanJob(event: ApiEvent, identity: Claims) {
     expiresAt: Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60,
     documents: [],
     structuredBiomarkers,
+    ...(sourcePanel?{sourcePanel}:{}),
+    ...rangeReleaseStamp(),
     panelId: input.panelId,
+    ...(typeof input.sourcePanelSha256 === 'string' ? {sourcePanelSha256:input.sourcePanelSha256} : {}),
     ...(patientContext ? { patientContext } : {}),
     ...(longitudinalContext ? { longitudinalContext } : {}),
     failureCategory: null,
     result: null,
   };
+  if(input.request!==undefined){
+    const {request,...intent}=input;
+    const saved=await labRequestLedger(db,required('LAB_JOB_TABLE')).create(job,request,'saved',intent,job);
+    await ensureQueuedExecution(saved);
+    return json(200,{contractVersion:REQUEST_RECOVERY_VERSION,requestId:requestIdentity(request).id,jobId:saved.pk.slice(4)});
+  }
   await db.send(new PutCommand({ TableName: required("LAB_JOB_TABLE"), Item: job, ConditionExpression: "attribute_not_exists(pk)" }));
-  await sfn.send(new StartExecutionCommand({
-    stateMachineArn: required("LAB_STATE_MACHINE_ARN"),
-    name: `lab-plan-${jobId}`,
-    input: JSON.stringify({ jobId }),
-  }));
+  await ensureQueuedExecution(job);
   console.info(JSON.stringify({ event: "structured_lab_plan_job_created", jobId, markerCount: structuredBiomarkers.length }));
   return json(200, { contractVersion: CONTRACT_VERSION, jobId, state: "queued" });
 }
 
+/** A transient start failure must not lose the durable job ID or create another job on retry. */
+async function ensureQueuedExecution(job: Job): Promise<void> {
+  if (job.state !== "queued") return;
+  const jobId = job.pk.slice(4);
+  try {
+    await sfn.send(new StartExecutionCommand({ stateMachineArn: required("LAB_STATE_MACHINE_ARN"),
+      name: `${job.structuredBiomarkers ? "lab-plan" : "lab"}-${jobId}`, input: JSON.stringify({ jobId }) }));
+  } catch (error) {
+    if (error && typeof error === "object" && (error as { name?: string }).name === "ExecutionAlreadyExists") return;
+    // Polling retries this exact named execution; queued state remains truthful.
+    console.warn("lab_execution_start_pending");
+  }
+}
+
 async function completeUpload(event: ApiEvent, identity: Claims, jobId: string) {
   const input = body(event);
-  const job = await ownedJob(jobId, identity.sub!);
+  const job = await ownedJob(jobId, identity);
   if (!job) return refusal(404);
-  if (job.state !== "awaiting_upload") return json(200, status(job));
+  if (job.state !== "awaiting_upload") { await ensureQueuedExecution(job); return json(200, status(job)); }
   if (!Array.isArray(input.uploadedDocuments)
     || input.uploadedDocuments.length !== job.documents.length) return refusal(409);
   const ids = new Set(input.uploadedDocuments.map((row) => (
@@ -479,12 +563,7 @@ async function completeUpload(event: ApiEvent, identity: Claims, jobId: string) 
   )));
   if (ids.size !== job.documents.length || job.documents.some((row) => !ids.has(row.clientDocumentId))) return refusal();
   for (const document of job.documents) {
-    const head = await s3.send(new HeadObjectCommand({ Bucket: required("LAB_DOCUMENT_BUCKET"), Key: document.objectKey }));
-    if (head.ContentLength !== document.byteSize
-      || head.ContentType !== document.contentType
-      || head.ServerSideEncryption !== "aws:kms"
-      || head.Metadata?.["job-id"] !== jobId
-      || head.Metadata?.["document-id"] !== document.clientDocumentId) return refusal(409);
+    if (!await verifyUploadedDocument(job, document)) return refusal(409);
   }
   const updatedAt = new Date().toISOString();
   await db.send(new UpdateCommand({
@@ -494,11 +573,7 @@ async function completeUpload(event: ApiEvent, identity: Claims, jobId: string) 
     ExpressionAttributeNames: { "#state": "state" },
     ExpressionAttributeValues: { ":queued": "queued", ":progress": 5, ":now": updatedAt, ":awaiting": "awaiting_upload", ":owner": identity.sub },
   }));
-  await sfn.send(new StartExecutionCommand({
-    stateMachineArn: required("LAB_STATE_MACHINE_ARN"),
-    name: `lab-${jobId}`,
-    input: JSON.stringify({ jobId }),
-  }));
+  await ensureQueuedExecution({ ...job, state: "queued" });
   return json(200, status({ ...job, state: "queued", progressPercent: 5, updatedAt }));
 }
 
@@ -507,18 +582,61 @@ export async function createAwsLabAnalysisApiHandler(event: ApiEvent) {
     const identity = claims(event);
     const method = event?.requestContext?.http?.method;
     const path = event?.rawPath;
-    if (method === "POST" && (path === "/clinical-core/consumer/labs/jobs" || path === "/clinical-core/synthetic-session/labs/jobs")) return createJob(event, identity);
-    if (method === "POST" && (path === "/clinical-core/consumer/labs/plan-jobs" || path === "/clinical-core/synthetic-session/labs/plan-jobs")) return createPlanJob(event, identity);
-    const match = typeof path === "string" ? path.match(/^\/clinical-core\/(?:consumer|synthetic-session)\/labs\/jobs\/([0-9a-f-]{36})(\/complete-upload)?$/i) : null;
+    if (method === 'GET' && typeof path === 'string') {
+      const scope = {ownerSub:identity.sub,organizationId:identity['custom:organization_id'],personId:identity['custom:person_id']};
+      if (/^\/clinical-core\/(?:consumer|synthetic-session)\/labs\/inventory$/.test(path)) {
+        const query = event.queryStringParameters ?? {};
+        if (Object.keys(query).some(k => k !== 'cursor')) return refusal();
+        return json(200, await listLabInventory(db, required('LAB_JOB_TABLE'), scope, query.cursor));
+      }
+      const recovery = path.match(/^\/clinical-core\/(?:consumer|synthetic-session)\/labs\/jobs\/([0-9a-f-]{36})\/recovery$/i);
+      if (recovery) {
+        const job = await ownedJob(recovery[1], identity);
+        const descriptor = job ? labRecoveryDescriptor(job, scope) : null;
+        return descriptor ? json(200, {contractVersion:LAB_INVENTORY_VERSION, job:descriptor}) : refusal(404);
+      }
+    }
+    if(method==='POST' && typeof path==='string'){
+      const retirement=path.match(/^\/clinical-core\/(?:consumer|synthetic-session)\/labs\/requests\/([0-9a-f-]{36})\/retire$/i);
+      if(retirement){
+        const input=body(event);
+        if(Object.keys(input).some(k=>k!=='request'))return refusal();
+        const request=requestIdentity(input.request);
+        if(request.id!==retirement[1].toLowerCase())return refusal();
+        await labRequestLedger(db,required('LAB_JOB_TABLE')).retire({ownerSub:identity.sub,organizationId:identity['custom:organization_id'],personId:identity['custom:person_id']},request);
+        return json(200,{contractVersion:REQUEST_RETIREMENT_VERSION,requestId:request.id,status:'retired'});
+      }
+      const recoveryCreate=path.match(/^\/clinical-core\/(?:consumer|synthetic-session)\/labs\/requests\/(documents|saved)$/);
+      if(recoveryCreate){
+        requestIdentity(body(event).request); // Dedicated routes cannot fall back to legacy creation.
+        return recoveryCreate[1]==='documents'?await createJob(event,identity):await createPlanJob(event,identity);
+      }
+    }
+    if(method==='GET' && typeof path==='string'){
+      if(/^\/clinical-core\/(?:consumer|synthetic-session)\/labs\/request-recovery$/.test(path))return json(200,{contractVersion:REQUEST_RECOVERY_VERSION});
+      const discovery=path.match(/^\/clinical-core\/(?:consumer|synthetic-session)\/labs\/requests\/([0-9a-f-]{36})$/i);
+      if(discovery){
+        const job=await labRequestLedger(db,required('LAB_JOB_TABLE')).discover<Job>({ownerSub:identity.sub,organizationId:identity['custom:organization_id'],personId:identity['custom:person_id']},discovery[1]);
+        await ensureQueuedExecution(job);
+        return json(200,{contractVersion:REQUEST_RECOVERY_VERSION,requestId:discovery[1].toLowerCase(),jobId:job.pk.slice(4)});
+      }
+    }
+    if (method === "POST" && (path === "/clinical-core/consumer/labs/jobs" || path === "/clinical-core/synthetic-session/labs/jobs")) return await createJob(event, identity);
+    if (method === "POST" && (path === "/clinical-core/consumer/labs/plan-jobs" || path === "/clinical-core/synthetic-session/labs/plan-jobs")) return await createPlanJob(event, identity);
+    const match = typeof path === "string" ? path.match(/^\/clinical-core\/(?:consumer|synthetic-session)\/labs\/jobs\/([0-9a-f-]{36})(\/(?:complete-upload|resume-upload|cancel))?$/i) : null;
     if (!match) return refusal(404);
-    if (method === "POST" && match[2]) return completeUpload(event, identity, match[1]);
-    if (method === "DELETE" && !match[2]) return deleteJob(identity, match[1]);
+    if (method === 'POST' && match[2] === '/cancel') return await cancelJob(event,identity,match[1]);
+    if (method === "POST" && match[2] === '/resume-upload') return await resumeUpload(identity, match[1]);
+    if (method === "POST" && match[2] === '/complete-upload') return await completeUpload(event, identity, match[1]);
+    if (method === "DELETE" && !match[2]) return await deleteJob(identity, match[1]);
     if (method === "GET" && !match[2]) {
-      const job = await ownedJob(match[1], identity.sub);
+      const job = await ownedJob(match[1], identity);
+      if (job) await ensureQueuedExecution(job);
       return job ? json(200, status(job)) : refusal(404);
     }
     return refusal(404);
-  } catch {
+  } catch (error) {
+    if(error instanceof LabRequestError)return json(error.statusCode,{contractVersion:REQUEST_RECOVERY_VERSION,error:error.code});
     return refusal();
   }
 }
