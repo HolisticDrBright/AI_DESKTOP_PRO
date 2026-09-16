@@ -16,7 +16,10 @@ const errors = [];
 const assert = (condition, message) => { if (!condition) errors.push(message); };
 
 assert(manifest.contract_version === "clinical-core-migrations/1", "generated manifest contract is invalid");
-assert(manifest.migrations.length === 55, "expected ten transformed migrations and forty-five production overlays");
+assert(manifest.migrations.length === 56, "expected ten transformed migrations and forty-six production overlays");
+assert(manifest.migrations.some(entry => entry.version === '20260916070000'
+  && entry.file === '20260916070000_production_owned_deletion_hold_guard.sql'),
+  "per-record legal-hold guard must be included in the production artifact");
 assert(!manifest.migrations.some(entry => ['20260821049000', '20260821049500', '20260821049700'].includes(entry.version)),
   "synthetic chat/family/directory variants must not shadow the dedicated production contracts");
 assert(!manifest.migrations.some((entry) => entry.file.includes("synthetic_patient_directory_create")),
@@ -54,6 +57,8 @@ for (const marker of [
   "clinical_private.assert_production_context",
   "clinical_core.create_patient_profile",
   "clinical_core.review_biomarker",
+  "clinical_private.guard_owned_record_deletion_hold",
+  "create trigger owned_record_deletion_hold_guard before insert on clinical_core.owned_consumer_record_versions",
   "'patient.created'",
   "'lab_observation.reviewed'",
 ]) assert(combined.includes(marker), `missing production invariant ${marker}`);

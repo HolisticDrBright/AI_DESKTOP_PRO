@@ -29,3 +29,8 @@ operator and default-blocked personal-storage bundles build. A registration
 test caught the initially missing migration-manifest entry; the manifest was
 corrected before publication. Legal/retention policies and operational approval
 remain human gates. No cloud deployment, PHI activation or paid mobile build.
+
+Exact-source CI at52f1936 caught a second inventory check still expecting55
+migrations. Updated the reviewed count to56 and explicitly require the hold
+migration and trigger in the generated artifact. The failed CI run is retained;
+unit success alone did not establish release-gate success.
