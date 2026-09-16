@@ -7,8 +7,9 @@ export async function handler(event:OwnedVoiceEvent){
   const env=process.env;
   cached??=createOwnedVoiceApi({
     configuration:{consumerIssuer:env.CONSUMER_ISSUER??'',consumerAudience:env.CONSUMER_AUDIENCE??'',
-      phiAllowed:env.PHI_ALLOWED==='true',activationState:env.PERSONAL_VOICE_ACTIVATION==='approved'?'approved':'blocked',
+      phiAllowed:env.PHI_ALLOWED==='true',activationState:env.PERSONAL_VOICE_ACTIVATION==='draining'?'draining':env.PERSONAL_VOICE_ACTIVATION==='approved'?'approved':'blocked',
       activationEvidenceSha256:env.PERSONAL_VOICE_EVIDENCE_SHA256,providerEvidenceSha256:env.PERSONAL_VOICE_PROVIDER_EVIDENCE_SHA256,
+      cleanupEvidenceSha256:env.PERSONAL_VOICE_CLEANUP_EVIDENCE_SHA256,
       allowedScopes:(env.PERSONAL_VOICE_ALLOWED_SCOPES??'').split(',').filter(Boolean)},
     adapter:()=>createOwnedConsumerRecordsAdapter(createRdsDataClinicalCoreDatabase({clusterArn:env.CLINICAL_DATABASE_CLUSTER_ARN??'',
       secretArn:env.CLINICAL_DATABASE_SECRET_ARN??'',databaseName:env.CLINICAL_DATABASE_NAME??'',region:env.AWS_REGION})),

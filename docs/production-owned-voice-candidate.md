@@ -73,7 +73,9 @@ deployment/provider/payment acceptance; load/abuse qualification; complete job/r
 auditing and account privacy across metadata/audio/transcripts/identity/backups;
 crash/restart/two-device/native testing; global-shutdown drain/recovery.
 The template disables scheduling/data IAM when globally blocked: that switch is
-not erasure of outstanding objects. Retention/lifecycle/PITR policy, reviewed
+not erasure of outstanding objects. A separate reviewed cleanup-only drain is
+now implemented; see production-voice-shutdown.md for its limits and operator
+sequence. Retention/lifecycle/PITR policy, reviewed
 consent releases, applicable agreements, production configuration and operational
 alarm owner must be verified before activation. No approval was invented.
 

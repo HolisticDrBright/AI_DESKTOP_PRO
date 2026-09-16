@@ -7,8 +7,8 @@ import type {VoiceJobs} from './voice-jobs';
 import {CoreSubscriptionError,requireConsumerCore} from './core-subscription-guard';
 
 export type OwnedVoiceConfiguration={
-  consumerIssuer:string;consumerAudience:string;phiAllowed:boolean;activationState:'blocked'|'approved';
-  activationEvidenceSha256?:string;providerEvidenceSha256?:string;allowedScopes:readonly string[];
+  consumerIssuer:string;consumerAudience:string;phiAllowed:boolean;activationState:'blocked'|'approved'|'draining';
+  activationEvidenceSha256?:string;providerEvidenceSha256?:string;cleanupEvidenceSha256?:string;allowedScopes:readonly string[];
 };
 const ROOT='/clinical-core/consumer/chat-transcription/jobs';
 export type OwnedVoiceEvent=ApiGatewayV2Event&{source?:string;rawPath?:string;requestContext?:ApiGatewayV2Event['requestContext']&{http?:{method?:string}}};
@@ -24,19 +24,23 @@ export function createOwnedVoiceApi(input:{
     ||!/^[a-zA-Z0-9]{20,128}$/.test(c.consumerAudience))throw new Error('owned_voice_configuration_invalid');
   const active=c.phiAllowed===true&&c.activationState==='approved'
     &&[c.activationEvidenceSha256,c.providerEvidenceSha256].every(v=>/^[a-f0-9]{64}$/.test(v??''));
+  const draining=c.phiAllowed===false&&c.activationState==='draining'
+    &&[c.activationEvidenceSha256,c.providerEvidenceSha256,c.cleanupEvidenceSha256].every(v=>/^[a-f0-9]{64}$/.test(v??''))
+    &&c.allowedScopes.length===0;
+  if(c.activationState==='draining'&&!draining)throw new Error('owned_voice_cleanup_configuration_invalid');
   const featureEnabled=['ai_context','voice_transcription'].every(s=>c.allowedScopes.includes(s));
   if(c.phiAllowed&&!active)throw new Error('owned_voice_activation_invalid');
   const authorization=createOwnedVoiceAuthorization(input.adapter,input.now);
   const policy:VoiceAuthorizationPolicy={verify:job=>{
-    if(!featureEnabled)throw new VoiceAuthorizationRevoked();
+    if(!active||!featureEnabled)throw new VoiceAuthorizationRevoked();
     return authorization.policy.verify(job);
   }};
   return async(event:OwnedVoiceEvent):Promise<ApiGatewayV2Response>=>{
-    if(!active)return reply(503,{error:'production_not_activated',phiAllowed:false});
-    if(event.source==='aws.events'&&!event.requestContext){
+    if((active||draining)&&event.source==='aws.events'&&!event.requestContext&&!event.rawPath&&!event.body){
       try{await input.service(policy).sweep();return reply(200,{swept:true});}
       catch{throw new Error('owned_voice_sweep_retry_required');}
     }
+    if(!active)return reply(503,{error:draining?'voice_cleanup_only':'production_not_activated',phiAllowed:false});
     try{
       const method=event.requestContext?.http?.method;
       const path=event.rawPath??'';

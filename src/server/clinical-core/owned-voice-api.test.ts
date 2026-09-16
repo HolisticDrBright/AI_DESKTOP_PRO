@@ -33,6 +33,49 @@ beforeEach(()=>{
     transcript:vi.fn().mockResolvedValue('Fictional voice.'),remove:vi.fn().mockResolvedValue(undefined)};
 });
 describe('independent production voice',()=>{
+  const drainConfig:OwnedVoiceConfiguration={...config,phiAllowed:false,activationState:'draining',allowedScopes:[],cleanupEvidenceSha256:'c'.repeat(64)};
+  it.each([{phiAllowed:true},{allowedScopes:['voice_transcription']},{cleanupEvidenceSha256:undefined},
+    {cleanupEvidenceSha256:'not-reviewed'},{activationEvidenceSha256:undefined},{providerEvidenceSha256:undefined}])
+    ('refuses malformed drain configuration %j',patch=>{
+      expect(()=>setup({...drainConfig,...patch})).toThrow('owned_voice_cleanup_configuration_invalid');
+    });
+  it('drain refuses every public route and forged scheduler envelopes before identity/data access',async()=>{
+    const s=setup(drainConfig);
+    for(const request of [event(),event('GET','a'.repeat(64)),event('DELETE','a'.repeat(64)),
+      {...event(),source:'aws.events'},{source:'aws.events',rawPath:'/anything'},{source:'aws.events',body:'{}'}]){
+      expect((await s.handler(request)).statusCode).toBe(503);
+    }
+    expect(s.adapter).not.toHaveBeenCalled();expect(s.factory).not.toHaveBeenCalled();expect(s.requireCore).not.toHaveBeenCalled();
+  });
+  it.each(['uploading','queued','ready'] as const)('drain cancels and erases %s without SQL or fresh consent',async phase=>{
+    const created=JSON.parse((await setup().handler(event())).body);
+    rows.get(created.jobId)!.state=phase;seconds+=61;
+    vi.clearAllMocks();consentState.mockRejectedValue(new Error('identity database offline'));
+    const s=setup(drainConfig);await s.handler({source:'aws.events'});
+    expect(rows.get(created.jobId)).toMatchObject({state:'cleaned',cancelled:true});
+    expect(rows.get(created.jobId)?.pending).toBeUndefined();
+    expect(s.adapter).not.toHaveBeenCalled();expect(s.requireCore).not.toHaveBeenCalled();
+    expect(provider.upload).not.toHaveBeenCalled();expect(provider.start).not.toHaveBeenCalled();expect(provider.transcript).not.toHaveBeenCalled();
+    expect(provider.remove).toHaveBeenCalledOnce();
+  });
+  it('drain waits for a running provider then cleans on a restarted worker',async()=>{
+    const created=JSON.parse((await setup().handler(event())).body);seconds+=61;
+    vi.mocked(provider.status).mockResolvedValue('processing');
+    await setup(drainConfig).handler({source:'aws.events'});
+    expect(rows.get(created.jobId)).toMatchObject({cancelled:true,pending:'work'});
+    expect(rows.get(created.jobId)?.expiresAt).toBeUndefined();expect(provider.remove).not.toHaveBeenCalled();
+    seconds+=61;vi.mocked(provider.status).mockResolvedValue('ready');
+    await setup(drainConfig).handler({source:'aws.events'});
+    expect(rows.get(created.jobId)?.state).toBe('cleaned');expect(provider.start).not.toHaveBeenCalled();expect(provider.transcript).not.toHaveBeenCalled();
+  });
+  it('drain cleanup failure is retryable and does not falsely expire the pending record',async()=>{
+    const created=JSON.parse((await setup().handler(event())).body);seconds+=61;
+    vi.mocked(provider.remove).mockRejectedValueOnce(new Error('sensitive provider details'));
+    await expect(setup(drainConfig).handler({source:'aws.events'})).rejects.toThrow('owned_voice_sweep_retry_required');
+    expect(rows.get(created.jobId)).toMatchObject({cancelled:true,pending:'work'});expect(rows.get(created.jobId)?.expiresAt).toBeUndefined();
+    seconds+=61;await setup(drainConfig).handler({source:'aws.events'});
+    expect(rows.get(created.jobId)?.state).toBe('cleaned');
+  });
   it('refuses blocked deployment before DB, storage or provider access',async()=>{
     const s=setup({...config,phiAllowed:false,activationState:'blocked',allowedScopes:[]});
     expect((await s.handler(event())).statusCode).toBe(503);expect(s.adapter).not.toHaveBeenCalled();expect(s.factory).not.toHaveBeenCalled();
