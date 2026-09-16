@@ -1,5 +1,24 @@
 # ALP commercial launch: owner actions and remaining engineering
 
+## Current checkpoint — September 15 synthetic generation acceptance
+
+The lab backend is now **883623f3dcc837eaf8d54c7bc779777d4ce3e574**.
+Saved-measurement generation and actual fictional image extraction/generation
+passed **46 distinct hosted checks** after repairing silent omission of noncatalog
+line measurements (ALT exposed the defect). Runtime hashes and unchanged synthetic
+gates were checked. See [exact deployment and acceptance evidence](synthetic-recovery-hosted-evidence-2026-09-15.md).
+Desktop web still runs 4ffd5f2; no installed V2 update or paid mobile build occurred.
+
+The fixed six-phase scope/status lives in V2
+`expo/docs/commercial-six-phase-ledger.md`. All six remain partial/incomplete.
+Production-owned processing, authoritative plan continuity, full privacy/guardian
+fulfillment, clinical activation, provider qualification and physical release
+acceptance are not completed by these synthetic checks.
+
+**Historical checkpoints below are point-in-time records.** Their “latest” and
+“not deployed” wording must not override a later exact-source checkpoint. Source
+implementation, deployed backend, installed app and human approvals are separate.
+
 Latest September 15 source increment: [cross-device lab recovery](cross-device-lab-recovery.md).
 New indexed requests support explicit V2 inventory/selection under 26 lab routes;
 backend-first deployment, legacy migration and physical acceptance remain.

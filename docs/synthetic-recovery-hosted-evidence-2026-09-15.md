@@ -271,3 +271,55 @@ and external/human requirements remain. No PHI or paid-build gate changed.
 
 This closes the synthetic backend compatibility prerequisite for reviewed-input
 mobile requests, not the production pipeline or any whole commercial phase.
+
+## Positive model/document acceptance and omitted-measurement repair
+
+September 15, 2026 (deployment/test UTC may be September 16).
+
+- Before this repair, positive saved-measurement generation passed on fdc7d8d
+  using the existing synthetic OpenAI secret. Two real fictional-image runs then
+  completed five passes but returned only Glucose and Vitamin D: ALT was missing.
+  Both runs failed acceptance; cleanup returned success and both test identities
+  per run were disabled. Those failed runs are not document acceptance passes.
+- Cause: the explicit OCR-line parser recognized only the fixture range catalog.
+  The table and saved-observation paths were broader. Generic explicit measurement
+  lines are now retained independently of functional-range eligibility. Unknown
+  functional limits remain null; source remains unverified. Qualified/censored
+  unknown values refuse exact-value synthesis. This is not universal OCR/assay
+  coverage or validation of clinical targets.
+- Runtime/harness source **883623f3dcc837eaf8d54c7bc779777d4ce3e574**, PR65.
+  Full local suite **1,515 passed /11 existing skips**; typecheck and artifact build
+  passed; lint zero errors/four existing warnings. Seven new parser tests.
+- Exact change set **recovery-883623f3dcc8-20260915200405** executed after review.
+  Live/candidate templates identical; only ApiCodeKey and WorkerCodeKey changed.
+  All listed IAM, state-machine and event-rule changes were dependent references;
+  no data-resource replacement/removal or permission expansion. Stack
+  UPDATE_COMPLETE, four functions Active/Successful with matching ZIP SHA256:
+  API/authorizer/cleanup
+  **72e267d669aab4597318941a94d1d5abc40c9d6c7b18871b5920eaa5ddea52dd**;
+  worker **39d094ddee9bcf92adc68b3b67e18f803990d1b3c49e467626fb71808280edeb**.
+- Exact-source combined live run used -TestReviewedContext, -TestUploadRoundTrip,
+  -TestSavedPlanGeneration and -TestDocumentGeneration. **46 distinct checks /
+  52 assertion evaluations passed**, terminal exit0. Repeated polling assertions
+  are not counted as distinct tests.
+- Saved test: fictional Glucose104, HDL39, VitaminD24; reviewed-context/source
+  fingerprints preserved; replay recovered the same job/result; plan retained
+  panel provenance and explicit tasks; another user denied; completed job deleted.
+- Document test: in-memory fictional PNG with Glucose104mg/dL, VitaminD24ng/mL,
+  ALT24U/L and printed reference intervals. Real checksum-bound encrypted upload,
+  Textract extraction and existing OpenAI generation completed all five passes.
+  All three values/units/document IDs survived, each needs_human_review. Plan
+  retained exact analysis/panel identity. Completed upload replay returned identical
+  stored analysis; cross-user start/read denied. Job and object versions removed.
+- Both newly created test identities signed out/disabled; minimal audit/request/
+  cleanup history retained intentionally. No real data, email, payment, provider
+  account creation, production account change, clinical signature or mobile build.
+  Two fictional model jobs ran using the existing provider credential/model.
+- Post-test: PHI false, synthetic_only, KnowledgeReleaseMode disabled,
+  LabRangeMode synthetic_fixture, gpt-5.1-2025-11-13 unchanged. Desktop web remains
+  4ffd5f2; V2 installed release unchanged. V2 source1ab884e CI35049328755 succeeded.
+  Desktop883623f CI35050338119 still running at capture; this is not a CI pass claim.
+
+This verifies synthetic positive processing/recovery, not supplement suitability,
+full document-format/assay coverage, production-owned processing, physical devices,
+App-to-Desktop delivery, privacy fulfillment or any complete commercial phase.
