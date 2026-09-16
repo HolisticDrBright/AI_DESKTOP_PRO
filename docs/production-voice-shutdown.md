@@ -63,7 +63,47 @@ checks), typecheck and CloudFormation lint passed. No V2 code changed; its prior
 aed85d56 GitHub run35053061002 passed. Updated Desktop CI must be checked after
 publication; earlier green source runs do not prove this revision.
 
-Remaining: actual IAM/provider and deployment-transition acceptance, complete
-inventory reconciliation tooling, backlog/load/failure alarms, operator/legal-hold
+## Read-only reconciliation tool
+
+Build with node scripts/build-aws-owned-voice.mjs, then use an authorized operator
+AWS profile with:
+
+```text
+node dist/aws-clinical-core/owned-voice/inventory.cjs --read-only ACCOUNT_ID REGION STACK_NAME
+```
+
+No default account/stack is inferred. The tool checks caller account, stack ARN
+and completed state, physical resource mapping, reviewed drain parameters, actual
+Lambda configuration/revision, then configuration again after reading. It scans
+the entire job table with lifecycle-only projection (not the due-work index),
+lists every voice-prefix version/delete marker and matching Transcribe job.
+AWS CLI automatic pagination must remain enabled. Residual pagination markers,
+duplicates, unexpected records, oversized output, timeouts and errors refuse
+completion. It never writes cloud state or reads audio/transcript bodies.
+
+Only counts, scope, revision and a sorted-inventory hash are printed, not job IDs,
+owners, object keys, consent proofs or provider URLs. Exit0 means only that the
+observed operational inventory is a candidate for completion review; exit3 means
+work/artifacts remain; exit1 means incomplete/refused; exit2 means invalid usage.
+All reports say deletionCertified=false and atomicSnapshot=false. Compare repeated
+inventories after old invocations have ended, and retain independent review.
+[DynamoDB consistent scans are not snapshots](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_Scan.html).
+Provider listing covers the account/region's alp-personal-voice prefix; another
+deployment's jobs conservatively appear as orphans requiring investigation.
+
+Operator read permissions are separate from the runtime cleanup role:
+STS identity, CloudFormation describe/list, Lambda configuration, table Scan,
+S3 version listing and Transcribe job listing plus applicable DynamoDB KMS access.
+No new operator grants were applied. The tool has not run against a production
+voice deployment; the candidate is not deployed.
+
+Inventory increment verification: Desktop1586 passing /11 existing skips,
+24 new checks, typecheck, lint (zero errors/four existing warnings), artifact
+build and CloudFormation lint passed. CLI refusal smoke uses no AWS access.
+AWS reader tests use command-response doubles; actual inventory completeness,
+permission effectiveness and provider eventual consistency remain unverified.
+
+Remaining: actual IAM/provider and deployment-transition acceptance, independent
+inventory completion review, backlog/load/failure alarms, operator/legal-hold
 decisions and full account privacy fulfillment. Clinical holds and source checks
 are unchanged. No paid mobile build, real data or PHI activation.

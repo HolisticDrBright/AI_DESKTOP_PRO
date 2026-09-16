@@ -1,5 +1,5 @@
 import {beforeAll,describe,it,expect} from 'vitest';
-import {execFileSync} from 'node:child_process';
+import {execFileSync,spawnSync} from 'node:child_process';
 import {readFileSync,readdirSync} from 'node:fs';
 let template=JSON.parse('{}');
 beforeAll(()=>{
@@ -59,6 +59,12 @@ describe('production voice release candidate',()=>{
     expect([...files].sort()).toEqual(readdirSync(root).filter(f=>f.endsWith('.sql')).sort());
     expect(files).toContain('20260916010000_production_owned_privacy_export.sql');
     expect(files).toContain('20260916020000_production_owned_voice_consent.sql');
+  });
+  it('built inventory tool refuses missing or malformed scope before AWS access',()=>{
+    const usage=spawnSync(process.execPath,['dist/aws-clinical-core/owned-voice/inventory.cjs'],{encoding:'utf8'});
+    expect(usage.status).toBe(2);expect(usage.stdout).toBe('');expect(usage.stderr).toContain('Usage:');
+    const refused=spawnSync(process.execPath,['dist/aws-clinical-core/owned-voice/inventory.cjs','--read-only','not-account','us-east-2','fixture'],{encoding:'utf8'});
+    expect(refused.status).toBe(1);expect(refused.stdout).toBe('');expect(refused.stderr).toContain('no completion claimed');
   });
   it('built drain handler rejects public requests without DB/provider configuration',()=>{
     const script="const h=require('./dist/aws-clinical-core/owned-voice/index.js');h.handler({rawPath:'/clinical-core/consumer/chat-transcription/jobs',requestContext:{http:{method:'POST'}}}).then(r=>{if(r.statusCode!==503||JSON.parse(r.body).error!=='voice_cleanup_only')process.exit(1);})";

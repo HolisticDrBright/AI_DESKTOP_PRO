@@ -2,6 +2,7 @@ import {build} from 'esbuild';
 import {readFileSync,mkdirSync,writeFileSync} from 'node:fs';
 const out='dist/aws-clinical-core/owned-voice';mkdirSync(out,{recursive:true});
 await build({entryPoints:['src/server/clinical-core/owned-voice-api-lambda.ts'],outfile:`${out}/index.js`,bundle:true,platform:'node',target:'node22',format:'cjs',minify:true,legalComments:'none'});
+await build({entryPoints:['src/server/clinical-core/owned-voice-inventory-cli.ts'],outfile:`${out}/inventory.cjs`,bundle:true,platform:'node',target:'node22',format:'cjs',legalComments:'none'});
 // Reuse the proven durable provider infrastructure, not its identity/consent gate.
 // This emits a candidate only; it never deploys or inserts human approval records.
 const source=JSON.parse(readFileSync('infra/aws-clinical-core/chat-transcription-extension.json','utf8'));
