@@ -6,7 +6,7 @@ import { clinicalUuid, ClinicalCoreDatabaseRejection, type ClinicalCoreDatabase,
 import { createOwnedPrivacyExport } from './owned-privacy-export';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-export const OWNED_STORAGE_SCOPES = ["forms_checkins","symptoms_adherence","nutrition","protocols_supplements","wearables","reproductive_health","ai_context","lab_history"] as const;
+export const OWNED_STORAGE_SCOPES = ["forms_checkins","symptoms_adherence","nutrition","protocols_supplements","wearables","reproductive_health","ai_context","lab_history","voice_transcription"] as const;
 export type OwnedStorageScope = typeof OWNED_STORAGE_SCOPES[number];
 export type OwnedRecordWrite = {
   collection: ConsumerClinicalCollection; recordId: string; expectedRevision: number;

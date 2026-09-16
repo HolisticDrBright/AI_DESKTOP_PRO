@@ -6,6 +6,8 @@ import { createRdsDataAdministrativeDatabase } from "./rds-data-database";
 import { createOwnedConsumerApi } from "./owned-consumer-api";
 import { createOwnedConsumerRecordsAdapter } from "./owned-consumer-records";
 import type { ApiGatewayV2Event } from "./aws-identity-api";
+import {createOwnedVoiceApi,type OwnedVoiceEvent} from './owned-voice-api';
+import type {VoiceAuthorization} from './voice-authorization';
 
 class RolledBack extends Error {}
 async function run() {
@@ -28,6 +30,7 @@ async function run() {
       for (const statement of splitPostgresStatements(readFileSync("infra/aws-clinical-core/production-migrations/20260908100000_production_owned_storage_reads.sql","utf8"))) await tx.query(statement);
       for (const statement of splitPostgresStatements(readFileSync("infra/aws-clinical-core/production-migrations/20260908110000_production_owned_lab_history.sql","utf8"))) await tx.query(statement);
       for (const statement of splitPostgresStatements(readFileSync("infra/aws-clinical-core/production-migrations/20260916010000_production_owned_privacy_export.sql","utf8"))) await tx.query(statement);
+      for (const statement of splitPostgresStatements(readFileSync("infra/aws-clinical-core/production-migrations/20260916020000_production_owned_voice_consent.sql","utf8"))) await tx.query(statement);
       // Fictional approval metadata is exclusively inside this rolled-back transaction.
       await tx.query("insert into clinical_private.consumer_storage_consent_releases(scope,version,content_sha256,content,approved_by,approved_at) values ('forms_checkins','acceptance-only',encode(public.digest($1,'sha256'),'hex'),$1,'ROLLBACK TEST - NOT A HUMAN APPROVAL',clock_timestamp()),('wearables','acceptance-only',encode(public.digest($1,'sha256'),'hex'),$1,'ROLLBACK TEST - NOT A HUMAN APPROVAL',clock_timestamp())", ["Fictional rollback-only consent copy; not approved for use."]);
       await tx.query("set local role clinical_core_api");
@@ -107,7 +110,7 @@ async function run() {
         });
         queue=result.catch(()=>undefined);return result;
       }};
-      const api=createOwnedConsumerApi({configuration:{consumerIssuer:issuer,consumerAudience:audience,phiAllowed:true,activationState:"approved",activationEvidenceSha256:"0".repeat(64),allowedScopes:["forms_checkins","ai_context","lab_history"]},adapter:()=>createOwnedConsumerRecordsAdapter(apiDatabase)});
+      const api=createOwnedConsumerApi({configuration:{consumerIssuer:issuer,consumerAudience:audience,phiAllowed:true,activationState:"approved",activationEvidenceSha256:"0".repeat(64),allowedScopes:["forms_checkins","ai_context","lab_history","voice_transcription"]},adapter:()=>createOwnedConsumerRecordsAdapter(apiDatabase)});
       const apiEvent=(who:string,subject:string,route:string,query?:Record<string,string>,body?:unknown):ApiGatewayV2Event=>({routeKey:route,queryStringParameters:query,headers:{"content-type":"application/json"},...(body?{body:JSON.stringify(body)}:{}),requestContext:{authorizer:{jwt:{claims:{iss:issuer,aud:audience,sub:subject,token_use:"id",email_verified:"true",exp:Math.floor(Date.now()/1000)+600,iat:Math.floor(Date.now()/1000),"custom:person_id":who,"custom:organization_id":org,"custom:production_bound":"true"}}}}});
       const apiId=randomUUID(); const apiRequest=randomUUID();
       const apiBody={collection:"wellness_profiles",recordId:apiId,requestId:apiRequest,expectedRevision:0,consentRevision:3,deleted:false,payload:{id:apiId,goals:[],onboardingCompleted:false,role:"patient"}};
@@ -158,6 +161,39 @@ async function run() {
       if((await api(apiEvent(a,subA,'POST /clinical-core/consumer/personal/consent',undefined,{scope:'lab_history',status:'revoked',expectedRevision:1}))).statusCode!==200)throw new Error('lab_revoke_failed');checks++;
       const withdrawn=await api(apiEvent(a,subA,'GET /clinical-core/consumer/personal/chat-context'));
       if(withdrawn.statusCode!==200||JSON.parse(withdrawn.body).data.labs.length!==0)throw new Error('lab_withdrawal_leak');checks++;
+      stage='owned_voice_consent';
+      let voiceBinding:{owner:string;authorization?:VoiceAuthorization}|undefined;
+      const voiceId='a'.repeat(64);
+      // Voice storage/provider and payment are doubles; identity/consent crosses
+      // the actual handler/adapter/Data API into this rollback-only Aurora tx.
+      const voice=createOwnedVoiceApi({configuration:{consumerIssuer:issuer,consumerAudience:audience,phiAllowed:true,activationState:'approved',
+        activationEvidenceSha256:'0'.repeat(64),providerEvidenceSha256:'0'.repeat(64),allowedScopes:['ai_context','voice_transcription']},
+        adapter:()=>createOwnedConsumerRecordsAdapter(apiDatabase),requireCore:async()=>{},
+        service:policy=>({
+          async start(owner,_body,authorization){voiceBinding={owner,authorization};await policy.verify(voiceBinding);return {jobId:voiceId,state:'processing'};},
+          async status(owner){if(!voiceBinding||voiceBinding.owner!==owner)throw Object.assign(new Error('missing'),{status:404});await policy.verify(voiceBinding);return {jobId:voiceId,state:'ready',transcript:'Rollback-only fictional transcript.'};},
+          async cancel(owner){if(!voiceBinding||voiceBinding.owner!==owner)throw Object.assign(new Error('missing'),{status:404});return {jobId:voiceId,state:'cancelled'};},
+          async sweep(){},
+        })});
+      const voiceEvent=(person:string,subject:string,method='POST'):OwnedVoiceEvent=>{
+        const base=apiEvent(person,subject,'');
+        return {...base,rawPath:'/clinical-core/consumer/chat-transcription/jobs'+(method==='POST'?'':'/'+voiceId),
+          requestContext:{...base.requestContext,http:{method}},...(method==='POST'?{body:JSON.stringify({requestId:randomUUID(),audioBase64:Buffer.alloc(64).toString('base64'),mimeType:'audio/wav',consentVersion:'patient-chat-consent/1',purpose:'patient_chat_voice_input'})}:{})};
+      };
+      if((await voice(voiceEvent(a,subA))).statusCode!==403)throw new Error('voice_unsigned_consent_allowed');checks++;
+      if((await api(apiEvent(a,subA,'POST /clinical-core/consumer/personal/consent',undefined,{scope:'voice_transcription',status:'granted',releaseVersion:'acceptance-only',expectedRevision:0}))).statusCode!==403)throw new Error('voice_missing_release_allowed');checks++;
+      await tx.query('reset role');
+      await tx.query("insert into clinical_private.consumer_storage_consent_releases(scope,version,content_sha256,content,approved_by,approved_at) select 'voice_transcription',version,content_sha256,content,approved_by,approved_at from clinical_private.consumer_storage_consent_releases where scope='forms_checkins'");
+      await tx.query('set local role clinical_core_api');
+      if((await api(apiEvent(a,subA,'POST /clinical-core/consumer/personal/consent',undefined,{scope:'voice_transcription',status:'granted',releaseVersion:'acceptance-only',expectedRevision:0}))).statusCode!==200)throw new Error('voice_grant_failed');checks++;
+      if((await voice(voiceEvent(a,subA))).statusCode!==202||voiceBinding?.authorization?.personId!==a)throw new Error('voice_owner_binding_failed');checks++;
+      if((await voice(voiceEvent(a,subA,'GET'))).statusCode!==200)throw new Error('voice_read_failed');checks++;
+      if((await voice(voiceEvent(b,subB,'GET'))).statusCode!==404)throw new Error('voice_other_owner_allowed');checks++;
+      if((await api(apiEvent(a,subA,'POST /clinical-core/consumer/personal/consent',undefined,{scope:'voice_transcription',status:'revoked',expectedRevision:1}))).statusCode!==200)throw new Error('voice_withdraw_failed');checks++;
+      if((await voice(voiceEvent(a,subA,'GET'))).statusCode!==403)throw new Error('voice_withdraw_read_allowed');checks++;
+      if((await voice(voiceEvent(a,subA,'DELETE'))).statusCode!==202)throw new Error('voice_withdraw_cleanup_denied');checks++;
+      if((await api(apiEvent(a,subA,'POST /clinical-core/consumer/personal/consent',undefined,{scope:'voice_transcription',status:'granted',releaseVersion:'acceptance-only',expectedRevision:2}))).statusCode!==200)throw new Error('voice_regrant_failed');checks++;
+      if((await voice(voiceEvent(a,subA,'GET'))).statusCode!==403)throw new Error('voice_old_recording_revived');checks++;
       stage='privacy_export';
       await context(a,subA);
       for(let i=0;i<3;i++)await tx.query("select clinical_core.write_owned_consumer_record('wellness_profiles',$1,0,$2,jsonb_build_object('historical_fixture',repeat('x',15000)),false,3)",[clinicalUuid(randomUUID()),clinicalUuid(randomUUID())]);

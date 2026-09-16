@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -85,6 +85,9 @@ for (const entry of overlayManifest.migrations) {
   writeFileSync(path.join(outputDirectory, entry.file), source);
   migrations.push(entry);
 }
+const registeredOverlays=new Set(overlayManifest.migrations.map(entry=>entry.file));
+const omitted=readdirSync(overlayDirectory).filter(file=>file.endsWith('.sql')&&!registeredOverlays.has(file));
+if(omitted.length)throw new Error(`Unregistered production migration(s): ${omitted.join(', ')}`);
 
 for (let index = 1; index < migrations.length; index += 1) {
   if (migrations[index].version <= migrations[index - 1].version) {

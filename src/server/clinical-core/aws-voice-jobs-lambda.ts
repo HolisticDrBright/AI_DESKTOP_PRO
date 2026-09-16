@@ -3,6 +3,8 @@ import { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, UpdateCom
 import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { DeleteTranscriptionJobCommand, GetTranscriptionJobCommand, StartTranscriptionJobCommand, TranscribeClient } from "@aws-sdk/client-transcribe";
 import { VoiceJobs, type VoiceJob, type VoiceProvider, type VoiceRepository } from "./voice-jobs";
+import type {VoiceAuthorizationPolicy} from './voice-authorization';
+import {erasePersonalVoiceObjects} from './voice-object-cleanup';
 
 const db = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const s3 = new S3Client({});
@@ -10,13 +12,20 @@ const transcribe = new TranscribeClient({});
 const required = (name: string) => { const value = process.env[name]; if (!value) throw new Error("voice_configuration_refused"); return value; };
 const conditional = (error: unknown) => error instanceof Error && error.name === "ConditionalCheckFailedException";
 const absent = (error: unknown) => error instanceof Error && error.name === "BadRequestException" && /couldn't be found|not found|does not exist|doesn't exist/i.test(error.message);
-const inputKey = (job: VoiceJob) => `temporary-input/${job.id}.${job.format}`;
-const outputKey = (job: VoiceJob) => `temporary-output/${job.id}.json`;
-const jobName = (job: VoiceJob) => `alp-synthetic-voice-${job.id}`;
 
 export function awsVoiceJobs(): VoiceJobs {
   if (required("DATA_CLASSIFICATION") !== "synthetic_only" || required("PHI_ALLOWED") !== "false") throw new Error("voice_configuration_refused");
   const table = required("VOICE_JOB_TABLE"), bucket = required("TRANSCRIPTION_BUCKET"), kms = required("VOICE_KMS_KEY_ARN");
+  return createAwsVoiceService({table,bucket,kms,mode:'synthetic'});
+}
+export function createAwsVoiceService(options:{table:string;bucket:string;kms:string}&(
+  {mode:'synthetic';policy?:never}|{mode:'production';policy:VoiceAuthorizationPolicy}
+)):VoiceJobs{
+  const {table,bucket,kms}=options;
+  if(!table||!bucket||!kms||(options.mode==='production'&&!options.policy))throw new Error('voice_configuration_refused');
+  const inputKey = (job: VoiceJob) => `${options.mode==='production'?'personal-voice/input':'temporary-input'}/${job.id}.${job.format}`;
+  const outputKey = (job: VoiceJob) => `${options.mode==='production'?'personal-voice/output':'temporary-output'}/${job.id}.json`;
+  const jobName = (job: VoiceJob) => `alp-${options.mode==='production'?'personal':'synthetic'}-voice-${job.id}`;
   const repo: VoiceRepository = {
     async get(id) { return (await db.send(new GetCommand({ TableName: table, Key: { id }, ConsistentRead: true }))).Item as VoiceJob | undefined; },
     async insert(job) {
@@ -81,11 +90,12 @@ export function awsVoiceJobs(): VoiceJobs {
       // Only called after a terminal/absent provider status; deletion errors remain retryable.
       try { await transcribe.send(new DeleteTranscriptionJobCommand({ TranscriptionJobName: jobName(job) })); }
       catch (error) { if (!absent(error)) throw error; }
+      if(options.mode==='production'){await erasePersonalVoiceObjects(s3,bucket,job);return;}
       await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: inputKey(job) }));
       await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: outputKey(job) }));
     },
   };
-  return new VoiceJobs(repo, provider);
+  return new VoiceJobs(repo, provider,undefined,options.policy);
 }
 
 type Event = { source?: string; rawPath?: string; body?: string; isBase64Encoded?: boolean;

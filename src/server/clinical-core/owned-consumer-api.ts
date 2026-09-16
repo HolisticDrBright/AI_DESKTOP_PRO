@@ -38,7 +38,7 @@ export function createOwnedConsumerApi(input:{configuration:OwnedConsumerApiConf
       if (!(OWNED_CONSUMER_ROUTES as readonly string[]).includes(route)) return response(404,{error:"route_not_found"});
       const consent=route.endsWith("/consent");
       const privacy=route.endsWith('/privacy-export');
-      const context=identity(event,c,consent||privacy?"consent_management":"clinical_data",input.now?.()??Date.now());
+      const context=ownedConsumerIdentity(event,c,consent||privacy?"consent_management":"clinical_data",input.now?.()??Date.now());
       const post=route.startsWith("POST ");
       const q=event.queryStringParameters??{};
       if (post && Object.keys(q).length || !post && event.body) invalid();
@@ -95,7 +95,7 @@ export function createOwnedConsumerApi(input:{configuration:OwnedConsumerApiConf
     }
   };
 }
-function identity(event:ApiGatewayV2Event,c:OwnedConsumerApiConfiguration,purpose:ProductionClinicalRequestContext["purpose"],now:number):ProductionClinicalRequestContext {
+export function ownedConsumerIdentity(event:ApiGatewayV2Event,c:Pick<OwnedConsumerApiConfiguration,'consumerIssuer'|'consumerAudience'>,purpose:ProductionClinicalRequestContext["purpose"],now:number):ProductionClinicalRequestContext {
   const v=event.requestContext?.authorizer?.jwt?.claims??{};
   const sub=v.sub; const person=v["custom:person_id"]; const org=v["custom:organization_id"];
   if (v.iss!==c.consumerIssuer || v.aud!==c.consumerAudience || v.token_use!=="id"

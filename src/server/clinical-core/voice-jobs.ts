@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { VoiceAuthorizationRevoked, sameVoiceAuthorization, type VoiceAuthorization, type VoiceAuthorizationPolicy } from './voice-authorization';
 
 export const VOICE_CONSENT = "patient-chat-consent/1";
 export type VoiceJob = {
@@ -6,6 +7,7 @@ export type VoiceJob = {
   state: "uploading" | "queued" | "running" | "ready" | "failed" | "cleaned";
   consentVersion: string; consentAcceptedAt: number; createdAt: number; readableUntil: number;
   cancelled: boolean; nextWork: number; pending?: string; leaseToken?: string; leaseUntil?: number; expiresAt?: number;
+  authorization?: VoiceAuthorization;
 };
 export type VoiceStatus = { jobId: string; state: "processing" | "ready" | "cancelled" | "expired" | "failed"; transcript?: string };
 export interface VoiceRepository {
@@ -27,9 +29,10 @@ const idPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[
 const refused = () => Object.assign(new Error("voice_request_refused"), { status: 400 });
 const missing = () => Object.assign(new Error("voice_job_not_found"), { status: 404 });
 export class VoiceJobs {
-  constructor(private repo: VoiceRepository, private provider: VoiceProvider, private now = () => Math.floor(Date.now() / 1000)) {}
+  constructor(private repo: VoiceRepository, private provider: VoiceProvider, private now = () => Math.floor(Date.now() / 1000), private authorizationPolicy?:VoiceAuthorizationPolicy) {}
 
-  async start(owner: string, input: Record<string, unknown>): Promise<VoiceStatus> {
+  async start(owner: string, input: Record<string, unknown>, authorization?:VoiceAuthorization): Promise<VoiceStatus> {
+    if(authorization && !this.authorizationPolicy)throw refused();
     if (Object.keys(input).some(key => !["requestId", "audioBase64", "mimeType", "consentVersion", "purpose"].includes(key))
       || typeof input.requestId !== "string" || !idPattern.test(input.requestId)
       || input.consentVersion !== VOICE_CONSENT || input.purpose !== "patient_chat_voice_input"
@@ -42,10 +45,14 @@ export class VoiceJobs {
     const hash = createHash("sha256").update(bytes).update(format).digest("hex");
     const id = createHash("sha256").update(`${owner}:${input.requestId}`).digest("hex");
     const now = this.now();
-    await this.repo.insert({ id, owner, inputHash: hash, format, state: "uploading", cancelled: false,
-      consentVersion: VOICE_CONSENT, consentAcceptedAt: now, createdAt: now, readableUntil: now + 900, nextWork: now + 60, pending: "work" });
+    const draft:VoiceJob={ id, owner, inputHash: hash, format, state: "uploading", cancelled: false,
+      consentVersion: VOICE_CONSENT, consentAcceptedAt: now, createdAt: now, readableUntil: now + 900, nextWork: now + 60, pending: "work",
+      ...(authorization?{authorization:structuredClone(authorization)}:{}) };
+    await this.authorizationPolicy?.verify(draft);
+    await this.repo.insert(draft);
     const existing = await this.repo.get(id);
     if (!existing || existing.owner !== owner || existing.inputHash !== hash) throw refused();
+    if(!sameVoiceAuthorization(existing.authorization,draft.authorization))throw new VoiceAuthorizationRevoked();
     if (existing.cancelled || existing.readableUntil <= now || existing.state === "cleaned") return this.publicStatus(existing);
     const token = randomUUID();
     const job = await this.repo.acquire(id, token, now);
@@ -53,6 +60,7 @@ export class VoiceJobs {
       let state = job.state;
       try {
         if (state === "uploading" && !job.cancelled && job.readableUntil > this.now()) {
+          await this.authorizationPolicy?.verify(job);
           await this.provider.upload(job, bytes);
           state = "queued";
         }
@@ -74,7 +82,9 @@ export class VoiceJobs {
     const job = (await this.repo.get(id))!;
     const result = this.publicStatus(job);
     if (result.state !== "ready") return result;
+    await this.authorizationPolicy?.verify(job);
     const transcript = await this.provider.transcript(job);
+    await this.authorizationPolicy?.verify(job);
     // Re-check cancellation after the object read, not only before it.
     const latest = this.publicStatus((await this.repo.get(id))!);
     if (latest.state !== "ready") return latest;
@@ -97,6 +107,15 @@ export class VoiceJobs {
     const changes: Partial<VoiceJob> = { nextWork: this.now() + 30 };
     try {
       if (job.state === "cleaned") return;
+      // Lost consent/identity stops new work but never blocks eventual cleanup.
+      // A database outage is not interpreted as revocation: retry, without work.
+      if(!job.cancelled && job.readableUntil>this.now() && job.state!=='failed'){
+        try{await this.authorizationPolicy?.verify(job);}
+        catch(error){
+          if(!(error instanceof VoiceAuthorizationRevoked))throw error;
+          await this.repo.cancel(id,job.owner);job.cancelled=true;
+        }
+      }
       const current = await this.provider.status(job);
       if (job.cancelled || job.readableUntil <= this.now() || job.state === "failed" || current === "failed") {
         if (current === "processing") return; // Transcribe cannot delete nonterminal jobs.
@@ -111,6 +130,7 @@ export class VoiceJobs {
       } else if (job.state === "queued" || job.state === "running") {
         const latest = await this.repo.get(id);
         if (!latest || latest.cancelled || latest.readableUntil <= this.now()) return;
+        await this.authorizationPolicy?.verify(latest);
         await this.provider.start(job); // Deterministic provider job name makes retry safe.
         changes.state = "running";
       }

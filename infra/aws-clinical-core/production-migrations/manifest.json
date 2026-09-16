@@ -156,6 +156,14 @@
     {
       "version": "20260908110000",
       "file": "20260908110000_production_owned_lab_history.sql"
+    },
+    {
+      "version": "20260916010000",
+      "file": "20260916010000_production_owned_privacy_export.sql"
+    },
+    {
+      "version": "20260916020000",
+      "file": "20260916020000_production_owned_voice_consent.sql"
     }
   ]
 }
