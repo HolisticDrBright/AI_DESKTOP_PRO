@@ -80,6 +80,13 @@ jobs:
           npm run check:aws-production-readiness-workload
           npm run check:aws-provider-configuration
           npm run test:aws-provider-configuration
+          npm run check:aws-application-rollback
+          npm run test:aws-load-qualification
+          npm run qualify:load-plan
+      - name: Credential-free security qualification (source evidence, not a hosted test)
+        run: |
+          npm run build:security-qualification
+          npm run qualify:security
       - name: Mock-import graph (no production path to fixtures)
         run: npm run check:mock-imports
       - name: Build refuses without an explicit edition

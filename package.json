@@ -68,6 +68,11 @@
     "audit:aws-data-plane-migration": "node scripts/check-aws-data-plane-migration.mjs --report",
     "check:aws-data-plane-migration": "node scripts/check-aws-data-plane-migration.mjs --enforce",
     "check:aws-provider-configuration": "node scripts/check-aws-provider-configuration.mjs",
+    "check:aws-application-rollback": "node scripts/check-aws-application-rollback.mjs",
+    "test:aws-load-qualification": "node scripts/run-aws-load-qualification.test.mjs",
+    "qualify:load-plan": "node scripts/run-aws-load-qualification.mjs",
+    "build:security-qualification": "node scripts/build-security-qualification.mjs",
+    "qualify:security": "node dist/qualification/security-qualification.cjs",
     "test:aws-provider-configuration": "node scripts/check-aws-provider-configuration.test.mjs",
     "test:aws-data-plane-migration": "node scripts/check-aws-data-plane-migration.test.mjs"
   },
