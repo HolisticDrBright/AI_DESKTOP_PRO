@@ -2,7 +2,7 @@ import {beforeEach,describe,it,expect,vi,afterEach} from 'vitest';
 const mock=vi.hoisted(()=>({db:vi.fn(),sfn:vi.fn()}));
 vi.mock('@aws-sdk/lib-dynamodb',async importOriginal=>({...await importOriginal<typeof import('@aws-sdk/lib-dynamodb')>(),DynamoDBDocumentClient:{from:()=>({send:mock.db})}}));
 vi.mock('@aws-sdk/client-sfn',()=>({SFNClient:class{send=mock.sfn;},StartExecutionCommand:class{constructor(public input:unknown){}}}));
-import {createAwsLabAnalysisApiHandler as handler} from './aws-lab-analysis-api';
+import {createAwsLabAnalysisApiHandler as handler,labContextFingerprint} from './aws-lab-analysis-api';
 import {readFileSync} from 'node:fs';
 const id='10000000-0000-4000-8000-000000000001',owner='20000000-0000-4000-8000-000000000001';
 const rows=new Map<string,Record<string,unknown>>();
@@ -26,6 +26,24 @@ beforeEach(()=>{
 });
 afterEach(()=>vi.unstubAllEnvs());
 describe('request-aware API integration',()=>{
+  it('binds saved-plan context fingerprints to verified request inputs and preserves them in recovery',async()=>{
+    const patientContext={ageYears:40,sex:'male',pregnancyStatus:'not_applicable',nursing:false,
+      mainComplaint:null,complaintDuration:null,complaintSeverity:0,conditions:[],medications:[],allergies:[],topSymptomSignals:[],
+      lifestyle:{sleepHours:7,sleepQuality:6,stressLevel:3,dietType:'omnivore',exerciseFrequency:2}};
+    const sourceContextSha256=labContextFingerprint(patientContext);
+    const body={...input(),patientContext,sourceContextSha256};
+    expect((await handler(event('POST','requests/saved',{...body,sourceContextSha256:'a'.repeat(64)}))).statusCode).toBe(400);
+    expect(rows.size).toBe(0);expect(mock.sfn).not.toHaveBeenCalled();
+    expect((await handler(event('POST','requests/saved',{...body,patientContext:undefined}))).statusCode).toBe(400);
+    expect((await handler(event('POST','requests/saved',{...body,sourceContextSha256:'malformed'}))).statusCode).toBe(400);
+    expect(rows.size).toBe(0);expect(mock.sfn).not.toHaveBeenCalled();
+    const created=await handler(event('POST','requests/saved',body));expect(created.statusCode).toBe(200);
+    const jobId=JSON.parse(created.body).data.jobId;
+    expect(rows.get('job#'+jobId)?.patientContext).toEqual(patientContext);
+    const detail=await handler(event('GET',`jobs/${jobId}/recovery`));
+    expect(JSON.parse(detail.body).data.job.sourceContextSha256).toBe(sourceContextSha256);
+    expect(JSON.stringify(JSON.parse(detail.body).data.job)).not.toContain('patientContext');
+  });
   it('lists an actually created job and retrieves recovery metadata without clinical payload or execution side effects',async()=>{
     const body={...input(),sourcePanelSha256:'b'.repeat(64)};const created=await handler(event('POST','requests/saved',body));
     const jobId=JSON.parse(created.body).data.jobId;mock.sfn.mockClear();

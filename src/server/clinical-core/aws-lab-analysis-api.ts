@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomUUID,createHash } from "node:crypto";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { GetCommand, PutCommand, UpdateCommand, DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import { HeadObjectCommand, ListObjectsV2Command, S3Client } from "@aws-sdk/client-s3";
@@ -90,6 +90,7 @@ type Job = {
   sourcePanel?: LabSourcePanel;
   panelId?: string;
   sourcePanelSha256?: string;
+  sourceContextSha256?: string;
   patientContext?: PatientContext;
   longitudinalContext?: LongitudinalContext;
   failureCategory: string | null;
@@ -166,7 +167,7 @@ function safeDocument(value: unknown): DocumentInput {
   return row as DocumentInput;
 }
 
-function safePatientContext(value: unknown): PatientContext | undefined {
+export function safePatientContext(value: unknown): PatientContext | undefined {
   if (value === undefined) return undefined;
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("patient_context_invalid");
   const row = value as Record<string, unknown>;
@@ -183,15 +184,18 @@ function safePatientContext(value: unknown): PatientContext | undefined {
     || !["not_pregnant", "pregnant", "unsure", "not_applicable"].includes(String(row.pregnancyStatus))
     || typeof row.nursing !== "boolean"
     || !textOrNull(row.mainComplaint, 500) || !textOrNull(row.complaintDuration, 120)
-    || !(row.complaintSeverity === null || (Number.isInteger(row.complaintSeverity) && Number(row.complaintSeverity) >= 1 && Number(row.complaintSeverity) <= 10))
+    || !(row.complaintSeverity === null || (Number.isInteger(row.complaintSeverity) && Number(row.complaintSeverity) >= 0 && Number(row.complaintSeverity) <= 10))
     || !stringList(row.conditions) || !stringList(row.medications) || !stringList(row.allergies)
     || !Array.isArray(signals) || signals.length > 8 || signals.some((item) => {
       if (!item || typeof item !== "object" || Array.isArray(item)) return true;
       const signal = item as Record<string, unknown>;
-      return typeof signal.categoryId !== "string" || signal.categoryId.length < 1 || signal.categoryId.length > 80
+      return Object.keys(signal).some(key=>!['categoryId','percentage'].includes(key))
+        || typeof signal.categoryId !== "string" || signal.categoryId.length < 1 || signal.categoryId.length > 80
         || !Number.isInteger(signal.percentage) || Number(signal.percentage) < 0 || Number(signal.percentage) > 100;
     })
     || !lifestyle || Array.isArray(lifestyle)
+    || Object.keys(lifestyle).some(key=>!['sleepHours','sleepQuality','stressLevel','dietType','exerciseFrequency'].includes(key))
+    || ['sleepHours','sleepQuality','stressLevel','exerciseFrequency'].some(key=>!Number.isFinite(lifestyle[key]))
     || typeof lifestyle.sleepHours !== "number" || lifestyle.sleepHours < 0 || lifestyle.sleepHours > 24
     || typeof lifestyle.sleepQuality !== "number" || lifestyle.sleepQuality < 0 || lifestyle.sleepQuality > 10
     || typeof lifestyle.stressLevel !== "number" || lifestyle.stressLevel < 0 || lifestyle.stressLevel > 10
@@ -200,6 +204,16 @@ function safePatientContext(value: unknown): PatientContext | undefined {
     throw new Error("patient_context_invalid");
   }
   return row as PatientContext;
+}
+
+export function labContextFingerprint(value:unknown):string{
+  const context=safePatientContext(value);if(!context)throw new Error('patient_context_invalid');
+  const canonical=(input:unknown):unknown=>{
+    if(Array.isArray(input))return input.map(canonical);
+    if(input&&typeof input==='object')return Object.fromEntries(Object.entries(input).sort(([a],[b])=>a<b?-1:a>b?1:0).map(([k,v])=>[k,canonical(v)]));
+    return input;
+  };
+  return createHash('sha256').update(JSON.stringify(canonical({contractVersion:'plan-context/1',context}))).digest('hex');
 }
 
 function boundedString(value: unknown, max: number): value is string {
@@ -485,7 +499,7 @@ async function resumeUpload(identity: Claims, jobId: string) {
 
 async function createPlanJob(event: ApiEvent, identity: Claims) {
   const input = body(event);
-  const expected = ["request", "panelId", "panelName", "testDate", "patientContext", "longitudinalContext", "dataClassification", "attestsSyntheticOnly", "biomarkers", "sourcePanelSha256"];
+  const expected = ["request", "panelId", "panelName", "testDate", "patientContext", "longitudinalContext", "dataClassification", "attestsSyntheticOnly", "biomarkers", "sourcePanelSha256","sourceContextSha256"];
   if (Object.keys(input).some((key) => !expected.includes(key))
     || input.dataClassification !== "synthetic_only" || input.attestsSyntheticOnly !== true
     || !boundedString(input.panelId, 160) || !boundedString(input.panelName, 180) || !safeDate(input.testDate)
@@ -493,6 +507,7 @@ async function createPlanJob(event: ApiEvent, identity: Claims) {
   const structuredBiomarkers = safeStructuredLabBiomarkers(input.biomarkers);
   const sourcePanel=resolveLabSourcePanel({sourcePanel:{panelId:input.panelId,panelName:input.panelName,testDate:input.testDate},structuredBiomarkers});
   const patientContext = safePatientContext(input.patientContext);
+  if(input.sourceContextSha256!==undefined&&input.sourceContextSha256!==labContextFingerprint(patientContext))return refusal();
   const longitudinalContext = safeLongitudinalContext(input.longitudinalContext);
   if (longitudinalContext && (longitudinalContext.incomingPanel.panelId !== input.panelId
     || longitudinalContext.incomingPanel.panelName !== input.panelName
@@ -518,6 +533,7 @@ async function createPlanJob(event: ApiEvent, identity: Claims) {
     ...rangeReleaseStamp(),
     panelId: input.panelId,
     ...(typeof input.sourcePanelSha256 === 'string' ? {sourcePanelSha256:input.sourcePanelSha256} : {}),
+    ...(typeof input.sourceContextSha256 === 'string' ? {sourceContextSha256:input.sourceContextSha256} : {}),
     ...(patientContext ? { patientContext } : {}),
     ...(longitudinalContext ? { longitudinalContext } : {}),
     failureCategory: null,

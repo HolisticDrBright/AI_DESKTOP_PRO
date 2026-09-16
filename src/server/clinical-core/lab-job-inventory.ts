@@ -28,6 +28,7 @@ export function labRecoveryDescriptor(row: Record<string, unknown>, scope: Scope
     || Number(row.progressPercent) < 0 || Number(row.progressPercent) > 100) fail();
   const kind = Array.isArray(row.structuredBiomarkers) ? 'saved' : 'documents';
   if (row.sourcePanelSha256 !== undefined && (kind !== 'saved' || typeof row.sourcePanelSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(row.sourcePanelSha256))) fail();
+  if (row.sourceContextSha256 !== undefined && (kind !== 'saved' || typeof row.sourceContextSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(row.sourceContextSha256))) fail();
   const request = row.recoveryRequest as Record<string, unknown> | undefined;
   const requestInfo = request ? { ...requestIdentity({id:request.id,createdAt:request.createdAt}), kind } : undefined;
   if (request && request.kind !== kind) fail();
@@ -46,7 +47,8 @@ export function labRecoveryDescriptor(row: Record<string, unknown>, scope: Scope
     state: String(row.state), progressPercent: Number(row.progressPercent), kind,
     canResume: (kind !== 'saved' || Boolean(panelId && requestInfo)) && (row.state !== 'awaiting_upload' || Boolean(uploadManifest)),
     ...(panelId ? {panelId} : {}), ...(requestInfo ? {request:requestInfo} : {}), ...(uploadManifest ? {uploadManifest} : {}),
-    ...(typeof row.sourcePanelSha256 === 'string' ? {sourcePanelSha256:row.sourcePanelSha256} : {}) };
+    ...(typeof row.sourcePanelSha256 === 'string' ? {sourcePanelSha256:row.sourcePanelSha256} : {}),
+    ...(typeof row.sourceContextSha256 === 'string' ? {sourceContextSha256:row.sourceContextSha256} : {}) };
 }
 export async function listLabInventory(db: DynamoDBDocumentClient, table: string, scope: Scope, cursor?: string) {
   const owner = inventoryStamp(scope, '2000-01-01T00:00:00.000Z', 'job#00000000-0000-4000-8000-000000000001').inventoryOwner;
