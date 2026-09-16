@@ -1,4 +1,4 @@
-param([switch]$ConfirmSyntheticOnly,[switch]$CreateSyntheticTestUsers,[switch]$TestUploadRoundTrip,[switch]$TestLateUploadCleanup,[switch]$TestActiveCancellation,[switch]$TestLegacyInventoryMigration,[switch]$TestReviewedContext,[switch]$TestSavedPlanGeneration,[switch]$TestDocumentGeneration,[string]$Profile='ai-synthetic-member')
+param([switch]$ConfirmSyntheticOnly,[switch]$CreateSyntheticTestUsers,[switch]$TestUploadRoundTrip,[switch]$TestLateUploadCleanup,[switch]$TestActiveCancellation,[switch]$TestLegacyInventoryMigration,[switch]$TestReviewedContext,[switch]$TestSavedPlanGeneration,[switch]$TestDocumentGeneration,[switch]$TestDeliveryAcknowledgment,[string]$Profile='ai-synthetic-member')
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 $common=@('--profile',$Profile,'--region','us-east-2','--no-cli-pager')
@@ -8,6 +8,7 @@ function AwsJson([string[]]$Arguments){
   if($raw){return ($raw|ConvertFrom-Json)}
 }
 if(-not $ConfirmSyntheticOnly -or -not $CreateSyntheticTestUsers){throw 'Explicit synthetic-only/test-identity confirmation required.'}
+if($TestDeliveryAcknowledgment -and ($TestUploadRoundTrip -or $TestSavedPlanGeneration -or $TestDocumentGeneration)){throw 'Delivery receipt fixture must run separately from uploads or model generation.'}
 if($TestLateUploadCleanup -and -not $TestUploadRoundTrip){throw 'Late-upload verification requires the fixture-upload switch.'}
 if($TestActiveCancellation -and (-not $TestUploadRoundTrip -or -not $TestLateUploadCleanup)){throw 'Cancellation acceptance requires the upload and late-cleanup checks.'}
 if($TestDocumentGeneration -and (-not $TestUploadRoundTrip -or $TestLateUploadCleanup -or $TestActiveCancellation)){throw 'Document generation requires upload roundtrip and a separate run from failure/cancellation fixtures.'}
@@ -277,6 +278,54 @@ try{
     Start-Sleep -Seconds 1
   }
   Check $visible 'owned job appears in live index'
+  if($TestDeliveryAcknowledgment){
+    # Only this invocation's new, unstarted job becomes a completed fixture.
+    # No source object is uploaded and no model/workflow is called. Actual JWT,
+    # API routing, Lambda validation/IAM and DynamoDB writes are exercised.
+    $key=@{pk=@{S="job#$jobId"}}|ConvertTo-Json -Compress
+    $names=@{'#state'='state';'#request'='recoveryRequest';'#id'='id';'#result'='result'}|ConvertTo-Json -Compress
+    $values=@{':await'=@{S='awaiting_upload'};':done'=@{S='completed'};':request'=@{S=$requestBody.request.id};
+      ':result'=@{M=@{analysisId=@{S=$jobId};summary=@{S='Fictional hosted delivery acceptance'}}};
+      ':five'=@{N='5'};':hundred'=@{N='100'}}|ConvertTo-Json -Depth 8 -Compress
+    $null=AwsJson @('dynamodb','update-item','--table-name',$table,'--key',$key,
+      '--update-expression','SET #state = :done, #result = :result, passesCompleted = :five, progressPercent = :hundred',
+      '--condition-expression','#state = :await AND #request.#id = :request AND attribute_not_exists(#result)',
+      '--expression-attribute-names',$names,'--expression-attribute-values',$values)
+    $device='a'*64;$otherDevice='b'*64
+    $ack=@{contractVersion='lab-delivery-ack/1';deviceBindingSha256=$device;disposition='applied'}
+    $claim=@{contractVersion='lab-delivery/1';deviceBindingSha256=$device}
+    $response=CallApi 'POST' "/jobs/$jobId/delivery" '' $ack
+    Check ($response.Status -eq 401) 'anonymous delivery refused by hosted authorizer'
+    $response=CallApi 'POST' "/jobs/$jobId/delivery" $b $ack
+    Check ($response.Status -eq 404) 'second user cannot acknowledge delivery'
+    $response=CallApi 'POST' "/jobs/$jobId/delivery" $a $ack
+    Check ($response.Status -eq 409) 'unclaimed completed job cannot be acknowledged'
+    $response=CallApi 'POST' "/jobs/$jobId/delivery" $a $claim
+    Check ($response.Status -eq 200 -and $response.Json.data.delivery.bindingSha256 -eq $device) 'hosted installation claim recorded'
+    $wrong=$ack.Clone();$wrong.deviceBindingSha256=$otherDevice
+    $response=CallApi 'POST' "/jobs/$jobId/delivery" $a $wrong
+    Check ($response.Status -eq 409) 'other installation cannot acknowledge claimed result'
+    $invalid=$ack.Clone();$invalid.disposition='unreviewed'
+    $response=CallApi 'POST' "/jobs/$jobId/delivery" $a $invalid
+    Check ($response.Status -eq 400) 'unknown delivery disposition refused'
+    $response=CallApi 'POST' "/jobs/$jobId/delivery" $a $ack
+    Check ($response.Status -eq 200 -and $response.Json.data.contractVersion -eq 'lab-delivery-ack/1' -and
+      $response.Json.data.jobId -eq $jobId -and $response.Json.data.acknowledgment.disposition -eq 'applied') 'hosted persistence attestation recorded'
+    $receipt=$response.Json.data.acknowledgment
+    $canonical='{"analysisId":"'+$jobId+'","summary":"Fictional hosted delivery acceptance"}'
+    $digest=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($canonical))).ToLowerInvariant()
+    Check ($receipt.resultSha256 -ceq $digest -and $receipt.bindingSha256 -ceq $device) 'receipt binds exact persisted fixture content and installation'
+    $response=CallApi 'POST' "/jobs/$jobId/delivery" $a $ack
+    Check ($response.Status -eq 200 -and ($response.Json.data.acknowledgment|ConvertTo-Json -Compress) -ceq ($receipt|ConvertTo-Json -Compress)) 'lost acknowledgment retry returns original receipt'
+    $opposite=$ack.Clone();$opposite.disposition='archived_not_applied'
+    $response=CallApi 'POST' "/jobs/$jobId/delivery" $a $opposite
+    Check ($response.Status -eq 409) 'existing persistence decision cannot be overwritten'
+    $response=CallApi 'POST' "/jobs/$jobId/delivery" $a $claim
+    Check ($response.Status -eq 200) 'claim remains backward compatible after acknowledgment'
+    $stored=AwsJson @('dynamodb','get-item','--table-name',$table,'--consistent-read','--key',$key,'--projection-expression','deliveryAcknowledgment')
+    Check ($stored.Item.deliveryAcknowledgment.M.resultSha256.S -ceq $digest -and
+      $stored.Item.deliveryAcknowledgment.M.disposition.S -ceq 'applied') 'read-back confirms durable receipt survived claim replay'
+  }
   if($TestUploadRoundTrip){
     $target=$resume.Json.data.documents[0]
     Check ((PutFixture $target $fixture) -eq 200) 'encrypted checksum-bound fixture uploaded'

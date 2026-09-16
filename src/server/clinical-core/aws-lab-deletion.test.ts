@@ -35,6 +35,8 @@ describe("AWS lab deletion boundary", () => {
     expect(source).toContain("dynamodb:DeleteItem");
     expect(source).toContain("s3:DeleteObjectVersion");
     expect(source).toContain("s3:ListBucketVersions");
-    expect(template.Outputs.RoutesEnabled.Value).toBe("28");
+    const routes = Object.values(template.Resources).filter(resource => (resource as {Type:string}).Type === "AWS::ApiGatewayV2::Route");
+    expect(routes).toHaveLength(30);
+    expect(Number(template.Outputs.RoutesEnabled.Value)).toBe(routes.length);
   });
 });

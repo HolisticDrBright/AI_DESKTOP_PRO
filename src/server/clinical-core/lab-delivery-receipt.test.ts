@@ -2,7 +2,8 @@ import {beforeEach,describe,it,expect,vi,afterEach} from 'vitest';
 const mock=vi.hoisted(()=>({db:vi.fn(),sfn:vi.fn()}));
 vi.mock('@aws-sdk/lib-dynamodb',async importOriginal=>({...await importOriginal<typeof import('@aws-sdk/lib-dynamodb')>(),DynamoDBDocumentClient:{from:()=>({send:mock.db})}}));
 vi.mock('@aws-sdk/client-sfn',()=>({SFNClient:class{send=mock.sfn;},StartExecutionCommand:class{constructor(public input:unknown){}}}));
-import {createAwsLabAnalysisApiHandler as handler,LAB_DELIVERY_VERSION} from './aws-lab-analysis-api';
+import {createAwsLabAnalysisApiHandler as handler,createLabAnalysisApi,LAB_DELIVERY_VERSION,LAB_DELIVERY_ACK_VERSION} from './aws-lab-analysis-api';
+import {LabAuthorizationRevoked} from './owned-lab-authorization';
 import {labRecoveryDescriptor} from './lab-job-inventory';
 const id='10000000-0000-4000-8000-000000000001',owner='20000000-0000-4000-8000-000000000001',other='30000000-0000-4000-8000-000000000001';
 const deviceA='a'.repeat(64),deviceB='b'.repeat(64);
@@ -18,6 +19,10 @@ beforeEach(()=>{
     if(c.constructor.name==='UpdateCommand'){
       const row=rows.get(c.input.Key.pk)!;const v=c.input.ExpressionAttributeValues;
       const condition=c.input.ConditionExpression as string;
+      if(v[':ack']){
+        if(row.state!==v[':completed']||row.ownerSub!==v[':owner']||(row.delivery as {bindingSha256:string})?.bindingSha256!==v[':binding']||row.deliveryAcknowledgment)throw Object.assign(new Error('conditional'),{name:'ConditionalCheckFailedException'});
+        rows.set(c.input.Key.pk,{...row,deliveryAcknowledgment:v[':ack'],updatedAt:v[':now']});return {};
+      }
       const ok=row.state===v[':completed']&&row.ownerSub===v[':owner']&&(condition.includes('attribute_not_exists(delivery)')?row.delivery===undefined
         :(row.delivery as {bindingSha256:string;count:number})?.bindingSha256===v[':binding']&&(row.delivery as {count:number}).count===v[':previous']);
       if(!ok)throw Object.assign(new Error('conditional'),{name:'ConditionalCheckFailedException'});
@@ -28,6 +33,7 @@ beforeEach(()=>{
 });
 afterEach(()=>vi.unstubAllEnvs());
 const claim=(device:string,sub=owner)=>handler(event('POST',`jobs/${id}/delivery`,{contractVersion:LAB_DELIVERY_VERSION,deviceBindingSha256:device},sub));
+const ack=(device=deviceA,disposition='applied',sub=owner)=>handler(event('POST',`jobs/${id}/delivery`,{contractVersion:LAB_DELIVERY_ACK_VERSION,deviceBindingSha256:device,disposition},sub));
 describe('device-bound delivery claims',()=>{
   it('claims a completed result for one device, is idempotent for that device, and exposes only the binding digest',async()=>{
     rows.set('job#'+id,job());
@@ -57,5 +63,53 @@ describe('device-bound delivery claims',()=>{
     rows.set('job#'+id,job());
     expect(JSON.parse((await handler(event('GET',`jobs/${id}`))).body).data).not.toHaveProperty('delivery');
     expect(()=>labRecoveryDescriptor(job({delivery:{bindingSha256:'nope'}}),{ownerSub:owner,organizationId:owner,personId:owner})).toThrow('lab_inventory_invalid');
+  });
+});
+
+describe('durable delivery acknowledgment',()=>{
+  it('requires a prior matching claim, records the client disposition and result digest once, and survives lost responses',async()=>{
+    rows.set('job#'+id,job());expect((await ack()).statusCode).toBe(409);
+    await claim(deviceA);expect(rows.get('job#'+id)!.deliveryAcknowledgment).toBeUndefined();
+    const first=await ack();expect(first.statusCode).toBe(200);
+    const receipt=JSON.parse(first.body).data;
+    expect(receipt).toMatchObject({contractVersion:LAB_DELIVERY_ACK_VERSION,jobId:id,acknowledgment:{bindingSha256:deviceA,disposition:'applied',resultSha256:expect.stringMatching(/^[a-f0-9]{64}$/)}});
+    expect(JSON.parse((await ack()).body).data).toEqual(receipt);
+    await claim(deviceA);expect(rows.get('job#'+id)!.deliveryAcknowledgment).toEqual(receipt.acknowledgment);
+    expect((await ack(deviceA,'archived_not_applied')).statusCode).toBe(409);
+    expect((await ack(deviceB)).statusCode).toBe(409);expect((await ack(deviceA,'applied',other)).statusCode).toBe(404);
+    expect(rows.get('job#'+id)!.result).toEqual({analysisId:id});
+  });
+  it('refuses unknown dispositions, extra fields, deleting jobs and changed content without inventing applied state',async()=>{
+    rows.set('job#'+id,job());await claim(deviceA);
+    expect((await ack(deviceA,'physician_approved')).statusCode).toBe(400);
+    expect((await handler(event('POST',`jobs/${id}/delivery`,{contractVersion:LAB_DELIVERY_ACK_VERSION,deviceBindingSha256:deviceA,disposition:'applied',ownerId:owner}))).statusCode).toBe(400);
+    expect(rows.get('job#'+id)!.deliveryAcknowledgment).toBeUndefined();
+    expect((await ack(deviceA,'archived_not_applied')).statusCode).toBe(200);
+    rows.get('job#'+id)!.result={changed:true};expect((await ack(deviceA,'archived_not_applied')).statusCode).toBe(409);
+    rows.get('job#'+id)!.state='deleting';expect((await ack()).statusCode).toBe(404);
+  });
+  it('reconciles concurrent identical acknowledgments but never overwrites another disposition or deletion',async()=>{
+    for(const outcome of ['same','different','deleted','result_changed']){
+      rows.set('job#'+id,job());await claim(deviceA);
+      const original=mock.db.getMockImplementation()!;
+      mock.db.mockImplementation(async c=>{
+        if(c.input.ExpressionAttributeValues?.[':ack']){
+          const acknowledgment=c.input.ExpressionAttributeValues[':ack'];
+          if(outcome==='deleted')rows.delete(c.input.Key.pk);
+          else rows.get(c.input.Key.pk)!.deliveryAcknowledgment={...acknowledgment,...(outcome==='different'?{disposition:'archived_not_applied'}:{})};
+          if(outcome==='result_changed')rows.get(c.input.Key.pk)!.result={changed:true};
+          throw Object.assign(new Error('conditional'),{name:'ConditionalCheckFailedException'});
+        }
+        return original(c);
+      });
+      expect((await ack()).statusCode).toBe(outcome==='same'?200:409);mock.db.mockImplementation(original);
+    }
+  });
+  it('rechecks production consent before persisting an acknowledgment',async()=>{
+    rows.set('job#'+id,job({dataClassification:'personal_health_record',delivery:{bindingSha256:deviceA,deliveredAt:new Date().toISOString(),count:1}}));
+    const verify=vi.fn(async()=>{throw new LabAuthorizationRevoked();});
+    const production=createLabAnalysisApi({mode:'production',identity:()=>({sub:owner,'custom:person_id':owner,'custom:organization_id':owner}),capture:async()=>{throw new Error('not creation');},policy:{verify},requireCore:async()=>{throw new Error('not creation');}});
+    const result=await production(event('POST',`jobs/${id}/delivery`,{contractVersion:LAB_DELIVERY_ACK_VERSION,deviceBindingSha256:deviceA,disposition:'applied'}));
+    expect(result.statusCode).toBe(403);expect(verify).toHaveBeenCalledOnce();expect(rows.get('job#'+id)!.deliveryAcknowledgment).toBeUndefined();
   });
 });

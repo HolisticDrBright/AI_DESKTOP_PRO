@@ -58,8 +58,9 @@ provider, payment, device or rollback-only database evidence.
 ## Still required
 
 Hosted synthetic acceptance of the candidate; the V2 client mode for a verified
-production runtime; a server-side delivered/consumed state for durable delivery
-reconciliation; reviewed consent releases for `lab_history`/`ai_context`;
+production runtime; hosted/device qualification of the source claim and durable
+acknowledgment protocol (`lab-delivery-acknowledgment.md`), plus cloud publication
+and lost-device recovery; reviewed consent releases for `lab_history`/`ai_context`;
 provider (Textract/OpenAI) agreements and evidence hashes; retention/lifecycle
 policy; alarm owner; billing origin; load/abuse qualification; complete job/read
 auditing and account privacy across documents, artifacts, identity and backups;

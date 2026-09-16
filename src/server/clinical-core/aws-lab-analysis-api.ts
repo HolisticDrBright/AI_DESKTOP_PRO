@@ -15,6 +15,7 @@ import { labObjectPrefix } from './lab-object-prefix';
 import { LabAuthorizationRevoked, type LabAuthorization, type LabAuthorizationPolicy } from './owned-lab-authorization';
 import { CoreSubscriptionError } from './core-subscription-guard';
 import { OwnedStorageError } from './owned-consumer-records';
+import { canonicalPayload } from './aws-consumer-clinical-records';
 
 const CONTRACT_VERSION = "lab-analysis/1";
 const MAX_BODY_BYTES = 256 * 1024;
@@ -107,8 +108,11 @@ type Job = {
   authorization?: LabAuthorization;
   /** Device-bound delivery claim recorded before a device commits the result locally. */
   delivery?: LabDelivery;
+  deliveryAcknowledgment?: LabDeliveryAcknowledgment;
 };
 export const LAB_DELIVERY_VERSION = 'lab-delivery/1';
+export const LAB_DELIVERY_ACK_VERSION = 'lab-delivery-ack/1';
+export type LabDeliveryAcknowledgment = {bindingSha256:string;disposition:'applied'|'archived_not_applied';acknowledgedAt:string;resultSha256:string};
 export type LabDelivery = { bindingSha256: string; deliveredAt: string; count: number };
 const DEVICE_BINDING = /^[a-f0-9]{64}$/;
 export type LabDataClassification = 'synthetic_only' | 'personal_health_record';
@@ -377,10 +381,11 @@ function status(job: Job) {
 
 /** A completed result is claimed by exactly one device binding before that
  * device commits it locally. The same device may claim again (retry after a
- * failed local commit); a different device is refused so a result is never
- * adopted twice. The claim never changes the result or the job's lifecycle. */
+ * failed local commit); a different device cannot claim this job. This is not
+ * proof of persistence or active-plan adoption. The result is not changed. */
 async function recordDelivery(event: ApiEvent, identity: Claims, jobId: string, options: LabApiOptions) {
   const input = body(event);
+  if(input.contractVersion===LAB_DELIVERY_ACK_VERSION)return acknowledgeDelivery(input,identity,jobId,options);
   if (Object.keys(input).sort().join(',') !== 'contractVersion,deviceBindingSha256' || input.contractVersion !== LAB_DELIVERY_VERSION
     || typeof input.deviceBindingSha256 !== 'string' || !DEVICE_BINDING.test(input.deviceBindingSha256)) return refusal();
   const job = await ownedJob(jobId, identity, options);
@@ -406,6 +411,40 @@ async function recordDelivery(event: ApiEvent, identity: Claims, jobId: string, 
     throw error;
   }
   return json(200, { contractVersion: LAB_DELIVERY_VERSION, jobId, delivery });
+}
+
+/** The phone attests durable local persistence. This is distinct from a claim,
+ * not independent proof of device storage, clinical adoption or clinic sync. */
+async function acknowledgeDelivery(input:Record<string,unknown>,identity:Claims,jobId:string,options:LabApiOptions){
+  if(Object.keys(input).sort().join(',')!=='contractVersion,deviceBindingSha256,disposition'
+    ||typeof input.deviceBindingSha256!=='string'||!DEVICE_BINDING.test(input.deviceBindingSha256)
+    ||!['applied','archived_not_applied'].includes(String(input.disposition)))return refusal();
+  const job=await ownedJob(jobId,identity,options);
+  if(!job)return refusal(404);
+  const conflict=()=>json(409,{contractVersion:LAB_DELIVERY_ACK_VERSION,error:'lab_delivery_conflict'});
+  if(job.state!=='completed'||!job.result||typeof job.result!=='object'||Array.isArray(job.result)||job.delivery?.bindingSha256!==input.deviceBindingSha256)return conflict();
+  const resultSha256=createHash('sha256').update(canonicalPayload(job.result as Record<string,unknown>)).digest('hex');
+  const matching=(ack:LabDeliveryAcknowledgment|undefined)=>!!ack&&ack.bindingSha256===input.deviceBindingSha256
+    &&ack.disposition===input.disposition&&ack.resultSha256===resultSha256&&Number.isFinite(Date.parse(ack.acknowledgedAt));
+  const reply=(ack:LabDeliveryAcknowledgment)=>json(200,{contractVersion:LAB_DELIVERY_ACK_VERSION,jobId,acknowledgment:ack});
+  if(job.deliveryAcknowledgment)return matching(job.deliveryAcknowledgment)?reply(job.deliveryAcknowledgment):conflict();
+  const acknowledgment:LabDeliveryAcknowledgment={bindingSha256:input.deviceBindingSha256,disposition:input.disposition as LabDeliveryAcknowledgment['disposition'],acknowledgedAt:new Date().toISOString(),resultSha256};
+  try{
+    await db.send(new UpdateCommand({TableName:required('LAB_JOB_TABLE'),Key:{pk:job.pk},
+      UpdateExpression:'SET deliveryAcknowledgment = :ack, updatedAt = :now',
+      ConditionExpression:'#state = :completed AND ownerSub = :owner AND delivery.bindingSha256 = :binding AND #result = :result AND attribute_not_exists(deliveryAcknowledgment)',
+      ExpressionAttributeNames:{'#state':'state','#result':'result'},ExpressionAttributeValues:{':ack':acknowledgment,':now':acknowledgment.acknowledgedAt,':completed':'completed',':owner':identity.sub,':binding':input.deviceBindingSha256,':result':job.result}}));
+  }catch(error){
+    if((error as {name?:string})?.name!=='ConditionalCheckFailedException')throw error;
+    // Retry after a concurrent identical ACK is successful only after a fresh
+    // owner/classification/consent check. Deletion or differing decisions refuse.
+    const fresh=await ownedJob(jobId,identity,options);
+    return fresh?.state==='completed'&&fresh.delivery?.bindingSha256===input.deviceBindingSha256
+      &&fresh.result&&typeof fresh.result==='object'&&!Array.isArray(fresh.result)
+      &&createHash('sha256').update(canonicalPayload(fresh.result as Record<string,unknown>)).digest('hex')===resultSha256&&matching(fresh.deliveryAcknowledgment)
+      ?reply(fresh.deliveryAcknowledgment!):conflict();
+  }
+  return reply(acknowledgment);
 }
 
 async function ownedJob(jobId: string, identity: Claims, options: LabApiOptions, includeDeleting = false): Promise<Job | null> {
