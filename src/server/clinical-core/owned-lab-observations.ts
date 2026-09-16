@@ -1,24 +1,13 @@
 /** Consumer-imported observations are not verified clinical evidence. Keeping
  * this collection separate avoids expanding the legacy clinic-sharing API. */
 import { CONSUMER_CLINICAL_COLLECTIONS, validateCollectionPayload, type ConsumerClinicalCollection } from './aws-consumer-clinical-records';
-import { z } from 'zod';
-import { calendarDate, collectionDimensions } from './lab-range-population';
+import { ageAtDrawCollectionContextSchema } from './lab-range-population';
+import type { z } from 'zod';
 
 /** Owned storage refuses direct identifiers such as a date of birth, so the
- * personal copy carries the completed age at the draw instead. The device
- * re-derives a range-equivalent context from its own profile on restore. */
-export const ownedCollectionContextSchema = z.object({
-  ageAtDraw: z.object({ value: z.number().int().min(0), unit: z.enum(['days','months','years']) }).strict()
-    .refine(age => age.value <= ({ days: 46000, months: 1500, years: 125 })[age.unit]),
-  observedOn: calendarDate,
-  sex: collectionDimensions.sex.nullable(),
-  pregnancyStatus: collectionDimensions.pregnancy.nullable(),
-  cyclePhase: collectionDimensions.phase.nullable(),
-  reproductiveStage: collectionDimensions.stage.nullable(),
-  contraception: collectionDimensions.contraception.nullable(),
-  pregnancyTrimester: z.number().int().min(1).max(3).nullable(),
-  assayId: z.string().trim().min(1).max(160).nullable(),
-}).strict().refine(row => row.pregnancyTrimester === null || row.pregnancyStatus === 'pregnant', 'trimester_requires_pregnancy');
+ * personal copy carries the completed age at the draw instead. Restore keeps
+ * that precision; profile agreement never establishes an exact birth date. */
+export const ownedCollectionContextSchema = ageAtDrawCollectionContextSchema;
 export type OwnedCollectionContext = z.infer<typeof ownedCollectionContextSchema>;
 
 export const OWNED_COLLECTIONS = [...CONSUMER_CLINICAL_COLLECTIONS, 'lab_observations'] as const;

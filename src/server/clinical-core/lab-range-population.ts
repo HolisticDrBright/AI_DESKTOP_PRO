@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { birthDateBoundsForCompletedAge } from './lab-recorded-age';
 
 const text = (max: number) => z.string().trim().min(1).max(max);
 export const calendarDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine(value =>
@@ -15,8 +16,7 @@ export const collectionDimensions = { sex, pregnancy, phase, stage, contraceptio
 
 // Context must describe THIS observation, not today's profile. Null means unknown.
 // Source status is retained as reported, never upgraded to clinical verification.
-export const collectionRangeContextSchema = z.object({
-  dateOfBirth: calendarDate,
+const collectionFields = {
   observedOn: calendarDate,
   sex: sex.nullable(),
   pregnancyStatus: pregnancy.nullable(),
@@ -25,8 +25,18 @@ export const collectionRangeContextSchema = z.object({
   contraception: contraception.nullable(),
   pregnancyTrimester: z.number().int().min(1).max(3).nullable(),
   assayId: text(160).nullable(),
-}).strict().refine(row => row.dateOfBirth <= row.observedOn, "observation_precedes_birth")
+};
+export const exactCollectionRangeContextSchema = z.object({dateOfBirth:calendarDate,...collectionFields}).strict()
+  .refine(row => row.dateOfBirth <= row.observedOn, "observation_precedes_birth")
   .refine(row => row.pregnancyTrimester === null || row.pregnancyStatus === "pregnant", "trimester_requires_pregnancy");
+/** Completed age is intentionally coarser than a birth date. Never promote it
+ * to an invented date of birth or today's age when restoring or matching. */
+export const ageAtDrawCollectionContextSchema = z.object({
+  ageAtDraw:z.object({value:z.number().int().nonnegative(),unit:z.enum(['days','months','years'])}).strict()
+    .refine(age=>age.value<=({days:46000,months:1500,years:125})[age.unit]),
+  ...collectionFields,
+}).strict().refine(row=>row.pregnancyTrimester===null||row.pregnancyStatus==='pregnant','trimester_requires_pregnancy');
+export const collectionRangeContextSchema=z.union([exactCollectionRangeContextSchema,ageAtDrawCollectionContextSchema]);
 export type CollectionRangeContext = z.infer<typeof collectionRangeContextSchema>;
 
 export const preciseLabRangeSchema = z.object({
@@ -87,12 +97,21 @@ export function matchPreciseLabRanges(release: PreciseLabRangeRelease, name: str
   if (!parsed.success) return [];
   const context = parsed.data, observed = Date.parse(context.observedOn);
   if (observed > now) return [];
+  const births='dateOfBirth' in context?[context.dateOfBirth,context.dateOfBirth]:
+    birthDateBoundsForCompletedAge(context.ageAtDraw,context.observedOn);
+  if(!births)return [];
   return release.ranges.filter(row => {
     const p = row.population, a = p.age;
-    const low = boundary(context.dateOfBirth, a.min, a.unit), high = boundary(context.dateOfBirth, a.max, a.unit);
+    // Calendar age boundaries are monotone in birth date. Requiring both
+    // endpoints means EVERY birth date consistent with the stored age matches.
+    // A coarse year/month cannot select a narrower day/month range by guessing.
+    const ageMatches=births.every(birth=>{
+      const low=boundary(birth,a.min,a.unit),high=boundary(birth,a.max,a.unit);
+      return (a.minInclusive?observed>=low:observed>low)&&(a.maxInclusive?observed<=high:observed<high);
+    });
     return row.rangeKind === kind && [row.canonicalName, ...row.aliases].some(alias => normalized(alias) === normalized(name))
       && normalized(row.unit) === normalized(unit)
-      && (a.minInclusive ? observed >= low : observed > low) && (a.maxInclusive ? observed <= high : observed < high)
+      && ageMatches
       && includes(p.sexes, context.sex) && includes(p.pregnancyStatuses, context.pregnancyStatus)
       && includes(p.cyclePhases, context.cyclePhase) && includes(p.reproductiveStages, context.reproductiveStage)
       && includes(p.contraceptions, context.contraception) && includes(p.pregnancyTrimesters, context.pregnancyTrimester)

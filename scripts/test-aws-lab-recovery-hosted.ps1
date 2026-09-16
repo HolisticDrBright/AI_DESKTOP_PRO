@@ -1,4 +1,4 @@
-param([switch]$ConfirmSyntheticOnly,[switch]$CreateSyntheticTestUsers,[switch]$TestUploadRoundTrip,[switch]$TestLateUploadCleanup,[switch]$TestActiveCancellation,[switch]$TestLegacyInventoryMigration,[switch]$TestReviewedContext,[switch]$TestSavedPlanGeneration,[switch]$TestDocumentGeneration,[switch]$TestDeliveryAcknowledgment,[string]$Profile='ai-synthetic-member')
+param([switch]$ConfirmSyntheticOnly,[switch]$CreateSyntheticTestUsers,[switch]$TestUploadRoundTrip,[switch]$TestLateUploadCleanup,[switch]$TestActiveCancellation,[switch]$TestLegacyInventoryMigration,[switch]$TestReviewedContext,[switch]$TestSavedPlanGeneration,[switch]$TestDocumentGeneration,[switch]$TestDeliveryAcknowledgment,[switch]$TestRecordedAgeContext,[string]$Profile='ai-synthetic-member')
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 $common=@('--profile',$Profile,'--region','us-east-2','--no-cli-pager')
@@ -8,6 +8,7 @@ function AwsJson([string[]]$Arguments){
   if($raw){return ($raw|ConvertFrom-Json)}
 }
 if(-not $ConfirmSyntheticOnly -or -not $CreateSyntheticTestUsers){throw 'Explicit synthetic-only/test-identity confirmation required.'}
+if($TestRecordedAgeContext -and -not $TestSavedPlanGeneration){throw 'Recorded-age acceptance requires the explicit fictional saved-plan generation switch.'}
 if($TestDeliveryAcknowledgment -and ($TestUploadRoundTrip -or $TestSavedPlanGeneration -or $TestDocumentGeneration)){throw 'Delivery receipt fixture must run separately from uploads or model generation.'}
 if($TestLateUploadCleanup -and -not $TestUploadRoundTrip){throw 'Late-upload verification requires the fixture-upload switch.'}
 if($TestActiveCancellation -and (-not $TestUploadRoundTrip -or -not $TestLateUploadCleanup)){throw 'Cancellation acceptance requires the upload and late-cleanup checks.'}
@@ -122,6 +123,25 @@ try{
       @{markerId='fictional-glucose';canonicalName='Glucose';value=104;unit='mg/dL';labMin=70;labMax=99},
       @{markerId='fictional-hdl';canonicalName='HDL Cholesterol';value=39;unit='mg/dL';labMin=40;labMax=90},
       @{markerId='fictional-vitamin-d';canonicalName='Vitamin D';value=24;unit='ng/mL';labMin=30;labMax=100})
+    if($TestRecordedAgeContext){
+      $collection=@{ageAtDraw=@{value=40;unit='years'};observedOn='2026-09-01';sex='male';
+        pregnancyStatus=$null;cyclePhase=$null;reproductiveStage=$null;contraception=$null;pregnancyTrimester=$null;assayId=$null}
+      foreach($marker in $fixtureMarkers){$marker.collectionContext=$collection.Clone()}
+      foreach($mode in @('conflicting-birth-date','negative-age','wrong-draw-date')){
+        $invalid=$collection.Clone()
+        if($mode -eq 'conflicting-birth-date'){$invalid.dateOfBirth='1986-01-01'}
+        if($mode -eq 'negative-age'){$invalid.ageAtDraw=@{value=-1;unit='years'}}
+        if($mode -eq 'wrong-draw-date'){$invalid.observedOn='2026-08-31'}
+        $invalidRequest=@{request=@{id=[guid]::NewGuid().ToString();createdAt=[DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ss.fffZ')};
+          panelId=[guid]::NewGuid().ToString();panelName='Fictional recorded-age refusal';testDate='2026-09-01';
+          dataClassification='synthetic_only';attestsSyntheticOnly=$true;
+          biomarkers=@(@{markerId='fictional';canonicalName='Fictional';value=1;unit='widgets';labMin=$null;labMax=$null;collectionContext=$invalid})}
+        $refused=CallApi 'POST' '/requests/saved' $a $invalidRequest
+        Check ($refused.Status -eq 400) "recorded age $mode refused before dispatch"
+        $absent=CallApi 'GET' "/requests/$($invalidRequest.request.id)" $a
+        Check ($absent.Status -eq 404) "recorded age $mode created no durable request"
+      }
+    }
     $sourceHash=(@{panelId=$analysisPanel;testDate='2026-09-01';biomarkers=$fixtureMarkers}|ConvertTo-Json -Depth 10 -Compress)|& node -e $canonicalHashScript
     if($LASTEXITCODE -ne 0 -or $sourceHash -notmatch '^[a-f0-9]{64}$'){throw 'Fixture source hashing failed.'}
     $generation=@{request=@{id=$analysisRequestId;createdAt=[DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ss.fffZ')};
@@ -132,6 +152,16 @@ try{
     $queued=CallApi 'POST' '/requests/saved' $a $generation
     Check ($queued.Status -eq 200 -and $queued.Json.data.contractVersion -eq 'lab-request-recovery/1') 'fictional reviewed-input generation accepted'
     $analysisJobId=$queued.Json.data.jobId
+    if($TestRecordedAgeContext){
+      $saved=AwsJson @('dynamodb','get-item','--table-name',$table,'--consistent-read',
+        '--key',(@{pk=@{S="job#$analysisJobId"}}|ConvertTo-Json -Compress),'--projection-expression','structuredBiomarkers')
+      $contexts=@($saved.Item.structuredBiomarkers.L|ForEach-Object {$_.M.collectionContext.M})
+      Check ($contexts.Count -eq $fixtureMarkers.Count) 'each saved marker retains collection context'
+      foreach($context in $contexts){
+        Check ($context.ageAtDraw.M.value.N -eq '40' -and $context.ageAtDraw.M.unit.S -eq 'years' -and
+          $context.observedOn.S -eq '2026-09-01' -and $context.PSObject.Properties.Name -notcontains 'dateOfBirth') 'recorded completed age retained without invented birthday'
+      }
+    }
     $replayed=CallApi 'POST' '/requests/saved' $a $generation
     Check ($replayed.Status -eq 200 -and $replayed.Json.data.jobId -eq $analysisJobId) 'generation replay returns the same durable job'
     $foreign=CallApi 'GET' "/jobs/$analysisJobId" $b
