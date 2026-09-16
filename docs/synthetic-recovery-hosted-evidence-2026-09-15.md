@@ -163,3 +163,37 @@ payment, account-wide erasure or mobile build was performed. Notifications remai
 unconfigured pending an approved recipient. Backend CI35036314103 was still
 running at this final live-test capture; do not confuse this manual acceptance
 with a completed CI run or physical-device qualification.
+
+## Active cancellation service acceptance
+
+- Backend source **be23130a2389d923f3b82fa0bcee5c0f9a25e1ce** (PR65).
+  **1,450 passed / 11 existing skips**, typecheck, lint, infrastructure lint,
+  PowerShell parse, bundle build and diff checks passed.
+- Exact change set recovery-be23130a2389-20260915165936 executed in synthetic
+  account 588966314750. UPDATE_COMPLETE, both indexes ACTIVE. Added two existing-
+  authorizer-protected cancellation routes and scoped StopExecution permission.
+  No data resource replacement/removal. Two unchanged-rule invocation permissions
+  were reviewed as conditional refreshes; no broader principal/source allowed.
+- API/authorizer/cleanup artifact SHA256:
+  4b3fb90470891a323fac41bcb9ea911cd2d1d7c49b174ffb6208d08f17dbfcf9.
+  Worker SHA256:
+  6b92bfce4ea26904fb984ea3ba5222afe1136037b5135b7106822f11dacd043f.
+  All four functions Active/Successful, hashes matched.
+- Extended test with -TestActiveCancellation passed **28 live checks**. Only its
+  newly created fixture was placed in queued with a ten-minute blocking lease.
+  The real workflow was RUNNING; the lease prevented provider/document access.
+  Wrong-owner cancellation returned 404; missing confirmation returned 400;
+  owned cancellation succeeded and exact execution became ABORTED. Repeating
+  cancellation succeeded safely. Deletion/watch and late-PUT automatic removal
+  passed again, with no resurrected job.
+- Both new identities signed out/disabled; zero visible/in-flight failure-queue
+  messages after the run. Test job/files removed; minimal audit/deletion/request
+  metadata retained. No real data, model generation, email, payment or mobile build.
+- Prior cleanup backend CI35036314103 succeeded. Cancellation CI35038029274 and
+  preceding evidence CI35037195301 were still running at final live capture.
+  App Runner web remains 4ffd5f2. V2 runtime unchanged; **mobile cancellation
+  controls and durable local cancellation-intent integration remain unimplemented**.
+
+Read docs/lab-active-cancellation.md. Active provider-call interruption/erasure is
+not claimed. This completes tested service behavior, not original phase 2 or
+commercial release qualification. PHI and clinical release gates remain unchanged.

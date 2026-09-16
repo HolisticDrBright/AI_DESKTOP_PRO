@@ -49,4 +49,13 @@ pointer, and clear only the acknowledged original request. An ambiguous timeout
 must remain retryable, not be reported as cancelled. Physical device acceptance
 and production processing/retention/alert-routing gates remain open.
 
+The existing mobile `pendingJobs.exclusive` spans the polling loop and rejects
+overlapping calls. Do not put cancellation behind that same lock: it would be
+unavailable precisely while processing. Use a short storage-mutation lock and
+account-scoped operation generations to invalidate stale running work, with
+durable cancellation intent before the remote request. Account switching and
+failed/ambiguous storage writes must not clear another pointer. If completion
+wins and AWS refuses cancellation, preserve the completed job for explicit
+review instead of automatically applying or discarding it.
+
 AWS reference: [StopExecution](https://docs.aws.amazon.com/step-functions/latest/apireference/API_StopExecution.html).
