@@ -1,4 +1,5 @@
 import { createOwnedActivePlan } from './owned-active-plan';
+import { createOwnedPrivacyRequests } from './owned-privacy-requests';
 import { canonicalPayload } from "./aws-consumer-clinical-records";
 import { OWNED_COLLECTIONS, validateOwnedPayload as validateCollectionPayload, type OwnedCollection as ConsumerClinicalCollection } from './owned-lab-observations';
 import type { ProductionClinicalRequestContext } from "./aws-identity-consent";
@@ -56,6 +57,7 @@ export function createOwnedConsumerRecordsAdapter(database: ClinicalCoreDatabase
   return {
     ...createOwnedPrivacyExport((context, work) => run(context, 'consent_management', work)),
     ...createOwnedActivePlan((context, work) => run(context, 'clinical_data', work)),
+    ...createOwnedPrivacyRequests((context, work) => run(context, 'consent_management', work)),
     async recent(context:ProductionClinicalRequestContext,input:{collection:ConsumerClinicalCollection;limit:number}):Promise<OwnedRecord[]> {
       exactKeys(input,['collection','limit']);collection(input.collection);if(!Number.isInteger(input.limit)||input.limit<1||input.limit>100)invalid();
       return run(context,'clinical_data',async tx=>{

@@ -32,6 +32,8 @@ async function run() {
       for (const statement of splitPostgresStatements(readFileSync("infra/aws-clinical-core/production-migrations/20260916010000_production_owned_privacy_export.sql","utf8"))) await tx.query(statement);
       for (const statement of splitPostgresStatements(readFileSync("infra/aws-clinical-core/production-migrations/20260916020000_production_owned_voice_consent.sql","utf8"))) await tx.query(statement);
       for (const statement of splitPostgresStatements(readFileSync("infra/aws-clinical-core/production-migrations/20260916030000_production_owned_active_plan.sql","utf8"))) await tx.query(statement);
+      for (const statement of splitPostgresStatements(readFileSync("infra/aws-clinical-core/production-migrations/20260916040000_production_owned_privacy_requests.sql","utf8"))) await tx.query(statement);
+      for (const statement of splitPostgresStatements(readFileSync("infra/aws-clinical-core/production-migrations/20260916050000_production_guardian_authority.sql","utf8"))) await tx.query(statement);
       // Fictional approval metadata is exclusively inside this rolled-back transaction.
       await tx.query("insert into clinical_private.consumer_storage_consent_releases(scope,version,content_sha256,content,approved_by,approved_at) values ('forms_checkins','acceptance-only',encode(public.digest($1,'sha256'),'hex'),$1,'ROLLBACK TEST - NOT A HUMAN APPROVAL',clock_timestamp()),('wearables','acceptance-only',encode(public.digest($1,'sha256'),'hex'),$1,'ROLLBACK TEST - NOT A HUMAN APPROVAL',clock_timestamp())", ["Fictional rollback-only consent copy; not approved for use."]);
       await tx.query("set local role clinical_core_api");
@@ -268,6 +270,29 @@ async function run() {
       await check("select clinical_core.get_owned_active_plan()->'current' = 'null'::jsonb as ok");
       await check("select clinical_core.get_owned_active_plan()->'history'->0->>'action'='record_deleted' as ok");
       await refused(`clinical_core.release_owned_active_plan('${releaseReq}','${planB}',1)`,'40001');
+      stage='privacy_requests';
+      await context(a,subA,'consent_management');
+      const deletionReq=randomUUID();
+      const submitted=await api(apiEvent(a,subA,'POST /clinical-core/consumer/personal/privacy-request',undefined,{requestId:deletionReq,kind:'deletion'}));
+      if(submitted.statusCode!==200||JSON.parse(submitted.body).data.status!=='submitted')throw new Error('privacy_request_submit_failed');checks++;
+      const replayed=await api(apiEvent(a,subA,'POST /clinical-core/consumer/personal/privacy-request',undefined,{requestId:deletionReq,kind:'deletion'}));
+      if(JSON.parse(replayed.body).data.duplicate!==true)throw new Error('privacy_request_replay_failed');checks++;
+      await refused(`clinical_core.submit_owned_privacy_request('${randomUUID()}','deletion',null)`,'40001');
+      const tombstoned=await api(apiEvent(a,subA,'POST /clinical-core/consumer/personal/privacy-request/tombstone',undefined,{requestId:deletionReq,confirmTombstoneAllPersonalRecords:true}));
+      const ledger=JSON.parse(tombstoned.body).data;
+      if(tombstoned.statusCode!==200||ledger.status!=='in_progress'||!(ledger.tombstoned>=1))throw new Error('privacy_tombstone_failed');checks++;
+      await context(a,subA);
+      await check("select jsonb_array_length(clinical_core.list_owned_consumer_records('wellness_profiles',10))=0 as ok");
+      await check("select clinical_core.get_owned_active_plan()->'current' = 'null'::jsonb as ok");
+      await context(a,subA,'consent_management');
+      // Workforce-only operations refuse the consumer; a held request cannot purge.
+      await refused(`clinical_private.complete_owned_privacy_request('${ledger.privacyRequestId}')`,'42501');
+      await refused(`clinical_private.purge_owned_personal_history('${ledger.privacyRequestId}','none')`,'42501');
+      await refused(`clinical_private.place_owned_legal_hold('${a}','litigation')`,'42501');
+      await check("select jsonb_array_length(clinical_core.list_my_guardian_authorities())=0 as ok");
+      await refused(`clinical_private.review_guardian_authority('${b}','${a}','parent_of_minor','birth_record','${'a'.repeat(64)}',clock_timestamp()+interval '1 day')`,'42501');
+      await context(b,subB,'consent_management');
+      await check("select jsonb_array_length(clinical_core.list_owned_privacy_requests())=0 as ok");
       await context(a,subA);
       await tx.query("select set_config('clinical.claim.identity_pool','workforce',true)");
       await refused("clinical_private.owned_consumer_actor()", "42501");
@@ -277,7 +302,7 @@ async function run() {
     if (!(error instanceof RolledBack)) { console.error(JSON.stringify({ failedStage: stage, passedChecks: checks })); throw error; }
   }
   const remaining = await database.transaction(async tx => tx.query<{ ok: boolean }>(
-    "select to_regclass('clinical_core.owned_consumer_record_versions') is null and to_regclass('clinical_private.owned_privacy_exports') is null and to_regclass('clinical_audit.owned_privacy_export_events') is null and to_regclass('clinical_core.owned_consumer_active_plans') is null and to_regclass('clinical_core.owned_consumer_active_plan_history') is null and not exists(select 1 from clinical_core.identities where identity_subject in ($1,$2)) as ok", [subA,subB]));
+    "select to_regclass('clinical_core.owned_consumer_record_versions') is null and to_regclass('clinical_private.owned_privacy_exports') is null and to_regclass('clinical_audit.owned_privacy_export_events') is null and to_regclass('clinical_core.owned_consumer_active_plans') is null and to_regclass('clinical_core.owned_consumer_active_plan_history') is null and to_regclass('clinical_private.owned_privacy_requests') is null and to_regclass('clinical_core.guardian_authorities') is null and not exists(select 1 from clinical_core.identities where identity_subject in ($1,$2)) as ok", [subA,subB]));
   if (remaining.rows[0]?.ok !== true) throw new Error("rollback_verification_failed");
   console.log(JSON.stringify({ checks, rollbackVerified: true, retainedSchema: false, retainedFixtureRows: 0, clinicConnectionRequired: false, phiAllowed: false }));
 }

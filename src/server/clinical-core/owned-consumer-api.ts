@@ -1,3 +1,4 @@
+import {PERSONAL_DELETION_COVERAGE} from './owned-privacy-requests';
 import type { ApiGatewayV2Event,ApiGatewayV2Response } from "./aws-identity-api";
 import type { ProductionClinicalRequestContext } from "./aws-identity-consent";
 import { createOwnedConsumerRecordsAdapter,OwnedStorageError,OWNED_STORAGE_SCOPES,type OwnedStorageScope,type OwnedRecordWrite } from "./owned-consumer-records";
@@ -12,7 +13,7 @@ export type OwnedConsumerApiConfiguration = {
 };
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const BASE="/clinical-core/consumer/personal";
-export const OWNED_CONSUMER_ROUTES=[`GET ${BASE}/records`,`GET ${BASE}/record`,`POST ${BASE}/records`,`GET ${BASE}/consent`,`POST ${BASE}/consent`,`GET ${BASE}/chat-context`,`POST ${BASE}/privacy-export`,`GET ${BASE}/privacy-export`,`GET ${BASE}/active-plan`,`POST ${BASE}/active-plan`,`POST ${BASE}/active-plan/release`] as const;
+export const OWNED_CONSUMER_ROUTES=[`GET ${BASE}/records`,`GET ${BASE}/record`,`POST ${BASE}/records`,`GET ${BASE}/consent`,`POST ${BASE}/consent`,`GET ${BASE}/chat-context`,`POST ${BASE}/privacy-export`,`GET ${BASE}/privacy-export`,`GET ${BASE}/active-plan`,`POST ${BASE}/active-plan`,`POST ${BASE}/active-plan/release`,`GET ${BASE}/privacy-request`,`POST ${BASE}/privacy-request`,`POST ${BASE}/privacy-request/tombstone`] as const;
 const COLLECTION_SCOPE:Record<ConsumerClinicalCollection,OwnedStorageScope>={
   lab_observations:'lab_history',
   protocols:"protocols_supplements",daily_adherence:"symptoms_adherence",symptom_logs:"symptoms_adherence",
@@ -37,7 +38,7 @@ export function createOwnedConsumerApi(input:{configuration:OwnedConsumerApiConf
       const route=event.routeKey??"";
       if (!(OWNED_CONSUMER_ROUTES as readonly string[]).includes(route)) return response(404,{error:"route_not_found"});
       const consent=route.endsWith("/consent");
-      const privacy=route.endsWith('/privacy-export');
+      const privacy=route.endsWith('/privacy-export')||route.includes('/privacy-request');
       const context=ownedConsumerIdentity(event,c,consent||privacy?"consent_management":"clinical_data",input.now?.()??Date.now());
       const post=route.startsWith("POST ");
       const q=event.queryStringParameters??{};
@@ -47,6 +48,13 @@ export function createOwnedConsumerApi(input:{configuration:OwnedConsumerApiConf
       // withdrawn feature's consent. Identity + deployment gates still apply.
       if(privacy){
         const adapter=input.adapter();
+        if(route.includes('/privacy-request')){
+          // Deletion/correction requests and self-service tombstones need no
+          // feature scope and survive withdrawal; they never claim full erasure.
+          if(route.endsWith('/tombstone')){exact(body,['requestId','confirmTombstoneAllPersonalRecords']);return response(200,{data:await adapter.tombstonePersonalRecords(context,body as Parameters<typeof adapter.tombstonePersonalRecords>[1])});}
+          if(post){exact(body,['requestId','kind','correction']);return response(200,{data:await adapter.submitPrivacyRequest(context,body as Parameters<typeof adapter.submitPrivacyRequest>[1])});}
+          exact(body,[]);return response(200,{data:{requests:await adapter.listPrivacyRequests(context),coverage:PERSONAL_DELETION_COVERAGE}});
+        }
         if(post){exact(body,['requestId']);return response(200,{data:await adapter.startPrivacyExport(context,{requestId:String(body.requestId??'')})});}
         exact(body,['exportId','section','limit','cursor']);
         return response(200,{data:await adapter.readPrivacyExport(context,{exportId:String(body.exportId??''),section:body.section as 'records'|'consents',

@@ -168,6 +168,14 @@
     {
       "version": "20260916030000",
       "file": "20260916030000_production_owned_active_plan.sql"
+    },
+    {
+      "version": "20260916040000",
+      "file": "20260916040000_production_owned_privacy_requests.sql"
+    },
+    {
+      "version": "20260916050000",
+      "file": "20260916050000_production_guardian_authority.sql"
     }
   ]
 }
