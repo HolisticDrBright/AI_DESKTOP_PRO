@@ -1,7 +1,7 @@
 import {describe,it,expect,vi} from "vitest";
 import {createOwnedConsumerApi,type OwnedConsumerApiConfiguration} from "./owned-consumer-api";
 import {createOwnedConsumerRecordsAdapter} from "./owned-consumer-records";
-import type {ClinicalCoreDatabase} from "./database";
+import {clinicalUuid,type ClinicalCoreDatabase} from "./database";
 import type {ApiGatewayV2Event} from "./aws-identity-api";
 const id="11111111-1111-4111-8111-111111111111";
 const now=Date.parse("2026-09-08T00:00:00Z");
@@ -50,5 +50,33 @@ describe("independent consumer API",()=>{
     expect((await handler(e)).statusCode).toBe(200);expect(setConsent).toHaveBeenCalledTimes(1);
     e.body=JSON.stringify({scope:'wearables',status:'granted',expectedRevision:2,releaseVersion:'test/1'});
     expect((await handler(e)).statusCode).toBe(403);expect(setConsent).toHaveBeenCalledTimes(1);
+  });
+});
+describe('authoritative active plan routes',()=>{
+  const plansConfig:OwnedConsumerApiConfiguration={...config,allowedScopes:['protocols_supplements']};
+  const state={current:null,history:[],historyLimit:100};
+  it('requires the plans scope, exact bodies, and never adopts from a GET',async()=>{
+    const s=setup({...config,allowedScopes:['forms_checkins']});
+    const e=event('GET /clinical-core/consumer/personal/active-plan');e.queryStringParameters={};
+    expect((await s.handler(e)).statusCode).toBe(403);expect(s.query).not.toHaveBeenCalled();
+    const t=setup(plansConfig);(t.query as unknown as {mockResolvedValue:(v:unknown)=>void}).mockResolvedValue({rows:[{result:state}]});
+    const g=event('GET /clinical-core/consumer/personal/active-plan');g.queryStringParameters={};
+    const read=await t.handler(g);expect(read.statusCode).toBe(200);expect(JSON.parse(read.body).data).toEqual({version:'owned-active-plan/1',...state});
+    expect((t.query as unknown as {mock:{calls:unknown[][]}}).mock.calls.some(([sql])=>String(sql).includes('adopt_owned_active_plan'))).toBe(false);
+    const bad=event('POST /clinical-core/consumer/personal/active-plan');bad.queryStringParameters=undefined;bad.headers={'content-type':'application/json'};
+    bad.body=JSON.stringify({recordId:id,revision:1,contentSha256:'a'.repeat(64),consentRevision:1,requestId:id,expectedPrevious:null,ownerId:id});
+    expect((await t.handler(bad)).statusCode).toBe(400);
+  });
+  it('adopts and releases through the verified context with the exact database calls',async()=>{
+    const t=setup(plansConfig);
+    (t.query as unknown as {mockResolvedValue:(v:unknown)=>void}).mockResolvedValue({rows:[{result:{current:{recordId:id,revision:1,contentSha256:'a'.repeat(64),consentRevision:1,adoptedAt:'2026-09-16T00:00:00.000Z',adoptionRequestId:id,supersedes:null},history:[],historyLimit:100,duplicate:false}}]});
+    const adopt=event('POST /clinical-core/consumer/personal/active-plan');adopt.queryStringParameters=undefined;adopt.headers={'content-type':'application/json'};
+    adopt.body=JSON.stringify({recordId:id,revision:1,contentSha256:'a'.repeat(64),consentRevision:1,requestId:id,expectedPrevious:null});
+    const adopted=await t.handler(adopt);expect(adopted.statusCode).toBe(200);expect(JSON.parse(adopted.body).data.current.recordId).toBe(id);
+    expect((t.query as unknown as {mock:{calls:unknown[][]}}).mock.calls.find(([sql])=>String(sql).includes('adopt_owned_active_plan'))?.[1]).toEqual([clinicalUuid(id),1,'a'.repeat(64),1,clinicalUuid(id),null,null]);
+    (t.query as unknown as {mockResolvedValue:(v:unknown)=>void}).mockResolvedValue({rows:[{result:{current:null,history:[],historyLimit:100,duplicate:false}}]});
+    const release=event('POST /clinical-core/consumer/personal/active-plan/release');release.queryStringParameters=undefined;release.headers={'content-type':'application/json'};
+    release.body=JSON.stringify({requestId:id,expected:{recordId:id,revision:1}});
+    const released=await t.handler(release);expect(released.statusCode).toBe(200);expect(JSON.parse(released.body).data.current).toBeNull();
   });
 });

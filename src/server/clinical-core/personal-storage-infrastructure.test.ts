@@ -5,6 +5,6 @@ describe('personal storage deployment boundary',()=>{
     const script=readFileSync('scripts/build-aws-personal-storage.mjs','utf8');
     expect(script).toContain("PHI_ALLOWED:'false'");expect(script).toContain("PERSONAL_STORAGE_ACTIVATION:'blocked'");expect(script).toContain("PERSONAL_STORAGE_ALLOWED_SCOPES:''");
     expect(script).toContain("AuthorizationType:'JWT'");expect(script).toContain("['logs:CreateLogStream','logs:PutLogEvents']");expect(script).not.toMatch(/rds-data:|secretsmanager:GetSecretValue|s3:GetObject/);
-    expect(script).toContain('GET chat-context');
+    expect(script).toContain('GET chat-context');expect(script).toContain('POST active-plan/release');
   });
 });

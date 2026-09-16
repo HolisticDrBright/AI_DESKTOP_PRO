@@ -31,6 +31,7 @@ async function run() {
       for (const statement of splitPostgresStatements(readFileSync("infra/aws-clinical-core/production-migrations/20260908110000_production_owned_lab_history.sql","utf8"))) await tx.query(statement);
       for (const statement of splitPostgresStatements(readFileSync("infra/aws-clinical-core/production-migrations/20260916010000_production_owned_privacy_export.sql","utf8"))) await tx.query(statement);
       for (const statement of splitPostgresStatements(readFileSync("infra/aws-clinical-core/production-migrations/20260916020000_production_owned_voice_consent.sql","utf8"))) await tx.query(statement);
+      for (const statement of splitPostgresStatements(readFileSync("infra/aws-clinical-core/production-migrations/20260916030000_production_owned_active_plan.sql","utf8"))) await tx.query(statement);
       // Fictional approval metadata is exclusively inside this rolled-back transaction.
       await tx.query("insert into clinical_private.consumer_storage_consent_releases(scope,version,content_sha256,content,approved_by,approved_at) values ('forms_checkins','acceptance-only',encode(public.digest($1,'sha256'),'hex'),$1,'ROLLBACK TEST - NOT A HUMAN APPROVAL',clock_timestamp()),('wearables','acceptance-only',encode(public.digest($1,'sha256'),'hex'),$1,'ROLLBACK TEST - NOT A HUMAN APPROVAL',clock_timestamp())", ["Fictional rollback-only consent copy; not approved for use."]);
       await tx.query("set local role clinical_core_api");
@@ -240,6 +241,33 @@ async function run() {
       await tx.query('set local role clinical_core_api');
       const expired=await api(apiEvent(a,subA,'GET /clinical-core/consumer/personal/privacy-export',{exportId:manifest.exportId,section:'records'}));
       if(expired.statusCode!==400)throw new Error('privacy_expiry_failed');checks++;
+      stage='active_plan';
+      // Fictional plans scope release inside the rolled-back transaction only.
+      await tx.query('reset role');
+      await tx.query("insert into clinical_private.consumer_storage_consent_releases(scope,version,content_sha256,content,approved_by,approved_at) values ('protocols_supplements','acceptance-only',encode(public.digest($1,'sha256'),'hex'),$1,'ROLLBACK TEST - NOT A HUMAN APPROVAL',clock_timestamp())",["Fictional rollback-only plans consent copy; not approved for use."]);
+      await tx.query('set local role clinical_core_api');
+      await context(a,subA,'consent_management');
+      const plansConsent=Number((await tx.query<{result:{revision:number}}>("select clinical_core.set_owned_consumer_consent('protocols_supplements','granted','acceptance-only',0) as result")).rows[0]?.result?.revision);
+      await context(a,subA);
+      const planA=randomUUID(),planB=randomUUID(),adoptA=randomUUID(),adoptB=randomUUID(),releaseReq=randomUUID(),hash='a'.repeat(64);
+      await check("select clinical_core.get_owned_active_plan()->'current' = 'null'::jsonb as ok");
+      await tx.query("select clinical_core.write_owned_consumer_record('protocols',$1,0,$2,'{\"name\":\"fictional\"}'::jsonb,false,$3)",[clinicalUuid(planA),clinicalUuid(randomUUID()),plansConsent]);
+      await refused(`clinical_core.adopt_owned_active_plan('${planA}',2,'${hash}',${plansConsent},'${adoptA}',null,null)`,'40001');
+      await refused(`clinical_core.adopt_owned_active_plan('${planB}',1,'${hash}',${plansConsent},'${adoptA}',null,null)`,'40001');
+      await check(`select (clinical_core.adopt_owned_active_plan('${planA}',1,'${hash}',${plansConsent},'${adoptA}',null,null)->'current'->>'recordId')::uuid=$1 as ok`,[clinicalUuid(planA)]);
+      await check(`select (clinical_core.adopt_owned_active_plan('${planA}',1,'${hash}',${plansConsent},'${adoptA}',null,null)->>'duplicate')::boolean as ok`);
+      await refused(`clinical_core.adopt_owned_active_plan('${planA}',1,'${hash}',${plansConsent},'${randomUUID()}',null,null)`,'40001');
+      await tx.query("select clinical_core.write_owned_consumer_record('protocols',$1,0,$2,'{\"name\":\"fictional-b\"}'::jsonb,false,$3)",[clinicalUuid(planB),clinicalUuid(randomUUID()),plansConsent]);
+      await refused(`clinical_core.adopt_owned_active_plan('${planB}',1,'${hash}',${plansConsent},'${adoptB}',null,null)`,'40001');
+      await check(`select (clinical_core.adopt_owned_active_plan('${planB}',1,'${hash}',${plansConsent},'${adoptB}','${planA}',1)->'current'->'supersedes'->>'recordId')::uuid=$1 as ok`,[clinicalUuid(planA)]);
+      await context(b,subB);
+      await refused("clinical_core.get_owned_active_plan()",'42501');
+      await check("select count(*)::int=0 as ok from clinical_core.owned_consumer_active_plans where owner_id=$1",[clinicalUuid(a)]);
+      await context(a,subA);
+      await tx.query("select clinical_core.write_owned_consumer_record('protocols',$1,1,$2,'{}'::jsonb,true,$3)",[clinicalUuid(planB),clinicalUuid(randomUUID()),plansConsent]);
+      await check("select clinical_core.get_owned_active_plan()->'current' = 'null'::jsonb as ok");
+      await check("select clinical_core.get_owned_active_plan()->'history'->0->>'action'='record_deleted' as ok");
+      await refused(`clinical_core.release_owned_active_plan('${releaseReq}','${planB}',1)`,'40001');
       await context(a,subA);
       await tx.query("select set_config('clinical.claim.identity_pool','workforce',true)");
       await refused("clinical_private.owned_consumer_actor()", "42501");
@@ -249,7 +277,7 @@ async function run() {
     if (!(error instanceof RolledBack)) { console.error(JSON.stringify({ failedStage: stage, passedChecks: checks })); throw error; }
   }
   const remaining = await database.transaction(async tx => tx.query<{ ok: boolean }>(
-    "select to_regclass('clinical_core.owned_consumer_record_versions') is null and to_regclass('clinical_private.owned_privacy_exports') is null and to_regclass('clinical_audit.owned_privacy_export_events') is null and not exists(select 1 from clinical_core.identities where identity_subject in ($1,$2)) as ok", [subA,subB]));
+    "select to_regclass('clinical_core.owned_consumer_record_versions') is null and to_regclass('clinical_private.owned_privacy_exports') is null and to_regclass('clinical_audit.owned_privacy_export_events') is null and to_regclass('clinical_core.owned_consumer_active_plans') is null and to_regclass('clinical_core.owned_consumer_active_plan_history') is null and not exists(select 1 from clinical_core.identities where identity_subject in ($1,$2)) as ok", [subA,subB]));
   if (remaining.rows[0]?.ok !== true) throw new Error("rollback_verification_failed");
   console.log(JSON.stringify({ checks, rollbackVerified: true, retainedSchema: false, retainedFixtureRows: 0, clinicConnectionRequired: false, phiAllowed: false }));
 }

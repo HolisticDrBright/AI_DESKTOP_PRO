@@ -12,7 +12,7 @@ export type OwnedConsumerApiConfiguration = {
 };
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const BASE="/clinical-core/consumer/personal";
-export const OWNED_CONSUMER_ROUTES=[`GET ${BASE}/records`,`GET ${BASE}/record`,`POST ${BASE}/records`,`GET ${BASE}/consent`,`POST ${BASE}/consent`,`GET ${BASE}/chat-context`,`POST ${BASE}/privacy-export`,`GET ${BASE}/privacy-export`] as const;
+export const OWNED_CONSUMER_ROUTES=[`GET ${BASE}/records`,`GET ${BASE}/record`,`POST ${BASE}/records`,`GET ${BASE}/consent`,`POST ${BASE}/consent`,`GET ${BASE}/chat-context`,`POST ${BASE}/privacy-export`,`GET ${BASE}/privacy-export`,`GET ${BASE}/active-plan`,`POST ${BASE}/active-plan`,`POST ${BASE}/active-plan/release`] as const;
 const COLLECTION_SCOPE:Record<ConsumerClinicalCollection,OwnedStorageScope>={
   lab_observations:'lab_history',
   protocols:"protocols_supplements",daily_adherence:"symptoms_adherence",symptom_logs:"symptoms_adherence",
@@ -51,6 +51,15 @@ export function createOwnedConsumerApi(input:{configuration:OwnedConsumerApiConf
         exact(body,['exportId','section','limit','cursor']);
         return response(200,{data:await adapter.readPrivacyExport(context,{exportId:String(body.exportId??''),section:body.section as 'records'|'consents',
           limit:body.limit===undefined?25:Number(body.limit),...(body.cursor===undefined?{}:{cursor:body.cursor as string})})});
+      }
+      if(route.includes('/active-plan')){
+        // The authoritative plan pointer is owner data under the plans scope; it
+        // is never adopted by the server on its own and never reads plan content.
+        if(!c.allowedScopes.includes('protocols_supplements'))return response(403,{error:'feature_scope_not_enabled'});
+        const adapter=input.adapter();
+        if(route.endsWith('/release')){exact(body,['requestId','expected']);return response(200,{data:await adapter.releaseActivePlan(context,body as Parameters<typeof adapter.releaseActivePlan>[1])});}
+        if(post){exact(body,['recordId','revision','contentSha256','consentRevision','requestId','expectedPrevious']);return response(200,{data:await adapter.adoptActivePlan(context,body as Parameters<typeof adapter.adoptActivePlan>[1])});}
+        exact(body,[]);return response(200,{data:await adapter.activePlan(context)});
       }
       if(route.endsWith('/chat-context')){
         exact(body,[]);
