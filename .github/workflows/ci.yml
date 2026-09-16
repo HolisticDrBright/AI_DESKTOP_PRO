@@ -78,6 +78,8 @@ jobs:
           npm run test:aws-production-readiness
           npm run check:aws-production-container
           npm run check:aws-production-readiness-workload
+          npm run check:aws-provider-configuration
+          npm run test:aws-provider-configuration
       - name: Mock-import graph (no production path to fixtures)
         run: npm run check:mock-imports
       - name: Build refuses without an explicit edition

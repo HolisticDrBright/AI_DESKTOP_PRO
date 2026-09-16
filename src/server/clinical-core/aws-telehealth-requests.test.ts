@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 
-const { send } = vi.hoisted(() => ({ send: vi.fn() }));
+const { send, secretSend } = vi.hoisted(() => ({ send: vi.fn(), secretSend: vi.fn() }));
 
 vi.mock("@aws-sdk/client-dynamodb", () => ({
   DynamoDBClient: class DynamoDBClient {},
@@ -17,7 +17,7 @@ vi.mock("@aws-sdk/lib-dynamodb", () => ({
 }));
 
 vi.mock("@aws-sdk/client-secrets-manager", () => ({
-  SecretsManagerClient: class SecretsManagerClient { send = vi.fn(); },
+  SecretsManagerClient: class SecretsManagerClient { send = secretSend; },
   GetSecretValueCommand: class GetSecretValueCommand { constructor(readonly input: unknown) {} },
 }));
 
@@ -85,8 +85,60 @@ function event(routeKey: string, body?: Record<string, unknown>, suppliedClaims 
   } as never;
 }
 
+const processingItem = () => ({
+  pk: `ORG#${workforceClaims["custom:organization_id"]}`, sk: "REQ#2026-09-01T00:00:00.000Z#33333333-3333-4333-8333-333333333333",
+  gsi1pk: `PERSON#${claims["custom:person_id"]}`, gsi1sk: "REQ#2026-09-01T00:00:00.000Z#33333333-3333-4333-8333-333333333333",
+  requestId: "33333333-3333-4333-8333-333333333333", organizationId: workforceClaims["custom:organization_id"], consumerPersonId: claims["custom:person_id"],
+  consumerEmail: claims.email, status: "scheduled", visitType: "follow_up", preferredSlots: ["2026-09-03T17:00:00.000Z"], timeZone: "America/Los_Angeles",
+  note: null, scheduledStart: "2026-09-03T17:00:00.000Z", scheduledEnd: "2026-09-03T17:45:00.000Z", joinUrl: null, providerMeetingId: null, version: 4, createdAt: "2026-09-01T00:00:00.000Z",
+  updatedAt: "2026-09-01T00:00:00.000Z", lastActionBy: "workforce", slotId: "55555555-5555-4555-8555-555555555555", appointmentId: "66666666-6666-4666-8666-666666666666",
+  priceMinor: 15000, currency: "USD", cancellationPolicy: "Cancel at least 24 hours before the visit.", cancellationWindowHours: 24, cancellationFeeDueMinor: 0,
+  reminderStatus: "disabled", paymentPolicyVersion: "telehealth-payments/1", paymentAuthorizationStatus: "authorized", paymentStatus: "processing",
+  paymentIntentId: "pi_synthetic_1", paidMinor: 0, refundedMinor: 0,
+});
+const stripeConfig: TelehealthConfiguration = { ...config, stripeTestEnabled: true, stripeSecretArn: "arn:aws:secretsmanager:us-east-2:111122223333:secret:synthetic-stripe",
+  stripeSuccessUrl: "https://ailongevitypro.app/appointments/payment-complete", stripeCancelUrl: "https://ailongevitypro.app/appointments/payment-cancelled" };
+function stripeIntent(patch: Record<string, unknown>) {
+  return { id: "pi_synthetic_1", livemode: false, status: "processing", amount_received: 0,
+    metadata: { organization_id: workforceClaims["custom:organization_id"], request_id: "33333333-3333-4333-8333-333333333333" }, ...patch };
+}
+describe("workforce payment failure reconciliation", () => {
+  beforeEach(() => { send.mockReset(); secretSend.mockReset(); secretSend.mockResolvedValue({ SecretString: JSON.stringify({ secretKey: "sk_test_synthetic", webhookSecret: "whsec_synthetic" }) }); });
+  const reconcile = (intent: Record<string, unknown>, expectedVersion = 4, ok = true) => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok, json: async () => intent })));
+    return createTelehealthHandler(stripeConfig)(event("POST /clinical-core/workforce/appointments/payments", { requestId: "33333333-3333-4333-8333-333333333333", action: "reconcile", expectedVersion }, workforceClaims));
+  };
+  it("settles a processing charge from the official intent only when its metadata names this request", async () => {
+    send.mockResolvedValueOnce({ Items: [processingItem()] }).mockResolvedValueOnce({});
+    const paid = await reconcile(stripeIntent({ status: "succeeded", amount_received: 15000 }));
+    expect(paid.statusCode).toBe(200);
+    expect(JSON.parse(paid.body ?? "{}").data).toMatchObject({ reconciliation: "settled_paid", paymentStatus: "paid", paidMinor: 15000, version: 5 });
+    send.mockReset(); send.mockResolvedValueOnce({ Items: [processingItem()] });
+    const foreign = await reconcile(stripeIntent({ status: "succeeded", amount_received: 15000, metadata: { organization_id: workforceClaims["custom:organization_id"], request_id: "44444444-4444-4444-8444-444444444444" } }));
+    expect(foreign.statusCode).toBe(503); expect(send).toHaveBeenCalledTimes(1);
+  });
+  it("records a terminal failure, leaves unfinished intents untouched and refuses stale versions or overpayment", async () => {
+    send.mockResolvedValueOnce({ Items: [processingItem()] }).mockResolvedValueOnce({});
+    expect(JSON.parse((await reconcile(stripeIntent({ status: "requires_payment_method", last_payment_error: { code: "card_declined" } }))).body ?? "{}").data).toMatchObject({ reconciliation: "settled_failed", paymentStatus: "failed" });
+    send.mockReset(); send.mockResolvedValueOnce({ Items: [processingItem()] });
+    expect(JSON.parse((await reconcile(stripeIntent({ status: "requires_action" }))).body ?? "{}").data).toMatchObject({ reconciliation: "still_processing", paymentStatus: "processing" });
+    expect(send).toHaveBeenCalledTimes(1);
+    send.mockReset(); send.mockResolvedValueOnce({ Items: [processingItem()] });
+    expect((await reconcile(stripeIntent({ status: "succeeded", amount_received: 15000 }), 3)).statusCode).toBe(409);
+    send.mockReset(); send.mockResolvedValueOnce({ Items: [processingItem()] });
+    expect((await reconcile(stripeIntent({ status: "succeeded", amount_received: 99999 }))).statusCode).toBe(503);
+  });
+  it("does nothing for a request that is not processing and refuses without the Stripe test boundary", async () => {
+    send.mockResolvedValueOnce({ Items: [{ ...processingItem(), paymentStatus: "paid", paidMinor: 15000 }] });
+    expect(JSON.parse((await reconcile(stripeIntent({}))).body ?? "{}").data).toMatchObject({ reconciliation: "not_processing", paymentStatus: "paid" });
+    send.mockReset(); send.mockResolvedValueOnce({ Items: [processingItem()] });
+    const disabled = await createTelehealthHandler(config)(event("POST /clinical-core/workforce/appointments/payments", { requestId: "33333333-3333-4333-8333-333333333333", action: "reconcile", expectedVersion: 4 }, workforceClaims));
+    expect(disabled.statusCode).toBe(503); expect(secretSend).not.toHaveBeenCalled();
+  });
+});
+
 describe("AWS telehealth request boundary", () => {
-  beforeEach(() => send.mockReset());
+  beforeEach(() => { send.mockReset(); vi.unstubAllGlobals(); });
 
   it("refuses production traffic until the PHI activation gate is opened", async () => {
     const handler = createTelehealthHandler({ ...config, runtimeMode: "production" });

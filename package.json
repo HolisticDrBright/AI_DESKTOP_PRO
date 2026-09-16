@@ -67,6 +67,8 @@
     "build:aws-production-rollback-acceptance": "node scripts/build-aws-production-rollback-acceptance.mjs",
     "audit:aws-data-plane-migration": "node scripts/check-aws-data-plane-migration.mjs --report",
     "check:aws-data-plane-migration": "node scripts/check-aws-data-plane-migration.mjs --enforce",
+    "check:aws-provider-configuration": "node scripts/check-aws-provider-configuration.mjs",
+    "test:aws-provider-configuration": "node scripts/check-aws-provider-configuration.test.mjs",
     "test:aws-data-plane-migration": "node scripts/check-aws-data-plane-migration.test.mjs"
   },
   "dependencies": {
