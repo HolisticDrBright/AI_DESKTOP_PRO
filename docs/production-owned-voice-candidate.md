@@ -5,6 +5,11 @@ Desktop **4a0080f01f46819911b029172929fa51d93cc041**;
 V2 **48ba65a48a78e703ab10d2e0c74530fea459f7da**.
 Source only: no deployment, persistent migration, real data or paid mobile build.
 
+Release follow-up: GitHub CI now explicitly builds and CloudFormation-lints the
+generated independent voice template, in addition to its unit/build refusal tests.
+This closes a schema-validation coverage gap; it does not deploy or prove provider
+acceptance. The generated template remains default-blocked.
+
 ## Implemented
 
 - Dedicated production handler on the existing consumer voice-job contract. Gateway
