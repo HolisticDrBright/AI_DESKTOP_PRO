@@ -550,8 +550,16 @@ test("EMR: appointment → encounter → autosaved draft → recovery → sign �
   const block = page.getByRole("button", { name: /Fixture Patient/ }).first();
   await block.waitFor();
   await block.click();
+  // Separate a refused/missing POST from a failed client navigation. Waiting
+  // only for the URL hid the boundary that failed in CI35184836183.
+  const opening = page.waitForResponse(response =>
+    response.url().includes('/api/live/emr/encounter') && response.request().method() === 'POST');
   await page.getByRole("button", { name: "Open encounter" }).click();
-  await page.waitForURL("**/encounter/**");
+  const opened = await opening;
+  expect(opened.status(), 'appointment-to-encounter POST must succeed').toBe(200);
+  const openedBody = await opened.json() as {data:{encounterId:string}};
+  expect(openedBody.data.encounterId).toMatch(/^[0-9a-f-]{36}$/i);
+  await expect(page).toHaveURL(new RegExp(`/encounter/${openedBody.data.encounterId}$`));
   const encounterUrl = page.url();
   await expect(page.getByTestId("encounter-status")).toHaveText("In progress");
 
