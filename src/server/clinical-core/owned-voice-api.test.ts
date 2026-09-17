@@ -25,8 +25,8 @@ beforeEach(()=>{
   seconds=now/1000;rows=new Map();consentState=vi.fn(async(_context,scope)=>state(scope));
   repo={get:async id=>rows.has(id)?structuredClone(rows.get(id)!):undefined,
     insert:async job=>{if(rows.has(job.id))return false;rows.set(job.id,structuredClone(job));return true;},
-    acquire:async(id,token,time)=>{const r=rows.get(id);if(!r||r.state==='cleaned'||(r.leaseUntil??0)>=time)return;Object.assign(r,{leaseToken:token,leaseUntil:time+90});return structuredClone(r);},
-    release:async(id,token,changes)=>{const r=rows.get(id)!;if(r.leaseToken!==token)throw new Error('lease_lost');Object.assign(r,changes);delete r.leaseToken;delete r.leaseUntil;if(r.state==='cleaned')delete r.pending;},
+    acquire:async(id,token,time)=>{const r=rows.get(id);if(!r||(r.leaseUntil??0)>=time)return;Object.assign(r,{leaseToken:token,leaseUntil:time+90});return structuredClone(r);},
+    release:async(id,token,changes)=>{const r=rows.get(id)!;if(r.leaseToken!==token)throw new Error('lease_lost');Object.assign(r,changes);delete r.leaseToken;delete r.leaseUntil;if(r.state==='cleaned'){r.pending='work';delete r.expiresAt;}},
     cancel:async(id,owner)=>{const r=rows.get(id)!;if(r.owner!==owner)throw new Error('wrong_owner');r.cancelled=true;r.nextWork=seconds;},
     due:async t=>[...rows.values()].filter(r=>r.pending&&r.nextWork<=t).map(r=>r.id)};
   provider={upload:vi.fn().mockResolvedValue(undefined),start:vi.fn().mockResolvedValue(undefined),status:vi.fn().mockResolvedValue('missing'),
@@ -53,7 +53,8 @@ describe('independent production voice',()=>{
     vi.clearAllMocks();consentState.mockRejectedValue(new Error('identity database offline'));
     const s=setup(drainConfig);await s.handler({source:'aws.events'});
     expect(rows.get(created.jobId)).toMatchObject({state:'cleaned',cancelled:true});
-    expect(rows.get(created.jobId)?.pending).toBeUndefined();
+    expect(rows.get(created.jobId)).toMatchObject({pending:'work',cleanupWatchVersion:'voice-cleanup-watch/1',lastCleanupAt:seconds});
+    expect(rows.get(created.jobId)?.expiresAt).toBeUndefined();
     expect(s.adapter).not.toHaveBeenCalled();expect(s.requireCore).not.toHaveBeenCalled();
     expect(provider.upload).not.toHaveBeenCalled();expect(provider.start).not.toHaveBeenCalled();expect(provider.transcript).not.toHaveBeenCalled();
     expect(provider.remove).toHaveBeenCalledOnce();

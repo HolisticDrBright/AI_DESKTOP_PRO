@@ -2,7 +2,7 @@ import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { DeleteTranscriptionJobCommand, GetTranscriptionJobCommand, StartTranscriptionJobCommand, TranscribeClient } from "@aws-sdk/client-transcribe";
-import { VoiceJobs, type VoiceJob, type VoiceProvider, type VoiceRepository } from "./voice-jobs";
+import { VoiceJobs, VOICE_CLEANUP_WATCH, type VoiceJob, type VoiceProvider, type VoiceRepository } from "./voice-jobs";
 import type {VoiceAuthorizationPolicy} from './voice-authorization';
 import {erasePersonalVoiceObjects} from './voice-object-cleanup';
 
@@ -35,18 +35,20 @@ export function createAwsVoiceService(options:{table:string;bucket:string;kms:st
     async acquire(id, token, now) {
       try {
         return (await db.send(new UpdateCommand({ TableName: table, Key: { id },
-          ConditionExpression: "attribute_exists(id) AND #state <> :cleaned AND (attribute_not_exists(leaseUntil) OR leaseUntil < :now)",
+          ConditionExpression: "attribute_exists(id) AND (attribute_not_exists(leaseUntil) OR leaseUntil < :now)",
           UpdateExpression: "SET leaseToken = :token, leaseUntil = :until",
-          ExpressionAttributeNames: { "#state": "state" }, ExpressionAttributeValues: { ":cleaned": "cleaned", ":now": now, ":until": now + 90, ":token": token },
+          ExpressionAttributeValues: { ":now": now, ":until": now + 90, ":token": token },
           ReturnValues: "ALL_NEW" }))).Attributes as VoiceJob;
       } catch (error) { if (conditional(error)) return undefined; throw error; }
     },
     async release(id, token, changes) {
       const clean = changes.state === "cleaned";
+      if (clean && (changes.cleanupWatchVersion !== VOICE_CLEANUP_WATCH || !Number.isSafeInteger(changes.lastCleanupAt)
+        || changes.lastCleanupAt! < 0 || !Number.isSafeInteger(changes.nextWork) || changes.nextWork! <= changes.lastCleanupAt!)) throw new Error('voice_cleanup_watch_invalid');
       await db.send(new UpdateCommand({ TableName: table, Key: { id }, ConditionExpression: "leaseToken = :token",
-        UpdateExpression: `SET nextWork = :due${changes.state ? ", #state = :state" : ""}${clean ? ", expiresAt = :expires" : ""} REMOVE leaseToken, leaseUntil${clean ? ", pending" : ""}`,
+        UpdateExpression: `SET nextWork = :due${changes.state ? ", #state = :state" : ""}${clean ? ", pending = :work, cleanupWatchVersion = :watch, lastCleanupAt = :verified" : ""} REMOVE leaseToken, leaseUntil${clean ? ", expiresAt" : ""}`,
         ...(changes.state ? { ExpressionAttributeNames: { "#state": "state" } } : {}),
-        ExpressionAttributeValues: { ":token": token, ":due": changes.nextWork, ...(changes.state ? { ":state": changes.state } : {}), ...(clean ? { ":expires": changes.expiresAt } : {}) } }));
+        ExpressionAttributeValues: { ":token": token, ":due": changes.nextWork, ...(changes.state ? { ":state": changes.state } : {}), ...(clean ? { ":work": "work", ":watch": VOICE_CLEANUP_WATCH, ":verified": changes.lastCleanupAt } : {}) } }));
     },
     async cancel(id, owner) {
       try { await db.send(new UpdateCommand({ TableName: table, Key: { id }, ConditionExpression: "#owner = :owner AND #state <> :cleaned",

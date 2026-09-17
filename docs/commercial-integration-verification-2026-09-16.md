@@ -60,6 +60,13 @@ build, provider activation, approval record or PHI flag changed.
 
 ## Release status and remaining engineering
 
+Later source increment: see voice-late-write-cleanup-watch.md. Voice cleanup now
+retains a due-index watch after successful removal, with no automatic metadata TTL.
+Late uploads/provider completions remain unreadable and get another cleanup attempt.
+The drain inventory distinguishes empty artifacts from shutdown eligibility.
+This advances original phases2/3/6, not completion: deployment, legacy backfill,
+retention/hold decisions, full account fulfillment and physical acceptance remain.
+
 Not commercial ready. All six original phases remain partial in V2's fixed
 `expo/docs/commercial-six-phase-ledger.md`; no additional numbered phase is invented.
 

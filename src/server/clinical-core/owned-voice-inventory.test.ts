@@ -3,9 +3,18 @@ import {summarizeVoiceInventory,type VoiceInventoryInput} from './owned-voice-in
 import {readVoiceDrainInventory,type ReadAws} from './owned-voice-inventory-reader';
 const id='a'.repeat(64),other='b'.repeat(64),empty=():VoiceInventoryInput=>({jobs:[],versions:[],deleteMarkers:[],providerJobs:[]});
 describe('voice shutdown inventory',()=>{
+  it('distinguishes empty artifacts from permission to retire an active cleanup watch',()=>{
+    const watch={id,state:'cleaned',pending:'work',cleanupWatchVersion:'voice-cleanup-watch/1',lastCleanupAt:1000,nextWork:1300};
+    expect(summarizeVoiceInventory({...empty(),jobs:[watch]})).toMatchObject({
+      candidateClear:false,artifactsCurrentlyClear:true,deletionCertified:false,cleanupWatchesMustRemainEnabled:true,
+      counts:{cleanupWatches:1,unwatchedCleanedJobs:0,cleanedStillPending:1},
+    });
+    expect(summarizeVoiceInventory({...empty(),jobs:[{...watch,expiresAt:2000}]}).counts.unwatchedCleanedJobs).toBe(1);
+    expect(summarizeVoiceInventory({...empty(),jobs:[{...watch,nextWork:999}]}).counts.unwatchedCleanedJobs).toBe(1);
+  });
   it('counts retained cleaned metadata without calling it full erasure',()=>{
     const r=summarizeVoiceInventory({...empty(),jobs:[{id,state:'cleaned'}]});
-    expect(r).toMatchObject({candidateClear:true,atomicSnapshot:false,deletionCertified:false,counts:{jobMetadata:1,uncleanJobs:0}});
+    expect(r).toMatchObject({candidateClear:false,atomicSnapshot:false,deletionCertified:false,counts:{jobMetadata:1,uncleanJobs:0,unwatchedCleanedJobs:1}});
     expect(JSON.stringify(r)).not.toContain(id);
   });
   it.each(['uploading','queued','running','ready','failed'])('counts %s even without pending or due-work flags',state=>{
@@ -61,6 +70,19 @@ function fixture(){
   return {responses,aws,stack,configuration};
 }
 describe('read-only AWS inventory scope',()=>{
+  it('reads watch metadata without fetching owners or transcripts',async()=>{
+    const f=fixture();
+    f.responses['dynamodb scan']={Items:[{id:{S:id},state:{S:'cleaned'},pending:{S:'work'},
+      cleanupWatchVersion:{S:'voice-cleanup-watch/1'},lastCleanupAt:{N:'1000'},nextWork:{N:'1300'}}]};
+    const report=await readVoiceDrainInventory(scope,f.aws);
+    expect(report).toMatchObject({candidateClear:false,artifactsCurrentlyClear:true,cleanupWatchesMustRemainEnabled:true,counts:{cleanupWatches:1}});
+    expect(JSON.stringify(report)).not.toContain(id);
+  });
+  it('refuses a malformed numeric watch attribute rather than assuming no work',async()=>{
+    const f=fixture();
+    f.responses['dynamodb scan']={Items:[{id:{S:id},state:{S:'cleaned'},nextWork:{S:'1300'}}]};
+    await expect(readVoiceDrainInventory(scope,f.aws)).rejects.toThrow();
+  });
   it('refuses malformed scope before AWS access',async()=>{
     const f=fixture();
     await expect(readVoiceDrainInventory({...scope,stack:'https://not-a-stack'},f.aws)).rejects.toThrow();
@@ -76,7 +98,7 @@ describe('read-only AWS inventory scope',()=>{
     expect(r.deletionCertified).toBe(false);
     const scan=f.aws.mock.calls.find(([args])=>args[0]==='dynamodb')![0];
     expect(scan).toContain('--consistent-read');expect(scan).not.toContain('--filter-expression');
-    expect(scan).toContain('#id,#state,#pending');
+    expect(scan).toContain('#id,#state,#pending,cleanupWatchVersion,lastCleanupAt,nextWork,expiresAt');
     expect(f.aws.mock.calls.map(([args])=>args.slice(0,2).join(' '))).toEqual([
       'sts get-caller-identity','cloudformation describe-stacks','cloudformation list-stack-resources',
       'lambda get-function-configuration','dynamodb scan','s3api list-object-versions','transcribe list-transcription-jobs',

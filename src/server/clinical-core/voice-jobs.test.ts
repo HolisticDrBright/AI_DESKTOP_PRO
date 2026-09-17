@@ -10,14 +10,64 @@ beforeEach(() => {
   repo = {
     get: async id => rows.has(id) ? { ...rows.get(id)! } : undefined,
     insert: async job => { if (rows.has(job.id)) return false; rows.set(job.id, { ...job }); return true; },
-    acquire: async (id, token, at) => { const row = rows.get(id); if (!row || row.state === "cleaned" || (row.leaseUntil ?? 0) >= at) return undefined; Object.assign(row, { leaseToken: token, leaseUntil: at + 90 }); return { ...row }; },
-    release: async (id, token, changes) => { const row = rows.get(id)!; if (row.leaseToken !== token) throw new Error("lease_lost"); Object.assign(row, changes); delete row.leaseToken; delete row.leaseUntil; if (row.state === "cleaned") delete row.pending; },
+    acquire: async (id, token, at) => { const row = rows.get(id); if (!row || (row.leaseUntil ?? 0) >= at) return undefined; Object.assign(row, { leaseToken: token, leaseUntil: at + 90 }); return { ...row }; },
+    release: async (id, token, changes) => { const row = rows.get(id)!; if (row.leaseToken !== token) throw new Error("lease_lost"); Object.assign(row, changes); delete row.leaseToken; delete row.leaseUntil; if (row.state === "cleaned") { row.pending = 'work'; delete row.expiresAt; } },
     cancel: async id => { const row = rows.get(id)!; row.cancelled = true; row.nextWork = now; },
     due: async at => [...rows.values()].filter(row => row.pending && row.nextWork <= at).map(row => row.id),
   };
   service = new VoiceJobs(repo, provider, () => now);
 });
 describe("durable voice lifecycle", () => {
+  test('an upload that finishes after losing its lease is still covered by cleanup', async () => {
+    let finish!:()=>void;
+    vi.mocked(provider.upload).mockImplementationOnce(()=>new Promise<void>(resolve=>{finish=resolve;}));
+    const starting=service.start(owner,input);
+    const rejected=expect(starting).rejects.toThrow('lease_lost');
+    await vi.waitFor(()=>expect(provider.upload).toHaveBeenCalled());
+    const job=[...rows.values()][0];
+    await service.cancel(owner,job.id); now+=91; await service.advance(job.id);
+    expect(rows.get(job.id)?.state).toBe('cleaned');
+    finish(); await rejected;
+    vi.mocked(provider.remove).mockClear(); now+=301; await service.sweep();
+    expect(provider.remove).toHaveBeenCalledOnce();
+    expect(rows.get(job.id)).toMatchObject({state:'cleaned',pending:'work'});
+    expect(rows.get(job.id)?.expiresAt).toBeUndefined();
+  });
+  test('a late upload after cleanup is removed by the retained watch without restarting transcription', async () => {
+    const job = await service.start(owner, input);
+    await service.cancel(owner, job.jobId); await service.advance(job.jobId);
+    vi.mocked(provider.remove).mockClear();
+    now += 301; await service.sweep();
+    expect(provider.remove).toHaveBeenCalledOnce();
+    expect(provider.start).not.toHaveBeenCalled();
+    expect(provider.transcript).not.toHaveBeenCalled();
+    expect(rows.get(job.jobId)?.expiresAt).toBeUndefined();
+    expect(await service.start(owner,input)).toEqual({jobId:job.jobId,state:'cancelled'});
+    expect(provider.upload).toHaveBeenCalledOnce();
+  });
+  test('late nonterminal provider work remains unreadable until it can be purged', async () => {
+    const job = await service.start(owner,input); await service.cancel(owner,job.jobId); await service.advance(job.jobId);
+    vi.mocked(provider.remove).mockClear(); vi.mocked(provider.status).mockResolvedValue('processing');
+    now+=301; await service.sweep();
+    expect(provider.remove).not.toHaveBeenCalled();
+    expect((await service.status(owner,job.jobId)).state).toBe('cancelled');
+    expect(provider.transcript).not.toHaveBeenCalled();
+    vi.mocked(provider.status).mockResolvedValue('ready'); now+=31; await service.sweep();
+    expect(provider.remove).toHaveBeenCalledOnce();
+  });
+  test('watch failure keeps work scheduled and old verification does not advance', async () => {
+    const job=await service.start(owner,input); await service.cancel(owner,job.jobId); await service.advance(job.jobId);
+    const verified=rows.get(job.jobId)!.lastCleanupAt;
+    vi.mocked(provider.remove).mockRejectedValueOnce(new Error('late deletion failed'));
+    now+=301; await expect(service.sweep()).rejects.toThrow('voice_cleanup_retry_required');
+    expect(rows.get(job.jobId)).toMatchObject({state:'cleaned',pending:'work',lastCleanupAt:verified});
+    expect(rows.get(job.jobId)?.expiresAt).toBeUndefined();
+  });
+  test('older watches use a daily sweep without an invented tombstone TTL', async () => {
+    const job=await service.start(owner,input); now+=3601; await service.sweep();
+    expect(rows.get(job.jobId)).toMatchObject({state:'cleaned',nextWork:now+86400,pending:'work'});
+    expect(rows.get(job.jobId)?.expiresAt).toBeUndefined();
+  });
   test("same recording retry retains one job and consent; changed payload is refused", async () => {
     const first = await service.start(owner, input);
     expect(await service.start(owner, input)).toEqual(first);
@@ -43,7 +93,8 @@ describe("durable voice lifecycle", () => {
     await service.sweep();
     expect(provider.remove).toHaveBeenCalledOnce();
     expect(rows.get(job.jobId)).toMatchObject({ state: "cleaned", cancelled: true });
-    expect(rows.get(job.jobId)?.pending).toBeUndefined();
+    expect(rows.get(job.jobId)).toMatchObject({pending:'work',cleanupWatchVersion:'voice-cleanup-watch/1',lastCleanupAt:now,nextWork:now+300});
+    expect(rows.get(job.jobId)?.expiresAt).toBeUndefined();
   });
   test("expiry blocks reads before asynchronous TTL removes metadata", async () => {
     const job = await service.start(owner, input); now += 901;

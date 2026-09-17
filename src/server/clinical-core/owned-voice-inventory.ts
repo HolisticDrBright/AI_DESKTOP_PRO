@@ -22,15 +22,23 @@ export function summarizeVoiceInventory(input:VoiceInventoryInput){
   for(const values of Object.values(input))if(!Array.isArray(values)||values.length>100_000)throw bad();
   const jobs=new Map<string,string>(),artifacts=new Set<string>(),seenVersions=new Set<string>(),providers=new Set<string>();
   const canonical:string[]=[];
-  let uncleanJobs=0,cleanedStillPending=0,orphanObjectVersions=0,orphanProviderJobs=0,cleanedJobsWithArtifacts=0;
+  let uncleanJobs=0,cleanedStillPending=0,cleanupWatches=0,unwatchedCleanedJobs=0,orphanObjectVersions=0,orphanProviderJobs=0,cleanedJobsWithArtifacts=0;
   for(const value of input.jobs){
     const row=object(value),jobId=text(row.id,64),state=text(row.state,16);
     if(!id.test(jobId)||jobs.has(jobId)||!['uploading','queued','running','ready','failed','cleaned'].includes(state)
       ||!(row.pending===undefined||row.pending==='work'))throw bad();
     jobs.set(jobId,state);
     if(state!=='cleaned')uncleanJobs++;
-    else if(row.pending!==undefined)cleanedStillPending++;
-    canonical.push(JSON.stringify(['job',jobId,state,row.pending??null]));
+    else {
+      if(row.pending!==undefined)cleanedStillPending++;
+      if(row.cleanupWatchVersion==='voice-cleanup-watch/1' && row.pending==='work'
+        && Number.isSafeInteger(row.lastCleanupAt) && Number(row.lastCleanupAt)>=0
+        && Number.isSafeInteger(row.nextWork) && Number(row.nextWork)>Number(row.lastCleanupAt)
+        && row.expiresAt===undefined)cleanupWatches++;
+      else unwatchedCleanedJobs++;
+    }
+    canonical.push(JSON.stringify(['job',jobId,state,row.pending??null,row.cleanupWatchVersion??null,
+      row.lastCleanupAt??null,row.nextWork??null,row.expiresAt??null]));
   }
   for(const [kind,values] of [['version',input.versions],['delete-marker',input.deleteMarkers]] as const){
     for(const value of values){
@@ -57,8 +65,10 @@ export function summarizeVoiceInventory(input:VoiceInventoryInput){
     version:'owned-voice-inventory/1',
     atomicSnapshot:false,
     deletionCertified:false,
-    candidateClear:uncleanJobs===0&&cleanedStillPending===0&&seenVersions.size===0&&providers.size===0,
-    counts:{jobMetadata:jobs.size,uncleanJobs,cleanedStillPending,objectVersions:input.versions.length,
+    candidateClear:jobs.size===0&&seenVersions.size===0&&providers.size===0,
+    artifactsCurrentlyClear:uncleanJobs===0&&seenVersions.size===0&&providers.size===0,
+    cleanupWatchesMustRemainEnabled:cleanupWatches>0,
+    counts:{jobMetadata:jobs.size,uncleanJobs,cleanedStillPending,cleanupWatches,unwatchedCleanedJobs,objectVersions:input.versions.length,
       deleteMarkers:input.deleteMarkers.length,providerJobs:providers.size,orphanObjectVersions,orphanProviderJobs,cleanedJobsWithArtifacts},
     fingerprint:createHash('sha256').update(canonical.sort().join('\n')).digest('hex'),
     excluded:['backups','PITR','audit logs','other buckets/prefixes','other accounts/regions','identity and account data'],

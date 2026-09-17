@@ -56,11 +56,18 @@ export async function readVoiceDrainInventory(scope:InventoryScope,aws:ReadAws){
   // AWS CLI default auto-pagination must remain enabled. Markers remaining after
   // aggregation are treated as incomplete output, never silently accepted.
   const scan=record(await aws(['dynamodb','scan','--table-name',table,'--consistent-read',
-    '--projection-expression','#id,#state,#pending','--expression-attribute-names',JSON.stringify({'#id':'id','#state':'state','#pending':'pending'})]));
+    '--projection-expression','#id,#state,#pending,cleanupWatchVersion,lastCleanupAt,nextWork,expiresAt','--expression-attribute-names',JSON.stringify({'#id':'id','#state':'state','#pending':'pending'})]));
   if(scan.NextToken!==undefined||(scan.LastEvaluatedKey!==undefined&&Object.keys(record(scan.LastEvaluatedKey)).length))throw fail();
   const jobs=list(scan.Items).map(value=>{
     const row=record(value);
-    return {id:attr(row.id),state:attr(row.state),...(row.pending===undefined?{}:{pending:attr(row.pending)})};
+    const numberAttribute=(value:unknown)=>{
+      const field=record(value);
+      if(Object.keys(field).join(',')!=='N'||typeof field.N!=='string'||!/^\d+$/.test(field.N)||!Number.isSafeInteger(Number(field.N)))throw fail();
+      return Number(field.N);
+    };
+    return {id:attr(row.id),state:attr(row.state),...(row.pending===undefined?{}:{pending:attr(row.pending)}),
+      ...(row.cleanupWatchVersion===undefined?{}:{cleanupWatchVersion:attr(row.cleanupWatchVersion)}),
+      ...Object.fromEntries(['lastCleanupAt','nextWork','expiresAt'].filter(key=>row[key]!==undefined).map(key=>[key,numberAttribute(row[key])]))};
   });
   const objects=record(await aws(['s3api','list-object-versions','--bucket',bucket,'--expected-bucket-owner',scope.account,'--prefix','personal-voice/']));
   if(objects.IsTruncated===true||objects.NextKeyMarker!==undefined||objects.NextVersionIdMarker!==undefined||objects.NextToken!==undefined)throw fail();

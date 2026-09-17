@@ -2,12 +2,14 @@ import { createHash, randomUUID } from "node:crypto";
 import { VoiceAuthorizationRevoked, sameVoiceAuthorization, type VoiceAuthorization, type VoiceAuthorizationPolicy } from './voice-authorization';
 
 export const VOICE_CONSENT = "patient-chat-consent/1";
+export const VOICE_CLEANUP_WATCH = 'voice-cleanup-watch/1';
 export type VoiceJob = {
   id: string; owner: string; inputHash: string; format: "mp4" | "wav";
   state: "uploading" | "queued" | "running" | "ready" | "failed" | "cleaned";
   consentVersion: string; consentAcceptedAt: number; createdAt: number; readableUntil: number;
   cancelled: boolean; nextWork: number; pending?: string; leaseToken?: string; leaseUntil?: number; expiresAt?: number;
   authorization?: VoiceAuthorization;
+  cleanupWatchVersion?: typeof VOICE_CLEANUP_WATCH; lastCleanupAt?: number;
 };
 export type VoiceStatus = { jobId: string; state: "processing" | "ready" | "cancelled" | "expired" | "failed"; transcript?: string };
 export interface VoiceRepository {
@@ -106,10 +108,9 @@ export class VoiceJobs {
     if (!job) return;
     const changes: Partial<VoiceJob> = { nextWork: this.now() + 30 };
     try {
-      if (job.state === "cleaned") return;
       // Lost consent/identity stops new work but never blocks eventual cleanup.
       // A database outage is not interpreted as revocation: retry, without work.
-      if(!job.cancelled && job.readableUntil>this.now() && job.state!=='failed'){
+      if(!job.cancelled && job.readableUntil>this.now() && job.state!=='failed' && job.state!=='cleaned'){
         try{await this.authorizationPolicy?.verify(job);}
         catch(error){
           if(!(error instanceof VoiceAuthorizationRevoked))throw error;
@@ -117,11 +118,16 @@ export class VoiceJobs {
         }
       }
       const current = await this.provider.status(job);
-      if (job.cancelled || job.readableUntil <= this.now() || job.state === "failed" || current === "failed") {
+      if (job.state === 'cleaned' || job.cancelled || job.readableUntil <= this.now() || job.state === "failed" || current === "failed") {
         if (current === "processing") return; // Transcribe cannot delete nonterminal jobs.
         await this.provider.remove(job);
         changes.state = "cleaned";
-        changes.expiresAt = this.now() + 86_400;
+        changes.cleanupWatchVersion = VOICE_CLEANUP_WATCH;
+        changes.lastCleanupAt = this.now();
+        // An old upload/provider request can finish after its worker lease.
+        // Keep a non-readable tombstone scheduled; one empty listing is not
+        // proof that no late write or restored object can ever appear.
+        changes.nextWork = this.now() + (this.now() - job.createdAt < 3600 ? 300 : 86400);
       } else if (current === "ready") {
         changes.state = "ready";
         changes.nextWork = job.readableUntil;
