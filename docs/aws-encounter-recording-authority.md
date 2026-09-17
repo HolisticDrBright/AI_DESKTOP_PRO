@@ -177,3 +177,72 @@ harness/runtime investigation; passing focused consent tests does not resolve it
 Fresh AWS ai-synthetic-staging authentication still requires user re-login.
 No schema was applied, AWS deployment changed, real approval invented, PHI
 enabled or paid mobile build started. All six original phases remain open.
+
+## September 17 durable segment increment (internal service; not activated)
+
+Overlay `20260917090000` adds three private/default-deny tables: separately
+reviewed storage releases, durable segment reservations/receipts and immutable
+segment events. The artifact now contains **66 migrations**, with no seeded
+storage destination, qualification, clinical consent or approval.
+
+The storage release is immutable apart from one-way retirement, linked to the
+exact capture release, hash-bound, expiring and restricted to its AWS region,
+bucket owner and KMS key. It is not selected by the browser. The storage
+qualification must eventually prove versioning, IAM/KMS, retention and provider
+configuration; merely filling these fields does not demonstrate those controls.
+
+Upload sequence:
+
+1. Validate actual bytes/digest/size, then reserve under the encounter lock.
+   Authorization rechecks workforce, patient scope, token, participant roster,
+   recording consent, authority epoch and both reviewed releases. The reservation
+   snapshots participant/grant IDs and establishes a bounded acceptance window.
+2. Release the database transaction, then conditionally PUT to the exact S3 key
+   with SHA-256, expected bucket owner, SSE-KMS and minimal capture metadata.
+   No presigned URL, overwrite or delete operation is exposed. Per-request
+   network waits and total upload work are bounded; regional SDK clients are reused.
+3. HEAD the exact object version (or recover a lost PUT response by inspecting
+   the existing object), requiring a full-object checksum, byte count, content
+   type, KMS key, non-null version and matching capture/session/epoch/segment
+   metadata. A generic success acknowledgment is not a receipt.
+4. Reacquire database authority in a separate transaction. Accept only if consent,
+   token, epoch, release and reservation still permit it. Return a small receipt,
+   never an object key, token or provider response. A stored receipt can be retried
+   without another PUT, but still requires current authority.
+
+Ordering is contiguous with one unresolved segment at a time. Conflicting retries
+refuse; exact retries keep the same key/reservation. Reserved bytes count toward
+the whole-recording limit. Maximum segment size is 4 MiB, further constrained by
+the reviewed policy; the sequence ceiling is 4096. Provenance and accepted
+receipts cannot be rewritten. Unknown outcomes remain `reserved`, not `stored`.
+The indexed reservation inventory is the basis for later reconciliation; it is
+not an implemented cleanup scheduler. No automatic deletion is attempted after
+uncertain upload, because retention/legal holds must control that operation.
+
+The SDK contract follows AWS's [conditional write rules](https://docs.aws.amazon.com/AmazonS3/latest/userguide/conditional-writes.html)
+and [version/checksum HEAD contract](https://docs.aws.amazon.com/AmazonS3/latest/API/API_HeadObject.html).
+Retrieving KMS-encrypted checksums requires the corresponding KMS permissions;
+the future deployment must scope them to the reviewed bucket/key.
+
+Evidence: **160 focused tests passed**, including actual canonical SQL through
+the typed repository/uploader, authority withdrawal during simulated storage,
+no network call under a database lock, malformed storage policy, provenance,
+immutable receipts, byte/order limits, expired leases, conditional retry,
+cross-actor denial and mismatched object evidence. The storage provider in these
+tests is simulated; the SQL is real PGlite PostgreSQL, not hosted Aurora.
+Full suite: **2261 passed, 11 existing skips, 196 files**. Typecheck, changed-file
+lint and the 66-migration/no-seeded-row gate pass. An initial test-only SDK
+overload typing issue was corrected before the final typecheck/full run.
+
+Still required before activation: HTTP/binary API deployment and IAM/KMS/bucket
+qualification; capture UI/start/credential rotation/pause/resume/disposition;
+durable reconciliation and hold-aware object/provider deletion with receipts;
+provider processing and versioned transcript/correction/review-only drafts;
+actual multi-connection Aurora, S3, browser microphone, Safari and recovery tests.
+The authority API continues to report `audioCapture:false`; existing deployed
+workloads have not changed. This increment does not close original phase 2 or 6.
+
+Prior-source evidence: Desktop dd3694e CI35272294502 remained in progress at
+check; older6834e76 CI35270244009 failed after another dev memory restart.
+V2 db2f974 CI35272303130 succeeded. Fresh STS again reports expired credentials;
+user re-login requested. No AWS schema/deployment, PHI activation or paid build.

@@ -2,18 +2,21 @@ import { beforeAll, afterAll, describe, expect, it } from "vitest";
 import { PGlite } from "@electric-sql/pglite";
 import { pgcrypto } from "@electric-sql/pglite/contrib/pgcrypto";
 import { execFileSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import { createEncounterRecordingOperations } from "./encounter-recording-operations";
 import { createRecordingAuthorityApi, RECORDING_AUTHORITY_ROUTE } from "./recording-authority-api";
 import type { ClinicalCoreDatabase } from "./database";
 import type { ApiGatewayV2Event } from "./aws-identity-api";
+import { createRecordingSegmentRepository, createRecordingSegmentUploader, type RecordingSegmentReservation } from './recording-segments';
+import type { ProductionClinicalRequestContext } from './aws-identity-consent';
 
 let db: PGlite;
 const org = randomUUID(), otherOrg = randomUUID(), actor = randomUUID(), colleague = randomUUID();
 const consumer = randomUUID(), staff = randomUUID(), outsider = randomUUID(), patient = randomUUID();
 const tables = ["recording_controls", "recording_consent_releases", "recording_participants",
   "recording_representative_authorities", "recording_consent_grants", "recording_consent_withdrawals",
-  "recording_capture_releases", "encounter_captures", "recording_authority_events", "recording_participant_commands", "recording_access_events"];
+  "recording_capture_releases", "encounter_captures", "recording_authority_events", "recording_participant_commands", "recording_access_events",
+  "recording_storage_releases", "recording_segments", "recording_segment_events"];
 type Capture = { recordingId: string; sessionId: string; captureToken: string; authorityEpoch: number; status: string; replayed: boolean };
 async function call<T = unknown>(sql: string, args: unknown[] = [], who = actor, pool = "workforce", organization = org) {
   return db.transaction(async tx => {
@@ -59,6 +62,27 @@ async function ready() {
   const e = await encounter(), p = (await participant(e))!, clinician = (await participant(e, "practitioner"))!;
   const d = await release(), pGrant = (await grant(p, d))!, clinicianGrant = (await grant(clinician, d))!;
   return { e, p, clinician, d, pGrant, clinicianGrant, config: await policy() };
+}
+const storageConfig = { bucket: 'fictional-recording-storage', expectedBucketOwner: '123456789012', region: 'us-east-2',
+  kmsKeyArn: 'arn:aws:kms:us-east-2:123456789012:key/11111111-1111-4111-8111-111111111111', maxSegmentBytes: 1000000 };
+async function storageRelease(captureRelease: string, configuration: Record<string, unknown> = storageConfig) {
+  const id = randomUUID();
+  await db.query(`insert into clinical_private.recording_storage_releases
+    (id,capture_release_id,configuration,configuration_sha256,qualification_sha256,approved_by,approved_at,expires_at)
+    values($1,$2,$3::jsonb,encode(public.digest(($3::jsonb)::text,'sha256'),'hex'),repeat('b',64),
+      'FICTIONAL STORAGE QUALIFICATION',clock_timestamp()-interval '1 hour',clock_timestamp()+interval '1 hour')`,
+  [id, captureRelease, JSON.stringify(configuration)]);
+  return id;
+}
+const reserveSegment = (c: Capture, sequence = 0, sha = 'a'.repeat(64), bytes = 3, who = actor) => call<RecordingSegmentReservation>(
+  'select clinical_private.reserve_recording_segment($1,$2,$3,$4,$5,$6) as result', [c.recordingId, c.sessionId, c.captureToken, sequence, sha, bytes], who);
+const completeSegment = (c: Capture, s: RecordingSegmentReservation, version = 'fictional-version-1') => call(
+  'select clinical_private.complete_recording_segment($1,$2,$3,$4,$5,$6,$7) as result',
+  [c.recordingId, c.sessionId, c.captureToken, s.segmentId, s.sha256, s.bytes, version]);
+async function uploadReady() {
+  const readyState = await ready();
+  const storageReleaseId = await storageRelease(readyState.config);
+  return { ...readyState, storageReleaseId, capture: (await begin(readyState.e, readyState.config))! };
 }
 
 beforeAll(async () => {
@@ -312,5 +336,132 @@ describe("AWS encounter recording authority: production SQL, fictional in-memory
     expect(JSON.parse(final.body).capabilities.audioCapture).toBe(false);
     expect((await send(workspace, outsider)).statusCode).not.toBe(200);
     expect((await send({ ...workspace, organizationId: otherOrg })).statusCode).toBe(400);
+  });
+});
+
+describe('durable recording segments: actual SQL, fictional receipts (not S3 evidence)', () => {
+  it('runs the typed upload service through actual SQL, outside network locks, including withdrawal during upload', async () => {
+    let transactions = 0;
+    const database: ClinicalCoreDatabase = { transaction: work => db.transaction(async tx => {
+      transactions++;
+      try {
+        await tx.exec('set local role clinical_core_api');
+        return await work({ async query<Row extends Record<string, unknown>>(sql: string, parameters: readonly unknown[] = []) {
+          const values = parameters.map(p => p && typeof p === 'object' && 'kind' in p && p.kind === 'uuid' && 'value' in p ? p.value : p);
+          return tx.query<Row>(sql, values);
+        } });
+      } finally { transactions--; }
+    }) };
+    const context: ProductionClinicalRequestContext = { actorPersonId: actor, organizationId: org, identityPool: 'workforce',
+      identitySubject: 'subject-' + actor, purpose: 'clinical_data', environment: 'production-clinical',
+      dataClassification: 'clinical_phi', containsPhi: true, realPatientData: true, productionBound: true };
+    const bytes = Buffer.from('FICTIONAL RECORDING BYTES'), sha256 = createHash('sha256').update(bytes).digest('hex');
+    for (const revoke of [false, true]) {
+      const r = await uploadReady(); let puts = 0;
+      const upload = createRecordingSegmentUploader(createRecordingSegmentRepository(database), {
+        async put() {
+          expect(transactions).toBe(0); puts++;
+          if (revoke) await withdraw(r.pGrant);
+          return { version: 'fictional-storage-version' };
+        },
+        async head(s) {
+          expect(transactions).toBe(0);
+          return { version: 'fictional-storage-version', bytes: bytes.length, contentType: s.contentType,
+            checksum: Buffer.from(sha256, 'hex').toString('base64'), checksumType: 'FULL_OBJECT', encryption: 'aws:kms', kmsKeyArn: s.storage.kmsKeyArn,
+            metadata: { 'segment-id': s.segmentId, 'recording-id': s.recordingId, 'session-id': s.sessionId, 'authority-epoch': String(s.authorityEpoch) } };
+        },
+      });
+      const input = { recordingId: r.capture.recordingId, sessionId: r.capture.sessionId, captureToken: r.capture.captureToken,
+        sequence: 0, sha256, bytes: bytes.length };
+      if (revoke) {
+        await expect(upload(context, input, bytes)).rejects.toThrow();
+        expect((await db.query<{ status: string }>('select status from clinical_private.recording_segments where recording_id=$1', [r.capture.recordingId])).rows[0].status).toBe('reserved');
+      } else {
+        const receipt = await upload(context, input, bytes);
+        expect(receipt.status).toBe('stored');
+        expect(await upload(context, input, bytes)).toEqual(receipt);
+      }
+      expect(puts).toBe(1);
+    }
+  });
+  it('requires separately reviewed storage and rejects API access to its helper', async () => {
+    const r = await ready(), c = (await begin(r.e, r.config))!;
+    await expect(reserveSegment(c)).rejects.toThrow('recording_storage_release_required');
+    await expect(call('select clinical_private.require_recording_storage_release($1,$2)', [r.config, org])).rejects.toThrow('permission denied');
+  });
+  it.each([
+    { bucket: null }, { expectedBucketOwner: '999999999999' }, { region: 'us-west-2' },
+    { kmsKeyArn: 'arn:aws:kms:us-east-2:123456789012:key/------------------------------------' },
+    { maxSegmentBytes: null }, { maxSegmentBytes: 4194305 }, { endpoint: 'https://unapproved.invalid' },
+  ])('refuses malformed or mismatched reviewed storage %j', async patch => {
+    const r = await ready(); await storageRelease(r.config, { ...storageConfig, ...patch });
+    await expect(reserveSegment((await begin(r.e, r.config))!)).rejects.toThrow('recording_storage_release_required');
+  });
+  it('reserves once, pins consent provenance and returns a stable receipt on exact replay', async () => {
+    const r = await uploadReady(), s = (await reserveSegment(r.capture))!;
+    const replay = (await reserveSegment(r.capture))!;
+    expect(replay.segmentId).toBe(s.segmentId);
+    expect(replay.objectKey).toBe(s.objectKey);
+    expect(s.status).toBe('reserved'); expect(s.objectVersion).toBeNull();
+    const stored = (await db.query<{ participant_ids: string[]; recording_grant_ids: string[] }>(
+      'select participant_ids,recording_grant_ids from clinical_private.recording_segments where id=$1', [s.segmentId])).rows[0];
+    expect(new Set(stored.participant_ids)).toEqual(new Set([r.p, r.clinician]));
+    expect(new Set(stored.recording_grant_ids)).toEqual(new Set([r.pGrant, r.clinicianGrant]));
+    const receipt = await completeSegment(r.capture, s);
+    expect(await completeSegment(r.capture, s)).toEqual(receipt);
+    expect((await reserveSegment(r.capture))?.status).toBe('stored');
+    const events = await db.query<{ action: string }>('select action from clinical_private.recording_segment_events where segment_id=$1 order by created_at', [s.segmentId]);
+    expect(events.rows.map(e => e.action)).toEqual(['segment.reserved', 'segment.stored']);
+  });
+  it('rejects altered bytes, digest, version, sparse ordering and an outstanding predecessor', async () => {
+    const r = await uploadReady();
+    await expect(reserveSegment(r.capture, 1)).rejects.toThrow('recording_segment_order_required');
+    const s = (await reserveSegment(r.capture))!;
+    await expect(reserveSegment(r.capture, 0, 'b'.repeat(64))).rejects.toThrow('recording_segment_conflict');
+    await expect(reserveSegment(r.capture, 0, s.sha256, 4)).rejects.toThrow('recording_segment_conflict');
+    await expect(reserveSegment(r.capture, 1)).rejects.toThrow('recording_segment_order_required');
+    await expect(completeSegment(r.capture, { ...s, sha256: 'b'.repeat(64) })).rejects.toThrow('recording_segment_conflict');
+    await expect(completeSegment(r.capture, s, 'null')).rejects.toThrow('recording_segment_conflict');
+    await completeSegment(r.capture, s);
+    await expect(completeSegment(r.capture, s, 'another-version')).rejects.toThrow('recording_segment_conflict');
+    expect((await reserveSegment(r.capture, 1))?.sequence).toBe(1);
+  });
+  it('counts all reserved bytes against the recording budget and validates chunk bounds', async () => {
+    const r = await uploadReady();
+    for (const [seq, bytes] of [[-1, 1], [4096, 1], [0, 0], [0, 1000001]])
+      await expect(reserveSegment(r.capture, seq, 'a'.repeat(64), bytes)).rejects.toThrow('recording_segment_invalid');
+    const s = (await reserveSegment(r.capture, 0, 'a'.repeat(64), 1000000))!;
+    await completeSegment(r.capture, s);
+    await expect(reserveSegment(r.capture, 1)).rejects.toThrow('recording_size_limit');
+  });
+  it('cannot accept an object after withdrawal or a late participant; the pending row survives for cleanup', async () => {
+    for (const change of ['withdraw', 'participant']) {
+      const r = await uploadReady(), s = (await reserveSegment(r.capture))!;
+      if (change === 'withdraw') await withdraw(r.pGrant); else await participant(r.e, 'caregiver');
+      await expect(completeSegment(r.capture, s)).rejects.toThrow('recording_capture_refused');
+      expect((await db.query<{ status: string }>('select status from clinical_private.recording_segments where id=$1', [s.segmentId])).rows[0].status).toBe('reserved');
+    }
+  });
+  it('denies another actor and rechecks storage retirement after reservation', async () => {
+    const r = await uploadReady();
+    await expect(reserveSegment(r.capture, 0, 'a'.repeat(64), 3, colleague)).rejects.toThrow('recording_capture_refused');
+    const s = (await reserveSegment(r.capture))!;
+    await db.query('update clinical_private.recording_storage_releases set retired_at=clock_timestamp() where id=$1', [r.storageReleaseId]);
+    await expect(completeSegment(r.capture, s)).rejects.toThrow('recording_storage_release_required');
+  });
+  it('requires a renewed authority-checked reservation after its lease expires', async () => {
+    const r = await uploadReady(), s = (await reserveSegment(r.capture))!;
+    await db.query("update clinical_private.recording_segments set accept_before=clock_timestamp()-interval '1 second' where id=$1", [s.segmentId]);
+    await expect(completeSegment(r.capture, s)).rejects.toThrow('recording_reservation_expired');
+    const renewed = (await reserveSegment(r.capture))!;
+    expect(renewed.segmentId).toBe(s.segmentId);
+    expect(await completeSegment(r.capture, renewed)).toMatchObject({ status: 'stored' });
+  });
+  it('protects source provenance, accepted receipts and event rows from mutation', async () => {
+    const r = await uploadReady(), s = (await reserveSegment(r.capture))!;
+    await expect(db.query('update clinical_private.recording_segments set content_sha256=$1 where id=$2', ['b'.repeat(64), s.segmentId])).rejects.toThrow('recording_segment_immutable');
+    await completeSegment(r.capture, s);
+    await expect(db.query('update clinical_private.recording_segments set accept_before=clock_timestamp() where id=$1', [s.segmentId])).rejects.toThrow('recording_segment_immutable');
+    await expect(db.query('delete from clinical_private.recording_segment_events where segment_id=$1', [s.segmentId])).rejects.toThrow();
   });
 });

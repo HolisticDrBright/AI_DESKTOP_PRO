@@ -220,6 +220,10 @@
     {
       "version": "20260917080000",
       "file": "20260917080000_production_recording_workspace.sql"
+    },
+    {
+      "version": "20260917090000",
+      "file": "20260917090000_production_recording_segments.sql"
     }
   ]
 }
