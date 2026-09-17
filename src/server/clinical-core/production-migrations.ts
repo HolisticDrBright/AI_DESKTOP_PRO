@@ -237,6 +237,8 @@ export async function applyProductionClinicalCoreMigrations(
         + (select count(*) from clinical_private.recording_capture_releases)
         + (select count(*) from clinical_private.encounter_captures)
         + (select count(*) from clinical_private.recording_authority_events)
+        + (select count(*) from clinical_private.recording_participant_commands)
+        + (select count(*) from clinical_private.recording_access_events)
       )::int as clinical_row_count`);
     const row = verification.rows[0];
     if (!row || Number(row.table_count) !== 114 || Number(row.contract_count) !== 81

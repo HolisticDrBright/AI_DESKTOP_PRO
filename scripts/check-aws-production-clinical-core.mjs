@@ -16,7 +16,9 @@ const errors = [];
 const assert = (condition, message) => { if (!condition) errors.push(message); };
 
 assert(manifest.contract_version === "clinical-core-migrations/1", "generated manifest contract is invalid");
-assert(manifest.migrations.length === 64, "expected ten transformed migrations and fifty-four production overlays");
+assert(manifest.migrations.length === 65, "expected ten transformed migrations and fifty-five production overlays");
+assert(manifest.migrations.some(entry => entry.file === '20260917080000_production_recording_workspace.sql'),
+  "missing recording consent workspace and retry-safe roster");
 assert(manifest.migrations.some(entry => entry.file === '20260917070000_production_encounter_recording_authority.sql'),
   "missing encounter recording authority");
 assert(manifest.migrations.some(entry => entry.file === '20260917060000_production_external_privacy_inventory.sql'),

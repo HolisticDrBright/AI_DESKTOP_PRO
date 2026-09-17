@@ -5,13 +5,17 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { randomUUID } from "node:crypto";
+import { createEncounterRecordingOperations } from "./encounter-recording-operations";
+import { createRecordingAuthorityApi, RECORDING_AUTHORITY_ROUTE } from "./recording-authority-api";
+import type { ClinicalCoreDatabase } from "./database";
+import type { ApiGatewayV2Event } from "./aws-identity-api";
 
 let db: PGlite;
 const org = randomUUID(), otherOrg = randomUUID(), actor = randomUUID(), colleague = randomUUID();
 const consumer = randomUUID(), staff = randomUUID(), outsider = randomUUID(), patient = randomUUID();
 const tables = ["recording_controls", "recording_consent_releases", "recording_participants",
   "recording_representative_authorities", "recording_consent_grants", "recording_consent_withdrawals",
-  "recording_capture_releases", "encounter_captures", "recording_authority_events"];
+  "recording_capture_releases", "encounter_captures", "recording_authority_events", "recording_participant_commands", "recording_access_events"];
 type Capture = { recordingId: string; sessionId: string; captureToken: string; authorityEpoch: number; status: string; replayed: boolean };
 async function call<T = unknown>(sql: string, args: unknown[] = [], who = actor, pool = "workforce", organization = org) {
   return db.transaction(async tx => {
@@ -25,7 +29,7 @@ async function encounter() {
   return (await call<string>("select clinical_core.start_encounter($1,$2) as result", [org, patient]))!;
 }
 const participant = (e: string, kind = "patient", self = true) => call<string>(
-  "select clinical_private.add_encounter_recording_participant($1,$2,'FICTIONAL PARTICIPANT',$3) as result", [e, kind, self]);
+  "select clinical_private.add_encounter_recording_participant($1,$2,'FICTIONAL PARTICIPANT',$3,$4) as result", [e, kind, self, randomUUID()]);
 async function release(scope = "recording", options: { organization?: string; corrupt?: boolean; future?: boolean } = {}) {
   const id = randomUUID();
   await db.query(`insert into clinical_private.recording_consent_releases
@@ -95,7 +99,7 @@ describe("AWS encounter recording authority: production SQL, fictional in-memory
     await expect(call("select clinical_private.recording_grants_for_scope($1,'recording',$2::uuid[])", [randomUUID(), []])).rejects.toThrow("permission denied");
   });
   it("rejects consumer, staff, cross-organization and missing encounter access", async () => {
-    const e = await encounter(), sql = "select clinical_private.add_encounter_recording_participant($1,'patient','FICTIONAL',true) as result";
+    const e = await encounter(), sql = "select clinical_private.add_encounter_recording_participant($1,'patient','FICTIONAL',true,gen_random_uuid()) as result";
     await expect(call(sql, [e], consumer, "consumer")).rejects.toThrow();
     await expect(call(sql, [e], staff)).rejects.toThrow("clinical_role_required");
     await expect(call(sql, [e], outsider, "workforce", otherOrg)).rejects.toThrow();
@@ -234,5 +238,81 @@ describe("AWS encounter recording authority: production SQL, fictional in-memory
     await db.query("update clinical_core.organization_memberships set role='staff' where organization_id=$1 and person_id=$2", [org, actor]);
     try { await expect(authorize(c)).rejects.toThrow("clinical_role_required"); }
     finally { await db.query("update clinical_core.organization_memberships set role='practitioner' where organization_id=$1 and person_id=$2", [org, actor]); }
+  });
+  it("roster command replay preserves participant and epoch; changed content or actor is a conflict", async () => {
+    const e = await encounter(), command = randomUUID();
+    const sql = "select clinical_private.add_encounter_recording_participant($1,$2,$3,$4,$5) as result";
+    const args = [e, "patient", "Fictional retry", true, command];
+    const id = await call(sql, args);
+    expect(await call(sql, args)).toBe(id);
+    expect((await db.query<{ epoch: number }>("select authority_epoch::int epoch from clinical_private.recording_controls where encounter_id=$1", [e])).rows[0].epoch).toBe(1);
+    expect((await db.query("select * from clinical_private.recording_authority_events where encounter_id=$1", [e])).rows).toHaveLength(1);
+    await expect(call(sql, [e, "patient", "Changed", true, command])).rejects.toThrow("recording_participant_conflict");
+    await expect(call(sql, args, colleague)).rejects.toThrow("recording_participant_conflict");
+    await expect(call("select clinical_private.add_encounter_recording_participant($1,'patient','OLD',true)", [e])).rejects.toThrow("permission denied");
+  });
+  it("reads only the encounter's bounded consent state, with exact jurisdiction and current withdrawal status", async () => {
+    const f = await ready(), c = (await begin(f.e, f.config))!;
+    const sql = "select clinical_private.get_encounter_recording_workspace($1,$2,$3) as result";
+    const workspace = await call<{ participants: { consents: { status: string; effective: boolean }[] }[]; consentReleases: unknown[]; activeCapture: { id: string } }>(sql, [f.e, "en", "FICTIONAL"]);
+    expect(workspace?.participants).toHaveLength(2); expect(workspace?.activeCapture.id).toBe(c.recordingId);
+    expect(JSON.stringify(workspace)).not.toMatch(/token_sha256|captureToken|FICTIONAL ACK|evidence_sha256/);
+    const unmatched = await call<{ consentReleases: unknown[] }>(sql, [f.e, "en", "UNREVIEWED"]);
+    expect(unmatched?.consentReleases).toEqual([]);
+    await withdraw(f.pGrant);
+    const changed = await call<{ participants: { id: string; consents: { status: string; effective: boolean }[] }[] }>(sql, [f.e, "en", "FICTIONAL"]);
+    expect(changed?.participants.find(p => p.id === f.p)?.consents).toEqual([expect.objectContaining({ status: "withdrawn", effective: false })]);
+    await expect(call(sql, [f.e, "en", "FICTIONAL"], outsider, "workforce", otherOrg)).rejects.toThrow();
+    await expect(call(sql, [f.e, "en", "FICTIONAL"], consumer, "consumer")).rejects.toThrow();
+    await expect(call("select clinical_private.read_recording_encounter($1)", [f.e])).rejects.toThrow("permission denied");
+    const doc = await call<{ content: string; contentSha256: string }>("select clinical_private.read_encounter_recording_consent_release($1,$2) as result", [f.e, f.d]);
+    expect(doc?.content).toBe("FICTIONAL CONSENT ONLY"); expect(doc?.contentSha256).toMatch(/^[a-f0-9]{64}$/);
+    await expect(call("select clinical_private.read_encounter_recording_consent_release($1,$2) as result", [f.e, await release("recording", { organization: otherOrg })])).rejects.toThrow("recording_consent_release_required");
+    const reads = (await db.query("select * from clinical_private.recording_access_events where encounter_id=$1", [f.e])).rows;
+    expect(reads).toHaveLength(4);
+    expect(JSON.stringify(reads)).not.toMatch(/FICTIONAL|token|content|evidence/);
+    await expect(db.query("delete from clinical_private.recording_access_events where encounter_id=$1", [f.e])).rejects.toThrow();
+  });
+  it("executes the typed workforce API through real production SQL from workspace to consent withdrawal", async () => {
+    // This bridge replaces only the RDS transport, not SQL or authorization.
+    const database: ClinicalCoreDatabase = { transaction: work => db.transaction(async tx => {
+      await tx.exec("set local role clinical_core_api");
+      return work({ async query<Row extends Record<string, unknown>>(sql: string, parameters: readonly unknown[] = []) {
+        const values = parameters.map(p => p && typeof p === "object" && "kind" in p && p.kind === "uuid" && "value" in p ? p.value : p);
+        return tx.query<Row>(sql, values);
+      } });
+    }) };
+    const now = Date.now(), seconds = Math.floor(now / 1000), e = await encounter(), d = await release();
+    const issuer = "https://cognito-idp.us-east-2.amazonaws.com/FictionalWorkforce", audience = "12345678901234567890";
+    const handler = createRecordingAuthorityApi({ configuration: { workforceIssuer: issuer, workforceAudience: audience,
+      organizationId: org, phiAllowed: true, activation: "approved", activationEvidenceSha256: "a".repeat(64), mfaReviewSha256: "b".repeat(64), databaseReviewSha256: "c".repeat(64) },
+      operations: () => createEncounterRecordingOperations(database), now: () => now });
+    const send = async (body: unknown, who = actor) => {
+      const event: ApiGatewayV2Event = { routeKey: RECORDING_AUTHORITY_ROUTE, headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+        requestContext: { authorizer: { jwt: { claims: { iss: issuer, aud: audience, sub: "subject-" + who,
+          token_use: "id", "custom:person_id": who, "custom:organization_id": org, "custom:production_bound": "true",
+          email_verified: "true", exp: seconds + 600, iat: seconds, auth_time: seconds } } } } };
+      return handler(event);
+    };
+    const workspace = { action: "workspace", encounterId: e, locale: "en", jurisdiction: "FICTIONAL" };
+    const empty = await send(workspace); expect(empty.statusCode, empty.body).toBe(200);
+    expect(JSON.parse(empty.body).data.participants).toEqual([]);
+    const add = { action: "addParticipant", encounterId: e, commandId: randomUUID(), kind: "patient", displayName: "Fictional API patient", canSelfConsent: true };
+    const added = await send(add); expect(added.statusCode, added.body).toBe(200);
+    const participantId = JSON.parse(added.body).data.participantId;
+    expect(JSON.parse((await send(add)).body).data.participantId).toBe(participantId);
+    const document = await send({ action: "readConsentRelease", encounterId: e, releaseId: d });
+    expect(document.statusCode, document.body).toBe(200);
+    expect(JSON.parse(document.body).data.content).toBe("FICTIONAL CONSENT ONLY");
+    const granted = await send({ action: "grantConsent", participantId, releaseId: d, commandId: randomUUID(), method: "written", acknowledgment: "FICTIONAL ACK", representativeAuthorityId: null });
+    expect(granted.statusCode, granted.body).toBe(200);
+    const consentId = JSON.parse(granted.body).data.consentId;
+    const withdrawn = await send({ action: "withdrawConsent", consentId, reason: "Fictional withdrawal" });
+    expect(withdrawn.statusCode, withdrawn.body).toBe(200);
+    const final = await send(workspace);
+    expect(JSON.parse(final.body).data.participants[0].consents[0]).toMatchObject({ status: "withdrawn", effective: false });
+    expect(JSON.parse(final.body).capabilities.audioCapture).toBe(false);
+    expect((await send(workspace, outsider)).statusCode).not.toBe(200);
+    expect((await send({ ...workspace, organizationId: otherOrg })).statusCode).toBe(400);
   });
 });

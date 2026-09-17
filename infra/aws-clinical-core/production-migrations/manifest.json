@@ -216,6 +216,10 @@
     {
       "version": "20260917070000",
       "file": "20260917070000_production_encounter_recording_authority.sql"
+    },
+    {
+      "version": "20260917080000",
+      "file": "20260917080000_production_recording_workspace.sql"
     }
   ]
 }
