@@ -38,6 +38,7 @@ export type LabImportResult = {
   eventId: string;
   state: "review_pending" | "conflict" | "accepted" | "rejected";
   duplicate: boolean;
+  receipt?: { version: "lab-import-receipt/1"; connectionId: string; providerEventId: string; resourceVersion: string; payloadSha256: string };
 };
 
 export type LabReviewResult = {
@@ -108,6 +109,7 @@ function createAwsClinicalStateAdapter<Context extends ClinicalRequestContext>(
     },
     async importLabResult(context, payload) {
       assertContext(context, boundary, "consumer");
+      payload = structuredClone(payload);
       validateLabImport(payload);
       const canonicalPayload = JSON.stringify({
         schemaVersion: payload.schemaVersion,
@@ -141,7 +143,11 @@ function createAwsClinicalStateAdapter<Context extends ClinicalRequestContext>(
           createHash("sha256").update(canonicalPayload).digest("hex"),
         ],
       )), "clinical_state_refused");
-      return { eventId: row.event_id, state: row.state, duplicate: row.duplicate };
+      if (!UUID.test(row.event_id) || !["review_pending", "conflict", "accepted", "rejected"].includes(row.state)
+        || typeof row.duplicate !== "boolean") throw new ClinicalStateError("database_unavailable");
+      return { eventId: row.event_id, state: row.state, duplicate: row.duplicate,
+        receipt: { version: "lab-import-receipt/1", connectionId: payload.connectionId, providerEventId: payload.providerEventId,
+          resourceVersion: payload.resourceVersion, payloadSha256: createHash("sha256").update(canonicalPayload).digest("hex") } };
     },
 
     async reviewLabResult(context, input) {
