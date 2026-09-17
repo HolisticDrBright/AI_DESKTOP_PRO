@@ -208,6 +208,10 @@
     {
       "version": "20260917050000",
       "file": "20260917050000_production_external_deletion_guard.sql"
+    },
+    {
+      "version": "20260917060000",
+      "file": "20260917060000_production_external_privacy_inventory.sql"
     }
   ]
 }

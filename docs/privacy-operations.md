@@ -2,6 +2,12 @@
 
 September 17, 2026. Source/release candidate, **not deployed or PHI-enabled**.
 
+Latest increment: [request-bound retained lab/voice inventory](retained-privacy-inventory.md)
+adds an independently disabled, read-only `externalInventory` action, resumable
+SQL checkpoints and explicit Desktop controls. The earlier verification counts
+below describe the personal-purge increment; the linked report records the
+current 63-migration inventory evidence and its unresolved coverage/retention.
+
 ## Delivered
 
 Settings → Privacy operations opens a paginated, explicitly loaded queue of

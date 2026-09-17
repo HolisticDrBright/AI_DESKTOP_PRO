@@ -12,6 +12,8 @@ import {createPrivacyOperations} from './privacy-operations';
 import {createPrivacyOperationsApi,PRIVACY_OPERATIONS_ROUTE} from './privacy-operations-api';
 import type {ClinicalCoreDatabase} from './database';
 import type {ApiGatewayV2Event} from './aws-identity-api';
+import {createExternalInventoryReader} from './privacy-external-inventory';
+import type {DynamoDBDocumentClient} from '@aws-sdk/lib-dynamodb';
 
 const owner=randomUUID(),other=randomUUID(),operator=randomUUID(),unassigned=randomUUID(),reviewer=randomUUID(),org=randomUUID();
 const digest='a'.repeat(64);
@@ -99,6 +101,111 @@ beforeAll(async()=>{
 afterAll(async()=>{await db?.close();});
 
 describe('privacy fulfillment: executable production SQL with fictional data (not hosted Aurora)',()=>{
+  it('persists reviewed read-only inventory pages through workforce API, adapter, mocked Scan and real SQL',async()=>{
+    const requestId=await request(),inventoryId=randomUUID(),jobId=randomUUID();
+    const database:ClinicalCoreDatabase={transaction:work=>db.transaction(async tx=>{
+      await tx.exec('set local role clinical_core_api');
+      return work({query:async<Row extends Record<string,unknown>>(sql:string,parameters:readonly unknown[]=[])=>
+        tx.query<Row>(sql,parameters.map(p=>p&&typeof p==='object'&&'kind' in p&&p.kind==='uuid'&&'value' in p?p.value:p))});
+    })};
+    const send=vi.fn().mockResolvedValueOnce({ScannedCount:25,Items:[{pk:'job#'+jobId,personId:owner,ownerSub:'subject-'+owner,
+      organizationId:org,state:'completed',dataClassification:'personal_health_record',updatedAt:'2020-01-01T00:00:00.000Z'}],LastEvaluatedKey:{pk:'job#'+jobId}})
+      .mockResolvedValueOnce({ScannedCount:1,Items:[]});
+    const reader=createExternalInventoryReader({labs:'arn:aws:dynamodb:us-east-2:123456789012:table/labs',voice:'arn:aws:dynamodb:us-east-2:123456789012:table/voice',region:'us-east-2'},
+      {send} as unknown as DynamoDBDocumentClient);
+    const now=Date.now(),issuer='https://cognito-idp.us-east-2.amazonaws.com/workforce',audience='12345678901234567890';
+    const configuration={workforceIssuer:issuer,workforceAudience:audience,phiAllowed:true,activation:'approved' as const,
+      evidenceSha256:digest,mfaReviewSha256:digest,externalInventoryEnabled:true,externalInventoryEvidenceSha256:digest};
+    const api=createPrivacyOperationsApi({configuration,now:()=>now,operations:()=>createPrivacyOperations(database,()=>reader)});
+    const event=(revision:number,store='labs'):ApiGatewayV2Event=>({routeKey:PRIVACY_OPERATIONS_ROUTE,headers:{'content-type':'application/json'},
+      body:JSON.stringify({action:'externalInventory',privacyRequestId:requestId,inventoryId,store,expectedRevision:revision}),
+      requestContext:{authorizer:{jwt:{claims:{iss:issuer,aud:audience,sub:'subject-'+operator,token_use:'id',email_verified:true,
+        'custom:production_bound':'true','custom:person_id':operator,'custom:organization_id':org,
+        iat:Math.floor(now/1000)-1,auth_time:Math.floor(now/1000)-1,exp:Math.floor(now/1000)+300}}}}});
+    const first=await api(event(0));expect(first.statusCode).toBe(200);
+    const p=JSON.parse(first.body).data;
+    expect(p).toMatchObject({revision:1,scanned:25,items:1,state:'scanning',readOnly:true,completeAccountInventory:false});
+    expect(first.body).not.toContain(jobId);expect(first.body).not.toContain('subject-'+owner);expect(first.body).not.toContain('arn:aws');
+    expect((await api(event(0))).body).toBe(first.body);expect(send).toHaveBeenCalledOnce();
+    const second=await api(event(1));expect(second.statusCode).toBe(200);
+    expect(JSON.parse(second.body).data).toMatchObject({revision:2,scanned:26,items:1,state:'exhausted',requiresReconciliation:true});
+    expect(send.mock.calls[1][0].input.ExclusiveStartKey).toEqual({pk:'job#'+jobId});
+    expect((await api(event(2))).body).toBe(second.body);expect(send).toHaveBeenCalledTimes(2);
+    const changed=await api(event(2,'voice'));expect(changed.statusCode).not.toBe(200);expect(send).toHaveBeenCalledTimes(2);
+    const blocked=createPrivacyOperationsApi({configuration:{...configuration,externalInventoryEnabled:false},now:()=>now,operations:()=>createPrivacyOperations(database,()=>reader)});
+    expect((await blocked(event(0))).statusCode).toBe(503);expect(send).toHaveBeenCalledTimes(2);
+    expect((await db.query('select * from clinical_private.owned_privacy_fulfillment where privacy_request_id=$1',[requestId])).rows).toEqual([]);
+    expect((await db.query<{status:string}>('select status from clinical_private.owned_privacy_requests where id=$1',[requestId])).rows[0].status).toBe('in_progress');
+    const detail=(await asActor('select clinical_private.get_assigned_privacy_request($1) as result',[requestId])).rows[0] as {result:{externalInventories:unknown[]}};
+    expect(detail.result.externalInventories).toEqual([JSON.parse(second.body).data]);
+    expect(JSON.stringify(detail.result)).not.toContain(jobId);
+  });
+  it('requires assigned authority and a deletion request; consumer/unassigned/correction cannot begin an inventory',async()=>{
+    const req=await request(),inventory=randomUUID(),arn='arn:aws:dynamodb:us-east-2:123456789012:table/labs';
+    const sql='select clinical_private.open_owned_external_inventory($1,$2,$3,$4) as result';
+    await expect(asActor(sql,[req,inventory,'labs',arn],owner,'consumer')).rejects.toThrow();
+    await expect(asActor(sql,[req,inventory,'labs',arn],unassigned)).rejects.toThrow('privacy_operator_assignment_required');
+    await expect(asActor(sql,[await request('correction'),inventory,'labs',arn])).rejects.toThrow('external_inventory_invalid');
+    await expect(asActor('select * from clinical_private.owned_external_inventory_items')).rejects.toThrow('permission denied');
+    await expect(asActor('select * from clinical_private.owned_external_inventories')).rejects.toThrow('permission denied');
+  });
+  it('refuses source or identity changes and stops at the durable scan bound',async()=>{
+    const req=await request(),inventory=randomUUID(),arn='arn:aws:dynamodb:us-east-2:123456789012:table/labs';
+    const open=()=>asActor('select clinical_private.open_owned_external_inventory($1,$2,$3,$4)',[req,inventory,'labs',arn]);
+    await open();
+    await expect(asActor('select clinical_private.open_owned_external_inventory($1,$2,$3,$4)',[req,inventory,'labs',arn+'-different'])).rejects.toThrow('external_inventory_conflict');
+    await db.query('update clinical_core.identities set identity_subject=$1 where person_id=$2',['changed-subject',owner]);
+    try{await expect(open()).rejects.toThrow('external_inventory_conflict');}
+    finally{await db.query('update clinical_core.identities set identity_subject=$1 where person_id=$2',['subject-'+owner,owner]);}
+    await db.query('update clinical_private.owned_external_inventories set scanned=99990 where id=$1',[inventory]);
+    const result=await asActor("select clinical_private.append_owned_external_inventory($1,0,'[]'::jsonb,'{\"pk\":\"next\"}'::jsonb,25,0) as result",[inventory]);
+    expect((result.rows[0] as {result:unknown}).result).toMatchObject({state:'bounded',scanned:100015,completeAccountInventory:false});
+    await expect(asActor("select clinical_private.append_owned_external_inventory($1,1,'[]'::jsonb,null,0,0)",[inventory])).rejects.toThrow('external_inventory_conflict');
+  });
+  it('rolls back inventory items and checkpoint if its audit receipt cannot be recorded',async()=>{
+    const req=await request(),inventory=randomUUID();
+    await asActor('select clinical_private.open_owned_external_inventory($1,$2,$3,$4)',[req,inventory,'voice','arn:aws:dynamodb:us-east-2:123456789012:table/voice']);
+    await db.exec("create function public.test_inventory_audit_failure() returns trigger language plpgsql as $$ begin if NEW.action='privacy_request.inventory' then raise exception 'fixture_audit_failed'; end if; return NEW; end $$; create trigger test_inventory_audit_failure before insert on clinical_audit.consumer_storage_events for each row execute function public.test_inventory_audit_failure()");
+    try{
+      const item={kind:'voice_job',jobId:'d'.repeat(64),organizationId:org,ownerSub:'subject-'+owner,state:'cleaned',updatedAt:null};
+      await expect(asActor('select clinical_private.append_owned_external_inventory($1,0,$2::jsonb,null,1,0)',[inventory,JSON.stringify([item])])).rejects.toThrow('fixture_audit_failed');
+    }finally{await db.exec('drop trigger test_inventory_audit_failure on clinical_audit.consumer_storage_events; drop function public.test_inventory_audit_failure()');}
+    expect((await db.query('select revision,item_count from clinical_private.owned_external_inventories where id=$1',[inventory])).rows).toEqual([{revision:0,item_count:0}]);
+    expect((await db.query('select * from clinical_private.owned_external_inventory_items where inventory_id=$1',[inventory])).rows).toEqual([]);
+  });
+  it('reads under a legal hold but never creates erasure receipts; holds and disabled-owner records remain preserved',async()=>{
+    const req=await request(),inventory=randomUUID(),arn='arn:aws:dynamodb:us-east-2:123456789012:table/voice';
+    const hold=(await asActor("select clinical_private.place_owned_legal_hold($1,'owner_dispute') as id",[owner])).rows[0] as {id:string};
+    await db.query("update clinical_core.identities set status='disabled' where person_id=$1",[owner]);
+    try{
+      await asActor('select clinical_private.open_owned_external_inventory($1,$2,$3,$4)',[req,inventory,'voice',arn]);
+      const page=await asActor('select clinical_private.append_owned_external_inventory($1,0,$2::jsonb,null,1,0) as result',
+        [inventory,JSON.stringify([{kind:'voice_job',jobId:'f'.repeat(64),organizationId:org,ownerSub:'subject-'+owner,state:'cleaned',updatedAt:null}])]);
+      expect((page.rows[0] as {result:unknown}).result).toMatchObject({state:'exhausted',items:1,readOnly:true});
+      expect((await db.query('select id from clinical_private.owned_legal_holds where id=$1 and released_at is null',[hold.id])).rows).toHaveLength(1);
+      expect((await db.query('select * from clinical_private.owned_privacy_fulfillment where privacy_request_id=$1',[req])).rows).toHaveLength(0);
+    }finally{
+      await db.query("update clinical_core.identities set status='active' where person_id=$1",[owner]);
+      await asActor('select clinical_private.release_owned_legal_hold($1)',[hold.id]);
+    }
+  });
+  it('rolls back duplicate pages, mismatched owners, looping cursors and revoked authority without advancing checkpoints',async()=>{
+    const req=await request(),inventory=randomUUID(),arn='arn:aws:dynamodb:us-east-2:123456789012:table/labs',jobId=randomUUID();
+    await asActor('select clinical_private.open_owned_external_inventory($1,$2,$3,$4)',[req,inventory,'labs',arn]);
+    const item={kind:'lab_job',jobId,organizationId:org,ownerSub:'subject-'+owner,state:'completed',updatedAt:'2020-01-01T00:00:00Z'};
+    const page=(revision:number,items:unknown[],cursor:unknown)=>asActor('select clinical_private.append_owned_external_inventory($1,$2,$3::jsonb,$4::jsonb,1,0)',
+      [inventory,revision,JSON.stringify(items),cursor===null?null:JSON.stringify(cursor)]);
+    await expect(page(0,[{...item,ownerSub:'subject-'+other}],null)).rejects.toThrow('external_inventory_invalid');
+    await page(0,[item],{pk:'first'});
+    await expect(page(0,[],null)).rejects.toThrow('external_inventory_conflict');
+    await expect(page(1,[item],{pk:'second'})).rejects.toThrow('external_inventory_conflict');
+    await expect(page(1,[],{pk:'first'})).rejects.toThrow('external_inventory_conflict');
+    await db.query('update clinical_private.owned_privacy_operator_assignments set revoked_at=now() where operator_id=$1 and owner_id=$2',[operator,owner]);
+    try{await expect(page(1,[],null)).rejects.toThrow('privacy_operator_assignment_required');}
+    finally{await db.query('update clinical_private.owned_privacy_operator_assignments set revoked_at=null where operator_id=$1 and owner_id=$2',[operator,owner]);}
+    expect((await db.query<{revision:number;item_count:number}>('select revision,item_count from clinical_private.owned_external_inventories where id=$1',[inventory])).rows[0])
+      .toEqual({revision:1,item_count:1});
+  });
   it('guards external deletion as the current consumer without requiring processing consent',async()=>{
     const result=await asActor('select clinical_core.guard_owned_external_deletion() as owner',[],owner,'consumer');
     expect(result.rows).toEqual([{owner}]);

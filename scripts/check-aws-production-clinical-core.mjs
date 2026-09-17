@@ -16,7 +16,9 @@ const errors = [];
 const assert = (condition, message) => { if (!condition) errors.push(message); };
 
 assert(manifest.contract_version === "clinical-core-migrations/1", "generated manifest contract is invalid");
-assert(manifest.migrations.length === 62, "expected ten transformed migrations and fifty-two production overlays");
+assert(manifest.migrations.length === 63, "expected ten transformed migrations and fifty-three production overlays");
+assert(manifest.migrations.some(entry => entry.file === '20260917060000_production_external_privacy_inventory.sql'),
+  "missing request-bound retained-job inventory");
 assert(manifest.migrations.some(entry => entry.file === '20260917050000_production_external_deletion_guard.sql'),
   "missing owner-locked external deletion guard");
 assert(manifest.migrations.some(entry => entry.file === '20260917040000_production_reviewed_personal_purge.sql'),
@@ -50,6 +52,10 @@ for (const entry of manifest.migrations) {
 assert((combined.match(/create table clinical_core\.patient_relationships\s*\(/gi) ?? []).length === 1,
   "family relationships must have exactly one authoritative table definition");
 assert(!/^\+--/m.test(combined), "a patch marker was included as SQL");
+for(const marker of ['owned_external_inventory_items force row level security','open_owned_external_inventory',
+  'append_owned_external_inventory',"'completeAccountInventory',false","'requiresReconciliation',true",
+  "'privacy_request.inventory'"])
+  assert(combined.includes(marker),`missing retained-inventory invariant ${marker}`);
 
 for (const [pattern, description] of [
   [/synthetic/i, "production artifact contains a synthetic marker"],

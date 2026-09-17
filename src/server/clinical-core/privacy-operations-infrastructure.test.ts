@@ -16,6 +16,17 @@ function evaluate(v:Json,p:Record<string,string>):unknown{
   throw new Error('unsupported_condition');
 }
 describe('privacy operations deployable candidate',()=>{
+  it('keeps retained inventories separately disabled and grants only pinned table scans, never deletion or object reads',()=>{
+    expect(t.Parameters.ExternalInventoryEnabled.Default).toBe('false');expect(t.Parameters.ExternalInventoryEvidenceSha256.Default).toBe('');
+    const policies=t.Resources.Role.Properties.Policies as Record<string,Json>[];
+    const branch=policies[2]['Fn::If'] as Json[];expect(branch[0]).toBe('InventoryActive');
+    expect(JSON.stringify(branch[1])).toContain('dynamodb:Scan');
+    expect(JSON.stringify(branch[1])).not.toMatch(/Delete|Put|Update|s3:|transcribe:|"Resource":"\*"/);
+    expect(JSON.stringify(branch[1])).toContain('kms:EncryptionContext:aws:dynamodb:tableName');
+    expect(JSON.stringify(branch[1])).toContain('"dynamodb:Select":"SPECIFIC_ATTRIBUTES"');
+    expect(JSON.stringify(branch[1])).toContain('ForAllValues:StringEquals');
+    expect(branch[2]).toEqual({Ref:'AWS::NoValue'});
+  });
   it('remains blocked unless every separate approval and alarm destination exists',()=>{
     const defaults=Object.fromEntries(Object.entries(t.Parameters).map(([k,v])=>[k,v.Default??'']));
     const approved={...defaults,PhiAllowed:'true',Activation:'approved',ActivationEvidenceSha256:'a'.repeat(64),

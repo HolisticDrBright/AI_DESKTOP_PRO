@@ -16,8 +16,19 @@ export async function requestPrivacyOperation(token:string|null,input:PrivacyOpe
     const r=await fetch(url.origin+'/clinical-core/workforce/privacy-operations',{method:'POST',headers:{
       Authorization:'Bearer '+token,'content-type':'application/json',Accept:'application/json'},
       body:JSON.stringify(parsed.data),cache:'no-store',redirect:'error',signal:AbortSignal.timeout(20000)});
-    if(!r.ok)throw new PrivacyOperationError(r.status===401?'reauth_required':r.status===403?'privacy_access_refused':
-      r.status===409?'conflict':r.status===400?'request_invalid':'service_unavailable');
+    if(!r.ok){
+      // Only known, action/status-bound machine codes may cross this boundary.
+      // Never relay arbitrary provider text, credentials or clinical values.
+      let code:unknown;
+      try{const text=await r.text();if(Buffer.byteLength(text)<=2000)code=JSON.parse(text)?.error;}catch{/* generic refusal below */}
+      if(r.status===503&&code==='external_inventory_not_activated'&&parsed.data.action==='externalInventory')
+        throw new PrivacyOperationError(code);
+      if(r.status===503&&code==='personal_purge_not_activated'
+        &&['previewPersonalPurge','purgePersonal'].includes(parsed.data.action))throw new PrivacyOperationError(code);
+      if(r.status===403&&code==='legal_hold')throw new PrivacyOperationError(code);
+      throw new PrivacyOperationError(r.status===401?'reauth_required':r.status===403?'privacy_access_refused':
+        r.status===409?'conflict':r.status===400?'request_invalid':'service_unavailable');
+    }
     const text=await r.text();
     if(Buffer.byteLength(text)>250000)throw new Error('oversize');
     const body=JSON.parse(text);

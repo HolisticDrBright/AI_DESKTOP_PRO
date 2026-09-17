@@ -8,6 +8,18 @@ const command:PrivacyOperation={action:'purgePersonal',privacyRequestId:id,comma
 const base=Object.fromEntries(Object.entries(preview).filter(([key])=>key!=='policyContent'));
 const receipt={...base,commandId:other,outcome:'purged',verifiedAt:'2026-09-17T00:00:00Z',evidenceSha256:'c'.repeat(64)};
 describe('preview-bound purge contracts',()=>{
+  it('binds inventory summaries to request, store, checkpoint and non-completion semantics',()=>{
+    const input:PrivacyOperation={action:'externalInventory',privacyRequestId:id,inventoryId:other,store:'labs',expectedRevision:0};
+    const value={inventoryId:other,privacyRequestId:id,store:'labs',revision:1,scanned:25,items:1,issues:0,state:'scanning',
+      sourceSha256:'a'.repeat(64),evidenceSha256:'b'.repeat(64),createdAt:'2026-09-17T00:00:00Z',updatedAt:'2026-09-17T00:00:01Z',
+      readOnly:true,completeAccountInventory:false,requiresReconciliation:true};
+    expect(parsePrivacyOperationResult(input,value)).toEqual(value);
+    for(const patch of [{inventoryId:id},{privacyRequestId:other},{store:'voice'},{revision:2},{readOnly:false},
+      {completeAccountInventory:true},{requiresReconciliation:false},{items:26},{cursor:{pk:'private'}},{ownerId:other}])
+      expect(()=>parsePrivacyOperationResult(input,{...value,...patch})).toThrow();
+    expect(privacyOperationSchema.safeParse({...input,sourceArn:'arbitrary'}).success).toBe(false);
+    expect(privacyOperationSchema.safeParse({...input,ownerId:other}).success).toBe(false);
+  });
   it('accepts exact preview and receipt but never whole-account completion claims',()=>{
     expect(parsePrivacyOperationResult({action:'previewPersonalPurge',privacyRequestId:id,policyVersion:'fictional'},preview)).toEqual(preview);
     expect(parsePrivacyOperationResult(command,receipt)).toEqual(receipt);

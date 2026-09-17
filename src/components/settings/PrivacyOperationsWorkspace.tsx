@@ -1,6 +1,6 @@
 'use client';
 import {useEffect,useRef,useState} from 'react';
-import {privacyOperationSchema,parsePrivacyOperationResult,type PrivacyOperation,type PrivacyQueue,type PrivacyDetail,type PersonalPurgePreview,type PersonalPurgeReceipt} from '@/contracts/privacyOperations';
+import {privacyOperationSchema,parsePrivacyOperationResult,type PrivacyOperation,type PrivacyQueue,type PrivacyDetail,type PersonalPurgePreview,type PersonalPurgeReceipt,type ExternalInventorySummary} from '@/contracts/privacyOperations';
 import {Card} from '@/components/ui/bits';
 import {Btn} from '@/components/ui/Btn';
 const messages:Record<string,string>={
@@ -11,6 +11,7 @@ const messages:Record<string,string>={
   request_invalid:'Check the requested outcome, revision and explanation.',
   service_unavailable:'Privacy operations are unavailable on this deployment. No completion is confirmed.',
   personal_purge_not_activated:'Personal-history deletion has not been activated on this deployment. No deletion was performed.',
+  external_inventory_not_activated:'Retained-job inventory has not been activated on this deployment. No external records were scanned or deleted.',
 };
 export function PrivacyOperationsWorkspace(){
   const [queue,setQueue]=useState<PrivacyQueue|null>(null),[detail,setDetail]=useState<PrivacyDetail|null>(null);
@@ -20,6 +21,8 @@ export function PrivacyOperationsWorkspace(){
   const [policy,setPolicy]=useState(''),[purgeConfirmation,setPurgeConfirmation]=useState('');
   const [preview,setPreview]=useState<PersonalPurgePreview|null>(null),[receipt,setReceipt]=useState<PersonalPurgeReceipt|null>(null);
   const [purgeCommand,setPurgeCommand]=useState<string|null>(null);
+  const [inventory,setInventory]=useState<ExternalInventorySummary|null>(null);
+  const [inventoryCommand,setInventoryCommand]=useState<Extract<PrivacyOperation,{action:'externalInventory'}>|null>(null);
   const alive=useRef(true),working=useRef(false),generation=useRef(0);
   const abort=useRef<AbortController|null>(null);
   useEffect(()=>{
@@ -29,6 +32,7 @@ export function PrivacyOperationsWorkspace(){
       invalidate();working.current=false;
       setBusy(false);setQueue(null);setDetail(null);setExplanation('');setRevision('');setConfirm(false);setError('');setNotice('');
       setPolicy('');setPurgeConfirmation('');setPreview(null);setReceipt(null);setPurgeCommand(null);
+      setInventory(null);setInventoryCommand(null);
     };
     const hide=()=>{if(document.visibilityState==='hidden')clear();};
     document.addEventListener('visibilitychange',hide);window.addEventListener('pagehide',clear);
@@ -39,6 +43,7 @@ export function PrivacyOperationsWorkspace(){
     if(working.current||!alive.current)return;
     const parsed=privacyOperationSchema.safeParse(input);
     if(!parsed.success){setError(messages.request_invalid);return;}
+    if(parsed.data.action==='externalInventory')setInventoryCommand(parsed.data);
     working.current=true;setBusy(true);setError('');setNotice('');
     const epoch=++generation.current;
     const controller=new AbortController();abort.current=controller;
@@ -50,11 +55,16 @@ export function PrivacyOperationsWorkspace(){
       const body=JSON.parse(text);
       if(!alive.current||epoch!==generation.current)return;
       if(!response.ok){
-        if([400,401,403,409].includes(response.status)){setPreview(null);setPurgeCommand(null);setPurgeConfirmation('');}
+        if([400,401,403,409].includes(response.status)){setPreview(null);setPurgeCommand(null);setPurgeConfirmation('');setInventory(null);setInventoryCommand(null);}
         if(response.status===401||response.status===403){setDetail(null);setQueue(null);setExplanation('');setRevision('');setConfirm(false);setReceipt(null);setPolicy('');}
         setError(messages[typeof body?.error==='string'?body.error:'']??messages.service_unavailable);return;
       }
       const result=parsePrivacyOperationResult(parsed.data,body.data);
+      if(input.action==='externalInventory'){
+        const saved=result as ExternalInventorySummary;setInventory(saved);setInventoryCommand(null);
+        setDetail(previous=>previous?.privacyRequestId===saved.privacyRequestId?{...previous,
+          externalInventories:[saved,...previous.externalInventories.filter(i=>i.inventoryId!==saved.inventoryId)].slice(0,20)}:previous);return;
+      }
       if(input.action==='previewPersonalPurge'){
         setPreview(result as PersonalPurgePreview);setReceipt(null);setPurgeConfirmation('');setPurgeCommand(crypto.randomUUID());return;
       }
@@ -63,6 +73,7 @@ export function PrivacyOperationsWorkspace(){
         setNotice('Personal-storage purge receipt verified. Other stores remain unresolved; this is not complete account deletion.');return;
       }
       setPreview(null);setReceipt(null);setPurgeCommand(null);setPolicy('');setPurgeConfirmation('');
+      setInventory(null);setInventoryCommand(null);
       if(input.action==='list'){setQueue(result as PrivacyQueue);setDetail(null);setConfirm(false);setExplanation('');}
       else{setDetail(result as PrivacyDetail);setConfirm(false);
         if(input.action==='resolve'){setQueue(null);setNotice('Decision verified and recorded. Refresh the queue to see remaining requests.');}
@@ -76,7 +87,7 @@ export function PrivacyOperationsWorkspace(){
     <Card className="p-5 space-y-3">
       <p>Only requests covered by your explicit privacy assignment appear here. This does not connect an independent consumer to your clinic.</p>
       <p className="text-sm text-subtle">Review is separate from editing a record. An applied decision verifies an already-saved, exact correction; it cannot change clinical data, consent, protocols or legal holds.</p>
-      <label className="flex gap-2"><input type="checkbox" checked={closed} disabled={busy} onChange={e=>{setClosed(e.target.checked);setQueue(null);setDetail(null);setConfirm(false);setPreview(null);setReceipt(null);setPurgeCommand(null);setPolicy('');setPurgeConfirmation('');}}/>Include completed and declined requests</label>
+      <label className="flex gap-2"><input type="checkbox" checked={closed} disabled={busy} onChange={e=>{setClosed(e.target.checked);setQueue(null);setDetail(null);setConfirm(false);setPreview(null);setReceipt(null);setPurgeCommand(null);setPolicy('');setPurgeConfirmation('');setInventory(null);setInventoryCommand(null);}}/>Include completed and declined requests</label>
       <Btn disabled={busy} onClick={()=>void perform({action:'list',includeClosed:closed})}>{busy?'Working…':'Load / refresh assigned requests'}</Btn>
       {error?<p role="alert" className="text-danger">{error}</p>:null}
       {notice?<p role="status">{notice}</p>:null}
@@ -105,6 +116,25 @@ export function PrivacyOperationsWorkspace(){
       {detail.kind==='deletion'?<><p>Deletion requires reconciliation of all nine stores. The personal-storage action below cannot complete account deletion.</p>
         <ul>{detail.fulfillment.map((f,i)=><li key={i}>{f.store}: {f.outcome} ({f.recordedAt.slice(0,10)})</li>)}</ul>
         {!detail.fulfillment.length?<p>No fulfillment evidence recorded.</p>:null}
+        {!terminal?<section aria-label="Retained lab and voice inventory" className="border-t pt-3 space-y-3">
+          <h3 className="font-semibold">Read-only retained-job inventory</h3>
+          <p>Find retained lab jobs, lab cleanup watches and voice jobs. This includes old processing records, not just recent visible history. No files are opened or deleted, and legal holds remain in place.</p>
+          <p>Each click scans up to 25 table records. Counts may include unresolved metadata. An exhausted scan is not a point-in-time snapshot or proof of complete account inventory: source objects, orphaned/legacy rows, other stores and backups still need reconciliation.</p>
+          <div className="flex flex-wrap gap-2">{(['labs','voice'] as const).map(store=><Btn key={store} disabled={busy||!!inventoryCommand} onClick={()=>{setInventory(null);void perform({action:'externalInventory',privacyRequestId:detail.privacyRequestId,inventoryId:crypto.randomUUID(),store,expectedRevision:0});}}>Start {store} inventory</Btn>)}</div>
+          {inventoryCommand?<Btn disabled={busy} onClick={()=>void perform(inventoryCommand)}>Retry same inventory page</Btn>:null}
+          {inventory?<div role="status" className="space-y-2">
+            <p>{inventory.store}: {inventory.state} · {inventory.items} retained records · {inventory.issues} metadata issues · {inventory.scanned} table records scanned.</p>
+            <p className="break-all">Inventory {inventory.inventoryId}, page {inventory.revision}. Evidence {inventory.evidenceSha256}</p>
+            <p>No deletion performed. Independent reconciliation required.</p>
+            {inventory.state==='scanning'?<Btn disabled={busy||!!inventoryCommand} onClick={()=>void perform({action:'externalInventory',privacyRequestId:detail.privacyRequestId,inventoryId:inventory.inventoryId,store:inventory.store,expectedRevision:inventory.revision})}>Scan next inventory page</Btn>:null}
+            {inventory.state==='bounded'?<p role="alert">This scan reached its safety bound. An operator must reconcile the remaining inventory; it is not complete.</p>:null}
+          </div>:null}
+          {detail.externalInventories.map(saved=><div key={saved.inventoryId} className="text-sm border-t pt-2">
+            <p>Saved {saved.store} inventory · {saved.state} · {saved.items} retained records · {saved.issues} metadata issues · {saved.updatedAt.slice(0,10)}</p>
+            <Btn disabled={busy||!!inventoryCommand} onClick={()=>void perform({action:'externalInventory',privacyRequestId:detail.privacyRequestId,inventoryId:saved.inventoryId,store:saved.store,expectedRevision:saved.revision})}>Resume / review saved {saved.store} inventory</Btn>
+          </div>)}
+          <Btn disabled={busy} onClick={()=>void perform({action:'detail',privacyRequestId:detail.privacyRequestId})}>Refresh saved inventories</Btn>
+        </section>:null}
         {!terminal&&!detail.legalHold?<section aria-label="Personal-history deletion" className="border-t pt-3 space-y-3">
           <h3 className="font-semibold">Preview personal-history deletion</h3>
           <p>Separate deployment approval and a policy explicitly authorizing this purge are required. No policy or approval is created here.</p>

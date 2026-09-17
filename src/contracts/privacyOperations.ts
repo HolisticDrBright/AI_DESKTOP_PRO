@@ -6,6 +6,8 @@ const policyVersion=z.string().trim().min(1).max(200);
 export const privacyOperationSchema=z.discriminatedUnion('action',[
   z.object({action:z.literal('list'),after:id.optional(),includeClosed:z.boolean()}).strict(),
   z.object({action:z.literal('detail'),privacyRequestId:id}).strict(),
+  z.object({action:z.literal('externalInventory'),privacyRequestId:id,inventoryId:id,store:z.enum(['labs','voice']),
+    expectedRevision:z.number().int().min(0).max(10000)}).strict(),
   z.object({action:z.literal('resolve'),privacyRequestId:id,outcome:z.enum(['applied','declined']),
     appliedRevision:z.number().int().min(1).max(999999999).nullable(),
     explanation:z.string().trim().min(1).max(2000)}).strict().refine(v=>v.outcome==='applied'?v.appliedRevision!==null:v.appliedRevision===null),
@@ -18,6 +20,12 @@ const row=z.object({privacyRequestId:id,ownerId:id,kind:z.enum(['deletion','corr
   status:z.enum(['submitted','held','in_progress','completed','refused']),
   submittedAt:z.string().datetime({offset:true}),updatedAt:z.string().datetime({offset:true})}).strict();
 export const privacyQueueSchema=z.object({items:z.array(row).max(25),nextAfter:id.nullable()}).strict();
+export const externalInventorySummarySchema=z.object({inventoryId:id,privacyRequestId:id,store:z.enum(['labs','voice']),
+  revision:z.number().int().min(0).max(10000),scanned:z.number().int().min(0).max(100025),items:z.number().int().min(0).max(10025),
+  issues:z.number().int().min(0).max(100025),state:z.enum(['scanning','exhausted','bounded']),sourceSha256:hash,evidenceSha256:hash,
+  createdAt:z.string().datetime({offset:true}),updatedAt:z.string().datetime({offset:true}),readOnly:z.literal(true),
+  completeAccountInventory:z.literal(false),requiresReconciliation:z.literal(true)}).strict().refine(v=>v.items+v.issues<=v.scanned);
+export type ExternalInventorySummary=z.infer<typeof externalInventorySummarySchema>;
 export const privacyDetailSchema=row.extend({legalHold:z.boolean(),fulfillment:z.array(z.object({
   store:z.enum(['personal_records','personal_consents','active_plan','lab_jobs_and_documents','voice_jobs_and_transcripts',
     'identity','clinic_records','device_caches_and_recovery_archives','backups_and_audit']),
@@ -27,7 +35,8 @@ export const privacyDetailSchema=row.extend({legalHold:z.boolean(),fulfillment:z
   target:correctionTargetSchema,reason:z.string().min(1).max(2000),requestedValue:z.unknown(),
   originalAvailable:z.boolean(),originalValue:z.unknown(),currentRevision:z.number().int().positive().nullable(),
   currentDeleted:z.boolean(),currentValue:z.unknown(),resolution:correctionResolutionSchema.nullable(),
-}).strict().nullable()}).strict().refine(v=>{
+}).strict().nullable(),externalInventories:z.array(externalInventorySummarySchema).max(20).default([])}).strict().refine(v=>{
+  if(v.externalInventories.some(i=>i.privacyRequestId!==v.privacyRequestId))return false;
   if(v.correction===null)return true; // Legacy request, explicitly not resolvable.
   if(v.kind!=='correction')return false;
   const r=v.correction.resolution;
@@ -44,7 +53,13 @@ export const personalPurgeReceiptSchema=purgeBase.extend({commandId:id,outcome:z
   verifiedAt:z.string().datetime({offset:true}),evidenceSha256:hash}).strict();
 export type PersonalPurgePreview=z.infer<typeof personalPurgePreviewSchema>;
 export type PersonalPurgeReceipt=z.infer<typeof personalPurgeReceiptSchema>;
-export function parsePrivacyOperationResult(input:PrivacyOperation,raw:unknown):PrivacyQueue|PrivacyDetail|PersonalPurgePreview|PersonalPurgeReceipt{
+export function parsePrivacyOperationResult(input:PrivacyOperation,raw:unknown):PrivacyQueue|PrivacyDetail|PersonalPurgePreview|PersonalPurgeReceipt|ExternalInventorySummary{
+  if(input.action==='externalInventory'){
+    const value=externalInventorySummarySchema.parse(raw);
+    if(value.inventoryId!==input.inventoryId||value.privacyRequestId!==input.privacyRequestId||value.store!==input.store
+      ||![input.expectedRevision,input.expectedRevision+1].includes(value.revision))throw new Error('privacy_response_invalid');
+    return value;
+  }
   if(input.action==='previewPersonalPurge'||input.action==='purgePersonal'){
     const value=input.action==='previewPersonalPurge'?personalPurgePreviewSchema.parse(raw):personalPurgeReceiptSchema.parse(raw);
     if(value.privacyRequestId!==input.privacyRequestId||value.policyVersion!==input.policyVersion)throw new Error('privacy_response_invalid');

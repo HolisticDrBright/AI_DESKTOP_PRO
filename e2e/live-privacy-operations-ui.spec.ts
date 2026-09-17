@@ -8,6 +8,42 @@ const detail={...row,legalHold:false,fulfillment:[],correction:{target:{collecti
   recordId:'33333333-3333-4333-8333-333333333333',expectedRevision:1,expectedPayloadSha256:'a'.repeat(64),
   field:'height_cm',requestSha256:'b'.repeat(64)},reason:'Fictional height entry correction',requestedValue:180,
   originalAvailable:true,originalValue:170,currentRevision:2,currentDeleted:false,currentValue:180,resolution:null}};
+
+test('retained inventory retries the same checkpoint, resumes saved progress and never claims erasure',async({page},info)=>{
+  const calls:Record<string,unknown>[]=[],errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));
+  const deletion={...row,kind:'deletion',status:'held'};let saved:Record<string,unknown>|null=null;
+  await page.route('**/api/live/privacy-operations',async route=>{
+    const body=route.request().postDataJSON();calls.push(body);
+    if(body.action==='externalInventory'){
+      if(calls.filter(c=>c.action==='externalInventory').length===1){await route.fulfill({status:503,json:{error:'service_unavailable'}});return;}
+      saved={inventoryId:body.inventoryId,privacyRequestId:id,store:body.store,revision:body.expectedRevision+1,
+        scanned:body.expectedRevision===0?25:26,items:2,issues:1,state:body.expectedRevision===0?'scanning':'exhausted',
+        sourceSha256:'a'.repeat(64),evidenceSha256:'b'.repeat(64),createdAt:'2026-09-17T01:00:00Z',updatedAt:'2026-09-17T01:01:00Z',
+        readOnly:true,completeAccountInventory:false,requiresReconciliation:true};
+      await route.fulfill({json:{data:saved}});return;
+    }
+    await route.fulfill({json:{data:body.action==='list'?{items:[deletion],nextAfter:null}:
+      {...deletion,legalHold:true,fulfillment:[],correction:null,externalInventories:saved?[saved]:[]}}});
+  });
+  await page.goto('/settings/privacy-operations');
+  await page.getByRole('button',{name:'Load / refresh assigned requests'}).click();await page.getByRole('button',{name:'Review request'}).click();
+  await expect(page.getByRole('button',{name:'Preview exact deletion'})).toHaveCount(0);
+  await page.getByRole('button',{name:'Start labs inventory'}).click();
+  await expect(page.getByRole('button',{name:'Retry same inventory page'})).toBeVisible();
+  await page.getByRole('button',{name:'Retry same inventory page'}).click();
+  const retries=calls.filter(c=>c.action==='externalInventory');expect(retries).toHaveLength(2);expect(retries[0]).toEqual(retries[1]);
+  await expect(page.getByRole('status').filter({hasText:'labs: scanning'})).toBeVisible();
+  await page.getByRole('button',{name:'Refresh saved inventories'}).click();
+  await page.getByRole('button',{name:'Resume / review saved labs inventory'}).click();
+  await expect(page.getByRole('status').filter({hasText:'labs: exhausted'})).toBeVisible();
+  await expect(page.getByRole('button',{name:'Scan next inventory page'})).toHaveCount(0);
+  await expect(page.getByText('No deletion performed. Independent reconciliation required.')).toBeVisible();
+  await page.screenshot({path:info.outputPath('privacy-retained-inventory.png'),fullPage:true});
+  expect(calls.filter(c=>c.action==='externalInventory').at(-1)).toMatchObject({expectedRevision:1,inventoryId:retries[0].inventoryId});
+  expect(calls.some(c=>c.action==='purgePersonal')).toBe(false);expect(errors).toEqual([]);
+  await page.evaluate(()=>{Object.defineProperty(document,'visibilityState',{configurable:true,value:'hidden'});document.dispatchEvent(new Event('visibilitychange'));});
+  await expect(page.getByRole('heading',{name:'Read-only retained-job inventory'})).toHaveCount(0);
+});
 test('privacy UI distinguishes sign-in refusal from an empty queue',async({page})=>{
   await page.route('**/api/live/privacy-operations',route=>route.fulfill({status:401,json:{error:'reauth_required'}}));
   const response=await page.goto('/settings/privacy-operations');
