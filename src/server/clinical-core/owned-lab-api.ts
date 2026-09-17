@@ -40,6 +40,11 @@ export function createOwnedLabApi(input:{
   };
   const inner=(input.api??createLabAnalysisApi)({
     mode:'production',identity,
+    revalidatePrivacyIdentity:async event=>{
+      const context=ownedConsumerIdentity(event as ApiGatewayV2Event,c,'consent_management',now());
+      // Fetching consent state checks the active DB identity, not a grant.
+      await input.adapter().consentState(context,'lab_history');
+    },
     capture:async event=>{
       if(!active||!featureEnabled)throw new LabAuthorizationRevoked();
       return authorization.capture(ownedConsumerIdentity(event as ApiGatewayV2Event,c,'consent_management',now()));

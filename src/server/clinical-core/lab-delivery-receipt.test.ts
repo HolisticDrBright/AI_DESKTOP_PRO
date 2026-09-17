@@ -108,7 +108,7 @@ describe('durable delivery acknowledgment',()=>{
   it('rechecks production consent before persisting an acknowledgment',async()=>{
     rows.set('job#'+id,job({dataClassification:'personal_health_record',delivery:{bindingSha256:deviceA,deliveredAt:new Date().toISOString(),count:1}}));
     const verify=vi.fn(async()=>{throw new LabAuthorizationRevoked();});
-    const production=createLabAnalysisApi({mode:'production',identity:()=>({sub:owner,'custom:person_id':owner,'custom:organization_id':owner}),capture:async()=>{throw new Error('not creation');},policy:{verify},requireCore:async()=>{throw new Error('not creation');}});
+    const production=createLabAnalysisApi({mode:'production',identity:()=>({sub:owner,'custom:person_id':owner,'custom:organization_id':owner}),capture:async()=>{throw new Error('not creation');},policy:{verify},requireCore:async()=>{throw new Error('not creation');},revalidatePrivacyIdentity:async()=>{throw new Error('not privacy');}});
     const result=await production(event('POST',`jobs/${id}/delivery`,{contractVersion:LAB_DELIVERY_ACK_VERSION,deviceBindingSha256:deviceA,disposition:'applied'}));
     expect(result.statusCode).toBe(403);expect(verify).toHaveBeenCalledOnce();expect(rows.get('job#'+id)!.deliveryAcknowledgment).toBeUndefined();
   });

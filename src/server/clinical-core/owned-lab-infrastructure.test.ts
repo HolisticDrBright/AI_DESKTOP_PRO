@@ -26,12 +26,15 @@ describe('production lab release candidate',()=>{
   });
   it('keeps only consumer JWT routes and binds identity to explicit production pool parameters',()=>{
     const routes=Object.values(template.Resources as Record<string,{Type:string;Properties:{RouteKey:string;AuthorizationType:string}}>).filter(r=>r.Type==='AWS::ApiGatewayV2::Route');
-    expect(routes).toHaveLength(15);
+    expect(routes).toHaveLength(17);
+    expect(routes.filter(r=>/privacy-copy|privacy-download/.test(r.Properties.RouteKey))).toHaveLength(2);
     expect(routes.every(r=>r.Properties.AuthorizationType==='JWT'&&r.Properties.RouteKey.includes('/clinical-core/consumer/labs'))).toBe(true);
     expect(template.Resources.LabConsumerAuthorizer.Properties.JwtConfiguration).toEqual({Issuer:{Ref:'ConsumerIssuer'},Audience:[{Ref:'ConsumerAudience'}]});
     expect(Object.keys(template.Resources).some(name=>name.includes('Synthetic'))).toBe(false);
   });
   it('scopes object, workflow and consent-database permissions to named resources and the personal namespace',()=>{
+    const download=(template.Resources.LabApiRole.Properties.Policies as Policy[]).map(p=>p['Fn::If']?.[1]).find(p=>p?.PolicyName==='LabDocumentPrivacyDownload');
+    expect(download?.PolicyDocument?.Statement).toEqual([{Effect:'Allow',Action:'s3:GetObjectVersion',Resource:{'Fn::Sub':'${LabDocumentsBucket.Arn}/personal-labs/*'}}]);
     for(const role of ['LabApiRole','LabWorkerRole','LabCleanupRole']){
       const active=(template.Resources[role].Properties.Policies as Policy[]).slice(1).map(p=>p['Fn::If']![1]).flatMap(p=>p['Fn::If']?[]:p.PolicyDocument!.Statement);
       expect(active.every(s=>s.Resource!=='*'||(Array.isArray(s.Action)&&s.Action.every(a=>String(a).startsWith('textract:'))))).toBe(true);

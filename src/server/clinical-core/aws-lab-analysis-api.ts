@@ -1,7 +1,7 @@
 import { randomUUID,createHash } from "node:crypto";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { GetCommand, PutCommand, UpdateCommand, DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
-import { HeadObjectCommand, ListObjectsV2Command, S3Client } from "@aws-sdk/client-s3";
+import { GetObjectCommand, HeadObjectCommand, ListObjectsV2Command, S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { SFNClient, StartExecutionCommand } from "@aws-sdk/client-sfn";
@@ -16,6 +16,7 @@ import { LabAuthorizationRevoked, type LabAuthorization, type LabAuthorizationPo
 import { CoreSubscriptionError } from './core-subscription-guard';
 import { OwnedStorageError } from './owned-consumer-records';
 import { canonicalPayload } from './aws-consumer-clinical-records';
+import {createLabJobPrivacy,LabPrivacyError} from './lab-job-privacy';
 
 const CONTRACT_VERSION = "lab-analysis/1";
 const MAX_BODY_BYTES = 256 * 1024;
@@ -125,6 +126,7 @@ export type LabApiOptions =
       identity: (event: ApiEvent) => Claims;
       capture: (event: ApiEvent, identity: Claims) => Promise<LabAuthorization>;
       policy: LabAuthorizationPolicy;
+      revalidatePrivacyIdentity:(event:ApiEvent)=>Promise<void>;
       requireCore: (headers: Record<string, string | undefined>) => Promise<void> };
 const CLASSIFICATION: Record<LabApiOptions['mode'], LabDataClassification> = { synthetic: 'synthetic_only', production: 'personal_health_record' };
 function classificationAccepted(input: Record<string, unknown>, options: LabApiOptions): boolean {
@@ -457,7 +459,9 @@ async function ownedJob(jobId: string, identity: Claims, options: LabApiOptions,
   const job = result.Item as Job | undefined;
   const owned = (includeDeleting || job?.state !== 'deleting') && job?.ownerSub === identity.sub && job.organizationId === identity['custom:organization_id']
     && job.personId === identity['custom:person_id'] ? job : null;
-  return owned ? classifiedJob(owned, options) : null;
+  // includeDeleting is used only by explicit cancel/delete, never processing or
+  // clinical reads. Withdrawal must not prevent the owner stopping old work.
+  return owned ? classifiedJob(owned, options, includeDeleting) : null;
 }
 /** A handler never serves another classification's rows, and a production job
  * is re-authorized against current consent on every access. Cancellation and
@@ -730,6 +734,26 @@ export function createLabAnalysisApi(options: LabApiOptions) {
     const identity = claims(event, options);
     const method = event?.requestContext?.http?.method;
     const path = event?.rawPath;
+    const privacy=typeof path==='string'?path.match(/^\/clinical-core\/(?:consumer|synthetic-session)\/labs\/jobs\/([0-9a-f-]{36})\/(privacy-copy|documents\/([0-9a-f-]{36})\/privacy-download)$/i):null;
+    if(privacy){
+      if(Object.keys(event.queryStringParameters??{}).length)return refusal();
+      const scope={ownerSub:identity.sub,organizationId:identity['custom:organization_id'],personId:identity['custom:person_id']};
+      const reader=createLabJobPrivacy({classification:CLASSIFICATION[options.mode],prefix:labObjectPrefix(),kmsKeyArn:required('LAB_KMS_KEY_ARN'),
+        revalidate:async()=>{if(options.mode==='production')await options.revalidatePrivacyIdentity(event);else claims(event,options);},
+        read:async id=>(await db.send(new GetCommand({TableName:required('LAB_JOB_TABLE'),Key:{pk:`job#${id}`},ConsistentRead:true}))).Item,
+        head:key=>s3.send(new HeadObjectCommand({Bucket:required('LAB_DOCUMENT_BUCKET'),Key:key,ChecksumMode:'ENABLED'})),
+        sign:input=>getSignedUrl(s3,new GetObjectCommand({Bucket:required('LAB_DOCUMENT_BUCKET'),Key:input.key,
+          VersionId:input.versionId,IfMatch:input.etag,ResponseContentType:input.contentType,ResponseCacheControl:'no-store',
+          ResponseContentDisposition:`attachment; filename="${input.downloadName}"`}),{expiresIn:input.seconds}),
+      });
+      if(privacy[2]==='privacy-copy'&&method==='GET')return json(200,await reader.copy(scope,privacy[1]));
+      if(privacy[3]&&method==='POST'){
+        const input=body(event);
+        if(Object.keys(input).join(',')!=='confirmDownload'||input.confirmDownload!==true)return refusal();
+        return json(200,await reader.document(scope,privacy[1],privacy[3]));
+      }
+      return refusal(405);
+    }
     if (method === 'GET' && typeof path === 'string') {
       const scope = {ownerSub:identity.sub,organizationId:identity['custom:organization_id'],personId:identity['custom:person_id']};
       if (/^\/clinical-core\/(?:consumer|synthetic-session)\/labs\/inventory$/.test(path)) {
@@ -786,6 +810,7 @@ export function createLabAnalysisApi(options: LabApiOptions) {
     }
     return refusal(404);
   } catch (error) {
+    if(error instanceof LabPrivacyError)return json(error.status,{error:error.code});
     if(error instanceof LabRequestError)return json(error.statusCode,{contractVersion:REQUEST_RECOVERY_VERSION,error:error.code});
     if(error instanceof LabAuthorizationRevoked)return json(403,{error:'lab_consent_required'});
     if(error instanceof CoreSubscriptionError)return json(402,{error:'core_subscription_required'});
