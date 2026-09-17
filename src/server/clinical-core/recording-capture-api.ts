@@ -5,10 +5,11 @@ import { RecordingAuthorityError } from './encounter-recording-operations';
 import { recordingContentTypeSchema, recordingStartSchema, recordingStartReceiptSchema, recordingLifecycleCommandSchema,
   recordingLifecycleReceiptSchema, recordingRecoveryStateSchema, RecordingLifecycleError, type createRecordingLifecycleRepository } from './recording-lifecycle';
 import { recordingSegmentInputSchema, recordingSegmentReceiptSchema, RecordingUploadError, type createRecordingSegmentUploader } from './recording-segments';
-import { recordingReconciliationReceiptSchema } from '@/contracts/encounterRecordingCapture';
+import { recordingReconciliationReceiptSchema, recordingReadinessRequestSchema, recordingReadinessSchema } from '@/contracts/encounterRecordingCapture';
 import type { createRecordingReconciler } from './recording-reconciliation';
 
 export const RECORDING_CAPTURE_ROUTES = {
+  readiness: 'POST /clinical-core/workforce/encounter-recording/readiness',
   start: 'POST /clinical-core/workforce/encounter-recording/start',
   state: 'POST /clinical-core/workforce/encounter-recording/state',
   reconcile: 'POST /clinical-core/workforce/encounter-recording/reconcile',
@@ -75,7 +76,12 @@ export function createRecordingCaptureApi(input: { configuration: RecordingCaptu
       } else {
         if (Object.keys(event.headers ?? {}).some(k => k.toLowerCase().startsWith('x-alp-'))) throw new RecordingLifecycleError('request_invalid');
         const body = jsonBody(event);
-        if (event.routeKey === RECORDING_CAPTURE_ROUTES.start) {
+        if (event.routeKey === RECORDING_CAPTURE_ROUTES.readiness) {
+          const request = parse(recordingReadinessRequestSchema, body);
+          const result = recordingReadinessSchema.parse(await input.lifecycle().readiness(context, request, c.captureReleaseId));
+          if (result.encounterId !== request.encounterId) throw new RecordingLifecycleError('service_unavailable');
+          data = result;
+        } else if (event.routeKey === RECORDING_CAPTURE_ROUTES.start) {
           const request = parse(recordingStartSchema, body);
           data = recordingStartReceiptSchema.parse(await input.lifecycle().start(context, request, c.captureReleaseId));
         } else if (event.routeKey === RECORDING_CAPTURE_ROUTES.state) {

@@ -28,6 +28,21 @@ function fixture(data: unknown = receipt, failure?: Error) {
 }
 
 describe('internal recording lifecycle repository and strict receipts', () => {
+  it('binds readiness to workforce context, configured release, and exact encounter without starting capture',async()=>{
+    const ready={encounterId:id,ready:true,authorityEpoch:0,checkedAt:'2026-09-17T00:00:00Z',expiresAt:'2026-09-17T00:00:30Z',
+      maxRecordingBytes:100,maxSegmentBytes:100,maxSegments:4096,audioRetentionHours:1,
+      contentTypes:['audio/webm'],captureStarted:false,processingRequested:false};
+    const f=fixture(ready);
+    expect(await f.repository.readiness(context,{encounterId:id},other)).toEqual(ready);
+    expect(f.query).toHaveBeenLastCalledWith('select clinical_private.get_recording_capture_readiness($1,$2) as data',
+      [{kind:'uuid',value:id},{kind:'uuid',value:other}]);
+    expect(()=>f.repository.readiness(context,{encounterId:id,releaseId:id},other)).toThrow('request_invalid');
+    expect(()=>f.repository.readiness(context,{encounterId:id},'invalid')).toThrow('request_invalid');
+    await expect(fixture({...ready,encounterId:other}).repository.readiness(context,{encounterId:id},other)).rejects.toThrow('service_unavailable');
+    const wrong=fixture(ready);
+    await expect(wrong.repository.readiness({...context,identityPool:'consumer'},{encounterId:id},other)).rejects.toThrow('access_refused');
+    expect(wrong.transaction).not.toHaveBeenCalled();
+  });
   it('starts through qualified SQL, binds the configured release and refuses unknown input or mismatched receipts', async () => {
     const request = { encounterId: id, commandId: other, contentType: 'audio/webm' };
     const started = { ...request, recordingId: id, sessionId: other, status: 'capturing', replayed: false, captureToken: 'a'.repeat(64),

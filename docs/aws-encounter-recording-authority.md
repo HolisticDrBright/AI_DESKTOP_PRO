@@ -521,3 +521,33 @@ skips, 202 files**; typecheck passes; lint has no errors (four existing unrelate
 warnings); the five-route capture candidate builds. Synthetic AWS STS was checked
 again and reports an expired session; hosted qualification cannot proceed until
 the operator renews that named profile. Local/source engineering remains possible.
+
+### September 17 — consent-bound capture readiness
+
+The sixth capture-service operation, POST readiness, qualifies the encounter
+before a browser may offer capture. It accepts only encounterId, uses fresh
+workforce identity and the server-configured capture release, and checks current
+patient/practitioner roster, every recording grant, encounter status, capture
+and storage releases, and absence of an unresolved capture. Short SQL transactions
+do not call storage or providers. No capture/token/approval is created; a readiness
+reply is advisory, not a grant. Start and uploads still recheck current authority.
+
+The strict result contains only encounter/epoch, checked/expiry timestamps,
+measured configuration limits, supported MIME types, and explicit false values
+for captureStarted/processingRequested. Validity is at most 30 seconds and bounded
+by both release expirations. Browser validation rejects expired/future observations,
+wrong encounters, duplicated MIME types, invalid limits and secret-bearing replies.
+The Desktop cookie proxy, shared contracts and six exact JWT invocation scopes are
+wired; the AWS UI microphone controller remains the next engineering step.
+
+238 focused tests pass, including actual canonical PostgreSQL, API-to-database
+readiness followed by capture, retirement/withdrawal/roster/access failures,
+response correlation and final-candidate infrastructure. Typecheck, 70-migration
+zero-seed gate and capture candidate build pass. This is isolated fictional
+evidence, not hosted AWS or physical-microphone acceptance.
+The full six original commercial scopes remain incomplete. AWS synthetic
+credentials are still expired. No deployment, approval signature, PHI/provider
+activation or paid mobile build occurred.
+Final local verification: 2497 full unit tests passed, 11 existing skips, 203 test
+files. Lint has zero errors and four existing unrelated warnings. No new browser
+UI is exposed in this increment, and no new browser/device acceptance is claimed.

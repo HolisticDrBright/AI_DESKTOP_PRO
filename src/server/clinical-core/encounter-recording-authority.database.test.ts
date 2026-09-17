@@ -12,6 +12,7 @@ import type { ProductionClinicalRequestContext } from './aws-identity-consent';
 import { createRecordingLifecycleRepository, type RecordingRecoveryState, type RecordingLifecycleReceipt } from './recording-lifecycle';
 import { createRecordingCaptureApi, RECORDING_CAPTURE_ROUTES as captureRoutes } from './recording-capture-api';
 import { createRecordingReconciler, createRecordingReconciliationRepository } from './recording-reconciliation';
+import { recordingReadinessSchema, type RecordingReadiness } from '@/contracts/encounterRecordingCapture';
 
 let db: PGlite;
 const org = randomUUID(), otherOrg = randomUUID(), actor = randomUUID(), colleague = randomUUID();
@@ -118,6 +119,44 @@ beforeAll(async () => {
     [patient, org, "patient_" + patient.replaceAll("-", "")]);
 }, 30000);
 afterAll(async () => { await db?.close(); });
+
+const preflight = (e:string,config:string,who=actor,pool='workforce',organization=org) => call<RecordingReadiness>(
+  'select clinical_private.get_recording_capture_readiness($1,$2) as result',[e,config],who,pool,organization);
+describe('capture readiness with real canonical SQL and fictional records', () => {
+  it('returns reviewed bounds and a short-lived advisory without a capture, token, or authority event', async () => {
+    const r=await ready(); await storageRelease(r.config);
+    const before=await db.query('select * from clinical_private.recording_authority_events where encounter_id=$1',[r.e]);
+    const result=recordingReadinessSchema.parse(await preflight(r.e,r.config));
+    expect(result).toMatchObject({encounterId:r.e,ready:true,maxSegmentBytes:1000000,maxRecordingBytes:1000000,
+      audioRetentionHours:24,maxSegments:4096,captureStarted:false,processingRequested:false});
+    expect(Date.parse(result.expiresAt)-Date.parse(result.checkedAt)).toBe(30000);
+    expect(await db.query('select * from clinical_private.recording_authority_events where encounter_id=$1',[r.e])).toEqual(before);
+    expect((await db.query('select * from clinical_private.encounter_captures where encounter_id=$1',[r.e])).rows).toEqual([]);
+    await withdraw(r.pGrant);
+    await expect(preflight(r.e,r.config)).rejects.toThrow();
+    await expect(begin(r.e,r.config)).rejects.toThrow('recording_consent_required');
+  });
+  it.each(['missing-storage','capture-retired','storage-retired','consent-retired','withdrawn','extra-participant','closed','existing-capture'])
+    ('refuses readiness for %s', async reason => {
+      const r=await ready(), s=reason==='missing-storage'?null:await storageRelease(r.config);
+      if(reason==='capture-retired') await db.query('update clinical_private.recording_capture_releases set retired_at=clock_timestamp() where id=$1',[r.config]);
+      if(reason==='storage-retired') await db.query('update clinical_private.recording_storage_releases set retired_at=clock_timestamp() where id=$1',[s]);
+      if(reason==='consent-retired') await db.query('update clinical_private.recording_consent_releases set retired_at=clock_timestamp() where id=$1',[r.d]);
+      if(reason==='withdrawn') await withdraw(r.pGrant);
+      if(reason==='extra-participant') await participant(r.e,'caregiver');
+      if(reason==='closed') await db.query("update clinical_core.encounters set status='completed' where id=$1",[r.e]);
+      if(reason==='existing-capture') await begin(r.e,r.config);
+      await expect(preflight(r.e,r.config)).rejects.toThrow();
+    });
+  it('refuses consumer, staff, cross-organization, empty-roster and cross-release checks', async () => {
+    const r=await ready(); await storageRelease(r.config);
+    await expect(preflight(r.e,r.config,consumer,'consumer')).rejects.toThrow();
+    await expect(preflight(r.e,r.config,staff)).rejects.toThrow();
+    await expect(preflight(r.e,r.config,outsider,'workforce',otherOrg)).rejects.toThrow();
+    await expect(preflight(await encounter(),r.config)).rejects.toThrow('recording_roster_required');
+    await expect(preflight(r.e,randomUUID())).rejects.toThrow();
+  });
+});
 
 const prepareReconciliation = (c: Capture, who = actor, pool = 'workforce', organization = org) => call<RecordingSegmentReservation | null>(
   'select clinical_private.prepare_recording_reconciliation($1) as result', [c.recordingId], who, pool, organization);
@@ -749,6 +788,10 @@ describe('durable recording segments: actual SQL, fictional receipts (not S3 evi
       });
       const api = createRecordingCaptureApi({ configuration, lifecycle: () => createRecordingLifecycleRepository(database), upload: () => upload,
         reconcile: () => createRecordingReconciler(createRecordingReconciliationRepository(database), { async head() { throw new Error('unused test storage'); } }), now: () => now });
+      const readyResponse=await api(request(captureRoutes.readiness,{encounterId:r.e}));
+      expect(readyResponse.statusCode).toBe(200);
+      expect(recordingReadinessSchema.parse(JSON.parse(readyResponse.body).data)).toMatchObject({encounterId:r.e,ready:true,captureStarted:false});
+      expect(puts).toBe(0);
       const startEvent = request(captureRoutes.start, { encounterId: r.e, commandId: randomUUID(), contentType: 'audio/webm' });
       const startResponse = await api(startEvent); expect(startResponse.statusCode).toBe(200);
       const capture = JSON.parse(startResponse.body).data as Capture;

@@ -23,6 +23,10 @@ function segment(): ApiGatewayV2Event {
     'x-alp-recording-id': id, 'x-alp-session-id': id, 'x-alp-capture-token': 'a'.repeat(64), 'x-alp-sequence': '0', 'x-alp-sha256': sha } };
 }
 function fixture(configuration = config) {
+  const readiness = vi.fn().mockResolvedValue({ encounterId:id, ready:true, authorityEpoch:0,
+    checkedAt:new Date(now).toISOString(), expiresAt:new Date(now+30000).toISOString(), maxRecordingBytes:1000000,
+    maxSegmentBytes:1000000, maxSegments:4096, audioRetentionHours:24, contentTypes:['audio/webm'],
+    captureStarted:false, processingRequested:false });
   const start = vi.fn().mockResolvedValue({ recordingId: id, sessionId: id, encounterId: id, commandId: other, contentType: 'audio/webm',
     status: 'capturing', replayed: false, captureToken: 'a'.repeat(64), credentialVersion: 0, authorityEpoch: 0, expiresAt: at, deletionDeadline: at });
   const state = vi.fn().mockResolvedValue({ recordingId: id, sessionId: id, status: 'capturing', credentialVersion: 0, authorityEpoch: 0,
@@ -31,12 +35,28 @@ function fixture(configuration = config) {
   const command = vi.fn().mockResolvedValue({ recordingId: id, commandId: other, action: 'pause', statusAtCommand: 'paused', credentialVersion: 1,
     expiresAt: at, inventorySha256: null, captureToken: null, replayed: false, requiresCredentialRecovery: false, processingRequested: false, audioDeleted: false });
   const upload = vi.fn().mockResolvedValue({ segmentId: other, recordingId: id, sequence: 0, sha256: sha, bytes: bytes.length, authorityEpoch: 0, status: 'stored' });
-  const lifecycleFactory = vi.fn(() => ({ start, state, command })), uploadFactory = vi.fn(() => upload);
+  const lifecycleFactory = vi.fn(() => ({ readiness, start, state, command })), uploadFactory = vi.fn(() => upload);
   const reconcile = vi.fn().mockResolvedValue({ recordingId: id, outcome: 'no_pending_segment' }), reconcileFactory = vi.fn(() => reconcile);
-  return { start, state, command, upload, lifecycleFactory, uploadFactory, reconcile, reconcileFactory,
+  return { readiness, start, state, command, upload, lifecycleFactory, uploadFactory, reconcile, reconcileFactory,
     handler: createRecordingCaptureApi({ configuration, lifecycle: lifecycleFactory, upload: uploadFactory, reconcile: reconcileFactory, now: () => now }) };
 }
 describe('independently governed recording transport API', () => {
+  it('preflights without starting capture, accepts no caller-selected release and never bypasses activation or reauthentication', async () => {
+    const f=fixture(), request=event(routes.readiness,{encounterId:id});
+    expect((await f.handler(request)).statusCode).toBe(200);
+    expect(f.readiness).toHaveBeenCalledWith(expect.objectContaining({identityPool:'workforce'}),{encounterId:id},config.captureReleaseId);
+    expect(f.start).not.toHaveBeenCalled(); expect(f.uploadFactory).not.toHaveBeenCalled();
+    for(const extra of [{releaseId:other},{captureToken:'a'.repeat(64)},{organizationId:other}])
+      expect((await f.handler(event(routes.readiness,{encounterId:id,...extra}))).statusCode).toBe(400);
+    f.readiness.mockResolvedValue({...await f.readiness(),encounterId:other});
+    expect((await f.handler(request)).statusCode).toBe(503);
+    const blocked=fixture({...config,phiAllowed:false,activation:'blocked'});
+    expect((await blocked.handler(request)).statusCode).toBe(503);
+    expect(blocked.lifecycleFactory).not.toHaveBeenCalled();
+    const stale=fixture();
+    expect((await stale.handler(event(routes.readiness,{encounterId:id},{auth_time:seconds-901}))).statusCode).toBe(401);
+    expect(stale.lifecycleFactory).not.toHaveBeenCalled();
+  });
   it('reconciles only with fresh workforce identity, no client-supplied object evidence, and a correlated receipt', async () => {
     const f=fixture(), request=event(routes.reconcile,{recordingId:id});
     expect((await f.handler(request)).statusCode).toBe(200);

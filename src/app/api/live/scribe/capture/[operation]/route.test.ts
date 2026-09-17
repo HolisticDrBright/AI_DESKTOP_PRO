@@ -22,6 +22,19 @@ beforeEach(() => {
   upstream.mockImplementation(async () => Response.json({ data: state }));
 });
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); vi.useRealTimers(); });
+it('proxies readiness with no caller-selected release and no secret-bearing or mismatched result',async()=>{
+  const ready={encounterId:id,ready:true,authorityEpoch:1,checkedAt:'2026-09-17T00:00:00Z',expiresAt:'2026-09-17T00:00:30Z',
+    maxRecordingBytes:100,maxSegmentBytes:100,maxSegments:4096,audioRetentionHours:1,
+    contentTypes:['audio/webm'],captureStarted:false,processingRequested:false};
+  upstream.mockImplementation(async()=>Response.json({data:ready}));
+  expect((await post(req({encounterId:id}),'readiness')).status).toBe(200);
+  expect(upstream.mock.calls[0][0]).toBe('https://abcdefghij.execute-api.us-east-2.amazonaws.com/clinical-core/workforce/encounter-recording/readiness');
+  expect((await post(req({encounterId:id,releaseId:other}),'readiness')).status).toBe(400);
+  for(const patch of [{encounterId:other},{captureToken:hash},{captureStarted:true}]){
+    upstream.mockImplementation(async()=>Response.json({data:{...ready,...patch}}));
+    expect((await post(req({encounterId:id}),'readiness')).status).toBe(503);
+  }
+});
 it('forwards only the cookie identity to the distinct pinned service and validates state', async () => {
   const r = await post(req(undefined, { authorization: 'Bearer attacker' }));
   expect(r.status).toBe(200); expect(await r.json()).toEqual({ data: state });

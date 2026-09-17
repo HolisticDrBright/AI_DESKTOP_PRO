@@ -236,6 +236,10 @@
     {
       "version": "20260917120000",
       "file": "20260917120000_production_recording_reconciliation.sql"
+    },
+    {
+      "version": "20260917130000",
+      "file": "20260917130000_production_recording_readiness.sql"
     }
   ]
 }

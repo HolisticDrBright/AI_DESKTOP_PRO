@@ -5,6 +5,25 @@ const uuid = z.string().uuid(), hash = z.string().regex(/^[a-f0-9]{64}$/);
 const counter = z.number().int().nonnegative().safe();
 const date = z.string().datetime({ offset: true });
 export const recordingContentTypeSchema = z.enum(['audio/webm', 'audio/ogg', 'audio/wav', 'audio/mp4', 'audio/mpeg']);
+export const recordingReadinessRequestSchema = z.object({ encounterId: uuid }).strict();
+export const recordingReadinessSchema = z.object({
+  encounterId: uuid, ready: z.literal(true), authorityEpoch: counter, checkedAt: date, expiresAt: date,
+  maxRecordingBytes: counter.min(1).max(2147483648), maxSegmentBytes: counter.min(1).max(4194304),
+  maxSegments: z.literal(4096), audioRetentionHours: counter.min(1).max(24),
+  contentTypes: z.array(recordingContentTypeSchema).min(1).max(5),
+  captureStarted: z.literal(false), processingRequested: z.literal(false),
+}).strict().refine(r => r.maxSegmentBytes <= r.maxRecordingBytes
+  && new Set(r.contentTypes).size === r.contentTypes.length
+  && Date.parse(r.expiresAt) > Date.parse(r.checkedAt)
+  && Date.parse(r.expiresAt) - Date.parse(r.checkedAt) <= 30000);
+export type RecordingReadiness = z.infer<typeof recordingReadinessSchema>;
+/** Advisory only: a successful check never replaces fresh authorization at
+ * start. Conservative on clock skew and expiry; callers must check again. */
+export function isRecordingReadinessCurrent(value: unknown, encounterId: string, now: number): value is RecordingReadiness {
+  const parsed = recordingReadinessSchema.safeParse(value);
+  return parsed.success && parsed.data.encounterId === encounterId && Number.isFinite(now)
+    && Date.parse(parsed.data.checkedAt) <= now && now < Date.parse(parsed.data.expiresAt);
+}
 export const recordingStartSchema = z.object({ encounterId: uuid, commandId: uuid, contentType: recordingContentTypeSchema }).strict();
 export const recordingStartReceiptSchema = z.object({ recordingId: uuid, sessionId: uuid, encounterId: uuid, commandId: uuid,
   contentType: recordingContentTypeSchema, status: z.enum(['capturing', 'paused', 'revoked', 'closed']), replayed: z.boolean(),
@@ -52,6 +71,7 @@ export const recordingReconciliationReceiptSchema = z.discriminatedUnion('outcom
 ]);
 export type RecordingReconciliationReceipt = z.infer<typeof recordingReconciliationReceiptSchema>;
 export const recordingCaptureRequestSchema = z.discriminatedUnion('operation', [
+  z.object({ operation: z.literal('readiness'), input: recordingReadinessRequestSchema }).strict(),
   z.object({ operation: z.literal('start'), input: recordingStartSchema }).strict(),
   z.object({ operation: z.literal('state'), input: recordingStateRequestSchema }).strict(),
   z.object({ operation: z.literal('reconcile'), input: recordingStateRequestSchema }).strict(),
@@ -64,6 +84,11 @@ export type RecordingCaptureRequest = z.infer<typeof recordingCaptureRequestSche
  * segment. Replay secrets and non-implemented processing/deletion claims fail
  * schema validation before they can be shown to a user. */
 export function parseRecordingCaptureResponse(request: RecordingCaptureRequest, raw: unknown) {
+  if (request.operation === 'readiness') {
+    const result = z.object({ data: recordingReadinessSchema }).strict().parse(raw);
+    if (result.data.encounterId !== request.input.encounterId) throw new Error('recording_response_mismatch');
+    return result;
+  }
   if (request.operation === 'reconcile') {
     const result = z.object({ data: recordingReconciliationReceiptSchema }).strict().parse(raw);
     if (result.data.recordingId !== request.input.recordingId) throw new Error('recording_response_mismatch');

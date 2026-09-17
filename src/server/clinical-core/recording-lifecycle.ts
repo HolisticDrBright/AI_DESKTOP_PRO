@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { clinicalUuid, ClinicalCoreDatabaseRejection, type ClinicalCoreDatabase } from './database';
 import type { ProductionClinicalRequestContext } from './aws-identity-consent';
 
-import { recordingStartSchema, recordingStartReceiptSchema, recordingLifecycleCommandSchema,
+import { recordingReadinessRequestSchema, recordingReadinessSchema, recordingStartSchema, recordingStartReceiptSchema, recordingLifecycleCommandSchema,
   recordingRecoveryStateSchema, recordingLifecycleReceiptSchema,
   type RecordingRecoveryState, type RecordingLifecycleReceipt } from '@/contracts/encounterRecordingCapture';
 export { recordingContentTypeSchema, recordingStartSchema, recordingStartReceiptSchema, recordingLifecycleCommandSchema,
@@ -48,6 +48,13 @@ export function createRecordingLifecycleRepository(database: ClinicalCoreDatabas
     }
   }
   return {
+    readiness(context: ProductionClinicalRequestContext, input: unknown, captureReleaseId: string) {
+      const parsed = recordingReadinessRequestSchema.safeParse(input);
+      if (!parsed.success || !uuid.safeParse(captureReleaseId).success) throw new RecordingLifecycleError('request_invalid');
+      return query(context, 'select clinical_private.get_recording_capture_readiness($1,$2) as data',
+        [clinicalUuid(parsed.data.encounterId), clinicalUuid(captureReleaseId)],
+        recordingReadinessSchema, r => r.encounterId === parsed.data.encounterId);
+    },
     start(context: ProductionClinicalRequestContext, input: unknown, captureReleaseId: string) {
       const parsed = recordingStartSchema.safeParse(input);
       if (!parsed.success || !uuid.safeParse(captureReleaseId).success) throw new RecordingLifecycleError('request_invalid');
