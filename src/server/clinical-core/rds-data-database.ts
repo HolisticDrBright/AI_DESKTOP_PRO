@@ -212,6 +212,8 @@ function classifyDatabaseRejection(error: unknown): ClinicalCoreDatabaseRejectio
   if (/\b(recording_consent_required|recording_consent_release_required|recording_capture_release_required|recording_roster_required|recording_storage_release_required)\b/.test(message)) return new ClinicalCoreDatabaseRejection("consent_required");
   if (/\b(recording_segment_conflict|recording_segment_order_required|recording_reservation_expired)\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");
   if (/\b(recording_segment_invalid|recording_size_limit)\b/.test(message)) return new ClinicalCoreDatabaseRejection("request_invalid");
+  if (/\b(recording_lifecycle_conflict|recording_inventory_changed|recording_segments_unresolved)\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");
+  if (/\brecording_lifecycle_invalid\b/.test(message)) return new ClinicalCoreDatabaseRejection("request_invalid");
   if (/\b(recording_participant_conflict|recording_consent_conflict|recording_capture_conflict|recording_consent_already_granted|recording_disposition_required|recording_encounter_closed)\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");
   if (/\b(recording_participant_invalid|recording_participant_limit|recording_consent_invalid|recording_capture_invalid|recording_workspace_invalid)\b/.test(message)) return new ClinicalCoreDatabaseRejection("request_invalid");
   if (/\b(privacy_operator_required|privacy_operator_assignment_required|personal_purge_policy_required|retention_policy_required)\b/.test(message)) return new ClinicalCoreDatabaseRejection("identity_refused");

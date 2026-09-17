@@ -9,6 +9,7 @@ import type { ClinicalCoreDatabase } from "./database";
 import type { ApiGatewayV2Event } from "./aws-identity-api";
 import { createRecordingSegmentRepository, createRecordingSegmentUploader, type RecordingSegmentReservation } from './recording-segments';
 import type { ProductionClinicalRequestContext } from './aws-identity-consent';
+import { createRecordingLifecycleRepository, type RecordingRecoveryState, type RecordingLifecycleReceipt } from './recording-lifecycle';
 
 let db: PGlite;
 const org = randomUUID(), otherOrg = randomUUID(), actor = randomUUID(), colleague = randomUUID();
@@ -16,7 +17,7 @@ const consumer = randomUUID(), staff = randomUUID(), outsider = randomUUID(), pa
 const tables = ["recording_controls", "recording_consent_releases", "recording_participants",
   "recording_representative_authorities", "recording_consent_grants", "recording_consent_withdrawals",
   "recording_capture_releases", "encounter_captures", "recording_authority_events", "recording_participant_commands", "recording_access_events",
-  "recording_storage_releases", "recording_segments", "recording_segment_events"];
+  "recording_storage_releases", "recording_segments", "recording_segment_events", "recording_lifecycle_commands", "recording_dispositions", "recording_lifecycle_events"];
 type Capture = { recordingId: string; sessionId: string; captureToken: string; authorityEpoch: number; status: string; replayed: boolean };
 async function call<T = unknown>(sql: string, args: unknown[] = [], who = actor, pool = "workforce", organization = org) {
   return db.transaction(async tx => {
@@ -84,6 +85,12 @@ async function uploadReady() {
   const storageReleaseId = await storageRelease(readyState.config);
   return { ...readyState, storageReleaseId, capture: (await begin(readyState.e, readyState.config))! };
 }
+const recoveryState = (c: Capture, who = actor, pool = 'workforce', organization = org) => call<RecordingRecoveryState>(
+  'select clinical_private.get_recording_recovery_state($1) as result', [c.recordingId], who, pool, organization);
+const lifecycle = (c: Capture, action: string | null, expectedVersion: number | null, inventory: string | null = null,
+  command = randomUUID(), who = actor) => call<RecordingLifecycleReceipt>(
+  'select clinical_private.command_recording_lifecycle($1,$2,$3,$4::bigint,$5) as result',
+  [c.recordingId, command, action, expectedVersion, inventory], who);
 
 beforeAll(async () => {
   const { manifest, files } = JSON.parse(execFileSync(process.execPath,
@@ -463,5 +470,142 @@ describe('durable recording segments: actual SQL, fictional receipts (not S3 evi
     await completeSegment(r.capture, s);
     await expect(db.query('update clinical_private.recording_segments set accept_before=clock_timestamp() where id=$1', [s.segmentId])).rejects.toThrow('recording_segment_immutable');
     await expect(db.query('delete from clinical_private.recording_segment_events where segment_id=$1', [s.segmentId])).rejects.toThrow();
+  });
+  it('exposes only bounded recovery state to the owning authorized practitioner', async () => {
+    const r = await uploadReady(), c = r.capture;
+    const state = (await recoveryState(c))!;
+    expect(state).toMatchObject({ recordingId: c.recordingId, sessionId: c.sessionId, status: 'capturing',
+      credentialVersion: 0, storedSegments: 0, pendingSegments: 0, reservedBytes: 0, nextSequence: 0,
+      disposition: null, processingRequested: false, audioDeleted: false });
+    expect(JSON.stringify(state)).not.toMatch(/captureToken|objectKey|FICTIONAL|token_sha256/);
+    await expect(recoveryState(c, colleague)).rejects.toThrow('recording_access_refused');
+    await expect(recoveryState(c, consumer, 'consumer')).rejects.toThrow();
+    await expect(recoveryState(c, outsider, 'workforce', otherOrg)).rejects.toThrow();
+    await expect(recoveryState(c, staff)).rejects.toThrow('clinical_role_required');
+    await expect(call('select clinical_private.recording_segment_inventory($1)', [c.recordingId])).rejects.toThrow('permission denied');
+    await expect(call('select clinical_private.lock_owned_recording($1)', [c.recordingId])).rejects.toThrow('permission denied');
+    await expect(lifecycle(c, 'pause', 0, null, randomUUID(), colleague)).rejects.toThrow('recording_access_refused');
+  });
+  it('pauses, rotates and renews credentials without replaying secrets or accepting the old token', async () => {
+    const r = await uploadReady(), c = r.capture, pauseId = randomUUID(), resumeId = randomUUID();
+    expect(await lifecycle(c, 'pause', 0, null, pauseId)).toMatchObject({ statusAtCommand: 'paused', credentialVersion: 1, captureToken: null });
+    await expect(authorize(c)).rejects.toThrow('recording_capture_refused');
+    const resumed = (await lifecycle(c, 'resume', 1, null, resumeId))!;
+    expect(resumed).toMatchObject({ statusAtCommand: 'capturing', credentialVersion: 2, requiresCredentialRecovery: false });
+    expect(resumed.captureToken).toMatch(/^[a-f0-9]{64}$/);
+    expect(resumed.captureToken).not.toBe(c.captureToken);
+    expect(await authorize({ ...c, captureToken: resumed.captureToken! })).toMatchObject({ scope: 'recording' });
+    await expect(authorize(c)).rejects.toThrow('recording_capture_refused');
+    expect(await lifecycle(c, 'resume', 1, null, resumeId)).toMatchObject({ replayed: true, captureToken: null, requiresCredentialRecovery: true });
+    // A late command retry is a historical receipt, not a change back to paused.
+    expect(await lifecycle(c, 'pause', 0, null, pauseId)).toMatchObject({ replayed: true, statusAtCommand: 'paused' });
+    expect((await recoveryState(c))?.status).toBe('capturing');
+    await db.query("update clinical_private.encounter_captures set token_expires_at=clock_timestamp()-interval '1 second' where id=$1", [c.recordingId]);
+    await expect(authorize({ ...c, captureToken: resumed.captureToken! })).rejects.toThrow('recording_capture_refused');
+    const renewed = (await lifecycle(c, 'renew', 2))!;
+    expect(await authorize({ ...c, captureToken: renewed.captureToken! })).toMatchObject({ scope: 'recording' });
+    expect(renewed.credentialVersion).toBe(3);
+    const persisted = JSON.stringify((await db.query('select receipt from clinical_private.recording_lifecycle_commands where recording_id=$1', [c.recordingId])).rows);
+    expect(persisted).not.toContain(resumed.captureToken); expect(persisted).not.toContain(renewed.captureToken);
+    expect(persisted).not.toContain('captureToken');
+  });
+  it('uses command identity and expected credential version to refuse stale or conflicting devices', async () => {
+    const c = (await uploadReady()).capture, command = randomUUID();
+    await lifecycle(c, 'renew', 0, null, command);
+    await expect(lifecycle(c, 'pause', 0, null, command)).rejects.toThrow('recording_lifecycle_conflict');
+    await expect(lifecycle(c, 'renew', 1, null, command)).rejects.toThrow('recording_lifecycle_conflict');
+    await expect(lifecycle(c, 'renew', 0)).rejects.toThrow('recording_lifecycle_conflict');
+    const attempts = await Promise.allSettled([lifecycle(c, 'renew', 1), lifecycle(c, 'renew', 1)]);
+    expect(attempts.filter(a => a.status === 'fulfilled')).toHaveLength(1);
+    expect(attempts.filter(a => a.status === 'rejected')).toHaveLength(1);
+    // PGlite serializes transactions; this tests CAS semantics, not a multi-session Aurora lock exercise.
+    expect((await recoveryState(c))?.credentialVersion).toBe(2);
+  });
+  it.each([
+    [null, 0, null], ['invented', 0, null], ['pause', null, null], ['pause', -1, null],
+    ['pause', Number.MAX_SAFE_INTEGER, null], ['pause', 0, 'a'.repeat(64)], ['finish', 0, null], ['discard', 0, 'bad'],
+  ])('rejects invalid lifecycle action/version/inventory %j %j %j', async (action, version, inventory) => {
+    const c = (await uploadReady()).capture;
+    await expect(lifecycle(c, action as string | null, version as number | null, inventory as string | null)).rejects.toThrow('recording_lifecycle_invalid');
+    expect((await recoveryState(c))?.credentialVersion).toBe(0);
+  });
+  it.each(['withdrawal', 'late-participant', 'storage-retired', 'capture-retired', 'consent-retired', 'expired', 'completed'])
+    ('refuses credential recovery after %s and does not mint or save a token', async reason => {
+      const r = await uploadReady(), c = r.capture;
+      await lifecycle(c, 'pause', 0);
+      if (reason === 'withdrawal') { await withdraw(r.pGrant); await grant(r.p, r.d); }
+      if (reason === 'late-participant') { const p = (await participant(r.e, 'caregiver'))!; await grant(p, r.d); }
+      if (reason === 'storage-retired') await db.query('update clinical_private.recording_storage_releases set retired_at=clock_timestamp() where id=$1', [r.storageReleaseId]);
+      if (reason === 'capture-retired') await db.query('update clinical_private.recording_capture_releases set retired_at=clock_timestamp() where id=$1', [r.config]);
+      if (reason === 'consent-retired') await db.query('update clinical_private.recording_consent_releases set retired_at=clock_timestamp() where id=$1', [r.d]);
+      if (reason === 'expired') await db.query("update clinical_private.encounter_captures set deletion_deadline=clock_timestamp()-interval '1 second' where id=$1", [c.recordingId]);
+      if (reason === 'completed') await db.query("update clinical_core.encounters set status='completed' where id=$1", [r.e]);
+      await expect(lifecycle(c, 'resume', 1)).rejects.toThrow();
+      expect((await recoveryState(c))?.credentialVersion).toBe(1);
+      expect((await db.query('select * from clinical_private.recording_lifecycle_commands where recording_id=$1', [c.recordingId])).rows).toHaveLength(1);
+    });
+  it('refuses to renew without separately qualified storage', async () => {
+    const r = await ready(), c = (await begin(r.e, r.config))!;
+    await expect(lifecycle(c, 'renew', 0)).rejects.toThrow('recording_storage_release_required');
+  });
+  it('requires exact inventory review and resolved stored segments before finish', async () => {
+    const r = await uploadReady(), c = r.capture, empty = (await recoveryState(c))!;
+    await expect(lifecycle(c, 'finish', 0, empty.inventorySha256)).rejects.toThrow('recording_segments_unresolved');
+    const segment = (await reserveSegment(c))!, pending = (await recoveryState(c))!;
+    expect(pending).toMatchObject({ storedSegments: 0, pendingSegments: 1, reservedBytes: 3, nextSequence: 1 });
+    await expect(lifecycle(c, 'finish', 0, pending.inventorySha256)).rejects.toThrow('recording_segments_unresolved');
+    await completeSegment(c, segment);
+    await expect(lifecycle(c, 'finish', 0, pending.inventorySha256)).rejects.toThrow('recording_inventory_changed');
+    const complete = (await recoveryState(c))!, command = randomUUID();
+    expect(complete).toMatchObject({ storedSegments: 1, pendingSegments: 0 });
+    expect(await lifecycle(c, 'finish', 0, complete.inventorySha256, command)).toMatchObject({
+      statusAtCommand: 'closed', credentialVersion: 1, processingRequested: false, audioDeleted: false });
+    expect(await lifecycle(c, 'finish', 0, complete.inventorySha256, command)).toMatchObject({ replayed: true, captureToken: null });
+    expect(await recoveryState(c)).toMatchObject({ status: 'closed', disposition: 'finish' });
+    await expect(lifecycle(c, 'renew', 1)).rejects.toThrow('recording_lifecycle_conflict');
+    await expect(authorize(c)).rejects.toThrow('recording_capture_refused');
+    const inventory = (await db.query<{ inventory: unknown }>('select inventory from clinical_private.recording_dispositions where recording_id=$1', [c.recordingId])).rows[0].inventory;
+    expect(inventory).toEqual([expect.objectContaining({ segmentId: segment.segmentId, objectVersion: 'fictional-version-1',
+      sha256: segment.sha256, bytes: 3, status: 'stored' })]);
+    expect((await begin(r.e, r.config))?.recordingId).not.toBe(c.recordingId);
+  });
+  it('late join permits explicit finish of existing consented bytes but never resumes the old roster', async () => {
+    const r = await uploadReady(), c = r.capture, s = (await reserveSegment(c))!;
+    await completeSegment(c, s);
+    const p = (await participant(r.e, 'caregiver'))!; await grant(p, r.d);
+    await expect(lifecycle(c, 'resume', 0)).rejects.toThrow('recording_disposition_required');
+    await lifecycle(c, 'finish', 0, (await recoveryState(c))!.inventorySha256);
+    const next = (await begin(r.e, r.config))!;
+    expect(next.authorityEpoch).toBeGreaterThan(c.authorityEpoch);
+  });
+  it('discard closes revoked or pending capture without pretending deletion or deleting provenance', async () => {
+    const r = await uploadReady(), c = r.capture, s = (await reserveSegment(c))!;
+    await withdraw(r.pGrant);
+    const state = (await recoveryState(c))!;
+    await expect(lifecycle(c, 'finish', 0, state.inventorySha256)).rejects.toThrow('recording_capture_refused');
+    expect(await lifecycle(c, 'discard', 0, state.inventorySha256)).toMatchObject({ statusAtCommand: 'closed', audioDeleted: false, processingRequested: false });
+    expect(await recoveryState(c)).toMatchObject({ status: 'closed', disposition: 'discard', pendingSegments: 1 });
+    expect((await db.query<{ status: string }>('select status from clinical_private.recording_segments where id=$1', [s.segmentId])).rows[0].status).toBe('reserved');
+    await expect(completeSegment(c, s)).rejects.toThrow('recording_capture_refused');
+    for (const table of ['recording_dispositions', 'recording_lifecycle_commands', 'recording_lifecycle_events'])
+      await expect(db.query(`delete from clinical_private.${table} where recording_id=$1`, [c.recordingId])).rejects.toThrow();
+    await grant(r.p, r.d);
+    expect((await begin(r.e, r.config))?.recordingId).not.toBe(c.recordingId);
+  });
+  it('drives typed lifecycle repository through real SQL with no storage or provider call', async () => {
+    const r = await uploadReady(), c = r.capture;
+    const database: ClinicalCoreDatabase = { transaction: operation => db.transaction(async tx => {
+      await tx.exec('set local role clinical_core_api');
+      return operation({ query: async (sql, args = []) => tx.query(sql,
+        args.map(v => typeof v === 'object' && v !== null && 'kind' in v && v.kind === 'uuid' && 'value' in v ? v.value : v)) });
+    }) };
+    const context = { actorPersonId: actor, organizationId: org, identityPool: 'workforce', identitySubject: 'subject-' + actor,
+      purpose: 'clinical_data', environment: 'production-clinical', dataClassification: 'clinical_phi', productionBound: true,
+      containsPhi: true, realPatientData: true } as ProductionClinicalRequestContext;
+    const repository = createRecordingLifecycleRepository(database);
+    expect(await repository.state(context, c.recordingId)).toMatchObject({ credentialVersion: 0 });
+    const command = { recordingId: c.recordingId, commandId: randomUUID(), action: 'renew', expectedVersion: 0, inventorySha256: null };
+    expect(await repository.command(context, command)).toMatchObject({ action: 'renew', credentialVersion: 1 });
+    expect(await repository.command(context, command)).toMatchObject({ captureToken: null, requiresCredentialRecovery: true, replayed: true });
   });
 });

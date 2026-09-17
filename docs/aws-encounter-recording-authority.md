@@ -246,3 +246,59 @@ Prior-source evidence: Desktop dd3694e CI35272294502 remained in progress at
 check; older6834e76 CI35270244009 failed after another dev memory restart.
 V2 db2f974 CI35272303130 succeeded. Fresh STS again reports expired credentials;
 user re-login requested. No AWS schema/deployment, PHI activation or paid build.
+
+## September 17 lifecycle increment (internal repository; not activated)
+
+Overlay `20260917100000` brings the canonical artifact to **67 migrations**.
+It adds default-deny immutable command receipts, inventory-bound dispositions,
+and lifecycle access/command events. No consent, policy, storage or approval
+rows are seeded. The same encounter-before-capture lock order applies; no
+external storage/provider work runs under the transaction.
+
+The owning, currently authorized practitioner can read a bounded recovery state
+and explicitly pause, resume, renew, finish or discard. Credential-version
+compare-and-swap prevents stale-device commands from silently taking control.
+A repeated command returns a historical receipt, **never a capture secret**;
+the caller must reread current state and explicitly renew after a lost token.
+The fresh token is returned once, only its hash is stored, and renewal is bounded
+by the original retention deadline and current capture/storage releases.
+
+Recovery rechecks the same roster epoch, recording grants, active encounter,
+workforce/patient access and qualified releases. Re-consent cannot revive a
+revoked capture. A late participant requires disposition of the existing
+capture followed by a new session; old bytes retain their original provenance.
+Both finish and discard bind to the exact reviewed inventory digest. Finish
+requires at least one verified stored segment and no unresolved reservation.
+Discard can close a revoked/pending capture but does not remove pending rows,
+silently call a provider or claim deletion. Both return `processingRequested:false`
+and `audioDeleted:false`. The immutable disposition is evidence for future
+processing/hold-aware cleanup, **not an implemented cleanup worker**.
+
+The typed server repository uses fixed parameterized SQL, bounded strict schemas,
+request/response correlation and sanitized database refusals. Recovery state
+contains counts and a digest, not private object keys, participant names or
+credentials. It does not recover missing local audio bytes or supply a browser
+recording UI. A future HTTP route must verify fresh workforce login; a capture
+token alone is never login authority. No such route is activated by this change.
+
+Executed verification: **191 focused cases** across lifecycle, real SQL,
+database-refusal mapping and canonical artifact tests; **2340 full unit tests
+passed, 11 existing skips, 197 files**. Typecheck and lint pass (four existing
+unrelated lint warnings); the67-migration/no-seeded-row gate passes. Real SQL
+tests cover cross-user/default-deny access, expiry, lost response, stale-version
+rejection, withdrawal, late joins, release retirement, inventory changes,
+unresolved segments and immutable disposition. PGlite serializes the concurrent
+test requests; it proves CAS behavior, not independent Aurora connection locking.
+An initial test-adapter TypeScript narrowing error was fixed before final checks.
+
+Still engineering: authenticated binary/lifecycle routes, capture UI and durable
+local recovery, storage reconciliation/hold-aware cleanup, provider processing,
+transcript/correction provenance and review-only drafts. Still external evidence:
+qualified AWS resources, actual Aurora/S3/provider execution, browser microphone,
+Safari/physical-device recovery and permission withdrawal. `audioCapture:false`
+remains unchanged. No AWS migration/deployment or paid mobile build occurred.
+
+The earlier full-browser harness run Desktopdd3694e/CI35272294502 now **passed**
+(295passed/19existing skips, actual memory probe inspected, no dev restart).
+V2b206b7e/CI35274202914 passed. These are source/CI results, not PHI activation.
+All six ORIGINAL commercial-readiness scopes remain incomplete.

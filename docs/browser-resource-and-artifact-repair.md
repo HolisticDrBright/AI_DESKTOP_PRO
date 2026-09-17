@@ -3,6 +3,21 @@
 This is release-test infrastructure work, not a deployment or PHI activation.
 All six original commercial-readiness scopes remain open.
 
+## Full CI qualification result
+
+Desktop source `dd3694eab357164601e0dbc881f75be00e69fb45`, CI **35272294502**,
+completed SUCCESS on September 17. The unchanged full live-fixture selection
+finished with **295 passed, 19 existing skips** in 25.6 minutes. Job105374355309
+logs confirm the requested10240MiB budget and the actual long-lived Next worker
+(PID3306):51 memory samples, peak observed heap6,880,107,664bytes, actual V8
+heap limit10,787,749,888bytes, and **zero threshold-restart messages**. The
+short-lived helper processes in the log are not replacement Next workers.
+This qualifies the resource/harness repair for this source/run, not a production
+memory-leak fix or hosted clinical acceptance. Later release candidates still
+need their own CI result. The earlier failures below remain part of the record.
+
+V2 source `b206b7e62ecdbfaceefda8fcfa4960397646cbec`, CI35274202914, also passed.
+
 ## Evidence and changes
 
 Desktop CI 35266197149 failed at the EMR note POST immediately after Next 15.5.25
