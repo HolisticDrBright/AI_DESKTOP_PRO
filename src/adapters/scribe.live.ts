@@ -1,14 +1,17 @@
 if (typeof window !== "undefined") {
   throw new Error("This module is server-only and must not run in the browser.");
 }
-import { trpcMutation, trpcQuery } from "./trpc.server";
+import { trpcMutation as fixtureMutation, trpcQuery as fixtureQuery } from "./trpc.server";
+import { isContractFixtureAllowed } from "@/server/runtime/contractFixture";
 import { TRPC_BASE_URL } from "./config";
 import { getClinicalAccessToken } from "./session.server";
 import { AdapterError } from "./errors";
 
 /**
- * Live scribe namespace (server-only): consent-gated encounter recording +
- * AI scribe (Milestone 1). Every mutation lands in a SECURITY DEFINER RPC
+ * Local contract-fixture scribe namespace (server-only). Deployed access is
+ * refused: the AWS recording-authority adapter manages consent while capture
+ * awaits its separate transport implementation. In the legacy harness,
+ * every mutation lands in a SECURITY DEFINER RPC
  * (migrations 0022/0023) via the backend's clinical.scribe.* procedures —
  * consent scopes, ACTIVE revocation, bound single-use tokens, the recording
  * state machine, provider enablement and the durable deletion workflow are
@@ -21,6 +24,19 @@ import { AdapterError } from "./errors";
  */
 
 const BACKEND_ORIGIN = TRPC_BASE_URL.replace(/\/api\/trpc\/?$/, "");
+
+// Transitional scribe is now a local synthetic contract harness only. Missing
+// AWS capture implementation must never route deployed audio to a legacy host.
+function requireFixture() {
+  if (process.env.RECORDING_AWS_API_ORIGIN?.trim() || !isContractFixtureAllowed())
+    throw new AdapterError("unavailable", "AWS encounter audio capture is not available on this deployment.");
+}
+async function trpcQuery<T>(path: string, input?: unknown, token?: string | null): Promise<T> {
+  requireFixture(); return fixtureQuery<T>(path, input, token);
+}
+async function trpcMutation<T>(path: string, input?: unknown, token?: string | null, options?: { signal?: AbortSignal }): Promise<T> {
+  requireFixture(); return fixtureMutation<T>(path, input, token, options);
+}
 
 export type ConsentScope = "recording" | "transcription" | "ai_drafting";
 export type ConsentMethod = "verbal_attested" | "written" | "electronic_signature";
@@ -149,6 +165,7 @@ async function backendFetch(
   path: string,
   init: RequestInit & { sessionToken?: string | null },
 ): Promise<Response> {
+  requireFixture();
   const token = await getClinicalAccessToken(init.sessionToken);
   const headers = new Headers(init.headers);
   headers.set("authorization", `Bearer ${token}`);

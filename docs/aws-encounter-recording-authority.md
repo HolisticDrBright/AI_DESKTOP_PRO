@@ -108,8 +108,8 @@ acceptance. Original commercial-release scopes and clinical holds are unchanged.
 
 ## Remaining implementation (do not activate this layer alone)
 
-- Desktop proxy/UI integration with the new typed workforce API, plus hosted
-  deployment acceptance. Desktop currently still calls transitional scribe routes.
+- Hosted deployment acceptance of the typed workforce API and Desktop consent
+  integration below; capture UI/transport still requires implementation.
 - Participant/capacity/guardian verification and reviewed jurisdiction-specific
   consent release workflow; no invented signatures or approvals.
 - Durable per-segment consent provenance; explicit pause/resume, short-lived
@@ -123,3 +123,57 @@ acceptance. Original commercial-release scopes and clinical holds are unchanged.
 - Deployment/configuration/rollback, concurrent request testing and physical
   microphone/Safari/provider/restore acceptance. No paid mobile build or PHI
   activation has been performed.
+
+## September 17 Desktop consent integration (not capture activation)
+
+The actual encounter page now selects the AWS consent workspace by default.
+Only an allowed local contract fixture with no recording AWS origin selects the
+legacy scribe UI. Every legacy scribe adapter transport also enforces that
+restriction, including direct calls to the old binary upload endpoints; a
+missing AWS capture implementation cannot fall back to a retired host.
+
+The new same-origin POST proxy uses only the request-scoped workforce cookie,
+never the demo session fallback, a browser-supplied identity or an organization
+override. Configure the separately deployed authority API's root HTTPS gateway
+origin as `RECORDING_AWS_API_ORIGIN`. It is not the compatibility API origin.
+The proxy rejects cross-origin writes, malformed/oversized bodies, redirects,
+unexpected response fields, wrong encounter/release IDs and modified document
+content. Network/body waits and response bytes are bounded; no response body,
+token or raw upstream error is logged. Responses are non-cacheable.
+
+The screen requires explicit reviewed locale/jurisdiction, reviewed capacity
+selection and presentation of the exact version/hash-bound document before a
+scope-specific grant. It displays effective consent separately from historical
+grant status and supports withdrawal. Representative evidence cannot be entered
+as free text; that workflow remains unavailable. Audio capture/transcription/AI
+drafting are explicitly unavailable, not presented as successful setup.
+
+Uncertain participant/grant writes preserve their exact command ID in memory
+for retry, prevent another mutation while confirmation is pending and reload
+the authoritative workspace after success. No consent, participant data or
+credentials are persisted in browser storage. Encounter navigation remounts
+the workspace and aborts unfinished requests. A saved change whose read-back
+fails is reported as saved with unavailable read-back, not as a failed write.
+
+Evidence: 70 focused proxy/API/SQL/operations tests passed before the additional
+three legacy-transport refusal cases. Final full units: **2,171 passed, 11
+existing skips, 193 files**. Typecheck and changed-file lint passed. Browser
+presentation and real unauthenticated-proxy verification are in
+`e2e/aws-recording-consent.spec.ts` and a dedicated CI job. Fictional UI HTTP
+responses do not prove a hosted AWS/database round trip; the independent SQL
+suite exercises actual production migrations. The initial browser cache-header
+assertion expected only no-store, whereas the application adds no-cache and
+must-revalidate. The assertion now checks the required no-store directive;
+the initial trace is retained. Final browser rerun: **5 passed**, including
+the actual browser-to-Desktop unauthenticated-cookie refusal. No security
+assertion or timeout was relaxed.
+
+Prior API-source evidence: V2 83236a1 CI35268055386 passed. Desktop 76dcc07
+CI35268046775 was still running when checked. Desktop00f5ed8 CI35266197149
+completed with a live-browser failure: 292 passed, 19 skipped and 2 unrun;
+the EMR autosave test timed out waiting for a POST immediately after Next
+reported a memory-threshold server restart. This new evidence needs a separate
+harness/runtime investigation; passing focused consent tests does not resolve it.
+Fresh AWS ai-synthetic-staging authentication still requires user re-login.
+No schema was applied, AWS deployment changed, real approval invented, PHI
+enabled or paid mobile build started. All six original phases remain open.

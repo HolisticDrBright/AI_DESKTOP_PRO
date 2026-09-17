@@ -35,3 +35,21 @@ export const recordingParticipantReceiptSchema = z.object({ participantId: id })
 export const recordingConsentReceiptSchema = z.object({ consentId: id }).strict();
 export const recordingWithdrawalReceiptSchema = z.object({ withdrawn: z.literal(true) }).strict();
 export type RecordingWorkspace = z.infer<typeof recordingWorkspaceSchema>;
+
+export const recordingCapabilitiesSchema = z.object({
+  consentManagement: z.literal(true), audioCapture: z.literal(false),
+  reason: z.literal("audio_transport_not_configured"),
+}).strict();
+export type RecordingConsentRelease = z.infer<typeof recordingConsentReleaseSchema>;
+export function parseRecordingAuthorityResponse(request: RecordingAuthorityRequest, raw: unknown) {
+  const dataSchema = request.action === "workspace" ? recordingWorkspaceSchema
+    : request.action === "readConsentRelease" ? recordingConsentReleaseSchema
+    : request.action === "addParticipant" ? recordingParticipantReceiptSchema
+    : request.action === "grantConsent" ? recordingConsentReceiptSchema : recordingWithdrawalReceiptSchema;
+  const result = z.object({ data: dataSchema, capabilities: recordingCapabilitiesSchema }).strict().parse(raw);
+  if (request.action === "workspace" && (!("encounterId" in result.data) || result.data.encounterId !== request.encounterId)
+    || request.action === "readConsentRelease" && (!("id" in result.data) || result.data.id !== request.releaseId)) {
+    throw new Error("recording_response_mismatch");
+  }
+  return result;
+}

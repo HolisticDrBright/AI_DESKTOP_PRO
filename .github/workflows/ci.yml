@@ -10,6 +10,33 @@ on:
 # the two refusal gates (no edition / demo edition) still hold.
 
 jobs:
+  e2e-aws-recording-consent:
+    name: Browser suite (AWS recording consent presentation and cookie refusal)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Verify the AWS UI with fictional responses; no AWS or audio calls
+        run: |
+          node scripts/live-stub-server.mjs &
+          E2E_RECORDING_AWS=1 E2E_DEV_SERVER=1 APP_EDITION=clinical \
+          NEXT_PUBLIC_USE_LIVE_API=true CLINICAL_CONTRACT_FIXTURE=1 \
+          TRPC_BASE_URL=http://127.0.0.1:3999/api/trpc \
+          CLINICAL_SUPABASE_URL=http://127.0.0.1:3999 CLINICAL_SUPABASE_ANON_KEY=stub \
+          CLINICAL_DEMO_EMAIL=demo@local CLINICAL_DEMO_PASSWORD=demo CLINICAL_ORG_ID=org-fixture \
+          RECORDING_AWS_API_ORIGIN=https://abcdefghij.execute-api.us-east-2.amazonaws.com \
+          npm run test:e2e -- e2e/aws-recording-consent.spec.ts --trace retain-on-failure
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: aws-recording-consent-browser-evidence
+          path: test-results/
+  # Existing fixture recording suites retain their own isolated runtime.
   checks:
     name: Typecheck, lint, unit, build
     runs-on: ubuntu-latest
