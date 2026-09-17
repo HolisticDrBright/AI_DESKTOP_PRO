@@ -25,6 +25,13 @@ export function createPrivacyOperations(database:ClinicalCoreDatabase){
       }
       if(v.action==='resolve')await tx.query('select clinical_private.resolve_owned_correction($1,$2,$3,$4)',
         [clinicalUuid(v.privacyRequestId),v.outcome,v.appliedRevision,v.explanation]);
+      if(v.action==='previewPersonalPurge'||v.action==='purgePersonal'){
+        const result=v.action==='previewPersonalPurge'
+          ?await tx.query<{result:unknown}>('select clinical_private.preview_owned_personal_purge($1,$2) as result',[clinicalUuid(v.privacyRequestId),v.policyVersion])
+          :await tx.query<{result:unknown}>('select clinical_private.execute_owned_personal_purge($1,$2,$3,$4,$5,$6) as result',
+            [clinicalUuid(v.privacyRequestId),clinicalUuid(v.commandId),v.policyVersion,v.policySha256,v.inventorySha256,v.confirmation]);
+        return parsePrivacyOperationResult(v,decode(result.rows[0]?.result));
+      }
       const result=await tx.query<{result:unknown}>('select clinical_private.get_assigned_privacy_request($1) as result',[clinicalUuid(v.privacyRequestId)]);
       return parsePrivacyOperationResult(v,decode(result.rows[0]?.result));
     });}catch(error){

@@ -200,6 +200,10 @@
     {
       "version": "20260917030000",
       "file": "20260917030000_production_privacy_operator_queue.sql"
+    },
+    {
+      "version": "20260917040000",
+      "file": "20260917040000_production_reviewed_personal_purge.sql"
     }
   ]
 }

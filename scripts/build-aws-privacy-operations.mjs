@@ -14,6 +14,7 @@ const template={AWSTemplateFormatVersion:'2010-09-09',Description:'Owner-assigne
     PhiAllowed:{Type:'String',Default:'false',AllowedValues:['false','true']},
     Activation:{Type:'String',Default:'blocked',AllowedValues:['blocked','approved']},
     ActivationEvidenceSha256:hash,DatabaseReviewSha256:hash,WorkforceMfaReviewSha256:hash,
+    PersonalPurgeEnabled:{Type:'String',Default:'false',AllowedValues:['false','true']},PersonalPurgeEvidenceSha256:hash,
     DatabaseClusterArn:{Type:'String',AllowedPattern:'^arn:aws:rds:[a-z0-9-]+:[0-9]{12}:cluster:[A-Za-z0-9-]{1,63}$'},
     DatabaseSecretArn:{Type:'String',AllowedPattern:'^arn:aws:secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@!-]+$'},
     DatabaseName:{Type:'String',AllowedPattern:'^[a-z][a-z0-9_]{0,62}$'},
@@ -27,7 +28,11 @@ const template={AWSTemplateFormatVersion:'2010-09-09',Description:'Owner-assigne
     HasAlarmRecipient:nonempty('AlarmTopicArn')},
   Rules:{ReviewedActivation:{RuleCondition:{'Fn::Equals':[ref('PhiAllowed'),'true']},Assertions:[
     {Assert:{'Fn::Equals':[ref('Activation'),'approved']},AssertDescription:'Reviewed activation required'},
-    ...required.map(n=>({Assert:nonempty(n),AssertDescription:n+' required before activation'}))]}},
+    ...required.map(n=>({Assert:nonempty(n),AssertDescription:n+' required before activation'}))]},
+    ReviewedPersonalPurge:{RuleCondition:{'Fn::Equals':[ref('PersonalPurgeEnabled'),'true']},Assertions:[
+      {Assert:{'Fn::Equals':[ref('PhiAllowed'),'true']},AssertDescription:'Privacy service activation required'},
+      {Assert:nonempty('PersonalPurgeEvidenceSha256'),AssertDescription:'Separate reviewed purge evidence required'},
+    ]}},
   Resources:{
     Logs:{Type:'AWS::Logs::LogGroup',DeletionPolicy:'Retain',UpdateReplacePolicy:'Retain',
       Properties:{LogGroupName:sub('/aws/lambda/${ApiId}-privacy-operations'),RetentionInDays:30,KmsKeyId:ref('LogsKmsKeyArn')}},
@@ -49,6 +54,7 @@ const template={AWSTemplateFormatVersion:'2010-09-09',Description:'Owner-assigne
       LoggingConfig:{LogGroup:ref('Logs')},Environment:{Variables:{
         WORKFORCE_ISSUER:ref('WorkforceIssuer'),WORKFORCE_AUDIENCE:ref('WorkforceAudience'),PHI_ALLOWED:ref('PhiAllowed'),
         PRIVACY_OPERATIONS_ACTIVATION:ref('Activation'),PRIVACY_OPERATIONS_EVIDENCE_SHA256:ref('ActivationEvidenceSha256'),
+        PERSONAL_PURGE_ENABLED:ref('PersonalPurgeEnabled'),PERSONAL_PURGE_EVIDENCE_SHA256:ref('PersonalPurgeEvidenceSha256'),
         WORKFORCE_MFA_REVIEW_SHA256:ref('WorkforceMfaReviewSha256'),CLINICAL_DATABASE_CLUSTER_ARN:ref('DatabaseClusterArn'),
         CLINICAL_DATABASE_SECRET_ARN:ref('DatabaseSecretArn'),CLINICAL_DATABASE_NAME:ref('DatabaseName'),SOURCE_COMMIT:ref('SourceCommit'),
       }}}},

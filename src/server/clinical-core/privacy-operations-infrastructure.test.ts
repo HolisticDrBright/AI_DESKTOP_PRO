@@ -29,6 +29,11 @@ describe('privacy operations deployable candidate',()=>{
     expect(JSON.stringify(policies)).not.toContain('"Resource":"*"');
   });
   it('has one dedicated workforce JWT route and bounded encrypted infrastructure',()=>{
+    expect(t.Parameters.PersonalPurgeEnabled.Default).toBe('false');
+    expect(t.Parameters.PersonalPurgeEvidenceSha256.Default).toBe('');
+    expect(t.Rules).toMatchObject({ReviewedPersonalPurge:{RuleCondition:{'Fn::Equals':[{Ref:'PersonalPurgeEnabled'},'true']},
+      Assertions:[{Assert:{'Fn::Equals':[{Ref:'PhiAllowed'},'true']},AssertDescription:expect.any(String)},
+        {Assert:{'Fn::Not':[{'Fn::Equals':[{Ref:'PersonalPurgeEvidenceSha256'},'']}]},AssertDescription:expect.any(String)}]}});
     expect(Object.values(t.Resources).filter(r=>r.Type==='AWS::ApiGatewayV2::Route')).toHaveLength(1);
     expect(t.Resources.Route.Properties).toMatchObject({RouteKey:'POST /clinical-core/workforce/privacy-operations',AuthorizationType:'JWT',AuthorizerId:{Ref:'Authorizer'}});
     expect(t.Resources.Authorizer.Properties.JwtConfiguration).toEqual({Issuer:{Ref:'WorkforceIssuer'},Audience:[{Ref:'WorkforceAudience'}]});

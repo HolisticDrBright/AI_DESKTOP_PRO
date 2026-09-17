@@ -10,7 +10,8 @@ there is no caller-selected owner, automatic clinic connection, or self-grant.
 Ordinary organization membership does not authorize these records.
 
 The dedicated POST /clinical-core/workforce/privacy-operations endpoint accepts
-only list, detail and resolve commands. It requires API Gateway-verified
+list, detail, resolve, previewPersonalPurge and purgePersonal commands. The
+last two additionally require separate purge activation. It requires API Gateway-verified
 workforce ID-token claims, verified email, production identity binding and an
 auth_time within 15 minutes. Consumer/synthetic tokens, wrong issuer/audience,
 expired sessions and owner overrides are refused. The configured workforce
@@ -29,8 +30,40 @@ Applied correction decisions call the existing exact-successor verifier in the
 same transaction as the returned detail. They never edit clinical content.
 Declined decisions require an explanation visible to the consumer. Exact retries
 are idempotent; changed decisions conflict. Holds remain authoritative. Legacy
-unbound requests cannot be completed here. Deletion receipts are visible but
-this screen neither deletes records nor attests whole-account completion.
+unbound requests cannot be completed here. Deletion receipts are visible; the
+separately gated action below deletes only personal storage and never attests
+whole-account completion.
+
+## Preview-bound personal deletion
+
+An assigned operator supplies an existing, reviewed policy version. The policy
+must have a personal_purge_authorized_sha256 matching its verified content hash;
+generic retention approval alone is insufficient. No policy authorization is
+seeded. Preview returns the full policy, exact counts and an inventory hash for
+personal record versions, storage consents, active plans and adoption history.
+It includes historical/deleted record versions, not merely currently visible rows.
+
+The operator must type PURGE PERSONAL HISTORY. Execution is bound to that request,
+policy hash, inventory hash and unique command ID. Inside one transaction it
+rechecks operator assignment, current identity, legal holds and policy validity
+under the same owner lock used by writers. Changed inventory or policy refuses.
+Deletion, empty-store verification, store evidence and an immutable command
+receipt are atomic. An exact retry returns its historical receipt and does not
+delete newly written rows. Changed command content conflicts. The UI preserves
+the command after an uncertain response, but requires a new confirmation after
+a new preview. Confirmation and review data clear when the page becomes hidden.
+
+The old direct purge function is no longer executable by the API role. Generic
+completion still checks all nine stores and now rechecks current personal-store
+counts before accepting purged/not-applicable receipts. Fresh rows roll completion
+back; current reviewed retention may explicitly account for retained rows. An
+older purge receipt is not proof that later data was removed.
+
+This does not delete lab jobs/documents, voice jobs/transcripts, identity,
+clinic records, device copies/recovery archives, backups or audit/request records.
+Those stores remain separate fulfillment and retention obligations. Oversized
+inventories refuse rather than silently truncate. Distributed concurrency and
+large-history performance still require hosted verification.
 
 The Next route validates its own session and exact Origin and forwards only to
 CLINICAL_AWS_PRIVACY_OPERATIONS_ORIGIN (HTTPS API Gateway origin). Responses are
@@ -49,13 +82,19 @@ database review, workforce MFA review and an alarm destination. Code is bound
 to a versioned object and source commit. Logs are encrypted/retained; data IAM
 is account/resource scoped. There is no S3 object deletion, Cognito deletion,
 wildcard data permission, automatic migration or account assignment.
+PersonalPurgeEnabled defaults false, separately from queue activation, and
+requires PersonalPurgeEvidenceSha256 plus the existing activation prerequisites.
+Corresponding runtime settings are PERSONAL_PURGE_ENABLED and
+PERSONAL_PURGE_EVIDENCE_SHA256. These settings do not grant DB policy approval.
 
 ## Verification and limits
 
-- All 60 production migrations executed in isolated PGlite PostgreSQL with
+- All 61 production migrations executed in isolated PGlite PostgreSQL with
   fictional records. Tests cover assigned pagination, cross-owner/consumer
   denial, revocation recheck, immutable access audit, field minimization and
-  API → adapter → SQL → verified correction response, including replay.
+  API → adapter → SQL → verified correction and personal-purge responses,
+  including replay, stale previews, new data after purge, holds, policy/authority
+  revocation, immutable receipts and transactional completion rollback.
 - API/Next/client tests cover activation, fresh workforce login, owner
   overrides, origin checks, response shape and sanitized failure paths.
 - Deployment candidate builds, passes CloudFormation schema validation, and its
@@ -63,11 +102,16 @@ wildcard data permission, automatic migration or account assignment.
 - Browser tests use **fictional intercepted HTTP responses**, not a hosted
   clinical backend: sign-in refusal vs empty, exact-field review with explicit
   decision confirmation, held-request refusal, state clearing and CSP headers.
+  Five browser tests now also cover exact purge confirmation, uncertain-response
+  command reuse and stale-preview invalidation. The screenshot was inspected.
   Actual API/SQL verification is separate; this is not a single deployed E2E run.
-- Full local Desktop suite: 1,919 passed, 11 existing skips with maxWorkers=2.
-  The initial unrestricted parallel run timed out four bundled-child checks
-  while browser/typechecking also ran; bounded rerun passed unchanged assertions
-  and timeouts. Typecheck and changed-file lint pass.
+- Full local Desktop suite: 1,937 passed, 11 existing skips with maxWorkers=2.
+  Initial targeted API/database/client/Next/contract/infrastructure checks: 113
+  passed; two more SQL regressions then passed and are included in the full run.
+  The 36 privacy SQL cases also prove unchanged-count inventory changes refuse
+  and a command-receipt insertion failure rolls deletion/store evidence back.
+  Typecheck, changed-file lint and CloudFormation schema validation pass.
+  No hosted deployment or physical-device test is claimed.
 
 ## Still required
 

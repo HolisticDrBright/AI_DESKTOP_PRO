@@ -34,7 +34,14 @@ async function request(kind='deletion',who=owner){
 const record=(id:string,store:string,outcome:string,evidence:string|null=digest)=>asActor(
   'select clinical_private.record_owned_privacy_fulfillment($1,$2,$3,$4)',[id,store,outcome,evidence]);
 const complete=(id:string)=>asActor('select clinical_private.complete_owned_privacy_request($1) as result',[id]);
-const purge=(id:string,policy='test-valid')=>asActor('select clinical_private.purge_owned_personal_history($1,$2) as result',[id,policy]);
+type PurgePreview={privacyRequestId:string;policyVersion:string;policySha256:string;inventorySha256:string;records:number;consents:number;activePlans:number;planHistory:number};
+async function previewPurge(id:string,policy='test-valid'){
+  return ((await asActor('select clinical_private.preview_owned_personal_purge($1,$2) as result',[id,policy])).rows[0] as {result:PurgePreview}).result;
+}
+const executePurge=(p:PurgePreview,command=randomUUID(),confirmation='PURGE PERSONAL HISTORY')=>asActor(
+  'select clinical_private.execute_owned_personal_purge($1,$2,$3,$4,$5,$6) as result',
+  [p.privacyRequestId,command,p.policyVersion,p.policySha256,p.inventorySha256,confirmation]);
+const purge=async(id:string,policy='test-valid')=>executePurge(await previewPurge(id,policy));
 async function correctionFixture(){
   const recordId=randomUUID();
   await db.query(`insert into clinical_private.consumer_storage_consent_releases(scope,version,content,content_sha256,approved_by,approved_at)
@@ -52,7 +59,13 @@ const submitCorrection=(correction:unknown,requestId=randomUUID(),actor=owner)=>
   "select clinical_core.submit_owned_privacy_request($1,'correction',$2::jsonb) as result",[requestId,JSON.stringify(correction)],actor,'consumer');
 const resolveCorrection=(id:string,outcome='applied',revision:number|null=2,reason='Verified against the saved correction')=>asActor(
   'select clinical_private.resolve_owned_correction($1,$2,$3,$4) as result',[id,outcome,revision,reason]);
-async function fill(id:string){for(const store of stores)await record(id,store,'not_applicable');}
+async function fill(id:string){
+  const kind=(await db.query<{kind:string}>('select kind from clinical_private.owned_privacy_requests where id=$1',[id])).rows[0].kind;
+  // Shared fictional fixtures may contain records from preceding tests. A
+  // not-applicable assertion is valid only after the reviewed purge empties them.
+  if(kind==='deletion')await purge(id);
+  for(const store of stores)await record(id,store,'not_applicable');
+}
 beforeAll(async()=>{
   // Build the same production SQL artifact as CI. Its cleanup target is a
   // derived directory inside this checkout, never a home/workspace root.
@@ -80,10 +93,90 @@ beforeAll(async()=>{
         'FIXTURE NOT APPROVAL',case when $1='test-future' then now()+interval '1 day' else now()-interval '1 day' end,
         case when $1='test-retired' then now() else null end)`,[version,digest]);
   }
+  await db.exec("update clinical_private.owned_retention_policies set personal_purge_authorized_sha256=content_sha256");
 },30000);
 afterAll(async()=>{await db?.close();});
 
 describe('privacy fulfillment: executable production SQL with fictional data (not hosted Aurora)',()=>{
+  it('requires explicit personal-purge policy authorization, not merely generic policy approval',async()=>{
+    const id=await request();
+    await db.exec("update clinical_private.owned_retention_policies set personal_purge_authorized_sha256=null where version='test-valid'");
+    try{await expect(previewPurge(id)).rejects.toThrow('personal_purge_policy_required');}
+    finally{await db.exec("update clinical_private.owned_retention_policies set personal_purge_authorized_sha256=content_sha256 where version='test-valid'");}
+    await expect(asActor("select clinical_private.purge_owned_personal_history($1,'test-valid')",[id])).rejects.toThrow('permission denied');
+    await expect(asActor('select clinical_private.complete_owned_privacy_request_v2($1)',[id])).rejects.toThrow('permission denied');
+    await expect(asActor('select clinical_private.personal_purge_inventory($1)',[owner])).rejects.toThrow('permission denied');
+  });
+  it('refuses changed previews and wrong confirmation without deleting any records',async()=>{
+    const id=await request(),p=await previewPurge(id);
+    const {recordId}=await correctionFixture();
+    await expect(executePurge(p)).rejects.toThrow('personal_purge_preview_changed');
+    const fresh=await previewPurge(id);
+    expect(fresh.inventorySha256).not.toBe(p.inventorySha256);
+    await expect(executePurge(fresh,randomUUID(),'yes')).rejects.toThrow('personal_purge_request_invalid');
+    await expect(executePurge({...fresh,policySha256:digest})).rejects.toThrow('personal_purge_preview_changed');
+    expect((await db.query('select count(*)::int as n from clinical_core.owned_consumer_record_versions where owner_id=$1 and record_id=$2',[owner,recordId])).rows).toEqual([{n:1}]);
+    expect((await db.query('select count(*)::int as n from clinical_private.owned_personal_purge_commands where privacy_request_id=$1',[id])).rows).toEqual([{n:0}]);
+    await purge(id);
+  });
+  it('returns the original receipt on lost-response retry without deleting newly written data',async()=>{
+    const id=await request();await correctionFixture();
+    const p=await previewPurge(id),command=randomUUID(),first=await executePurge(p,command);
+    expect(first.rows[0]).toMatchObject({result:{completeAccountDeletion:false,outcome:'purged',commandId:command,records:1,consents:1,
+      evidenceSha256:expect.stringMatching(/^[a-f0-9]{64}$/)}});
+    const {recordId}=await correctionFixture();
+    expect((await executePurge(p,command)).rows).toEqual(first.rows);
+    await expect(executePurge({...p,inventorySha256:digest},command)).rejects.toThrow('personal_purge_command_conflict');
+    expect((await db.query('select count(*)::int as n from clinical_core.owned_consumer_record_versions where owner_id=$1 and record_id=$2',[owner,recordId])).rows).toEqual([{n:1}]);
+    await expect(db.query("update clinical_private.owned_personal_purge_commands set receipt='{}' where privacy_request_id=$1",[id])).rejects.toThrow('append_only_record');
+    await expect(asActor('select * from clinical_private.owned_personal_purge_commands')).rejects.toThrow('permission denied');
+    await purge(id);
+  });
+  it('rechecks holds, retired policies, revoked assignments and consumer/foreign-owner authority at execution',async()=>{
+    const id=await request(),p=await previewPurge(id);
+    const args=[id,randomUUID(),p.policyVersion,p.policySha256,p.inventorySha256,'PURGE PERSONAL HISTORY'];
+    const sql='select clinical_private.execute_owned_personal_purge($1,$2,$3,$4,$5,$6)';
+    await expect(asActor(sql,args,owner,'consumer')).rejects.toThrow('privacy_operator_required');
+    await expect(asActor(sql,args,unassigned)).rejects.toThrow('privacy_operator_assignment_required');
+    await expect(executePurge({...p,privacyRequestId:await request('deletion',other)})).rejects.toThrow('privacy_operator_assignment_required');
+    const hold=(await asActor("select clinical_private.place_owned_legal_hold($1,'owner_dispute') as id",[owner])).rows[0] as {id:string};
+    try{await expect(executePurge(p)).rejects.toThrow('privacy_request_held');}
+    finally{await asActor('select clinical_private.release_owned_legal_hold($1)',[hold.id]);}
+    await db.exec("update clinical_private.owned_retention_policies set retired_at=now() where version='test-valid'");
+    try{await expect(executePurge(p)).rejects.toThrow('retention_policy_required');}
+    finally{await db.exec("update clinical_private.owned_retention_policies set retired_at=null where version='test-valid'");}
+    await db.exec('update clinical_private.owned_privacy_operator_assignments set revoked_at=now()');
+    try{await expect(executePurge(p)).rejects.toThrow('privacy_operator_assignment_required');}
+    finally{await db.exec('update clinical_private.owned_privacy_operator_assignments set revoked_at=null');}
+  });
+  it('rolls completion back when fresh records contradict old purge/not-applicable receipts',async()=>{
+    const id=await request();await fill(id);
+    await correctionFixture();
+    await expect(complete(id)).rejects.toThrow('privacy_request_personal_store_changed');
+    expect((await db.query('select status,completed_at,completed_by from clinical_private.owned_privacy_requests where id=$1',[id])).rows)
+      .toEqual([{status:'in_progress',completed_at:null,completed_by:null}]);
+    await purge(id);
+    expect((await complete(id)).rows[0]).toMatchObject({result:{status:'completed'}});
+  });
+  it('detects changed record content even when inventory row counts are unchanged',async()=>{
+    const id=await request(),{recordId}=await correctionFixture(),p=await previewPurge(id);
+    // Privileged test-only mutation models a changed snapshot; the production
+    // API cannot update immutable versions directly.
+    await db.query('alter table clinical_core.owned_consumer_record_versions disable trigger user');
+    try{await db.query("update clinical_core.owned_consumer_record_versions set payload='{\"height_cm\":171}' where owner_id=$1 and record_id=$2",[owner,recordId]);}
+    finally{await db.query('alter table clinical_core.owned_consumer_record_versions enable trigger user');}
+    const fresh=await previewPurge(id);expect(fresh.records).toBe(p.records);expect(fresh.inventorySha256).not.toBe(p.inventorySha256);
+    await expect(executePurge(p)).rejects.toThrow('personal_purge_preview_changed');await purge(id);
+  });
+  it('rolls all deletions and store receipts back if immutable command evidence cannot be saved',async()=>{
+    const id=await request();await correctionFixture();const p=await previewPurge(id);
+    await db.exec('alter table clinical_private.owned_personal_purge_commands add constraint fictional_fail_receipt check(false) not valid');
+    try{await expect(executePurge(p)).rejects.toThrow('fictional_fail_receipt');}
+    finally{await db.exec('alter table clinical_private.owned_personal_purge_commands drop constraint fictional_fail_receipt');}
+    expect(await previewPurge(id)).toEqual(p);
+    expect((await db.query('select count(*)::int as n from clinical_private.owned_privacy_fulfillment where privacy_request_id=$1',[id])).rows).toEqual([{n:0}]);
+    await purge(id);
+  });
   it('lists only assigned requests, pages without duplicates and audits workforce reads',async()=>{
     for(let i=0;i<28;i++)await request();
     const foreign=await request('deletion',other);
@@ -121,7 +214,7 @@ describe('privacy fulfillment: executable production SQL with fictional data (no
     })};
     const issuer='https://cognito-idp.us-east-2.amazonaws.com/workforce',audience='12345678901234567890',now=Date.now(),t=Math.floor(now/1000);
     const handler=createPrivacyOperationsApi({configuration:{workforceIssuer:issuer,workforceAudience:audience,phiAllowed:true,
-      activation:'approved',evidenceSha256:digest,mfaReviewSha256:digest},operations:()=>createPrivacyOperations(database),now:()=>now});
+      activation:'approved',evidenceSha256:digest,mfaReviewSha256:digest,personalPurgeEnabled:true,personalPurgeEvidenceSha256:digest},operations:()=>createPrivacyOperations(database),now:()=>now});
     const event=(body:unknown):ApiGatewayV2Event=>({routeKey:PRIVACY_OPERATIONS_ROUTE,body:JSON.stringify(body),headers:{'content-type':'application/json'},
       requestContext:{authorizer:{jwt:{claims:{iss:issuer,aud:audience,sub:'subject-'+operator,token_use:'id',email_verified:'true',
         'custom:person_id':operator,'custom:organization_id':org,'custom:production_bound':'true',iat:t,auth_time:t,exp:t+600}}}}});
@@ -135,6 +228,19 @@ describe('privacy fulfillment: executable production SQL with fictional data (no
     const result=await handler(event(command));expect(result.statusCode).toBe(200);
     expect(JSON.parse(result.body).data).toMatchObject({status:'completed',correction:{resolution:{outcome:'applied',appliedRevision:2}}});
     expect((await handler(event(command))).body).toBe(result.body);
+    const deletion=await request();
+    const preview=await handler(event({action:'previewPersonalPurge',privacyRequestId:deletion,policyVersion:'test-valid'}));
+    expect(preview.statusCode).toBe(200);const p=JSON.parse(preview.body).data;
+    expect(p).toMatchObject({records:2,consents:1,policyContent:'Fictional in-memory policy',completeAccountDeletion:false});
+    const purgeCommand={action:'purgePersonal',privacyRequestId:deletion,commandId:randomUUID(),policyVersion:p.policyVersion,
+      policySha256:p.policySha256,inventorySha256:p.inventorySha256,confirmation:'PURGE PERSONAL HISTORY'};
+    const purged=await handler(event(purgeCommand));expect(purged.statusCode).toBe(200);
+    expect(JSON.parse(purged.body).data).toMatchObject({records:2,consents:1,outcome:'purged',completeAccountDeletion:false});
+    expect((await handler(event(purgeCommand))).body).toBe(purged.body);
+    const after=await handler(event({action:'detail',privacyRequestId:deletion}));
+    expect(JSON.parse(after.body).data).toMatchObject({status:'in_progress',fulfillment:expect.arrayContaining([
+      expect.objectContaining({store:'personal_records',outcome:'purged'}),
+    ])});
   });
   it('denies consumers, unassigned workforce and assignments for another owner',async()=>{
     const id=await request();
@@ -240,7 +346,7 @@ describe('privacy fulfillment: executable production SQL with fictional data (no
     }
     expect((await db.query('select store,outcome from clinical_private.owned_privacy_fulfillment where privacy_request_id=$1 order by store',[id])).rows)
       .toEqual(['active_plan','personal_consents','personal_records'].map(store=>({store,outcome:'purged'})));
-    expect((await db.query("select count(*)::int as n from clinical_audit.consumer_storage_events where owner_id=$1 and action='privacy_request.purged'",[owner])).rows).toEqual([{n:1}]);
+    expect((await db.query('select count(*)::int as n from clinical_private.owned_personal_purge_commands where privacy_request_id=$1',[id])).rows).toEqual([{n:1}]);
     await expect(complete(id)).rejects.toThrow('privacy_request_store_pending');
   });
   it('keeps consumer request views owner-scoped',async()=>{

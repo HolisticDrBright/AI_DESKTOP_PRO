@@ -60,3 +60,63 @@ test('held requests remain readable but cannot be resolved',async({page})=>{
   await expect(page.getByRole('alert').filter({hasText:'Legal hold active'})).toBeVisible();
   await expect(page.getByRole('button',{name:'Record verified decision'})).toHaveCount(0);
 });
+
+test('personal purge requires the exact preview and confirmation, retaining the command after an uncertain response',async({page},info)=>{
+  const calls:Record<string,unknown>[]=[],errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
+  const deletion={...row,kind:'deletion'};
+  const preview={privacyRequestId:id,policyVersion:'fictional-policy',policySha256:'a'.repeat(64),inventorySha256:'b'.repeat(64),
+    records:4,consents:2,activePlans:1,planHistory:3,completeAccountDeletion:false,policyContent:'Fictional reviewed purge policy — test only.'};
+  await page.route('**/api/live/privacy-operations',async route=>{
+    const body=route.request().postDataJSON();calls.push(body);
+    if(body.action==='purgePersonal'&&calls.filter(c=>c.action==='purgePersonal').length===1){
+      await route.fulfill({status:503,json:{error:'service_unavailable'}});return;
+    }
+    const base=Object.fromEntries(Object.entries(preview).filter(([key])=>key!=='policyContent'));
+    const data=body.action==='list'?{items:[deletion],nextAfter:null}:body.action==='detail'?{...deletion,legalHold:false,fulfillment:[],correction:null}:
+      body.action==='previewPersonalPurge'?preview:{...base,commandId:body.commandId,outcome:'purged',verifiedAt:'2026-09-17T01:00:00Z',evidenceSha256:'c'.repeat(64)};
+    await route.fulfill({json:{data}});
+  });
+  await page.goto('/settings/privacy-operations');
+  await page.getByRole('button',{name:'Load / refresh assigned requests'}).click();
+  await page.getByRole('button',{name:'Review request'}).click();
+  await page.getByLabel('Approved purge policy version').fill('fictional-policy');
+  await page.getByRole('button',{name:'Preview exact deletion'}).click();
+  await expect(page.getByText(preview.policyContent)).toBeVisible();
+  const save=page.getByRole('button',{name:'Confirm personal-history deletion / retry same command'});
+  await expect(save).toBeDisabled();
+  await page.getByLabel('Type PURGE PERSONAL HISTORY').fill('yes');await expect(save).toBeDisabled();
+  await page.getByLabel('Type PURGE PERSONAL HISTORY').fill('PURGE PERSONAL HISTORY');
+  await page.screenshot({path:info.outputPath('privacy-purge-preview.png'),fullPage:true});
+  await save.click();
+  await expect(page.getByRole('alert').filter({hasText:'No completion is confirmed'})).toBeVisible();
+  await save.click();
+  await expect(page.getByText('Complete account deletion: no.')).toBeVisible();
+  const commands=calls.filter(c=>c.action==='purgePersonal');expect(commands).toHaveLength(2);expect(commands[0]).toEqual(commands[1]);
+  expect(commands[0]).toMatchObject({privacyRequestId:id,policySha256:preview.policySha256,inventorySha256:preview.inventorySha256,confirmation:'PURGE PERSONAL HISTORY'});
+  await expect(save).toHaveCount(0);expect(errors).toEqual([]);
+  await page.evaluate(()=>{Object.defineProperty(document,'visibilityState',{configurable:true,value:'hidden'});document.dispatchEvent(new Event('visibilitychange'));});
+  await expect(page.getByText('Complete account deletion: no.')).toHaveCount(0);
+});
+
+test('a stale deletion preview is discarded, and held deletion requests offer no purge action',async({page})=>{
+  let held=false;
+  const deletion={...row,kind:'deletion'};
+  await page.route('**/api/live/privacy-operations',async route=>{
+    const body=route.request().postDataJSON();
+    if(body.action==='purgePersonal'){await route.fulfill({status:409,json:{error:'conflict'}});return;}
+    const data=body.action==='list'?{items:[deletion],nextAfter:null}:body.action==='detail'?{...deletion,legalHold:held,fulfillment:[],correction:null}:
+      {privacyRequestId:id,policyVersion:'fictional',policySha256:'a'.repeat(64),inventorySha256:'b'.repeat(64),records:1,consents:1,activePlans:0,planHistory:0,
+        completeAccountDeletion:false,policyContent:'Fictional policy'};
+    await route.fulfill({json:{data}});
+  });
+  await page.goto('/settings/privacy-operations');
+  await page.getByRole('button',{name:'Load / refresh assigned requests'}).click();await page.getByRole('button',{name:'Review request'}).click();
+  await page.getByLabel('Approved purge policy version').fill('fictional');await page.getByRole('button',{name:'Preview exact deletion'}).click();
+  await page.getByLabel('Type PURGE PERSONAL HISTORY').fill('PURGE PERSONAL HISTORY');
+  await page.getByRole('button',{name:'Confirm personal-history deletion / retry same command'}).click();
+  await expect(page.getByRole('alert').filter({hasText:'inventory or policy changed'})).toBeVisible();
+  await expect(page.getByLabel('Type PURGE PERSONAL HISTORY')).toHaveCount(0);
+  held=true;await page.getByRole('button',{name:'Refresh deletion request'}).click();
+  await expect(page.getByRole('alert').filter({hasText:'Legal hold active'})).toBeVisible();
+  await expect(page.getByRole('button',{name:'Preview exact deletion'})).toHaveCount(0);
+});

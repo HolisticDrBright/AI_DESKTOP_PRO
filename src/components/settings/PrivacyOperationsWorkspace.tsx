@@ -1,21 +1,25 @@
 'use client';
 import {useEffect,useRef,useState} from 'react';
-import {privacyOperationSchema,parsePrivacyOperationResult,type PrivacyOperation,type PrivacyQueue,type PrivacyDetail} from '@/contracts/privacyOperations';
+import {privacyOperationSchema,parsePrivacyOperationResult,type PrivacyOperation,type PrivacyQueue,type PrivacyDetail,type PersonalPurgePreview,type PersonalPurgeReceipt} from '@/contracts/privacyOperations';
 import {Card} from '@/components/ui/bits';
 import {Btn} from '@/components/ui/Btn';
 const messages:Record<string,string>={
   reauth_required:'Sign out and sign in again with your workforce account. Privacy operations require a login within the last 15 minutes.',
   privacy_access_refused:'This request requires an active privacy assignment. Ordinary clinic membership does not grant access.',
-  conflict:'The saved record or decision changed, or the requested correction has not been saved exactly. Refresh and review before retrying.',
+  conflict:'The saved record, inventory or policy changed, or the requested correction has not been saved exactly. Refresh and review before retrying.',
   legal_hold:'A legal hold prevents this action. No hold was removed.',
   request_invalid:'Check the requested outcome, revision and explanation.',
   service_unavailable:'Privacy operations are unavailable on this deployment. No completion is confirmed.',
+  personal_purge_not_activated:'Personal-history deletion has not been activated on this deployment. No deletion was performed.',
 };
 export function PrivacyOperationsWorkspace(){
   const [queue,setQueue]=useState<PrivacyQueue|null>(null),[detail,setDetail]=useState<PrivacyDetail|null>(null);
   const [closed,setClosed]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState('');
   const [outcome,setOutcome]=useState<'applied'|'declined'>('applied'),[revision,setRevision]=useState(''),[explanation,setExplanation]=useState('');
   const [confirm,setConfirm]=useState(false),[notice,setNotice]=useState('');
+  const [policy,setPolicy]=useState(''),[purgeConfirmation,setPurgeConfirmation]=useState('');
+  const [preview,setPreview]=useState<PersonalPurgePreview|null>(null),[receipt,setReceipt]=useState<PersonalPurgeReceipt|null>(null);
+  const [purgeCommand,setPurgeCommand]=useState<string|null>(null);
   const alive=useRef(true),working=useRef(false),generation=useRef(0);
   const abort=useRef<AbortController|null>(null);
   useEffect(()=>{
@@ -24,6 +28,7 @@ export function PrivacyOperationsWorkspace(){
     const clear=()=>{
       invalidate();working.current=false;
       setBusy(false);setQueue(null);setDetail(null);setExplanation('');setRevision('');setConfirm(false);setError('');setNotice('');
+      setPolicy('');setPurgeConfirmation('');setPreview(null);setReceipt(null);setPurgeCommand(null);
     };
     const hide=()=>{if(document.visibilityState==='hidden')clear();};
     document.addEventListener('visibilitychange',hide);window.addEventListener('pagehide',clear);
@@ -45,10 +50,19 @@ export function PrivacyOperationsWorkspace(){
       const body=JSON.parse(text);
       if(!alive.current||epoch!==generation.current)return;
       if(!response.ok){
-        if(response.status===401||response.status===403){setDetail(null);setQueue(null);setExplanation('');setRevision('');setConfirm(false);}
+        if([400,401,403,409].includes(response.status)){setPreview(null);setPurgeCommand(null);setPurgeConfirmation('');}
+        if(response.status===401||response.status===403){setDetail(null);setQueue(null);setExplanation('');setRevision('');setConfirm(false);setReceipt(null);setPolicy('');}
         setError(messages[typeof body?.error==='string'?body.error:'']??messages.service_unavailable);return;
       }
       const result=parsePrivacyOperationResult(parsed.data,body.data);
+      if(input.action==='previewPersonalPurge'){
+        setPreview(result as PersonalPurgePreview);setReceipt(null);setPurgeConfirmation('');setPurgeCommand(crypto.randomUUID());return;
+      }
+      if(input.action==='purgePersonal'){
+        setReceipt(result as PersonalPurgeReceipt);setPreview(null);setPurgeConfirmation('');
+        setNotice('Personal-storage purge receipt verified. Other stores remain unresolved; this is not complete account deletion.');return;
+      }
+      setPreview(null);setReceipt(null);setPurgeCommand(null);setPolicy('');setPurgeConfirmation('');
       if(input.action==='list'){setQueue(result as PrivacyQueue);setDetail(null);setConfirm(false);setExplanation('');}
       else{setDetail(result as PrivacyDetail);setConfirm(false);
         if(input.action==='resolve'){setQueue(null);setNotice('Decision verified and recorded. Refresh the queue to see remaining requests.');}
@@ -62,7 +76,7 @@ export function PrivacyOperationsWorkspace(){
     <Card className="p-5 space-y-3">
       <p>Only requests covered by your explicit privacy assignment appear here. This does not connect an independent consumer to your clinic.</p>
       <p className="text-sm text-subtle">Review is separate from editing a record. An applied decision verifies an already-saved, exact correction; it cannot change clinical data, consent, protocols or legal holds.</p>
-      <label className="flex gap-2"><input type="checkbox" checked={closed} disabled={busy} onChange={e=>{setClosed(e.target.checked);setQueue(null);setDetail(null);setConfirm(false);}}/>Include completed and declined requests</label>
+      <label className="flex gap-2"><input type="checkbox" checked={closed} disabled={busy} onChange={e=>{setClosed(e.target.checked);setQueue(null);setDetail(null);setConfirm(false);setPreview(null);setReceipt(null);setPurgeCommand(null);setPolicy('');setPurgeConfirmation('');}}/>Include completed and declined requests</label>
       <Btn disabled={busy} onClick={()=>void perform({action:'list',includeClosed:closed})}>{busy?'Working…':'Load / refresh assigned requests'}</Btn>
       {error?<p role="alert" className="text-danger">{error}</p>:null}
       {notice?<p role="status">{notice}</p>:null}
@@ -88,9 +102,28 @@ export function PrivacyOperationsWorkspace(){
         </dl>
         {detail.correction.resolution?<p>Recorded outcome: {detail.correction.resolution.outcome}. {detail.correction.resolution.explanation}</p>:null}
       </>:detail.kind==='correction'?<p>This older request has no revision-bound target and cannot be completed here. Obtain a new consumer correction request.</p>:null}
-      {detail.kind==='deletion'?<><p>Deletion requires reconciliation of all nine stores. This screen does not erase data or attest completion.</p>
+      {detail.kind==='deletion'?<><p>Deletion requires reconciliation of all nine stores. The personal-storage action below cannot complete account deletion.</p>
         <ul>{detail.fulfillment.map((f,i)=><li key={i}>{f.store}: {f.outcome} ({f.recordedAt.slice(0,10)})</li>)}</ul>
-        {!detail.fulfillment.length?<p>No fulfillment evidence recorded.</p>:null}</>:null}
+        {!detail.fulfillment.length?<p>No fulfillment evidence recorded.</p>:null}
+        {!terminal&&!detail.legalHold?<section aria-label="Personal-history deletion" className="border-t pt-3 space-y-3">
+          <h3 className="font-semibold">Preview personal-history deletion</h3>
+          <p>Separate deployment approval and a policy explicitly authorizing this purge are required. No policy or approval is created here.</p>
+          <p>This removes personal record versions, storage consents, the active plan and its adoption history. Labs/documents, voice/transcripts, identity, clinic records, device copies, backups and audit records are not erased by this action.</p>
+          <label className="block">Approved purge policy version <input aria-label="Approved purge policy version" className="border rounded p-2" maxLength={200} value={policy} disabled={busy||!!preview||!!receipt} onChange={e=>setPolicy(e.target.value)}/></label>
+          {!receipt?<Btn disabled={busy||!policy.trim()} onClick={()=>void perform({action:'previewPersonalPurge',privacyRequestId:detail.privacyRequestId,policyVersion:policy.trim()})}>Preview exact deletion</Btn>:null}
+          {preview?<div className="space-y-3">
+            <p>Records: {preview.records} · Consents: {preview.consents} · Active plans: {preview.activePlans} · Plan history: {preview.planHistory}</p>
+            <p className="whitespace-pre-wrap break-words">{preview.policyContent}</p>
+            <p className="text-sm break-all">Inventory SHA-256: {preview.inventorySha256}<br/>Policy SHA-256: {preview.policySha256}</p>
+            <p>Review the exact counts and policy. This is irreversible through this screen. If a response is lost, retrying the same command returns its original receipt; it does not erase newer data. A new preview requires a new confirmation.</p>
+            <label className="block">Type PURGE PERSONAL HISTORY <input aria-label="Type PURGE PERSONAL HISTORY" className="border rounded p-2" autoComplete="off" value={purgeConfirmation} disabled={busy} onChange={e=>setPurgeConfirmation(e.target.value)}/></label>
+            <Btn disabled={busy||purgeConfirmation!=='PURGE PERSONAL HISTORY'||!purgeCommand} onClick={()=>void perform({action:'purgePersonal',privacyRequestId:detail.privacyRequestId,
+              commandId:purgeCommand!,policyVersion:preview.policyVersion,policySha256:preview.policySha256,inventorySha256:preview.inventorySha256,confirmation:'PURGE PERSONAL HISTORY'})}>Confirm personal-history deletion / retry same command</Btn>
+          </div>:null}
+          {receipt?<div role="status" className="space-y-2 break-words"><p>Verified personal purge: {receipt.records} record versions, {receipt.consents} consents, {receipt.activePlans} active plans and {receipt.planHistory} history rows.</p>
+            <p>Receipt time: {receipt.verifiedAt}. This receipt does not claim data added afterward was deleted.</p><p className="break-all">Evidence: {receipt.evidenceSha256}</p><p>Complete account deletion: no.</p></div>:null}
+          <Btn disabled={busy} onClick={()=>void perform({action:'detail',privacyRequestId:detail.privacyRequestId})}>Refresh deletion request</Btn>
+        </section>:null}</>:null}
       {canResolve?<div className="space-y-3 border-t pt-3">
         <label className="block">Decision <select value={outcome} disabled={busy} className="border rounded p-2" onChange={e=>{setOutcome(e.target.value as 'applied'|'declined');setConfirm(false);}}>
           <option value="applied">Verify a saved correction</option><option value="declined">Decline with explanation</option></select></label>

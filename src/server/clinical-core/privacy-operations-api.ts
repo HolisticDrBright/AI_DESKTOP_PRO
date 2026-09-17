@@ -4,7 +4,8 @@ import {privacyOperationSchema} from '@/contracts/privacyOperations';
 import {PrivacyOperationError,type createPrivacyOperations} from './privacy-operations';
 export const PRIVACY_OPERATIONS_ROUTE='POST /clinical-core/workforce/privacy-operations';
 export type PrivacyOperationsConfiguration={workforceIssuer:string;workforceAudience:string;phiAllowed:boolean;
-  activation:'blocked'|'approved';evidenceSha256?:string;mfaReviewSha256?:string};
+  activation:'blocked'|'approved';evidenceSha256?:string;mfaReviewSha256?:string;
+  personalPurgeEnabled?:boolean;personalPurgeEvidenceSha256?:string};
 export function createPrivacyOperationsApi(input:{configuration:PrivacyOperationsConfiguration;
   operations:()=>ReturnType<typeof createPrivacyOperations>;now?:()=>number}){
   const c=input.configuration,hash=/^[a-f0-9]{64}$/;
@@ -12,6 +13,8 @@ export function createPrivacyOperationsApi(input:{configuration:PrivacyOperation
     ||!/^[a-zA-Z0-9]{20,128}$/.test(c.workforceAudience))throw new Error('privacy_api_configuration_invalid');
   const active=c.phiAllowed&&c.activation==='approved'&&hash.test(c.evidenceSha256??'')&&hash.test(c.mfaReviewSha256??'');
   if(c.phiAllowed&&!active)throw new Error('privacy_api_activation_invalid');
+  const purgeActive=active&&c.personalPurgeEnabled===true&&hash.test(c.personalPurgeEvidenceSha256??'');
+  if(c.personalPurgeEnabled&&!purgeActive)throw new Error('privacy_purge_activation_invalid');
   return async(event:ApiGatewayV2Event):Promise<ApiGatewayV2Response>=>{
     if(!active)return response(503,{error:'production_not_activated',phiAllowed:false});
     if(event.routeKey!==PRIVACY_OPERATIONS_ROUTE)return response(404,{error:'route_not_found'});
@@ -25,6 +28,8 @@ export function createPrivacyOperationsApi(input:{configuration:PrivacyOperation
       let raw:unknown;try{raw=JSON.parse(bytes.toString('utf8'));}catch{throw new PrivacyOperationError('request_invalid');}
       const parsed=privacyOperationSchema.safeParse(raw);
       if(!parsed.success)throw new PrivacyOperationError('request_invalid');
+      if((parsed.data.action==='previewPersonalPurge'||parsed.data.action==='purgePersonal')&&!purgeActive)
+        return response(503,{error:'personal_purge_not_activated'});
       return response(200,{data:await input.operations()(context,parsed.data)});
     }catch(error){
       const code=error instanceof PrivacyOperationError?error.code:'service_unavailable';

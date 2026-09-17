@@ -1,12 +1,17 @@
 import {z} from 'zod';
 import {correctionTargetSchema,correctionResolutionSchema} from './personalCorrection';
 const id=z.string().uuid();
+const hash=z.string().regex(/^[a-f0-9]{64}$/);
+const policyVersion=z.string().trim().min(1).max(200);
 export const privacyOperationSchema=z.discriminatedUnion('action',[
   z.object({action:z.literal('list'),after:id.optional(),includeClosed:z.boolean()}).strict(),
   z.object({action:z.literal('detail'),privacyRequestId:id}).strict(),
   z.object({action:z.literal('resolve'),privacyRequestId:id,outcome:z.enum(['applied','declined']),
     appliedRevision:z.number().int().min(1).max(999999999).nullable(),
     explanation:z.string().trim().min(1).max(2000)}).strict().refine(v=>v.outcome==='applied'?v.appliedRevision!==null:v.appliedRevision===null),
+  z.object({action:z.literal('previewPersonalPurge'),privacyRequestId:id,policyVersion}).strict(),
+  z.object({action:z.literal('purgePersonal'),privacyRequestId:id,commandId:id,policyVersion,
+    policySha256:hash,inventorySha256:hash,confirmation:z.literal('PURGE PERSONAL HISTORY')}).strict(),
 ]);
 export type PrivacyOperation=z.infer<typeof privacyOperationSchema>;
 const row=z.object({privacyRequestId:id,ownerId:id,kind:z.enum(['deletion','correction']),
@@ -31,7 +36,22 @@ export const privacyDetailSchema=row.extend({legalHold:z.boolean(),fulfillment:z
 });
 export type PrivacyQueue=z.infer<typeof privacyQueueSchema>;
 export type PrivacyDetail=z.infer<typeof privacyDetailSchema>;
-export function parsePrivacyOperationResult(input:PrivacyOperation,raw:unknown):PrivacyQueue|PrivacyDetail{
+const purgeBase=z.object({privacyRequestId:id,policyVersion,policySha256:hash,inventorySha256:hash,
+  records:z.number().int().min(0).max(100000),consents:z.number().int().min(0).max(100000),
+  activePlans:z.number().int().min(0).max(100000),planHistory:z.number().int().min(0).max(100000),completeAccountDeletion:z.literal(false)}).strict();
+export const personalPurgePreviewSchema=purgeBase.extend({policyContent:z.string().min(1).max(50000)}).strict();
+export const personalPurgeReceiptSchema=purgeBase.extend({commandId:id,outcome:z.literal('purged'),
+  verifiedAt:z.string().datetime({offset:true}),evidenceSha256:hash}).strict();
+export type PersonalPurgePreview=z.infer<typeof personalPurgePreviewSchema>;
+export type PersonalPurgeReceipt=z.infer<typeof personalPurgeReceiptSchema>;
+export function parsePrivacyOperationResult(input:PrivacyOperation,raw:unknown):PrivacyQueue|PrivacyDetail|PersonalPurgePreview|PersonalPurgeReceipt{
+  if(input.action==='previewPersonalPurge'||input.action==='purgePersonal'){
+    const value=input.action==='previewPersonalPurge'?personalPurgePreviewSchema.parse(raw):personalPurgeReceiptSchema.parse(raw);
+    if(value.privacyRequestId!==input.privacyRequestId||value.policyVersion!==input.policyVersion)throw new Error('privacy_response_invalid');
+    if(input.action==='purgePersonal'&&(!('commandId' in value)||value.commandId!==input.commandId
+      ||value.policySha256!==input.policySha256||value.inventorySha256!==input.inventorySha256))throw new Error('privacy_response_invalid');
+    return value;
+  }
   if(input.action==='list'){
     const value=privacyQueueSchema.parse(raw);let previous=input.after?.toLowerCase()??'';
     for(const item of value.items){if(item.privacyRequestId.toLowerCase()<=previous

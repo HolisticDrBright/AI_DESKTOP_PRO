@@ -11,6 +11,26 @@ const event=(patch:Record<string,unknown>={}):ApiGatewayV2Event=>({routeKey:PRIV
     'custom:person_id':uuid,'custom:organization_id':uuid,'custom:production_bound':'true',email_verified:'true',
     exp:time+600,iat:time,auth_time:time,...patch}}}}});
 describe('privacy workforce API claims and activation',()=>{
+  it('keeps purge separately disabled and refuses unreviewed activation before opening the database',async()=>{
+    const operations=vi.fn();
+    const handler=createPrivacyOperationsApi({configuration:config,operations,now:()=>now});
+    const preview={action:'previewPersonalPurge',privacyRequestId:uuid,policyVersion:'fictional'};
+    const purge={action:'purgePersonal',privacyRequestId:uuid,policyVersion:'fictional',commandId:uuid,
+      policySha256:'a'.repeat(64),inventorySha256:'b'.repeat(64),confirmation:'PURGE PERSONAL HISTORY'};
+    for(const body of [preview,purge]){
+      const result=await handler({...event(),body:JSON.stringify(body)});
+      expect(result.statusCode).toBe(503);expect(JSON.parse(result.body)).toEqual({error:'personal_purge_not_activated'});
+    }
+    expect(operations).not.toHaveBeenCalled();
+    expect(()=>createPrivacyOperationsApi({configuration:{...config,personalPurgeEnabled:true},operations})).toThrow('privacy_purge_activation_invalid');
+    expect(()=>createPrivacyOperationsApi({configuration:{...config,phiAllowed:false,personalPurgeEnabled:true,personalPurgeEvidenceSha256:'c'.repeat(64)},operations})).toThrow('privacy_purge_activation_invalid');
+    const call=vi.fn().mockResolvedValue({});
+    const reviewed=createPrivacyOperationsApi({configuration:{...config,personalPurgeEnabled:true,personalPurgeEvidenceSha256:'c'.repeat(64)},operations:()=>call,now:()=>now});
+    expect((await reviewed({...event(),body:JSON.stringify(preview)})).statusCode).toBe(200);
+    for(const body of [{...purge,confirmation:'yes'},{...purge,inventorySha256:''},{...preview,ownerId:uuid}])
+      expect((await reviewed({...event(),body:JSON.stringify(body)})).statusCode).toBe(400);
+    expect(call).toHaveBeenCalledOnce();
+  });
   it('defaults blocked without opening a database and requires separate MFA review',async()=>{
     const operations=vi.fn();
     const handler=createPrivacyOperationsApi({configuration:{...config,phiAllowed:false,activation:'blocked'},operations});
