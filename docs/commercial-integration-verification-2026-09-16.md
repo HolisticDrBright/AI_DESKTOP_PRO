@@ -64,6 +64,11 @@ Later source increment: see voice-late-write-cleanup-watch.md. Voice cleanup now
 retains a due-index watch after successful removal, with no automatic metadata TTL.
 Late uploads/provider completions remain unreadable and get another cleanup attempt.
 The drain inventory distinguishes empty artifacts from shutdown eligibility.
+The separately built synthetic-only voice-watch backfill operator now offers a
+read-only metadata plan and explicit hash-approved conditional requeue. It checks
+the reviewed deployed zip, stack/function revisions, PHI-disabled environment and
+enabled schedule; it never recreates missing rows or fabricates cleanup evidence.
+No AWS backfill ran. Production backfill and orphan reconciliation remain open.
 This advances original phases2/3/6, not completion: deployment, legacy backfill,
 retention/hold decisions, full account fulfillment and physical acceptance remain.
 

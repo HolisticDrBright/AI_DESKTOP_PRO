@@ -48,3 +48,46 @@ Account-wide erasure, voice-specific hold-aware retention, archive/PITR reconcil
 and approved watch retirement remain open. Production activation is still blocked
 by the existing evidence/consent gates. Do not roll back to the one-pass TTL behavior
 without a replacement reconciliation mechanism.
+
+## Reviewed synthetic legacy backfill operator
+
+The synthetic backfill source is now available through `build:aws-chat-transcription`,
+which produces `dist/aws-clinical-core/voice-watch-backfill/backfill.cjs` separately
+from the Lambda deployment directories.
+Building this artifact does not run it. It is not imported by an API or granted to
+the runtime role. There is no production mode. Scope is fixed to account
+588966314750, us-east-2, stack
+ai-clinical-core-synthetic-staging-chat-transcription and profile ai-synthetic-staging.
+
+After a separately reviewed deployment of the retained-watch worker, calculate the
+base64 SHA-256 of that exact reviewed Lambda zip (not an arbitrary currently deployed
+zip). The operator compares it to Lambda CodeSha256, plus the function revision,
+stable stack identity, mapped resources, synthetic/PHI-disabled environment, and
+enabled one-minute cleanup schedule. These checks are repeated after planning and
+before each write. They do not make the cloud snapshot atomic; freeze deployment
+changes during the operation and independently inspect afterward.
+
+1. Run `node dist/aws-clinical-core/voice-watch-backfill/backfill.cjs --plan PRIVATE_PLAN_PATH REVIEWED_ZIP_SHA256_BASE64`.
+   This stage makes no AWS writes. It refuses partial/malformed/duplicate scan output.
+   The projected metadata plan contains job IDs, format and lifecycle fields, not
+   owners, consent payloads, recordings or transcripts. Store it in a restricted
+   local directory outside git/OneDrive. File mode is 0600 on supporting systems;
+   on Windows verify the containing directory ACL. The output file must not exist.
+2. Review the plan and SHA-256. Eligible rows are only already-cleaned records with
+   no pending flag, no active/leftover lease fields and no existing watch evidence.
+   Malformed rows stop the plan; other states are counted as skipped, not certified.
+3. Explicitly run `node dist/aws-clinical-core/voice-watch-backfill/backfill.cjs --apply PRIVATE_PLAN_PATH APPROVED_PLAN_SHA256`.
+   Plans expire after one hour. Every projected field is compared in the DynamoDB
+   update condition, including absent fields. Missing/TTL-deleted/changed rows are
+   not recreated or overwritten. Existing rows receive pending=work and nextWork=now;
+   expiresAt is removed. State stays cleaned/unreadable. No cleanup timestamp or
+   watch-verification marker is invented. Only an actual later worker cleanup writes
+   those fields. A replay conflicts safely rather than repeating the transition.
+4. Check schedule/worker success, inspect retained watches and reconcile object and
+   provider inventories, including orphans whose metadata was previously TTL-deleted.
+   A scheduled count is not a deletion count. Uncertain writes or mid-run drift can
+   leave partial progress: re-inventory and create a new reviewed plan, never claim
+   rollback or cleanup completion from the operator output.
+
+No AWS backfill was run in this source increment. Production backfill, orphan recovery,
+retention/holds, fleet capacity and hosted failure-injection acceptance remain open.
