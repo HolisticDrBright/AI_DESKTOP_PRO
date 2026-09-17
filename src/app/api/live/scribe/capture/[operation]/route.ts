@@ -17,7 +17,7 @@ export async function POST(request: Request, context: { params: Promise<{ operat
     const session = await getRequestSession();
     if (!session.signedIn || !session.token) throw new AdapterError('unauthenticated');
     const { operation } = await context.params;
-    if (!['start', 'state', 'command', 'segment'].includes(operation) || new URL(request.url).search
+    if (!['start', 'state', 'command', 'segment', 'reconcile'].includes(operation) || new URL(request.url).search
       || request.headers.has('content-encoding')
       || [...request.headers.keys()].some(k => k.startsWith('x-alp-') && (operation !== 'segment' || !uploadHeaders.includes(k))))
       throw new AdapterError('invalid');

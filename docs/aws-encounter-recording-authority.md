@@ -443,3 +443,81 @@ and physical microphone/device acceptance. No real AWS request, PHI activation,
 deployment or paid mobile build occurred. All six original phase scopes remain
 open. Prior Desktop47e1a2e/CI35275985277 and V24224455/CI35278360309 now SUCCESS;
 Desktop11658c0/CI35278357086 remains in progress at this checkpoint.
+
+## September 17 pending-object reconciliation (source only)
+
+The fifth capture route, `POST /clinical-core/workforce/encounter-recording/reconcile`,
+and its same-origin Desktop proxy accept only a recording ID. The server selects
+the pending segment from the original immutable reservation. Recovery needs fresh
+owner/workforce authorization, current participant grants and authority epoch,
+reviewed capture/storage releases and unexpired retention; it does not need or
+issue the old capture credential. Paused captures can reconcile without resuming.
+
+Canonical migration 69 adds a private immutable reconciliation audit and two
+narrow database operations. Preparation locks encounter/capture/segment in the
+existing order, refreshes a bounded receipt lease, then commits. The service
+performs only a bounded object HEAD outside the transaction: exact version,
+full-object checksum, size, MIME type, encryption/key and reservation metadata
+must match. Completion rechecks authority after that network operation. Replayed
+versions are idempotent; different versions conflict. Missing or unverifiable
+objects remain pending. Withdrawal, changed roster, expired retention, retired
+releases, closed encounter/capture or unauthorized actor refuse. No PUT, LIST,
+body download, deletion or provider permission was added.
+
+The recovery screen now offers **Reconcile pending upload**. A lost reply keeps
+the exact request for explicit retry; a no-pending reply reloads current state
+rather than fabricating a stored receipt. Finish remains unavailable until all
+pending segments resolve. Discard still does not prove erasure.
+
+Evidence: **234 focused tests passed**, including API/proxy, original upload
+regressions, canonical SQL and candidate infrastructure; **2467 full unit tests
+passed, 11 existing skips, 201 files**. **Nine local browser cases passed in
+52.3 seconds**, retries zero, including loss after a simulated server commit,
+exact retry, refreshed inventory, finish availability and no audio/credential
+transmission. Browser responses and storage HEAD are fictional. SQL runs in
+PGlite, not hosted Aurora. The complete build now contains 69 registered
+migrations, zero seeds, and five exact JWT routes/invocation permissions.
+
+Retained failed evidence: the first SQL attempt correctly refused an unregistered
+overlay; registering it resolved that failure. The first full-unit invocation
+bypassed the package timezone setting and exposed an outdated 68-migration
+assertion. The assertion now checks 69 plus the exact last migration; the normal
+`test:unit` command passes without changing timezone semantics or skipping tests.
+An initial local legacy-scribe probe used the AWS-panel server configuration and
+could not find the legacy panel; this is not evidence about microphone behavior.
+
+Release qualification remains incomplete: Desktop CI35278357086 failed one
+legacy microphone-loss setup before recording (292 passed, 19 skipped, two did
+not run). Its trace shows the recording POST aborted at the existing eight-second
+authorization bound and the UI stopped capture as unconfirmed. That trace alone
+does not prove the cause of the delayed acknowledgment. No timeout/safety check
+was relaxed. V2 CI35280326725 passed and independently verified the shipped USDA
+catalog in both final container variants. Neither CI result is hosted activation.
+
+Remaining original phase-2 work includes capture/rotation/durable local recovery,
+missing-object disposition and hold-aware erasure, processing/transcript/drafts,
+hosted concurrency/storage/identity qualification and physical devices. This
+increment does not complete any of the original six scopes. No PHI flag, database
+deployment, provider activation or paid mobile build changed.
+
+### Source-scan isolation and legacy browser investigation
+
+The local legacy probe initially used the wrong AWS-screen configuration, then
+timed out while dev compilation repeatedly invalidated the page. The app's
+Tailwind import implicitly scanned the whole checkout, including generated graph
+and downloaded evidence files. It now uses `source("../")` relative to
+`src/app/globals.css`, restricting candidates to the complete `src` tree, following
+[Tailwind's explicit source-base documentation](https://tailwindcss.com/docs/detecting-classes-in-source-files#setting-your-base-path).
+An isolated test compiles the real stylesheet/theme with the installed engine:
+application utilities must exist; distinct utility classes in Graphify and trace
+fixtures must not. It passes. The rendered Today screen retains its styles and
+has no framework error overlay. The unchanged legacy microphone-loss browser test
+then passed (one case, 35.5 seconds, no retries or deadline changes). This is a
+local verification result, not proof that the remote CI delay has the same cause
+or that the complete browser battery passes. The downloaded failure trace is
+retained outside the checkout in the workspace evidence directory.
+Final source checkpoint after this repair: **2468 unit tests passed, 11 existing
+skips, 202 files**; typecheck passes; lint has no errors (four existing unrelated
+warnings); the five-route capture candidate builds. Synthetic AWS STS was checked
+again and reports an expired session; hosted qualification cannot proceed until
+the operator renews that named profile. Local/source engineering remains possible.

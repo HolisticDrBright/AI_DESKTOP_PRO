@@ -5,10 +5,13 @@ import { RecordingAuthorityError } from './encounter-recording-operations';
 import { recordingContentTypeSchema, recordingStartSchema, recordingStartReceiptSchema, recordingLifecycleCommandSchema,
   recordingLifecycleReceiptSchema, recordingRecoveryStateSchema, RecordingLifecycleError, type createRecordingLifecycleRepository } from './recording-lifecycle';
 import { recordingSegmentInputSchema, recordingSegmentReceiptSchema, RecordingUploadError, type createRecordingSegmentUploader } from './recording-segments';
+import { recordingReconciliationReceiptSchema } from '@/contracts/encounterRecordingCapture';
+import type { createRecordingReconciler } from './recording-reconciliation';
 
 export const RECORDING_CAPTURE_ROUTES = {
   start: 'POST /clinical-core/workforce/encounter-recording/start',
   state: 'POST /clinical-core/workforce/encounter-recording/state',
+  reconcile: 'POST /clinical-core/workforce/encounter-recording/reconcile',
   command: 'POST /clinical-core/workforce/encounter-recording/command',
   segment: 'POST /clinical-core/workforce/encounter-recording/segment',
 } as const;
@@ -44,6 +47,7 @@ function parse<T>(schema: z.ZodType<T>, value: unknown): T {
  */
 export function createRecordingCaptureApi(input: { configuration: RecordingCaptureConfiguration;
   lifecycle: () => ReturnType<typeof createRecordingLifecycleRepository>;
+  reconcile: () => ReturnType<typeof createRecordingReconciler>;
   upload: () => ReturnType<typeof createRecordingSegmentUploader>; now?: () => number }) {
   const c = input.configuration;
   const active = recordingWorkforceActivation(c) && id.safeParse(c.captureReleaseId).success
@@ -77,6 +81,11 @@ export function createRecordingCaptureApi(input: { configuration: RecordingCaptu
         } else if (event.routeKey === RECORDING_CAPTURE_ROUTES.state) {
           const request = parse(stateRequest, body);
           data = recordingRecoveryStateSchema.parse(await input.lifecycle().state(context, request.recordingId));
+        } else if (event.routeKey === RECORDING_CAPTURE_ROUTES.reconcile) {
+          const request = parse(stateRequest, body);
+          const result = recordingReconciliationReceiptSchema.parse(await input.reconcile()(context, request));
+          if (result.recordingId !== request.recordingId) throw new RecordingUploadError('storage_unverified');
+          data = result;
         } else {
           const request = parse(recordingLifecycleCommandSchema, body);
           data = recordingLifecycleReceiptSchema.parse(await input.lifecycle().command(context, request));

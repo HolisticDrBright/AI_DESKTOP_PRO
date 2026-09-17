@@ -130,6 +130,39 @@ const recovery = { recordingId: consentId, sessionId: releaseId, status: "captur
   deletionDeadline: "2026-09-18T22:00:00Z", storedSegments: 2, pendingSegments: 0, reservedBytes: 8,
   nextSequence: 2, inventorySha256: "a".repeat(64), disposition: null as string | null,
   processingRequested: false, audioDeleted: false };
+
+test("reconciles a pending object with exact retry after a lost response, without sending audio or credentials", async ({ page }, info) => {
+  await withCapture(page);
+  let reconciliations=0;
+  const calls:Record<string,unknown>[]=[];
+  await page.route("**/api/live/scribe/capture/*",async route=>{
+    const operation=new URL(route.request().url()).pathname.split("/").at(-1), body=route.request().postDataJSON();
+    calls.push({operation,...body});
+    expect(["state","reconcile"]).toContain(operation);
+    expect(body).toEqual({recordingId:consentId});
+    if(operation==="state"){
+      await route.fulfill({json:{data:{...recovery,status:"paused",credentialVersion:1,
+        storedSegments:reconciliations?3:2,pendingSegments:reconciliations?0:1,nextSequence:3,
+        inventorySha256:(reconciliations?"b":"a").repeat(64)}}});return;
+    }
+    reconciliations++;
+    if(reconciliations===1){await route.fulfill({status:503,json:{error:"FICTIONAL SECRET MUST NOT DISPLAY"}});return;}
+    await route.fulfill({json:{data:{recordingId:consentId,outcome:"no_pending_segment"}}});
+  });
+  await open(page);await page.getByRole("button",{name:"Load recording status"}).click();
+  await expect(page.getByRole("option",{name:"Finish capture without processing"})).toHaveJSProperty("disabled",true);
+  await page.getByRole("button",{name:"Reconcile pending upload"}).click();
+  await expect(page.getByRole("button",{name:"Retry the same recording command"})).toBeVisible();
+  await expect(page.getByText("FICTIONAL SECRET MUST NOT DISPLAY")).toHaveCount(0);
+  await page.getByRole("button",{name:"Retry the same recording command"}).click();
+  await expect(page.getByText("Recording status: paused. Stored segments: 3. Pending segments: 0.")).toBeVisible();
+  await expect(page.getByRole("option",{name:"Finish capture without processing"})).toHaveJSProperty("disabled",false);
+  await expect(page.getByRole("button",{name:"Reconcile pending upload"})).toHaveCount(0);
+  await expect(page.getByText(/Audio deletion is not confirmed/)).toBeVisible();
+  expect(calls.filter(c=>c.operation==="reconcile")).toEqual([
+    {operation:"reconcile",recordingId:consentId},{operation:"reconcile",recordingId:consentId}]);
+  await page.screenshot({path:info.outputPath("recording-reconciled.png"),fullPage:true});
+});
 async function withCapture(page: Page) {
   await page.route("**/api/live/scribe/authority", route => route.fulfill({ json: { data: {
     ...workspace(), activeCapture: { id: consentId, sessionId: releaseId, status: "capturing",

@@ -32,10 +32,27 @@ function fixture(configuration = config) {
     expiresAt: at, inventorySha256: null, captureToken: null, replayed: false, requiresCredentialRecovery: false, processingRequested: false, audioDeleted: false });
   const upload = vi.fn().mockResolvedValue({ segmentId: other, recordingId: id, sequence: 0, sha256: sha, bytes: bytes.length, authorityEpoch: 0, status: 'stored' });
   const lifecycleFactory = vi.fn(() => ({ start, state, command })), uploadFactory = vi.fn(() => upload);
-  return { start, state, command, upload, lifecycleFactory, uploadFactory,
-    handler: createRecordingCaptureApi({ configuration, lifecycle: lifecycleFactory, upload: uploadFactory, now: () => now }) };
+  const reconcile = vi.fn().mockResolvedValue({ recordingId: id, outcome: 'no_pending_segment' }), reconcileFactory = vi.fn(() => reconcile);
+  return { start, state, command, upload, lifecycleFactory, uploadFactory, reconcile, reconcileFactory,
+    handler: createRecordingCaptureApi({ configuration, lifecycle: lifecycleFactory, upload: uploadFactory, reconcile: reconcileFactory, now: () => now }) };
 }
 describe('independently governed recording transport API', () => {
+  it('reconciles only with fresh workforce identity, no client-supplied object evidence, and a correlated receipt', async () => {
+    const f=fixture(), request=event(routes.reconcile,{recordingId:id});
+    expect((await f.handler(request)).statusCode).toBe(200);
+    expect(f.reconcile).toHaveBeenCalledWith(expect.objectContaining({identityPool:'workforce',actorPersonId:id}),{recordingId:id});
+    for(const patch of [{segmentId:other},{objectVersion:'v1'},{bucket:'override'},{captureToken:'a'.repeat(64)}])
+      expect((await f.handler(event(routes.reconcile,{recordingId:id,...patch}))).statusCode).toBe(400);
+    expect(f.reconcile).toHaveBeenCalledOnce();
+    f.reconcile.mockResolvedValue({recordingId:other,outcome:'no_pending_segment'});
+    expect((await f.handler(request)).statusCode).toBe(503);
+    const unauth=fixture();
+    expect((await unauth.handler(event(routes.reconcile,{recordingId:id},{auth_time:seconds-901}))).statusCode).toBe(401);
+    expect(unauth.reconcileFactory).not.toHaveBeenCalled();
+    const blocked=fixture({...config,phiAllowed:false,activation:'blocked'});
+    expect((await blocked.handler(request)).statusCode).toBe(503);
+    expect(blocked.reconcileFactory).not.toHaveBeenCalled();
+  });
   it('stays blocked without PHI activation and never constructs database or storage services', async () => {
     const f = fixture({ ...config, phiAllowed: false, activation: 'blocked', captureReleaseId: '' });
     expect(JSON.parse((await f.handler(segment())).body)).toEqual({ error: 'production_not_activated', phiAllowed: false });

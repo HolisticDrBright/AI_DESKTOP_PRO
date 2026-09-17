@@ -45,9 +45,16 @@ export const recordingSegmentReceiptSchema = z.object({ segmentId: uuid, recordi
   sequence: z.number().int().min(0).max(4095), sha256: hash, bytes: z.number().int().min(1).max(4194304),
   authorityEpoch: counter, status: z.literal('stored') }).strict();
 export type RecordingSegmentReceipt = z.infer<typeof recordingSegmentReceiptSchema>;
+export const recordingReconciliationReceiptSchema = z.discriminatedUnion('outcome', [
+  z.object({ recordingId: uuid, outcome: z.literal('no_pending_segment') }).strict(),
+  z.object({ recordingId: uuid, outcome: z.literal('stored'), segment: recordingSegmentReceiptSchema }).strict()
+    .refine(r => r.recordingId === r.segment.recordingId),
+]);
+export type RecordingReconciliationReceipt = z.infer<typeof recordingReconciliationReceiptSchema>;
 export const recordingCaptureRequestSchema = z.discriminatedUnion('operation', [
   z.object({ operation: z.literal('start'), input: recordingStartSchema }).strict(),
   z.object({ operation: z.literal('state'), input: recordingStateRequestSchema }).strict(),
+  z.object({ operation: z.literal('reconcile'), input: recordingStateRequestSchema }).strict(),
   z.object({ operation: z.literal('command'), input: recordingLifecycleCommandSchema }).strict(),
   z.object({ operation: z.literal('segment'), input: recordingSegmentInputSchema.extend({ contentType: recordingContentTypeSchema }) }).strict(),
 ]);
@@ -57,6 +64,11 @@ export type RecordingCaptureRequest = z.infer<typeof recordingCaptureRequestSche
  * segment. Replay secrets and non-implemented processing/deletion claims fail
  * schema validation before they can be shown to a user. */
 export function parseRecordingCaptureResponse(request: RecordingCaptureRequest, raw: unknown) {
+  if (request.operation === 'reconcile') {
+    const result = z.object({ data: recordingReconciliationReceiptSchema }).strict().parse(raw);
+    if (result.data.recordingId !== request.input.recordingId) throw new Error('recording_response_mismatch');
+    return result;
+  }
   if (request.operation === 'start') {
     const result = z.object({ data: recordingStartReceiptSchema }).strict().parse(raw), r = result.data;
     if (r.encounterId !== request.input.encounterId || r.commandId !== request.input.commandId || r.contentType !== request.input.contentType)

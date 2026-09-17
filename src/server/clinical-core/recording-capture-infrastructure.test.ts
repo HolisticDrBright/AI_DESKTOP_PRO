@@ -51,11 +51,11 @@ describe('independently blocked recording capture deployment', () => {
       .toMatchObject({ Null: { 's3:if-none-match': 'false' } });
     for (const hash of hashes) expect(JSON.stringify(template.Rules)).toContain(hash);
   });
-  it('exposes exactly four JWT-protected POST routes with exact invocation scope, pinned code and encrypted retained logs', () => {
+  it('exposes exactly five JWT-protected POST routes with exact invocation scope, pinned code and encrypted retained logs', () => {
     const r = template.Resources;
-    expect(Object.values(r).filter(v => v.Type === 'AWS::ApiGatewayV2::Route')).toHaveLength(4);
+    expect(Object.values(r).filter(v => v.Type === 'AWS::ApiGatewayV2::Route')).toHaveLength(5);
     expect(Object.values(r).some(v => v.Type === 'AWS::Lambda::Url')).toBe(false);
-    for (const action of ['start', 'state', 'command', 'segment']) {
+    for (const action of ['start', 'state', 'command', 'segment', 'reconcile']) {
       expect(r['Route_' + action].Properties).toMatchObject({ RouteKey: 'POST /clinical-core/workforce/encounter-recording/' + action,
         AuthorizationType: 'JWT', AuthorizerId: { Ref: 'Authorizer' } });
       expect(JSON.stringify(r['Invoke_' + action].Properties.SourceArn)).toContain('/POST/clinical-core/workforce/encounter-recording/' + action);

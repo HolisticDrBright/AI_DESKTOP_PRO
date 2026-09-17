@@ -21,7 +21,7 @@ export async function handler(event: ApiGatewayV2Event) {
       databaseReviewSha256: e.DATABASE_REVIEW_SHA256, captureReleaseId: e.RECORDING_CAPTURE_RELEASE_ID ?? '',
       captureReviewSha256: e.RECORDING_CAPTURE_REVIEW_SHA256, storageReviewSha256: e.RECORDING_STORAGE_REVIEW_SHA256,
       retentionReviewSha256: e.RECORDING_RETENTION_REVIEW_SHA256,
-    }, lifecycle: () => runtime().lifecycle, upload: () => runtime().upload });
+    }, lifecycle: () => runtime().lifecycle, upload: () => runtime().upload, reconcile: () => runtime().reconcile });
   }
   return cached(event);
 }

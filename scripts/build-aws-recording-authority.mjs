@@ -119,7 +119,7 @@ if (capture) {
   );
   const route = template.Resources.Route, permission = template.Resources.Invoke;
   delete template.Resources.Route; delete template.Resources.Invoke;
-  for (const action of ['start', 'state', 'command', 'segment']) {
+  for (const action of ['start', 'state', 'command', 'segment', 'reconcile']) {
     template.Resources['Route_' + action] = { ...route, Properties: { ...route.Properties,
       RouteKey: 'POST /clinical-core/workforce/encounter-recording/' + action } };
     template.Resources['Invoke_' + action] = { ...permission, Properties: { ...permission.Properties,

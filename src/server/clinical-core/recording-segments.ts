@@ -108,13 +108,7 @@ export function createRecordingSegmentUploader(repository: RecordingSegmentRepos
       try { storedVersion = (await storage.put(reserved, bytes, signal())).version; }
       catch { /* Conditional conflict or lost response: prove the existing object, never overwrite it. */ }
       const head = await storage.head(reserved, storedVersion, signal());
-      if (!version.safeParse(head.version).success || (storedVersion !== undefined && head.version !== storedVersion)
-        || head.bytes !== r.bytes || head.contentType !== reserved.contentType
-        || head.checksum !== Buffer.from(r.sha256, 'hex').toString('base64') || head.checksumType !== 'FULL_OBJECT'
-        || head.encryption !== 'aws:kms' || head.kmsKeyArn !== reserved.storage.kmsKeyArn || head.deleteMarker === true
-        || head.metadata?.['segment-id'] !== reserved.segmentId || head.metadata?.['recording-id'] !== r.recordingId
-        || head.metadata?.['session-id'] !== r.sessionId || head.metadata?.['authority-epoch'] !== String(reserved.authorityEpoch))
-        throw new RecordingUploadError('storage_unverified');
+      validateRecordingStoredObject(head, reserved, storedVersion);
       if (deadline <= now()) throw new RecordingUploadError('service_unavailable');
       // A separate transaction rechecks live consent/epoch/token/release after upload.
       return validateReceipt(await repository.complete(context, r, reserved.segmentId, head.version!), reserved);
@@ -124,7 +118,16 @@ export function createRecordingSegmentUploader(repository: RecordingSegmentRepos
     }
   };
 }
-function validateReceipt(value: unknown, reserved: RecordingSegmentReservation): RecordingSegmentReceipt {
+export function validateRecordingStoredObject(head: RecordingStoredObject, reserved: RecordingSegmentReservation, expectedVersion?: string) {
+  if (!version.safeParse(head.version).success || expectedVersion !== undefined && head.version !== expectedVersion
+    || head.bytes !== reserved.bytes || head.contentType !== reserved.contentType
+    || head.checksum !== Buffer.from(reserved.sha256, 'hex').toString('base64') || head.checksumType !== 'FULL_OBJECT'
+    || head.encryption !== 'aws:kms' || head.kmsKeyArn !== reserved.storage.kmsKeyArn || head.deleteMarker === true
+    || head.metadata?.['segment-id'] !== reserved.segmentId || head.metadata?.['recording-id'] !== reserved.recordingId
+    || head.metadata?.['session-id'] !== reserved.sessionId || head.metadata?.['authority-epoch'] !== String(reserved.authorityEpoch))
+    throw new RecordingUploadError('storage_unverified');
+}
+export function validateReceipt(value: unknown, reserved: RecordingSegmentReservation): RecordingSegmentReceipt {
   const parsed = recordingSegmentReceiptSchema.safeParse(value);
   if (!parsed.success || parsed.data.segmentId !== reserved.segmentId || parsed.data.recordingId !== reserved.recordingId
     || parsed.data.sequence !== reserved.sequence || parsed.data.sha256 !== reserved.sha256

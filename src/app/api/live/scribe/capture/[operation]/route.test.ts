@@ -29,6 +29,14 @@ it('forwards only the cookie identity to the distinct pinned service and validat
   expect(upstream.mock.calls[0][0]).toBe('https://abcdefghij.execute-api.us-east-2.amazonaws.com/clinical-core/workforce/encounter-recording/state');
   expect(upstream.mock.calls[0][1]).toMatchObject({ headers: { Authorization: 'Bearer fictional-cookie-token' }, cache: 'no-store', redirect: 'error' });
 });
+it('forwards reconciliation without caller-selected version or storage and checks correlated results', async () => {
+  upstream.mockImplementation(async()=>Response.json({data:{recordingId:id,outcome:'no_pending_segment'}}));
+  expect((await post(req(),'reconcile')).status).toBe(200);
+  expect(upstream.mock.calls[0][0]).toBe('https://abcdefghij.execute-api.us-east-2.amazonaws.com/clinical-core/workforce/encounter-recording/reconcile');
+  expect((await post(req({recordingId:id,objectVersion:'v1'}),'reconcile')).status).toBe(400);
+  upstream.mockResolvedValue(Response.json({data:{recordingId:other,outcome:'no_pending_segment'}}));
+  expect((await post(req(),'reconcile')).status).toBe(503);
+});
 it.each<Record<string, string>>([{ origin: '' }, { origin: 'https://other.example' }, { 'sec-fetch-site': 'same-site' }])('blocks foreign origins before identity: %o', async headers => {
   expect((await post(req(undefined, headers))).status).toBe(403); expect(session).not.toHaveBeenCalled(); expect(upstream).not.toHaveBeenCalled();
 });

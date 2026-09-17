@@ -1,4 +1,6 @@
-@import "tailwindcss";
+/* Scan application source, not Graphify, downloaded traces or release artifacts.
+ * The path is relative to this stylesheet, so ../ is the complete src tree. */
+@import "tailwindcss" source("../");
 
 /*
  * Design tokens — from the Clinical Intelligence design handoff.

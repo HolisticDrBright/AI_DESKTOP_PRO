@@ -5,7 +5,7 @@ import { requestRecordingCapture } from '@/lib/recording-capture-client';
 import { type RecordingCaptureRequest, type RecordingRecoveryState } from '@/contracts/encounterRecordingCapture';
 
 const buttonStyle = 'rounded border border-line px-3 py-2 text-sm disabled:opacity-50';
-type CommandRequest = Extract<RecordingCaptureRequest, { operation: 'command' }>;
+type CommandRequest = Extract<RecordingCaptureRequest, { operation: 'command' | 'reconcile' }>;
 /** No microphone/resume switch: recovery does not activate the unfinished capture
  * UI. The parent keys this component by encounter + recording + session. */
 export function AwsRecordingRecoveryPanel({ recordingId, sessionId }: { recordingId: string; sessionId: string }) {
@@ -68,6 +68,11 @@ export function AwsRecordingRecoveryPanel({ recordingId, sessionId }: { recordin
       <p className="text-sm">Recording status: {state.status}. Stored segments: {state.storedSegments}. Pending segments: {state.pendingSegments}.</p>
       <p className="text-sm">Retention deadline: {state.deletionDeadline}. Audio deletion is not confirmed.</p>
       {state.pendingSegments > 0 ? <p className="text-sm">An upload remains unconfirmed. Finishing is unavailable until it is reconciled. Discard records a disposition; it does not erase that upload.</p> : null}
+      {state.pendingSegments > 0 && (state.status === 'capturing' || state.status === 'paused') ? <div className="space-y-2">
+        <p className="text-sm">Check the existing stored object against its original reservation. This does not upload replacement audio or resume recording. Unreadable or mismatched data stays unresolved.</p>
+        <button type="button" className={buttonStyle} disabled={busy || !!pending}
+          onClick={() => void perform({ operation: 'reconcile', input: { recordingId } })}>Reconcile pending upload</button>
+      </div> : null}
       {state.status === 'capturing' ? <button type="button" className={buttonStyle} disabled={busy} onClick={() => command('pause')}>Pause this recording</button> : null}
       {state.status !== 'closed' ? <form key={state.credentialVersion + ':' + state.inventorySha256} onSubmit={event => {
         event.preventDefault();
