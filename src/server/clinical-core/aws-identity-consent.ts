@@ -17,6 +17,7 @@ export const CONSENT_SCOPES = [
   "reproductive_health",
   "lab_summaries",
   "lab_results_import",
+  "lab_specimen_context",
   "billing_links",
   "research_n_of_1",
 ] as const;

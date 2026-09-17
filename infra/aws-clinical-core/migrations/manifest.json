@@ -135,6 +135,11 @@
       "version": "20260904090000",
       "file": "20260904090000_independent_consumer_chat_context.sql",
       "production_transform": false
+    },
+    {
+      "version": "20260916080000",
+      "file": "20260916080000_synthetic_lab_specimen_context.sql",
+      "production_transform": false
     }
   ]
 }

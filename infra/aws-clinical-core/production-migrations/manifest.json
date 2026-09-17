@@ -184,6 +184,10 @@
     {
       "version": "20260916070000",
       "file": "20260916070000_production_owned_deletion_hold_guard.sql"
+    },
+    {
+      "version": "20260916080000",
+      "file": "20260916080000_production_lab_specimen_context.sql"
     }
   ]
 }

@@ -3,6 +3,7 @@ if (typeof window !== "undefined") {
 }
 
 import { createHash } from "node:crypto";
+import {labSpecimenTransferSchema,labSpecimenReceiptSchema,labSpecimenRecordSchema,specimenContent,type LabSpecimenTransfer,type LabSpecimenReceipt,type LabSpecimenRecord} from "../../contracts/labSpecimenTransfer";
 import { clinicalUuid, ClinicalCoreDatabaseRejection, type ClinicalCoreDatabase, type ClinicalCoreTransaction } from "./database";
 import {
   ClinicalCoreAdapterError,
@@ -57,6 +58,8 @@ export interface AwsClinicalStateAdapter<Context extends ClinicalRequestContext>
     labResultsImportConsent: "granted" | "revoked" | "not_granted";
   } | null>;
   importLabResult(context: Context, payload: LabResultImport): Promise<LabImportResult>;
+  importLabSpecimenContext?(context:Context,payload:LabSpecimenTransfer):Promise<LabSpecimenReceipt>;
+  getLabSpecimenContext?(context:Context,eventId:string):Promise<LabSpecimenRecord|null>;
   reviewLabResult(context: Context, input: {
     eventId: string;
     decision: "accept" | "reject";
@@ -150,6 +153,47 @@ function createAwsClinicalStateAdapter<Context extends ClinicalRequestContext>(
           resourceVersion: payload.resourceVersion, payloadSha256: createHash("sha256").update(canonicalPayload).digest("hex") } };
     },
 
+    async importLabSpecimenContext(context,input) {
+      assertContext(context,boundary,"consumer");
+      const parsed=labSpecimenTransferSchema.safeParse(input);
+      if(!parsed.success)throw new ClinicalStateError("request_invalid");
+      const payload=parsed.data,content=specimenContent(payload),hash=createHash("sha256").update(content).digest("hex");
+      const row=await run(database,context,async tx=>{
+        try{return first(await tx.query("select * from clinical_core.record_lab_specimen_context($1)",[content]));}
+        catch(error){
+          if(error instanceof ClinicalCoreDatabaseRejection){
+            if(error.category==='conflict')throw new ClinicalStateError('specimen_context_conflict');
+            if(error.category==='consent_required')throw new ClinicalStateError('specimen_consent_required');
+            if(error.category==='request_invalid')throw new ClinicalStateError('request_invalid');
+          }
+          throw error;
+        }
+      },"clinical_state_refused");
+      const receipt=labSpecimenReceiptSchema.safeParse({version:"lab-specimen-receipt/1",
+        contextId:row.context_id,labEventId:row.lab_event_id,requestId:row.request_id,revision:row.revision,
+        payloadSha256:row.payload_sha256,receivedAt:specimenTimestamp(row.received_at),duplicate:row.duplicate});
+      if(!receipt.success||receipt.data.labEventId!==payload.labEventId||receipt.data.requestId!==payload.requestId
+        ||receipt.data.payloadSha256!==hash||receipt.data.revision!==payload.expectedRevision+1)throw new ClinicalStateError("database_unavailable");
+      return receipt.data;
+    },
+    async getLabSpecimenContext(context,eventId) {
+      assertContext(context,boundary);
+      if(!UUID.test(eventId))throw new ClinicalStateError("request_invalid");
+      return run(database,context,async tx=>{
+        const rows=(await tx.query(`select id,lab_event_id,revision,context,received_at,payload_sha256,lab_payload_sha256
+          from clinical_core.lab_specimen_context_versions where organization_id=$1 and lab_event_id=$2
+          order by revision desc limit 1`,[clinicalUuid(context.organizationId),clinicalUuid(eventId)])).rows;
+        if(!rows[0])return null;
+        let raw=rows[0].context;
+        if(typeof raw==="string"){try{raw=JSON.parse(raw);}catch{throw new ClinicalStateError("database_unavailable");}}
+        const row=rows[0];
+        const parsed=labSpecimenRecordSchema.safeParse({version:'lab-specimen-record/1',contextId:row.id,
+          labEventId:row.lab_event_id,revision:row.revision,payloadSha256:row.payload_sha256,
+          labPayloadSha256:row.lab_payload_sha256,receivedAt:specimenTimestamp(row.received_at),context:raw});
+        if(!parsed.success||parsed.data.labEventId!==eventId)throw new ClinicalStateError("database_unavailable");
+        return parsed.data;
+      },"clinical_state_refused");
+    },
     async reviewLabResult(context, input) {
       assertContext(context, boundary, "workforce");
       if (!UUID.test(input.eventId) || !["accept", "reject"].includes(input.decision)
@@ -225,10 +269,16 @@ function createAwsClinicalStateAdapter<Context extends ClinicalRequestContext>(
 }
 
 export class ClinicalStateError extends Error {
-  constructor(readonly category: "request_invalid" | "clinical_state_refused" | "database_unavailable") {
+  constructor(readonly category: "request_invalid" | "clinical_state_refused" | "database_unavailable" | "specimen_context_conflict" | "specimen_consent_required") {
     super(category);
     this.name = "ClinicalStateError";
   }
+}
+
+function specimenTimestamp(value:unknown):string {
+  const date=value instanceof Date?value:typeof value==="string"?new Date(value):null;
+  if(!date||!Number.isFinite(date.getTime()))throw new ClinicalStateError("database_unavailable");
+  return date.toISOString();
 }
 
 function validateLabImport(payload: LabResultImport) {

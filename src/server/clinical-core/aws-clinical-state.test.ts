@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
-import type { ClinicalCoreDatabase } from "./database";
+import { ClinicalCoreDatabaseRejection, type ClinicalCoreDatabase } from "./database";
+import type { LabSpecimenTransfer } from "../../contracts/labSpecimenTransfer";
 import {
   ClinicalStateError,
   createAwsProductionClinicalStateAdapter,
@@ -78,6 +79,29 @@ function database(state = "review_pending", duplicate = false) {
 }
 
 describe("AWS synthetic clinical state adapter", () => {
+  test.each([
+    ['conflict','specimen_context_conflict'],['consent_required','specimen_consent_required'],
+    ['request_invalid','request_invalid'],['operation_refused','clinical_state_refused'],
+  ] as const)('preserves bounded specimen %s without leaking provider detail',async(category,expected)=>{
+    const input:LabSpecimenTransfer={version:'lab-specimen-context/1',connectionId:CONNECTION,labEventId:EVENT,
+      labPayloadSha256:'a'.repeat(64),requestId:EVENT,expectedRevision:0,consentVersion:1,reproductiveConsentVersion:null,
+      context:{source:'patient_reported',verification:'unverified',recordedAt:'2026-01-03T00:00:00Z',observedOn:'2026-01-02',
+        ageAtDraw:{value:35,unit:'years'},sex:null,assayId:null,pregnancyStatus:null,cyclePhase:null,reproductiveStage:null,
+        contraception:null,pregnancyTrimester:null}};
+    const db:ClinicalCoreDatabase={transaction:work=>work({query:async sql=>{
+      if(sql.includes('set_request_context'))return {rows:[]};throw new ClinicalCoreDatabaseRejection(category);
+    }})};
+    await expect(createAwsSyntheticClinicalStateAdapter(db).importLabSpecimenContext!(context(),input))
+      .rejects.toMatchObject({category:expected,message:expected});
+  });
+  test('refuses malformed specimen read metadata instead of forwarding database rows',async()=>{
+    const db:ClinicalCoreDatabase={transaction:work=>work({query:async<Row extends Record<string,unknown>>(sql:string)=>({
+      rows:(sql.includes('set_request_context')?[]:[{id:EVENT,lab_event_id:EVENT,revision:1,context:{},
+        received_at:'2026-01-03T00:00:00Z',payload_sha256:'not-a-hash'}]) as unknown as Row[],
+    })})};
+    await expect(createAwsSyntheticClinicalStateAdapter(db).getLabSpecimenContext!(context(),EVENT))
+      .rejects.toMatchObject({category:'database_unavailable'});
+  });
   test("matches the V2 lab journal golden content hash for a one-sided reported range", async () => {
     const fixture = database(), input = payload();
     input.source = { system: "ai_longevity_pro_v2", recordType: "lab_panels", panelId: `panel_${"a".repeat(32)}`, markerId: `marker_${"b".repeat(32)}` };

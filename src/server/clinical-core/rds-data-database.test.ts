@@ -144,6 +144,11 @@ describe("Aurora RDS Data API transaction adapter", () => {
   });
 
   test.each([
+    ["specimen_consent_required", "consent_required"],
+    ["specimen_context_conflict", "conflict"],
+    ["specimen_context_invalid", "request_invalid"],
+    ["specimen_context_refused", "operation_refused"],
+    ["specimen_provider_approval_required", "operation_refused"],
     ["request_context_refused", "identity_refused"],
     ["production_context_refused", "identity_refused"],
     ["patient_access_refused", "identity_refused"],
