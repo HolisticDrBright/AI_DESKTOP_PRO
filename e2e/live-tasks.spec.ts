@@ -359,8 +359,9 @@ test("practitioner sign-in and sign-out work via httpOnly cookie session", async
   await page.getByLabel("Email").fill("practitioner@fixture.local");
   await page.getByLabel("Password").fill("fixture-password");
   await page.getByRole("button", { name: "Sign in" }).click();
-  // Redirects home on success; the session endpoint reflects the cookie session.
-  await page.waitForURL("**/");
+  // The home route redirects to Today. A full-document login correctly follows
+  // that redirect; do not wait for the intermediate root URL to remain loaded.
+  await expect(page).toHaveURL(/\/today$/);
   const session = await page.evaluate(() =>
     fetch("/api/auth/session").then((r) => r.json()),
   );
@@ -390,7 +391,7 @@ test("org members: roster, account linking, honest guards, confirmed removal (ad
   await page.getByLabel("Email").fill("practitioner@fixture.local");
   await page.getByLabel("Password").fill("fixture-password");
   await page.getByRole("button", { name: "Sign in" }).click();
-  await page.waitForURL("**/");
+  await expect(page).toHaveURL(/\/today$/);
 
   await page.goto("/settings");
   const card = page.getByTestId("org-members-card");
@@ -445,7 +446,7 @@ test("org substitution: a forged organization id is refused and the session org 
   await page.getByLabel("Email").fill("practitioner@fixture.local");
   await page.getByLabel("Password").fill("fixture-password");
   await page.getByRole("button", { name: "Sign in" }).click();
-  await page.waitForURL("**/");
+  await expect(page).toHaveURL(/\/today$/);
 
   // The org id is browser input here — the server must validate it against
   // the caller's OWN memberships, not trust it.
@@ -478,7 +479,7 @@ test("a signed-in user with no active memberships gets honest states, never tena
   await page.getByLabel("Email").fill("no-orgs@fixture.local");
   await page.getByLabel("Password").fill("fixture-password");
   await page.getByRole("button", { name: "Sign in" }).click();
-  await page.waitForURL("**/");
+  await expect(page).toHaveURL(/\/today$/);
 
   const session = await page.evaluate(() => fetch("/api/auth/session").then((r) => r.json()));
   expect(session?.data?.signedIn).toBe(true);
@@ -503,7 +504,7 @@ test("multi-org: auto-select, validated switch clears org data, tabs agree, mid-
   await page.getByLabel("Email").fill("dual-org@fixture.local");
   await page.getByLabel("Password").fill("fixture-password");
   await page.getByRole("button", { name: "Sign in" }).click();
-  await page.waitForURL("**/");
+  await expect(page).toHaveURL(/\/today$/);
 
   // Safe default: exactly-one-or-first membership auto-selected at sign-in.
   const session = await page.evaluate(() => fetch("/api/auth/session").then((r) => r.json()));
@@ -627,7 +628,7 @@ test("EMR: appointment → encounter → autosaved draft → recovery → sign �
   await page.getByLabel("Email").fill("no-orgs@fixture.local");
   await page.getByLabel("Password").fill("fixture-password");
   await page.getByRole("button", { name: "Sign in" }).click();
-  await page.waitForURL("**/");
+  await expect(page).toHaveURL(/\/today$/);
   await page.goto(encounterUrl);
   await expect(
     page.getByText(/isn.t available|not available|access denied/i).first(),
