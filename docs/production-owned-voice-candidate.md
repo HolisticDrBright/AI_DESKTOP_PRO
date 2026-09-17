@@ -1,5 +1,10 @@
 # Independent production voice-processing candidate
 
+September 17 follow-up: `personal-voice-deletion-holds.md` describes the concrete
+database guard on provider/object deletion and cleanup receipts, including drain.
+Production native TTL/lifecycle deletion is removed; synthetic expiry is unchanged.
+The candidate now requires a reviewed SecretKmsKeyArn for database-secret access.
+
 September 15, 2026. Original phase2, not a new/completed phase.
 Desktop **4a0080f01f46819911b029172929fa51d93cc041**;
 V2 **48ba65a48a78e703ab10d2e0c74530fea459f7da**.
@@ -32,7 +37,7 @@ acceptance. The generated template remains default-blocked.
 - Durable idempotency/leases, bounded audio size,15-minute readable lifetime and
   retry sweep retained. Separate production object/job namespaces. Cleanup removes
   exact audio/transcript versions and delete markers, refusing unexpected keys and
-  partial failures. Cleaned-job metadata expires later; backups/audits are not
+  partial failures. Cleaned-job metadata stays on a retained retry watch; backups/audits are not
   claimed erased. Scheduled failures throw sanitized errors so alarms can fire.
 - V2 checks both owner-specific server consents before capture and upload; Personal
   data storage provides review/history/withdrawal. No bundled approval/automatic

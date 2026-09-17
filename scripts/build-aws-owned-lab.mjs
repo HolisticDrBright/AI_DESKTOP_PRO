@@ -38,6 +38,7 @@ Object.assign(template.Parameters,{
   AllowedScopes:{Type:'String',Default:'',AllowedValues:['','ai_context,lab_history']},
   DatabaseClusterArn:{Type:'String',AllowedPattern:'^arn:aws:rds:[a-z0-9-]+:[0-9]{12}:cluster:[A-Za-z0-9-]+$'},
   DatabaseSecretArn:{Type:'String',AllowedPattern:'^arn:aws:secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@!-]+$'},
+  SecretKmsKeyArn:{Type:'String',AllowedPattern:'^arn:aws:kms:[a-z0-9-]+:[0-9]{12}:key/[a-f0-9-]{36}$'},
   DatabaseName:{Type:'String',AllowedPattern:'^[a-z][a-z0-9_]{0,62}$'},
   BillingApiOrigin:{Type:'String',Default:'',AllowedPattern:'^$|^https://[a-z0-9-]+\\.execute-api\\.[a-z0-9-]+\\.amazonaws\\.com$'},
   AlarmTopicArn:{Type:'String',Default:'',AllowedPattern:'^$|^arn:aws:sns:[a-z0-9-]+:[0-9]{12}:[A-Za-z0-9_-]+$'},
@@ -71,7 +72,9 @@ Object.assign(R.LabCleanupFunction.Properties.Environment.Variables,production);
 R.LabApiFunction.Properties.ReservedConcurrentExecutions=8;
 R.LabWorkerFunction.Properties.ReservedConcurrentExecutions=4;
 const database=[{Effect:'Allow',Action:['rds-data:BeginTransaction','rds-data:CommitTransaction','rds-data:RollbackTransaction','rds-data:ExecuteStatement'],Resource:ref('DatabaseClusterArn')},
-  {Effect:'Allow',Action:'secretsmanager:GetSecretValue',Resource:ref('DatabaseSecretArn')}];
+  {Effect:'Allow',Action:'secretsmanager:GetSecretValue',Resource:ref('DatabaseSecretArn')},
+  {Effect:'Allow',Action:'kms:Decrypt',Resource:ref('SecretKmsKeyArn'),Condition:{StringEquals:{
+    'kms:ViaService':sub('secretsmanager.${AWS::Region}.amazonaws.com'),'kms:EncryptionContext:SecretARN':ref('DatabaseSecretArn')}}}];
 // Logs-only by default; every data, provider, workflow and database permission
 // exists only while the reviewed activation condition holds.
 function gate(roleName,logsPolicyName,extra=[]){

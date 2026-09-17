@@ -5,6 +5,8 @@ import { DeleteTranscriptionJobCommand, GetTranscriptionJobCommand, StartTranscr
 import { VoiceJobs, VOICE_CLEANUP_WATCH, type VoiceJob, type VoiceProvider, type VoiceRepository } from "./voice-jobs";
 import type {VoiceAuthorizationPolicy} from './voice-authorization';
 import {erasePersonalVoiceObjects} from './voice-object-cleanup';
+import type {ExternalDeletionGuard} from './owned-external-deletion';
+import {ownedVoiceDeletionScope} from './owned-voice-deletion';
 
 const db = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const s3 = new S3Client({});
@@ -19,10 +21,12 @@ export function awsVoiceJobs(): VoiceJobs {
   return createAwsVoiceService({table,bucket,kms,mode:'synthetic'});
 }
 export function createAwsVoiceService(options:{table:string;bucket:string;kms:string}&(
-  {mode:'synthetic';policy?:never}|{mode:'production';policy:VoiceAuthorizationPolicy}
+  {mode:'synthetic';policy?:never}|{mode:'production';policy:VoiceAuthorizationPolicy;deletionGuard:ExternalDeletionGuard}
 )):VoiceJobs{
   const {table,bucket,kms}=options;
-  if(!table||!bucket||!kms||(options.mode==='production'&&!options.policy))throw new Error('voice_configuration_refused');
+  if(!table||!bucket||!kms||(options.mode==='production'&&(!options.policy||typeof options.deletionGuard!=='function')))throw new Error('voice_configuration_refused');
+  const mutate=<T>(job:VoiceJob,operation:()=>Promise<T>):Promise<T>=>options.mode==='production'
+    ?options.deletionGuard(ownedVoiceDeletionScope(job),operation):operation();
   const inputKey = (job: VoiceJob) => `${options.mode==='production'?'personal-voice/input':'temporary-input'}/${job.id}.${job.format}`;
   const outputKey = (job: VoiceJob) => `${options.mode==='production'?'personal-voice/output':'temporary-output'}/${job.id}.json`;
   const jobName = (job: VoiceJob) => `alp-${options.mode==='production'?'personal':'synthetic'}-voice-${job.id}`;
@@ -45,10 +49,18 @@ export function createAwsVoiceService(options:{table:string;bucket:string;kms:st
       const clean = changes.state === "cleaned";
       if (clean && (changes.cleanupWatchVersion !== VOICE_CLEANUP_WATCH || !Number.isSafeInteger(changes.lastCleanupAt)
         || changes.lastCleanupAt! < 0 || !Number.isSafeInteger(changes.nextWork) || changes.nextWork! <= changes.lastCleanupAt!)) throw new Error('voice_cleanup_watch_invalid');
-      await db.send(new UpdateCommand({ TableName: table, Key: { id }, ConditionExpression: "leaseToken = :token",
+      const write=(bound?:VoiceJob)=>db.send(new UpdateCommand({ TableName: table, Key: { id },
+        ConditionExpression: "leaseToken = :token"+(bound?' AND #owner = :owner AND #authorization = :authorization':''),
         UpdateExpression: `SET nextWork = :due${changes.state ? ", #state = :state" : ""}${clean ? ", pending = :work, cleanupWatchVersion = :watch, lastCleanupAt = :verified" : ""} REMOVE leaseToken, leaseUntil${clean ? ", expiresAt" : ""}`,
-        ...(changes.state ? { ExpressionAttributeNames: { "#state": "state" } } : {}),
-        ExpressionAttributeValues: { ":token": token, ":due": changes.nextWork, ...(changes.state ? { ":state": changes.state } : {}), ...(clean ? { ":work": "work", ":watch": VOICE_CLEANUP_WATCH, ":verified": changes.lastCleanupAt } : {}) } }));
+        ...(changes.state||bound ? { ExpressionAttributeNames: { ...(changes.state?{"#state":"state"}:{}),...(bound?{'#owner':'owner','#authorization':'authorization'}:{}) } } : {}),
+        ExpressionAttributeValues: { ":token": token, ":due": changes.nextWork, ...(changes.state ? { ":state": changes.state } : {}),
+          ...(clean ? { ":work": "work", ":watch": VOICE_CLEANUP_WATCH, ":verified": changes.lastCleanupAt } : {}),
+          ...(bound?{':owner':bound.owner,':authorization':bound.authorization}:{}) } }),{abortSignal:AbortSignal.timeout(15000)});
+      if(clean&&options.mode==='production'){
+        const current=await repo.get(id);
+        if(!current||current.id!==id||current.leaseToken!==token)throw new Error('voice_cleanup_lease_lost');
+        await mutate(current,()=>write(current));
+      }else await write();
     },
     async cancel(id, owner) {
       try { await db.send(new UpdateCommand({ TableName: table, Key: { id }, ConditionExpression: "#owner = :owner AND #state <> :cleaned",
@@ -90,9 +102,11 @@ export function createAwsVoiceService(options:{table:string;bucket:string;kms:st
     },
     async remove(job) {
       // Only called after a terminal/absent provider status; deletion errors remain retryable.
-      try { await transcribe.send(new DeleteTranscriptionJobCommand({ TranscriptionJobName: jobName(job) })); }
-      catch (error) { if (!absent(error)) throw error; }
-      if(options.mode==='production'){await erasePersonalVoiceObjects(s3,bucket,job);return;}
+      await mutate(job,async()=>{
+        try { await transcribe.send(new DeleteTranscriptionJobCommand({ TranscriptionJobName: jobName(job) }),{abortSignal:AbortSignal.timeout(15000)}); }
+        catch (error) { if (!absent(error)) throw error; }
+      });
+      if(options.mode==='production'){await erasePersonalVoiceObjects(s3,bucket,job,operation=>mutate(job,operation));return;}
       await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: inputKey(job) }));
       await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: outputKey(job) }));
     },

@@ -27,6 +27,7 @@ Object.assign(template.Parameters,{
   AllowedScopes:{Type:'String',Default:'',AllowedValues:['','ai_context,voice_transcription']},
   DatabaseClusterArn:{Type:'String',AllowedPattern:'^arn:aws:rds:[a-z0-9-]+:[0-9]{12}:cluster:[A-Za-z0-9-]+$'},
   DatabaseSecretArn:{Type:'String',AllowedPattern:'^arn:aws:secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@!-]+$'},
+  SecretKmsKeyArn:{Type:'String',AllowedPattern:'^arn:aws:kms:[a-z0-9-]+:[0-9]{12}:key/[a-f0-9-]{36}$'},
   DatabaseName:{Type:'String',AllowedPattern:'^[a-z][a-z0-9_]{0,62}$'},
   BillingApiOrigin:{Type:'String',Default:'',AllowedPattern:'^$|^https://[a-z0-9-]+\\.execute-api\\.[a-z0-9-]+\\.amazonaws\\.com$'},
   AlarmTopicArn:{Type:'String',Default:'',AllowedPattern:'^$|^arn:aws:sns:[a-z0-9-]+:[0-9]{12}:[A-Za-z0-9_-]+$'}
@@ -46,13 +47,15 @@ template.Conditions.SweepEnabled={'Fn::Or':[{Condition:'Active'},{Condition:'Dra
 template.Rules.DrainRequiresReviewedCleanup={RuleCondition:{'Fn::Equals':[ref('Activation'),'draining']},Assertions:[
   {Assert:{'Fn::Equals':[ref('PhiAllowed'),'false']},AssertDescription:'New content processing must be disabled during drain'},
   {Assert:{'Fn::Equals':[ref('AllowedScopes'),'']},AssertDescription:'No feature scopes during drain'},
-  ...['CleanupEvidenceSha256','ActivationEvidenceSha256','ProviderEvidenceSha256','AlarmTopicArn'].map(name=>({Assert:{'Fn::Not':[{'Fn::Equals':[ref(name),'']}]},AssertDescription:`${name} required for reviewed cleanup`}))
+  ...['CleanupEvidenceSha256','ActivationEvidenceSha256','ProviderEvidenceSha256','AlarmTopicArn','DatabaseClusterArn','DatabaseSecretArn','DatabaseName','SecretKmsKeyArn'].map(name=>({Assert:{'Fn::Not':[{'Fn::Equals':[ref(name),'']}]},AssertDescription:`${name} required for reviewed cleanup`}))
 ]};
 resources.TranscriptionLogGroup.Properties.LogGroupName=sub('/ai-clinical-core/production/personal-voice/${ClinicalApiId}');
 resources.VoiceJobTable.Properties.PointInTimeRecoverySpecification={PointInTimeRecoveryEnabled:true};
 resources.TranscriptionBucket.Properties.VersioningConfiguration={Status:'Enabled'};
-// Retention must be approved before activation; no backup-erasure claim is made.
-resources.TranscriptionBucket.Properties.LifecycleConfiguration.Rules[0].NoncurrentVersionExpiration={NoncurrentDays:1};
+// Native expiry cannot consult legal holds. Processing/readability deadlines
+// remain, but personal-record erasure must use the guarded cleanup path.
+delete resources.TranscriptionBucket.Properties.LifecycleConfiguration;
+delete resources.VoiceJobTable.Properties.TimeToLiveSpecification;
 resources.VoiceJobFunction.Properties.Environment.Variables={
   VOICE_JOB_TABLE:ref('VoiceJobTable'),TRANSCRIPTION_BUCKET:ref('TranscriptionBucket'),VOICE_KMS_KEY_ARN:ref('ClinicalCoreKeyArn'),
   CONSUMER_ISSUER:ref('ConsumerIssuer'),CONSUMER_AUDIENCE:ref('ConsumerAudience'),PHI_ALLOWED:ref('PhiAllowed'),
@@ -70,17 +73,22 @@ objectPolicy.Action=['s3:GetObject','s3:PutObject','s3:DeleteObjectVersion'];
 objectPolicy.Resource=sub('${TranscriptionBucket.Arn}/personal-voice/*');
 statements.push({Effect:'Allow',Action:'s3:ListBucketVersions',Resource:{'Fn::GetAtt':['TranscriptionBucket','Arn']},Condition:{StringLike:{'s3:prefix':['personal-voice/input/*','personal-voice/output/*']}}});
 statements.find(s=>Array.isArray(s.Action)&&s.Action.includes('transcribe:StartTranscriptionJob')).Resource=sub('arn:${AWS::Partition}:transcribe:${AWS::Region}:${AWS::AccountId}:transcription-job/alp-personal-voice-*');
-statements.push({Effect:'Allow',Action:['rds-data:BeginTransaction','rds-data:CommitTransaction','rds-data:RollbackTransaction','rds-data:ExecuteStatement'],Resource:ref('DatabaseClusterArn')},
-  {Effect:'Allow',Action:'secretsmanager:GetSecretValue',Resource:ref('DatabaseSecretArn')});
+const holdDatabase=[{Effect:'Allow',Action:['rds-data:BeginTransaction','rds-data:CommitTransaction','rds-data:RollbackTransaction','rds-data:ExecuteStatement'],Resource:ref('DatabaseClusterArn')},
+  {Effect:'Allow',Action:['secretsmanager:GetSecretValue'],Resource:ref('DatabaseSecretArn')},
+  {Effect:'Allow',Action:['kms:Decrypt'],Resource:ref('SecretKmsKeyArn'),Condition:{StringEquals:{
+    'kms:ViaService':sub('secretsmanager.${AWS::Region}.amazonaws.com'),'kms:EncryptionContext:SecretARN':ref('DatabaseSecretArn')}}}];
+statements.push(...holdDatabase);
 resources.VoiceJobRole.Properties.Policies=[logPolicy,{'Fn::If':['Active',{PolicyName:'ScopedOwnedVoiceData',PolicyDocument:{Version:'2012-10-17',Statement:statements}},ref('AWS::NoValue')]}];
 // Drain retains only maintenance access: no audio/transcript reads or writes,
-// provider starts, SQL, secrets, billing or unrestricted KMS decryption.
+// provider starts, billing or unrestricted KMS decryption. The scoped database
+// guard is necessary during drain too; there is no hold-bypass cleanup mode.
 const cleanupActions=new Set(['dynamodb:GetItem','dynamodb:UpdateItem','dynamodb:Query',
   's3:DeleteObjectVersion','s3:ListBucketVersions','transcribe:GetTranscriptionJob','transcribe:DeleteTranscriptionJob']);
 const cleanupStatements=statements.flatMap(statement=>{
   const Action=(Array.isArray(statement.Action)?statement.Action:[statement.Action]).filter(a=>cleanupActions.has(a));
   return Action.length?[{...statement,Action}]:[];
 });
+cleanupStatements.push(...holdDatabase);
 cleanupStatements.push({Effect:'Allow',Action:['kms:Encrypt','kms:Decrypt','kms:GenerateDataKey'],Resource:ref('ClinicalCoreKeyArn'),
   Condition:{StringEquals:{'kms:ViaService':sub('dynamodb.${AWS::Region}.amazonaws.com'),
     'kms:EncryptionContext:aws:dynamodb:tableName':ref('VoiceJobTable'),

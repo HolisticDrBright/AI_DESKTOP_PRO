@@ -18,7 +18,7 @@ describe('production voice release candidate',()=>{
     expect(JSON.stringify(template.Rules)).toContain('AlarmTopicArn');
     expect(JSON.stringify(template.Rules)).toContain('BillingApiOrigin');
   });
-  it('drain retains maintenance permissions but never ingestion, transcript access or SQL',()=>{
+  it('drain retains the scoped hold database guard but never ingestion or transcript access',()=>{
     expect(template.Parameters.Activation.AllowedValues).toContain('draining');
     expect(template.Parameters.CleanupEvidenceSha256.Default).toBe('');
     expect(JSON.stringify(template.Rules.DrainRequiresReviewedCleanup)).toContain('CleanupEvidenceSha256');
@@ -28,12 +28,22 @@ describe('production voice release candidate',()=>{
     expect(statements.every(s=>s.Resource!=='*')).toBe(true);
     expect(statements.flatMap(s=>s.Action).sort()).toEqual([
       'dynamodb:GetItem','dynamodb:UpdateItem','dynamodb:Query','s3:DeleteObjectVersion','s3:ListBucketVersions',
-      'transcribe:GetTranscriptionJob','transcribe:DeleteTranscriptionJob','kms:Encrypt','kms:Decrypt','kms:GenerateDataKey'].sort());
-    expect(statements.find(s=>s.Action.includes('kms:Decrypt'))?.Condition).toEqual({StringEquals:{
+      'transcribe:GetTranscriptionJob','transcribe:DeleteTranscriptionJob','kms:Encrypt','kms:Decrypt','kms:GenerateDataKey',
+      'rds-data:BeginTransaction','rds-data:CommitTransaction','rds-data:RollbackTransaction','rds-data:ExecuteStatement','secretsmanager:GetSecretValue','kms:Decrypt'].sort());
+    expect(statements.find(s=>s.Action.includes('kms:GenerateDataKey'))?.Condition).toEqual({StringEquals:{
       'kms:ViaService':{'Fn::Sub':'dynamodb.${AWS::Region}.amazonaws.com'},
       'kms:EncryptionContext:aws:dynamodb:tableName':{Ref:'VoiceJobTable'},
       'kms:EncryptionContext:aws:dynamodb:subscriberId':{Ref:'AWS::AccountId'}}});
+    expect(statements.find(s=>s.Action.includes('kms:Decrypt')&&!s.Action.includes('kms:GenerateDataKey'))).toEqual({
+      Effect:'Allow',Action:['kms:Decrypt'],Resource:{Ref:'SecretKmsKeyArn'},Condition:{StringEquals:{
+        'kms:ViaService':{'Fn::Sub':'secretsmanager.${AWS::Region}.amazonaws.com'},'kms:EncryptionContext:SecretARN':{Ref:'DatabaseSecretArn'}}}});
+    expect(JSON.stringify(template.Rules.DrainRequiresReviewedCleanup)).toContain('DatabaseClusterArn');
+    expect(JSON.stringify(template.Rules.DrainRequiresReviewedCleanup)).toContain('SecretKmsKeyArn');
     expect(template.Conditions.SweepEnabled).toEqual({'Fn::Or':[{Condition:'Active'},{Condition:'Draining'}]});
+  });
+  it('never applies native expiry to personal jobs, audio or transcript versions',()=>{
+    expect(template.Resources.TranscriptionBucket.Properties.LifecycleConfiguration).toBeUndefined();
+    expect(template.Resources.VoiceJobTable.Properties.TimeToLiveSpecification).toBeUndefined();
   });
   it('scopes provider, object-version cleanup and database permissions to named resources',()=>{
     const statements=template.Resources.VoiceJobRole.Properties.Policies[1]['Fn::If'][1].PolicyDocument.Statement;

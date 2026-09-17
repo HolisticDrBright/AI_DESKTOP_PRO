@@ -2,6 +2,7 @@ import {createOwnedVoiceApi,type OwnedVoiceEvent} from './owned-voice-api';
 import {createOwnedConsumerRecordsAdapter} from './owned-consumer-records';
 import {createRdsDataClinicalCoreDatabase} from './rds-data-database';
 import {createAwsVoiceService} from './aws-voice-jobs-lambda';
+import {ownedExternalDeletionGuardFromEnv} from './owned-external-deletion';
 let cached:ReturnType<typeof createOwnedVoiceApi>|undefined;
 export async function handler(event:OwnedVoiceEvent){
   const env=process.env;
@@ -13,7 +14,7 @@ export async function handler(event:OwnedVoiceEvent){
       allowedScopes:(env.PERSONAL_VOICE_ALLOWED_SCOPES??'').split(',').filter(Boolean)},
     adapter:()=>createOwnedConsumerRecordsAdapter(createRdsDataClinicalCoreDatabase({clusterArn:env.CLINICAL_DATABASE_CLUSTER_ARN??'',
       secretArn:env.CLINICAL_DATABASE_SECRET_ARN??'',databaseName:env.CLINICAL_DATABASE_NAME??'',region:env.AWS_REGION})),
-    service:policy=>createAwsVoiceService({mode:'production',policy,table:env.VOICE_JOB_TABLE??'',bucket:env.TRANSCRIPTION_BUCKET??'',kms:env.VOICE_KMS_KEY_ARN??''}),
+    service:policy=>createAwsVoiceService({mode:'production',policy,deletionGuard:ownedExternalDeletionGuardFromEnv(env),table:env.VOICE_JOB_TABLE??'',bucket:env.TRANSCRIPTION_BUCKET??'',kms:env.VOICE_KMS_KEY_ARN??''}),
   });
   return cached(event);
 }

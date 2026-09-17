@@ -65,6 +65,7 @@ export function createOwnedVoiceApi(input:{
       if(error instanceof VoiceAuthorizationRevoked)return reply(403,{error:'voice_consent_required'});
       if(error instanceof OwnedStorageError){
         if(error.code==='owner_required')return reply(401,{error:'reauth_required'});
+        if(error.code==='legal_hold')return reply(409,{error:'voice_deletion_held'});
         if(error.code==='consent_required')return reply(403,{error:'voice_consent_required'});
       }
       const status=error&&typeof error==='object'&&'status' in error?Number(error.status):503;

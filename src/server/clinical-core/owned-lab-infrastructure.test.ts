@@ -19,6 +19,8 @@ describe('production lab release candidate',()=>{
     expect(role[0]).toBe('Active');
     expect(role[1].PolicyDocument.Statement).toContainEqual({Effect:'Allow',Action:['rds-data:BeginTransaction','rds-data:CommitTransaction','rds-data:RollbackTransaction','rds-data:ExecuteStatement'],Resource:{Ref:'DatabaseClusterArn'}});
     expect(role[1].PolicyDocument.Statement).toContainEqual({Effect:'Allow',Action:'secretsmanager:GetSecretValue',Resource:{Ref:'DatabaseSecretArn'}});
+    expect(role[1].PolicyDocument.Statement).toContainEqual({Effect:'Allow',Action:'kms:Decrypt',Resource:{Ref:'SecretKmsKeyArn'},Condition:{StringEquals:{
+      'kms:ViaService':{'Fn::Sub':'secretsmanager.${AWS::Region}.amazonaws.com'},'kms:EncryptionContext:SecretARN':{Ref:'DatabaseSecretArn'}}}});
   });
   it('is blocked, personal-namespaced and logs-only by default with explicit activation evidence',()=>{
     expect(template.Parameters.PhiAllowed.Default).toBe('false');expect(template.Parameters.Activation.Default).toBe('blocked');

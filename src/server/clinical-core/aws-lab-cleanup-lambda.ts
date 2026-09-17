@@ -4,7 +4,7 @@ import { S3Client } from '@aws-sdk/client-s3';
 import { SFNClient } from '@aws-sdk/client-sfn';
 import { stopLabExecutions } from './lab-execution-stop';
 import { cleanupJobFromObjectKey, reconcileLabDeletion, sweepLabDeletions } from './lab-deletion-cleanup';
-import {ownedLabDeletionGuardFromEnv} from './owned-external-deletion';
+import {ownedExternalDeletionGuardFromEnv} from './owned-external-deletion';
 
 const db=DynamoDBDocumentClient.from(new DynamoDBClient({}),{marshallOptions:{removeUndefinedValues:true}});
 const s3=new S3Client({});
@@ -21,7 +21,7 @@ export async function labCleanupHandler(event:unknown) {
       &&env.PERSONAL_LAB_ALLOWED_SCOPES==='ai_context,lab_history';
     if(!synthetic&&!personal)throw new Error('lab_cleanup_posture_invalid');
     const deps={db,s3,table:required('LAB_JOB_TABLE'),bucket:required('LAB_DOCUMENT_BUCKET'),
-      deletionGuard:personal?ownedLabDeletionGuardFromEnv(env):undefined,
+      deletionGuard:personal?ownedExternalDeletionGuardFromEnv(env):undefined,
       stopExecutions:(id:string)=>stopLabExecutions(sfn,required('LAB_STATE_MACHINE_ARN'),id)};
     const value=event as Record<string,unknown>;
     if(!value||typeof value!=='object'||Array.isArray(value))throw new Error('lab_cleanup_event_invalid');

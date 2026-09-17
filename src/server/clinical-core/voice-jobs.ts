@@ -108,7 +108,9 @@ export class VoiceJobs {
     if (!job) return;
     const changes: Partial<VoiceJob> = { nextWork: this.now() + 30 };
     try {
-      // Lost consent/identity stops new work but never blocks eventual cleanup.
+      // Lost processing consent stops new work without requiring regrant for
+      // cleanup. Production erasure still requires active identity and no hold;
+      // a refusal retains work instead of claiming successful cleanup.
       // A database outage is not interpreted as revocation: retry, without work.
       if(!job.cancelled && job.readableUntil>this.now() && job.state!=='failed' && job.state!=='cleaned'){
         try{await this.authorizationPolicy?.verify(job);}

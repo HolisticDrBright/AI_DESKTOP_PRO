@@ -5,7 +5,7 @@ import {createRdsDataClinicalCoreDatabase} from './rds-data-database';
 export type ExternalDeletionScope={ownerSub:string;organizationId:string;personId:string};
 export type ExternalDeletionGuard=<T>(scope:ExternalDeletionScope,operation:()=>Promise<T>)=>Promise<T>;
 const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-export function ownedLabDeletionGuardFromEnv(env:Record<string,string|undefined>):ExternalDeletionGuard{
+export function ownedExternalDeletionGuardFromEnv(env:Record<string,string|undefined>):ExternalDeletionGuard{
   return (scope,operation)=>createOwnedExternalDeletionGuard(createRdsDataClinicalCoreDatabase({
     clusterArn:env.CLINICAL_DATABASE_CLUSTER_ARN??'',secretArn:env.CLINICAL_DATABASE_SECRET_ARN??'',
     databaseName:env.CLINICAL_DATABASE_NAME??'',region:env.AWS_REGION,

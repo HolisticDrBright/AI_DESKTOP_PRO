@@ -2,7 +2,7 @@ if (typeof window !== "undefined") throw new Error("owned-lab-api-lambda is serv
 import {createOwnedLabApi,type OwnedLabEvent} from './owned-lab-api';
 import {createOwnedConsumerRecordsAdapter} from './owned-consumer-records';
 import {createRdsDataClinicalCoreDatabase} from './rds-data-database';
-import {ownedLabDeletionGuardFromEnv} from './owned-external-deletion';
+import {ownedExternalDeletionGuardFromEnv} from './owned-external-deletion';
 export function ownedLabConfigurationFromEnv(env:Record<string,string|undefined>){
   return {consumerIssuer:env.CONSUMER_ISSUER??'',consumerAudience:env.CONSUMER_AUDIENCE??'',
     phiAllowed:env.PHI_ALLOWED==='true',activationState:env.PERSONAL_LAB_ACTIVATION==='approved'?'approved' as const:'blocked' as const,
@@ -17,7 +17,7 @@ let cached:ReturnType<typeof createOwnedLabApi>|undefined;
 export async function handler(event:OwnedLabEvent){
   const env=process.env;
   if(env.LAB_OBJECT_PREFIX!=='personal-labs')throw new Error('owned_lab_namespace_required');
-  cached??=createOwnedLabApi({configuration:ownedLabConfigurationFromEnv(env),adapter:ownedLabAdapterFromEnv(env),deletionGuard:ownedLabDeletionGuardFromEnv(env)});
+  cached??=createOwnedLabApi({configuration:ownedLabConfigurationFromEnv(env),adapter:ownedLabAdapterFromEnv(env),deletionGuard:ownedExternalDeletionGuardFromEnv(env)});
   return cached(event);
 }
 export { labCleanupHandler as cleanup } from './aws-lab-cleanup-lambda';

@@ -14,7 +14,10 @@ Drain requires PhiAllowed=false, empty AllowedScopes, the earlier activation and
 provider evidence hashes, a separate CleanupEvidenceSha256, and alarm recipient.
 Hashes record the operator's review reference; they do not verify a signature or
 create authorization. No consent grant, content upload, provider start, transcript
-retrieval, SQL lookup or billing request is made by drain.
+retrieval or billing request is made by drain. Since the September 17 safeguard,
+drain MUST consult the database identity/legal-hold guard before each destructive
+operation. A database outage, disabled identity or hold retains pending data;
+cleanup never bypasses that check. Migration 62 is a prerequisite.
 
 The existing durable sweep cancels due unexpired jobs via its refusal policy,
 waits for nonterminal provider work, and removes terminal provider jobs and exact
@@ -23,18 +26,22 @@ a sanitized retry error for the Lambda alarm. Independent invocations resume fro
 persisted jobs; no phone or new consent is required. All public reads and writes
 remain unavailable, including user cancellation (the worker cancels on their behalf).
 
-IAM in drain permits only named-table GetItem/UpdateItem/index Query, scoped
-object-version listing/deletion and named-job provider status/deletion. KMS
-permissions are constrained to DynamoDB through its regional service and this
-table/account encryption context; no S3-content decryption permission is retained.
+IAM in drain permits named-table GetItem/UpdateItem/index Query, scoped
+object-version listing/deletion and named-job provider status/deletion, plus
+the named database transaction/statement and database-secret access needed by the
+hold guard. KMS access is constrained to the DynamoDB table/account and,
+separately, the exact database secret via Secrets Manager and SecretKmsKeyArn.
+No S3-content decryption permission is retained. There is no public SQL endpoint.
 See [AWS DynamoDB encryption context and permissions](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/encryption.usagenotes.html).
 Actual AWS/key-policy effectiveness still needs hosted acceptance.
 
 ## Required shutdown sequence — not executed
 
 1. Operator reviews retention/legal holds and approves a drain plan, alarm owner,
-   prior service evidence and recovery procedure. If a hold prohibits deletion,
-   do not enable this deleting drain; arrange an authorized preservation process.
+   prior service evidence and recovery procedure. Held owners are refused by the
+   database guard. Review those retained jobs separately; never release a hold
+   or disable an identity just to make the inventory look empty. Configure and
+   qualify the database/secret/key permissions before entering drain.
 2. Review and apply a change set selecting draining and disabling new processing.
    Wait for deployment completion and old invocations to finish. IAM/configuration
    propagation is not an instantaneous global cancellation transaction.
@@ -47,8 +54,14 @@ Actual AWS/key-policy effectiveness still needs hosted acceptance.
    be forcibly deleted until terminal. Failures require investigation, not blocking
    the schedule and claiming erasure.
 5. Only after a reviewed completion inventory, set blocked. Retained job metadata
-   TTL, PITR, logs, backup/audit retention and account-level erasure are separate.
+   retention, PITR, logs, backup/audit retention and account-level erasure are separate.
    No automatic empty-inventory certification or irreversible key deletion exists.
+
+Production native DynamoDB TTL and S3 lifecycle expiry are now omitted: those
+mechanisms cannot consult legal holds. Readability deadlines still apply. Retained
+metadata/files can accumulate and need a reviewed retention workflow. Synthetic
+expiry remains unchanged. See `personal-voice-deletion-holds.md` for limitations
+and current tests; this does not establish hosted shutdown acceptance.
 
 ## Source verification
 

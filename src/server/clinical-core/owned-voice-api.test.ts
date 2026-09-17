@@ -33,6 +33,14 @@ beforeEach(()=>{
     transcript:vi.fn().mockResolvedValue('Fictional voice.'),remove:vi.fn().mockResolvedValue(undefined)};
 });
 describe('independent production voice',()=>{
+  it('returns a safe hold refusal on cleanup-triggering reads without claiming erasure',async()=>{
+    const s=setup(),created=JSON.parse((await s.handler(event())).body);
+    rows.get(created.jobId)!.cancelled=true;
+    vi.mocked(provider.remove).mockRejectedValue(new OwnedStorageError('legal_hold'));
+    const response=await s.handler(event('GET',created.jobId));
+    expect(response.statusCode).toBe(409);expect(JSON.parse(response.body)).toEqual({error:'voice_deletion_held'});
+    expect(rows.get(created.jobId)!.state).not.toBe('cleaned');expect(provider.transcript).not.toHaveBeenCalled();
+  });
   const drainConfig:OwnedVoiceConfiguration={...config,phiAllowed:false,activationState:'draining',allowedScopes:[],cleanupEvidenceSha256:'c'.repeat(64)};
   it.each([{phiAllowed:true},{allowedScopes:['voice_transcription']},{cleanupEvidenceSha256:undefined},
     {cleanupEvidenceSha256:'not-reviewed'},{activationEvidenceSha256:undefined},{providerEvidenceSha256:undefined}])
@@ -47,7 +55,7 @@ describe('independent production voice',()=>{
     }
     expect(s.adapter).not.toHaveBeenCalled();expect(s.factory).not.toHaveBeenCalled();expect(s.requireCore).not.toHaveBeenCalled();
   });
-  it.each(['uploading','queued','ready'] as const)('drain cancels and erases %s without SQL or fresh consent',async phase=>{
+  it.each(['uploading','queued','ready'] as const)('drain cancels %s without fresh processing consent (cleanup provider mocked)',async phase=>{
     const created=JSON.parse((await setup().handler(event())).body);
     rows.get(created.jobId)!.state=phase;seconds+=61;
     vi.clearAllMocks();consentState.mockRejectedValue(new Error('identity database offline'));
