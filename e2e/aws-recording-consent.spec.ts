@@ -124,3 +124,92 @@ test("the real Desktop proxy refuses a browser without a workforce cookie, despi
   // The app middleware adds no-cache/must-revalidate to the route's no-store.
   expect(result.cache?.split(",").map(v => v.trim())).toContain("no-store");
 });
+
+const recovery = { recordingId: consentId, sessionId: releaseId, status: "capturing", credentialVersion: 0,
+  authorityEpoch: 1, currentAuthorityEpoch: 1, tokenExpiresAt: "2026-09-17T22:00:00Z",
+  deletionDeadline: "2026-09-18T22:00:00Z", storedSegments: 2, pendingSegments: 0, reservedBytes: 8,
+  nextSequence: 2, inventorySha256: "a".repeat(64), disposition: null as string | null,
+  processingRequested: false, audioDeleted: false };
+async function withCapture(page: Page) {
+  await page.route("**/api/live/scribe/authority", route => route.fulfill({ json: { data: {
+    ...workspace(), activeCapture: { id: consentId, sessionId: releaseId, status: "capturing",
+      createdAt: "2026-09-17T21:00:00Z", authorityEpoch: 1, deletionDeadline: recovery.deletionDeadline },
+  }, capabilities } }));
+}
+test("rediscovers a recording, pauses and explicitly finishes it without microphone, processing or deletion", async ({ page }, info) => {
+  await withCapture(page);
+  let current = { ...recovery };
+  const commands: Record<string, unknown>[] = [], errors: string[] = [];
+  page.on("pageerror", e => errors.push(e.message));
+  await page.route("**/api/live/scribe/capture/*", async route => {
+    const operation = new URL(route.request().url()).pathname.split("/").at(-1);
+    const body = route.request().postDataJSON();
+    expect(operation === "state" || operation === "command").toBe(true);
+    if (operation === "state") { expect(body).toEqual({ recordingId: consentId }); await route.fulfill({ json: { data: current } }); return; }
+    commands.push(body);
+    current = { ...current, status: body.action === "pause" ? "paused" : "closed",
+      disposition: body.action === "pause" ? null : body.action, credentialVersion: current.credentialVersion + 1 };
+    await route.fulfill({ json: { data: { recordingId: consentId, commandId: body.commandId, action: body.action,
+      statusAtCommand: current.status, credentialVersion: current.credentialVersion, expiresAt: recovery.tokenExpiresAt,
+      inventorySha256: body.inventorySha256, processingRequested: false, audioDeleted: false,
+      replayed: false, captureToken: null, requiresCredentialRecovery: false } } });
+  });
+  await open(page);
+  await expect(page.getByRole("heading", { name: "Existing recording recovery" })).toBeVisible();
+  expect(commands).toHaveLength(0);
+  await page.getByRole("button", { name: "Load recording status" }).click();
+  await expect(page.getByText("Recording status: capturing.", { exact: false })).toBeVisible();
+  await page.getByRole("button", { name: "Pause this recording" }).click();
+  await expect(page.getByText("Recording status: paused.", { exact: false })).toBeVisible();
+  await page.getByLabel("Recording disposition", { exact: false }).selectOption("finish");
+  await page.getByRole("button", { name: "Confirm recording disposition" }).click();
+  expect(commands).toHaveLength(1);
+  await page.getByRole("checkbox", { name: /I reviewed this inventory/ }).check();
+  await page.screenshot({ path: info.outputPath("recording-recovery-review.png"), fullPage: true });
+  await page.getByRole("button", { name: "Confirm recording disposition" }).click();
+  await expect(page.getByText("Capture closed: finish.", { exact: false })).toBeVisible();
+  expect(commands).toHaveLength(2);
+  expect(commands[0]).toMatchObject({ action: "pause", expectedVersion: 0, inventorySha256: null });
+  expect(commands[1]).toMatchObject({ action: "finish", expectedVersion: 1, inventorySha256: recovery.inventorySha256 });
+  await expect(page.getByRole("button", { name: /Resume|Start recording/ })).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
+test("uncertain recovery retries the exact command and blocks closing an unresolved upload", async ({ page }) => {
+  await withCapture(page);
+  const commands: Record<string, unknown>[] = [];
+  await page.route("**/api/live/scribe/capture/*", async route => {
+    if (route.request().url().endsWith("/state")) {
+      await route.fulfill({ json: { data: { ...recovery, pendingSegments: 1, nextSequence: 3 } } }); return;
+    }
+    const body = route.request().postDataJSON(); commands.push(body);
+    if (commands.length === 1) { await route.fulfill({ status: 503, json: { secret: "NEVER SHOW THIS TOKEN" } }); return; }
+    await route.fulfill({ status: 409, json: { secret: "NEVER SHOW THIS TOKEN" } });
+  });
+  await open(page);
+  await page.getByRole("button", { name: "Load recording status" }).click();
+  // Playwright's enabled-state matcher does not model native option disabling.
+  // Assert the actual DOM property and the available selectable disposition.
+  await expect(page.getByRole("option", { name: "Finish capture without processing" })).toHaveJSProperty("disabled", true);
+  await page.getByLabel("Recording disposition", { exact: false }).selectOption("discard");
+  await expect(page.getByLabel("Recording disposition", { exact: false })).toHaveValue("discard");
+  await page.getByRole("button", { name: "Pause this recording" }).click();
+  await expect(page.getByRole("button", { name: "Retry the same recording command" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Confirm recording disposition" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Retry the same recording command" }).click();
+  await expect(page.getByText(/The recording changed. Reload its status/)).toBeVisible();
+  expect(commands).toHaveLength(2); expect(commands[0]).toEqual(commands[1]);
+  await expect(page.getByText("NEVER SHOW THIS TOKEN")).toHaveCount(0);
+});
+test("wrong-session recovery response is refused and real capture proxy cannot use fixture auth", async ({ page }) => {
+  await withCapture(page);
+  await page.route("**/api/live/scribe/capture/state", route => route.fulfill({ json: { data: { ...recovery, sessionId: participantId } } }));
+  await open(page);
+  await page.getByRole("button", { name: "Load recording status" }).click();
+  await expect(page.getByRole("region", { name: "Recording recovery" }).getByRole("alert")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Pause this recording" })).toHaveCount(0);
+  await page.unroute("**/api/live/scribe/capture/state");
+  const status = await page.evaluate(async recordingId => (await fetch("/api/live/scribe/capture/state", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ recordingId }),
+  })).status, consentId);
+  expect(status).toBe(401);
+});

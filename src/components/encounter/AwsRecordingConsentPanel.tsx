@@ -4,6 +4,7 @@ import { Card } from "@/components/ui/bits";
 import { AdapterError } from "@/adapters/errors";
 import { requestRecordingAuthority } from "@/lib/recording-authority-client";
 import { type RecordingAuthorityRequest, type RecordingConsentRelease, type RecordingWorkspace } from "@/contracts/encounterRecordingAuthority";
+import { AwsRecordingRecoveryPanel } from "./AwsRecordingRecoveryPanel";
 
 const SCOPE_LABEL = { recording: "Recording", transcription: "Transcription", ai_drafting: "AI drafting" };
 const inputStyle = "block w-full rounded border border-line bg-surface px-2 py-1.5 text-ink";
@@ -98,8 +99,11 @@ export function AwsRecordingConsentPanel({ encounterId }: { encounterId: string 
     <p className="text-xs text-subtle">Choose the applicable reviewed locale and jurisdiction explicitly. No other jurisdiction or unsigned document will be substituted.</p>
     {workspace ? <fieldset disabled={busy || !!retry} className="space-y-4">
       <p className="text-sm">Encounter status: {workspace.encounterStatus}. {workspace.activeCapture
-        ? `Existing capture: ${workspace.activeCapture.status}. Capture recovery and disposition require the recording operations workflow; this page cannot resume it.`
+        ? "A capture was found when this workspace loaded. Load current recovery status below; recording cannot be resumed here."
         : "No open capture is recorded."}</p>
+      {workspace.activeCapture ? <AwsRecordingRecoveryPanel
+        key={encounterId + ':' + workspace.activeCapture.id + ':' + workspace.activeCapture.sessionId}
+        recordingId={workspace.activeCapture.id} sessionId={workspace.activeCapture.sessionId} /> : null}
       {workspace.consentReleases.length === 0 ? <p className="text-sm">No current reviewed consent documents match this locale and jurisdiction. Ask your authorized reviewer to publish them.</p> : null}
       <form key={workspace.participants.map(p => p.id).join(",")} onSubmit={event => {
         event.preventDefault();

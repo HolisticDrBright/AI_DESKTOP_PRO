@@ -3,17 +3,13 @@ import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { clinicalUuid, ClinicalCoreDatabaseRejection, type ClinicalCoreDatabase } from './database';
 import type { ProductionClinicalRequestContext } from './aws-identity-consent';
+import { recordingSegmentInputSchema, recordingSegmentReceiptSchema,
+  type RecordingSegmentInput, type RecordingSegmentReceipt } from '@/contracts/encounterRecordingCapture';
+export { recordingSegmentInputSchema, recordingSegmentReceiptSchema } from '@/contracts/encounterRecordingCapture';
+export type { RecordingSegmentInput, RecordingSegmentReceipt } from '@/contracts/encounterRecordingCapture';
 
-const uuid = z.string().uuid(), hash = z.string().regex(/^[a-f0-9]{64}$/);
+const uuid = z.string().uuid();
 const version = z.string().min(1).max(1024).regex(/^[A-Za-z0-9+/=._-]+$/).refine(v => v !== 'null');
-export const recordingSegmentInputSchema = z.object({ recordingId: uuid, sessionId: uuid,
-  captureToken: hash, sequence: z.number().int().min(0).max(4095), sha256: hash,
-  bytes: z.number().int().min(1).max(4194304),
-  contentType: z.enum(['audio/webm', 'audio/ogg', 'audio/wav', 'audio/mp4', 'audio/mpeg']).optional() }).strict();
-export type RecordingSegmentInput = z.infer<typeof recordingSegmentInputSchema>;
-export const recordingSegmentReceiptSchema = z.object({ segmentId: uuid, recordingId: uuid,
-  sequence: z.number().int().min(0).max(4095), sha256: hash, bytes: z.number().int().min(1).max(4194304),
-  authorityEpoch: z.number().int().nonnegative().safe(), status: z.literal('stored') }).strict();
 const storageSchema = z.object({ bucket: z.string().regex(/^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/),
   expectedBucketOwner: z.string().regex(/^\d{12}$/), region: z.string().regex(/^us-(east|west)-[12]$/),
   kmsKeyArn: z.string(), maxSegmentBytes: z.number().int().min(1).max(4194304) }).strict()
@@ -24,7 +20,6 @@ export const recordingSegmentReservationSchema = recordingSegmentReceiptSchema.o
   contentType: z.enum(['audio/webm', 'audio/ogg', 'audio/wav', 'audio/mp4', 'audio/mpeg']), storage: storageSchema,
 }).strict().refine(r => (r.status === 'stored') === (r.objectVersion !== null));
 export type RecordingSegmentReservation = z.infer<typeof recordingSegmentReservationSchema>;
-export type RecordingSegmentReceipt = z.infer<typeof recordingSegmentReceiptSchema>;
 export class RecordingUploadError extends Error {
   constructor(readonly code: 'request_invalid' | 'access_refused' | 'consent_required' | 'conflict' | 'service_unavailable' | 'storage_unverified') {
     super(code); this.name = 'RecordingUploadError';

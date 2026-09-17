@@ -386,3 +386,60 @@ The existing consent UI still reports `audioCapture:false`; no route has been
 deployed, PHI enabled or paid mobile build started. All original phase scopes stay
 open. Prior Desktopda55e3b/CI35274197975 and V2424cd4f/CI35275991172 now SUCCESS;
 Desktop47e1a2e/CI35275985277 was still running at check. New source needs new CI.
+
+## September 17 Desktop capture proxy and explicit recovery (source only)
+
+Desktop now exposes same-origin POST routes at
+`/api/live/scribe/capture/{start,state,command,segment}`. These use the real
+request cookie, never a browser Authorization header or fixture identity.
+Cross-origin/same-site writes, query credentials, unknown metadata and compressed
+request framing refuse. The separate server-only
+`RECORDING_CAPTURE_AWS_API_ORIGIN` must be a root HTTPS AWS Gateway origin in the
+supported US regions; the consent origin is not a fallback. It remains blank in
+the example environment. This does not change AWS activation or PHI policy.
+
+JSON bodies are limited to10KB. Binary segments require measured byte length,
+canonical sequence, allowed MIME type and a SHA-256 matching actual bytes before
+forwarding. Uploads are bounded to4MiB and10seconds input time. AWS transport is
+35seconds; decoded response bodies are bounded to16KB/5seconds. No redirects,
+cache, raw provider errors, browser-selected storage, automatic retries or
+persistent browser tokens. Browser-safe shared contracts now validate the actual
+server repositories and Desktop transport: request/receipt IDs, action, CAS
+version, inventory, segment hash/size, replay secret rules and unsupported
+processing/deletion claims are all checked.
+
+The existing consent workspace already exposes the open capture ID/session.
+Its recovery section now explicitly loads owner-authorized server state, can
+pause, and can finish or discard after inventory review plus acknowledgment.
+Pending uploads block finish. Revoked captures cannot finish/resume through this
+screen. Uncertain commands preserve their original ID/version/inventory in page
+memory and offer only exact retry; conflict/authorization failure requires fresh
+review. No automatic microphone or resume exists. After a command, current state
+is fetched again instead of presenting a historical replay receipt as current.
+Wrong-session responses are refused. Discard is a disposition, not proof of
+deletion; finish does not enqueue transcription. These limitations are visible.
+
+Evidence: full suite **2422passed/11existing skips/200files**, typecheck and lint
+(4existing unrelated warnings) pass. The final206focused transport/repository/API
+and compiled-artifact checks passed. The capture candidate still builds with the shared contracts.
+Actual local Next/browser suite **8passed/29.0seconds**, retries0, fictional
+consent/capture responses: review/withdrawal, uncertain retry, representative and
+missing-release refusal, unavailable/stale auth, recovery/pause/finish with exact
+inventory/CAS, pending-segment exclusion, wrong-session refusal, and real
+cookie-less consent/capture proxy401s. Screenshot reviewed for recovery controls;
+agent-browser confirmed the local app renders without a framework overlay.
+
+Retained failed evidence: the first browser run passed7/failed1 because the
+Playwright enabled-state matcher treated a native disabled option as enabled
+despite the trace's disabled attribute. The corrected test verifies the actual
+DOM disabled property and selectable discard value. The full8-case run then
+passed without timeout/retry increases. Two test-only union-inference typing
+errors were corrected before the passing typecheck.
+
+Not complete: browser capture/start/credential rotation, durable local audio
+recovery policy, storage reconciliation and hold-aware erasure, processing/
+transcript/review-only drafting, resource qualification, isolated hosted tests
+and physical microphone/device acceptance. No real AWS request, PHI activation,
+deployment or paid mobile build occurred. All six original phase scopes remain
+open. Prior Desktop47e1a2e/CI35275985277 and V24224455/CI35278360309 now SUCCESS;
+Desktop11658c0/CI35278357086 remains in progress at this checkpoint.

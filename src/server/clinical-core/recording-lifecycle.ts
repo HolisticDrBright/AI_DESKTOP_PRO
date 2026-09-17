@@ -3,40 +3,13 @@ import { z } from 'zod';
 import { clinicalUuid, ClinicalCoreDatabaseRejection, type ClinicalCoreDatabase } from './database';
 import type { ProductionClinicalRequestContext } from './aws-identity-consent';
 
-const uuid = z.string().uuid(), hash = z.string().regex(/^[a-f0-9]{64}$/);
-const counter = z.number().int().nonnegative().safe();
-const date = z.string().datetime({ offset: true });
-export const recordingContentTypeSchema = z.enum(['audio/webm', 'audio/ogg', 'audio/wav', 'audio/mp4', 'audio/mpeg']);
-export const recordingStartSchema = z.object({ encounterId: uuid, commandId: uuid, contentType: recordingContentTypeSchema }).strict();
-export const recordingStartReceiptSchema = z.object({ recordingId: uuid, sessionId: uuid, encounterId: uuid, commandId: uuid,
-  contentType: recordingContentTypeSchema, status: z.enum(['capturing', 'paused', 'revoked', 'closed']), replayed: z.boolean(),
-  captureToken: hash.nullable(), credentialVersion: counter, authorityEpoch: counter, expiresAt: date, deletionDeadline: date }).strict()
-  .refine(r => r.replayed ? r.captureToken === null : r.captureToken !== null && r.status === 'capturing' && r.credentialVersion === 0);
-const actions = z.enum(['pause', 'resume', 'renew', 'finish', 'discard']);
-const closing = (action: string) => action === 'finish' || action === 'discard';
-const credential = (action: string) => action === 'resume' || action === 'renew';
-export const recordingLifecycleCommandSchema = z.object({ recordingId: uuid, commandId: uuid, action: actions,
-  expectedVersion: counter.max(Number.MAX_SAFE_INTEGER - 1), inventorySha256: hash.nullable() }).strict()
-  .refine(r => closing(r.action) === (r.inventorySha256 !== null));
-export type RecordingLifecycleCommand = z.infer<typeof recordingLifecycleCommandSchema>;
-export const recordingRecoveryStateSchema = z.object({ recordingId: uuid, sessionId: uuid,
-  status: z.enum(['capturing', 'paused', 'revoked', 'closed']), credentialVersion: counter,
-  authorityEpoch: counter, currentAuthorityEpoch: counter, tokenExpiresAt: date, deletionDeadline: date,
-  storedSegments: counter.max(4096), pendingSegments: counter.max(1), reservedBytes: counter.max(2147483648),
-  nextSequence: counter.max(4096), inventorySha256: hash, disposition: z.enum(['finish', 'discard']).nullable(),
-  processingRequested: z.literal(false), audioDeleted: z.literal(false) }).strict()
-  .refine(r => r.nextSequence === r.storedSegments + r.pendingSegments
-    && r.currentAuthorityEpoch >= r.authorityEpoch && (r.status === 'closed') === (r.disposition !== null));
-export type RecordingRecoveryState = z.infer<typeof recordingRecoveryStateSchema>;
-export const recordingLifecycleReceiptSchema = z.object({ recordingId: uuid, commandId: uuid, action: actions,
-  statusAtCommand: z.enum(['capturing', 'paused', 'closed']), credentialVersion: counter.min(1), expiresAt: date,
-  inventorySha256: hash.nullable(), processingRequested: z.literal(false), audioDeleted: z.literal(false),
-  replayed: z.boolean(), captureToken: hash.nullable(), requiresCredentialRecovery: z.boolean() }).strict()
-  .refine(r => r.statusAtCommand === (closing(r.action) ? 'closed' : r.action === 'pause' ? 'paused' : 'capturing')
-    && closing(r.action) === (r.inventorySha256 !== null)
-    && (r.captureToken !== null) === (credential(r.action) && !r.replayed)
-    && r.requiresCredentialRecovery === (credential(r.action) && r.replayed));
-export type RecordingLifecycleReceipt = z.infer<typeof recordingLifecycleReceiptSchema>;
+import { recordingStartSchema, recordingStartReceiptSchema, recordingLifecycleCommandSchema,
+  recordingRecoveryStateSchema, recordingLifecycleReceiptSchema,
+  type RecordingRecoveryState, type RecordingLifecycleReceipt } from '@/contracts/encounterRecordingCapture';
+export { recordingContentTypeSchema, recordingStartSchema, recordingStartReceiptSchema, recordingLifecycleCommandSchema,
+  recordingRecoveryStateSchema, recordingLifecycleReceiptSchema } from '@/contracts/encounterRecordingCapture';
+export type { RecordingLifecycleCommand, RecordingRecoveryState, RecordingLifecycleReceipt } from '@/contracts/encounterRecordingCapture';
+const uuid = z.string().uuid();
 export class RecordingLifecycleError extends Error {
   constructor(readonly code: 'request_invalid' | 'access_refused' | 'consent_required' | 'conflict' | 'service_unavailable') {
     super(code); this.name = 'RecordingLifecycleError';
