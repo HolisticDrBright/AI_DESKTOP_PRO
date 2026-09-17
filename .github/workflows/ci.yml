@@ -60,6 +60,8 @@ jobs:
           npm run build:aws-deployment-tools
           npm run build:aws-chat-transcription
           node scripts/build-aws-personal-storage.mjs
+          node scripts/build-aws-privacy-operations.mjs
+          cfn-lint dist/aws-clinical-core/privacy-operations/template.json
           cfn-lint dist/aws-clinical-core/personal-storage/disabled-template.json dist/aws-clinical-core/personal-storage/template.json
           npm run check:aws-chat-transcription
       - name: AWS production provider-removal and foundation gates

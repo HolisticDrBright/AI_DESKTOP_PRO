@@ -7,6 +7,8 @@ import {resolve,sep} from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {createOwnedConsumerRecordsAdapter} from './owned-consumer-records';
 import {createOwnedConsumerApi} from './owned-consumer-api';
+import {createPrivacyOperations} from './privacy-operations';
+import {createPrivacyOperationsApi,PRIVACY_OPERATIONS_ROUTE} from './privacy-operations-api';
 import type {ClinicalCoreDatabase} from './database';
 import type {ApiGatewayV2Event} from './aws-identity-api';
 
@@ -82,6 +84,58 @@ beforeAll(async()=>{
 afterAll(async()=>{await db?.close();});
 
 describe('privacy fulfillment: executable production SQL with fictional data (not hosted Aurora)',()=>{
+  it('lists only assigned requests, pages without duplicates and audits workforce reads',async()=>{
+    for(let i=0;i<28;i++)await request();
+    const foreign=await request('deletion',other);
+    const page=(after:string|null=null)=>asActor('select clinical_private.list_assigned_privacy_requests($1,25,false) as result',[after]);
+    const first=(await page()).rows[0] as {result:{privacyRequestId:string;ownerId:string}[]};
+    expect(first.result).toHaveLength(25);expect(first.result.every(r=>r.ownerId===owner)).toBe(true);
+    const last=first.result.at(-1)!.privacyRequestId;
+    const second=(await page(last)).rows[0] as typeof first;
+    expect(second.result.every(r=>r.privacyRequestId>last&&r.ownerId===owner)).toBe(true);
+    expect([...first.result,...second.result].some(r=>r.privacyRequestId===foreign)).toBe(false);
+    expect((await asActor('select clinical_private.list_assigned_privacy_requests() as result',[],unassigned)).rows).toEqual([{result:[]}]);
+    await expect(asActor('select clinical_private.list_assigned_privacy_requests()',[],owner,'consumer')).rejects.toThrow('privacy_operator_required');
+    await expect(asActor('select clinical_private.get_assigned_privacy_request($1)',[foreign])).rejects.toThrow('privacy_operator_assignment_required');
+    await expect(asActor('select * from clinical_audit.privacy_operator_access')).rejects.toThrow('permission denied');
+    const audits=await db.query('select distinct operator_id from clinical_audit.privacy_operator_access');
+    expect(audits.rows).toEqual([{operator_id:operator}]);
+    await expect(db.exec("update clinical_audit.privacy_operator_access set action='detail'")).rejects.toThrow('append_only_record');
+  });
+  it('rechecks assignment expiry and revocation when opening a previously listed request',async()=>{
+    const id=await request();
+    expect((await asActor('select clinical_private.get_assigned_privacy_request($1) as result',[id])).rows[0]).toMatchObject({result:{privacyRequestId:id}});
+    await db.exec('update clinical_private.owned_privacy_operator_assignments set revoked_at=now()');
+    try{
+      expect((await asActor('select clinical_private.list_assigned_privacy_requests() as result')).rows).toEqual([{result:[]}]);
+      await expect(asActor('select clinical_private.get_assigned_privacy_request($1)',[id])).rejects.toThrow('privacy_operator_assignment_required');
+    }finally{await db.exec('update clinical_private.owned_privacy_operator_assignments set revoked_at=null');}
+  });
+  it('round-trips assigned correction review and verified resolution through workforce API, adapter and production SQL',async()=>{
+    const {correction,payload,recordId}=await correctionFixture();
+    const id=((await submitCorrection(correction)).rows[0] as {result:{privacyRequestId:string}}).result.privacyRequestId;
+    const database:ClinicalCoreDatabase={transaction:work=>db.transaction(async tx=>{
+      await tx.exec('set local role clinical_core_api');
+      return work({query:async<Row extends Record<string,unknown>>(sql:string,parameters:readonly unknown[]=[])=>
+        tx.query<Row>(sql,parameters.map(p=>p&&typeof p==='object'&&'kind' in p&&p.kind==='uuid'&&'value' in p?p.value:p))});
+    })};
+    const issuer='https://cognito-idp.us-east-2.amazonaws.com/workforce',audience='12345678901234567890',now=Date.now(),t=Math.floor(now/1000);
+    const handler=createPrivacyOperationsApi({configuration:{workforceIssuer:issuer,workforceAudience:audience,phiAllowed:true,
+      activation:'approved',evidenceSha256:digest,mfaReviewSha256:digest},operations:()=>createPrivacyOperations(database),now:()=>now});
+    const event=(body:unknown):ApiGatewayV2Event=>({routeKey:PRIVACY_OPERATIONS_ROUTE,body:JSON.stringify(body),headers:{'content-type':'application/json'},
+      requestContext:{authorizer:{jwt:{claims:{iss:issuer,aud:audience,sub:'subject-'+operator,token_use:'id',email_verified:'true',
+        'custom:person_id':operator,'custom:organization_id':org,'custom:production_bound':'true',iat:t,auth_time:t,exp:t+600}}}}});
+    const detail=await handler(event({action:'detail',privacyRequestId:id}));
+    expect(detail.statusCode).toBe(200);
+    expect(JSON.parse(detail.body).data).toMatchObject({privacyRequestId:id,correction:{originalValue:170,requestedValue:180,currentValue:170,
+      currentRevision:1,resolution:null,originalAvailable:true}});
+    expect(detail.body).not.toContain('"note"'); // Unrelated intake fields stay private.
+    await asActor("select clinical_core.write_owned_consumer_record('wellness_profiles',$1,1,$2,$3::jsonb,false,1)",[recordId,randomUUID(),JSON.stringify({...payload,height_cm:180})],owner,'consumer','clinical_data');
+    const command={action:'resolve',privacyRequestId:id,outcome:'applied',appliedRevision:2,explanation:'Verified fictional change'};
+    const result=await handler(event(command));expect(result.statusCode).toBe(200);
+    expect(JSON.parse(result.body).data).toMatchObject({status:'completed',correction:{resolution:{outcome:'applied',appliedRevision:2}}});
+    expect((await handler(event(command))).body).toBe(result.body);
+  });
   it('denies consumers, unassigned workforce and assignments for another owner',async()=>{
     const id=await request();
     for(const [actor,pool,error] of [[owner,'consumer','privacy_operator_required'],[unassigned,'workforce','privacy_operator_assignment_required']]){
@@ -163,6 +217,8 @@ describe('privacy fulfillment: executable production SQL with fictional data (no
     expect((await complete(id)).rows[0]).toMatchObject({result:{status:'completed',fulfillment:expect.arrayContaining([{store:'backups_and_audit',outcome:'retained_by_policy',evidenceSha256:digest,recordedAt:expect.any(String)}])}});
   });
   it('runs a scoped personal-history purge and records exact store receipts without claiming whole-account completion',async()=>{
+    const priorRecords=Number((await db.query<{n:number}>('select count(*)::int as n from clinical_core.owned_consumer_record_versions where owner_id=$1',[owner])).rows[0].n);
+    const priorConsents=Number((await db.query<{n:number}>('select count(*)::int as n from clinical_core.consumer_storage_consents where owner_id=$1',[owner])).rows[0].n);
     const id=await request();
     await db.query(`insert into clinical_private.consumer_storage_consent_releases(scope,version,content,content_sha256,approved_by,approved_at)
       values('protocols_supplements','fixture-only','Not approved for real use',encode(public.digest('Not approved for real use','sha256'),'hex'),'FICTIONAL TEST',now())`);
@@ -178,7 +234,7 @@ describe('privacy fulfillment: executable production SQL with fictional data (no
       await db.query(`insert into clinical_core.owned_consumer_active_plan_history(owner_id,action,request_id,record_id,revision,content_sha256,consent_revision)
         values($1,'adopted',$2,$3,1,$4,1)`,[who,randomUUID(),recordId,digest]);
     }
-    expect((await purge(id)).rows[0]).toMatchObject({result:{privacyRequestId:id,records:2,consents:1,activePlans:1,policyVersion:'test-valid'}});
+    expect((await purge(id)).rows[0]).toMatchObject({result:{privacyRequestId:id,records:priorRecords+2,consents:priorConsents+1,activePlans:1,policyVersion:'test-valid'}});
     for(const table of ['owned_consumer_record_versions','consumer_storage_consents','owned_consumer_active_plans','owned_consumer_active_plan_history']){
       expect((await db.query(`select owner_id from clinical_core.${table}`)).rows).toEqual([{owner_id:other}]);
     }

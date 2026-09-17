@@ -208,6 +208,9 @@ function classifyDatabaseRejection(error: unknown): ClinicalCoreDatabaseRejectio
   const record = error as Record<string, unknown>;
   if (record.name !== "DatabaseErrorException" || typeof record.message !== "string") return undefined;
   const message = record.message;
+  if (/\b(privacy_operator_required|privacy_operator_assignment_required)\b/.test(message)) return new ClinicalCoreDatabaseRejection("identity_refused");
+  if (/\b(privacy_correction_resolution_conflict|privacy_correction_not_applied|privacy_correction_target_changed)\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");
+  if (/\b(privacy_queue_invalid|privacy_correction_invalid|privacy_correction_resolution_invalid)\b/.test(message)) return new ClinicalCoreDatabaseRejection("request_invalid");
   // Exact server-authored codes only. Never forward SQL/provider detail.
   if (/\bspecimen_consent_required\b/.test(message)) return new ClinicalCoreDatabaseRejection("consent_required");
   if (/\bspecimen_context_conflict\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");
