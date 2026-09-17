@@ -5,6 +5,7 @@ import Link from "next/link";
 import { LogIn, LogOut } from "lucide-react";
 import { Card } from "@/components/ui/bits";
 import { localReturnPath } from "@/lib/local-return-path";
+import { announceWorkforceSessionChange } from "@/lib/workforce-session-change";
 
 /**
  * Email/password sign-in form (live mode). Credentials go only to the
@@ -78,6 +79,7 @@ export function LoginForm() {
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!interactive || pending) return;
+    announceWorkforceSessionChange();
     setPending(true);
     setError(null);
     try {
@@ -116,6 +118,7 @@ export function LoginForm() {
   };
 
   const signOut = async () => {
+    announceWorkforceSessionChange();
     setPending(true);
     setError(null);
     try {

@@ -623,3 +623,53 @@ evidence/recording-controller-20260917/child-startup.mjs.
 Final full unit verification: **2528 passed, 11 existing skips, 205 files** in
 84.76seconds. This covers the final controller/CAS code and bounded artifact
 harness repair. It is not physical browser/microphone or hosted-service proof.
+
+### September 17 — encounter capture screen integration
+
+The AWS encounter screen now mounts the page-owned browser controller. Recording
+requires an explicit readiness check, acknowledgment of memory-only buffering,
+microphone permission and fresh server authorization. Controls expose pause,
+resume, immediate local microphone stop, exact uncertain-request retry, finish
+and discard. No action claims transcription, note creation or physical erasure.
+The consent workspace's legacy `audioCapture:false` describes that consent API;
+it is not changed or treated as authorization. The separate capture API still
+defaults to blocked and needs its own approved deployment configuration.
+
+The capture owner remains mounted while consent workspace reads/mutations run.
+Those actions stop input synchronously before network work, retaining any unsent
+tail and original retry. Completing/cancelling/marking an encounter erroneous
+also stops input before the status request. Page hiding/offline and navigation
+stop tracks; unmount disposes the owner. Before-unload warns for unresolved
+captures. Login, MFA submission, logout and organization switching broadcast
+non-sensitive same-origin invalidation before changing cookies; capture screens
+stop, clear local audio and require a fresh document. No identity/token/audio is
+stored in that marker. Storage-denied cross-tab delivery is not guaranteed;
+server authority checks and the existing bounded lease remain mandatory.
+
+Browser evidence: initial combined consent/capture run **14/14 PASS**. Expanded
+capture suite **7/7 PASS**, including actual Chromium-generated WebM bytes,
+hash/sequence-matched receipts, pause/resume in one encoded container, final
+chunk flush, consent withdrawal before its request, real cross-tab invalidation,
+an uncertain binary retry retaining exact bytes and headers, cancellation of
+pending authorization, offline stopping and encounter navigation. The earlier
+9 consent/recovery cases include actual cookie-less proxy401s. Generated audio
+and fictional HTTP authority/object receipts are not hosted AWS authorization,
+physical microphone/Safari qualification or provider-processing evidence.
+Screenshot inspected; no page errors in the complete recording flow. CI now
+explicitly selects both browser suites.44 focused controller/session tests and
+typecheck pass. No runtime deadline, clinical gate or PHI flag was relaxed.
+The local server also logged absent fictional lens evaluations (404), calendar
+date-range refusals and aborted navigation requests. These tests do not prove
+clean unrelated server logs or full-app hosted functionality.
+
+Still open in original phase2: durable encrypted local audio recovery, review of
+missing/unresolved object disposition and hold-aware erasure, actual transcription
+and review-only draft processing, authenticated hosted and physical acceptance.
+Buffers remain memory-only, and a refresh can lose unsent bytes. The capture
+screen must not be described as a finished voice/scribe service. All other
+original phase scopes remain open; no deployment or paid mobile build occurred.
+
+Final source check:2530 full unit tests PASS/11existing skips/206files (86.85s).
+Typecheck and changed-file lint pass. Full lint retains the four existing
+unrelated warnings; no new errors. All seven new browser cases passed without
+retries or timeout changes. Synthetic test servers and browser were closed.

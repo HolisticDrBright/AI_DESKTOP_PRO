@@ -1,19 +1,23 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import { Card } from "@/components/ui/bits";
 import { AdapterError } from "@/adapters/errors";
 import { requestRecordingAuthority } from "@/lib/recording-authority-client";
 import { type RecordingAuthorityRequest, type RecordingConsentRelease, type RecordingWorkspace } from "@/contracts/encounterRecordingAuthority";
-import { AwsRecordingRecoveryPanel } from "./AwsRecordingRecoveryPanel";
+import { AwsRecordingCapturePanel } from "./AwsRecordingCapturePanel";
+import type { AwsBrowserRecording } from "@/lib/aws-browser-recording";
+import { onWorkforceSessionChange } from "@/lib/workforce-session-change";
 
 const SCOPE_LABEL = { recording: "Recording", transcription: "Transcription", ai_drafting: "AI drafting" };
 const inputStyle = "block w-full rounded border border-line bg-surface px-2 py-1.5 text-ink";
 const buttonStyle = "rounded border border-line px-3 py-2 text-sm disabled:opacity-50";
 type GrantTarget = { participantId: string; release: RecordingConsentRelease };
 
-/** AWS consent management only. Capture is intentionally absent until the
- * independently authorized upload/processing path can enforce these grants. */
-export function AwsRecordingConsentPanel({ encounterId }: { encounterId: string }) {
+/** Consent and capture remain independent server authorities. Workspace reloads
+ * stop input but must not destroy the page-owned unsent tail or exact retry. */
+export function AwsRecordingConsentPanel({ encounterId, ownerRef, encounterOpen }: {
+  encounterId: string; ownerRef: RefObject<AwsBrowserRecording | null>; encounterOpen: boolean;
+}) {
   const [locale, setLocale] = useState("");
   const [jurisdiction, setJurisdiction] = useState("");
   const [workspace, setWorkspace] = useState<RecordingWorkspace | null>(null);
@@ -24,17 +28,23 @@ export function AwsRecordingConsentPanel({ encounterId }: { encounterId: string 
   const [retry, setRetry] = useState<RecordingAuthorityRequest | null>(null);
   const controller = useRef<AbortController | null>(null);
   const running = useRef(false);
+  const [identityChanged, setIdentityChanged] = useState(false);
   useEffect(() => {
     const active = new AbortController(); controller.current = active;
-    return () => { active.abort(); };
-  }, []);
+    const unsubscribe = onWorkforceSessionChange(() => {
+      active.abort(); ownerRef.current?.dispose(); setIdentityChanged(true);
+      setWorkspace(null); setTarget(null); setRetry(null);
+    });
+    return () => { active.abort(); unsubscribe(); };
+  }, [ownerRef]);
 
-  function resetSelection() { setWorkspace(null); setTarget(null); setError(null); setNotice(""); }
+  function resetSelection() { ownerRef.current?.interrupt(); setWorkspace(null); setTarget(null); setError(null); setNotice(""); }
   async function perform(request: RecordingAuthorityRequest, participantId?: string) {
     const signal = controller.current?.signal;
     if (!signal || signal.aborted || running.current) return;
     running.current = true; setBusy(true); setError(null); setNotice("");
     const mutation = !["workspace", "readConsentRelease"].includes(request.action);
+    if (mutation || request.action === "workspace") ownerRef.current?.interrupt();
     if (request.action === "workspace") { setWorkspace(null); setTarget(null); }
     if (request.action === "readConsentRelease") setTarget(null);
     let saved = false;
@@ -74,9 +84,10 @@ export function AwsRecordingConsentPanel({ encounterId }: { encounterId: string 
     } finally { running.current = false; if (!signal.aborted) setBusy(false); }
   }
 
+  if (identityChanged) return <Card className="mt-4 p-4"><p role="alert">Your workforce session changed. Recording has stopped and local audio was cleared. Reload this encounter after signing in to review server recovery; this does not confirm remote deletion.</p></Card>;
   return <Card className="mt-4 space-y-4 p-4">
     <h2 className="m-0 text-base font-semibold">Recording consent — AWS</h2>
-    <p className="text-sm text-subtle">Audio recording, transcription and AI drafting are not available yet. Recording consent does not enable them.</p>
+    <p className="text-sm text-subtle">Recording consent does not enable audio capture by itself. A separate service readiness check is required. Transcription and AI drafting are not available here yet.</p>
     <div role="status" aria-live="polite">{busy ? "Contacting the consent service…" : notice}</div>
     {error ? <p role="alert" className="text-sm text-red-700">{error}</p> : null}
     {retry ? <div className="space-y-2">
@@ -99,11 +110,8 @@ export function AwsRecordingConsentPanel({ encounterId }: { encounterId: string 
     <p className="text-xs text-subtle">Choose the applicable reviewed locale and jurisdiction explicitly. No other jurisdiction or unsigned document will be substituted.</p>
     {workspace ? <fieldset disabled={busy || !!retry} className="space-y-4">
       <p className="text-sm">Encounter status: {workspace.encounterStatus}. {workspace.activeCapture
-        ? "A capture was found when this workspace loaded. Load current recovery status below; recording cannot be resumed here."
-        : "No open capture is recorded."}</p>
-      {workspace.activeCapture ? <AwsRecordingRecoveryPanel
-        key={encounterId + ':' + workspace.activeCapture.id + ':' + workspace.activeCapture.sessionId}
-        recordingId={workspace.activeCapture.id} sessionId={workspace.activeCapture.sessionId} /> : null}
+        ? "A capture was found when this workspace loaded. Review its current status below. Microphone resume requires its original open recording page."
+        : "No open capture was found at the last workspace load."}</p>
       {workspace.consentReleases.length === 0 ? <p className="text-sm">No current reviewed consent documents match this locale and jurisdiction. Ask your authorized reviewer to publish them.</p> : null}
       <form key={workspace.participants.map(p => p.id).join(",")} onSubmit={event => {
         event.preventDefault();
@@ -162,5 +170,8 @@ export function AwsRecordingConsentPanel({ encounterId }: { encounterId: string 
         <button className={buttonStyle} type="button" onClick={() => setTarget(null)}>Cancel review</button>
       </fieldset>
     </form> : null}
+    <AwsRecordingCapturePanel encounterId={encounterId} ownerRef={ownerRef}
+      available={encounterOpen && workspace?.encounterStatus === 'in_progress' && !busy && !retry}
+      existingCapture={workspace?.activeCapture ?? null} />
   </Card>;
 }
