@@ -22,6 +22,9 @@ const inputCls =
   "h-10 w-full rounded-lg border border-line bg-card px-[11px] text-[13px] text-body outline-none focus-visible:outline-2 focus-visible:outline-action";
 
 export function LoginForm() {
+  // Server-rendered controls must not accept credentials/submission before
+  // React has attached the same-origin POST handler (native GET loses input).
+  const [interactive, setInteractive] = useState(false);
   const [session, setSession] = useState<SessionInfo | null>(null);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -61,6 +64,7 @@ export function LoginForm() {
   };
 
   useEffect(() => {
+    setInteractive(true);
     let alive = true;
     fetch("/api/auth/session")
       .then((r) => r.json())
@@ -73,6 +77,7 @@ export function LoginForm() {
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!interactive || pending) return;
     setPending(true);
     setError(null);
     try {
@@ -158,10 +163,12 @@ export function LoginForm() {
         enforced by AWS identity and organization membership, not by this screen.
       </p>
       <form onSubmit={submit} className="flex flex-col gap-3">
+        {!interactive && <p role="status" className="m-0 text-[12px] text-subtle">Preparing secure sign-in. If this does not finish, enable JavaScript and reload this page.</p>}
         {!mfaMode && <label className="block">
           <span className="mb-[4px] block text-[10.5px] font-bold tracking-[0.04em] text-faint uppercase">Email</span>
           <input
             type="email"
+            disabled={!interactive || pending}
             required
             autoComplete="email"
             value={email}
@@ -173,6 +180,7 @@ export function LoginForm() {
           <span className="mb-[4px] block text-[10.5px] font-bold tracking-[0.04em] text-faint uppercase">Password</span>
           <input
             type="password"
+            disabled={!interactive || pending}
             required
             autoComplete="current-password"
             value={password}
@@ -217,7 +225,7 @@ export function LoginForm() {
         )}
         <button
           type="submit"
-          disabled={pending}
+          disabled={!interactive || pending}
           className="mt-1 flex h-10 items-center justify-center gap-[7px] rounded-lg border-none bg-action text-[13px] font-semibold text-white hover:bg-action-deep focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink disabled:cursor-not-allowed disabled:opacity-60"
         >
           <LogIn size={14} strokeWidth={2} aria-hidden />
@@ -242,7 +250,7 @@ export function LoginForm() {
           <button
             type="button"
             onClick={requestReset}
-            disabled={pending}
+            disabled={!interactive || pending}
             className="cursor-pointer border-none bg-transparent p-0 text-[12px] font-semibold text-action hover:underline focus-visible:outline-2 focus-visible:outline-action disabled:opacity-50"
           >
             Forgot password? Email me a reset code
