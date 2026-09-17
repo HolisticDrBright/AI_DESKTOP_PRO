@@ -82,6 +82,13 @@ any existing hold. Its protections are:
   target/revision-bound resolution workflow is implemented and verified. That
   workflow is remaining engineering, not a human-only blocker.
 
+September 17 successor: `20260917020000_production_owned_correction_resolution.sql`
+adds a separate revision/hash-bound correction-resolution operation. The generic
+deletion completion still refuses corrections. See
+[personal-correction-resolution.md](personal-correction-resolution.md) for the
+connected consumer request flow, verified-delta resolution and remaining operator,
+structured-field and cross-store work. The earlier safety overlay remains intact.
+
 `owned-privacy-safety.database.test.ts` builds and executes all 58 production
 migrations in an isolated PGlite PostgreSQL instance with fictional fixtures.
 It tests actual role permissions, scoped assignments, hold checks, incomplete and

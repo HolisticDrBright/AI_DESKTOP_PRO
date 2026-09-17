@@ -192,6 +192,10 @@
     {
       "version": "20260917010000",
       "file": "20260917010000_production_privacy_fulfillment_safety.sql"
+    },
+    {
+      "version": "20260917020000",
+      "file": "20260917020000_production_owned_correction_resolution.sql"
     }
   ]
 }

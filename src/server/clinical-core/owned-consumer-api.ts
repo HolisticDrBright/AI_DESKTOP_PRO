@@ -53,6 +53,11 @@ export function createOwnedConsumerApi(input:{configuration:OwnedConsumerApiConf
           // feature scope and survive withdrawal; they never claim full erasure.
           if(route.endsWith('/tombstone')){exact(body,['requestId','confirmTombstoneAllPersonalRecords']);return response(200,{data:await adapter.tombstonePersonalRecords(context,body as Parameters<typeof adapter.tombstonePersonalRecords>[1])});}
           if(post){exact(body,['requestId','kind','correction']);return response(200,{data:await adapter.submitPrivacyRequest(context,body as Parameters<typeof adapter.submitPrivacyRequest>[1])});}
+          if(body.view==='correction-targets'){
+            exact(body,['view','collection','limit','after']);
+            return response(200,{data:await adapter.listCorrectionTargets(context,{collection:String(body.collection??''),
+              ...(body.limit===undefined?{}:{limit:Number(body.limit)}),...(body.after===undefined?{}:{after:String(body.after)})})});
+          }
           exact(body,[]);return response(200,{data:{requests:await adapter.listPrivacyRequests(context),coverage:PERSONAL_DELETION_COVERAGE}});
         }
         if(post){exact(body,['requestId']);return response(200,{data:await adapter.startPrivacyExport(context,{requestId:String(body.requestId??'')})});}

@@ -27,10 +27,22 @@ describe('owned privacy requests',()=>{
     expect(state).toMatchObject({kind:'deletion',status:'submitted',duplicate:false});
     expect(s.query.mock.calls[0][0]).toContain('set_request_context');expect(s.query.mock.calls[0][1]).toContain('consent_management');
     expect(s.query.mock.calls[1]).toEqual(['select clinical_core.submit_owned_privacy_request($1,$2,$3::jsonb) as result',[clinicalUuid(req),'deletion',null]]);
-    const c=setup(request({kind:'correction',duplicate:false}));
-    const correction={collection:'wellness_profiles',recordId:uuid,field:'height_cm',requestedValue:180,reason:'Entered in inches.'};
+    const correction={version:'personal-correction/1',collection:'wellness_profiles',recordId:uuid,field:'height_cm',requestedValue:180,reason:'Entered in inches.',expectedRevision:1,expectedPayloadSha256:'a'.repeat(64)};
+    const c=setup(request({kind:'correction',duplicate:false,correctionTarget:{collection:correction.collection,recordId:uuid,field:correction.field,
+      expectedRevision:1,expectedPayloadSha256:'a'.repeat(64),requestSha256:'b'.repeat(64)}}));
     await c.adapter.submitPrivacyRequest(context,{requestId:req,kind:'correction',correction});
     expect(c.query.mock.calls[1][1]).toEqual([clinicalUuid(req),'correction',JSON.stringify(correction)]);
+  });
+  it('lists owner targets through the database boundary and refuses mismatched or unordered results',async()=>{
+    const row={collection:'wellness_profiles',recordId:uuid,revision:1,payloadSha256:'a'.repeat(64),payload:{height_cm:170},receivedAt:'2026-09-16T12:00:00.000Z'};
+    const s=setup([row]);expect(await s.adapter.listCorrectionTargets(context,{collection:'wellness_profiles'})).toEqual([row]);
+    expect(s.query.mock.calls[1]).toEqual(['select clinical_core.list_owned_correction_targets($1,$2,$3) as result',['wellness_profiles',25,null]]);
+    for(const rows of [[row,row],[{...row,collection:'protocols'}],[{...row,payloadSha256:'bad'}]]){
+      await expect(setup(rows).adapter.listCorrectionTargets(context,{collection:'wellness_profiles'})).rejects.toMatchObject({code:'storage_unavailable'});
+    }
+    for(const patch of [{collection:'unknown'},{after:'bad'},{limit:26}]){
+      await expect(s.adapter.listCorrectionTargets(context,{collection:'wellness_profiles',...patch})).rejects.toMatchObject({code:'request_invalid'});
+    }
   });
   it.each([{requestId:'bad'},{kind:'export'},{kind:'correction'},{kind:'deletion',correction:{collection:'x',recordId:uuid,field:'f',requestedValue:1,reason:'r'}},
     {kind:'correction',correction:{collection:'x',recordId:uuid,field:'f',requestedValue:1,reason:'r',extra:1}},{kind:'correction',correction:{collection:'x',recordId:'bad',field:'f',requestedValue:1,reason:'r'}}])
