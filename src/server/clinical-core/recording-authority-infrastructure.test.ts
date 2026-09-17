@@ -1,5 +1,6 @@
 import { beforeAll, describe, expect, it } from "vitest";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { readFileSync } from "node:fs";
 type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 let template: { Parameters: Record<string, { Default?: string }>; Conditions: Record<string, Json>;
@@ -44,17 +45,20 @@ describe("recording authority deployable candidate", () => {
     expect(resources.ApiFailureAlarm.Properties.MetricName).toBe("5xx");
     expect(JSON.stringify(resources.Invoke.Properties.SourceArn)).toContain("/POST/clinical-core/workforce/encounter-recording/authority");
   });
-  it("runs the actual bundled default-blocked handler without database configuration or AWS credentials", () => {
-    const child = spawnSync(process.execPath, ["-e", "require('./dist/aws-clinical-core/recording-authority/index.js').handler({}).then(r=>console.log(JSON.stringify(r)))"], {
-      encoding: "utf8", timeout: 10000, env: { ...process.env,
+  it("runs the actual bundled default-blocked handler without database configuration or AWS credentials", async () => {
+    const child = await promisify(execFile)(process.execPath, ["-e", "require('./dist/aws-clinical-core/recording-authority/index.js').handler({}).then(r=>console.log(JSON.stringify(r)))"], {
+      // A deployment child must not inherit test-runner preloads/worker state.
+      // Artifact behavior test, not a latency SLO: retain the original bounded
+      // native process budget and give the outer harness time to reap it.
+      encoding: "utf8", timeout: 10000, env: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, NODE_ENV: 'production',
         WORKFORCE_ISSUER: "https://cognito-idp.us-east-2.amazonaws.com/FictionalWorkforce", WORKFORCE_AUDIENCE: "12345678901234567890",
         RECORDING_ORGANIZATION_ID: "11111111-1111-4111-8111-111111111111", PHI_ALLOWED: "false", RECORDING_AUTHORITY_ACTIVATION: "blocked",
         CLINICAL_DATABASE_CLUSTER_ARN: "", CLINICAL_DATABASE_SECRET_ARN: "", CLINICAL_DATABASE_NAME: "",
         AWS_EC2_METADATA_DISABLED: "true", AWS_ACCESS_KEY_ID: "", AWS_SECRET_ACCESS_KEY: "", AWS_SESSION_TOKEN: "",
       },
     });
-    expect(child.status, child.stderr).toBe(0);
+    expect(child.stderr).toBe('');
     const response = JSON.parse(child.stdout); expect(response.statusCode).toBe(503);
     expect(JSON.parse(response.body)).toEqual({ error: "production_not_activated", phiAllowed: false });
-  });
+  }, 15000);
 });

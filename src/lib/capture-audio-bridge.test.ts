@@ -42,6 +42,16 @@ describe("stable capture audio stream", () => {
     expect(lost).toHaveBeenCalledOnce(); expect(bridge.hasMicrophone()).toBe(true);
     bridge.close(); expect(bridge.stream.getAudioTracks()[0].readyState).toBe("ended");
   });
+  it("releases input explicitly while preserving the original recorder output for resume", () => {
+    const a=audio(), lost=vi.fn(), first=media(), second=media(), bridge=a.bridge(lost);
+    const output=bridge.stream;
+    bridge.replaceMicrophone(first.stream);bridge.releaseMicrophone();
+    expect(first.track.stop).toHaveBeenCalledOnce();expect(bridge.hasMicrophone()).toBe(false);
+    expect(output.getAudioTracks()[0].readyState).toBe("live");expect(lost).not.toHaveBeenCalled();
+    bridge.replaceMicrophone(second.stream);expect(bridge.stream).toBe(output);
+    expect(bridge.hasMicrophone()).toBe(true);bridge.close();
+    expect(second.track.stop).toHaveBeenCalledOnce();
+  });
   it("closes all resources once without reporting deliberate shutdown as device loss", () => {
     const a = audio(), lost = vi.fn(), first = media(), bridge = a.bridge(lost);
     bridge.replaceMicrophone(first.stream); bridge.close(); bridge.close();

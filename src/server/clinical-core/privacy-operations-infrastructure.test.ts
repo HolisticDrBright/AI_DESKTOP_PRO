@@ -1,5 +1,6 @@
 import {beforeAll,describe,expect,it} from 'vitest';
-import {execFileSync,spawnSync} from 'node:child_process';
+import {execFileSync,execFile} from 'node:child_process';
+import {promisify} from 'node:util';
 import {readFileSync} from 'node:fs';
 type Json=null|boolean|number|string|Json[]|{[key:string]:Json};
 let t:{Parameters:Record<string,{Default?:string}>;Conditions:Record<string,Json>;Rules:Json;Resources:Record<string,{Type:string;Properties:Record<string,Json>;DeletionPolicy?:string}>};
@@ -52,12 +53,15 @@ describe('privacy operations deployable candidate',()=>{
     expect(t.Resources.Logs.Properties.KmsKeyId).toEqual({Ref:'LogsKmsKeyArn'});expect(t.Resources.Logs.DeletionPolicy).toBe('Retain');
     expect(t.Resources.ApiFailureAlarm.Properties.MetricName).toBe('5xx');
   });
-  it('bundled disabled runtime makes no AWS connection without credentials',()=>{
-    const child=spawnSync(process.execPath,['-e',"require('./dist/aws-clinical-core/privacy-operations/index.js').handler({routeKey:'POST /clinical-core/workforce/privacy-operations'}).then(r=>console.log(JSON.stringify(r)))"],{
-      encoding:'utf8',timeout:10000,env:{...process.env,WORKFORCE_ISSUER:'https://cognito-idp.us-east-2.amazonaws.com/workforce',
+  it('bundled disabled runtime makes no AWS connection without credentials',async()=>{
+    const child=await promisify(execFile)(process.execPath,['-e',"require('./dist/aws-clinical-core/privacy-operations/index.js').handler({routeKey:'POST /clinical-core/workforce/privacy-operations'}).then(r=>console.log(JSON.stringify(r)))"],{
+      // Match a deployment child, not the parent's Vitest preloads. The outer
+      // artifact-check budget includes the original ten-second process bound.
+      encoding:'utf8',timeout:10000,env:{PATH:process.env.PATH,SystemRoot:process.env.SystemRoot,NODE_ENV:'production',
+        WORKFORCE_ISSUER:'https://cognito-idp.us-east-2.amazonaws.com/workforce',
         WORKFORCE_AUDIENCE:'12345678901234567890',PHI_ALLOWED:'false',PRIVACY_OPERATIONS_ACTIVATION:'blocked',
         CLINICAL_DATABASE_CLUSTER_ARN:'',CLINICAL_DATABASE_SECRET_ARN:'',CLINICAL_DATABASE_NAME:'',AWS_EC2_METADATA_DISABLED:'true',
         AWS_ACCESS_KEY_ID:'',AWS_SECRET_ACCESS_KEY:'',AWS_SESSION_TOKEN:''}});
-    expect(child.status,child.stderr).toBe(0);expect(JSON.parse(child.stdout).statusCode).toBe(503);
-  });
+    expect(child.stderr).toBe('');expect(JSON.parse(child.stdout).statusCode).toBe(503);
+  },15000);
 });

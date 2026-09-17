@@ -24,6 +24,7 @@ export function createCaptureAudioBridge(onLost: () => void, context = new Audio
   };
   return {
     stream: destination.stream,
+    releaseMicrophone,
     hasMicrophone: () => !disposed && Boolean(microphone?.getAudioTracks().some(track => track.readyState === "live")),
     replaceMicrophone(next: MediaStream) {
       if (disposed || !next.getAudioTracks().some(track => track.readyState === "live")) {

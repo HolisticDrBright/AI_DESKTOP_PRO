@@ -551,3 +551,75 @@ activation or paid mobile build occurred.
 Final local verification: 2497 full unit tests passed, 11 existing skips, 203 test
 files. Lint has zero errors and four existing unrelated warnings. No new browser
 UI is exposed in this increment, and no new browser/device acceptance is claimed.
+
+### September 17 — page-owned microphone and transport controllers
+
+Source controllers now connect the readiness/start/lifecycle/segment contracts
+to browser microphone ownership. They are not yet mounted in the encounter
+screen. Start requires fresh readiness, an allowed supported MIME type, microphone
+permission, and an acknowledged server start before MediaRecorder is constructed.
+The same recorder/output stream survives pause and explicit microphone replacement;
+no new media header is appended to an existing server capture after a page reload.
+
+One transport writer serializes uploads and credential changes. Encoded chunks
+are split by the reviewed byte bound, hashed, uploaded in sequence and acknowledged
+once. The queue is limited to eight MiB, the reviewed total recording bytes and
+4096 segments. Overflow/encoder failure marks the capture incomplete instead of
+presenting a silently truncated finishable recording. Lost acknowledgments retain
+the original request/bytes for explicit retry only. A secret-free command replay
+does not reactivate input; explicit resume first validates fresh state, unchanged
+session/epoch/inventory/CAS, then requests a new credential.
+
+Successful upload receipts revalidate authority. Idle capture renews through the
+actual grant-checking command, not a recovery-state read. A monotonic 20-second
+local freshness bound plus token/retention expiry stops input even while requests
+are stuck; moving the device wall clock backward cannot extend this local lease.
+Start has an eight-second authorization bound; other transport operations are
+bounded at fifteen seconds. Hidden page, offline/pagehide, device loss, expired
+authority and disposal stop microphone tracks. Late permission/results cannot
+restart them. Finish waits for the original recorder's final dataavailable/stop
+events and all upload receipts before requesting the exact server inventory
+disposition. No transcription/deletion is implied.
+
+Verification uses fictional service responses/media objects, not actual devices.
+The focused microphone/transport/bridge/preparation suite covers microphone
+ownership, bounded uploads, clock changes, exact retry and cross-device control.
+Initial negative runs caught a contradictory size-limit fixture and an aliased
+mock cleanup counter; those fixtures were corrected without relaxing validation.
+Type checking also caught two state-narrowing/test-response typing errors; these
+were repaired. No runtime timeout extension, test skip or PHI activation was used.
+
+Remaining source work includes mounting controls with consent-mutation/account/
+navigation cleanup, explicit memory-only recovery disclosure, rendered browser
+acceptance, durable encrypted local recovery, pending-object disposition and
+hold-aware erasure, transcription/review-only drafts, plus hosted/physical
+qualification. Current buffers are memory-only; closing this page loses unsent
+bytes and does not prove remote rollback or deletion. All original six scopes
+remain incomplete. Nothing was deployed or enabled for PHI.
+
+Retained full-suite evidence: one run during concurrent Graphify extraction
+timed out in the existing default-blocked service smoke test (2526 passed,
+one failed, 11 skips). After extraction finished, the unchanged smoke test and
+full suite passed (2527 passed, 11 skips, 205 files;79.75seconds), without changing
+its five-second test bound or ten-second child-process bound. Resource contention
+is a hypothesis, not a proven cause. A subsequent cross-device finish-version
+regression also passes in the 42-case focused controller suite.
+
+A second full run then exposed the same five-second wrapper timeout in the
+privacy artifact smoke test (2527 passed, one failed, 11 skips). Removing inherited
+test-runner environment and using a four-second child bound did not fix those
+two smoke tests under Vitest; standalone probes of the identical blocked
+recording artifact returned 503 in 226/245ms with minimal/inherited environments.
+The environment or Graphify hypotheses are not established causes.
+Both affected artifact tests now use a clean deployment-like child environment
+and asynchronous child execution, retain their original ten-second child limit,
+and give the enclosing harness fifteen seconds to reap/assert the result, matching
+the existing owned-storage/voice artifact tests. Assertions remain intact,
+including 503/PHI-disabled responses without database credentials. No production
+timeout or performance SLO was changed or declared verified. The seven focused
+artifact cases pass; native-startup/hosted latency qualification remains separate.
+The read-only diagnostic is retained outside application source under workspace
+evidence/recording-controller-20260917/child-startup.mjs.
+Final full unit verification: **2528 passed, 11 existing skips, 205 files** in
+84.76seconds. This covers the final controller/CAS code and bounded artifact
+harness repair. It is not physical browser/microphone or hosted-service proof.
