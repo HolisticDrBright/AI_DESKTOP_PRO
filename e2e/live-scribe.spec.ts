@@ -74,6 +74,71 @@ async function consentEveryone(page: Page, scopes: string[]): Promise<void> {
 
 const phase = (page: Page) => page.getByTestId("recording-status");
 
+async function probeMicrophones(page:Page){
+  await page.addInitScript(()=>{
+    const original=navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+    const probe=window as unknown as {__captureStreams:MediaStream[]};probe.__captureStreams=[];
+    navigator.mediaDevices.getUserMedia=async constraints=>{const stream=await original(constraints);probe.__captureStreams.push(stream);return stream;};
+  });
+}
+async function microphonesStopped(page:Page){
+  await expect.poll(()=>page.evaluate(()=>{
+    const streams=(window as unknown as {__captureStreams:MediaStream[]}).__captureStreams;
+    return streams.length>0&&streams.every(s=>s.getTracks().every(t=>t.readyState==='ended'));
+  })).toBe(true);
+}
+
+test('uncertain recording start stops the microphone and recovers without replaying begin',async({page},testInfo)=>{
+  const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
+  await probeMicrophones(page);await openNewEncounter(page);await consentEveryone(page,['recording','transcription']);
+  let release!:()=>void;const held=new Promise<void>(resolve=>{release=resolve;});let starts=0;
+  await page.route('**/api/live/scribe/recording',async route=>{
+    if(route.request().method()!=='POST')return route.continue();
+    starts++;const response=await route.fetch(); // Commit once, withhold the response.
+    await held;await route.fulfill({response}).catch(()=>{});
+  });
+  try{
+    await page.getByTestId('start-recording').click();
+    await expect(phase(page)).toHaveAttribute('data-phase','starting');
+    await expect(phase(page)).toHaveAttribute('data-phase','unconfirmed',{timeout:12000});
+    await microphonesStopped(page);expect(starts).toBe(1);
+    await page.getByTestId('recording-status').scrollIntoViewIfNeeded();
+    await page.screenshot({path:testInfo.outputPath('recording-unconfirmed.png')});
+    expect(errors).toEqual([]);
+    await expect(page.getByTestId('start-recording')).toHaveCount(0);
+    await page.getByTestId('check-recording-start').click();
+    await expect(page.getByTestId('recover-recording')).toBeVisible();
+    release();await page.unroute('**/api/live/scribe/recording');
+    await page.getByTestId('recover-recording').click();
+    await expect(phase(page)).toHaveAttribute('data-phase','recording');
+    await page.waitForTimeout(1600);await page.getByTestId('stop-recording').click();
+    await expect(phase(page)).toHaveAttribute('data-phase','transcript_ready');
+    expect(starts).toBe(1);
+  }finally{release();}
+});
+
+test('cancelled preparation closes the microphone and permits only a status check before manual retry',async({page})=>{
+  await probeMicrophones(page);await openNewEncounter(page);await consentEveryone(page,['recording']);
+  let attempted!:()=>void;const requestSeen=new Promise<void>(resolve=>{attempted=resolve;});
+  let release!:()=>void;const held=new Promise<void>(resolve=>{release=resolve;});let starts=0;
+  await page.route('**/api/live/scribe/recording',async route=>{
+    if(route.request().method()!=='POST')return route.continue();
+    starts++;attempted();await held;await route.abort().catch(()=>{}); // No server mutation.
+  });
+  try{
+    await page.getByTestId('start-recording').click();await requestSeen;
+    await page.getByTestId('cancel-recording-start').click();
+    await expect(phase(page)).toHaveAttribute('data-phase','unconfirmed');await microphonesStopped(page);
+    expect(starts).toBe(1);await expect(page.getByTestId('start-recording')).toHaveCount(0);
+    release();await page.unroute('**/api/live/scribe/recording');
+    await page.getByTestId('check-recording-start').click();
+    await expect(phase(page)).toContainText('No active recording was found');
+    await expect(page.getByTestId('start-recording')).toBeEnabled();
+    // There is no implicit replay when status becomes available.
+    expect(starts).toBe(1);
+  }finally{release();}
+});
+
 test("milestone workflow: consent → record → pause/resume → transcribe → correct → draft → sign → verified deletion → audit", async ({
   page,
 }) => {

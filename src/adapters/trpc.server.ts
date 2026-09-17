@@ -66,6 +66,7 @@ async function call<T>(
   method: "GET" | "POST",
   input?: unknown,
   sessionToken?: string | null,
+  options?:{signal?:AbortSignal},
 ): Promise<T> {
   let token: string;
   try {
@@ -97,7 +98,7 @@ async function call<T>(
 
   let res: Response;
   try {
-    res = await fetch(url, { method, headers, body: bodyInit, cache: "no-store" });
+    res = await fetch(url, { method, headers, body: bodyInit, cache: "no-store",...(options?.signal?{signal:options.signal}:{}) });
   } catch (e) {
     // Network failure / backend unreachable (the state in this sandbox).
     throw new AdapterError(
@@ -132,8 +133,8 @@ export function trpcQuery<T>(path: string, input?: unknown, sessionToken?: strin
   return call<T>(path, "GET", input, sessionToken);
 }
 
-export function trpcMutation<T>(path: string, input?: unknown, sessionToken?: string | null): Promise<T> {
-  return call<T>(path, "POST", input, sessionToken);
+export function trpcMutation<T>(path: string, input?: unknown, sessionToken?: string | null,options?:{signal?:AbortSignal}): Promise<T> {
+  return call<T>(path, "POST", input, sessionToken,options);
 }
 
 /**

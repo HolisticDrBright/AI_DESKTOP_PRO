@@ -239,7 +239,10 @@ export const scribeLive = {
     input: { encounterId: string; contentType: string },
     sessionToken?: string | null,
   ): Promise<BeginRecordingResult> {
-    return trpcMutation<BeginRecordingResult>("clinical.scribe.beginRecording", input, sessionToken);
+    // Bound the upstream request too. Timeout is uncertain, never proof that
+    // the server did not create a recording; UI must discover/recover it.
+    return trpcMutation<BeginRecordingResult>("clinical.scribe.beginRecording", input, sessionToken,
+      {signal:AbortSignal.timeout(7000)});
   },
 
   heartbeat(sessionId: string, sessionToken?: string | null): Promise<HeartbeatResult> {

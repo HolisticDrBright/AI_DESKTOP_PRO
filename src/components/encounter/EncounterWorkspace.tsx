@@ -297,6 +297,7 @@ export function EncounterWorkspace({ encounterId, patientId }: { encounterId: st
       </div>
 
       <RecordingScribePanel
+        key={encounterId}
         encounterId={encounterId}
         encounterOpen={open}
         onDraftCreated={(id) => {
