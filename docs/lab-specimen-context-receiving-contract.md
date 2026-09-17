@@ -96,6 +96,31 @@ the inventory fixture is fixed without weakening runtime drift checks.
 
 All six original commercial phases remain partial/incomplete.
 
+## September 16 browser qualification follow-up
+
+Four new Playwright checks pass through the real Desktop clinical shell and lab
+inspector with explicitly synthetic workspace/context responses: explicit read
+and exact selection, absent fields without defaults, safe access-refusal/retry,
+null versus malformed/wrong-result context, and selection changes during a
+pending request. The rendered screenshot was inspected. These are browser UI
+checks, not AWS endpoint, database, consent-activation or physical-device proof.
+The existing live-fixture CI job includes this new `live-` suite automatically.
+
+The first cold browser run caught successful login stranded on the login page:
+client navigation and immediate refresh competed. Login now performs a full
+document transition after confirmed success, reading the new cookie session and
+discarding prior client state. The shared login/organization-recovery return-path
+validator rejects external, backslash, control-character and normalized
+protocol-relative destinations. Failed logout stays visibly unconfirmed; a
+successful retry clears the document/session. Three additional browser checks
+pass for those transitions. MFA verification is unchanged.
+
+Development-server logs during the context run included aborted requests on
+navigation and invalid calendar-body refusals during that cancellation; no
+browser error overlay was observed. This is not a claim of clean hosted logs.
+Hosted deployment, concurrency/privacy lifecycle and device acceptance remain
+open; no PHI or approved clinical range state changed.
+
 ## September 16 sender and Desktop read-only follow-up
 
 The source now includes V2's explicit collection-context selection, review,

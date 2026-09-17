@@ -2,9 +2,9 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { LogIn, LogOut } from "lucide-react";
 import { Card } from "@/components/ui/bits";
+import { localReturnPath } from "@/lib/local-return-path";
 
 /**
  * Email/password sign-in form (live mode). Credentials go only to the
@@ -22,7 +22,6 @@ const inputCls =
   "h-10 w-full rounded-lg border border-line bg-card px-[11px] text-[13px] text-body outline-none focus-visible:outline-2 focus-visible:outline-action";
 
 export function LoginForm() {
-  const router = useRouter();
   const [session, setSession] = useState<SessionInfo | null>(null);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -83,7 +82,7 @@ export function LoginForm() {
         body: JSON.stringify(mfaMode ? { code: mfaCode } : { email, password }),
       });
       const json = (await res.json().catch(() => ({}))) as {
-        data?: { email?: string; mfaRequired?: boolean; mfaSetup?: boolean; secretCode?: string };
+        data?: { signedIn?: boolean; email?: string; mfaRequired?: boolean; mfaSetup?: boolean; secretCode?: string };
         error?: { message?: string };
       };
       if (!res.ok) {
@@ -96,12 +95,14 @@ export function LoginForm() {
         setPassword("");
         return;
       }
-      setSession({ signedIn: true, email: json.data?.email ?? email });
-      // Return to where the practitioner was headed. Same-origin paths only —
-      // absolute/protocol-relative values would be an open redirect.
-      const next = new URLSearchParams(window.location.search).get("next") ?? "/";
-      router.push(next.startsWith("/") && !next.startsWith("//") ? next : "/");
-      router.refresh();
+      if (json.data?.signedIn !== true) {
+        setError("Sign-in could not be confirmed. Please try again.");
+        return;
+      }
+      // A full document transition reads the new httpOnly session and drops
+      // any previous account's client state. push() followed by refresh()
+      // races on cold routes and can leave successful sign-in on this page.
+      window.location.replace(localReturnPath(new URLSearchParams(window.location.search).get("next")));
     } catch {
       setError("The sign-in service is unreachable right now. Please try again.");
     } finally {
@@ -111,10 +112,13 @@ export function LoginForm() {
 
   const signOut = async () => {
     setPending(true);
+    setError(null);
     try {
-      await fetch("/api/auth/logout", { method: "POST" });
-      setSession({ signedIn: false, email: null });
-      router.refresh();
+      const response = await fetch("/api/auth/logout", { method: "POST" });
+      if (!response.ok) throw new Error("logout_failed");
+      window.location.replace("/login");
+    } catch {
+      setError("Sign-out could not be confirmed. Please try again.");
     } finally {
       setPending(false);
     }
@@ -128,7 +132,7 @@ export function LoginForm() {
         </p>
         <div className="mt-[12px] flex gap-2">
           <button
-            onClick={() => router.push("/")}
+            onClick={() => window.location.replace("/")}
             className="h-9 flex-1 cursor-pointer rounded-lg border-none bg-action px-4 text-[12.5px] font-semibold text-white hover:bg-action-deep focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink"
           >
             Open the app
@@ -142,6 +146,7 @@ export function LoginForm() {
             Sign out
           </button>
         </div>
+        {error ? <p role="alert" className="mt-3 text-sm text-red-700">{error}</p> : null}
       </Card>
     );
   }
