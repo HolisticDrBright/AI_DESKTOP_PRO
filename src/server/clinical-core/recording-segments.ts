@@ -8,7 +8,8 @@ const uuid = z.string().uuid(), hash = z.string().regex(/^[a-f0-9]{64}$/);
 const version = z.string().min(1).max(1024).regex(/^[A-Za-z0-9+/=._-]+$/).refine(v => v !== 'null');
 export const recordingSegmentInputSchema = z.object({ recordingId: uuid, sessionId: uuid,
   captureToken: hash, sequence: z.number().int().min(0).max(4095), sha256: hash,
-  bytes: z.number().int().min(1).max(4194304) }).strict();
+  bytes: z.number().int().min(1).max(4194304),
+  contentType: z.enum(['audio/webm', 'audio/ogg', 'audio/wav', 'audio/mp4', 'audio/mpeg']).optional() }).strict();
 export type RecordingSegmentInput = z.infer<typeof recordingSegmentInputSchema>;
 export const recordingSegmentReceiptSchema = z.object({ segmentId: uuid, recordingId: uuid,
   sequence: z.number().int().min(0).max(4095), sha256: hash, bytes: z.number().int().min(1).max(4194304),
@@ -95,7 +96,8 @@ export function createRecordingSegmentUploader(repository: RecordingSegmentRepos
       const reserved = recordingSegmentReservationSchema.parse(await repository.reserve(context, r));
       const key = `encounter-recordings/${context.organizationId}/${r.recordingId}/${r.sessionId}/${r.sequence}-${r.sha256}`;
       if (reserved.recordingId !== r.recordingId || reserved.sessionId !== r.sessionId || reserved.sequence !== r.sequence
-        || reserved.sha256 !== r.sha256 || reserved.bytes !== r.bytes || reserved.objectKey !== key || r.bytes > reserved.storage.maxSegmentBytes)
+        || reserved.sha256 !== r.sha256 || reserved.bytes !== r.bytes || reserved.objectKey !== key || r.bytes > reserved.storage.maxSegmentBytes
+        || r.contentType !== undefined && r.contentType !== reserved.contentType)
         throw new RecordingUploadError('storage_unverified');
       if (reserved.status === 'stored') {
         // Revalidate consent in the database even for a retry of a saved receipt.

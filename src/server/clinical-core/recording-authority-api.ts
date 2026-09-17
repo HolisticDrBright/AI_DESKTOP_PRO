@@ -18,18 +18,12 @@ export function createRecordingAuthorityApi(input: {
   operations: () => ReturnType<typeof createEncounterRecordingOperations>;
   now?: () => number;
 }) {
-  const c = input.configuration;
-  if (!/^https:\/\/cognito-idp\.[a-z0-9-]+\.amazonaws\.com\/[A-Za-z0-9_-]+$/.test(c.workforceIssuer)
-    || !/^[A-Za-z0-9]{20,128}$/.test(c.workforceAudience) || !uuid.test(c.organizationId)
-    || !["approved", "blocked"].includes(c.activation)) throw new Error("recording_api_configuration_invalid");
-  const active = c.phiAllowed === true && c.activation === "approved"
-    && hash.test(c.activationEvidenceSha256 ?? "") && hash.test(c.mfaReviewSha256 ?? "") && hash.test(c.databaseReviewSha256 ?? "");
-  if (c.phiAllowed && !active) throw new Error("recording_api_activation_invalid");
+  const c = input.configuration, active = recordingWorkforceActivation(c);
   return async (event: ApiGatewayV2Event): Promise<ApiGatewayV2Response> => {
     if (!active) return reply(503, { error: "production_not_activated", phiAllowed: false });
     if (event.routeKey !== RECORDING_AUTHORITY_ROUTE) return reply(404, { error: "route_not_found" });
     try {
-      const context = identity(event, c, input.now?.() ?? Date.now());
+      const context = recordingWorkforceIdentity(event, c, input.now?.() ?? Date.now());
       const type = Object.entries(event.headers ?? {}).find(([k]) => k.toLowerCase() === "content-type")?.[1];
       if (Object.keys(event.queryStringParameters ?? {}).length || type?.split(";")[0]?.trim().toLowerCase() !== "application/json"
         || typeof event.body !== "string" || event.body.length > 16000) throw new RecordingAuthorityError("request_invalid");
@@ -50,7 +44,17 @@ export function createRecordingAuthorityApi(input: {
     }
   };
 }
-function identity(event: ApiGatewayV2Event, c: RecordingAuthorityConfiguration, now: number): ProductionClinicalRequestContext {
+/** Shared validation only; capture adds independent storage/retention reviews. */
+export function recordingWorkforceActivation(c: RecordingAuthorityConfiguration): boolean {
+  if (!/^https:\/\/cognito-idp\.[a-z0-9-]+\.amazonaws\.com\/[A-Za-z0-9_-]+$/.test(c.workforceIssuer)
+    || !/^[A-Za-z0-9]{20,128}$/.test(c.workforceAudience) || !uuid.test(c.organizationId)
+    || !["approved", "blocked"].includes(c.activation)) throw new Error("recording_api_configuration_invalid");
+  const active = c.phiAllowed === true && c.activation === "approved"
+    && hash.test(c.activationEvidenceSha256 ?? "") && hash.test(c.mfaReviewSha256 ?? "") && hash.test(c.databaseReviewSha256 ?? "");
+  if (c.phiAllowed && !active) throw new Error("recording_api_activation_invalid");
+  return active;
+}
+export function recordingWorkforceIdentity(event: ApiGatewayV2Event, c: RecordingAuthorityConfiguration, now: number): ProductionClinicalRequestContext {
   const v = event.requestContext?.authorizer?.jwt?.claims ?? {};
   const numericTime = (n: unknown) => (typeof n === "number" || typeof n === "string" && /^\d+$/.test(n))
     && Number.isSafeInteger(Number(n)) && Number(n) > 0;

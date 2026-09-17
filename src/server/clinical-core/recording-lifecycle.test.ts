@@ -28,6 +28,21 @@ function fixture(data: unknown = receipt, failure?: Error) {
 }
 
 describe('internal recording lifecycle repository and strict receipts', () => {
+  it('starts through qualified SQL, binds the configured release and refuses unknown input or mismatched receipts', async () => {
+    const request = { encounterId: id, commandId: other, contentType: 'audio/webm' };
+    const started = { ...request, recordingId: id, sessionId: other, status: 'capturing', replayed: false, captureToken: 'a'.repeat(64),
+      credentialVersion: 0, authorityEpoch: 2, expiresAt: state.tokenExpiresAt, deletionDeadline: state.deletionDeadline };
+    const f = fixture(started);
+    expect(await f.repository.start(context, request, id)).toEqual(started);
+    expect(f.query).toHaveBeenLastCalledWith('select clinical_private.start_qualified_recording_capture($1,$2,$3,$4) as data',
+      [{ kind: 'uuid', value: id }, { kind: 'uuid', value: id }, { kind: 'uuid', value: other }, 'audio/webm']);
+    expect(() => f.repository.start(context, { ...request, releaseId: other }, id)).toThrow('request_invalid');
+    expect(() => f.repository.start(context, request, 'bad')).toThrow('request_invalid');
+    for (const patch of [{ encounterId: other }, { commandId: id }, { contentType: 'audio/mp4' }, { captureToken: null }, { replayed: true }])
+      await expect(fixture({ ...started, ...patch }).repository.start(context, request, id)).rejects.toThrow('service_unavailable');
+    expect(await fixture({ ...started, replayed: true, captureToken: null }).repository.start(context, request, id))
+      .toMatchObject({ replayed: true, captureToken: null });
+  });
   it('uses fixed parameterized SQL with UUID context and a bigint version, and decodes Data API JSON', async () => {
     const f = fixture(JSON.stringify(receipt));
     expect(await f.repository.command(context, input)).toEqual(receipt);

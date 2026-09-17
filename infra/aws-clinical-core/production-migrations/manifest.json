@@ -228,6 +228,10 @@
     {
       "version": "20260917100000",
       "file": "20260917100000_production_recording_lifecycle.sql"
+    },
+    {
+      "version": "20260917110000",
+      "file": "20260917110000_production_recording_qualified_start.sql"
     }
   ]
 }

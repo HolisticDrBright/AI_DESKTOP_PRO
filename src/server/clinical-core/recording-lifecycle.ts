@@ -6,6 +6,12 @@ import type { ProductionClinicalRequestContext } from './aws-identity-consent';
 const uuid = z.string().uuid(), hash = z.string().regex(/^[a-f0-9]{64}$/);
 const counter = z.number().int().nonnegative().safe();
 const date = z.string().datetime({ offset: true });
+export const recordingContentTypeSchema = z.enum(['audio/webm', 'audio/ogg', 'audio/wav', 'audio/mp4', 'audio/mpeg']);
+export const recordingStartSchema = z.object({ encounterId: uuid, commandId: uuid, contentType: recordingContentTypeSchema }).strict();
+export const recordingStartReceiptSchema = z.object({ recordingId: uuid, sessionId: uuid, encounterId: uuid, commandId: uuid,
+  contentType: recordingContentTypeSchema, status: z.enum(['capturing', 'paused', 'revoked', 'closed']), replayed: z.boolean(),
+  captureToken: hash.nullable(), credentialVersion: counter, authorityEpoch: counter, expiresAt: date, deletionDeadline: date }).strict()
+  .refine(r => r.replayed ? r.captureToken === null : r.captureToken !== null && r.status === 'capturing' && r.credentialVersion === 0);
 const actions = z.enum(['pause', 'resume', 'renew', 'finish', 'discard']);
 const closing = (action: string) => action === 'finish' || action === 'discard';
 const credential = (action: string) => action === 'resume' || action === 'renew';
@@ -69,6 +75,14 @@ export function createRecordingLifecycleRepository(database: ClinicalCoreDatabas
     }
   }
   return {
+    start(context: ProductionClinicalRequestContext, input: unknown, captureReleaseId: string) {
+      const parsed = recordingStartSchema.safeParse(input);
+      if (!parsed.success || !uuid.safeParse(captureReleaseId).success) throw new RecordingLifecycleError('request_invalid');
+      const r = parsed.data;
+      return query(context, 'select clinical_private.start_qualified_recording_capture($1,$2,$3,$4) as data',
+        [clinicalUuid(r.encounterId), clinicalUuid(captureReleaseId), clinicalUuid(r.commandId), r.contentType],
+        recordingStartReceiptSchema, receipt => receipt.encounterId === r.encounterId && receipt.commandId === r.commandId && receipt.contentType === r.contentType);
+    },
     state(context: ProductionClinicalRequestContext, recordingId: string): Promise<RecordingRecoveryState> {
       if (!uuid.safeParse(recordingId).success) throw new RecordingLifecycleError('request_invalid');
       return query(context, 'select clinical_private.get_recording_recovery_state($1) as data',

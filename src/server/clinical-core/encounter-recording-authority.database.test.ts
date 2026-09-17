@@ -10,6 +10,7 @@ import type { ApiGatewayV2Event } from "./aws-identity-api";
 import { createRecordingSegmentRepository, createRecordingSegmentUploader, type RecordingSegmentReservation } from './recording-segments';
 import type { ProductionClinicalRequestContext } from './aws-identity-consent';
 import { createRecordingLifecycleRepository, type RecordingRecoveryState, type RecordingLifecycleReceipt } from './recording-lifecycle';
+import { createRecordingCaptureApi, RECORDING_CAPTURE_ROUTES as captureRoutes } from './recording-capture-api';
 
 let db: PGlite;
 const org = randomUUID(), otherOrg = randomUUID(), actor = randomUUID(), colleague = randomUUID();
@@ -607,5 +608,78 @@ describe('durable recording segments: actual SQL, fictional receipts (not S3 evi
     const command = { recordingId: c.recordingId, commandId: randomUUID(), action: 'renew', expectedVersion: 0, inventorySha256: null };
     expect(await repository.command(context, command)).toMatchObject({ action: 'renew', credentialVersion: 1 });
     expect(await repository.command(context, command)).toMatchObject({ captureToken: null, requiresCredentialRecovery: true, replayed: true });
+  });
+  it('requires reviewed storage before qualified start and caps the initial credential to the release expiry', async () => {
+    const r = await ready(), command = randomUUID();
+    const start = () => call<Record<string, unknown>>('select clinical_private.start_qualified_recording_capture($1,$2,$3,$4) as result',
+      [r.e, r.config, command, 'audio/webm']);
+    await expect(start()).rejects.toThrow('recording_storage_release_required');
+    expect((await db.query('select * from clinical_private.encounter_captures where encounter_id=$1', [r.e])).rows).toHaveLength(0);
+    const storage = randomUUID();
+    await db.query(`insert into clinical_private.recording_storage_releases
+      (id,capture_release_id,configuration,configuration_sha256,qualification_sha256,approved_by,approved_at,expires_at)
+      values($1,$2,$3::jsonb,encode(public.digest(($3::jsonb)::text,'sha256'),'hex'),repeat('b',64),
+      'FICTIONAL STORAGE QUALIFICATION',clock_timestamp()-interval '1 hour',clock_timestamp()+interval '60 seconds')`,
+      [storage, r.config, JSON.stringify(storageConfig)]);
+    const first = (await start())!, replay = (await start())!;
+    expect(first).toMatchObject({ encounterId: r.e, commandId: command, replayed: false, status: 'capturing', credentialVersion: 0 });
+    expect(first.captureToken).toMatch(/^[a-f0-9]{64}$/);
+    expect(replay).toMatchObject({ recordingId: first.recordingId, replayed: true, captureToken: null });
+    const expiry = (await db.query<{ expires: string }>('select expires_at::text expires from clinical_private.recording_storage_releases where id=$1', [storage])).rows[0].expires;
+    expect(Date.parse(first.expiresAt as string)).toBe(Date.parse(expiry));
+    await db.query('update clinical_private.recording_storage_releases set retired_at=clock_timestamp() where id=$1', [storage]);
+    await expect(start()).rejects.toThrow('recording_storage_release_required');
+  });
+  it('executes the workforce capture API through actual SQL and simulated versioned storage, including withdrawal during upload', async () => {
+    for (const revoke of [false, true]) {
+      const r = await ready(); await storageRelease(r.config);
+      let transactions = 0, puts = 0;
+      const database: ClinicalCoreDatabase = { transaction: operation => db.transaction(async tx => {
+        transactions++; await tx.exec('set local role clinical_core_api');
+        try { return await operation({ query: (sql, args = []) => tx.query(sql, args.map(v =>
+          typeof v === 'object' && v !== null && 'kind' in v && v.kind === 'uuid' && 'value' in v ? v.value : v)) }); }
+        finally { transactions--; }
+      }) };
+      const now = Date.now(), seconds = Math.floor(now / 1000), bytes = Buffer.from('FICTIONAL ENDPOINT AUDIO');
+      const sha256 = createHash('sha256').update(bytes).digest('hex');
+      const configuration = { workforceIssuer: 'https://cognito-idp.us-east-2.amazonaws.com/fictional', workforceAudience: '12345678901234567890',
+        organizationId: org, phiAllowed: true, activation: 'approved' as const, activationEvidenceSha256: 'a'.repeat(64), mfaReviewSha256: 'b'.repeat(64),
+        databaseReviewSha256: 'c'.repeat(64), captureReleaseId: r.config, captureReviewSha256: 'd'.repeat(64), storageReviewSha256: 'e'.repeat(64), retentionReviewSha256: 'f'.repeat(64) };
+      const request = (route: string, body: unknown): ApiGatewayV2Event => ({ routeKey: route, body: JSON.stringify(body), headers: { 'content-type': 'application/json' },
+        requestContext: { authorizer: { jwt: { claims: { iss: configuration.workforceIssuer, aud: configuration.workforceAudience, sub: 'subject-' + actor,
+          'custom:person_id': actor, 'custom:organization_id': org, 'custom:production_bound': 'true', email_verified: 'true', token_use: 'id',
+          exp: seconds + 600, iat: seconds, auth_time: seconds } } } } });
+      const upload = createRecordingSegmentUploader(createRecordingSegmentRepository(database), {
+        async put() { expect(transactions).toBe(0); puts++; if (revoke) await withdraw(r.pGrant); return { version: 'fictional-version' }; },
+        async head(s) { expect(transactions).toBe(0); return { version: 'fictional-version', bytes: bytes.length, contentType: s.contentType,
+          checksum: Buffer.from(sha256, 'hex').toString('base64'), checksumType: 'FULL_OBJECT', encryption: 'aws:kms', kmsKeyArn: s.storage.kmsKeyArn,
+          metadata: { 'segment-id': s.segmentId, 'recording-id': s.recordingId, 'session-id': s.sessionId, 'authority-epoch': String(s.authorityEpoch) } }; },
+      });
+      const api = createRecordingCaptureApi({ configuration, lifecycle: () => createRecordingLifecycleRepository(database), upload: () => upload, now: () => now });
+      const startEvent = request(captureRoutes.start, { encounterId: r.e, commandId: randomUUID(), contentType: 'audio/webm' });
+      const startResponse = await api(startEvent); expect(startResponse.statusCode).toBe(200);
+      const capture = JSON.parse(startResponse.body).data as Capture;
+      expect(JSON.parse((await api(startEvent)).body).data).toMatchObject({ recordingId: capture.recordingId, captureToken: null, replayed: true });
+      const segmentEvent = { ...request(captureRoutes.segment, {}), isBase64Encoded: true, body: bytes.toString('base64'), headers: { 'content-type': 'audio/webm',
+        'x-alp-recording-id': capture.recordingId, 'x-alp-session-id': capture.sessionId, 'x-alp-capture-token': capture.captureToken,
+        'x-alp-sequence': '0', 'x-alp-sha256': sha256 } };
+      expect((await api({ ...segmentEvent, body: Buffer.from('ALTERED').toString('base64') })).statusCode).toBe(400);
+      expect(puts).toBe(0);
+      const uploaded = await api(segmentEvent);
+      if (revoke) {
+        // This embedded driver intentionally has no AWS error-envelope adapter;
+        // the independent RDS mapping suite proves the deployed 403 category.
+        expect(uploaded.statusCode).toBe(503);
+        expect((await db.query<{ status: string }>('select status from clinical_private.recording_segments where recording_id=$1', [capture.recordingId])).rows[0].status).toBe('reserved');
+      } else {
+        expect(uploaded.statusCode).toBe(200); expect((await api(segmentEvent)).body).toBe(uploaded.body);
+        const state = JSON.parse((await api(request(captureRoutes.state, { recordingId: capture.recordingId }))).body).data as RecordingRecoveryState;
+        expect(state).toMatchObject({ storedSegments: 1, pendingSegments: 0, nextSequence: 1 });
+        expect((await api(request(captureRoutes.command, { recordingId: capture.recordingId, commandId: randomUUID(), action: 'finish',
+          expectedVersion: 0, inventorySha256: state.inventorySha256 }))).statusCode).toBe(200);
+        expect(await recoveryState(capture)).toMatchObject({ status: 'closed', disposition: 'finish', processingRequested: false, audioDeleted: false });
+      }
+      expect(puts).toBe(1);
+    }
   });
 });

@@ -29,6 +29,11 @@ function fixture() {
   return { reservation, receipt, head, repository, storage, upload: createRecordingSegmentUploader(repository, storage, () => now) };
 }
 describe('consent-bound recording upload', () => {
+  it('rejects a request MIME type that differs from the qualified capture before touching storage', async () => {
+    const f = fixture();
+    await expect(f.upload(context, { ...input, contentType: 'audio/mp4' }, bytes)).rejects.toMatchObject({ code: 'storage_unverified' });
+    expect(f.storage.put).not.toHaveBeenCalled(); expect(f.storage.head).not.toHaveBeenCalled();
+  });
   it('verifies actual bytes, stores outside the transaction and returns only a bounded accepted receipt', async () => {
     const f = fixture();
     expect(await f.upload(context, input, bytes)).toEqual(f.receipt);

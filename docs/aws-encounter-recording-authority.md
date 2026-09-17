@@ -302,3 +302,87 @@ The earlier full-browser harness run Desktopdd3694e/CI35272294502 now **passed**
 (295passed/19existing skips, actual memory probe inspected, no dev restart).
 V2b206b7e/CI35274202914 passed. These are source/CI results, not PHI activation.
 All six ORIGINAL commercial-readiness scopes remain incomplete.
+
+## September 17 authenticated transport candidate (not deployed)
+
+The new separately activated workforce API connects the existing lifecycle and
+segment services. All routes are POST under `/clinical-core/workforce/encounter-recording/`:
+
+| Route suffix | Request | Result |
+| --- | --- | --- |
+| `start` | Encounter/command IDs and allowed audio MIME type | Qualified start receipt; credential returned only once |
+| `state` | Recording ID | Current bounded state and inventory digest, no storage key/token |
+| `command` | Action, expected credential version, command ID and required disposition digest | Historical retry-safe or new lifecycle receipt |
+| `segment` | Raw audio plus bounded `x-alp-*` identity/sequence/hash/token headers | Verified stored-segment receipt only |
+
+The request identity comes exclusively from API Gateway's verified workforce JWT.
+Consumer/wrong-organization/unverified/expired/stale-auth identities refuse before
+service construction. No identity override, query-string credentials, arbitrary
+storage destination, provider selection or token-only login is accepted. Upload
+requires canonical Gateway base64, a supported MIME type, at most4MiB of actual
+bytes, bounded metadata and a matching digest. Duplicate/combined metadata headers
+refuse. The declared MIME type must match the capture before S3 is touched.
+Responses are strict, non-cacheable and sanitized. The configured capture release
+is server-owned, not chosen by a browser request.
+
+Canonical overlay `20260917110000` adds storage-qualified start: both reviewed
+releases must be valid before a capture is created, and the initial token expiry
+is capped by those releases and the original retention deadline. The artifact has
+**68 migrations, zero seeded rows**. No reviewed destination or consent is invented.
+
+Build: `npm run build:aws-recording-capture`. The same reviewed builder still emits
+the independent consent-only candidate by default. Capture creates
+`dist/aws-clinical-core/recording-capture/`: **index.js AND recording-capture-runtime.js
+must both be packaged**. The artifact manifest binds both files and template.json
+with byte counts and SHA-256s. The small handler does not initialize database/S3
+SDKs for blocked, unauthenticated or malformed requests. The authorized runtime
+reuses clients across warm calls while rechecking database authorization each time.
+Sanitized authored errors preserve their bounded categories across the two bundles.
+
+The candidate defaults to blocked/PHIfalse and logs-only IAM. Activation separately
+requires capture/storage/retention reviews in addition to workforce/database/
+activation evidence and an alarm recipient. Four JWT routes and four exact
+invocation permissions expose no function URL. Active permissions scope RDS and
+secret/KMS access; S3 read/version-read/conditional-write is restricted to the
+configured bucket/organization prefix and account, with the specified encryption
+key. The write permission additionally requires the `If-None-Match` header, matching
+AWS's [conditional-write enforcement](https://docs.aws.amazon.com/AmazonS3/latest/userguide/conditional-writes-enforce.html).
+There is no delete/list/provider permission. Logs are encrypted/retained;
+Lambda errors/throttles and API5xx alarms have the reviewed destination. Resource
+qualification must still prove bucket versioning/retention/holds, IAM/KMS and
+metadata-only gateway logs. Hash fields alone are not that proof.
+
+The envelope follows AWS [HTTP API payload2.0](https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api-develop-integrations-lambda.html)
+and [Lambda synchronous payload limits](https://docs.aws.amazon.com/lambda/latest/dg/gettingstarted-limits.html).
+The4MiB audio ceiling leaves room for base64 expansion and the request envelope.
+Actual hosted limit/timeout/concurrency qualification remains required.
+
+Evidence: **202 focused API/SQL/repository/segment/artifact cases passed**, plus
+the4new capture-infrastructure checks and existing consent candidate tests in
+the full run. **2384 full tests passed,11existing skips,199files**; typecheck,
+lint (4existing unrelated warnings) and68-migration gate pass. The actual bundled
+blocked handler executes without SDK/runtime loading or usable AWS credentials.
+Actual API→repository→canonical SQL tests exercise start/replay, altered-byte
+refusal, versioned storage receipt/retry, state, finish and withdrawal during
+upload. Storage is simulated; PGlite is not hosted Aurora and test claims are
+fictional, not proof of Cognito configuration. Separate RDS-envelope tests cover
+deployed refusal mapping. No actual audio, network storage or PHI is used.
+A separate local compiled-handler probe with fictional reviewed parameters and
+deliberately missing database configuration also confirmed that the authorized
+branch loads the second runtime file and returns only service_unavailable, not
+raw configuration details. It makes no database request and is not activation.
+
+Retained failed evidence: eager monolithic SDK import exceeded the new test's
+5second default deadline; a diagnostic placed the delay during module import,
+not the blocked request. Splitting SDK initialization out of the blocked path
+resolved this check without increasing the deadline (child execution is bounded
+to4seconds). A reserved-variable lint issue was corrected before final checks.
+
+Still needed: Desktop same-origin authenticated proxy and capture/recovery UI,
+durable local audio policy, isolated hosted qualification lane, deployment and
+resource evidence, reconciliation/hold-aware cleanup, provider processing,
+transcript/review-only draft workflow and physical microphone/device acceptance.
+The existing consent UI still reports `audioCapture:false`; no route has been
+deployed, PHI enabled or paid mobile build started. All original phase scopes stay
+open. Prior Desktopda55e3b/CI35274197975 and V2424cd4f/CI35275991172 now SUCCESS;
+Desktop47e1a2e/CI35275985277 was still running at check. New source needs new CI.
