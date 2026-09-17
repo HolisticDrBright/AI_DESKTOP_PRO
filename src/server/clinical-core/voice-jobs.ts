@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { VoiceAuthorizationRevoked, sameVoiceAuthorization, type VoiceAuthorization, type VoiceAuthorizationPolicy } from './voice-authorization';
+import {createVoiceWorkBudget,VoiceWorkDeferred,type VoiceWorkBudget} from './voice-work-budget';
 
 export const VOICE_CONSENT = "patient-chat-consent/1";
 export const VOICE_CLEANUP_WATCH = 'voice-cleanup-watch/1';
@@ -12,13 +13,16 @@ export type VoiceJob = {
   cleanupWatchVersion?: typeof VOICE_CLEANUP_WATCH; lastCleanupAt?: number;
 };
 export type VoiceStatus = { jobId: string; state: "processing" | "ready" | "cancelled" | "expired" | "failed"; transcript?: string };
+export type VoiceDueCursor={id:string;pending:'work';nextWork:number};
+export type VoiceDuePage={ids:string[];next:VoiceDueCursor|null};
+export type VoiceSweepResult={attempted:number;failed:number;pages:number;stopReason:'exhausted'|'budget'|'limit';backlogCleared:false};
 export interface VoiceRepository {
   get(id: string): Promise<VoiceJob | undefined>;
   insert(job: VoiceJob): Promise<boolean>;
   acquire(id: string, token: string, now: number): Promise<VoiceJob | undefined>;
   release(id: string, token: string, changes: Partial<VoiceJob>): Promise<void>;
   cancel(id: string, owner: string): Promise<void>;
-  due(now: number): Promise<string[]>;
+  due(now: number,after?:VoiceDueCursor): Promise<VoiceDuePage>;
 }
 export interface VoiceProvider {
   upload(job: VoiceJob, bytes: Uint8Array): Promise<void>;
@@ -31,7 +35,7 @@ const idPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[
 const refused = () => Object.assign(new Error("voice_request_refused"), { status: 400 });
 const missing = () => Object.assign(new Error("voice_job_not_found"), { status: 404 });
 export class VoiceJobs {
-  constructor(private repo: VoiceRepository, private provider: VoiceProvider, private now = () => Math.floor(Date.now() / 1000), private authorizationPolicy?:VoiceAuthorizationPolicy) {}
+  constructor(private repo: VoiceRepository, private provider: VoiceProvider, private now = () => Math.floor(Date.now() / 1000), private authorizationPolicy?:VoiceAuthorizationPolicy,private budget?:VoiceWorkBudget) {}
 
   async start(owner: string, input: Record<string, unknown>, authorization?:VoiceAuthorization): Promise<VoiceStatus> {
     if(authorization && !this.authorizationPolicy)throw refused();
@@ -103,6 +107,7 @@ export class VoiceJobs {
   }
 
   async advance(id: string): Promise<void> {
+    this.budget?.check();
     const token = randomUUID();
     const job = await this.repo.acquire(id, token, this.now());
     if (!job) return;
@@ -145,11 +150,38 @@ export class VoiceJobs {
     } finally { await this.repo.release(id, token, changes); }
   }
 
-  async sweep(): Promise<void> {
-    let failures = 0;
-    for (const id of await this.repo.due(this.now())) {
-      try { await this.advance(id); } catch { failures += 1; console.warn("voice_job_retry_pending"); }
+  async sweep(): Promise<VoiceSweepResult> {
+    const budget=this.budget??createVoiceWorkBudget(),cutoff=this.now();
+    const result:VoiceSweepResult={attempted:0,failed:0,pages:0,stopReason:'limit',backlogCleared:false};
+    const cursors=new Set<string>(),seen=new Set<string>();let after:VoiceDueCursor|undefined;
+    outer:for(let page=0;page<20;page++){
+      if(!budget.canStart()){result.stopReason='budget';break;}
+      const found=await this.repo.due(cutoff,after);result.pages++;
+      if(!Array.isArray(found.ids)||found.ids.length>25||found.ids.some(id=>! /^[a-f0-9]{64}$/.test(id)))
+        throw new Error('voice_inventory_invalid');
+      const next=found.next;
+      if(next!==null&&(Object.keys(next).sort().join(',')!=='id,nextWork,pending'||! /^[a-f0-9]{64}$/.test(next.id)
+        ||next.pending!=='work'||!Number.isSafeInteger(next.nextWork)||next.nextWork<0||next.nextWork>cutoff
+        ||after&&next.nextWork<after.nextWork))throw new Error('voice_inventory_invalid');
+      const cursor=next?JSON.stringify([next.id,next.nextWork]):null;
+      if(cursor&&cursors.has(cursor))throw new Error('voice_inventory_invalid');
+      if(cursor)cursors.add(cursor);
+      for(const id of found.ids){
+        // GSI pages are not a snapshot. A moved item can reappear; never run it
+        // twice in this invocation or mistake exhaustion for account erasure.
+        if(seen.has(id))continue;seen.add(id);
+        if(!budget.canStart()){result.stopReason='budget';break outer;}
+        result.attempted++;
+        try{await this.advance(id);}catch(error){
+          if(error instanceof VoiceWorkDeferred){result.stopReason='budget';break outer;}
+          result.failed++;console.warn('voice_job_retry_pending');
+        }
+      }
+      if(next===null){result.stopReason='exhausted';break;}
+      after=next;
     }
-    if (failures) throw new Error("voice_cleanup_retry_required");
+    console.info('voice_sweep_result',JSON.stringify(result));
+    if(result.failed)throw new Error('voice_cleanup_retry_required');
+    return result;
   }
 }

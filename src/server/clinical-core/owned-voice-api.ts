@@ -4,6 +4,7 @@ import {OwnedStorageError,type createOwnedConsumerRecordsAdapter} from './owned-
 import {createOwnedVoiceAuthorization,voiceOwner} from './owned-voice-authorization';
 import {VoiceAuthorizationRevoked,type VoiceAuthorizationPolicy} from './voice-authorization';
 import type {VoiceJobs} from './voice-jobs';
+import {createVoiceWorkBudget,type VoiceWorkBudget} from './voice-work-budget';
 import {CoreSubscriptionError,requireConsumerCore} from './core-subscription-guard';
 
 export type OwnedVoiceConfiguration={
@@ -15,7 +16,7 @@ export type OwnedVoiceEvent=ApiGatewayV2Event&{source?:string;rawPath?:string;re
 export function createOwnedVoiceApi(input:{
   configuration:OwnedVoiceConfiguration;
   adapter:()=>Pick<ReturnType<typeof createOwnedConsumerRecordsAdapter>,'consentState'>;
-  service:(policy:VoiceAuthorizationPolicy)=>Pick<VoiceJobs,'start'|'status'|'cancel'|'sweep'>;
+  service:(policy:VoiceAuthorizationPolicy,budget:VoiceWorkBudget)=>Pick<VoiceJobs,'start'|'status'|'cancel'|'sweep'>;
   now?:()=>number;
   requireCore?:(headers:Record<string,string|undefined>)=>Promise<void>;
 }){
@@ -35,9 +36,9 @@ export function createOwnedVoiceApi(input:{
     if(!active||!featureEnabled)throw new VoiceAuthorizationRevoked();
     return authorization.policy.verify(job);
   }};
-  return async(event:OwnedVoiceEvent):Promise<ApiGatewayV2Response>=>{
+  return async(event:OwnedVoiceEvent,budget:VoiceWorkBudget=createVoiceWorkBudget()):Promise<ApiGatewayV2Response>=>{
     if((active||draining)&&event.source==='aws.events'&&!event.requestContext&&!event.rawPath&&!event.body){
-      try{await input.service(policy).sweep();return reply(200,{swept:true});}
+      try{const sweep=await input.service(policy,budget).sweep();return reply(200,{swept:true,sweep});}
       catch{throw new Error('owned_voice_sweep_retry_required');}
     }
     if(!active)return reply(503,{error:draining?'voice_cleanup_only':'production_not_activated',phiAllowed:false});
@@ -55,10 +56,10 @@ export function createOwnedVoiceApi(input:{
         const body=parse(event);
         await (input.requireCore??requireConsumerCore)(event.headers??{});
         const captured=await authorization.capture(context);
-        return reply(202,await input.service(policy).start(voiceOwner(context),body,captured));
+        return reply(202,await input.service(policy,budget).start(voiceOwner(context),body,captured));
       }
       if(event.body)throw invalid();
-      const service=input.service(policy);
+      const service=input.service(policy,budget);
       return method==='DELETE'?reply(202,await service.cancel(voiceOwner(context),id!)):reply(200,await service.status(voiceOwner(context),id!));
     }catch(error){
       if(error instanceof CoreSubscriptionError)return reply(402,{error:'core_subscription_required'});

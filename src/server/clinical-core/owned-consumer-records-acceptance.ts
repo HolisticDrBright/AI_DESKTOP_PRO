@@ -249,7 +249,7 @@ async function run() {
           async start(owner,_body,authorization){voiceBinding={owner,authorization};await policy.verify(voiceBinding);return {jobId:voiceId,state:'processing'};},
           async status(owner){if(!voiceBinding||voiceBinding.owner!==owner)throw Object.assign(new Error('missing'),{status:404});await policy.verify(voiceBinding);return {jobId:voiceId,state:'ready',transcript:'Rollback-only fictional transcript.'};},
           async cancel(owner){if(!voiceBinding||voiceBinding.owner!==owner)throw Object.assign(new Error('missing'),{status:404});return {jobId:voiceId,state:'cancelled'};},
-          async sweep(){},
+          async sweep(){return {attempted:0,failed:0,pages:0,stopReason:'exhausted',backlogCleared:false};},
         })});
       const voiceEvent=(person:string,subject:string,method='POST'):OwnedVoiceEvent=>{
         const base=apiEvent(person,subject,'');

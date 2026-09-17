@@ -1,13 +1,14 @@
-import {beforeEach,describe,it,expect,vi} from 'vitest';
+import {beforeEach,afterEach,describe,it,expect,vi} from 'vitest';
 const mocks=vi.hoisted(()=>({db:vi.fn(),s3:vi.fn(),transcribe:vi.fn()}));
 vi.mock('@aws-sdk/lib-dynamodb',async original=>({...await original<typeof import('@aws-sdk/lib-dynamodb')>(),DynamoDBDocumentClient:{from:()=>({send:mocks.db})}}));
 vi.mock('@aws-sdk/client-s3',async original=>({...await original<typeof import('@aws-sdk/client-s3')>(),S3Client:class{send=mocks.s3;}}));
 vi.mock('@aws-sdk/client-transcribe',async original=>({...await original<typeof import('@aws-sdk/client-transcribe')>(),TranscribeClient:class{send=mocks.transcribe;}}));
-import {createAwsVoiceService} from './aws-voice-jobs-lambda';
+import {createAwsVoiceService,handler} from './aws-voice-jobs-lambda';
 import {voiceOwner} from './owned-voice-authorization';
 import {OwnedStorageError} from './owned-consumer-records';
 import type {ExternalDeletionGuard} from './owned-external-deletion';
 import type {VoiceJob} from './voice-jobs';
+import {createVoiceWorkBudget} from './voice-work-budget';
 const id='a'.repeat(64),person='10000000-0000-4000-8000-000000000001',org='20000000-0000-4000-8000-000000000001',sub='fictional-voice-subject';
 const owner=voiceOwner({actorPersonId:person,organizationId:org,identitySubject:sub});
 let row:VoiceJob,objects:{Key:string;VersionId:string}[],locked:boolean,guardCalls:number;
@@ -51,7 +52,55 @@ beforeEach(()=>{
     objects=objects.filter(o=>!c.input.Delete.Objects.some((v:{Key:string;VersionId:string})=>v.Key===o.Key&&v.VersionId===o.VersionId));return {};
   });
 });
+afterEach(()=>{vi.unstubAllEnvs();});
 describe('production voice: real lifecycle and AWS commands with mocked transports',()=>{
+  it('raises a synthetic scheduled failure instead of returning an HTTP error that the scheduler treats as success',async()=>{
+    for(const [key,value] of Object.entries({DATA_CLASSIFICATION:'synthetic_only',PHI_ALLOWED:'false',VOICE_JOB_TABLE:'fictional',TRANSCRIPTION_BUCKET:'fictional',VOICE_KMS_KEY_ARN:'fictional'}))vi.stubEnv(key,value);
+    mocks.db.mockRejectedValue(new Error('unavailable'));
+    await expect(handler({source:'aws.events'},{getRemainingTimeInMillis:()=>30000})).rejects.toThrow('voice_sweep_retry_required');
+  });
+  it('paginates past leased jobs using the actual DynamoDB query continuation',async()=>{
+    const base=mocks.db.getMockImplementation()!;
+    const first=Array.from({length:25},(_,i)=>({id:i.toString(16).padStart(64,'0')}));
+    const cursor={id:first.at(-1)!.id,pending:'work',nextWork:1};let pages=0;
+    mocks.db.mockImplementation(async(c,options)=>{
+      expect(options.abortSignal).toBeInstanceOf(AbortSignal);
+      if(c.constructor.name==='QueryCommand'){
+        expect(c.input.Limit).toBe(25);expect(c.input.ScanIndexForward).toBe(true);
+        if(++pages===1)return {Items:first,LastEvaluatedKey:cursor};
+        expect(c.input.ExclusiveStartKey).toEqual(cursor);return {Items:[{id}]};
+      }
+      if(c.input.ReturnValues==='ALL_NEW'&&c.input.Key.id!==id){throw Object.assign(new Error('leased'),{name:'ConditionalCheckFailedException'});}
+      return base(c,options);
+    });
+    expect(await service().sweep()).toMatchObject({attempted:26,pages:2,stopReason:'exhausted',backlogCleared:false});
+    expect(row.state).toBe('cleaned');
+    for(const [,options] of [...mocks.s3.mock.calls,...mocks.transcribe.mock.calls])expect(options.abortSignal).toBeInstanceOf(AbortSignal);
+  });
+  it('deadline between version batches preserves pending artifacts and releases the lease',async()=>{
+    let remaining=30000;const budget=createVoiceWorkBudget(()=>remaining);
+    const base=mocks.s3.getMockImplementation()!;
+    mocks.s3.mockImplementation(async(c,options)=>{
+      const result=await base(c,options);
+      if(c.constructor.name==='DeleteObjectsCommand')remaining=4000;
+      return result;
+    });
+    const bounded=createAwsVoiceService({mode:'production',table:'fictional',bucket:'fictional',kms:'fictional',policy,
+      budget,deletionGuard:(scope,work)=>guard(scope,work)});
+    await expect(bounded.advance(id)).rejects.toThrow('voice_work_deferred');
+    expect(objects).toEqual([{Key:`personal-voice/output/${id}.json`,VersionId:'output-v1'}]);
+    expect(row.lastCleanupAt).toBeUndefined();expect(row.state).toBe('ready');expect(row.pending).toBe('work');
+    expect(row.leaseToken).toBeUndefined();
+  });
+  it('rechecks the deadline after waiting for the hold database before deleting remotely',async()=>{
+    let remaining=30000;const budget=createVoiceWorkBudget(()=>remaining);
+    guard=async(_scope,work)=>{remaining=4000;return work();};
+    const bounded=createAwsVoiceService({mode:'production',table:'fictional',bucket:'fictional',kms:'fictional',policy,
+      budget,deletionGuard:(scope,work)=>guard(scope,work)});
+    await expect(bounded.advance(id)).rejects.toThrow('voice_work_deferred');
+    expect(mocks.transcribe.mock.calls.every(([c])=>c.constructor.name==='GetTranscriptionJobCommand')).toBe(true);
+    expect(objects).toHaveLength(2);expect(row.lastCleanupAt).toBeUndefined();expect(row.leaseToken).toBeUndefined();
+  });
   it('guards provider deletion, both version batches and the cleanup receipt without regranting consent',async()=>{
     await service().advance(id);
     expect(guardCalls).toBe(5);expect(objects).toEqual([]);expect(row.state).toBe('cleaned');expect(row.lastCleanupAt).toBeTypeOf('number');

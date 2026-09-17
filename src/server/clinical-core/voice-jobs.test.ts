@@ -13,7 +13,7 @@ beforeEach(() => {
     acquire: async (id, token, at) => { const row = rows.get(id); if (!row || (row.leaseUntil ?? 0) >= at) return undefined; Object.assign(row, { leaseToken: token, leaseUntil: at + 90 }); return { ...row }; },
     release: async (id, token, changes) => { const row = rows.get(id)!; if (row.leaseToken !== token) throw new Error("lease_lost"); Object.assign(row, changes); delete row.leaseToken; delete row.leaseUntil; if (row.state === "cleaned") { row.pending = 'work'; delete row.expiresAt; } },
     cancel: async id => { const row = rows.get(id)!; row.cancelled = true; row.nextWork = now; },
-    due: async at => [...rows.values()].filter(row => row.pending && row.nextWork <= at).map(row => row.id),
+    due: async at => ({ids:[...rows.values()].filter(row => row.pending && row.nextWork <= at).map(row => row.id),next:null}),
   };
   service = new VoiceJobs(repo, provider, () => now);
 });

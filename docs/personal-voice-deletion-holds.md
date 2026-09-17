@@ -59,7 +59,11 @@ something, database rollback cannot restore object versions, and a later hold
 cannot undo prior authorized deletion. It does not create S3 Object Lock or change
 AWS Transcribe's own service-retention policy. Those requirements need review.
 
-Still open: reviewed cross-store/owner inventory orchestration, backlog fairness
+The subsequent [worker backlog/deadline repair](voice-worker-backlog-budget.md)
+adds bounded pagination and invocation-aware SDK deadlines to active/drain workers.
+It preserves the guard and pending-state behavior described here.
+
+Still open: reviewed cross-store/owner inventory orchestration, hosted backlog
 and runtime-budget qualification, held/disabled-identity operator resolution,
 identity-last deletion, full archive/device/clinic/backup/audit handling and
 physical/hosted acceptance. No whole-account deletion or commercial completion

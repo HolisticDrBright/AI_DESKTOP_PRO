@@ -116,6 +116,10 @@ build and CloudFormation lint passed. CLI refusal smoke uses no AWS access.
 AWS reader tests use command-response doubles; actual inventory completeness,
 permission effectiveness and provider eventual consistency remain unverified.
 
+The [worker backlog/deadline repair](voice-worker-backlog-budget.md) now paginates
+due jobs and carries a fresh invocation deadline into cleanup SDK calls. It does
+not replace the independent whole-deployment inventory above or certify erasure.
+
 Remaining: actual IAM/provider and deployment-transition acceptance, independent
 inventory completion review, backlog/load/failure alarms, operator/legal-hold
 decisions and full account privacy fulfillment. Clinical holds and source checks

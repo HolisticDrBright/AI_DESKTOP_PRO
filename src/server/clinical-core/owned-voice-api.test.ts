@@ -28,7 +28,7 @@ beforeEach(()=>{
     acquire:async(id,token,time)=>{const r=rows.get(id);if(!r||(r.leaseUntil??0)>=time)return;Object.assign(r,{leaseToken:token,leaseUntil:time+90});return structuredClone(r);},
     release:async(id,token,changes)=>{const r=rows.get(id)!;if(r.leaseToken!==token)throw new Error('lease_lost');Object.assign(r,changes);delete r.leaseToken;delete r.leaseUntil;if(r.state==='cleaned'){r.pending='work';delete r.expiresAt;}},
     cancel:async(id,owner)=>{const r=rows.get(id)!;if(r.owner!==owner)throw new Error('wrong_owner');r.cancelled=true;r.nextWork=seconds;},
-    due:async t=>[...rows.values()].filter(r=>r.pending&&r.nextWork<=t).map(r=>r.id)};
+    due:async t=>({ids:[...rows.values()].filter(r=>r.pending&&r.nextWork<=t).map(r=>r.id),next:null})};
   provider={upload:vi.fn().mockResolvedValue(undefined),start:vi.fn().mockResolvedValue(undefined),status:vi.fn().mockResolvedValue('missing'),
     transcript:vi.fn().mockResolvedValue('Fictional voice.'),remove:vi.fn().mockResolvedValue(undefined)};
 });

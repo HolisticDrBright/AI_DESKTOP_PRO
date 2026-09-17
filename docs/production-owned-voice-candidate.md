@@ -50,7 +50,7 @@ Default PHI false, activation blocked, no scopes, logs-only IAM, disabled sweep.
 Activation requires review/provider evidence hashes, database/billing configuration,
 explicit scopes and alarm recipient. Hashes alone do not verify agreements or
 constitute signatures. Candidate includes encrypted versioned objects, retained
-DynamoDB/PITR/index/TTL,3JWT routes, scoped data permissions, concurrency cap and
+DynamoDB/PITR/index (production TTL removed for hold protection),3JWT routes, scoped data permissions, concurrency cap and
 error alarm. Transcript output explicitly selects KMS encryption; see
 [AWS encryption documentation](https://docs.aws.amazon.com/transcribe/latest/dg/data-encryption.html).
 
