@@ -31,6 +31,18 @@ export const labSpecimenTransferSchema=z.object({
 }).strict().refine(p=>specimenHasReproductiveContext(p.context)===(p.reproductiveConsentVersion!==null));
 export type LabSpecimenTransfer=z.infer<typeof labSpecimenTransferSchema>;
 export const SPECIMEN_CONSENT_VERSION='lab-specimen-context-consent/1';
+/** Draft copy: usable only when the server publishes an approved artifact whose
+ * exact UTF-8 digest and version match. Shipping this text does not approve it. */
+export const SPECIMEN_CONSENT_COPY={
+  lab_specimen_context:{
+    version:SPECIMEN_CONSENT_VERSION,
+    text:'I authorize AI Longevity Pro to send collection context I select to my connected practice, separately from my lab results. This may include my completed age at collection, recorded sex, assay identifier and collection date. Reproductive details are excluded unless I separately authorize reproductive-health sharing and select them. My entries remain patient-reported and unverified. I can withdraw consent to stop future transfers. Withdrawal does not recall information already delivered; the practice retains its copy under its record-retention obligations. Reviewing this notice does not send any data.',
+  },
+  reproductive_health:{
+    version:'lab-specimen-reproductive-consent/1',
+    text:'I authorize sharing selected reproductive-health collection context with my connected practice: pregnancy status or trimester, cycle phase, reproductive stage and contraception status, when recorded. These are sensitive, patient-reported details, not verified diagnoses. This is separate from permission to track reproductive information in the app. I can withdraw this sharing consent to stop future transfers. Withdrawal does not recall information already delivered; the practice retains its copy under its record-retention obligations. I will review each selected record before sending.',
+  },
+} as const;
 export const labSpecimenReceiptSchema=z.object({
   version:z.literal('lab-specimen-receipt/1'),contextId:z.string().uuid(),labEventId:z.string().uuid(),
   requestId:z.string().uuid(),revision:z.number().int().positive(),payloadSha256:z.string().regex(/^[0-9a-f]{64}$/),

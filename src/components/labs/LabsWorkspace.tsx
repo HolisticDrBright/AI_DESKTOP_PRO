@@ -29,6 +29,7 @@ import { ActionBar } from "@/components/ui/ActionBar";
 import { ClinicalEmpty, ClinicalError, ClinicalLoading } from "@/components/ui/ClinicalStates";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { Provenance } from "@/components/ui/Provenance";
+import {SpecimenContextCard} from "@/components/labs/SpecimenContextCard";
 import { Sparkline } from "@/components/ui/Sparkline";
 import { Card } from "@/components/ui/bits";
 import { cn } from "@/lib/cn";
@@ -574,6 +575,8 @@ function MarkerInspector({
         </p>
 
         {/* Provenance */}
+        {marker.labImportEventId?<SpecimenContextCard key={`${patientId}:${marker.id}:${marker.labImportEventId}`}
+          patientId={patientId} observationId={marker.id} eventId={marker.labImportEventId}/>:null}
         <div className="mt-[12px] border-t border-hairline-2 pt-[11px]">
           <Provenance data={marker.provenance} onOpenSource={() => announce("Opened source document (demo — no file).")} />
         </div>

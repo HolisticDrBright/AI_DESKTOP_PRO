@@ -80,11 +80,10 @@ the inventory fixture is fixed without weakening runtime drift checks.
 
 ## Required next steps (not completed)
 
-1. Explicit V2 context preview/selection, approved consent presentation, independent
-   grants/withdrawal, immutable consent-bound send/retry journal and export mapping.
-   Bind selection to the exact successful lab receipt, not name-based matching.
-2. Desktop per-result context/provenance display with honest missing/withdrawn/
-   unverified states; no automatic clinical range activation.
+1. Validate the new V2 preview/selection, consent/withdrawal and journal controls
+   on physical devices against the deployed, approved synthetic recipient.
+2. Browser-verify Desktop's new per-result context display against that recipient;
+   source/unit tests do not establish hosted UI acceptance.
 3. Integrate context history into full privacy export, approved retention,
    correction/deletion/legal-hold handling and cross-device receipt discovery.
 4. In synthetic AWS: reviewed migration application, approved synthetic consent
@@ -96,3 +95,51 @@ the inventory fixture is fixed without weakening runtime drift checks.
    original commercial/provider/device gates remain separate. PHI stays disabled.
 
 All six original commercial phases remain partial/incomplete.
+
+## September 16 sender and Desktop read-only follow-up
+
+The source now includes V2's explicit collection-context selection, review,
+consent presentation/withdrawal, and encrypted account/environment-bound send
+journal. Preparation performs no disclosure. It requires a matching successful
+receipt for the exact lab content. Send and retry preserve that selection,
+original chart, context/reproductive grant versions and local reproductive
+consent lineage. Reproductive dimensions default off; no DOB is sent.
+
+A matching server-approved consent artifact version and exact text SHA-256 are
+required before the draft notice can be accepted. The bundled copy is NOT a
+signature or approval. Paused connections retain withdrawal and receipt review
+but cannot initiate new sharing. Missing, revoked or changed grants stop later
+attempts. An uncertain response remains unconfirmed, never silently successful.
+
+The journal is included in the partial, owner/environment-validated device
+privacy export without replay. This is not complete server-side privacy
+fulfillment, retention/deletion or cross-device receipt discovery.
+
+Desktop now exposes a separately loaded, read-only collection-context card on
+an imported lab result. The clinical adapter supplies the exact import-event ID
+through an indexed, organization/patient-constrained observation join under
+RLS. The server bridge rechecks patient + observation + event ownership before
+calling the separately governed context endpoint; it does not embed context in
+the existing production-allowed compatibility route. Invalid/mismatched context,
+unavailable service, access refusal and a genuine null result stay distinct.
+The card labels every record patient-reported/unverified and changes no ranges.
+
+New tests exercise actual V2 mocked-HTTP transport, frozen selection/receipts,
+consent/artifact/account changes, durable failed/retried/stopped sends and
+partial device export; Desktop tests exercise patient/observation matching,
+strict response validation, session authority and production-policy refusal.
+The real adapter/SQL test additionally executes the observation-to-event join
+with API-role RLS and denies unrelated consumers/organizations.
+
+Local follow-up checkpoint: V2 1,469 tests passed / one existing skip; Desktop
+1,780 passed / 11 existing skips. Both typechecks passed. Touched V2 modules
+and screens lint clean; Desktop lint has zero errors and four pre-existing
+warnings. Authenticated and production API builds/gates, production migration
+gate (57 migrations, zero seeded rows), V2 capability check and catalog integrity
+check passed. These results do not replace hosted or physical verification.
+
+Outstanding: approved consent artifacts/provider capability, deployed migration
+and API, distributed concurrency, complete privacy lifecycle, browser/device
+acceptance and the original six-phase commercial gates. AWS synthetic STS was
+rechecked and still reports an expired session. No cloud change or paid mobile
+build was performed, no clinical/source holds were changed, and PHI remains off.

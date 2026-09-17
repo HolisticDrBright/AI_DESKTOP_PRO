@@ -230,7 +230,11 @@ function createAwsClinicalStateAdapter<Context extends ClinicalRequestContext>(
       assertContext(context, boundary);
       if (!UUID.test(patientRecordId)) throw new ClinicalStateError("request_invalid");
       return run(database, context, async (tx) => (await tx.query(
-        "select * from clinical_core.list_patient_lab_observations($1)", [clinicalUuid(patientRecordId)],
+        `select visible.*, observation.import_event_id
+         from clinical_core.list_patient_lab_observations($1) visible
+         join clinical_core.lab_observations observation on observation.id=visible.observation_id
+         where observation.organization_id=$2 and observation.patient_record_id=$1`,
+        [clinicalUuid(patientRecordId),clinicalUuid(context.organizationId)],
       )).rows, "clinical_state_refused");
     },
     async listDesktopPatients(context, patientRecordId) {

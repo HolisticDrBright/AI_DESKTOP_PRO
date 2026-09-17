@@ -8,6 +8,8 @@ import {
   type AdapterErrorCode,
 } from "./errors";
 import { getContractFixtureTransport } from "@/server/runtime/contractFixture";
+import {labSpecimenRecordSchema} from "@/contracts/labSpecimenTransfer";
+import {z} from "zod";
 
 interface ClinicalServiceError {
   code?: string;
@@ -166,4 +168,37 @@ export function clinicalRpc<T>(
   token?: string | null,
 ) {
   return request<T>({ kind: "rpc", functionName, args }, token);
+}
+
+/** Read through the separately governed endpoint, never embed context through
+ * data-compatibility (which would bypass its production activation policy). */
+export async function clinicalLabSpecimenContext(
+  selection:{patientId:string;observationId:string;eventId:string},orgId:string|null,token:string|null,
+){
+  if(!token)throw new AdapterError("unauthenticated");
+  const parsed=z.object({patientId:z.string().uuid(),observationId:z.string().uuid(),eventId:z.string().uuid()}).strict().safeParse(selection);
+  if(!parsed.success||!orgId)throw new AdapterError("invalid");
+  const config=clinicalConfig();
+  if(config.kind!=="aws")throw new AdapterError("unavailable");
+  const rows=await clinicalRpc<Array<{id:string;import_event_id?:string;observed_at:string}>>(
+    "list_patient_lab_observations",{_organization_id:orgId,_patient_id:selection.patientId},token);
+  const matches=Array.isArray(rows)?rows.filter(r=>r.id===selection.observationId&&r.import_event_id===selection.eventId):[];
+  if(matches.length!==1)throw new AdapterError("not_found");
+  let response:Response;
+  try{
+    response=await fetch(`${config.origin}/clinical-core/workforce/labs/specimen-context?eventId=${encodeURIComponent(selection.eventId)}`,{
+      method:"GET",headers:{Authorization:`Bearer ${token}`,Accept:"application/json"},
+      cache:"no-store",redirect:"error",signal:AbortSignal.timeout(15000),
+    });
+  }catch{throw new AdapterError("unavailable");}
+  if(!response.ok)throw new AdapterError(codeFromHttpStatus(response.status));
+  const text=await response.text();
+  if(new TextEncoder().encode(text).byteLength>64*1024)throw new AdapterError("unavailable");
+  let raw:unknown;try{raw=JSON.parse(text);}catch{throw new AdapterError("unavailable");}
+  const result=z.object({data:labSpecimenRecordSchema.nullable()}).strict().safeParse(raw);
+  if(!result.success)throw new AdapterError("unavailable");
+  const record=result.data.data;
+  if(record&&(record.labEventId!==selection.eventId||typeof matches[0].observed_at!=="string"
+    ||record.context.observedOn!==matches[0].observed_at.slice(0,10)))throw new AdapterError("unavailable");
+  return record;
 }

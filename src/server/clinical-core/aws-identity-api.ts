@@ -641,6 +641,7 @@ function desktopLabObservation(row: Record<string, unknown>): Record<string, unk
     : {};
   return {
     id: row.observation_id,
+    import_event_id: typeof row.import_event_id === "string" && UUID.test(row.import_event_id) ? row.import_event_id : null,
     biomarker_definition_id: null,
     canonical_name: row.marker_name,
     biological_system: null,

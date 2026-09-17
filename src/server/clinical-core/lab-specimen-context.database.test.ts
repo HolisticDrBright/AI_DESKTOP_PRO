@@ -129,6 +129,13 @@ describe('specimen context SQL against in-memory PostgreSQL (not hosted Aurora)'
       actorPersonId:actor,organizationId:organization,identityPool:pool,identitySubject:'subject-'+actor,
       purpose:'clinical_data',environment:'synthetic-staging',dataClassification:'synthetic_only',containsPhi:false,realPatientData:false});
     const p={...content(),consentVersion:3,expectedRevision:4};
+    await db.query(`insert into clinical_core.lab_observations(id,organization_id,patient_record_id,import_event_id,panel_name,marker_name,value_numeric,observed_at,provenance)
+      values($1,$2,$3,$4,'Fictional panel','Fictional marker',1,'2026-01-02','{}')`,[id(15),org,patient,event]);
+    expect(await adapter.listPatientLabObservations(context(clinician,org,'workforce'),patient))
+      .toMatchObject([{observation_id:id(15),import_event_id:event}]);
+    expect(await adapter.listPatientLabObservations(context(),patient)).toHaveLength(1);
+    await expect(adapter.listPatientLabObservations(context(other),patient)).rejects.toThrow();
+    await expect(adapter.listPatientLabObservations(context(clinician,otherOrg,'workforce'),patient)).rejects.toThrow();
     const receipt=await adapter.importLabSpecimenContext!(context(),p);
     expect(receipt).toMatchObject({version:'lab-specimen-receipt/1',labEventId:event,requestId:p.requestId,revision:5,duplicate:false});
     expect(await adapter.getLabSpecimenContext!(context(),event)).toMatchObject({version:'lab-specimen-record/1',
