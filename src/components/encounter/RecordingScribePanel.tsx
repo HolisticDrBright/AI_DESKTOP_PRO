@@ -6,6 +6,7 @@ import { Card } from "@/components/ui/bits";
 import { CapturePreparationError, prepareCapture } from "@/lib/capture-start";
 import { authorizeCaptureResume, type CaptureReply } from "@/lib/capture-resume";
 import { createCaptureAudioBridge, type CaptureAudioBridge } from "@/lib/capture-audio-bridge";
+import { CaptureUploadBuffer } from "@/lib/capture-upload-buffer";
 
 /**
  * Consent-gated encounter recording + AI scribe (Milestone 1).
@@ -187,8 +188,7 @@ export function RecordingScribePanel({
   const streamRef = useRef<MediaStream | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const audioBridgeRef = useRef<CaptureAudioBridge | null>(null);
-  const queueRef = useRef<Blob[]>([]);
-  const pumpingRef = useRef(false);
+  const queueRef = useRef<CaptureUploadBuffer | null>(null);
   const heartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const startedAtRef = useRef<number>(0);
   const captureAttemptRef = useRef<AbortController|null>(null);
@@ -302,6 +302,9 @@ export function RecordingScribePanel({
 
   const stopEverything = useCallback(() => {
     invalidateHeartbeat();
+    // Fence transport and queued recorder events before stop emits its final blob.
+    queueRef.current?.cancel();
+    queueRef.current = null;
     captureAttemptRef.current?.abort();
     captureAttemptRef.current=null;
     if (heartbeatRef.current) clearInterval(heartbeatRef.current);
@@ -323,23 +326,27 @@ export function RecordingScribePanel({
 
   /** Upload queued chunks strictly in order; server revalidates each one. */
   const pumpQueue = useCallback(async () => {
-    if (pumpingRef.current) return;
-    pumpingRef.current = true;
+    const queue = queueRef.current;
+    if (!queue || queue.pumping || queue.signal.aborted) return;
+    const current = () => queueRef.current === queue && !queue.signal.aborted
+      && recordingIdRef.current === queue.recordingId && sessionIdRef.current === queue.sessionId;
+    queue.pumping = true;
     try {
       let retries = 0;
-      while (queueRef.current.length > 0) {
-        const recId = recordingIdRef.current;
+      while (current() && queue.length > 0) {
         const token = tokenRef.current;
-        if (!recId || !token) break;
-        const chunk = queueRef.current[0];
+        const chunk = queue.head;
+        if (!token || !chunk) break;
         let res: Response;
         try {
           res = await fetch("/api/live/scribe/chunk", {
             method: "POST",
-            headers: { "content-type": "application/octet-stream", "x-recording-id": recId, "x-capture-token": token },
+            headers: { "content-type": "application/octet-stream", "x-recording-id": queue.recordingId, "x-capture-token": token },
             body: chunk,
+            signal: queue.signal,
           });
         } catch {
+          if (!current()) return;
           // Network interruption: keep the chunk, back off, let the heartbeat
           // rotate the token; capture continues locally.
           retries += 1;
@@ -348,8 +355,9 @@ export function RecordingScribePanel({
           await new Promise((r) => setTimeout(r, Math.min(5000, 500 * retries)));
           continue;
         }
+        if (!current()) return;
         if (res.ok) {
-          queueRef.current.shift();
+          if (!queue.acknowledge(chunk)) return;
           retries = 0;
           if (phaseRef.current === "reconnecting") setPhaseAndDetail("recording");
           continue;
@@ -372,7 +380,7 @@ export function RecordingScribePanel({
         await new Promise((r) => setTimeout(r, Math.min(5000, 500 * retries)));
       }
     } finally {
-      pumpingRef.current = false;
+      queue.pumping = false;
     }
   }, [setPhaseAndDetail]);
 
@@ -452,9 +460,14 @@ export function RecordingScribePanel({
       await bridge.activate(signal);
       if (signal.aborted || !bridge.hasMicrophone()) throw new Error("microphone_unavailable");
       const recorder = new MediaRecorder(bridge.stream, { mimeType: contentType });
+      const recId = recordingIdRef.current, sessionId = sessionIdRef.current;
+      if (!recId || !sessionId) throw new Error("capture_owner_required");
+      queueRef.current?.cancel();
+      const queue = new CaptureUploadBuffer(recId, sessionId);
+      queueRef.current = queue;
       recorder.ondataavailable = (e: BlobEvent) => {
-        if (e.data && e.data.size > 0) {
-          queueRef.current.push(e.data);
+        // Closure ownership also fences a stopped recorder's final async event.
+        if (queueRef.current === queue && recorderRef.current === recorder && e.data && queue.enqueue(e.data)) {
           void pumpQueue();
         }
       };
@@ -642,7 +655,9 @@ export function RecordingScribePanel({
   const stopAndUpload = useCallback(async () => {
     const recId = recordingIdRef.current;
     const sessionId = sessionIdRef.current;
-    if (!recId || !sessionId) return;
+    const queue = queueRef.current;
+    if (!recId || !sessionId || !queue || queue.signal.aborted) return;
+    const current = () => queueRef.current === queue && !queue.signal.aborted;
     invalidateHeartbeat();
     setBusy(true);
     setPhaseAndDetail("stopping");
@@ -658,6 +673,7 @@ export function RecordingScribePanel({
           resolve();
         }
       });
+      if (!current()) return;
       if (heartbeatRef.current) clearInterval(heartbeatRef.current);
       heartbeatRef.current = null;
       audioBridgeRef.current?.close();
@@ -670,11 +686,12 @@ export function RecordingScribePanel({
       // pump (the guard makes ours return instantly) — wait until the queue
       // is truly empty, not merely until one pump call returns.
       const drainDeadline = Date.now() + 30_000;
-      while (queueRef.current.length > 0 && Date.now() < drainDeadline) {
+      while (current() && queue.length > 0 && Date.now() < drainDeadline) {
         await pumpQueue();
-        if (queueRef.current.length > 0) await new Promise((r) => setTimeout(r, 200));
+        if (current() && queue.length > 0) await new Promise((r) => setTimeout(r, 200));
       }
-      if (queueRef.current.length > 0) {
+      if (!current()) return;
+      if (queue.length > 0) {
         setPhaseAndDetail("failed", "Some audio could not be uploaded. The recording was not completed.");
         return;
       }
@@ -683,7 +700,9 @@ export function RecordingScribePanel({
         "/api/live/scribe/recording",
         { action: "completionToken", sessionId },
         "PATCH",
+        queue.signal,
       );
+      if (!current()) return;
       if (!auth.ok || !auth.data) {
         setPhaseAndDetail("failed", auth.message ?? "Upload completion was not authorized.");
         return;
@@ -692,7 +711,9 @@ export function RecordingScribePanel({
         "/api/live/scribe/recording",
         { action: "complete", recordingId: recId, completionToken: auth.data.completionToken, durationMs },
         "PATCH",
+        queue.signal,
       );
+      if (!current()) return;
       tokenRef.current = null;
       if (!done.ok || !done.data) {
         setPhaseAndDetail("failed", done.message ?? "The upload could not be completed.");
@@ -702,7 +723,8 @@ export function RecordingScribePanel({
         setPhaseAndDetail("failed", "The audio failed content validation and was quarantined. It will not be processed.");
         return;
       }
-      const queued = await postJson("/api/live/scribe/recording", { action: "queue", recordingId: recId }, "PATCH");
+      const queued = await postJson("/api/live/scribe/recording", { action: "queue", recordingId: recId }, "PATCH", queue.signal);
+      if (!current()) return;
       if (!queued.ok) {
         setPhaseAndDetail("failed", queued.message ?? "Transcription could not be queued.");
         return;
@@ -710,7 +732,7 @@ export function RecordingScribePanel({
       setPhaseAndDetail("processing");
       pollTranscript(recId);
     } finally {
-      setBusy(false);
+      if (current()) setBusy(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [invalidateHeartbeat, pumpQueue, setPhaseAndDetail]);
@@ -1201,7 +1223,7 @@ export function RecordingScribePanel({
         )}
         {phase === "revoked" && (
           <span className="text-[11.5px] font-semibold text-critical">
-            Recording consent was withdrawn. Captured audio is retained pending deletion or renewed consent.
+            Recording consent was withdrawn. Unsent audio was cleared from this page. Already uploaded audio is not deleted automatically; review its deletion status below.
           </span>
         )}
       </section>

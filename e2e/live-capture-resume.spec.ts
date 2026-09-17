@@ -136,3 +136,79 @@ test("cancelled resume ignores a late successful response and preserves the paus
     await expect(status(page)).toHaveAttribute("data-phase", "transcript_ready");
   } finally { release(); }
 });
+
+test("revocation cancels a pending chunk and fences delayed recorder events and upload replies", async ({ page }, testInfo) => {
+  const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
+  let release!: () => void, reached!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  const seen = new Promise<void>(resolve => { reached = resolve; });
+  let uploads = 0;
+  const uploaded: { recordingId: string; lateAudio: boolean }[] = [];
+  await page.route("**/api/live/scribe/chunk", async route => {
+    uploads++;
+    uploaded.push({ recordingId: route.request().headers()["x-recording-id"],
+      lateAudio: route.request().postDataBuffer()?.includes(Buffer.from("synthetic late audio")) ?? false });
+    if (uploads > 1) return route.continue();
+    const response = await route.fetch(); reached(); await held;
+    await route.fulfill({ response }).catch(() => {});
+  });
+  try {
+    await setup(page); await seen;
+    await page.getByTestId("withdraw-patient-recording").click();
+    await expect(status(page)).toHaveAttribute("data-phase", "revoked");
+    await expect(page.getByText("Unsent audio was cleared from this page.", { exact: false })).toBeVisible();
+    const count = uploads;
+    await page.evaluate(() => {
+      const recorder = (window as unknown as { __resumeProbe: Probe }).__resumeProbe.recorders[0];
+      // Deliver the final event after cancellation, as browser event queues may.
+      recorder.dispatchEvent(new BlobEvent("dataavailable", { data: new Blob(["synthetic late audio"]) }));
+    });
+    await page.waitForTimeout(1800);
+    expect(uploads).toBe(count);
+    await expect(status(page)).toHaveAttribute("data-phase", "revoked");
+    expect(await page.evaluate(() => {
+      const probe = (window as unknown as { __resumeProbe: Probe }).__resumeProbe;
+      return probe.recorders.every(recorder => recorder.state === "inactive")
+        && probe.streams.every(stream => stream.getTracks().every(track => track.readyState === "ended"));
+    })).toBe(true);
+    expect(errors).toEqual([]);
+    await status(page).scrollIntoViewIfNeeded();
+    await page.screenshot({ path: testInfo.outputPath("revoked-upload.png") });
+    // Renewed consent does not dispose of the old paused recording or revive
+    // its revoked session. The backend must continue refusing a competing start.
+    await page.getByTestId("ack-patient-recording").check();
+    await page.getByTestId("grant-patient-recording").click();
+    await expect(page.getByTestId("withdraw-patient-recording")).toBeVisible();
+    await page.getByTestId("start-recording").click();
+    await expect(status(page)).toHaveAttribute("data-phase", "unconfirmed");
+    release();
+    expect(uploads).toBe(count);
+    expect(uploaded.some(chunk => chunk.lateAudio)).toBe(false);
+    expect(errors).toEqual([]);
+  } finally { release(); }
+});
+
+test("a completed recorder cannot inject delayed audio into a subsequent recording", async ({ page }) => {
+  const uploaded: { recordingId: string; lateAudio: boolean }[] = [];
+  await page.route("**/api/live/scribe/chunk", async route => {
+    uploaded.push({ recordingId: route.request().headers()["x-recording-id"],
+      lateAudio: route.request().postDataBuffer()?.includes(Buffer.from("synthetic late audio")) ?? false });
+    await route.continue();
+  });
+  await setup(page);
+  await expect.poll(() => uploaded.length).toBeGreaterThan(0);
+  const firstId = uploaded[0].recordingId;
+  await page.getByTestId("stop-recording").click();
+  await expect(status(page)).toHaveAttribute("data-phase", "transcript_ready");
+  await page.getByTestId("start-recording").click();
+  await expect(status(page)).toHaveAttribute("data-phase", "recording");
+  await page.evaluate(() => {
+    const probe = (window as unknown as { __resumeProbe: Probe }).__resumeProbe;
+    if (probe.recorders.length !== 2) throw new Error("expected two distinct recorders");
+    probe.recorders[0].dispatchEvent(new BlobEvent("dataavailable", { data: new Blob(["synthetic late audio"]) }));
+  });
+  await expect.poll(() => uploaded.some(chunk => chunk.recordingId !== firstId)).toBe(true);
+  await page.getByTestId("stop-recording").click();
+  await expect(status(page)).toHaveAttribute("data-phase", "transcript_ready");
+  expect(uploaded.some(chunk => chunk.lateAudio)).toBe(false);
+});

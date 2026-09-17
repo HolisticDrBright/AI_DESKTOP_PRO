@@ -86,3 +86,7 @@ capture authorization cannot be established, bounded buffering and server-side
 chunk idempotency. Current happy-path network/revocation tests do not prove those
 adversarial queue cases; this is an activation blocker, not completed processing.
 All six original commercial-readiness phase scopes remain incomplete.
+
+Follow-up: [recording upload ownership](recording-upload-ownership.md) repairs
+recording/session ownership and stale-pump/event fencing. It does not complete
+the remaining authorization-epoch, bounded-buffer or durable-retry requirements.
