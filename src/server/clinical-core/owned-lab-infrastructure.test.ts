@@ -8,6 +8,18 @@ beforeAll(()=>{
 });
 type Policy={PolicyName?:string;PolicyDocument?:{Statement:{Action:string|string[];Resource:unknown}[]};'Fn::If'?:[string,Policy,unknown]};
 describe('production lab release candidate',()=>{
+  it('cannot expire held personal documents/jobs through an unguarded native lifecycle',()=>{
+    expect(template.Resources.LabDocumentsBucket.Properties.LifecycleConfiguration).toBeUndefined();
+    expect(template.Resources.LabJobTable.Properties.TimeToLiveSpecification).toBeUndefined();
+    const env=template.Resources.LabCleanupFunction.Properties.Environment.Variables;
+    expect(env.PERSONAL_LAB_ACTIVATION).toEqual({Ref:'Activation'});
+    expect(env.CLINICAL_DATABASE_CLUSTER_ARN).toEqual({Ref:'DatabaseClusterArn'});
+    expect(env.CLINICAL_DATABASE_SECRET_ARN).toEqual({Ref:'DatabaseSecretArn'});
+    const role=template.Resources.LabCleanupRole.Properties.Policies[1]['Fn::If'];
+    expect(role[0]).toBe('Active');
+    expect(role[1].PolicyDocument.Statement).toContainEqual({Effect:'Allow',Action:['rds-data:BeginTransaction','rds-data:CommitTransaction','rds-data:RollbackTransaction','rds-data:ExecuteStatement'],Resource:{Ref:'DatabaseClusterArn'}});
+    expect(role[1].PolicyDocument.Statement).toContainEqual({Effect:'Allow',Action:'secretsmanager:GetSecretValue',Resource:{Ref:'DatabaseSecretArn'}});
+  });
   it('is blocked, personal-namespaced and logs-only by default with explicit activation evidence',()=>{
     expect(template.Parameters.PhiAllowed.Default).toBe('false');expect(template.Parameters.Activation.Default).toBe('blocked');
     expect(template.Parameters.Activation.AllowedValues).toEqual(['blocked','approved']);

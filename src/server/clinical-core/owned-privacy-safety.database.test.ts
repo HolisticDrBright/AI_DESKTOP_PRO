@@ -1,4 +1,5 @@
-import {afterAll,beforeAll,describe,expect,it} from 'vitest';
+import {afterAll,beforeAll,describe,expect,it,vi} from 'vitest';
+import {createOwnedExternalDeletionGuard} from './owned-external-deletion';
 import {PGlite} from '@electric-sql/pglite';
 import {pgcrypto} from '@electric-sql/pglite/contrib/pgcrypto';
 import {readFileSync} from 'node:fs';
@@ -98,6 +99,32 @@ beforeAll(async()=>{
 afterAll(async()=>{await db?.close();});
 
 describe('privacy fulfillment: executable production SQL with fictional data (not hosted Aurora)',()=>{
+  it('guards external deletion as the current consumer without requiring processing consent',async()=>{
+    const result=await asActor('select clinical_core.guard_owned_external_deletion() as owner',[],owner,'consumer');
+    expect(result.rows).toEqual([{owner}]);
+    await expect(asActor('select clinical_core.guard_owned_external_deletion()',[],owner,'consumer','clinical_data')).rejects.toThrow('consumer_owner_required');
+    await expect(asActor('select clinical_core.guard_owned_external_deletion()',[],operator,'workforce')).rejects.toThrow('consumer_owner_required');
+    await db.query("update clinical_core.identities set status='disabled' where person_id=$1",[owner]);
+    try{await expect(asActor('select clinical_core.guard_owned_external_deletion()',[],owner,'consumer')).rejects.toThrow('request_context_refused');}
+    finally{await db.query("update clinical_core.identities set status='active' where person_id=$1",[owner]);}
+  });
+  it('blocks held external cleanup and permits it only after an authorized release',async()=>{
+    const database:ClinicalCoreDatabase={transaction:work=>db.transaction(async tx=>{
+      await tx.exec('set local role clinical_core_api');
+      return work({query:async<Row extends Record<string,unknown>>(sql:string,parameters:readonly unknown[]=[])=>
+        tx.query<Row>(sql,parameters.map(p=>p&&typeof p==='object'&&'kind' in p&&p.kind==='uuid'&&'value' in p?p.value:p))});
+    })};
+    const guard=createOwnedExternalDeletionGuard(database),scope={personId:owner,organizationId:org,ownerSub:'subject-'+owner};
+    const operation=vi.fn(async()=>({fictional:true}));
+    const hold=(await asActor("select clinical_private.place_owned_legal_hold($1,'owner_dispute') as id",[owner])).rows[0] as {id:string};
+    try{
+      await expect(asActor('select clinical_core.guard_owned_external_deletion()',[],owner,'consumer')).rejects.toThrow('owned_record_legal_hold');
+      await expect(guard(scope,operation)).rejects.toThrow();expect(operation).not.toHaveBeenCalled();
+      // Another person's identity cannot be substituted for the held owner.
+      await expect(guard({...scope,ownerSub:'subject-'+other},operation)).rejects.toThrow();expect(operation).not.toHaveBeenCalled();
+    }finally{await asActor('select clinical_private.release_owned_legal_hold($1)',[hold.id]);}
+    expect(await guard(scope,operation)).toEqual({fictional:true});expect(operation).toHaveBeenCalledOnce();
+  });
   it('requires explicit personal-purge policy authorization, not merely generic policy approval',async()=>{
     const id=await request();
     await db.exec("update clinical_private.owned_retention_policies set personal_purge_authorized_sha256=null where version='test-valid'");

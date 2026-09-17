@@ -4,6 +4,7 @@ import {OwnedStorageError,type createOwnedConsumerRecordsAdapter} from './owned-
 import {createOwnedLabAuthorization,LabAuthorizationRevoked,LAB_AUTHORIZATION_SCOPES} from './owned-lab-authorization';
 import {createLabAnalysisApi,type ApiEvent,type Claims,type LabApiOptions} from './aws-lab-analysis-api';
 import {CoreSubscriptionError,requireConsumerCore} from './core-subscription-guard';
+import type {ExternalDeletionGuard} from './owned-external-deletion';
 
 /** Independent production lab/document processing candidate. Mirrors the owned
  * voice candidate: verified production consumer identity, separate ai_context
@@ -21,6 +22,7 @@ export function createOwnedLabApi(input:{
   configuration:OwnedLabConfiguration;
   adapter:()=>Pick<ReturnType<typeof createOwnedConsumerRecordsAdapter>,'consentState'>;
   now?:()=>number;
+  deletionGuard?:ExternalDeletionGuard;
   requireCore?:(headers:Record<string,string|undefined>)=>Promise<void>;
   /** Test seam: the mode-aware lab API factory. Production code uses the real one. */
   api?:(options:LabApiOptions)=>Handler;
@@ -39,7 +41,7 @@ export function createOwnedLabApi(input:{
     return {sub:context.identitySubject,'custom:person_id':context.actorPersonId,'custom:organization_id':context.organizationId};
   };
   const inner=(input.api??createLabAnalysisApi)({
-    mode:'production',identity,
+    mode:'production',identity,deletionGuard:input.deletionGuard,
     revalidatePrivacyIdentity:async event=>{
       const context=ownedConsumerIdentity(event as ApiGatewayV2Event,c,'consent_management',now());
       // Fetching consent state checks the active DB identity, not a grant.

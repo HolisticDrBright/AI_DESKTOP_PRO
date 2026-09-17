@@ -10,6 +10,7 @@ import {createAwsLabAnalysisApiHandler} from './aws-lab-analysis-api';
 import {CoreSubscriptionError} from './core-subscription-guard';
 import {OwnedStorageError,type StorageConsentState} from './owned-consumer-records';
 import type {ProductionClinicalRequestContext} from './aws-identity-consent';
+import type {ExternalDeletionGuard} from './owned-external-deletion';
 const now=Date.parse('2026-09-16T12:00:00Z'),uuid='11111111-1111-4111-8111-111111111111',requestId='10000000-0000-4000-8000-000000000001';
 const config:OwnedLabConfiguration={consumerIssuer:'https://cognito-idp.us-east-2.amazonaws.com/consumer',consumerAudience:'12345678901234567890',
   phiAllowed:true,activationState:'approved',activationEvidenceSha256:'a'.repeat(64),providerEvidenceSha256:'b'.repeat(64),allowedScopes:['ai_context','lab_history']};
@@ -26,7 +27,8 @@ function state(scope:StorageConsentState['scope'],revision=1):StorageConsentStat
 const rows=new Map<string,Record<string,unknown>>();
 let consentState:ReturnType<typeof vi.fn<(context:ProductionClinicalRequestContext,scope:StorageConsentState['scope'])=>Promise<StorageConsentState>>>;
 function setup(c=config){const adapter=vi.fn(()=>({consentState}));const requireCore=vi.fn(async()=>{});
-  return {adapter,requireCore,handler:createOwnedLabApi({configuration:c,adapter,now:()=>now,requireCore})};}
+  const deletionGuard:ExternalDeletionGuard=async(_s,work)=>work();
+  return {adapter,requireCore,deletionGuard,handler:createOwnedLabApi({configuration:c,adapter,now:()=>now,requireCore,deletionGuard})};}
 beforeEach(()=>{
   rows.clear();vi.clearAllMocks();consentState=vi.fn(async(_c,scope)=>state(scope));
   mock.claim.mockReset().mockResolvedValue(undefined);mock.cleanup.mockReset().mockResolvedValue(null);
@@ -169,7 +171,16 @@ describe('production owner privacy routes after consent withdrawal',()=>{
     const scope={ownerSub:claims().sub,organizationId:uuid,personId:uuid};
     expect(mock.claim.mock.calls[0].slice(1)).toEqual(operation==='cancel'?[scope,s.id,true]:[scope,s.id]);
     expect(mock.cleanup.mock.calls[0].slice(1)).toEqual([s.id,scope]);expect(s.requireCore).not.toHaveBeenCalled();
+    expect(mock.claim.mock.calls[0][0].deletionGuard).toBe(s.deletionGuard);
+    expect(mock.cleanup.mock.calls[0][0].deletionGuard).toBe(s.deletionGuard);
     expect(mock.sfn).not.toHaveBeenCalled();
+  });
+  it.each(['cancel','delete'] as const)('reports a hold distinctly for %s without claiming deletion',async operation=>{
+    const s=await retained();if(operation==='delete')job().state='completed';
+    mock.claim.mockRejectedValue(new OwnedStorageError('legal_hold'));
+    const response=await s.handler(operation==='cancel'?event('POST',`jobs/${s.id}/cancel`,{confirmRemoveUnfinishedAnalysis:true}):event('DELETE',`jobs/${s.id}`));
+    expect(response.statusCode).toBe(409);expect(JSON.parse(response.body)).toEqual({data:{error:'lab_deletion_held'}});
+    expect(mock.cleanup).not.toHaveBeenCalled();
   });
   it('never claims another owner or classification for deletion, and refuses cancellation of saved results',async()=>{
     const s=await retained();

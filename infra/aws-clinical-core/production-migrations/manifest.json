@@ -204,6 +204,10 @@
     {
       "version": "20260917040000",
       "file": "20260917040000_production_reviewed_personal_purge.sql"
+    },
+    {
+      "version": "20260917050000",
+      "file": "20260917050000_production_external_deletion_guard.sql"
     }
   ]
 }

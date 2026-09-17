@@ -120,6 +120,7 @@ export type LabDataClassification = 'synthetic_only' | 'personal_health_record';
 /** The synthetic handler keeps its attested-token path. The production mode is
  * only reachable through the owned wrapper, which verifies a production-bound
  * consumer identity, revalidates consent and binds it to every job. */
+import type {ExternalDeletionGuard} from './owned-external-deletion';
 export type LabApiOptions =
   | { mode: 'synthetic' }
   | { mode: 'production';
@@ -127,6 +128,7 @@ export type LabApiOptions =
       capture: (event: ApiEvent, identity: Claims) => Promise<LabAuthorization>;
       policy: LabAuthorizationPolicy;
       revalidatePrivacyIdentity:(event:ApiEvent)=>Promise<void>;
+      deletionGuard?:ExternalDeletionGuard;
       requireCore: (headers: Record<string, string | undefined>) => Promise<void> };
 const CLASSIFICATION: Record<LabApiOptions['mode'], LabDataClassification> = { synthetic: 'synthetic_only', production: 'personal_health_record' };
 function classificationAccepted(input: Record<string, unknown>, options: LabApiOptions): boolean {
@@ -473,9 +475,11 @@ async function classifiedJob(job: Job, options: LabApiOptions, includeRevoked = 
 }
 
 async function deleteJob(identity: Claims, jobId: string, options: LabApiOptions) {
+  if(options.mode==='production'&&!options.deletionGuard)throw new OwnedStorageError('storage_unavailable');
   const job = await ownedJob(jobId, identity, options, true);
   if (job && !["awaiting_upload", "completed", "needs_review", "failed", "deleting"].includes(job.state)) return refusal(409);
   const deps={db,s3,table:required('LAB_JOB_TABLE'),bucket:required('LAB_DOCUMENT_BUCKET'),
+    deletionGuard:options.mode==='production'?options.deletionGuard:undefined,
     stopExecutions:(id:string)=>stopLabExecutions(sfn,required('LAB_STATE_MACHINE_ARN'),id)};
   const scope={ownerSub:identity.sub,organizationId:identity['custom:organization_id'],personId:identity['custom:person_id']};
   if(job)await claimLabDeletion(deps,scope,jobId);
@@ -486,12 +490,14 @@ async function deleteJob(identity: Claims, jobId: string, options: LabApiOptions
 /** Cancellation is explicit removal of unfinished work, not deletion of a saved result.
  * A running Lambda/provider request may finish, but cannot publish after the fence. */
 async function cancelJob(event:ApiEvent,identity:Claims,jobId:string,options:LabApiOptions){
+  if(options.mode==='production'&&!options.deletionGuard)throw new OwnedStorageError('storage_unavailable');
   const input=body(event);
   if(Object.keys(input).sort().join(',')!=='confirmRemoveUnfinishedAnalysis' || input.confirmRemoveUnfinishedAnalysis!==true)return refusal();
   const job=await ownedJob(jobId,identity,options,true);
   if(job&&!['awaiting_upload','queued','extracting','verifying','normalizing','interpreting','synthesizing','deleting'].includes(job.state))return refusal(409);
   const scope={ownerSub:identity.sub,organizationId:identity['custom:organization_id'],personId:identity['custom:person_id']};
   const deps={db,s3,table:required('LAB_JOB_TABLE'),bucket:required('LAB_DOCUMENT_BUCKET'),
+    deletionGuard:options.mode==='production'?options.deletionGuard:undefined,
     stopExecutions:(id:string)=>stopLabExecutions(sfn,required('LAB_STATE_MACHINE_ARN'),id)};
   try{
     if(job)await claimLabDeletion(deps,scope,jobId,true);
@@ -499,6 +505,7 @@ async function cancelJob(event:ApiEvent,identity:Claims,jobId:string,options:Lab
     if(!cleanup)return refusal(404);
     return json(200,{contractVersion:'lab-cancellation/1',jobId,cancelled:true,deleted:true,...cleanup});
   }catch(error){
+    if(error instanceof OwnedStorageError)throw error;
     if((error as {name?:unknown})?.name==='TransactionCanceledException')return refusal(409);
     // The durable outbox remains for retry. Never acknowledge a partial purge/stop.
     return refusal(503);
@@ -815,6 +822,8 @@ export function createLabAnalysisApi(options: LabApiOptions) {
     if(error instanceof LabAuthorizationRevoked)return json(403,{error:'lab_consent_required'});
     if(error instanceof CoreSubscriptionError)return json(402,{error:'core_subscription_required'});
     if(error instanceof OwnedStorageError&&error.code==='owner_required')return json(401,{error:'reauth_required'});
+    if(error instanceof OwnedStorageError&&error.code==='legal_hold')return json(409,{error:'lab_deletion_held'});
+    if(error instanceof OwnedStorageError)return json(503,{error:'lab_analysis_unavailable'});
     return refusal();
   }
   };

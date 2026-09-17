@@ -16,7 +16,9 @@ const errors = [];
 const assert = (condition, message) => { if (!condition) errors.push(message); };
 
 assert(manifest.contract_version === "clinical-core-migrations/1", "generated manifest contract is invalid");
-assert(manifest.migrations.length === 61, "expected ten transformed migrations and fifty-one production overlays");
+assert(manifest.migrations.length === 62, "expected ten transformed migrations and fifty-two production overlays");
+assert(manifest.migrations.some(entry => entry.file === '20260917050000_production_external_deletion_guard.sql'),
+  "missing owner-locked external deletion guard");
 assert(manifest.migrations.some(entry => entry.file === '20260917040000_production_reviewed_personal_purge.sql'),
   "missing preview-bound personal purge");
 assert(manifest.migrations.some(entry => entry.file === '20260917030000_production_privacy_operator_queue.sql'),

@@ -9,7 +9,7 @@ export async function stopLabExecutions(sfn:SFNClient,stateMachineArn:string,job
   for(const prefix of ['lab','lab-plan']){
     const executionArn=stateMachineArn.replace(':stateMachine:',':execution:')+`:${prefix}-${jobId}`;
     try{
-      const response=await sfn.send(new StopExecutionCommand({executionArn}));
+      const response=await sfn.send(new StopExecutionCommand({executionArn}),{abortSignal:AbortSignal.timeout(15000)});
       if(!(response.stopDate instanceof Date)||!Number.isFinite(response.stopDate.getTime()))
         throw new Error('lab_cancellation_stop_unconfirmed');
     }catch(error){

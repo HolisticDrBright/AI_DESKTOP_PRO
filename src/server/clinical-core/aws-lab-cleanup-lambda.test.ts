@@ -20,6 +20,16 @@ it('ordinary live objects without a cleanup record are left untouched',async()=>
   calls.reconcile.mockResolvedValue(null);
   expect(await labCleanupHandler({kind:'created',bucket:'fictional-bucket',key})).toEqual({checked:0});
 });
+it('personal cleanup requires full activation evidence and carries the real database guard',async()=>{
+  vi.spyOn(console,'error').mockImplementation(()=>{});
+  vi.stubEnv('PHI_ALLOWED','true');vi.stubEnv('DATA_CLASSIFICATION','personal_health_record');vi.stubEnv('LAB_OBJECT_PREFIX','personal-labs');
+  await expect(labCleanupHandler({kind:'sweep'})).rejects.toThrow('lab_cleanup_retry_required');
+  expect(calls.sweep).not.toHaveBeenCalled();
+  vi.stubEnv('PERSONAL_LAB_ACTIVATION','approved');vi.stubEnv('PERSONAL_LAB_EVIDENCE_SHA256','a'.repeat(64));
+  vi.stubEnv('PERSONAL_LAB_PROVIDER_EVIDENCE_SHA256','b'.repeat(64));vi.stubEnv('PERSONAL_LAB_ALLOWED_SCOPES','ai_context,lab_history');
+  await labCleanupHandler({kind:'sweep'});
+  expect(calls.sweep).toHaveBeenCalledWith(expect.objectContaining({deletionGuard:expect.any(Function)}));
+});
 it.each([
   null,{kind:'sweep',extra:'refuse'},{kind:'created',bucket:'other',key},
   {kind:'created',bucket:'fictional-bucket',key:'unrelated/object'},

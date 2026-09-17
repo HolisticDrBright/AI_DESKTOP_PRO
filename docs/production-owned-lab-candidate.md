@@ -1,5 +1,11 @@
 # Independent production lab/document processing candidate
 
+September 17 safety follow-up: production delete/cancel and retry/late-object
+cleanup now use the owner-locked database legal-hold guard. The generated
+production template removes unguarded Dynamo TTL and S3 lifecycle expiry;
+synthetic retention is unchanged. See `personal-lab-deletion-holds.md` for tests,
+distributed-operation limits and remaining retention/hosted work.
+
 September 16, 2026. Original phase 2 (production-owned lab/document processing),
 not a new or completed phase. Source only: no deployment, persistent migration,
 real data, provider call or paid mobile build. Pairs with V2

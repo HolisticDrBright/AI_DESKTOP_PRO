@@ -57,15 +57,17 @@ R.LabJobTable.Properties.PointInTimeRecoverySpecification={PointInTimeRecoveryEn
 delete R.LabJobTable.DeletionPolicy;R.LabJobTable.DeletionPolicy='Retain';R.LabJobTable.UpdateReplacePolicy='Retain';
 R.LabDocumentsBucket.DeletionPolicy='Retain';R.LabDocumentsBucket.UpdateReplacePolicy='Retain';
 delete R.LabDocumentsBucket.Properties.CorsConfiguration; // native uploads only; browser origins need separate review
-// Retention must be approved before activation; the seven-day job lifetime is a
-// processing window, not a records-retention policy, and no backup erasure is claimed.
-R.LabDocumentsBucket.Properties.LifecycleConfiguration.Rules[0].Id='ExpirePersonalLabProcessingObjects';
+// A processing deadline is not deletion authority. Native Dynamo TTL and S3
+// expiry cannot consult owner holds, so neither may erase personal records.
+// Retention cleanup must use the hold-aware worker under an approved policy.
+delete R.LabJobTable.Properties.TimeToLiveSpecification;
+delete R.LabDocumentsBucket.Properties.LifecycleConfiguration;
 const production={CONSUMER_ISSUER:ref('ConsumerIssuer'),CONSUMER_AUDIENCE:ref('ConsumerAudience'),PHI_ALLOWED:ref('PhiAllowed'),
   PERSONAL_LAB_ACTIVATION:ref('Activation'),PERSONAL_LAB_EVIDENCE_SHA256:ref('ActivationEvidenceSha256'),PERSONAL_LAB_PROVIDER_EVIDENCE_SHA256:ref('ProviderEvidenceSha256'),
   PERSONAL_LAB_ALLOWED_SCOPES:ref('AllowedScopes'),BILLING_AWS_API_ORIGIN:ref('BillingApiOrigin'),LAB_OBJECT_PREFIX:'personal-labs',DATA_CLASSIFICATION:'personal_health_record',
   CLINICAL_DATABASE_CLUSTER_ARN:ref('DatabaseClusterArn'),CLINICAL_DATABASE_SECRET_ARN:ref('DatabaseSecretArn'),CLINICAL_DATABASE_NAME:ref('DatabaseName')};
 for(const name of ['LabApiFunction','LabWorkerFunction'])Object.assign(R[name].Properties.Environment.Variables,production);
-Object.assign(R.LabCleanupFunction.Properties.Environment.Variables,{PHI_ALLOWED:ref('PhiAllowed'),DATA_CLASSIFICATION:'personal_health_record',LAB_OBJECT_PREFIX:'personal-labs'});
+Object.assign(R.LabCleanupFunction.Properties.Environment.Variables,production);
 R.LabApiFunction.Properties.ReservedConcurrentExecutions=8;
 R.LabWorkerFunction.Properties.ReservedConcurrentExecutions=4;
 const database=[{Effect:'Allow',Action:['rds-data:BeginTransaction','rds-data:CommitTransaction','rds-data:RollbackTransaction','rds-data:ExecuteStatement'],Resource:ref('DatabaseClusterArn')},
@@ -87,7 +89,7 @@ const cleanupRole=R.LabCleanupRole.Properties;
 const cleanupStatements=cleanupRole.Policies[0].PolicyDocument.Statement;
 const cleanupLogs=cleanupStatements.find(s=>Array.isArray(s.Action)&&s.Action.includes('logs:PutLogEvents'));
 cleanupRole.Policies=[{PolicyName:'LogsOnly',PolicyDocument:{Version:'2012-10-17',Statement:[cleanupLogs]}},
-  {'Fn::If':['Active',{PolicyName:'ScopedPersonalLabCleanup',PolicyDocument:{Version:'2012-10-17',Statement:cleanupStatements.filter(s=>s!==cleanupLogs)}},ref('AWS::NoValue')]}];
+  {'Fn::If':['Active',{PolicyName:'ScopedPersonalLabCleanup',PolicyDocument:{Version:'2012-10-17',Statement:[...cleanupStatements.filter(s=>s!==cleanupLogs),...database]}},ref('AWS::NoValue')]}];
 for(const name of ['LabCancellationPolicy','LabInventoryQueryPolicy'])R[name].Condition='Active';
 for(const name of ['LabCleanupSweepRule','LabCleanupObjectRule'])R[name].Properties.State={'Fn::If':['Active','ENABLED','DISABLED']};
 for(const [name,fn] of [['LabApiFailureAlarm','LabApiFunction'],['LabWorkerFailureAlarm','LabWorkerFunction']])R[name]={Type:'AWS::CloudWatch::Alarm',Properties:{

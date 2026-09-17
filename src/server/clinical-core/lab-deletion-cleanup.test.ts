@@ -1,4 +1,6 @@
-import { expect,it,vi } from 'vitest';
+import {afterEach,expect,it,vi} from 'vitest';
+import type {ExternalDeletionGuard} from './owned-external-deletion';
+afterEach(()=>vi.unstubAllEnvs());
 import type {DynamoDBDocumentClient} from '@aws-sdk/lib-dynamodb';
 import type {S3Client} from '@aws-sdk/client-s3';
 import {claimLabDeletion,reconcileLabDeletion,sweepLabDeletions,cleanupJobFromObjectKey,LAB_CLEANUP_VERSION} from './lab-deletion-cleanup';
@@ -38,6 +40,35 @@ it('atomically claims the job and outbox with scope/state/lease checks and no cl
   expect(JSON.stringify(command.input)).toContain('attribute_not_exists(leaseUntil)');
   expect(JSON.stringify(command.input)).toContain('if_not_exists(requestedAt, :now)');
   expect(JSON.stringify(command.input)).not.toMatch(/expiresAt|fileName|biomarkers|result|documents/);
+});
+it('personal claims and cleanup fail closed without a hold-aware guard',async()=>{
+  vi.stubEnv('LAB_OBJECT_PREFIX','personal-labs');const h=setup();
+  await expect(claimLabDeletion(h.deps,scope,id)).rejects.toThrow('storage_unavailable');
+  expect(h.db).not.toHaveBeenCalled();
+  await expect(reconcileLabDeletion(h.deps,id,scope)).rejects.toThrow('storage_unavailable');
+  expect(h.s3).not.toHaveBeenCalled();expect(h.job).toBeDefined();
+  expect(h.db.mock.calls.every(([c])=>c.constructor.name==='GetCommand')).toBe(true);
+});
+it('holds every personal remote mutation behind the owner guard, including cancel and late-watch writes',async()=>{
+  vi.stubEnv('LAB_OBJECT_PREFIX','personal-labs');const h=setup();let locked=false,count=0;
+  h.objects=[{Key:prefix.replace('synthetic-labs','personal-labs')+'document/source.pdf',VersionId:'v1'}];
+  h.ledger!.stopRequired=true;
+  const originalDb=h.db.getMockImplementation()!,originalS3=h.s3.getMockImplementation()!;
+  h.db.mockImplementation(async c=>{if(c.constructor.name!=='GetCommand')expect(locked).toBe(true);return originalDb(c);});
+  h.s3.mockImplementation(async c=>{if(c.constructor.name==='DeleteObjectsCommand')expect(locked).toBe(true);return originalS3(c);});
+  const deletionGuard:ExternalDeletionGuard=async(s,work)=>{expect(s).toMatchObject(scope);locked=true;count++;try{return await work();}finally{locked=false;}};
+  const stopExecutions=vi.fn(async()=>{expect(locked).toBe(true);});
+  const deps={...h.deps,deletionGuard,stopExecutions};
+  await claimLabDeletion(deps,scope,id,true);await reconcileLabDeletion(deps,id,scope);
+  expect(count).toBe(6);expect(stopExecutions).toHaveBeenCalledOnce();expect(h.job).toBeUndefined();expect(h.objects).toEqual([]);
+});
+it('a new hold between cleanup batches prevents all subsequent deletion and acknowledgment',async()=>{
+  vi.stubEnv('LAB_OBJECT_PREFIX','personal-labs');const h=setup();let checks=0;
+  h.objects=[{Key:prefix.replace('synthetic-labs','personal-labs')+'document/source.pdf',VersionId:'v1'}];
+  const deletionGuard:ExternalDeletionGuard=async(_s,work)=>{if(++checks===3)throw new Error('held');return work();};
+  await expect(reconcileLabDeletion({...h.deps,deletionGuard},id,scope)).rejects.toThrow('held');
+  expect(h.objects).toEqual([]);expect(h.job).toBeDefined();expect(h.ledger!.cleanupPartition).toBe('pending');
+  expect(h.db.mock.calls.every(([c])=>c.constructor.name==='GetCommand')).toBe(true);
 });
 it('purges all versions before dropping the clinical row and keeps a minimal late-upload watch',async()=>{
   const h=setup();const result=await reconcileLabDeletion(h.deps,id,scope);

@@ -4,6 +4,7 @@ import { S3Client } from '@aws-sdk/client-s3';
 import { SFNClient } from '@aws-sdk/client-sfn';
 import { stopLabExecutions } from './lab-execution-stop';
 import { cleanupJobFromObjectKey, reconcileLabDeletion, sweepLabDeletions } from './lab-deletion-cleanup';
+import {ownedLabDeletionGuardFromEnv} from './owned-external-deletion';
 
 const db=DynamoDBDocumentClient.from(new DynamoDBClient({}),{marshallOptions:{removeUndefinedValues:true}});
 const s3=new S3Client({});
@@ -14,9 +15,13 @@ export async function labCleanupHandler(event:unknown) {
     // Exactly one reviewed posture: synthetic fixtures, or the production-owned
     // personal namespace. Mixed or partial postures refuse before any cleanup.
     const env=process.env,synthetic=env.PHI_ALLOWED==='false'&&env.DATA_CLASSIFICATION==='synthetic_only'&&(env.LAB_OBJECT_PREFIX??'synthetic-labs')==='synthetic-labs';
-    const personal=env.PHI_ALLOWED==='true'&&env.DATA_CLASSIFICATION==='personal_health_record'&&env.LAB_OBJECT_PREFIX==='personal-labs';
+    const personal=env.PHI_ALLOWED==='true'&&env.DATA_CLASSIFICATION==='personal_health_record'&&env.LAB_OBJECT_PREFIX==='personal-labs'
+      &&env.PERSONAL_LAB_ACTIVATION==='approved'
+      &&[env.PERSONAL_LAB_EVIDENCE_SHA256,env.PERSONAL_LAB_PROVIDER_EVIDENCE_SHA256].every(v=>/^[a-f0-9]{64}$/.test(v??''))
+      &&env.PERSONAL_LAB_ALLOWED_SCOPES==='ai_context,lab_history';
     if(!synthetic&&!personal)throw new Error('lab_cleanup_posture_invalid');
     const deps={db,s3,table:required('LAB_JOB_TABLE'),bucket:required('LAB_DOCUMENT_BUCKET'),
+      deletionGuard:personal?ownedLabDeletionGuardFromEnv(env):undefined,
       stopExecutions:(id:string)=>stopLabExecutions(sfn,required('LAB_STATE_MACHINE_ARN'),id)};
     const value=event as Record<string,unknown>;
     if(!value||typeof value!=='object'||Array.isArray(value))throw new Error('lab_cleanup_event_invalid');

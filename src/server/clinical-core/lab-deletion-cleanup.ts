@@ -1,4 +1,6 @@
 import {labObjectPrefix} from './lab-object-prefix';
+import type {ExternalDeletionGuard} from './owned-external-deletion';
+import {OwnedStorageError} from './owned-consumer-records';
 import { DeleteCommand, GetCommand, QueryCommand, TransactWriteCommand, UpdateCommand, type DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { DeleteObjectsCommand, ListObjectVersionsCommand, type S3Client } from '@aws-sdk/client-s3';
 
@@ -8,7 +10,12 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 const subject = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 type Scope = {ownerSub:string;organizationId:string;personId:string};
 type Cleanup = Scope & {pk:string;contractVersion:string;requestedAt:string;cleanupPartition:'pending'|'watching';cleanupDue:string;lastVerifiedAt?:string;stopRequired?:true};
-type Dependencies = {db:DynamoDBDocumentClient;s3:S3Client;table:string;bucket:string;now?:()=>number;stopExecutions?:(jobId:string)=>Promise<void>};
+type Dependencies = {db:DynamoDBDocumentClient;s3:S3Client;table:string;bucket:string;now?:()=>number;stopExecutions?:(jobId:string)=>Promise<void>;deletionGuard?:ExternalDeletionGuard};
+async function mutate<T>(deps:Dependencies,scope:Scope,operation:()=>Promise<T>):Promise<T>{
+  if(deps.deletionGuard)return deps.deletionGuard(scope,operation);
+  if(labObjectPrefix()==='synthetic-labs')return operation();
+  throw new OwnedStorageError('storage_unavailable');
+}
 const invalid = ():never => {throw new Error('lab_cleanup_invalid');};
 const sameOwner = (a:Scope,b:Scope) => a.ownerSub===b.ownerSub && a.organizationId===b.organizationId && a.personId===b.personId;
 function validateScope(scope:Scope,jobId:string) {
@@ -34,7 +41,7 @@ async function readCleanup(deps:Dependencies,jobId:string) {
 export async function claimLabDeletion(deps:Dependencies,scope:Scope,jobId:string,cancelActive=false) {
   validateScope(scope,jobId);
   const now=(deps.now??Date.now)(),iso=new Date(now).toISOString();
-  await deps.db.send(new TransactWriteCommand({TransactItems:[
+  await mutate(deps,scope,()=>deps.db.send(new TransactWriteCommand({TransactItems:[
     {Update:{TableName:deps.table,Key:{pk:'job#'+jobId},
       UpdateExpression:'SET #state = :deleting, updatedAt = :now'+(cancelActive?' REMOVE leaseToken, leaseUntil':''),
       ConditionExpression:'ownerSub = :owner AND organizationId = :org AND personId = :person AND '+(cancelActive
@@ -48,9 +55,9 @@ export async function claimLabDeletion(deps:Dependencies,scope:Scope,jobId:strin
       UpdateExpression:'SET contractVersion = :version, ownerSub = :owner, organizationId = :org, personId = :person, requestedAt = if_not_exists(requestedAt, :now), cleanupPartition = :pending, cleanupDue = :now'+(cancelActive?', stopRequired = :yes':''),
       ConditionExpression:'attribute_not_exists(pk) OR (ownerSub = :owner AND organizationId = :org AND personId = :person AND contractVersion = :version)',
       ExpressionAttributeValues:{':version':LAB_CLEANUP_VERSION,':owner':scope.ownerSub,':org':scope.organizationId,':person':scope.personId,':now':iso,':pending':'pending',...(cancelActive?{':yes':true}:{})}}},
-  ]}));
+  ]}),{abortSignal:AbortSignal.timeout(15000)}));
 }
-async function purge(deps:Dependencies,prefix:string) {
+async function purge(deps:Dependencies,scope:Scope,prefix:string) {
   // Re-list from the beginning after deleting each page. Retry is safe after
   // partial failure; never skip versions using a marker we just deleted.
   for(let page=0;page<32;page++){
@@ -58,8 +65,8 @@ async function purge(deps:Dependencies,prefix:string) {
     const entries=[...(result.Versions??[]),...(result.DeleteMarkers??[])];
     if(entries.some(item=>typeof item.Key!=='string'||!item.Key.startsWith(prefix)||typeof item.VersionId!=='string'||!item.VersionId))invalid();
     if(!entries.length){if(result.IsTruncated)invalid();return;}
-    const removed=await deps.s3.send(new DeleteObjectsCommand({Bucket:deps.bucket,
-      Delete:{Objects:entries.map(item=>({Key:item.Key!,VersionId:item.VersionId!})),Quiet:true}}));
+    const removed=await mutate(deps,scope,()=>deps.s3.send(new DeleteObjectsCommand({Bucket:deps.bucket,
+      Delete:{Objects:entries.map(item=>({Key:item.Key!,VersionId:item.VersionId!})),Quiet:true}}),{abortSignal:AbortSignal.timeout(15000)}));
     if(removed.Errors?.length)throw new Error('lab_cleanup_retry_required');
   }
   throw new Error('lab_cleanup_retry_required');
@@ -70,6 +77,8 @@ export async function reconcileLabDeletion(deps:Dependencies,jobId:string,expect
   const record=await readCleanup(deps,jobId);
   if(!record)return null;
   if(expected&&!sameOwner(record,expected))return null;
+  // Revalidate even on an empty prefix, not just when object bytes exist.
+  await mutate(deps,record,async()=>{});
   const namespace=labObjectPrefix();
   const sourcePrefix=`${namespace}/${record.organizationId}/${record.ownerSub}/${jobId}/`;
   const artifactPrefix=`${namespace}/artifacts/${jobId}/`;
@@ -79,21 +88,21 @@ export async function reconcileLabDeletion(deps:Dependencies,jobId:string,expect
     ||Number(current.Item.leaseUntil??0)>(deps.now??Date.now)()))throw new Error('lab_cleanup_state_conflict');
   if(record.stopRequired){
     if(!deps.stopExecutions)throw new Error('lab_cancellation_configuration_missing');
-    await deps.stopExecutions(jobId);
+    await mutate(deps,record,()=>deps.stopExecutions!(jobId));
   }
-  await purge(deps,sourcePrefix);await purge(deps,artifactPrefix);
-  await deps.db.send(new DeleteCommand({TableName:deps.table,Key:{pk:'job#'+jobId},
+  await purge(deps,record,sourcePrefix);await purge(deps,record,artifactPrefix);
+  await mutate(deps,record,()=>deps.db.send(new DeleteCommand({TableName:deps.table,Key:{pk:'job#'+jobId},
     ConditionExpression:'attribute_not_exists(pk) OR (ownerSub = :owner AND organizationId = :org AND personId = :person AND #state = :deleting AND (attribute_not_exists(leaseUntil) OR leaseUntil <= :epoch))',
     ExpressionAttributeNames:{'#state':'state'},ExpressionAttributeValues:{':owner':record.ownerSub,':org':record.organizationId,':person':record.personId,
-      ':deleting':'deleting',':epoch':(deps.now??Date.now)()}}));
+      ':deleting':'deleting',':epoch':(deps.now??Date.now)()}}),{abortSignal:AbortSignal.timeout(15000)}));
   const now=(deps.now??Date.now)(),lastVerifiedAt=new Date(now).toISOString();
-  await deps.db.send(new UpdateCommand({TableName:deps.table,Key:{pk:record.pk},
+  await mutate(deps,record,()=>deps.db.send(new UpdateCommand({TableName:deps.table,Key:{pk:record.pk},
     UpdateExpression:'SET cleanupPartition = :watching, cleanupDue = :next, lastVerifiedAt = :now REMOVE stopRequired',
     ConditionExpression:'ownerSub = :owner AND organizationId = :org AND personId = :person AND requestedAt = :requested AND contractVersion = :version AND '+(record.stopRequired?'stopRequired = :yes':'attribute_not_exists(stopRequired)'),
     ExpressionAttributeValues:{':owner':record.ownerSub,':org':record.organizationId,':person':record.personId,':requested':record.requestedAt,
       ':version':LAB_CLEANUP_VERSION,':watching':'watching',
       ':next':new Date(now+(now-Date.parse(record.requestedAt)<60*60*1000?5*60*1000:24*60*60*1000)).toISOString(),':now':lastVerifiedAt,
-      ...(record.stopRequired?{':yes':true}:{})}}));
+      ...(record.stopRequired?{':yes':true}:{})}}),{abortSignal:AbortSignal.timeout(15000)}));
   return {cleanupVersion:LAB_CLEANUP_VERSION,cleanupStatus:'late_upload_watch' as const,lastVerifiedAt};
 }
 export async function sweepLabDeletions(deps:Dependencies) {
