@@ -172,6 +172,10 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - run: npm run build:clinical
       - name: Run every live suite against the committed contract fixture
+        env:
+          # Full single-process suite: reserve >=4 GiB for Chromium, OS and
+          # native allocations. The config refuses undersized/cgroup runners.
+          E2E_DEV_HEAP_MB: "10240"
         run: |
           node scripts/live-stub-server.mjs &
           sleep 2

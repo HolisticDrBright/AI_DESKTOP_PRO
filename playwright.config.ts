@@ -1,4 +1,5 @@
 import { defineConfig } from "@playwright/test";
+import { devServerEnvironment } from "./scripts/e2e-dev-resources.mjs";
 
 /**
  * E2E suite for the MOCK/demo app (no live backend required).
@@ -57,8 +58,11 @@ export default defineConfig({
   },
   webServer: {
     command: DEV_SERVER ? `npx next dev -p ${PORT}` : `npx next start -p ${PORT}`,
+    // Only this child receives the explicit budget; production and ordinary
+    // local development keep their own configuration. Validate before boot.
+    ...(DEV_SERVER ? { env: devServerEnvironment() } : {}),
     port: PORT,
-    reuseExistingServer: true,
+    reuseExistingServer: !process.env.CI,
     timeout: DEV_SERVER ? 180_000 : 60_000,
   },
 });

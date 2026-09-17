@@ -2,9 +2,7 @@ import {afterAll,beforeAll,describe,expect,it,vi} from 'vitest';
 import {createOwnedExternalDeletionGuard} from './owned-external-deletion';
 import {PGlite} from '@electric-sql/pglite';
 import {pgcrypto} from '@electric-sql/pglite/contrib/pgcrypto';
-import {readFileSync} from 'node:fs';
 import {execFileSync} from 'node:child_process';
-import {resolve,sep} from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {createOwnedConsumerRecordsAdapter} from './owned-consumer-records';
 import {createOwnedConsumerApi} from './owned-consumer-api';
@@ -70,16 +68,14 @@ async function fill(id:string){
   for(const store of stores)await record(id,store,'not_applicable');
 }
 beforeAll(async()=>{
-  // Build the same production SQL artifact as CI. Its cleanup target is a
-  // derived directory inside this checkout, never a home/workspace root.
-  const root=resolve('.'),out=resolve('dist/aws-clinical-core/production-migrations');
-  if(!out.startsWith(root+sep)||out===root)throw new Error('unsafe_build_output');
-  execFileSync(process.execPath,['scripts/build-aws-production-clinical-core.mjs'],{cwd:root,stdio:'pipe'});
+  // Same production artifact, isolated per process: no shared-directory rebuild.
+  const {manifest,files:contents}=JSON.parse(execFileSync(process.execPath,
+    ['scripts/build-aws-production-clinical-core.mjs','--json'],{encoding:'utf8',maxBuffer:8*1024*1024,timeout:10000})) as
+    {manifest:{migrations:{file:string}[]};files:Record<string,string>};
   db=new PGlite({extensions:{pgcrypto}});
-  const manifest=JSON.parse(readFileSync(resolve(out,'manifest.json'),'utf8')) as {migrations:{file:string}[]};
   const files=manifest.migrations.map(entry=>entry.file);
   for(const file of files){
-    try{await db.exec(readFileSync(resolve(out,file),'utf8'));}
+    try{await db.exec(contents[file]);}
     catch(cause){throw new Error(file+': '+(cause instanceof Error?cause.message:'migration_failed'));}
   }
   // All identities, approvals and retention text here are fictional in-memory fixtures.

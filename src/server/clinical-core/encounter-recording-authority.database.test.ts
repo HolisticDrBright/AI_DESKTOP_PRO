@@ -2,8 +2,6 @@ import { beforeAll, afterAll, describe, expect, it } from "vitest";
 import { PGlite } from "@electric-sql/pglite";
 import { pgcrypto } from "@electric-sql/pglite/contrib/pgcrypto";
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { createEncounterRecordingOperations } from "./encounter-recording-operations";
 import { createRecordingAuthorityApi, RECORDING_AUTHORITY_ROUTE } from "./recording-authority-api";
@@ -64,12 +62,12 @@ async function ready() {
 }
 
 beforeAll(async () => {
-  execFileSync(process.execPath, ["scripts/build-aws-production-clinical-core.mjs"], { stdio: "pipe" });
-  const directory = resolve("dist/aws-clinical-core/production-migrations");
-  const manifest = JSON.parse(readFileSync(resolve(directory, "manifest.json"), "utf8")) as { migrations: { file: string }[] };
+  const { manifest, files } = JSON.parse(execFileSync(process.execPath,
+    ["scripts/build-aws-production-clinical-core.mjs", "--json"], { encoding: "utf8", maxBuffer: 8 * 1024 * 1024, timeout: 10000 })) as
+    { manifest: { migrations: { file: string }[] }; files: Record<string, string> };
   db = new PGlite({ extensions: { pgcrypto } });
   for (const entry of manifest.migrations) {
-    try { await db.exec(readFileSync(resolve(directory, entry.file), "utf8")); }
+    try { await db.exec(files[entry.file]); }
     catch (cause) { throw new Error(entry.file + ": " + (cause instanceof Error ? cause.message : "failed")); }
   }
   // No deployment rows or clinical approvals. Everything below is isolated fictional SQL data.
