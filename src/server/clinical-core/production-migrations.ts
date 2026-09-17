@@ -228,6 +228,15 @@ export async function applyProductionClinicalCoreMigrations(
         + (select count(*) from clinical_core.sync_callback_nonces)
         + (select count(*) from clinical_core.sync_inbound_lab_imports)
         + (select count(*) from clinical_audit.patient_relationship_events)
+        + (select count(*) from clinical_private.recording_controls)
+        + (select count(*) from clinical_private.recording_consent_releases)
+        + (select count(*) from clinical_private.recording_participants)
+        + (select count(*) from clinical_private.recording_representative_authorities)
+        + (select count(*) from clinical_private.recording_consent_grants)
+        + (select count(*) from clinical_private.recording_consent_withdrawals)
+        + (select count(*) from clinical_private.recording_capture_releases)
+        + (select count(*) from clinical_private.encounter_captures)
+        + (select count(*) from clinical_private.recording_authority_events)
       )::int as clinical_row_count`);
     const row = verification.rows[0];
     if (!row || Number(row.table_count) !== 114 || Number(row.contract_count) !== 81
