@@ -91,8 +91,11 @@ original intermittent upstream/development-navigation stall is eliminated.
 Hosted load, physical audio formats/devices and actual provider acceptance are
 still required. Browser provider responses are synthetic; production scribe
 provider activation is unchanged. Existing pause/resume heartbeat-failure and
-physical device-reconnection behavior need further engineering review; this
-increment does not certify those beyond the tested fixture cases. Long-running
+physical device-reconnection behavior needed further engineering review at this
+checkpoint; the subsequent source repairs and16case combined run are recorded in
+recording-pause-and-device-recovery.md. That follow-up replaces automatic client-
+router handoff with document navigation; this file retains the earlier failures
+as historical evidence. Long-running
 transcription/draft operations and other transport deadlines are unchanged.
 
 All original account continuity, processing, privacy/cross-store fulfillment,

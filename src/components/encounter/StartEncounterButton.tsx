@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
 import { Mic, Stethoscope } from "lucide-react";
 import { requestEncounterStart, type EncounterStartResult } from "@/lib/encounter-start";
 
@@ -31,7 +30,6 @@ function EncounterStartAction({
   compact = false,
   purpose = "encounter",
 }: StartEncounterButtonProps) {
-  const router = useRouter();
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<EncounterStartResult | null>(null);
@@ -49,9 +47,10 @@ function EncounterStartAction({
       if (controller.signal.aborted || attempt.current !== controller) return;
       setResult(outcome);
       if (outcome.kind === "ready") {
-        // Keep a document-navigation escape hatch if the client router stalls.
-        // It opens the returned encounter and never replays the POST.
-        try { router.push(outcome.href); } catch { /* The direct link remains usable. */ }
+        // A clinical creation must not depend on the observed intermittent
+        // client-router transition. Navigate once to the validated same-origin
+        // document; the link remains if beforeunload/user cancellation blocks it.
+        try { window.location.assign(outcome.href); } catch { /* The direct link remains usable. */ }
       } else if (outcome.kind === "unconfirmed") {
         setError("We could not confirm whether the encounter was created. Review the chart timeline before starting another.");
       } else {

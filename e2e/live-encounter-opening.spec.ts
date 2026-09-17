@@ -5,37 +5,49 @@ test.skip(!process.env.E2E_LIVE, "requires the synthetic clinical fixture");
 test.beforeAll(resetBackend);
 const chart = "/patients/aaaaaaaa-1111-2222-3333-444444444401/chart";
 
-test("a stalled client navigation exposes the created encounter without a second POST", async ({ page }, testInfo) => {
+test("creation opens the encounter document without relying on client navigation or another POST", async ({ page }, testInfo) => {
   let creations = 0;
   const errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message));
   page.on("request", request => {
     if (request.url().endsWith("/api/live/emr/encounter") && request.method() === "POST") creations++;
   });
-  // Hold only RSC navigation. A normal document GET must remain available.
-  let release!: () => void;
-  const held = new Promise<void>(resolve => { release = resolve; });
+  let rscAttempts = 0;
+  let documentRequests = 0;
+  // Refuse client-router navigation: the creation handoff must use the document.
   await page.route("**/patients/*/encounter/**", async route => {
-    if (route.request().headers().rsc !== "1") return route.continue();
-    await held;
-    await route.abort().catch(() => {});
+    if (route.request().headers().rsc === "1") { rscAttempts++; return route.abort(); }
+    if (route.request().isNavigationRequest()) documentRequests++;
+    return route.continue();
   });
-  try {
     await page.goto(chart);
     await page.getByRole("button", { name: "Start encounter", exact: true }).click();
-    const link = page.getByTestId("open-created-encounter");
-    await expect(link).toBeVisible();
-    await expect(page.getByRole("button", { name: "Opening…" })).toHaveCount(0);
-    expect(creations).toBe(1);
-    await page.screenshot({ path: testInfo.outputPath("encounter-ready-recovery.png") });
-    const href = await link.getAttribute("href");
-    expect(href).toMatch(/^\/patients\/aaaaaaaa-1111-2222-3333-444444444401\/encounter\/[a-f0-9-]{36}$/);
-    await link.click();
-    await expect(page).toHaveURL(new RegExp(`${href}$`));
+    await expect(page).toHaveURL(/\/patients\/aaaaaaaa-1111-2222-3333-444444444401\/encounter\/[a-f0-9-]{36}$/);
     await expect(page.getByTestId("scribe-panel")).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath("encounter-document-opened.png") });
     expect(creations).toBe(1);
+    expect(documentRequests).toBe(1); expect(rscAttempts).toBe(0);
     expect(errors).toEqual([]);
-  } finally { release(); }
+});
+
+test("cancelled browser navigation retains a direct link without creating another encounter", async ({ page }) => {
+  let creations = 0;
+  page.on("request", request => { if (request.url().endsWith("/api/live/emr/encounter") && request.method() === "POST") creations++; });
+  await page.goto(chart);
+  await page.evaluate(() => {
+    const handler = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; };
+    (window as unknown as { __blockEncounterLeave: typeof handler }).__blockEncounterLeave = handler;
+    window.addEventListener("beforeunload", handler);
+  });
+  const dialog = page.waitForEvent("dialog");
+  await page.getByRole("button", { name: "Start encounter", exact: true }).click({ noWaitAfter: true });
+  await (await dialog).dismiss();
+  const link = page.getByTestId("open-created-encounter"); await expect(link).toBeVisible();
+  await expect(page.getByRole("button", { name: "Opening…" })).toHaveCount(0);
+  await page.evaluate(() => window.removeEventListener("beforeunload", (window as unknown as { __blockEncounterLeave: (event: BeforeUnloadEvent) => void }).__blockEncounterLeave));
+  await link.click();
+  await expect(page.getByTestId("scribe-panel")).toBeVisible();
+  expect(creations).toBe(1);
 });
 
 test("an uncertain creation offers timeline reconciliation, not an automatic retry", async ({ page }) => {
