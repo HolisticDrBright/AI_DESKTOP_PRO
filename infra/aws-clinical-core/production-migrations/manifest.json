@@ -188,6 +188,10 @@
     {
       "version": "20260916080000",
       "file": "20260916080000_production_lab_specimen_context.sql"
+    },
+    {
+      "version": "20260917010000",
+      "file": "20260917010000_production_privacy_fulfillment_safety.sql"
     }
   ]
 }

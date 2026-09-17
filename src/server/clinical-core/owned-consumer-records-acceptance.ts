@@ -38,6 +38,7 @@ async function run() {
       for (const statement of splitPostgresStatements(readFileSync("infra/aws-clinical-core/production-migrations/20260916050000_production_guardian_authority.sql","utf8"))) await tx.query(statement);
       for (const statement of splitPostgresStatements(readFileSync("infra/aws-clinical-core/production-migrations/20260916060000_production_owned_reproductive_context_guard.sql","utf8"))) await tx.query(statement);
       for (const statement of splitPostgresStatements(readFileSync("infra/aws-clinical-core/production-migrations/20260916070000_production_owned_deletion_hold_guard.sql","utf8"))) await tx.query(statement);
+      for (const statement of splitPostgresStatements(readFileSync("infra/aws-clinical-core/production-migrations/20260917010000_production_privacy_fulfillment_safety.sql","utf8"))) await tx.query(statement);
       // Fictional approval metadata is exclusively inside this rolled-back transaction.
       await tx.query("insert into clinical_private.consumer_storage_consent_releases(scope,version,content_sha256,content,approved_by,approved_at) values ('forms_checkins','acceptance-only',encode(public.digest($1,'sha256'),'hex'),$1,'ROLLBACK TEST - NOT A HUMAN APPROVAL',clock_timestamp()),('wearables','acceptance-only',encode(public.digest($1,'sha256'),'hex'),$1,'ROLLBACK TEST - NOT A HUMAN APPROVAL',clock_timestamp())", ["Fictional rollback-only consent copy; not approved for use."]);
       await tx.query("set local role clinical_core_api");

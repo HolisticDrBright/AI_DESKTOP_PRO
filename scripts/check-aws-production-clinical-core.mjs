@@ -16,7 +16,9 @@ const errors = [];
 const assert = (condition, message) => { if (!condition) errors.push(message); };
 
 assert(manifest.contract_version === "clinical-core-migrations/1", "generated manifest contract is invalid");
-assert(manifest.migrations.length === 57, "expected ten transformed migrations and forty-seven production overlays");
+assert(manifest.migrations.length === 58, "expected ten transformed migrations and forty-eight production overlays");
+assert(manifest.migrations.some(entry => entry.file === '20260917010000_production_privacy_fulfillment_safety.sql'),
+  "privacy fulfillment safety must be included in the production artifact");
 assert(manifest.migrations.some(entry => entry.version === '20260916070000'
   && entry.file === '20260916070000_production_owned_deletion_hold_guard.sql'),
   "per-record legal-hold guard must be included in the production artifact");
