@@ -30,7 +30,7 @@ jobs:
           CLINICAL_SUPABASE_URL=http://127.0.0.1:3999 CLINICAL_SUPABASE_ANON_KEY=stub \
           CLINICAL_DEMO_EMAIL=demo@local CLINICAL_DEMO_PASSWORD=demo CLINICAL_ORG_ID=org-fixture \
           RECORDING_AWS_API_ORIGIN=https://abcdefghij.execute-api.us-east-2.amazonaws.com \
-          npm run test:e2e -- e2e/aws-recording-consent.spec.ts e2e/aws-recording-capture.spec.ts --trace retain-on-failure
+          npm run test:e2e -- e2e/aws-recording-consent.spec.ts e2e/aws-recording-capture.spec.ts e2e/aws-recording-cleanup-review.spec.ts --trace retain-on-failure
       - uses: actions/upload-artifact@v4
         if: always()
         with:

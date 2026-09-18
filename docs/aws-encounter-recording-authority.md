@@ -1,5 +1,44 @@
 # AWS encounter recording authority — source candidate
 
+## September 17 operator-review screen checkpoint
+
+Settings now links to `/settings/recording-cleanup`. An explicit read obtains
+queue/history metadata through a same-origin cookie-authenticated Desktop proxy,
+then the separate workforce AWS review endpoint. The server requires its own
+`RECORDING_CLEANUP_REVIEW_API_ORIGIN`; no capture/consumer/fixture fallback.
+It rejects actor/organization/mutation injection, redirects, oversized content,
+malformed receipts, foreign recording history and inconsistent page cursors.
+Transport has an independent deadline even when cancellation is ignored.
+
+The screen holds no persistent cache and clears on session/storage notification,
+hide, page exit, offline and one-minute expiry. Each request replaces the prior
+view, so history cannot extend an older queue snapshot. Late responses cannot
+restore a cleared view. Unknown acknowledgments stay Unknown; empty scans and
+empty pages never mean erasure. No dispatch, storage deletion, hold removal or
+release approval controls exist here. This is operator review, not execution.
+
+Verification: 2741 full units pass /11existing skips; typecheck passes; lint has
+zero errors and four existing unrelated warnings. 44new targeted route/contract
+tests pass;11new browser cases pass,16existing recording browser cases pass
+locally. Browser cases use fictional HTTP receipts except actual no-cookie proxy
+refusal; API-to-canonical-SQL scope/audit evidence remains in the preceding
+checkpoint. Agent-browser screen inspected with no error overlay; real proxy
+returned the expected sign-in refusal. Initial new selector ambiguity against
+Next's global live regions and one test typing error were corrected.
+
+Previous exact-head CI35296248287 retained a failed consent-screen mount test:
+the trace shows Loading encounter with no encounter API request. The cause is
+not yet proven and local success does not erase that failure. Added counts of
+encounter requests/page errors/failed scripts on mount failure without payloads,
+identifiers or credentials. No timeout, assertion or production policy relaxed.
+
+All SIX ORIGINAL phases remain open. Authenticated dispatch, reviewed runtime
+identity, storage-side hold coordination, deployed cleanup, durable local audio,
+transcription/drafts, hosted/device acceptance and other original requirements
+remain. The user has now authorized a synthetic TestFlight build and hosted
+Desktop update, superseding the previous paid-build restriction for this release.
+AWS test login is expired; this checkpoint does not claim deployment or submission.
+
 September 17, 2026. Original commercial-readiness phase 2; not an enabled
 recording service, deployed migration, or completed release phase.
 

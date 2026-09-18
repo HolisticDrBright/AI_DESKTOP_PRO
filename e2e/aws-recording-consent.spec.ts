@@ -15,11 +15,22 @@ function workspace(participants = [] as unknown[]) {
   return { encounterId, encounterStatus: "in_progress", participants, consentReleases: [release], activeCapture: null };
 }
 async function open(page: Page) {
+  // Preserve the pre-hydration boundary on failure without logging clinical
+  // payloads, URL parameters or browser credentials. Do not relax deadlines.
+  let encounterRequests = 0, pageErrors = 0, failedScripts = 0;
+  page.on('request', request => { if (new URL(request.url()).pathname === '/api/live/emr/encounter') encounterRequests++; });
+  page.on('pageerror', () => { pageErrors++; });
+  page.on('requestfailed', request => { if (request.resourceType() === 'script') failedScripts++; });
   await page.route("**/api/live/emr/encounter?*", route => route.fulfill({ json: { data: {
     encounter: { encounterId, patientId, status: "in_progress", appointmentId: null, visitType: null, startedAt: null, endedAt: null, statusReason: null }, notes: [],
   } } }));
   await page.goto(path);
-  await expect(page.getByRole("heading", { name: "Recording consent — AWS" })).toBeVisible();
+  try { await expect(page.getByRole("heading", { name: "Recording consent — AWS" })).toBeVisible(); }
+  catch (error) {
+    await test.info().attach('encounter-mount-boundary', {contentType:'application/json',
+      body:JSON.stringify({encounterRequests,pageErrors,failedScripts})});
+    throw error;
+  }
   await expect(page.getByRole("button", { name: /Start recording/i })).toHaveCount(0);
   await page.getByLabel("Consent locale").fill("en-US");
   await page.getByLabel("Reviewed jurisdiction").fill("FICTIONAL");

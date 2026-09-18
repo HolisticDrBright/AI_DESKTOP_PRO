@@ -1,0 +1,87 @@
+'use client';
+import {useEffect,useRef,useState} from 'react';
+import {cleanupReviewRequestSchema,parseCleanupReviewResponse,type CleanupReviewRequest,type CleanupWorkPage,type CleanupHistoryPage} from '@/contracts/recordingCleanupReview';
+import {AdapterError,codeFromHttpStatus} from '@/adapters/errors';
+import {onWorkforceSessionChange} from '@/lib/workforce-session-change';
+import {Card} from '@/components/ui/bits';
+import {Btn} from '@/components/ui/Btn';
+import {readBoundedRequestBody} from '@/server/bounded-request-body';
+const outcomeNames={empty_observed:'Empty scan observed — recheck required',needs_recheck:'Further reconciliation required',held:'Held at last check',unavailable:'Service unavailable at last check',refused:'Worker refused at last check'};
+const reasons={retention_deadline:'Retention deadline',discard:'Recording discarded',consent_revoked:'Consent revoked'};
+export function RecordingCleanupReviewWorkspace(){
+  const [queue,setQueue]=useState<CleanupWorkPage|null>(null),[history,setHistory]=useState<CleanupHistoryPage|null>(null);
+  const [busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState(''),[checkedAt,setCheckedAt]=useState('');
+  const alive=useRef(false),working=useRef(false),epoch=useRef(0),abort=useRef<AbortController|null>(null),expires=useRef<ReturnType<typeof setTimeout>|null>(null);
+  useEffect(()=>{
+    const lifecycle=epoch;
+    alive.current=true;
+    const clear=()=>{epoch.current++;abort.current?.abort();working.current=false;if(expires.current)clearTimeout(expires.current);
+      setQueue(null);setHistory(null);setBusy(false);setError('');setCheckedAt('');setNotice('Review cleared. Reload after checking your current workforce session.');};
+    const hide=()=>{if(document.visibilityState==='hidden')clear();};
+    const unsubscribe=onWorkforceSessionChange(clear);
+    document.addEventListener('visibilitychange',hide);window.addEventListener('pagehide',clear);window.addEventListener('offline',clear);
+    return()=>{alive.current=false;lifecycle.current++;abort.current?.abort();if(expires.current)clearTimeout(expires.current);
+      unsubscribe();document.removeEventListener('visibilitychange',hide);window.removeEventListener('pagehide',clear);window.removeEventListener('offline',clear);};
+  },[]);
+  async function load(input:CleanupReviewRequest){
+    if(!alive.current||working.current)return;
+    const request=cleanupReviewRequestSchema.parse(input),generation=++epoch.current,controller=new AbortController();abort.current=controller;
+    working.current=true;setBusy(true);setError('');setNotice('');setHistory(null);setQueue(null);setCheckedAt('');
+    if(expires.current)clearTimeout(expires.current);
+    let timer:ReturnType<typeof setTimeout>|undefined;
+    try{
+      const operation=async()=>{
+        const response=await fetch('/api/live/recording-cleanup-review',{method:'POST',credentials:'same-origin',cache:'no-store',redirect:'error',
+          headers:{'Content-Type':'application/json'},body:JSON.stringify(request),signal:controller.signal});
+        if(!response.ok){void response.body?.cancel().catch(()=>{});throw new AdapterError(codeFromHttpStatus(response.status));}
+        if(response.headers.get('content-type')?.split(';')[0].trim().toLowerCase()!=='application/json')throw new AdapterError('unavailable');
+        const headers=new Headers(response.headers);if(headers.has('content-encoding'))headers.delete('content-length');
+        const bytes=await readBoundedRequestBody({body:response.body,headers,signal:controller.signal},128000,10000);
+        return parseCleanupReviewResponse(request,JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes)));
+      };
+      const result=await Promise.race([operation(),new Promise<never>((_,reject)=>{timer=setTimeout(()=>{controller.abort();reject(new AdapterError('unavailable'));},20000);})]);
+      if(!alive.current||generation!==epoch.current||controller.signal.aborted)return;
+      if('items' in result.data)setQueue(result.data);else setHistory(result.data);
+      setCheckedAt(new Date().toISOString());
+      expires.current=setTimeout(()=>{epoch.current++;abort.current?.abort();working.current=false;setBusy(false);setQueue(null);setHistory(null);setCheckedAt('');setNotice('Review snapshot expired. Reload to check current status.');},60000);
+    }catch(e){
+      if(!alive.current||generation!==epoch.current)return;
+      setQueue(null);setHistory(null);setCheckedAt('');
+      const code=e instanceof AdapterError?e.code:'unavailable';
+      setError(code==='unauthenticated'?'Sign in again with your workforce account. Review requires a login within the last 15 minutes.':
+        code==='forbidden'?'A reviewed cleanup-operator assignment is required. Ordinary clinic membership does not grant access.':
+        'Cleanup review is unavailable or its response could not be verified. No cleanup completion is confirmed.');
+    }finally{if(timer)clearTimeout(timer);if(alive.current&&generation===epoch.current){working.current=false;setBusy(false);}}
+  }
+  return <div data-testid="recording-cleanup-review" className="space-y-4">
+    <Card className="p-5 space-y-3">
+      <p>Read-only review for assigned cleanup operators. This screen cannot delete recordings, remove holds, start workers or approve releases.</p>
+      <p className="text-sm text-subtle">An empty scan or an exact-version acknowledgment is not proof of complete erasure. Each page is a snapshot, not a live status feed or complete inventory.</p>
+      <Btn disabled={busy} onClick={()=>void load({action:'queue'})}>{busy?'Loading review…':'Load / refresh cleanup queue'}</Btn>
+      {error?<p role="alert" className="text-danger">{error}</p>:null}
+      {notice?<p role="status">{notice}</p>:null}
+      {checkedAt?<p className="text-sm">Snapshot loaded {checkedAt}. Display expires after one minute.</p>:null}
+      {!queue&&!history&&!busy&&!error&&!notice?<p>Cleanup history has not been loaded.</p>:null}
+      {queue?.items.length===0?<p>No queued recordings were returned for this view. This is not confirmation that all recordings were deleted.</p>:null}
+      {queue?.items.map(item=><section key={item.recordingId} aria-label={`Recording ${item.recordingId}`} className="border-t pt-3 space-y-2 break-words">
+        <h2 className="font-semibold">Recording {item.recordingId}</h2><p>Patient reference: {item.patientRecordId}</p>
+        <p>{reasons[item.reason]} · revision {item.version}</p><p>Due: {item.dueAt} · next scheduled check: {item.nextCheckAt}</p>
+        <p>{item.lastOutcome?outcomeNames[item.lastOutcome]:'No run outcome recorded'} · unresolved version attempts: {item.unresolvedAttempts}</p>
+        <p>{item.leaseUntil?`Claim lease deadline: ${item.leaseUntil}. A lease does not prove that a worker is running.`:'No active claim recorded in this snapshot.'}</p>
+        <Btn disabled={busy} aria-label={`Review runs for ${item.recordingId}`} onClick={()=>void load({action:'history',recordingId:item.recordingId})}>Review run history</Btn>
+      </section>)}
+      {queue?.nextAfter?<Btn disabled={busy} onClick={()=>void load({action:'queue',after:queue.nextAfter!})}>Next queue page</Btn>:null}
+    </Card>
+    {history?<Card className="p-5 space-y-3 break-words"><h2 className="text-lg font-semibold">Run history</h2>
+      <p>Recording {history.recordingId}. Pages use run-ID order, not chronological order.</p>
+      {!history.runs.length?<p>No runs returned for this page. No deletion is confirmed.</p>:null}
+      {history.runs.map(run=><section key={run.runId} className="border-t pt-3 space-y-2">
+        <h3 className="font-semibold">Run {run.runId}</h3><p>Revision {run.version} · claimed {run.claimedAt} · lease deadline {run.leaseUntil}</p>
+        <p>{run.leaseActive?'Lease was active when the server checked. Execution is not independently confirmed.':'Lease is not current. This does not establish whether remote work finished.'}</p>
+        {run.result?<><p>{outcomeNames[run.result.outcome]}</p><p>Exact-version delete acknowledgments: {run.result.deleteAcknowledged===null?'Unknown':run.result.deleteAcknowledged}. Whole-recording erasure: not confirmed.</p>
+          <p>{run.result.appliedToSchedule?'Result updated the recheck schedule.':'Historical result did not change the current schedule.'} Recorded {run.result.recordedAt}.</p></>:<p>No result recorded — outcome remains unknown.</p>}
+      </section>)}
+      {history.nextAfter?<Btn disabled={busy} onClick={()=>void load({action:'history',recordingId:history.recordingId,after:history.nextAfter!})}>Next history page</Btn>:null}
+    </Card>:null}
+  </div>;
+}

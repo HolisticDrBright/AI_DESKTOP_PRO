@@ -15,3 +15,16 @@ export const cleanupReviewRequestSchema=z.discriminatedUnion('action',[
   z.object({action:z.literal('queue'),after:uuid.optional()}).strict(),
   z.object({action:z.literal('history'),recordingId:uuid,after:uuid.optional()}).strict(),
 ]);
+export type CleanupReviewRequest=z.infer<typeof cleanupReviewRequestSchema>;
+export type CleanupWorkPage=z.infer<typeof cleanupWorkPageSchema>;
+export type CleanupHistoryPage=z.infer<typeof cleanupHistoryPageSchema>;
+const envelopeSchema=z.object({data:z.unknown(),capabilities:z.object({review:z.literal(true),dispatch:z.literal(false),storageDeletion:z.literal(false)}).strict()}).strict();
+export function parseCleanupReviewResponse(request:CleanupReviewRequest,value:unknown){
+  const envelope=envelopeSchema.parse(value);
+  const data=request.action==='queue'?cleanupWorkPageSchema.parse(envelope.data):cleanupHistoryPageSchema.parse(envelope.data);
+  if('recordingId' in data&&(request.action!=='history'||data.recordingId!==request.recordingId))throw new Error('cleanup_review_scope_mismatch');
+  const ids='items' in data?data.items.map(i=>i.recordingId):data.runs.map(r=>r.runId);
+  if(ids.some((id,i)=>i>0&&id<=ids[i-1]||request.after!==undefined&&id<=request.after)
+    ||data.nextAfter!==(ids.length===25?ids.at(-1):null))throw new Error('cleanup_review_page_invalid');
+  return {data,capabilities:envelope.capabilities};
+}
