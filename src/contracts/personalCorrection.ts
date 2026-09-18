@@ -1,7 +1,7 @@
 import {z} from 'zod';
 export const CORRECTION_COLLECTIONS=['wellness_profiles','lifestyle_profiles','clinical_intakes','questionnaire_responses','contraindications',
   'symptom_logs','hormone_entries','reproductive_profiles','daily_adherence','meal_logs','subjective_rollups','weekly_checkins',
-  'wearable_daily_records','adverse_event_reports','lab_observations','protocols'] as const;
+  'wearable_daily_records','adverse_event_reports','lab_observations','protocols','diet_preferences'] as const;
 const hash=z.string().regex(/^[a-f0-9]{64}$/);
 const revision=z.number().int().min(1).max(999999999);
 const field=z.string().min(1).max(80).refine(v=>!['__proto__','prototype','constructor'].includes(v));

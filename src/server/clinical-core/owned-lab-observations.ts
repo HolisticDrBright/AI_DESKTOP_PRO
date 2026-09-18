@@ -4,6 +4,7 @@ import { CONSUMER_CLINICAL_COLLECTIONS, validateCollectionPayload, type Consumer
 import { ageAtDrawCollectionContextSchema } from './lab-range-population';
 import type { z } from 'zod';
 import { personalMealBackupSchema } from '@/contracts/personalMealBackup';
+import { dietPreferencesSchema } from '@/contracts/personalDietPreferences';
 
 /** Owned storage refuses direct identifiers such as a date of birth, so the
  * personal copy carries the completed age at the draw instead. Restore keeps
@@ -11,7 +12,7 @@ import { personalMealBackupSchema } from '@/contracts/personalMealBackup';
 export const ownedCollectionContextSchema = ageAtDrawCollectionContextSchema;
 export type OwnedCollectionContext = z.infer<typeof ownedCollectionContextSchema>;
 
-export const OWNED_COLLECTIONS = [...CONSUMER_CLINICAL_COLLECTIONS, 'lab_observations'] as const;
+export const OWNED_COLLECTIONS = [...CONSUMER_CLINICAL_COLLECTIONS, 'lab_observations', 'diet_preferences'] as const;
 export type OwnedCollection = typeof OWNED_COLLECTIONS[number];
 export type OwnedLabObservation = {
   id: string; panelId: string; markerId: string; panelName: string;
@@ -37,6 +38,11 @@ export function withholdReproductiveContext(payload: Record<string,unknown>): Re
 }
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 export function validateOwnedPayload(collection: OwnedCollection, payload: Record<string,unknown>): void {
+  if(collection==='diet_preferences'){
+    const parsed=dietPreferencesSchema.safeParse(payload);
+    if(!parsed.success||Date.parse(parsed.data.updatedAt)>Date.now())throw new Error('owned_diet_preferences_invalid');
+    return;
+  }
   // Full meal copies are private owned storage only. The legacy clinic-sharing
   // payload and consent contract are deliberately not expanded.
   if(collection==='meal_logs' && Object.hasOwn(payload,'details')) {
