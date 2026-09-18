@@ -240,6 +240,10 @@
     {
       "version": "20260917130000",
       "file": "20260917130000_production_recording_readiness.sql"
+    },
+    {
+      "version": "20260917140000",
+      "file": "20260917140000_production_recording_cleanup_intents.sql"
     }
   ]
 }

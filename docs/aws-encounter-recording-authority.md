@@ -749,3 +749,46 @@ Prior Desktop02d2fd5/CI35288355796 SUCCESS and V2354f1c6/35289756845 SUCCESS.
 The newer diagnostic Desktop00583ef/35289750713 remained in progress at inspection.
 Fresh ai-synthetic-staging STS check reports expired credentials; no hosted
 storage/identity/deployment evidence or environment switching is claimed.
+
+## September 17 — durable cleanup intent handoff (not deletion execution)
+
+Canonical migration71 registers `recording_cleanup_intents` and its immutable
+event history. Capture insertion atomically creates a work item at that capture's
+original retention deadline, so abandoned/no-disposition captures are not omitted.
+Discard advances the due time; capture revocation and withdrawal of a recorded
+recording grant do likewise, including withdrawal after a successful finish.
+Finish alone does not shorten the original deadline or start processing.
+
+This is a handoff for a reviewed cleanup worker, NOT authority to delete. A due
+item must still pass fresh retention/legal-hold, in-flight writer, full version
+inventory and storage-disposition checks. No worker, delete permission, hold
+release, deletion receipt or `audioDeleted:true` is added here. The worker and
+operator workflow remain required engineering. In particular, an empty HEAD or
+aborted PUT cannot discharge this work item.
+
+The schema pins recording/organization/patient/release identity. Ordinary API
+roles have no table access or execute permission on the enqueue helper. Intent
+updates cannot postpone cleanup, replace identity or erase the original request;
+each due-reason revision appends an immutable event. Existing retry-safe lifecycle
+commands create no duplicate intent events. Original reserved/stored segment
+inventory is unchanged. Recording-grant lookup uses a GIN index, not a scan of
+every capture for each withdrawal. Existing captures are backfilled through the
+same private helper, without approval seeds, storage changes or erasure claims.
+
+Tests execute canonical SQL in isolated PGlite: the preceding70-migration schema
+creates unfinished/discarded/finished-then-withdrawn fixtures before migration71
+is applied, proving the actual backfill. Cases cover deadline identity, pending
+segments, exact replay, finish/withdrawal, unauthorized writes, immutable events,
+failed inventory comparison, atomic rollback and preservation of a legal-hold
+record. This does not prove that a future deletion worker honors holds or that
+multi-connection Aurora concurrency is qualified. Initial93SQL/artifact cases,
+typecheck and the71-migration/zero-seed gate passed.
+
+All six original scopes remain incomplete. No deployment, PHI/provider activation,
+clinical signature changes, legal-hold release or paid mobile build occurred.
+
+Final local verification:2561unit tests PASS/11existing skips/208files;
+typecheck PASS;lint0errors/4existing warnings;recording capture candidate build
+PASS;canonical71-migration/zero-seed gate PASS. Graphify9076nodes/18311edges/
+712communities (30known omitted sources). Prior Desktop00583ef/35289750713 and
+b46d554/35290363870 were still running at inspection, not failed or passed.

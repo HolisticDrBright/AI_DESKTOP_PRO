@@ -15,6 +15,8 @@ import { createRecordingReconciler, createRecordingReconciliationRepository } fr
 import { recordingReadinessSchema, type RecordingReadiness } from '@/contracts/encounterRecordingCapture';
 
 let db: PGlite;
+const legacyCleanup: { id:string; reason:string }[]=[];
+const cleanupFile='20260917140000_production_recording_cleanup_intents.sql';
 const org = randomUUID(), otherOrg = randomUUID(), actor = randomUUID(), colleague = randomUUID();
 const consumer = randomUUID(), staff = randomUUID(), outsider = randomUUID(), patient = randomUUID();
 const tables = ["recording_controls", "recording_consent_releases", "recording_participants",
@@ -102,6 +104,7 @@ beforeAll(async () => {
     { manifest: { migrations: { file: string }[] }; files: Record<string, string> };
   db = new PGlite({ extensions: { pgcrypto } });
   for (const entry of manifest.migrations) {
+    if(entry.file===cleanupFile) continue; // Prove migration backfill against real preceding schema.
     try { await db.exec(files[entry.file]); }
     catch (cause) { throw new Error(entry.file + ": " + (cause instanceof Error ? cause.message : "failed")); }
   }
@@ -117,8 +120,102 @@ beforeAll(async () => {
   }
   await db.query("insert into clinical_core.patient_records(id,organization_id,patient_key,first_name,last_name) values($1,$2,$3,'Fictional','Patient')",
     [patient, org, "patient_" + patient.replaceAll("-", "")]);
+  for(const reason of ['retention_deadline','discard','consent_revoked']){
+    const r=await uploadReady(), c=r.capture;
+    if(reason==='discard') await lifecycle(c,'discard',0,(await recoveryState(c))!.inventorySha256);
+    if(reason==='consent_revoked'){
+      const s=(await reserveSegment(c))!;await completeSegment(c,s);
+      await lifecycle(c,'finish',0,(await recoveryState(c))!.inventorySha256);await withdraw(r.pGrant);
+    }
+    legacyCleanup.push({id:c.recordingId,reason});
+  }
+  await db.exec(files[cleanupFile]);
 }, 30000);
 afterAll(async () => { await db?.close(); });
+
+type CleanupIntent={recording_id:string;organization_id:string;patient_record_id:string;capture_release_id:string;reason:string;version:number;due_at:Date|string};
+async function cleanupIntent(id:string){return (await db.query<CleanupIntent>('select * from clinical_private.recording_cleanup_intents where recording_id=$1',[id])).rows[0];}
+describe('durable recording cleanup handoff; not erasure authority',()=>{
+  it('rolls back capture, cleanup intent and event together if the transaction fails',async()=>{
+    const r=await ready();await storageRelease(r.config);let id='';
+    await expect(db.transaction(async tx=>{
+      await tx.exec('set local role clinical_core_api');
+      await tx.query("select clinical_private.set_request_context($1,$2,'workforce',$3,'clinical_data','production-clinical','clinical_phi')",[actor,org,'subject-'+actor]);
+      const result=await tx.query<{result:Capture}>("select clinical_private.begin_encounter_capture($1,$2,$3,'audio/webm') as result",[r.e,r.config,randomUUID()]);
+      id=result.rows[0].result.recordingId;throw new Error('FICTIONAL ROLLBACK');
+    })).rejects.toThrow('FICTIONAL ROLLBACK');
+    expect(id).not.toBe('');expect(await cleanupIntent(id)).toBeUndefined();
+    expect((await db.query('select * from clinical_private.recording_cleanup_intent_events where recording_id=$1',[id])).rows).toEqual([]);
+    expect((await db.query('select * from clinical_private.encounter_captures where id=$1',[id])).rows).toEqual([]);
+  });
+  it('does not alter an existing legal hold or create any deletion proof when scheduling discard',async()=>{
+    const hold=randomUUID();
+    await db.query("insert into clinical_private.owned_legal_holds(id,owner_id,reason_code,placed_by) values($1,$2,'litigation',$3)",[hold,consumer,actor]);
+    const before=(await db.query('select * from clinical_private.owned_legal_holds where id=$1',[hold])).rows;
+    const r=await uploadReady();await lifecycle(r.capture,'discard',0,(await recoveryState(r.capture))!.inventorySha256);
+    expect((await db.query('select * from clinical_private.owned_legal_holds where id=$1',[hold])).rows).toEqual(before);
+    expect(await recoveryState(r.capture)).toMatchObject({audioDeleted:false});
+    expect(await cleanupIntent(r.capture.recordingId)).not.toHaveProperty('audio_deleted');
+  });
+  it('backfills existing unfinished, discarded and finished-then-withdrawn captures',async()=>{
+    for(const r of legacyCleanup){
+      const intent=await cleanupIntent(r.id);expect(intent).toMatchObject({reason:r.reason,organization_id:org,patient_record_id:patient});
+      const expected=r.reason==='retention_deadline'?1:2;
+      expect(Number(intent.version)).toBe(expected);
+      expect((await db.query('select * from clinical_private.recording_cleanup_intent_events where recording_id=$1',[r.id])).rows).toHaveLength(expected);
+    }
+  });
+  it('schedules a new capture at its exact original retention deadline without marking audio deleted',async()=>{
+    const r=await uploadReady(),intent=await cleanupIntent(r.capture.recordingId);
+    expect(intent).toMatchObject({reason:'retention_deadline',capture_release_id:r.config,organization_id:org,patient_record_id:patient});
+    const state=(await recoveryState(r.capture))!;
+    expect(new Date(intent.due_at).getTime()).toBe(new Date(state.deletionDeadline).getTime());
+    expect(state.audioDeleted).toBe(false);
+  });
+  it('atomically queues discard with unresolved segments, preserving immutable storage inventory and exact retry',async()=>{
+    const r=await uploadReady(), c=r.capture;await reserveSegment(c);
+    const state=(await recoveryState(c))!, command=randomUUID();
+    await lifecycle(c,'discard',0,state.inventorySha256,command);
+    const first=await cleanupIntent(c.recordingId);
+    expect(first.reason).toBe('discard');expect(Number(first.version)).toBe(2);
+    expect(new Date(first.due_at).getTime()).toBeLessThanOrEqual(Date.now());
+    await lifecycle(c,'discard',0,state.inventorySha256,command);
+    expect(await cleanupIntent(c.recordingId)).toEqual(first);
+    expect((await db.query<{status:string}>('select status from clinical_private.recording_segments where recording_id=$1',[c.recordingId])).rows[0].status).toBe('reserved');
+    expect(await recoveryState(c)).toMatchObject({audioDeleted:false,pendingSegments:1,disposition:'discard'});
+  });
+  it('does not accelerate cleanup on finish alone or grant new processing permission',async()=>{
+    const r=await uploadReady(),c=r.capture;const s=(await reserveSegment(c))!;await completeSegment(c,s);
+    const before=await cleanupIntent(c.recordingId);
+    await lifecycle(c,'finish',0,(await recoveryState(c))!.inventorySha256);
+    expect(await cleanupIntent(c.recordingId)).toEqual(before);
+    expect(await recoveryState(c)).toMatchObject({audioDeleted:false,processingRequested:false});
+    await withdraw(r.pGrant);
+    expect((await cleanupIntent(c.recordingId)).reason).toBe('consent_revoked');
+    expect(await recoveryState(c)).toMatchObject({status:'closed',disposition:'finish',audioDeleted:false});
+  });
+  it('queues withdrawal once while preserving all consent events and refusing further upload',async()=>{
+    const r=await uploadReady();await withdraw(r.pGrant);const before=await cleanupIntent(r.capture.recordingId);
+    expect(before.reason).toBe('consent_revoked');expect(Number(before.version)).toBe(2);
+    await withdraw(r.pGrant);expect(await cleanupIntent(r.capture.recordingId)).toEqual(before);
+    await expect(reserveSegment(r.capture)).rejects.toThrow();
+  });
+  it('does not enqueue discard when the authoritative inventory comparison fails',async()=>{
+    const r=await uploadReady(),before=await cleanupIntent(r.capture.recordingId);
+    await expect(lifecycle(r.capture,'discard',0,'f'.repeat(64))).rejects.toThrow('recording_inventory_changed');
+    expect(await cleanupIntent(r.capture.recordingId)).toEqual(before);
+  });
+  it('denies ordinary API table/helper access and disallows rewriting provenance or postponing cleanup',async()=>{
+    const r=await uploadReady(),id=r.capture.recordingId;
+    for(const table of ['recording_cleanup_intents','recording_cleanup_intent_events']){
+      await expect(call(`select * from clinical_private.${table}`)).rejects.toThrow('permission denied');
+    }
+    await expect(call("select clinical_private.enqueue_recording_cleanup($1,'discard')",[id])).rejects.toThrow('permission denied');
+    await expect(db.query("update clinical_private.recording_cleanup_intents set due_at=due_at+interval '1 day',version=version+1 where recording_id=$1",[id])).rejects.toThrow('recording_cleanup_intent_immutable');
+    await expect(db.query('delete from clinical_private.recording_cleanup_intents where recording_id=$1',[id])).rejects.toThrow();
+    await expect(db.query('delete from clinical_private.recording_cleanup_intent_events where recording_id=$1',[id])).rejects.toThrow();
+  });
+});
 
 const preflight = (e:string,config:string,who=actor,pool='workforce',organization=org) => call<RecordingReadiness>(
   'select clinical_private.get_recording_capture_readiness($1,$2) as result',[e,config],who,pool,organization);
