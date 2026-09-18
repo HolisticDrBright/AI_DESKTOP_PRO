@@ -228,6 +228,9 @@ function classifyDatabaseRejection(error: unknown): ClinicalCoreDatabaseRejectio
   if (/\b(specimen_context_refused|specimen_provider_approval_required)\b/.test(message)) return new ClinicalCoreDatabaseRejection("operation_refused");
   if (/\b(owned_record_legal_hold|privacy_request_held|recording_cleanup_legal_hold)\b/.test(message)) return new ClinicalCoreDatabaseRejection("legal_hold");
   if (/\brecording_cleanup_not_ready\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");
+  if (/\brecording_cleanup_attempt_conflict\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");
+  if (/\brecording_cleanup_attempt_invalid\b/.test(message)) return new ClinicalCoreDatabaseRejection("request_invalid");
+  if (/\brecording_cleanup_attempt_required\b/.test(message)) return new ClinicalCoreDatabaseRejection("identity_refused");
   if (/\b(recording_cleanup_operator_required|recording_cleanup_release_required)\b/.test(message)) return new ClinicalCoreDatabaseRejection("identity_refused");
   if (/\bconsumer_owner_required\b/.test(message)) return new ClinicalCoreDatabaseRejection("identity_refused");
   if (/\b(consumer_storage_consent_required|reviewed_consent_release_required)\b/.test(message)) return new ClinicalCoreDatabaseRejection("consent_required");

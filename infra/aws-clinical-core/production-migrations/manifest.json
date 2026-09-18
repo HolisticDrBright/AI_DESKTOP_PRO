@@ -248,6 +248,10 @@
     {
       "version": "20260917150000",
       "file": "20260917150000_production_recording_cleanup_authority.sql"
+    },
+    {
+      "version": "20260917160000",
+      "file": "20260917160000_production_recording_cleanup_attempts.sql"
     }
   ]
 }

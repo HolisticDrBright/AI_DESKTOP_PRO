@@ -14,6 +14,8 @@ import { createRecordingCaptureApi, RECORDING_CAPTURE_ROUTES as captureRoutes } 
 import { createRecordingReconciler, createRecordingReconciliationRepository } from './recording-reconciliation';
 import { recordingReadinessSchema, type RecordingReadiness } from '@/contracts/encounterRecordingCapture';
 import { createRecordingCleanupAuthority, type RecordingCleanupAdmission } from './recording-cleanup-authority';
+import { createRecordingCleanupAttempts } from './recording-cleanup-attempts';
+import { createRecordingCleanupWorker,type RecordingCleanupStore } from './recording-cleanup-worker';
 
 let db: PGlite;
 const legacyCleanup: { id:string; reason:string }[]=[];
@@ -252,7 +254,8 @@ async function cleanupReady(options:{pending?:boolean;due?:boolean;policyCorrupt
 }
 describe('recording cleanup admission and holds with actual canonical SQL',()=>{
   beforeAll(async()=>{
-    for(const table of ['recording_cleanup_operators','recording_cleanup_releases','recording_legal_holds','recording_cleanup_access_events','recording_cleanup_subjects'])
+    for(const table of ['recording_cleanup_operators','recording_cleanup_releases','recording_legal_holds','recording_cleanup_access_events','recording_cleanup_subjects',
+      'recording_cleanup_attempts','recording_cleanup_attempt_events'])
       expect((await db.query<{n:number}>(`select count(*)::int n from clinical_private.${table}`)).rows[0].n).toBe(0);
     await db.query(`insert into clinical_private.recording_cleanup_operators(organization_id,operator_id,reviewed_by,evidence_sha256,approved_at,expires_at)
       values($1,$2,$3,repeat('e',64),clock_timestamp()-interval '1 hour',clock_timestamp()+interval '1 day')`,[org,actor,colleague]);
@@ -371,6 +374,50 @@ describe('recording cleanup admission and holds with actual canonical SQL',()=>{
     await expect(guarded(cleanupContext,r.request,async()=>{throw new Error('FICTIONAL UNKNOWN STORAGE OUTCOME');})).rejects.toThrow('service_unavailable');
     expect((await db.query('select * from clinical_private.recording_cleanup_access_events where recording_id=$1',[r.capture.recordingId])).rows).toEqual(before);
     expect(called).toBe(1);expect(await recoveryState(r.capture)).toMatchObject({audioDeleted:false,pendingSegments:1});
+  });
+  it('commits exact deletion intent before mutation and retains unknown outcomes through a later empty scan',async()=>{
+    const r=await cleanupReady({pending:true});
+    const database:ClinicalCoreDatabase={transaction:operation=>db.transaction(async tx=>{
+      await tx.exec('set local role clinical_core_api');return operation({query:async(sql,args=[])=>tx.query(sql,
+        args.map(v=>typeof v==='object'&&v!==null&&'kind' in v&&v.kind==='uuid'&&'value' in v?v.value:v))});
+    })};
+    let exists=true,mutations=0;
+    const storage:RecordingCleanupStore={
+      list:async a=>({versions:exists?[{key:a.inventory[0].objectKey,version:'fictional-deleted-version',kind:'object'}]:[],truncated:false}),
+      inspect:async(a,v)=>({version:v.version,bytes:a.inventory[0].bytes,checksum:Buffer.from(a.inventory[0].sha256,'hex').toString('base64'),
+        checksumType:'FULL_OBJECT',encryption:'aws:kms',kmsKeyArn:a.storage.kmsKeyArn,legalHold:'OFF',retentionVerified:true,
+        metadata:{'segment-id':a.inventory[0].segmentId,'recording-id':a.recordingId,'session-id':a.sessionId,'authority-epoch':String(a.inventory[0].authorityEpoch)}}),
+      remove:async a=>{expect(a.attempt?.id).toBeTruthy();mutations++;exists=false;throw new Error('FICTIONAL LOST DELETE RESPONSE');},
+    };
+    const attempts=createRecordingCleanupAttempts(database);
+    const worker=createRecordingCleanupWorker({authorize:createRecordingCleanupAuthority(database),attempts,storage});
+    expect(await worker(cleanupContext,r.request)).toMatchObject({state:'needs_recheck',deleteAcknowledged:0,audioDeleted:false});
+    const rows=(await db.query<{id:string}>('select * from clinical_private.recording_cleanup_attempts where recording_id=$1',[r.capture.recordingId])).rows;
+    expect(rows).toHaveLength(1);expect(mutations).toBe(1);
+    expect((await db.query<{outcome:string}>('select outcome from clinical_private.recording_cleanup_attempt_events where attempt_id=$1',[rows[0].id])).rows).toEqual([{outcome:'unknown'}]);
+    expect(await worker(cleanupContext,r.request)).toMatchObject({state:'empty_observed',audioDeleted:false,requiresRecheck:true});
+    expect((await db.query('select * from clinical_private.recording_cleanup_attempts where id=$1',[rows[0].id])).rows).toHaveLength(1);
+    expect(await cleanupIntent(r.capture.recordingId)).toBeDefined();expect(await recoveryState(r.capture)).toMatchObject({audioDeleted:false,pendingSegments:1});
+  });
+  it('requires a prepared attempt bound to exact scope; replay cannot substitute versions or another recording',async()=>{
+    const r=await cleanupReady({pending:true}),a=(await cleanupCall<RecordingCleanupAdmission>(admitSql,r.args))!,id=randomUUID();
+    const args=[...r.args,id,a.inventory[0].segmentId,'fictional-version','object',a.inventorySha256,'a'.repeat(64)];
+    const prepare='select clinical_private.prepare_recording_cleanup_attempt($1,$2::bigint,$3,$4,$5,$6,$7,$8,$9,$10) as result';
+    const use='select clinical_private.admit_recording_cleanup_attempt($1,$2::bigint,$3,$4,$5) as result';
+    await expect(cleanupCall(use,[...r.args,id])).rejects.toThrow('recording_cleanup_attempt_required');
+    expect(await cleanupCall(prepare,args)).toBe(id);expect(await cleanupCall(prepare,args)).toBe(id);
+    const replaced=[...args];replaced[6]='different-version';await expect(cleanupCall(prepare,replaced)).rejects.toThrow('recording_cleanup_attempt_conflict');
+    const unknownSegment=[...args];unknownSegment[4]=randomUUID();unknownSegment[5]=randomUUID();await expect(cleanupCall(prepare,unknownSegment)).rejects.toThrow('recording_cleanup_attempt_invalid');
+    expect(await cleanupCall(use,[...r.args,id])).toMatchObject({attempt:{id,objectVersion:'fictional-version'},audioDeleted:false});
+    const other=await cleanupReady({pending:true});await expect(cleanupCall(use,[...other.args,id])).rejects.toThrow('recording_cleanup_attempt_required');
+    await expect(db.query("update clinical_private.recording_cleanup_attempts set object_version='other' where id=$1",[id])).rejects.toThrow();
+    await expect(cleanupCall('select * from clinical_private.recording_cleanup_attempts')).rejects.toThrow('permission denied');
+    const hold=await cleanupCall<string>("select clinical_private.place_recording_legal_hold($1,'litigation') as result",[patient]);
+    try{
+      await expect(cleanupCall(use,[...r.args,id])).rejects.toThrow('recording_cleanup_legal_hold');
+      expect(await cleanupCall("select clinical_private.record_recording_cleanup_attempt($1,'retained',$2) as result",[id,'b'.repeat(64)])).toBe(id);
+    }finally{await cleanupCall('select clinical_private.release_recording_legal_hold($1)',[hold]);}
+    await expect(cleanupCall("select clinical_private.record_recording_cleanup_attempt($1,'erased',$2)",[id,'b'.repeat(64)])).rejects.toThrow('recording_cleanup_attempt_invalid');
   });
 });
 describe('capture readiness with real canonical SQL and fictional records', () => {

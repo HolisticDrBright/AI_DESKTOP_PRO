@@ -65,6 +65,15 @@ describe('cleanup guard: identity, scope, transaction and bounded uncertainty',(
     const f=fixture(),operation=vi.fn();f.admission.validUntil=new Date(Date.now()-1).toISOString();
     await expect(createRecordingCleanupAuthority(f.db)(context,f.request,operation)).rejects.toThrow('service_unavailable');expect(operation).not.toHaveBeenCalled();
   });
+  it('requires a matching prepared attempt receipt when authorizing a mutation',async()=>{
+    const f=fixture(),operation=vi.fn(),attemptId=randomUUID();
+    await expect(createRecordingCleanupAuthority(f.db)(context,{...f.request,attemptId},operation)).rejects.toThrow('service_unavailable');
+    f.admission.attempt={id:randomUUID(),segmentId:f.admission.inventory[0].segmentId,objectVersion:'version-1',kind:'object',evidenceSha256:'d'.repeat(64)};
+    await expect(createRecordingCleanupAuthority(f.db)(context,{...f.request,attemptId},operation)).rejects.toThrow('service_unavailable');
+    expect(operation).not.toHaveBeenCalled();
+    f.admission.attempt.id=attemptId;operation.mockResolvedValue('FICTIONAL OPERATION');
+    expect(await createRecordingCleanupAuthority(f.db)(context,{...f.request,attemptId},operation)).toBe('FICTIONAL OPERATION');
+  });
   it('settles and rolls back independently of ignored cancellation; late completion cannot become a receipt',async()=>{
     vi.useFakeTimers();const f=fixture();let finish!:(v:string)=>void,signal:AbortSignal|undefined;
     const promise=createRecordingCleanupAuthority(f.db)(context,f.request,async(_a,s)=>{signal=s;return new Promise<string>(resolve=>{finish=resolve;});});

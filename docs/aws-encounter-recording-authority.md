@@ -848,3 +848,69 @@ Final lint:0errors/4existing unrelated warnings. Recording capture candidate bui
 PASS (local artifact only). Prior V2 2aec44c CI passed. Prior Desktop5b67acd/
 CI35291079313 still had its legacy browser job running when inspected; no result
 is inferred for that run. The new cleanup candidate needs its own CI.
+
+## September 17 — exact-version cleanup worker and durable uncertain attempts
+
+Migration73 adds immutable version-specific attempts and append-only outcome
+events. The attempt must commit in a separate transaction BEFORE storage mutation.
+Its recording, segment, queue version, inventory hash, cleanup release, object
+version/kind, observed-evidence hash and operator cannot be substituted on replay.
+The later mutation transaction re-runs cleanup admission and verifies that exact
+prepared attempt. A changed hold, assignment, release or queue version refuses
+the mutation. Outcome logging grants no mutation rights and remains possible
+after a newly placed hold; no event means unresolved, never successful erasure.
+
+`recording-cleanup-worker.ts` and `aws-recording-cleanup-store.ts` implement the
+internal worker and AWS version adapter. Every invocation starts with a fresh
+first page, validates all observed keys against authoritative segment inventory,
+and processes at most25 versions. Subsequent invocations start over rather than
+reusing a pagination cursor altered by deletes. Null versions, foreign keys,
+duplicate/malformed listings, bad checksum/size/KMS/segment/recording/session/
+authority metadata, missing lock evidence and mismatched receipts are refused.
+Object provenance and holds are re-read immediately before each mutation.
+Delete markers use re-listed exact versions, not HEAD-derived absence.
+
+Storage qualification requires enabled bucket versioning and Object Lock; no
+runtime configuration is changed to create them. Bucket owner/region/endpoint,
+recording prefix and exact version are pinned. Explicit GetObjectLegalHold and
+GetObjectRetention must succeed (HEAD can omit lock state when permissions are
+missing). No unversioned delete, bulk/bucket erase, hold mutation or governance
+bypass is requested. AWS reference behavior:
+[version deletion](https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteObject.html),
+[Object Lock visibility](https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-lock-managing.html),
+[legal-hold reads](https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObjectLegalHold.html).
+
+Every network step checks cancellation before another SDK call. The existing
+independent five-second admission timer bounds each callback. A lost delete
+response or failed outcome write leaves the committed attempt for reconciliation.
+`delete_acknowledged` means only an exact-version provider acknowledgment. Even
+a later empty listing returns `audioDeleted:false`, `requiresRecheck:true`; the
+cleanup intent and pending segment history remain. There is no automatic whole-
+recording completion, false erasure statement or guessed late-write horizon.
+
+This is internal source engineering, NOT an activated scheduler/operator service.
+Deployment/IAM, fresh worker identity binding, operator inventory/review, durable
+recheck scheduling, terminal absence/late-write evidence and storage-side hold
+coordination still require engineering and actual AWS qualification. A database
+transaction cannot undo a remote operation that finishes after timeout; these
+requirements must be satisfied before activating real-data deletion. No current
+capture IAM or public API is expanded by these files.
+
+Initial source verification:141 canonical SQL/artifact/guard tests and25 worker/
+adapter tests PASS; typecheck PASS. Full2639tests PASS/11existing skips/211files,
+lint0errors/4existing warnings. Added one further guard-receipt test; its26-case
+guard suite PASS. Final full suite2640PASS/11existing skips/211files; final
+typecheck PASS;73-migration/zero-seed gate and capture candidate build PASS.
+Graphify9154nodes/18499edges/717communities (30known omitted sources).
+Actual SQL+worker test proves
+committed attempt survives a simulated lost-delete response and a later empty
+scan. Another SQL test proves exact replay, version/record substitution refusal,
+immutable attempts and a hold added after preparation. All storage is fictional;
+no Aurora concurrency, hosted S3 or physical deletion proof is claimed.
+
+Fresh ai-synthetic-staging STS check:session expired. No account/environment
+switch, deployed migration, PHI/provider activation or paid mobile build. All
+SIX ORIGINAL phase scopes remain incomplete. Prior V2a720614/CI35292487117 SUCCESS;
+Desktop e069b86/CI35292465614 legacy browser job still running at inspection.
+Prior Desktop5b67acd/CI35291079313 subsequently completed SUCCESS. New source
+requires its own CI; local capture build is not a cleanup deployment artifact.
