@@ -54,7 +54,7 @@ For the narrower first supervised lab/intake pilot, use `docs/first-real-data-pi
 - [ ] Record security review, BAA state, approved editions, approved data classes, exact purposes, allowed regions/origins, retention, and reviewer.
 - [ ] Require user consent at request time and re-check it before every delivery or provider call.
 - [ ] Junction: synthetic sandbox test with opaque IDs, webhook signature/replay tests, minimum scopes, deletion/disconnect, backfill bounds, and data-provenance review.
-- [ ] Passio: synthetic food/image test with no person identifiers, raw-image retention decision, human confirmation, provenance, no invented nutrient fallback, and deletion workflow.
+- [x] Passio retired (September 16, 2026). Consumer nutrition uses the V2 in-house USDA catalog; no nutrition vendor receives data. Re-adding any nutrition vendor reopens this item.
 - [ ] Confirm vendor request/response bodies are not logged and that vendor errors cannot echo submitted content to users or logs.
 - [ ] Activate one connector and one organization at a time behind a reversible governed approval. Monitor before widening.
 

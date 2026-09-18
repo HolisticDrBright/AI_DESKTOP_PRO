@@ -31,7 +31,6 @@ const requiredControls = [
   "vulnerability_gate",
   "mobile_secure_storage_review",
   "junction_approval",
-  "passio_approval",
   "clinical_ai_approval",
   "desktop_compatibility_contract",
 ];

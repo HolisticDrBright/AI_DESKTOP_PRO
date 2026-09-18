@@ -28,6 +28,9 @@ const expectedRoutes = new Set([
   "POST /clinical-core/consumer/consents/revoke",
   "GET /clinical-core/consumer/consent-artifact",
   "POST /clinical-core/consumer/labs/import",
+  "POST /clinical-core/consumer/labs/specimen-context",
+  "GET /clinical-core/consumer/labs/specimen-context",
+  "GET /clinical-core/workforce/labs/specimen-context",
   "GET /clinical-core/consumer/connection",
   "GET /clinical-core/workforce/lab-imports",
   "POST /clinical-core/workforce/lab-imports/review",
@@ -146,4 +149,4 @@ if (errors.length) {
   errors.forEach((error) => console.error(`ERROR: ${error}`));
   process.exit(1);
 }
-console.log("Production clinical API gates passed: deployed boundary is PHI-disabled/log-only; candidate is one-organization lab/intake pilot scoped with 28 JWT routes and conditionally absent data permissions.");
+console.log("Production clinical API gates passed: candidate routes are JWT-protected; PHI and specimen-context pilot activation remain separately blocked by policy.");

@@ -41,6 +41,8 @@ const GROUPS: {
     note: "People, permissions, and accountable access.",
     links: [
       { label: "Team & permissions", detail: "Staff roles, membership, and access boundaries", href: "/team", icon: UsersRound },
+      { label: "Privacy operations", detail: "Review explicitly assigned consumer correction and deletion requests", href: "/settings/privacy-operations", icon: ShieldCheck },
+      { label: "Recording cleanup review", detail: "Read assigned recording cleanup queues and unresolved run outcomes", href: "/settings/recording-cleanup", icon: ShieldCheck },
       { label: "Security & governance", detail: "Audit history and governed AI features", href: "/settings/governance", icon: ShieldCheck },
       { label: "Ask ALP activation", detail: "Review and sign the exact patient-chat safety configuration", href: "/settings/ask-alp", icon: MessageSquare },
     ],

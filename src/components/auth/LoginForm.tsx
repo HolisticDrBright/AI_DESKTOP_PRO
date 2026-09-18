@@ -2,9 +2,10 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { LogIn, LogOut } from "lucide-react";
 import { Card } from "@/components/ui/bits";
+import { localReturnPath } from "@/lib/local-return-path";
+import { announceWorkforceSessionChange } from "@/lib/workforce-session-change";
 
 /**
  * Email/password sign-in form (live mode). Credentials go only to the
@@ -22,7 +23,9 @@ const inputCls =
   "h-10 w-full rounded-lg border border-line bg-card px-[11px] text-[13px] text-body outline-none focus-visible:outline-2 focus-visible:outline-action";
 
 export function LoginForm() {
-  const router = useRouter();
+  // Server-rendered controls must not accept credentials/submission before
+  // React has attached the same-origin POST handler (native GET loses input).
+  const [interactive, setInteractive] = useState(false);
   const [session, setSession] = useState<SessionInfo | null>(null);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -62,6 +65,7 @@ export function LoginForm() {
   };
 
   useEffect(() => {
+    setInteractive(true);
     let alive = true;
     fetch("/api/auth/session")
       .then((r) => r.json())
@@ -74,6 +78,8 @@ export function LoginForm() {
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!interactive || pending) return;
+    announceWorkforceSessionChange();
     setPending(true);
     setError(null);
     try {
@@ -83,7 +89,7 @@ export function LoginForm() {
         body: JSON.stringify(mfaMode ? { code: mfaCode } : { email, password }),
       });
       const json = (await res.json().catch(() => ({}))) as {
-        data?: { email?: string; mfaRequired?: boolean; mfaSetup?: boolean; secretCode?: string };
+        data?: { signedIn?: boolean; email?: string; mfaRequired?: boolean; mfaSetup?: boolean; secretCode?: string };
         error?: { message?: string };
       };
       if (!res.ok) {
@@ -96,12 +102,14 @@ export function LoginForm() {
         setPassword("");
         return;
       }
-      setSession({ signedIn: true, email: json.data?.email ?? email });
-      // Return to where the practitioner was headed. Same-origin paths only —
-      // absolute/protocol-relative values would be an open redirect.
-      const next = new URLSearchParams(window.location.search).get("next") ?? "/";
-      router.push(next.startsWith("/") && !next.startsWith("//") ? next : "/");
-      router.refresh();
+      if (json.data?.signedIn !== true) {
+        setError("Sign-in could not be confirmed. Please try again.");
+        return;
+      }
+      // A full document transition reads the new httpOnly session and drops
+      // any previous account's client state. push() followed by refresh()
+      // races on cold routes and can leave successful sign-in on this page.
+      window.location.replace(localReturnPath(new URLSearchParams(window.location.search).get("next")));
     } catch {
       setError("The sign-in service is unreachable right now. Please try again.");
     } finally {
@@ -110,11 +118,15 @@ export function LoginForm() {
   };
 
   const signOut = async () => {
+    announceWorkforceSessionChange();
     setPending(true);
+    setError(null);
     try {
-      await fetch("/api/auth/logout", { method: "POST" });
-      setSession({ signedIn: false, email: null });
-      router.refresh();
+      const response = await fetch("/api/auth/logout", { method: "POST" });
+      if (!response.ok) throw new Error("logout_failed");
+      window.location.replace("/login");
+    } catch {
+      setError("Sign-out could not be confirmed. Please try again.");
     } finally {
       setPending(false);
     }
@@ -128,7 +140,7 @@ export function LoginForm() {
         </p>
         <div className="mt-[12px] flex gap-2">
           <button
-            onClick={() => router.push("/")}
+            onClick={() => window.location.replace("/")}
             className="h-9 flex-1 cursor-pointer rounded-lg border-none bg-action px-4 text-[12.5px] font-semibold text-white hover:bg-action-deep focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink"
           >
             Open the app
@@ -142,6 +154,7 @@ export function LoginForm() {
             Sign out
           </button>
         </div>
+        {error ? <p role="alert" className="mt-3 text-sm text-red-700">{error}</p> : null}
       </Card>
     );
   }
@@ -153,10 +166,12 @@ export function LoginForm() {
         enforced by AWS identity and organization membership, not by this screen.
       </p>
       <form onSubmit={submit} className="flex flex-col gap-3">
+        {!interactive && <p role="status" className="m-0 text-[12px] text-subtle">Preparing secure sign-in. If this does not finish, enable JavaScript and reload this page.</p>}
         {!mfaMode && <label className="block">
           <span className="mb-[4px] block text-[10.5px] font-bold tracking-[0.04em] text-faint uppercase">Email</span>
           <input
             type="email"
+            disabled={!interactive || pending}
             required
             autoComplete="email"
             value={email}
@@ -168,6 +183,7 @@ export function LoginForm() {
           <span className="mb-[4px] block text-[10.5px] font-bold tracking-[0.04em] text-faint uppercase">Password</span>
           <input
             type="password"
+            disabled={!interactive || pending}
             required
             autoComplete="current-password"
             value={password}
@@ -212,7 +228,7 @@ export function LoginForm() {
         )}
         <button
           type="submit"
-          disabled={pending}
+          disabled={!interactive || pending}
           className="mt-1 flex h-10 items-center justify-center gap-[7px] rounded-lg border-none bg-action text-[13px] font-semibold text-white hover:bg-action-deep focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink disabled:cursor-not-allowed disabled:opacity-60"
         >
           <LogIn size={14} strokeWidth={2} aria-hidden />
@@ -237,7 +253,7 @@ export function LoginForm() {
           <button
             type="button"
             onClick={requestReset}
-            disabled={pending}
+            disabled={!interactive || pending}
             className="cursor-pointer border-none bg-transparent p-0 text-[12px] font-semibold text-action hover:underline focus-visible:outline-2 focus-visible:outline-action disabled:opacity-50"
           >
             Forgot password? Email me a reset code

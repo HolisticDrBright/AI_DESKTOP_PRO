@@ -1,8 +1,7 @@
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { build } from "esbuild";
 
 const outdir = "dist/aws-clinical-core/lab-analysis";
-rmSync(outdir, { recursive: true, force: true });
 mkdirSync(outdir, { recursive: true });
 
 await Promise.all([

@@ -3,6 +3,7 @@ if (typeof window !== "undefined") {
 }
 
 import { createHash } from "node:crypto";
+import {labSpecimenTransferSchema} from "../../contracts/labSpecimenTransfer";
 
 import {
   ClinicalCoreAdapterError,
@@ -98,6 +99,7 @@ type RouteDefinition = {
   operation: "posture" | "issue" | "claim" | "grant" | "revoke"
     | "get_consent_artifact"
     | "get_connection" | "import_lab" | "list_lab_imports" | "review_lab" | "list_labs"
+    | "import_specimen_context" | "get_specimen_context"
     | "record_clinical" | "list_clinical" | "list_consent_history"
       | "submit_privacy_request" | "list_privacy_requests" | "desktop_compatibility"
       | "list_family_requests" | "approve_family" | "claim_family"
@@ -116,6 +118,9 @@ const ROUTES: Readonly<Record<string, RouteDefinition>> = {
   "POST /clinical-core/consumer/consents/revoke": { pool: "consumer", purpose: "consent_management", operation: "revoke" },
   "GET /clinical-core/consumer/consent-artifact": { pool: "consumer", purpose: "consent_management", operation: "get_consent_artifact" },
   "POST /clinical-core/consumer/labs/import": { pool: "consumer", purpose: "clinical_data", operation: "import_lab" },
+  "POST /clinical-core/consumer/labs/specimen-context": {pool:"consumer",purpose:"clinical_data",operation:"import_specimen_context"},
+  "GET /clinical-core/consumer/labs/specimen-context": {pool:"consumer",purpose:"clinical_data",operation:"get_specimen_context"},
+  "GET /clinical-core/workforce/labs/specimen-context": {pool:"workforce",purpose:"clinical_data",operation:"get_specimen_context"},
   "GET /clinical-core/consumer/connection": { pool: "consumer", purpose: "clinical_data", operation: "get_connection" },
   "GET /clinical-core/workforce/lab-imports": { pool: "workforce", purpose: "clinical_data", operation: "list_lab_imports" },
   "POST /clinical-core/workforce/lab-imports/review": { pool: "workforce", purpose: "clinical_data", operation: "review_lab" },
@@ -313,6 +318,12 @@ function createIdentityApiHandler<Context extends ClinicalRequestContext>(input:
         if (event.body) throw new IdentityApiError("request_invalid");
         return response(200, { data: await clinicalStateAdapter!.getConsumerConnection(context) });
       }
+      if(route.operation==="get_specimen_context"){
+        if(event.body||!clinicalStateAdapter?.getLabSpecimenContext)throw new IdentityApiError("request_invalid");
+        const eventId=event.queryStringParameters?.eventId??"";
+        if(!UUID.test(eventId))throw new IdentityApiError("request_invalid");
+        return response(200,{data:await clinicalStateAdapter.getLabSpecimenContext(context,eventId)});
+      }
       if (route.operation === "list_labs") {
         if (event.body) throw new IdentityApiError("request_invalid");
         const patientRecordId = event.queryStringParameters?.patientRecordId ?? "";
@@ -464,6 +475,11 @@ function createIdentityApiHandler<Context extends ClinicalRequestContext>(input:
         case "import_lab": {
           return response(202, { data: await clinicalStateAdapter!.importLabResult(context, parseLabImport(body)) });
         }
+        case "import_specimen_context": {
+          const parsed=labSpecimenTransferSchema.safeParse(body);
+          if(!parsed.success||!clinicalStateAdapter?.importLabSpecimenContext)throw new IdentityApiError("request_invalid");
+          return response(202,{data:await clinicalStateAdapter.importLabSpecimenContext(context,parsed.data)});
+        }
         case "review_lab": {
           exactKeys(body, ["eventId", "decision", "note"], ["eventId", "decision"]);
           const decision = requiredString(body, "decision");
@@ -547,7 +563,8 @@ function createIdentityApiHandler<Context extends ClinicalRequestContext>(input:
       }
       if (error instanceof ClinicalStateError) {
         const status = error.category === "clinical_state_refused" ? 403
-          : error.category === "database_unavailable" ? 503 : 400;
+          : error.category === "database_unavailable" ? 503
+            : error.category === "specimen_context_conflict" || error.category === "specimen_consent_required" ? 409 : 400;
         return response(status, { error: error.category });
       }
       if (error instanceof ConsumerClinicalError) {
@@ -624,6 +641,7 @@ function desktopLabObservation(row: Record<string, unknown>): Record<string, unk
     : {};
   return {
     id: row.observation_id,
+    import_event_id: typeof row.import_event_id === "string" && UUID.test(row.import_event_id) ? row.import_event_id : null,
     biomarker_definition_id: null,
     canonical_name: row.marker_name,
     biological_system: null,

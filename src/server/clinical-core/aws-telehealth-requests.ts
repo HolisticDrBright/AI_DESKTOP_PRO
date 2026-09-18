@@ -454,7 +454,32 @@ async function authorizeAppointmentPayment(config: TelehealthConfiguration, acto
     return publicItem(result.Attributes as AppointmentItem, "consumer");
   } catch (error) { if ((error as { name?: string }).name === "ConditionalCheckFailedException") throw new TelehealthError("conflict"); throw error; }
 }
+/** Missed or delayed Stripe webhooks leave a charge in "processing". Staff can
+ * reconcile one request against the official payment intent: the intent must
+ * carry this request's metadata, and only a terminal Stripe status settles it. */
+async function reconcilePayment(config: TelehealthConfiguration, actor: Actor, value: Record<string, unknown>) {
+  exact(value, ["requestId", "action", "expectedVersion"], ["requestId", "action", "expectedVersion"]);
+  if (!Number.isInteger(value.expectedVersion)) throw new TelehealthError("request_invalid");
+  const item = await find(config, actor.organizationId, String(value.requestId));
+  if (item.version !== value.expectedVersion) throw new TelehealthError("conflict");
+  if (item.paymentStatus !== "processing" || !item.paymentIntentId) return { ...publicItem(item, "workforce"), reconciliation: "not_processing" };
+  const intent = await stripeGet(config, `/payment_intents/${encodeURIComponent(item.paymentIntentId)}`);
+  const metadata = (intent.metadata ?? {}) as Record<string, unknown>;
+  if (intent.id !== item.paymentIntentId || metadata.request_id !== item.requestId || metadata.organization_id !== item.organizationId) throw new TelehealthError("provider_unavailable");
+  const status = String(intent.status ?? "");
+  if (status === "succeeded") {
+    const received = Number.isInteger(intent.amount_received) ? Number(intent.amount_received) : null;
+    if (received === null || received < 1 || received > Math.max(item.priceMinor, item.cancellationFeeDueMinor)) throw new TelehealthError("provider_unavailable");
+    return { ...await updatePaymentState(config, item, item.version, { paymentStatus: "paid", paidMinor: received }), reconciliation: "settled_paid" };
+  }
+  if (status === "canceled" || (status === "requires_payment_method" && intent.last_payment_error)) {
+    return { ...await updatePaymentState(config, item, item.version, { paymentStatus: "failed" }), reconciliation: "settled_failed" };
+  }
+  // requires_action, requires_confirmation, requires_capture, processing: Stripe has not finished; no local change.
+  return { ...publicItem(item, "workforce"), reconciliation: "still_processing" };
+}
 async function workforcePayment(config: TelehealthConfiguration, actor: Actor, value: Record<string, unknown>) {
+  if (value.action === "reconcile") return reconcilePayment(config, actor, value);
   exact(value, ["requestId", "action", "expectedVersion", "amountMinor", "serviceDelivered", "reason"], ["requestId", "action", "expectedVersion", "amountMinor"]);
   if (!Number.isInteger(value.expectedVersion) || !Number.isInteger(value.amountMinor) || Number(value.amountMinor) < 1 || !["charge", "refund"].includes(String(value.action))) throw new TelehealthError("request_invalid");
   const item = await find(config, actor.organizationId, String(value.requestId)); const amount = Number(value.amountMinor);

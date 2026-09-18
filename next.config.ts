@@ -103,6 +103,15 @@ const nextConfig: NextConfig = {
     // demo's whole-app egress CSP now lives only in AI-DESKTOP-PRO-DEMO.
     return [
       {
+        source: "/settings/privacy-operations",
+        headers: [
+          { key: "Content-Security-Policy", value: RECORDING_CSP },
+          { key: "Referrer-Policy", value: "no-referrer" },
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          { key: "Permissions-Policy", value: "microphone=(), camera=(), geolocation=()" },
+        ],
+      },
+      {
         // Encounter workspace = recording + transcript surface.
         source: "/patients/:patientId/encounter/:encounterId*",
         headers: [

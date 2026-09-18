@@ -135,7 +135,7 @@ const COLLECTION_KEYS: Record<ConsumerClinicalCollection, { allowed: readonly st
   },
   clinical_intakes: {
     allowed: ["id","chiefComplaint","associatedSymptoms","energyLevel","sleepQuality","digestiveFunction","stressPerception","temperatureSensitivity","painQuality","tcmDifferentiationResponses","createdAt","updatedAt"],
-    required: ["id","chiefComplaint","associatedSymptoms","energyLevel","sleepQuality","digestiveFunction","stressPerception","temperatureSensitivity","createdAt","updatedAt"],
+    required: ["id","chiefComplaint","associatedSymptoms","createdAt","updatedAt"],
   },
   wearable_daily_records: {
     allowed: [

@@ -3,6 +3,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Mic, Pause, Play, Square, Trash2, FileText, ShieldCheck, AlertTriangle } from "lucide-react";
 import { Card } from "@/components/ui/bits";
+import { CapturePreparationError, prepareCapture } from "@/lib/capture-start";
+import { authorizeCaptureResume, type CaptureReply } from "@/lib/capture-resume";
+import { createCaptureAudioBridge, type CaptureAudioBridge } from "@/lib/capture-audio-bridge";
+import { CaptureUploadBuffer } from "@/lib/capture-upload-buffer";
 
 /**
  * Consent-gated encounter recording + AI scribe (Milestone 1).
@@ -80,6 +84,9 @@ interface DeletionInfo {
 
 type CapturePhase =
   | "idle"
+  | "starting"
+  | "resuming"
+  | "unconfirmed"
   | "recording"
   | "paused"
   | "device_lost"
@@ -93,6 +100,9 @@ type CapturePhase =
 
 const PHASE_LABEL: Record<CapturePhase, string> = {
   idle: "Not recording",
+  starting: "Preparing microphone and checking recording authorization…",
+  resuming: "Recording paused — checking resume authorization…",
+  unconfirmed: "Recording start could not be confirmed — microphone stopped",
   recording: "Recording in progress",
   paused: "Recording paused",
   device_lost: "Microphone disconnected — recording paused",
@@ -107,6 +117,9 @@ const PHASE_LABEL: Record<CapturePhase, string> = {
 
 const PHASE_TONE: Record<CapturePhase, string> = {
   idle: "bg-surface-2 text-subtle",
+  starting: "bg-action/10 text-action",
+  resuming: "bg-warn/20 text-ink",
+  unconfirmed: "bg-warn/20 text-ink",
   recording: "bg-critical/15 text-critical",
   paused: "bg-warn/20 text-ink",
   device_lost: "bg-warn/20 text-ink",
@@ -119,12 +132,13 @@ const PHASE_TONE: Record<CapturePhase, string> = {
   failed: "bg-critical/15 text-critical",
 };
 
-async function postJson<T>(url: string, body: unknown, method = "POST"): Promise<{ ok: boolean; status: number; data?: T; message?: string }> {
+async function postJson<T>(url: string, body: unknown, method = "POST", signal?:AbortSignal): Promise<{ ok: boolean; status: number; data?: T; message?: string }> {
   try {
     const res = await fetch(url, {
       method,
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
+      ...(signal?{signal}:{}),
     });
     const json = (await res.json().catch(() => ({}))) as { data?: T; error?: { message?: string } };
     return { ok: res.ok, status: res.status, data: json.data, message: json.error?.message };
@@ -173,10 +187,13 @@ export function RecordingScribePanel({
   const tokenRef = useRef<string | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
-  const queueRef = useRef<Blob[]>([]);
-  const pumpingRef = useRef(false);
+  const audioBridgeRef = useRef<CaptureAudioBridge | null>(null);
+  const queueRef = useRef<CaptureUploadBuffer | null>(null);
   const heartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const startedAtRef = useRef<number>(0);
+  const captureAttemptRef = useRef<AbortController|null>(null);
+  const heartbeatAttemptRef = useRef<AbortController | null>(null);
+  const captureEpochRef = useRef(0);
   // React Strict Mode and a fast mutation can overlap consent reads. Only the
   // newest request may publish state; otherwise an older pre-mutation response
   // can erase a participant that the server has already persisted.
@@ -185,6 +202,7 @@ export function RecordingScribePanel({
   phaseRef.current = phase;
 
   const setPhaseAndDetail = useCallback((p: CapturePhase, detail?: string | null) => {
+    phaseRef.current=p;
     setPhase(p);
     setStatusDetail(detail ?? null);
   }, []);
@@ -236,7 +254,7 @@ export function RecordingScribePanel({
           captureSession: { id: string; status: string } | null;
         };
       };
-      if (cancelled || !res.ok || !json.data) return;
+      if (cancelled || captureAttemptRef.current || phaseRef.current!=='idle' || !res.ok || !json.data) return;
       const { recordings, liveRecordingId, captureSession } = json.data;
       if (liveRecordingId && captureSession && ["active", "paused"].includes(captureSession.status)) {
         setRecoverable({ recordingId: liveRecordingId, sessionId: captureSession.id, sessionStatus: captureSession.status });
@@ -276,7 +294,19 @@ export function RecordingScribePanel({
   }, [participants]);
 
   // ------------------------------------------------------------- capture
+  const invalidateHeartbeat = useCallback(() => {
+    captureEpochRef.current++;
+    heartbeatAttemptRef.current?.abort();
+    heartbeatAttemptRef.current = null;
+  }, []);
+
   const stopEverything = useCallback(() => {
+    invalidateHeartbeat();
+    // Fence transport and queued recorder events before stop emits its final blob.
+    queueRef.current?.cancel();
+    queueRef.current = null;
+    captureAttemptRef.current?.abort();
+    captureAttemptRef.current=null;
     if (heartbeatRef.current) clearInterval(heartbeatRef.current);
     heartbeatRef.current = null;
     try {
@@ -285,32 +315,38 @@ export function RecordingScribePanel({
       /* recorder already gone */
     }
     recorderRef.current = null;
+    audioBridgeRef.current?.close();
+    audioBridgeRef.current = null;
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
     tokenRef.current = null;
-  }, []);
+  }, [invalidateHeartbeat]);
 
   useEffect(() => stopEverything, [stopEverything]);
 
   /** Upload queued chunks strictly in order; server revalidates each one. */
   const pumpQueue = useCallback(async () => {
-    if (pumpingRef.current) return;
-    pumpingRef.current = true;
+    const queue = queueRef.current;
+    if (!queue || queue.pumping || queue.signal.aborted) return;
+    const current = () => queueRef.current === queue && !queue.signal.aborted
+      && recordingIdRef.current === queue.recordingId && sessionIdRef.current === queue.sessionId;
+    queue.pumping = true;
     try {
       let retries = 0;
-      while (queueRef.current.length > 0) {
-        const recId = recordingIdRef.current;
+      while (current() && queue.length > 0) {
         const token = tokenRef.current;
-        if (!recId || !token) break;
-        const chunk = queueRef.current[0];
+        const chunk = queue.head;
+        if (!token || !chunk) break;
         let res: Response;
         try {
           res = await fetch("/api/live/scribe/chunk", {
             method: "POST",
-            headers: { "content-type": "application/octet-stream", "x-recording-id": recId, "x-capture-token": token },
+            headers: { "content-type": "application/octet-stream", "x-recording-id": queue.recordingId, "x-capture-token": token },
             body: chunk,
+            signal: queue.signal,
           });
         } catch {
+          if (!current()) return;
           // Network interruption: keep the chunk, back off, let the heartbeat
           // rotate the token; capture continues locally.
           retries += 1;
@@ -319,8 +355,9 @@ export function RecordingScribePanel({
           await new Promise((r) => setTimeout(r, Math.min(5000, 500 * retries)));
           continue;
         }
+        if (!current()) return;
         if (res.ok) {
-          queueRef.current.shift();
+          if (!queue.acknowledge(chunk)) return;
           retries = 0;
           if (phaseRef.current === "reconnecting") setPhaseAndDetail("recording");
           continue;
@@ -343,32 +380,48 @@ export function RecordingScribePanel({
         await new Promise((r) => setTimeout(r, Math.min(5000, 500 * retries)));
       }
     } finally {
-      pumpingRef.current = false;
+      queue.pumping = false;
     }
   }, [setPhaseAndDetail]);
 
   const heartbeat = useCallback(async () => {
     const sessionId = sessionIdRef.current;
-    if (!sessionId) return;
+    if (!sessionId || captureAttemptRef.current || heartbeatAttemptRef.current
+      || !["recording", "reconnecting", "paused", "device_lost"].includes(phaseRef.current)) return;
+    const epoch = captureEpochRef.current;
+    const controller = new AbortController();
+    heartbeatAttemptRef.current = controller;
+    const timer = setTimeout(() => controller.abort(), 8000);
+    try {
     const r = await postJson<{ ok: boolean; status: string; captureToken: string | null }>(
       "/api/live/scribe/recording",
       { action: "heartbeat", sessionId },
       "PATCH",
+      controller.signal,
     );
+    if (epoch !== captureEpochRef.current || sessionIdRef.current !== sessionId || heartbeatAttemptRef.current !== controller) return;
+    if (r.data?.status === "revoked") {
+      stopEverything(); setPhaseAndDetail("revoked"); await loadConsent(); return;
+    }
     if (!r.ok) {
       if (r.status === 409 || r.status === 422 || r.status === 400) {
         // Session revoked (consent withdrawn) — active revocation reached us.
         stopEverything();
         setPhaseAndDetail("revoked");
         await loadConsent();
+      } else {
+        tokenRef.current = null;
+        try { recorderRef.current?.pause(); } catch { /* already paused or stopped */ }
+        if (phaseRef.current !== "device_lost") setPhaseAndDetail("paused", "Capture authorization is unavailable. Resume explicitly after the connection returns.");
       }
       return;
     }
-    if (r.data?.ok && r.data.captureToken) {
+    if (r.data?.ok === true && r.data.status === "active" && typeof r.data.captureToken === "string" && r.data.captureToken.trim()) {
       tokenRef.current = r.data.captureToken; // rotation
-      if (phaseRef.current === "paused") setPhaseAndDetail("recording");
+      // A heartbeat is never a user's Resume action. Preserve local pause.
       void pumpQueue();
-    } else if (r.data && !r.data.ok) {
+    } else {
+      tokenRef.current = null;
       // Paused server-side (late participant join). Stop the mic locally too.
       try {
         recorderRef.current?.pause();
@@ -376,72 +429,85 @@ export function RecordingScribePanel({
         /* recorder already stopped */
       }
       if (phaseRef.current === "recording" || phaseRef.current === "reconnecting") {
-        setPhaseAndDetail("paused", "Capture paused — a new participant must be identified and consent before it can resume.");
+        setPhaseAndDetail("paused", r.data?.status === "paused"
+          ? "Capture paused — a new participant must be identified and consent before it can resume."
+          : "Fresh capture authorization was not confirmed. Resume explicitly before recording again.");
         await loadConsent();
       }
+    }
+    } finally {
+      clearTimeout(timer);
+      if (heartbeatAttemptRef.current === controller) heartbeatAttemptRef.current = null;
     }
   }, [loadConsent, pumpQueue, setPhaseAndDetail, stopEverything]);
 
   const attachRecorder = useCallback(
-    (stream: MediaStream, contentType: string) => {
+    async (stream: MediaStream, contentType: string, signal: AbortSignal) => {
       streamRef.current = stream;
-      for (const track of stream.getAudioTracks()) {
-        track.onended = () => {
+      try {
+      const bridge = createCaptureAudioBridge(() => {
+          invalidateHeartbeat();
+          captureAttemptRef.current?.abort();
           try {
             recorderRef.current?.pause();
           } catch {
             /* recorder already stopped */
           }
           setPhaseAndDetail("device_lost", "Reconnect a microphone, then resume — or stop and keep what was captured.");
-        };
-      }
-      const recorder = new MediaRecorder(stream, { mimeType: contentType });
+      });
+      audioBridgeRef.current = bridge;
+      bridge.replaceMicrophone(stream);
+      await bridge.activate(signal);
+      if (signal.aborted || !bridge.hasMicrophone()) throw new Error("microphone_unavailable");
+      const recorder = new MediaRecorder(bridge.stream, { mimeType: contentType });
+      const recId = recordingIdRef.current, sessionId = sessionIdRef.current;
+      if (!recId || !sessionId) throw new Error("capture_owner_required");
+      queueRef.current?.cancel();
+      const queue = new CaptureUploadBuffer(recId, sessionId);
+      queueRef.current = queue;
       recorder.ondataavailable = (e: BlobEvent) => {
-        if (e.data && e.data.size > 0) {
-          queueRef.current.push(e.data);
+        // Closure ownership also fences a stopped recorder's final async event.
+        if (queueRef.current === queue && recorderRef.current === recorder && e.data && queue.enqueue(e.data)) {
           void pumpQueue();
         }
       };
       recorderRef.current = recorder;
       recorder.start(1500);
+      } catch (error) {
+        audioBridgeRef.current?.close(); audioBridgeRef.current = null;
+        stream.getTracks().forEach(track => track.stop());
+        if (streamRef.current === stream) streamRef.current = null;
+        throw error;
+      }
     },
-    [pumpQueue, setPhaseAndDetail],
+    [invalidateHeartbeat, pumpQueue, setPhaseAndDetail],
   );
 
   const start = useCallback(async () => {
+    if(captureAttemptRef.current)return;
+    const attempt=new AbortController();captureAttemptRef.current=attempt;
     setBusy(true);
     setError(null);
+    setPhaseAndDetail('starting','No audio is recorded until the service confirms authorization.');
     try {
       const contentType = typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : "audio/mp4";
-      let stream: MediaStream;
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      } catch {
-        setPhaseAndDetail("failed", "Microphone access was denied. Recording needs an available, permitted microphone.");
-        return;
-      }
-      const begin = await postJson<{
+      const {stream,authorization:begin}=await prepareCapture({signal:attempt.signal,
+        microphone:()=>navigator.mediaDevices.getUserMedia({audio:true}),
+        authorize:signal=>postJson<{
         recordingId: string;
         sessionId: string;
         captureToken: string;
-      }>("/api/live/scribe/recording", { encounterId, contentType });
-      if (!begin.ok || !begin.data) {
+      }>("/api/live/scribe/recording", { encounterId, contentType },'POST',signal)});
+      if(attempt.signal.aborted||captureAttemptRef.current!==attempt){stream.getTracks().forEach(t=>t.stop());return;}
+      if (!begin.ok || !begin.data || typeof begin.data.recordingId!=='string'||!begin.data.recordingId
+        ||typeof begin.data.sessionId!=='string'||!begin.data.sessionId||typeof begin.data.captureToken!=='string'||!begin.data.captureToken) {
         stream.getTracks().forEach((t) => t.stop());
         if (begin.status === 409) {
-          setPhaseAndDetail("paused", "This encounter is already being recorded — possibly in another tab. Recover it below or stop it there first.");
-          const res = await fetch(`/api/live/scribe/recording?encounterId=${encounterId}`);
-          const json = (await res.json().catch(() => ({}))) as {
-            data?: { liveRecordingId: string | null; captureSession: { id: string; status: string } | null };
-          };
-          if (json.data?.liveRecordingId && json.data.captureSession) {
-            setRecoverable({
-              recordingId: json.data.liveRecordingId,
-              sessionId: json.data.captureSession.id,
-              sessionStatus: json.data.captureSession.status,
-            });
-            setRecordingId(json.data.liveRecordingId);
-          }
+          setPhaseAndDetail("unconfirmed", "The recording state changed or another capture exists. Check server status before continuing.");
+        } else if(begin.status===0||begin.status>=500||begin.ok) {
+          setPhaseAndDetail('unconfirmed','The request may have reached the server. Check recording status; no automatic retry was sent.');
         } else {
+          setPhaseAndDetail('failed');
           setError(begin.message ?? "Recording could not start.");
         }
         return;
@@ -454,97 +520,145 @@ export function RecordingScribePanel({
       setTranscript(null);
       setDeletion(null);
       startedAtRef.current = Date.now();
-      attachRecorder(stream, contentType);
+      await attachRecorder(stream, contentType, attempt.signal);
       heartbeatRef.current = setInterval(() => void heartbeat(), 15_000);
       setPhaseAndDetail("recording");
+    } catch(error) {
+      if(captureAttemptRef.current!==attempt)return;
+      if(error instanceof CapturePreparationError&&['microphone_denied','microphone_timeout'].includes(error.code))
+        setPhaseAndDetail('failed',error.code==='microphone_denied'
+          ?'Microphone access was denied. Recording needs an available, permitted microphone.'
+          :'Microphone permission was not completed. No recording authorization was requested. Try again when ready.');
+      else {stopEverything();setBusy(false);setPhaseAndDetail('unconfirmed','No audio is being captured. Check server status before starting again.');}
     } finally {
-      setBusy(false);
+      if(captureAttemptRef.current===attempt){captureAttemptRef.current=null;setBusy(false);}
     }
-  }, [attachRecorder, encounterId, heartbeat, setPhaseAndDetail]);
+  }, [attachRecorder, encounterId, heartbeat, setPhaseAndDetail,stopEverything]);
+
+  const checkStart = useCallback(async()=>{
+    if(captureAttemptRef.current)return;
+    const attempt=new AbortController();captureAttemptRef.current=attempt;setBusy(true);setError(null);
+    const timer=setTimeout(()=>attempt.abort(),8000);
+    try{
+      const response=await fetch(`/api/live/scribe/recording?encounterId=${encounterId}`,{signal:attempt.signal,cache:'no-store'});
+      const body=await response.json();
+      if(captureAttemptRef.current!==attempt||attempt.signal.aborted)return;
+      const data=body?.data;
+      if(!response.ok||!data||!Array.isArray(data.recordings))throw new Error('unavailable');
+      if(typeof data.liveRecordingId==='string'&&typeof data.captureSession?.id==='string'
+        &&['active','paused'].includes(data.captureSession.status)){
+        setRecordingId(data.liveRecordingId);
+        setRecoverable({recordingId:data.liveRecordingId,sessionId:data.captureSession.id,sessionStatus:data.captureSession.status});
+        setPhaseAndDetail('paused','An interrupted recording exists. Recover it explicitly to obtain fresh authorization.');
+      }else if(data.liveRecordingId===null&&data.captureSession===null){
+        setRecoverable(null);setPhaseAndDetail('failed','No active recording was found. Start again only when ready; authorization is checked again by the server.');
+      }else throw new Error('invalid');
+    }catch{
+      if(captureAttemptRef.current===attempt)setPhaseAndDetail('unconfirmed','Server status is still unavailable. The microphone remains stopped. Check again.');
+    }finally{clearTimeout(timer);if(captureAttemptRef.current===attempt){captureAttemptRef.current=null;setBusy(false);}}
+  },[encounterId,setPhaseAndDetail]);
 
   /** Recover an interrupted capture session (refresh/crash/second tab). */
   const recover = useCallback(async () => {
-    if (!recoverable) return;
+    if (!recoverable||captureAttemptRef.current) return;
+    const attempt=new AbortController();captureAttemptRef.current=attempt;
     setBusy(true);
     setError(null);
+    setPhaseAndDetail('starting','Checking fresh authorization for the interrupted recording.');
     try {
-      let stream: MediaStream;
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      } catch {
-        setPhaseAndDetail("failed", "Microphone access was denied. Recording needs an available, permitted microphone.");
+      const {stream,authorization:beat}=await prepareCapture({signal:attempt.signal,
+        microphone:()=>navigator.mediaDevices.getUserMedia({audio:true}),authorize:async signal=>{
+          if(recoverable.sessionStatus==='paused'){
+            const resumed=await postJson('/api/live/scribe/recording',{action:'resume',sessionId:recoverable.sessionId},'PATCH',signal);
+            if(!resumed.ok)return {ok:false,status:resumed.status,message:resumed.message};
+          }
+          return postJson<{ok:boolean;captureToken:string|null}>('/api/live/scribe/recording',
+            {action:'heartbeat',sessionId:recoverable.sessionId},'PATCH',signal);
+        }});
+      if(attempt.signal.aborted||captureAttemptRef.current!==attempt){stream.getTracks().forEach(t=>t.stop());return;}
+      if (!beat.ok || !beat.data?.ok || typeof beat.data.captureToken!=='string' || !beat.data.captureToken) {
+        stream.getTracks().forEach((t) => t.stop());
+        setPhaseAndDetail('unconfirmed','Fresh capture authorization was not confirmed. Check the server state before retrying.');
+        setRecoverable(null);
+        setError(beat.message ?? "The interrupted recording could not be recovered.");
         return;
       }
       recordingIdRef.current = recoverable.recordingId;
       sessionIdRef.current = recoverable.sessionId;
-      if (recoverable.sessionStatus === "paused") {
-        const resumed = await postJson("/api/live/scribe/recording", { action: "resume", sessionId: recoverable.sessionId }, "PATCH");
-        if (!resumed.ok) {
-          stream.getTracks().forEach((t) => t.stop());
-          setError(resumed.message ?? "The paused recording cannot resume until every participant has consented.");
-          return;
-        }
-      }
-      const beat = await postJson<{ ok: boolean; captureToken: string | null }>(
-        "/api/live/scribe/recording",
-        { action: "heartbeat", sessionId: recoverable.sessionId },
-        "PATCH",
-      );
-      if (!beat.ok || !beat.data?.captureToken) {
-        stream.getTracks().forEach((t) => t.stop());
-        setError(beat.message ?? "The interrupted recording could not be recovered.");
-        return;
-      }
       tokenRef.current = beat.data.captureToken;
       startedAtRef.current = Date.now();
-      attachRecorder(stream, "audio/webm");
+      await attachRecorder(stream,MediaRecorder.isTypeSupported('audio/webm')?'audio/webm':'audio/mp4', attempt.signal);
       heartbeatRef.current = setInterval(() => void heartbeat(), 15_000);
       setRecoverable(null);
       setPhaseAndDetail("recording", "Recovered — capture is running again.");
+    } catch {
+      if(captureAttemptRef.current!==attempt)return;
+      stopEverything();setBusy(false);setRecoverable(null);
+      setPhaseAndDetail('unconfirmed','Recovery could not be confirmed. The microphone is stopped. Check server status before retrying.');
     } finally {
-      setBusy(false);
+      if(captureAttemptRef.current===attempt){captureAttemptRef.current=null;setBusy(false);}
     }
-  }, [attachRecorder, heartbeat, recoverable, setPhaseAndDetail]);
+  }, [attachRecorder, heartbeat, recoverable, setPhaseAndDetail,stopEverything]);
 
   const resumeAfterPause = useCallback(async () => {
     const sessionId = sessionIdRef.current;
-    if (!sessionId) return;
+    const recorder = recorderRef.current;
+    const bridge = audioBridgeRef.current;
+    if (!sessionId || captureAttemptRef.current || !recorder || !bridge) return;
+    if (recorder.state !== "paused") {
+      setError("The recorder cannot resume. Stop and preserve the captured audio before starting another recording.");
+      return;
+    }
+    invalidateHeartbeat();
+    tokenRef.current = null;
+    const attempt = new AbortController();
+    captureAttemptRef.current = attempt;
+    let replacement: MediaStream | null = null;
     setBusy(true);
+    setError(null);
+    setPhaseAndDetail("resuming");
     try {
-      const r = await postJson("/api/live/scribe/recording", { action: "resume", sessionId }, "PATCH");
-      if (!r.ok) {
-        // A 409 on resume is a consent/state precondition (0022), not a
-        // transient failure — say so plainly.
-        setError(
-          r.status === 409
-            ? "Capture cannot resume until every participant has consented."
-            : (r.message ?? "Capture could not resume."),
-        );
+      const authorize = (signal: AbortSignal) => authorizeCaptureResume(signal, (action, requestSignal) =>
+        postJson<CaptureReply["data"]>("/api/live/scribe/recording", { action, sessionId }, "PATCH", requestSignal));
+      const prepared = !bridge.hasMicrophone()
+        ? await prepareCapture({ signal: attempt.signal, microphone: () => navigator.mediaDevices.getUserMedia({ audio: true }), authorize })
+        : null;
+      replacement = prepared?.stream ?? null;
+      const authorization = prepared?.authorization ?? await authorize(attempt.signal);
+      if (attempt.signal.aborted || captureAttemptRef.current !== attempt) return;
+      if (authorization.kind !== "authorized") {
+        setPhaseAndDetail(bridge.hasMicrophone() ? "paused" : "device_lost");
+        setError(authorization.kind === "refused"
+          ? "Capture cannot resume until every participant has consented."
+          : "Fresh capture authorization was not confirmed. Recording remains paused; no automatic resume was sent.");
         return;
       }
-      const beat = await postJson<{ ok: boolean; captureToken: string | null }>(
-        "/api/live/scribe/recording",
-        { action: "heartbeat", sessionId },
-        "PATCH",
-      );
-      if (beat.ok && beat.data?.captureToken) tokenRef.current = beat.data.captureToken;
-      try {
-        if (recorderRef.current?.state === "paused") recorderRef.current.resume();
-      } catch {
-        /* recorder gone — device flow will restart */
-      }
+      await bridge.activate(attempt.signal);
+      if (attempt.signal.aborted || captureAttemptRef.current !== attempt || recorderRef.current !== recorder) return;
+      if (replacement) { bridge.replaceMicrophone(replacement); streamRef.current = replacement; replacement = null; }
+      if (!bridge.hasMicrophone()) throw new Error("microphone_unavailable");
+      tokenRef.current = authorization.token;
+      recorder.resume();
       setPhaseAndDetail("recording");
-      setError(null);
       void pumpQueue();
+    } catch {
+      if (captureAttemptRef.current === attempt && !attempt.signal.aborted) {
+        tokenRef.current = null;
+        setPhaseAndDetail(bridge.hasMicrophone() ? "paused" : "device_lost", "Resume could not be confirmed. No new audio is being recorded.");
+      }
     } finally {
-      setBusy(false);
+      replacement?.getTracks().forEach(track => track.stop());
+      if (captureAttemptRef.current === attempt) { captureAttemptRef.current = null; setBusy(false); }
     }
-  }, [pumpQueue, setPhaseAndDetail]);
+  }, [invalidateHeartbeat, pumpQueue, setPhaseAndDetail]);
 
   const stopAndUpload = useCallback(async () => {
     const recId = recordingIdRef.current;
     const sessionId = sessionIdRef.current;
-    if (!recId || !sessionId) return;
+    const queue = queueRef.current;
+    if (!recId || !sessionId || !queue || queue.signal.aborted) return;
+    const current = () => queueRef.current === queue && !queue.signal.aborted;
+    invalidateHeartbeat();
     setBusy(true);
     setPhaseAndDetail("stopping");
     try {
@@ -559,8 +673,11 @@ export function RecordingScribePanel({
           resolve();
         }
       });
+      if (!current()) return;
       if (heartbeatRef.current) clearInterval(heartbeatRef.current);
       heartbeatRef.current = null;
+      audioBridgeRef.current?.close();
+      audioBridgeRef.current = null;
       streamRef.current?.getTracks().forEach((t) => t.stop());
       streamRef.current = null;
 
@@ -569,11 +686,12 @@ export function RecordingScribePanel({
       // pump (the guard makes ours return instantly) — wait until the queue
       // is truly empty, not merely until one pump call returns.
       const drainDeadline = Date.now() + 30_000;
-      while (queueRef.current.length > 0 && Date.now() < drainDeadline) {
+      while (current() && queue.length > 0 && Date.now() < drainDeadline) {
         await pumpQueue();
-        if (queueRef.current.length > 0) await new Promise((r) => setTimeout(r, 200));
+        if (current() && queue.length > 0) await new Promise((r) => setTimeout(r, 200));
       }
-      if (queueRef.current.length > 0) {
+      if (!current()) return;
+      if (queue.length > 0) {
         setPhaseAndDetail("failed", "Some audio could not be uploaded. The recording was not completed.");
         return;
       }
@@ -582,7 +700,9 @@ export function RecordingScribePanel({
         "/api/live/scribe/recording",
         { action: "completionToken", sessionId },
         "PATCH",
+        queue.signal,
       );
+      if (!current()) return;
       if (!auth.ok || !auth.data) {
         setPhaseAndDetail("failed", auth.message ?? "Upload completion was not authorized.");
         return;
@@ -591,7 +711,9 @@ export function RecordingScribePanel({
         "/api/live/scribe/recording",
         { action: "complete", recordingId: recId, completionToken: auth.data.completionToken, durationMs },
         "PATCH",
+        queue.signal,
       );
+      if (!current()) return;
       tokenRef.current = null;
       if (!done.ok || !done.data) {
         setPhaseAndDetail("failed", done.message ?? "The upload could not be completed.");
@@ -601,7 +723,8 @@ export function RecordingScribePanel({
         setPhaseAndDetail("failed", "The audio failed content validation and was quarantined. It will not be processed.");
         return;
       }
-      const queued = await postJson("/api/live/scribe/recording", { action: "queue", recordingId: recId }, "PATCH");
+      const queued = await postJson("/api/live/scribe/recording", { action: "queue", recordingId: recId }, "PATCH", queue.signal);
+      if (!current()) return;
       if (!queued.ok) {
         setPhaseAndDetail("failed", queued.message ?? "Transcription could not be queued.");
         return;
@@ -609,10 +732,10 @@ export function RecordingScribePanel({
       setPhaseAndDetail("processing");
       pollTranscript(recId);
     } finally {
-      setBusy(false);
+      if (current()) setBusy(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pumpQueue, setPhaseAndDetail]);
+  }, [invalidateHeartbeat, pumpQueue, setPhaseAndDetail]);
 
   const pollTranscript = useCallback(
     (recId: string, attempt = 0) => {
@@ -811,7 +934,7 @@ export function RecordingScribePanel({
   }, [loadDeletion, recordingId]);
 
   // ------------------------------------------------------------------ UI
-  const live = ["recording", "paused", "device_lost", "reconnecting"].includes(phase);
+  const live = ["recording", "paused", "device_lost", "reconnecting", "resuming"].includes(phase);
   const audioDeleted = deletion?.recordingStatus === "deleted";
 
   return (
@@ -1015,7 +1138,7 @@ export function RecordingScribePanel({
 
       {/* ------------------------------------------------------- controls */}
       <section className="mt-3 flex flex-wrap items-center gap-2" data-testid="recording-controls">
-        {!live && phase !== "uploading" && phase !== "processing" && !audioDeleted && (
+        {!live && phase !== "starting" && phase !== "unconfirmed" && phase !== "uploading" && phase !== "processing" && !audioDeleted && (
           <button
             type="button"
             disabled={busy || !encounterOpen || !provider?.available || !consentComplete.recording || Boolean(recoverable)}
@@ -1026,6 +1149,20 @@ export function RecordingScribePanel({
             <Mic size={12} strokeWidth={2.4} aria-hidden /> Start recording
           </button>
         )}
+        {phase==='unconfirmed'&&<button type="button" disabled={busy} onClick={()=>void checkStart()}
+          className="h-8 rounded-lg border border-line bg-surface px-3 text-[12px] font-bold text-ink disabled:opacity-50"
+          data-testid="check-recording-start">Check recording status</button>}
+        {phase==='starting'&&<button type="button" onClick={()=>{
+          stopEverything();setBusy(false);setRecoverable(null);
+          setPhaseAndDetail('unconfirmed','Capture preparation was cancelled. Check server status; cancelling does not undo a server request.');
+        }} className="h-8 rounded-lg border border-line bg-surface px-3 text-[12px] font-bold text-ink"
+          data-testid="cancel-recording-start">Cancel preparation</button>}
+        {phase === "resuming" && <button type="button" onClick={() => {
+          captureAttemptRef.current?.abort(); captureAttemptRef.current = null;
+          setBusy(false); tokenRef.current = null;
+          setPhaseAndDetail(audioBridgeRef.current?.hasMicrophone() ? "paused" : "device_lost", "Resume cancelled. Previously captured audio is preserved.");
+        }} className="h-8 rounded-lg border border-line bg-surface px-3 text-[12px] font-bold text-ink"
+          data-testid="cancel-recording-resume">Cancel resume</button>}
         {!consentComplete.recording && participants.length > 0 && !live && (
           <span className="text-[11px] font-medium text-subtle" data-testid="consent-gate-hint">
             Recording consent is not complete for every participant.
@@ -1059,6 +1196,7 @@ export function RecordingScribePanel({
               <button
                 type="button"
                 onClick={() => {
+                  invalidateHeartbeat();
                   try {
                     recorderRef.current?.pause();
                   } catch {
@@ -1085,7 +1223,7 @@ export function RecordingScribePanel({
         )}
         {phase === "revoked" && (
           <span className="text-[11.5px] font-semibold text-critical">
-            Recording consent was withdrawn. Captured audio is retained pending deletion or renewed consent.
+            Recording consent was withdrawn. Unsent audio was cleared from this page. Already uploaded audio is not deleted automatically; review its deletion status below.
           </span>
         )}
       </section>

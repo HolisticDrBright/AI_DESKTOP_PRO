@@ -7,6 +7,8 @@ import { Card } from "@/components/ui/bits";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { ReasonDialog } from "./ReasonDialog";
 import { RecordingScribePanel } from "./RecordingScribePanel";
+import { AwsRecordingConsentPanel } from "./AwsRecordingConsentPanel";
+import type { AwsBrowserRecording } from "@/lib/aws-browser-recording";
 import { LensPanel } from "./LensPanel";
 import { NoteComposer, NOTE_TYPE_LABEL, type ComposerNoteType, type ComposerInsert } from "./NoteComposer";
 
@@ -46,7 +48,7 @@ const STATUS_LABEL: Record<Encounter["status"], string> = {
 
 const NOTE_TYPES: ComposerNoteType[] = ["soap", "narrative", "follow_up", "adime", "patient_instructions"];
 
-export function EncounterWorkspace({ encounterId, patientId }: { encounterId: string; patientId: string }) {
+export function EncounterWorkspace({ encounterId, patientId, recordingMode = "aws" }: { encounterId: string; patientId: string; recordingMode?: "aws" | "local-fixture" }) {
   const [encounter, setEncounter] = useState<Encounter | null>(null);
   const [notes, setNotes] = useState<NoteSummary[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -60,6 +62,7 @@ export function EncounterWorkspace({ encounterId, patientId }: { encounterId: st
   const [actionError, setActionError] = useState<string | null>(null);
   const [noteInsert, setNoteInsert] = useState<ComposerInsert | null>(null);
   const insertSeq = useRef(0);
+  const recordingOwner = useRef<AwsBrowserRecording | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -90,6 +93,7 @@ export function EncounterWorkspace({ encounterId, patientId }: { encounterId: st
   }, [load]);
 
   const transition = async (status: "completed" | "cancelled" | "entered_in_error", reason?: string) => {
+    recordingOwner.current?.interrupt();
     setActionError(null);
     try {
       const res = await fetch("/api/live/emr/encounter", {
@@ -296,7 +300,9 @@ export function EncounterWorkspace({ encounterId, patientId }: { encounterId: st
         </Card>
       </div>
 
-      <RecordingScribePanel
+      {recordingMode === "aws" ? <AwsRecordingConsentPanel key={encounterId} encounterId={encounterId}
+        ownerRef={recordingOwner} encounterOpen={encounter.status === 'in_progress'} /> : <RecordingScribePanel
+        key={encounterId}
         encounterId={encounterId}
         encounterOpen={open}
         onDraftCreated={(id) => {
@@ -304,7 +310,7 @@ export function EncounterWorkspace({ encounterId, patientId }: { encounterId: st
           setActiveNoteId(id);
           void load();
         }}
-      />
+      />}
 
       <LensPanel
         encounterId={encounterId}

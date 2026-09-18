@@ -43,15 +43,18 @@
     },
     {
       "version": "20260821049000",
-      "file": "20260821049000_patient_chat_context.sql"
+      "file": "20260821049000_patient_chat_context.sql",
+      "production_transform": false
     },
     {
       "version": "20260821049500",
-      "file": "20260821049500_consumer_family_access.sql"
+      "file": "20260821049500_consumer_family_access.sql",
+      "production_transform": false
     },
     {
       "version": "20260821049700",
-      "file": "20260821049700_synthetic_workforce_organization_directory.sql"
+      "file": "20260821049700_synthetic_workforce_organization_directory.sql",
+      "production_transform": false
     },
     {
       "version": "20260821049800",
@@ -131,6 +134,11 @@
     {
       "version": "20260904090000",
       "file": "20260904090000_independent_consumer_chat_context.sql",
+      "production_transform": false
+    },
+    {
+      "version": "20260916080000",
+      "file": "20260916080000_synthetic_lab_specimen_context.sql",
       "production_transform": false
     }
   ]

@@ -1,6 +1,9 @@
 import { describe, expect, test, vi } from "vitest";
 import { ClinicalCoreAdapterError, type AwsSyntheticIdentityConsentAdapter } from "./aws-identity-consent";
 import { createAwsIdentityApiHandler, type ApiGatewayV2Event } from "./aws-identity-api";
+import type { LabSpecimenTransfer } from "../../contracts/labSpecimenTransfer";
+import { isProductionPilotRouteAllowed, isProductionPilotConsentScopeAllowed } from "./production-pilot-policy";
+import { ClinicalStateError } from "./aws-clinical-state";
 
 const PERSON = "11111111-1111-4111-8111-111111111111";
 const ORG = "22222222-2222-4222-8222-222222222222";
@@ -56,6 +59,72 @@ function handler(service = adapter()) {
     }),
   };
 }
+
+describe("separately consented specimen-context API", () => {
+  const post = "POST /clinical-core/consumer/labs/specimen-context";
+  const read = (pool: string) => `GET /clinical-core/${pool}/labs/specimen-context`;
+  const payload = (): LabSpecimenTransfer => ({ version: 'lab-specimen-context/1', connectionId: CONNECTION,
+    labEventId: PATIENT, labPayloadSha256: 'a'.repeat(64), requestId: ARTIFACT, expectedRevision: 0,
+    consentVersion: 1, reproductiveConsentVersion: null,
+    context: { source: 'patient_reported', verification: 'unverified', recordedAt: '2026-01-03T00:00:00Z',
+      observedOn: '2026-01-02', ageAtDraw: { value: 35, unit: 'years' }, sex: null, assayId: null,
+      pregnancyStatus: null, cyclePhase: null, reproductiveStage: null, contraception: null, pregnancyTrimester: null } });
+  function setup() {
+    const state = { getConsumerConnection: vi.fn(), importLabResult: vi.fn(), reviewLabResult: vi.fn(),
+      listLabImports: vi.fn(), listPatientLabObservations: vi.fn(), listDesktopPatients: vi.fn(), listDesktopLabDocuments: vi.fn(),
+      importLabSpecimenContext: vi.fn(async () => ({ version: 'lab-specimen-receipt/1' as const, contextId: CONNECTION,
+        labEventId: PATIENT, requestId: ARTIFACT, revision: 1, payloadSha256: 'b'.repeat(64),
+        receivedAt: '2026-01-03T00:00:00Z', duplicate: false })),
+      getLabSpecimenContext: vi.fn(async () => null) };
+    const run = createAwsIdentityApiHandler({ adapter: adapter(), clinicalStateAdapter: state,
+      configuration: { workforceIssuer: WORKFORCE_ISSUER, workforceAudience: WORKFORCE_AUD,
+        consumerIssuer: CONSUMER_ISSUER, consumerAudience: CONSUMER_AUD } });
+    return { run, state };
+  }
+  test('accepts only the bounded consumer contract, preserving nulls and unverified provenance', async () => {
+    const t = setup(), p = payload();
+    expect((await t.run(event(post, 'consumer', p))).statusCode).toBe(202);
+    expect(t.state.importLabSpecimenContext).toHaveBeenCalledWith(expect.objectContaining({
+      actorPersonId: PERSON, organizationId: ORG, identityPool: 'consumer', purpose: 'clinical_data', containsPhi: false }), p);
+  });
+  test.each(['extra field', 'reproductive without consent', 'claim verified', 'bad event'])('refuses %s before database calls', async kind => {
+    const t = setup(), p = payload();
+    if (kind === 'reproductive without consent') p.context.cyclePhase = 'luteal';
+    if (kind === 'claim verified') Object.assign(p.context, { verification: 'verified' });
+    if (kind === 'bad event') p.labEventId = 'not-an-event';
+    if (kind === 'extra field') Object.assign(p.context, { dateOfBirth: '1991-01-02' });
+    expect((await t.run(event(post, 'consumer', p))).statusCode).toBe(400);
+    expect(t.state.importLabSpecimenContext).not.toHaveBeenCalled();
+  });
+  test('rejects wrong identity pool and unsigned requests before dispatch', async () => {
+    const t = setup();
+    expect((await t.run(event(post, 'workforce', payload()))).statusCode).toBe(403);
+    const missing = event(post, 'consumer', payload()); missing.requestContext = {};
+    expect((await t.run(missing)).statusCode).toBe(403);
+    expect(t.state.importLabSpecimenContext).not.toHaveBeenCalled();
+  });
+  test.each(['consumer', 'workforce'] as const)('binds %s reads and refuses a body or invalid event', async pool => {
+    const t = setup(), request = event(read(pool), pool, {}); request.body = undefined;
+    request.queryStringParameters = { eventId: PATIENT };
+    const response = await t.run(request);
+    expect(response.statusCode).toBe(200); expect(response.headers['cache-control']).toBe('no-store');
+    expect(JSON.parse(response.body)).toEqual({ data: null });
+    expect(t.state.getLabSpecimenContext).toHaveBeenCalledWith(expect.objectContaining({ identityPool: pool, organizationId: ORG }), PATIENT);
+    request.body = '{}'; expect((await t.run(request)).statusCode).toBe(400);
+    request.body = undefined; request.queryStringParameters.eventId = 'bad';
+    expect((await t.run(request)).statusCode).toBe(400); expect(t.state.getLabSpecimenContext).toHaveBeenCalledOnce();
+  });
+  test('keeps new routes and consent outside both existing production pilot approvals', () => {
+    for (const route of [post, read('consumer'), read('workforce')]) expect(isProductionPilotRouteAllowed(route)).toBe(false);
+    for (const scope of ['lab_intake_only', 'lab_intake_wearables_cycle_ai'] as const)
+      expect(isProductionPilotConsentScopeAllowed(scope, 'lab_specimen_context')).toBe(false);
+  });
+  test.each(['specimen_context_conflict','specimen_consent_required'] as const)('returns actionable %s, not a retryable service outage',async category=>{
+    const t=setup();t.state.importLabSpecimenContext.mockRejectedValue(new ClinicalStateError(category));
+    const response=await t.run(event(post,'consumer',payload()));
+    expect(response.statusCode).toBe(409);expect(JSON.parse(response.body)).toEqual({error:category});
+  });
+});
 
 describe("authenticated synthetic identity API", () => {
   test("returns the current approved consent artifact without its document body", async () => {

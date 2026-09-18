@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, test } from "vitest";
 
 const api = readFileSync("src/server/clinical-core/aws-lab-analysis-api.ts", "utf8");
+const cleanup = readFileSync("src/server/clinical-core/lab-deletion-cleanup.ts", "utf8");
 const template = JSON.parse(readFileSync("infra/aws-clinical-core/lab-analysis-extension.json", "utf8"));
 
 describe("AWS lab deletion boundary", () => {
@@ -17,12 +18,15 @@ describe("AWS lab deletion boundary", () => {
   });
 
   test("checks ownership, refuses active jobs, and purges source plus artifact versions", () => {
-    expect(api).toContain("const job = await ownedJob(jobId, identity.sub)");
-    expect(api).toContain('["awaiting_upload", "completed", "needs_review", "failed"]');
-    expect(api).toContain("ListObjectVersionsCommand");
-    expect(api).toContain("DeleteObjectsCommand");
-    expect(api).toContain("synthetic-labs/artifacts/${jobId}/");
-    expect(api).toContain('ConditionExpression: "ownerSub = :owner"');
+    expect(api).toContain("const job = await ownedJob(jobId, identity, options)");
+    expect(api).toContain('["awaiting_upload", "completed", "needs_review", "failed", "deleting"]');
+    expect(cleanup).toContain("ListObjectVersionsCommand");
+    expect(cleanup).toContain("DeleteObjectsCommand");
+    expect(cleanup).toContain("${namespace}/artifacts/${jobId}/");expect(cleanup).toContain("labObjectPrefix()");
+    expect(cleanup).toContain('organizationId = :org AND personId = :person');
+    expect(cleanup).toContain('#state = :deleting');
+    expect(api).toContain('claimLabDeletion');
+    expect(api).toContain('reconcileLabDeletion');
   });
 
   test("grants only the delete and version-list permissions needed by the API", () => {
@@ -31,6 +35,8 @@ describe("AWS lab deletion boundary", () => {
     expect(source).toContain("dynamodb:DeleteItem");
     expect(source).toContain("s3:DeleteObjectVersion");
     expect(source).toContain("s3:ListBucketVersions");
-    expect(template.Outputs.RoutesEnabled.Value).toBe("10");
+    const routes = Object.values(template.Resources).filter(resource => (resource as {Type:string}).Type === "AWS::ApiGatewayV2::Route");
+    expect(routes).toHaveLength(34);
+    expect(Number(template.Outputs.RoutesEnabled.Value)).toBe(routes.length);
   });
 });

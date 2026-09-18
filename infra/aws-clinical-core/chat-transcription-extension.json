@@ -7,9 +7,52 @@
     "ConsumerJwtAuthorizerId": { "Type": "String", "AllowedPattern": "^[A-Za-z0-9_-]{1,128}$" },
     "ClinicalCoreKeyArn": { "Type": "String", "AllowedPattern": "^arn:(aws|aws-us-gov|aws-cn):kms:[a-z0-9-]+:[0-9]{12}:key/[0-9a-f-]{36}$" },
     "LambdaCodeBucket": { "Type": "String", "AllowedPattern": "^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$" },
-    "LambdaCodeKey": { "Type": "String", "AllowedPattern": "^[A-Za-z0-9!_.*'()/\\-]{1,1024}$" }
+    "LambdaCodeKey": { "Type": "String", "AllowedPattern": "^[A-Za-z0-9!_.*'()/\\-]{1,1024}$" },
+    "VoiceJobsCodeKey": { "Type": "String", "Default": "", "AllowedPattern": "^$|^[A-Za-z0-9!_.*'()/\\-]{1,1024}$" }
   },
+  "Conditions": { "DurableVoice": { "Fn::Not": [{ "Fn::Equals": [{ "Ref": "VoiceJobsCodeKey" }, ""] }] } },
   "Resources": {
+    "VoiceJobTable": {
+      "Type": "AWS::DynamoDB::Table", "Condition": "DurableVoice", "DeletionPolicy": "Retain", "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "BillingMode": "PAY_PER_REQUEST",
+        "AttributeDefinitions": [{ "AttributeName": "id", "AttributeType": "S" }, { "AttributeName": "pending", "AttributeType": "S" }, { "AttributeName": "nextWork", "AttributeType": "N" }],
+        "KeySchema": [{ "AttributeName": "id", "KeyType": "HASH" }],
+        "GlobalSecondaryIndexes": [{ "IndexName": "PendingWork", "KeySchema": [{ "AttributeName": "pending", "KeyType": "HASH" }, { "AttributeName": "nextWork", "KeyType": "RANGE" }], "Projection": { "ProjectionType": "KEYS_ONLY" } }],
+        "SSESpecification": { "SSEEnabled": true, "SSEType": "KMS", "KMSMasterKeyId": { "Ref": "ClinicalCoreKeyArn" } },
+        "TimeToLiveSpecification": { "AttributeName": "expiresAt", "Enabled": true }
+      }
+    },
+    "VoiceJobRole": {
+      "Type": "AWS::IAM::Role", "Condition": "DurableVoice",
+      "Properties": {
+        "AssumeRolePolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Principal": { "Service": "lambda.amazonaws.com" }, "Action": "sts:AssumeRole" }] },
+        "Policies": [{ "PolicyName": "BoundedVoiceJobs", "PolicyDocument": { "Version": "2012-10-17", "Statement": [
+          { "Effect": "Allow", "Action": ["logs:CreateLogStream", "logs:PutLogEvents"], "Resource": { "Fn::Sub": "${TranscriptionLogGroup.Arn}:*" } },
+          { "Effect": "Allow", "Action": ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem"], "Resource": { "Fn::GetAtt": ["VoiceJobTable", "Arn"] } },
+          { "Effect": "Allow", "Action": "dynamodb:Query", "Resource": { "Fn::Sub": "${VoiceJobTable.Arn}/index/PendingWork" } },
+          { "Effect": "Allow", "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"], "Resource": { "Fn::Sub": "${TranscriptionBucket.Arn}/temporary-*/*" } },
+          { "Effect": "Allow", "Action": ["kms:Encrypt", "kms:Decrypt", "kms:GenerateDataKey"], "Resource": { "Ref": "ClinicalCoreKeyArn" } },
+          { "Effect": "Allow", "Action": ["transcribe:StartTranscriptionJob", "transcribe:GetTranscriptionJob", "transcribe:DeleteTranscriptionJob"], "Resource": { "Fn::Sub": "arn:${AWS::Partition}:transcribe:${AWS::Region}:${AWS::AccountId}:transcription-job/alp-synthetic-voice-*" } }
+        ] } }]
+      }
+    },
+    "VoiceJobFunction": {
+      "Type": "AWS::Lambda::Function", "Condition": "DurableVoice",
+      "Properties": {
+        "Runtime": "nodejs22.x", "Handler": "index.handler", "Role": { "Fn::GetAtt": ["VoiceJobRole", "Arn"] }, "MemorySize": 512, "Timeout": 30,
+        "Code": { "S3Bucket": { "Ref": "LambdaCodeBucket" }, "S3Key": { "Ref": "VoiceJobsCodeKey" } },
+        "LoggingConfig": { "LogGroup": { "Ref": "TranscriptionLogGroup" } },
+        "Environment": { "Variables": { "VOICE_JOB_TABLE": { "Ref": "VoiceJobTable" }, "TRANSCRIPTION_BUCKET": { "Ref": "TranscriptionBucket" }, "VOICE_KMS_KEY_ARN": { "Ref": "ClinicalCoreKeyArn" }, "DATA_CLASSIFICATION": "synthetic_only", "PHI_ALLOWED": "false" } }
+      }
+    },
+    "VoiceJobIntegration": { "Type": "AWS::ApiGatewayV2::Integration", "Condition": "DurableVoice", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "IntegrationType": "AWS_PROXY", "IntegrationUri": { "Fn::GetAtt": ["VoiceJobFunction", "Arn"] }, "PayloadFormatVersion": "2.0", "TimeoutInMillis": 29000 } },
+    "VoiceStartRoute": { "Type": "AWS::ApiGatewayV2::Route", "Condition": "DurableVoice", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "POST /clinical-core/consumer/chat-transcription/jobs", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "ConsumerJwtAuthorizerId" }, "Target": { "Fn::Sub": "integrations/${VoiceJobIntegration}" } } },
+    "VoiceStatusRoute": { "Type": "AWS::ApiGatewayV2::Route", "Condition": "DurableVoice", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "GET /clinical-core/consumer/chat-transcription/jobs/{jobId}", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "ConsumerJwtAuthorizerId" }, "Target": { "Fn::Sub": "integrations/${VoiceJobIntegration}" } } },
+    "VoiceCancelRoute": { "Type": "AWS::ApiGatewayV2::Route", "Condition": "DurableVoice", "Properties": { "ApiId": { "Ref": "ClinicalApiId" }, "RouteKey": "DELETE /clinical-core/consumer/chat-transcription/jobs/{jobId}", "AuthorizationType": "JWT", "AuthorizerId": { "Ref": "ConsumerJwtAuthorizerId" }, "Target": { "Fn::Sub": "integrations/${VoiceJobIntegration}" } } },
+    "VoiceApiPermission": { "Type": "AWS::Lambda::Permission", "Condition": "DurableVoice", "Properties": { "Action": "lambda:InvokeFunction", "FunctionName": { "Ref": "VoiceJobFunction" }, "Principal": "apigateway.amazonaws.com", "SourceArn": { "Fn::Sub": "arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${ClinicalApiId}/*/*/clinical-core/consumer/chat-transcription/jobs*" } } },
+    "VoiceSweepRule": { "Type": "AWS::Events::Rule", "Condition": "DurableVoice", "Properties": { "ScheduleExpression": "rate(1 minute)", "State": "ENABLED", "Targets": [{ "Id": "VoiceCleanup", "Arn": { "Fn::GetAtt": ["VoiceJobFunction", "Arn"] } }] } },
+    "VoiceSweepPermission": { "Type": "AWS::Lambda::Permission", "Condition": "DurableVoice", "Properties": { "Action": "lambda:InvokeFunction", "FunctionName": { "Ref": "VoiceJobFunction" }, "Principal": "events.amazonaws.com", "SourceArn": { "Fn::GetAtt": ["VoiceSweepRule", "Arn"] } } },
     "TranscriptionBucket": {
       "Type": "AWS::S3::Bucket",
       "DeletionPolicy": "Retain",

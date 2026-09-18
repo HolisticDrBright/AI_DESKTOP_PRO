@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { LogOut } from "lucide-react";
+import { announceWorkforceSessionChange } from "@/lib/workforce-session-change";
 
 /** Small sign-out control for the Settings data-source panel (live mode). */
 export function SignOutButton() {
@@ -9,6 +10,7 @@ export function SignOutButton() {
   return (
     <button
       onClick={async () => {
+        announceWorkforceSessionChange();
         setPending(true);
         try {
           await fetch("/api/auth/logout", { method: "POST" });

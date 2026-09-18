@@ -7,6 +7,9 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+if ($ApiOrigin -ne 'https://wxv734oi12.execute-api.us-east-2.amazonaws.com') { throw 'Only the isolated synthetic API is allowed by this acceptance test.' }
+$testAccount = aws sts get-caller-identity --profile $Profile --query Account --output text
+if ($LASTEXITCODE -ne 0 -or $testAccount -ne '588966314750') { throw 'Synthetic account verification failed.' }
 $credentialPath = Join-Path $env:USERPROFILE ".ai-longevity-pro-synthetic-lab-test.dpapi.json"
 if (-not (Test-Path -LiteralPath $credentialPath)) { throw "Prepare the synthetic lab test account first." }
 $record = Get-Content -LiteralPath $credentialPath -Raw | ConvertFrom-Json
@@ -15,6 +18,9 @@ $clientId = $record.client_id
 $temp = Join-Path $env:TEMP ("ai-saved-lab-plan-test-" + [guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Path $temp | Out-Null
 $authPath = Join-Path $temp "auth.json"
+$created = $null
+$current = $null
+$deleted = $null
 try {
   [ordered]@{ AuthFlow = "USER_PASSWORD_AUTH"; ClientId = $clientId; AuthParameters = @{ USERNAME = $record.email; PASSWORD = $password } } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $authPath -Encoding utf8NoBOM
   $auth = aws cognito-idp initiate-auth --cli-input-json ("file://" + $authPath.Replace("\", "/")) --profile $Profile --region $Region --output json | ConvertFrom-Json
@@ -76,7 +82,22 @@ try {
   if (-not $accepted) { throw "Saved-lab plan result failed acceptance checks." }
   $deleted = Invoke-RestMethod -Method Delete -Uri "$ApiOrigin/clinical-core/consumer/labs/jobs/$($created.data.jobId)" -Headers $headers
   if ($deleted.data.deleted -ne $true) { throw "Saved-lab plan job cleanup failed." }
-  [pscustomobject]@{ State = $current.data.state; Markers = $current.data.result.biomarkers.Count; PlanTasks = $current.data.result.generatedPlan.tasks.Count; HistoricalSupplementConsiderations = $current.data.result.generatedPlan.supplementRecommendations.Count; MeasuredOnly = $true; ReviewProvenanceRetained = $true; Deleted = $true } | Format-List
+  $afterDelete = Invoke-WebRequest -Method Get -Uri "$ApiOrigin/clinical-core/consumer/labs/jobs/$($created.data.jobId)" -Headers $headers -SkipHttpErrorCheck
+  if ($afterDelete.StatusCode -ne 404) { throw 'Deleted job is still readable.' }
+  [pscustomobject]@{ State = $current.data.state; Markers = $current.data.result.biomarkers.Count; PlanTasks = $current.data.result.generatedPlan.tasks.Count; HistoricalSupplementConsiderations = $current.data.result.generatedPlan.supplementRecommendations.Count; MeasuredOnly = $true; ReviewProvenanceRetained = $true; Deleted = $true; PostDeleteReadStatus = $afterDelete.StatusCode } | Format-List
 } finally {
-  Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue
+  if ($created.data.jobId -and $deleted.data.deleted -ne $true) {
+    # Do not delete an active job while its worker can still write artifacts.
+    try {
+      $cleanupStatus = Invoke-RestMethod -Method Get -Uri "$ApiOrigin/clinical-core/consumer/labs/jobs/$($created.data.jobId)" -Headers $headers
+      if ($cleanupStatus.data.state -in @('completed', 'needs_review', 'failed')) {
+        $cleanup = Invoke-RestMethod -Method Delete -Uri "$ApiOrigin/clinical-core/consumer/labs/jobs/$($created.data.jobId)" -Headers $headers
+        if ($cleanup.data.deleted -ne $true) { throw 'Fixture cleanup not confirmed.' }
+      } else { Write-Warning "Synthetic job $($created.data.jobId) requires terminal cleanup; no cleanup success is claimed." }
+    } catch { Write-Warning "Synthetic job $($created.data.jobId) requires cleanup retry." }
+  }
+  $resolvedTemp = [System.IO.Path]::GetFullPath($temp)
+  $expectedTempRoot = [System.IO.Path]::GetFullPath($env:TEMP).TrimEnd('\') + '\'
+  if (-not $resolvedTemp.StartsWith($expectedTempRoot, [System.StringComparison]::OrdinalIgnoreCase) -or (Split-Path -Leaf $resolvedTemp) -notmatch '^ai-saved-lab-plan-test-[a-f0-9]{32}$') { throw 'Unsafe temporary cleanup path.' }
+  Remove-Item -LiteralPath $resolvedTemp -Recurse -Force
 }

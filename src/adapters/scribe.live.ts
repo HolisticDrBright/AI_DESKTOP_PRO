@@ -1,14 +1,18 @@
 if (typeof window !== "undefined") {
   throw new Error("This module is server-only and must not run in the browser.");
 }
-import { trpcMutation, trpcQuery } from "./trpc.server";
+import { trpcMutation as fixtureMutation, trpcQuery as fixtureQuery } from "./trpc.server";
+import type { TrpcCallOptions } from "./trpc.server";
+import { isContractFixtureAllowed } from "@/server/runtime/contractFixture";
 import { TRPC_BASE_URL } from "./config";
 import { getClinicalAccessToken } from "./session.server";
 import { AdapterError } from "./errors";
 
 /**
- * Live scribe namespace (server-only): consent-gated encounter recording +
- * AI scribe (Milestone 1). Every mutation lands in a SECURITY DEFINER RPC
+ * Local contract-fixture scribe namespace (server-only). Deployed access is
+ * refused: the AWS recording-authority adapter manages consent while capture
+ * awaits its separate transport implementation. In the legacy harness,
+ * every mutation lands in a SECURITY DEFINER RPC
  * (migrations 0022/0023) via the backend's clinical.scribe.* procedures —
  * consent scopes, ACTIVE revocation, bound single-use tokens, the recording
  * state machine, provider enablement and the durable deletion workflow are
@@ -21,6 +25,19 @@ import { AdapterError } from "./errors";
  */
 
 const BACKEND_ORIGIN = TRPC_BASE_URL.replace(/\/api\/trpc\/?$/, "");
+
+// Transitional scribe is now a local synthetic contract harness only. Missing
+// AWS capture implementation must never route deployed audio to a legacy host.
+function requireFixture() {
+  if (process.env.RECORDING_AWS_API_ORIGIN?.trim() || !isContractFixtureAllowed())
+    throw new AdapterError("unavailable", "AWS encounter audio capture is not available on this deployment.");
+}
+async function trpcQuery<T>(path: string, input?: unknown, token?: string | null): Promise<T> {
+  requireFixture(); return fixtureQuery<T>(path, input, token);
+}
+async function trpcMutation<T>(path: string, input?: unknown, token?: string | null, options?: TrpcCallOptions): Promise<T> {
+  requireFixture(); return fixtureMutation<T>(path, input, token, options);
+}
 
 export type ConsentScope = "recording" | "transcription" | "ai_drafting";
 export type ConsentMethod = "verbal_attested" | "written" | "electronic_signature";
@@ -149,6 +166,7 @@ async function backendFetch(
   path: string,
   init: RequestInit & { sessionToken?: string | null },
 ): Promise<Response> {
+  requireFixture();
   const token = await getClinicalAccessToken(init.sessionToken);
   const headers = new Headers(init.headers);
   headers.set("authorization", `Bearer ${token}`);
@@ -238,16 +256,20 @@ export const scribeLive = {
   beginRecording(
     input: { encounterId: string; contentType: string },
     sessionToken?: string | null,
+    options?: Pick<TrpcCallOptions, 'observe'>,
   ): Promise<BeginRecordingResult> {
-    return trpcMutation<BeginRecordingResult>("clinical.scribe.beginRecording", input, sessionToken);
+    // Bound the upstream request too. Timeout is uncertain, never proof that
+    // the server did not create a recording; UI must discover/recover it.
+    return trpcMutation<BeginRecordingResult>("clinical.scribe.beginRecording", input, sessionToken,
+      {observe:options?.observe,signal:AbortSignal.timeout(7000)});
   },
 
-  heartbeat(sessionId: string, sessionToken?: string | null): Promise<HeartbeatResult> {
-    return trpcMutation<HeartbeatResult>("clinical.scribe.heartbeat", { sessionId }, sessionToken);
+  heartbeat(sessionId: string, sessionToken?: string | null, options?: TrpcCallOptions): Promise<HeartbeatResult> {
+    return trpcMutation<HeartbeatResult>("clinical.scribe.heartbeat", { sessionId }, sessionToken, options);
   },
 
-  resume(sessionId: string, sessionToken?: string | null): Promise<{ ok: true }> {
-    return trpcMutation<{ ok: true }>("clinical.scribe.resume", { sessionId }, sessionToken);
+  resume(sessionId: string, sessionToken?: string | null, options?: TrpcCallOptions): Promise<{ ok: true }> {
+    return trpcMutation<{ ok: true }>("clinical.scribe.resume", { sessionId }, sessionToken, options);
   },
 
   issueCompletionAuthorization(

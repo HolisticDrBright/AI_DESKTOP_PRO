@@ -10,6 +10,34 @@ on:
 # the two refusal gates (no edition / demo edition) still hold.
 
 jobs:
+  e2e-aws-recording-consent:
+    name: Browser suite (AWS recording controls, generated audio and cookie refusal)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Verify generated browser audio with fictional AWS responses; no real patient audio
+        run: |
+          node scripts/live-stub-server.mjs &
+          E2E_RECORDING_AWS=1 E2E_DEV_SERVER=1 APP_EDITION=clinical \
+          NEXT_PUBLIC_USE_LIVE_API=true CLINICAL_CONTRACT_FIXTURE=1 \
+          TRPC_BASE_URL=http://127.0.0.1:3999/api/trpc \
+          CLINICAL_SUPABASE_URL=http://127.0.0.1:3999 CLINICAL_SUPABASE_ANON_KEY=stub \
+          CLINICAL_DEMO_EMAIL=demo@local CLINICAL_DEMO_PASSWORD=demo CLINICAL_ORG_ID=org-fixture \
+          RECORDING_AWS_API_ORIGIN=https://abcdefghij.execute-api.us-east-2.amazonaws.com \
+          RECORDING_CLEANUP_EXECUTION_UI=enabled RECORDING_CLEANUP_EXECUTION_API_ORIGIN=https://abcdefghij.execute-api.us-east-2.amazonaws.com \
+          npm run test:e2e -- e2e/aws-recording-consent.spec.ts e2e/aws-recording-capture.spec.ts e2e/aws-recording-cleanup-review.spec.ts e2e/aws-recording-cleanup-execution.spec.ts --trace retain-on-failure
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: aws-recording-consent-browser-evidence
+          path: test-results/
+  # Existing fixture recording suites retain their own isolated runtime.
   checks:
     name: Typecheck, lint, unit, build
     runs-on: ubuntu-latest
@@ -21,8 +49,13 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
+      - name: Dependency security gate
+        run: npm audit --audit-level=high
       - run: npm run lint
       - run: npm run test:unit
+      - run: npm run build:lab-range-tools
+      - name: Build read-only retained-lab privacy operator (no AWS calls)
+        run: node scripts/build-lab-privacy-inventory.mjs
       - name: AWS clinical-core synthetic safety gate
         run: npm run check:aws-clinical-core
       - name: AWS identity, invitation, and consent safety gate
@@ -39,12 +72,26 @@ jobs:
         run: |
           pip install --disable-pip-version-check --quiet cfn-lint==1.55.0
           cfn-lint infra/aws-clinical-core/template.json infra/aws-clinical-core/identity-api-extension.json infra/aws-clinical-core/catalog-api-extension.json infra/aws-clinical-core/production-readiness-workload.json infra/aws-clinical-core/production-clinical-api-disabled.json infra/aws-clinical-core/production-clinical-api-candidate.json
+      - name: Build and validate independent voice deployment candidate (no deployment)
+        run: |
+          node scripts/build-aws-owned-voice.mjs
+          cfn-lint dist/aws-clinical-core/owned-voice/template.json
+      - name: Build and validate independent lab processing candidate (no deployment)
+        run: |
+          node scripts/build-aws-owned-lab.mjs
+          cfn-lint dist/aws-clinical-core/owned-lab/template.json
       - name: Build the authenticated API Lambda artifact
         run: npm run build:aws-authenticated-api
       - name: Build governed catalog and deployment artifacts
         run: |
           npm run build:aws-governed-catalog-api
           npm run build:aws-deployment-tools
+          npm run build:aws-chat-transcription
+          node scripts/build-aws-personal-storage.mjs
+          node scripts/build-aws-privacy-operations.mjs
+          cfn-lint dist/aws-clinical-core/privacy-operations/template.json
+          cfn-lint dist/aws-clinical-core/personal-storage/disabled-template.json dist/aws-clinical-core/personal-storage/template.json
+          npm run check:aws-chat-transcription
       - name: AWS production provider-removal and foundation gates
         run: |
           npm run check:aws-data-plane-migration
@@ -64,6 +111,15 @@ jobs:
           npm run test:aws-production-readiness
           npm run check:aws-production-container
           npm run check:aws-production-readiness-workload
+          npm run check:aws-provider-configuration
+          npm run test:aws-provider-configuration
+          npm run check:aws-application-rollback
+          npm run test:aws-load-qualification
+          npm run qualify:load-plan
+      - name: Credential-free security qualification (source evidence, not a hosted test)
+        run: |
+          npm run build:security-qualification
+          npm run qualify:security
       - name: Mock-import graph (no production path to fixtures)
         run: npm run check:mock-imports
       - name: Build refuses without an explicit edition
@@ -117,6 +173,11 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - run: npm run build:clinical
       - name: Run every live suite against the committed contract fixture
+        env:
+          # Full single-process suite: reserve >=4 GiB for Chromium, OS and
+          # native allocations. The config refuses undersized/cgroup runners.
+          E2E_DEV_HEAP_MB: "10240"
+          E2E_RECORDING_DIAGNOSTICS: "1"
         run: |
           node scripts/live-stub-server.mjs &
           sleep 2
@@ -130,7 +191,15 @@ jobs:
           CLINICAL_DEMO_EMAIL=demo@local \
           CLINICAL_DEMO_PASSWORD=demo \
           CLINICAL_ORG_ID=org-fixture \
-          npm run test:e2e -- live-
+          npm run test:e2e -- live- --trace retain-on-failure
+      - name: Preserve synthetic contract-fixture failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: synthetic-live-fixture-failures
+          path: test-results/
+          retention-days: 7
+          if-no-files-found: ignore
 
   # Phase 10B.1. The copilot's process-level mode AND the runtime's
   # deployment posture are both fixed when the server boots, so one server

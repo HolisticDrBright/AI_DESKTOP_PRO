@@ -12,6 +12,7 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
+    "build:lab-range-tools": "node scripts/build-lab-range-tools.mjs",
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed",
     "test:unit": "cross-env TZ=America/Los_Angeles vitest run",
@@ -54,6 +55,10 @@
     "build:aws-desktop-operation-inventory": "node scripts/build-aws-desktop-operation-inventory.mjs --write",
     "check:aws-desktop-operation-inventory": "node scripts/check-aws-desktop-operation-inventory.mjs",
     "build:aws-production-clinical-core": "node scripts/build-aws-production-clinical-core.mjs",
+    "build:aws-recording-authority": "node scripts/build-aws-recording-authority.mjs",
+    "build:aws-recording-capture": "node scripts/build-aws-recording-authority.mjs --capture",
+    "build:aws-recording-cleanup-review": "node scripts/build-aws-recording-authority.mjs --cleanup-review",
+    "build:aws-recording-cleanup-execution": "node scripts/build-aws-recording-authority.mjs --cleanup-execution",
     "build:aws-production-clinical-core-verifier": "node scripts/build-aws-production-clinical-core-verifier.mjs",
     "build:aws-production-migration-operator": "node scripts/build-aws-production-migration-operator.mjs",
     "check:aws-production-clinical-core": "node scripts/check-aws-production-clinical-core.mjs",
@@ -66,6 +71,13 @@
     "build:aws-production-rollback-acceptance": "node scripts/build-aws-production-rollback-acceptance.mjs",
     "audit:aws-data-plane-migration": "node scripts/check-aws-data-plane-migration.mjs --report",
     "check:aws-data-plane-migration": "node scripts/check-aws-data-plane-migration.mjs --enforce",
+    "check:aws-provider-configuration": "node scripts/check-aws-provider-configuration.mjs",
+    "check:aws-application-rollback": "node scripts/check-aws-application-rollback.mjs",
+    "test:aws-load-qualification": "node scripts/run-aws-load-qualification.test.mjs",
+    "qualify:load-plan": "node scripts/run-aws-load-qualification.mjs",
+    "build:security-qualification": "node scripts/build-security-qualification.mjs",
+    "qualify:security": "node dist/qualification/security-qualification.cjs",
+    "test:aws-provider-configuration": "node scripts/check-aws-provider-configuration.test.mjs",
     "test:aws-data-plane-migration": "node scripts/check-aws-data-plane-migration.test.mjs"
   },
   "dependencies": {
@@ -83,11 +95,13 @@
     "@aws-sdk/s3-request-presigner": "^3.1109.0",
     "@tanstack/react-query": "^5.101.2",
     "lucide-react": "^1.24.0",
-    "next": "^15.5.20",
+    "next": "^15.5.25",
     "react": "^19.2.7",
-    "react-dom": "^19.2.7"
+    "react-dom": "^19.2.7",
+    "zod": "4.3.6"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "0.5.8",
     "@eslint/eslintrc": "^3.3.6",
     "@playwright/test": "^1.61.1",
     "@tailwindcss/postcss": "^4.3.2",
@@ -97,15 +111,15 @@
     "cross-env": "^10.1.0",
     "esbuild": "^0.28.2",
     "eslint": "^9.39.5",
-    "eslint-config-next": "^15.5.20",
+    "eslint-config-next": "^15.5.25",
     "playwright": "^1.61.1",
     "tailwindcss": "^4.3.2",
     "typescript": "^5.9.3",
-    "vitest": "4.1.5"
+    "vitest": "4.1.11"
   },
   "overrides": {
     "nanoid": "3.3.18",
     "postcss": "8.5.23",
-    "sharp": "0.35.0"
+    "sharp": "0.35.4"
   }
 }

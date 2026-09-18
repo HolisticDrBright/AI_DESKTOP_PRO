@@ -1,6 +1,7 @@
 import { USE_LIVE_API } from "@/adapters/mode";
 import { EncounterWorkspace } from "@/components/encounter/EncounterWorkspace";
 import { Card } from "@/components/ui/bits";
+import { isContractFixtureAllowed } from "@/server/runtime/contractFixture";
 
 /**
  * Encounter workspace route (Phase 2 slice 1). Live mode only — the demo
@@ -25,5 +26,6 @@ export default async function EncounterPage({
     );
   }
 
-  return <EncounterWorkspace encounterId={encounterId} patientId={patientId} />;
+  return <EncounterWorkspace key={encounterId} encounterId={encounterId} patientId={patientId}
+    recordingMode={!process.env.RECORDING_AWS_API_ORIGIN?.trim() && isContractFixtureAllowed() ? "local-fixture" : "aws"} />;
 }

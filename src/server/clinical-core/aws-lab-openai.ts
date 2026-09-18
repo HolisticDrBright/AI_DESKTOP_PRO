@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import { GetSecretValueCommand, SecretsManagerClient } from "@aws-sdk/client-secrets-manager";
 import type { LongitudinalContext, PatientContext } from "./aws-lab-analysis-api";
 import { buildDirectionalLabContext } from "./aws-lab-directional-context";
+import {loadReviewedKnowledge} from './aws-reviewed-knowledge';
+import {KNOWLEDGE_MODEL_BOUNDARY,assertKnowledgeCitations,type KnowledgeContext} from './reviewed-knowledge';
 
 const secrets = new SecretsManagerClient({});
 const OPENAI_ORIGIN = "https://api.openai.com";
@@ -84,6 +86,7 @@ export type LabPlanTask = {
 };
 
 export type LabAiSynthesis = {
+  reviewedKnowledge?:KnowledgeContext|null;
   summary: string;
   uncertainty: string;
   priorityActions: string[];
@@ -327,6 +330,7 @@ export function parseOpenAISecret(secretString: string): string {
 }
 
 export function buildLabSynthesisRequest(input: {
+  reviewedKnowledge?:KnowledgeContext|null;
   model: string;
   biomarkers: LabSynthesisBiomarker[];
   jobId: string;
@@ -342,11 +346,12 @@ export function buildLabSynthesisRequest(input: {
     relationshipGroups: directionalContext.relationshipGroups,
     patientReportedContext: input.patientContext ?? null,
     activeProtocol: input.activeProtocol ?? null,
+    reviewedKnowledge: input.reviewedKnowledge ?? null,
   };
   return {
     model: input.model,
     input: [
-      { role: "system", content: SYSTEM_INSTRUCTION },
+      { role: "system", content: `${SYSTEM_INSTRUCTION}\n${KNOWLEDGE_MODEL_BOUNDARY}` },
       { role: "user", content: JSON.stringify(payload) },
     ],
     text: {
@@ -520,7 +525,8 @@ export async function synthesizeLabWithOpenAI(input: {
   activeProtocol?: LongitudinalContext["activeProtocol"];
 }): Promise<LabAiSynthesis> {
   const model = required("LAB_OPENAI_MODEL");
-  const body = buildLabSynthesisRequest({ model, biomarkers: input.biomarkers, jobId: input.jobId, patientContext: input.patientContext, activeProtocol: input.activeProtocol });
+  const reviewedKnowledge=await loadReviewedKnowledge({biomarkerNames:input.biomarkers.map(b=>b.canonicalName)});
+  const body = buildLabSynthesisRequest({ model, biomarkers: input.biomarkers, jobId: input.jobId, patientContext: input.patientContext, activeProtocol: input.activeProtocol,reviewedKnowledge });
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
@@ -546,7 +552,7 @@ export async function synthesizeLabWithOpenAI(input: {
     if (!response.headers.get("content-type")?.toLowerCase().includes("application/json")) throw new Error("openai_content_type_refused");
     let parsed: unknown;
     try { parsed = JSON.parse(raw); } catch { throw new Error("openai_response_malformed"); }
-    return parseLabSynthesisResponse({
+    const result=parseLabSynthesisResponse({
       response: parsed,
       expectedModel: model,
       allowedBiomarkerIds: new Set(input.biomarkers.map((row) => row.biomarkerId)),
@@ -555,6 +561,8 @@ export async function synthesizeLabWithOpenAI(input: {
       allowedRelationshipGroups: new Map(buildDirectionalLabContext(input.biomarkers).relationshipGroups
         .slice(0, 6).map((row) => [row.groupId, new Set(row.biomarkerIds)])),
     });
+    assertKnowledgeCitations(JSON.stringify(result),reviewedKnowledge);
+    return {...result,reviewedKnowledge};
   } catch (error) {
     if (controller.signal.aborted) throw Object.assign(new Error("openai_timeout"), { category: "provider_unavailable" });
     const message = error instanceof Error ? error.message : "";

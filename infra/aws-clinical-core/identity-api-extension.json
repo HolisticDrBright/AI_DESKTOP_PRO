@@ -243,6 +243,9 @@
         "Target": { "Fn::Sub": "integrations/${IdentityApiIntegration}" }
       }
     },
+    "ConsumerSpecimenContextWriteRoute": {"Type":"AWS::ApiGatewayV2::Route","Properties":{"ApiId":{"Ref":"ClinicalApiId"},"RouteKey":"POST /clinical-core/consumer/labs/specimen-context","AuthorizationType":"JWT","AuthorizerId":{"Ref":"ConsumerJwtAuthorizer"},"Target":{"Fn::Sub":"integrations/${IdentityApiIntegration}"}}},
+    "ConsumerSpecimenContextReadRoute": {"Type":"AWS::ApiGatewayV2::Route","Properties":{"ApiId":{"Ref":"ClinicalApiId"},"RouteKey":"GET /clinical-core/consumer/labs/specimen-context","AuthorizationType":"JWT","AuthorizerId":{"Ref":"ConsumerJwtAuthorizer"},"Target":{"Fn::Sub":"integrations/${IdentityApiIntegration}"}}},
+    "WorkforceSpecimenContextReadRoute": {"Type":"AWS::ApiGatewayV2::Route","Properties":{"ApiId":{"Ref":"ClinicalApiId"},"RouteKey":"GET /clinical-core/workforce/labs/specimen-context","AuthorizationType":"JWT","AuthorizerId":{"Ref":"WorkforceJwtAuthorizer"},"Target":{"Fn::Sub":"integrations/${IdentityApiIntegration}"}}},
     "ConsumerConnectionRoute": {
       "Type": "AWS::ApiGatewayV2::Route",
       "Properties": {
