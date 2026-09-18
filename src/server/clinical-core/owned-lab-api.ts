@@ -5,7 +5,7 @@ import {createOwnedLabAuthorization,LabAuthorizationRevoked,LAB_AUTHORIZATION_SC
 import {createLabAnalysisApi,type ApiEvent,type Claims,type LabApiOptions} from './aws-lab-analysis-api';
 import {CoreSubscriptionError,requireConsumerCore} from './core-subscription-guard';
 import type {ExternalDeletionGuard} from './owned-external-deletion';
-import {publishLabResult} from './owned-lab-publication';
+import {publishLabResult,retractLabPublication} from './owned-lab-publication';
 
 /** Independent production lab/document processing candidate. Mirrors the owned
  * voice candidate: verified production consumer identity, separate ai_context
@@ -58,6 +58,17 @@ export function createOwnedLabApi(input:{
       // Publication re-verifies the job's consent binding before the personal copy is written.
       await authorization.policy.verify(job);
       return publishLabResult({job,now,adapter:()=>{
+        const a=input.adapter();
+        if(typeof a.write!=='function'||typeof a.get!=='function')throw new OwnedStorageError('storage_unavailable');
+        return a as Required<Pick<typeof a,'write'|'get'>>;
+      }});
+    },
+    retract:async job=>{
+      if(!active||!featureEnabled)throw new LabAuthorizationRevoked();
+      // Deletion does not re-verify the job's consent binding: a withdrawn
+      // consent must not stop the owner removing old work. The tombstone write
+      // itself binds the revision and reports a retained copy when refused.
+      return retractLabPublication({job,now,adapter:()=>{
         const a=input.adapter();
         if(typeof a.write!=='function'||typeof a.get!=='function')throw new OwnedStorageError('storage_unavailable');
         return a as Required<Pick<typeof a,'write'|'get'>>;

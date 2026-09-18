@@ -31,7 +31,8 @@ const processingConsentStates=async(c:ProductionClinicalRequestContext)=>{
   if(deletionBlocked)throw new OwnedStorageError('account_deletion_write_blocked');
   return Promise.all((['ai_context','lab_history'] as const).map(scope=>consentState(c,scope)));
 };
-function setup(c=config){const adapter=vi.fn(()=>({consentState,processingConsentStates}));const requireCore=vi.fn(async()=>{});
+const personalGet=vi.fn(async(..._args:unknown[])=>null);const personalWrite=vi.fn();
+function setup(c=config){const adapter=vi.fn(()=>({consentState,processingConsentStates,get:personalGet,write:personalWrite}));const requireCore=vi.fn(async()=>{});
   const deletionGuard:ExternalDeletionGuard=async(_s,work)=>work();
   return {adapter,requireCore,deletionGuard,handler:createOwnedLabApi({configuration:c,adapter,now:()=>now,requireCore,deletionGuard})};}
 beforeEach(()=>{
@@ -188,6 +189,10 @@ describe('production owner privacy routes after consent withdrawal',()=>{
     const response=await s.handler(operation==='cancel'?event('POST',`jobs/${s.id}/cancel`,{confirmRemoveUnfinishedAnalysis:true}):event('DELETE',`jobs/${s.id}`));
     expect(response.statusCode).toBe(200);
     const scope={ownerSub:claims().sub,organizationId:uuid,personId:uuid};
+    // Deletion consults personal storage for a cloud copy even after withdrawal;
+    // cancellation of unfinished work has no copy to consult.
+    if(operation==='delete'){expect(JSON.parse(response.body).data.publication).toMatchObject({status:'not_published'});expect(personalGet.mock.calls[0][1]).toMatchObject({collection:'lab_analyses'});expect(personalWrite).not.toHaveBeenCalled();}
+    else {expect(personalGet).not.toHaveBeenCalled();expect(JSON.parse(response.body).data.publication).toBeUndefined();}
     expect(mock.claim.mock.calls[0].slice(1)).toEqual(operation==='cancel'?[scope,s.id,true]:[scope,s.id]);
     expect(mock.cleanup.mock.calls[0].slice(1)).toEqual([s.id,scope]);expect(s.requireCore).not.toHaveBeenCalled();
     expect(mock.claim.mock.calls[0][0].deletionGuard).toBe(s.deletionGuard);

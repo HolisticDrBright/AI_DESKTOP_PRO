@@ -82,6 +82,57 @@ export async function publishLabResult(input: { job: PublishableLabJob; adapter:
   }
 }
 
+/** Outcome of removing the personal-storage copy when its job is deleted.
+ * `retracted` means a tombstone revision now supersedes the copy; `retained`
+ * means the copy stays because the owner's consent or account state refuses a
+ * new revision (it remains reachable through personal storage or a privacy
+ * request); `not_published` means no live copy exists. A storage outage throws
+ * so the caller can refuse the deletion instead of orphaning the copy. */
+export type LabRetraction = {
+  version: typeof LAB_PUBLICATION_VERSION;
+  status: 'retracted' | 'retained' | 'not_published';
+  at: string;
+  recordId?: string;
+  revision?: number;
+  reason?: 'lab_consent_required' | 'account_deletion_write_blocked' | 'authorization_missing' | 'record_conflict';
+};
+export async function retractLabPublication(input: { job: PublishableLabJob & { publication?: unknown }; adapter: () => Adapter; now?: () => number }): Promise<LabRetraction> {
+  const now = input.now ?? (() => Date.now());
+  const at = new Date(now()).toISOString();
+  const base = { version: LAB_PUBLICATION_VERSION as typeof LAB_PUBLICATION_VERSION, at };
+  const jobId = input.job.pk.slice(4).toLowerCase();
+  if (!UUID.test(jobId)) return { ...base, status: 'not_published' };
+  const a = input.job.authorization;
+  if (!a || a.version !== 'owned-lab/1' || a.personId !== input.job.personId || a.organizationId !== input.job.organizationId || a.identitySubject !== input.job.ownerSub
+    || !Number.isSafeInteger(a.consents?.lab_history?.revision)) {
+    // Without a consent binding no revision can be written. A never-published job has nothing to retract.
+    return publicPublication(input.job.publication)?.status === 'published' ? { ...base, status: 'retained', reason: 'authorization_missing' } : { ...base, status: 'not_published' };
+  }
+  const context: ProductionClinicalRequestContext = { actorPersonId: a.personId, organizationId: a.organizationId, identitySubject: a.identitySubject, identityPool: 'consumer',
+    purpose: 'clinical_data', environment: 'production-clinical', dataClassification: 'clinical_phi', containsPhi: true, realPatientData: true, productionBound: true };
+  const recordId = deterministicUuid(`personal-lab-analysis:${jobId}`);
+  // The store, not the receipt, decides: a pending receipt may hide a copy the
+  // server wrote before its response was lost.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const current = await input.adapter().get(context, { collection: 'lab_analyses', recordId });
+    if (!current) return { ...base, status: 'not_published' };
+    if (current.deleted) return { ...base, status: 'retracted', recordId, revision: current.revision };
+    try {
+      const saved = await input.adapter().write(context, { collection: 'lab_analyses', recordId, requestId: deterministicUuid(`personal-lab-analysis-retract:${jobId}:${current.revision}`),
+        expectedRevision: current.revision, consentRevision: a.consents.lab_history.revision, deleted: true, payload: {} });
+      return { ...base, status: 'retracted', recordId, revision: saved.revision };
+    } catch (error) {
+      if (error instanceof OwnedStorageError) {
+        if (error.code === 'conflict') continue;
+        if (error.code === 'consent_required' || error.code === 'owner_required') return { ...base, status: 'retained', recordId, revision: current.revision, reason: 'lab_consent_required' };
+        if (error.code === 'account_deletion_write_blocked') return { ...base, status: 'retained', recordId, revision: current.revision, reason: 'account_deletion_write_blocked' };
+      }
+      throw new OwnedStorageError('storage_unavailable');
+    }
+  }
+  return { ...base, status: 'retained', recordId, reason: 'record_conflict' };
+}
+
 /** Client-facing projection: never the stored result, only the receipt. */
 export function publicPublication(value: unknown): LabPublication | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;

@@ -17,7 +17,7 @@ import { CoreSubscriptionError } from './core-subscription-guard';
 import { OwnedStorageError } from './owned-consumer-records';
 import { canonicalPayload } from './aws-consumer-clinical-records';
 import {createLabJobPrivacy,LabPrivacyError} from './lab-job-privacy';
-import { LAB_PUBLICATION_VERSION, publicPublication, type LabPublication, type PublishableLabJob } from './owned-lab-publication';
+import { LAB_PUBLICATION_VERSION, publicPublication, type LabPublication, type LabRetraction, type PublishableLabJob } from './owned-lab-publication';
 
 const CONTRACT_VERSION = "lab-analysis/1";
 const MAX_BODY_BYTES = 256 * 1024;
@@ -138,6 +138,8 @@ export type LabApiOptions =
       deletionGuard?:ExternalDeletionGuard;
       /** Durable cloud publication of a completed result into personal storage; idempotent per result. */
       publish?: (job: PublishableLabJob) => Promise<LabPublication>;
+      /** Removes the personal-storage copy before a job deletion is claimed; throws OwnedStorageError when storage cannot confirm. */
+      retract?: (job: PublishableLabJob & { publication?: unknown }) => Promise<LabRetraction>;
       requireCore: (headers: Record<string, string | undefined>) => Promise<void> };
 const CLASSIFICATION: Record<LabApiOptions['mode'], LabDataClassification> = { synthetic: 'synthetic_only', production: 'personal_health_record' };
 function classificationAccepted(input: Record<string, unknown>, options: LabApiOptions): boolean {
@@ -572,13 +574,24 @@ async function deleteJob(identity: Claims, jobId: string, options: LabApiOptions
   if(options.mode==='production'&&!options.deletionGuard)throw new OwnedStorageError('storage_unavailable');
   const job = await ownedJob(jobId, identity, options, true);
   if (job && !["awaiting_upload", "completed", "needs_review", "failed", "deleting"].includes(job.state)) return refusal(409);
+  // The cloud copy is removed before the deletion is claimed. When storage
+  // cannot confirm, nothing is fenced or purged and the owner retries later;
+  // a retained copy is reported, never silently orphaned.
+  let retraction: LabRetraction | undefined;
+  if (job && options.mode === 'production' && options.retract && ['completed', 'deleting'].includes(job.state)) {
+    try { retraction = await options.retract(job); }
+    catch (error) {
+      if (error instanceof OwnedStorageError) return json(503, { contractVersion: LAB_PUBLICATION_VERSION, error: 'lab_publication_retraction_pending' });
+      throw error;
+    }
+  }
   const deps={db,s3,table:required('LAB_JOB_TABLE'),bucket:required('LAB_DOCUMENT_BUCKET'),
     deletionGuard:options.mode==='production'?options.deletionGuard:undefined,
     stopExecutions:(id:string)=>stopLabExecutions(sfn,required('LAB_STATE_MACHINE_ARN'),id)};
   const scope={ownerSub:identity.sub,organizationId:identity['custom:organization_id'],personId:identity['custom:person_id']};
   if(job)await claimLabDeletion(deps,scope,jobId);
   const cleanup=await reconcileLabDeletion(deps,jobId,scope);
-  return json(200, { contractVersion: CONTRACT_VERSION, jobId, deleted: true, ...cleanup });
+  return json(200, { contractVersion: CONTRACT_VERSION, jobId, deleted: true, ...cleanup, ...(retraction ? { publication: retraction } : {}) });
 }
 
 /** Cancellation is explicit removal of unfinished work, not deletion of a saved result.

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { deterministicUuid, publicPublication, publicationEnvelope, publishLabResult, resultDigest, type PublishableLabJob } from './owned-lab-publication';
+import { deterministicUuid, publicPublication, publicationEnvelope, publishLabResult, resultDigest, retractLabPublication, type PublishableLabJob } from './owned-lab-publication';
 import { OwnedStorageError } from './owned-consumer-records';
 import { validateOwnedPayload, ownedPayloadLimit } from './owned-lab-observations';
 import type { LabAuthorization } from './owned-lab-authorization';
@@ -64,5 +64,44 @@ describe('durable lab result publication', () => {
   it('projects only the receipt to clients', () => {
     expect(publicPublication({ version: 'lab-publication/1', status: 'published', resultSha256: 'a'.repeat(64), at: '2026-09-18T12:00:00.000Z', recordId: uuid, revision: 1, secret: 'x' })).toEqual({ version: 'lab-publication/1', status: 'published', resultSha256: 'a'.repeat(64), at: '2026-09-18T12:00:00.000Z', recordId: uuid, revision: 1 });
     expect(publicPublication({ version: 'other' })).toBeNull(); expect(publicPublication(null)).toBeNull();
+  });
+});
+
+describe('cloud copy retraction on job deletion', () => {
+  const recordId = deterministicUuid(`personal-lab-analysis:${jobId}`);
+  const stored = (revision = 1, deleted = false) => ({ recordId, revision, deleted, receivedAt: '2026-09-18T12:00:00.000Z', payload: deleted ? {} : { resultSha256: resultDigest(result) } });
+  it('tombstones the stored copy at its current revision under the bound consent, deciding from the store rather than the receipt', async () => {
+    const a = adapter({ get: async () => stored(2), write: async (input) => ({ recordId: input.recordId, revision: 3, duplicate: false, receivedAt: '2026-09-18T12:00:00.000Z' }) });
+    const outcome = await retractLabPublication({ job: { ...job(), publication: { version: 'lab-publication/1', status: 'pending', resultSha256: 'a'.repeat(64), at: 'x', reason: 'storage_unavailable' } }, adapter: a.factory, now });
+    expect(outcome).toEqual({ version: 'lab-publication/1', status: 'retracted', at: '2026-09-18T12:00:00.000Z', recordId, revision: 3 });
+    expect(a.write.mock.calls[0][1]).toMatchObject({ collection: 'lab_analyses', recordId, expectedRevision: 2, consentRevision: 5, deleted: true, payload: {}, requestId: deterministicUuid(`personal-lab-analysis-retract:${jobId}:2`) });
+    const none = adapter({ get: async () => null });
+    expect(await retractLabPublication({ job: job(), adapter: none.factory, now })).toEqual({ version: 'lab-publication/1', status: 'not_published', at: '2026-09-18T12:00:00.000Z' });
+    expect(none.write).not.toHaveBeenCalled();
+    const gone = adapter({ get: async () => stored(4, true) });
+    expect(await retractLabPublication({ job: job(), adapter: gone.factory, now })).toMatchObject({ status: 'retracted', revision: 4 });
+    expect(gone.write).not.toHaveBeenCalled();
+  });
+  it('retains the copy when consent or account state refuses a new revision, retries one conflict, and throws on outages', async () => {
+    const consent = adapter({ get: async () => stored(), write: async () => { throw new OwnedStorageError('consent_required'); } });
+    expect(await retractLabPublication({ job: job(), adapter: consent.factory, now })).toMatchObject({ status: 'retained', reason: 'lab_consent_required', recordId, revision: 1 });
+    const closing = adapter({ get: async () => stored(), write: async () => { throw new OwnedStorageError('account_deletion_write_blocked'); } });
+    expect(await retractLabPublication({ job: job(), adapter: closing.factory, now })).toMatchObject({ status: 'retained', reason: 'account_deletion_write_blocked' });
+    let revision = 1;
+    const racing = adapter({ get: async () => stored(revision), write: async (input) => { if (input.expectedRevision === 1) { revision = 2; throw new OwnedStorageError('conflict'); } return { recordId, revision: 3, duplicate: false, receivedAt: 'x' }; } });
+    expect(await retractLabPublication({ job: job(), adapter: racing.factory, now })).toMatchObject({ status: 'retracted', revision: 3 });
+    expect(racing.write).toHaveBeenCalledTimes(2);
+    const stuck = adapter({ get: async () => stored(), write: async () => { throw new OwnedStorageError('conflict'); } });
+    expect(await retractLabPublication({ job: job(), adapter: stuck.factory, now })).toMatchObject({ status: 'retained', reason: 'record_conflict' });
+    const offline = adapter({ get: async () => stored(), write: async () => { throw new Error('socket'); } });
+    await expect(retractLabPublication({ job: job(), adapter: offline.factory, now })).rejects.toMatchObject({ code: 'storage_unavailable' });
+    const unreachable = adapter({ get: async () => { throw new OwnedStorageError('storage_unavailable'); } });
+    await expect(retractLabPublication({ job: job(), adapter: unreachable.factory, now })).rejects.toMatchObject({ code: 'storage_unavailable' });
+  });
+  it('without a consent binding reports a published copy as retained and anything else as not published, never writing', async () => {
+    const a = adapter();
+    expect(await retractLabPublication({ job: { ...job({ authorization: undefined }), publication: { version: 'lab-publication/1', status: 'published', resultSha256: 'a'.repeat(64), at: 'x', recordId, revision: 1 } }, adapter: a.factory, now })).toMatchObject({ status: 'retained', reason: 'authorization_missing' });
+    expect(await retractLabPublication({ job: job({ authorization: undefined }), adapter: a.factory, now })).toMatchObject({ status: 'not_published' });
+    expect(a.get).not.toHaveBeenCalled(); expect(a.write).not.toHaveBeenCalled();
   });
 });
