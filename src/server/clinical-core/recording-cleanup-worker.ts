@@ -6,6 +6,7 @@ import {RecordingCleanupError,recordingCleanupRequestSchema,type RecordingCleanu
 import type {RecordingCleanupAttempts,CleanupPrepared,CleanupOutcome} from './recording-cleanup-attempts';
 import type {ProductionClinicalRequestContext} from './aws-identity-consent';
 import type {RecordingStoredObject} from './recording-segments';
+import {createRecordingStorageBudget} from './recording-storage-budget';
 
 export const cleanupVersionSchema=z.object({key:z.string().min(1).max(512),version:z.string().min(1).max(1024)
   .regex(/^[A-Za-z0-9+/=._-]+$/).refine(v=>v!=='null'),kind:z.enum(['object','delete_marker'])}).strict();
@@ -57,17 +58,29 @@ function verifyObject(a:RecordingCleanupAdmission,v:CleanupObjectVersion,h:Clean
  * starts over rather than continuing a stale pagination cursor after deletion.
  * Empty listing is an observation, not proof against late PUTs or complete
  * erasure. Durable attempts remain for watch/reconciliation/operator review. */
-export function createRecordingCleanupWorker(deps:{authorize:ReturnType<typeof createRecordingCleanupAuthority>;attempts:RecordingCleanupAttempts;storage:RecordingCleanupStore}){
+export function createRecordingCleanupWorker(deps:{authorize:ReturnType<typeof createRecordingCleanupAuthority>;attempts:RecordingCleanupAttempts;storage:RecordingCleanupStore;maximumMs?:number}){
+  const maximumMs=deps.maximumMs??60000;
+  if(!Number.isSafeInteger(maximumMs)||maximumMs<1||maximumMs>60000)throw new Error('recording_cleanup_budget_invalid');
   return async(context:ProductionClinicalRequestContext,input:unknown):Promise<CleanupWorkerResult>=>{
     const parsed=recordingCleanupRequestSchema.safeParse(input);
     if(!parsed.success||parsed.data.attemptId||!parsed.data.runId)throw new RecordingCleanupError('request_invalid');
     const request:RecordingCleanupRequest=parsed.data;
-    const initial=await deps.authorize(context,request,async(a,signal)=>({a,page:verifiedPage(a,await deps.storage.list(a,signal))}));
+    const budget=createRecordingStorageBudget(new Date(Date.now()+maximumMs).toISOString(),maximumMs);
+    // The pass has one monotonic deadline, including database waits. A late
+    // admission/prepare must never continue into a new storage operation.
+    const authorize:ReturnType<typeof createRecordingCleanupAuthority>=(_context,r,operation)=>budget.run(passSignal=>
+      deps.authorize(_context,r,(a,operationSignal)=>{
+        budget.check();
+        const signal=AbortSignal.any([passSignal,operationSignal]);
+        if(signal.aborted)throw new RecordingCleanupError('not_ready');
+        return operation(a,signal);
+      }));
+    const initial=await authorize(context,request,async(a,signal)=>({a,page:verifiedPage(a,await deps.storage.list(a,signal))}));
     if(initial.page.versions.length===0)return {state:'empty_observed',deleteAcknowledged:0,audioDeleted:false,requiresRecheck:true};
     let acknowledged=0;
     const objects=[...initial.page.versions].sort((a,b)=>Number(a.kind==='delete_marker')-Number(b.kind==='delete_marker')).slice(0,25);
     for(const object of objects){
-      const proof=await deps.authorize(context,request,async(a,signal)=>{
+      const proof=await authorize(context,request,async(a,signal)=>{
         if(a.inventorySha256!==initial.a.inventorySha256)throw new RecordingCleanupError('not_ready');
         if(object.kind==='object')return verifyObject(a,object,await deps.storage.inspect(a,object,signal));
         const page=verifiedPage(a,await deps.storage.list(a,signal));
@@ -77,11 +90,11 @@ export function createRecordingCleanupWorker(deps:{authorize:ReturnType<typeof c
       const attempt:CleanupPrepared={id:randomUUID(),segmentId:segment(initial.a,object).segmentId,objectVersion:object.version,
         kind:object.kind,inventorySha256:initial.a.inventorySha256,evidenceSha256:proof};
       // A separate committed transaction, BEFORE any remote mutation.
-      const prepared=await deps.attempts.prepare(context,request,attempt);
+      const prepared=await budget.run(async()=>deps.attempts.prepare(context,request,attempt));
       if(prepared!==attempt.id)throw new RecordingCleanupError('service_unavailable');
       let outcome:CleanupOutcome='unknown';
       try{
-        await deps.authorize(context,{...request,attemptId:attempt.id},async(a,signal)=>{
+        await authorize(context,{...request,attemptId:attempt.id},async(a,signal)=>{
           if(!a.attempt||a.attempt.id!==attempt.id||a.attempt.segmentId!==attempt.segmentId
             ||a.attempt.objectVersion!==object.version||a.attempt.kind!==object.kind||a.attempt.evidenceSha256!==proof)
             throw new RecordingCleanupError('access_refused');
@@ -92,6 +105,7 @@ export function createRecordingCleanupWorker(deps:{authorize:ReturnType<typeof c
             if(!page.versions.some(v=>v.key===object.key&&v.version===object.version&&v.kind===object.kind))throw new RecordingCleanupError('not_ready');
             freshProof=evidence(object);
           }
+          budget.check();
           if(freshProof!==proof||signal.aborted)throw new RecordingCleanupError('not_ready');
           const receipt=await deps.storage.remove(a,object,signal);
           if(receipt.version!==object.version||(object.kind==='delete_marker'?receipt.deleteMarker!==true:receipt.deleteMarker===true))
@@ -103,7 +117,7 @@ export function createRecordingCleanupWorker(deps:{authorize:ReturnType<typeof c
       }
       // Outcome logging is not a whole-recording deletion receipt. If it fails,
       // the durable attempt remains unresolved and a later pass must reconcile.
-      await deps.attempts.record(context,attempt.id,outcome,evidence({attemptId:attempt.id,outcome,objectVersion:object.version}));
+      await budget.run(async()=>deps.attempts.record(context,attempt.id,outcome,evidence({attemptId:attempt.id,outcome,objectVersion:object.version})));
       if(outcome!=='delete_acknowledged')return {state:'needs_recheck',deleteAcknowledged:acknowledged,audioDeleted:false,requiresRecheck:true};
     }
     return {state:'needs_recheck',deleteAcknowledged:acknowledged,audioDeleted:false,requiresRecheck:true};

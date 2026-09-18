@@ -1,12 +1,17 @@
 import { build } from "esbuild";
 import { mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { createHash } from 'node:crypto';
+import { resolve } from 'node:path';
 
-if (process.argv.slice(2).some(arg => !['--capture','--cleanup-review'].includes(arg)) || process.argv.slice(2).length > 1) throw new Error('recording_build_argument_invalid');
-const capture = process.argv.includes('--capture'), cleanupReview = process.argv.includes('--cleanup-review');
-const suffix = capture ? 'recording-capture' : cleanupReview ? 'recording-cleanup-review' : 'recording-authority';
-const splitRuntime = capture || cleanupReview;
-const out = `dist/aws-clinical-core/${suffix}`;
+const args=process.argv.slice(2),outputArgs=args.filter(arg=>arg.startsWith('--out-dir='));
+const modes=args.filter(arg=>!arg.startsWith('--out-dir='));
+if (modes.some(arg => !['--capture','--cleanup-review','--cleanup-execution'].includes(arg)) || modes.length > 1
+  || outputArgs.length>1 || outputArgs.some(arg=>!arg.slice('--out-dir='.length).trim())) throw new Error('recording_build_argument_invalid');
+const capture = modes.includes('--capture'), cleanupReview = modes.includes('--cleanup-review'), cleanupExecution = modes.includes('--cleanup-execution');
+const suffix = capture ? 'recording-capture' : cleanupReview ? 'recording-cleanup-review' : cleanupExecution ? 'recording-cleanup-execution' : 'recording-authority';
+const splitRuntime = capture || cleanupReview || cleanupExecution;
+// Isolated output lets artifact tests avoid racing a simultaneous release build.
+const out = outputArgs.length?resolve(outputArgs[0].slice('--out-dir='.length)):`dist/aws-clinical-core/${suffix}`;
 mkdirSync(out, { recursive: true });
 await build({ entryPoints: [`src/server/clinical-core/${suffix}-lambda.ts`], outfile: out + "/index.js",
   bundle: true, platform: "node", target: "node22", format: "cjs", minify: true, legalComments: "none",
@@ -18,10 +23,11 @@ const nonempty = name => ({ "Fn::Not": [{ "Fn::Equals": [ref(name), ""] }] });
 const hash = { Type: "String", Default: "", AllowedPattern: "^$|^[a-f0-9]{64}$" };
 const required = ["ActivationEvidenceSha256", "DatabaseReviewSha256", "WorkforceMfaReviewSha256", "AlarmTopicArn",
   ...(capture ? ['CaptureReviewSha256', 'StorageReviewSha256', 'RetentionReviewSha256'] : []),
-  ...(cleanupReview ? ['CleanupReviewSha256'] : [])];
+  ...(cleanupReview ? ['CleanupReviewSha256'] : []),
+  ...(cleanupExecution ? ['CleanupExecutionReviewSha256','CleanupWorkerSha256','StorageReviewSha256','HoldCoordinationReviewSha256'] : [])];
 const template = {
   AWSTemplateFormatVersion: "2010-09-09",
-  Description: cleanupReview ? 'Read-only recording cleanup operator metadata; no storage or dispatch permission; blocked by default' : capture ? 'Encounter recording capture transport; independent reviewed activation; blocked and logs-only by default'
+  Description: cleanupExecution ? 'One authenticated bounded recording cleanup pass; independent reviews required; blocked by default' : cleanupReview ? 'Read-only recording cleanup operator metadata; no storage or dispatch permission; blocked by default' : capture ? 'Encounter recording capture transport; independent reviewed activation; blocked and logs-only by default'
     : "Encounter recording consent authority; no audio transport; blocked and logs-only by default",
   Parameters: {
     ApiId: { Type: "String", AllowedPattern: "[a-z0-9]{10}" },
@@ -69,7 +75,7 @@ const template = {
       ] } }, ref("AWS::NoValue")] },
     ] } },
     Function: { Type: "AWS::Lambda::Function", Properties: { FunctionName: sub(`\${ApiId}-${suffix}`), Runtime: "nodejs22.x", Handler: "index.handler",
-      Role: { "Fn::GetAtt": ["Role", "Arn"] }, Timeout: capture ? 29 : 20, MemorySize: capture ? 512 : 256, ReservedConcurrentExecutions: 2,
+      Role: { "Fn::GetAtt": ["Role", "Arn"] }, Timeout: capture || cleanupExecution ? 29 : 20, MemorySize: capture || cleanupExecution ? 512 : 256, ReservedConcurrentExecutions: 2,
       Code: { S3Bucket: ref("CodeBucket"), S3Key: ref("CodeKey"), S3ObjectVersion: ref("CodeVersion") },
       LoggingConfig: { LogGroup: ref("Logs") }, Environment: { Variables: {
         WORKFORCE_ISSUER: ref("WorkforceIssuer"), WORKFORCE_AUDIENCE: ref("WorkforceAudience"), RECORDING_ORGANIZATION_ID: ref("OrganizationId"),
@@ -82,7 +88,7 @@ const template = {
       AuthorizerType: "JWT", IdentitySource: ["$request.header.Authorization"], JwtConfiguration: { Issuer: ref("WorkforceIssuer"), Audience: [ref("WorkforceAudience")] },
     } },
     Integration: { Type: "AWS::ApiGatewayV2::Integration", Properties: { ApiId: ref("ApiId"), IntegrationType: "AWS_PROXY",
-      IntegrationUri: { "Fn::GetAtt": ["Function", "Arn"] }, PayloadFormatVersion: "2.0", TimeoutInMillis: capture ? 30000 : 20000,
+      IntegrationUri: { "Fn::GetAtt": ["Function", "Arn"] }, PayloadFormatVersion: "2.0", TimeoutInMillis: capture || cleanupExecution ? 30000 : 20000,
     } },
     Route: { Type: "AWS::ApiGatewayV2::Route", Properties: { ApiId: ref("ApiId"), RouteKey: "POST /clinical-core/workforce/encounter-recording/authority",
       AuthorizationType: "JWT", AuthorizerId: ref("Authorizer"), Target: { "Fn::Join": ["/", ["integrations", ref("Integration")]] },
@@ -138,6 +144,38 @@ if (cleanupReview) {
   template.Resources.Role.Properties.Policies[1]['Fn::If'][1].PolicyName = 'ReviewedRecordingCleanupMetadata';
   template.Resources.Route.Properties.RouteKey = 'POST /clinical-core/workforce/encounter-recording/cleanup-review';
   template.Resources.Invoke.Properties.SourceArn = sub('arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiId}/*/POST/clinical-core/workforce/encounter-recording/cleanup-review');
+}
+if (cleanupExecution) {
+  Object.assign(template.Parameters, {
+    CleanupReleaseId: { Type: 'String', AllowedPattern: '^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$' },
+    CleanupExecutionReviewSha256: hash, CleanupWorkerSha256: hash, StorageReviewSha256: hash, HoldCoordinationReviewSha256: hash,
+    RecordingBucket: { Type: 'String', AllowedPattern: '^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$' },
+    RecordingKmsKeyArn: { Type: 'String', AllowedPattern: '^arn:aws:kms:[a-z0-9-]+:[0-9]{12}:key/[a-f0-9-]{36}$' },
+  });
+  const vars=template.Resources.Function.Properties.Environment.Variables;
+  delete vars.RECORDING_AUTHORITY_ACTIVATION; delete vars.RECORDING_AUTHORITY_EVIDENCE_SHA256;
+  Object.assign(vars, { RECORDING_CLEANUP_EXECUTION_ACTIVATION: ref('Activation'),
+    RECORDING_CLEANUP_EXECUTION_EVIDENCE_SHA256: ref('ActivationEvidenceSha256'),
+    RECORDING_CLEANUP_RELEASE_ID: ref('CleanupReleaseId'), RECORDING_CLEANUP_WORKER_SHA256: ref('CleanupWorkerSha256'),
+    RECORDING_CLEANUP_EXECUTION_REVIEW_SHA256: ref('CleanupExecutionReviewSha256'),
+    RECORDING_STORAGE_REVIEW_SHA256: ref('StorageReviewSha256'), RECORDING_HOLD_COORDINATION_REVIEW_SHA256: ref('HoldCoordinationReviewSha256'),
+  });
+  const policy=template.Resources.Role.Properties.Policies[1]['Fn::If'][1];
+  policy.PolicyName='ReviewedRecordingCleanupExecution';
+  const bucket=sub('arn:${AWS::Partition}:s3:::${RecordingBucket}');
+  const prefix=sub('arn:${AWS::Partition}:s3:::${RecordingBucket}/encounter-recordings/${OrganizationId}/*');
+  const owner={StringEquals:{'s3:ResourceAccount':ref('AWS::AccountId')}};
+  policy.PolicyDocument.Statement.push(
+    {Effect:'Allow',Action:['s3:GetBucketVersioning','s3:GetBucketObjectLockConfiguration'],Resource:bucket,Condition:owner},
+    {Effect:'Allow',Action:'s3:ListBucketVersions',Resource:bucket,Condition:{...owner,StringLike:{'s3:prefix':sub('encounter-recordings/${OrganizationId}/*')}}},
+    {Effect:'Allow',Action:['s3:GetObjectVersion','s3:GetObjectLegalHold','s3:GetObjectRetention','s3:DeleteObjectVersion'],Resource:prefix,Condition:owner},
+    {Effect:'Allow',Action:['kms:Decrypt','kms:GenerateDataKey'],Resource:ref('RecordingKmsKeyArn'),Condition:{
+      StringEquals:{'kms:ViaService':sub('s3.${AWS::Region}.amazonaws.com'),'kms:CallerAccount':ref('AWS::AccountId')},
+      StringLike:{'kms:EncryptionContext:aws:s3:arn':[bucket,prefix]},
+    }},
+  );
+  template.Resources.Route.Properties.RouteKey='POST /clinical-core/workforce/encounter-recording/cleanup-execution';
+  template.Resources.Invoke.Properties.SourceArn=sub('arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiId}/*/POST/clinical-core/workforce/encounter-recording/cleanup-execution');
 }
 for (const metric of ["Errors", "Throttles"]) template.Resources[metric + "Alarm"] = { Type: "AWS::CloudWatch::Alarm", Properties: {
   Namespace: "AWS/Lambda", MetricName: metric, Dimensions: [{ Name: "FunctionName", Value: ref("Function") }], Statistic: "Sum", Period: 60,

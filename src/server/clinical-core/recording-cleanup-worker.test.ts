@@ -1,4 +1,4 @@
-import {describe,expect,it,vi} from 'vitest';
+import {afterEach,describe,expect,it,vi} from 'vitest';
 import {randomUUID} from 'node:crypto';
 import {createRecordingCleanupWorker,type CleanupInspection,type CleanupObjectVersion,type RecordingCleanupStore} from './recording-cleanup-worker';
 import {RecordingCleanupError,type RecordingCleanupAdmission,type createRecordingCleanupAuthority} from './recording-cleanup-authority';
@@ -28,10 +28,44 @@ function fixture(count=1){
       'recording-id':a.recordingId,'session-id':a.sessionId,'authority-epoch':'1'},legalHold:'OFF',retentionVerified:true});
   const storage:RecordingCleanupStore={list:vi.fn(async()=>({versions:[...versions],truncated:false})),inspect:vi.fn(async(_a,v)=>head(v)),
     remove:vi.fn(async(admission,v)=>{expect(prepared.has(admission.attempt!.id)).toBe(true);versions=versions.filter(x=>x.version!==v.version);return {version:v.version,deleteMarker:v.kind==='delete_marker'};})};
-  const worker=()=>createRecordingCleanupWorker({authorize,attempts,storage})(context,request);
+  const worker=(maximumMs?:number)=>createRecordingCleanupWorker({authorize,attempts,storage,maximumMs})(context,request);
   return {context,request,a,storage,attempts,prepared,events,worker,head,setHeld:(v:boolean)=>{held=v;},setVersions:(v:CleanupObjectVersion[])=>{versions=v;}};
 }
 describe('recording cleanup worker: exact-version mutations and honest observations',()=>{
+  afterEach(()=>vi.useRealTimers());
+  it.each([0,-1,Infinity,NaN,60001,1.5])('refuses invalid pass budget %s before work',maximumMs=>{
+    const f=fixture();expect(()=>f.worker(maximumMs)).toThrow('recording_cleanup_budget_invalid');expect(f.storage.list).not.toHaveBeenCalled();
+  });
+  it('bounds an uncooperative listing and never continues after its late result',async()=>{
+    vi.useFakeTimers();const f=fixture();let settle!:(v:{versions:CleanupObjectVersion[];truncated:boolean})=>void;
+    let signal:AbortSignal|undefined;
+    f.storage.list=vi.fn<RecordingCleanupStore['list']>((_a,s)=>{signal=s;return new Promise(resolve=>{settle=resolve;});});
+    const result=expect(f.worker(20)).rejects.toThrow('recording_storage_deadline');
+    await vi.advanceTimersByTimeAsync(21);await result;expect(signal?.aborted).toBe(true);
+    settle({versions:[{key:f.a.inventory[0].objectKey,version:'version-0',kind:'object'}],truncated:false});
+    await vi.advanceTimersByTimeAsync(0);expect(f.attempts.prepare).not.toHaveBeenCalled();expect(f.storage.remove).not.toHaveBeenCalled();
+  });
+  it('does not delete after a timed-out attempt commit later succeeds',async()=>{
+    vi.useFakeTimers();const f=fixture();let settle!:(v:string)=>void,id='';
+    f.attempts.prepare=vi.fn(async(_c,_r,attempt)=>{id=attempt.id;return new Promise<string>(resolve=>{settle=resolve;});});
+    const result=expect(f.worker(20)).rejects.toThrow('recording_storage_deadline');
+    await vi.advanceTimersByTimeAsync(21);await result;expect(id).not.toBe('');settle(id);
+    await vi.advanceTimersByTimeAsync(0);expect(f.storage.remove).not.toHaveBeenCalled();expect(f.attempts.record).not.toHaveBeenCalled();
+  });
+  it('does not delete after a late pre-delete inspection ignores cancellation',async()=>{
+    vi.useFakeTimers();const f=fixture();let settle!:(v:CleanupInspection)=>void,n=0;let version:CleanupObjectVersion|undefined;
+    f.storage.inspect=vi.fn(async(_a,v)=>{version=v;if(++n===1)return f.head(v);return new Promise<CleanupInspection>(resolve=>{settle=resolve;});});
+    const result=expect(f.worker(20)).rejects.toThrow('recording_storage_deadline');
+    await vi.advanceTimersByTimeAsync(21);await result;expect(f.prepared.size).toBe(1);settle(f.head(version!));
+    await vi.advanceTimersByTimeAsync(0);expect(f.storage.remove).not.toHaveBeenCalled();expect(f.attempts.record).not.toHaveBeenCalled();
+  });
+  it('does not record a late delete acknowledgment or start another object after timeout',async()=>{
+    vi.useFakeTimers();const f=fixture(2);let settle!:(v:{version:string})=>void;let version='';
+    f.storage.remove=vi.fn(async(_a,v)=>{version=v.version;return new Promise<{version:string}>(resolve=>{settle=resolve;});});
+    const result=expect(f.worker(20)).rejects.toThrow('recording_storage_deadline');
+    await vi.advanceTimersByTimeAsync(21);await result;settle({version});await vi.advanceTimersByTimeAsync(0);
+    expect(f.storage.remove).toHaveBeenCalledOnce();expect(f.prepared.size).toBe(1);expect(f.attempts.record).not.toHaveBeenCalled();
+  });
   it('prepares each version before deletion, logs acknowledgments, and keeps later empty scans provisional',async()=>{
     const f=fixture(2);expect(await f.worker()).toEqual({state:'needs_recheck',deleteAcknowledged:2,audioDeleted:false,requiresRecheck:true});
     expect(f.prepared.size).toBe(2);expect(f.events.map(e=>e.outcome)).toEqual(['delete_acknowledged','delete_acknowledged']);

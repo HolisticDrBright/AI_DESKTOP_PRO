@@ -18,6 +18,7 @@ import { createRecordingCleanupAttempts } from './recording-cleanup-attempts';
 import { createRecordingCleanupWorker,type RecordingCleanupStore } from './recording-cleanup-worker';
 import { createRecordingCleanupQueue,createRecordingCleanupRunner } from './recording-cleanup-queue';
 import {createRecordingCleanupReviewApi,RECORDING_CLEANUP_REVIEW_ROUTE} from './recording-cleanup-review-api';
+import {createRecordingCleanupExecutionApi,RECORDING_CLEANUP_EXECUTION_ROUTE} from './recording-cleanup-execution-api';
 
 let db: PGlite;
 const legacyCleanup: { id:string; reason:string }[]=[];
@@ -463,6 +464,35 @@ describe('recording cleanup admission and holds with actual canonical SQL',()=>{
       expect(rows).toHaveLength(1);expect(rows[0]).toMatchObject({run_id:null,last_outcome:null});
       expect(Number(rows[0].queue_version)).toBe(Number((await cleanupIntent(r.id)).version));
     }
+  });
+  it('runs one authenticated pass through the API, durable claim and actual SQL; exact replay never runs storage twice',async()=>{
+    const r=await cleanupReady(),runId=randomUUID();let lists=0;
+    const database:ClinicalCoreDatabase={transaction:operation=>db.transaction(async tx=>{
+      await tx.exec('set local role clinical_core_api');return operation({query:async(sql,args=[])=>tx.query(sql,
+        args.map(v=>typeof v==='object'&&v!==null&&'kind' in v&&v.kind==='uuid'&&'value' in v?v.value:v))});
+    })};
+    const worker=createRecordingCleanupWorker({authorize:createRecordingCleanupAuthority(database),attempts:createRecordingCleanupAttempts(database),
+      storage:{list:async()=>{lists++;return {versions:[],truncated:false};},inspect:async()=>{throw new Error('unexpected inspect');},remove:async()=>{throw new Error('unexpected remove');}}});
+    const runner=createRecordingCleanupRunner(createRecordingCleanupQueue(database),worker),now=Date.now(),seconds=Math.floor(now/1000);
+    const issuer='https://cognito-idp.us-east-2.amazonaws.com/FictionalWorkforce',audience='12345678901234567890';
+    const api=createRecordingCleanupExecutionApi({configuration:{workforceIssuer:issuer,workforceAudience:audience,organizationId:org,
+      phiAllowed:true,activation:'approved',activationEvidenceSha256:'a'.repeat(64),mfaReviewSha256:'b'.repeat(64),databaseReviewSha256:'c'.repeat(64),
+      cleanupReleaseId:r.cleanupRelease,workerSha256:r.request.workerSha256,executionReviewSha256:'d'.repeat(64),storageReviewSha256:'e'.repeat(64),holdCoordinationReviewSha256:'f'.repeat(64)},
+      service:()=>runner,now:()=>now});
+    const event:ApiGatewayV2Event={routeKey:RECORDING_CLEANUP_EXECUTION_ROUTE,headers:{'content-type':'application/json'},body:JSON.stringify({recordingId:r.capture.recordingId,version:r.version,requestId:runId,confirmation:'run_bounded_cleanup_pass'}),
+      requestContext:{authorizer:{jwt:{claims:{iss:issuer,aud:audience,sub:'subject-'+actor,token_use:'id','custom:person_id':actor,
+        'custom:organization_id':org,'custom:production_bound':'true',email_verified:true,iat:seconds,exp:seconds+600,auth_time:seconds}}}}};
+    const response=await api(event);expect(response.statusCode).toBe(200);
+    expect(JSON.parse(response.body).data).toMatchObject({runId,recordingId:r.capture.recordingId,outcome:'empty_observed',appliedToSchedule:true,audioDeleted:false,requiresRecheck:true});
+    expect(JSON.parse((await api(event)).body).data).toMatchObject({state:'already_claimed',runId});expect(lists).toBe(1);
+    const runs=(await db.query('select * from clinical_private.recording_cleanup_runs where recording_id=$1',[r.capture.recordingId])).rows;
+    const results=(await db.query('select * from clinical_private.recording_cleanup_run_results where run_id=$1',[runId])).rows;
+    expect(runs).toHaveLength(1);expect(results).toHaveLength(1);expect(await cleanupIntent(r.capture.recordingId)).toBeTruthy();
+    const different=await cleanupReady();event.body=JSON.stringify({recordingId:different.capture.recordingId,version:different.version,requestId:runId,confirmation:'run_bounded_cleanup_pass'});
+    expect((await api(event)).statusCode).not.toBe(200);expect(lists).toBe(1);
+    event.requestContext!.authorizer!.jwt!.claims!['custom:person_id']=colleague;
+    event.requestContext!.authorizer!.jwt!.claims!.sub='subject-'+colleague;
+    expect((await api(event)).statusCode).not.toBe(200);expect(lists).toBe(1);
   });
   it('leases a run once, refuses concurrent executors and fences expired leases',async()=>{
     const r=await cleanupReady(),run=randomUUID(),other=randomUUID();

@@ -1,5 +1,72 @@
 # AWS encounter recording authority — source candidate
 
+## September 17 bounded execution candidate
+
+`POST /clinical-core/workforce/encounter-recording/cleanup-execution` now has a
+separate default-blocked source implementation and deployment candidate. It is
+NOT deployed or connected to an enabled UI action. The existing operator screen
+remains read-only. This is one manually authorized pass, not a recurring dispatcher.
+
+The request contains only recordingId, expected queue version, a stable UUID
+requestId and `confirmation: "run_bounded_cleanup_pass"`. Verified fresh workforce
+identity supplies the organization/actor. Reviewed server configuration supplies
+the cleanup release and worker digest. Capture, consumer and unsigned header
+identity cannot authorize it. The existing database checks require the separately
+assigned cleanup operator and recheck current releases/holds at each admission.
+
+The runner commits its run claim before work and its result separately afterward.
+The requestId is the runId: retry the SAME ID after a lost response, or inspect
+run history. An `already_claimed` response is not a result or proof of execution.
+A failed result write leaves a durable claim/lease, not a successful erasure.
+New passes must respect the database's due time and lease. No client-selected
+worker hash, purpose, organization, object key, attempt, storage or actor is allowed.
+
+Worker passes now have a shared wall/monotonic deadline in addition to per-operation
+admission deadlines. The HTTP runtime gives storage work eight seconds. Late
+admission, inspection or attempt-commit results cannot start a subsequent deletion;
+signals propagate into the SDK. A previously sent remote request may still finish
+after cancellation: its result stays uncertain and requires reconciliation. A lost
+acknowledgment is never reported as zero deletions or complete absence. Database
+claim/result waits and gateway failures can still yield no HTTP receipt; durable
+history and same-ID retry are the recovery mechanism, not an assumed response SLA.
+
+`npm run build:aws-recording-cleanup-execution` packages separate entry/runtime
+files and a SHA-256 manifest. The active entrypoint verifies the actual bundled
+runtime hash before importing any SDK services. Inactive entrypoints never import
+the worker. Activation additionally requires execution, storage and storage-side
+hold-coordination reviews, database/workforce/activation evidence and an alarm
+recipient. Those reviews have NOT been created or approved by this work. Completing
+storage-side hold coordination and real AWS qualification is required before
+activation; a placeholder hash is not evidence.
+
+Active IAM is scoped to the configured database, secret, bucket owner, organization
+recording prefix and encryption key. Only exact-version deletion is permitted;
+there is no unversioned deletion, write, hold mutation, governance bypass, scheduler
+or worker-invocation permission. Code uses a pinned object version, and logs remain
+encrypted and retained. Required lock and checksum permissions were checked against
+[AWS S3 permissions](https://docs.aws.amazon.com/AmazonS3/latest/userguide/using-with-s3-policy-actions.html)
+and [HEAD checksum requirements](https://docs.aws.amazon.com/AmazonS3/latest/API/API_HeadObject.html).
+
+Verification includes authenticated API → actual canonical PostgreSQL functions →
+durable claim → fictional storage → persisted result. Exact replay invokes storage
+once; substituted records/operators fail. Other tests cover late uncooperative
+operations, malformed requests/results, missing review gates, scoped IAM and actual
+built-artifact refusal/digest mismatch without credentials. Initial full run found
+a hash-check collision with a simultaneous manual build; artifact tests now build
+in their own temporary directory rather than sharing the release output. Test-only
+typing errors were corrected. Final full suite: **2803 passed /11 existing skips
+across218 files**; typecheck PASS; lint0errors/4existing warnings. Separate focused
+runs:86 worker/queue/API cases and133 SQL/artifact cases PASS. The75-migration
+zero-seed gate, execution candidate build and CloudFormation lint PASS. These are
+isolated PostgreSQL and fictional-storage checks, not hosted S3 qualification.
+
+All six original phases remain incomplete. Still required: operator execution UI,
+scheduled dispatch with reviewed workload identity, storage-side hold coordination,
+late-write/version reconciliation and terminal proof, actual AWS deployment and
+concurrency verification, durable local recording and transcription/review drafts,
+plus the original account/privacy/clinical/commerce/release acceptance work. No
+actual data deletion, PHI activation, new mobile build or provider approval occurred.
+
 ## September 17 operator-review screen checkpoint
 
 Settings now links to `/settings/recording-cleanup`. An explicit read obtains
