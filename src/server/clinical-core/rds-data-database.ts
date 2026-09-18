@@ -234,6 +234,7 @@ function classifyDatabaseRejection(error: unknown): ClinicalCoreDatabaseRejectio
   if (/\brecording_cleanup_attempt_invalid\b/.test(message)) return new ClinicalCoreDatabaseRejection("request_invalid");
   if (/\brecording_cleanup_attempt_required\b/.test(message)) return new ClinicalCoreDatabaseRejection("identity_refused");
   if (/\b(recording_cleanup_operator_required|recording_cleanup_release_required)\b/.test(message)) return new ClinicalCoreDatabaseRejection("identity_refused");
+  if (/\bowned_account_deletion_write_blocked\b/.test(message)) return new ClinicalCoreDatabaseRejection("account_deletion_write_blocked");
   if (/\bconsumer_owner_required\b/.test(message)) return new ClinicalCoreDatabaseRejection("identity_refused");
   if (/\b(consumer_storage_consent_required|reviewed_consent_release_required)\b/.test(message)) return new ClinicalCoreDatabaseRejection("consent_required");
   if (/\b(owned_record_revision_conflict|owned_record_idempotency_conflict|consent_revision_conflict|privacy_export_conflict)\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");

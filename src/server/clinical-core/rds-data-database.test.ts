@@ -212,6 +212,7 @@ describe("Aurora RDS Data API transaction adapter", () => {
     ["personal_purge_request_invalid", "request_invalid"],
     ["personal_purge_inventory_too_large", "request_invalid"],
     ["reviewed_consent_release_required", "consent_required"],
+    ["owned_account_deletion_write_blocked", "account_deletion_write_blocked"],
     ["owned_record_revision_conflict", "conflict"],
     ["owned_record_idempotency_conflict", "conflict"],
     ["consent_revision_conflict", "conflict"],

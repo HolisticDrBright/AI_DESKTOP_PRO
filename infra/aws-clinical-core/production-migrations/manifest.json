@@ -264,6 +264,10 @@
     {
       "version": "20260917190000",
       "file": "20260917190000_production_owned_diet_preferences.sql"
+    },
+    {
+      "version": "20260917200000",
+      "file": "20260917200000_production_owned_deletion_write_fence.sql"
     }
   ]
 }

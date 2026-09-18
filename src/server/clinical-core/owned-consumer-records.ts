@@ -24,7 +24,7 @@ export type StorageConsentState = {
   historyLimit: number; activeRevision: number | null;
 };
 export class OwnedStorageError extends Error {
-  constructor(readonly code: "request_invalid" | "owner_required" | "storage_unavailable" | "consent_required" | "conflict" | "legal_hold") { super(code); }
+  constructor(readonly code: "request_invalid" | "owner_required" | "storage_unavailable" | "consent_required" | "conflict" | "legal_hold" | "account_deletion_write_blocked") { super(code); }
 }
 
 /** Internal production adapter, not an activation switch. The public workload
@@ -47,8 +47,8 @@ export function createOwnedConsumerRecordsAdapter(database: ClinicalCoreDatabase
       if (error instanceof OwnedStorageError) throw error;
       if (error instanceof ClinicalCoreDatabaseRejection) {
         if (error.category === "identity_refused") throw new OwnedStorageError("owner_required");
-        if (["consent_required","conflict","request_invalid","legal_hold"].includes(error.category)) {
-          throw new OwnedStorageError(error.category as "consent_required" | "conflict" | "request_invalid" | "legal_hold");
+        if (["consent_required","conflict","request_invalid","legal_hold","account_deletion_write_blocked"].includes(error.category)) {
+          throw new OwnedStorageError(error.category as "consent_required" | "conflict" | "request_invalid" | "legal_hold" | "account_deletion_write_blocked");
         }
       }
       throw new OwnedStorageError("storage_unavailable");

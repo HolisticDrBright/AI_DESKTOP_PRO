@@ -1,4 +1,4 @@
-import {afterAll,beforeAll,describe,expect,it,vi} from 'vitest';
+import {afterAll,beforeAll,beforeEach,describe,expect,it,vi} from 'vitest';
 import {createOwnedExternalDeletionGuard} from './owned-external-deletion';
 import {PGlite} from '@electric-sql/pglite';
 import {pgcrypto} from '@electric-sql/pglite/contrib/pgcrypto';
@@ -43,6 +43,14 @@ const executePurge=(p:PurgePreview,command=randomUUID(),confirmation='PURGE PERS
   'select clinical_private.execute_owned_personal_purge($1,$2,$3,$4,$5,$6) as result',
   [p.privacyRequestId,command,p.policyVersion,p.policySha256,p.inventorySha256,confirmation]);
 const purge=async(id:string,policy='test-valid')=>executePurge(await previewPurge(id,policy));
+// Privileged corruption/recovery fixture ONLY: prove the purge inventory and
+// immutable receipts still defend against a restored pre-fence backup. Normal
+// writes are independently refused by owned-deletion-write-fence.database.test.
+async function restoredHistoricalFixture(){
+  await db.exec('alter table clinical_core.consumer_storage_consents disable trigger owned_deletion_consent_write; alter table clinical_core.owned_consumer_record_versions disable trigger owned_deletion_record_write');
+  try{return await correctionFixture();}
+  finally{await db.exec('alter table clinical_core.consumer_storage_consents enable trigger owned_deletion_consent_write; alter table clinical_core.owned_consumer_record_versions enable trigger owned_deletion_record_write');}
+}
 async function correctionFixture(){
   const recordId=randomUUID();
   await db.query(`insert into clinical_private.consumer_storage_consent_releases(scope,version,content,content_sha256,approved_by,approved_at)
@@ -95,6 +103,12 @@ beforeAll(async()=>{
   await db.exec("update clinical_private.owned_retention_policies set personal_purge_authorized_sha256=content_sha256");
 },30000);
 afterAll(async()=>{await db?.close();});
+beforeEach(async()=>{
+  // This legacy suite shares fictional owners; prior tests' account closures
+  // must not fence unrelated correction fixtures in the next test. No production
+  // code can make this administrative fixture change or reopen an account.
+  await db.exec("update clinical_private.owned_privacy_requests set status='refused' where kind='deletion'");
+});
 
 describe('privacy fulfillment: executable production SQL with fictional data (not hosted Aurora)',()=>{
   it('persists reviewed read-only inventory pages through workforce API, adapter, mocked Scan and real SQL',async()=>{
@@ -239,7 +253,7 @@ describe('privacy fulfillment: executable production SQL with fictional data (no
   });
   it('refuses changed previews and wrong confirmation without deleting any records',async()=>{
     const id=await request(),p=await previewPurge(id);
-    const {recordId}=await correctionFixture();
+    const {recordId}=await restoredHistoricalFixture();
     await expect(executePurge(p)).rejects.toThrow('personal_purge_preview_changed');
     const fresh=await previewPurge(id);
     expect(fresh.inventorySha256).not.toBe(p.inventorySha256);
@@ -249,12 +263,12 @@ describe('privacy fulfillment: executable production SQL with fictional data (no
     expect((await db.query('select count(*)::int as n from clinical_private.owned_personal_purge_commands where privacy_request_id=$1',[id])).rows).toEqual([{n:0}]);
     await purge(id);
   });
-  it('returns the original receipt on lost-response retry without deleting newly written data',async()=>{
-    const id=await request();await correctionFixture();
+  it('returns the original receipt on lost-response retry without deleting privileged restored data',async()=>{
+    await correctionFixture();const id=await request();
     const p=await previewPurge(id),command=randomUUID(),first=await executePurge(p,command);
     expect(first.rows[0]).toMatchObject({result:{completeAccountDeletion:false,outcome:'purged',commandId:command,records:1,consents:1,
       evidenceSha256:expect.stringMatching(/^[a-f0-9]{64}$/)}});
-    const {recordId}=await correctionFixture();
+    const {recordId}=await restoredHistoricalFixture();
     expect((await executePurge(p,command)).rows).toEqual(first.rows);
     await expect(executePurge({...p,inventorySha256:digest},command)).rejects.toThrow('personal_purge_command_conflict');
     expect((await db.query('select count(*)::int as n from clinical_core.owned_consumer_record_versions where owner_id=$1 and record_id=$2',[owner,recordId])).rows).toEqual([{n:1}]);
@@ -281,7 +295,7 @@ describe('privacy fulfillment: executable production SQL with fictional data (no
   });
   it('rolls completion back when fresh records contradict old purge/not-applicable receipts',async()=>{
     const id=await request();await fill(id);
-    await correctionFixture();
+    await restoredHistoricalFixture();
     await expect(complete(id)).rejects.toThrow('privacy_request_personal_store_changed');
     expect((await db.query('select status,completed_at,completed_by from clinical_private.owned_privacy_requests where id=$1',[id])).rows)
       .toEqual([{status:'in_progress',completed_at:null,completed_by:null}]);
@@ -289,7 +303,7 @@ describe('privacy fulfillment: executable production SQL with fictional data (no
     expect((await complete(id)).rows[0]).toMatchObject({result:{status:'completed'}});
   });
   it('detects changed record content even when inventory row counts are unchanged',async()=>{
-    const id=await request(),{recordId}=await correctionFixture(),p=await previewPurge(id);
+    const {recordId}=await correctionFixture(),id=await request(),p=await previewPurge(id);
     // Privileged test-only mutation models a changed snapshot; the production
     // API cannot update immutable versions directly.
     await db.query('alter table clinical_core.owned_consumer_record_versions disable trigger user');
@@ -299,7 +313,7 @@ describe('privacy fulfillment: executable production SQL with fictional data (no
     await expect(executePurge(p)).rejects.toThrow('personal_purge_preview_changed');await purge(id);
   });
   it('rolls all deletions and store receipts back if immutable command evidence cannot be saved',async()=>{
-    const id=await request();await correctionFixture();const p=await previewPurge(id);
+    await correctionFixture();const id=await request(),p=await previewPurge(id);
     await db.exec('alter table clinical_private.owned_personal_purge_commands add constraint fictional_fail_receipt check(false) not valid');
     try{await expect(executePurge(p)).rejects.toThrow('fictional_fail_receipt');}
     finally{await db.exec('alter table clinical_private.owned_personal_purge_commands drop constraint fictional_fail_receipt');}
@@ -455,7 +469,6 @@ describe('privacy fulfillment: executable production SQL with fictional data (no
   it('runs a scoped personal-history purge and records exact store receipts without claiming whole-account completion',async()=>{
     const priorRecords=Number((await db.query<{n:number}>('select count(*)::int as n from clinical_core.owned_consumer_record_versions where owner_id=$1',[owner])).rows[0].n);
     const priorConsents=Number((await db.query<{n:number}>('select count(*)::int as n from clinical_core.consumer_storage_consents where owner_id=$1',[owner])).rows[0].n);
-    const id=await request();
     await db.query(`insert into clinical_private.consumer_storage_consent_releases(scope,version,content,content_sha256,approved_by,approved_at)
       values('protocols_supplements','fixture-only','Not approved for real use',encode(public.digest('Not approved for real use','sha256'),'hex'),'FICTIONAL TEST',now())`);
     const recordId=randomUUID();
@@ -470,6 +483,7 @@ describe('privacy fulfillment: executable production SQL with fictional data (no
       await db.query(`insert into clinical_core.owned_consumer_active_plan_history(owner_id,action,request_id,record_id,revision,content_sha256,consent_revision)
         values($1,'adopted',$2,$3,1,$4,1)`,[who,randomUUID(),recordId,digest]);
     }
+    const id=await request();
     expect((await purge(id)).rows[0]).toMatchObject({result:{privacyRequestId:id,records:priorRecords+2,consents:priorConsents+1,activePlans:1,policyVersion:'test-valid'}});
     for(const table of ['owned_consumer_record_versions','consumer_storage_consents','owned_consumer_active_plans','owned_consumer_active_plan_history']){
       expect((await db.query(`select owner_id from clinical_core.${table}`)).rows).toEqual([{owner_id:other}]);

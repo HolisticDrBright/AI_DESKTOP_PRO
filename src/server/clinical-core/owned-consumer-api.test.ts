@@ -2,7 +2,7 @@ import {describe,it,expect,vi} from "vitest";
 import {createHash} from 'node:crypto';
 import {createOwnedConsumerApi,type OwnedConsumerApiConfiguration} from "./owned-consumer-api";
 import {createOwnedConsumerRecordsAdapter} from "./owned-consumer-records";
-import {clinicalUuid,type ClinicalCoreDatabase} from "./database";
+import {clinicalUuid,ClinicalCoreDatabaseRejection,type ClinicalCoreDatabase} from "./database";
 import type {ApiGatewayV2Event} from "./aws-identity-api";
 const id="11111111-1111-4111-8111-111111111111";
 const now=Date.parse("2026-09-08T00:00:00Z");
@@ -10,6 +10,13 @@ const config:OwnedConsumerApiConfiguration={consumerIssuer:"https://cognito-idp.
 function event(route="GET /clinical-core/consumer/personal/records"):ApiGatewayV2Event { return {routeKey:route,queryStringParameters:{collection:"wellness_profiles"},requestContext:{authorizer:{jwt:{claims:{iss:config.consumerIssuer,aud:config.consumerAudience,token_use:"id",sub:"consumer-person",email_verified:"true","custom:person_id":id,"custom:organization_id":id,"custom:production_bound":"true",exp:now/1000+600,iat:now/1000-60}}}}}; }
 function setup(c=config) { const query=vi.fn(async()=>({rows:[{result:[]}]})); const transaction=vi.fn(async work=>work({query})); const adapter=vi.fn(()=>createOwnedConsumerRecordsAdapter({transaction} as ClinicalCoreDatabase)); return {handler:createOwnedConsumerApi({configuration:c,adapter,now:()=>now}),adapter,query}; }
 describe("independent consumer API",()=>{
+  it('returns the deletion write fence as a safe explicit refusal, not a sign-in or outage error',async()=>{
+    const s=setup();s.query.mockRejectedValueOnce(new ClinicalCoreDatabaseRejection('account_deletion_write_blocked'));
+    const response=await s.handler(event());
+    expect(response.statusCode).toBe(403);
+    expect(JSON.parse(response.body)).toEqual({error:'account_deletion_write_blocked'});
+    expect(response.headers['cache-control']).toBe('no-store');
+  });
   it("is blocked before any data access and rejects incomplete activation",async()=>{
     const s=setup({...config,phiAllowed:false,activationState:"blocked",allowedScopes:[]});
     expect((await s.handler(event())).statusCode).toBe(503); expect(s.adapter).not.toHaveBeenCalled();
