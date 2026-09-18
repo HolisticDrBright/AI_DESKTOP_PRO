@@ -85,18 +85,17 @@ export function createOwnedConsumerRecordsAdapter(database: ClinicalCoreDatabase
       if (!OWNED_STORAGE_SCOPES.includes(scope)) invalid();
       return run(context,"consent_management",async tx => {
         const result=await tx.query<{result:unknown}>("select clinical_core.get_owned_storage_consent_state($1) as result",[scope]);
+        return parseConsentState(result.rows[0]?.result,scope);
+      });
+    },
+    async processingConsentStates(context:ProductionClinicalRequestContext,operation:'lab'|'voice'):Promise<StorageConsentState[]> {
+      if(!['lab','voice'].includes(operation))invalid();
+      return run(context,'consent_management',async tx=>{
+        const result=await tx.query<{result:unknown}>('select clinical_core.get_owned_processing_consent_states($1) as result',[operation]);
         const value=object(result.rows[0]?.result);
-        if (value.scope !== scope || value.historyLimit !== 100 || !Array.isArray(value.history) || value.history.length>100
-          || (value.activeRevision !== null && !revision(value.activeRevision,1))) unavailable();
-        const entry=(raw:unknown) => { const v=object(raw); if (!revision(v.revision,1) || !["granted","revoked"].includes(v.status as string) || typeof v.releaseVersion !== "string" || !date(v.recordedAt)) unavailable(); return {revision:v.revision as number,status:v.status as "granted"|"revoked",releaseVersion:v.releaseVersion as string,recordedAt:v.recordedAt as string}; };
-        let release:StorageConsentState["release"]=null;
-        if (value.release !== null) {
-          const r=object(value.release);
-          if (typeof r.version !== "string" || typeof r.content !== "string" || r.content.length<1 || r.content.length>12000 || !date(r.approvedAt)
-            || r.contentSha256 !== createHash("sha256").update(r.content).digest("hex")) unavailable();
-          release={version:r.version as string,content:r.content as string,contentSha256:r.contentSha256 as string,approvedAt:r.approvedAt as string};
-        }
-        return {scope,release,current:value.current===null?null:entry(value.current),history:value.history.map(entry),historyLimit:100,activeRevision:value.activeRevision as number|null};
+        if(value.version!=='owned-processing-consent/1'||value.ownerId!==context.actorPersonId||value.operation!==operation
+          ||!Array.isArray(value.states)||value.states.length!==2)unavailable();
+        return [parseConsentState(value.states[0],'ai_context'),parseConsentState(value.states[1],operation==='lab'?'lab_history':'voice_transcription')];
       });
     },
     async write(context: ProductionClinicalRequestContext, input: OwnedRecordWrite): Promise<WriteResult> {
@@ -180,6 +179,20 @@ async function redactWithdrawnContext(tx: ClinicalCoreTransaction, collection: C
   if (collection !== "lab_observations" || !rows.some(row => hasReproductiveCollectionContext(row.payload))) return rows;
   if (await reproductiveConsentActive(tx)) return rows;
   return rows.map(row => ({ ...row, payload: withholdReproductiveContext(row.payload) }));
+}
+function parseConsentState(raw:unknown,scope:OwnedStorageScope):StorageConsentState {
+  const value=object(raw);
+  if(value.scope!==scope||value.historyLimit!==100||!Array.isArray(value.history)||value.history.length>100
+    ||(value.activeRevision!==null&&!revision(value.activeRevision,1)))unavailable();
+  const entry=(raw:unknown)=>{const v=object(raw);if(!revision(v.revision,1)||!['granted','revoked'].includes(v.status as string)||typeof v.releaseVersion!=='string'||!date(v.recordedAt))unavailable();
+    return {revision:v.revision as number,status:v.status as 'granted'|'revoked',releaseVersion:v.releaseVersion as string,recordedAt:v.recordedAt as string};};
+  let release:StorageConsentState['release']=null;
+  if(value.release!==null){const r=object(value.release);
+    if(typeof r.version!=='string'||typeof r.content!=='string'||r.content.length<1||r.content.length>12000||!date(r.approvedAt)
+      ||r.contentSha256!==createHash('sha256').update(r.content).digest('hex'))unavailable();
+    release={version:r.version as string,content:r.content as string,contentSha256:r.contentSha256 as string,approvedAt:r.approvedAt as string};
+  }
+  return {scope,release,current:value.current===null?null:entry(value.current),history:value.history.map(entry),historyLimit:100,activeRevision:value.activeRevision as number|null};
 }
 function invalid(): never { throw new OwnedStorageError("request_invalid"); }
 function unavailable(): never { throw new OwnedStorageError("storage_unavailable"); }

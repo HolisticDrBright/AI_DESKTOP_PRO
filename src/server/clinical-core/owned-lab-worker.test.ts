@@ -23,10 +23,25 @@ describe('production lab worker authorization',()=>{
   test('verifies consent before document extraction and stores artifacts in the personal namespace',async()=>{
     const verify=vi.fn(async()=>{});mock.db.mockResolvedValueOnce({Item:job({authorization})});
     expect(await createAwsLabAnalysisWorker({jobId,pass:0},{policy:{verify}})).toMatchObject({completed:true});
-    expect(verify).toHaveBeenCalledTimes(2);expect(mock.textract).toHaveBeenCalledOnce();
+    expect(verify).toHaveBeenCalledTimes(4);expect(mock.textract).toHaveBeenCalledOnce();
     const put=mock.s3.mock.calls.find(([c])=>c.constructor.name==='PutObjectCommand')![0].input;
     expect(put.Key).toBe(`personal-labs/artifacts/${jobId}/extracted.json`);
     expect(verify.mock.invocationCallOrder[0]).toBeLessThan(mock.textract.mock.invocationCallOrder[0]);
+  });
+  test('account closure stops before provider dispatch with a distinct failure reason',async()=>{
+    const verify=vi.fn(async()=>{throw new LabAuthorizationRevoked('account_deletion_write_blocked');});
+    mock.db.mockResolvedValueOnce({Item:job({authorization})});
+    await expect(createAwsLabAnalysisWorker({jobId,pass:0},{policy:{verify}})).rejects.toThrow('account_deletion_write_blocked');
+    expect(mock.textract).not.toHaveBeenCalled();expect(mock.s3).not.toHaveBeenCalled();expect(mock.openai).not.toHaveBeenCalled();
+  });
+  test('deletion during document extraction prevents saving the extracted artifact',async()=>{
+    let closed=false;const verify=vi.fn(async()=>{if(closed)throw new LabAuthorizationRevoked('account_deletion_write_blocked');});
+    mock.db.mockResolvedValueOnce({Item:job({authorization})});
+    mock.textract.mockImplementationOnce(async()=>{closed=true;return {Blocks:[]};});
+    await expect(createAwsLabAnalysisWorker({jobId,pass:0},{policy:{verify}})).rejects.toThrow('account_deletion_write_blocked');
+    expect(mock.textract).toHaveBeenCalledOnce();
+    expect(mock.s3.mock.calls.filter(([c])=>c.constructor.name==='PutObjectCommand')).toHaveLength(0);
+    expect(mock.db.mock.calls.filter(([c])=>String(c.input.UpdateExpression).includes('#result'))).toHaveLength(0);
   });
   test('withdrawn consent stops before the provider is called and fails as consent_withdrawn',async()=>{
     const verify=vi.fn(async()=>{throw new LabAuthorizationRevoked();});mock.db.mockResolvedValueOnce({Item:job({authorization})});
@@ -57,9 +72,9 @@ describe('production lab worker authorization',()=>{
     const stored=mock.db.mock.calls.filter(([c])=>c.constructor.name==='UpdateCommand'&&String(c.input.UpdateExpression).includes('#result'));
     expect(stored).toHaveLength(0);
   });
-  test('accepts consent_withdrawn as a recorded failure category',async()=>{
+  test.each(['consent_withdrawn','account_deletion_write_blocked'])('accepts %s as a recorded failure category',async category=>{
     mock.db.mockResolvedValueOnce({});
-    expect(await createAwsLabAnalysisWorker({jobId,pass:0,fail:true,failureCategory:'consent_withdrawn'})).toMatchObject({failed:true});
-    expect(mock.db.mock.calls[0][0].input.ExpressionAttributeValues[':category']).toBe('consent_withdrawn');
+    expect(await createAwsLabAnalysisWorker({jobId,pass:0,fail:true,failureCategory:category})).toMatchObject({failed:true});
+    expect(mock.db.mock.calls[0][0].input.ExpressionAttributeValues[':category']).toBe(category);
   });
 });

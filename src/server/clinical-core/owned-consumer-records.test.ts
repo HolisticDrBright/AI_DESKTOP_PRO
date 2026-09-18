@@ -16,6 +16,19 @@ function setup(result: unknown = { recordId:id,revision:1,duplicate:false,receiv
 const observation={id,panelId:id,markerId:id,panelName:"Synthetic panel",name:"Ferritin",value:1,unit:null,drawnAt:"2026-01-01T00:00:00.000Z",reportedRange:null,sourceStatus:"consumer_import_unverified"};
 const reproductive={...observation,collectionContext:{ageAtDraw:{value:36,unit:"years"},observedOn:"2026-01-01",sex:"female",pregnancyStatus:"not_pregnant",cyclePhase:"luteal",reproductiveStage:"reproductive",contraception:"none",pregnancyTrimester:null,assayId:null}};
 const consentState=(activeRevision:number|null)=>({result:activeRevision!==null});
+
+describe('processing consent snapshot validation',()=>{
+  const state=(scope:string)=>({scope,release:null,current:null,history:[],historyLimit:100,activeRevision:null});
+  const value={version:'owned-processing-consent/1',ownerId:id,operation:'lab',states:[state('ai_context'),state('lab_history')]};
+  it('uses the dedicated closure-aware SQL checkpoint, not independent consent reads',async()=>{
+    const s=setup(value);expect((await s.adapter.processingConsentStates({...context,purpose:'consent_management'},'lab')).map(v=>v.scope)).toEqual(['ai_context','lab_history']);
+    expect(s.query.mock.calls[1]).toEqual(['select clinical_core.get_owned_processing_consent_states($1) as result',['lab']]);
+  });
+  it.each([{ownerId:'other'},{operation:'voice'},{version:'old'},{states:[]},{states:[state('ai_context'),state('ai_context')]},
+    {states:[state('lab_history'),state('ai_context')]},{states:[{...state('ai_context'),activeRevision:0},state('lab_history')]}])('refuses malformed or mismatched processing states %j',async patch=>{
+    await expect(setup({...value,...patch}).adapter.processingConsentStates({...context,purpose:'consent_management'},'lab')).rejects.toThrow('storage_unavailable');
+  });
+});
 describe("reproductive collection context on owned lab observations",() => {
   const labWrite:OwnedRecordWrite={...input,collection:"lab_observations",payload:reproductive};
   const ctx={rows:[]};

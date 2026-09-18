@@ -26,10 +26,16 @@ function state(scope:StorageConsentState['scope'],revision=1):StorageConsentStat
   current:{status:'granted',revision,releaseVersion:'approved-fixture/1',recordedAt:new Date(now-500).toISOString()},history:[],historyLimit:100,activeRevision:revision};}
 const rows=new Map<string,Record<string,unknown>>();
 let consentState:ReturnType<typeof vi.fn<(context:ProductionClinicalRequestContext,scope:StorageConsentState['scope'])=>Promise<StorageConsentState>>>;
-function setup(c=config){const adapter=vi.fn(()=>({consentState}));const requireCore=vi.fn(async()=>{});
+let deletionBlocked=false;
+const processingConsentStates=async(c:ProductionClinicalRequestContext)=>{
+  if(deletionBlocked)throw new OwnedStorageError('account_deletion_write_blocked');
+  return Promise.all((['ai_context','lab_history'] as const).map(scope=>consentState(c,scope)));
+};
+function setup(c=config){const adapter=vi.fn(()=>({consentState,processingConsentStates}));const requireCore=vi.fn(async()=>{});
   const deletionGuard:ExternalDeletionGuard=async(_s,work)=>work();
   return {adapter,requireCore,deletionGuard,handler:createOwnedLabApi({configuration:c,adapter,now:()=>now,requireCore,deletionGuard})};}
 beforeEach(()=>{
+  deletionBlocked=false;
   rows.clear();vi.clearAllMocks();consentState=vi.fn(async(_c,scope)=>state(scope));
   mock.claim.mockReset().mockResolvedValue(undefined);mock.cleanup.mockReset().mockResolvedValue(null);
   mock.s3.mockReset();mock.sign.mockReset();
@@ -47,6 +53,19 @@ beforeEach(()=>{
 afterEach(()=>vi.unstubAllEnvs());
 const job=()=>[...rows.values()].find(r=>String(r.pk).startsWith('job#'))!;
 describe('independent production lab processing',()=>{
+  it('blocks new processing for a deletion request before job creation, signing or dispatch',async()=>{
+    deletionBlocked=true;const s=setup(),r=await s.handler(event('POST','requests/saved',planInput()));
+    expect(r.statusCode).toBe(403);expect(JSON.parse(r.body).data.error).toBe('account_deletion_write_blocked');
+    expect(rows.size).toBe(0);expect(mock.sign).not.toHaveBeenCalled();expect(mock.sfn).not.toHaveBeenCalled();
+  });
+  it('withholds existing job results after deletion but keeps privacy inspection available',async()=>{
+    const s=setup();await s.handler(event('POST','requests/saved',planInput()));const id=String(job().pk).slice(4);
+    deletionBlocked=true;mock.sfn.mockClear();mock.sign.mockClear();
+    const r=await s.handler(event('GET',`jobs/${id}`));
+    expect(r.statusCode).toBe(403);expect(JSON.parse(r.body).data.error).toBe('account_deletion_write_blocked');
+    expect(mock.sfn).not.toHaveBeenCalled();expect(mock.sign).not.toHaveBeenCalled();
+    expect((await s.handler(event('GET',`jobs/${id}/privacy-copy`))).statusCode).toBe(200);
+  });
   it.each([{phiAllowed:true,activationState:'blocked' as const},{phiAllowed:true,activationEvidenceSha256:undefined},{phiAllowed:true,providerEvidenceSha256:'short'}])
     ('refuses malformed activation %j',patch=>{expect(()=>setup({...config,...patch})).toThrow('owned_lab_activation_invalid');});
   it('blocked deployment refuses every route before identity, consent, billing or storage access',async()=>{

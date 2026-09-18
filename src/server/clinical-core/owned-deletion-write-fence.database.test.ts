@@ -3,7 +3,13 @@ import {PGlite} from '@electric-sql/pglite';
 import {pgcrypto} from '@electric-sql/pglite/contrib/pgcrypto';
 import {execFileSync} from 'node:child_process';
 import {randomUUID} from 'node:crypto';
+import {createOwnedConsumerRecordsAdapter} from './owned-consumer-records';
+import {ClinicalCoreDatabaseRejection,type ClinicalCoreDatabase} from './database';
+import {createOwnedLabAuthorization} from './owned-lab-authorization';
+import {createOwnedVoiceAuthorization,voiceOwner} from './owned-voice-authorization';
+import type {ProductionClinicalRequestContext} from './aws-identity-consent';
 let db:PGlite;const org=randomUUID();
+const fixtureScopes=['forms_checkins','protocols_supplements','ai_context','lab_history','voice_transcription'];
 async function call(owner:string,sql:string,params:unknown[]=[],purpose='clinical_data'){
   return db.transaction(async tx=>{await tx.exec('set local role clinical_core_api');
     await tx.query("select clinical_private.set_request_context($1,$2,'consumer',$3,$4,'production-clinical','clinical_phi')",[owner,org,'subject-'+owner,purpose]);
@@ -13,7 +19,7 @@ async function owner(){
   const id=randomUUID();
   await db.query('insert into clinical_core.persons(id,subject_key) values($1,$2)',[id,'subject_'+id.replaceAll('-','')]);
   await db.query("insert into clinical_core.identities(person_id,identity_pool,identity_subject,production_bound) values($1,'consumer',$2,true)",[id,'subject-'+id]);
-  for(const scope of ['forms_checkins','protocols_supplements'])await call(id,'select clinical_core.set_owned_consumer_consent($1,\'granted\',\'fictional-fence\',0)',[scope],'consent_management');
+  for(const scope of fixtureScopes)await call(id,'select clinical_core.set_owned_consumer_consent($1,\'granted\',\'fictional-fence\',0)',[scope],'consent_management');
   return id;
 }
 const write=(who:string,id=randomUUID(),rev=0,command=randomUUID(),deleted=false,collection='wellness_profiles')=>call(who,
@@ -23,9 +29,41 @@ beforeAll(async()=>{
   const {manifest,files}=JSON.parse(execFileSync(process.execPath,['scripts/build-aws-production-clinical-core.mjs','--json'],{encoding:'utf8',maxBuffer:8*1024*1024,timeout:10000}));
   db=new PGlite({extensions:{pgcrypto}});for(const m of manifest.migrations)await db.exec(files[m.file]);
   await db.query("insert into clinical_core.organizations(id,organization_label) values($1,'Fictional deletion fence test')",[org]);
-  for(const scope of ['forms_checkins','protocols_supplements'])await db.query("insert into clinical_private.consumer_storage_consent_releases(scope,version,content,content_sha256,approved_by,approved_at) values($1,'fictional-fence','Fixture only',encode(public.digest('Fixture only','sha256'),'hex'),'TEST NOT APPROVAL',now())",[scope]);
+  for(const scope of fixtureScopes)await db.query("insert into clinical_private.consumer_storage_consent_releases(scope,version,content,content_sha256,approved_by,approved_at) values($1,'fictional-fence','Fixture only',encode(public.digest('Fixture only','sha256'),'hex'),'TEST NOT APPROVAL',now())",[scope]);
 },30000);
 afterAll(async()=>{await db?.close();});
+
+it('binds real lab and voice policies to the owner closure ledger without blocking privacy reads',async()=>{
+  const a=await owner(),b=await owner();
+  const database:ClinicalCoreDatabase={transaction:work=>db.transaction(async tx=>{
+    await tx.exec('set local role clinical_core_api');
+    return work({query:async<Row extends Record<string,unknown>>(sql:string,params:readonly unknown[]=[])=>{
+      try{return await tx.query<Row>(sql,params.map(p=>p&&typeof p==='object'&&'kind' in p&&p.kind==='uuid'&&'value' in p?p.value:p));}
+      catch(error){if(error instanceof Error&&error.message==='owned_account_deletion_write_blocked')throw new ClinicalCoreDatabaseRejection('account_deletion_write_blocked');throw error;}
+    }});
+  })};
+  const adapter=createOwnedConsumerRecordsAdapter(database);
+  const context:ProductionClinicalRequestContext={actorPersonId:a,organizationId:org,identityPool:'consumer',identitySubject:'subject-'+a,
+    purpose:'consent_management',environment:'production-clinical',dataClassification:'clinical_phi',containsPhi:true,realPatientData:true,productionBound:true};
+  const lab=createOwnedLabAuthorization(()=>adapter),voice=createOwnedVoiceAuthorization(()=>adapter);
+  const l=await lab.capture(context),v=await voice.capture(context);
+  const lj={authorization:l,ownerSub:l.identitySubject,personId:a,organizationId:org},vj={authorization:v,owner:voiceOwner(context)};
+  await lab.policy.verify(lj);await voice.policy.verify(vj);await submit(a);
+  await expect(lab.policy.verify(lj)).rejects.toMatchObject({reason:'account_deletion_write_blocked'});
+  await expect(voice.policy.verify(vj)).rejects.toMatchObject({reason:'account_deletion_write_blocked'});
+  await expect(adapter.processingConsentStates(context,'lab')).rejects.toMatchObject({code:'account_deletion_write_blocked'});
+  expect((await adapter.consentState(context,'lab_history')).activeRevision).toBe(1);
+  const other={...context,actorPersonId:b,identitySubject:'subject-'+b};
+  expect((await adapter.processingConsentStates(other,'voice')).map(s=>s.scope)).toEqual(['ai_context','voice_transcription']);
+});
+
+it('requires the processing operation and purpose and does not manufacture a grant after withdrawal',async()=>{
+  const a=await owner();
+  await expect(call(a,"select clinical_core.get_owned_processing_consent_states('voice')")).rejects.toThrow('consent_request_invalid');
+  await expect(call(a,"select clinical_core.get_owned_processing_consent_states('other')",[],'consent_management')).rejects.toThrow('consent_request_invalid');
+  await call(a,"select clinical_core.set_owned_consumer_consent('ai_context','revoked',null,1)",[],'consent_management');
+  expect((await call(a,"select clinical_core.get_owned_processing_consent_states('voice') as result",[],'consent_management')).rows[0]).toMatchObject({result:{ownerId:a,operation:'voice',states:[{scope:'ai_context',activeRevision:null},{scope:'voice_transcription',activeRevision:1}]}});
+});
 
 it.each(['submitted','held','in_progress','completed'])('fences new personal saves for %s deletion without hiding reads or blocking another owner',async status=>{
   const a=await owner(),b=await owner(),id=randomUUID(),command=randomUUID();

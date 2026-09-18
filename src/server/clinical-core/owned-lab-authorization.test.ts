@@ -8,8 +8,17 @@ const context:ProductionClinicalRequestContext={actorPersonId:uuid,organizationI
 function state(scope:StorageConsentState['scope'],revision=1):StorageConsentState{return {scope,release:{version:'approved-fixture/1',content:'test only',contentSha256:'a'.repeat(64),approvedAt:new Date(now-1000).toISOString()},
   current:{status:'granted',revision,releaseVersion:'approved-fixture/1',recordedAt:new Date(now-500).toISOString()},history:[],historyLimit:100,activeRevision:revision};}
 function setup(){const consentState=vi.fn(async(_c:ProductionClinicalRequestContext,scope:StorageConsentState['scope'])=>state(scope));
-  return {consentState,auth:createOwnedLabAuthorization(()=>({consentState}),()=>now)};}
+  const processingConsentStates=vi.fn(async(c:ProductionClinicalRequestContext)=>Promise.all(LAB_AUTHORIZATION_SCOPES.map(s=>consentState(c,s))));
+  return {consentState,processingConsentStates,auth:createOwnedLabAuthorization(()=>({processingConsentStates}),()=>now)};}
 describe('owned lab authorization',()=>{
+  it('turns a deletion fence into permanent authorization refusal, while outages stay retryable',async()=>{
+    const s=setup(),a=await s.auth.capture(context),job={ownerSub:a.identitySubject,organizationId:a.organizationId,personId:a.personId,authorization:a};
+    s.processingConsentStates.mockRejectedValue(new OwnedStorageError('account_deletion_write_blocked'));
+    await expect(s.auth.capture(context)).rejects.toMatchObject({code:'account_deletion_write_blocked'});
+    await expect(s.auth.policy.verify(job)).rejects.toMatchObject({reason:'account_deletion_write_blocked'});
+    s.processingConsentStates.mockRejectedValue(new OwnedStorageError('storage_unavailable'));
+    await expect(s.auth.policy.verify(job)).rejects.toMatchObject({code:'storage_unavailable'});
+  });
   it('binds both owner-specific scopes with revision, release version and content hash',async()=>{
     const s=setup();const captured=await s.auth.capture(context);
     expect(LAB_AUTHORIZATION_SCOPES).toEqual(['ai_context','lab_history']);

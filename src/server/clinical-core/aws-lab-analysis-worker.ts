@@ -617,7 +617,7 @@ async function verifyAuthorization(job: Job, options: LabWorkerOptions): Promise
     if (!job.authorization) throw Object.assign(new Error("lab_authorization_missing"), { category: "consent_withdrawn" });
     try { await options.policy.verify(job); }
     catch (error) {
-      if (error instanceof LabAuthorizationRevoked) throw Object.assign(new Error("lab_authorization_revoked"), { category: "consent_withdrawn" });
+      if (error instanceof LabAuthorizationRevoked) throw Object.assign(new Error("lab_authorization_revoked"), { category: error.reason==='account_deletion_write_blocked'?'account_deletion_write_blocked':"consent_withdrawn" });
       throw Object.assign(new Error("lab_authorization_unverifiable"), { category: "provider_unavailable" });
     }
   } else if (job.authorization) {
@@ -626,32 +626,37 @@ async function verifyAuthorization(job: Job, options: LabWorkerOptions): Promise
 }
 async function executePass(job: Job, pass: number, options: LabWorkerOptions = {}): Promise<unknown | null> {
   const jobId = job.pk.slice(4);
+  const persistArtifact=async(name:string,value:unknown)=>{
+    await verifyAuthorization(job,options);
+    await writeArtifact(jobId,name,value);
+  };
   const sourcePanel=resolveLabSourcePanel(job);
   const rangeContext = await reviewedRangeContext(job);
   if (pass === 0) {
     await verifyAuthorization(job, options);
     if (job.structuredBiomarkers) {
-      await writeArtifact(jobId, "extracted", { lines: [], tableRows: [], source: "saved_measured_biomarkers" });
+      await persistArtifact("extracted", { lines: [], tableRows: [], source: "saved_measured_biomarkers" });
       return null;
     }
     const lines: Extracted["lines"] = [];
     const tableRows: ExtractedRow[] = [];
     for (const document of job.documents) {
+      await verifyAuthorization(job,options);
       const extracted = await extractDocument(document);
       lines.push(...extracted.lines);
       tableRows.push(...(extracted.tableRows ?? []));
     }
-    await writeArtifact(jobId, "extracted", { lines, tableRows });
+    await persistArtifact("extracted", { lines, tableRows });
     return null;
   }
   if (pass === 1) {
     if (job.structuredBiomarkers) {
-      await writeArtifact(jobId, "verified", { lines: [], source: "saved_measured_biomarkers", independentlyVerified: false });
+      await persistArtifact("verified", { lines: [], source: "saved_measured_biomarkers", independentlyVerified: false });
       return null;
     }
     const extracted = await readArtifact(jobId, "extracted") as Extracted;
     const verified = extracted.lines.map((line) => ({ ...line, normalizedText: line.text.replace(/\s+/g, " ").trim(), needsHumanReview: line.confidence < 80 }));
-    await writeArtifact(jobId, "verified", { lines: verified });
+    await persistArtifact("verified", { lines: verified });
     return null;
   }
   if (pass === 2) {
@@ -661,7 +666,7 @@ async function executePass(job: Job, pass: number, options: LabWorkerOptions = {
       ? normalizeStructuredLabBiomarkers(job.structuredBiomarkers, jobId, sourcePanel?.panelName, rangeContext)
       : sanitizeMeasuredLabBiomarkers(normalizeExtractedLabLines(extracted!, rangeContext));
     if (!biomarkers.length) throw Object.assign(new Error("no_supported_biomarkers"), { category: "document_unreadable" });
-    await writeArtifact(jobId, "normalized", { biomarkers });
+    await persistArtifact("normalized", { biomarkers });
     return null;
   }
   if (pass === 3) {
@@ -672,7 +677,7 @@ async function executePass(job: Job, pass: number, options: LabWorkerOptions = {
         ? functionalRangeStatus(row.value, row.functionalMin, row.functionalMax)
         : reportedRangeStatus(row.value, row.labMin, row.labMax),
     }));
-    await writeArtifact(jobId, "interpreted", { biomarkers: interpreted });
+    await persistArtifact("interpreted", { biomarkers: interpreted });
     return null;
   }
   const { biomarkers } = await readArtifact(jobId, "interpreted") as { biomarkers: Array<Biomarker & { status: string }> };
@@ -808,8 +813,8 @@ async function executePass(job: Job, pass: number, options: LabWorkerOptions = {
       },
     },
   };
-  await writeArtifact(jobId, "ai-synthesis", { ...aiSynthesis, referencedBiomarkerIds: aiSynthesis.referencedBiomarkerIds });
-  await writeArtifact(jobId, "result", result);
+  await persistArtifact("ai-synthesis", { ...aiSynthesis, referencedBiomarkerIds: aiSynthesis.referencedBiomarkerIds });
+  await persistArtifact("result", result);
   return result;
 }
 
@@ -817,7 +822,7 @@ export async function createAwsLabAnalysisWorker(event: { jobId?: string; pass?:
   const jobId = event.jobId ?? ""; const pass = event.pass ?? -1;
   if (/^[0-9a-f-]{36}$/i.test(jobId) && event.fail === true) {
     if (!Number.isInteger(pass) || pass < 0 || pass > 4) throw new Error("worker_failure_pass_required");
-    const allowed = new Set(["document_unreadable", "verification_disagreement", "unsupported_document", "provider_unavailable", "safety_review_required", "consent_withdrawn", "internal_failure"]);
+    const allowed = new Set(["document_unreadable", "verification_disagreement", "unsupported_document", "provider_unavailable", "safety_review_required", "consent_withdrawn", "account_deletion_write_blocked", "internal_failure"]);
     const category = allowed.has(event.failureCategory ?? "") ? event.failureCategory : "internal_failure";
     try {
       await db.send(new UpdateCommand({ TableName: required("LAB_JOB_TABLE"), Key: { pk: `job#${jobId}` },

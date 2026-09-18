@@ -18,10 +18,16 @@ function event(method='POST',id?:string):OwnedVoiceEvent{return {rawPath:'/clini
 let rows:Map<string,VoiceJob>,repo:VoiceRepository,provider:VoiceProvider,consentState:ReturnType<typeof vi.fn<(context:ProductionClinicalRequestContext,scope:StorageConsentState['scope'])=>Promise<StorageConsentState>>>,seconds:number;
 function state(scope:StorageConsentState['scope'],revision=1):StorageConsentState{return {scope,release:{version:'approved-fixture/1',content:'test only',contentSha256:'a'.repeat(64),approvedAt:new Date(now-1000).toISOString()},
   current:{status:'granted',revision,releaseVersion:'approved-fixture/1',recordedAt:new Date(now-500).toISOString()},history:[],historyLimit:100,activeRevision:revision};}
-function setup(c=config){const adapter=vi.fn(()=>({consentState}));const factory=vi.fn(policy=>new VoiceJobs(repo,provider,()=>seconds,policy));
+let deletionBlocked=false;
+const processingConsentStates=async(c:ProductionClinicalRequestContext)=>{
+  if(deletionBlocked)throw new OwnedStorageError('account_deletion_write_blocked');
+  return Promise.all((['ai_context','voice_transcription'] as const).map(scope=>consentState(c,scope)));
+};
+function setup(c=config){const adapter=vi.fn(()=>({consentState,processingConsentStates}));const factory=vi.fn(policy=>new VoiceJobs(repo,provider,()=>seconds,policy));
   const requireCore=vi.fn(async()=>{});
   return {adapter,factory,requireCore,handler:createOwnedVoiceApi({configuration:c,adapter,service:factory,now:()=>now,requireCore})};}
 beforeEach(()=>{
+  deletionBlocked=false;
   seconds=now/1000;rows=new Map();consentState=vi.fn(async(_context,scope)=>state(scope));
   repo={get:async id=>rows.has(id)?structuredClone(rows.get(id)!):undefined,
     insert:async job=>{if(rows.has(job.id))return false;rows.set(job.id,structuredClone(job));return true;},
@@ -33,6 +39,25 @@ beforeEach(()=>{
     transcript:vi.fn().mockResolvedValue('Fictional voice.'),remove:vi.fn().mockResolvedValue(undefined)};
 });
 describe('independent production voice',()=>{
+  it('refuses new audio on account deletion without writing a job or calling its provider',async()=>{
+    deletionBlocked=true;const s=setup(),response=await s.handler(event());
+    expect(response.statusCode).toBe(403);expect(JSON.parse(response.body)).toEqual({error:'account_deletion_write_blocked'});
+    expect(rows.size).toBe(0);expect(s.factory).not.toHaveBeenCalled();expect(provider.upload).not.toHaveBeenCalled();
+  });
+  it('cancels queued work after account deletion without dispatching transcription, and permits explicit cancellation',async()=>{
+    const s=setup(),created=JSON.parse((await s.handler(event())).body);seconds+=61;deletionBlocked=true;
+    await s.handler({source:'aws.events'});
+    expect(rows.get(created.jobId)?.cancelled).toBe(true);expect(provider.start).not.toHaveBeenCalled();expect(provider.transcript).not.toHaveBeenCalled();
+    expect((await s.handler(event('DELETE',created.jobId))).statusCode).toBe(202);
+  });
+  it('withholds a ready transcript when deletion occurs during its object read',async()=>{
+    const s=setup(),created=JSON.parse((await s.handler(event())).body);seconds+=61;
+    rows.get(created.jobId)!.state='ready';vi.mocked(provider.status).mockResolvedValue('ready');
+    vi.mocked(provider.transcript).mockImplementation(async()=>{deletionBlocked=true;return 'Fictional private transcript';});
+    const response=await s.handler(event('GET',created.jobId));
+    expect(response.statusCode).toBe(403);expect(JSON.parse(response.body)).toEqual({error:'account_deletion_write_blocked'});
+    expect(response.body).not.toContain('private transcript');
+  });
   it('returns a safe hold refusal on cleanup-triggering reads without claiming erasure',async()=>{
     const s=setup(),created=JSON.parse((await s.handler(event())).body);
     rows.get(created.jobId)!.cancelled=true;
@@ -171,7 +196,7 @@ describe('independent production voice',()=>{
     expect(provider.start).not.toHaveBeenCalled();expect(provider.transcript).not.toHaveBeenCalled();
   });
   it('malformed or mismatched stored bindings cannot start work',async()=>{
-    const context=ownedConsumerIdentity(event(),config,'consent_management',now),auth=createOwnedVoiceAuthorization(()=>({consentState}),()=>now);
+    const context=ownedConsumerIdentity(event(),config,'consent_management',now),auth=createOwnedVoiceAuthorization(()=>({processingConsentStates}),()=>now);
     const proof=await auth.capture(context);
     await expect(auth.policy.verify({owner:'different',authorization:proof})).rejects.toThrow('voice_consent_required');
     await expect(auth.policy.verify({owner:voiceOwner(context)})).rejects.toThrow('voice_consent_required');

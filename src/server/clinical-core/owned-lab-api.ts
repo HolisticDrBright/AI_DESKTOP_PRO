@@ -20,7 +20,7 @@ export type OwnedLabEvent=ApiGatewayV2Event&ApiEvent&{rawPath?:string;requestCon
 type Handler=(event:ApiEvent)=>Promise<{statusCode:number;headers:Record<string,string>;body:string}>;
 export function createOwnedLabApi(input:{
   configuration:OwnedLabConfiguration;
-  adapter:()=>Pick<ReturnType<typeof createOwnedConsumerRecordsAdapter>,'consentState'>;
+  adapter:()=>Pick<ReturnType<typeof createOwnedConsumerRecordsAdapter>,'consentState'|'processingConsentStates'>;
   now?:()=>number;
   deletionGuard?:ExternalDeletionGuard;
   requireCore?:(headers:Record<string,string|undefined>)=>Promise<void>;
@@ -68,8 +68,9 @@ export function createOwnedLabApi(input:{
       return {statusCode:response.statusCode,headers:{...response.headers,'x-content-type-options':'nosniff'},body:response.body};
     }catch(error){
       if(error instanceof CoreSubscriptionError)return reply(402,{error:'core_subscription_required'});
-      if(error instanceof LabAuthorizationRevoked)return reply(403,{error:'lab_consent_required'});
+      if(error instanceof LabAuthorizationRevoked)return reply(403,{error:error.reason});
       if(error instanceof OwnedStorageError){
+        if(error.code==='account_deletion_write_blocked')return reply(403,{error:error.code});
         if(error.code==='owner_required')return reply(401,{error:'reauth_required'});
         if(error.code==='consent_required')return reply(403,{error:'lab_consent_required'});
       }

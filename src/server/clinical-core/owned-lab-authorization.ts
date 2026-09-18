@@ -1,7 +1,7 @@
 import type {ProductionClinicalRequestContext} from './aws-identity-consent';
 import {OwnedStorageError,type createOwnedConsumerRecordsAdapter} from './owned-consumer-records';
 
-type Adapter=Pick<ReturnType<typeof createOwnedConsumerRecordsAdapter>,'consentState'>;
+type Adapter=Pick<ReturnType<typeof createOwnedConsumerRecordsAdapter>,'processingConsentStates'>;
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 /** Lab/document processing sends health documents and measured values to the
  * AI service and stores resulting observations in the owner's personal lab
@@ -11,7 +11,7 @@ export type LabAuthorization={
   version:'owned-lab/1';personId:string;organizationId:string;identitySubject:string;
   consents:Record<typeof LAB_AUTHORIZATION_SCOPES[number],{revision:number;releaseVersion:string;contentSha256:string}>;
 };
-export class LabAuthorizationRevoked extends Error{constructor(){super('lab_consent_required');}}
+export class LabAuthorizationRevoked extends Error{constructor(readonly reason:'lab_consent_required'|'account_deletion_write_blocked'='lab_consent_required'){super(reason);}}
 /** Minimal job shape the policy needs; the lab job store owns the rest. */
 export type AuthorizedLabJob={ownerSub:string;organizationId:string;personId:string;authorization?:LabAuthorization};
 export type LabAuthorizationPolicy={verify(job:AuthorizedLabJob):Promise<void>};
@@ -23,8 +23,10 @@ export function sameLabAuthorization(a:LabAuthorization|undefined,b:LabAuthoriza
 export function createOwnedLabAuthorization(adapter:()=>Adapter,now=()=>Date.now()){
   const capture=async(context:ProductionClinicalRequestContext):Promise<LabAuthorization>=>{
     const consents={} as LabAuthorization['consents'];
-    for(const scope of LAB_AUTHORIZATION_SCOPES){
-      const state=await adapter().consentState({...context,purpose:'consent_management'},scope);
+    const states=await adapter().processingConsentStates({...context,purpose:'consent_management'},'lab');
+    if(states.length!==2)throw new LabAuthorizationRevoked();
+    for(const [index,scope] of LAB_AUTHORIZATION_SCOPES.entries()){
+      const state=states[index];
       if(state.scope!==scope||!state.release||!state.current||state.current.status!=='granted'||state.activeRevision!==state.current.revision
         ||!validRevision(state.current.revision)||!/^[a-f0-9]{64}$/.test(state.release.contentSha256)
         ||state.current.releaseVersion!==state.release.version||!Number.isFinite(Date.parse(state.release.approvedAt))
@@ -49,6 +51,7 @@ export function createOwnedLabAuthorization(adapter:()=>Adapter,now=()=>Date.now
           ||a.consents?.[scope]?.releaseVersion!==current.consents[scope].releaseVersion
           ||a.consents?.[scope]?.contentSha256!==current.consents[scope].contentSha256)throw new LabAuthorizationRevoked();
       }catch(error){
+        if(error instanceof OwnedStorageError&&error.code==='account_deletion_write_blocked')throw new LabAuthorizationRevoked(error.code);
         if(error instanceof OwnedStorageError&&['owner_required','consent_required'].includes(error.code))throw new LabAuthorizationRevoked();
         throw error;
       }

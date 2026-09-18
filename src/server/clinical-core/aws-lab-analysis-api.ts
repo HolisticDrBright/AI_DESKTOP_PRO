@@ -819,7 +819,8 @@ export function createLabAnalysisApi(options: LabApiOptions) {
   } catch (error) {
     if(error instanceof LabPrivacyError)return json(error.status,{error:error.code});
     if(error instanceof LabRequestError)return json(error.statusCode,{contractVersion:REQUEST_RECOVERY_VERSION,error:error.code});
-    if(error instanceof LabAuthorizationRevoked)return json(403,{error:'lab_consent_required'});
+    if(error instanceof LabAuthorizationRevoked)return json(403,{error:error.reason});
+    if(error instanceof OwnedStorageError&&error.code==='account_deletion_write_blocked')return json(403,{error:error.code});
     if(error instanceof CoreSubscriptionError)return json(402,{error:'core_subscription_required'});
     if(error instanceof OwnedStorageError&&error.code==='owner_required')return json(401,{error:'reauth_required'});
     if(error instanceof OwnedStorageError&&error.code==='legal_hold')return json(409,{error:'lab_deletion_held'});

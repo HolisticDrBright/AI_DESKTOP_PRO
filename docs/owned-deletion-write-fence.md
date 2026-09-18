@@ -54,10 +54,10 @@ API and Aurora-driver tests verify the sanitized refusal. V2 exercises the actua
 adapter over a mocked transport and checks disclosure text; no native rendering
 or physical-device acceptance is claimed.
 
-This protects the personal PostgreSQL stores only. It is **not** a complete
-account-wide write stop: lab/voice job admission, object uploads, clinic sharing,
-external providers and in-flight jobs still need their own coordinated closure
-checks and deployed race testing. Local caches/recovery archives are not wiped.
+Migration 78 (next source increment) extends checkpoints into lab/voice processing;
+see below. This is still **not** a complete account-wide write stop: object uploads,
+clinic sharing, external providers and in-flight jobs need coordinated closure
+and deployed race testing. Local caches/recovery archives are not wiped.
 Offline and other-device reconciliation, retention-approved fulfillment of every
 store, hosted Aurora multi-connection contention, backup restoration and exact
 release/device qualification remain open. Never treat this fence as proof of
@@ -67,3 +67,45 @@ Build 70 and its matching synthetic API remain at c5b4d61. This source increment
 is not in that mobile binary. No duplicate paid build was started. Hosted Desktop
 still requires renewal of the named ai-synthetic-staging AWS login. All PHI,
 clinical/source-verification, provider and activation gates remain unchanged.
+
+## Processing-checkpoint increment: migration 78
+
+The owner-scoped processing-consent function reads AI plus lab/voice consent
+under the same short owner lock as the deletion ledger check. The adapter checks
+the snapshot version, owner, operation, both scopes, revisions and signed-copy
+hashes. No owner supplied by the caller or unsigned approval is accepted.
+Privacy-only consent reads remain separate so withdrawal/export/cancellation are
+not prevented by closure. API permissions expose only the scoped function.
+
+Lab/voice admission and their existing authorization checkpoints now distinguish
+account closure from expired credentials, consent withdrawal and temporary service
+failure. Lab extraction checks each document and checks again before each result
+artifact write. Voice queued work stops before provider dispatch when closed;
+transcripts are withheld if closure is detected after the transcript read. V2
+stops voice polling on the explicit refusal, attempts cancellation and directs the
+user to their privacy request instead of asking them to log in or grant consent
+again. Cancellation failure is not represented as cleanup success. Lab generation
+also preserves the specific refusal. React review retained existing hook/session
+boundaries; no automatic retry or regrant effect was added.
+
+Local full verification: Desktop 2,875 passed / 11 skips (221 files), V2 1,625
+passed / one hosted skip (139 passing files); both typechecks/lint passed, with
+four unchanged Desktop warnings. The 78-migration zero-seed gate and V2 capability
+and TestFlight-source gates passed. Ten deletion-fence SQL tests now include the
+actual adapter and lab/voice authorization policies over canonical migrations,
+owner isolation and preserved privacy reads. Targeted tests cover provider-return
+closure, suppressed artifact/publication, malformed snapshots, error sanitization,
+queued voice cancellation and transcript withholding.
+
+Lab, voice and personal-storage Lambda candidates built. Actual built lab/voice
+APIs returned 503/no-store/phiAllowed:false with fictional blocked configuration;
+the built lab worker refused production_not_activated. No real provider was called.
+
+Deployment order: apply the reviewed migration artifact before the dependent
+backend, ship V2's refusal handling, then synthetically qualify the exact release.
+These checkpoints are NOT a lease across provider/S3/DynamoDB operations. A deletion
+can race between a successful check and an external action; already-issued upload
+URLs, late uploads, pending provider work and Step Functions retries remain separate
+coordination work. No atomic multi-store closure, completed erasure, deployed Aurora
+race proof or physical-device acceptance is claimed. This is an original phases
+1/2/3 increment, not a newly completed phase. Build 70 remains unchanged.

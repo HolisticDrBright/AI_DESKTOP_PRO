@@ -15,7 +15,7 @@ const ROOT='/clinical-core/consumer/chat-transcription/jobs';
 export type OwnedVoiceEvent=ApiGatewayV2Event&{source?:string;rawPath?:string;requestContext?:ApiGatewayV2Event['requestContext']&{http?:{method?:string}}};
 export function createOwnedVoiceApi(input:{
   configuration:OwnedVoiceConfiguration;
-  adapter:()=>Pick<ReturnType<typeof createOwnedConsumerRecordsAdapter>,'consentState'>;
+  adapter:()=>Pick<ReturnType<typeof createOwnedConsumerRecordsAdapter>,'consentState'|'processingConsentStates'>;
   service:(policy:VoiceAuthorizationPolicy,budget:VoiceWorkBudget)=>Pick<VoiceJobs,'start'|'status'|'cancel'|'sweep'>;
   now?:()=>number;
   requireCore?:(headers:Record<string,string|undefined>)=>Promise<void>;
@@ -63,8 +63,9 @@ export function createOwnedVoiceApi(input:{
       return method==='DELETE'?reply(202,await service.cancel(voiceOwner(context),id!)):reply(200,await service.status(voiceOwner(context),id!));
     }catch(error){
       if(error instanceof CoreSubscriptionError)return reply(402,{error:'core_subscription_required'});
-      if(error instanceof VoiceAuthorizationRevoked)return reply(403,{error:'voice_consent_required'});
+      if(error instanceof VoiceAuthorizationRevoked)return reply(403,{error:error.reason});
       if(error instanceof OwnedStorageError){
+        if(error.code==='account_deletion_write_blocked')return reply(403,{error:error.code});
         if(error.code==='owner_required')return reply(401,{error:'reauth_required'});
         if(error.code==='legal_hold')return reply(409,{error:'voice_deletion_held'});
         if(error.code==='consent_required')return reply(403,{error:'voice_consent_required'});

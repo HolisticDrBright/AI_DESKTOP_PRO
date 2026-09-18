@@ -5,7 +5,7 @@ export type VoiceAuthorization = {
 };
 export class VoiceAuthorizationRevoked extends Error {
   readonly status=403;
-  constructor(){super('voice_consent_required');}
+  constructor(readonly reason:'voice_consent_required'|'account_deletion_write_blocked'='voice_consent_required'){super(reason);}
 }
 export interface VoiceAuthorizationPolicy {
   verify(job:{owner:string;authorization?:VoiceAuthorization}):Promise<void>;
