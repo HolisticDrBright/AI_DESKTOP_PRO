@@ -2,6 +2,7 @@ if (typeof window !== "undefined") {
   throw new Error("This module is server-only and must not run in the browser.");
 }
 import { trpcMutation as fixtureMutation, trpcQuery as fixtureQuery } from "./trpc.server";
+import type { TrpcCallOptions } from "./trpc.server";
 import { isContractFixtureAllowed } from "@/server/runtime/contractFixture";
 import { TRPC_BASE_URL } from "./config";
 import { getClinicalAccessToken } from "./session.server";
@@ -34,7 +35,7 @@ function requireFixture() {
 async function trpcQuery<T>(path: string, input?: unknown, token?: string | null): Promise<T> {
   requireFixture(); return fixtureQuery<T>(path, input, token);
 }
-async function trpcMutation<T>(path: string, input?: unknown, token?: string | null, options?: { signal?: AbortSignal }): Promise<T> {
+async function trpcMutation<T>(path: string, input?: unknown, token?: string | null, options?: TrpcCallOptions): Promise<T> {
   requireFixture(); return fixtureMutation<T>(path, input, token, options);
 }
 
@@ -255,19 +256,20 @@ export const scribeLive = {
   beginRecording(
     input: { encounterId: string; contentType: string },
     sessionToken?: string | null,
+    options?: Pick<TrpcCallOptions, 'observe'>,
   ): Promise<BeginRecordingResult> {
     // Bound the upstream request too. Timeout is uncertain, never proof that
     // the server did not create a recording; UI must discover/recover it.
     return trpcMutation<BeginRecordingResult>("clinical.scribe.beginRecording", input, sessionToken,
-      {signal:AbortSignal.timeout(7000)});
+      {observe:options?.observe,signal:AbortSignal.timeout(7000)});
   },
 
-  heartbeat(sessionId: string, sessionToken?: string | null): Promise<HeartbeatResult> {
-    return trpcMutation<HeartbeatResult>("clinical.scribe.heartbeat", { sessionId }, sessionToken);
+  heartbeat(sessionId: string, sessionToken?: string | null, options?: TrpcCallOptions): Promise<HeartbeatResult> {
+    return trpcMutation<HeartbeatResult>("clinical.scribe.heartbeat", { sessionId }, sessionToken, options);
   },
 
-  resume(sessionId: string, sessionToken?: string | null): Promise<{ ok: true }> {
-    return trpcMutation<{ ok: true }>("clinical.scribe.resume", { sessionId }, sessionToken);
+  resume(sessionId: string, sessionToken?: string | null, options?: TrpcCallOptions): Promise<{ ok: true }> {
+    return trpcMutation<{ ok: true }>("clinical.scribe.resume", { sessionId }, sessionToken, options);
   },
 
   issueCompletionAuthorization(

@@ -176,6 +176,7 @@ jobs:
           # Full single-process suite: reserve >=4 GiB for Chromium, OS and
           # native allocations. The config refuses undersized/cgroup runners.
           E2E_DEV_HEAP_MB: "10240"
+          E2E_RECORDING_DIAGNOSTICS: "1"
         run: |
           node scripts/live-stub-server.mjs &
           sleep 2

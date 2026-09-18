@@ -11,11 +11,13 @@ describe('scribe begin upstream deadline',()=>{
     const fetcher=vi.fn((_url:string,init:RequestInit)=>new Promise((_resolve,reject)=>{
       init.signal!.addEventListener('abort',()=>reject(new Error('private upstream detail')),{once:true});
     }));vi.stubGlobal('fetch',fetcher);
-    const request=scribeLive.beginRecording({encounterId:'fictional',contentType:'audio/webm'},'synthetic-token');
+    const observe=vi.fn();
+    const request=scribeLive.beginRecording({encounterId:'fictional',contentType:'audio/webm'},'synthetic-token',{observe});
     const checked=expect(request).rejects.toMatchObject({code:'unavailable'});
     await vi.advanceTimersByTimeAsync(7000);await checked;
     expect(timeout).toHaveBeenCalledWith(7000);expect(fetcher).toHaveBeenCalledOnce();expect(controller.signal.aborted).toBe(true);
     expect(fetcher.mock.calls[0]?.[1]).toMatchObject({method:'POST',cache:'no-store',signal:controller.signal});
+    expect(observe.mock.calls).toEqual([['token_start'],['token_ready'],['upstream_start']]);
   });
   it('preserves successful authorization without replay',async()=>{
     const value={recordingId:'fictional-recording',sessionId:'fictional-session',captureToken:'synthetic-only'};
@@ -40,5 +42,27 @@ describe('retired recording transport is local-fixture-only',()=>{
     ];
     for(const call of calls)await expect(call()).rejects.toMatchObject({code:'unavailable'});
     expect(fetcher).not.toHaveBeenCalled();
+  });
+});
+
+describe('fixture recovery timing boundaries',()=>{
+  it.each(['heartbeat','resume'] as const)('observes %s without changing the request or returning diagnostics',async action=>{
+    const value={captureToken:'synthetic-only'};
+    const fetcher=vi.fn().mockResolvedValue(new Response(JSON.stringify({result:{data:{json:value}}})));
+    vi.stubGlobal('fetch',fetcher);const observe=vi.fn();
+    expect(await scribeLive[action]('fictional-session','synthetic-token',{observe})).toEqual(value);
+    expect(observe.mock.calls).toEqual(['token_start','token_ready','upstream_start','upstream_headers','upstream_decoded'].map(stage=>[stage]));
+    expect(fetcher).toHaveBeenCalledOnce();
+    expect(fetcher.mock.calls[0][1].body).toBe(JSON.stringify({json:{sessionId:'fictional-session'}}));
+  });
+  it('preserves a successful response even if the observer throws',async()=>{
+    vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(JSON.stringify({result:{data:{json:{ok:true}}}}))));
+    expect(await scribeLive.heartbeat('fictional-session','synthetic-token',{observe:()=>{throw new Error('diagnostic failed');}})).toEqual({ok:true});
+  });
+  it('identifies the last completed boundary on a network error without replay',async()=>{
+    const observe=vi.fn();const fetcher=vi.fn().mockRejectedValue(new Error('private upstream failure'));vi.stubGlobal('fetch',fetcher);
+    await expect(scribeLive.heartbeat('fictional-session','synthetic-token',{observe})).rejects.toMatchObject({code:'unavailable'});
+    expect(observe.mock.calls).toEqual([['token_start'],['token_ready'],['upstream_start']]);
+    expect(fetcher).toHaveBeenCalledOnce();
   });
 });

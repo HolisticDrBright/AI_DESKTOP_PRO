@@ -3,6 +3,7 @@ import { scribeLive } from "@/adapters/scribe.live";
 import { AdapterError } from "@/adapters/errors";
 import { getRequestSession } from "@/server/session";
 import { liveGuard, runLive } from "../../route-helpers";
+import { withRecordingFixtureTrace } from "@/server/recording-fixture-trace";
 
 const CONTENT_TYPES = ["audio/webm", "audio/ogg", "audio/wav", "audio/mp4", "audio/mpeg"];
 
@@ -39,15 +40,17 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const blocked = liveGuard();
   if (blocked) return blocked;
-  return runLive(async () => {
+  return withRecordingFixtureTrace(req, observe => runLive(async () => {
     const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+    observe('request_body_read');
     const encounterId = typeof body.encounterId === "string" ? body.encounterId : "";
     const contentType = typeof body.contentType === "string" ? body.contentType : "";
     if (!encounterId) throw new AdapterError("invalid", "An encounter is required.");
     if (!CONTENT_TYPES.includes(contentType)) throw new AdapterError("invalid", "Unsupported audio format.");
     const session = await getRequestSession();
-    return scribeLive.beginRecording({ encounterId, contentType }, session.token);
-  });
+    observe('session_read');
+    return scribeLive.beginRecording({ encounterId, contentType }, session.token, { observe });
+  }));
 }
 
 /**
@@ -62,21 +65,23 @@ export async function POST(req: NextRequest) {
 export async function PATCH(req: NextRequest) {
   const blocked = liveGuard();
   if (blocked) return blocked;
-  return runLive(async () => {
+  return withRecordingFixtureTrace(req, observe => runLive(async () => {
     const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+    observe('request_body_read');
     const action = typeof body.action === "string" ? body.action : "";
     const session = await getRequestSession();
+    observe('session_read');
 
     const sessionId = typeof body.sessionId === "string" ? body.sessionId : "";
     const recordingId = typeof body.recordingId === "string" ? body.recordingId : "";
 
     if (action === "heartbeat") {
       if (!sessionId) throw new AdapterError("invalid", "A capture session is required.");
-      return scribeLive.heartbeat(sessionId, session.token);
+      return scribeLive.heartbeat(sessionId, session.token, { observe });
     }
     if (action === "resume") {
       if (!sessionId) throw new AdapterError("invalid", "A capture session is required.");
-      return scribeLive.resume(sessionId, session.token);
+      return scribeLive.resume(sessionId, session.token, { observe });
     }
     if (action === "completionToken") {
       if (!sessionId) throw new AdapterError("invalid", "A capture session is required.");
@@ -101,5 +106,5 @@ export async function PATCH(req: NextRequest) {
       return scribeLive.requestDeletion(recordingId, session.token);
     }
     throw new AdapterError("invalid", "Unknown recording action.");
-  });
+  }));
 }

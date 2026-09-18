@@ -21,6 +21,8 @@ import { AdapterError, codeFromHttpStatus, type AdapterErrorCode } from "./error
 interface TrpcError {
   error?: { json?: { message?: string; data?: { code?: string; httpStatus?: number } } };
 }
+export type TrpcObservation = 'token_start' | 'token_ready' | 'upstream_start' | 'upstream_headers' | 'upstream_decoded';
+export type TrpcCallOptions = { signal?: AbortSignal; observe?: (stage: TrpcObservation) => void };
 
 /**
  * Backend error text is discarded by default (it could carry sensitive
@@ -66,11 +68,18 @@ async function call<T>(
   method: "GET" | "POST",
   input?: unknown,
   sessionToken?: string | null,
-  options?:{signal?:AbortSignal},
+  options?:TrpcCallOptions,
 ): Promise<T> {
+  // Observability is never authority: even a broken observer must not alter
+  // token resolution, network dispatch, response decoding, or error mapping.
+  const observe = (stage: TrpcObservation) => {
+    try { options?.observe?.(stage); } catch { /* Preserve the service outcome. */ }
+  };
   let token: string;
   try {
+    observe('token_start');
     token = await getClinicalAccessToken(sessionToken);
+    observe('token_ready');
   } catch (e) {
     // Preserve typed auth errors (signed-out ≠ backend down); wrap the rest.
     if (e instanceof AdapterError) throw e;
@@ -98,7 +107,9 @@ async function call<T>(
 
   let res: Response;
   try {
+    observe('upstream_start');
     res = await fetch(url, { method, headers, body: bodyInit, cache: "no-store",...(options?.signal?{signal:options.signal}:{}) });
+    observe('upstream_headers');
   } catch (e) {
     // Network failure / backend unreachable (the state in this sandbox).
     throw new AdapterError(
@@ -111,6 +122,7 @@ async function call<T>(
   let body: { result?: { data?: { json?: T } } } | TrpcError;
   try {
     body = (await res.json()) as typeof body;
+    observe('upstream_decoded');
   } catch {
     throw new AdapterError("unknown", undefined, `tRPC ${path}: non-JSON response (${res.status})`);
   }
@@ -133,7 +145,7 @@ export function trpcQuery<T>(path: string, input?: unknown, sessionToken?: strin
   return call<T>(path, "GET", input, sessionToken);
 }
 
-export function trpcMutation<T>(path: string, input?: unknown, sessionToken?: string | null,options?:{signal?:AbortSignal}): Promise<T> {
+export function trpcMutation<T>(path: string, input?: unknown, sessionToken?: string | null,options?:TrpcCallOptions): Promise<T> {
   return call<T>(path, "POST", input, sessionToken,options);
 }
 

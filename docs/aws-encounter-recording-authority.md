@@ -673,3 +673,40 @@ Final source check:2530 full unit tests PASS/11existing skips/206files (86.85s).
 Typecheck and changed-file lint pass. Full lint retains the four existing
 unrelated warnings; no new errors. All seven new browser cases passed without
 retries or timeout changes. Synthetic test servers and browser were closed.
+
+## September 17 — retained fixture failure and bounded timing evidence
+
+Desktop CI35286696055 at2ade8bc failed the legacy fixture refresh-recovery
+case: start/chunk/discovery returned200, then the fresh-authority PATCH was
+aborted and the UI correctly remained unconfirmed. The saved trace does not
+establish whether the request reached the route, token resolution or upstream.
+This is separate from the new AWS recording browser suite. It is not resolved
+by claiming that the newer suite passed.
+
+Opt-in E2E_RECORDING_DIAGNOSTICS now marks recording POST/PATCH route entry,
+body/session completion, token resolution, upstream headers/decoding and route
+settlement/abort. It requires the existing local contract-fixture gate as well
+as the diagnostic flag; deployment cannot enable it. Entries contain only a
+random correlation value, allowlisted method/stage and elapsed time. URLs,
+headers, bodies, tokens, patient/session identifiers, errors and audio are not
+logged. Observer failures cannot change service outcomes. No retry, authorization
+rule, deployed provider or application deadline changes. CI opts in only for
+the local-fixture browser job.
+
+The unchanged refresh-recovery browser case passed locally (1.4minutes, no
+retry). An initial invocation without E2E_LIVE was skipped and is not evidence;
+the subsequent correctly configured invocation executed and passed.14focused
+diagnostic/deadline tests and typecheck passed before the POST timing extension.
+That local pass does not establish the cause of the older CI failure. Await
+new exact-head CI timing evidence before declaring the intermittent issue fixed.
+
+Final diagnostics source:2539unit tests PASS/11existing skips/207files;
+typecheck PASS;lint0errors/4existing unrelated warnings. Graphify AST9055nodes/
+18274edges/718communities (30known omitted sources;5000-node HTML limit).
+Owned browser and local servers closed after testing. Prior Desktop02d2fd5
+CI35288355796 passed units/build and AWS recording browsers; its legacy browser
+job was still running at this checkpoint. V2fdfdb62 CI35288362105 SUCCESS.
+
+All six original phases remain incomplete, including durable local audio,
+processing/drafts, hold-aware cleanup, hosted and physical acceptance. No
+deployment, PHI activation, signed-content changes or paid mobile build.
