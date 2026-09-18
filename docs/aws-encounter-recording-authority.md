@@ -961,3 +961,48 @@ Final scoped pagination/other-organization SQL checks:121cases PASS. Graphify AS
 updated9188nodes/18571edges/732communities;30known omitted sources and5000-node
 HTML limit remain disclosed. PostgreSQL review informed the short queue
 transactions, timeout bounds and organization-first pagination index.
+
+## September 17 — authenticated cleanup review service candidate
+
+Migration75 adds bounded run-history reads and immutable queue/history access
+events. Each read requires the reviewed organization cleanup operator; arbitrary
+workforce membership is insufficient. The metadata distinguishes a live current
+lease, historical results and missing results. Unknown deletion counts remain
+NULL. No audio, object key, bucket, token or subject identifier is returned.
+History uses a recording/run composite index and keyset paging (UUID order, not
+chronological order). A page is not a complete history or an erasure assertion.
+
+`recording-cleanup-review-api.ts` exposes one Gateway-JWT-protected POST route:
+`/clinical-core/workforce/encounter-recording/cleanup-review`. Requests are either
+`{action:'queue',after?:UUID}` or `{action:'history',recordingId:UUID,after?:UUID}`.
+The purpose and organization come from trusted configuration/verified identity.
+The client cannot choose an actor, release, worker, storage, limit or mutation.
+The service exposes only list/history; dispatch and storage deletion capabilities
+are explicitly false. Fresh login, production identity, organization membership,
+operator review, independent service review and database/workforce activation
+requirements remain enforced. Caller-supplied authorization text is never decoded
+as verified identity. Failure responses are bounded and non-cacheable.
+
+`npm run build:aws-recording-cleanup-review` produces a separately disabled
+candidate. Both entry point and lazily loaded SDK runtime plus the template are
+SHA-256-bound in its manifest. Inactive requests do not load services. Reviewed
+active IAM permits scoped RDS/secret access only: no S3, worker invocation,
+scheduler or processing-provider permission. Code is version-pinned, logs
+encrypted/retained, and activation requires an alarm recipient. This is a read
+service, not the cleanup dispatcher or a completed operator UI.
+
+Verification: initial174focused cases PASS, full2697unit tests PASS/11existing
+skips/214files; typecheck PASS; lint0errors/4existing unrelated warnings;
+75-migration/zero-seed gate PASS; review candidate build and cfn-lint PASS. Tests
+include actual API-to-canonical-SQL reads and audit events under the ordinary API
+role, unknown outcomes, cross-organization refusal, malformed/extra fields,
+unverified/expired identity and exact built-artifact blocked execution with no
+AWS credentials. Existing capture artifact tests also pass after extending the
+shared builder. Initial test-helper reference and reserved-variable lint errors
+were corrected; no existing boundary or assertion was relaxed.
+
+All SIX ORIGINAL phases remain incomplete. Authenticated dispatch/operator UI,
+reviewed service identity, worker deployment/IAM, storage-side hold coordination,
+late-write/terminal evidence, durable local audio and transcription/drafts remain
+engineering. No hosted migration, runtime activation, actual deletion, physical
+device test or paid mobile build. AWS named test login still needs renewal.

@@ -2,23 +2,26 @@ import { build } from "esbuild";
 import { mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { createHash } from 'node:crypto';
 
-if (process.argv.slice(2).some(arg => arg !== '--capture') || process.argv.slice(2).length > 1) throw new Error('recording_build_argument_invalid');
-const capture = process.argv.includes('--capture'), suffix = capture ? 'recording-capture' : 'recording-authority';
+if (process.argv.slice(2).some(arg => !['--capture','--cleanup-review'].includes(arg)) || process.argv.slice(2).length > 1) throw new Error('recording_build_argument_invalid');
+const capture = process.argv.includes('--capture'), cleanupReview = process.argv.includes('--cleanup-review');
+const suffix = capture ? 'recording-capture' : cleanupReview ? 'recording-cleanup-review' : 'recording-authority';
+const splitRuntime = capture || cleanupReview;
 const out = `dist/aws-clinical-core/${suffix}`;
 mkdirSync(out, { recursive: true });
 await build({ entryPoints: [`src/server/clinical-core/${suffix}-lambda.ts`], outfile: out + "/index.js",
   bundle: true, platform: "node", target: "node22", format: "cjs", minify: true, legalComments: "none",
-  external: capture ? ['./recording-capture-runtime.js'] : [] });
-if (capture) await build({ entryPoints: ['src/server/clinical-core/recording-capture-runtime.ts'], outfile: out + '/recording-capture-runtime.js',
+  external: splitRuntime ? [`./${suffix}-runtime.js`] : [] });
+if (splitRuntime) await build({ entryPoints: [`src/server/clinical-core/${suffix}-runtime.ts`], outfile: out + `/${suffix}-runtime.js`,
   bundle: true, platform: 'node', target: 'node22', format: 'cjs', minify: true, legalComments: 'none' });
 const ref = name => ({ Ref: name }), sub = value => ({ "Fn::Sub": value });
 const nonempty = name => ({ "Fn::Not": [{ "Fn::Equals": [ref(name), ""] }] });
 const hash = { Type: "String", Default: "", AllowedPattern: "^$|^[a-f0-9]{64}$" };
 const required = ["ActivationEvidenceSha256", "DatabaseReviewSha256", "WorkforceMfaReviewSha256", "AlarmTopicArn",
-  ...(capture ? ['CaptureReviewSha256', 'StorageReviewSha256', 'RetentionReviewSha256'] : [])];
+  ...(capture ? ['CaptureReviewSha256', 'StorageReviewSha256', 'RetentionReviewSha256'] : []),
+  ...(cleanupReview ? ['CleanupReviewSha256'] : [])];
 const template = {
   AWSTemplateFormatVersion: "2010-09-09",
-  Description: capture ? 'Encounter recording capture transport; independent reviewed activation; blocked and logs-only by default'
+  Description: cleanupReview ? 'Read-only recording cleanup operator metadata; no storage or dispatch permission; blocked by default' : capture ? 'Encounter recording capture transport; independent reviewed activation; blocked and logs-only by default'
     : "Encounter recording consent authority; no audio transport; blocked and logs-only by default",
   Parameters: {
     ApiId: { Type: "String", AllowedPattern: "[a-z0-9]{10}" },
@@ -126,6 +129,16 @@ if (capture) {
       SourceArn: sub('arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiId}/*/POST/clinical-core/workforce/encounter-recording/' + action) } };
   }
 }
+if (cleanupReview) {
+  template.Parameters.CleanupReviewSha256 = hash;
+  const vars = template.Resources.Function.Properties.Environment.Variables;
+  delete vars.RECORDING_AUTHORITY_ACTIVATION; delete vars.RECORDING_AUTHORITY_EVIDENCE_SHA256;
+  Object.assign(vars, { RECORDING_CLEANUP_REVIEW_ACTIVATION: ref('Activation'),
+    RECORDING_CLEANUP_REVIEW_EVIDENCE_SHA256: ref('ActivationEvidenceSha256'), RECORDING_CLEANUP_REVIEW_SHA256: ref('CleanupReviewSha256') });
+  template.Resources.Role.Properties.Policies[1]['Fn::If'][1].PolicyName = 'ReviewedRecordingCleanupMetadata';
+  template.Resources.Route.Properties.RouteKey = 'POST /clinical-core/workforce/encounter-recording/cleanup-review';
+  template.Resources.Invoke.Properties.SourceArn = sub('arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiId}/*/POST/clinical-core/workforce/encounter-recording/cleanup-review');
+}
 for (const metric of ["Errors", "Throttles"]) template.Resources[metric + "Alarm"] = { Type: "AWS::CloudWatch::Alarm", Properties: {
   Namespace: "AWS/Lambda", MetricName: metric, Dimensions: [{ Name: "FunctionName", Value: ref("Function") }], Statistic: "Sum", Period: 60,
   EvaluationPeriods: 1, Threshold: 1, ComparisonOperator: "GreaterThanOrEqualToThreshold", TreatMissingData: "notBreaching",
@@ -135,8 +148,8 @@ template.Resources.ApiFailureAlarm = { Type: "AWS::CloudWatch::Alarm", Propertie
   Namespace: "AWS/ApiGateway", MetricName: "5xx", Dimensions: [{ Name: "ApiId", Value: ref("ApiId") }],
 } };
 writeFileSync(out + "/template.json", JSON.stringify(template, null, 2));
-if (capture) writeFileSync(out + '/artifact-manifest.json', JSON.stringify({ contract: 'recording-capture-artifact/1',
-  files: ['index.js', 'recording-capture-runtime.js', 'template.json'].map(path => {
+if (splitRuntime) writeFileSync(out + '/artifact-manifest.json', JSON.stringify({ contract: `${suffix}-artifact/1`,
+  files: ['index.js', `${suffix}-runtime.js`, 'template.json'].map(path => {
     const bytes = readFileSync(out + '/' + path);
     return { path, bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') };
   }),

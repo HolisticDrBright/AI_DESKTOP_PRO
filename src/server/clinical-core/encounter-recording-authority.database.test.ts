@@ -17,6 +17,7 @@ import { createRecordingCleanupAuthority, type RecordingCleanupAdmission } from 
 import { createRecordingCleanupAttempts } from './recording-cleanup-attempts';
 import { createRecordingCleanupWorker,type RecordingCleanupStore } from './recording-cleanup-worker';
 import { createRecordingCleanupQueue,createRecordingCleanupRunner } from './recording-cleanup-queue';
+import {createRecordingCleanupReviewApi,RECORDING_CLEANUP_REVIEW_ROUTE} from './recording-cleanup-review-api';
 
 let db: PGlite;
 const legacyCleanup: { id:string; reason:string }[]=[];
@@ -421,6 +422,39 @@ describe('recording cleanup admission and holds with actual canonical SQL',()=>{
       expect(await cleanupCall("select clinical_private.record_recording_cleanup_attempt($1,'retained',$2) as result",[id,'b'.repeat(64)])).toBe(id);
     }finally{await cleanupCall('select clinical_private.release_recording_legal_hold($1)',[hold]);}
     await expect(cleanupCall("select clinical_private.record_recording_cleanup_attempt($1,'erased',$2)",[id,'b'.repeat(64)])).rejects.toThrow('recording_cleanup_attempt_invalid');
+  });
+  it('serves operator history through Gateway claims and canonical SQL without exposing storage or another organization',async()=>{
+    const r=await cleanupReady(),run=randomUUID();
+    await cleanupCall('select clinical_private.claim_recording_cleanup_run($1,$2::bigint,$3,$4,$5)',[...r.args,run]);
+    const database:ClinicalCoreDatabase={transaction:operation=>db.transaction(async tx=>{
+      await tx.exec('set local role clinical_core_api');return operation({query:async(sql,args=[])=>tx.query(sql,
+        args.map(v=>typeof v==='object'&&v!==null&&'kind' in v&&v.kind==='uuid'&&'value' in v?v.value:v))});
+    })};
+    const repository=createRecordingCleanupQueue(database),now=Date.now(),seconds=Math.floor(now/1000);
+    const issuer='https://cognito-idp.us-east-2.amazonaws.com/FictionalWorkforce',audience='12345678901234567890';
+    const api=createRecordingCleanupReviewApi({configuration:{workforceIssuer:issuer,workforceAudience:audience,organizationId:org,
+      phiAllowed:true,activation:'approved',activationEvidenceSha256:'a'.repeat(64),mfaReviewSha256:'b'.repeat(64),databaseReviewSha256:'c'.repeat(64),cleanupReviewSha256:'d'.repeat(64)},
+      service:()=>repository,now:()=>now});
+    const event:ApiGatewayV2Event={routeKey:RECORDING_CLEANUP_REVIEW_ROUTE,headers:{'content-type':'application/json'},body:JSON.stringify({action:'history',recordingId:r.capture.recordingId}),
+      requestContext:{authorizer:{jwt:{claims:{iss:issuer,aud:audience,sub:'subject-'+actor,token_use:'id','custom:person_id':actor,
+        'custom:organization_id':org,'custom:production_bound':'true',email_verified:true,iat:seconds,exp:seconds+600,auth_time:seconds}}}}};
+    const response=await api(event);expect(response.statusCode).toBe(200);
+    expect(JSON.parse(response.body).data.runs).toEqual([expect.objectContaining({runId:run,leaseActive:true,result:null,audioDeleted:false})]);
+    expect(response.body).not.toMatch(/objectKey|bucket|captureToken|identitySubject|operatorId/);
+    await cleanupCall("select clinical_private.finish_recording_cleanup_run($1,'unavailable',null,$2)",[run,'a'.repeat(64)]);
+    const after=await api(event);expect(JSON.parse(after.body).data.runs[0]).toMatchObject({leaseActive:false,result:{outcome:'unavailable',deleteAcknowledged:null}});
+    expect(await repository.history(cleanupContext,r.capture.recordingId,run)).toMatchObject({runs:[],nextAfter:null});
+    await expect(cleanupCall('select clinical_private.list_recording_cleanup_runs($1,null,25)',[r.capture.recordingId],actor,'workforce',otherOrg)).rejects.toThrow();
+    await expect(repository.history({...cleanupContext,actorPersonId:colleague,identitySubject:'subject-'+colleague},r.capture.recordingId)).rejects.toThrow('service_unavailable');
+    await expect(repository.history(cleanupContext,randomUUID())).rejects.toThrow('service_unavailable');
+    await expect(cleanupCall('select clinical_private.list_recording_cleanup_runs($1,null,26)',[r.capture.recordingId])).rejects.toThrow('recording_cleanup_run_invalid');
+    const audit=(await db.query<{id:string;actor_id:string;action:string;returned_rows:number}>('select * from clinical_private.recording_cleanup_review_events where recording_id=$1',[r.capture.recordingId])).rows;
+    expect(audit).toHaveLength(3);expect(audit.every(a=>a.actor_id===actor&&a.action==='history.read')).toBe(true);
+    expect(audit.map(a=>a.returned_rows).sort()).toEqual([0,1,1]);
+    await repository.list(cleanupContext);
+    expect((await db.query("select * from clinical_private.recording_cleanup_review_events where action='queue.read' and organization_id=$1",[org])).rows.length).toBeGreaterThan(0);
+    await expect(db.query("update clinical_private.recording_cleanup_review_events set returned_rows=0 where id=$1",[audit[0].id])).rejects.toThrow();
+    await expect(cleanupCall('select * from clinical_private.recording_cleanup_review_events')).rejects.toThrow('permission denied');
   });
   it('backfills durable schedules for preceding captures without completing cleanup',async()=>{
     for(const r of legacyCleanup){

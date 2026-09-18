@@ -5,16 +5,13 @@ import {clinicalUuid,ClinicalCoreDatabaseRejection,type ClinicalCoreDatabase} fr
 import {assertRecordingCleanupContext,RecordingCleanupError,recordingCleanupRequestSchema} from './recording-cleanup-authority';
 import type {ProductionClinicalRequestContext} from './aws-identity-consent';
 import type {createRecordingCleanupWorker} from './recording-cleanup-worker';
+import {cleanupWorkItemSchema as itemSchema,cleanupOutcomeSchema,cleanupHistoryItemSchema} from '@/contracts/recordingCleanupReview';
 const uuid=z.string().uuid(),date=z.string().datetime({offset:true});
 export const cleanupRunRequestSchema=recordingCleanupRequestSchema.omit({attemptId:true,runId:true}).strict();
-export const cleanupRunOutcomeSchema=z.enum(['empty_observed','needs_recheck','held','unavailable','refused']);
+export const cleanupRunOutcomeSchema=cleanupOutcomeSchema;
 export const cleanupRunClaimSchema=z.object({runId:uuid,recordingId:uuid,version:z.number().int().positive().safe(),claimed:z.boolean(),leaseUntil:date}).strict();
 export const cleanupRunResultSchema=z.object({runId:uuid,recordingId:uuid,outcome:cleanupRunOutcomeSchema,appliedToSchedule:z.boolean(),
   nextCheckAt:date.nullable(),audioDeleted:z.literal(false),requiresRecheck:z.literal(true)}).strict();
-const itemSchema=z.object({recordingId:uuid,patientRecordId:uuid,version:z.number().int().positive().safe(),
-  reason:z.enum(['retention_deadline','discard','consent_revoked']),dueAt:date,nextCheckAt:date,leaseUntil:date.nullable(),
-  lastOutcome:cleanupRunOutcomeSchema.nullable(),consecutiveFailures:z.number().int().min(0).max(16),unresolvedAttempts:z.number().int().nonnegative(),
-  audioDeleted:z.literal(false),requiresRecheck:z.literal(true)}).strict();
 export type CleanupRunRequest=z.infer<typeof cleanupRunRequestSchema>;
 export type CleanupRunOutcome=z.infer<typeof cleanupRunOutcomeSchema>;
 export interface RecordingCleanupQueue {
@@ -22,7 +19,7 @@ export interface RecordingCleanupQueue {
   finish(context:ProductionClinicalRequestContext,runId:string,recordingId:string,outcome:CleanupRunOutcome,acknowledged:number|null,evidence:string):Promise<z.infer<typeof cleanupRunResultSchema>>;
   list(context:ProductionClinicalRequestContext,after?:string):Promise<{items:z.infer<typeof itemSchema>[];nextAfter:string|null}>;
 }
-export function createRecordingCleanupQueue(database:ClinicalCoreDatabase):RecordingCleanupQueue{
+export function createRecordingCleanupQueue(database:ClinicalCoreDatabase){
   async function query<T>(context:ProductionClinicalRequestContext,sql:string,args:unknown[],schema:z.ZodType<T>){
     assertRecordingCleanupContext(context);
     try{return await database.transaction(async tx=>{
@@ -40,7 +37,7 @@ export function createRecordingCleanupQueue(database:ClinicalCoreDatabase):Recor
       throw new RecordingCleanupError('service_unavailable');
     }
   }
-  return {
+  const queue:RecordingCleanupQueue={
     async claim(context,request,runId){
       const parsed=cleanupRunRequestSchema.safeParse(request);
       if(!parsed.success||!uuid.safeParse(runId).success)throw new RecordingCleanupError('request_invalid');
@@ -57,11 +54,18 @@ export function createRecordingCleanupQueue(database:ClinicalCoreDatabase):Recor
     },
     async list(context,after){
       if(after!==undefined&&!uuid.safeParse(after).success)throw new RecordingCleanupError('request_invalid');
-      const items=await query(context,'select clinical_private.list_recording_cleanup_work($1,25) as data',[after?clinicalUuid(after):null],z.array(itemSchema).max(25));
+      const items=await query(context,'select clinical_private.review_recording_cleanup_work($1,25) as data',[after?clinicalUuid(after):null],z.array(itemSchema).max(25));
       if(items.some((v,i)=>(i>0&&v.recordingId<=items[i-1].recordingId)||after!==undefined&&v.recordingId<=after))throw new RecordingCleanupError('service_unavailable');
       return {items,nextAfter:items.length===25?items.at(-1)!.recordingId:null};
     },
   };
+  return {...queue,async history(context:ProductionClinicalRequestContext,recordingId:string,after?:string){
+    if(!uuid.safeParse(recordingId).success||after!==undefined&&!uuid.safeParse(after).success)throw new RecordingCleanupError('request_invalid');
+    const runs=await query(context,'select clinical_private.list_recording_cleanup_runs($1,$2,25) as data',
+      [clinicalUuid(recordingId),after?clinicalUuid(after):null],z.array(cleanupHistoryItemSchema).max(25));
+    if(runs.some((r,i)=>i>0&&r.runId<=runs[i-1].runId||after!==undefined&&r.runId<=after))throw new RecordingCleanupError('service_unavailable');
+    return {recordingId,runs,nextAfter:runs.length===25?runs.at(-1)!.runId:null};
+  }};
 }
 
 /** Claim commits before work; result commits separately. A crash or a failed
