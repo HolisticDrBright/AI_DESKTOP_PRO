@@ -1,5 +1,47 @@
 # AWS encounter recording authority — source candidate
 
+## September 17 operator execution screen and authenticated proxy
+
+The cleanup review screen now has an independently configured execution panel.
+It remains read-only by default. Both `RECORDING_CLEANUP_EXECUTION_UI=enabled`
+and a separate HTTPS AWS Gateway `RECORDING_CLEANUP_EXECUTION_API_ORIGIN` are
+required even for direct proxy calls. Neither setting grants operator authority
+or activates the backend; the independent reviews described below still apply.
+No deployment configuration was changed and no actual deletion was performed.
+
+The operator selects a queue revision, checks recording-scoped run history and
+explicitly confirms one bounded pass. A visible active lease blocks a new pass.
+Retries preserve the same request ID; there are no automatic submissions or
+automatic retries. Acknowledgment and unknown outcomes are not erasure evidence.
+Refreshing, hiding or leaving the page does not cancel work already submitted.
+After returning, reload the queue and inspect durable history before another
+request. Browser state is memory-only and clears on session changes, offline,
+visibility/page exit and one-minute snapshot expiry. Late responses are ignored.
+
+The same-origin POST proxy requires the workforce cookie, rejects caller-supplied
+authority and cross-origin requests, and uses bounded JSON bodies and independent
+deadlines. The server alone supplies the bearer token to the configured Gateway;
+no fallback origin is used. Receipts must match both recording and request IDs
+and cannot claim whole-recording erasure, hold mutation or scheduled dispatch.
+
+Verification: 74 focused proxy/review tests and 40 browser cases passed. Browser
+coverage includes exact retry identity, stale sessions, refresh, active leases,
+missing browser request-ID support, mismatched responses and real cookie-less
+proxy refusal. Positive browser API responses are fictional fixtures, not hosted
+workforce/S3 proof. Agent-browser screenshots were inspected without an error
+overlay. Typecheck passed; lint has zero errors and four existing warnings.
+The final official `npm run test:unit` run passed 2842 tests across 219 files,
+with 11 existing skips. The first full run had a native child-process timeout;
+its unchanged focused test passed. An intervening direct Vitest invocation omitted
+the required TZ and failed the timezone assertion. The final official rerun above
+passed without relaxing deadlines or assertions. These earlier failures are not
+evidence of a deployed fix or proof that the intermittent timeout cannot recur.
+
+This closes the source UI/proxy gap only. Recurring dispatch, workload identity,
+storage-side hold coordination, late-write/terminal reconciliation, hosted AWS
+qualification, durable local audio and transcription/review drafts remain.
+The following section records the earlier endpoint-only checkpoint.
+
 ## September 17 bounded execution candidate
 
 `POST /clinical-core/workforce/encounter-recording/cleanup-execution` now has a

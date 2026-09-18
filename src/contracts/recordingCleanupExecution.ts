@@ -13,3 +13,13 @@ export const cleanupExecutionReceiptSchema=z.union([
   z.object({runId:uuid,recordingId:uuid,outcome:cleanupOutcomeSchema,appliedToSchedule:z.boolean(),
     nextCheckAt:z.string().datetime({offset:true}).nullable(),audioDeleted:z.literal(false),requiresRecheck:z.literal(true)}).strict(),
 ]);
+export type CleanupExecutionRequest=z.infer<typeof cleanupExecutionRequestSchema>;
+export type CleanupExecutionReceipt=z.infer<typeof cleanupExecutionReceiptSchema>;
+export const cleanupExecutionEnvelopeSchema=z.object({data:cleanupExecutionReceiptSchema,capabilities:z.object({
+  boundedPass:z.literal(true),scheduledDispatch:z.literal(false),holdMutation:z.literal(false),wholeRecordingErasure:z.literal(false),
+}).strict()}).strict();
+export function parseCleanupExecutionResponse(request:CleanupExecutionRequest,value:unknown){
+  const envelope=cleanupExecutionEnvelopeSchema.parse(value);
+  if(envelope.data.recordingId!==request.recordingId||envelope.data.runId!==request.requestId)throw new Error('cleanup_execution_scope_mismatch');
+  return envelope;
+}

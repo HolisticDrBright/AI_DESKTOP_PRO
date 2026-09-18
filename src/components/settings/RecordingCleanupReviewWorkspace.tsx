@@ -6,9 +6,11 @@ import {onWorkforceSessionChange} from '@/lib/workforce-session-change';
 import {Card} from '@/components/ui/bits';
 import {Btn} from '@/components/ui/Btn';
 import {readBoundedRequestBody} from '@/server/bounded-request-body';
+import {RecordingCleanupExecutionPanel} from './RecordingCleanupExecutionPanel';
 const outcomeNames={empty_observed:'Empty scan observed — recheck required',needs_recheck:'Further reconciliation required',held:'Held at last check',unavailable:'Service unavailable at last check',refused:'Worker refused at last check'};
 const reasons={retention_deadline:'Retention deadline',discard:'Recording discarded',consent_revoked:'Consent revoked'};
-export function RecordingCleanupReviewWorkspace(){
+export function RecordingCleanupReviewWorkspace({executionConfigured=false}:{executionConfigured?:boolean}){
+  const [selection,setSelection]=useState<{recordingId:string;version:number}|null>(null);
   const [queue,setQueue]=useState<CleanupWorkPage|null>(null),[history,setHistory]=useState<CleanupHistoryPage|null>(null);
   const [busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState(''),[checkedAt,setCheckedAt]=useState('');
   const alive=useRef(false),working=useRef(false),epoch=useRef(0),abort=useRef<AbortController|null>(null),expires=useRef<ReturnType<typeof setTimeout>|null>(null);
@@ -16,7 +18,7 @@ export function RecordingCleanupReviewWorkspace(){
     const lifecycle=epoch;
     alive.current=true;
     const clear=()=>{epoch.current++;abort.current?.abort();working.current=false;if(expires.current)clearTimeout(expires.current);
-      setQueue(null);setHistory(null);setBusy(false);setError('');setCheckedAt('');setNotice('Review cleared. Reload after checking your current workforce session.');};
+      setSelection(null);setQueue(null);setHistory(null);setBusy(false);setError('');setCheckedAt('');setNotice('Review cleared. Any submitted pass may continue. Reload after checking your current workforce session and review run history.');};
     const hide=()=>{if(document.visibilityState==='hidden')clear();};
     const unsubscribe=onWorkforceSessionChange(clear);
     document.addEventListener('visibilitychange',hide);window.addEventListener('pagehide',clear);window.addEventListener('offline',clear);
@@ -26,7 +28,7 @@ export function RecordingCleanupReviewWorkspace(){
   async function load(input:CleanupReviewRequest){
     if(!alive.current||working.current)return;
     const request=cleanupReviewRequestSchema.parse(input),generation=++epoch.current,controller=new AbortController();abort.current=controller;
-    working.current=true;setBusy(true);setError('');setNotice('');setHistory(null);setQueue(null);setCheckedAt('');
+    working.current=true;setSelection(null);setBusy(true);setError('');setNotice('');setHistory(null);setQueue(null);setCheckedAt('');
     if(expires.current)clearTimeout(expires.current);
     let timer:ReturnType<typeof setTimeout>|undefined;
     try{
@@ -43,7 +45,7 @@ export function RecordingCleanupReviewWorkspace(){
       if(!alive.current||generation!==epoch.current||controller.signal.aborted)return;
       if('items' in result.data)setQueue(result.data);else setHistory(result.data);
       setCheckedAt(new Date().toISOString());
-      expires.current=setTimeout(()=>{epoch.current++;abort.current?.abort();working.current=false;setBusy(false);setQueue(null);setHistory(null);setCheckedAt('');setNotice('Review snapshot expired. Reload to check current status.');},60000);
+      expires.current=setTimeout(()=>{epoch.current++;abort.current?.abort();working.current=false;setSelection(null);setBusy(false);setQueue(null);setHistory(null);setCheckedAt('');setNotice('Review snapshot expired. A submitted pass may continue. Reload to check current status and run history.');},60000);
     }catch(e){
       if(!alive.current||generation!==epoch.current)return;
       setQueue(null);setHistory(null);setCheckedAt('');
@@ -55,7 +57,7 @@ export function RecordingCleanupReviewWorkspace(){
   }
   return <div data-testid="recording-cleanup-review" className="space-y-4">
     <Card className="p-5 space-y-3">
-      <p>Read-only review for assigned cleanup operators. This screen cannot delete recordings, remove holds, start workers or approve releases.</p>
+      <p>{executionConfigured?'Review for assigned cleanup operators. Separately configured bounded execution requires history review and explicit confirmation. Configuration is not proof of authorization. This screen cannot remove holds or approve releases.':'Read-only review for assigned cleanup operators. This screen cannot delete recordings, remove holds, start workers or approve releases.'}</p>
       <p className="text-sm text-subtle">An empty scan or an exact-version acknowledgment is not proof of complete erasure. Each page is a snapshot, not a live status feed or complete inventory.</p>
       <Btn disabled={busy} onClick={()=>void load({action:'queue'})}>{busy?'Loading review…':'Load / refresh cleanup queue'}</Btn>
       {error?<p role="alert" className="text-danger">{error}</p>:null}
@@ -69,9 +71,11 @@ export function RecordingCleanupReviewWorkspace(){
         <p>{item.lastOutcome?outcomeNames[item.lastOutcome]:'No run outcome recorded'} · unresolved version attempts: {item.unresolvedAttempts}</p>
         <p>{item.leaseUntil?`Claim lease deadline: ${item.leaseUntil}. A lease does not prove that a worker is running.`:'No active claim recorded in this snapshot.'}</p>
         <Btn disabled={busy} aria-label={`Review runs for ${item.recordingId}`} onClick={()=>void load({action:'history',recordingId:item.recordingId})}>Review run history</Btn>
+        {executionConfigured?<Btn disabled={busy||selection!==null} aria-label={`Prepare cleanup for ${item.recordingId}`} onClick={()=>setSelection({recordingId:item.recordingId,version:item.version})}>Prepare bounded cleanup pass</Btn>:null}
       </section>)}
       {queue?.nextAfter?<Btn disabled={busy} onClick={()=>void load({action:'queue',after:queue.nextAfter!})}>Next queue page</Btn>:null}
     </Card>
+    {selection&&executionConfigured?<RecordingCleanupExecutionPanel key={selection.recordingId+':'+selection.version} selection={selection}/>:null}
     {history?<Card className="p-5 space-y-3 break-words"><h2 className="text-lg font-semibold">Run history</h2>
       <p>Recording {history.recordingId}. Pages use run-ID order, not chronological order.</p>
       {!history.runs.length?<p>No runs returned for this page. No deletion is confirmed.</p>:null}
