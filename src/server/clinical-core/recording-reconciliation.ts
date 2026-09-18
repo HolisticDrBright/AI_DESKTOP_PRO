@@ -1,5 +1,6 @@
 if (typeof window !== 'undefined') throw new Error('recording-reconciliation is server-only');
 import { z } from 'zod';
+import { createRecordingStorageBudget } from './recording-storage-budget';
 import { clinicalUuid, ClinicalCoreDatabaseRejection, type ClinicalCoreDatabase } from './database';
 import type { ProductionClinicalRequestContext } from './aws-identity-consent';
 import { recordingSegmentReservationSchema, RecordingUploadError, validateRecordingStoredObject, validateReceipt,
@@ -66,11 +67,10 @@ export function createRecordingReconciler(repository: RecordingReconciliationRep
       const key = `encounter-recordings/${context.organizationId}/${recordingId}/${r.sessionId}/${r.sequence}-${r.sha256}`;
       if (r.recordingId !== recordingId || r.status !== 'reserved' || r.objectVersion !== null
         || r.objectKey !== key || r.bytes > r.storage.maxSegmentBytes) throw new RecordingUploadError('storage_unverified');
-      const deadline = Math.min(Date.parse(r.acceptBefore), now() + 10000), remaining = deadline - now();
-      if (remaining <= 0) throw new RecordingUploadError('service_unavailable');
-      const head = await storage.head(r, undefined, AbortSignal.timeout(Math.max(1, Math.floor(remaining))));
+      const budget = createRecordingStorageBudget(r.acceptBefore, 10000, now);
+      const head = await budget.run(signal => storage.head(r, undefined, signal));
       validateRecordingStoredObject(head, r);
-      if (now() >= deadline) throw new RecordingUploadError('service_unavailable');
+      budget.check();
       const segment = validateReceipt(await repository.complete(context, recordingId, r.segmentId, head.version!), r);
       return { recordingId, outcome: 'stored', segment };
     } catch (error) {

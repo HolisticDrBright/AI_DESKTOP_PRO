@@ -1,8 +1,8 @@
-import { describe, it, expect, vi } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import { createHash } from 'node:crypto';
 import { S3Client, PutObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
 import { createRecordingSegmentUploader, createRecordingSegmentRepository, RecordingUploadError,
-  type RecordingSegmentReservation, type RecordingStoredObject } from './recording-segments';
+  type RecordingSegmentReservation, type RecordingStoredObject, type RecordingObjectStore } from './recording-segments';
 import { createAwsRecordingSegmentStore } from './aws-recording-segment-store';
 import type { ProductionClinicalRequestContext } from './aws-identity-consent';
 import { ClinicalCoreDatabaseRejection, type ClinicalCoreDatabase, type ClinicalCoreTransaction } from './database';
@@ -14,6 +14,7 @@ const context: ProductionClinicalRequestContext = { actorPersonId: id, organizat
 const bytes = Buffer.from('FICTIONAL AUDIO BYTES ONLY'), sha256 = createHash('sha256').update(bytes).digest('hex');
 const input = { recordingId: id, sessionId: id, captureToken: 'a'.repeat(64), sequence: 0, sha256, bytes: bytes.length };
 const now = Date.parse('2026-09-17T00:00:00Z');
+afterEach(() => vi.useRealTimers());
 function fixture() {
   const reservation: RecordingSegmentReservation = { segmentId, recordingId: id, sessionId: id, sequence: 0, sha256,
     bytes: bytes.length, contentType: 'audio/webm', authorityEpoch: 2, status: 'reserved', objectVersion: null,
@@ -25,10 +26,33 @@ function fixture() {
     checksum: Buffer.from(sha256, 'hex').toString('base64'), checksumType: 'FULL_OBJECT', encryption: 'aws:kms', kmsKeyArn: reservation.storage.kmsKeyArn,
     metadata: { 'segment-id': segmentId, 'recording-id': id, 'session-id': id, 'authority-epoch': '2' } };
   const repository = { reserve: vi.fn(async () => reservation), complete: vi.fn(async () => receipt) };
-  const storage = { put: vi.fn(async () => ({ version: head.version })), head: vi.fn(async () => head) };
+  const storage = { put: vi.fn<RecordingObjectStore['put']>(async () => ({ version: head.version })),
+    head: vi.fn<RecordingObjectStore['head']>(async () => head) };
   return { reservation, receipt, head, repository, storage, upload: createRecordingSegmentUploader(repository, storage, () => now) };
 }
 describe('consent-bound recording upload', () => {
+  it('bounds an uncooperative PUT and reconciles without issuing a second write', async () => {
+    vi.useFakeTimers(); const f=fixture(); let resolve!: (value:{version?:string})=>void;
+    f.storage.put.mockImplementation(()=>new Promise(done=>{resolve=done;}));
+    let settled=false; const result=f.upload(context,input,bytes).finally(()=>{settled=true;});
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(settled).toBe(true);
+    expect(await result).toEqual(f.receipt);
+    expect(f.storage.put.mock.calls[0][2].aborted).toBe(true);
+    expect(f.storage.head).toHaveBeenCalledWith(f.reservation,undefined,expect.any(AbortSignal));
+    resolve({version:'late-version'}); await vi.advanceTimersByTimeAsync(0);
+    expect(f.storage.put).toHaveBeenCalledOnce(); expect(f.repository.complete).toHaveBeenCalledOnce();
+  });
+  it('never commits after a timed-out HEAD eventually resolves', async () => {
+    vi.useFakeTimers(); const f=fixture(); let resolve!: (value:RecordingStoredObject)=>void;
+    f.storage.head.mockImplementation(()=>new Promise(done=>{resolve=done;}));
+    let settled=false; const checked=expect(f.upload(context,input,bytes).finally(()=>{settled=true;})).rejects.toMatchObject({code:'service_unavailable'});
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(settled).toBe(true); await checked;
+    expect(f.storage.head.mock.calls[0][2].aborted).toBe(true);
+    resolve(f.head); await vi.advanceTimersByTimeAsync(0);
+    expect(f.repository.complete).not.toHaveBeenCalled();
+  });
   it('rejects a request MIME type that differs from the qualified capture before touching storage', async () => {
     const f = fixture();
     await expect(f.upload(context, { ...input, contentType: 'audio/mp4' }, bytes)).rejects.toMatchObject({ code: 'storage_unverified' });

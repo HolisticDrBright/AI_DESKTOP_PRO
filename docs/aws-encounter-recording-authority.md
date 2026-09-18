@@ -710,3 +710,42 @@ job was still running at this checkpoint. V2fdfdb62 CI35288362105 SUCCESS.
 All six original phases remain incomplete, including durable local audio,
 processing/drafts, hold-aware cleanup, hosted and physical acceptance. No
 deployment, PHI activation, signed-content changes or paid mobile build.
+
+## September 17 — enforce recording storage deadlines independently of cancellation
+
+Inspection found that PUT/HEAD passed AbortSignal.timeout to the storage client
+but still awaited its promise without an independent bound. A transport ignoring
+abort could hang upload/reconciliation beyond the reservation deadline. Three
+new service tests reproduced this before the fix (80existing cases passed).
+
+The live capture uploader and reconciler now share a bounded storage budget.
+Each remote operation remains limited to10seconds, the PUT-plus-HEAD sequence
+to20seconds, and reconciliation to10seconds, all capped by the original database
+reservation deadline. An independent timer settles the caller and requests SDK
+cancellation. Monotonic elapsed time prevents backward wall-clock extension;
+checks around completion reject late results even if timer delivery is delayed.
+Timers are cleared on success/error, and detached late failures are consumed.
+
+An uncertain PUT may still complete remotely: timeout never means absence or
+deletion. The uploader can use the remaining budget for read-only HEAD and accepts
+only the existing exact version/checksum/size/encryption/provenance checks plus
+fresh database authority. It never issues a second PUT. Timed-out HEAD responses
+cannot reach receipt completion, and unresolved reservations remain durable for
+later explicit reconciliation. No storage delete/list, retention override,
+clinical consent bypass or new provider permission was introduced.
+
+The initial214targeted SQL/API/storage cases passed after integration; tests also
+cover ignored cancellation, late success/rejection, timer cleanup, short leases,
+backwards clocks, synchronous failure and individual-versus-total deadlines.
+Typecheck and the capture candidate build passed. These are synthetic local
+tests, not S3/Aurora or physical-device qualification. All six original scopes
+remain incomplete. Complete cleanup/hold handling, durable local audio,
+transcription/drafts and hosted/device evidence remain required.
+
+Final source verification:2552unit tests PASS/11existing skips/208files;
+typecheck PASS;lint0errors/4existing warnings;capture candidate build PASS.
+Graphify9060nodes/18290edges/714communities (30known omitted source files).
+Prior Desktop02d2fd5/CI35288355796 SUCCESS and V2354f1c6/35289756845 SUCCESS.
+The newer diagnostic Desktop00583ef/35289750713 remained in progress at inspection.
+Fresh ai-synthetic-staging STS check reports expired credentials; no hosted
+storage/identity/deployment evidence or environment switching is claimed.

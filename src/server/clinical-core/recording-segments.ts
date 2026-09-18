@@ -1,6 +1,7 @@
 if (typeof window !== 'undefined') throw new Error('recording-segments is server-only');
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
+import { createRecordingStorageBudget } from './recording-storage-budget';
 import { clinicalUuid, ClinicalCoreDatabaseRejection, type ClinicalCoreDatabase } from './database';
 import type { ProductionClinicalRequestContext } from './aws-identity-consent';
 import { recordingSegmentInputSchema, recordingSegmentReceiptSchema,
@@ -98,18 +99,13 @@ export function createRecordingSegmentUploader(repository: RecordingSegmentRepos
         // Revalidate consent in the database even for a retry of a saved receipt.
         return validateReceipt(await repository.complete(context, r, reserved.segmentId, reserved.objectVersion!), reserved);
       }
-      const deadline = Math.min(Date.parse(reserved.acceptBefore), now() + 20000);
-      const signal = () => {
-        const remaining = deadline - now();
-        if (remaining <= 0) throw new RecordingUploadError('service_unavailable');
-        return AbortSignal.timeout(Math.max(1, Math.floor(Math.min(10000, remaining))));
-      };
+      const budget = createRecordingStorageBudget(reserved.acceptBefore, 20000, now);
       let storedVersion: string | undefined;
-      try { storedVersion = (await storage.put(reserved, bytes, signal())).version; }
+      try { storedVersion = (await budget.run(signal => storage.put(reserved, bytes, signal))).version; }
       catch { /* Conditional conflict or lost response: prove the existing object, never overwrite it. */ }
-      const head = await storage.head(reserved, storedVersion, signal());
+      const head = await budget.run(signal => storage.head(reserved, storedVersion, signal));
       validateRecordingStoredObject(head, reserved, storedVersion);
-      if (deadline <= now()) throw new RecordingUploadError('service_unavailable');
+      budget.check();
       // A separate transaction rechecks live consent/epoch/token/release after upload.
       return validateReceipt(await repository.complete(context, r, reserved.segmentId, head.version!), reserved);
     } catch (error) {

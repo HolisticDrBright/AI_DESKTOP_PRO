@@ -1,10 +1,11 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createRecordingReconciler, createRecordingReconciliationRepository, type RecordingReconciliationRepository } from './recording-reconciliation';
-import { RecordingUploadError, type RecordingSegmentReservation, type RecordingStoredObject } from './recording-segments';
+import { RecordingUploadError, type RecordingSegmentReservation, type RecordingStoredObject, type RecordingObjectStore } from './recording-segments';
 import type { ProductionClinicalRequestContext } from './aws-identity-consent';
 import { ClinicalCoreDatabaseRejection, type ClinicalCoreDatabase } from './database';
 const id = '11111111-1111-4111-8111-111111111111', other = '22222222-2222-4222-8222-222222222222';
 const hash = 'a'.repeat(64), now = Date.parse('2026-09-17T00:00:00Z');
+afterEach(() => vi.useRealTimers());
 const context: ProductionClinicalRequestContext = { actorPersonId: id, organizationId: id, identityPool: 'workforce',
   identitySubject: 'fictional-subject', purpose: 'clinical_data', environment: 'production-clinical',
   dataClassification: 'clinical_phi', containsPhi: true, realPatientData: true, productionBound: true };
@@ -20,10 +21,22 @@ function fixture() {
     metadata: { 'recording-id': id, 'session-id': id, 'segment-id': other, 'authority-epoch': '1' } };
   const repository = { prepare: vi.fn<RecordingReconciliationRepository['prepare']>().mockResolvedValue(reservation),
     complete: vi.fn<RecordingReconciliationRepository['complete']>().mockResolvedValue(receipt) };
-  const storage = { head: vi.fn(async () => head) };
+  const storage = { head: vi.fn<RecordingObjectStore['head']>(async () => head) };
   return { reservation, receipt, head, repository, storage, reconcile: createRecordingReconciler(repository, storage, () => now) };
 }
 describe('recording reconciliation without replacement upload or old capture token', () => {
+  it('settles at the deadline even if HEAD ignores cancellation; late evidence cannot commit', async () => {
+    vi.useFakeTimers(); const f=fixture(); let resolve!: (value: RecordingStoredObject) => void;
+    f.storage.head.mockImplementation(() => new Promise(done => { resolve=done; }));
+    const result=f.reconcile(context,{recordingId:id});
+    let settled=false; const checked=expect(result.finally(()=>{settled=true;})).rejects.toMatchObject({code:'service_unavailable'});
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(settled).toBe(true);
+    await checked;
+    expect(f.storage.head.mock.calls[0][2].aborted).toBe(true);
+    resolve(f.head); await vi.advanceTimersByTimeAsync(0);
+    expect(f.repository.complete).not.toHaveBeenCalled();
+  });
   it('uses only server inventory and HEAD outside transactions, then reauthorizes receipt completion', async () => {
     const f = fixture();
     expect(await f.reconcile(context, { recordingId: id })).toEqual({ recordingId: id, outcome: 'stored', segment: f.receipt });
