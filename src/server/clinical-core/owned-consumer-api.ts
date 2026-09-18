@@ -16,6 +16,7 @@ const BASE="/clinical-core/consumer/personal";
 export const OWNED_CONSUMER_ROUTES=[`GET ${BASE}/records`,`GET ${BASE}/record`,`POST ${BASE}/records`,`GET ${BASE}/consent`,`POST ${BASE}/consent`,`GET ${BASE}/chat-context`,`POST ${BASE}/privacy-export`,`GET ${BASE}/privacy-export`,`GET ${BASE}/active-plan`,`POST ${BASE}/active-plan`,`POST ${BASE}/active-plan/release`,`GET ${BASE}/privacy-request`,`POST ${BASE}/privacy-request`,`POST ${BASE}/privacy-request/tombstone`] as const;
 const COLLECTION_SCOPE:Record<ConsumerClinicalCollection,OwnedStorageScope>={
   lab_observations:'lab_history',
+  lab_analyses:'lab_history',
   diet_preferences:'nutrition',
   protocols:"protocols_supplements",daily_adherence:"symptoms_adherence",symptom_logs:"symptoms_adherence",
   hormone_entries:"reproductive_health",reproductive_profiles:"reproductive_health",meal_logs:"nutrition",

@@ -36,7 +36,7 @@ describe("AWS lab deletion boundary", () => {
     expect(source).toContain("s3:DeleteObjectVersion");
     expect(source).toContain("s3:ListBucketVersions");
     const routes = Object.values(template.Resources).filter(resource => (resource as {Type:string}).Type === "AWS::ApiGatewayV2::Route");
-    expect(routes).toHaveLength(34);
+    expect(routes).toHaveLength(36);
     expect(Number(template.Outputs.RoutesEnabled.Value)).toBe(routes.length);
   });
 });

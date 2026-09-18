@@ -294,10 +294,10 @@ function parsePayload(value: unknown): Record<string, unknown> {
   }
 }
 
-export function canonicalPayload(value: Record<string, unknown>): string {
+export function canonicalPayload(value: Record<string, unknown>, maxBytes: number = MAX_PAYLOAD_BYTES): string {
   validateValue(value, 0);
   const canonical = canonicalJson(value);
-  if (Buffer.byteLength(canonical, "utf8") > MAX_PAYLOAD_BYTES) throw new ConsumerClinicalError("request_invalid");
+  if (Buffer.byteLength(canonical, "utf8") > maxBytes) throw new ConsumerClinicalError("request_invalid");
   return canonical;
 }
 
@@ -354,7 +354,7 @@ function validateValue(value: unknown, depth: number): void {
   }
 }
 
-function canonicalJson(value: unknown): string {
+export function canonicalJson(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
   const object = value as Record<string, unknown>;

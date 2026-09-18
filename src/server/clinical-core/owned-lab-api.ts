@@ -5,6 +5,7 @@ import {createOwnedLabAuthorization,LabAuthorizationRevoked,LAB_AUTHORIZATION_SC
 import {createLabAnalysisApi,type ApiEvent,type Claims,type LabApiOptions} from './aws-lab-analysis-api';
 import {CoreSubscriptionError,requireConsumerCore} from './core-subscription-guard';
 import type {ExternalDeletionGuard} from './owned-external-deletion';
+import {publishLabResult} from './owned-lab-publication';
 
 /** Independent production lab/document processing candidate. Mirrors the owned
  * voice candidate: verified production consumer identity, separate ai_context
@@ -20,7 +21,7 @@ export type OwnedLabEvent=ApiGatewayV2Event&ApiEvent&{rawPath?:string;requestCon
 type Handler=(event:ApiEvent)=>Promise<{statusCode:number;headers:Record<string,string>;body:string}>;
 export function createOwnedLabApi(input:{
   configuration:OwnedLabConfiguration;
-  adapter:()=>Pick<ReturnType<typeof createOwnedConsumerRecordsAdapter>,'consentState'|'processingConsentStates'>;
+  adapter:()=>Pick<ReturnType<typeof createOwnedConsumerRecordsAdapter>,'consentState'|'processingConsentStates'>&Partial<Pick<ReturnType<typeof createOwnedConsumerRecordsAdapter>,'write'|'get'>>;
   now?:()=>number;
   deletionGuard?:ExternalDeletionGuard;
   requireCore?:(headers:Record<string,string|undefined>)=>Promise<void>;
@@ -52,6 +53,16 @@ export function createOwnedLabApi(input:{
       return authorization.capture(ownedConsumerIdentity(event as ApiGatewayV2Event,c,'consent_management',now()));
     },
     policy:{verify:job=>{if(!active||!featureEnabled)throw new LabAuthorizationRevoked();return authorization.policy.verify(job);}},
+    publish:async job=>{
+      if(!active||!featureEnabled)throw new LabAuthorizationRevoked();
+      // Publication re-verifies the job's consent binding before the personal copy is written.
+      await authorization.policy.verify(job);
+      return publishLabResult({job,now,adapter:()=>{
+        const a=input.adapter();
+        if(typeof a.write!=='function'||typeof a.get!=='function')throw new OwnedStorageError('storage_unavailable');
+        return a as Required<Pick<typeof a,'write'|'get'>>;
+      }});
+    },
     requireCore:input.requireCore??requireConsumerCore,
   });
   return async(event:OwnedLabEvent):Promise<ApiGatewayV2Response>=>{

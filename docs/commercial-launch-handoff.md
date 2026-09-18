@@ -1,5 +1,9 @@
 # ALP commercial launch: owner actions and remaining engineering
 
+Latest source increment (September 18): [durable cloud publication of completed lab results](lab-result-publication.md).
+Completed analyses are published idempotently into the owner's personal storage under lab_history consent,
+with a republish route and receipt on the job; migration 79 verified in PGlite. Source only; not deployed.
+
 ## Current checkpoint — September 15 synthetic generation acceptance
 
 Subsequent source candidate: [independent production voice](production-owned-voice-candidate.md),

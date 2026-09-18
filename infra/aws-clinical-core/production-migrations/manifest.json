@@ -272,6 +272,10 @@
     {
       "version": "20260917210000",
       "file": "20260917210000_production_owned_processing_authorization.sql"
+    },
+    {
+      "version": "20260918010000",
+      "file": "20260918010000_production_owned_lab_analyses.sql"
     }
   ]
 }

@@ -5,6 +5,7 @@ vi.mock('@aws-sdk/client-sfn',()=>({SFNClient:class{send=mock.sfn;},StartExecuti
 import {createAwsLabAnalysisApiHandler as handler,createLabAnalysisApi,LAB_DELIVERY_VERSION,LAB_DELIVERY_ACK_VERSION} from './aws-lab-analysis-api';
 import {LabAuthorizationRevoked} from './owned-lab-authorization';
 import {isDeepStrictEqual} from 'node:util';
+import {createHash} from 'node:crypto';
 import {labRecoveryDescriptor} from './lab-job-inventory';
 const id='10000000-0000-4000-8000-000000000001',owner='20000000-0000-4000-8000-000000000001',other='30000000-0000-4000-8000-000000000001';
 const deviceA='a'.repeat(64),deviceB='b'.repeat(64);
@@ -28,6 +29,11 @@ beforeEach(()=>{
         if(!matches)throw Object.assign(new Error('conditional'),{name:'ConditionalCheckFailedException'});
         const next:Record<string,unknown>={...row,delivery:v[':delivery'],deliveryTransfers:v[':transfers'],updatedAt:v[':now']};delete next.deliveryAcknowledgment;
         rows.set(c.input.Key.pk,next);return {};
+      }
+      if(v[':publication']){
+        const conditionOk=row&&row.state===v[':completed']&&row.ownerSub===v[':owner']&&isDeepStrictEqual(row.result,v[':result']);
+        if(!conditionOk)throw Object.assign(new Error('conditional'),{name:'ConditionalCheckFailedException'});
+        rows.set(c.input.Key.pk,{...row,publication:v[':publication'],updatedAt:v[':now']});return {};
       }
       if(v[':ack']){
         if(row.state!==v[':completed']||row.ownerSub!==v[':owner']||(row.delivery as {bindingSha256:string})?.bindingSha256!==v[':binding']||row.deliveryAcknowledgment)throw Object.assign(new Error('conditional'),{name:'ConditionalCheckFailedException'});
@@ -199,5 +205,40 @@ describe('durable delivery acknowledgment',()=>{
     const production=createLabAnalysisApi({mode:'production',identity:()=>({sub:owner,'custom:person_id':owner,'custom:organization_id':owner}),capture:async()=>{throw new Error('not creation');},policy:{verify},requireCore:async()=>{throw new Error('not creation');},revalidatePrivacyIdentity:async()=>{throw new Error('not privacy');}});
     const result=await production(event('POST',`jobs/${id}/delivery`,{contractVersion:LAB_DELIVERY_ACK_VERSION,deviceBindingSha256:deviceA,disposition:'applied'}));
     expect(result.statusCode).toBe(403);expect(verify).toHaveBeenCalledOnce();expect(rows.get('job#'+id)!.deliveryAcknowledgment).toBeUndefined();
+  });
+});
+
+describe('durable cloud publication route',()=>{
+  const receipt=(status:'published'|'pending'|'refused',extra:Record<string,unknown>={})=>({version:'lab-publication/1' as const,status,resultSha256:createHash('sha256').update(JSON.stringify({analysisId:id})).digest('hex'),at:'2026-09-18T12:00:00.000Z',...extra});
+  const production=(publish?:(job:unknown)=>Promise<unknown>)=>createLabAnalysisApi({mode:'production',identity:(e)=>{const c=(e as {requestContext:{authorizer:{jwt:{claims:Record<string,string>}}}}).requestContext.authorizer.jwt.claims;return {sub:c.sub,'custom:person_id':c['custom:person_id'],'custom:organization_id':c['custom:organization_id']};},capture:async()=>{throw new Error('not creation');},policy:{verify:async()=>{}},requireCore:async()=>{},revalidatePrivacyIdentity:async()=>{},...(publish?{publish:publish as never}:{})});
+  it('publishes a completed result once, records the receipt, exposes it in status and inventory, and replays without republishing',async()=>{
+    rows.set('job#'+id,job({dataClassification:'personal_health_record'}));const publish=vi.fn(async()=>receipt('published',{recordId:owner,revision:1}));
+    const api=production(publish);
+    const first=await api(event('POST',`jobs/${id}/publication`));expect(first.statusCode).toBe(200);
+    expect(JSON.parse(first.body).data).toMatchObject({contractVersion:'lab-publication/1',jobId:id,publication:{status:'published',recordId:owner,revision:1}});
+    const status=JSON.parse((await api(event('GET',`jobs/${id}`))).body).data;expect(status.publication).toMatchObject({status:'published',recordId:owner});
+    expect(labRecoveryDescriptor(rows.get('job#'+id)!,{ownerSub:owner,organizationId:owner,personId:owner})!.publication).toEqual({status:'published'});
+    const again=await api(event('POST',`jobs/${id}/publication`));expect(again.statusCode).toBe(200);expect(publish).toHaveBeenCalledOnce();
+  });
+  it('retries a pending or refused publication, refuses unfinished jobs and other owners, and is unavailable in synthetic mode',async()=>{
+    rows.set('job#'+id,job({dataClassification:'personal_health_record',publication:receipt('pending',{reason:'storage_unavailable'})}));
+    const publish=vi.fn(async()=>receipt('refused',{reason:'lab_consent_required'}));const api=production(publish);
+    const retried=await api(event('POST',`jobs/${id}/publication`));expect(retried.statusCode).toBe(200);expect(JSON.parse(retried.body).data.publication).toMatchObject({status:'refused',reason:'lab_consent_required'});
+    expect(publish).toHaveBeenCalledOnce();
+    rows.set('job#'+id,job({dataClassification:'personal_health_record',state:'interpreting',result:undefined}));
+    expect((await api(event('POST',`jobs/${id}/publication`))).statusCode).toBe(409);
+    rows.set('job#'+id,job({dataClassification:'personal_health_record'}));
+    expect((await api(event('POST',`jobs/${id}/publication`,undefined,other))).statusCode).toBe(404);
+    expect((await production()(event('POST',`jobs/${id}/publication`))).statusCode).toBe(404);
+    rows.set('job#'+id,job());
+    expect((await handler(event('POST',`jobs/${id}/publication`))).statusCode).toBe(404);
+    expect(publish).toHaveBeenCalledOnce();
+  });
+  it('reports a pending receipt when the job record cannot be updated after publishing',async()=>{
+    rows.set('job#'+id,job({dataClassification:'personal_health_record'}));const api=production(async()=>receipt('published',{recordId:owner,revision:1}));
+    mock.db.mockImplementationOnce(async c=>{if(c.constructor.name==='GetCommand')return {Item:rows.get(c.input.Key.pk)};throw new Error('x');});
+    mock.db.mockImplementationOnce(async()=>{throw new Error('dynamo offline');});
+    const response=await api(event('POST',`jobs/${id}/publication`));
+    expect(response.statusCode).toBe(503);expect(JSON.parse(response.body).data).toMatchObject({error:'lab_publication_receipt_pending'});
   });
 });

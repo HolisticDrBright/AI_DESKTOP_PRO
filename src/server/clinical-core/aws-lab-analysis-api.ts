@@ -17,6 +17,7 @@ import { CoreSubscriptionError } from './core-subscription-guard';
 import { OwnedStorageError } from './owned-consumer-records';
 import { canonicalPayload } from './aws-consumer-clinical-records';
 import {createLabJobPrivacy,LabPrivacyError} from './lab-job-privacy';
+import { LAB_PUBLICATION_VERSION, publicPublication, type LabPublication, type PublishableLabJob } from './owned-lab-publication';
 
 const CONTRACT_VERSION = "lab-analysis/1";
 const MAX_BODY_BYTES = 256 * 1024;
@@ -111,6 +112,7 @@ type Job = {
   delivery?: LabDelivery;
   deliveryAcknowledgment?: LabDeliveryAcknowledgment;
   deliveryTransfers?: LabDeliveryTransfer[];
+  publication?: LabPublication;
 };
 export const LAB_DELIVERY_VERSION = 'lab-delivery/1';
 export const LAB_DELIVERY_ACK_VERSION = 'lab-delivery-ack/1';
@@ -134,6 +136,8 @@ export type LabApiOptions =
       policy: LabAuthorizationPolicy;
       revalidatePrivacyIdentity:(event:ApiEvent)=>Promise<void>;
       deletionGuard?:ExternalDeletionGuard;
+      /** Durable cloud publication of a completed result into personal storage; idempotent per result. */
+      publish?: (job: PublishableLabJob) => Promise<LabPublication>;
       requireCore: (headers: Record<string, string | undefined>) => Promise<void> };
 const CLASSIFICATION: Record<LabApiOptions['mode'], LabDataClassification> = { synthetic: 'synthetic_only', production: 'personal_health_record' };
 function classificationAccepted(input: Record<string, unknown>, options: LabApiOptions): boolean {
@@ -385,7 +389,35 @@ function status(job: Job) {
     result: sanitizeStoredResult(job.result),
     // Only present once a device has claimed delivery; older clients never see it.
     ...(job.delivery ? { delivery: { bindingSha256: job.delivery.bindingSha256, deliveredAt: job.delivery.deliveredAt } } : {}),
+    ...(publicPublication(job.publication) ? { publication: publicPublication(job.publication) } : {}),
   };
+}
+
+/** Explicit or retried cloud publication of a completed result. Idempotent:
+ * an already published job returns its receipt; a refused publication reports
+ * why without changing the job, delivery claim or result. */
+async function publishResult(identity: Claims, jobId: string, options: LabApiOptions) {
+  if (options.mode !== 'production' || !options.publish) return json(404, { contractVersion: LAB_PUBLICATION_VERSION, error: 'lab_publication_unavailable' });
+  const job = await ownedJob(jobId, identity, options);
+  if (!job) return refusal(404);
+  if (job.state !== 'completed' || !job.result) return json(409, { contractVersion: LAB_PUBLICATION_VERSION, error: 'lab_result_not_completed' });
+  const existing = publicPublication(job.publication);
+  if (existing && existing.status === 'published' && existing.resultSha256 === createHash('sha256').update(canonicalPayload(job.result as Record<string, unknown>)).digest('hex')) {
+    return json(200, { contractVersion: LAB_PUBLICATION_VERSION, jobId: job.pk.slice(4), publication: existing });
+  }
+  const publication = await options.publish(job);
+  try {
+    await db.send(new UpdateCommand({ TableName: required('LAB_JOB_TABLE'), Key: { pk: job.pk },
+      ConditionExpression: 'attribute_exists(pk) AND #state = :completed AND ownerSub = :owner AND #result = :result',
+      UpdateExpression: 'SET publication = :publication, updatedAt = :now',
+      ExpressionAttributeNames: { '#state': 'state', '#result': 'result' },
+      ExpressionAttributeValues: { ':publication': publication, ':completed': 'completed', ':owner': identity.sub, ':result': job.result, ':now': new Date().toISOString() } }));
+  } catch (error) {
+    if ((error as { name?: string })?.name === 'ConditionalCheckFailedException') return json(409, { contractVersion: LAB_PUBLICATION_VERSION, error: 'lab_pending_request_changed' });
+    // The personal copy may already exist; the receipt is not durable on the job yet. Retrying replays the same command.
+    return json(503, { contractVersion: LAB_PUBLICATION_VERSION, error: 'lab_publication_receipt_pending' });
+  }
+  return json(200, { contractVersion: LAB_PUBLICATION_VERSION, jobId: job.pk.slice(4), publication });
 }
 
 /** A completed result is claimed by exactly one device binding before that
@@ -865,8 +897,9 @@ export function createLabAnalysisApi(options: LabApiOptions) {
     }
     if (method === "POST" && (path === "/clinical-core/consumer/labs/jobs" || path === "/clinical-core/synthetic-session/labs/jobs")) return await createJob(event, identity, options);
     if (method === "POST" && (path === "/clinical-core/consumer/labs/plan-jobs" || path === "/clinical-core/synthetic-session/labs/plan-jobs")) return await createPlanJob(event, identity, options);
-    const match = typeof path === "string" ? path.match(/^\/clinical-core\/(?:consumer|synthetic-session)\/labs\/jobs\/([0-9a-f-]{36})(\/(?:complete-upload|resume-upload|cancel|delivery))?$/i) : null;
+    const match = typeof path === "string" ? path.match(/^\/clinical-core\/(?:consumer|synthetic-session)\/labs\/jobs\/([0-9a-f-]{36})(\/(?:complete-upload|resume-upload|cancel|delivery|publication))?$/i) : null;
     if (!match) return refusal(404);
+    if (method === 'POST' && match[2] === '/publication') return await publishResult(identity,match[1],options);
     if (method === 'POST' && match[2] === '/delivery') return await recordDelivery(event,identity,match[1],options);
     if (method === 'POST' && match[2] === '/cancel') return await cancelJob(event,identity,match[1],options);
     if (method === "POST" && match[2] === '/resume-upload') return await resumeUpload(identity, match[1], options);

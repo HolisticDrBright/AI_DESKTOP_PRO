@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { LAB_PUBLICATION_VERSION, type LabPublication } from "./owned-lab-publication";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { GetCommand, UpdateCommand, DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import { GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
@@ -611,7 +612,24 @@ export function reviewedMeasurementStatus(row: Biomarker): "optimal" | "normal" 
  * before the final result is stored. A synthetic worker must never process an
  * authorized job, and a production worker must never process an unauthorized
  * one: both fail closed rather than falling back. */
-export type LabWorkerOptions = { policy?: LabAuthorizationPolicy };
+export type LabWorkerOptions = { policy?: LabAuthorizationPolicy;
+  /** Production only: publish the completed result into the owner's personal
+   * storage. Failures are recorded on the job as pending, never as a pass failure. */
+  publish?: (job: Job & { result: unknown; updatedAt: string }) => Promise<LabPublication> };
+/** Records the publication receipt on the completed job without ever throwing;
+ * a lost record leaves the job publication-less and the API can republish idempotently. */
+async function recordPublication(pk: string, publication: LabPublication): Promise<void> {
+  try {
+    await db.send(new UpdateCommand({ TableName: required("LAB_JOB_TABLE"), Key: { pk },
+      ConditionExpression: "attribute_exists(pk) AND #state = :completed AND (attribute_not_exists(publication) OR publication.#status <> :published)",
+      UpdateExpression: "SET publication = :publication, updatedAt = :now",
+      ExpressionAttributeNames: { "#state": "state", "#status": "status" },
+      ExpressionAttributeValues: { ":publication": publication, ":completed": "completed", ":published": "published", ":now": new Date().toISOString() } }));
+  } catch (error) {
+    const name = error && typeof error === "object" ? (error as { name?: string }).name : undefined;
+    if (name !== "ConditionalCheckFailedException") console.warn("lab_publication_record_unconfirmed");
+  }
+}
 async function verifyAuthorization(job: Job, options: LabWorkerOptions): Promise<void> {
   if (options.policy) {
     if (!job.authorization) throw Object.assign(new Error("lab_authorization_missing"), { category: "consent_withdrawn" });
@@ -888,6 +906,15 @@ export async function createAwsLabAnalysisWorker(event: { jobId?: string; pass?:
       },
     }));
     console.info(JSON.stringify({ event: "lab_analysis_pass_completed", jobId, pass, terminal }));
+    if (terminal && options.publish) {
+      // The result is already durable on the job. Publication is a separate,
+      // idempotent cloud copy; its outcome is recorded, never allowed to fail the pass.
+      let publication: LabPublication;
+      try { publication = await options.publish({ ...job, result: output, updatedAt }); }
+      catch { publication = { version: LAB_PUBLICATION_VERSION, status: "pending", resultSha256: "0".repeat(64), at: new Date().toISOString(), reason: "storage_unavailable" }; }
+      console.info(JSON.stringify({ event: "lab_analysis_publication", jobId, status: publication.status, reason: publication.reason ?? null }));
+      await recordPublication(job.pk, publication);
+    }
     return { jobId, pass, completed: true };
   } catch (error) {
     // Only the owner may release a lease. A delayed invocation cannot unlock

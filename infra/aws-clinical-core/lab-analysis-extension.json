@@ -252,6 +252,8 @@
     "LabRecoverySyntheticRoute": {"Type":"AWS::ApiGatewayV2::Route","Properties":{"ApiId":{"Ref":"ClinicalApiId"},"RouteKey":"GET /clinical-core/synthetic-session/labs/jobs/{jobId}/recovery","AuthorizationType":"CUSTOM","AuthorizerId":{"Ref":"LabSyntheticSessionAuthorizer"},"Target":{"Fn::Sub":"integrations/${LabApiIntegration}"}}},
     "RecordLabDeliveryRoute": {"Type":"AWS::ApiGatewayV2::Route","Properties":{"ApiId":{"Ref":"ClinicalApiId"},"RouteKey":"POST /clinical-core/consumer/labs/jobs/{jobId}/delivery","AuthorizationType":"JWT","AuthorizerId":{"Ref":"LabConsumerAuthorizer"},"Target":{"Fn::Sub":"integrations/${LabApiIntegration}"}}},
     "RecordLabDeliverySyntheticRoute": {"Type":"AWS::ApiGatewayV2::Route","Properties":{"ApiId":{"Ref":"ClinicalApiId"},"RouteKey":"POST /clinical-core/synthetic-session/labs/jobs/{jobId}/delivery","AuthorizationType":"CUSTOM","AuthorizerId":{"Ref":"LabSyntheticSessionAuthorizer"},"Target":{"Fn::Sub":"integrations/${LabApiIntegration}"}}},
+    "PublishLabResultRoute": {"Type":"AWS::ApiGatewayV2::Route","Properties":{"ApiId":{"Ref":"ClinicalApiId"},"RouteKey":"POST /clinical-core/consumer/labs/jobs/{jobId}/publication","AuthorizationType":"JWT","AuthorizerId":{"Ref":"LabConsumerAuthorizer"},"Target":{"Fn::Sub":"integrations/${LabApiIntegration}"}}},
+    "PublishLabResultSyntheticRoute": {"Type":"AWS::ApiGatewayV2::Route","Properties":{"ApiId":{"Ref":"ClinicalApiId"},"RouteKey":"POST /clinical-core/synthetic-session/labs/jobs/{jobId}/publication","AuthorizationType":"CUSTOM","AuthorizerId":{"Ref":"LabSyntheticSessionAuthorizer"},"Target":{"Fn::Sub":"integrations/${LabApiIntegration}"}}},
     "LabPrivacyCopyConsumerRoute": {"Type":"AWS::ApiGatewayV2::Route","Properties":{"ApiId":{"Ref":"ClinicalApiId"},"RouteKey":"GET /clinical-core/consumer/labs/jobs/{jobId}/privacy-copy","AuthorizationType":"JWT","AuthorizerId":{"Ref":"LabConsumerAuthorizer"},"Target":{"Fn::Sub":"integrations/${LabApiIntegration}"}}},
     "LabPrivacyCopySyntheticRoute": {"Type":"AWS::ApiGatewayV2::Route","Properties":{"ApiId":{"Ref":"ClinicalApiId"},"RouteKey":"GET /clinical-core/synthetic-session/labs/jobs/{jobId}/privacy-copy","AuthorizationType":"CUSTOM","AuthorizerId":{"Ref":"LabSyntheticSessionAuthorizer"},"Target":{"Fn::Sub":"integrations/${LabApiIntegration}"}}},
     "LabPrivacyDocumentConsumerRoute": {"Type":"AWS::ApiGatewayV2::Route","Properties":{"ApiId":{"Ref":"ClinicalApiId"},"RouteKey":"POST /clinical-core/consumer/labs/jobs/{jobId}/documents/{documentId}/privacy-download","AuthorizationType":"JWT","AuthorizerId":{"Ref":"LabConsumerAuthorizer"},"Target":{"Fn::Sub":"integrations/${LabApiIntegration}"}}},
@@ -364,7 +366,7 @@
     "LabJobTableName": { "Value": { "Ref": "LabJobTable" } },
     "LabDocumentsBucketName": { "Value": { "Ref": "LabDocumentsBucket" } },
     "LabStateMachineArn": { "Value": { "Ref": "LabStateMachine" } },
-    "RoutesEnabled": { "Value": "34" },
+    "RoutesEnabled": { "Value": "36" },
     "SyntheticAppSessionEnabled": { "Value": "true" },
     "PhiAllowed": { "Value": "false" },
     "DataClassification": { "Value": "synthetic_only" }

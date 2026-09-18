@@ -1,7 +1,7 @@
 import { createOwnedActivePlan } from './owned-active-plan';
 import { createOwnedPrivacyRequests } from './owned-privacy-requests';
 import { canonicalPayload } from "./aws-consumer-clinical-records";
-import { OWNED_COLLECTIONS, hasReproductiveCollectionContext, validateOwnedPayload as validateCollectionPayload, withholdReproductiveContext, type OwnedCollection as ConsumerClinicalCollection } from './owned-lab-observations';
+import { OWNED_COLLECTIONS, hasReproductiveCollectionContext, ownedPayloadLimit, validateOwnedPayload as validateCollectionPayload, withholdReproductiveContext, type OwnedCollection as ConsumerClinicalCollection } from './owned-lab-observations';
 import type { ProductionClinicalRequestContext } from "./aws-identity-consent";
 import { createHash } from "node:crypto";
 import { clinicalUuid, ClinicalCoreDatabaseRejection, type ClinicalCoreDatabase, type ClinicalCoreTransaction } from "./database";
@@ -76,7 +76,7 @@ export function createOwnedConsumerRecordsAdapter(database: ClinicalCoreDatabase
         const value = object(raw);
         if (value.recordId !== input.recordId || !revision(value.revision,1) || typeof value.deleted !== "boolean" || !date(value.receivedAt)) unavailable();
         const payload = object(value.payload);
-        try { const encoded=canonicalPayload(payload); if (value.deleted ? encoded !== "{}" : false) unavailable(); if (!value.deleted) validateCollectionPayload(input.collection,payload); } catch { unavailable(); }
+        try { const encoded=canonicalPayload(payload,ownedPayloadLimit(input.collection)); if (value.deleted ? encoded !== "{}" : false) unavailable(); if (!value.deleted) validateCollectionPayload(input.collection,payload); } catch { unavailable(); }
         const [row]=await redactWithdrawnContext(tx,input.collection,[{recordId:input.recordId,revision:value.revision as number,payload,receivedAt:value.receivedAt as string}]);
         return {...row,deleted:value.deleted as boolean};
       });
@@ -108,7 +108,7 @@ export function createOwnedConsumerRecordsAdapter(database: ClinicalCoreDatabase
       if (input.payload.id !== undefined && input.payload.id !== input.recordId) invalid();
       try {
         if (!input.deleted) validateCollectionPayload(input.collection,input.payload);
-        payload = canonicalPayload(input.payload);
+        payload = canonicalPayload(input.payload,ownedPayloadLimit(input.collection));
       } catch { invalid(); }
       if (input.deleted && payload !== "{}") invalid();
       const reproductive = !input.deleted && input.collection === "lab_observations" && hasReproductiveCollectionContext(input.payload);
@@ -146,7 +146,7 @@ export function createOwnedConsumerRecordsAdapter(database: ClinicalCoreDatabase
           const value = object(row);
           if (typeof value.recordId !== "string" || !UUID.test(value.recordId) || !revision(value.revision,1) || !date(value.receivedAt)) unavailable();
           const payload = object(value.payload);
-          try { canonicalPayload(payload); validateCollectionPayload(input.collection,payload); } catch { unavailable(); }
+          try { canonicalPayload(payload,ownedPayloadLimit(input.collection)); validateCollectionPayload(input.collection,payload); } catch { unavailable(); }
           return { recordId: value.recordId as string,revision: value.revision as number,payload,receivedAt: value.receivedAt as string };
         });
         return redactWithdrawnContext(tx,input.collection,rows);

@@ -72,6 +72,38 @@ describe('production lab worker authorization',()=>{
     const stored=mock.db.mock.calls.filter(([c])=>c.constructor.name==='UpdateCommand'&&String(c.input.UpdateExpression).includes('#result'));
     expect(stored).toHaveLength(0);
   });
+  const terminalFixture=()=>{
+    mock.db.mockResolvedValueOnce({Item:job({authorization,state:'interpreting',passesCompleted:4,structuredBiomarkers:[]})});
+    const interpreted={biomarkers:[{canonicalName:'Fictional',reportedName:'Fictional',value:1,unit:'widgets',labMin:null,labMax:null,functionalMin:null,functionalMax:null,
+      sourceId:null,sourceVersion:null,population:null,confidence:99,documentId:uuid,page:1,status:'normal'}]};
+    mock.s3.mockImplementation(async c=>c.constructor.name==='GetObjectCommand'?{Body:{transformToString:async()=>JSON.stringify(interpreted)}}:{});
+    mock.openai.mockResolvedValue({summary:'Fictional.',uncertainty:'Fictional.',relationshipFindings:[],priorityActions:[],citations:[],referencedBiomarkerIds:[],longitudinalSummary:'',planImpact:{headline:'Fictional.',changes:[]},providerModel:'fictional-model',
+      generatedPlan:{title:'Fictional plan',summary:'Fictional.',confidence:0.5,tasks:[]}});
+  };
+  const publicationUpdates=()=>mock.db.mock.calls.filter(([c])=>c.constructor.name==='UpdateCommand'&&String(c.input.UpdateExpression).includes('publication'));
+  test('publishes the durable cloud copy only after the terminal result is stored and records the receipt',async()=>{
+    terminalFixture();const order:string[]=[];
+    const publish=vi.fn(async(published:{result:unknown;updatedAt:string})=>{order.push('publish');expect(published.result).toBeTruthy();expect(published.updatedAt).toBeTruthy();
+      return {version:'lab-publication/1' as const,status:'published' as const,resultSha256:'a'.repeat(64),at:'2026-09-18T12:00:00.000Z',recordId:uuid,revision:1};});
+    mock.db.mockImplementation(async c=>{if(c.constructor.name==='UpdateCommand'&&String(c.input.UpdateExpression).includes('#result'))order.push('result');return {};});
+    expect(await createAwsLabAnalysisWorker({jobId,pass:4},{policy:{verify:vi.fn(async()=>{})},publish})).toMatchObject({completed:true});
+    expect(order).toEqual(['result','publish']);
+    const [record]=publicationUpdates();expect(record[0].input.ExpressionAttributeValues[':publication']).toMatchObject({status:'published',recordId:uuid});
+    expect(String(record[0].input.ConditionExpression)).toContain('publication.#status <> :published');
+  });
+  test('a failed or throwing publication is recorded as pending and never fails the completed pass',async()=>{
+    terminalFixture();
+    const publish=vi.fn(async()=>{throw new Error('personal storage offline');});
+    expect(await createAwsLabAnalysisWorker({jobId,pass:4},{policy:{verify:vi.fn(async()=>{})},publish})).toMatchObject({completed:true});
+    expect(publicationUpdates()[0][0].input.ExpressionAttributeValues[':publication']).toMatchObject({status:'pending',reason:'storage_unavailable'});
+    terminalFixture();mock.db.mockImplementation(async c=>{if(String(c.input.UpdateExpression??'').includes('publication'))throw new Error('dynamo offline');return {};});
+    expect(await createAwsLabAnalysisWorker({jobId,pass:4},{policy:{verify:vi.fn(async()=>{})},publish:async()=>({version:'lab-publication/1' as const,status:'published' as const,resultSha256:'a'.repeat(64),at:'x'})})).toMatchObject({completed:true});
+  });
+  test('a synthetic worker without a publisher stores the result and publishes nothing',async()=>{
+    terminalFixture();
+    expect(await createAwsLabAnalysisWorker({jobId,pass:4},{policy:{verify:vi.fn(async()=>{})}})).toMatchObject({completed:true});
+    expect(publicationUpdates()).toHaveLength(0);
+  });
   test.each(['consent_withdrawn','account_deletion_write_blocked'])('accepts %s as a recorded failure category',async category=>{
     mock.db.mockResolvedValueOnce({});
     expect(await createAwsLabAnalysisWorker({jobId,pass:0,fail:true,failureCategory:category})).toMatchObject({failed:true});
