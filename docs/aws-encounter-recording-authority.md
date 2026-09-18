@@ -914,3 +914,50 @@ SIX ORIGINAL phase scopes remain incomplete. Prior V2a720614/CI35292487117 SUCCE
 Desktop e069b86/CI35292465614 legacy browser job still running at inspection.
 Prior Desktop5b67acd/CI35291079313 subsequently completed SUCCESS. New source
 requires its own CI; local capture build is not a cleanup deployment artifact.
+
+## September 17 — durable cleanup run leases and recheck queue
+
+Migration74 adds immutable run claims/results and a private mutable schedule
+derived from cleanup intents (including preceding-schema backfill). Claims commit
+before storage work. Exact replay acknowledges the claim without executing again;
+live leases exclude another executor. A new intent version immediately clears
+the old lease, and storage admission requires the exact current run and version.
+Every operation retains the existing hold/release/operator checks and five-second
+bound, shortened when the run lease expires. Expired/superseded workers cannot
+obtain another storage admission. This is not cancellation of an already-issued
+remote request or distributed-transaction proof.
+
+Results commit separately. Lost result writes leave the claim visible until lease
+expiry; late results are retained but cannot postpone newer work. Unknown partial
+progress uses a NULL deletion count, not an invented zero. Empty observations
+schedule another check in one hour, held work in one hour, remaining work in
+30seconds, and failures with exponential backoff capped at one hour. These are
+operational retry cadences, NOT retention policies or an approved late-write
+horizon. No completion state, intent removal or audioDeleted:true is introduced.
+
+The internal typed queue lists organization-scoped metadata using keyset paging
+and an organization/recording index. It reports unresolved attempts, current lease,
+outcome and next check; it does not return audio, object keys or credentials.
+Ordinary API roles cannot alter tables or forge results. Queue transactions have
+two-second lock and ten-second statement limits and contain no storage calls.
+The existing narrowly bounded hold-locked storage callback is unchanged.
+
+Verification: typecheck PASS; initial162focused tests PASS; full2662unit tests
+PASS/11existing skips/212files; lint0errors/4existing unrelated warnings;
+74-migration/zero-seed gate PASS; existing capture candidate build PASS. Canonical
+SQL tests exercise leases, replay, stale completion, intent revision, holds,
+backoff, unknown counts, scoped listing and direct-table refusal. Guard tests
+exercise missing/wrong run receipts and earlier lease deadlines. Tests use PGlite
+and fictional storage, NOT Aurora multi-connection or actual S3 deletion evidence.
+
+Still required engineering: authenticated operator service/UI and dispatch,
+cleanup deployment/IAM and reviewed worker binding, storage-side hold coordination,
+late-write/uncertain-version reconciliation and terminal evidence, encrypted local
+recording recovery, transcription/review-only drafts, and hosted/device acceptance.
+AWS ai-synthetic-staging credentials remain expired; no account switch, deployment,
+PHI activation or paid build. All SIX ORIGINAL phases remain incomplete.
+
+Final scoped pagination/other-organization SQL checks:121cases PASS. Graphify AST
+updated9188nodes/18571edges/732communities;30known omitted sources and5000-node
+HTML limit remain disclosed. PostgreSQL review informed the short queue
+transactions, timeout bounds and organization-first pagination index.

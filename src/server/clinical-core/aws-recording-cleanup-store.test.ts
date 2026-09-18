@@ -4,7 +4,7 @@ import type {S3Client} from '@aws-sdk/client-s3';
 import {createAwsRecordingCleanupStore} from './aws-recording-cleanup-store';
 import type {RecordingCleanupAdmission} from './recording-cleanup-authority';
 function fixture(){
-  const a={organizationId:randomUUID(),recordingId:randomUUID(),sessionId:randomUUID(),storage:{bucket:'fictional-bucket',expectedBucketOwner:'123456789012',region:'us-east-2'},
+  const a={organizationId:randomUUID(),recordingId:randomUUID(),sessionId:randomUUID(),runId:randomUUID(),storage:{bucket:'fictional-bucket',expectedBucketOwner:'123456789012',region:'us-east-2'},
     inventory:[{objectKey:'exact-key',segmentId:randomUUID()}]} as RecordingCleanupAdmission;
   const v={key:'exact-key',version:'exact-version',kind:'object' as const};
   const responses:Record<string,unknown>={GetBucketVersioningCommand:{Status:'Enabled'},GetObjectLockConfigurationCommand:{ObjectLockConfiguration:{ObjectLockEnabled:'Enabled'}},

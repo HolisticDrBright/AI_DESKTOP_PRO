@@ -74,6 +74,20 @@ describe('cleanup guard: identity, scope, transaction and bounded uncertainty',(
     f.admission.attempt.id=attemptId;operation.mockResolvedValue('FICTIONAL OPERATION');
     expect(await createRecordingCleanupAuthority(f.db)(context,{...f.request,attemptId},operation)).toBe('FICTIONAL OPERATION');
   });
+  it('requires the exact run fence and caps work at its returned lease deadline',async()=>{
+    vi.useFakeTimers();const f=fixture(),operation=vi.fn(),runId=randomUUID();
+    await expect(createRecordingCleanupAuthority(f.db)(context,{...f.request,runId},operation)).rejects.toThrow('service_unavailable');
+    f.admission.runId=randomUUID();
+    await expect(createRecordingCleanupAuthority(f.db)(context,{...f.request,runId},operation)).rejects.toThrow('service_unavailable');
+    expect(operation).not.toHaveBeenCalled();
+    f.admission.runId=runId;f.admission.validUntil=new Date(Date.now()+200).toISOString();
+    let signal:AbortSignal|undefined;
+    const pending=createRecordingCleanupAuthority(f.db)(context,{...f.request,runId},async(_a,s)=>{signal=s;return new Promise(()=>{});});
+    const rejected=expect(pending).rejects.toThrow('service_unavailable');
+    await vi.advanceTimersByTimeAsync(201);await rejected;
+    expect(signal?.aborted).toBe(true);expect(f.query).toHaveBeenCalledWith(expect.stringContaining('admit_recording_cleanup_run'));
+    expect(f.commits).not.toHaveBeenCalled();
+  });
   it('settles and rolls back independently of ignored cancellation; late completion cannot become a receipt',async()=>{
     vi.useFakeTimers();const f=fixture();let finish!:(v:string)=>void,signal:AbortSignal|undefined;
     const promise=createRecordingCleanupAuthority(f.db)(context,f.request,async(_a,s)=>{signal=s;return new Promise<string>(resolve=>{finish=resolve;});});

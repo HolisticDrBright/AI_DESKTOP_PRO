@@ -193,6 +193,8 @@ describe("Aurora RDS Data API transaction adapter", () => {
     ["recording_cleanup_attempt_required", "identity_refused"],
     ["recording_cleanup_attempt_invalid", "request_invalid"],
     ["recording_cleanup_attempt_conflict", "conflict"],
+    ["recording_cleanup_run_conflict", "conflict"],
+    ["recording_cleanup_run_invalid", "request_invalid"],
     ["privacy_operator_required", "identity_refused"],
     ["privacy_operator_assignment_required", "identity_refused"],
     ["privacy_queue_invalid", "request_invalid"],

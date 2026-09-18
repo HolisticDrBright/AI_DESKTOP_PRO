@@ -48,7 +48,7 @@ export function createAwsRecordingCleanupStore(clientForRegion=(region:string)=>
     },
     async remove(a,v,signal){
       const input=base(a,v);check(signal);
-      if(!a.attempt||a.attempt.objectVersion!==v.version||a.attempt.kind!==v.kind
+      if(!a.runId||!a.attempt||a.attempt.objectVersion!==v.version||a.attempt.kind!==v.kind
         ||a.inventory.find(s=>s.objectKey===v.key)?.segmentId!==a.attempt.segmentId)throw new RecordingCleanupError('access_refused');
       const result=await client(a.storage.region).send(new DeleteObjectCommand(input),{abortSignal:signal});check(signal);
       return {version:result.VersionId,deleteMarker:result.DeleteMarker};

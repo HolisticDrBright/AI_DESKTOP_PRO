@@ -6,7 +6,7 @@ import { recordingStorageSchema } from './recording-segments';
 import { createRecordingStorageBudget } from './recording-storage-budget';
 
 const uuid=z.string().uuid(), sha=z.string().regex(/^[a-f0-9]{64}$/);
-export const recordingCleanupRequestSchema=z.object({recordingId:uuid,version:z.number().int().positive().safe(),cleanupReleaseId:uuid,workerSha256:sha,attemptId:uuid.optional()}).strict();
+export const recordingCleanupRequestSchema=z.object({recordingId:uuid,version:z.number().int().positive().safe(),cleanupReleaseId:uuid,workerSha256:sha,attemptId:uuid.optional(),runId:uuid.optional()}).strict();
 export type RecordingCleanupRequest=z.infer<typeof recordingCleanupRequestSchema>;
 export const recordingCleanupAttemptSchema=z.object({id:uuid,segmentId:uuid,objectVersion:z.string().min(1).max(1024)
   .regex(/^[A-Za-z0-9+/=._-]+$/).refine(v=>v!=='null'),kind:z.enum(['object','delete_marker']),evidenceSha256:sha}).strict();
@@ -18,7 +18,7 @@ const segmentSchema=z.object({segmentId:uuid,sequence:z.number().int().min(0).ma
 export const recordingCleanupAdmissionSchema=z.object({recordingId:uuid,sessionId:uuid,organizationId:uuid,patientRecordId:uuid,
   version:z.number().int().positive().safe(),cleanupReleaseId:uuid,workerSha256:sha,storageReleaseId:uuid,storage:recordingStorageSchema,
   inventory:z.array(segmentSchema).max(4096),inventorySha256:sha,validUntil:z.string().datetime({offset:true}),audioDeleted:z.literal(false),
-  attempt:recordingCleanupAttemptSchema.optional()}).strict()
+  attempt:recordingCleanupAttemptSchema.optional(),runId:uuid.optional()}).strict()
   .refine(r=>new Set(r.inventory.map(s=>s.segmentId)).size===r.inventory.length
     && new Set(r.inventory.map(s=>s.sequence)).size===r.inventory.length
     && r.inventory.every(s=>s.storageReleaseId===r.storageReleaseId && s.bytes<=r.storage.maxSegmentBytes
@@ -56,16 +56,19 @@ export function createRecordingCleanupAuthority(database:ClinicalCoreDatabase){
           clinicalUuid(context.actorPersonId),clinicalUuid(context.organizationId),context.identityPool,context.identitySubject,
           context.purpose,context.environment,context.dataClassification]);
         const r=request.data;
-        const result=await tx.query<{data:unknown}>(r.attemptId
+        const result=await tx.query<{data:unknown}>(r.runId
+          ?'select clinical_private.admit_recording_cleanup_run($1,$2::bigint,$3,$4,$5,$6) as data'
+          :r.attemptId
           ?'select clinical_private.admit_recording_cleanup_attempt($1,$2::bigint,$3,$4,$5) as data'
           :'select clinical_private.admit_recording_cleanup($1,$2::bigint,$3,$4) as data',[
-          clinicalUuid(r.recordingId),r.version,clinicalUuid(r.cleanupReleaseId),r.workerSha256,...(r.attemptId?[clinicalUuid(r.attemptId)]:[])]);
+          clinicalUuid(r.recordingId),r.version,clinicalUuid(r.cleanupReleaseId),r.workerSha256,
+          ...(r.runId?[clinicalUuid(r.runId),r.attemptId?clinicalUuid(r.attemptId):null]:r.attemptId?[clinicalUuid(r.attemptId)]:[])]);
         if(result.rows.length!==1)throw new RecordingCleanupError('service_unavailable');
         const raw=result.rows[0].data, parsed=recordingCleanupAdmissionSchema.safeParse(typeof raw==='string'?JSON.parse(raw):raw);
         if(!parsed.success)throw new RecordingCleanupError('service_unavailable');
         const a=parsed.data;
         if(a.recordingId!==r.recordingId||a.organizationId!==context.organizationId||a.version!==r.version
-          ||a.cleanupReleaseId!==r.cleanupReleaseId||a.workerSha256!==r.workerSha256||a.attempt?.id!==r.attemptId)throw new RecordingCleanupError('service_unavailable');
+          ||a.cleanupReleaseId!==r.cleanupReleaseId||a.workerSha256!==r.workerSha256||a.attempt?.id!==r.attemptId||a.runId!==r.runId)throw new RecordingCleanupError('service_unavailable');
         return createRecordingStorageBudget(a.validUntil,5000).run(signal=>operation(a,signal));
       });
     }catch(error){

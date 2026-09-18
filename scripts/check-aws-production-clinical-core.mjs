@@ -16,7 +16,9 @@ const errors = [];
 const assert = (condition, message) => { if (!condition) errors.push(message); };
 
 assert(manifest.contract_version === "clinical-core-migrations/1", "generated manifest contract is invalid");
-assert(manifest.migrations.length === 73, "expected ten transformed migrations and sixty-three production overlays");
+assert(manifest.migrations.length === 74, "expected ten transformed migrations and sixty-four production overlays");
+assert(manifest.migrations.some(entry => entry.file === '20260917170000_production_recording_cleanup_rechecks.sql'),
+  "recording cleanup rechecks overlay missing");
 assert(manifest.migrations.some(entry => entry.file === '20260917160000_production_recording_cleanup_attempts.sql'),
   "recording cleanup attempts overlay missing");
 assert(manifest.migrations.some(entry => entry.file === '20260917150000_production_recording_cleanup_authority.sql'),

@@ -60,7 +60,7 @@ function verifyObject(a:RecordingCleanupAdmission,v:CleanupObjectVersion,h:Clean
 export function createRecordingCleanupWorker(deps:{authorize:ReturnType<typeof createRecordingCleanupAuthority>;attempts:RecordingCleanupAttempts;storage:RecordingCleanupStore}){
   return async(context:ProductionClinicalRequestContext,input:unknown):Promise<CleanupWorkerResult>=>{
     const parsed=recordingCleanupRequestSchema.safeParse(input);
-    if(!parsed.success||parsed.data.attemptId)throw new RecordingCleanupError('request_invalid');
+    if(!parsed.success||parsed.data.attemptId||!parsed.data.runId)throw new RecordingCleanupError('request_invalid');
     const request:RecordingCleanupRequest=parsed.data;
     const initial=await deps.authorize(context,request,async(a,signal)=>({a,page:verifiedPage(a,await deps.storage.list(a,signal))}));
     if(initial.page.versions.length===0)return {state:'empty_observed',deleteAcknowledged:0,audioDeleted:false,requiresRecheck:true};

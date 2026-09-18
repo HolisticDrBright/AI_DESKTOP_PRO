@@ -7,7 +7,7 @@ import type {ProductionClinicalRequestContext} from './aws-identity-consent';
 function fixture(count=1){
   const context:ProductionClinicalRequestContext={actorPersonId:randomUUID(),organizationId:randomUUID(),identityPool:'workforce',identitySubject:'fictional-subject',
     purpose:'consent_management',environment:'production-clinical',dataClassification:'clinical_phi',productionBound:true,containsPhi:true,realPatientData:true};
-  const request={recordingId:randomUUID(),version:2,cleanupReleaseId:randomUUID(),workerSha256:'a'.repeat(64)};
+  const request={recordingId:randomUUID(),version:2,cleanupReleaseId:randomUUID(),workerSha256:'a'.repeat(64),runId:randomUUID()};
   const sessionId=randomUUID(),storageReleaseId=randomUUID(),key=`encounter-recordings/${context.organizationId}/${request.recordingId}/${sessionId}/0-${'b'.repeat(64)}`;
   const a:RecordingCleanupAdmission={...request,sessionId,organizationId:context.organizationId,patientRecordId:randomUUID(),storageReleaseId,
     storage:{bucket:'fictional-bucket',expectedBucketOwner:'123456789012',region:'us-east-2',kmsKeyArn:'arn:aws:kms:us-east-2:123456789012:key/11111111-1111-4111-8111-111111111111',maxSegmentBytes:10000},
