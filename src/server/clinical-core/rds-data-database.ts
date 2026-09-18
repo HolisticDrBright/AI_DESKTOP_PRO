@@ -226,7 +226,9 @@ function classifyDatabaseRejection(error: unknown): ClinicalCoreDatabaseRejectio
   if (/\bspecimen_context_conflict\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");
   if (/\bspecimen_context_invalid\b/.test(message)) return new ClinicalCoreDatabaseRejection("request_invalid");
   if (/\b(specimen_context_refused|specimen_provider_approval_required)\b/.test(message)) return new ClinicalCoreDatabaseRejection("operation_refused");
-  if (/\b(owned_record_legal_hold|privacy_request_held)\b/.test(message)) return new ClinicalCoreDatabaseRejection("legal_hold");
+  if (/\b(owned_record_legal_hold|privacy_request_held|recording_cleanup_legal_hold)\b/.test(message)) return new ClinicalCoreDatabaseRejection("legal_hold");
+  if (/\brecording_cleanup_not_ready\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");
+  if (/\b(recording_cleanup_operator_required|recording_cleanup_release_required)\b/.test(message)) return new ClinicalCoreDatabaseRejection("identity_refused");
   if (/\bconsumer_owner_required\b/.test(message)) return new ClinicalCoreDatabaseRejection("identity_refused");
   if (/\b(consumer_storage_consent_required|reviewed_consent_release_required)\b/.test(message)) return new ClinicalCoreDatabaseRejection("consent_required");
   if (/\b(owned_record_revision_conflict|owned_record_idempotency_conflict|consent_revision_conflict|privacy_export_conflict)\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");

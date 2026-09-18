@@ -244,6 +244,10 @@
     {
       "version": "20260917140000",
       "file": "20260917140000_production_recording_cleanup_intents.sql"
+    },
+    {
+      "version": "20260917150000",
+      "file": "20260917150000_production_recording_cleanup_authority.sql"
     }
   ]
 }

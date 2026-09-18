@@ -11,14 +11,14 @@ export type { RecordingSegmentInput, RecordingSegmentReceipt } from '@/contracts
 
 const uuid = z.string().uuid();
 const version = z.string().min(1).max(1024).regex(/^[A-Za-z0-9+/=._-]+$/).refine(v => v !== 'null');
-const storageSchema = z.object({ bucket: z.string().regex(/^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/),
+export const recordingStorageSchema = z.object({ bucket: z.string().regex(/^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/),
   expectedBucketOwner: z.string().regex(/^\d{12}$/), region: z.string().regex(/^us-(east|west)-[12]$/),
   kmsKeyArn: z.string(), maxSegmentBytes: z.number().int().min(1).max(4194304) }).strict()
   .refine(s => new RegExp(`^arn:aws:kms:${s.region}:${s.expectedBucketOwner}:key/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$`).test(s.kmsKeyArn));
 export const recordingSegmentReservationSchema = recordingSegmentReceiptSchema.omit({ status: true }).extend({
   sessionId: uuid, status: z.enum(['reserved', 'stored']), objectVersion: version.nullable(),
   objectKey: z.string().max(512), acceptBefore: z.string().datetime({ offset: true }),
-  contentType: z.enum(['audio/webm', 'audio/ogg', 'audio/wav', 'audio/mp4', 'audio/mpeg']), storage: storageSchema,
+  contentType: z.enum(['audio/webm', 'audio/ogg', 'audio/wav', 'audio/mp4', 'audio/mpeg']), storage: recordingStorageSchema,
 }).strict().refine(r => (r.status === 'stored') === (r.objectVersion !== null));
 export type RecordingSegmentReservation = z.infer<typeof recordingSegmentReservationSchema>;
 export class RecordingUploadError extends Error {

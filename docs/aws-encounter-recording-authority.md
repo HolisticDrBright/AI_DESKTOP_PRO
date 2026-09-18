@@ -792,3 +792,59 @@ typecheck PASS;lint0errors/4existing warnings;recording capture candidate build
 PASS;canonical71-migration/zero-seed gate PASS. Graphify9076nodes/18311edges/
 712communities (30known omitted sources). Prior Desktop00583ef/35289750713 and
 b46d554/35290363870 were still running at inspection, not failed or passed.
+
+## September 17 — separately reviewed cleanup admission and legal holds
+
+Migration72 adds an internal cleanup authorization boundary, not a deployed
+deletion service. A capture token, patient grant, due queue item or ordinary
+practitioner membership alone is insufficient. Admission requires fresh active,
+production-bound workforce identity in the same active organization, purpose
+`consent_management`, a separately reviewed/unexpired operator assignment, and
+a reviewed cleanup release binding the exact capture release, storage release,
+retention-policy hash, worker artifact hash and qualification evidence. No such
+approvals or assignments are seeded. Review scope is immutable; revocation and
+retirement cannot be undone by the ordinary API role.
+
+Chart-level recording holds have explicit, attributable placement/release and
+immutable audit events. Admission checks these and personal legal holds for all
+recorded consumer associations, including revoked connections. Association
+history is append-only: later unlinking/deleting a connection cannot discard a
+known subject and silently remove their hold from consideration. Migration
+backfill can only recover connections still present in the database; it cannot
+reconstruct previously deleted historical links from absent evidence. Review of
+legacy attribution remains required before activating cleanup on legacy data.
+
+Encounter/capture locks serialize against lifecycle writers; patient locks
+serialize chart holds and connection changes; sorted owner locks match personal
+hold operations. Identity, membership, assignment, policy and release rows stay
+locked during the bounded callback. Admission rejects stale queue versions, not-
+yet-due items, live segment acceptance windows and mismatched storage. Archived
+charts and retired capture/storage releases can still reach reviewed cleanup;
+this never revives recording or processing rights. Storage identity remains the
+original immutable binding. Pending segments are included, not declared absent.
+
+The typed internal guard validates receipt scope and every exact object key,
+storage binding, size, sequence and receipt state. Its single operation is capped
+at five seconds (or earlier review expiry), independently of SDK cancellation.
+Late results cannot create a receipt or commit the admission transaction. This
+is NOT a distributed transaction: an already-issued remote operation could still
+finish after timeout. A future deletion worker must retain durable uncertain
+attempts, enumerate/reconcile versions and late writes, honor storage-side holds,
+and never turn timeout/empty HEAD into proof of erasure. The guard does not grant
+S3 IAM, delete anything, complete an intent, or return `audioDeleted:true`.
+
+Verification: full Desktop suite2609PASS/11existing skips/209files; typecheck
+PASS;72-migration/zero-seed gate PASS. Tests use actual canonical SQL in PGlite
+and fictional records, including separate privilege, assignment expiry/future/
+revocation, reviewed-policy failures, holds through unlinking, archived charts,
+pending uploads, stale versions, immutable evidence, typed callback transaction
+rollback and ignored-cancellation timeouts. Initial test authoring errors (missing
+brace and inferred UUID parameter type) were corrected before final verification.
+PGlite is not multi-connection Aurora concurrency qualification. No hosted storage
+deletion, deployed migration, operator UI/worker authentication, physical device
+or production acceptance is claimed. All SIX ORIGINAL phases remain incomplete.
+
+Final lint:0errors/4existing unrelated warnings. Recording capture candidate build
+PASS (local artifact only). Prior V2 2aec44c CI passed. Prior Desktop5b67acd/
+CI35291079313 still had its legacy browser job running when inspected; no result
+is inferred for that run. The new cleanup candidate needs its own CI.
