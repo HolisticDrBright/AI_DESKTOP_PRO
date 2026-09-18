@@ -4,6 +4,7 @@ vi.mock('@aws-sdk/lib-dynamodb',async importOriginal=>({...await importOriginal<
 vi.mock('@aws-sdk/client-sfn',()=>({SFNClient:class{send=mock.sfn;},StartExecutionCommand:class{constructor(public input:unknown){}}}));
 import {createAwsLabAnalysisApiHandler as handler,createLabAnalysisApi,LAB_DELIVERY_VERSION,LAB_DELIVERY_ACK_VERSION} from './aws-lab-analysis-api';
 import {LabAuthorizationRevoked} from './owned-lab-authorization';
+import {isDeepStrictEqual} from 'node:util';
 import {labRecoveryDescriptor} from './lab-job-inventory';
 const id='10000000-0000-4000-8000-000000000001',owner='20000000-0000-4000-8000-000000000001',other='30000000-0000-4000-8000-000000000001';
 const deviceA='a'.repeat(64),deviceB='b'.repeat(64);
@@ -19,6 +20,15 @@ beforeEach(()=>{
     if(c.constructor.name==='UpdateCommand'){
       const row=rows.get(c.input.Key.pk)!;const v=c.input.ExpressionAttributeValues;
       const condition=c.input.ConditionExpression as string;
+      if(v[':transfers']){
+        const matches=row&&row.state===v[':completed']&&row.ownerSub===v[':owner']&&row.organizationId===v[':organization']&&row.personId===v[':person']
+          &&row.dataClassification===v[':classification']&&row.expiresAt===v[':expiry']&&Number(row.expiresAt)>v[':clock']
+          &&isDeepStrictEqual(row.delivery,v[':previousDelivery'])&&isDeepStrictEqual(row.result,v[':result'])
+          &&isDeepStrictEqual(row.deliveryAcknowledgment,v[':previousAck'])&&isDeepStrictEqual(row.deliveryTransfers,v[':previousTransfers']);
+        if(!matches)throw Object.assign(new Error('conditional'),{name:'ConditionalCheckFailedException'});
+        const next:Record<string,unknown>={...row,delivery:v[':delivery'],deliveryTransfers:v[':transfers'],updatedAt:v[':now']};delete next.deliveryAcknowledgment;
+        rows.set(c.input.Key.pk,next);return {};
+      }
       if(v[':ack']){
         if(row.state!==v[':completed']||row.ownerSub!==v[':owner']||(row.delivery as {bindingSha256:string})?.bindingSha256!==v[':binding']||row.deliveryAcknowledgment)throw Object.assign(new Error('conditional'),{name:'ConditionalCheckFailedException'});
         rows.set(c.input.Key.pk,{...row,deliveryAcknowledgment:v[':ack'],updatedAt:v[':now']});return {};
@@ -63,6 +73,84 @@ describe('device-bound delivery claims',()=>{
     rows.set('job#'+id,job());
     expect(JSON.parse((await handler(event('GET',`jobs/${id}`))).body).data).not.toHaveProperty('delivery');
     expect(()=>labRecoveryDescriptor(job({delivery:{bindingSha256:'nope'}}),{ownerSub:owner,organizationId:owner,personId:owner})).toThrow('lab_inventory_invalid');
+  });
+});
+
+const reviewTransfer=async(to=deviceB,sub=owner)=>handler(event('POST',`jobs/${id}/delivery`,{contractVersion:'lab-delivery-transfer-review/1',toBindingSha256:to},sub));
+const transferCommand=(preview:Record<string,unknown>)=>({contractVersion:'lab-delivery-transfer/1',claimSha256:preview.claimSha256,
+  fromBindingSha256:preview.fromBindingSha256,toBindingSha256:preview.toBindingSha256,confirmTransfer:true});
+const transfer=(preview:Record<string,unknown>,sub=owner)=>handler(event('POST',`jobs/${id}/delivery`,transferCommand(preview),sub));
+describe('explicit lost-phone delivery transfer',()=>{
+  async function prepare(){rows.set('job#'+id,job());await claim(deviceA);return JSON.parse((await reviewTransfer()).body).data;}
+  it('reviews without writing, transfers only the claim, retains prior ACK and allows the new device to persist',async()=>{
+    await prepare();await ack();const before=structuredClone(rows.get('job#'+id));
+    const preview=JSON.parse((await reviewTransfer()).body).data;
+    expect(rows.get('job#'+id)).toEqual(before);expect(preview).toMatchObject({contractVersion:'lab-delivery-transfer-review/1',jobId:id,fromBindingSha256:deviceA,toBindingSha256:deviceB});
+    expect(Object.keys(preview).sort()).toEqual(['claimSha256','contractVersion','fromBindingSha256','jobId','resultSha256','toBindingSha256']);
+    const result=await transfer(preview);expect(result.statusCode).toBe(200);
+    const row=rows.get('job#'+id)!;expect(row.result).toEqual(before!.result);expect(row.state).toBe('completed');
+    expect(row.deliveryAcknowledgment).toBeUndefined();expect(row.deliveryTransfers).toEqual([expect.objectContaining({previousAcknowledgment:before!.deliveryAcknowledgment,previousDelivery:before!.delivery})]);
+    expect((await claim(deviceA)).statusCode).toBe(409);expect((await ack(deviceA)).statusCode).toBe(409);
+    expect((await claim(deviceB)).statusCode).toBe(200);expect((await ack(deviceB)).statusCode).toBe(200);
+    const replay=await transfer(preview);expect(replay.body).toEqual(result.body);expect((rows.get('job#'+id)!.deliveryTransfers as unknown[]).length).toBe(1);
+  });
+  it('rejects tampered reviews, absent confirmation, same device, wrong users and unsupported fields',async()=>{
+    const preview=await prepare();expect((await reviewTransfer(deviceA)).statusCode).toBe(409);expect((await reviewTransfer(deviceB,other)).statusCode).toBe(404);
+    expect((await transfer(preview,other)).statusCode).toBe(404);
+    for(const patch of [{claimSha256:'d'.repeat(64)},{fromBindingSha256:'c'.repeat(64)}])expect((await transfer({...preview,...patch})).statusCode).toBe(409);
+    for(const patch of [{confirmTransfer:false},{confirmTransfer:undefined},{extra:true},{toBindingSha256:deviceA},{claimSha256:'bad'}]){
+      const response=await handler(event('POST',`jobs/${id}/delivery`,{...transferCommand(preview),...patch}));expect(response.statusCode).toBe(400);
+    }
+    expect(rows.get('job#'+id)!.deliveryTransfers).toBeUndefined();
+  });
+  it.each(['ack','claim','result','expiry','deleting'] as const)('refuses a review after %s changes',async mode=>{
+    const preview=await prepare();
+    if(mode==='ack')await ack();if(mode==='claim')await claim(deviceA);if(mode==='result')rows.get('job#'+id)!.result={changed:true};
+    if(mode==='expiry')rows.get('job#'+id)!.expiresAt=Math.floor(Date.now()/1000)-1;if(mode==='deleting')rows.get('job#'+id)!.state='deleting';
+    expect((await transfer(preview)).statusCode).toBe(mode==='deleting'?404:409);expect(rows.get('job#'+id)!.deliveryTransfers).toBeUndefined();
+  });
+  it.each(['ack','result','deleted','other_transfer','classification','organization','person'] as const)('conditional update fences a concurrent %s after the authorized read',async mode=>{
+    const preview=await prepare(),original=mock.db.getMockImplementation()!;
+    mock.db.mockImplementation(async c=>{
+      if(c.input.ExpressionAttributeValues?.[':transfers']){
+        const row=rows.get('job#'+id)!;
+        if(mode==='ack')row.deliveryAcknowledgment={bindingSha256:deviceA,disposition:'applied'};
+        if(mode==='result')row.result={changed:true};if(mode==='deleted')rows.delete('job#'+id);
+        if(mode==='other_transfer')row.delivery={bindingSha256:'c'.repeat(64),deliveredAt:new Date().toISOString(),count:1};
+        if(mode==='classification')row.dataClassification='personal_health_record';if(mode==='organization')row.organizationId=other;if(mode==='person')row.personId=other;
+      }
+      return original(c);
+    });
+    expect((await transfer(preview)).statusCode).toBe(409);
+    expect(rows.get('job#'+id)?.deliveryTransfers).toBeUndefined();
+  });
+  it('reconciles simultaneous identical requests without duplicate audit entries',async()=>{
+    const preview=await prepare(),results=await Promise.all([transfer(preview),transfer(preview)]);
+    expect(results.map(r=>r.statusCode)).toEqual([200,200]);expect(results[0].body).toEqual(results[1].body);
+    expect((rows.get('job#'+id)!.deliveryTransfers as unknown[]).length).toBe(1);
+  });
+  it('preserves newer decisions after A to B to A and refuses stale transfer replay',async()=>{
+    const preview=await prepare();await transfer(preview);
+    const reverse=JSON.parse((await reviewTransfer(deviceA)).body).data;expect((await transfer(reverse)).statusCode).toBe(200);
+    expect((await transfer(preview)).statusCode).toBe(409);expect((rows.get('job#'+id)!.delivery as {bindingSha256:string}).bindingSha256).toBe(deviceA);
+  });
+  it('bounds transfer history without dropping old receipts or extending expiry',async()=>{
+    await prepare();const expiry=rows.get('job#'+id)!.expiresAt;
+    for(let index=0;index<16;index++){
+      const preview=JSON.parse((await reviewTransfer(index%2?deviceA:deviceB)).body).data;
+      expect((await transfer(preview)).statusCode).toBe(200);
+    }
+    expect((await reviewTransfer(deviceB)).statusCode).toBe(409);
+    expect((rows.get('job#'+id)!.deliveryTransfers as unknown[]).length).toBe(16);expect(rows.get('job#'+id)!.expiresAt).toBe(expiry);
+  });
+  it('production review and confirmation independently enforce current consent/account closure',async()=>{
+    const preview=await prepare();rows.get('job#'+id)!.dataClassification='personal_health_record';
+    const verify=vi.fn(async()=>{throw new LabAuthorizationRevoked('account_deletion_write_blocked');});
+    const production=createLabAnalysisApi({mode:'production',identity:()=>({sub:owner,'custom:person_id':owner,'custom:organization_id':owner}),capture:async()=>{throw new Error('not creation');},policy:{verify},requireCore:async()=>{},revalidatePrivacyIdentity:async()=>{}});
+    for(const input of [{contractVersion:'lab-delivery-transfer-review/1',toBindingSha256:deviceB},transferCommand(preview)]){
+      const response=await production(event('POST',`jobs/${id}/delivery`,input));expect(response.statusCode).toBe(403);expect(response.body).toContain('account_deletion_write_blocked');
+    }
+    expect(verify).toHaveBeenCalledTimes(2);expect(rows.get('job#'+id)!.deliveryTransfers).toBeUndefined();
   });
 });
 

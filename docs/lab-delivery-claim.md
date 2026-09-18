@@ -16,6 +16,10 @@ exists, so older clients keep parsing. Production-owned mode applies the same
 consent re-authorization to this route. Both synthetic and owned templates gain
 the route (30 synthetic routes, 15 owned routes).
 
+Source follow-up: `lab-delivery-transfer.md` adds an explicit reviewed claim
+transfer to a replacement installation. It is not deployed and requires a
+matching client. The historical limits below describe the original increment.
+
 Not covered: cross-device release of a claim (a lost phone keeps its claim until
 the job expires or is deleted), clinic-sync receipts, and physical two-device
 acceptance. A claim is a delivery record, not proof that the device persisted

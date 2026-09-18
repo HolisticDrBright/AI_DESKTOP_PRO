@@ -26,7 +26,7 @@ export class LabPrivacyError extends Error{
 }
 function fail(code:LabPrivacyError['code'],status:number):never{throw new LabPrivacyError(code,status);}
 const copyFields=['panelId','sourcePanel','sourcePanelSha256','sourceContextSha256','structuredBiomarkers','patientContext','longitudinalContext',
-  'rangeReleaseSha256','recoveryRequest','delivery','deliveryAcknowledgment'] as const;
+  'rangeReleaseSha256','recoveryRequest','delivery','deliveryAcknowledgment','deliveryTransfers'] as const;
 /** Read-only owner copy, not a result-delivery claim, plan adoption or processor.
  * Current AI consent and Core entitlement are intentionally NOT dependencies.
  * Production caller still enforces deployment gates and active database identity.

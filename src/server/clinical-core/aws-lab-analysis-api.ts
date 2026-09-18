@@ -110,9 +110,14 @@ type Job = {
   /** Device-bound delivery claim recorded before a device commits the result locally. */
   delivery?: LabDelivery;
   deliveryAcknowledgment?: LabDeliveryAcknowledgment;
+  deliveryTransfers?: LabDeliveryTransfer[];
 };
 export const LAB_DELIVERY_VERSION = 'lab-delivery/1';
 export const LAB_DELIVERY_ACK_VERSION = 'lab-delivery-ack/1';
+export const LAB_DELIVERY_TRANSFER_REVIEW_VERSION='lab-delivery-transfer-review/1';
+export const LAB_DELIVERY_TRANSFER_VERSION='lab-delivery-transfer/1';
+export type LabDeliveryTransfer={claimSha256:string;fromBindingSha256:string;toBindingSha256:string;resultSha256:string;transferredAt:string;
+  previousDelivery:LabDelivery;previousAcknowledgment?:LabDeliveryAcknowledgment};
 export type LabDeliveryAcknowledgment = {bindingSha256:string;disposition:'applied'|'archived_not_applied';acknowledgedAt:string;resultSha256:string};
 export type LabDelivery = { bindingSha256: string; deliveredAt: string; count: number };
 const DEVICE_BINDING = /^[a-f0-9]{64}$/;
@@ -385,10 +390,11 @@ function status(job: Job) {
 
 /** A completed result is claimed by exactly one device binding before that
  * device commits it locally. The same device may claim again (retry after a
- * failed local commit); a different device cannot claim this job. This is not
+ * failed local commit); a different device needs the explicit transfer flow. This is not
  * proof of persistence or active-plan adoption. The result is not changed. */
 async function recordDelivery(event: ApiEvent, identity: Claims, jobId: string, options: LabApiOptions) {
   const input = body(event);
+  if(input.contractVersion===LAB_DELIVERY_TRANSFER_REVIEW_VERSION||input.contractVersion===LAB_DELIVERY_TRANSFER_VERSION)return transferDelivery(input,identity,jobId,options);
   if(input.contractVersion===LAB_DELIVERY_ACK_VERSION)return acknowledgeDelivery(input,identity,jobId,options);
   if (Object.keys(input).sort().join(',') !== 'contractVersion,deviceBindingSha256' || input.contractVersion !== LAB_DELIVERY_VERSION
     || typeof input.deviceBindingSha256 !== 'string' || !DEVICE_BINDING.test(input.deviceBindingSha256)) return refusal();
@@ -449,6 +455,62 @@ async function acknowledgeDelivery(input:Record<string,unknown>,identity:Claims,
       ?reply(fresh.deliveryAcknowledgment!):conflict();
   }
   return reply(acknowledgment);
+}
+
+/** Explicit owner-authorized relocation, not erasure of the old phone or proof
+ * of local persistence. Historical claims/ACKs are retained in the same row. */
+async function transferDelivery(input:Record<string,unknown>,identity:Claims,jobId:string,options:LabApiOptions){
+  const review=input.contractVersion===LAB_DELIVERY_TRANSFER_REVIEW_VERSION;
+  const version=review?LAB_DELIVERY_TRANSFER_REVIEW_VERSION:LAB_DELIVERY_TRANSFER_VERSION;
+  const conflict=()=>json(409,{contractVersion:version,error:'lab_delivery_conflict'});
+  if(Object.keys(input).sort().join(',')!==(review?'contractVersion,toBindingSha256':'claimSha256,confirmTransfer,contractVersion,fromBindingSha256,toBindingSha256')
+    ||typeof input.toBindingSha256!=='string'||!DEVICE_BINDING.test(input.toBindingSha256)
+    ||(!review&&(input.confirmTransfer!==true||typeof input.fromBindingSha256!=='string'||!DEVICE_BINDING.test(input.fromBindingSha256)
+      ||typeof input.claimSha256!=='string'||!DEVICE_BINDING.test(input.claimSha256)||input.fromBindingSha256===input.toBindingSha256)))return refusal();
+  const job=await ownedJob(jobId,identity,options);if(!job)return refusal(404);
+  const usable=(row:Job)=>row.state==='completed'&&row.expiresAt>Math.floor(Date.now()/1000)
+    &&row.result&&typeof row.result==='object'&&!Array.isArray(row.result)&&row.delivery
+    &&DEVICE_BINDING.test(row.delivery.bindingSha256)&&Number.isSafeInteger(row.delivery.count)&&row.delivery.count>0
+    &&Number.isFinite(Date.parse(row.delivery.deliveredAt))&&(!row.deliveryTransfers||Array.isArray(row.deliveryTransfers)&&row.deliveryTransfers.length<=16);
+  if(!usable(job))return conflict();
+  const resultHash=(row:Job)=>createHash('sha256').update(canonicalPayload(row.result as Record<string,unknown>)).digest('hex');
+  const resultSha256=resultHash(job);
+  const publicTransfer=(row:LabDeliveryTransfer)=>({claimSha256:row.claimSha256,fromBindingSha256:row.fromBindingSha256,toBindingSha256:row.toBindingSha256,resultSha256:row.resultSha256,transferredAt:row.transferredAt});
+  const replay=(row:Job)=>{
+    const last=row.deliveryTransfers?.at(-1);
+    return usable(row)&&last&&last.claimSha256===input.claimSha256&&last.fromBindingSha256===input.fromBindingSha256
+      &&last.toBindingSha256===input.toBindingSha256&&row.delivery?.bindingSha256===input.toBindingSha256
+      &&last.resultSha256===resultHash(row)?last:null;
+  };
+  const receipt=(record:LabDeliveryTransfer)=>json(200,{contractVersion:LAB_DELIVERY_TRANSFER_VERSION,jobId,transfer:publicTransfer(record)});
+  if(!review){const prior=replay(job);if(prior)return receipt(prior);}
+  if(job.delivery!.bindingSha256===input.toBindingSha256||(job.deliveryTransfers?.length??0)>=16)return conflict();
+  // Includes prior transfers, so moving A→B→A cannot make an old review current.
+  const claimSha256=createHash('sha256').update(canonicalPayload({jobId,resultSha256,expiresAt:job.expiresAt,
+    delivery:job.delivery,acknowledgment:job.deliveryAcknowledgment??null,transfers:job.deliveryTransfers??[]})).digest('hex');
+  if(review)return json(200,{contractVersion:version,jobId,claimSha256,fromBindingSha256:job.delivery!.bindingSha256,toBindingSha256:input.toBindingSha256,resultSha256});
+  if(input.fromBindingSha256!==job.delivery!.bindingSha256||input.claimSha256!==claimSha256)return conflict();
+  const at=new Date().toISOString();
+  const transfer:LabDeliveryTransfer={claimSha256,fromBindingSha256:job.delivery!.bindingSha256,toBindingSha256:input.toBindingSha256,resultSha256,transferredAt:at,
+    previousDelivery:job.delivery!,...(job.deliveryAcknowledgment?{previousAcknowledgment:job.deliveryAcknowledgment}:{})};
+  try{
+    await db.send(new UpdateCommand({TableName:required('LAB_JOB_TABLE'),Key:{pk:job.pk},
+      UpdateExpression:'SET delivery = :delivery, deliveryTransfers = :transfers, updatedAt = :now REMOVE deliveryAcknowledgment',
+      ConditionExpression:'#state = :completed AND ownerSub = :owner AND organizationId = :organization AND personId = :person AND delivery = :previousDelivery AND #result = :result AND expiresAt = :expiry AND expiresAt > :clock AND '
+        +(job.dataClassification?'dataClassification = :classification':'attribute_not_exists(dataClassification)')+' AND '
+        +(job.deliveryAcknowledgment?'deliveryAcknowledgment = :previousAck':'attribute_not_exists(deliveryAcknowledgment)')+' AND '
+        +(job.deliveryTransfers?'deliveryTransfers = :previousTransfers':'attribute_not_exists(deliveryTransfers)'),
+      ExpressionAttributeNames:{'#state':'state','#result':'result'},ExpressionAttributeValues:{':delivery':{bindingSha256:input.toBindingSha256,deliveredAt:at,count:1},
+        ':transfers':[...(job.deliveryTransfers??[]),transfer],':now':at,':completed':'completed',':owner':identity.sub,':organization':job.organizationId,':person':job.personId,
+        ...(job.dataClassification?{':classification':job.dataClassification}:{}),':previousDelivery':job.delivery,':result':job.result,
+        ':expiry':job.expiresAt,':clock':Math.floor(Date.now()/1000),...(job.deliveryAcknowledgment?{':previousAck':job.deliveryAcknowledgment}:{}),
+        ...(job.deliveryTransfers?{':previousTransfers':job.deliveryTransfers}:{})}}));
+  }catch(error){
+    if((error as {name?:string})?.name!=='ConditionalCheckFailedException')throw error;
+    const fresh=await ownedJob(jobId,identity,options),prior=fresh?replay(fresh):null;
+    return prior?receipt(prior):conflict();
+  }
+  return receipt(transfer);
 }
 
 async function ownedJob(jobId: string, identity: Claims, options: LabApiOptions, includeDeleting = false): Promise<Job | null> {

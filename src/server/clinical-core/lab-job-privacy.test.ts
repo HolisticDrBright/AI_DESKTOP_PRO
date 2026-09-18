@@ -20,7 +20,11 @@ beforeEach(()=>{row=fixture();deps={classification:'personal_health_record',pref
   sign:vi.fn(async()=>'https://fictional.s3.us-east-2.amazonaws.com/version-pinned')};});
 describe('owner-only retained lab privacy copies',()=>{
   it('exports retained expired processing inputs/results without processing, object keys or credentials',async()=>{
+    row.deliveryTransfers=[{fromBindingSha256:'a'.repeat(64),toBindingSha256:'b'.repeat(64),claimSha256:'c'.repeat(64),resultSha256:'d'.repeat(64),
+      transferredAt:new Date(now).toISOString(),previousDelivery:{bindingSha256:'a'.repeat(64),deliveredAt:new Date(now-1000).toISOString(),count:1},
+      previousAcknowledgment:{bindingSha256:'a'.repeat(64),disposition:'applied',resultSha256:'d'.repeat(64),acknowledgedAt:new Date(now-500).toISOString()}}];
     const out=await createLabJobPrivacy(deps).copy(scope,jobId);
+    expect(out.record).toMatchObject({deliveryTransfers:row.deliveryTransfers});
     expect(out.coverage.completeAccountExport).toBe(false);expect(out.coverage.excluded).toContain('original_document_bytes');
     expect(out.record.result).toEqual({biomarkers:[{name:'fictional',value:0}]});
     expect(out.record).toMatchObject({structuredBiomarkers:[{name:'fictional',value:0}]});
