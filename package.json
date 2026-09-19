@@ -54,6 +54,7 @@
     "check:aws-desktop-compatibility-contract": "node scripts/check-aws-desktop-compatibility-contract.mjs",
     "build:aws-desktop-operation-inventory": "node scripts/build-aws-desktop-operation-inventory.mjs --write",
     "check:aws-desktop-operation-inventory": "node scripts/check-aws-desktop-operation-inventory.mjs",
+    "check:aws-core-launch-scope": "node scripts/check-aws-core-launch-scope.mjs",
     "build:aws-production-clinical-core": "node scripts/build-aws-production-clinical-core.mjs",
     "build:aws-recording-authority": "node scripts/build-aws-recording-authority.mjs",
     "build:aws-recording-capture": "node scripts/build-aws-recording-authority.mjs --capture",

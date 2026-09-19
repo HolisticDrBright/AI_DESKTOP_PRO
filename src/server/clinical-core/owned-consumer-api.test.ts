@@ -40,6 +40,16 @@ describe("independent consumer API",()=>{
     e.queryStringParameters={collection:"wellness_profiles",cursor:"bad"}; expect((await s.handler(e)).statusCode).toBe(400);
     e.routeKey="GET /clinical-core/workforce/personal/records"; expect((await s.handler(e)).statusCode).toBe(404);
   });
+  it("publishes the deployment's enabled scopes as posture without touching stored data",async()=>{
+    const s=setup({...config,allowedScopes:["lab_history","ai_context","forms_checkins"]});
+    const e=event("GET /clinical-core/consumer/personal/posture");e.queryStringParameters={};
+    const r=await s.handler(e);expect(r.statusCode).toBe(200);
+    expect(JSON.parse(r.body).data).toEqual({contractVersion:"personal-posture/1",launchTier:"core",enabledScopes:["ai_context","forms_checkins","lab_history"]});
+    expect(s.adapter).not.toHaveBeenCalled();expect(r.headers["cache-control"]).toBe("no-store");
+    e.queryStringParameters={collection:"wellness_profiles"};expect((await s.handler(e)).statusCode).toBe(400);
+    const unverified=event("GET /clinical-core/consumer/personal/posture");unverified.queryStringParameters={};delete unverified.requestContext;
+    expect((await s.handler(unverified)).statusCode).toBe(401);
+  });
   it("does not activate wearable or reproductive scopes with Core identity alone",async()=>{
     const s=setup(); const e=event(); e.queryStringParameters={collection:"wearable_daily_records"};
     expect(JSON.parse((await s.handler(e)).body).error).toBe("feature_scope_not_enabled"); expect(s.adapter).not.toHaveBeenCalled();

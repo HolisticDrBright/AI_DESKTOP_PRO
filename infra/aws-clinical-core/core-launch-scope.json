@@ -1,0 +1,53 @@
+{
+  "contractVersion": "core-launch-scope/1",
+  "launchTier": "core",
+  "declaredOn": "2026-09-19",
+  "purpose": "Engineering declaration of the personal-storage scopes and consumer features that the Core release claims. It activates nothing. PHI, activation state and each deployment's AllowedScopes remain reviewed deployment parameters; the personal posture route reports what a deployment actually enables and the app conforms to that answer.",
+  "services": {
+    "personal_storage": {
+      "template": "scripts/personal-storage-candidate.mjs",
+      "parameter": "AllowedScopes",
+      "environmentVariable": "PERSONAL_STORAGE_ALLOWED_SCOPES",
+      "coreScopes": [
+        "ai_context",
+        "forms_checkins",
+        "lab_history",
+        "nutrition",
+        "protocols_supplements",
+        "reproductive_health",
+        "symptoms_adherence",
+        "voice_transcription",
+        "wearables"
+      ]
+    },
+    "owned_lab": {
+      "template": "scripts/build-aws-owned-lab.mjs",
+      "parameter": "AllowedScopes",
+      "environmentVariable": "PERSONAL_LAB_ALLOWED_SCOPES",
+      "activeValue": "ai_context,lab_history"
+    },
+    "owned_voice": {
+      "template": "scripts/build-aws-owned-voice.mjs",
+      "parameter": "AllowedScopes",
+      "environmentVariable": "PERSONAL_VOICE_ALLOWED_SCOPES",
+      "activeValue": "ai_context,voice_transcription"
+    }
+  },
+  "features": {
+    "intake_profile": { "service": "personal_storage", "scopes": ["forms_checkins"] },
+    "symptom_tracking": { "service": "personal_storage", "scopes": ["symptoms_adherence"] },
+    "nutrition": { "service": "personal_storage", "scopes": ["nutrition"] },
+    "plans_supplements": { "service": "personal_storage", "scopes": ["protocols_supplements"] },
+    "wearables": { "service": "personal_storage", "scopes": ["wearables"] },
+    "cycle_reproductive": { "service": "personal_storage", "scopes": ["reproductive_health"] },
+    "ask_alp_context": { "service": "personal_storage", "scopes": ["ai_context"] },
+    "lab_history": { "service": "personal_storage", "scopes": ["lab_history"] },
+    "lab_document_processing": { "service": "owned_lab", "scopes": ["ai_context", "lab_history"] },
+    "voice_notes": { "service": "owned_voice", "scopes": ["ai_context", "voice_transcription"] }
+  },
+  "programs": {
+    "peptide_program": { "available": false },
+    "longevity_program": { "available": false }
+  },
+  "clinicSharingPilotScope": "lab_intake_only"
+}

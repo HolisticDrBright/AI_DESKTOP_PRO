@@ -97,6 +97,7 @@ jobs:
           npm run check:aws-data-plane-migration
           npm run check:aws-desktop-compatibility-contract
           npm run check:aws-desktop-operation-inventory
+          npm run check:aws-core-launch-scope
           npm run check:aws-production-clinical-core
           npm run check:aws-production-clinical-api
           npm run check:aws-production-closed-boundary-exercise

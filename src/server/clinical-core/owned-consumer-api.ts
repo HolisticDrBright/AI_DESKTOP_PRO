@@ -13,7 +13,7 @@ export type OwnedConsumerApiConfiguration = {
 };
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const BASE="/clinical-core/consumer/personal";
-export const OWNED_CONSUMER_ROUTES=[`GET ${BASE}/records`,`GET ${BASE}/record`,`POST ${BASE}/records`,`GET ${BASE}/consent`,`POST ${BASE}/consent`,`GET ${BASE}/chat-context`,`POST ${BASE}/privacy-export`,`GET ${BASE}/privacy-export`,`GET ${BASE}/active-plan`,`POST ${BASE}/active-plan`,`POST ${BASE}/active-plan/release`,`GET ${BASE}/privacy-request`,`POST ${BASE}/privacy-request`,`POST ${BASE}/privacy-request/tombstone`] as const;
+export const OWNED_CONSUMER_ROUTES=[`GET ${BASE}/records`,`GET ${BASE}/record`,`POST ${BASE}/records`,`GET ${BASE}/consent`,`POST ${BASE}/consent`,`GET ${BASE}/posture`,`GET ${BASE}/chat-context`,`POST ${BASE}/privacy-export`,`GET ${BASE}/privacy-export`,`GET ${BASE}/active-plan`,`POST ${BASE}/active-plan`,`POST ${BASE}/active-plan/release`,`GET ${BASE}/privacy-request`,`POST ${BASE}/privacy-request`,`POST ${BASE}/privacy-request/tombstone`] as const;
 const COLLECTION_SCOPE:Record<ConsumerClinicalCollection,OwnedStorageScope>={
   lab_observations:'lab_history',
   lab_analyses:'lab_history',
@@ -41,11 +41,18 @@ export function createOwnedConsumerApi(input:{configuration:OwnedConsumerApiConf
       if (!(OWNED_CONSUMER_ROUTES as readonly string[]).includes(route)) return response(404,{error:"route_not_found"});
       const consent=route.endsWith("/consent");
       const privacy=route.endsWith('/privacy-export')||route.includes('/privacy-request');
-      const context=ownedConsumerIdentity(event,c,consent||privacy?"consent_management":"clinical_data",input.now?.()??Date.now());
+      const posture=route.endsWith('/posture');
+      const context=ownedConsumerIdentity(event,c,consent||privacy||posture?"consent_management":"clinical_data",input.now?.()??Date.now());
       const post=route.startsWith("POST ");
       const q=event.queryStringParameters??{};
       if (post && Object.keys(q).length || !post && event.body) invalid();
       const body=post?parseBody(event):q;
+      if(posture){
+        // What this deployment enables, so the app can conform before it asks
+        // for a new grant or a clinical read. Not consent state and not data.
+        exact(body,[]);
+        return response(200,{data:{contractVersion:'personal-posture/1',launchTier:'core',enabledScopes:[...c.allowedScopes].sort()}});
+      }
       // Privacy access does not require clinic membership or re-granting a
       // withdrawn feature's consent. Identity + deployment gates still apply.
       if(privacy){

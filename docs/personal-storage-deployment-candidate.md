@@ -69,7 +69,7 @@ operational process; this template does not claim to implement them.
 
 ## Verification and remaining acceptance
 
-Five infrastructure tests build the real artifacts, compare all fourteen routes
+Five infrastructure tests build the real artifacts, compare every declared personal route
 against the runtime contract, test every incomplete IAM activation combination,
 scope allow-list, permission resources and key conditions, and invoke the actual
 blocked bundle without database configuration. Both artifacts pass CloudFormation
