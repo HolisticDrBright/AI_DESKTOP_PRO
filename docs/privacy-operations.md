@@ -127,7 +127,12 @@ hosted/physical checks. AWS CLI authentication is currently expired. Production
 requires reviewed activation/MFA/database/assignment evidence, not merely
 working credentials. This turn did not change any deployment flags.
 
-Engineering still includes operator-led cross-store deletion fulfillment,
+September 19 successor: [external purge and deletion completion](privacy-external-purge.md)
+adds the operator-led purge of inventoried lab and voice jobs, disposition and retention
+recording for the remaining stores, and reviewed request completion. Identity deletion and
+hosted acceptance remain open.
+
+Engineering still includes consumer identity deletion,
 large/history privacy workflows, structured/domain correction edits and their
 downstream propagation, guardian operations, and the other original account,
 processing, clinical, commerce and release requirements. This queue is not

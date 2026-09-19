@@ -28,6 +28,34 @@ describe('privacy operations deployable candidate',()=>{
     expect(JSON.stringify(branch[1])).toContain('ForAllValues:StringEquals');
     expect(branch[2]).toEqual({Ref:'AWS::NoValue'});
   });
+  it('grants external purge only behind inventory activation, its own evidence and pinned destinations, never table scans of bodies or wildcard resources',()=>{
+    expect(t.Parameters.ExternalPurgeEnabled.Default).toBe('false');expect(t.Parameters.ExternalPurgeEvidenceSha256.Default).toBe('');
+    const policies=t.Resources.Role.Properties.Policies as Record<string,Json>[];
+    const branch=policies[3]['Fn::If'] as Json[];expect(branch[0]).toBe('PurgeActive');
+    const text=JSON.stringify(branch[1]);
+    for(const action of ['dynamodb:UpdateItem','dynamodb:DeleteItem','s3:ListBucketVersions','s3:DeleteObjectVersion','states:StopExecution','transcribe:DeleteTranscriptionJob','kms:GenerateDataKey'])expect(text).toContain(action);
+    for(const forbidden of ['dynamodb:Scan','dynamodb:Query','s3:GetObject','s3:PutObject','transcribe:StartTranscriptionJob','"Resource":"*"','synthetic-labs','temporary-input'])expect(text).not.toContain(forbidden);
+    expect(text).toContain('personal-labs/*');expect(text).toContain('personal-voice/*');expect(text).toContain('alp-personal-voice-*');
+    expect(branch[2]).toEqual({Ref:'AWS::NoValue'});
+    const defaults=Object.fromEntries(Object.entries(t.Parameters).map(([k,v])=>[k,v.Default??'']));
+    const inventory={...defaults,PhiAllowed:'true',Activation:'approved',ActivationEvidenceSha256:'a'.repeat(64),DatabaseReviewSha256:'b'.repeat(64),
+      WorkforceMfaReviewSha256:'c'.repeat(64),AlarmTopicArn:'arn:aws:sns:us-east-2:123456789012:reviewed',ExternalInventoryEnabled:'true',
+      ExternalInventoryEvidenceSha256:'d'.repeat(64),LabTableArn:'arn:aws:dynamodb:us-east-2:123456789012:table/labs',VoiceTableArn:'arn:aws:dynamodb:us-east-2:123456789012:table/voice',
+      LabTableKmsKeyArn:'arn:aws:kms:us-east-2:123456789012:key/00000000-0000-4000-8000-000000000000',VoiceTableKmsKeyArn:'arn:aws:kms:us-east-2:123456789012:key/00000000-0000-4000-8000-000000000001'};
+    const purge={...inventory,ExternalPurgeEnabled:'true',ExternalPurgeEvidenceSha256:'e'.repeat(64),LabDocumentBucket:'lab-bucket',
+      LabStateMachineArn:'arn:aws:states:us-east-2:123456789012:stateMachine:abc-personal-lab-analysis',VoiceBucket:'voice-bucket',VoiceKmsKeyArn:'arn:aws:kms:us-east-2:123456789012:key/00000000-0000-4000-8000-000000000002'};
+    const conditions={...t.Conditions};
+    const evaluateWith=(name:string,p:Record<string,string>):boolean=>{
+      const resolve=(v:Json):Json=>{if(v&&typeof v==='object'&&!Array.isArray(v)&&typeof (v as Record<string,Json>).Condition==='string')return evaluateWith((v as Record<string,string>).Condition,p);
+        if(Array.isArray(v))return v.map(resolve);if(v&&typeof v==='object')return Object.fromEntries(Object.entries(v).map(([k,x])=>[k,resolve(x)]));return v;};
+      return evaluate(resolve(conditions[name]),p) as boolean;};
+    expect(evaluateWith('PurgeActive',inventory)).toBe(false);expect(evaluateWith('PurgeActive',purge)).toBe(true);
+    for(const key of ['ExternalInventoryEnabled','ExternalPurgeEvidenceSha256','LabDocumentBucket','LabStateMachineArn','VoiceBucket','VoiceKmsKeyArn','PhiAllowed'])
+      expect(evaluateWith('PurgeActive',{...purge,[key]:defaults[key]})).toBe(false);
+    expect(t.Rules).toMatchObject({ReviewedExternalPurge:{RuleCondition:{'Fn::Equals':[{Ref:'ExternalPurgeEnabled'},'true']}}});
+    const env=(t.Resources.Function.Properties.Environment as {Variables:Record<string,Json>}).Variables;
+    expect(env.LAB_OBJECT_PREFIX).toBe('personal-labs');expect(env.EXTERNAL_PURGE_ENABLED).toEqual({Ref:'ExternalPurgeEnabled'});
+  });
   it('remains blocked unless every separate approval and alarm destination exists',()=>{
     const defaults=Object.fromEntries(Object.entries(t.Parameters).map(([k,v])=>[k,v.Default??'']));
     const approved={...defaults,PhiAllowed:'true',Activation:'approved',ActivationEvidenceSha256:'a'.repeat(64),

@@ -31,6 +31,34 @@ describe('privacy workforce API claims and activation',()=>{
       expect((await reviewed({...event(),body:JSON.stringify(body)})).statusCode).toBe(400);
     expect(call).toHaveBeenCalledOnce();
   });
+  it('keeps external purge behind the inventory activation and its own evidence, and gates the completion actions on activation only',async()=>{
+    const operations=vi.fn();
+    const inventoryOn={...config,externalInventoryEnabled:true,externalInventoryEvidenceSha256:'d'.repeat(64)};
+    const purge={action:'purgeExternal',privacyRequestId:uuid,inventoryId:uuid,store:'labs',maxItems:5,confirmation:'PURGE EXTERNAL STORE'};
+    const handler=createPrivacyOperationsApi({configuration:inventoryOn,operations,now:()=>now});
+    const result=await handler({...event(),body:JSON.stringify(purge)});
+    expect(result.statusCode).toBe(503);expect(JSON.parse(result.body)).toEqual({error:'external_purge_not_activated'});
+    expect(operations).not.toHaveBeenCalled();
+    expect(()=>createPrivacyOperationsApi({configuration:{...config,externalPurgeEnabled:true,externalPurgeEvidenceSha256:'e'.repeat(64)},operations})).toThrow('privacy_external_purge_activation_invalid');
+    expect(()=>createPrivacyOperationsApi({configuration:{...inventoryOn,externalPurgeEnabled:true},operations})).toThrow('privacy_external_purge_activation_invalid');
+    const call=vi.fn().mockResolvedValue({});
+    const reviewed=createPrivacyOperationsApi({configuration:{...inventoryOn,externalPurgeEnabled:true,externalPurgeEvidenceSha256:'e'.repeat(64)},operations:()=>call,now:()=>now});
+    expect((await reviewed({...event(),body:JSON.stringify(purge)})).statusCode).toBe(200);
+    for(const body of [{...purge,confirmation:'yes'},{...purge,maxItems:11},{...purge,store:'clinic'},{...purge,ownerId:uuid}])
+      expect((await reviewed({...event(),body:JSON.stringify(body)})).statusCode).toBe(400);
+    const completion=vi.fn().mockResolvedValue({});
+    const base=createPrivacyOperationsApi({configuration:config,operations:()=>completion,now:()=>now});
+    for(const body of [{action:'recordDisposition',privacyRequestId:uuid,store:'clinic_records',outcome:'not_applicable',evidenceSha256:'f'.repeat(64)},
+      {action:'retainByPolicy',privacyRequestId:uuid,store:'backups_and_audit',evidenceSha256:'f'.repeat(64),policyVersion:'fictional'},
+      {action:'completeDeletion',privacyRequestId:uuid,confirmation:'COMPLETE DELETION REQUEST'}])
+      expect((await base({...event(),body:JSON.stringify(body)})).statusCode).toBe(200);
+    for(const body of [{action:'recordDisposition',privacyRequestId:uuid,store:'personal_records',outcome:'purged',evidenceSha256:'f'.repeat(64)},
+      {action:'recordDisposition',privacyRequestId:uuid,store:'clinic_records',outcome:'purged',evidenceSha256:'f'.repeat(64)},
+      {action:'retainByPolicy',privacyRequestId:uuid,store:'personal_records',evidenceSha256:'f'.repeat(64),policyVersion:'fictional'},
+      {action:'completeDeletion',privacyRequestId:uuid,confirmation:'complete'}])
+      expect((await base({...event(),body:JSON.stringify(body)})).statusCode).toBe(400);
+    expect(completion).toHaveBeenCalledTimes(3);expect(call).toHaveBeenCalledOnce();expect(operations).not.toHaveBeenCalled();
+  });
   it('defaults blocked without opening a database and requires separate MFA review',async()=>{
     const operations=vi.fn();
     const handler=createPrivacyOperationsApi({configuration:{...config,phiAllowed:false,activation:'blocked'},operations});
