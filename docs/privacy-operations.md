@@ -129,10 +129,10 @@ working credentials. This turn did not change any deployment flags.
 
 September 19 successor: [external purge and deletion completion](privacy-external-purge.md)
 adds the operator-led purge of inventoried lab and voice jobs, disposition and retention
-recording for the remaining stores, and reviewed request completion. Identity deletion and
-hosted acceptance remain open.
+recording for the remaining stores, and reviewed request completion; [consumer identity
+deletion](owned-identity-deletion.md) is the final step. Hosted acceptance remains open.
 
-Engineering still includes consumer identity deletion,
+Engineering still includes
 large/history privacy workflows, structured/domain correction edits and their
 downstream propagation, guardian operations, and the other original account,
 processing, clinical, commerce and release requirements. This queue is not

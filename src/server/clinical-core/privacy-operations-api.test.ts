@@ -59,6 +59,19 @@ describe('privacy workforce API claims and activation',()=>{
       expect((await base({...event(),body:JSON.stringify(body)})).statusCode).toBe(400);
     expect(completion).toHaveBeenCalledTimes(3);expect(call).toHaveBeenCalledOnce();expect(operations).not.toHaveBeenCalled();
   });
+  it('keeps identity deletion behind its own reviewed evidence and exact confirmation',async()=>{
+    const operations=vi.fn();
+    const body={action:'purgeIdentity',privacyRequestId:uuid,confirmation:'DELETE CONSUMER IDENTITY'};
+    const handler=createPrivacyOperationsApi({configuration:config,operations,now:()=>now});
+    const result=await handler({...event(),body:JSON.stringify(body)});
+    expect(result.statusCode).toBe(503);expect(JSON.parse(result.body)).toEqual({error:'identity_deletion_not_activated'});expect(operations).not.toHaveBeenCalled();
+    expect(()=>createPrivacyOperationsApi({configuration:{...config,identityDeletionEnabled:true},operations})).toThrow('privacy_identity_deletion_activation_invalid');
+    const call=vi.fn().mockResolvedValue({});
+    const reviewed=createPrivacyOperationsApi({configuration:{...config,identityDeletionEnabled:true,identityDeletionEvidenceSha256:'e'.repeat(64)},operations:()=>call,now:()=>now});
+    expect((await reviewed({...event(),body:JSON.stringify(body)})).statusCode).toBe(200);
+    expect((await reviewed({...event(),body:JSON.stringify({...body,confirmation:'delete'})})).statusCode).toBe(400);
+    expect(call).toHaveBeenCalledOnce();
+  });
   it('defaults blocked without opening a database and requires separate MFA review',async()=>{
     const operations=vi.fn();
     const handler=createPrivacyOperationsApi({configuration:{...config,phiAllowed:false,activation:'blocked'},operations});

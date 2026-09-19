@@ -16,7 +16,8 @@ const errors = [];
 const assert = (condition, message) => { if (!condition) errors.push(message); };
 
 assert(manifest.contract_version === "clinical-core-migrations/1", "generated manifest contract is invalid");
-assert(manifest.migrations.length === 80, "expected ten transformed migrations and seventy production overlays");
+assert(manifest.migrations.length === 81, "expected ten transformed migrations and seventy-one production overlays");
+assert(manifest.migrations.some(entry => entry.file === '20260919020000_production_owned_identity_deletion.sql'), "identity deletion overlay missing");
 assert(manifest.migrations.some(entry => entry.file === '20260919010000_production_external_privacy_purge.sql'), "external privacy purge overlay missing");
 assert(manifest.migrations.some(entry => entry.file === '20260917210000_production_owned_processing_authorization.sql'), "processing closure checkpoint missing");
 assert(manifest.migrations.some(entry => entry.file === '20260917200000_production_owned_deletion_write_fence.sql'), "account deletion write fence missing");

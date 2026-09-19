@@ -56,6 +56,20 @@ describe('privacy operations deployable candidate',()=>{
     const env=(t.Resources.Function.Properties.Environment as {Variables:Record<string,Json>}).Variables;
     expect(env.LAB_OBJECT_PREFIX).toBe('personal-labs');expect(env.EXTERNAL_PURGE_ENABLED).toEqual({Ref:'ExternalPurgeEnabled'});
   });
+  it('grants identity deletion only behind activation, its own evidence and the pinned consumer pool, with exactly the three admin actions',()=>{
+    expect(t.Parameters.IdentityDeletionEnabled.Default).toBe('false');expect(t.Parameters.ConsumerUserPoolId.Default).toBe('');
+    const policies=t.Resources.Role.Properties.Policies as Record<string,Json>[];
+    const branch=policies[4]['Fn::If'] as Json[];expect(branch[0]).toBe('IdentityDeletionActive');
+    const statements=((branch[1] as Record<string,Json>).PolicyDocument as Record<string,Json>).Statement as Record<string,Json>[];
+    expect(statements).toHaveLength(1);
+    expect(statements[0].Action).toEqual(['cognito-idp:AdminDisableUser','cognito-idp:AdminUserGlobalSignOut','cognito-idp:AdminDeleteUser']);
+    expect(JSON.stringify(statements[0].Resource)).toContain('userpool/${ConsumerUserPoolId}');
+    expect(JSON.stringify(branch[1])).not.toMatch(/AdminCreateUser|AdminSetUserPassword|ListUsers|"Resource":"\*"/);
+    expect(branch[2]).toEqual({Ref:'AWS::NoValue'});
+    expect(t.Rules).toMatchObject({ReviewedIdentityDeletion:{RuleCondition:{'Fn::Equals':[{Ref:'IdentityDeletionEnabled'},'true']}}});
+    const env=(t.Resources.Function.Properties.Environment as {Variables:Record<string,Json>}).Variables;
+    expect(env.CONSUMER_USER_POOL_ID).toEqual({Ref:'ConsumerUserPoolId'});expect(env.IDENTITY_DELETION_ENABLED).toEqual({Ref:'IdentityDeletionEnabled'});
+  });
   it('remains blocked unless every separate approval and alarm destination exists',()=>{
     const defaults=Object.fromEntries(Object.entries(t.Parameters).map(([k,v])=>[k,v.Default??'']));
     const approved={...defaults,PhiAllowed:'true',Activation:'approved',ActivationEvidenceSha256:'a'.repeat(64),

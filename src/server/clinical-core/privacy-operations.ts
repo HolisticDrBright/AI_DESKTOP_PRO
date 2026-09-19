@@ -4,6 +4,7 @@ import {privacyOperationSchema,parsePrivacyOperationResult,type PrivacyOperation
 import {externalInventorySummarySchema} from '@/contracts/privacyOperations';
 import type {ExternalInventoryReader} from './privacy-external-inventory';
 import type {ExternalPurgeExecutor,ExternalPurgeOutcome} from './privacy-external-purge';
+import type {ConsumerIdentityDeleter} from './owned-identity-deletion';
 import {z} from 'zod';
 export class PrivacyOperationError extends Error{
   constructor(readonly code:'reauth_required'|'privacy_access_refused'|'request_invalid'|'conflict'|'legal_hold'|'service_unavailable'|'external_inventory_not_activated'|'personal_purge_not_activated'|'external_purge_not_activated',cause?:unknown){super(code,cause===undefined?undefined:{cause});}
@@ -13,7 +14,9 @@ const purgeBatchSchema=z.object({ownerId:z.string().uuid(),ownerSub:z.string().r
   items:z.array(z.object({kind:z.enum(['lab_job','lab_cleanup','voice_job']),jobId:z.string().min(1).max(64),
     organizationId:z.string().uuid(),inventoryState:z.string().min(1).max(40),attempts:z.number().int().min(0).max(1000)}).strict()).max(10),
   summary:z.unknown()}).strict();
-export function createPrivacyOperations(database:ClinicalCoreDatabase,inventory?:()=>ExternalInventoryReader,purge?:()=>ExternalPurgeExecutor){
+const identityBeginSchema=z.object({ownerId:z.string().uuid(),identitySubject:z.string().regex(/^[A-Za-z0-9:_-]{8,128}$/),
+  providerState:z.enum(['disabled','signed_out','deleted','absent']),completedAt:z.string().nullable()}).passthrough();
+export function createPrivacyOperations(database:ClinicalCoreDatabase,inventory?:()=>ExternalInventoryReader,purge?:()=>ExternalPurgeExecutor,identity?:()=>ConsumerIdentityDeleter){
   const withContext=async<T>(context:ProductionClinicalRequestContext,work:(tx:Tx)=>Promise<T>):Promise<T>=>{
     try{return await database.transaction(async tx=>{
       await tx.query('select clinical_private.set_request_context($1,$2,$3,$4,$5,$6,$7)',[
@@ -54,6 +57,28 @@ export function createPrivacyOperations(database:ClinicalCoreDatabase,inventory?
           'select clinical_private.finish_owned_external_purge($1,$2) as result',[clinicalUuid(v.privacyRequestId),clinicalUuid(v.inventoryId)]))).rows[0]?.result);
       }
       return parsePrivacyOperationResult(v,summary);
+    }
+    if(v.action==='purgeIdentity'){
+      // Identity is last. The database identity is disabled under the request lock
+      // before the provider is called; the store is recorded only from the provider's
+      // own confirmation, and the detail returned comes from a fresh read.
+      if(!identity)throw new PrivacyOperationError('service_unavailable');
+      const begun=identityBeginSchema.parse(decode((await withContext(context,tx=>tx.query<{result:unknown}>(
+        'select clinical_private.begin_owned_identity_deletion($1) as result',[clinicalUuid(v.privacyRequestId)]))).rows[0]?.result));
+      if(begun.completedAt===null){
+        const deleter=identity();
+        const record=(state:string,evidence:string)=>withContext(context,tx=>tx.query('select clinical_private.record_owned_identity_deletion($1,$2,$3)',[clinicalUuid(v.privacyRequestId),state,evidence]));
+        let outcome:Awaited<ReturnType<ConsumerIdentityDeleter['delete']>>;
+        // The database identity is already disabled; a provider failure leaves the
+        // account locked and unrecorded so the operator retries with the same ledger row.
+        try{outcome=await deleter.delete(begun.identitySubject);}
+        catch(error){throw new PrivacyOperationError('service_unavailable',error);}
+        await record(outcome.state,outcome.evidenceSha256);
+      }
+      return withContext(context,async tx=>{
+        const result=await tx.query<{result:unknown}>('select clinical_private.get_assigned_privacy_request($1) as result',[clinicalUuid(v.privacyRequestId)]);
+        return parsePrivacyOperationResult(v,decode(result.rows[0]?.result));
+      });
     }
     return withContext(context,async tx=>{
       if(v.action==='recordDisposition'){

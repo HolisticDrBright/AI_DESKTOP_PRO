@@ -11,6 +11,8 @@ import {S3Client} from '@aws-sdk/client-s3';
 import {SFNClient} from '@aws-sdk/client-sfn';
 import {stopLabExecutions} from './lab-execution-stop';
 import {createAwsVoiceService} from './aws-voice-jobs-lambda';
+import {createConsumerIdentityDeleter} from './owned-identity-deletion';
+import {CognitoIdentityProviderClient} from '@aws-sdk/client-cognito-identity-provider';
 let cached:ReturnType<typeof createPrivacyOperationsApi>|undefined;
 const tableName=(arn:string)=>arn.split(':table/')[1]??'';
 /** Purge dependencies are built only when the reviewed purge flag is on; the
@@ -31,6 +33,10 @@ function purgeExecutor(e:NodeJS.ProcessEnv):(()=>ExternalPurgeExecutor)|undefine
     });
   };
 }
+function identityDeleter(e:NodeJS.ProcessEnv){
+  if(e.IDENTITY_DELETION_ENABLED!=='true')return undefined;
+  return()=>createConsumerIdentityDeleter({client:new CognitoIdentityProviderClient({region:e.AWS_REGION}),poolId:e.CONSUMER_USER_POOL_ID??''});
+}
 export async function handler(event:ApiGatewayV2Event){
   if(!cached){
     const e=process.env;
@@ -39,11 +45,12 @@ export async function handler(event:ApiGatewayV2Event){
       evidenceSha256:e.PRIVACY_OPERATIONS_EVIDENCE_SHA256,mfaReviewSha256:e.WORKFORCE_MFA_REVIEW_SHA256,
       personalPurgeEnabled:e.PERSONAL_PURGE_ENABLED==='true',personalPurgeEvidenceSha256:e.PERSONAL_PURGE_EVIDENCE_SHA256,
       externalInventoryEnabled:e.EXTERNAL_INVENTORY_ENABLED==='true',externalInventoryEvidenceSha256:e.EXTERNAL_INVENTORY_EVIDENCE_SHA256,
-      externalPurgeEnabled:e.EXTERNAL_PURGE_ENABLED==='true',externalPurgeEvidenceSha256:e.EXTERNAL_PURGE_EVIDENCE_SHA256},
+      externalPurgeEnabled:e.EXTERNAL_PURGE_ENABLED==='true',externalPurgeEvidenceSha256:e.EXTERNAL_PURGE_EVIDENCE_SHA256,
+      identityDeletionEnabled:e.IDENTITY_DELETION_ENABLED==='true',identityDeletionEvidenceSha256:e.IDENTITY_DELETION_EVIDENCE_SHA256},
       operations:()=>createPrivacyOperations(createRdsDataClinicalCoreDatabase({clusterArn:e.CLINICAL_DATABASE_CLUSTER_ARN??'',
         secretArn:e.CLINICAL_DATABASE_SECRET_ARN??'',databaseName:e.CLINICAL_DATABASE_NAME??'',region:e.AWS_REGION}),
         ()=>createExternalInventoryReader({labs:e.PRIVACY_LAB_TABLE_ARN??'',voice:e.PRIVACY_VOICE_TABLE_ARN??'',region:e.AWS_REGION??''}),
-        purgeExecutor(e))});
+        purgeExecutor(e),identityDeleter(e))});
   }
   return cached(event);
 }

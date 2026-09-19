@@ -21,6 +21,7 @@ export const privacyOperationSchema=z.discriminatedUnion('action',[
   z.object({action:z.literal('retainByPolicy'),privacyRequestId:id,store:z.enum(['backups_and_audit','clinic_records']),
     evidenceSha256:hash,policyVersion}).strict(),
   z.object({action:z.literal('completeDeletion'),privacyRequestId:id,confirmation:z.literal('COMPLETE DELETION REQUEST')}).strict(),
+  z.object({action:z.literal('purgeIdentity'),privacyRequestId:id,confirmation:z.literal('DELETE CONSUMER IDENTITY')}).strict(),
 ]);
 export type PrivacyOperation=z.infer<typeof privacyOperationSchema>;
 const row=z.object({privacyRequestId:id,ownerId:id,kind:z.enum(['deletion','correction']),
@@ -100,6 +101,10 @@ export function parsePrivacyOperationResult(input:PrivacyOperation,raw:unknown):
   const value=privacyDetailSchema.parse(raw);
   if(value.privacyRequestId!==input.privacyRequestId)throw new Error('privacy_response_invalid');
   if(input.action==='completeDeletion'&&(value.kind!=='deletion'||value.status!=='completed'))throw new Error('privacy_response_invalid');
+  if(input.action==='purgeIdentity'){
+    const latest=[...value.fulfillment].filter(f=>f.store==='identity').sort((a,b)=>a.recordedAt.localeCompare(b.recordedAt)).at(-1);
+    if(value.kind!=='deletion'||!latest||!['purged','not_applicable'].includes(latest.outcome)||!latest.evidenceSha256)throw new Error('privacy_response_invalid');
+  }
   if(input.action==='recordDisposition'||input.action==='retainByPolicy'){
     const expected=input.action==='recordDisposition'?input.outcome:'retained_by_policy';
     const latest=[...value.fulfillment].filter(f=>f.store===input.store).sort((a,b)=>a.recordedAt.localeCompare(b.recordedAt)).at(-1);

@@ -17,6 +17,8 @@ const template={AWSTemplateFormatVersion:'2010-09-09',Description:'Owner-assigne
     PersonalPurgeEnabled:{Type:'String',Default:'false',AllowedValues:['false','true']},PersonalPurgeEvidenceSha256:hash,
     ExternalInventoryEnabled:{Type:'String',Default:'false',AllowedValues:['false','true']},ExternalInventoryEvidenceSha256:hash,
     ExternalPurgeEnabled:{Type:'String',Default:'false',AllowedValues:['false','true']},ExternalPurgeEvidenceSha256:hash,
+    IdentityDeletionEnabled:{Type:'String',Default:'false',AllowedValues:['false','true']},IdentityDeletionEvidenceSha256:hash,
+    ConsumerUserPoolId:{Type:'String',Default:'',AllowedPattern:'^$|^[a-z0-9-]+_[A-Za-z0-9]+$'},
     LabDocumentBucket:{Type:'String',Default:'',AllowedPattern:'^$|^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$'},
     LabStateMachineArn:{Type:'String',Default:'',AllowedPattern:'^$|^arn:aws:states:[a-z0-9-]+:[0-9]{12}:stateMachine:[a-z0-9-]+-personal-lab-analysis$'},
     VoiceBucket:{Type:'String',Default:'',AllowedPattern:'^$|^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$'},
@@ -38,7 +40,9 @@ const template={AWSTemplateFormatVersion:'2010-09-09',Description:'Owner-assigne
     HasAlarmRecipient:nonempty('AlarmTopicArn'),InventoryActive:{'Fn::And':[{Condition:'Active'},
       {'Fn::Equals':[ref('ExternalInventoryEnabled'),'true']},...['ExternalInventoryEvidenceSha256','LabTableArn','VoiceTableArn','LabTableKmsKeyArn','VoiceTableKmsKeyArn'].map(nonempty)]},
     PurgeActive:{'Fn::And':[{Condition:'InventoryActive'},{'Fn::Equals':[ref('ExternalPurgeEnabled'),'true']},
-      ...['ExternalPurgeEvidenceSha256','LabDocumentBucket','LabStateMachineArn','VoiceBucket','VoiceKmsKeyArn'].map(nonempty)]}},
+      ...['ExternalPurgeEvidenceSha256','LabDocumentBucket','LabStateMachineArn','VoiceBucket','VoiceKmsKeyArn'].map(nonempty)]},
+    IdentityDeletionActive:{'Fn::And':[{Condition:'Active'},{'Fn::Equals':[ref('IdentityDeletionEnabled'),'true']},
+      ...['IdentityDeletionEvidenceSha256','ConsumerUserPoolId'].map(nonempty)]}},
   Rules:{ReviewedActivation:{RuleCondition:{'Fn::Equals':[ref('PhiAllowed'),'true']},Assertions:[
     {Assert:{'Fn::Equals':[ref('Activation'),'approved']},AssertDescription:'Reviewed activation required'},
     ...required.map(n=>({Assert:nonempty(n),AssertDescription:n+' required before activation'}))]},
@@ -49,6 +53,10 @@ const template={AWSTemplateFormatVersion:'2010-09-09',Description:'Owner-assigne
     ReviewedExternalPurge:{RuleCondition:{'Fn::Equals':[ref('ExternalPurgeEnabled'),'true']},Assertions:[
       {Assert:{'Fn::Equals':[ref('ExternalInventoryEnabled'),'true']},AssertDescription:'External inventory activation required'},
       ...['ExternalPurgeEvidenceSha256','LabDocumentBucket','LabStateMachineArn','VoiceBucket','VoiceKmsKeyArn'].map(n=>({Assert:nonempty(n),AssertDescription:n+' required'})),
+    ]},
+    ReviewedIdentityDeletion:{RuleCondition:{'Fn::Equals':[ref('IdentityDeletionEnabled'),'true']},Assertions:[
+      {Assert:{'Fn::Equals':[ref('PhiAllowed'),'true']},AssertDescription:'Privacy service activation required'},
+      ...['IdentityDeletionEvidenceSha256','ConsumerUserPoolId'].map(n=>({Assert:nonempty(n),AssertDescription:n+' required'})),
     ]},
     ReviewedPersonalPurge:{RuleCondition:{'Fn::Equals':[ref('PersonalPurgeEnabled'),'true']},Assertions:[
       {Assert:{'Fn::Equals':[ref('PhiAllowed'),'true']},AssertDescription:'Privacy service activation required'},
@@ -96,6 +104,10 @@ const template={AWSTemplateFormatVersion:'2010-09-09',Description:'Owner-assigne
         {Effect:'Allow',Action:['transcribe:GetTranscriptionJob','transcribe:DeleteTranscriptionJob'],
           Resource:sub('arn:${AWS::Partition}:transcribe:${AWS::Region}:${AWS::AccountId}:transcription-job/alp-personal-voice-*')},
       ]}},ref('AWS::NoValue')]},
+      {'Fn::If':['IdentityDeletionActive',{PolicyName:'ReviewedIdentityDeletion',PolicyDocument:{Version:'2012-10-17',Statement:[
+        {Effect:'Allow',Action:['cognito-idp:AdminDisableUser','cognito-idp:AdminUserGlobalSignOut','cognito-idp:AdminDeleteUser'],
+          Resource:sub('arn:${AWS::Partition}:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/${ConsumerUserPoolId}')},
+      ]}},ref('AWS::NoValue')]},
     ]}},
     Function:{Type:'AWS::Lambda::Function',Properties:{FunctionName:sub('${ApiId}-privacy-operations'),Runtime:'nodejs22.x',Handler:'index.handler',
       Role:{'Fn::GetAtt':['Role','Arn']},Timeout:60,MemorySize:256,ReservedConcurrentExecutions:2,
@@ -109,6 +121,7 @@ const template={AWSTemplateFormatVersion:'2010-09-09',Description:'Owner-assigne
         EXTERNAL_PURGE_ENABLED:ref('ExternalPurgeEnabled'),EXTERNAL_PURGE_EVIDENCE_SHA256:ref('ExternalPurgeEvidenceSha256'),
         LAB_DOCUMENT_BUCKET:ref('LabDocumentBucket'),LAB_STATE_MACHINE_ARN:ref('LabStateMachineArn'),LAB_OBJECT_PREFIX:'personal-labs',
         VOICE_BUCKET:ref('VoiceBucket'),VOICE_KMS_KEY_ARN:ref('VoiceKmsKeyArn'),
+        IDENTITY_DELETION_ENABLED:ref('IdentityDeletionEnabled'),IDENTITY_DELETION_EVIDENCE_SHA256:ref('IdentityDeletionEvidenceSha256'),CONSUMER_USER_POOL_ID:ref('ConsumerUserPoolId'),
         WORKFORCE_MFA_REVIEW_SHA256:ref('WorkforceMfaReviewSha256'),CLINICAL_DATABASE_CLUSTER_ARN:ref('DatabaseClusterArn'),
         CLINICAL_DATABASE_SECRET_ARN:ref('DatabaseSecretArn'),CLINICAL_DATABASE_NAME:ref('DatabaseName'),SOURCE_COMMIT:ref('SourceCommit'),
       }}}},

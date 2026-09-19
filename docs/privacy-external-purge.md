@@ -62,7 +62,6 @@ Infrastructure tests assert the permission branch and its condition. Manifest co
 ## Not done
 
 No hosted DynamoDB, S3, Step Functions, Transcribe or Aurora run. Consumer identity
-deletion remains unimplemented: no operation can record `identity` as purged, so completion
-still needs that store to be recorded through a future reviewed step. Retention and hold
+deletion is the separate final step described in [owned-identity-deletion.md](owned-identity-deletion.md). Retention and hold
 policy content, operator assignments and activation evidence are human inputs and are not
 seeded. A purged external store still leaves the lab cleanup watch record and the voice cleanup tombstone as metadata, and is not erasure of backups or audit records.
