@@ -16,6 +16,7 @@ export type OwnedRecordWrite = {
 };
 type WriteResult = { recordId: string; revision: number; duplicate: boolean; receivedAt: string };
 export type OwnedRecord = { recordId: string; revision: number; payload: Record<string, unknown>; receivedAt: string };
+export type OwnedTombstone = { recordId: string; revision: number; deleted: true; receivedAt: string };
 export type StorageConsentState = {
   scope: OwnedStorageScope;
   release: {version:string;content:string;contentSha256:string;approvedAt:string} | null;
@@ -150,6 +151,32 @@ export function createOwnedConsumerRecordsAdapter(database: ClinicalCoreDatabase
           return { recordId: value.recordId as string,revision: value.revision as number,payload,receivedAt: value.receivedAt as string };
         });
         return redactWithdrawnContext(tx,input.collection,rows);
+      });
+    },
+    /** Latest-version tombstones only, no payload. Lets a device learn what the
+     * owner removed elsewhere; it never asserts that device copies are gone. */
+    async listTombstones(context: ProductionClinicalRequestContext, input: {
+      collection: ConsumerClinicalCollection; limit: number; after?: { receivedAt: string; recordId: string };
+    }): Promise<OwnedTombstone[]> {
+      exactKeys(input,["collection","limit","after"]);
+      collection(input.collection);
+      if (!Number.isInteger(input.limit) || input.limit<1 || input.limit>100) invalid();
+      if (input.after) {
+        exactKeys(input.after,["receivedAt","recordId"]);
+        if (!date(input.after.receivedAt) || !UUID.test(input.after.recordId)) invalid();
+      }
+      return run(context,"clinical_data",async tx => {
+        const result = await tx.query<{ result: unknown }>("select clinical_core.list_owned_consumer_tombstones($1,$2::integer,$3::timestamptz,$4::uuid) as result", [
+          input.collection,input.limit,input.after?.receivedAt ?? null,input.after ? clinicalUuid(input.after.recordId) : null,
+        ]);
+        const data = parsed(result.rows[0]?.result);
+        if (!Array.isArray(data) || data.length>input.limit) unavailable();
+        return (data as unknown[]).map(row => {
+          const value = object(row);
+          exactKeys(value,["recordId","revision","deleted","receivedAt"]);
+          if (typeof value.recordId !== "string" || !UUID.test(value.recordId) || !revision(value.revision,1) || value.deleted !== true || !date(value.receivedAt)) unavailable();
+          return { recordId: value.recordId as string,revision: value.revision as number,deleted: true as const,receivedAt: value.receivedAt as string };
+        });
       });
     },
     async setConsent(context: ProductionClinicalRequestContext, input: {

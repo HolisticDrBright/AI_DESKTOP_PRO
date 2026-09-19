@@ -111,10 +111,15 @@ export function createOwnedConsumerApi(input:{configuration:OwnedConsumerApiConf
         exact(body,["collection","recordId"]);
         return response(200,{data:await adapter.get(context,{collection,recordId:String(body.recordId??"")})});
       }
-      exact(body,["collection","limit","cursor"]);
+      exact(body,["collection","limit","cursor","view"]);
+      if(body.view!==undefined&&body.view!=='tombstones')invalid();
       const limit=body.limit===undefined?100:Number(body.limit);
       const after=cursor(body.cursor);
-      const items=await adapter.list(context,{collection,limit,...(after?{after}: {})});
+      // view=tombstones returns the owner's deleted record ids and revisions so
+      // another device can review copies the owner removed elsewhere.
+      const items=body.view==='tombstones'
+        ?await adapter.listTombstones(context,{collection,limit,...(after?{after}: {})})
+        :await adapter.list(context,{collection,limit,...(after?{after}: {})});
       const last=items.length===limit?items.at(-1):undefined;
       return response(200,{data:{items,nextCursor:last?Buffer.from(JSON.stringify({receivedAt:last.receivedAt,recordId:last.recordId})).toString("base64url"):null}});
     } catch(error) {

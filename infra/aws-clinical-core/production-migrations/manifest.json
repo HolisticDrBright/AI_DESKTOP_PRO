@@ -284,6 +284,10 @@
     {
       "version": "20260919020000",
       "file": "20260919020000_production_owned_identity_deletion.sql"
+    },
+    {
+      "version": "20260919030000",
+      "file": "20260919030000_production_owned_record_tombstones.sql"
     }
   ]
 }

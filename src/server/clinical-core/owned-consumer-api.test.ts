@@ -50,6 +50,18 @@ describe("independent consumer API",()=>{
     const unverified=event("GET /clinical-core/consumer/personal/posture");unverified.queryStringParameters={};delete unverified.requestContext;
     expect((await s.handler(unverified)).statusCode).toBe(401);
   });
+  it("lists tombstones only through the explicit view under the same scope gate",async()=>{
+    const list=vi.fn(async()=>[]),listTombstones=vi.fn(async()=>[{recordId:id,revision:2,deleted:true,receivedAt:"2026-09-01T00:00:00.000Z"}]);
+    const adapter=()=>({list,listTombstones}) as unknown as ReturnType<typeof createOwnedConsumerRecordsAdapter>;
+    const handler=createOwnedConsumerApi({configuration:config,adapter,now:()=>now});
+    const e=event();e.queryStringParameters={collection:"wellness_profiles",view:"tombstones",limit:"5"};
+    const r=await handler(e);expect(r.statusCode).toBe(200);
+    expect(JSON.parse(r.body).data).toEqual({items:[{recordId:id,revision:2,deleted:true,receivedAt:"2026-09-01T00:00:00.000Z"}],nextCursor:null});
+    expect(listTombstones).toHaveBeenCalledWith(expect.anything(),{collection:"wellness_profiles",limit:5});expect(list).not.toHaveBeenCalled();
+    e.queryStringParameters={collection:"wellness_profiles",view:"live"};expect((await handler(e)).statusCode).toBe(400);
+    e.queryStringParameters={collection:"wearable_daily_records",view:"tombstones"};
+    expect(JSON.parse((await handler(e)).body).error).toBe("feature_scope_not_enabled");expect(listTombstones).toHaveBeenCalledTimes(1);
+  });
   it("does not activate wearable or reproductive scopes with Core identity alone",async()=>{
     const s=setup(); const e=event(); e.queryStringParameters={collection:"wearable_daily_records"};
     expect(JSON.parse((await s.handler(e)).body).error).toBe("feature_scope_not_enabled"); expect(s.adapter).not.toHaveBeenCalled();
