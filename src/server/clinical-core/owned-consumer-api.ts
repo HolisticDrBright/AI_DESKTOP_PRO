@@ -66,7 +66,7 @@ export function createOwnedConsumerApi(input:{configuration:OwnedConsumerApiConf
           // Deletion/correction requests and self-service tombstones need no
           // feature scope and survive withdrawal; they never claim full erasure.
           if(route.endsWith('/tombstone')){exact(body,['requestId','confirmTombstoneAllPersonalRecords']);return response(200,{data:await adapter.tombstonePersonalRecords(context,body as Parameters<typeof adapter.tombstonePersonalRecords>[1])});}
-          if(post){exact(body,['requestId','kind','correction']);return response(200,{data:await adapter.submitPrivacyRequest(context,body as Parameters<typeof adapter.submitPrivacyRequest>[1])});}
+          if(post){exact(body,['requestId','kind','correction','dispute']);return response(200,{data:await adapter.submitPrivacyRequest(context,body as Parameters<typeof adapter.submitPrivacyRequest>[1])});}
           if(body.view==='correction-targets'){
             exact(body,['view','collection','limit','after']);
             return response(200,{data:await adapter.listCorrectionTargets(context,{collection:String(body.collection??''),

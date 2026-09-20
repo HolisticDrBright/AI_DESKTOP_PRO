@@ -1,5 +1,6 @@
 import {z} from 'zod';
 import {correctionTargetSchema,correctionResolutionSchema} from './personalCorrection';
+import {disputeTargetSchema,disputeResolutionSchema,DISPUTE_OUTCOMES} from './personalDispute';
 const id=z.string().uuid();
 const hash=z.string().regex(/^[a-f0-9]{64}$/);
 const policyVersion=z.string().trim().min(1).max(200);
@@ -25,9 +26,11 @@ export const privacyOperationSchema=z.discriminatedUnion('action',[
   z.object({action:z.literal('cleanupExports'),maxItems:z.number().int().min(1).max(10)}).strict(),
   z.object({action:z.literal('reconcileExports'),maxItems:z.number().int().min(1).max(10)}).strict(),
   z.object({action:z.literal('exportBacklog')}).strict(),
+  z.object({action:z.literal('resolveDispute'),privacyRequestId:id,outcome:z.enum(DISPUTE_OUTCOMES),amendmentSha256:hash.nullable(),
+    explanation:z.string().trim().min(1).max(2000)}).strict().refine(v=>(v.outcome==='declined')===(v.amendmentSha256===null)),
 ]);
 export type PrivacyOperation=z.infer<typeof privacyOperationSchema>;
-const row=z.object({privacyRequestId:id,ownerId:id,kind:z.enum(['deletion','correction']),
+const row=z.object({privacyRequestId:id,ownerId:id,kind:z.enum(['deletion','correction','dispute']),
   status:z.enum(['submitted','held','in_progress','completed','refused']),
   submittedAt:z.string().datetime({offset:true}),updatedAt:z.string().datetime({offset:true})}).strict();
 export const privacyQueueSchema=z.object({items:z.array(row).max(25),nextAfter:id.nullable()}).strict();
@@ -46,8 +49,12 @@ export const privacyDetailSchema=row.extend({legalHold:z.boolean(),fulfillment:z
   target:correctionTargetSchema,reason:z.string().min(1).max(2000),requestedValue:z.unknown(),
   originalAvailable:z.boolean(),originalValue:z.unknown(),currentRevision:z.number().int().positive().nullable(),
   currentDeleted:z.boolean(),currentValue:z.unknown(),resolution:correctionResolutionSchema.nullable(),
-}).strict().nullable(),externalInventories:z.array(externalInventorySummarySchema).max(20).default([])}).strict().refine(v=>{
+}).strict().nullable(),externalInventories:z.array(externalInventorySummarySchema).max(20).default([]),
+  // Disputes (migration 20260920170000): the target and the owner's statement; a resolution once recorded. Older deployments omit the key.
+  dispute:z.object({target:disputeTargetSchema,statement:z.string().min(1).max(4000),resolution:disputeResolutionSchema.nullable()}).strict().nullable().default(null)}).strict().refine(v=>{
   if(v.externalInventories.some(i=>i.privacyRequestId!==v.privacyRequestId))return false;
+  if(v.dispute!==null&&v.kind!=='dispute')return false;
+  if(v.dispute?.resolution&&(v.dispute.resolution.outcome==='declined'?v.status!=='refused':v.status!=='completed'))return false;
   if(v.correction===null)return true; // Legacy request, explicitly not resolvable.
   if(v.kind!=='correction')return false;
   const r=v.correction.resolution;
@@ -146,6 +153,10 @@ export function parsePrivacyOperationResult(input:PrivacyOperation,raw:unknown):
     const expected=input.action==='recordDisposition'?input.outcome:'retained_by_policy';
     const latest=[...value.fulfillment].filter(f=>f.store===input.store).sort((a,b)=>a.recordedAt.localeCompare(b.recordedAt)).at(-1);
     if(!latest||latest.outcome!==expected||latest.evidenceSha256!==input.evidenceSha256)throw new Error('privacy_response_invalid');
+  }
+  if(input.action==='resolveDispute'){
+    const r=value.dispute?.resolution;
+    if(value.kind!=='dispute'||!r||r.outcome!==input.outcome||r.amendmentSha256!==input.amendmentSha256||r.explanation!==input.explanation)throw new Error('privacy_response_invalid');
   }
   if(input.action==='resolve'){
     const r=value.correction?.resolution;

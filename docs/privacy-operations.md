@@ -146,3 +146,12 @@ large/history privacy workflows, structured/domain correction edits and their
 downstream propagation, guardian operations, and the other original account,
 processing, clinical, commerce and release requirements. This queue is not
 evidence that all six original commercial-readiness phases are complete.
+
+## September 20: dispute resolution
+
+Requests of kind `dispute` appear in the same queue. The detail shows the disputed store, reference,
+optional content digest, the consumer's statement and the request digest. `resolveDispute` records
+`amended`, `annotated` or `removed` with the evidence digest of what was done, or `declined` with an
+explanation; the screen changes no clinical content and the decision is final (a different decision
+for the same request is refused). Verify the reference in its store first: the lab inventory for
+results and documents, the voice inventory for transcripts, the record itself for personal records.

@@ -140,6 +140,8 @@ export function createPrivacyOperations(database:ClinicalCoreDatabase,inventory?
       }
       if(v.action==='resolve')await tx.query('select clinical_private.resolve_owned_correction($1,$2,$3,$4)',
         [clinicalUuid(v.privacyRequestId),v.outcome,v.appliedRevision,v.explanation]);
+      if(v.action==='resolveDispute')await tx.query('select clinical_private.resolve_owned_dispute($1,$2,$3,$4)',
+        [clinicalUuid(v.privacyRequestId),v.outcome,v.amendmentSha256,v.explanation]);
       if(v.action==='previewPersonalPurge'||v.action==='purgePersonal'){
         const result=v.action==='previewPersonalPurge'
           ?await tx.query<{result:unknown}>('select clinical_private.preview_owned_personal_purge($1,$2) as result',[clinicalUuid(v.privacyRequestId),v.policyVersion])

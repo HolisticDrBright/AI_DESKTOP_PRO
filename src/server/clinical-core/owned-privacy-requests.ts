@@ -3,6 +3,7 @@ import {clinicalUuid,type ClinicalCoreTransaction} from './database';
 import {OwnedStorageError} from './owned-consumer-records';
 import {CORRECTION_COLLECTIONS,correctionInputSchema,correctionRecordSchema,correctionTargetSchema,correctionResolutionSchema,
   type CorrectionRecord,type CorrectionTarget,type CorrectionResolution} from '@/contracts/personalCorrection';
+import {disputeInputSchema,disputeTargetSchema,disputeResolutionSchema,type DisputeInput,type DisputeTarget,type DisputeResolution} from '@/contracts/personalDispute';
 
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 type Run=<T>(context:ProductionClinicalRequestContext,work:(tx:ClinicalCoreTransaction)=>Promise<T>)=>Promise<T>;
@@ -11,9 +12,10 @@ export const PRIVACY_STORES=['personal_records','personal_consents','active_plan
 export const PRIVACY_OUTCOMES=['tombstoned','purged','not_applicable','pending','refused','not_enumerable','retained_by_policy'] as const;
 export type PrivacyStore=typeof PRIVACY_STORES[number];
 export type PrivacyFulfillmentEntry={store:PrivacyStore;outcome:typeof PRIVACY_OUTCOMES[number];evidenceSha256:string|null;recordedAt:string};
-export type PrivacyRequest={privacyRequestId:string;requestId:string;kind:'deletion'|'correction';status:'submitted'|'held'|'in_progress'|'completed'|'refused';
+export type PrivacyRequestKind='deletion'|'correction'|'dispute';
+export type PrivacyRequest={privacyRequestId:string;requestId:string;kind:PrivacyRequestKind;status:'submitted'|'held'|'in_progress'|'completed'|'refused';
   submittedAt:string;updatedAt:string;completedAt:string|null;legalHold:boolean;fulfillment:PrivacyFulfillmentEntry[];duplicate?:boolean;tombstoned?:number;
-  correctionTarget?:CorrectionTarget;correctionResolution?:CorrectionResolution};
+  correctionTarget?:CorrectionTarget;correctionResolution?:CorrectionResolution;disputeTarget?:DisputeTarget;disputeResolution?:DisputeResolution};
 /** Machine-readable statement of what self-service deletion does and does not do. */
 export const PERSONAL_DELETION_COVERAGE={
   completeAccountDeletion:false,
@@ -29,7 +31,7 @@ export const PERSONAL_DELETION_COVERAGE={
 export function createOwnedPrivacyRequests(run:Run){
   const parse=(raw:unknown):PrivacyRequest=>{
     const v=object(raw);
-    if(!UUID.test(String(v.privacyRequestId))||!UUID.test(String(v.requestId))||!['deletion','correction'].includes(String(v.kind))
+    if(!UUID.test(String(v.privacyRequestId))||!UUID.test(String(v.requestId))||!['deletion','correction','dispute'].includes(String(v.kind))
       ||!['submitted','held','in_progress','completed','refused'].includes(String(v.status))||!date(v.submittedAt)||!date(v.updatedAt)
       ||(v.completedAt!==null&&!date(v.completedAt))||typeof v.legalHold!=='boolean'||!Array.isArray(v.fulfillment)||v.fulfillment.length>200)unavailable();
     const fulfillment=v.fulfillment.map(row=>{
@@ -44,29 +46,48 @@ export function createOwnedPrivacyRequests(run:Run){
     if(target?.success&&v.status==='completed'&&!resolution?.success)unavailable();
     if(resolution?.success&&(!target?.success||(resolution.data.outcome==='applied'?
       v.status!=='completed'||resolution.data.appliedRevision!<=target.data.expectedRevision||v.completedAt===null:v.status!=='refused'||v.completedAt!==null)))unavailable();
+    // Disputes: the target travels with every dispute; a resolution closes it (declined refuses, anything else completes).
+    const disputeTarget=v.disputeTarget===undefined?undefined:disputeTargetSchema.safeParse(v.disputeTarget);
+    const disputeResolution=v.disputeResolution===undefined?undefined:disputeResolutionSchema.safeParse(v.disputeResolution);
+    if(disputeTarget&&!disputeTarget.success||disputeResolution&&!disputeResolution.success||((disputeTarget||disputeResolution)&&v.kind!=='dispute')||(v.kind==='dispute'&&!disputeTarget?.success))unavailable();
+    if(disputeTarget?.success&&['completed','refused'].includes(String(v.status))&&!disputeResolution?.success)unavailable();
+    if(disputeResolution?.success&&(disputeResolution.data.outcome==='declined'?v.status!=='refused'||v.completedAt!==null:v.status!=='completed'||v.completedAt===null))unavailable();
     return {privacyRequestId:v.privacyRequestId as string,requestId:v.requestId as string,kind:v.kind as PrivacyRequest['kind'],status:v.status as PrivacyRequest['status'],
       submittedAt:v.submittedAt as string,updatedAt:v.updatedAt as string,completedAt:v.completedAt as string|null,legalHold:v.legalHold,fulfillment,
       ...(typeof v.duplicate==='boolean'?{duplicate:v.duplicate}:{}),...(Number.isSafeInteger(v.tombstoned)?{tombstoned:v.tombstoned as number}:{}),
-      ...(target?.success?{correctionTarget:target.data}:{}),...(resolution?.success?{correctionResolution:resolution.data}:{})};
+      ...(target?.success?{correctionTarget:target.data}:{}),...(resolution?.success?{correctionResolution:resolution.data}:{}),
+      ...(disputeTarget?.success?{disputeTarget:disputeTarget.data}:{}),...(disputeResolution?.success?{disputeResolution:disputeResolution.data}:{})};
   };
   return {
-    async submitPrivacyRequest(context:ProductionClinicalRequestContext,input:{requestId:string;kind:'deletion'|'correction';correction?:Record<string,unknown>}):Promise<PrivacyRequest>{
-      exact(input,['requestId','kind','correction']);
-      if(!UUID.test(input.requestId)||!['deletion','correction'].includes(input.kind)||((input.kind==='correction')!==(input.correction!==undefined)))invalid();
+    async submitPrivacyRequest(context:ProductionClinicalRequestContext,input:{requestId:string;kind:PrivacyRequestKind;correction?:Record<string,unknown>;dispute?:Record<string,unknown>}):Promise<PrivacyRequest>{
+      exact(input,['requestId','kind','correction','dispute']);
+      if(!UUID.test(input.requestId)||!['deletion','correction','dispute'].includes(input.kind)||((input.kind==='correction')!==(input.correction!==undefined))
+        ||((input.kind==='dispute')!==(input.dispute!==undefined)))invalid();
       if(input.correction!==undefined){
         const c=input.correction;
         if(!c||typeof c!=='object'||Array.isArray(c)||Buffer.byteLength(JSON.stringify(c),'utf8')>8192)invalid();
         if(!correctionInputSchema.safeParse(c).success)invalid();
       }
+      let dispute:DisputeInput|undefined;
+      if(input.dispute!==undefined){
+        const d=input.dispute;
+        if(!d||typeof d!=='object'||Array.isArray(d)||Buffer.byteLength(JSON.stringify(d),'utf8')>8192)invalid();
+        const parsed=disputeInputSchema.safeParse(d);if(!parsed.success)invalid();dispute=parsed.data;
+      }
+      const payload=input.correction??dispute;
       return run(context,async tx=>{
         const result=await tx.query<{result:unknown}>('select clinical_core.submit_owned_privacy_request($1,$2,$3::jsonb) as result',
-          [clinicalUuid(input.requestId),input.kind,input.correction===undefined?null:JSON.stringify(input.correction)]);
+          [clinicalUuid(input.requestId),input.kind,payload===undefined?null:JSON.stringify(payload)]);
         const state=parse(result.rows[0]?.result);
         if(state.requestId!==input.requestId||state.kind!==input.kind)unavailable();
         if(input.correction){
           const c=input.correction,t=state.correctionTarget;
           if(!t||t.collection!==c.collection||t.recordId!==c.recordId||t.field!==c.field
             ||t.expectedRevision!==c.expectedRevision||t.expectedPayloadSha256!==c.expectedPayloadSha256)unavailable();
+        }
+        if(dispute){
+          const t=state.disputeTarget;
+          if(!t||t.store!==dispute.store||t.referenceId!==dispute.referenceId||t.requestedAction!==dispute.requestedAction||t.contentSha256!==dispute.contentSha256)unavailable();
         }
         return state;
       });

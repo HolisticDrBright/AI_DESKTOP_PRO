@@ -115,3 +115,27 @@ call is unchanged. The consumer API accepts `limit`, `afterSubmittedAt` and `aft
 `GET /clinical-core/consumer/personal/privacy-request`, verifies the returned order strictly,
 and returns `nextAfter` only when a full page came back. Same owner, purpose and per-request
 JSON as before; nothing about fulfillment semantics changes.
+
+## September 20: owner disputes (migration 20260920170000)
+
+A third request kind, `dispute`, for content the owner cannot correct field by field: a processed
+lab result or its source document (reference: the lab job id), a voice transcript (reference: the job
+digest) or a whole personal record (reference: the record id, which must be the owner's). The payload
+(`personal-dispute/1`) carries the store, reference, an optional content digest the owner saw, a
+statement of what is wrong (1 to 4000 characters) and the requested action (`amend`, `annotate`,
+`remove`). `clinical_core.submit_owned_privacy_request(id,'dispute',payload)` validates the shape per
+store, replays the same request idempotently, refuses a different payload under the same request id,
+and stores the target with the statement digest and the request digest. Nothing about the referenced
+content is read or changed by submission; the database holds no rows for the lab or voice stores, so
+those references are verified by the operator against the inventories.
+
+`clinical_private.resolve_owned_dispute(id,outcome,amendment_sha256,explanation)` is the assigned
+operator's decision: `amended`, `annotated` and `removed` name the evidence digest of what was
+actually done (the amended result, the annotation record, the removal receipt), `declined` names none;
+the request becomes `completed` or `refused`; replaying the same decision returns the same receipt and
+a different decision is refused. The operator detail (`dispute` block) shows the target, the owner's
+statement and the resolution; the owner's ledger (`disputeTarget`, `disputeResolution`) shows the same.
+The workspace action is `resolveDispute`. Executable SQL is covered by
+`owned-privacy-disputes.database.test.ts` (fictional rows, PGlite); nothing hosted has run migration 99.
+The dispute records the ask and the outcome; performing the amendment in the lab or voice store is a
+separate operator procedure that this migration does not execute.

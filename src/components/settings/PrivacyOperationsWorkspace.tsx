@@ -32,6 +32,7 @@ export function PrivacyOperationsWorkspace(){
   const [queue,setQueue]=useState<PrivacyQueue|null>(null),[detail,setDetail]=useState<PrivacyDetail|null>(null);
   const [closed,setClosed]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState('');
   const [outcome,setOutcome]=useState<'applied'|'declined'>('applied'),[revision,setRevision]=useState(''),[explanation,setExplanation]=useState('');
+  const [disputeOutcome,setDisputeOutcome]=useState<'amended'|'annotated'|'removed'|'declined'>('amended'),[amendment,setAmendment]=useState('');
   const [confirm,setConfirm]=useState(false),[notice,setNotice]=useState('');
   const [policy,setPolicy]=useState(''),[purgeConfirmation,setPurgeConfirmation]=useState('');
   const [preview,setPreview]=useState<PersonalPurgePreview|null>(null),[receipt,setReceipt]=useState<PersonalPurgeReceipt|null>(null);
@@ -95,13 +96,14 @@ export function PrivacyOperationsWorkspace(){
       if(input.action==='exportBacklog'){setBacklog(result as ExportBacklog);return;}
       if(input.action==='list'){setQueue(result as PrivacyQueue);setDetail(null);setConfirm(false);setExplanation('');}
       else{setDetail(result as PrivacyDetail);setConfirm(false);
-        if(input.action==='resolve'){setQueue(null);setNotice('Decision verified and recorded. Refresh the queue to see remaining requests.');}
-        else{setExplanation('');setRevision('');setOutcome('applied');}}
+        if(input.action==='resolve'||input.action==='resolveDispute'){setQueue(null);setNotice('Decision verified and recorded. Refresh the queue to see remaining requests.');}
+        else{setExplanation('');setRevision('');setOutcome('applied');setDisputeOutcome('amended');setAmendment('');}}
     }catch{if(alive.current&&epoch===generation.current)setError(messages.service_unavailable);}
     finally{clearTimeout(timeout);if(alive.current&&epoch===generation.current){working.current=false;setBusy(false);}}
   }
   const terminal=detail&&['completed','refused'].includes(detail.status);
   const canResolve=detail?.kind==='correction'&&detail.correction&&!terminal&&!detail.legalHold;
+  const canResolveDispute=detail?.kind==='dispute'&&detail.dispute&&!terminal&&!detail.legalHold;
   return <div className="space-y-4">
     <Card className="p-5 space-y-3">
       <p>Only requests covered by your explicit privacy assignment appear here. This does not connect an independent consumer to your clinic.</p>
@@ -145,6 +147,16 @@ export function PrivacyOperationsWorkspace(){
         </dl>
         {detail.correction.resolution?<p>Recorded outcome: {detail.correction.resolution.outcome}. {detail.correction.resolution.explanation}</p>:null}
       </>:detail.kind==='correction'?<p>This older request has no revision-bound target and cannot be completed here. Obtain a new consumer correction request.</p>:null}
+      {detail.dispute?<section aria-label="Dispute" className="space-y-2 break-words">
+        <p><strong>Dispute</strong> · {detail.dispute.target.store.replaceAll('_',' ')} · requested: {detail.dispute.target.requestedAction}</p>
+        <dl className="space-y-2">
+          <dt>Reference</dt><dd className="break-all">{detail.dispute.target.referenceId}{detail.dispute.target.contentSha256?` · content digest ${detail.dispute.target.contentSha256}`:' · no content digest supplied'}</dd>
+          <dt>Consumer statement</dt><dd className="whitespace-pre-wrap">{detail.dispute.statement}</dd>
+          <dt>Request digest</dt><dd className="break-all">{detail.dispute.target.requestSha256}</dd>
+        </dl>
+        <p className="text-sm text-subtle">Verify the reference in its store (lab inventory for results and documents, voice inventory for transcripts, the record itself for personal records) before recording an outcome. An amendment, annotation or removal must already exist and is named by its evidence digest; this screen changes no clinical content.</p>
+        {detail.dispute.resolution?<p>Recorded outcome: {detail.dispute.resolution.outcome}{detail.dispute.resolution.amendmentSha256?` · evidence ${detail.dispute.resolution.amendmentSha256}`:''}. {detail.dispute.resolution.explanation}</p>:null}
+      </section>:detail.kind==='dispute'?<p>This dispute has no stored target and cannot be resolved here.</p>:null}
       {detail.kind==='deletion'?<><p>Deletion requires reconciliation of all nine stores. The personal-storage action below cannot complete account deletion.</p>
         <ul>{detail.fulfillment.map((f,i)=><li key={i}>{f.store}: {f.outcome} ({f.recordedAt.slice(0,10)})</li>)}</ul>
         {!detail.fulfillment.length?<p>No fulfillment evidence recorded.</p>:null}
@@ -195,6 +207,16 @@ export function PrivacyOperationsWorkspace(){
         <Btn disabled={busy||!confirm||!explanation.trim()||outcome==='applied'&&!/^[1-9][0-9]{0,8}$/.test(revision)} onClick={()=>void perform({
           action:'resolve',privacyRequestId:detail.privacyRequestId,outcome,appliedRevision:outcome==='applied'?Number(revision):null,explanation:explanation.trim()})}>Record verified decision</Btn>
         <Btn disabled={busy} onClick={()=>void perform({action:'detail',privacyRequestId:detail.privacyRequestId})}>Refresh this request</Btn>
+      </div>:null}
+      {canResolveDispute?<div className="space-y-2 border-t pt-3">
+        <label className="block">Dispute decision <select value={disputeOutcome} disabled={busy} className="border rounded p-2" onChange={e=>{setDisputeOutcome(e.target.value as typeof disputeOutcome);setConfirm(false);}}>
+          <option value="amended">Amended (evidence digest of the amended content)</option><option value="annotated">Annotated (evidence digest of the annotation)</option>
+          <option value="removed">Removed (evidence digest of the removal receipt)</option><option value="declined">Decline with explanation</option></select></label>
+        {disputeOutcome!=='declined'?<label className="block">Evidence digest (SHA-256, 64 hex) <input aria-label="Evidence digest" className="border rounded p-2 w-full" value={amendment} disabled={busy} onChange={e=>{setAmendment(e.target.value.trim().toLowerCase());setConfirm(false);}}/></label>:null}
+        <label className="block">Explanation visible to the consumer<textarea aria-label="Dispute explanation visible to the consumer" className="block border rounded p-2 w-full" maxLength={2000} value={explanation} disabled={busy} onChange={e=>{setExplanation(e.target.value);setConfirm(false);}}/></label>
+        <label className="flex gap-2"><input type="checkbox" checked={confirm} disabled={busy} onChange={e=>setConfirm(e.target.checked)}/>I verified the disputed content in its store and the evidence named here. This records a final decision, not a clinical edit.</label>
+        <Btn disabled={busy||!confirm||!explanation.trim()||(disputeOutcome!=='declined'&&!/^[a-f0-9]{64}$/.test(amendment))} onClick={()=>void perform({
+          action:'resolveDispute',privacyRequestId:detail.privacyRequestId,outcome:disputeOutcome,amendmentSha256:disputeOutcome==='declined'?null:amendment,explanation:explanation.trim()})}>Record dispute decision</Btn>
       </div>:null}
     </Card>:null}
   </div>;
