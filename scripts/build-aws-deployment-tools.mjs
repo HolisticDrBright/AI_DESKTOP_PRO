@@ -11,6 +11,7 @@ await build({
     catalogOperator: "src/server/clinical-core/aws-catalog-import-cli.ts",
     acceptance: "src/server/clinical-core/aws-acceptance-cli.ts",
     exportRetentionAcceptance: "src/server/clinical-core/export-retention-acceptance-cli.ts",
+    recordingAcceptance: "src/server/clinical-core/recording-acceptance-cli.ts",
   },
   outdir,
   bundle: true,

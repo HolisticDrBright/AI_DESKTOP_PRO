@@ -69,6 +69,13 @@ the analysis context propagate):
 - the intake restore settles an entry once the restored revision is at least the applied one;
 - a corrupt ledger reads as pending, never as clean.
 
-This makes stale outputs visible and blocks new clinical derivations; it does not rewrite saved plans.
+This makes stale outputs visible and blocks new clinical derivations. Saved plans are never rewritten
+in place. Once the restore settles a correction, the entry moves to a per-owner regeneration ledger
+(`correction_regeneration:<owner>`): the protocol screen marks the active plan "out of date after a
+correction", opens the plan input review once on its own, and the owner confirms before a replacement
+is generated; the current plan stays available until the new one completes. A successful generation
+clears the ledger; with no active plan there is nothing to regenerate and the ledger is cleared.
+Regeneration therefore stays an explicit, reviewed action (implemented, locally verified in
+`correction-propagation.test.ts`; the screen flow is not device verified).
 V2 `expo/__tests__/correction-propagation.test.ts` covers recording, blocking, settlement, per-owner scope and
 corruption. Device verification is outstanding.
