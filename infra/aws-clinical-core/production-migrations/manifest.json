@@ -344,6 +344,10 @@
     {
       "version": "20260920140000",
       "file": "20260920140000_production_owned_privacy_export_settlement.sql"
+    },
+    {
+      "version": "20260920150000",
+      "file": "20260920150000_production_owned_privacy_export_retention_ops.sql"
     }
   ]
 }

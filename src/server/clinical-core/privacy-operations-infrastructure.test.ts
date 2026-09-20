@@ -100,6 +100,26 @@ describe('privacy operations deployable candidate',()=>{
     expect(env.EXPORT_CLEANUP_ENABLED).toEqual({Ref:'ExportCleanupEnabled'});
     expect(env.PERSONAL_EXPORT_BUCKET).toEqual({'Fn::If':['ExportCleanupActive',{Ref:'ExportBucketName'},'']});
   });
+  it('ships the scheduled retention sweep disabled: its function, hourly rule, permission and alarms exist only under RetentionScheduleActive, which needs the reviewed service identity',()=>{
+    expect(t.Parameters.RetentionScheduleEnabled.Default).toBe('false');expect(t.Parameters.RetentionServicePersonId.Default).toBe('');expect(t.Parameters.RetentionServiceSubject.Default).toBe('');
+    for(const name of ['RetentionSweep','RetentionSweepSchedule','RetentionSweepInvoke','RetentionOverdueAlarm','RetentionRefusedAlarm'])expect((t.Resources[name] as {Condition?:string}).Condition).toBe('RetentionScheduleActive');
+    expect(t.Resources.RetentionSweep.Properties).toMatchObject({Handler:'retention-sweep.handler',ReservedConcurrentExecutions:1,Timeout:600});
+    expect(t.Resources.RetentionSweepSchedule.Properties).toMatchObject({ScheduleExpression:'rate(1 hour)'});
+    expect(t.Resources.RetentionSweepInvoke.Properties).toMatchObject({Principal:'events.amazonaws.com'});
+    expect(t.Resources.RetentionOverdueAlarm.Properties).toMatchObject({Namespace:'ALP/PrivacyExportRetention',MetricName:'OldestOverdueSeconds',TreatMissingData:'breaching',Threshold:{Ref:'RetentionOverdueAlarmSeconds'}});
+    expect(t.Resources.RetentionRefusedAlarm.Properties).toMatchObject({MetricName:'SweepRefused',TreatMissingData:'breaching'});
+    const env=(t.Resources.RetentionSweep.Properties.Environment as {Variables:Record<string,Json>}).Variables;
+    expect(env.RETENTION_SWEEP_ENABLED).toEqual({Ref:'RetentionScheduleEnabled'});expect(env.RETENTION_SERVICE_PERSON_ID).toEqual({Ref:'RetentionServicePersonId'});
+    expect(JSON.stringify(env)).not.toMatch(/WORKFORCE_ISSUER|CONSUMER_USER_POOL_ID|VOICE_BUCKET/);
+    expect((t.Resources.Function.Properties.Environment as {Variables:Record<string,Json>}).Variables.RETENTION_SWEEP_ENABLED).toBe('false');
+    expect(t.Rules).toMatchObject({ReviewedRetentionSchedule:{RuleCondition:{'Fn::Equals':[{Ref:'RetentionScheduleEnabled'},'true']}}});
+    expect(Object.values(t.Resources).filter(r=>r.Type==='AWS::ApiGatewayV2::Route')).toHaveLength(1);
+    expect(readFileSync('dist/aws-clinical-core/privacy-operations/retention-sweep.js','utf8').length).toBeGreaterThan(1000);
+    const lifecycle=JSON.parse(readFileSync('infra/aws-clinical-core/personal-export-bucket-lifecycle.json','utf8')) as {Rules:Array<Record<string,Json>>};
+    expect(lifecycle.Rules.every(r=>(r.Filter as {Prefix:string}).Prefix==='personal-exports/'&&r.Status==='Enabled')).toBe(true);
+    expect(lifecycle.Rules.some(r=>(r.AbortIncompleteMultipartUpload as {DaysAfterInitiation:number})?.DaysAfterInitiation===1)).toBe(true);
+    expect(lifecycle.Rules.some(r=>(r.NoncurrentVersionExpiration as {NoncurrentDays:number})?.NoncurrentDays===1)).toBe(true);
+  });
   it('remains blocked unless every separate approval and alarm destination exists',()=>{
     const defaults=Object.fromEntries(Object.entries(t.Parameters).map(([k,v])=>[k,v.Default??'']));
     const approved={...defaults,PhiAllowed:'true',Activation:'approved',ActivationEvidenceSha256:'a'.repeat(64),

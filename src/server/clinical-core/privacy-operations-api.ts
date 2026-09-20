@@ -45,7 +45,7 @@ export function createPrivacyOperationsApi(input:{configuration:PrivacyOperation
         return response(503,{error:'personal_purge_not_activated'});
       if(parsed.data.action==='purgeExternal'&&!externalPurgeActive)return response(503,{error:'external_purge_not_activated'});
       if(parsed.data.action==='purgeIdentity'&&!identityDeletionActive)return response(503,{error:'identity_deletion_not_activated'});
-      if(parsed.data.action==='cleanupExports'&&!exportCleanupActive)return response(503,{error:'export_cleanup_not_activated'});
+      if(['cleanupExports','reconcileExports','exportBacklog'].includes(parsed.data.action)&&!exportCleanupActive)return response(503,{error:'export_cleanup_not_activated'});
       return response(200,{data:await input.operations()(context,parsed.data)});
     }catch(error){
       const code=error instanceof PrivacyOperationError?error.code:'service_unavailable';

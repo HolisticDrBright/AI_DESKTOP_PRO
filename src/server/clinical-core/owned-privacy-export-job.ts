@@ -1,7 +1,7 @@
 if(typeof window!=='undefined')throw new Error('owned-privacy-export-job is server-only');
 import {createHash} from 'node:crypto';
 import type {ProductionClinicalRequestContext} from './aws-identity-consent';
-import {clinicalUuid,type ClinicalCoreTransaction} from './database';
+import {clinicalUuid,ClinicalCoreDatabaseRejection,type ClinicalCoreTransaction} from './database';
 import {OwnedStorageError} from './owned-consumer-records';
 import {createOwnedPrivacyExport,PERSONAL_EXPORT_COVERAGE} from './owned-privacy-export';
 
@@ -45,10 +45,14 @@ export interface PrivacyExportStore {
   listVersions(s:PrivacyExportObjectStorage,keyPrefix:string,signal:AbortSignal):Promise<{key:string;version:string;bytes:number|null;deleteMarker:boolean}[]>;
 }
 export type PrivacyExportJobStatus='requested'|'running'|'ready'|'failed'|'cancelled'|'expired';
+/** Retention vocabulary (migration 20260920150000): where the copy is in its life, separately from the job status.
+ * `retained_under_hold` is defined for completeness and never produced under the current policy (see docs). */
+export type PrivacyExportRetentionState='packaging'|'downloadable'|'cleanup_pending'|'removal_recorded'|'removal_verified'|'retained_under_hold';
+const RETENTION:PrivacyExportRetentionState[]=['packaging','downloadable','cleanup_pending','removal_recorded','removal_verified','retained_under_hold'];
 export type PrivacyExportJobView={contract:typeof PRIVACY_EXPORT_JOB_CONTRACT;jobId:string;status:PrivacyExportJobStatus;
   asOf:string;requestedAt:string;readyAt:string|null;expiresAt:string;recordCount:number;consentCount:number;exportedRecords:number;exportedConsents:number;
   parts:number;bytesWritten:number;byteLength:number|null;objectChecksum:string|null;failureCode:string|null;objectDeleted:boolean;version:number;
-  coverage:typeof PERSONAL_EXPORT_COVERAGE};
+  retention:PrivacyExportRetentionState;coverage:typeof PERSONAL_EXPORT_COVERAGE};
 type Run=<T>(context:ProductionClinicalRequestContext,work:(tx:ClinicalCoreTransaction)=>Promise<T>)=>Promise<T>;
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const STATUSES:PrivacyExportJobStatus[]=['requested','running','ready','failed','cancelled','expired'];
@@ -73,12 +77,12 @@ function view(raw:unknown):PrivacyExportJobView{
   if(!UUID.test(String(v.jobId))||!STATUSES.includes(v.status as PrivacyExportJobStatus)||!date(v.asOf)||!date(v.requestedAt)
     ||!date(v.expiresAt)||(v.readyAt!==null&&!date(v.readyAt))||!count(v.recordCount)||!count(v.consentCount)||!count(v.exportedRecords)||!count(v.exportedConsents)
     ||!count(v.parts)||!count(v.bytesWritten)||(v.byteLength!==null&&!count(v.byteLength))||(v.objectChecksum!==null&&typeof v.objectChecksum!=='string')
-    ||(v.failureCode!==null&&typeof v.failureCode!=='string')||typeof v.objectDeleted!=='boolean'||!count(v.version))unavailable();
+    ||(v.failureCode!==null&&typeof v.failureCode!=='string')||typeof v.objectDeleted!=='boolean'||!count(v.version)||!RETENTION.includes(v.retention as PrivacyExportRetentionState))unavailable();
   return {contract:PRIVACY_EXPORT_JOB_CONTRACT,jobId:v.jobId as string,status:v.status as PrivacyExportJobStatus,asOf:v.asOf as string,requestedAt:v.requestedAt as string,
     readyAt:(v.readyAt as string|null),expiresAt:v.expiresAt as string,recordCount:v.recordCount as number,consentCount:v.consentCount as number,
     exportedRecords:v.exportedRecords as number,exportedConsents:v.exportedConsents as number,parts:v.parts as number,bytesWritten:v.bytesWritten as number,
     byteLength:v.byteLength as number|null,objectChecksum:v.objectChecksum as string|null,failureCode:v.failureCode as string|null,objectDeleted:v.objectDeleted,
-    version:v.version as number,coverage:PERSONAL_EXPORT_COVERAGE};
+    version:v.version as number,retention:v.retention as PrivacyExportRetentionState,coverage:PERSONAL_EXPORT_COVERAGE};
 }
 async function call<T=unknown>(tx:ClinicalCoreTransaction,sql:string,args:unknown[]){const r=await tx.query<{result:T}>(sql,args);if(r.rows.length!==1)unavailable();return r.rows[0].result;}
 function items(listed:unknown):Record<string,unknown>[]{const v=typeof listed==='string'?JSON.parse(listed):listed;if(!Array.isArray(v))unavailable();return v.map(object);}
@@ -100,8 +104,76 @@ async function removeJobObjects(store:PrivacyExportStore,storage:PrivacyExportOb
   if((await store.listUploads(storage,key,signal)).some(u=>owned(u.key)))unavailable();
   if((await store.listVersions(storage,key,signal)).some(v=>owned(v.key)))unavailable();
 }
+/** True when the store still holds anything under the job's key: the reconciliation question after a certificate. */
+async function anythingRemains(store:PrivacyExportStore,storage:PrivacyExportObjectStorage,key:string,signal:AbortSignal):Promise<boolean>{
+  const owned=(k:string)=>k===key||k===staging(key);
+  if((await store.listUploads(storage,key,signal)).some(u=>owned(u.key)))return true;
+  return (await store.listVersions(storage,key,signal)).some(v=>owned(v.key));
+}
 /** A finished job may still have an admitted writer until its last lease is a settlement window old; it is not certifiable before then. */
 const settled=(item:Record<string,unknown>)=>item.settled===true;
+const errorLabel=(error:unknown)=>(error instanceof OwnedStorageError?error.code:error instanceof Error&&error.name&&error.name!=='Error'?error.name:'storage_failure').slice(0,120);
+export type PrivacyExportCleanupOutcome='deleted'|'pending'|'deferred';
+export type PrivacyExportRetentionItem={jobId:string;status:PrivacyExportJobStatus;outcome:PrivacyExportCleanupOutcome};
+export type PrivacyExportReconcileItem={jobId:string;status:PrivacyExportJobStatus;outcome:'confirmed'|'reopened'|'pending'};
+/** The SQL surface a cleanup authority exposes; the owner, the assigned operator and the retention service differ only here. */
+type CleanupAuthority={
+  list:(tx:ClinicalCoreTransaction,limit:number)=>Promise<unknown>;
+  certify:(tx:ClinicalCoreTransaction,ownerId:string,jobId:string,version:number)=>Promise<unknown>;
+  defer:(tx:ClinicalCoreTransaction,ownerId:string,jobId:string,version:number,error:string)=>Promise<unknown>;
+  listReconcile:(tx:ClinicalCoreTransaction,limit:number)=>Promise<unknown>;
+  reconcile:(tx:ClinicalCoreTransaction,ownerId:string,jobId:string,version:number,reappeared:boolean)=>Promise<unknown>;
+  /** The owner's own listing carries no ownerId; the key prefix is checked against the actor instead. */
+  ownerOf:(context:ProductionClinicalRequestContext,item:Record<string,unknown>)=>string;
+};
+async function runCleanup(run:Run,authority:CleanupAuthority,store:PrivacyExportStore,storage:PrivacyExportObjectStorage,
+  context:ProductionClinicalRequestContext,limit:number,signal:AbortSignal):Promise<PrivacyExportRetentionItem[]>{
+  const listed=items(await run(context,tx=>authority.list(tx,limit)));
+  if(listed.length>limit)unavailable();
+  const out:PrivacyExportRetentionItem[]=[];
+  for(const item of listed){
+    const jobId=String(item.jobId),key=String(item.objectKey),status=item.status as PrivacyExportJobStatus,ownerId=authority.ownerOf(context,item);
+    if(!UUID.test(jobId)||!STATUSES.includes(status)||!key.startsWith(privacyExportPrefix(ownerId))||!count(item.version))unavailable();
+    if(item.due===false){out.push({jobId,status,outcome:'deferred'});continue;} // backing off after an earlier failure; no store call
+    if(signal.aborted||!settled(item)){out.push({jobId,status,outcome:'pending'});continue;}
+    try{
+      await removeJobObjects(store,storage,key,{stagingVersion:item.stagingVersion,objectVersion:item.objectVersion},signal);
+      const receipt=object(await run(context,tx=>authority.certify(tx,ownerId,jobId,item.version as number)));
+      if(receipt.jobId!==jobId||receipt.objectDeleted!==true)unavailable();
+      out.push({jobId,status,outcome:'deleted'});
+    }catch(error){
+      if(error instanceof OwnedStorageError&&error.code==='owner_required')throw error;
+      // The failure is recorded with backoff so this job cannot starve the others; a lost record just leaves it due again.
+      let deferred=false;
+      try{await run(context,tx=>authority.defer(tx,ownerId,jobId,item.version as number,errorLabel(error)));deferred=true;}catch{/* next listing */}
+      out.push({jobId,status,outcome:deferred?'deferred':'pending'});
+    }
+  }
+  return out;
+}
+/** After a certificate: list the key again once the settlement window has passed, and daily for thirty days. Anything found reopens the obligation. */
+async function runReconcile(run:Run,authority:CleanupAuthority,store:PrivacyExportStore,storage:PrivacyExportObjectStorage,
+  context:ProductionClinicalRequestContext,limit:number,signal:AbortSignal):Promise<PrivacyExportReconcileItem[]>{
+  const listed=items(await run(context,tx=>authority.listReconcile(tx,limit)));
+  if(listed.length>limit)unavailable();
+  const out:PrivacyExportReconcileItem[]=[];
+  for(const item of listed){
+    const jobId=String(item.jobId),key=String(item.objectKey),status=item.status as PrivacyExportJobStatus,ownerId=authority.ownerOf(context,item);
+    if(!UUID.test(jobId)||!STATUSES.includes(status)||!key.startsWith(privacyExportPrefix(ownerId))||!count(item.version))unavailable();
+    if(signal.aborted){out.push({jobId,status,outcome:'pending'});continue;}
+    try{
+      const reappeared=await anythingRemains(store,storage,key,signal);
+      const receipt=object(await run(context,tx=>authority.reconcile(tx,ownerId,jobId,item.version as number,reappeared)));
+      if(receipt.jobId!==jobId)unavailable();
+      out.push({jobId,status,outcome:reappeared?'reopened':'confirmed'});
+    }catch(error){
+      if(error instanceof OwnedStorageError&&error.code==='owner_required')throw error;
+      out.push({jobId,status,outcome:'pending'});
+    }
+  }
+  return out;
+}
+const summary=<T extends {outcome:string}>(items:T[])=>Object.fromEntries(['deleted','pending','deferred','confirmed','reopened'].map(k=>[k,items.filter(i=>i.outcome===k).length])) as Record<'deleted'|'pending'|'deferred'|'confirmed'|'reopened',number>;
 
 export function createOwnedPrivacyExportJobs(run:Run,delivery:{store:PrivacyExportStore;storage:PrivacyExportObjectStorage;now?:()=>number;partBytes?:number}){
   const now=()=>delivery.now?.()??Date.now(), partBytes=delivery.partBytes??PRIVACY_EXPORT_PART_BYTES, {store,storage}=delivery;
@@ -111,6 +183,14 @@ export function createOwnedPrivacyExportJobs(run:Run,delivery:{store:PrivacyExpo
   const complete=(context:ProductionClinicalRequestContext,jobId:string,version:number,objectVersion:string,checksum:string)=>
     run(context,tx=>call(tx,'select clinical_core.complete_owned_privacy_export_job($1,$2::bigint,$3,$4) as result',[clinicalUuid(jobId),version,objectVersion,checksum])).then(view);
   /** The stored version must be the reviewed key's, the recorded length, and carry exactly the checksum the recorded parts fix. */
+  const ownerAuthority:CleanupAuthority={
+    list:tx=>call(tx,'select clinical_core.list_owned_privacy_export_cleanup() as result',[]),
+    certify:(tx,_owner,jobId,v)=>call(tx,'select clinical_core.record_owned_privacy_export_object_deleted($1,$2::bigint) as result',[clinicalUuid(jobId),v]),
+    defer:(tx,_owner,jobId,v,error)=>call(tx,'select clinical_core.record_owned_privacy_export_cleanup_attempt($1,$2::bigint,$3) as result',[clinicalUuid(jobId),v,error]),
+    listReconcile:tx=>call(tx,'select clinical_core.list_owned_privacy_export_reconcile() as result',[]),
+    reconcile:(tx,_owner,jobId,v,reappeared)=>call(tx,'select clinical_core.reconcile_owned_privacy_export($1,$2::bigint,$3::boolean) as result',[clinicalUuid(jobId),v,reappeared]),
+    ownerOf:context=>context.actorPersonId,
+  };
   const verified=async(key:string,objectVersion:string,bytes:number,checksum:string,signal:AbortSignal)=>{
     const head=await store.head(storage,key,objectVersion,signal,{checksum:true});
     if(!head?.exists||head.encryption!=='aws:kms'||head.kmsKeyArn!==storage.kmsKeyArn||head.bytes!==bytes)unavailable();
@@ -262,57 +342,76 @@ export function createOwnedPrivacyExportJobs(run:Run,delivery:{store:PrivacyExpo
       return {jobId,url,expiresInSeconds:PRIVACY_EXPORT_DOWNLOAD_SECONDS,byteLength:issued.byteLength as number,objectChecksum:issued.objectChecksum};
     },
     /** Removes the owner's own finished jobs' objects and open uploads, certifying each only after the store lists nothing under its
-     * key and no pass could still be writing (settlement); an unsettled job counts as remaining. */
+     * key and no pass could still be writing (settlement); an unsettled or failed job counts as remaining and failures back off. */
     async cleanupPrivacyExportJobs(context:ProductionClinicalRequestContext,signal:AbortSignal):Promise<{cleaned:number;remaining:number}>{
-      const listed=items(await run(context,tx=>call<unknown>(tx,'select clinical_core.list_owned_privacy_export_cleanup() as result',[])));
-      let cleaned=0,remaining=0;
-      for(const item of listed){
-        if(signal.aborted){remaining++;continue;}
-        if(!settled(item)){remaining++;continue;}
-        try{
-          const key=String(item.objectKey);
-          if(!key.startsWith(privacyExportPrefix(context.actorPersonId))||!UUID.test(String(item.jobId))||!count(item.version))unavailable();
-          await removeJobObjects(store,storage,key,{stagingVersion:item.stagingVersion,objectVersion:item.objectVersion},signal);
-          await run(context,tx=>call(tx,'select clinical_core.record_owned_privacy_export_object_deleted($1,$2::bigint) as result',[clinicalUuid(String(item.jobId)),item.version as number]));
-          cleaned++;
-        }catch{remaining++;}
-      }
-      return {cleaned,remaining};
+      const out=await runCleanup(run,ownerAuthority,store,storage,context,1000,signal);
+      const s=summary(out);return {cleaned:s.deleted,remaining:s.pending+s.deferred};
+    },
+    /** Re-checks the owner's certified jobs after the settlement window; a copy or upload that reappeared reopens its cleanup. */
+    async reconcilePrivacyExportJobs(context:ProductionClinicalRequestContext,signal:AbortSignal):Promise<{confirmed:number;reopened:number;pending:number}>{
+      const out=await runReconcile(run,ownerAuthority,store,storage,context,1000,signal);
+      const s=summary(out);return {confirmed:s.confirmed,reopened:s.reopened,pending:s.pending};
     },
   };
 }
 
-export type PrivacyExportRetentionItem={jobId:string;status:PrivacyExportJobStatus;outcome:'deleted'|'pending'};
-/** The assigned privacy operator's retention pass over export jobs
- * (migration 20260920130000): finished and expired jobs of the owners this
- * operator is assigned to, including owners whose accounts have closed, are
- * removed from the store with the same listing-based proof as the owner's own
- * pass and certified under the owner lock. Retention therefore does not depend
- * on the owner returning. Nothing here reads export content. */
-export function createPrivacyExportRetention(run:Run,delivery:{store:PrivacyExportStore;storage:PrivacyExportObjectStorage}){
+export type PrivacyExportBacklog={packaging:number;downloadable:number;downloadExpired:number;cleanupPending:number;settling:number;deferred:number;
+  removalRecorded:number;removalVerified:number;reconcileDue:number;reopened:number;retainedUnderHold:number;oldestOverdueSeconds:number;
+  oldestPendingSince:string|null;measuredAt:string;scope:'assigned_owners'|'all_owners'};
+/** Retention passes that do not depend on the owner (migrations 20260920130000 and
+ * 20260920150000). `operator`: the assigned privacy operator over the owners of a
+ * live assignment, including closed accounts. `retention_service`: the scheduled
+ * sweep over every owner, refused unless a reviewed release row names the
+ * calling workforce identity as the retention service. Both remove with the same
+ * listing proof as the owner's pass, defer failures with backoff, certify under
+ * the owner lock, reconcile certified jobs after the settlement window, and read
+ * a backlog. Nothing here reads export content. */
+export function createPrivacyExportRetention(rawRun:Run,delivery:{store:PrivacyExportStore;storage:PrivacyExportObjectStorage},authority:'operator'|'retention_service'='operator'){
   const {store,storage}=delivery;
+  // Database rejections become the same vocabulary the owner path uses; other errors (e.g. an API layer's own) pass through.
+  const run:Run=(context,work)=>rawRun(context,work).catch(error=>{
+    if(error instanceof ClinicalCoreDatabaseRejection){
+      if(error.category==='identity_refused'||error.category==='operation_refused')throw new OwnedStorageError('owner_required');
+      if(error.category==='conflict'||error.category==='request_invalid')throw new OwnedStorageError(error.category);
+      throw new OwnedStorageError('storage_unavailable');
+    }
+    throw error;
+  });
+  const fn=authority==='operator'?{list:'list_privacy_export_cleanup_for_operator',certify:'record_privacy_export_object_deleted_by_operator',defer:'defer_privacy_export_cleanup_by_operator',
+      listReconcile:'list_privacy_export_reconcile_for_operator',reconcile:'reconcile_privacy_export_by_operator',backlog:'privacy_export_backlog_for_operator',maxItems:10}
+    :{list:'list_privacy_export_cleanup_for_retention',certify:'record_privacy_export_object_deleted_by_retention',defer:'defer_privacy_export_cleanup_by_retention',
+      listReconcile:'list_privacy_export_reconcile_for_retention',reconcile:'reconcile_privacy_export_by_retention',backlog:'privacy_export_backlog_for_retention',maxItems:100};
+  const sql:CleanupAuthority={
+    list:(tx,limit)=>call(tx,`select clinical_private.${fn.list}($1::integer) as result`,[limit]),
+    certify:(tx,owner,jobId,v)=>call(tx,`select clinical_private.${fn.certify}($1,$2,$3::bigint) as result`,[clinicalUuid(owner),clinicalUuid(jobId),v]),
+    defer:(tx,owner,jobId,v,error)=>call(tx,`select clinical_private.${fn.defer}($1,$2,$3::bigint,$4) as result`,[clinicalUuid(owner),clinicalUuid(jobId),v,error]),
+    listReconcile:(tx,limit)=>call(tx,`select clinical_private.${fn.listReconcile}($1::integer) as result`,[limit]),
+    reconcile:(tx,owner,jobId,v,reappeared)=>call(tx,`select clinical_private.${fn.reconcile}($1,$2,$3::bigint,$4::boolean) as result`,[clinicalUuid(owner),clinicalUuid(jobId),v,reappeared]),
+    ownerOf:(_context,item)=>{const owner=String(item.ownerId);if(!UUID.test(owner))unavailable();return owner;},
+  };
+  const guard=(context:ProductionClinicalRequestContext,maxItems:number)=>{
+    if(!Number.isSafeInteger(maxItems)||maxItems<1||maxItems>fn.maxItems)invalid();
+    if(context.identityPool!=='workforce'||context.purpose!=='consent_management')throw new OwnedStorageError('owner_required');
+  };
   return {
-    async cleanupAssignedPrivacyExports(context:ProductionClinicalRequestContext,maxItems:number,signal:AbortSignal):Promise<{cleaned:number;remaining:number;items:PrivacyExportRetentionItem[]}>{
-      if(!Number.isSafeInteger(maxItems)||maxItems<1||maxItems>10)invalid();
-      if(context.identityPool!=='workforce'||context.purpose!=='consent_management')throw new OwnedStorageError('owner_required');
-      const listed=items(await run(context,tx=>call<unknown>(tx,'select clinical_private.list_privacy_export_cleanup_for_operator($1::integer) as result',[maxItems])));
-      if(listed.length>maxItems)unavailable();
-      const out:PrivacyExportRetentionItem[]=[];
-      for(const item of listed){
-        const jobId=String(item.jobId),ownerId=String(item.ownerId),key=String(item.objectKey),status=item.status as PrivacyExportJobStatus;
-        if(!UUID.test(jobId)||!UUID.test(ownerId)||!STATUSES.includes(status)||!key.startsWith(privacyExportPrefix(ownerId))||!count(item.version))unavailable();
-        if(signal.aborted||!settled(item)){out.push({jobId,status,outcome:'pending'});continue;}
-        try{
-          await removeJobObjects(store,storage,key,{stagingVersion:item.stagingVersion,objectVersion:item.objectVersion},signal);
-          const receipt=object(await run(context,tx=>call(tx,'select clinical_private.record_privacy_export_object_deleted_by_operator($1,$2,$3::bigint) as result',[clinicalUuid(ownerId),clinicalUuid(jobId),item.version as number])));
-          if(receipt.jobId!==jobId||receipt.objectDeleted!==true)unavailable();
-          out.push({jobId,status,outcome:'deleted'});
-        }catch(error){
-          if(error instanceof OwnedStorageError&&error.code==='owner_required')throw error;
-          out.push({jobId,status,outcome:'pending'});
-        }
-      }
-      return {cleaned:out.filter(i=>i.outcome==='deleted').length,remaining:out.filter(i=>i.outcome==='pending').length,items:out};
+    authority,
+    async cleanupAssignedPrivacyExports(context:ProductionClinicalRequestContext,maxItems:number,signal:AbortSignal):Promise<{cleaned:number;remaining:number;deferred:number;items:PrivacyExportRetentionItem[]}>{
+      guard(context,maxItems);
+      const out=await runCleanup(run,sql,store,storage,context,maxItems,signal);
+      const s=summary(out);return {cleaned:s.deleted,remaining:s.pending+s.deferred,deferred:s.deferred,items:out};
+    },
+    async reconcilePrivacyExports(context:ProductionClinicalRequestContext,maxItems:number,signal:AbortSignal):Promise<{confirmed:number;reopened:number;pending:number;items:PrivacyExportReconcileItem[]}>{
+      guard(context,maxItems);
+      const out=await runReconcile(run,sql,store,storage,context,maxItems,signal);
+      const s=summary(out);return {confirmed:s.confirmed,reopened:s.reopened,pending:s.pending,items:out};
+    },
+    async privacyExportBacklog(context:ProductionClinicalRequestContext):Promise<PrivacyExportBacklog>{
+      guard(context,1);
+      const b=object(await run(context,tx=>call(tx,`select clinical_private.${fn.backlog}() as result`,[])));
+      const n=['packaging','downloadable','downloadExpired','cleanupPending','settling','deferred','removalRecorded','removalVerified','reconcileDue','reopened','retainedUnderHold','oldestOverdueSeconds'] as const;
+      for(const k of n)if(!count(b[k]))unavailable();
+      if((b.oldestPendingSince!==null&&!date(b.oldestPendingSince))||!date(b.measuredAt)||!['assigned_owners','all_owners'].includes(String(b.scope)))unavailable();
+      return {...Object.fromEntries(n.map(k=>[k,b[k] as number])),oldestPendingSince:b.oldestPendingSince as string|null,measuredAt:b.measuredAt as string,scope:b.scope as PrivacyExportBacklog['scope']} as PrivacyExportBacklog;
     },
   };
 }

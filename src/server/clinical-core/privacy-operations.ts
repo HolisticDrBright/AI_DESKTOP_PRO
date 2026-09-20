@@ -36,13 +36,19 @@ export function createPrivacyOperations(database:ClinicalCoreDatabase,inventory?
     if(context.identityPool!=='workforce'||context.purpose!=='consent_management'||context.environment!=='production-clinical'
       ||context.dataClassification!=='clinical_phi'||!context.productionBound||!context.containsPhi||!context.realPatientData)
       throw new PrivacyOperationError('privacy_access_refused');
-    if(v.action==='cleanupExports'){
+    if(v.action==='cleanupExports'||v.action==='reconcileExports'||v.action==='exportBacklog'){
       // Retention independent of the owner: finished and deadline-passed export jobs of assigned owners are removed
-      // from the reviewed bucket with listing proof and certified under the owner lock, one short transaction each.
+      // from the reviewed bucket with listing proof and certified under the owner lock, one short transaction each;
+      // certified removals are reconciled again after the settlement window; the backlog is counts only.
       if(!exportRetention)throw new PrivacyOperationError('service_unavailable');
-      const retention=createPrivacyExportRetention((c,work)=>withContext(c,work),exportRetention());
-      try{return parsePrivacyOperationResult(v,await retention.cleanupAssignedPrivacyExports(context,v.maxItems,AbortSignal.timeout(50_000)));}
-      catch(error){
+      const retention=createPrivacyExportRetention((c,work)=>withContext(c,work),exportRetention(),'operator');
+      try{
+        const signal=AbortSignal.timeout(50_000);
+        const result=v.action==='cleanupExports'?await retention.cleanupAssignedPrivacyExports(context,v.maxItems,signal)
+          :v.action==='reconcileExports'?await retention.reconcilePrivacyExports(context,v.maxItems,signal)
+          :await retention.privacyExportBacklog(context);
+        return parsePrivacyOperationResult(v,result);
+      }catch(error){
         if(error instanceof PrivacyOperationError)throw error;
         if(error instanceof OwnedStorageError)throw new PrivacyOperationError(error.code==='owner_required'?'privacy_access_refused':error.code==='request_invalid'?'request_invalid':error.code==='conflict'?'conflict':'service_unavailable');
         throw mapError(error);

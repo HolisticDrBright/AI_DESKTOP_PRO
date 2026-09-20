@@ -82,9 +82,13 @@ describe('privacy workforce API claims and activation',()=>{
     const call=vi.fn().mockResolvedValue({});
     const reviewed=createPrivacyOperationsApi({configuration:{...config,exportCleanupEnabled:true,exportCleanupEvidenceSha256:'f'.repeat(64)},operations:()=>call,now:()=>now});
     expect((await reviewed({...event(),body:JSON.stringify(body)})).statusCode).toBe(200);
-    for(const bad of [{...body,maxItems:11},{...body,maxItems:0},{...body,ownerId:uuid},{action:'cleanupExports'}])
+    for(const bad of [{...body,maxItems:11},{...body,maxItems:0},{...body,ownerId:uuid},{action:'cleanupExports'},{action:'exportBacklog',maxItems:1},{action:'reconcileExports'}])
       expect((await reviewed({...event(),body:JSON.stringify(bad)})).statusCode).toBe(400);
-    expect(call).toHaveBeenCalledOnce();
+    for(const more of [{action:'reconcileExports',maxItems:10},{action:'exportBacklog'}]){
+      expect((await handler({...event(),body:JSON.stringify(more)})).statusCode).toBe(503);
+      expect((await reviewed({...event(),body:JSON.stringify(more)})).statusCode).toBe(200);
+    }
+    expect(call).toHaveBeenCalledTimes(3);expect(operations).not.toHaveBeenCalled();
   });
   it('defaults blocked without opening a database and requires separate MFA review',async()=>{
     const operations=vi.fn();

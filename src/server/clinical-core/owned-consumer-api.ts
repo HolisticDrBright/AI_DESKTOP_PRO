@@ -94,14 +94,16 @@ export function createOwnedConsumerApi(input:{configuration:OwnedConsumerApiConf
             exact(body,['jobId']);
             const cancelled=await jobs.cancelPrivacyExportJob(context,{jobId:String(body.jobId??'')});
             const cleanup=await jobs.cleanupPrivacyExportJobs(context,signal);
-            return response(200,{data:{...cancelled,cleanup}});
+            const reconcile=await jobs.reconcilePrivacyExportJobs(context,signal);
+            return response(200,{data:{...cancelled,cleanup,reconcile}});
           }
           if(post){
             exact(body,['requestId']);
             const requested=await jobs.requestPrivacyExportJob(context,{requestId:String(body.requestId??'')});
-            // The owner's earlier finished jobs are cleaned while they are here.
+            // The owner's earlier finished jobs are cleaned, and earlier recorded removals re-checked, while they are here.
             const cleanup=await jobs.cleanupPrivacyExportJobs(context,signal);
-            return response(200,{data:{...requested,cleanup}});
+            const reconcile=await jobs.reconcilePrivacyExportJobs(context,signal);
+            return response(200,{data:{...requested,cleanup,reconcile}});
           }
           exact(body,['jobId','advance']);
           const jobId=String(body.jobId??'');

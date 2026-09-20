@@ -121,7 +121,7 @@ describe('large-export job routes',()=>{
     const jobs={requestPrivacyExportJob:vi.fn(async()=>({...job,status:'requested',replayed:false})),getPrivacyExportJob:vi.fn(async()=>job),
       advancePrivacyExportJob:vi.fn(async()=>({...job,exportedRecords:300,parts:2})),cancelPrivacyExportJob:vi.fn(async()=>({...job,status:'cancelled'})),
       issuePrivacyExportDownload:vi.fn(async()=>({jobId:id,url:'https://fictional-bucket.s3.us-east-2.amazonaws.com/personal-exports/x/y.json?X-Amz-Expires=300',expiresInSeconds:300,byteLength:12,objectChecksum:'c'})),
-      cleanupPrivacyExportJobs:vi.fn(async()=>({cleaned:0,remaining:0}))};
+      cleanupPrivacyExportJobs:vi.fn(async()=>({cleaned:0,remaining:0})),reconcilePrivacyExportJobs:vi.fn(async()=>({confirmed:0,reopened:0,pending:0}))};
     return {...s,jobs,handler:createOwnedConsumerApi({configuration:config,adapter:s.adapter,now:()=>now,exportJobs:()=>jobs as never,passBudgetMs:1000})};
   }
   const route=(method:'GET'|'POST',suffix='')=>`${method} /clinical-core/consumer/personal/privacy-export/job${suffix}`;
@@ -151,7 +151,7 @@ describe('large-export job routes',()=>{
     expect((await call(s,route('GET'),undefined,{jobId:id,advance:'yes'})).statusCode).toBe(400);
     expect((await call(s,route('GET'),undefined,{jobId:id,ownerId:id})).statusCode).toBe(400);
     const cancelled=await call(s,route('POST','/cancel'),{jobId:id});
-    expect(JSON.parse(cancelled.body).data).toMatchObject({status:'cancelled',cleanup:{cleaned:0,remaining:0}});
+    expect(JSON.parse(cancelled.body).data).toMatchObject({status:'cancelled',cleanup:{cleaned:0,remaining:0},reconcile:{confirmed:0,reopened:0,pending:0}});
     expect(s.jobs.cleanupPrivacyExportJobs).toHaveBeenCalledTimes(2);
   });
   it('issues a download only with a sign-in in the last five minutes and never echoes a non-https link',async()=>{

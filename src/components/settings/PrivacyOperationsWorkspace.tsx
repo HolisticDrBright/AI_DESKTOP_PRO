@@ -1,6 +1,6 @@
 'use client';
 import {useEffect,useRef,useState} from 'react';
-import {privacyOperationSchema,parsePrivacyOperationResult,type PrivacyOperation,type PrivacyQueue,type PrivacyDetail,type PersonalPurgePreview,type PersonalPurgeReceipt,type ExternalInventorySummary,type ExportCleanupSummary} from '@/contracts/privacyOperations';
+import {privacyOperationSchema,parsePrivacyOperationResult,type PrivacyOperation,type PrivacyQueue,type PrivacyDetail,type PersonalPurgePreview,type PersonalPurgeReceipt,type ExternalInventorySummary,type ExportCleanupSummary,type ExportReconcileSummary,type ExportBacklog} from '@/contracts/privacyOperations';
 import {Card} from '@/components/ui/bits';
 import {Btn} from '@/components/ui/Btn';
 const messages:Record<string,string>={
@@ -23,7 +23,7 @@ export function PrivacyOperationsWorkspace(){
   const [purgeCommand,setPurgeCommand]=useState<string|null>(null);
   const [inventory,setInventory]=useState<ExternalInventorySummary|null>(null);
   const [inventoryCommand,setInventoryCommand]=useState<Extract<PrivacyOperation,{action:'externalInventory'}>|null>(null);
-  const [retention,setRetention]=useState<ExportCleanupSummary|null>(null);
+  const [retention,setRetention]=useState<ExportCleanupSummary|null>(null),[reconcile,setReconcile]=useState<ExportReconcileSummary|null>(null),[backlog,setBacklog]=useState<ExportBacklog|null>(null);
   const alive=useRef(true),working=useRef(false),generation=useRef(0);
   const abort=useRef<AbortController|null>(null);
   useEffect(()=>{
@@ -33,7 +33,7 @@ export function PrivacyOperationsWorkspace(){
       invalidate();working.current=false;
       setBusy(false);setQueue(null);setDetail(null);setExplanation('');setRevision('');setConfirm(false);setError('');setNotice('');
       setPolicy('');setPurgeConfirmation('');setPreview(null);setReceipt(null);setPurgeCommand(null);
-      setInventory(null);setInventoryCommand(null);setRetention(null);
+      setInventory(null);setInventoryCommand(null);setRetention(null);setReconcile(null);setBacklog(null);
     };
     const hide=()=>{if(document.visibilityState==='hidden')clear();};
     document.addEventListener('visibilitychange',hide);window.addEventListener('pagehide',clear);
@@ -76,6 +76,8 @@ export function PrivacyOperationsWorkspace(){
       setPreview(null);setReceipt(null);setPurgeCommand(null);setPolicy('');setPurgeConfirmation('');
       setInventory(null);setInventoryCommand(null);
       if(input.action==='cleanupExports'){setRetention(result as ExportCleanupSummary);return;}
+      if(input.action==='reconcileExports'){setReconcile(result as ExportReconcileSummary);return;}
+      if(input.action==='exportBacklog'){setBacklog(result as ExportBacklog);return;}
       if(input.action==='list'){setQueue(result as PrivacyQueue);setDetail(null);setConfirm(false);setExplanation('');}
       else{setDetail(result as PrivacyDetail);setConfirm(false);
         if(input.action==='resolve'){setQueue(null);setNotice('Decision verified and recorded. Refresh the queue to see remaining requests.');}
@@ -102,8 +104,14 @@ export function PrivacyOperationsWorkspace(){
       {queue?.nextAfter?<Btn disabled={busy} onClick={()=>void perform({action:'list',includeClosed:closed,after:queue.nextAfter!})}>Next 25 requests</Btn>:null}
       <div className="border-t pt-3 space-y-2">
         <p className="text-sm text-subtle">Export retention: removes the prepared personal-storage copies, staging versions and unfinished uploads of finished or expired export jobs for owners covered by your assignment, including closed accounts. Nothing is opened or read; a job is certified removed only after the store lists nothing under its key.</p>
-        <Btn disabled={busy} onClick={()=>void perform({action:'cleanupExports',maxItems:10})}>Run export retention pass (up to 10 jobs)</Btn>
-        {retention?<p role="status">Removed {retention.cleaned}; still pending {retention.remaining}{retention.items.length===0?' (nothing eligible for your assignments)':''}.</p>:null}
+        <div className="flex flex-wrap gap-2">
+          <Btn disabled={busy} onClick={()=>void perform({action:'exportBacklog'})}>Show export retention backlog</Btn>
+          <Btn disabled={busy} onClick={()=>void perform({action:'cleanupExports',maxItems:10})}>Run export retention pass (up to 10 jobs)</Btn>
+          <Btn disabled={busy} onClick={()=>void perform({action:'reconcileExports',maxItems:10})}>Re-check recorded removals (up to 10 jobs)</Btn>
+        </div>
+        {backlog?<p role="status">Backlog for your assignments at {backlog.measuredAt.slice(0,19)}Z: {backlog.cleanupPending} due for removal, {backlog.settling} settling, {backlog.deferred} deferred after failures, {backlog.downloadExpired} expired downloads not yet removed, {backlog.removalRecorded} removals recorded awaiting re-check, {backlog.removalVerified} verified, {backlog.reopened} reopened after something reappeared, {backlog.retainedUnderHold} retained under hold. Oldest pending {Math.floor(backlog.oldestOverdueSeconds/3600)} h.</p>:null}
+        {retention?<p role="status">Removed {retention.cleaned}; deferred after failure {retention.deferred}; still pending {retention.remaining-retention.deferred}{retention.items.length===0?' (nothing due for your assignments)':''}.</p>:null}
+        {reconcile?<p role="status">Re-checked {reconcile.items.length}: confirmed {reconcile.confirmed}, reopened {reconcile.reopened}, not reachable {reconcile.pending}.</p>:null}
       </div>
     </Card>
     {detail?<Card className="p-5 space-y-3">

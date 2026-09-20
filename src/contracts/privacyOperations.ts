@@ -23,6 +23,8 @@ export const privacyOperationSchema=z.discriminatedUnion('action',[
   z.object({action:z.literal('completeDeletion'),privacyRequestId:id,confirmation:z.literal('COMPLETE DELETION REQUEST')}).strict(),
   z.object({action:z.literal('purgeIdentity'),privacyRequestId:id,confirmation:z.literal('DELETE CONSUMER IDENTITY')}).strict(),
   z.object({action:z.literal('cleanupExports'),maxItems:z.number().int().min(1).max(10)}).strict(),
+  z.object({action:z.literal('reconcileExports'),maxItems:z.number().int().min(1).max(10)}).strict(),
+  z.object({action:z.literal('exportBacklog')}).strict(),
 ]);
 export type PrivacyOperation=z.infer<typeof privacyOperationSchema>;
 const row=z.object({privacyRequestId:id,ownerId:id,kind:z.enum(['deletion','correction']),
@@ -70,17 +72,41 @@ export const externalPurgeSummarySchema=z.object({inventoryId:id,privacyRequestI
   .refine(v=>(v.state==='complete')===(v.remaining===0&&v.inventoryState!=='scanning'))
   .refine(v=>(v.fulfillmentStore===undefined)===(v.fulfillmentOutcome===undefined)&&(v.fulfillmentStore===undefined||v.state==='complete'));
 export type ExternalPurgeSummary=z.infer<typeof externalPurgeSummarySchema>;
-/** One assigned-operator retention pass over finished export jobs: counts and per-job outcomes only, never keys, owners or content. */
-export const exportCleanupSummarySchema=z.object({cleaned:z.number().int().min(0).max(10),remaining:z.number().int().min(0).max(10),
-  items:z.array(z.object({jobId:id,status:z.enum(['failed','cancelled','expired']),outcome:z.enum(['deleted','pending'])}).strict()).max(10)}).strict()
-  .refine(v=>v.cleaned===v.items.filter(i=>i.outcome==='deleted').length&&v.remaining===v.items.filter(i=>i.outcome==='pending').length);
+/** One assigned-operator retention pass over finished export jobs: counts and per-job outcomes only, never keys, owners or content.
+ * `deferred` jobs failed this pass and are due again after backoff; `pending` jobs are still settling or the record was lost. */
+const finished=z.enum(['failed','cancelled','expired']);
+export const exportCleanupSummarySchema=z.object({cleaned:z.number().int().min(0).max(10),remaining:z.number().int().min(0).max(10),deferred:z.number().int().min(0).max(10),
+  items:z.array(z.object({jobId:id,status:finished,outcome:z.enum(['deleted','pending','deferred'])}).strict()).max(10)}).strict()
+  .refine(v=>v.cleaned===v.items.filter(i=>i.outcome==='deleted').length&&v.deferred===v.items.filter(i=>i.outcome==='deferred').length
+    &&v.remaining===v.items.filter(i=>i.outcome!=='deleted').length);
 export type ExportCleanupSummary=z.infer<typeof exportCleanupSummarySchema>;
+/** Reconciliation of certified removals after the settlement window: confirmed, or reopened because something reappeared under the key. */
+export const exportReconcileSummarySchema=z.object({confirmed:z.number().int().min(0).max(10),reopened:z.number().int().min(0).max(10),pending:z.number().int().min(0).max(10),
+  items:z.array(z.object({jobId:id,status:finished,outcome:z.enum(['confirmed','reopened','pending'])}).strict()).max(10)}).strict()
+  .refine(v=>['confirmed','reopened','pending'].every(k=>v[k as 'confirmed']===v.items.filter(i=>i.outcome===k).length));
+export type ExportReconcileSummary=z.infer<typeof exportReconcileSummarySchema>;
+const backlogCount=z.number().int().min(0).max(100000000);
+export const exportBacklogSchema=z.object({packaging:backlogCount,downloadable:backlogCount,downloadExpired:backlogCount,cleanupPending:backlogCount,settling:backlogCount,
+  deferred:backlogCount,removalRecorded:backlogCount,removalVerified:backlogCount,reconcileDue:backlogCount,reopened:backlogCount,retainedUnderHold:backlogCount,
+  oldestOverdueSeconds:z.number().int().min(0),oldestPendingSince:z.string().datetime({offset:true}).nullable(),measuredAt:z.string().datetime({offset:true}),
+  scope:z.enum(['assigned_owners','all_owners'])}).strict();
+export type ExportBacklog=z.infer<typeof exportBacklogSchema>;
 export type PersonalPurgePreview=z.infer<typeof personalPurgePreviewSchema>;
 export type PersonalPurgeReceipt=z.infer<typeof personalPurgeReceiptSchema>;
-export function parsePrivacyOperationResult(input:PrivacyOperation,raw:unknown):PrivacyQueue|PrivacyDetail|PersonalPurgePreview|PersonalPurgeReceipt|ExternalInventorySummary|ExternalPurgeSummary|ExportCleanupSummary{
+export function parsePrivacyOperationResult(input:PrivacyOperation,raw:unknown):PrivacyQueue|PrivacyDetail|PersonalPurgePreview|PersonalPurgeReceipt|ExternalInventorySummary|ExternalPurgeSummary|ExportCleanupSummary|ExportReconcileSummary|ExportBacklog{
   if(input.action==='cleanupExports'){
     const value=exportCleanupSummarySchema.parse(raw);
     if(value.items.length>input.maxItems)throw new Error('privacy_response_invalid');
+    return value;
+  }
+  if(input.action==='reconcileExports'){
+    const value=exportReconcileSummarySchema.parse(raw);
+    if(value.items.length>input.maxItems)throw new Error('privacy_response_invalid');
+    return value;
+  }
+  if(input.action==='exportBacklog'){
+    const value=exportBacklogSchema.parse(raw);
+    if(value.scope!=='assigned_owners')throw new Error('privacy_response_invalid');
     return value;
   }
   if(input.action==='purgeExternal'){

@@ -186,4 +186,93 @@ part and a late completion landing after cancel or expiry (pending inside the wi
 listing and removed once the window has passed, certificate only then), and the operator pass
 under the same rule with SQL-level refusal of an unsettled certification.
 
+### Why 60 seconds, and why it is not a guarantee
+
+The settlement window covers one thing: a request this service itself started under a lease
+and then abandoned. Every storage call of a pass carries a signal that aborts at the lease
+boundary (at most 60 seconds after the lease began), and the S3 client is configured with two
+attempts, so the last byte the service can send leaves before the lease ends. After that the
+only open question is how long S3 may take to make a request it has already received durable
+and visible. The 60-second figure is a conservative operational assumption about that
+server-side completion latency for requests of at most 5 MiB; it is not derived from a
+published S3 bound, and a timing experiment that never observes a later completion would not
+make one impossible (a partitioned network path, a retried request inside the SDK, or a
+paused process can all deliver later).
+
+So the design does not rest on the window. The window decides only when the *first* removal
+may be certified. Migration 20260920150000 then treats every certificate as provisional: the
+job is reconciled again once the window has passed since certification, and daily for thirty
+days after that, by listing the key; anything found reopens the cleanup obligation
+(`object.reappeared` audit row, certificate withdrawn) and is removed with a fresh certificate
+only after listing shows nothing again. The bucket lifecycle rules in
+`infra/aws-clinical-core/personal-export-bucket-lifecycle.json` are the last layer: incomplete
+uploads aborted after one day, noncurrent versions expired after one day, current export
+objects expired after three days. If the hosted run measures completions later than 60
+seconds, widen the constant in `privacy_export_settlement()`; the reconciliation and
+lifecycle layers stay as they are.
+
+## Retention as an operated process (migration 20260920150000)
+
+Retention state is reported separately from job status, on every job view (`retention`) and
+in the backlog:
+
+| State | Meaning |
+|---|---|
+| `packaging` | requested or running |
+| `downloadable` | ready and before its deadline |
+| `cleanup_pending` | cancelled, failed or expired and not yet certified removed: settling (a pass may still be writing), due, or deferred after a failed attempt |
+| `removal_recorded` | certified removed; reconciliation after the settlement window still owed |
+| `removal_verified` | certified and reconciled with nothing found |
+| `retained_under_hold` | defined, never produced: an export copy duplicates records that stay under the owner's retention and any legal hold, so the copy is removed regardless of a hold. This is a policy default awaiting review; if a hold must also preserve delivery copies, the state exists to report it. |
+
+Download expiry (`status: expired`) is therefore distinct from removal (`objectDeleted`,
+`removal_recorded`/`removal_verified`); the V2 card says so.
+
+Mechanics:
+
+- **Backoff.** A failed removal attempt is recorded (`cleanup.deferred`, attempts, last error
+  label, next due time: 1 minute doubling to a 6-hour cap). The owner's pass reports deferred
+  jobs as remaining without touching the store; operator and sweep listings return only due
+  jobs, oldest first and bounded, so one failing job cannot starve other owners.
+- **Reconciliation.** `list_*_reconcile` lists certified jobs due for a re-check; the caller
+  lists the key and records `object.reconciled` or `object.reappeared` (which reopens cleanup).
+  The owner's request and cancel routes run cleanup and reconciliation; the operator has
+  `reconcileExports`; the sweep runs both.
+- **Backlog.** `exportBacklog` (operator, assigned owners) and the sweep's global backlog
+  return counts per state plus `oldestOverdueSeconds` and `oldestPendingSince`, measured from
+  `finished_at` (cancel, failure or download expiry). Counts only, never keys or owners.
+- **Scheduled sweep (disabled).** `privacy-retention-sweep-lambda.ts` runs hourly under
+  `RetentionScheduleActive` on the privacy-operations candidate: it needs `ExportCleanupActive`,
+  `RetentionScheduleEnabled`, its own evidence hash and the retention service identity
+  (`RetentionServicePersonId`, `RetentionServiceSubject`, `RetentionServiceOrganizationId`).
+  The identity is an ordinary workforce identity row; the database accepts it as the retention
+  service only while a reviewed row in `privacy_retention_service_releases` names it
+  (`retention_service_release_required` otherwise). No row is seeded, so a deployed schedule
+  refuses until the operating policy is approved and an operator inserts the release. Each run
+  publishes CloudWatch embedded metrics (`ALP/PrivacyExportRetention`: `CleanupPending`,
+  `CleanupDeferred`, `Settling`, `OldestOverdueSeconds`, `Reopened`, `Cleaned`,
+  `SweepRefused`); alarms fire when the oldest pending removal exceeds
+  `RetentionOverdueAlarmSeconds` (default 72 hours), when a sweep is refused, or when no report
+  arrives. Its IAM is the same export-retention statement set: listing, abort, versioned
+  delete; no object reads, no KMS.
+- **Staffed alternative.** Without the schedule, the assigned operator's three actions are the
+  process; the backlog panel shows what is due, settling, deferred and awaiting re-check. Which
+  model operates, and the service level for the oldest pending age, is the open policy
+  decision; both are implemented and locally verified only.
+- **Account closure.** Closed or disabled owner accounts are covered by both the operator pass
+  and the sweep, which never need the owner's identity.
+
+Evidence (PGlite, fictional store): a write landing after the window and after the
+certificate is found by reconciliation, reopens the job, is removed, and the certificate is
+restored on the next re-check; a hung request aborted by the caller lands later and is removed
+after settlement; concurrent owner and operator cleanup certify exactly once; a failing job
+defers with doubling backoff, is audited, does not starve the other job, and clears its
+deferral once cleaned; the operator backlog counts assigned owners only and reports the oldest
+pending age; the retention sweep is refused without a release row, covers unassigned owners
+with one, attributes its audit rows to the service identity, and is refused again after
+revocation. `aws-privacy-export-store.test.ts` pins the S3 request shapes with a fictional
+client (pagination markers, delete markers, checksum mode only on request, 404 as absence,
+403 rethrown, composite checksum passthrough, exact-version deletes). None of this has run
+against a bucket.
+
 This is still the inline export's coverage, not a complete account export.

@@ -19,7 +19,7 @@ const operatorContext=(who=operator):ProductionClinicalRequestContext=>({...cont
 function classify(error:unknown){
   const message=error instanceof Error?error.message:'';
   if(/\b(privacy_export_job_state|privacy_export_job_busy|privacy_export_conflict)\b/.test(message))return new ClinicalCoreDatabaseRejection('conflict');
-  if(/\b(privacy_export_job_refused|consumer_owner_required|privacy_operator_required|privacy_operator_assignment_required|request_context_refused)\b/.test(message))return new ClinicalCoreDatabaseRejection('identity_refused');
+  if(/\b(privacy_export_job_refused|consumer_owner_required|privacy_operator_required|privacy_operator_assignment_required|request_context_refused|retention_service_release_required)\b/.test(message))return new ClinicalCoreDatabaseRejection('identity_refused');
   if(/\bprivacy_export_request_invalid\b/.test(message))return new ClinicalCoreDatabaseRejection('request_invalid');
   return error;
 }
@@ -60,15 +60,17 @@ const jobsWith=(store:PrivacyExportStore,partBytes=8192,now?:()=>number)=>create
 // A clock that exhausts the pass budget after one page read, so passes end with a staging object.
 const onePagePerPass=()=>{let t=1_700_000_000_000;return()=>{t+=15_000;return t;};};
 // The operator path sets the request context the way privacy-operations does: no consumer adapter, the same transport shim.
-const retentionWith=(store:PrivacyExportStore)=>createPrivacyExportRetention((c,work)=>database.transaction(async tx=>{
+const workforceRun=(c:ProductionClinicalRequestContext,work:(tx:ClinicalCoreTransaction)=>Promise<unknown>)=>database.transaction(async tx=>{
   await tx.query('select clinical_private.set_request_context($1,$2,$3,$4,$5,$6,$7)',[c.actorPersonId,c.organizationId,c.identityPool,c.identitySubject,c.purpose,c.environment,c.dataClassification]);
   return work(tx);
-}),{store,storage});
+});
+const retentionWith=(store:PrivacyExportStore,authority:'operator'|'retention_service'='operator')=>createPrivacyExportRetention(workforceRun as never,{store,storage},authority);
+const retentionService=randomUUID(); // a workforce identity that a reviewed release row may name as the retention service (never seeded)
 beforeAll(async()=>{
   const {manifest,files}=JSON.parse(execFileSync(process.execPath,['scripts/build-aws-production-clinical-core.mjs','--json'],{encoding:'utf8',maxBuffer:8*1024*1024,timeout:10000}));
   db=new PGlite({extensions:{pgcrypto}});for(const m of manifest.migrations)await db.exec(files[m.file]);
   await db.query("insert into clinical_core.organizations(id,organization_label) values($1,'FICTIONAL')",[org]);
-  for(const [id,pool] of [[owner,'consumer'],[other,'consumer'],[operator,'workforce'],[unassigned,'workforce'],[reviewer,'workforce']]){
+  for(const [id,pool] of [[owner,'consumer'],[other,'consumer'],[operator,'workforce'],[unassigned,'workforce'],[reviewer,'workforce'],[retentionService,'workforce']]){
     await db.query('insert into clinical_core.persons(id,subject_key) values($1,$2)',[id,'subject_'+id.replaceAll('-','')]);
     await db.query('insert into clinical_core.identities(person_id,identity_pool,identity_subject,production_bound) values($1,$2,$3,true)',[id,pool,'subject-'+id]);
   }
@@ -91,8 +93,8 @@ beforeEach(async()=>{
   // Each test starts without an open job and outside the hourly request limit; earlier tests' objects are irrelevant to it.
   await db.query("update clinical_private.owned_privacy_export_jobs set status='cancelled',cancelled_at=clock_timestamp(),ready_at=null,lease_until=null,version=version+1 where status in ('requested','running','ready')");
   await db.query("update clinical_private.owned_privacy_export_jobs set created_at=created_at-interval '2 hours'");
-  // Earlier tests' finished jobs are past their settlement window here (their fictional stores are gone); each test states its own settlement cases.
-  await db.query("update clinical_private.owned_privacy_export_jobs set lease_until=null where status in ('cancelled','failed','expired')");
+  // Earlier tests' finished jobs are past their settlement window and backoff here (their fictional stores are gone); each test states its own cases.
+  await db.query("update clinical_private.owned_privacy_export_jobs set lease_until=null,next_cleanup_at=null where status in ('cancelled','failed','expired')");
 });
 const drive=async(jobs:ReturnType<typeof jobsWith>,jobId:string,who=owner)=>{
   let view=await jobs.getPrivacyExportJob(context(who),{jobId});let passes=0;
@@ -202,9 +204,12 @@ describe('export failure matrix: store refusals, lost responses and ambiguous co
     const timeout=Object.assign(new Error('TimeoutError'),{name:'TimeoutError'});
     vi.mocked(f.store.abortUpload).mockRejectedValueOnce(new Error('AccessDenied')).mockRejectedValueOnce(timeout);
     expect(await jobs.cleanupPrivacyExportJobs(context(),new AbortController().signal)).toMatchObject({remaining:1});
+    // Each failure defers the job with backoff (migration 97); the backoff is aged here as the clock would age it.
+    await db.query('update clinical_private.owned_privacy_export_jobs set next_cleanup_at=null where id=$1',[job]);
     expect(await jobs.cleanupPrivacyExportJobs(context(),new AbortController().signal)).toMatchObject({remaining:1});
     expect(await jobs.getPrivacyExportJob(context(),{jobId:job})).toMatchObject({status:'cancelled',objectDeleted:false});
     expect(f.uploads.size).toBe(1);
+    await db.query('update clinical_private.owned_privacy_export_jobs set next_cleanup_at=null where id=$1',[job]);
     expect(await jobs.cleanupPrivacyExportJobs(context(),new AbortController().signal)).toEqual({cleaned:1,remaining:0});
     expect(f.uploads.size).toBe(0);
     expect(await jobs.getPrivacyExportJob(context(),{jobId:job})).toMatchObject({objectDeleted:true});
@@ -218,6 +223,7 @@ describe('export failure matrix: store refusals, lost responses and ambiguous co
     expect(await jobs.cleanupPrivacyExportJobs(context(),new AbortController().signal)).toEqual({cleaned:0,remaining:1});
     expect(f.uploads.size).toBe(1);
     expect(await jobs.getPrivacyExportJob(context(),{jobId:job})).toMatchObject({objectDeleted:false});
+    await db.query('update clinical_private.owned_privacy_export_jobs set next_cleanup_at=null where id=$1',[job]);
     expect(await jobs.cleanupPrivacyExportJobs(context(),new AbortController().signal)).toEqual({cleaned:1,remaining:0});
     expect(f.uploads.size).toBe(0);
   });
@@ -326,9 +332,10 @@ describe('assigned-operator retention pass (migration 95)',()=>{
     expect(f.uploads.size).toBe(1);
     // A still-running job the owner never came back for is failed by the operator's listing and its upload removed.
     vi.mocked(f.store.abortUpload).mockRejectedValueOnce(new Error('AccessDenied'));
-    expect(await retention.cleanupAssignedPrivacyExports(operatorContext(),10,new AbortController().signal)).toMatchObject({cleaned:0,remaining:1,items:[{jobId:abandoned,status:'failed',outcome:'pending'}]});
+    expect(await retention.cleanupAssignedPrivacyExports(operatorContext(),10,new AbortController().signal)).toMatchObject({cleaned:0,remaining:1,deferred:1,items:[{jobId:abandoned,status:'failed',outcome:'deferred'}]});
     expect(f.uploads.size).toBe(1);
     expect(await jobs.getPrivacyExportJob(context(),{jobId:abandoned})).toMatchObject({status:'failed',failureCode:'deadline_passed',objectDeleted:false});
+    await db.query('update clinical_private.owned_privacy_export_jobs set next_cleanup_at=null where id=$1',[abandoned]);
     expect(await retention.cleanupAssignedPrivacyExports(operatorContext(),10,new AbortController().signal)).toMatchObject({cleaned:1,remaining:0,items:[{jobId:abandoned,outcome:'deleted'}]});
     expect(f.uploads.size).toBe(0);
     expect(await jobs.getPrivacyExportJob(context(),{jobId:abandoned})).toMatchObject({objectDeleted:true});
@@ -357,7 +364,7 @@ describe('assigned-operator retention pass (migration 95)',()=>{
       const foreignKey=[...f.objects.keys()].find(k=>k.endsWith('.json')&&k.startsWith(privacyExportPrefix(other)))!;
       expect(f.objects.get(foreignKey)!.size).toBe(1);
       expect((await db.query<{status:string;deleted:boolean}>('select status,object_deleted_at is not null deleted from clinical_private.owned_privacy_export_jobs where id=$1',[ready])).rows[0]).toEqual({status:'expired',deleted:true});
-      expect(await retention.cleanupAssignedPrivacyExports(operatorContext(unassigned),10,new AbortController().signal)).toEqual({cleaned:0,remaining:0,items:[]});
+      expect(await retention.cleanupAssignedPrivacyExports(operatorContext(unassigned),10,new AbortController().signal)).toEqual({cleaned:0,remaining:0,deferred:0,items:[]});
       await expect(retention.cleanupAssignedPrivacyExports(context(),10,new AbortController().signal)).rejects.toThrow('owner_required');
       await expect(retention.cleanupAssignedPrivacyExports(operatorContext(),11,new AbortController().signal)).rejects.toThrow('request_invalid');
       await expect(db.query('select clinical_private.record_privacy_export_object_deleted_by_operator($1,$2,1)',[other,foreign])).rejects.toThrow();
@@ -469,6 +476,151 @@ describe('integrity binding and settlement (migration 96)',()=>{
     await db.query("update clinical_private.owned_privacy_export_jobs set lease_until=clock_timestamp()-interval '61 seconds' where id=$1",[job]);
     expect(await retention.cleanupAssignedPrivacyExports(operatorContext(),10,new AbortController().signal)).toMatchObject({cleaned:1,remaining:0});
     expect(f.uploads.size).toBe(0);
+  });
+});
+
+describe('settlement qualification and operated retention (migration 97)',()=>{
+  const age=(job:string,seconds:number)=>db.query("update clinical_private.owned_privacy_export_jobs set lease_until=clock_timestamp()-make_interval(secs=>$2) where id=$1",[job,seconds]);
+  const certifiedAgo=(job:string,seconds:number)=>db.query("update clinical_private.owned_privacy_export_jobs set object_deleted_at=clock_timestamp()-make_interval(secs=>$2),reconciled_at=null where id=$1",[job,seconds]);
+  it('a write that lands after the settlement window and after the certificate is found by reconciliation, reopens the obligation, and is removed before the certificate is restored',async()=>{
+    const f=fakeStore(),jobs=jobsWith(f.store);
+    const job=(await jobs.requestPrivacyExportJob(context(),{requestId:randomUUID()})).jobId;
+    await jobs.advancePrivacyExportJob(context(),{jobId:job},20000,new AbortController().signal);
+    await jobs.cancelPrivacyExportJob(context(),{jobId:job});
+    expect(await jobs.cleanupPrivacyExportJobs(context(),new AbortController().signal)).toEqual({cleaned:1,remaining:0});
+    expect(await jobs.getPrivacyExportJob(context(),{jobId:job})).toMatchObject({objectDeleted:true,retention:'removal_recorded'});
+    // The certificate exists. A request that outlived every bound lands now: the fictional store gains an upload under the job's key.
+    const key=[...f.objects.keys()].find(k=>k.endsWith('.json'))??(await db.query<{k:string}>('select object_key k from clinical_private.owned_privacy_export_jobs where id=$1',[job])).rows[0].k;
+    f.uploads.set('u-late',{key,parts:new Map()});
+    // Not yet due: reconciliation waits for the settlement window after the certificate.
+    expect(await jobs.reconcilePrivacyExportJobs(context(),new AbortController().signal)).toEqual({confirmed:0,reopened:0,pending:0});
+    await certifiedAgo(job,61);
+    expect(await jobs.reconcilePrivacyExportJobs(context(),new AbortController().signal)).toEqual({confirmed:0,reopened:1,pending:0});
+    expect(await jobs.getPrivacyExportJob(context(),{jobId:job})).toMatchObject({objectDeleted:false,retention:'cleanup_pending'});
+    expect(await jobs.cleanupPrivacyExportJobs(context(),new AbortController().signal)).toEqual({cleaned:1,remaining:0});
+    expect(f.uploads.size).toBe(0);
+    await certifiedAgo(job,61);
+    expect(await jobs.reconcilePrivacyExportJobs(context(),new AbortController().signal)).toEqual({confirmed:1,reopened:0,pending:0});
+    expect(await jobs.getPrivacyExportJob(context(),{jobId:job})).toMatchObject({objectDeleted:true,retention:'removal_verified'});
+    const audit=(await db.query<{action:string;n:number}>(`select e.action,count(*)::int n from clinical_audit.owned_privacy_export_events e
+      join clinical_private.owned_privacy_export_jobs j on j.export_id=e.export_id where j.id=$1 group by e.action`,[job])).rows;
+    expect(Object.fromEntries(audit.map(r=>[r.action,r.n]))).toMatchObject({'object.deleted':2,'object.reappeared':1,'object.reconciled':1});
+  });
+  it('process loss mid-request (a storage call that never returns) leaves a settling job; nothing is certified until the lease has aged, then the late artefact is removed',async()=>{
+    const f=fakeStore(),jobs=jobsWith(f.store);
+    const job=(await jobs.requestPrivacyExportJob(context(),{requestId:randomUUID()})).jobId;
+    const real=vi.mocked(f.store.uploadPart).getMockImplementation()!;
+    let release!:()=>void;const gate=new Promise<void>(r=>{release=r;});
+    vi.mocked(f.store.uploadPart).mockImplementationOnce((...a)=>new Promise((resolve,reject)=>{
+      (a[6] as AbortSignal).addEventListener('abort',()=>reject(Object.assign(new Error('aborted'),{name:'AbortError'})));
+      void gate.then(()=>real(...a).then(resolve,reject)); // the request still lands after the caller gave up
+    }));
+    const controller=new AbortController();
+    const pass=jobs.advancePrivacyExportJob(context(),{jobId:job},20000,controller.signal);
+    await new Promise(r=>setTimeout(r,20));
+    controller.abort(); // the process is gone from the caller's point of view; the request may still land
+    await expect(pass).rejects.toThrow('storage_unavailable');
+    await jobs.cancelPrivacyExportJob(context(),{jobId:job});
+    expect(await jobs.cleanupPrivacyExportJobs(context(),new AbortController().signal)).toEqual({cleaned:0,remaining:1});
+    release();await new Promise(r=>setTimeout(r,20));
+    expect(f.uploads.size).toBe(1);
+    expect(await jobs.getPrivacyExportJob(context(),{jobId:job})).toMatchObject({objectDeleted:false,retention:'cleanup_pending'});
+    await age(job,61);
+    expect(await jobs.cleanupPrivacyExportJobs(context(),new AbortController().signal)).toEqual({cleaned:1,remaining:0});
+    expect(f.uploads.size).toBe(0);
+  });
+  it('concurrent owner and operator cleanup of the same job certifies exactly once and leaves nothing behind',async()=>{
+    const f=fakeStore(),jobs=jobsWith(f.store),retention=retentionWith(f.store);
+    await jobs.cleanupPrivacyExportJobs(context(),new AbortController().signal);
+    const job=(await jobs.requestPrivacyExportJob(context(),{requestId:randomUUID()})).jobId;
+    await jobs.advancePrivacyExportJob(context(),{jobId:job},20000,new AbortController().signal);
+    await jobs.cancelPrivacyExportJob(context(),{jobId:job});
+    const [ownerResult,operatorResult]=await Promise.all([jobs.cleanupPrivacyExportJobs(context(),new AbortController().signal),retention.cleanupAssignedPrivacyExports(operatorContext(),10,new AbortController().signal)]);
+    expect(ownerResult.cleaned+operatorResult.cleaned).toBe(1);
+    expect(f.uploads.size).toBe(0);
+    const row=(await db.query<{deleted:boolean;n:number}>(`select j.object_deleted_at is not null deleted,(select count(*)::int from clinical_audit.owned_privacy_export_events e where e.export_id=j.export_id and e.action='object.deleted') n
+      from clinical_private.owned_privacy_export_jobs j where j.id=$1`,[job])).rows[0];
+    expect(row).toEqual({deleted:true,n:1});
+  });
+  it('a failing job backs off with exponential deferral and does not starve another owner job in the same pass; the deferral is audited',async()=>{
+    const f=fakeStore(),jobs=jobsWith(f.store);
+    const stuck=(await jobs.requestPrivacyExportJob(context(),{requestId:randomUUID()})).jobId;
+    await jobs.advancePrivacyExportJob(context(),{jobId:stuck},20000,new AbortController().signal);
+    await jobs.cancelPrivacyExportJob(context(),{jobId:stuck});
+    await db.query("update clinical_private.owned_privacy_export_jobs set created_at=created_at-interval '2 hours'");
+    const fine=(await jobs.requestPrivacyExportJob(context(),{requestId:randomUUID()})).jobId;
+    await jobs.advancePrivacyExportJob(context(),{jobId:fine},20000,new AbortController().signal);
+    await jobs.cancelPrivacyExportJob(context(),{jobId:fine});
+    const stuckKey=(await db.query<{k:string}>('select object_key k from clinical_private.owned_privacy_export_jobs where id=$1',[stuck])).rows[0].k;
+    const stuckUpload=[...f.uploads.entries()].find(([,u])=>u.key===stuckKey)![0];
+    vi.mocked(f.store.abortUpload).mockImplementation(async(_s,_key,uploadId)=>{if(uploadId===stuckUpload)throw new Error('AccessDenied');f.uploads.delete(uploadId);});
+    expect(await jobs.cleanupPrivacyExportJobs(context(),new AbortController().signal)).toEqual({cleaned:1,remaining:1});
+    const after=(await db.query<{attempts:number;next:string|null;err:string|null}>('select cleanup_attempts attempts,next_cleanup_at::text next,last_cleanup_error err from clinical_private.owned_privacy_export_jobs where id=$1',[stuck])).rows[0];
+    expect(after.attempts).toBe(1);expect(after.next).not.toBeNull();expect(after.err).toBe('storage_failure');
+    // Deferred: still counted as remaining, but no store work is done for it until it is due.
+    vi.mocked(f.store.listUploads).mockClear();
+    expect(await jobs.cleanupPrivacyExportJobs(context(),new AbortController().signal)).toEqual({cleaned:0,remaining:1});
+    expect(f.store.listUploads).not.toHaveBeenCalled();
+    // Due again (as time would make it), still failing: attempts grow and the wait doubles.
+    await db.query('update clinical_private.owned_privacy_export_jobs set next_cleanup_at=clock_timestamp() where id=$1',[stuck]);
+    expect(await jobs.cleanupPrivacyExportJobs(context(),new AbortController().signal)).toEqual({cleaned:0,remaining:1});
+    const again=(await db.query<{attempts:number;wait:number}>("select cleanup_attempts attempts,extract(epoch from next_cleanup_at-clock_timestamp())::int wait from clinical_private.owned_privacy_export_jobs where id=$1",[stuck])).rows[0];
+    expect(again.attempts).toBe(2);expect(again.wait).toBeGreaterThan(100);expect(again.wait).toBeLessThanOrEqual(120); // 1 min, then 2 min, doubling to a 6 h cap
+    expect((await db.query<{n:number}>(`select count(*)::int n from clinical_audit.owned_privacy_export_events e join clinical_private.owned_privacy_export_jobs j on j.export_id=e.export_id where j.id=$1 and e.action='cleanup.deferred'`,[stuck])).rows[0].n).toBe(2);
+    // The store recovers: the due job is cleaned and the deferral state cleared.
+    vi.mocked(f.store.abortUpload).mockImplementation(async(_s,_key,uploadId)=>{f.uploads.delete(uploadId);});
+    await db.query('update clinical_private.owned_privacy_export_jobs set next_cleanup_at=clock_timestamp() where id=$1',[stuck]);
+    expect(await jobs.cleanupPrivacyExportJobs(context(),new AbortController().signal)).toEqual({cleaned:1,remaining:0});
+    expect((await db.query<{next:string|null;err:string|null}>('select next_cleanup_at::text next,last_cleanup_error err from clinical_private.owned_privacy_export_jobs where id=$1',[stuck])).rows[0]).toEqual({next:null,err:null});
+  });
+  it('the operator backlog counts states for assigned owners only and reports the oldest pending age; operator reconciliation reopens and re-certifies',async()=>{
+    const f=fakeStore(),jobs=jobsWith(f.store),retention=retentionWith(f.store);
+    await db.query("update clinical_private.owned_privacy_export_jobs set next_cleanup_at=null where owner_id=$1",[owner]); // earlier tests' backoffs have elapsed
+    await jobs.cleanupPrivacyExportJobs(context(),new AbortController().signal);await jobs.reconcilePrivacyExportJobs(context(),new AbortController().signal);
+    await db.query("update clinical_private.owned_privacy_export_jobs set reconciled_at=clock_timestamp() where owner_id=$1 and object_deleted_at is not null",[owner]);
+    const job=(await jobs.requestPrivacyExportJob(context(),{requestId:randomUUID()})).jobId;
+    await jobs.advancePrivacyExportJob(context(),{jobId:job},20000,new AbortController().signal);
+    await jobs.cancelPrivacyExportJob(context(),{jobId:job});
+    await db.query("update clinical_private.owned_privacy_export_jobs set finished_at=clock_timestamp()-interval '2 hours' where id=$1",[job]);
+    const before=await retention.privacyExportBacklog(operatorContext());
+    expect(before).toMatchObject({scope:'assigned_owners',cleanupPending:1,settling:0,deferred:0,retainedUnderHold:0,removalRecorded:0});
+    expect(before.oldestOverdueSeconds).toBeGreaterThanOrEqual(7190);expect(before.oldestPendingSince).not.toBeNull();
+    expect(await retention.cleanupAssignedPrivacyExports(operatorContext(),10,new AbortController().signal)).toMatchObject({cleaned:1,remaining:0,deferred:0});
+    const key=(await db.query<{k:string}>('select object_key k from clinical_private.owned_privacy_export_jobs where id=$1',[job])).rows[0].k;
+    f.objects.set(key,new Map([['v-late',Buffer.from('{}')]]));
+    await certifiedAgo(job,61);
+    expect(await retention.privacyExportBacklog(operatorContext())).toMatchObject({removalRecorded:1,reconcileDue:1,cleanupPending:0});
+    expect(await retention.reconcilePrivacyExports(operatorContext(),10,new AbortController().signal)).toMatchObject({confirmed:0,reopened:1,pending:0,items:[{jobId:job,outcome:'reopened'}]});
+    const reopened=await retention.privacyExportBacklog(operatorContext());
+    expect(reopened).toMatchObject({cleanupPending:1,removalRecorded:0});expect(reopened.reopened).toBe(before.reopened+1);
+    expect(await retention.cleanupAssignedPrivacyExports(operatorContext(),10,new AbortController().signal)).toMatchObject({cleaned:1});
+    expect(f.objects.get(key)!.size).toBe(0);
+    expect(await retentionWith(f.store).privacyExportBacklog(operatorContext(unassigned))).toMatchObject({scope:'assigned_owners',cleanupPending:0,removalRecorded:0,oldestOverdueSeconds:0,oldestPendingSince:null});
+    await expect(retention.privacyExportBacklog(context())).rejects.toThrow('owner_required');
+  });
+  it('the retention service sweep is refused until a reviewed release names the identity, then covers every owner without an assignment, and is refused again once revoked',async()=>{
+    const f=fakeStore(),jobs=jobsWith(f.store),sweep=retentionWith(f.store,'retention_service');
+    const serviceContext=operatorContext(retentionService);
+    for(const attempt of [()=>sweep.cleanupAssignedPrivacyExports(serviceContext,100,new AbortController().signal),()=>sweep.reconcilePrivacyExports(serviceContext,100,new AbortController().signal),()=>sweep.privacyExportBacklog(serviceContext)])
+      await expect(attempt()).rejects.toThrow('owner_required');
+    await jobs.cleanupPrivacyExportJobs(context(other),new AbortController().signal);
+    const foreign=(await jobs.requestPrivacyExportJob(context(other),{requestId:randomUUID()})).jobId; // an owner nobody is assigned to
+    await jobs.advancePrivacyExportJob(context(other),{jobId:foreign},20000,new AbortController().signal);
+    await jobs.cancelPrivacyExportJob(context(other),{jobId:foreign});
+    await db.query(`insert into clinical_private.privacy_retention_service_releases(version,service_person_id,identity_subject,evidence_sha256,approved_by,approved_at)
+      values('test-release',$1,$2,$3,$4,clock_timestamp()-interval '1 minute')`,[retentionService,'subject-'+retentionService,'b'.repeat(64),reviewer]);
+    try{
+      // Another workforce identity is not the service even with a release present.
+      await expect(retentionWith(f.store,'retention_service').privacyExportBacklog(operatorContext(unassigned))).rejects.toThrow('owner_required');
+      const backlog=await sweep.privacyExportBacklog(serviceContext);
+      expect(backlog).toMatchObject({scope:'all_owners'});expect(backlog.cleanupPending).toBeGreaterThanOrEqual(1);
+      const swept=await sweep.cleanupAssignedPrivacyExports(serviceContext,100,new AbortController().signal);
+      expect(swept.items.some(i=>i.jobId===foreign&&i.outcome==='deleted')).toBe(true);
+      expect((await db.query<{op:string|null}>(`select e.operator_id::text op from clinical_audit.owned_privacy_export_events e join clinical_private.owned_privacy_export_jobs j on j.export_id=e.export_id where j.id=$1 and e.action='object.deleted'`,[foreign])).rows).toEqual([{op:retentionService}]);
+      await expect(jobs.cleanupPrivacyExportJobs(context(other),new AbortController().signal)).resolves.toEqual({cleaned:0,remaining:0});
+      await db.query("update clinical_private.privacy_retention_service_releases set revoked_at=clock_timestamp() where version='test-release'");
+      await expect(sweep.privacyExportBacklog(serviceContext)).rejects.toThrow('owner_required');
+    }finally{await db.query("delete from clinical_private.privacy_retention_service_releases where version='test-release'");}
   });
 });
 

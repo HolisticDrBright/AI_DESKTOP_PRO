@@ -3,6 +3,9 @@ import {mkdirSync,writeFileSync} from 'node:fs';
 const out='dist/aws-clinical-core/privacy-operations';mkdirSync(out,{recursive:true});
 await build({entryPoints:['src/server/clinical-core/privacy-operations-lambda.ts'],outfile:out+'/index.js',
   bundle:true,platform:'node',target:'node22',format:'cjs',minify:true,legalComments:'none'});
+// The scheduled retention sweep ships in the same artifact as a second handler; it exists in the stack only under its own condition.
+await build({entryPoints:['src/server/clinical-core/privacy-retention-sweep-lambda.ts'],outfile:out+'/retention-sweep.js',
+  bundle:true,platform:'node',target:'node22',format:'cjs',minify:true,legalComments:'none'});
 const ref=n=>({Ref:n}),sub=v=>({'Fn::Sub':v}),nonempty=n=>({'Fn::Not':[{'Fn::Equals':[ref(n),'']}]}),
   hash={Type:'String',Default:'',AllowedPattern:'^$|^[a-f0-9]{64}$'};
 const required=['ActivationEvidenceSha256','DatabaseReviewSha256','WorkforceMfaReviewSha256','AlarmTopicArn'];
@@ -19,6 +22,11 @@ const template={AWSTemplateFormatVersion:'2010-09-09',Description:'Owner-assigne
     ExternalPurgeEnabled:{Type:'String',Default:'false',AllowedValues:['false','true']},ExternalPurgeEvidenceSha256:hash,
     IdentityDeletionEnabled:{Type:'String',Default:'false',AllowedValues:['false','true']},IdentityDeletionEvidenceSha256:hash,
     ExportCleanupEnabled:{Type:'String',Default:'false',AllowedValues:['false','true']},ExportCleanupEvidenceSha256:hash,
+    RetentionScheduleEnabled:{Type:'String',Default:'false',AllowedValues:['false','true']},RetentionScheduleEvidenceSha256:hash,
+    RetentionServicePersonId:{Type:'String',Default:'',AllowedPattern:'^$|^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'},
+    RetentionServiceSubject:{Type:'String',Default:'',AllowedPattern:'^$|^[A-Za-z0-9:_-]{8,128}$'},
+    RetentionServiceOrganizationId:{Type:'String',Default:'',AllowedPattern:'^$|^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'},
+    RetentionOverdueAlarmSeconds:{Type:'Number',Default:259200,MinValue:3600,MaxValue:2592000},
     ExportBucketName:{Type:'String',Default:'',AllowedPattern:'^$|^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$'},
     ExportKmsKeyArn:{Type:'String',Default:'',AllowedPattern:'^$|^arn:aws:kms:[a-z0-9-]+:[0-9]{12}:key/[a-f0-9-]{36}$'},
     ConsumerUserPoolId:{Type:'String',Default:'',AllowedPattern:'^$|^[a-z0-9-]+_[A-Za-z0-9]+$'},
@@ -47,7 +55,9 @@ const template={AWSTemplateFormatVersion:'2010-09-09',Description:'Owner-assigne
     IdentityDeletionActive:{'Fn::And':[{Condition:'Active'},{'Fn::Equals':[ref('IdentityDeletionEnabled'),'true']},
       ...['IdentityDeletionEvidenceSha256','ConsumerUserPoolId'].map(nonempty)]},
     ExportCleanupActive:{'Fn::And':[{Condition:'Active'},{'Fn::Equals':[ref('ExportCleanupEnabled'),'true']},
-      ...['ExportCleanupEvidenceSha256','ExportBucketName','ExportKmsKeyArn'].map(nonempty)]}},
+      ...['ExportCleanupEvidenceSha256','ExportBucketName','ExportKmsKeyArn'].map(nonempty)]},
+    RetentionScheduleActive:{'Fn::And':[{Condition:'ExportCleanupActive'},{'Fn::Equals':[ref('RetentionScheduleEnabled'),'true']},
+      ...['RetentionScheduleEvidenceSha256','RetentionServicePersonId','RetentionServiceSubject','RetentionServiceOrganizationId'].map(nonempty)]}},
   Rules:{ReviewedActivation:{RuleCondition:{'Fn::Equals':[ref('PhiAllowed'),'true']},Assertions:[
     {Assert:{'Fn::Equals':[ref('Activation'),'approved']},AssertDescription:'Reviewed activation required'},
     ...required.map(n=>({Assert:nonempty(n),AssertDescription:n+' required before activation'}))]},
@@ -66,6 +76,10 @@ const template={AWSTemplateFormatVersion:'2010-09-09',Description:'Owner-assigne
     ReviewedExportCleanup:{RuleCondition:{'Fn::Equals':[ref('ExportCleanupEnabled'),'true']},Assertions:[
       {Assert:{'Fn::Equals':[ref('PhiAllowed'),'true']},AssertDescription:'Privacy service activation required'},
       ...['ExportCleanupEvidenceSha256','ExportBucketName','ExportKmsKeyArn'].map(n=>({Assert:nonempty(n),AssertDescription:n+' required'})),
+    ]},
+    ReviewedRetentionSchedule:{RuleCondition:{'Fn::Equals':[ref('RetentionScheduleEnabled'),'true']},Assertions:[
+      {Assert:{'Fn::Equals':[ref('ExportCleanupEnabled'),'true']},AssertDescription:'Export cleanup activation required'},
+      ...['RetentionScheduleEvidenceSha256','RetentionServicePersonId','RetentionServiceSubject','RetentionServiceOrganizationId'].map(n=>({Assert:nonempty(n),AssertDescription:n+' required'})),
     ]},
     ReviewedPersonalPurge:{RuleCondition:{'Fn::Equals':[ref('PersonalPurgeEnabled'),'true']},Assertions:[
       {Assert:{'Fn::Equals':[ref('PhiAllowed'),'true']},AssertDescription:'Privacy service activation required'},
@@ -145,9 +159,33 @@ const template={AWSTemplateFormatVersion:'2010-09-09',Description:'Owner-assigne
         EXPORT_CLEANUP_ENABLED:ref('ExportCleanupEnabled'),EXPORT_CLEANUP_EVIDENCE_SHA256:ref('ExportCleanupEvidenceSha256'),
         PERSONAL_EXPORT_BUCKET:{'Fn::If':['ExportCleanupActive',ref('ExportBucketName'),'']},PERSONAL_EXPORT_KMS_KEY_ARN:{'Fn::If':['ExportCleanupActive',ref('ExportKmsKeyArn'),'']},
         PERSONAL_EXPORT_BUCKET_OWNER:{'Fn::If':['ExportCleanupActive',ref('AWS::AccountId'),'']},
+        RETENTION_SWEEP_ENABLED:'false',
         WORKFORCE_MFA_REVIEW_SHA256:ref('WorkforceMfaReviewSha256'),CLINICAL_DATABASE_CLUSTER_ARN:ref('DatabaseClusterArn'),
         CLINICAL_DATABASE_SECRET_ARN:ref('DatabaseSecretArn'),CLINICAL_DATABASE_NAME:ref('DatabaseName'),SOURCE_COMMIT:ref('SourceCommit'),
       }}}},
+    // Scheduled retention sweep: same role (database and export retention statements), no API route, no JWT; the database
+    // refuses every call until a reviewed release row names this service identity. Hourly; the alarm watches the oldest pending removal.
+    RetentionSweep:{Type:'AWS::Lambda::Function',Condition:'RetentionScheduleActive',Properties:{FunctionName:sub('${ApiId}-privacy-retention-sweep'),Runtime:'nodejs22.x',Handler:'retention-sweep.handler',
+      Role:{'Fn::GetAtt':['Role','Arn']},Timeout:600,MemorySize:256,ReservedConcurrentExecutions:1,
+      Code:{S3Bucket:ref('CodeBucket'),S3Key:ref('CodeKey'),S3ObjectVersion:ref('CodeVersion')},
+      LoggingConfig:{LogGroup:ref('Logs')},Environment:{Variables:{
+        PHI_ALLOWED:ref('PhiAllowed'),RETENTION_SWEEP_ENABLED:ref('RetentionScheduleEnabled'),RETENTION_SWEEP_EVIDENCE_SHA256:ref('RetentionScheduleEvidenceSha256'),
+        RETENTION_SERVICE_PERSON_ID:ref('RetentionServicePersonId'),RETENTION_SERVICE_SUBJECT:ref('RetentionServiceSubject'),RETENTION_SERVICE_ORGANIZATION_ID:ref('RetentionServiceOrganizationId'),
+        PERSONAL_EXPORT_BUCKET:ref('ExportBucketName'),PERSONAL_EXPORT_KMS_KEY_ARN:ref('ExportKmsKeyArn'),PERSONAL_EXPORT_BUCKET_OWNER:ref('AWS::AccountId'),
+        CLINICAL_DATABASE_CLUSTER_ARN:ref('DatabaseClusterArn'),CLINICAL_DATABASE_SECRET_ARN:ref('DatabaseSecretArn'),CLINICAL_DATABASE_NAME:ref('DatabaseName'),SOURCE_COMMIT:ref('SourceCommit'),
+      }}}},
+    RetentionSweepSchedule:{Type:'AWS::Events::Rule',Condition:'RetentionScheduleActive',Properties:{Name:sub('${ApiId}-privacy-retention-sweep'),ScheduleExpression:'rate(1 hour)',State:'ENABLED',
+      Targets:[{Id:'sweep',Arn:{'Fn::GetAtt':['RetentionSweep','Arn']}}]}},
+    RetentionSweepInvoke:{Type:'AWS::Lambda::Permission',Condition:'RetentionScheduleActive',Properties:{FunctionName:ref('RetentionSweep'),Action:'lambda:InvokeFunction',Principal:'events.amazonaws.com',
+      SourceArn:{'Fn::GetAtt':['RetentionSweepSchedule','Arn']}}},
+    RetentionOverdueAlarm:{Type:'AWS::CloudWatch::Alarm',Condition:'RetentionScheduleActive',Properties:{Namespace:'ALP/PrivacyExportRetention',MetricName:'OldestOverdueSeconds',Statistic:'Maximum',Period:3600,
+      EvaluationPeriods:1,Threshold:ref('RetentionOverdueAlarmSeconds'),ComparisonOperator:'GreaterThanThreshold',TreatMissingData:'breaching',
+      AlarmDescription:'Oldest pending export removal is older than the reviewed threshold; a missing sweep report also alarms.',
+      AlarmActions:{'Fn::If':['HasAlarmRecipient',[ref('AlarmTopicArn')],ref('AWS::NoValue')]}}},
+    RetentionRefusedAlarm:{Type:'AWS::CloudWatch::Alarm',Condition:'RetentionScheduleActive',Properties:{Namespace:'ALP/PrivacyExportRetention',MetricName:'SweepRefused',Statistic:'Maximum',Period:3600,
+      EvaluationPeriods:1,Threshold:0,ComparisonOperator:'GreaterThanThreshold',TreatMissingData:'breaching',
+      AlarmDescription:'The scheduled sweep ran without a live retention service release, or did not run.',
+      AlarmActions:{'Fn::If':['HasAlarmRecipient',[ref('AlarmTopicArn')],ref('AWS::NoValue')]}}},
     Authorizer:{Type:'AWS::ApiGatewayV2::Authorizer',Properties:{ApiId:ref('ApiId'),Name:sub('${ApiId}-privacy-workforce'),
       AuthorizerType:'JWT',IdentitySource:['$request.header.Authorization'],JwtConfiguration:{Issuer:ref('WorkforceIssuer'),Audience:[ref('WorkforceAudience')]}}},
     Integration:{Type:'AWS::ApiGatewayV2::Integration',Properties:{ApiId:ref('ApiId'),IntegrationType:'AWS_PROXY',
