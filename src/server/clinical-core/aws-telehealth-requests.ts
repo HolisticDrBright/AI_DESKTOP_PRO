@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 if (typeof window !== "undefined") throw new Error("aws-telehealth-requests is server-only");
 
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
@@ -34,6 +35,8 @@ export type TelehealthConfiguration = {
   tableName: string; consumerIssuer: string; consumerAudience: string; workforceIssuer: string; workforceAudience: string;
   runtimeMode: "synthetic" | "production"; phiAllowed: boolean; zoomEnabled: boolean; zoomBaaVerified: boolean; zoomSecretArn: string;
   remindersEnabled: boolean; reminderSender: string; reminderConfigurationSet: string; reminderScheduleGroup: string; reminderSchedulerRoleArn: string; reminderTargetArn: string;
+  /** SNS topic that receives SES bounce and complaint events for the reminder configuration set; notifications from any other topic are refused. */
+  reminderEventsTopicArn: string;
   stripeTestEnabled: boolean; stripeSecretArn: string; stripeSuccessUrl: string; stripeCancelUrl: string;
 };
 
@@ -54,6 +57,11 @@ type AppointmentItem = {
 type PaymentProfile = { pk: string; sk: string; organizationId: string; consumerPersonId: string; stripeCustomerId: string; stripePaymentMethodId: string | null; status: "setup_pending" | "active" | "disabled"; updatedAt: string };
 
 type ReminderEvent = { internalEvent?: string; organizationId?: string; requestId?: string; scheduledStart?: string };
+/** SNS envelope carrying an SES bounce or complaint notification for the reminder configuration set. */
+type SnsEnvelope = { Records?: Array<{ EventSource?: string; Sns?: { TopicArn?: string; Message?: string } }> };
+const EMAIL_SUPPRESSION_PK = "EMAIL_SUPPRESSION";
+/** Addresses are never stored in the suppression list: only the SHA-256 of the lower-cased address, which is all the send path needs. */
+const suppressionKey = (email: string) => createHash("sha256").update(email.trim().toLowerCase()).digest("hex");
 
 type BookingSlot = {
   pk: string; sk: string; slotId: string; organizationId: string; start: string; end: string; timeZone: string;
@@ -71,6 +79,8 @@ export function createTelehealthHandler(config: TelehealthConfiguration) {
     try {
       const reminder = event as unknown as ReminderEvent;
       if (reminder.internalEvent === "send_appointment_reminder") return response(200, { data: await sendAppointmentReminder(config, reminder) });
+      const envelope = event as unknown as SnsEnvelope;
+      if (Array.isArray(envelope.Records) && envelope.Records.some((r) => r.EventSource === "aws:sns")) return response(200, { data: await recordEmailSuppressions(config, envelope) });
       if (route === STRIPE_WEBHOOK) return response(200, { data: await handleStripeWebhook(config, event) });
       const pool = route.includes("/workforce/") ? "workforce" : "consumer";
       const actor = identity(event, config, pool);
@@ -379,10 +389,39 @@ async function scheduleAppointmentReminders(config: TelehealthConfiguration, ite
         Input: JSON.stringify({ internalEvent: "send_appointment_reminder", organizationId: item.organizationId, requestId: item.requestId, scheduledStart: item.scheduledStart }) } }));
   }
 }
+/** SES bounce and complaint events (via the reminder configuration set's SNS destination) suppress further reminders to that
+ * address. Only the hash of the address is kept; a notification from any topic other than the configured one is refused. */
+async function recordEmailSuppressions(config: TelehealthConfiguration, envelope: SnsEnvelope) {
+  if (!config.remindersEnabled || !config.reminderEventsTopicArn) throw new TelehealthError("service_unavailable");
+  let recorded = 0, ignored = 0;
+  for (const record of envelope.Records ?? []) {
+    if (record.EventSource !== "aws:sns" || record.Sns?.TopicArn !== config.reminderEventsTopicArn) throw new TelehealthError("request_invalid");
+    let message: { notificationType?: string; eventType?: string; bounce?: { bounceType?: string; bouncedRecipients?: Array<{ emailAddress?: string }> }; complaint?: { complainedRecipients?: Array<{ emailAddress?: string }> } };
+    try { message = JSON.parse(String(record.Sns?.Message ?? "")); } catch { throw new TelehealthError("request_invalid"); }
+    const kind = String(message.notificationType ?? message.eventType ?? "").toLowerCase();
+    if (kind !== "bounce" && kind !== "complaint") { ignored++; continue; }
+    // Transient (soft) bounces do not suppress: the address may recover. Permanent bounces and every complaint do.
+    if (kind === "bounce" && String(message.bounce?.bounceType ?? "").toLowerCase() !== "permanent") { ignored++; continue; }
+    const recipients = (kind === "bounce" ? message.bounce?.bouncedRecipients : message.complaint?.complainedRecipients) ?? [];
+    for (const recipient of recipients) {
+      const address = String(recipient?.emailAddress ?? "");
+      if (!/^[^\s@]{1,64}@[^\s@]{1,190}$/.test(address)) { ignored++; continue; }
+      await document.send(new PutCommand({ TableName: config.tableName, Item: { pk: EMAIL_SUPPRESSION_PK, sk: suppressionKey(address), reason: kind, recordedAt: new Date().toISOString() } }));
+      recorded++;
+    }
+  }
+  return { recorded, ignored };
+}
+async function emailSuppressed(config: TelehealthConfiguration, email: string) {
+  const result = await document.send(new GetCommand({ TableName: config.tableName, Key: { pk: EMAIL_SUPPRESSION_PK, sk: suppressionKey(email) } }));
+  return Boolean(result.Item);
+}
 async function sendAppointmentReminder(config: TelehealthConfiguration, event: ReminderEvent) {
   if (!config.remindersEnabled || !UUID.test(String(event.organizationId)) || !UUID.test(String(event.requestId)) || !date(String(event.scheduledStart))) throw new TelehealthError("service_unavailable");
   const item = await find(config, String(event.organizationId), String(event.requestId));
   if (item.status === "cancelled" || item.scheduledStart !== event.scheduledStart) return { sent: false, reason: "stale" };
+  // A bounced or complained address is never mailed again; the appointment itself is unaffected and the app still shows it.
+  if (await emailSuppressed(config, item.consumerEmail)) return { sent: false, reason: "suppressed" };
   const when = new Date(item.scheduledStart ?? "").toISOString();
   const link = item.joinUrl ? `\nJoin your secure visit: ${item.joinUrl}` : "\nOpen AI Longevity Pro for the latest secure visit details.";
   await ses.send(new SendEmailCommand({ FromEmailAddress: config.reminderSender, ConfigurationSetName: config.reminderConfigurationSet,
@@ -555,6 +594,6 @@ function publicItem(item: AppointmentItem, pool: "consumer" | "workforce") {
   if (pool === "consumer") delete result.consumerPersonId;
   return result;
 }
-function validateConfiguration(config: TelehealthConfiguration) { if (!config.tableName || !config.consumerIssuer || !config.workforceIssuer || !config.consumerAudience || !config.workforceAudience || (config.runtimeMode === "synthetic" && config.phiAllowed) || (config.zoomEnabled && (!config.zoomBaaVerified || !config.zoomSecretArn)) || (config.remindersEnabled && (!config.reminderSender || !config.reminderConfigurationSet || !config.reminderScheduleGroup || !config.reminderSchedulerRoleArn || !config.reminderTargetArn)) || (config.stripeTestEnabled && (!config.stripeSecretArn || !/^https:\/\//.test(config.stripeSuccessUrl) || !/^https:\/\//.test(config.stripeCancelUrl)))) throw new Error("telehealth_configuration_invalid"); }
+function validateConfiguration(config: TelehealthConfiguration) { if (!config.tableName || !config.consumerIssuer || !config.workforceIssuer || !config.consumerAudience || !config.workforceAudience || (config.runtimeMode === "synthetic" && config.phiAllowed) || (config.zoomEnabled && (!config.zoomBaaVerified || !config.zoomSecretArn)) || (config.remindersEnabled && (!config.reminderSender || !config.reminderConfigurationSet || !config.reminderScheduleGroup || !config.reminderSchedulerRoleArn || !config.reminderTargetArn || !/^arn:aws:sns:[a-z0-9-]+:[0-9]{12}:[A-Za-z0-9_-]+$/.test(config.reminderEventsTopicArn))) || (config.stripeTestEnabled && (!config.stripeSecretArn || !/^https:\/\//.test(config.stripeSuccessUrl) || !/^https:\/\//.test(config.stripeCancelUrl)))) throw new Error("telehealth_configuration_invalid"); }
 class TelehealthError extends Error { constructor(readonly category: "identity_refused" | "request_invalid" | "not_found" | "conflict" | "provider_unavailable" | "service_unavailable") { super(category); } }
 function response(statusCode: number, payload: Record<string, unknown>): ApiGatewayV2Response { return { statusCode, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff" }, body: JSON.stringify(payload) }; }

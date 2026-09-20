@@ -13,6 +13,7 @@
       "domain": "ailongevitypro.app",
       "identity_status": "pending_dns_verification",
       "production_access": "denied_case_178794181600116",
+      "bounce_complaint_handling": "implemented_disabled: SES configuration-set event destination to SNS, hashed suppression list, reminders skipped for suppressed addresses; exists only when RemindersEnabled=true",
       "enabled": false
     },
     "secure_in_app_messaging": {

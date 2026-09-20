@@ -51,6 +51,7 @@ const config: TelehealthConfiguration = {
   reminderScheduleGroup: "",
   reminderSchedulerRoleArn: "",
   reminderTargetArn: "",
+  reminderEventsTopicArn: "",
   stripeTestEnabled: false,
   stripeSecretArn: "",
   stripeSuccessUrl: "",
@@ -302,3 +303,47 @@ describe("AWS telehealth request boundary", () => {
 });
 
 const CONSUMER_AVAILABILITY_TEST = "POST /clinical-core/consumer/appointments/availability";
+
+describe("SES bounce and complaint suppression for appointment reminders", () => {
+  const reminders: TelehealthConfiguration = { ...config, remindersEnabled: true, reminderSender: "no-reply@ailongevitypro.app", reminderConfigurationSet: "alp-transactional",
+    reminderScheduleGroup: "group", reminderSchedulerRoleArn: "arn:aws:iam::111122223333:role/reminders", reminderTargetArn: "arn:aws:lambda:us-east-2:111122223333:function:telehealth",
+    reminderEventsTopicArn: "arn:aws:sns:us-east-2:111122223333:telehealth-reminder-events" };
+  const sns = (message: unknown, topic = reminders.reminderEventsTopicArn) => ({ Records: [{ EventSource: "aws:sns", Sns: { TopicArn: topic, Message: JSON.stringify(message) } }] }) as never;
+  beforeEach(() => { send.mockReset(); });
+  it("records permanent bounces and complaints as hashed suppressions, ignores transient bounces, and never stores the address", async () => {
+    send.mockResolvedValue({});
+    const handler = createTelehealthHandler(reminders);
+    const bounce = await handler(sns({ notificationType: "Bounce", bounce: { bounceType: "Permanent", bouncedRecipients: [{ emailAddress: "Gone@Example.test" }] } }));
+    expect(bounce.statusCode).toBe(200); expect(JSON.parse(bounce.body ?? "{}").data).toEqual({ recorded: 1, ignored: 0 });
+    const put = (send.mock.calls[0][0] as { input: { Item: Record<string, unknown> } }).input;
+    expect(put.Item).toMatchObject({ pk: "EMAIL_SUPPRESSION", reason: "bounce" });
+    expect(String(put.Item.sk)).toMatch(/^[a-f0-9]{64}$/); expect(JSON.stringify(put)).not.toMatch(/example\.test/i);
+    const soft = await handler(sns({ notificationType: "Bounce", bounce: { bounceType: "Transient", bouncedRecipients: [{ emailAddress: "busy@example.test" }] } }));
+    expect(JSON.parse(soft.body ?? "{}").data).toEqual({ recorded: 0, ignored: 1 });
+    const complaint = await handler(sns({ notificationType: "Complaint", complaint: { complainedRecipients: [{ emailAddress: "annoyed@example.test" }] } }));
+    expect(JSON.parse(complaint.body ?? "{}").data).toEqual({ recorded: 1, ignored: 0 });
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+  it("refuses notifications from another topic or when reminders are disabled, without writing", async () => {
+    const other = await createTelehealthHandler(reminders)(sns({ notificationType: "Complaint", complaint: { complainedRecipients: [{ emailAddress: "x@example.test" }] } }, "arn:aws:sns:us-east-2:111122223333:someone-else"));
+    expect(other.statusCode).toBe(400);
+    const disabled = await createTelehealthHandler(config)(sns({ notificationType: "Complaint", complaint: { complainedRecipients: [{ emailAddress: "x@example.test" }] } }));
+    expect(disabled.statusCode).toBe(503);
+    expect(send).not.toHaveBeenCalled();
+  });
+  it("skips the reminder for a suppressed address and says so; an unsuppressed address is still mailed", async () => {
+    const item = { ...processingItem(), status: "scheduled", scheduledStart: "2026-09-03T17:00:00.000Z" };
+    const reminder = { internalEvent: "send_appointment_reminder", organizationId: item.organizationId, requestId: item.requestId, scheduledStart: item.scheduledStart } as never;
+    send.mockResolvedValueOnce({ Items: [item] }).mockResolvedValueOnce({ Item: { pk: "EMAIL_SUPPRESSION", sk: "hash", reason: "complaint" } });
+    const suppressed = await createTelehealthHandler(reminders)(reminder);
+    expect(JSON.parse(suppressed.body ?? "{}").data).toEqual({ sent: false, reason: "suppressed" });
+    const lookup = (send.mock.calls[1][0] as { input: { Key: Record<string, unknown> } }).input;
+    expect(lookup.Key).toEqual({ pk: "EMAIL_SUPPRESSION", sk: expect.stringMatching(/^[a-f0-9]{64}$/) });
+    send.mockReset(); send.mockResolvedValueOnce({ Items: [item] }).mockResolvedValueOnce({});
+    const mailed = await createTelehealthHandler(reminders)(reminder);
+    expect(JSON.parse(mailed.body ?? "{}").data).toEqual({ sent: true });
+  });
+  it("will not enable reminders without the SNS topic that carries bounces and complaints", () => {
+    expect(() => createTelehealthHandler({ ...reminders, reminderEventsTopicArn: "" })).toThrow("telehealth_configuration_invalid");
+  });
+});

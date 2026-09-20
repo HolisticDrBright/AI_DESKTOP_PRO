@@ -71,7 +71,7 @@ export async function runSecurityQualification(now = Date.now()): Promise<Securi
 
   const telehealth: TelehealthConfiguration = { tableName: "qualification", consumerIssuer: config.consumerIssuer, consumerAudience: config.consumerAudience, workforceIssuer: `${config.consumerIssuer}-workforce`,
     workforceAudience: "workforce", runtimeMode: "production", phiAllowed: false, zoomEnabled: false, zoomBaaVerified: false, zoomSecretArn: "", remindersEnabled: false, reminderSender: "",
-    reminderConfigurationSet: "", reminderScheduleGroup: "", reminderSchedulerRoleArn: "", reminderTargetArn: "", stripeTestEnabled: false, stripeSecretArn: "", stripeSuccessUrl: "", stripeCancelUrl: "" };
+    reminderConfigurationSet: "", reminderScheduleGroup: "", reminderSchedulerRoleArn: "", reminderTargetArn: "", reminderEventsTopicArn: "", stripeTestEnabled: false, stripeSecretArn: "", stripeSuccessUrl: "", stripeCancelUrl: "" };
   const telehealthEvent = (route: string, patch: Record<string, unknown> = {}, body?: Record<string, unknown>) => ({ routeKey: route, headers: body ? { "content-type": "application/json" } : {},
     body: body ? JSON.stringify(body) : undefined, requestContext: { authorizer: { jwt: { claims: { ...claims(), email: "qualification@example.test", "custom:synthetic_attested": "true", "custom:production_bound": "false", ...patch } } } } }) as ApiGatewayV2Event;
   const production = createTelehealthHandler(telehealth);
