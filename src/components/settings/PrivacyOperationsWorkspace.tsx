@@ -2,6 +2,7 @@
 import {useEffect,useRef,useState} from 'react';
 import {privacyOperationSchema,parsePrivacyOperationResult,type PrivacyOperation,type PrivacyQueue,type PrivacyDetail,type PersonalPurgePreview,type PersonalPurgeReceipt,type ExternalInventorySummary,type ExportCleanupSummary,type ExportReconcileSummary,type ExportBacklog} from '@/contracts/privacyOperations';
 import {Card} from '@/components/ui/bits';
+import {correctionEntryListDiff,isCorrectionEntryList,type CorrectionEntry} from '@/contracts/personalCorrection';
 import {Btn} from '@/components/ui/Btn';
 const messages:Record<string,string>={
   reauth_required:'Sign out and sign in again with your workforce account. Privacy operations require a login within the last 15 minutes.',
@@ -13,6 +14,20 @@ const messages:Record<string,string>={
   personal_purge_not_activated:'Personal-history deletion has not been activated on this deployment. No deletion was performed.',
   external_inventory_not_activated:'Retained-job inventory has not been activated on this deployment. No external records were scanned or deleted.',
 };
+/** A non-empty list of flat entries on both sides is reviewed entry by entry (by unique id when every entry carries one, else by position). */
+const entryList=(v:unknown):v is CorrectionEntry[]=>Array.isArray(v)&&(v.length===0||isCorrectionEntryList(v));
+function EntryListReview({before,after}:{before:CorrectionEntry[];after:CorrectionEntry[]}){
+  const diff=correctionEntryListDiff(before,after);
+  const text=(entry:CorrectionEntry)=>Object.keys(entry).map(k=>`${k}: ${JSON.stringify(entry[k])}`).join(' · ');
+  return <div className="space-y-1 text-sm">
+    <p>Matched by {diff.identity==='id'?'entry id':'position'} · {diff.unchanged} unchanged · {diff.changed.length} changed · {diff.added.length} added · {diff.removed.length} removed. Verify every changed, added and removed entry against the consumer&apos;s reason before recording an outcome.</p>
+    <ul className="list-disc pl-5">
+      {diff.removed.map(r=><li key={`r:${r.key}`}>Removed [{r.key}]: {text(r.entry)}</li>)}
+      {diff.added.map(a=><li key={`a:${a.key}`}>Added [{a.key}]: {text(a.entry)}</li>)}
+      {diff.changed.map(c=><li key={`c:${c.key}`}>Changed [{c.key}] {c.fields.join(', ')}: {c.fields.map(f=>`${f} ${JSON.stringify(c.before[f])} → ${JSON.stringify(c.after[f])}`).join('; ')}</li>)}
+    </ul>
+  </div>;
+}
 export function PrivacyOperationsWorkspace(){
   const [queue,setQueue]=useState<PrivacyQueue|null>(null),[detail,setDetail]=useState<PrivacyDetail|null>(null);
   const [closed,setClosed]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState('');
@@ -123,6 +138,8 @@ export function PrivacyOperationsWorkspace(){
         <dl className="space-y-2 break-words">
           <dt>Original value</dt><dd>{detail.correction.originalAvailable?JSON.stringify(detail.correction.originalValue):'Original record unavailable'}</dd>
           <dt>Requested value</dt><dd>{JSON.stringify(detail.correction.requestedValue)}</dd>
+          {detail.correction.originalAvailable&&entryList(detail.correction.originalValue)&&entryList(detail.correction.requestedValue)
+            ?<><dt>Entry-by-entry review</dt><dd><EntryListReview before={detail.correction.originalValue} after={detail.correction.requestedValue}/></dd></>:null}
           <dt>Consumer reason</dt><dd className="whitespace-pre-wrap">{detail.correction.reason}</dd>
           <dt>Current stored value</dt><dd>{detail.correction.currentDeleted?'Deleted or unavailable':JSON.stringify(detail.correction.currentValue)} · revision {detail.correction.currentRevision??'unavailable'}</dd>
         </dl>

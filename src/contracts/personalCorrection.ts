@@ -17,12 +17,43 @@ export function correctionPath(field:string):string[]|null{
 }
 export const isCorrectionScalar=(v:unknown):v is string|number|boolean=>['string','number','boolean'].includes(typeof v)&&(typeof v!=='number'||Number.isFinite(v));
 export const isCorrectionScalarList=(v:unknown):v is (string|number|boolean)[]=>Array.isArray(v)&&v.length<=CORRECTION_LIST_MAX&&v.every(isCorrectionScalar);
+/** Lists of structured entries (medications, supplements): each entry is a flat record of plain values or lists of plain values,
+ * with at most this many keys. A whole list may be replaced by another; the operator sees a per-entry diff, keyed by a unique
+ * string `id` when every entry on both sides carries one, otherwise by position. */
+export const CORRECTION_ENTRY_KEYS_MAX=40;
+export type CorrectionEntry=Record<string,string|number|boolean|(string|number|boolean)[]>;
+const safeEntryKey=(k:string)=>k.length>=1&&k.length<=80&&!k.includes('.')&&!/^[0-9-]/.test(k)&&!['__proto__','constructor','prototype'].includes(k);
+export function isCorrectionEntry(v:unknown):v is CorrectionEntry{
+  if(v===null||typeof v!=='object'||Array.isArray(v))return false;
+  const keys=Object.keys(v);
+  return keys.length>=1&&keys.length<=CORRECTION_ENTRY_KEYS_MAX&&keys.every(k=>safeEntryKey(k)&&(isCorrectionScalar((v as Record<string,unknown>)[k])||isCorrectionScalarList((v as Record<string,unknown>)[k])));
+}
+export const isCorrectionEntryList=(v:unknown):v is CorrectionEntry[]=>Array.isArray(v)&&v.length<=CORRECTION_LIST_MAX&&v.every(isCorrectionEntry);
+export type CorrectionEntryListDiff={identity:'id'|'index';added:{key:string;entry:CorrectionEntry}[];removed:{key:string;entry:CorrectionEntry}[];
+  changed:{key:string;before:CorrectionEntry;after:CorrectionEntry;fields:string[]}[];unchanged:number};
+const sameLeaf=(a:unknown,b:unknown)=>Array.isArray(a)&&Array.isArray(b)?a.length===b.length&&a.every((v,i)=>Object.is(v,b[i])):Object.is(a,b);
+export function correctionEntryListDiff(prior:CorrectionEntry[],requested:CorrectionEntry[]):CorrectionEntryListDiff{
+  const ids=(list:CorrectionEntry[])=>list.map(e=>typeof e.id==='string'?e.id:null);
+  const priorIds=ids(prior),requestedIds=ids(requested);
+  const byId=[...priorIds,...requestedIds].every(id=>id!==null)&&new Set(priorIds).size===prior.length&&new Set(requestedIds).size===requested.length;
+  const key=(list:CorrectionEntry[],i:number)=>byId?String(list[i].id):String(i);
+  const before=new Map(prior.map((e,i)=>[key(prior,i),e])),after=new Map(requested.map((e,i)=>[key(requested,i),e]));
+  const diff:CorrectionEntryListDiff={identity:byId?'id':'index',added:[],removed:[],changed:[],unchanged:0};
+  for(const [k,entry] of after){
+    const b=before.get(k);
+    if(!b){diff.added.push({key:k,entry});continue;}
+    const fields=[...new Set([...Object.keys(b),...Object.keys(entry)])].filter(f=>!sameLeaf(b[f],entry[f]));
+    if(fields.length)diff.changed.push({key:k,before:b,after:entry,fields});else diff.unchanged++;
+  }
+  for(const [k,entry] of before)if(!after.has(k))diff.removed.push({key:k,entry});
+  return diff;
+}
 const field=z.string().min(1).max(240).refine(v=>correctionPath(v)!==null);
 const date=z.string().datetime({offset:true});
 export const correctionInputSchema=z.object({
   version:z.literal('personal-correction/1'),collection:z.enum(CORRECTION_COLLECTIONS),recordId:z.string().uuid(),
   expectedRevision:revision,expectedPayloadSha256:hash,field,
-  requestedValue:z.unknown().refine(v=>isCorrectionScalar(v)||isCorrectionScalarList(v),'A requested plain value or list of plain values is required'),
+  requestedValue:z.unknown().refine(v=>isCorrectionScalar(v)||isCorrectionScalarList(v)||isCorrectionEntryList(v),'A requested plain value, list of plain values or list of flat entries is required'),
   reason:z.string().min(1).max(2000).refine(v=>v.trim().length>0),
 }).strict();
 export const correctionRecordSchema=z.object({collection:z.enum(CORRECTION_COLLECTIONS),recordId:z.string().uuid(),

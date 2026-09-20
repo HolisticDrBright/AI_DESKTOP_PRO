@@ -582,6 +582,26 @@ describe('privacy fulfillment: executable production SQL with fictional data (no
     await asActor("select clinical_core.write_owned_consumer_record('wellness_profiles',$1,2,$2,$3::jsonb,false,1)",[recordId,randomUUID(),JSON.stringify({...payload,allergies:['fictional pollen'],medications:[payload.medications[0],{name:'Fictional B',dose_mg:20}]})],owner,'consumer','clinical_data');
     expect((await resolveCorrection(indexed.result.privacyRequestId,'applied',3)).rows[0]).toMatchObject({result:{status:'completed',correctionResolution:{outcome:'applied',appliedRevision:3}}});
   });
+  it('replaces a whole list of flat entries (migration 98) under the same exact-delta verification, refusing nested or oversized entries',async()=>{
+    const recordId=randomUUID(),payload={medications:[{id:'m1',name:'Fictional A',dose_mg:5,times:['am']},{id:'m2',name:'Fictional B',dose_mg:10,times:['pm']}],label:'Fictional'};
+    await asActor("select clinical_core.write_owned_consumer_record('wellness_profiles',$1,0,$2,$3::jsonb,false,1)",[recordId,randomUUID(),JSON.stringify(payload)],owner,'consumer','clinical_data');
+    const targets=(await asActor("select clinical_core.list_owned_correction_targets('wellness_profiles',25,null) as result",[],owner,'consumer')).rows[0] as {result:{recordId:string;payloadSha256:string}[]};
+    const base={version:'personal-correction/1',collection:'wellness_profiles',recordId,expectedRevision:1,expectedPayloadSha256:targets.result.find(r=>r.recordId===recordId)!.payloadSha256,reason:'Fictional entry-list correction'};
+    for(const bad of [{field:'medications',requestedValue:[{id:'m1',nested:{a:1}}]},{field:'medications',requestedValue:[{}]},{field:'medications',requestedValue:[{'bad.key':1}]},
+      {field:'medications',requestedValue:Array.from({length:201},(_,i)=>({id:'m'+i}))},{field:'medications',requestedValue:['plain']},{field:'label',requestedValue:[{id:'x'}]},
+      {field:'medications',requestedValue:payload.medications},{field:'medications',requestedValue:[Object.fromEntries(Array.from({length:41},(_,i)=>['k'+i,1]))]}])
+      await expect(submitCorrection({...base,...bad})).rejects.toThrow('privacy_correction_invalid');
+    const requested=[{id:'m2',name:'Fictional B',dose_mg:20,times:['pm']},{id:'m3',name:'Fictional C',dose_mg:1,times:[]}];
+    const submitted=(await submitCorrection({...base,field:'medications',requestedValue:requested})).rows[0] as {result:{privacyRequestId:string;correctionTarget:{requestedValue:unknown}}};
+    expect(submitted.result.correctionTarget.requestedValue).toEqual(requested);
+    // A successor that also changed another field is not the requested correction.
+    await asActor("select clinical_core.write_owned_consumer_record('wellness_profiles',$1,1,$2,$3::jsonb,false,1)",[recordId,randomUUID(),JSON.stringify({medications:requested,label:'Changed'})],owner,'consumer','clinical_data');
+    await expect(resolveCorrection(submitted.result.privacyRequestId,'applied',2)).rejects.toThrow('privacy_correction_not_applied');
+    await asActor("select clinical_core.write_owned_consumer_record('wellness_profiles',$1,2,$2,$3::jsonb,false,1)",[recordId,randomUUID(),JSON.stringify({medications:requested,label:'Fictional'})],owner,'consumer','clinical_data');
+    expect((await resolveCorrection(submitted.result.privacyRequestId,'applied',3)).rows[0]).toMatchObject({result:{status:'completed',correctionResolution:{outcome:'applied',appliedRevision:3}}});
+    const detail=(await asActor('select clinical_private.get_assigned_privacy_request($1) as result',[submitted.result.privacyRequestId])).rows[0] as {result:{correction:{originalValue:unknown;requestedValue:unknown}}};
+    expect(detail.result.correction).toMatchObject({originalValue:payload.medications,requestedValue:requested});
+  });
   it('rejects stale, forged, missing and cross-owner correction targets before submission',async()=>{
     const {correction}=await correctionFixture();
     for(const patch of [{expectedRevision:2},{expectedPayloadSha256:'b'.repeat(64)},{recordId:randomUUID()}]){
