@@ -41,7 +41,7 @@ deployment that refuses is therefore never `ok`.
   deletes anything it did not create.
 - What it does not cover: recording, transcription and drafting flows (browser suites with intercepted
   HTTP exist; a hosted recording harness with fictional audio is unbuilt), the scheduled retention
-  sweep (needs the reviewed release row), the settlement bound measurement (needs a controlled late
+  sweep (needs the reviewed release row; see `retention-sweep-activation-runbook.md`), the settlement bound measurement (needs a controlled late
   write; the plan is in `personal-storage-privacy-export.md`), and anything the deployment refuses.
 
 ## Running it

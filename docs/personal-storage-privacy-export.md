@@ -248,7 +248,11 @@ Mechanics:
   The identity is an ordinary workforce identity row; the database accepts it as the retention
   service only while a reviewed row in `privacy_retention_service_releases` names it
   (`retention_service_release_required` otherwise). No row is seeded, so a deployed schedule
-  refuses until the operating policy is approved and an operator inserts the release. Each run
+  refuses until the operating policy is approved and an operator inserts the release
+  (`retention-service-release.ts` through `scripts/release-aws-retention-service.ps1`; the
+  order of operations and refusal categories are in `retention-sweep-activation-runbook.md`;
+  the sweep entry point has run locally against the executable SQL with a fictional store, never
+  hosted). Each run
   publishes CloudWatch embedded metrics (`ALP/PrivacyExportRetention`: `CleanupPending`,
   `CleanupDeferred`, `Settling`, `OldestOverdueSeconds`, `Reopened`, `Cleaned`,
   `SweepRefused`); alarms fire when the oldest pending removal exceeds

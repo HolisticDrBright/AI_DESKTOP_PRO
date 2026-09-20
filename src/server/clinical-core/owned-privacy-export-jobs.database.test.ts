@@ -723,3 +723,68 @@ describe('large personal-storage export jobs (migration 93)',()=>{
     await jobs.cancelPrivacyExportJob(context(),{jobId:job});
   });
 });
+
+// The activation path for the scheduled sweep, executed locally: the operator release module inserts the release row
+// with the same checks the sweep applies, and the sweep entry point itself runs against the executable SQL with the
+// fictional store. This is the only run of the sweep so far; nothing hosted has executed it.
+import {runRetentionSweep,type RetentionSweepConfiguration} from './privacy-retention-sweep-lambda';
+import {inspectRetentionServiceReleases,releaseRetentionService,revokeRetentionServiceRelease} from './retention-service-release';
+// The operator path: the administrative role, no API role switch, the same parameter unwrapping.
+const adminDatabase:ClinicalCoreDatabase={transaction:async work=>db.transaction(async tx=>work({query:async(sql:string,args:unknown[]=[])=>
+  tx.query(sql,args.map(v=>typeof v==='object'&&v!==null&&'kind' in v&&v.kind==='uuid'&&'value' in v?v.value:v))} as unknown as ClinicalCoreTransaction))} as ClinicalCoreDatabase;
+describe('retention sweep activation path (release row operator and a local sweep run)',()=>{
+  const sweepConfiguration=(patch:Partial<RetentionSweepConfiguration>={}):RetentionSweepConfiguration=>({enabled:true,phiAllowed:true,evidenceSha256:'b'.repeat(64),servicePersonId:retentionService,
+    serviceSubject:'subject-'+retentionService,organizationId:org,bucket:storage.bucket,kmsKeyArn:storage.kmsKeyArn,bucketOwner:storage.expectedBucketOwner,region:storage.region,...patch});
+  const release=(patch:Partial<Parameters<typeof releaseRetentionService>[1]>={})=>releaseRetentionService(adminDatabase,{version:'ops-2026-09-20',servicePersonId:retentionService,
+    serviceSubject:'subject-'+retentionService,approvedByPersonId:reviewer,evidenceSha256:'b'.repeat(64),...patch});
+  it('refuses a release that the sweep would later refuse, and never inserts on refusal',async()=>{
+    for(const [patch,code] of [[{version:''},'retention_release_invalid'],[{version:'x'.repeat(81)},'retention_release_invalid'],[{evidenceSha256:'B'.repeat(64)},'retention_release_invalid'],
+      [{serviceSubject:'short'},'retention_release_invalid'],[{approvedByPersonId:retentionService},'retention_release_self_approval'],
+      [{serviceSubject:'subject-'+operator},'retention_service_identity_required'],[{servicePersonId:owner,serviceSubject:'subject-'+owner},'retention_service_identity_required'],
+      [{servicePersonId:randomUUID(),serviceSubject:'subject-nobody-here'},'retention_service_identity_required'],[{approvedByPersonId:owner},'retention_approver_required'],
+      [{approvedByPersonId:randomUUID()},'retention_approver_required']] as const)
+      await expect(release(patch),JSON.stringify(patch)).rejects.toThrow(code);
+    expect(await inspectRetentionServiceReleases(adminDatabase)).toEqual({releases:[],live:0});
+  });
+  it('is refused with no live release, acts once released, reports counts only, and is refused again once revoked',async()=>{
+    const f=fakeStore(),jobs=jobsWith(f.store),lines:string[]=[];
+    const emit=(line:string)=>lines.push(line);
+    await expect(runRetentionSweep(database,sweepConfiguration({enabled:false}),{store:f.store as never,emit})).rejects.toThrow('retention_sweep_configuration_invalid');
+    await expect(runRetentionSweep(database,sweepConfiguration({phiAllowed:false}),{store:f.store as never,emit})).rejects.toThrow('retention_sweep_configuration_invalid');
+    await expect(runRetentionSweep(database,sweepConfiguration({bucket:'Bad Bucket'}),{store:f.store as never,emit})).rejects.toThrow('retention_sweep_configuration_invalid');
+    await jobs.cleanupPrivacyExportJobs(context(other),new AbortController().signal);
+    const foreign=(await jobs.requestPrivacyExportJob(context(other),{requestId:randomUUID()})).jobId;
+    await jobs.advancePrivacyExportJob(context(other),{jobId:foreign},20000,new AbortController().signal);
+    await jobs.cancelPrivacyExportJob(context(other),{jobId:foreign});
+    const refused=await runRetentionSweep(database,sweepConfiguration(),{store:f.store as never,emit});
+    expect(refused).toEqual({ok:false,refused:'retention_service_release_required',cleanup:null,reconcile:null,backlog:null});
+    expect(JSON.parse(lines.at(-1)!)).toMatchObject({SweepRefused:1,Cleaned:0,ok:false,refused:'retention_service_release_required'});
+    expect((await jobs.getPrivacyExportJob(context(other),{jobId:foreign})).objectDeleted).toBe(false);
+    try{
+      const released=await release();
+      expect(released).toMatchObject({version:'ops-2026-09-20',servicePersonId:retentionService,identitySubject:'subject-'+retentionService,approvedBy:reviewer,revokedAt:null,live:true});
+      await expect(release()).rejects.toThrow('retention_release_exists');
+      await expect(release({version:'ops-2026-09-21'})).rejects.toThrow('retention_release_live');
+      expect(await inspectRetentionServiceReleases(adminDatabase)).toMatchObject({live:1,releases:[{version:'ops-2026-09-20',live:true}]});
+      const swept=await runRetentionSweep(database,sweepConfiguration(),{store:f.store as never,emit});
+      expect(swept.ok).toBe(true);expect(swept.refused).toBeNull();
+      expect(swept.cleanup!.cleaned).toBeGreaterThanOrEqual(1);
+      expect(swept.reconcile).toEqual({confirmed:expect.any(Number),reopened:expect.any(Number),pending:expect.any(Number)});
+      expect(swept.backlog).toMatchObject({scope:'all_owners'});
+      expect((await jobs.getPrivacyExportJob(context(other),{jobId:foreign})).objectDeleted).toBe(true);
+      const metrics=JSON.parse(lines.at(-1)!);
+      expect(metrics).toMatchObject({SweepRefused:0,ok:true,refused:null});
+      expect(metrics._aws.CloudWatchMetrics[0].Namespace).toBe('ALP/PrivacyExportRetention');
+      // Counts only: no job, owner or key identifiers leave the sweep.
+      expect(JSON.stringify(metrics)).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|personal-exports/);
+      const revoked=await revokeRetentionServiceRelease(adminDatabase,'ops-2026-09-20');
+      expect(revoked.live).toBe(false);expect(revoked.revokedAt).not.toBeNull();
+      await expect(revokeRetentionServiceRelease(adminDatabase,'ops-2026-09-20')).rejects.toThrow('retention_release_not_live');
+      expect((await runRetentionSweep(database,sweepConfiguration(),{store:f.store as never,emit})).refused).toBe('retention_service_release_required');
+      // A revoked row stays as history; a new version for the same identity may be released afterwards.
+      const again=await release({version:'ops-2026-09-21'});
+      expect(again.live).toBe(true);
+      expect((await inspectRetentionServiceReleases(adminDatabase)).releases.map(r=>[r.version,r.live])).toEqual([['ops-2026-09-20',false],['ops-2026-09-21',true]]);
+    }finally{await db.query("delete from clinical_private.privacy_retention_service_releases where version like 'ops-2026-09-%'");}
+  });
+});
