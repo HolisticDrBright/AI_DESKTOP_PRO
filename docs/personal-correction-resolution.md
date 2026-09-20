@@ -66,6 +66,23 @@ verification in V2; they are not rewritten.
 The ordinary generic deletion-completion operation still refuses corrections;
 only the evidence-bound resolution operation can complete a new correction.
 
+## Owner-applied successor (September 20)
+
+Resolution requires an actual successor saved through the ordinary authorized write
+path, but nothing wrote one: the owner had to find the same record in another screen
+and change exactly that field. Migration 87
+(`20260920050000_production_owned_correction_request_content.sql`) returns the owner's
+own `requestedValue` and `reason` inside `correctionTarget` (never an operator
+identity), and the shared contract accepts them as optional so older deployments still
+parse. V2's Privacy Center now offers "Review and apply this correction to my record"
+for an open correction: it reads the current record, refuses unless the revision still
+equals the reviewed revision (a moved record means the request is stale and a new one
+is needed; a later revision that already carries the value is reported as awaiting
+verification), then writes exactly the original payload with that one field set to
+the requested value through `personalRecords.write` with the reviewed revision as the
+expected revision. The operator's evidence-bound resolution then verifies the delta as
+before. See V2 `expo/docs/personal-correction-resolution.md`.
+
 ## Verification and remaining work
 
 Local tests execute all 59 production migrations in isolated PostgreSQL using
@@ -76,8 +93,8 @@ exercise typed drafts, strict response schemas, account changes, paging,
 concurrency, ambiguous responses and preservation of legacy commands.
 
 This is not a complete deployed correction service. Remaining engineering:
-a reviewed workforce operations interface/queue, safe application of corrections
-through each domain's existing write path, nested/structured-field editing,
+nested/structured-field editing (the owner-applied successor covers scalar
+top-level fields only),
 source lab/document and clinic-specific amendments, cross-store propagation,
 complete request-history pagination and large-account acceptance. Personal
 record-history purge does not erase this privacy request/resolution audit;

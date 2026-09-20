@@ -14,8 +14,11 @@ export const correctionInputSchema=z.object({
 }).strict();
 export const correctionRecordSchema=z.object({collection:z.enum(CORRECTION_COLLECTIONS),recordId:z.string().uuid(),
   revision,payloadSha256:hash,payload:z.record(z.string(),z.unknown()),receivedAt:date}).strict();
+// The owner's own request content travels back so the owner's device can write
+// the exact successor; deployments before that overlay omit both fields.
 export const correctionTargetSchema=z.object({collection:z.enum(CORRECTION_COLLECTIONS),recordId:z.string().uuid(),
-  expectedRevision:revision,expectedPayloadSha256:hash,field,requestSha256:hash}).strict();
+  expectedRevision:revision,expectedPayloadSha256:hash,field,requestSha256:hash,
+  requestedValue:z.unknown().optional(),reason:z.string().min(1).max(2000).optional()}).strict();
 export const correctionResolutionSchema=z.object({outcome:z.enum(['applied','declined']),appliedRevision:revision.nullable(),
   appliedPayloadSha256:hash.nullable(),evidenceSha256:hash,explanation:z.string().min(1).max(2000),resolvedAt:date,
 }).strict().refine(v=>v.outcome==='applied'?(v.appliedRevision!==null&&v.appliedPayloadSha256!==null):

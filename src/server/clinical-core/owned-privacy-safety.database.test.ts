@@ -504,7 +504,10 @@ describe('privacy fulfillment: executable production SQL with fictional data (no
     const {correction,payload,recordId}=await correctionFixture(),command=randomUUID();
     const submitted=(await submitCorrection(correction,command)).rows[0] as {result:{privacyRequestId:string}};
     const id=submitted.result.privacyRequestId;
-    expect(submitted).toMatchObject({result:{status:'submitted',duplicate:false,correctionTarget:{recordId,expectedRevision:1,expectedPayloadSha256:correction.expectedPayloadSha256}}});
+    // The owner's ledger carries the requested value and reason so the owner's device can write the exact successor.
+    expect(submitted).toMatchObject({result:{status:'submitted',duplicate:false,correctionTarget:{recordId,expectedRevision:1,expectedPayloadSha256:correction.expectedPayloadSha256,
+      field:'height_cm',requestedValue:180,reason:'Fictional input correction'}}});
+    expect(JSON.stringify(submitted)).not.toMatch(/operator_id|operatorId/);
     await expect(resolveCorrection(id)).rejects.toThrow('privacy_correction_not_applied');
     await asActor("select clinical_core.write_owned_consumer_record('wellness_profiles',$1,1,$2,$3::jsonb,false,1)",[recordId,randomUUID(),JSON.stringify({...payload,height_cm:180})],owner,'consumer','clinical_data');
     expect((await submitCorrection(correction,command)).rows[0]).toMatchObject({result:{duplicate:true}});
