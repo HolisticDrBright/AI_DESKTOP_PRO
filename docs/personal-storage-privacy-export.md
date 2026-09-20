@@ -279,4 +279,32 @@ client (pagination markers, delete markers, checksum mode only on request, 404 a
 403 rethrown, composite checksum passthrough, exact-version deletes). None of this has run
 against a bucket.
 
-This is still the inline export's coverage, not a complete account export.
+## September 20: cross-store coverage (migration 20260920180000)
+
+The prepared copy can now reach the two stores the personal-storage export could not: after
+`records` and `consents` the document carries `labs` (the owner's lab processing jobs with their
+sanitized results and source documents, inlined base64 up to 6 MiB each, otherwise listed with the
+reason: `exceeds_inline_bound`, `object_missing`, `digest_mismatch`, `object_key_missing`) and `voice`
+(the owner's chat transcription jobs with the transcript text for ready jobs, otherwise `not_ready`,
+`removed_by_retention`, `transcript_absent` or `provider_output_invalid`). Both are read inside the
+export pass under the owner's own identity by `aws-cross-store-export-reader.ts`: the lab reader
+queries the owner inventory index and re-reads each job row, dropping anything that is not exactly
+this owner's subject, person and organization; the voice reader scans the job table for the owner and
+accepts only rows whose authorization binding matches. Progress inside a store section travels in the
+job's cursor, so an interrupted pass resumes without re-reading or duplicating a page. The section
+order is fixed (`records`, `consents`, `labs`, `voice`, `done`) and enforced at the SQL boundary.
+
+Coverage is decided by deployment configuration and written into every job view and the manifest:
+`coverage.crossStore.labs` and `coverage.crossStore.voice` are `included` only where the
+personal-storage candidate names the store (`ExportLabJobTableArn`, `ExportLabDocumentBucketName`,
+`ExportLabKmsKeyArn`; `ExportVoiceJobTableArn`, `ExportTranscriptionBucketName`,
+`ExportVoiceKmsKeyArn`; each with `CrossStoreExportReviewSha256` on top of export delivery), and
+`included`/`excluded` move `lab_processing_jobs_and_documents` and `chat_and_voice_transcripts`
+accordingly. The function's IAM for each store is read-only and bound to the named table, index,
+bucket prefix and key (`ReviewedCrossStoreLabExportReadOnly`, `ReviewedCrossStoreVoiceExportReadOnly`).
+Nothing is configured in any deployed stack. Locally verified: reader unit tests with fictional
+clients, and PGlite export runs with fictional store readers (both stores, one store, none).
+
+This remains a bounded export, not complete account fulfillment: clinic records, identity and billing,
+device-only data, recovery archives, backups and audit logs stay excluded, and the coverage statement
+says so on every job.

@@ -356,6 +356,10 @@
     {
       "version": "20260920170000",
       "file": "20260920170000_production_owned_disputes.sql"
+    },
+    {
+      "version": "20260920180000",
+      "file": "20260920180000_production_owned_privacy_export_cross_store.sql"
     }
   ]
 }

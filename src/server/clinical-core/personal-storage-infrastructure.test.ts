@@ -40,7 +40,7 @@ describe('functional personal storage deployment candidate',()=>{
     expect(condition(candidate.Conditions.Active,approved)).toBe(true);
     for(const key of ['PhiAllowed','Activation','ActivationEvidenceSha256','DatabaseReviewSha256','AllowedScopes','AlarmTopicArn'])expect(condition(candidate.Conditions.Active,{...approved,[key]:defaults[key]}),key).toBe(false);
     const policies=candidate.Resources.Role.Properties.Policies as Json[];
-    expect(policies).toHaveLength(3);
+    expect(policies).toHaveLength(5);
     expect(JSON.stringify(policies[0])).not.toMatch(/rds-data:|secretsmanager:|kms:|s3:/);
     expect((policies[1] as Record<string,Json>)['Fn::If']).toEqual(['Active',expect.any(Object),{Ref:'AWS::NoValue'}]);
     // Export delivery is a second, separately reviewed condition: no bucket, key or review hash means no S3 or KMS statement at all.
@@ -60,6 +60,30 @@ describe('functional personal storage deployment candidate',()=>{
     for(const key of ['ExportBucketName','ExportKmsKeyArn','ExportReviewSha256','PhiAllowed','Activation'])expect(condition(candidate.Conditions.ExportDelivery,{...delivery,[key]:defaults[key]}),key).toBe(false);
     expect(JSON.stringify(candidate.Rules.ExportDeliveryRequiresReview)).toContain('ExportReviewSha256');
     for(const key of ['Activation','ActivationEvidenceSha256','DatabaseReviewSha256','AllowedScopes','AlarmTopicArn'])expect(JSON.stringify(candidate.Rules)).toContain(key);
+  });
+  it('grants cross-store export reads only with a complete, reviewed store configuration on top of export delivery, read-only and bound to the named stores',()=>{
+    const policies=candidate.Resources.Role.Properties.Policies as Json[];
+    const lab=(policies[3] as Record<string,Json>)['Fn::If'] as Json[],voice=(policies[4] as Record<string,Json>)['Fn::If'] as Json[];
+    expect(lab[0]).toBe('CrossStoreLabExport');expect(voice[0]).toBe('CrossStoreVoiceExport');
+    const statements=(block:Json[])=>(block[1] as {PolicyDocument:{Statement:Array<{Action:string|string[];Resource:Json}>}}).PolicyDocument.Statement;
+    expect(statements(lab).flatMap(s=>s.Action)).toEqual(['dynamodb:GetItem','dynamodb:Query','s3:GetObject','kms:Decrypt']);
+    expect(statements(voice).flatMap(s=>s.Action)).toEqual(['dynamodb:GetItem','dynamodb:Scan','s3:GetObject','kms:Decrypt']);
+    expect(JSON.stringify([lab,voice])).not.toMatch(/PutItem|UpdateItem|DeleteItem|s3:PutObject|s3:DeleteObject|s3:ListBucket|"Resource":"\*"/);
+    expect(JSON.stringify(statements(voice)[1].Resource)).toContain('personal-voice/output/*');
+    const defaults=Object.fromEntries(Object.entries(candidate.Parameters).map(([k,v])=>[k,v.Default??'']));
+    const approved={...defaults,PhiAllowed:'true',Activation:'approved',ActivationEvidenceSha256:'a'.repeat(64),DatabaseReviewSha256:'b'.repeat(64),AllowedScopes:'lab_history',AlarmTopicArn:'arn:aws:sns:us-east-2:123456789012:alarms',
+      ExportBucketName:'fictional-export-bucket',ExportKmsKeyArn:'arn:aws:kms:us-east-2:123456789012:key/11111111-1111-4111-8111-111111111111',ExportReviewSha256:'c'.repeat(64)};
+    expect(condition(candidate.Conditions.CrossStoreLabExport,approved)).toBe(false);
+    const labFull={...approved,ExportLabJobTableArn:'arn:aws:dynamodb:us-east-2:123456789012:table/fictional-lab-jobs',ExportLabDocumentBucketName:'fictional-lab-documents',
+      ExportLabKmsKeyArn:'arn:aws:kms:us-east-2:123456789012:key/22222222-2222-4222-8222-222222222222',CrossStoreExportReviewSha256:'d'.repeat(64)};
+    expect(condition(candidate.Conditions.CrossStoreLabExport,labFull)).toBe(true);
+    expect(condition(candidate.Conditions.CrossStoreVoiceExport,labFull)).toBe(false);
+    for(const key of ['ExportLabJobTableArn','ExportLabDocumentBucketName','ExportLabKmsKeyArn','CrossStoreExportReviewSha256','ExportBucketName','PhiAllowed'])
+      expect(condition(candidate.Conditions.CrossStoreLabExport,{...labFull,[key]:defaults[key]}),key).toBe(false);
+    const env=candidate.Resources.Function.Properties.Environment as {Variables:Record<string,Json>};
+    expect(env.Variables.EXPORT_LAB_JOB_TABLE).toEqual({'Fn::If':['CrossStoreLabExport',{'Fn::Select':[1,{'Fn::Split':['/',{Ref:'ExportLabJobTableArn'}]}]},'']});
+    expect(env.Variables.EXPORT_TRANSCRIPTION_BUCKET).toEqual({'Fn::If':['CrossStoreVoiceExport',{Ref:'ExportTranscriptionBucketName'},'']});
+    expect(JSON.stringify(candidate.Rules.CrossStoreLabExportRequiresReview)).toContain('CrossStoreExportReviewSha256');
   });
   it('allows exactly the personal API routes under a dedicated matching consumer authorizer',()=>{
     const routes=Object.values(candidate.Resources).filter(r=>r.Type==='AWS::ApiGatewayV2::Route');

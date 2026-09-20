@@ -4,6 +4,7 @@ import type {ProductionClinicalRequestContext} from './aws-identity-consent';
 import {clinicalUuid,ClinicalCoreDatabaseRejection,type ClinicalCoreTransaction} from './database';
 import {OwnedStorageError} from './owned-consumer-records';
 import {createOwnedPrivacyExport,PERSONAL_EXPORT_COVERAGE} from './owned-privacy-export';
+import type {CrossStoreExportReader,CrossStoreExportSection} from './aws-cross-store-export-reader';
 
 /** Large personal-storage exports packaged server-side in owner-authorized,
  * bounded passes (migrations 20260920110000 and 20260920130000). A pass runs
@@ -52,7 +53,16 @@ const RETENTION:PrivacyExportRetentionState[]=['packaging','downloadable','clean
 export type PrivacyExportJobView={contract:typeof PRIVACY_EXPORT_JOB_CONTRACT;jobId:string;status:PrivacyExportJobStatus;
   asOf:string;requestedAt:string;readyAt:string|null;expiresAt:string;recordCount:number;consentCount:number;exportedRecords:number;exportedConsents:number;
   parts:number;bytesWritten:number;byteLength:number|null;objectChecksum:string|null;failureCode:string|null;objectDeleted:boolean;version:number;
-  retention:PrivacyExportRetentionState;coverage:typeof PERSONAL_EXPORT_COVERAGE};
+  retention:PrivacyExportRetentionState;coverage:PrivacyExportCoverage};
+export type PrivacyExportCoverage={completeAccountExport:false;included:string[];excluded:string[];crossStore:{labs:'included'|'not_configured';voice:'included'|'not_configured'}};
+export type ExportSection='records'|'consents'|'labs'|'voice'|'done';
+const SECTIONS:ExportSection[]=['records','consents','labs','voice','done'];
+/** What the prepared copy will hold, decided by which external stores this deployment names for the export reader. */
+export function privacyExportCoverage(crossStore?:CrossStoreExportReader):PrivacyExportCoverage{
+  const labs=crossStore?.configured('labs')?'included':'not_configured',voice=crossStore?.configured('voice')?'included':'not_configured';
+  const included=[...PERSONAL_EXPORT_COVERAGE.included,...(labs==='included'?['lab_processing_jobs_and_documents']:[]),...(voice==='included'?['chat_and_voice_transcripts']:[])];
+  return {completeAccountExport:false,included,excluded:PERSONAL_EXPORT_COVERAGE.excluded.filter(e=>!included.includes(e)),crossStore:{labs,voice}};
+}
 type Run=<T>(context:ProductionClinicalRequestContext,work:(tx:ClinicalCoreTransaction)=>Promise<T>)=>Promise<T>;
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const STATUSES:PrivacyExportJobStatus[]=['requested','running','ready','failed','cancelled','expired'];
@@ -72,7 +82,7 @@ const version=(v:unknown)=>typeof v==='string'&&v.length>=1&&v.length<=1024&&v!=
 export const privacyExportPrefix=(ownerId:string)=>`personal-exports/${createHash('sha256').update(ownerId).digest('hex')}/`;
 const staging=(key:string)=>`${key}.staging`;
 
-function view(raw:unknown):PrivacyExportJobView{
+function viewWith(raw:unknown,coverage:PrivacyExportCoverage=privacyExportCoverage()):PrivacyExportJobView{
   const v=object(raw);
   if(!UUID.test(String(v.jobId))||!STATUSES.includes(v.status as PrivacyExportJobStatus)||!date(v.asOf)||!date(v.requestedAt)
     ||!date(v.expiresAt)||(v.readyAt!==null&&!date(v.readyAt))||!count(v.recordCount)||!count(v.consentCount)||!count(v.exportedRecords)||!count(v.exportedConsents)
@@ -82,7 +92,7 @@ function view(raw:unknown):PrivacyExportJobView{
     readyAt:(v.readyAt as string|null),expiresAt:v.expiresAt as string,recordCount:v.recordCount as number,consentCount:v.consentCount as number,
     exportedRecords:v.exportedRecords as number,exportedConsents:v.exportedConsents as number,parts:v.parts as number,bytesWritten:v.bytesWritten as number,
     byteLength:v.byteLength as number|null,objectChecksum:v.objectChecksum as string|null,failureCode:v.failureCode as string|null,objectDeleted:v.objectDeleted,
-    version:v.version as number,retention:v.retention as PrivacyExportRetentionState,coverage:PERSONAL_EXPORT_COVERAGE};
+    version:v.version as number,retention:v.retention as PrivacyExportRetentionState,coverage};
 }
 async function call<T=unknown>(tx:ClinicalCoreTransaction,sql:string,args:unknown[]){const r=await tx.query<{result:T}>(sql,args);if(r.rows.length!==1)unavailable();return r.rows[0].result;}
 function items(listed:unknown):Record<string,unknown>[]{const v=typeof listed==='string'?JSON.parse(listed):listed;if(!Array.isArray(v))unavailable();return v.map(object);}
@@ -175,7 +185,9 @@ async function runReconcile(run:Run,authority:CleanupAuthority,store:PrivacyExpo
 }
 const summary=<T extends {outcome:string}>(items:T[])=>Object.fromEntries(['deleted','pending','deferred','confirmed','reopened'].map(k=>[k,items.filter(i=>i.outcome===k).length])) as Record<'deleted'|'pending'|'deferred'|'confirmed'|'reopened',number>;
 
-export function createOwnedPrivacyExportJobs(run:Run,delivery:{store:PrivacyExportStore;storage:PrivacyExportObjectStorage;now?:()=>number;partBytes?:number}){
+export function createOwnedPrivacyExportJobs(run:Run,delivery:{store:PrivacyExportStore;storage:PrivacyExportObjectStorage;now?:()=>number;partBytes?:number;crossStore?:CrossStoreExportReader}){
+  const crossStore=delivery.crossStore,coverage=privacyExportCoverage(crossStore);
+  const view=(raw:unknown)=>viewWith(raw,coverage);
   const now=()=>delivery.now?.()??Date.now(), partBytes=delivery.partBytes??PRIVACY_EXPORT_PART_BYTES, {store,storage}=delivery;
   if(!Number.isSafeInteger(partBytes)||partBytes<1024||partBytes>PRIVACY_EXPORT_PART_BYTES)throw new Error('privacy_export_part_bytes_invalid');
   const reader=createOwnedPrivacyExport(run);
@@ -219,12 +231,15 @@ export function createOwnedPrivacyExportJobs(run:Run,delivery:{store:PrivacyExpo
       if(lease.leased===false)throw new OwnedStorageError('conflict');
       if(lease.leased!==true)unavailable();
       const state={exportId:String(lease.exportId),asOf:String(lease.asOf),recordCount:lease.recordCount as number,consentCount:lease.consentCount as number,
-        key:String(lease.objectKey),uploadId:(lease.uploadId as string|null),section:String(lease.section) as 'records'|'consents'|'done',
-        cursor:(lease.cursor as {cursor:string|null}|null)?.cursor??null,parts:lease.parts as number,partSha256s:lease.partSha256s as string[],partEtags:lease.partEtags as string[],
+        key:String(lease.objectKey),uploadId:(lease.uploadId as string|null),section:String(lease.section) as ExportSection,
+        cursor:(lease.cursor as {cursor:string|null}|null)?.cursor??null,
+        // Cross-store progress travels in the cursor object: how many lab and voice items the document already holds.
+        crossCounts:{labs:count((lease.cursor as {labs?:unknown}|null)?.labs)?(lease.cursor as {labs:number}).labs:0,voice:count((lease.cursor as {voice?:unknown}|null)?.voice)?(lease.cursor as {voice:number}).voice:0},
+        parts:lease.parts as number,partSha256s:lease.partSha256s as string[],partEtags:lease.partEtags as string[],
         bytesWritten:lease.bytesWritten as number,exportedRecords:lease.exportedRecords as number,exportedConsents:lease.exportedConsents as number,
         stagingVersion:(lease.stagingVersion as string|null),version:lease.version as number};
       if(!UUID.test(state.exportId)||!date(state.asOf)||!count(state.recordCount)||!count(state.consentCount)||!state.key.startsWith(privacyExportPrefix(context.actorPersonId))
-        ||!['records','consents','done'].includes(state.section)||!count(state.parts)||!Array.isArray(state.partSha256s)||!Array.isArray(state.partEtags)
+        ||!SECTIONS.includes(state.section)||!count(state.parts)||!Array.isArray(state.partSha256s)||!Array.isArray(state.partEtags)
         ||state.partSha256s.length!==state.parts||state.partEtags.length!==state.parts||!count(state.version)||!count(state.bytesWritten)
         ||(state.uploadId!==null&&!version(state.uploadId))||(state.stagingVersion!==null&&!version(state.stagingVersion)))unavailable();
       // Failing from inside the pass names the held version: this pass is the only admitted writer and has finished, so its lease is released.
@@ -266,10 +281,24 @@ export function createOwnedPrivacyExportJobs(run:Run,delivery:{store:PrivacyExpo
           chunks.push(Buffer.from(pending).toString('utf8'));bytes=pending.byteLength;
         }else if(state.parts===0&&state.exportedRecords===0&&state.exportedConsents===0&&state.section==='records'){
           push(JSON.stringify({contract:PRIVACY_EXPORT_JOB_CONTRACT,manifest:{version:'personal-storage-export/1',exportId:state.exportId,asOf:state.asOf,
-            recordCount:state.recordCount,consentCount:state.consentCount,coverage:PERSONAL_EXPORT_COVERAGE}}).slice(0,-1)+',"records":[');
+            recordCount:state.recordCount,consentCount:state.consentCount,coverage}}).slice(0,-1)+',"records":[');
         }
-        let section:'records'|'consents'|'done'=state.section,cursor=state.cursor,records=state.exportedRecords,consents=state.exportedConsents;
+        let section:ExportSection=state.section,cursor=state.cursor,records=state.exportedRecords,consents=state.exportedConsents;
+        const crossCounts={...state.crossCounts};
+        // After consents come the external stores this deployment names, in order; an unconfigured store is skipped and the
+        // coverage statement written at the start already says so.
+        const following=(current:ExportSection):ExportSection=>{
+          const next=SECTIONS[SECTIONS.indexOf(current)+1];
+          return (next==='labs'||next==='voice')&&!crossStore?.configured(next)?following(next):next;
+        };
+        const open=(next:ExportSection)=>{if(next==='done')push(']}');else push(`],"${next}":[`);};
         while(section!=='done'&&now()<deadline&&!signal.aborted&&bytes<partBytes){
+          if(section==='labs'||section==='voice'){
+            const page=await crossStore!.read(context,section as CrossStoreExportSection,cursor,signal);
+            for(const item of page.items){push((crossCounts[section]>0?',':'')+JSON.stringify(item));crossCounts[section]++;}
+            if(page.nextCursor){cursor=page.nextCursor;continue;}
+            const next=following(section);section=next;cursor=null;open(next);continue;
+          }
           const page=await reader.readPrivacyExport(context,{exportId:state.exportId,section,limit:100,...(cursor?{cursor}:{})});
           for(const item of page.items){
             const seen=section==='records'?records:consents;
@@ -282,7 +311,7 @@ export function createOwnedPrivacyExportJobs(run:Run,delivery:{store:PrivacyExpo
             section='consents';cursor=null;push('],"consents":[');
           }else{
             if(consents!==state.consentCount)unavailable();
-            section='done';cursor=null;push(']}');
+            const next=following('consents');section=next;cursor=null;open(next);
           }
         }
         if(bytes>PRIVACY_EXPORT_MAX_BYTES-state.bytesWritten){await fail('export_too_large');return this.getPrivacyExportJob(context,input);}
@@ -306,7 +335,7 @@ export function createOwnedPrivacyExportJobs(run:Run,delivery:{store:PrivacyExpo
           if(!version(stagingVersion))unavailable();
         }
         const recorded=view(await run(context,tx=>call(tx,'select clinical_core.record_owned_privacy_export_pass($1,$2::bigint,$3,$4,$5,$6::bigint,$7,$8,$9::jsonb,$10::bigint,$11::bigint) as result',
-          [clinicalUuid(jobId),leased,uploadId,partSha,partEtag,partBytesWritten,stagingVersion,section,JSON.stringify({cursor}),records,consents])));
+          [clinicalUuid(jobId),leased,uploadId,partSha,partEtag,partBytesWritten,stagingVersion,section,JSON.stringify({cursor,...crossCounts}),records,consents])));
         // The old staging object is superseded either way; removal is best effort here and proven by the cleanup pass.
         if(state.stagingVersion){try{await store.deleteVersion(storage,staging(state.key),state.stagingVersion,signal);}catch{/* cleanup pass */}}
         if(partReady&&section==='done'){

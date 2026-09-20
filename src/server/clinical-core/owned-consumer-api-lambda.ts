@@ -5,6 +5,7 @@ import {createRdsDataClinicalCoreDatabase} from './rds-data-database';
 import {loadReviewedKnowledge} from './aws-reviewed-knowledge';
 import {createOwnedPrivacyExportJobs} from './owned-privacy-export-job';
 import {createAwsPrivacyExportStore} from './aws-privacy-export-store';
+import {createAwsCrossStoreExportReader} from './aws-cross-store-export-reader';
 let cached:ReturnType<typeof createOwnedConsumerApi>|undefined;
 /** Export delivery exists only with a reviewed bucket, key and owner account; otherwise the job routes refuse. */
 function exportDelivery(env:NodeJS.ProcessEnv){
@@ -12,7 +13,19 @@ function exportDelivery(env:NodeJS.ProcessEnv){
   if(!bucket&&!kmsKeyArn)return undefined;
   if(!/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/.test(bucket)||!/^arn:aws:kms:[a-z0-9-]+:[0-9]{12}:key\/[a-f0-9-]{36}$/.test(kmsKeyArn)||!/^[0-9]{12}$/.test(expectedBucketOwner)||!/^[a-z]{2}-[a-z]+-[1-9]$/.test(region))
     throw new Error('personal_export_configuration_invalid');
-  return {store:createAwsPrivacyExportStore(),storage:{bucket,kmsKeyArn,expectedBucketOwner,region}};
+  return {store:createAwsPrivacyExportStore(),storage:{bucket,kmsKeyArn,expectedBucketOwner,region},...crossStoreExport(env,region)};
+}
+/** Cross-store coverage exists only where a store's table and bucket are both named; a half-named store is a configuration error. */
+function crossStoreExport(env:NodeJS.ProcessEnv,region:string){
+  const pair=(table:string|undefined,bucket:string|undefined)=>{
+    const t=table??'',b=bucket??'';
+    if(!t&&!b)return undefined;
+    if(!t||!b)throw new Error('personal_export_configuration_invalid');
+    return {table:t,bucket:b};
+  };
+  const labs=pair(env.EXPORT_LAB_JOB_TABLE,env.EXPORT_LAB_DOCUMENT_BUCKET),voice=pair(env.EXPORT_VOICE_JOB_TABLE,env.EXPORT_TRANSCRIPTION_BUCKET);
+  if(!labs&&!voice)return {};
+  return {crossStore:createAwsCrossStoreExportReader({...(labs?{labs}:{}),...(voice?{voice}:{}),region})};
 }
 export async function handler(event:ApiGatewayV2Event){
   if(!cached){

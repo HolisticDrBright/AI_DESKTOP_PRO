@@ -788,3 +788,81 @@ describe('retention sweep activation path (release row operator and a local swee
     }finally{await db.query("delete from clinical_private.privacy_retention_service_releases where version like 'ops-2026-09-%'");}
   });
 });
+
+// Cross-store coverage (migration 20260920180000): where the deployment names the lab and voice stores, the prepared copy
+// carries `labs` and `voice` sections read through owner-authorized readers after records and consents; where it does not,
+// the sections are absent and the coverage statement says so. The stores here are fictional readers, never AWS.
+import type {CrossStoreExportReader} from './aws-cross-store-export-reader';
+describe('cross-store export coverage',()=>{
+  const fakeCrossStore=(configured:{labs:boolean;voice:boolean}):CrossStoreExportReader&{reads:string[]}=>{
+    const reads:string[]=[];
+    return {reads,configured:section=>configured[section],read:async(c,section,cursor)=>{
+      reads.push(`${section}:${cursor??'start'}`);
+      if(c.actorPersonId!==owner)throw new Error('wrong owner');
+      if(section==='labs')return cursor===null?{items:[{kind:'lab_job',jobId:'11111111-1111-4111-8111-111111111111',state:'completed',result:{summary:'FICTIONAL'},documents:[{clientDocumentId:'22222222-2222-4222-8222-222222222222',contentType:'application/pdf',byteSize:3,checksumSHA256:'x',encoding:'base64',content:'JVBE'}]}],nextCursor:'page2',skipped:0}
+        :{items:[{kind:'lab_job',jobId:'33333333-3333-4333-8333-333333333333',state:'failed',result:null,documents:[]}],nextCursor:null,skipped:1};
+      return {items:[{kind:'voice_job',jobId:'a'.repeat(64),state:'ready',transcript:'FICTIONAL TRANSCRIPT'}],nextCursor:null,skipped:0};
+    }};
+  };
+  const document=async(f:ReturnType<typeof fakeStore>)=>{
+    const key=[...f.objects.keys()].find(k=>k.endsWith('.json'))!;
+    const [,bytes]=[...f.objects.get(key)!.entries()][0];
+    return JSON.parse(Buffer.from(bytes).toString('utf8')) as Record<string,unknown>;
+  };
+  it('appends labs and voice sections after consents when both stores are configured, paging each store and recording progress across passes',async()=>{
+    const f=fakeStore(),cross=fakeCrossStore({labs:true,voice:true});
+    const jobs=createOwnedPrivacyExportJobs((c,work)=>adapter().runPrivacy(c,work),{store:f.store,storage,partBytes:8192,crossStore:cross,now:onePagePerPass()});
+    const requested=await jobs.requestPrivacyExportJob(context(),{requestId:randomUUID()});
+    expect(requested.coverage).toMatchObject({completeAccountExport:false,crossStore:{labs:'included',voice:'included'}});
+    expect(requested.coverage.included).toEqual(expect.arrayContaining(['lab_processing_jobs_and_documents','chat_and_voice_transcripts']));
+    expect(requested.coverage.excluded).not.toContain('lab_processing_jobs_and_documents');
+    const {view}=await drive(jobs,requested.jobId);
+    expect(view.status).toBe('ready');
+    const doc=await document(f);
+    expect((doc.manifest as {coverage:{crossStore:unknown}}).coverage.crossStore).toEqual({labs:'included',voice:'included'});
+    expect((doc.records as unknown[]).length).toBe(view.recordCount);expect((doc.consents as unknown[]).length).toBe(view.consentCount);
+    expect(doc.labs).toEqual([expect.objectContaining({jobId:'11111111-1111-4111-8111-111111111111'}),expect.objectContaining({jobId:'33333333-3333-4333-8333-333333333333'})]);
+    expect(doc.voice).toEqual([{kind:'voice_job',jobId:'a'.repeat(64),state:'ready',transcript:'FICTIONAL TRANSCRIPT'}]);
+    expect(Object.keys(doc)).toEqual(['contract','manifest','records','consents','labs','voice']);
+    // Each store page was read exactly once: progress is recorded in the cursor between passes, never re-read or duplicated.
+    expect(cross.reads).toEqual(['labs:start','labs:page2','voice:start']);
+  });
+  it('skips an unconfigured store, says so in the coverage statement, and leaves the document without that section',async()=>{
+    const f=fakeStore(),cross=fakeCrossStore({labs:false,voice:true});
+    const jobs=createOwnedPrivacyExportJobs((c,work)=>adapter().runPrivacy(c,work),{store:f.store,storage,partBytes:8192,crossStore:cross});
+    const requested=await jobs.requestPrivacyExportJob(context(),{requestId:randomUUID()});
+    expect(requested.coverage.crossStore).toEqual({labs:'not_configured',voice:'included'});
+    expect(requested.coverage.excluded).toContain('lab_processing_jobs_and_documents');
+    expect((await drive(jobs,requested.jobId)).view.status).toBe('ready');
+    const doc=await document(f);
+    expect(Object.keys(doc)).toEqual(['contract','manifest','records','consents','voice']);
+    expect(cross.reads).toEqual(['voice:start']);
+    // Without any reader the copy is the two-section document it always was, and the statement says both stores are not configured.
+    // One open job per owner and one request per hour: close the ready job and age it before the next request.
+    await jobs.cancelPrivacyExportJob(context(),{jobId:requested.jobId});
+    await db.query("update clinical_private.owned_privacy_export_jobs set created_at=created_at-interval '2 hours'");
+    const g=fakeStore(),plain=jobsWith(g.store);
+    const plainJob=await plain.requestPrivacyExportJob(context(),{requestId:randomUUID()});
+    expect(plainJob.coverage.crossStore).toEqual({labs:'not_configured',voice:'not_configured'});
+    expect((await drive(plain,plainJob.jobId)).view.status).toBe('ready');
+    expect(Object.keys(await document(g))).toEqual(['contract','manifest','records','consents']);
+  });
+  it('refuses a section moving backwards or past done at the SQL boundary',async()=>{
+    const f=fakeStore(),jobs=jobsWith(f.store);
+    const job=(await jobs.requestPrivacyExportJob(context(),{requestId:randomUUID()})).jobId;
+    const pass=(section:string,version:number)=>adapter().runPrivacy(context(),tx=>tx.query("select clinical_core.record_owned_privacy_export_pass($1,$2::bigint,null,null,null,null,null,$3,'{}'::jsonb,0,0)",[job,version,section]));
+    const place=async(section:string)=>{
+      await db.query("update clinical_private.owned_privacy_export_jobs set status='running',section=$2,lease_until=clock_timestamp()+interval '1 minute' where id=$1",[job,section]);
+      return (await db.query<{version:number}>('select version from clinical_private.owned_privacy_export_jobs where id=$1',[job])).rows[0].version;
+    };
+    let version=await place('voice');
+    for(const earlier of ['labs','consents','records'])await expect(pass(earlier,version)).rejects.toThrow('conflict');
+    await expect(pass('elsewhere',version)).rejects.toThrow('request_invalid');
+    // Forward moves are accepted: voice to done is the last transition and nothing follows it.
+    await expect(pass('done',version)).resolves.toBeDefined();
+    version=await place('done');
+    await expect(pass('done',version)).rejects.toThrow('conflict');
+    version=await place('labs');
+    await expect(pass('voice',version)).resolves.toBeDefined();
+  });
+});

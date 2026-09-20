@@ -27,6 +27,15 @@ export function personalStorageCandidate(disabled) {
     ExportBucketName: {Type:'String',Default:'',AllowedPattern:'^$|^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$'},
     ExportKmsKeyArn: {Type:'String',Default:'',AllowedPattern:'^$|^arn:aws:kms:[a-z0-9-]+:[0-9]{12}:key/[a-f0-9-]{36}$'},
     ExportReviewSha256: {Type:'String',Default:'',AllowedPattern:'^$|^[a-f0-9]{64}$'},
+    // Cross-store export coverage is optional and separately reviewed per store: the export pass reads the owner's lab jobs,
+    // documents and voice transcripts only where the store's table, bucket and key are named with the review digest.
+    ExportLabJobTableArn: {Type:'String',Default:'',AllowedPattern:'^$|^arn:aws:dynamodb:[a-z0-9-]+:[0-9]{12}:table/[A-Za-z0-9_.-]{3,255}$'},
+    ExportLabDocumentBucketName: {Type:'String',Default:'',AllowedPattern:'^$|^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$'},
+    ExportLabKmsKeyArn: {Type:'String',Default:'',AllowedPattern:'^$|^arn:aws:kms:[a-z0-9-]+:[0-9]{12}:key/[a-f0-9-]{36}$'},
+    ExportVoiceJobTableArn: {Type:'String',Default:'',AllowedPattern:'^$|^arn:aws:dynamodb:[a-z0-9-]+:[0-9]{12}:table/[A-Za-z0-9_.-]{3,255}$'},
+    ExportTranscriptionBucketName: {Type:'String',Default:'',AllowedPattern:'^$|^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$'},
+    ExportVoiceKmsKeyArn: {Type:'String',Default:'',AllowedPattern:'^$|^arn:aws:kms:[a-z0-9-]+:[0-9]{12}:key/[a-f0-9-]{36}$'},
+    CrossStoreExportReviewSha256: {Type:'String',Default:'',AllowedPattern:'^$|^[a-f0-9]{64}$'},
   });
   const required = ['ActivationEvidenceSha256','DatabaseReviewSha256','AllowedScopes','AlarmTopicArn'];
   template.Conditions = {
@@ -37,6 +46,12 @@ export function personalStorageCandidate(disabled) {
     HasAlarmRecipient: nonempty('AlarmTopicArn'),
     ExportDelivery: {'Fn::And':[{'Fn::Equals':[ref('PhiAllowed'),'true']},{'Fn::Equals':[ref('Activation'),'approved']},...required.map(nonempty),
       nonempty('ExportBucketName'),nonempty('ExportKmsKeyArn'),nonempty('ExportReviewSha256')]},
+    CrossStoreLabExport: {'Fn::And':[{'Fn::Equals':[ref('PhiAllowed'),'true']},{'Fn::Equals':[ref('Activation'),'approved']},...required.map(nonempty),
+      nonempty('ExportBucketName'),nonempty('ExportKmsKeyArn'),nonempty('ExportReviewSha256'),
+      nonempty('ExportLabJobTableArn'),nonempty('ExportLabDocumentBucketName'),nonempty('ExportLabKmsKeyArn'),nonempty('CrossStoreExportReviewSha256')]},
+    CrossStoreVoiceExport: {'Fn::And':[{'Fn::Equals':[ref('PhiAllowed'),'true']},{'Fn::Equals':[ref('Activation'),'approved']},...required.map(nonempty),
+      nonempty('ExportBucketName'),nonempty('ExportKmsKeyArn'),nonempty('ExportReviewSha256'),
+      nonempty('ExportVoiceJobTableArn'),nonempty('ExportTranscriptionBucketName'),nonempty('ExportVoiceKmsKeyArn'),nonempty('CrossStoreExportReviewSha256')]},
   };
   template.Rules = {ActivationRequiresReviewedConfiguration: {
     RuleCondition: {'Fn::Equals':[ref('PhiAllowed'),'true']},
@@ -49,6 +64,22 @@ export function personalStorageCandidate(disabled) {
     Assertions: [
       {Assert:nonempty('ExportKmsKeyArn'),AssertDescription:'ExportKmsKeyArn required with an export bucket'},
       {Assert:nonempty('ExportReviewSha256'),AssertDescription:'ExportReviewSha256 required with an export bucket'},
+    ],
+  },CrossStoreLabExportRequiresReview: {
+    RuleCondition: {'Fn::Not':[{'Fn::Equals':[ref('ExportLabJobTableArn'),'']}]},
+    Assertions: [
+      {Assert:nonempty('ExportBucketName'),AssertDescription:'Export delivery is required before cross-store lab export'},
+      {Assert:nonempty('ExportLabDocumentBucketName'),AssertDescription:'ExportLabDocumentBucketName required with a lab job table'},
+      {Assert:nonempty('ExportLabKmsKeyArn'),AssertDescription:'ExportLabKmsKeyArn required with a lab job table'},
+      {Assert:nonempty('CrossStoreExportReviewSha256'),AssertDescription:'CrossStoreExportReviewSha256 required with a lab job table'},
+    ],
+  },CrossStoreVoiceExportRequiresReview: {
+    RuleCondition: {'Fn::Not':[{'Fn::Equals':[ref('ExportVoiceJobTableArn'),'']}]},
+    Assertions: [
+      {Assert:nonempty('ExportBucketName'),AssertDescription:'Export delivery is required before cross-store voice export'},
+      {Assert:nonempty('ExportTranscriptionBucketName'),AssertDescription:'ExportTranscriptionBucketName required with a voice job table'},
+      {Assert:nonempty('ExportVoiceKmsKeyArn'),AssertDescription:'ExportVoiceKmsKeyArn required with a voice job table'},
+      {Assert:nonempty('CrossStoreExportReviewSha256'),AssertDescription:'CrossStoreExportReviewSha256 required with a voice job table'},
     ],
   }};
   const r = template.Resources;
@@ -83,6 +114,23 @@ export function personalStorageCandidate(disabled) {
         'kms:ViaService':sub('s3.${AWS::Region}.amazonaws.com'),'kms:CallerAccount':ref('AWS::AccountId')}}},
     ]},
   },ref('AWS::NoValue')]});
+  // Cross-store export readers: read-only, owner-scoped by the code, bound to the named table, bucket and key of each store.
+  // The lab reader queries the owner inventory index and reads job rows and document objects; the voice reader scans the
+  // job table for the owner and reads transcript outputs only. No writes, deletes or listings of other prefixes.
+  r.Role.Properties.Policies.push({'Fn::If':['CrossStoreLabExport',{
+    PolicyName:'ReviewedCrossStoreLabExportReadOnly',PolicyDocument:{Version:'2012-10-17',Statement:[
+      {Effect:'Allow',Action:['dynamodb:GetItem','dynamodb:Query'],Resource:[ref('ExportLabJobTableArn'),{'Fn::Join':['',[ref('ExportLabJobTableArn'),'/index/LabOwnerInventory']]}],Condition:account},
+      {Effect:'Allow',Action:'s3:GetObject',Resource:sub('arn:${AWS::Partition}:s3:::${ExportLabDocumentBucketName}/*'),Condition:account},
+      {Effect:'Allow',Action:'kms:Decrypt',Resource:ref('ExportLabKmsKeyArn'),Condition:{StringEquals:{'kms:ViaService':sub('s3.${AWS::Region}.amazonaws.com'),'kms:CallerAccount':ref('AWS::AccountId')}}},
+    ]},
+  },ref('AWS::NoValue')]});
+  r.Role.Properties.Policies.push({'Fn::If':['CrossStoreVoiceExport',{
+    PolicyName:'ReviewedCrossStoreVoiceExportReadOnly',PolicyDocument:{Version:'2012-10-17',Statement:[
+      {Effect:'Allow',Action:['dynamodb:GetItem','dynamodb:Scan'],Resource:ref('ExportVoiceJobTableArn'),Condition:account},
+      {Effect:'Allow',Action:'s3:GetObject',Resource:sub('arn:${AWS::Partition}:s3:::${ExportTranscriptionBucketName}/personal-voice/output/*'),Condition:account},
+      {Effect:'Allow',Action:'kms:Decrypt',Resource:ref('ExportVoiceKmsKeyArn'),Condition:{StringEquals:{'kms:ViaService':sub('s3.${AWS::Region}.amazonaws.com'),'kms:CallerAccount':ref('AWS::AccountId')}}},
+    ]},
+  },ref('AWS::NoValue')]});
   r.Function.Properties.FunctionName=sub('${ApiId}-personal-storage');
   r.Function.Properties.Code.S3ObjectVersion=ref('CodeVersion');
   r.Function.Properties.ReservedConcurrentExecutions=4;
@@ -95,6 +143,10 @@ export function personalStorageCandidate(disabled) {
     PERSONAL_EXPORT_BUCKET:{'Fn::If':['ExportDelivery',ref('ExportBucketName'),'']},
     PERSONAL_EXPORT_KMS_KEY_ARN:{'Fn::If':['ExportDelivery',ref('ExportKmsKeyArn'),'']},
     PERSONAL_EXPORT_BUCKET_OWNER:{'Fn::If':['ExportDelivery',ref('AWS::AccountId'),'']},
+    EXPORT_LAB_JOB_TABLE:{'Fn::If':['CrossStoreLabExport',{'Fn::Select':[1,{'Fn::Split':['/',ref('ExportLabJobTableArn')]}]},'']},
+    EXPORT_LAB_DOCUMENT_BUCKET:{'Fn::If':['CrossStoreLabExport',ref('ExportLabDocumentBucketName'),'']},
+    EXPORT_VOICE_JOB_TABLE:{'Fn::If':['CrossStoreVoiceExport',{'Fn::Select':[1,{'Fn::Split':['/',ref('ExportVoiceJobTableArn')]}]},'']},
+    EXPORT_TRANSCRIPTION_BUCKET:{'Fn::If':['CrossStoreVoiceExport',ref('ExportTranscriptionBucketName'),'']},
   };
   r.ConsumerAuthorizer={Type:'AWS::ApiGatewayV2::Authorizer',Properties:{
     ApiId:ref('ApiId'),Name:sub('${ApiId}-personal-storage-consumer'),AuthorizerType:'JWT',
