@@ -4,7 +4,15 @@ export const CORRECTION_COLLECTIONS=['wellness_profiles','lifestyle_profiles','c
   'wearable_daily_records','adverse_event_reports','lab_observations','protocols','diet_preferences'] as const;
 const hash=z.string().regex(/^[a-f0-9]{64}$/);
 const revision=z.number().int().min(1).max(999999999);
-const field=z.string().min(1).max(80).refine(v=>!['__proto__','prototype','constructor'].includes(v));
+// A top-level key or a dotted path to a nested scalar leaf; each segment is a plain key.
+export const CORRECTION_PATH_SEGMENTS=6;
+export function correctionPath(field:string):string[]|null{
+  if(typeof field!=='string'||field.length<1||field.length>240)return null;
+  const segments=field.split('.');
+  if(segments.length<1||segments.length>CORRECTION_PATH_SEGMENTS||segments.some(s=>s.length<1||s.length>80||['__proto__','prototype','constructor'].includes(s)))return null;
+  return segments;
+}
+const field=z.string().min(1).max(240).refine(v=>correctionPath(v)!==null);
 const date=z.string().datetime({offset:true});
 export const correctionInputSchema=z.object({
   version:z.literal('personal-correction/1'),collection:z.enum(CORRECTION_COLLECTIONS),recordId:z.string().uuid(),

@@ -92,9 +92,15 @@ exact delta verification and the real API/adapter/database round trip. V2 tests
 exercise typed drafts, strict response schemas, account changes, paging,
 concurrency, ambiguous responses and preservation of legacy commands.
 
+September 20 nested paths: migration 90 (`20260920080000_production_owned_correction_paths.sql`)
+lets `field` be a dotted path of up to six plain segments to a nested scalar leaf; submission
+requires the leaf to exist and be a string, number or boolean and the requested value to be a
+different scalar; resolution verifies `jsonb_set(before, path, value)` exactly as before; the
+operator detail reads the original and current values through the same path. Arrays, objects
+and null leaves still need a domain-specific workflow.
+
 This is not a complete deployed correction service. Remaining engineering:
-nested/structured-field editing (the owner-applied successor covers scalar
-top-level fields only),
+array and structured-value editing,
 source lab/document and clinic-specific amendments, cross-store propagation
 and large-account acceptance (request-history paging is now complete; see
 `owned-privacy-requests.md`). Personal

@@ -535,6 +535,29 @@ describe('privacy fulfillment: executable production SQL with fictional data (no
     await expect(db.query("update clinical_private.owned_correction_resolutions set explanation='changed' where privacy_request_id=$1",[id])).rejects.toThrow('append_only_record');
     await expect(db.query('delete from clinical_private.owned_correction_targets where privacy_request_id=$1',[id])).rejects.toThrow('append_only_record');
   });
+  it('corrects a nested scalar leaf by dotted path with the same exact-delta verification and operator evidence',async()=>{
+    const recordId=randomUUID(),payload={height_cm:170,profile:{sleep:{hours:7},label:'Fictional'},tags:['a']};
+    await asActor("select clinical_core.write_owned_consumer_record('wellness_profiles',$1,0,$2,$3::jsonb,false,1)",[recordId,randomUUID(),JSON.stringify(payload)],owner,'consumer','clinical_data');
+    const row=(await asActor("select clinical_core.list_owned_correction_targets('wellness_profiles',25,null) as result",[],owner,'consumer')).rows[0] as {result:{recordId:string;payloadSha256:string}[]};
+    const hash=row.result.find(r=>r.recordId===recordId)!.payloadSha256;
+    const base={version:'personal-correction/1',collection:'wellness_profiles',recordId,expectedRevision:1,expectedPayloadSha256:hash,reason:'Fictional nested correction'};
+    for(const bad of [{field:'profile.sleep',requestedValue:8},{field:'profile.missing',requestedValue:8},{field:'tags',requestedValue:'x'},{field:'profile.sleep.hours',requestedValue:7},
+      {field:'profile..hours',requestedValue:8},{field:'profile.__proto__.hours',requestedValue:8},{field:'profile.sleep.hours',requestedValue:{v:8}},{field:'a.b.c.d.e.f.g',requestedValue:1}])
+      await expect(submitCorrection({...base,...bad})).rejects.toThrow('privacy_correction_invalid');
+    const submitted=(await submitCorrection({...base,field:'profile.sleep.hours',requestedValue:8})).rows[0] as {result:{privacyRequestId:string;correctionTarget:{field:string;requestedValue:unknown}}};
+    expect(submitted.result.correctionTarget).toMatchObject({field:'profile.sleep.hours',requestedValue:8});
+    const id=submitted.result.privacyRequestId;
+    // A successor that changes anything else, or writes the leaf elsewhere, is not an application.
+    await asActor("select clinical_core.write_owned_consumer_record('wellness_profiles',$1,1,$2,$3::jsonb,false,1)",[recordId,randomUUID(),JSON.stringify({...payload,profile:{...payload.profile,sleep:{hours:8},label:'Changed'}})],owner,'consumer','clinical_data');
+    await expect(resolveCorrection(id)).rejects.toThrow('privacy_correction_not_applied');
+    await asActor("select clinical_core.write_owned_consumer_record('wellness_profiles',$1,2,$2,$3::jsonb,false,1)",[recordId,randomUUID(),JSON.stringify({...payload,profile:{...payload.profile,sleep:{hours:8}}})],owner,'consumer','clinical_data');
+    const detail=(await asActor('select clinical_private.get_assigned_privacy_request($1) as result',[id])).rows[0] as {result:{correction:{originalValue:unknown;currentValue:unknown}}};
+    expect(detail.result.correction).toMatchObject({originalValue:7,currentValue:8});
+    // Field-limited evidence: the rest of the record (the label, the tags) is not disclosed to the operator.
+    expect(JSON.stringify(detail.result.correction)).not.toMatch(/"label"|"tags"|Changed/);
+    const result=await resolveCorrection(id,'applied',3);
+    expect(result.rows[0]).toMatchObject({result:{status:'completed',correctionResolution:{outcome:'applied',appliedRevision:3}}});
+  });
   it('rejects stale, forged, missing and cross-owner correction targets before submission',async()=>{
     const {correction}=await correctionFixture();
     for(const patch of [{expectedRevision:2},{expectedPayloadSha256:'b'.repeat(64)},{recordId:randomUUID()}]){
