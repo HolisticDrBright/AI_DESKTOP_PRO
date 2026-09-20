@@ -268,8 +268,10 @@ acceptance. Original commercial-release scopes and clinical holds are unchanged.
   reauthorization. Provider transcription, transcript versions and corrections
   now have a blocked candidate and an encounter panel behind a same-origin proxy
   (`docs/encounter-transcription.md`, migrations 83 and 84); nothing is hosted.
-- Hold-aware retention/deletion across audio, transcripts, provider artifacts
-  and backups, with actual receipts rather than a status-only claim.
+- Hold-aware retention/deletion across backups and provider-side copies, with
+  actual receipts rather than a status-only claim. Audio, assembled media,
+  provider output and transcript versions are now inventoried and removed by the
+  same bounded pass (`docs/encounter-transcription.md`, migration 85).
 - Deployment/configuration/rollback, concurrent request testing and physical
   microphone/Safari/provider/restore acceptance. No paid mobile build or PHI
   activation has been performed.

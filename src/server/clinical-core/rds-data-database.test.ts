@@ -193,6 +193,8 @@ describe("Aurora RDS Data API transaction adapter", () => {
     ["recording_transcription_release_refused", "operation_refused"],
     ["recording_transcription_conflict", "conflict"],
     ["recording_transcription_invalid", "request_invalid"],
+    ["recording_transcription_artifact_invalid", "request_invalid"],
+    ["recording_transcription_artifact_conflict", "conflict"],
     ["recording_cleanup_not_ready", "conflict"],
     ["recording_cleanup_operator_required", "identity_refused"],
     ["recording_cleanup_release_required", "identity_refused"],

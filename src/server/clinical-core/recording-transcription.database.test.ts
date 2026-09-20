@@ -174,3 +174,46 @@ describe('finished recordings in the encounter workspace',()=>{
     await expect(call(sql,[f.e,'en','FICTIONAL'],actor,otherOrg)).rejects.toThrow();
   });
 });
+
+describe('transcription artifact registry and cleanup coordination',()=>{
+  const register=(job:string,kind:string,key:string,version:string,sha:string,bytes:number,transcript:string|null=null,who=actor)=>call<{artifactId:string;kind:string;replayed:boolean}>(
+    'select clinical_private.register_recording_transcription_artifact($1,$2,$3,$4,$5,$6,$7) as result',[job,kind,key,version,sha,bytes,transcript],who);
+  it('registers media, provider and transcript objects exactly once under the job prefix and inventories them',async()=>{
+    const f=await finished(),release=await transcriptionRelease();
+    const job=(await request(f.c.recordingId,release))!;
+    const prefix=`encounter-recordings/${org}/${f.c.recordingId}/transcription/${job.jobId}/`;
+    const media=(await register(job.jobId,'media',prefix+'media.webm','v-media','1'.repeat(64),9))!;
+    expect(media).toMatchObject({kind:'media',replayed:false});
+    expect(await register(job.jobId,'media',prefix+'media.webm','v-media','1'.repeat(64),9)).toMatchObject({artifactId:media.artifactId,replayed:true});
+    await expect(register(job.jobId,'media',prefix+'media.webm','v-other','1'.repeat(64),9)).rejects.toThrow('recording_transcription_artifact_conflict');
+    await expect(register(job.jobId,'media',prefix+'media.mp3','v-2','2'.repeat(64),9)).rejects.toThrow('recording_transcription_artifact_conflict');
+    for(const [kind,key] of [['media',`encounter-recordings/${org}/${f.c.recordingId}/transcription/${randomUUID()}/media.webm`],['provider',prefix+'output.json'],
+      ['media',prefix+'media.exe'],['transcript',prefix+'transcript-v1.txt']] as const)
+      await expect(register(job.jobId,kind,key,'v','3'.repeat(64),9)).rejects.toThrow('recording_transcription_artifact_invalid');
+    await expect(register(job.jobId,'media',prefix+'media.webm','v-media','1'.repeat(64),9,null,colleague)).rejects.toThrow('recording_access_refused');
+    await call('select clinical_private.mark_recording_transcription_processing($1,$2) as result',[job.jobId,'alp-'+job.jobId]);
+    expect(await register(job.jobId,'provider',prefix+'provider.json','v-provider','4'.repeat(64),20)).toMatchObject({kind:'provider',replayed:false});
+    const done=(await complete(job.jobId,prefix+'transcript-v1.txt','5'.repeat(64)))!;
+    await expect(register(job.jobId,'transcript',prefix+'transcript-v1.txt','v-t1','6'.repeat(64),120,done.transcriptId)).rejects.toThrow('recording_transcription_artifact_invalid');
+    await expect(register(job.jobId,'transcript',prefix+'transcript-v1.txt','v-t1','5'.repeat(64),120)).rejects.toThrow('recording_transcription_artifact_invalid');
+    expect(await register(job.jobId,'transcript',prefix+'transcript-v1.txt','v-t1','5'.repeat(64),120,done.transcriptId)).toMatchObject({kind:'transcript'});
+    const inventory=(await db.query<{result:{kind:string;objectKey:string;objectVersion:string;transcriptId:string|null}[]}>('select clinical_private.recording_transcription_inventory($1) as result',[f.c.recordingId])).rows[0].result;
+    expect(inventory.map(a=>[a.kind,a.objectVersion,a.transcriptId])).toEqual([['media','v-media',null],['provider','v-provider',null],['transcript','v-t1',done.transcriptId]]);
+    expect(inventory.every(a=>a.objectKey.startsWith(prefix))).toBe(true);
+    expect((await db.query("select count(*)::int as n from clinical_private.recording_transcription_events where recording_id=$1 and action='artifact.registered'",[f.c.recordingId])).rows[0]).toEqual({n:3});
+    await expect(db.query('delete from clinical_private.recording_transcription_artifacts where id=$1',[media.artifactId])).rejects.toThrow();
+  });
+  it('cancels an open job when cleanup is enqueued, so the processor can no longer write',async()=>{
+    const f=await finished(),release=await transcriptionRelease();
+    const job=(await request(f.c.recordingId,release))!;
+    const recordingGrant=(await db.query<{id:string}>(`select g.id from clinical_private.recording_consent_grants g join clinical_private.recording_consent_releases d on d.id=g.release_id
+      where d.scope='recording' and g.participant_id in (select unnest(participant_ids) from clinical_private.encounter_captures where id=$1) order by g.granted_at limit 1`,[f.c.recordingId])).rows[0].id;
+    await withdraw(recordingGrant);
+    const row=(await db.query<{status:string;reason:string}>('select j.status,i.reason from clinical_private.recording_transcription_jobs j join clinical_private.recording_cleanup_intents i on i.recording_id=j.recording_id where j.id=$1',[job.jobId])).rows[0];
+    expect(row).toEqual({status:'cancelled',reason:'consent_revoked'});
+    await expect(call('select clinical_private.get_recording_transcription_media($1) as result',[job.jobId])).rejects.toThrow('recording_transcription_conflict');
+    await expect(call('select clinical_private.mark_recording_transcription_processing($1,$2) as result',[job.jobId,'alp-'+job.jobId])).rejects.toThrow('recording_transcription_conflict');
+    await expect(request(f.c.recordingId,release)).rejects.toThrow('recording_transcription_refused');
+    expect((await db.query("select count(*)::int as n from clinical_private.recording_transcription_events where job_id=$1 and action='transcription.cancelled'",[job.jobId])).rows[0]).toEqual({n:1});
+  });
+});

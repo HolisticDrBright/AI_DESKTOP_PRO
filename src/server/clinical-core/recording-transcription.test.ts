@@ -34,10 +34,13 @@ const version = (n: number, text: string, kind: 'provider' | 'correction' = n ==
 const providerDocument = JSON.stringify({ jobName: `alp-${other}`, results: { transcripts: [{ transcript: 'fictional transcript text' }], items: [] }, status: 'COMPLETED' });
 function fixture(state: 'requested' | 'processing' = 'requested') {
   const objects = new Map<string, Uint8Array>([['k0', seg0], ['k1', seg1]]);
-  const store: TranscriptionMediaStore & { puts: { key: string; contentType: string }[] } = { puts: [],
+  const versionOf = (key: string) => 'v-' + createHash('sha256').update(key).digest('hex').slice(0, 8);
+  const store: TranscriptionMediaStore & { puts: { key: string; contentType: string; tags: unknown }[] } = { puts: [],
     get: vi.fn(async (_s, key, _v, max) => { const b = objects.get(key); if (!b) throw new RecordingTranscriptionError('storage_unverified');
-      if (b.length > max) throw new RecordingTranscriptionError('storage_unverified'); return b; }),
-    put: vi.fn(async (_s, key, bytes, contentType) => { if (objects.has(key)) throw new RecordingTranscriptionError('conflict'); objects.set(key, bytes); store.puts.push({ key, contentType }); }) };
+      if (b.length > max) throw new RecordingTranscriptionError('storage_unverified'); return { bytes: b, version: versionOf(key) }; }),
+    put: vi.fn(async (_s, key, bytes, contentType, tags) => { if (objects.has(key)) throw new RecordingTranscriptionError('conflict'); objects.set(key, bytes);
+      store.puts.push({ key, contentType, tags }); return { version: versionOf(key) }; }) };
+  const artifacts: { jobId: string; kind: string; key: string; version: string; sha256: string; bytes: number; transcriptId?: string }[] = [];
   const provider: TranscriptionProvider = { start: vi.fn(async () => undefined), status: vi.fn(async () => ({ state: 'processing' as const })) };
   let current = media(state), list = listing(state);
   const repository: RecordingTranscriptionRepository = {
@@ -54,9 +57,11 @@ function fixture(state: 'requested' | 'processing' = 'requested') {
     list: vi.fn(async () => list),
     object: vi.fn(async (_c, transcriptId) => { const v = list.versions.find(v => v.transcriptId === transcriptId); if (!v) throw new RecordingTranscriptionError('refused');
       return { transcriptId, recordingId: id, version: v.version, objectKey: `${transcriptionPrefix(current)}/transcript-v${v.version}.txt`, contentSha256: v.contentSha256, byteLength: v.byteLength, storage }; }),
+    registerArtifact: vi.fn(async (_c, jobId, kind, key, version, sha256, bytes, transcriptId) => {
+      artifacts.push({ jobId, kind, key, version, sha256, bytes, transcriptId }); return { artifactId: third, jobId, kind, replayed: false }; }),
   };
   const processor = createRecordingTranscriptionProcessor({ repository, media: store, provider, releaseId: third });
-  return { objects, store, provider, repository, processor, setMedia: (m: TranscriptionMedia) => { current = m; } };
+  return { objects, store, provider, repository, processor, artifacts, versionOf, setMedia: (m: TranscriptionMedia) => { current = m; } };
 }
 describe('bounded encounter transcription processor', () => {
   it('requests only under the deployed release and assembles verified media before starting the provider once', async () => {
@@ -67,8 +72,11 @@ describe('bounded encounter transcription processor', () => {
     const after = await f.processor.advance(context, id);
     expect(after.job?.status).toBe('processing');
     const mediaKey = `${transcriptionPrefix(media())}/media.webm`;
-    expect(f.store.puts).toEqual([{ key: mediaKey, contentType: 'audio/webm' }]);
+    expect(f.store.puts).toEqual([{ key: mediaKey, contentType: 'audio/webm', tags: { recordingId: id, jobId: other, kind: 'media' } }]);
     expect(f.objects.get(mediaKey)).toEqual(Buffer.concat([seg0, seg1]));
+    // The assembled media object is registered with its exact version and digest before the provider starts.
+    expect(f.artifacts).toEqual([{ jobId: other, kind: 'media', key: mediaKey, version: f.versionOf(mediaKey), sha256: sha(Buffer.concat([seg0, seg1])), bytes: seg0.length + seg1.length, transcriptId: undefined }]);
+    expect(vi.mocked(f.repository.registerArtifact).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(f.provider.start).mock.invocationCallOrder[0]);
     expect(f.provider.start).toHaveBeenCalledWith({ jobName: `alp-${other}`, storage, mediaKey, contentType: 'audio/webm',
       outputKey: `${transcriptionPrefix(media())}/provider.json`, languageCode: 'en-US' });
     // Authority is re-read after the segment reads and before the media object is written.
@@ -89,7 +97,12 @@ describe('bounded encounter transcription processor', () => {
     await expect(reordered.processor.advance(context, id)).rejects.toMatchObject({ code: 'storage_unverified' });
     for (const f of [tampered, huge, reordered]) {
       expect(f.store.puts).toEqual([]); expect(f.provider.start).not.toHaveBeenCalled(); expect(f.repository.markProcessing).not.toHaveBeenCalled();
+      expect(f.artifacts).toEqual([]);
     }
+    // A store that cannot name the version it wrote is refused: cleanup could never verify the object.
+    const versionless = fixture(); vi.mocked(versionless.store.put).mockResolvedValueOnce({ version: null });
+    await expect(versionless.processor.advance(context, id)).rejects.toMatchObject({ code: 'storage_unverified' });
+    expect(versionless.provider.start).not.toHaveBeenCalled(); expect(versionless.artifacts).toEqual([]);
     expect(huge.store.get).not.toHaveBeenCalled();
   });
   it('stores the provider result as an immutable digest-recorded version and records provider failure instead of a transcript', async () => {
@@ -98,9 +111,13 @@ describe('bounded encounter transcription processor', () => {
     vi.mocked(f.provider.status).mockResolvedValueOnce({ state: 'completed' });
     const done = await f.processor.advance(context, id);
     expect(done.job?.status).toBe('completed'); expect(done.versions).toHaveLength(1);
-    const key = `${transcriptionPrefix(media())}/transcript-v1.txt`;
-    expect(f.store.puts).toEqual([{ key, contentType: 'text/plain; charset=utf-8' }]);
+    const key = `${transcriptionPrefix(media())}/transcript-v1.txt`, providerKey = `${transcriptionPrefix(media())}/provider.json`;
+    expect(f.store.puts).toEqual([{ key, contentType: 'text/plain; charset=utf-8', tags: { recordingId: id, jobId: other, kind: 'transcript' } }]);
     expect(f.repository.complete).toHaveBeenCalledWith(context, other, key, sha('fictional transcript text'), 25, 3);
+    // Provider output is registered as read, the transcript after completion names its version row.
+    expect(f.artifacts).toEqual([
+      { jobId: other, kind: 'provider', key: providerKey, version: f.versionOf(providerKey), sha256: sha(providerDocument), bytes: Buffer.byteLength(providerDocument), transcriptId: undefined },
+      { jobId: other, kind: 'transcript', key, version: f.versionOf(key), sha256: sha('fictional transcript text'), bytes: 25, transcriptId: third }]);
     const content = await f.processor.read(context, third);
     expect(content).toEqual({ transcriptId: third, recordingId: id, version: 1, contentSha256: sha('fictional transcript text'), text: 'fictional transcript text' });
     f.objects.set(key, Buffer.from('fictional transcript TEXT'));
@@ -109,12 +126,14 @@ describe('bounded encounter transcription processor', () => {
     vi.mocked(failed.provider.status).mockResolvedValueOnce({ state: 'failed', failure: 'Unsupported media format detected' });
     const outcome = await failed.processor.advance(context, id);
     expect(outcome.job).toMatchObject({ status: 'failed', failureCode: 'provider_failed:Unsupported media format detected' });
-    expect(failed.repository.complete).not.toHaveBeenCalled(); expect(failed.store.puts).toEqual([]);
+    expect(failed.repository.complete).not.toHaveBeenCalled(); expect(failed.store.puts).toEqual([]); expect(failed.artifacts).toEqual([]);
     const malformed = fixture('processing');
     malformed.objects.set(`${transcriptionPrefix(media())}/provider.json`, Buffer.from('{"results":{}}'));
     vi.mocked(malformed.provider.status).mockResolvedValueOnce({ state: 'completed' });
     await expect(malformed.processor.advance(context, id)).rejects.toMatchObject({ code: 'storage_unverified' });
     expect(malformed.repository.complete).not.toHaveBeenCalled();
+    // Even a malformed provider object is registered, so cleanup can remove it.
+    expect(malformed.artifacts.map(a => a.kind)).toEqual(['provider']);
     expect(() => providerTranscriptText('not json')).toThrow(RecordingTranscriptionError);
     expect(providerTranscriptText(providerDocument)).toBe('fictional transcript text');
   });
@@ -130,6 +149,8 @@ describe('bounded encounter transcription processor', () => {
     expect(f.store.puts.map(p => p.key)).toEqual([`${transcriptionPrefix(media())}/transcript-v1.txt`, `${transcriptionPrefix(media())}/transcript-v2.txt`]);
     expect(f.repository.correct).toHaveBeenCalledWith(context, id, `${transcriptionPrefix(media())}/transcript-v2.txt`,
       sha('fictional corrected transcript text'), 35, 4, 'speaker name corrected');
+    expect(f.artifacts.at(-1)).toEqual({ jobId: other, kind: 'transcript', key: `${transcriptionPrefix(media())}/transcript-v2.txt`,
+      version: f.versionOf(`${transcriptionPrefix(media())}/transcript-v2.txt`), sha256: sha('fictional corrected transcript text'), bytes: 35, transcriptId: other });
     expect((await f.processor.read(context, third)).text).toBe('fictional transcript text');
     const none = fixture();
     await expect(none.processor.correct(context, id, 'text', 'reason')).rejects.toMatchObject({ code: 'refused' });

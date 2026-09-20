@@ -32,6 +32,8 @@ const stateSchema = z.object({ jobId: uuid, status: z.string(), providerJobName:
 const completionSchema = z.object({ jobId: uuid, status: z.enum(['completed', 'failed']), transcriptId: uuid.nullable(), version: z.number().nullable(),
   failureCode: z.string().optional(), contentSha256: hash.optional(), replayed: z.boolean() }).passthrough();
 const correctionSchema = z.object({ transcriptId: uuid, jobId: uuid, version: z.number().int().min(2), supersedesId: uuid, contentSha256: hash }).strict();
+const artifactReceiptSchema = z.object({ artifactId: uuid, jobId: uuid, kind: z.enum(['media', 'provider', 'transcript']), replayed: z.boolean() }).strict();
+export type TranscriptionArtifactKind = z.infer<typeof artifactReceiptSchema>['kind'];
 
 export interface RecordingTranscriptionRepository {
   request(context: ProductionClinicalRequestContext, recordingId: string, commandId: string, releaseId: string): Promise<TranscriptionReceipt>;
@@ -42,6 +44,9 @@ export interface RecordingTranscriptionRepository {
   correct(context: ProductionClinicalRequestContext, recordingId: string, objectKey: string, sha256: string, bytes: number, words: number, reason: string): Promise<z.infer<typeof correctionSchema>>;
   list(context: ProductionClinicalRequestContext, recordingId: string): Promise<TranscriptionListing>;
   object(context: ProductionClinicalRequestContext, transcriptId: string): Promise<z.infer<typeof objectSchema>>;
+  /** Registers an object the processor wrote or read back so hold-aware cleanup can verify and delete it. */
+  registerArtifact(context: ProductionClinicalRequestContext, jobId: string, kind: TranscriptionArtifactKind, objectKey: string, objectVersion: string,
+    sha256: string, bytes: number, transcriptId?: string): Promise<z.infer<typeof artifactReceiptSchema>>;
 }
 export function createRecordingTranscriptionRepository(database: ClinicalCoreDatabase): RecordingTranscriptionRepository {
   async function query<T>(context: ProductionClinicalRequestContext, sql: string, parameters: unknown[], schema: z.ZodType<T>): Promise<T> {
@@ -89,15 +94,23 @@ export function createRecordingTranscriptionRepository(database: ClinicalCoreDat
       [id(recordingId), objectKey, sha256, bytes, words, reason], correctionSchema),
     list: async (c, recordingId) => query(c, 'select clinical_private.list_recording_transcripts($1) as data', [id(recordingId)], transcriptionListingSchema),
     object: async (c, transcriptId) => query(c, 'select clinical_private.get_recording_transcript_object($1) as data', [id(transcriptId)], objectSchema),
+    async registerArtifact(c, jobId, kind, objectKey, objectVersion, sha256, bytes, transcriptId) {
+      if (!/^[A-Za-z0-9+/=._-]{1,1024}$/.test(objectVersion) || objectVersion === 'null') throw new RecordingTranscriptionError('storage_unverified');
+      return query(c, 'select clinical_private.register_recording_transcription_artifact($1,$2,$3,$4,$5,$6::integer,$7) as data',
+        [id(jobId), kind, objectKey, objectVersion, sha256, bytes, transcriptId ? id(transcriptId) : null], artifactReceiptSchema);
+    },
   };
 }
 
 export type TranscriptionStorage = z.infer<typeof recordingStorageSchema>;
 /** Bounded object access. Reads verify the digest the database recorded; writes
  * are create-only under the organization's recording prefix and KMS key. */
+export type TranscriptionObjectTags = { recordingId: string; jobId: string; kind: TranscriptionArtifactKind };
 export interface TranscriptionMediaStore {
-  get(storage: TranscriptionStorage, key: string, version: string | undefined, maxBytes: number): Promise<Uint8Array>;
-  put(storage: TranscriptionStorage, key: string, bytes: Uint8Array, contentType: string): Promise<void>;
+  /** Returns the bytes and the exact object version read; a versionless store cannot be cleaned up and is refused. */
+  get(storage: TranscriptionStorage, key: string, version: string | undefined, maxBytes: number): Promise<{ bytes: Uint8Array; version: string | null }>;
+  /** Create-only write with a full-object SHA-256 checksum and provenance metadata; returns the version created. */
+  put(storage: TranscriptionStorage, key: string, bytes: Uint8Array, contentType: string, tags: TranscriptionObjectTags): Promise<{ version: string | null }>;
 }
 export interface TranscriptionProvider {
   start(input: { jobName: string; storage: TranscriptionStorage; mediaKey: string; contentType: string; outputKey: string; languageCode: string }): Promise<void>;
@@ -128,7 +141,7 @@ export function createRecordingTranscriptionProcessor(input: { repository: Recor
     const parts: Uint8Array[] = [];
     for (const [index, segment] of m.segments.entries()) {
       if (segment.sequence !== index) throw new RecordingTranscriptionError('storage_unverified');
-      const bytes = await media.get(m.storage, segment.objectKey, segment.objectVersion, segment.bytes);
+      const { bytes } = await media.get(m.storage, segment.objectKey, segment.objectVersion, segment.bytes);
       if (bytes.length !== segment.bytes || sha256(bytes) !== segment.sha256) throw new RecordingTranscriptionError('storage_unverified');
       parts.push(bytes);
     }
@@ -136,8 +149,15 @@ export function createRecordingTranscriptionProcessor(input: { repository: Recor
     const key = `${transcriptionPrefix(m)}/media.${MEDIA_FORMAT[m.contentType]}`;
     // Re-check authority after the reads: a withdrawal during assembly stops here.
     await repository.media(context, m.jobId);
-    await media.put(m.storage, key, joined, m.contentType);
+    const written = await media.put(m.storage, key, joined, m.contentType, { recordingId: m.recordingId, jobId: m.jobId, kind: 'media' });
+    await register(context, m.jobId, 'media', key, written.version, sha256(joined), joined.length);
     return key;
+  }
+  /** Every object under the transcription prefix is registered with its exact version and digest before the step returns. */
+  async function register(context: ProductionClinicalRequestContext, jobId: string, kind: TranscriptionArtifactKind, key: string, version: string | null,
+    digest: string, bytes: number, transcriptId?: string) {
+    if (!version) throw new RecordingTranscriptionError('storage_unverified');
+    await repository.registerArtifact(context, jobId, kind, key, version, digest, bytes, transcriptId);
   }
   return {
     request(context: ProductionClinicalRequestContext, recordingId: string, commandId: string) {
@@ -159,13 +179,18 @@ export function createRecordingTranscriptionProcessor(input: { repository: Recor
       const state = await provider.status(m.providerJobName ?? jobName, m.storage);
       if (state.state === 'failed') { await repository.fail(context, m.jobId, `provider_failed:${(state.failure ?? 'unknown').slice(0, 40)}`); return repository.list(context, recordingId); }
       if (state.state !== 'completed') return listing;
-      const raw = await media.get(m.storage, `${transcriptionPrefix(m)}/provider.json`, undefined, 16 * 1024 * 1024);
-      const text = providerTranscriptText(Buffer.from(raw).toString('utf8'));
+      const providerKey = `${transcriptionPrefix(m)}/provider.json`;
+      const raw = await media.get(m.storage, providerKey, undefined, 16 * 1024 * 1024);
+      // The provider wrote this object; register it before anything derived from it exists.
+      await register(context, m.jobId, 'provider', providerKey, raw.version, sha256(raw.bytes), raw.bytes.length);
+      const text = providerTranscriptText(Buffer.from(raw.bytes).toString('utf8'));
       const bytes = Buffer.from(text, 'utf8');
       if (!bytes.length || bytes.length > 16 * 1024 * 1024) { await repository.fail(context, m.jobId, 'provider_transcript_invalid'); return repository.list(context, recordingId); }
       const key = `${transcriptionPrefix(m)}/transcript-v1.txt`;
-      await media.put(m.storage, key, bytes, 'text/plain; charset=utf-8');
-      await repository.complete(context, m.jobId, key, sha256(bytes), bytes.length, words(text));
+      const written = await media.put(m.storage, key, bytes, 'text/plain; charset=utf-8', { recordingId: m.recordingId, jobId: m.jobId, kind: 'transcript' });
+      const completion = await repository.complete(context, m.jobId, key, sha256(bytes), bytes.length, words(text));
+      if (completion.status === 'completed' && completion.transcriptId)
+        await register(context, m.jobId, 'transcript', key, written.version, sha256(bytes), bytes.length, completion.transcriptId);
       return repository.list(context, recordingId);
     },
     async correct(context: ProductionClinicalRequestContext, recordingId: string, text: string, reason: string) {
@@ -178,12 +203,14 @@ export function createRecordingTranscriptionProcessor(input: { repository: Recor
       if (digest === latest.contentSha256) throw new RecordingTranscriptionError('conflict');
       const object = await repository.object(context, latest.transcriptId);
       const key = `${object.objectKey.replace(/\/transcript-v\d+\.txt$/, '')}/transcript-v${latest.version + 1}.txt`;
-      await media.put(object.storage, key, bytes, 'text/plain; charset=utf-8');
-      return repository.correct(context, recordingId, key, digest, bytes.length, words(text), reason);
+      const written = await media.put(object.storage, key, bytes, 'text/plain; charset=utf-8', { recordingId, jobId: listing.job.jobId, kind: 'transcript' });
+      const corrected = await repository.correct(context, recordingId, key, digest, bytes.length, words(text), reason);
+      await register(context, corrected.jobId, 'transcript', key, written.version, digest, bytes.length, corrected.transcriptId);
+      return corrected;
     },
     async read(context: ProductionClinicalRequestContext, transcriptId: string): Promise<TranscriptContent> {
       const object = await repository.object(context, transcriptId);
-      const bytes = await media.get(object.storage, object.objectKey, undefined, object.byteLength);
+      const { bytes } = await media.get(object.storage, object.objectKey, undefined, object.byteLength);
       if (bytes.length !== object.byteLength || sha256(bytes) !== object.contentSha256) throw new RecordingTranscriptionError('storage_unverified');
       return transcriptContentSchema.parse({ transcriptId: object.transcriptId, recordingId: object.recordingId, version: object.version,
         contentSha256: object.contentSha256, text: Buffer.from(bytes).toString('utf8') });

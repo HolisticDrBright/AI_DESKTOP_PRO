@@ -74,6 +74,39 @@ correlated to the requested recording, command or transcript, and must declare A
 unavailable. Upstream detail is never forwarded or logged. A recording finished on this page
 triggers a notice to reload the workspace; the page never assumes the server state.
 
+## Hold-aware cleanup of transcription objects (migration 85)
+
+Cleanup previously listed only the capture session's audio prefix, so assembled media, the
+provider's result document and every transcript version would have outlived the recording.
+Migration 85 (`20260920030000_production_recording_transcription_artifacts.sql`) adds
+`recording_transcription_artifacts`: every object the processor writes (media, transcript
+versions) or reads back (the provider's `provider.json`) is registered by the owning workforce
+actor with its exact object version, SHA-256 and size before the step returns. Keys must sit
+under the job's transcription prefix with the kind's file name; a transcript artifact must
+match its version row; replays are no-ops and any other difference is a conflict. Media and
+transcript objects are written create-only with a full-object SHA-256 checksum and
+`recording-id`, `job-id` and `artifact-kind` metadata. A store that cannot name the version it
+wrote or read is refused, because such an object could never be verified for deletion.
+
+Cleanup admission (`admit_recording_cleanup`) now returns `transcriptionInventory` and its
+digest next to the audio inventory, waits while a job is requested or processing, and the
+same patient and owner holds apply. An actionable cleanup intent (discard, consent revoked or
+an arrived retention deadline) cancels open jobs, so the processor's next step finds a
+cancelled job and cannot write. The bounded worker lists the whole recording prefix, treats
+every key as either an inventoried segment or a registered artifact and stops on anything
+else, verifies artifacts by exact version, size, KMS key, checksum and metadata (the
+provider-written document by version and size, with its checksum when S3 reports one),
+re-reads holds and retention before each delete, prepares artifact attempts through
+`prepare_recording_cleanup_artifact_attempt` and refuses to delete when either inventory
+changed during the pass. Reviewed cleanup IAM already covers the recording prefix, so no
+template changed.
+
+Not covered: withdrawing transcription consent after a transcript exists stops further jobs
+and corrections but does not schedule deletion of stored transcripts; whether a produced
+transcript is part of the retained clinical record is a policy decision recorded separately.
+Backups, provider-side copies and a registration that fails after an object was written
+(the next pass stops on the unregistered key and surfaces it) remain outside this layer.
+
 ## Evidence and what remains
 
 Local only: PGlite tests exercise request gating, idempotency, consent, release refusal,
@@ -82,6 +115,6 @@ tests cover assembly verification, oversized media, provider failure, malformed 
 correction rules, database category mapping and API status mapping; the infrastructure test
 builds `npm run build:aws-recording-transcription` and executes the blocked handler without
 AWS credentials. No hosted migration, provider call, activation or PHI has occurred. AI
-drafting, review-only proposed notes and hold-aware retention of transcripts and provider
-artifacts are still engineering. The encounter panel has unit evidence for its controller and proxy only; no browser,
+drafting and review-only proposed notes are still engineering; transcript retention across
+backups and provider-side copies is not covered. The encounter panel has unit evidence for its controller and proxy only; no browser,
 provider or hosted run has exercised it.

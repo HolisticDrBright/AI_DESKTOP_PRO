@@ -1,4 +1,5 @@
 if (typeof window !== 'undefined') throw new Error('aws-recording-transcription-clients is server-only');
+import { createHash } from 'node:crypto';
 import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { GetTranscriptionJobCommand, StartTranscriptionJobCommand, TranscribeClient } from '@aws-sdk/client-transcribe';
 import type { TranscriptionMediaStore, TranscriptionProvider } from './recording-transcription';
@@ -15,12 +16,15 @@ export function createAwsTranscriptionMediaStore(clientForRegion = (region: stri
         ExpectedBucketOwner: storage.expectedBucketOwner, Range: `bytes=0-${maxBytes}` }));
       const bytes = await result.Body!.transformToByteArray();
       if (bytes.length > maxBytes) throw new Error('media_too_large');
-      return bytes;
+      return { bytes, version: result.VersionId ?? null };
     },
-    async put(storage, key, bytes, contentType) {
-      await client(storage.region).send(new PutObjectCommand({ Bucket: storage.bucket, Key: key, Body: bytes, ContentType: contentType,
+    async put(storage, key, bytes, contentType, tags) {
+      const result = await client(storage.region).send(new PutObjectCommand({ Bucket: storage.bucket, Key: key, Body: bytes, ContentType: contentType,
         ContentLength: bytes.length, IfNoneMatch: '*', ExpectedBucketOwner: storage.expectedBucketOwner,
-        ServerSideEncryption: 'aws:kms', SSEKMSKeyId: storage.kmsKeyArn }));
+        ChecksumAlgorithm: 'SHA256', ChecksumSHA256: createHash('sha256').update(bytes).digest('base64'),
+        ServerSideEncryption: 'aws:kms', SSEKMSKeyId: storage.kmsKeyArn,
+        Metadata: { 'recording-id': tags.recordingId, 'job-id': tags.jobId, 'artifact-kind': tags.kind } }));
+      return { version: result.VersionId ?? null };
     },
   };
 }

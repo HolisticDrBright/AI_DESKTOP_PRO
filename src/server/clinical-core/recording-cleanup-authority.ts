@@ -8,8 +8,14 @@ import { createRecordingStorageBudget } from './recording-storage-budget';
 const uuid=z.string().uuid(), sha=z.string().regex(/^[a-f0-9]{64}$/);
 export const recordingCleanupRequestSchema=z.object({recordingId:uuid,version:z.number().int().positive().safe(),cleanupReleaseId:uuid,workerSha256:sha,attemptId:uuid.optional(),runId:uuid.optional()}).strict();
 export type RecordingCleanupRequest=z.infer<typeof recordingCleanupRequestSchema>;
-export const recordingCleanupAttemptSchema=z.object({id:uuid,segmentId:uuid,objectVersion:z.string().min(1).max(1024)
-  .regex(/^[A-Za-z0-9+/=._-]+$/).refine(v=>v!=='null'),kind:z.enum(['object','delete_marker']),evidenceSha256:sha}).strict();
+const version=z.string().min(1).max(1024).regex(/^[A-Za-z0-9+/=._-]+$/).refine(v=>v!=='null');
+/** Exactly one target: an audio segment or a registered transcription artifact. */
+export const recordingCleanupAttemptSchema=z.object({id:uuid,segmentId:uuid.nullable(),artifactId:uuid.nullable().default(null),objectVersion:version,
+  kind:z.enum(['object','delete_marker']),evidenceSha256:sha}).strict().refine(a=>(a.segmentId===null)!==(a.artifactId===null));
+const artifactSchema=z.object({artifactId:uuid,jobId:uuid,kind:z.enum(['media','provider','transcript']),objectKey:z.string().min(1).max(512),
+  objectVersion:version,sha256:sha,bytes:z.number().int().min(1).max(268435456),transcriptId:uuid.nullable()}).strict()
+  .refine(t=>(t.kind==='transcript')===(t.transcriptId!==null));
+export type RecordingCleanupArtifact=z.infer<typeof artifactSchema>;
 const segmentSchema=z.object({segmentId:uuid,sequence:z.number().int().min(0).max(4095),sha256:sha,
   bytes:z.number().int().min(1).max(4194304),status:z.enum(['reserved','stored']),objectKey:z.string().max(512),
   objectVersion:z.string().min(1).max(1024).regex(/^[A-Za-z0-9+/=._-]+$/).refine(v=>v!=='null').nullable(),
@@ -17,12 +23,18 @@ const segmentSchema=z.object({segmentId:uuid,sequence:z.number().int().min(0).ma
   recordingGrantIds:z.array(uuid).max(100)}).strict().refine(s=>(s.status==='stored')===(s.objectVersion!==null));
 export const recordingCleanupAdmissionSchema=z.object({recordingId:uuid,sessionId:uuid,organizationId:uuid,patientRecordId:uuid,
   version:z.number().int().positive().safe(),cleanupReleaseId:uuid,workerSha256:sha,storageReleaseId:uuid,storage:recordingStorageSchema,
-  inventory:z.array(segmentSchema).max(4096),inventorySha256:sha,validUntil:z.string().datetime({offset:true}),audioDeleted:z.literal(false),
+  inventory:z.array(segmentSchema).max(4096),inventorySha256:sha,
+  transcriptionInventory:z.array(artifactSchema).max(512),transcriptionInventorySha256:sha,
+  validUntil:z.string().datetime({offset:true}),audioDeleted:z.literal(false),
   attempt:recordingCleanupAttemptSchema.optional(),runId:uuid.optional()}).strict()
   .refine(r=>new Set(r.inventory.map(s=>s.segmentId)).size===r.inventory.length
     && new Set(r.inventory.map(s=>s.sequence)).size===r.inventory.length
     && r.inventory.every(s=>s.storageReleaseId===r.storageReleaseId && s.bytes<=r.storage.maxSegmentBytes
-      && s.objectKey===`encounter-recordings/${r.organizationId}/${r.recordingId}/${r.sessionId}/${s.sequence}-${s.sha256}`));
+      && s.objectKey===`encounter-recordings/${r.organizationId}/${r.recordingId}/${r.sessionId}/${s.sequence}-${s.sha256}`))
+  .refine(r=>new Set(r.transcriptionInventory.map(t=>t.artifactId)).size===r.transcriptionInventory.length
+    && new Set(r.transcriptionInventory.map(t=>t.objectKey)).size===r.transcriptionInventory.length
+    && r.transcriptionInventory.every(t=>t.objectKey.startsWith(`encounter-recordings/${r.organizationId}/${r.recordingId}/transcription/${t.jobId}/`)
+      && !r.inventory.some(s=>s.objectKey===t.objectKey)));
 export type RecordingCleanupAdmission=z.infer<typeof recordingCleanupAdmissionSchema>;
 export class RecordingCleanupError extends Error {
   constructor(readonly code:'request_invalid'|'access_refused'|'legal_hold'|'not_ready'|'service_unavailable'){

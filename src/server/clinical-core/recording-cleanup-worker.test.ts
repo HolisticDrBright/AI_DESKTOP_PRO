@@ -12,14 +12,15 @@ function fixture(count=1){
   const a:RecordingCleanupAdmission={...request,sessionId,organizationId:context.organizationId,patientRecordId:randomUUID(),storageReleaseId,
     storage:{bucket:'fictional-bucket',expectedBucketOwner:'123456789012',region:'us-east-2',kmsKeyArn:'arn:aws:kms:us-east-2:123456789012:key/11111111-1111-4111-8111-111111111111',maxSegmentBytes:10000},
     inventory:[{segmentId:randomUUID(),sequence:0,sha256:'b'.repeat(64),bytes:3,status:'reserved',objectKey:key,objectVersion:null,storageReleaseId,
-      authorityEpoch:1,participantIds:[randomUUID()],recordingGrantIds:[randomUUID()]}],inventorySha256:'c'.repeat(64),validUntil:new Date(Date.now()+5000).toISOString(),audioDeleted:false};
+      authorityEpoch:1,participantIds:[randomUUID()],recordingGrantIds:[randomUUID()]}],inventorySha256:'c'.repeat(64),
+    transcriptionInventory:[],transcriptionInventorySha256:'e'.repeat(64),validUntil:new Date(Date.now()+5000).toISOString(),audioDeleted:false};
   let versions:CleanupObjectVersion[]=Array.from({length:count},(_,i)=>({key,version:'version-'+i,kind:'object'}));
   let held=false;const prepared=new Map<string,CleanupPrepared>(),events:{id:string;outcome:string}[]=[];
   const authorize:ReturnType<typeof createRecordingCleanupAuthority>=async(_ctx,r,operation)=>{
     if(held)throw new RecordingCleanupError('legal_hold');
     const id=(r as {attemptId?:string}).attemptId,attempt=id?prepared.get(id):undefined;
     if(id&&!attempt)throw new Error('prepare must commit first');
-    return operation({...a,attempt:attempt?{id:attempt.id,segmentId:attempt.segmentId,objectVersion:attempt.objectVersion,kind:attempt.kind,evidenceSha256:attempt.evidenceSha256}:undefined},new AbortController().signal);
+    return operation({...a,attempt:attempt?{id:attempt.id,segmentId:attempt.segmentId,artifactId:attempt.artifactId,objectVersion:attempt.objectVersion,kind:attempt.kind,evidenceSha256:attempt.evidenceSha256}:undefined},new AbortController().signal);
   };
   const attempts:RecordingCleanupAttempts={prepare:vi.fn(async(_ctx,_r,attempt)=>{prepared.set(attempt.id,attempt);return attempt.id;}),
     record:vi.fn(async(_ctx,id,outcome)=>{events.push({id,outcome});})};
@@ -114,5 +115,54 @@ describe('recording cleanup worker: exact-version mutations and honest observati
   it('re-lists delete markers, deletes only their exact versions, and never performs HEAD on a marker',async()=>{
     const f=fixture();f.setVersions([{key:f.a.inventory[0].objectKey,version:'marker-1',kind:'delete_marker'}]);
     expect((await f.worker()).deleteAcknowledged).toBe(1);expect(f.storage.inspect).not.toHaveBeenCalled();expect(f.storage.list).toHaveBeenCalledTimes(3);
+  });
+});
+describe('recording cleanup worker: transcription artifacts under the same holds',()=>{
+  function artifactFixture(kind:'media'|'provider'|'transcript'='transcript'){
+    const f=fixture(0);
+    const jobId=randomUUID(),artifactId=randomUUID(),sha='d'.repeat(64),transcriptId=kind==='transcript'?randomUUID():null;
+    const key=`encounter-recordings/${f.a.organizationId}/${f.a.recordingId}/transcription/${jobId}/${kind==='media'?'media.webm':kind==='provider'?'provider.json':'transcript-v1.txt'}`;
+    f.a.transcriptionInventory=[{artifactId,jobId,kind,objectKey:key,objectVersion:'artifact-version',sha256:sha,bytes:7,transcriptId}];
+    f.a.transcriptionInventorySha256='f'.repeat(64);
+    const v:CleanupObjectVersion={key,version:'artifact-version',kind:'object'};
+    const head=():CleanupInspection=>({version:v.version,bytes:7,checksum:Buffer.from(sha,'hex').toString('base64'),checksumType:'FULL_OBJECT',encryption:'aws:kms',
+      kmsKeyArn:f.a.storage.kmsKeyArn,metadata:{'recording-id':f.a.recordingId,'job-id':jobId,'artifact-kind':kind},legalHold:'OFF',retentionVerified:true});
+    let inspection=head();
+    f.storage.inspect=vi.fn(async()=>inspection);
+    f.setVersions([v]);
+    return {...f,v,artifactId,jobId,head,setInspection:(patch:Partial<CleanupInspection>)=>{inspection={...head(),...patch};}};
+  }
+  it('verifies, prepares by artifact and deletes exactly one registered transcript version',async()=>{
+    const f=artifactFixture();
+    expect(await f.worker()).toMatchObject({state:'needs_recheck',deleteAcknowledged:1,audioDeleted:false});
+    const prepared=[...f.prepared.values()];
+    expect(prepared).toHaveLength(1);expect(prepared[0]).toMatchObject({segmentId:null,artifactId:f.artifactId,objectVersion:'artifact-version',kind:'object'});
+    expect(f.storage.remove).toHaveBeenCalledOnce();expect(f.events).toEqual([{id:prepared[0].id,outcome:'delete_acknowledged'}]);
+  });
+  it('accepts provider output without a checksum but refuses a wrong version, size, key owner or metadata',async()=>{
+    const provider=artifactFixture('provider');provider.setInspection({checksum:undefined,checksumType:undefined,metadata:undefined});
+    expect((await provider.worker()).deleteAcknowledged).toBe(1);
+    for(const patch of [{bytes:8},{kmsKeyArn:'arn:aws:kms:us-east-2:123456789012:key/22222222-2222-4222-8222-222222222222'},{version:'other-version'},
+      {metadata:{'recording-id':randomUUID(),'job-id':'x','artifact-kind':'transcript'}},{checksum:Buffer.from('e'.repeat(64),'hex').toString('base64')}]){
+      const f=artifactFixture();f.setInspection(patch as Partial<CleanupInspection>);
+      await expect(f.worker()).rejects.toThrow('access_refused');expect(f.storage.remove).not.toHaveBeenCalled();expect(f.attempts.prepare).not.toHaveBeenCalled();
+    }
+    const listedOther=artifactFixture();listedOther.setVersions([{...listedOther.v,version:'unregistered-version'}]);
+    await expect(listedOther.worker()).rejects.toThrow('access_refused');expect(listedOther.storage.remove).not.toHaveBeenCalled();
+  });
+  it('stops on an unregistered object under the recording prefix and on a changed artifact inventory',async()=>{
+    const f=artifactFixture();f.setVersions([f.v,{key:`encounter-recordings/${f.a.organizationId}/${f.a.recordingId}/transcription/${f.jobId}/notes.txt`,version:'v',kind:'object'}]);
+    await expect(f.worker()).rejects.toThrow('access_refused');expect(f.storage.inspect).not.toHaveBeenCalled();expect(f.attempts.prepare).not.toHaveBeenCalled();
+    const changed=artifactFixture();let n=0;
+    const original=changed.storage.inspect;
+    changed.storage.inspect=vi.fn(async(a,v,s)=>{if(++n===1)changed.a.transcriptionInventorySha256='0'.repeat(64);return original(a,v,s);});
+    // The attempt phase re-reads both inventories; a change is an unknown outcome for that attempt, never a delete.
+    expect(await changed.worker()).toMatchObject({state:'needs_recheck',deleteAcknowledged:0});
+    expect(changed.storage.remove).not.toHaveBeenCalled();expect(changed.events).toEqual([{id:[...changed.prepared.keys()][0],outcome:'unknown'}]);
+  });
+  it('treats an artifact legal hold like an audio hold: the pass stops held and nothing is deleted',async()=>{
+    const f=artifactFixture('media');f.setInspection({legalHold:'ON'});
+    await expect(f.worker()).rejects.toThrow('legal_hold');
+    expect(f.storage.remove).not.toHaveBeenCalled();expect(f.attempts.prepare).not.toHaveBeenCalled();
   });
 });

@@ -296,6 +296,10 @@
     {
       "version": "20260920020000",
       "file": "20260920020000_production_recording_workspace_finished.sql"
+    },
+    {
+      "version": "20260920030000",
+      "file": "20260920030000_production_recording_transcription_artifacts.sql"
     }
   ]
 }

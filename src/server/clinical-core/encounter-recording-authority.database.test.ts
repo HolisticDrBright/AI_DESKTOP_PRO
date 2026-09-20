@@ -279,6 +279,36 @@ describe('recording cleanup admission and holds with actual canonical SQL',()=>{
     expect((await db.query('select * from clinical_private.recording_cleanup_access_events where recording_id=$1',[r.capture.recordingId])).rows).toHaveLength(1);
     expect(await recoveryState(r.capture)).toMatchObject({pendingSegments:1,audioDeleted:false});
   });
+  it('admits registered transcription artifacts alongside audio, waits for open jobs and prepares artifact attempts',async()=>{
+    const r=await cleanupReady(),recording=r.capture.recordingId;
+    const before=await cleanupCall<RecordingCleanupAdmission>(admitSql,r.args);
+    expect(before?.transcriptionInventory).toEqual([]);expect(before?.transcriptionInventorySha256).toMatch(/^[a-f0-9]{64}$/);
+    const release=randomUUID(),job=randomUUID(),artifact=randomUUID(),transcript=randomUUID();
+    const configuration=JSON.stringify({provider:'aws_transcribe',region:'us-east-2',languageCode:'en-US'});
+    await db.query(`insert into clinical_private.recording_transcription_releases(id,organization_id,configuration,configuration_sha256,qualification_sha256,approved_by,approved_at,expires_at)
+      values($1,$2,$3::jsonb,encode(public.digest(($3::jsonb)::text,'sha256'),'hex'),repeat('c',64),'FICTIONAL',clock_timestamp()-interval '1 hour',clock_timestamp()+interval '1 day')`,[release,org,configuration]);
+    await db.query(`insert into clinical_private.recording_transcription_jobs(id,recording_id,release_id,command_id,requested_by,participant_ids,transcription_grant_ids,segment_count,inventory_sha256,status,provider_job_name)
+      values($1,$2,$3,$4,$5,array[$4::uuid],array[$4::uuid],1,repeat('a',64),'processing','alp-'||($1::uuid)::text)`,[job,recording,release,randomUUID(),actor]);
+    await expect(cleanupCall(admitSql,r.args)).rejects.toThrow('recording_cleanup_not_ready');
+    await db.query("update clinical_private.recording_transcription_jobs set status='completed' where id=$1",[job]);
+    const prefix=`encounter-recordings/${org}/${recording}/transcription/${job}/`;
+    await db.query(`insert into clinical_private.recording_transcripts(id,recording_id,job_id,version,kind,content_sha256,object_key,byte_length,word_count,author_id)
+      values($1,$2,$3,1,'provider',repeat('b',64),$4,12,2,$5)`,[transcript,recording,job,prefix+'transcript-v1.txt',actor]);
+    await db.query(`insert into clinical_private.recording_transcription_artifacts(id,job_id,recording_id,kind,object_key,object_version,content_sha256,byte_length,transcript_id,registered_by)
+      values($1,$2,$3,'transcript',$4,'v-t1',repeat('b',64),12,$5,$6)`,[artifact,job,recording,prefix+'transcript-v1.txt',transcript,actor]);
+    const a=await cleanupCall<RecordingCleanupAdmission>(admitSql,r.args);
+    expect(a?.transcriptionInventory).toEqual([{artifactId:artifact,jobId:job,kind:'transcript',objectKey:prefix+'transcript-v1.txt',objectVersion:'v-t1',sha256:'b'.repeat(64),bytes:12,transcriptId:transcript}]);
+    expect(a?.transcriptionInventorySha256).not.toBe(before?.transcriptionInventorySha256);expect(a?.inventorySha256).toBe(before?.inventorySha256);
+    const attempt=randomUUID(),prepare='select clinical_private.prepare_recording_cleanup_artifact_attempt($1,$2::bigint,$3,$4,$5,$6,$7,$8,$9,$10) as result';
+    expect(await cleanupCall(prepare,[...r.args,attempt,artifact,'v-t1','object',a!.inventorySha256,'e'.repeat(64)])).toBe(attempt);
+    expect(await cleanupCall(prepare,[...r.args,attempt,artifact,'v-t1','object',a!.inventorySha256,'e'.repeat(64)])).toBe(attempt);
+    await expect(cleanupCall(prepare,[...r.args,randomUUID(),randomUUID(),'v-t1','object',a!.inventorySha256,'e'.repeat(64)])).rejects.toThrow('recording_cleanup_attempt_invalid');
+    await expect(cleanupCall(prepare,[...r.args,attempt,artifact,'v-t2','object',a!.inventorySha256,'e'.repeat(64)])).rejects.toThrow('recording_cleanup_attempt_conflict');
+    const admitted=await cleanupCall<RecordingCleanupAdmission>('select clinical_private.admit_recording_cleanup_attempt($1,$2::bigint,$3,$4,$5) as result',[...r.args,attempt]);
+    expect(admitted?.attempt).toEqual({id:attempt,segmentId:null,artifactId:artifact,objectVersion:'v-t1',kind:'object',evidenceSha256:'e'.repeat(64)});
+    await expect(db.query("insert into clinical_private.recording_cleanup_attempts(id,recording_id,cleanup_release_id,queue_version,inventory_sha256,object_version,object_kind,evidence_sha256,requested_by) values($1,$2,$3,1,repeat('a',64),'v','object',repeat('a',64),$4)",
+      [randomUUID(),recording,r.cleanupRelease,actor])).rejects.toThrow('recording_cleanup_attempts_one_target');
+  });
   it.each(['expired','future','revoked'])('refuses an %s cleanup assignment',async state=>{
     const r=await cleanupReady(),operator=randomUUID();
     await db.query("insert into clinical_core.persons(id,subject_key) values($1,$2)",[operator,'subject_'+operator.replaceAll('-','')]);

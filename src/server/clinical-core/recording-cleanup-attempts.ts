@@ -30,9 +30,12 @@ export function createRecordingCleanupAttempts(database:ClinicalCoreDatabase):Re
     async prepare(context,request,attempt){
       const r=recordingCleanupRequestSchema.safeParse(request),a=cleanupPreparedSchema.safeParse(attempt);
       if(!r.success||r.data.attemptId!==undefined||!a.success)throw new RecordingCleanupError('request_invalid');
-      return execute(context,'select clinical_private.prepare_recording_cleanup_attempt($1,$2::bigint,$3,$4,$5,$6,$7,$8,$9,$10) as id',[
+      // Segment and artifact intents are distinct SQL functions; each verifies its target exists for this recording.
+      const target=a.data.segmentId??a.data.artifactId!;
+      const fn=a.data.segmentId?'prepare_recording_cleanup_attempt':'prepare_recording_cleanup_artifact_attempt';
+      return execute(context,`select clinical_private.${fn}($1,$2::bigint,$3,$4,$5,$6,$7,$8,$9,$10) as id`,[
         clinicalUuid(r.data.recordingId),r.data.version,clinicalUuid(r.data.cleanupReleaseId),r.data.workerSha256,
-        clinicalUuid(a.data.id),clinicalUuid(a.data.segmentId),a.data.objectVersion,a.data.kind,a.data.inventorySha256,a.data.evidenceSha256],a.data.id);
+        clinicalUuid(a.data.id),clinicalUuid(target),a.data.objectVersion,a.data.kind,a.data.inventorySha256,a.data.evidenceSha256],a.data.id);
     },
     async record(context,id,outcome,evidence){
       if(!z.string().uuid().safeParse(id).success||!z.enum(['delete_acknowledged','unknown','retained','refused']).safeParse(outcome).success||!sha.safeParse(evidence).success)

@@ -16,7 +16,7 @@ function fixture(){
     inventory:[{segmentId:randomUUID(),sequence:0,sha256:'b'.repeat(64),bytes:3,status:'reserved',objectVersion:null,
       objectKey:`encounter-recordings/${context.organizationId}/${request.recordingId}/${sessionId}/0-${'b'.repeat(64)}`,
       storageReleaseId,authorityEpoch:1,participantIds:[randomUUID()],recordingGrantIds:[randomUUID()]}],
-    inventorySha256:'c'.repeat(64),validUntil:new Date(Date.now()+5000).toISOString(),audioDeleted:false};
+    inventorySha256:'c'.repeat(64),transcriptionInventory:[],transcriptionInventorySha256:'e'.repeat(64),validUntil:new Date(Date.now()+5000).toISOString(),audioDeleted:false};
   let active=false;const commits=vi.fn(),rollbacks=vi.fn(),query=vi.fn();
   const db:ClinicalCoreDatabase={transaction:async work=>{
     active=true;
@@ -68,7 +68,7 @@ describe('cleanup guard: identity, scope, transaction and bounded uncertainty',(
   it('requires a matching prepared attempt receipt when authorizing a mutation',async()=>{
     const f=fixture(),operation=vi.fn(),attemptId=randomUUID();
     await expect(createRecordingCleanupAuthority(f.db)(context,{...f.request,attemptId},operation)).rejects.toThrow('service_unavailable');
-    f.admission.attempt={id:randomUUID(),segmentId:f.admission.inventory[0].segmentId,objectVersion:'version-1',kind:'object',evidenceSha256:'d'.repeat(64)};
+    f.admission.attempt={id:randomUUID(),segmentId:f.admission.inventory[0].segmentId,artifactId:null,objectVersion:'version-1',kind:'object',evidenceSha256:'d'.repeat(64)};
     await expect(createRecordingCleanupAuthority(f.db)(context,{...f.request,attemptId},operation)).rejects.toThrow('service_unavailable');
     expect(operation).not.toHaveBeenCalled();
     f.admission.attempt.id=attemptId;operation.mockResolvedValue('FICTIONAL OPERATION');
