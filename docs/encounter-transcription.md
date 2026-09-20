@@ -51,6 +51,29 @@ scoped RDS Data, secret, S3 get/put (create-only, KMS-conditioned) on the organi
 and only `transcribe:StartTranscriptionJob` and `GetTranscriptionJob` on `alp-*` job names:
 no list, delete, wildcard or drafting-provider permission.
 
+## Encounter page (`AwsRecordingTranscriptionPanel`)
+
+Migration 84 (`20260920020000_production_recording_workspace_finished.sql`) extends the
+consent workspace with `finishedCaptures`: closed recordings with a finish disposition, no
+discard or consent-revoked cleanup intent and an unexpired deletion deadline, newest first
+and bounded to twenty, each with its content type, segment count and the latest open or
+completed transcription job. No token, object key, bucket or text is included. An authority
+built before this migration omits the key and the page reads it as none.
+
+The panel mounts below audio capture once the workspace is loaded. Each finished recording
+gets a page-owned review (`aws-recording-transcription.ts`): load status, request (a fresh
+command ID; an uncertain outcome keeps that exact request and blocks other steps until it is
+retried), advance one step, open a version, and correct the latest version with a reason.
+Text lives only in page memory while open and is dropped on correction, conflict, dispose or
+when the panel is unavailable. The browser calls the same-origin proxy
+`/api/live/scribe/transcription`, which uses only the request-scoped workforce cookie,
+refuses cross-origin writes, queries, encodings, unknown operations and bodies over the
+correction bound, and forwards to the separately configured
+`RECORDING_TRANSCRIPTION_AWS_API_ORIGIN`. Responses are validated against the strict contract,
+correlated to the requested recording, command or transcript, and must declare AI drafting
+unavailable. Upstream detail is never forwarded or logged. A recording finished on this page
+triggers a notice to reload the workspace; the page never assumes the server state.
+
 ## Evidence and what remains
 
 Local only: PGlite tests exercise request gating, idempotency, consent, release refusal,
@@ -60,4 +83,5 @@ correction rules, database category mapping and API status mapping; the infrastr
 builds `npm run build:aws-recording-transcription` and executes the blocked handler without
 AWS credentials. No hosted migration, provider call, activation or PHI has occurred. AI
 drafting, review-only proposed notes and hold-aware retention of transcripts and provider
-artifacts are still engineering. The encounter UI does not yet mount transcription.
+artifacts are still engineering. The encounter panel has unit evidence for its controller and proxy only; no browser,
+provider or hosted run has exercised it.

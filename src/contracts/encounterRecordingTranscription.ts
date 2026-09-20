@@ -30,3 +30,20 @@ export type TranscriptionListing = z.infer<typeof transcriptionListingSchema>;
 export const transcriptContentSchema = z.object({ transcriptId: uuid, recordingId: uuid, version: z.number().int().positive(), contentSha256: hash,
   text: z.string().max(2_000_000) }).strict();
 export type TranscriptContent = z.infer<typeof transcriptContentSchema>;
+export const transcriptionCapabilitiesSchema = z.object({ transcription: z.literal(true), aiDrafting: z.literal(false),
+  reason: z.literal('ai_drafting_not_configured') }).strict();
+/** Refuse a well-formed result for a different recording or transcript, any
+ * drafting claim, and any field the contract does not name. */
+export function parseTranscriptionResponse(request: TranscriptionOperation, raw: unknown) {
+  const dataSchema = request.operation === 'request' ? transcriptionReceiptSchema
+    : request.operation === 'read' ? transcriptContentSchema : transcriptionListingSchema;
+  const result = z.object({ data: dataSchema, capabilities: transcriptionCapabilitiesSchema }).strict().parse(raw);
+  if (request.operation === 'read') {
+    if (!('text' in result.data) || result.data.transcriptId !== request.input.transcriptId) throw new Error('transcription_response_mismatch');
+  } else {
+    if (!('recordingId' in result.data) || result.data.recordingId !== request.input.recordingId) throw new Error('transcription_response_mismatch');
+    if (request.operation === 'request' && (!('commandId' in result.data) || result.data.commandId !== request.input.commandId)) throw new Error('transcription_response_mismatch');
+  }
+  return result;
+}
+export type TranscriptionResponse = ReturnType<typeof parseTranscriptionResponse>;

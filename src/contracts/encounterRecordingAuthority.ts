@@ -30,6 +30,11 @@ export const recordingWorkspaceSchema = z.object({
   consentReleases: z.array(release).max(3),
   activeCapture: z.object({ id, sessionId: id, status: z.enum(["capturing", "paused", "revoked"]),
     createdAt: time, authorityEpoch: z.number().int().nonnegative().safe(), deletionDeadline: time }).strict().nullable(),
+  // Finished recordings still inside their deletion deadline, newest first. An
+  // authority built before migration 84 omits the key; that reads as none.
+  finishedCaptures: z.array(z.object({ id, contentType: z.enum(["audio/webm", "audio/ogg", "audio/wav", "audio/mp4", "audio/mpeg"]),
+    createdAt: time, finishedAt: time, deletionDeadline: time, segmentCount: z.number().int().min(1).max(4096),
+    transcription: z.object({ jobId: id, status: z.enum(["requested", "processing", "completed"]) }).strict().nullable() }).strict()).max(20).default([]),
 }).strict();
 export const recordingParticipantReceiptSchema = z.object({ participantId: id }).strict();
 export const recordingConsentReceiptSchema = z.object({ consentId: id }).strict();

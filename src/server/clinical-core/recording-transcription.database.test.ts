@@ -148,3 +148,29 @@ describe('encounter transcription authority',()=>{
     expect(events).toEqual(['transcription.requested','transcription.processing','transcription.completed','transcript.corrected']);
   });
 });
+
+describe('finished recordings in the encounter workspace',()=>{
+  it('lists finished, undeleted recordings with their transcription state and hides discarded or foreign ones',async()=>{
+    const f=await finished(),release=await transcriptionRelease();
+    const sql='select clinical_private.get_encounter_recording_workspace($1,$2,$3) as result';
+    type Workspace={activeCapture:unknown;finishedCaptures:{id:string;segmentCount:number;transcription:{jobId:string;status:string}|null}[]};
+    const before=(await call<Workspace>(sql,[f.e,'en','FICTIONAL']))!;
+    expect(before.activeCapture).toBeNull();
+    expect(before.finishedCaptures).toEqual([{id:f.c.recordingId,contentType:'audio/webm',createdAt:expect.any(String),finishedAt:expect.any(String),
+      deletionDeadline:expect.any(String),segmentCount:1,transcription:null}]);
+    const job=(await request(f.c.recordingId,release))!;
+    const after=(await call<Workspace>(sql,[f.e,'en','FICTIONAL']))!;
+    expect(after.finishedCaptures[0].transcription).toEqual({jobId:job.jobId,status:'requested'});
+    expect(JSON.stringify(after)).not.toMatch(/token|object_key|objectKey|bucket|inventory_sha256/);
+    // A discarded recording never appears, even though it is closed.
+    const d=await finished({finish:false});
+    const state=(await call<{inventorySha256:string}>('select clinical_private.get_recording_recovery_state($1) as result',[d.c.recordingId]))!;
+    await call("select clinical_private.command_recording_lifecycle($1,$2,'discard',0::bigint,$3) as result",[d.c.recordingId,randomUUID(),state.inventorySha256]);
+    expect((await call<Workspace>(sql,[d.e,'en','FICTIONAL']))!.finishedCaptures).toEqual([]);
+    // A still-open capture is active, not finished.
+    const open=await finished({finish:false});
+    const w=(await call<Workspace>(sql,[open.e,'en','FICTIONAL']))!;
+    expect(w.finishedCaptures).toEqual([]); expect(w.activeCapture).toMatchObject({id:open.c.recordingId});
+    await expect(call(sql,[f.e,'en','FICTIONAL'],actor,otherOrg)).rejects.toThrow();
+  });
+});

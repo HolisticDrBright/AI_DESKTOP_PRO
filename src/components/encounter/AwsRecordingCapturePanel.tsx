@@ -17,9 +17,11 @@ const labels: Record<CaptureTransportSnapshot['phase'], string> = {
 
 /** The owner survives consent workspace refreshes, preserving in-memory tail and
  * exact retry commands. Encounter unmount destroys it; no implicit restart. */
-export function AwsRecordingCapturePanel({ encounterId, available, ownerRef, existingCapture }: {
+export function AwsRecordingCapturePanel({ encounterId, available, ownerRef, existingCapture, onFinished }: {
   encounterId: string; available: boolean; ownerRef: RefObject<AwsBrowserRecording | null>;
   existingCapture: { id: string; sessionId: string } | null;
+  /** Called once when this page's capture reaches a finished disposition. */
+  onFinished?: (recordingId: string) => void;
 }) {
   const [snapshot, setSnapshot] = useState(initial);
   const [ack, setAck] = useState(false), [checked, setChecked] = useState(false);
@@ -45,6 +47,12 @@ export function AwsRecordingCapturePanel({ encounterId, available, ownerRef, exi
   useEffect(() => {
     if (!available) { ownerRef.current?.interrupt(); setChecked(false); setAck(false); }
   }, [available, ownerRef]);
+  const finishedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (snapshot.phase === 'finished' && snapshot.recordingId && finishedRef.current !== snapshot.recordingId) {
+      finishedRef.current = snapshot.recordingId; onFinished?.(snapshot.recordingId);
+    }
+  }, [snapshot.phase, snapshot.recordingId, onFinished]);
 
   async function act(action: 'check' | 'start' | 'pause' | 'resume' | 'retry' | 'finish' | 'discard') {
     const owner = ownerRef.current;
@@ -99,7 +107,7 @@ export function AwsRecordingCapturePanel({ encounterId, available, ownerRef, exi
       <button className={button} disabled={controlsBusy || !!snapshot.pendingOperation || snapshot.incomplete || !['recording', 'paused'].includes(snapshot.phase)} onClick={() => void act('finish')}>Finish recording</button>
       <button className={button} disabled={controlsBusy || !!snapshot.pendingOperation} onClick={() => void act('discard')}>Discard capture</button>
     </div> : null}
-    {terminal ? <><p>No transcription, clinical note or confirmed erasure has been produced by this action.</p>
+    {terminal ? <><p>{snapshot.phase === 'finished' ? 'No transcript, clinical note or confirmed erasure has been produced by this action. Reload the consent workspace to review transcription for this finished recording.' : 'No transcription, clinical note or confirmed erasure has been produced by this action.'}</p>
       <button className={button} disabled={controlsBusy} onClick={() => { setSnapshot(initial); setChecked(false); setAck(false); setError(''); setGeneration(value => value + 1); }}>Prepare another recording</button></> : null}
     {recovery ? <AwsRecordingRecoveryPanel key={existingCapture.id + ':' + existingCapture.sessionId} recordingId={existingCapture.id} sessionId={existingCapture.sessionId} /> : null}
   </section>;

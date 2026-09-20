@@ -5,6 +5,7 @@ import { AdapterError } from "@/adapters/errors";
 import { requestRecordingAuthority } from "@/lib/recording-authority-client";
 import { type RecordingAuthorityRequest, type RecordingConsentRelease, type RecordingWorkspace } from "@/contracts/encounterRecordingAuthority";
 import { AwsRecordingCapturePanel } from "./AwsRecordingCapturePanel";
+import { AwsRecordingTranscriptionPanel } from "./AwsRecordingTranscriptionPanel";
 import type { AwsBrowserRecording } from "@/lib/aws-browser-recording";
 import { onWorkforceSessionChange } from "@/lib/workforce-session-change";
 
@@ -29,6 +30,7 @@ export function AwsRecordingConsentPanel({ encounterId, ownerRef, encounterOpen 
   const controller = useRef<AbortController | null>(null);
   const running = useRef(false);
   const [identityChanged, setIdentityChanged] = useState(false);
+  const [finishedHere, setFinishedHere] = useState<string | null>(null);
   useEffect(() => {
     const active = new AbortController(); controller.current = active;
     const unsubscribe = onWorkforceSessionChange(() => {
@@ -87,7 +89,7 @@ export function AwsRecordingConsentPanel({ encounterId, ownerRef, encounterOpen 
   if (identityChanged) return <Card className="mt-4 p-4"><p role="alert">Your workforce session changed. Recording has stopped and local audio was cleared. Reload this encounter after signing in to review server recovery; this does not confirm remote deletion.</p></Card>;
   return <Card className="mt-4 space-y-4 p-4">
     <h2 className="m-0 text-base font-semibold">Recording consent — AWS</h2>
-    <p className="text-sm text-subtle">Recording consent does not enable audio capture by itself. A separate service readiness check is required. Transcription and AI drafting are not available here yet.</p>
+    <p className="text-sm text-subtle">Recording consent does not enable audio capture by itself. A separate service readiness check is required. Transcription runs only for finished recordings through its own reviewed service; AI drafting is not available.</p>
     <div role="status" aria-live="polite">{busy ? "Contacting the consent service…" : notice}</div>
     {error ? <p role="alert" className="text-sm text-red-700">{error}</p> : null}
     {retry ? <div className="space-y-2">
@@ -172,6 +174,9 @@ export function AwsRecordingConsentPanel({ encounterId, ownerRef, encounterOpen 
     </form> : null}
     <AwsRecordingCapturePanel encounterId={encounterId} ownerRef={ownerRef}
       available={encounterOpen && workspace?.encounterStatus === 'in_progress' && !busy && !retry}
-      existingCapture={workspace?.activeCapture ?? null} />
+      existingCapture={workspace?.activeCapture ?? null} onFinished={setFinishedHere} />
+    {workspace ? <AwsRecordingTranscriptionPanel available={!busy && !retry} captures={workspace.finishedCaptures} /> : null}
+    {workspace && finishedHere && !workspace.finishedCaptures.some(c => c.id === finishedHere)
+      ? <p className="text-sm">A recording finished on this page is not in the loaded workspace yet. Load the consent workspace again to review its transcription.</p> : null}
   </Card>;
 }

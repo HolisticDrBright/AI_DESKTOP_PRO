@@ -7,7 +7,7 @@ import { POST } from "./route";
 const id = "11111111-1111-4111-8111-111111111111";
 const other = "22222222-2222-4222-8222-222222222222";
 const request = { action: "workspace", encounterId: id, locale: "en-US", jurisdiction: "US-CA" };
-const workspace = { encounterId: id, encounterStatus: "in_progress", participants: [], consentReleases: [], activeCapture: null };
+const workspace = { encounterId: id, encounterStatus: "in_progress", participants: [], consentReleases: [], activeCapture: null, finishedCaptures: [] };
 const capabilities = { consentManagement: true, audioCapture: false, reason: "audio_transport_not_configured" };
 const upstream = vi.fn();
 function req(data: unknown = request, headers: Record<string, string> = {}) {
