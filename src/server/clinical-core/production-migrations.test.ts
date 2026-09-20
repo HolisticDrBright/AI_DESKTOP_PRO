@@ -5,6 +5,7 @@ import type { ClinicalCoreDatabase, ClinicalCoreTransaction } from "./database";
 import type { ClinicalCoreMigration } from "./migrations";
 import {
   applyProductionClinicalCoreMigrations,
+  inspectProductionClinicalCoreMigrations,
   ProductionClinicalCoreMigrationError,
 } from "./production-migrations";
 
@@ -284,5 +285,33 @@ describe("production clinical-core migrations", () => {
     const harness = databaseFor({ failOn: "create index" });
     await expect(applyProductionClinicalCoreMigrations(harness.database, [migration]))
       .rejects.toEqual(new ProductionClinicalCoreMigrationError("migration_failed", migration.version, 2));
+  });
+});
+
+describe("read-only production migration inspection", () => {
+  const later: ClinicalCoreMigration = { ...migration, version: "20260821060000", name: "later", sha256: "b".repeat(64) };
+  function inspectable(rows: Array<{ version: string; sha256: string }>, ledger = true) {
+    const statements: string[] = [];
+    const database: ClinicalCoreDatabase = { transaction: async (work) => work({ async query<Row extends Record<string, unknown>>(sql: string) {
+      statements.push(sql);
+      if (sql.includes("to_regclass")) return { rows: [{ present: ledger }] as unknown as Row[] };
+      if (sql.startsWith("select version")) return { rows: rows as unknown as Row[] };
+      throw new Error("unexpected write");
+    } } as ClinicalCoreTransaction) } as ClinicalCoreDatabase;
+    return { database, statements };
+  }
+  it("reports applied, missing, mismatched and unknown versions without creating or applying anything", async () => {
+    const { database, statements } = inspectable([{ version: migration.version, sha256: "c".repeat(64) }, { version: "20260101000000", sha256: "d".repeat(64) }]);
+    const result = await inspectProductionClinicalCoreMigrations(database, [migration, later]);
+    expect(result).toEqual({ applied: [], missing: [later.version], mismatched: [{ version: migration.version, recorded: "c".repeat(64), artifact: "a".repeat(64) }],
+      unknown: ["20260101000000"], ledgerPresent: true, artifactReleaseHash: expect.stringMatching(/^[a-f0-9]{64}$/) });
+    expect(statements.some((sql) => /create|insert|update|delete/i.test(sql))).toBe(false);
+    const clean = await inspectProductionClinicalCoreMigrations(inspectable([{ version: migration.version, sha256: migration.sha256 }]).database, [migration, later]);
+    expect(clean).toMatchObject({ applied: [migration.version], missing: [later.version], mismatched: [], unknown: [] });
+  });
+  it("treats an absent ledger as everything missing and never queries the missing table", async () => {
+    const { database, statements } = inspectable([], false);
+    expect(await inspectProductionClinicalCoreMigrations(database, [migration, later])).toMatchObject({ missing: [migration.version, later.version], applied: [], ledgerPresent: false });
+    expect(statements.some((sql) => sql.startsWith("select version"))).toBe(false);
   });
 });

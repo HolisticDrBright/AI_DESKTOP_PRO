@@ -4,6 +4,7 @@ if (typeof window !== "undefined") {
 
 import type { ClinicalCoreDatabase } from "./database";
 import type { ClinicalCoreMigration } from "./migrations";
+import { createHash } from "node:crypto";
 import { splitPostgresStatements } from "./migrations";
 
 export class ProductionClinicalCoreMigrationError extends Error {
@@ -30,6 +31,43 @@ export type ProductionClinicalCoreMigrationResult = {
  * patient, consent, clinical, or provider rows may exist at this readiness
  * stage; that invariant is checked before the transaction can commit.
  */
+export type ProductionClinicalCoreMigrationInspection = {
+  /** Versions recorded in clinical_core.schema_migrations with the same hash as the artifact. */
+  applied: string[];
+  /** Artifact versions not yet recorded, in apply order: the subset a deployment must apply. */
+  missing: string[];
+  /** Recorded versions whose hash differs from the artifact: a deployment must stop, not apply. */
+  mismatched: Array<{ version: string; recorded: string; artifact: string }>;
+  /** Recorded versions the artifact no longer carries: unknown history, also a stop. */
+  unknown: string[];
+  ledgerPresent: boolean;
+  artifactReleaseHash: string;
+};
+/** Read-only comparison of the database's migration ledger against the built artifact. Nothing is created or applied;
+ * a database without the ledger table reports every artifact version as missing. */
+export async function inspectProductionClinicalCoreMigrations(
+  database: ClinicalCoreDatabase,
+  migrations: ClinicalCoreMigration[],
+): Promise<ProductionClinicalCoreMigrationInspection> {
+  const artifactReleaseHash = createHash("sha256").update(migrations.map((m) => `${m.version}:${m.sha256}`).join("\n")).digest("hex");
+  return database.transaction(async (tx) => {
+    const ledger = await tx.query<{ present: boolean }>("select to_regclass('clinical_core.schema_migrations') is not null as present");
+    const ledgerPresent = ledger.rows[0]?.present === true;
+    const existing = ledgerPresent ? await tx.query<{ version: string; sha256: string }>("select version, sha256 from clinical_core.schema_migrations order by version") : { rows: [] as Array<{ version: string; sha256: string }> };
+    const byVersion = new Map(existing.rows.map((row) => [row.version, row.sha256]));
+    const known = new Set(migrations.map((m) => m.version));
+    const applied: string[] = [], missing: string[] = [], mismatched: Array<{ version: string; recorded: string; artifact: string }> = [];
+    for (const migration of migrations) {
+      const recorded = byVersion.get(migration.version);
+      if (recorded === undefined) missing.push(migration.version);
+      else if (recorded === migration.sha256) applied.push(migration.version);
+      else mismatched.push({ version: migration.version, recorded, artifact: migration.sha256 });
+    }
+    const unknown = existing.rows.map((row) => row.version).filter((version) => !known.has(version));
+    return { applied, missing, mismatched, unknown, ledgerPresent, artifactReleaseHash };
+  });
+}
+
 export async function applyProductionClinicalCoreMigrations(
   database: ClinicalCoreDatabase,
   migrations: ClinicalCoreMigration[],

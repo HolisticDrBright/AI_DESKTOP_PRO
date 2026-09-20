@@ -10,6 +10,7 @@ await build({
     operator: "src/server/clinical-core/aws-deployment-cli.ts",
     catalogOperator: "src/server/clinical-core/aws-catalog-import-cli.ts",
     acceptance: "src/server/clinical-core/aws-acceptance-cli.ts",
+    exportRetentionAcceptance: "src/server/clinical-core/export-retention-acceptance-cli.ts",
   },
   outdir,
   bundle: true,
