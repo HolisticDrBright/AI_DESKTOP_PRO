@@ -105,3 +105,13 @@ or weak evidence. Do not relabel old requests automatically. Store evidence is
 an accountable operator attestation: a syntactically valid digest alone does not
 prove an external system actually erased data. Hosted fulfillment, external-store
 verification, correction resolution and cross-store execution remain open.
+
+## September 20: paged owner listing
+
+`clinical_core.list_owned_privacy_requests(limit, after_submitted, after_id)` (migration 88)
+walks the owner's ledger newest first by `(submitted_at, id)` descending with a bounded page
+of 1 to 50; both cursor parts must be given together and the zero-argument fifty-most-recent
+call is unchanged. The consumer API accepts `limit`, `afterSubmittedAt` and `afterId` on
+`GET /clinical-core/consumer/personal/privacy-request`, verifies the returned order strictly,
+and returns `nextAfter` only when a full page came back. Same owner, purpose and per-request
+JSON as before; nothing about fulfillment semantics changes.

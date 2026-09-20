@@ -21,6 +21,24 @@ describe('owned privacy requests',()=>{
     await expect(setup(JSON.stringify([request()])).adapter.listPrivacyRequests(context)).resolves.toHaveLength(1);
     await expect(setup('{bad').adapter.listPrivacyRequests(context)).rejects.toMatchObject({code:'storage_unavailable'});
   });
+  it('walks the ledger newest first by (submittedAt, id) with a verified cursor, and refuses unordered or oversized pages',async()=>{
+    const older=request({privacyRequestId:'22222222-2222-4222-8222-222222222222',submittedAt:'2026-09-15T12:00:00.000Z',updatedAt:'2026-09-15T12:00:00.000Z'});
+    const s=setup([request(),older]);
+    const page=await s.adapter.listPrivacyRequestPage(context,{limit:2});
+    expect(page.requests.map(r=>r.privacyRequestId)).toEqual([uuid,older.privacyRequestId]);
+    expect(page.nextAfter).toEqual({submittedAt:older.submittedAt,privacyRequestId:older.privacyRequestId});
+    expect(s.query.mock.calls[1]).toEqual(['select clinical_core.list_owned_privacy_requests($1::integer,$2::timestamptz,$3) as result',[2,null,null]]);
+    const next=setup([]);expect(await next.adapter.listPrivacyRequestPage(context,{limit:2,after:page.nextAfter!})).toEqual({requests:[],nextAfter:null});
+    expect(next.query.mock.calls[1][1]).toEqual([2,older.submittedAt,clinicalUuid(older.privacyRequestId)]);
+    const short=setup([request()]);expect((await short.adapter.listPrivacyRequestPage(context,{limit:2})).nextAfter).toBeNull();
+    expect((await setup([request()]).adapter.listPrivacyRequestPage(context)).nextAfter).toBeNull();
+    await expect(setup([older,request()]).adapter.listPrivacyRequestPage(context,{limit:2})).rejects.toMatchObject({code:'storage_unavailable'});
+    await expect(setup([request(),request()]).adapter.listPrivacyRequestPage(context,{limit:2})).rejects.toMatchObject({code:'storage_unavailable'});
+    await expect(setup([request()]).adapter.listPrivacyRequestPage(context,{limit:2,after:{submittedAt:older.submittedAt,privacyRequestId:older.privacyRequestId}})).rejects.toMatchObject({code:'storage_unavailable'});
+    await expect(setup([request(),older]).adapter.listPrivacyRequestPage(context,{limit:1})).rejects.toMatchObject({code:'storage_unavailable'});
+    for(const bad of [{limit:0},{limit:51},{limit:2,after:{submittedAt:'yesterday',privacyRequestId:uuid}},{limit:2,after:{submittedAt:older.submittedAt,privacyRequestId:'x'}},{limit:2,extra:true}])
+      await expect(setup([]).adapter.listPrivacyRequestPage(context,bad as never)).rejects.toMatchObject({code:'request_invalid'});
+  });
   it('submits deletion and correction requests under consent_management with exact parameters',async()=>{
     const s=setup(request({duplicate:false}));
     const state=await s.adapter.submitPrivacyRequest(context,{requestId:req,kind:'deletion'});

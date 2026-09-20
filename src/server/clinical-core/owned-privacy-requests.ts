@@ -86,12 +86,37 @@ export function createOwnedPrivacyRequests(run:Run){
           const row=parsed.data;if(row.collection!==input.collection||row.recordId.toLowerCase()<=previous)unavailable();previous=row.recordId.toLowerCase();return row;});
       });
     },
-    async listPrivacyRequests(context:ProductionClinicalRequestContext):Promise<PrivacyRequest[]>{
+    /** Newest first. Without a page the 50 most recent are returned; with a page
+     * the ledger is walked by (submittedAt, privacyRequestId) so long histories
+     * are complete. Ordering is verified, and a full page yields the next cursor. */
+    async listPrivacyRequests(context:ProductionClinicalRequestContext,page?:{limit?:number;after?:{submittedAt:string;privacyRequestId:string}}):Promise<PrivacyRequest[]>{
+      return (await this.listPrivacyRequestPage(context,page)).requests;
+    },
+    async listPrivacyRequestPage(context:ProductionClinicalRequestContext,page?:{limit?:number;after?:{submittedAt:string;privacyRequestId:string}}):Promise<{requests:PrivacyRequest[];nextAfter:{submittedAt:string;privacyRequestId:string}|null}>{
+      if(page!==undefined)exact(page,['limit','after']);
+      const limit=page?.limit??50,after=page?.after;
+      if(!Number.isInteger(limit)||limit<1||limit>50)invalid();
+      if(after!==undefined){exact(after,['submittedAt','privacyRequestId']);if(!date(after.submittedAt)||!UUID.test(after.privacyRequestId))invalid();}
       return run(context,async tx=>{
-        const result=await tx.query<{result:unknown}>('select clinical_core.list_owned_privacy_requests() as result');
+        const result=page===undefined
+          ?await tx.query<{result:unknown}>('select clinical_core.list_owned_privacy_requests() as result')
+          :await tx.query<{result:unknown}>('select clinical_core.list_owned_privacy_requests($1::integer,$2::timestamptz,$3) as result',
+            [limit,after?.submittedAt??null,after?clinicalUuid(after.privacyRequestId):null]);
         const rows=decoded(result.rows[0]?.result);
-        if(!Array.isArray(rows)||rows.length>50)unavailable();
-        return rows.map(parse);
+        if(!Array.isArray(rows)||rows.length>limit)unavailable();
+        const requests=rows.map(parse);
+        // The paged function orders strictly by (submitted_at desc, id desc); the legacy
+        // fifty-most-recent listing keeps its original order and is not re-sorted here.
+        if(page!==undefined){
+          let previous=after?{submittedAt:Date.parse(after.submittedAt),id:after.privacyRequestId.toLowerCase()}:null;
+          for(const r of requests){
+            const at=Date.parse(r.submittedAt),id=r.privacyRequestId.toLowerCase();
+            if(previous&&(at>previous.submittedAt||at===previous.submittedAt&&id>=previous.id))unavailable();
+            previous={submittedAt:at,id};
+          }
+        }
+        const last=requests.at(-1);
+        return {requests,nextAfter:page!==undefined&&requests.length===limit&&last?{submittedAt:last.submittedAt,privacyRequestId:last.privacyRequestId}:null};
       });
     },
     async tombstonePersonalRecords(context:ProductionClinicalRequestContext,input:{requestId:string;confirmTombstoneAllPersonalRecords:true}):Promise<PrivacyRequest>{

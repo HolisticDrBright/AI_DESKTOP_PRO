@@ -95,8 +95,9 @@ concurrency, ambiguous responses and preservation of legacy commands.
 This is not a complete deployed correction service. Remaining engineering:
 nested/structured-field editing (the owner-applied successor covers scalar
 top-level fields only),
-source lab/document and clinic-specific amendments, cross-store propagation,
-complete request-history pagination and large-account acceptance. Personal
+source lab/document and clinic-specific amendments, cross-store propagation
+and large-account acceptance (request-history paging is now complete; see
+`owned-privacy-requests.md`). Personal
 record-history purge does not erase this privacy request/resolution audit;
 its retention needs a reviewed policy. Operator explanations may contain
 sensitive information and must stay in the authenticated privacy workflow.

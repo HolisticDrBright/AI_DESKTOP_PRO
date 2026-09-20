@@ -67,7 +67,13 @@ export function createOwnedConsumerApi(input:{configuration:OwnedConsumerApiConf
             return response(200,{data:await adapter.listCorrectionTargets(context,{collection:String(body.collection??''),
               ...(body.limit===undefined?{}:{limit:Number(body.limit)}),...(body.after===undefined?{}:{after:String(body.after)})})});
           }
-          exact(body,[]);return response(200,{data:{requests:await adapter.listPrivacyRequests(context),coverage:PERSONAL_DELETION_COVERAGE}});
+          exact(body,['limit','afterSubmittedAt','afterId']);
+          if(body.limit===undefined&&body.afterSubmittedAt===undefined&&body.afterId===undefined)
+            return response(200,{data:{requests:await adapter.listPrivacyRequests(context),coverage:PERSONAL_DELETION_COVERAGE,nextAfter:null}});
+          if((body.afterSubmittedAt===undefined)!==(body.afterId===undefined))invalid();
+          const page=await adapter.listPrivacyRequestPage(context,{...(body.limit===undefined?{}:{limit:Number(body.limit)}),
+            ...(body.afterId===undefined?{}:{after:{submittedAt:String(body.afterSubmittedAt),privacyRequestId:String(body.afterId)}})});
+          return response(200,{data:{requests:page.requests,coverage:PERSONAL_DELETION_COVERAGE,nextAfter:page.nextAfter}});
         }
         if(post){exact(body,['requestId']);return response(200,{data:await adapter.startPrivacyExport(context,{requestId:String(body.requestId??'')})});}
         exact(body,['exportId','section','limit','cursor']);

@@ -495,6 +495,22 @@ describe('privacy fulfillment: executable production SQL with fictional data (no
   });
   it('keeps consumer request views owner-scoped',async()=>{
     const own=await asActor('select clinical_core.list_owned_privacy_requests() as result',[],owner,'consumer');
+    // Keyset paging walks the same ledger newest first and never crosses owners.
+    const all=(own.rows[0] as {result:{privacyRequestId:string;submittedAt:string}[]}).result;
+    const first=(await asActor('select clinical_core.list_owned_privacy_requests(1,null,null) as result',[],owner,'consumer')).rows[0] as {result:{privacyRequestId:string;submittedAt:string}[]};
+    expect(first.result).toHaveLength(Math.min(1,all.length));
+    if(all.length>1){
+      const rest=(await asActor('select clinical_core.list_owned_privacy_requests($3::integer,$1::timestamptz,$2) as result',[first.result[0].submittedAt,first.result[0].privacyRequestId,all.length-1],owner,'consumer')).rows[0] as {result:{privacyRequestId:string;submittedAt:string}[]};
+      // Same ledger, complete and without overlap; the paged order is strict by (submittedAt, id) descending.
+      const walked=[...first.result,...rest.result];
+      expect(walked.map(r=>r.privacyRequestId).sort()).toEqual(all.map(r=>r.privacyRequestId).sort());
+      for(let i=1;i<walked.length;i++){
+        const a=walked[i-1],b=walked[i];
+        expect(Date.parse(b.submittedAt)<Date.parse(a.submittedAt)||(b.submittedAt===a.submittedAt&&b.privacyRequestId<a.privacyRequestId)).toBe(true);
+      }
+    }
+    await expect(asActor('select clinical_core.list_owned_privacy_requests(0,null,null) as result',[],owner,'consumer')).rejects.toThrow('privacy_request_invalid');
+    await expect(asActor('select clinical_core.list_owned_privacy_requests(5,now(),null) as result',[],owner,'consumer')).rejects.toThrow('privacy_request_invalid');
     const foreign=await asActor('select clinical_core.list_owned_privacy_requests() as result',[],other,'consumer');
     const a=(own.rows[0] as {result:{privacyRequestId:string}[]}).result.map(r=>r.privacyRequestId);
     const b=(foreign.rows[0] as {result:{privacyRequestId:string}[]}).result.map(r=>r.privacyRequestId);

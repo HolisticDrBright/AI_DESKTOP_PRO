@@ -308,6 +308,10 @@
     {
       "version": "20260920050000",
       "file": "20260920050000_production_owned_correction_request_content.sql"
+    },
+    {
+      "version": "20260920060000",
+      "file": "20260920060000_production_owned_privacy_request_paging.sql"
     }
   ]
 }
