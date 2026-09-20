@@ -70,6 +70,31 @@ describe('privacy operations deployable candidate',()=>{
     const env=(t.Resources.Function.Properties.Environment as {Variables:Record<string,Json>}).Variables;
     expect(env.CONSUMER_USER_POOL_ID).toEqual({Ref:'ConsumerUserPoolId'});expect(env.IDENTITY_DELETION_ENABLED).toEqual({Ref:'IdentityDeletionEnabled'});
   });
+  it('grants export retention only listing, abort, versioned delete and HEAD under the export prefix, behind its own condition',()=>{
+    expect(t.Parameters.ExportCleanupEnabled.Default).toBe('false');expect(t.Parameters.ExportBucketName.Default).toBe('');expect(t.Parameters.ExportKmsKeyArn.Default).toBe('');
+    const policies=t.Resources.Role.Properties.Policies as Record<string,Json>[];
+    const branch=policies[5]['Fn::If'] as Json[];expect(branch[0]).toBe('ExportCleanupActive');
+    const text=JSON.stringify(branch[1]);
+    for(const action of ['s3:ListBucketVersions','s3:ListBucketMultipartUploads','s3:AbortMultipartUpload','s3:DeleteObjectVersion','s3:GetObjectVersion'])expect(text).toContain(action);
+    for(const forbidden of ['s3:GetObject"','s3:PutObject','s3:DeleteObject"','kms:','"Resource":"*"','personal-labs','personal-voice'])expect(text).not.toContain(forbidden);
+    expect(text).toContain('"s3:prefix":"personal-exports/*"');expect(text).toContain('personal-exports/*');
+    expect(branch[2]).toEqual({Ref:'AWS::NoValue'});
+    expect(t.Rules).toMatchObject({ReviewedExportCleanup:{RuleCondition:{'Fn::Equals':[{Ref:'ExportCleanupEnabled'},'true']}}});
+    const defaults=Object.fromEntries(Object.entries(t.Parameters).map(([k,v])=>[k,v.Default??'']));
+    const active={...defaults,PhiAllowed:'true',Activation:'approved',ActivationEvidenceSha256:'a'.repeat(64),DatabaseReviewSha256:'b'.repeat(64),
+      WorkforceMfaReviewSha256:'c'.repeat(64),AlarmTopicArn:'arn:aws:sns:us-east-2:123456789012:reviewed'};
+    const cleanup={...active,ExportCleanupEnabled:'true',ExportCleanupEvidenceSha256:'f'.repeat(64),ExportBucketName:'fictional-export-bucket',
+      ExportKmsKeyArn:'arn:aws:kms:us-east-2:123456789012:key/00000000-0000-4000-8000-000000000003'};
+    const resolve=(v:Json,p:Record<string,string>):Json=>{if(v&&typeof v==='object'&&!Array.isArray(v)&&typeof (v as Record<string,Json>).Condition==='string')return evaluate(resolve(t.Conditions[(v as Record<string,string>).Condition],p),p) as Json;
+      if(Array.isArray(v))return v.map(x=>resolve(x,p));if(v&&typeof v==='object')return Object.fromEntries(Object.entries(v).map(([k,x])=>[k,resolve(x,p)]));return v;};
+    expect(evaluate(resolve(t.Conditions.ExportCleanupActive,active),active)).toBe(false);
+    expect(evaluate(resolve(t.Conditions.ExportCleanupActive,cleanup),cleanup)).toBe(true);
+    for(const key of ['ExportCleanupEnabled','ExportCleanupEvidenceSha256','ExportBucketName','ExportKmsKeyArn','PhiAllowed'])
+      expect(evaluate(resolve(t.Conditions.ExportCleanupActive,{...cleanup,[key]:defaults[key]}),{...cleanup,[key]:defaults[key]})).toBe(false);
+    const env=(t.Resources.Function.Properties.Environment as {Variables:Record<string,Json>}).Variables;
+    expect(env.EXPORT_CLEANUP_ENABLED).toEqual({Ref:'ExportCleanupEnabled'});
+    expect(env.PERSONAL_EXPORT_BUCKET).toEqual({'Fn::If':['ExportCleanupActive',{Ref:'ExportBucketName'},'']});
+  });
   it('remains blocked unless every separate approval and alarm destination exists',()=>{
     const defaults=Object.fromEntries(Object.entries(t.Parameters).map(([k,v])=>[k,v.Default??'']));
     const approved={...defaults,PhiAllowed:'true',Activation:'approved',ActivationEvidenceSha256:'a'.repeat(64),

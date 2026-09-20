@@ -13,6 +13,8 @@ import {stopLabExecutions} from './lab-execution-stop';
 import {createAwsVoiceService} from './aws-voice-jobs-lambda';
 import {createConsumerIdentityDeleter} from './owned-identity-deletion';
 import {CognitoIdentityProviderClient} from '@aws-sdk/client-cognito-identity-provider';
+import {createAwsPrivacyExportStore} from './aws-privacy-export-store';
+import type {PrivacyExportRetentionDelivery} from './privacy-operations';
 let cached:ReturnType<typeof createPrivacyOperationsApi>|undefined;
 const tableName=(arn:string)=>arn.split(':table/')[1]??'';
 /** Purge dependencies are built only when the reviewed purge flag is on; the
@@ -37,6 +39,14 @@ function identityDeleter(e:NodeJS.ProcessEnv){
   if(e.IDENTITY_DELETION_ENABLED!=='true')return undefined;
   return()=>createConsumerIdentityDeleter({client:new CognitoIdentityProviderClient({region:e.AWS_REGION}),poolId:e.CONSUMER_USER_POOL_ID??''});
 }
+/** Export retention is built only when its reviewed flag is on and the export bucket, key and owner are all pinned. */
+function exportRetention(e:NodeJS.ProcessEnv):(()=>PrivacyExportRetentionDelivery)|undefined{
+  if(e.EXPORT_CLEANUP_ENABLED!=='true')return undefined;
+  const storage={bucket:e.PERSONAL_EXPORT_BUCKET??'',kmsKeyArn:e.PERSONAL_EXPORT_KMS_KEY_ARN??'',expectedBucketOwner:e.PERSONAL_EXPORT_BUCKET_OWNER??'',region:e.AWS_REGION??''};
+  if(!/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/.test(storage.bucket)||!/^arn:aws:kms:[a-z0-9-]+:[0-9]{12}:key\/[a-f0-9-]{36}$/.test(storage.kmsKeyArn)
+    ||!/^[0-9]{12}$/.test(storage.expectedBucketOwner)||!/^[a-z0-9-]+$/.test(storage.region))throw new Error('privacy_export_cleanup_configuration_invalid');
+  return()=>({store:createAwsPrivacyExportStore(),storage});
+}
 export async function handler(event:ApiGatewayV2Event){
   if(!cached){
     const e=process.env;
@@ -46,11 +56,12 @@ export async function handler(event:ApiGatewayV2Event){
       personalPurgeEnabled:e.PERSONAL_PURGE_ENABLED==='true',personalPurgeEvidenceSha256:e.PERSONAL_PURGE_EVIDENCE_SHA256,
       externalInventoryEnabled:e.EXTERNAL_INVENTORY_ENABLED==='true',externalInventoryEvidenceSha256:e.EXTERNAL_INVENTORY_EVIDENCE_SHA256,
       externalPurgeEnabled:e.EXTERNAL_PURGE_ENABLED==='true',externalPurgeEvidenceSha256:e.EXTERNAL_PURGE_EVIDENCE_SHA256,
-      identityDeletionEnabled:e.IDENTITY_DELETION_ENABLED==='true',identityDeletionEvidenceSha256:e.IDENTITY_DELETION_EVIDENCE_SHA256},
+      identityDeletionEnabled:e.IDENTITY_DELETION_ENABLED==='true',identityDeletionEvidenceSha256:e.IDENTITY_DELETION_EVIDENCE_SHA256,
+      exportCleanupEnabled:e.EXPORT_CLEANUP_ENABLED==='true',exportCleanupEvidenceSha256:e.EXPORT_CLEANUP_EVIDENCE_SHA256},
       operations:()=>createPrivacyOperations(createRdsDataClinicalCoreDatabase({clusterArn:e.CLINICAL_DATABASE_CLUSTER_ARN??'',
         secretArn:e.CLINICAL_DATABASE_SECRET_ARN??'',databaseName:e.CLINICAL_DATABASE_NAME??'',region:e.AWS_REGION}),
         ()=>createExternalInventoryReader({labs:e.PRIVACY_LAB_TABLE_ARN??'',voice:e.PRIVACY_VOICE_TABLE_ARN??'',region:e.AWS_REGION??''}),
-        purgeExecutor(e),identityDeleter(e))});
+        purgeExecutor(e),identityDeleter(e),exportRetention(e))});
   }
   return cached(event);
 }

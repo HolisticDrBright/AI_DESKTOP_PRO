@@ -89,14 +89,74 @@ hash (`ExportBucketName`, `ExportKmsKeyArn`, `ExportReviewSha256`; the IAM state
 - **Delivery.** `download` requires a sign-in within the last five minutes (token
   `auth_time`), verifies the exact ready version, its encryption and size, and returns a
   five-minute signed link with `attachment` disposition. Every issuance is audited.
-- **Expiry and cleanup.** A ready copy expires 48 hours after the cut-off; the owner's next
-  request, cancel or status call marks it expired and the owner's next cleanup pass aborts
-  open uploads and deletes staging and object versions, each verified absent, before the
-  job is recorded as deleted. One open job per owner; one new job per owner per hour.
+- **Expiry and cleanup.** A ready copy expires 48 hours after the cut-off. Expiry is a
+  committed state transition (migration 20260920130000): the owner's next status, lease or
+  cleanup call, or the assigned operator's retention pass, marks a ready copy expired and an
+  unfinished job failed (`deadline_passed`). The objects are removed by the owner's next
+  cleanup pass or by the operator's retention pass described below; a job is recorded as
+  deleted only after the store lists nothing under its key. One open job per owner; one new
+  job per owner per hour. The 48-hour figure is what the code enforces; it is not a reviewed
+  retention policy and the policy text is not written.
 - **Evidence.** PGlite runs the production SQL with a fictional object store
-  (`owned-privacy-export-jobs.database.test.ts`): multi-part packaging with exact counts
-  against the snapshot row, download issuance and refusal, cancellation with verified
-  cleanup, expiry, resumption after a failed pass, and cross-owner refusal. No bucket,
-  hosted run, signed link or real account was used.
+  (`owned-privacy-export-jobs.database.test.ts`, 18 cases): multi-part packaging with exact
+  counts against the snapshot row, download issuance and refusal, cancellation with listing
+  proof, expiry, resumption after a failed pass, cross-owner refusal, the four independent
+  recheck cases below unmodified, the failure matrix, and the operator retention pass. No
+  bucket, hosted run, signed link or real account was used. **Local verification only**: the
+  S3 store (`aws-privacy-export-store.ts`) has never been exercised against a bucket, and the
+  listing calls, HEAD on SSE-KMS versions without `kms:Decrypt`, and the IAM statements are
+  unverified until the hosted synthetic run.
+
+## September 20 recheck: failure boundaries (migration 20260920130000)
+
+An independent recheck of the job path reproduced four failures against migration
+20260920110000. Its four tests were added unmodified
+(`describe('Codex recheck export failure boundaries')`) and pass with the repairs below;
+none of the earlier cases changed.
+
+| Recheck finding | Repair |
+|---|---|
+| Cleanup reported deletion when the store denied the abort. | `cleanupPrivacyExportJobs` no longer swallows abort errors. It lists the open uploads and versions under the job's key, aborts and deletes what it finds (plus the recorded versions), then lists again and HEADs each version; the job is certified deleted only when nothing remains. A refusal, timeout or an upload still listed after an abort that returned leaves the job pending with `objectDeleted:false`. |
+| An upload created before a failed first part was orphaned. | The upload id is recorded (`record_owned_privacy_export_upload`) under the same lease before any part is sent, and cleanup finds uploads by listing rather than by the recorded id, so an upload whose creation response was lost is still removed. |
+| A job stuck at section `done` after the object saved but the database receipt failed. | A pass that leases a job whose parts are all recorded never sends a part. It lists the versions under the key: exactly one live version whose HEAD matches the recorded byte count and the reviewed key completes the job with that version; no version and an open upload completes the upload from the recorded parts; anything else fails the job closed (`object_missing`, `object_mismatch`, `object_ambiguous`) and cleanup removes every version. |
+| Expired unfinished jobs stayed `running`. | The lease no longer raises after updating: it commits the `failed`/`deadline_passed` transition with its audit row and returns `leased:false`, which the API reports as a conflict. Status reads and both cleanup listings commit the same transition for requested, running and ready jobs. |
+
+The store interface gained `listUploads` and `listVersions` (S3 `ListMultipartUploads` and
+`ListObjectVersions`, bound to one job's key prefix). The personal-storage candidate grants
+`s3:ListBucketVersions` and `s3:ListBucketMultipartUploads` on the export bucket only with
+`s3:prefix` under `personal-exports/*`; no bucket-wide listing and no unversioned delete.
+
+Additional cases in the same file: denied then timed-out abort (pending twice, certified on
+the third pass), abort that returns while the upload is still listed, a recorded upload that
+is already gone (no abort call) and a never-started expired job (no store call at all), a
+lost create-upload response followed by a part failure, a superseded staging version whose
+delete failed during the pass, a lost completion response (recovered without resending a
+part) followed by an ambiguous second version (failed closed, both versions removed), and two
+concurrent polls (one pass, one conflict).
+
+## Retention that does not depend on the owner (migration 20260920130000)
+
+The assigned privacy operator's `cleanupExports` action (privacy-operations API, workspace
+button "Run export retention pass") lists, oldest first and at most ten per call, the
+cancelled, failed and expired export jobs of every owner the operator holds a live assignment
+for, after committing deadline transitions for that owner's requested, running and ready
+jobs. Closed or disabled owner accounts are included: the owner's own identity is never
+needed. Each job is removed with the same listing proof as the owner's pass and certified
+under the owner lock (`record_privacy_export_object_deleted_by_operator`), with the operator
+recorded on the `job.failed`, `job.expired` and `object.deleted` audit rows. The response
+carries counts and per-job outcomes only, never keys, owners or content.
+
+Activation is separate: `ExportCleanupEnabled`, `ExportCleanupEvidenceSha256`,
+`ExportBucketName` and `ExportKmsKeyArn` on the privacy-operations candidate. The IAM policy
+under that condition allows prefix-bound listing, `s3:AbortMultipartUpload`,
+`s3:DeleteObjectVersion` and `s3:GetObjectVersion` (HEAD) on `personal-exports/*`; no
+`GetObject`, no `PutObject`, no KMS grant. Whether `HeadObject` on an SSE-KMS version succeeds
+without `kms:Decrypt` under this role is a hosted check, not a local one. A bucket lifecycle
+rule that aborts incomplete multipart uploads and expires noncurrent versions is still
+recommended as defence in depth and is bucket configuration outside this repository.
+
+This is scheduled by a person, not by a timer: there is still no service identity, so the
+pass runs when an assigned operator (or a reviewed scheduled invocation using an operator
+identity, which does not exist yet) calls it.
 
 This is still the inline export's coverage, not a complete account export.

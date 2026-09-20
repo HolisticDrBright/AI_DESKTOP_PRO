@@ -1,6 +1,6 @@
 'use client';
 import {useEffect,useRef,useState} from 'react';
-import {privacyOperationSchema,parsePrivacyOperationResult,type PrivacyOperation,type PrivacyQueue,type PrivacyDetail,type PersonalPurgePreview,type PersonalPurgeReceipt,type ExternalInventorySummary} from '@/contracts/privacyOperations';
+import {privacyOperationSchema,parsePrivacyOperationResult,type PrivacyOperation,type PrivacyQueue,type PrivacyDetail,type PersonalPurgePreview,type PersonalPurgeReceipt,type ExternalInventorySummary,type ExportCleanupSummary} from '@/contracts/privacyOperations';
 import {Card} from '@/components/ui/bits';
 import {Btn} from '@/components/ui/Btn';
 const messages:Record<string,string>={
@@ -23,6 +23,7 @@ export function PrivacyOperationsWorkspace(){
   const [purgeCommand,setPurgeCommand]=useState<string|null>(null);
   const [inventory,setInventory]=useState<ExternalInventorySummary|null>(null);
   const [inventoryCommand,setInventoryCommand]=useState<Extract<PrivacyOperation,{action:'externalInventory'}>|null>(null);
+  const [retention,setRetention]=useState<ExportCleanupSummary|null>(null);
   const alive=useRef(true),working=useRef(false),generation=useRef(0);
   const abort=useRef<AbortController|null>(null);
   useEffect(()=>{
@@ -32,7 +33,7 @@ export function PrivacyOperationsWorkspace(){
       invalidate();working.current=false;
       setBusy(false);setQueue(null);setDetail(null);setExplanation('');setRevision('');setConfirm(false);setError('');setNotice('');
       setPolicy('');setPurgeConfirmation('');setPreview(null);setReceipt(null);setPurgeCommand(null);
-      setInventory(null);setInventoryCommand(null);
+      setInventory(null);setInventoryCommand(null);setRetention(null);
     };
     const hide=()=>{if(document.visibilityState==='hidden')clear();};
     document.addEventListener('visibilitychange',hide);window.addEventListener('pagehide',clear);
@@ -74,6 +75,7 @@ export function PrivacyOperationsWorkspace(){
       }
       setPreview(null);setReceipt(null);setPurgeCommand(null);setPolicy('');setPurgeConfirmation('');
       setInventory(null);setInventoryCommand(null);
+      if(input.action==='cleanupExports'){setRetention(result as ExportCleanupSummary);return;}
       if(input.action==='list'){setQueue(result as PrivacyQueue);setDetail(null);setConfirm(false);setExplanation('');}
       else{setDetail(result as PrivacyDetail);setConfirm(false);
         if(input.action==='resolve'){setQueue(null);setNotice('Decision verified and recorded. Refresh the queue to see remaining requests.');}
@@ -98,6 +100,11 @@ export function PrivacyOperationsWorkspace(){
         <Btn disabled={busy} onClick={()=>void perform({action:'detail',privacyRequestId:item.privacyRequestId})}>Review request</Btn>
       </div>)}
       {queue?.nextAfter?<Btn disabled={busy} onClick={()=>void perform({action:'list',includeClosed:closed,after:queue.nextAfter!})}>Next 25 requests</Btn>:null}
+      <div className="border-t pt-3 space-y-2">
+        <p className="text-sm text-subtle">Export retention: removes the prepared personal-storage copies, staging versions and unfinished uploads of finished or expired export jobs for owners covered by your assignment, including closed accounts. Nothing is opened or read; a job is certified removed only after the store lists nothing under its key.</p>
+        <Btn disabled={busy} onClick={()=>void perform({action:'cleanupExports',maxItems:10})}>Run export retention pass (up to 10 jobs)</Btn>
+        {retention?<p role="status">Removed {retention.cleaned}; still pending {retention.remaining}{retention.items.length===0?' (nothing eligible for your assignments)':''}.</p>:null}
+      </div>
     </Card>
     {detail?<Card className="p-5 space-y-3">
       <h2 className="text-lg font-semibold">Request review</h2>

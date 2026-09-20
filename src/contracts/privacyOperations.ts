@@ -22,6 +22,7 @@ export const privacyOperationSchema=z.discriminatedUnion('action',[
     evidenceSha256:hash,policyVersion}).strict(),
   z.object({action:z.literal('completeDeletion'),privacyRequestId:id,confirmation:z.literal('COMPLETE DELETION REQUEST')}).strict(),
   z.object({action:z.literal('purgeIdentity'),privacyRequestId:id,confirmation:z.literal('DELETE CONSUMER IDENTITY')}).strict(),
+  z.object({action:z.literal('cleanupExports'),maxItems:z.number().int().min(1).max(10)}).strict(),
 ]);
 export type PrivacyOperation=z.infer<typeof privacyOperationSchema>;
 const row=z.object({privacyRequestId:id,ownerId:id,kind:z.enum(['deletion','correction']),
@@ -69,9 +70,19 @@ export const externalPurgeSummarySchema=z.object({inventoryId:id,privacyRequestI
   .refine(v=>(v.state==='complete')===(v.remaining===0&&v.inventoryState!=='scanning'))
   .refine(v=>(v.fulfillmentStore===undefined)===(v.fulfillmentOutcome===undefined)&&(v.fulfillmentStore===undefined||v.state==='complete'));
 export type ExternalPurgeSummary=z.infer<typeof externalPurgeSummarySchema>;
+/** One assigned-operator retention pass over finished export jobs: counts and per-job outcomes only, never keys, owners or content. */
+export const exportCleanupSummarySchema=z.object({cleaned:z.number().int().min(0).max(10),remaining:z.number().int().min(0).max(10),
+  items:z.array(z.object({jobId:id,status:z.enum(['failed','cancelled','expired']),outcome:z.enum(['deleted','pending'])}).strict()).max(10)}).strict()
+  .refine(v=>v.cleaned===v.items.filter(i=>i.outcome==='deleted').length&&v.remaining===v.items.filter(i=>i.outcome==='pending').length);
+export type ExportCleanupSummary=z.infer<typeof exportCleanupSummarySchema>;
 export type PersonalPurgePreview=z.infer<typeof personalPurgePreviewSchema>;
 export type PersonalPurgeReceipt=z.infer<typeof personalPurgeReceiptSchema>;
-export function parsePrivacyOperationResult(input:PrivacyOperation,raw:unknown):PrivacyQueue|PrivacyDetail|PersonalPurgePreview|PersonalPurgeReceipt|ExternalInventorySummary|ExternalPurgeSummary{
+export function parsePrivacyOperationResult(input:PrivacyOperation,raw:unknown):PrivacyQueue|PrivacyDetail|PersonalPurgePreview|PersonalPurgeReceipt|ExternalInventorySummary|ExternalPurgeSummary|ExportCleanupSummary{
+  if(input.action==='cleanupExports'){
+    const value=exportCleanupSummarySchema.parse(raw);
+    if(value.items.length>input.maxItems)throw new Error('privacy_response_invalid');
+    return value;
+  }
   if(input.action==='purgeExternal'){
     const value=externalPurgeSummarySchema.parse(raw);
     if(value.inventoryId!==input.inventoryId||value.privacyRequestId!==input.privacyRequestId||value.store!==input.store)throw new Error('privacy_response_invalid');

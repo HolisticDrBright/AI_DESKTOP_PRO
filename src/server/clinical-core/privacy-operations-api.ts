@@ -6,7 +6,8 @@ export const PRIVACY_OPERATIONS_ROUTE='POST /clinical-core/workforce/privacy-ope
 export type PrivacyOperationsConfiguration={workforceIssuer:string;workforceAudience:string;phiAllowed:boolean;
   activation:'blocked'|'approved';evidenceSha256?:string;mfaReviewSha256?:string;
   personalPurgeEnabled?:boolean;personalPurgeEvidenceSha256?:string;externalInventoryEnabled?:boolean;externalInventoryEvidenceSha256?:string;
-  externalPurgeEnabled?:boolean;externalPurgeEvidenceSha256?:string;identityDeletionEnabled?:boolean;identityDeletionEvidenceSha256?:string};
+  externalPurgeEnabled?:boolean;externalPurgeEvidenceSha256?:string;identityDeletionEnabled?:boolean;identityDeletionEvidenceSha256?:string;
+  exportCleanupEnabled?:boolean;exportCleanupEvidenceSha256?:string};
 export function createPrivacyOperationsApi(input:{configuration:PrivacyOperationsConfiguration;
   operations:()=>ReturnType<typeof createPrivacyOperations>;now?:()=>number}){
   const c=input.configuration,hash=/^[a-f0-9]{64}$/;
@@ -23,6 +24,9 @@ export function createPrivacyOperationsApi(input:{configuration:PrivacyOperation
   if(c.externalPurgeEnabled&&!externalPurgeActive)throw new Error('privacy_external_purge_activation_invalid');
   const identityDeletionActive=active&&c.identityDeletionEnabled===true&&hash.test(c.identityDeletionEvidenceSha256??'');
   if(c.identityDeletionEnabled&&!identityDeletionActive)throw new Error('privacy_identity_deletion_activation_invalid');
+  // Export retention needs the reviewed export bucket configuration (checked by the lambda) and its own evidence.
+  const exportCleanupActive=active&&c.exportCleanupEnabled===true&&hash.test(c.exportCleanupEvidenceSha256??'');
+  if(c.exportCleanupEnabled&&!exportCleanupActive)throw new Error('privacy_export_cleanup_activation_invalid');
   return async(event:ApiGatewayV2Event):Promise<ApiGatewayV2Response>=>{
     if(!active)return response(503,{error:'production_not_activated',phiAllowed:false});
     if(event.routeKey!==PRIVACY_OPERATIONS_ROUTE)return response(404,{error:'route_not_found'});
@@ -41,6 +45,7 @@ export function createPrivacyOperationsApi(input:{configuration:PrivacyOperation
         return response(503,{error:'personal_purge_not_activated'});
       if(parsed.data.action==='purgeExternal'&&!externalPurgeActive)return response(503,{error:'external_purge_not_activated'});
       if(parsed.data.action==='purgeIdentity'&&!identityDeletionActive)return response(503,{error:'identity_deletion_not_activated'});
+      if(parsed.data.action==='cleanupExports'&&!exportCleanupActive)return response(503,{error:'export_cleanup_not_activated'});
       return response(200,{data:await input.operations()(context,parsed.data)});
     }catch(error){
       const code=error instanceof PrivacyOperationError?error.code:'service_unavailable';

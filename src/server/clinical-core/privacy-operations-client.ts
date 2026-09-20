@@ -25,6 +25,7 @@ export async function requestPrivacyOperation(token:string|null,input:PrivacyOpe
         throw new PrivacyOperationError(code);
       if(r.status===503&&code==='personal_purge_not_activated'
         &&['previewPersonalPurge','purgePersonal'].includes(parsed.data.action))throw new PrivacyOperationError(code);
+      if(r.status===503&&code==='export_cleanup_not_activated'&&parsed.data.action==='cleanupExports')throw new PrivacyOperationError(code);
       if(r.status===403&&code==='legal_hold')throw new PrivacyOperationError(code);
       throw new PrivacyOperationError(r.status===401?'reauth_required':r.status===403?'privacy_access_refused':
         r.status===409?'conflict':r.status===400?'request_invalid':'service_unavailable');

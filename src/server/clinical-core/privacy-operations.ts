@@ -5,9 +5,11 @@ import {externalInventorySummarySchema} from '@/contracts/privacyOperations';
 import type {ExternalInventoryReader} from './privacy-external-inventory';
 import type {ExternalPurgeExecutor,ExternalPurgeOutcome} from './privacy-external-purge';
 import type {ConsumerIdentityDeleter} from './owned-identity-deletion';
+import {OwnedStorageError} from './owned-consumer-records';
+import {createPrivacyExportRetention,type PrivacyExportObjectStorage,type PrivacyExportStore} from './owned-privacy-export-job';
 import {z} from 'zod';
 export class PrivacyOperationError extends Error{
-  constructor(readonly code:'reauth_required'|'privacy_access_refused'|'request_invalid'|'conflict'|'legal_hold'|'service_unavailable'|'external_inventory_not_activated'|'personal_purge_not_activated'|'external_purge_not_activated',cause?:unknown){super(code,cause===undefined?undefined:{cause});}
+  constructor(readonly code:'reauth_required'|'privacy_access_refused'|'request_invalid'|'conflict'|'legal_hold'|'service_unavailable'|'external_inventory_not_activated'|'personal_purge_not_activated'|'external_purge_not_activated'|'export_cleanup_not_activated',cause?:unknown){super(code,cause===undefined?undefined:{cause});}
 }
 type Tx=Parameters<Parameters<ClinicalCoreDatabase['transaction']>[0]>[0];
 const purgeBatchSchema=z.object({ownerId:z.string().uuid(),ownerSub:z.string().regex(/^[A-Za-z0-9:_-]{8,128}$/),
@@ -16,7 +18,9 @@ const purgeBatchSchema=z.object({ownerId:z.string().uuid(),ownerSub:z.string().r
   summary:z.unknown()}).strict();
 const identityBeginSchema=z.object({ownerId:z.string().uuid(),identitySubject:z.string().regex(/^[A-Za-z0-9:_-]{8,128}$/),
   providerState:z.enum(['disabled','signed_out','deleted','absent']),completedAt:z.string().nullable()}).passthrough();
-export function createPrivacyOperations(database:ClinicalCoreDatabase,inventory?:()=>ExternalInventoryReader,purge?:()=>ExternalPurgeExecutor,identity?:()=>ConsumerIdentityDeleter){
+export type PrivacyExportRetentionDelivery={store:PrivacyExportStore;storage:PrivacyExportObjectStorage};
+export function createPrivacyOperations(database:ClinicalCoreDatabase,inventory?:()=>ExternalInventoryReader,purge?:()=>ExternalPurgeExecutor,identity?:()=>ConsumerIdentityDeleter,
+  exportRetention?:()=>PrivacyExportRetentionDelivery){
   const withContext=async<T>(context:ProductionClinicalRequestContext,work:(tx:Tx)=>Promise<T>):Promise<T>=>{
     try{return await database.transaction(async tx=>{
       await tx.query('select clinical_private.set_request_context($1,$2,$3,$4,$5,$6,$7)',[
@@ -32,6 +36,18 @@ export function createPrivacyOperations(database:ClinicalCoreDatabase,inventory?
     if(context.identityPool!=='workforce'||context.purpose!=='consent_management'||context.environment!=='production-clinical'
       ||context.dataClassification!=='clinical_phi'||!context.productionBound||!context.containsPhi||!context.realPatientData)
       throw new PrivacyOperationError('privacy_access_refused');
+    if(v.action==='cleanupExports'){
+      // Retention independent of the owner: finished and deadline-passed export jobs of assigned owners are removed
+      // from the reviewed bucket with listing proof and certified under the owner lock, one short transaction each.
+      if(!exportRetention)throw new PrivacyOperationError('service_unavailable');
+      const retention=createPrivacyExportRetention((c,work)=>withContext(c,work),exportRetention());
+      try{return parsePrivacyOperationResult(v,await retention.cleanupAssignedPrivacyExports(context,v.maxItems,AbortSignal.timeout(50_000)));}
+      catch(error){
+        if(error instanceof PrivacyOperationError)throw error;
+        if(error instanceof OwnedStorageError)throw new PrivacyOperationError(error.code==='owner_required'?'privacy_access_refused':error.code==='request_invalid'?'request_invalid':error.code==='conflict'?'conflict':'service_unavailable');
+        throw mapError(error);
+      }
+    }
     if(v.action==='purgeExternal'){
       // Multiple short transactions: the batch is chosen under the request lock,
       // each remote mutation then runs under its own guarded lock, and each

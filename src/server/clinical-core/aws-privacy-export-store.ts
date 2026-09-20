@@ -1,10 +1,11 @@
 if(typeof window!=='undefined')throw new Error('aws-privacy-export-store is server-only');
-import {AbortMultipartUploadCommand,CompleteMultipartUploadCommand,CreateMultipartUploadCommand,DeleteObjectCommand,GetObjectCommand,HeadObjectCommand,PutObjectCommand,S3Client,UploadPartCommand} from '@aws-sdk/client-s3';
+import {AbortMultipartUploadCommand,CompleteMultipartUploadCommand,CreateMultipartUploadCommand,DeleteObjectCommand,GetObjectCommand,HeadObjectCommand,ListMultipartUploadsCommand,ListObjectVersionsCommand,PutObjectCommand,S3Client,UploadPartCommand} from '@aws-sdk/client-s3';
 import {getSignedUrl} from '@aws-sdk/s3-request-presigner';
 import type {PrivacyExportObjectStorage,PrivacyExportStore} from './owned-privacy-export-job';
 
 /** Fixed regional endpoint, expected bucket owner on every call, SSE-KMS with the
- * reviewed key, full-object checksums, versioned deletes only. No listing. */
+ * reviewed key, full-object checksums, versioned deletes only. Listing is by one
+ * job's key prefix under `personal-exports/`, used to prove nothing remains. */
 export function createAwsPrivacyExportStore(clientForRegion=(region:string)=>new S3Client({region,endpoint:`https://s3.${region}.amazonaws.com`,followRegionRedirects:false,maxAttempts:2})):PrivacyExportStore{
   const clients=new Map<string,S3Client>();
   const client=(region:string)=>{let c=clients.get(region);if(!c){c=clientForRegion(region);clients.set(region,c);}return c;};
@@ -48,6 +49,33 @@ export function createAwsPrivacyExportStore(clientForRegion=(region:string)=>new
       }
     },
     async deleteVersion(s,key,version,signal){await client(s.region).send(new DeleteObjectCommand({...base(s,key),VersionId:version}),{abortSignal:signal});},
+    async listUploads(s,keyPrefix,signal){
+      if(!keyPrefix.startsWith('personal-exports/'))throw new Error('privacy_export_prefix_invalid');
+      const out:{key:string;uploadId:string}[]=[];let keyMarker:string|undefined,uploadIdMarker:string|undefined;
+      for(let page=0;page<20;page++){
+        const r=await client(s.region).send(new ListMultipartUploadsCommand({Bucket:s.bucket,ExpectedBucketOwner:s.expectedBucketOwner,Prefix:keyPrefix,MaxUploads:1000,
+          KeyMarker:keyMarker,UploadIdMarker:uploadIdMarker}),{abortSignal:signal});
+        for(const u of r.Uploads??[])if(typeof u.Key==='string'&&typeof u.UploadId==='string')out.push({key:u.Key,uploadId:u.UploadId});
+        if(!r.IsTruncated)return out;
+        keyMarker=r.NextKeyMarker;uploadIdMarker=r.NextUploadIdMarker;
+        if(!keyMarker&&!uploadIdMarker)break;
+      }
+      throw new Error('privacy_export_listing_truncated');
+    },
+    async listVersions(s,keyPrefix,signal){
+      if(!keyPrefix.startsWith('personal-exports/'))throw new Error('privacy_export_prefix_invalid');
+      const out:{key:string;version:string;bytes:number|null;deleteMarker:boolean}[]=[];let keyMarker:string|undefined,versionIdMarker:string|undefined;
+      for(let page=0;page<20;page++){
+        const r=await client(s.region).send(new ListObjectVersionsCommand({Bucket:s.bucket,ExpectedBucketOwner:s.expectedBucketOwner,Prefix:keyPrefix,MaxKeys:1000,
+          KeyMarker:keyMarker,VersionIdMarker:versionIdMarker}),{abortSignal:signal});
+        for(const v of r.Versions??[])if(typeof v.Key==='string'&&typeof v.VersionId==='string')out.push({key:v.Key,version:v.VersionId,bytes:typeof v.Size==='number'?v.Size:null,deleteMarker:false});
+        for(const m of r.DeleteMarkers??[])if(typeof m.Key==='string'&&typeof m.VersionId==='string')out.push({key:m.Key,version:m.VersionId,bytes:null,deleteMarker:true});
+        if(!r.IsTruncated)return out;
+        keyMarker=r.NextKeyMarker;versionIdMarker=r.NextVersionIdMarker;
+        if(!keyMarker&&!versionIdMarker)break;
+      }
+      throw new Error('privacy_export_listing_truncated');
+    },
     signDownload(s,key,version,seconds,fileName){
       return getSignedUrl(client(s.region),new GetObjectCommand({...base(s,key),VersionId:version,ResponseContentType:'application/json',ResponseCacheControl:'no-store',
         ResponseContentDisposition:`attachment; filename="${fileName}"`}),{expiresIn:seconds});

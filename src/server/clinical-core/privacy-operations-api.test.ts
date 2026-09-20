@@ -72,6 +72,20 @@ describe('privacy workforce API claims and activation',()=>{
     expect((await reviewed({...event(),body:JSON.stringify({...body,confirmation:'delete'})})).statusCode).toBe(400);
     expect(call).toHaveBeenCalledOnce();
   });
+  it('keeps export retention behind its own reviewed evidence and bounded batch size',async()=>{
+    const operations=vi.fn();
+    const body={action:'cleanupExports',maxItems:10};
+    const handler=createPrivacyOperationsApi({configuration:config,operations,now:()=>now});
+    const result=await handler({...event(),body:JSON.stringify(body)});
+    expect(result.statusCode).toBe(503);expect(JSON.parse(result.body)).toEqual({error:'export_cleanup_not_activated'});expect(operations).not.toHaveBeenCalled();
+    expect(()=>createPrivacyOperationsApi({configuration:{...config,exportCleanupEnabled:true},operations})).toThrow('privacy_export_cleanup_activation_invalid');
+    const call=vi.fn().mockResolvedValue({});
+    const reviewed=createPrivacyOperationsApi({configuration:{...config,exportCleanupEnabled:true,exportCleanupEvidenceSha256:'f'.repeat(64)},operations:()=>call,now:()=>now});
+    expect((await reviewed({...event(),body:JSON.stringify(body)})).statusCode).toBe(200);
+    for(const bad of [{...body,maxItems:11},{...body,maxItems:0},{...body,ownerId:uuid},{action:'cleanupExports'}])
+      expect((await reviewed({...event(),body:JSON.stringify(bad)})).statusCode).toBe(400);
+    expect(call).toHaveBeenCalledOnce();
+  });
   it('defaults blocked without opening a database and requires separate MFA review',async()=>{
     const operations=vi.fn();
     const handler=createPrivacyOperationsApi({configuration:{...config,phiAllowed:false,activation:'blocked'},operations});

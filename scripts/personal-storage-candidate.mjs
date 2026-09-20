@@ -68,11 +68,14 @@ export function personalStorageCandidate(disabled) {
       }}},
     ]},
   },ref('AWS::NoValue')]});
-  // Export objects live under one prefix in the reviewed bucket; deletes are by exact version, no listing, no other prefix.
+  // Export objects live under one prefix in the reviewed bucket; deletes are by exact version; listing is bound to that
+  // prefix and exists so cleanup can prove no upload or version remains under a job's key before certifying deletion.
   r.Role.Properties.Policies.push({'Fn::If':['ExportDelivery',{
     PolicyName:'ReviewedPersonalExportObjectsOnly',PolicyDocument:{Version:'2012-10-17',Statement:[
       {Effect:'Allow',Action:['s3:PutObject','s3:GetObject','s3:GetObjectVersion','s3:DeleteObjectVersion','s3:AbortMultipartUpload','s3:ListMultipartUploadParts'],
         Resource:sub('arn:${AWS::Partition}:s3:::${ExportBucketName}/personal-exports/*'),Condition:account},
+      {Effect:'Allow',Action:['s3:ListBucketVersions','s3:ListBucketMultipartUploads'],Resource:sub('arn:${AWS::Partition}:s3:::${ExportBucketName}'),
+        Condition:{StringLike:{'s3:prefix':'personal-exports/*'},StringEquals:{'aws:ResourceAccount':ref('AWS::AccountId')}}},
       {Effect:'Allow',Action:['kms:GenerateDataKey','kms:Decrypt'],Resource:ref('ExportKmsKeyArn'),Condition:{StringEquals:{
         'kms:ViaService':sub('s3.${AWS::Region}.amazonaws.com'),'kms:CallerAccount':ref('AWS::AccountId')}}},
     ]},

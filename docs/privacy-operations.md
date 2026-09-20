@@ -127,6 +127,12 @@ hosted/physical checks. AWS CLI authentication is currently expired. Production
 requires reviewed activation/MFA/database/assignment evidence, not merely
 working credentials. This turn did not change any deployment flags.
 
+September 20 successor: the `cleanupExports` action (migration 20260920130000) is the
+assigned operator's retention pass over finished and expired personal-storage export jobs,
+separately activated (`ExportCleanupEnabled`, evidence hash, export bucket and key); see
+[personal-storage-privacy-export.md](personal-storage-privacy-export.md). It is locally
+verified against PGlite and a fictional store only.
+
 September 19 successor: [external purge and deletion completion](privacy-external-purge.md)
 adds the operator-led purge of inventoried lab and voice jobs, disposition and retention
 recording for the remaining stores, and reviewed request completion; [consumer identity

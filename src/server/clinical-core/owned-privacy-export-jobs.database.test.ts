@@ -4,21 +4,22 @@ import {pgcrypto} from '@electric-sql/pglite/contrib/pgcrypto';
 import {execFileSync} from 'node:child_process';
 import {createHash,randomUUID} from 'node:crypto';
 import {createOwnedConsumerRecordsAdapter} from './owned-consumer-records';
-import {createOwnedPrivacyExportJobs,privacyExportPrefix,type PrivacyExportStore,type PrivacyExportObjectStorage} from './owned-privacy-export-job';
+import {createOwnedPrivacyExportJobs,createPrivacyExportRetention,privacyExportPrefix,type PrivacyExportStore,type PrivacyExportObjectStorage} from './owned-privacy-export-job';
 import {ClinicalCoreDatabaseRejection,type ClinicalCoreDatabase,type ClinicalCoreTransaction} from './database';
 import type {ProductionClinicalRequestContext} from './aws-identity-consent';
 
 // Executable production SQL over fictional in-memory rows with a fictional object
 // store. No bucket, hosted database, signed link or real account is involved.
-const owner=randomUUID(),other=randomUUID(),org=randomUUID();
+const owner=randomUUID(),other=randomUUID(),operator=randomUUID(),unassigned=randomUUID(),reviewer=randomUUID(),org=randomUUID();
 let db:PGlite;
 const context=(who=owner):ProductionClinicalRequestContext=>({actorPersonId:who,organizationId:org,identityPool:'consumer',identitySubject:'subject-'+who,
   purpose:'consent_management',environment:'production-clinical',dataClassification:'clinical_phi',containsPhi:true,realPatientData:true,productionBound:true});
+const operatorContext=(who=operator):ProductionClinicalRequestContext=>({...context(who),identityPool:'workforce'});
 // Replaces only the RDS transport: the same server-authored codes are classified the way rds-data-database does.
 function classify(error:unknown){
   const message=error instanceof Error?error.message:'';
   if(/\b(privacy_export_job_state|privacy_export_job_busy|privacy_export_conflict)\b/.test(message))return new ClinicalCoreDatabaseRejection('conflict');
-  if(/\b(privacy_export_job_refused|consumer_owner_required)\b/.test(message))return new ClinicalCoreDatabaseRejection('identity_refused');
+  if(/\b(privacy_export_job_refused|consumer_owner_required|privacy_operator_required|privacy_operator_assignment_required|request_context_refused)\b/.test(message))return new ClinicalCoreDatabaseRejection('identity_refused');
   if(/\bprivacy_export_request_invalid\b/.test(message))return new ClinicalCoreDatabaseRejection('request_invalid');
   return error;
 }
@@ -44,18 +45,30 @@ function fakeStore(){
     head:vi.fn(async(_s,key,v)=>{const b=objects.get(key)?.get(v);return b?{exists:true,bytes:b.byteLength,encryption:'aws:kms',kmsKeyArn:storage.kmsKeyArn,checksum:'x'}:{exists:false};}),
     deleteVersion:vi.fn(async(_s,key,v)=>{objects.get(key)?.delete(v);}),
     signDownload:vi.fn(async(_s,key,v,seconds,name)=>`https://fictional-export-bucket.s3.us-east-2.amazonaws.com/${key}?versionId=${v}&X-Amz-Expires=${seconds}&name=${encodeURIComponent(name)}`),
+    listUploads:vi.fn(async(_s,prefix)=>[...uploads.entries()].filter(([,u])=>u.key.startsWith(prefix)).map(([uploadId,u])=>({key:u.key,uploadId}))),
+    listVersions:vi.fn(async(_s,prefix)=>[...objects.entries()].filter(([k])=>k.startsWith(prefix)).flatMap(([key,vs])=>[...vs.entries()].map(([version,b])=>({key,version,bytes:b.byteLength,deleteMarker:false})))),
   };
   return {store,objects,uploads};
 }
-const jobsWith=(store:PrivacyExportStore,partBytes=8192)=>createOwnedPrivacyExportJobs((c,work)=>adapter().runPrivacy(c,work),{store,storage,partBytes});
+const PRIVACY_EXPORT_TEST_LARGE_PART=64*1024;
+const jobsWith=(store:PrivacyExportStore,partBytes=8192,now?:()=>number)=>createOwnedPrivacyExportJobs((c,work)=>adapter().runPrivacy(c,work),{store,storage,partBytes,...(now?{now}:{})});
+// A clock that exhausts the pass budget after one page read, so passes end with a staging object.
+const onePagePerPass=()=>{let t=1_700_000_000_000;return()=>{t+=15_000;return t;};};
+// The operator path sets the request context the way privacy-operations does: no consumer adapter, the same transport shim.
+const retentionWith=(store:PrivacyExportStore)=>createPrivacyExportRetention((c,work)=>database.transaction(async tx=>{
+  await tx.query('select clinical_private.set_request_context($1,$2,$3,$4,$5,$6,$7)',[c.actorPersonId,c.organizationId,c.identityPool,c.identitySubject,c.purpose,c.environment,c.dataClassification]);
+  return work(tx);
+}),{store,storage});
 beforeAll(async()=>{
   const {manifest,files}=JSON.parse(execFileSync(process.execPath,['scripts/build-aws-production-clinical-core.mjs','--json'],{encoding:'utf8',maxBuffer:8*1024*1024,timeout:10000}));
   db=new PGlite({extensions:{pgcrypto}});for(const m of manifest.migrations)await db.exec(files[m.file]);
   await db.query("insert into clinical_core.organizations(id,organization_label) values($1,'FICTIONAL')",[org]);
-  for(const id of [owner,other]){
+  for(const [id,pool] of [[owner,'consumer'],[other,'consumer'],[operator,'workforce'],[unassigned,'workforce'],[reviewer,'workforce']]){
     await db.query('insert into clinical_core.persons(id,subject_key) values($1,$2)',[id,'subject_'+id.replaceAll('-','')]);
-    await db.query("insert into clinical_core.identities(person_id,identity_pool,identity_subject,production_bound) values($1,'consumer',$2,true)",[id,'subject-'+id]);
+    await db.query('insert into clinical_core.identities(person_id,identity_pool,identity_subject,production_bound) values($1,$2,$3,true)',[id,pool,'subject-'+id]);
   }
+  await db.query(`insert into clinical_private.owned_privacy_operator_assignments(operator_id,owner_id,reviewed_by,evidence_sha256,approved_at,expires_at)
+    values($1,$2,$3,$4,now()-interval '1 day',now()+interval '1 day')`,[operator,owner,reviewer,'a'.repeat(64)]);
   await db.query(`insert into clinical_private.consumer_storage_consent_releases(scope,version,content,content_sha256,approved_by,approved_at)
     values('forms_checkins','export-fixture','Fictional only',encode(public.digest('Fictional only','sha256'),'hex'),'FICTIONAL TEST',now())`);
   for(const id of [owner,other])await db.query("insert into clinical_core.consumer_storage_consents(owner_id,scope,revision,status,release_version) values($1,'forms_checkins',1,'granted','export-fixture')",[id]);
@@ -79,6 +92,230 @@ const drive=async(jobs:ReturnType<typeof jobsWith>,jobId:string,who=owner)=>{
   while(['requested','running'].includes(view.status)&&passes<200){view=await jobs.advancePrivacyExportJob(context(who),{jobId},20000,new AbortController().signal);passes++;}
   return {view,passes};
 };
+
+describe('Codex recheck export failure boundaries',()=>{
+  it('durably expires an unfinished job so its open upload becomes cleanup eligible',async()=>{
+    const f=fakeStore(),jobs=jobsWith(f.store);
+    const job=(await jobs.requestPrivacyExportJob(context(),{requestId:randomUUID()})).jobId;
+    await jobs.advancePrivacyExportJob(context(),{jobId:job},20000,new AbortController().signal);
+    await db.query("update clinical_private.owned_privacy_export_jobs set expires_at=clock_timestamp()-interval '1 second',lease_until=null where id=$1",[job]);
+    await expect(jobs.advancePrivacyExportJob(context(),{jobId:job},20000,new AbortController().signal)).rejects.toThrow('conflict');
+    expect(await jobs.getPrivacyExportJob(context(),{jobId:job})).toMatchObject({status:'failed',failureCode:'deadline_passed'});
+    await jobs.cleanupPrivacyExportJobs(context(),new AbortController().signal);
+    expect(f.uploads.size).toBe(0);
+  });
+  it('does not certify deletion when aborting an open multipart upload is denied',async()=>{
+    const f=fakeStore(),jobs=jobsWith(f.store);
+    const job=(await jobs.requestPrivacyExportJob(context(),{requestId:randomUUID()})).jobId;
+    await jobs.advancePrivacyExportJob(context(),{jobId:job},20000,new AbortController().signal);
+    expect(f.uploads.size).toBe(1);
+    await jobs.cancelPrivacyExportJob(context(),{jobId:job});
+    vi.mocked(f.store.abortUpload).mockRejectedValue(new Error('AccessDenied'));
+    await jobs.cleanupPrivacyExportJobs(context(),new AbortController().signal);
+    expect(f.uploads.size).toBe(1);
+    expect(await jobs.getPrivacyExportJob(context(),{jobId:job})).toMatchObject({objectDeleted:false});
+  });
+  it('cleans the upload created before a failed first part, including after retry and cancellation',async()=>{
+    const f=fakeStore(),jobs=jobsWith(f.store);
+    const job=(await jobs.requestPrivacyExportJob(context(),{requestId:randomUUID()})).jobId;
+    vi.mocked(f.store.uploadPart).mockRejectedValueOnce(new Error('fictional network failure'));
+    await expect(jobs.advancePrivacyExportJob(context(),{jobId:job},20000,new AbortController().signal)).rejects.toThrow('storage_unavailable');
+    await db.query('update clinical_private.owned_privacy_export_jobs set lease_until=null where id=$1',[job]);
+    await drive(jobs,job);
+    await jobs.cancelPrivacyExportJob(context(),{jobId:job});
+    await jobs.cleanupPrivacyExportJobs(context(),new AbortController().signal);
+    expect(f.uploads.size).toBe(0);
+  });
+  it('recovers the completed object when the database completion receipt is interrupted',async()=>{
+    const f=fakeStore();let failCompletion=true;
+    const jobs=createOwnedPrivacyExportJobs((c,work)=>adapter().runPrivacy(c,tx=>work({
+      ...tx,query:async(sql:string,args?:unknown[])=>{
+        if(failCompletion&&sql.includes('complete_owned_privacy_export_job')){failCompletion=false;throw new Error('fictional database interruption');}
+        return tx.query(sql,args);
+      },
+    } as ClinicalCoreTransaction)),{store:f.store,storage,partBytes:8192});
+    const job=(await jobs.requestPrivacyExportJob(context(),{requestId:randomUUID()})).jobId;
+    await expect(drive(jobs,job)).rejects.toThrow('storage_unavailable');
+    expect([...f.objects.keys()].some(k=>k.endsWith('.json'))).toBe(true);
+    await db.query('update clinical_private.owned_privacy_export_jobs set lease_until=null where id=$1',[job]);
+    await expect(drive(jobs,job)).resolves.toMatchObject({view:{status:'ready'}});
+  });
+});
+
+describe('export failure matrix: store refusals, lost responses and ambiguous completion',()=>{
+  it('keeps a denied or timed-out abort pending and certifies only once the store shows nothing under the key',async()=>{
+    const f=fakeStore(),jobs=jobsWith(f.store);
+    const job=(await jobs.requestPrivacyExportJob(context(),{requestId:randomUUID()})).jobId;
+    await jobs.advancePrivacyExportJob(context(),{jobId:job},20000,new AbortController().signal);
+    await jobs.cancelPrivacyExportJob(context(),{jobId:job});
+    const timeout=Object.assign(new Error('TimeoutError'),{name:'TimeoutError'});
+    vi.mocked(f.store.abortUpload).mockRejectedValueOnce(new Error('AccessDenied')).mockRejectedValueOnce(timeout);
+    expect(await jobs.cleanupPrivacyExportJobs(context(),new AbortController().signal)).toMatchObject({remaining:1});
+    expect(await jobs.cleanupPrivacyExportJobs(context(),new AbortController().signal)).toMatchObject({remaining:1});
+    expect(await jobs.getPrivacyExportJob(context(),{jobId:job})).toMatchObject({status:'cancelled',objectDeleted:false});
+    expect(f.uploads.size).toBe(1);
+    expect(await jobs.cleanupPrivacyExportJobs(context(),new AbortController().signal)).toEqual({cleaned:1,remaining:0});
+    expect(f.uploads.size).toBe(0);
+    expect(await jobs.getPrivacyExportJob(context(),{jobId:job})).toMatchObject({objectDeleted:true});
+  });
+  it('does not certify while an abort that returned without error still leaves the upload listed (parts landing in flight)',async()=>{
+    const f=fakeStore(),jobs=jobsWith(f.store);
+    const job=(await jobs.requestPrivacyExportJob(context(),{requestId:randomUUID()})).jobId;
+    await jobs.advancePrivacyExportJob(context(),{jobId:job},20000,new AbortController().signal);
+    await jobs.cancelPrivacyExportJob(context(),{jobId:job});
+    vi.mocked(f.store.abortUpload).mockResolvedValueOnce(undefined);
+    expect(await jobs.cleanupPrivacyExportJobs(context(),new AbortController().signal)).toEqual({cleaned:0,remaining:1});
+    expect(f.uploads.size).toBe(1);
+    expect(await jobs.getPrivacyExportJob(context(),{jobId:job})).toMatchObject({objectDeleted:false});
+    expect(await jobs.cleanupPrivacyExportJobs(context(),new AbortController().signal)).toEqual({cleaned:1,remaining:0});
+    expect(f.uploads.size).toBe(0);
+  });
+  it('certifies a job whose recorded upload is already gone without calling abort, and a never-started job without any store call',async()=>{
+    const f=fakeStore(),jobs=jobsWith(f.store);
+    const job=(await jobs.requestPrivacyExportJob(context(),{requestId:randomUUID()})).jobId;
+    await jobs.advancePrivacyExportJob(context(),{jobId:job},20000,new AbortController().signal);
+    await jobs.cancelPrivacyExportJob(context(),{jobId:job});
+    f.uploads.clear(); // removed outside the job, e.g. by a bucket lifecycle rule
+    expect(await jobs.cleanupPrivacyExportJobs(context(),new AbortController().signal)).toEqual({cleaned:1,remaining:0});
+    expect(f.store.abortUpload).not.toHaveBeenCalled();
+    expect(await jobs.getPrivacyExportJob(context(),{jobId:job})).toMatchObject({status:'cancelled',objectDeleted:true});
+    await db.query("update clinical_private.owned_privacy_export_jobs set created_at=created_at-interval '2 hours'");
+    const idle=(await jobs.requestPrivacyExportJob(context(),{requestId:randomUUID()})).jobId;
+    await db.query("update clinical_private.owned_privacy_export_jobs set expires_at=clock_timestamp()-interval '1 second' where id=$1",[idle]);
+    expect(await jobs.getPrivacyExportJob(context(),{jobId:idle})).toMatchObject({status:'failed',failureCode:'deadline_passed'});
+    vi.mocked(f.store.deleteVersion).mockClear();vi.mocked(f.store.abortUpload).mockClear();
+    expect(await jobs.cleanupPrivacyExportJobs(context(),new AbortController().signal)).toEqual({cleaned:1,remaining:0});
+    expect(f.store.deleteVersion).not.toHaveBeenCalled();expect(f.store.abortUpload).not.toHaveBeenCalled();
+    expect(await jobs.getPrivacyExportJob(context(),{jobId:idle})).toMatchObject({status:'failed',objectDeleted:true});
+  });
+  it('records the upload id before the first part, and finds an upload whose creation response was lost',async()=>{
+    const f=fakeStore(),jobs=jobsWith(f.store);
+    const job=(await jobs.requestPrivacyExportJob(context(),{requestId:randomUUID()})).jobId;
+    const real=vi.mocked(f.store.createUpload).getMockImplementation()!;
+    vi.mocked(f.store.createUpload).mockImplementationOnce(async(s,key,signal)=>{await real(s,key,signal);throw new Error('fictional lost response');});
+    await expect(jobs.advancePrivacyExportJob(context(),{jobId:job},20000,new AbortController().signal)).rejects.toThrow('storage_unavailable');
+    expect(f.uploads.size).toBe(1);
+    expect((await db.query<{upload_id:string|null}>('select upload_id from clinical_private.owned_privacy_export_jobs where id=$1',[job])).rows[0].upload_id).toBeNull();
+    await db.query('update clinical_private.owned_privacy_export_jobs set lease_until=null where id=$1',[job]);
+    // A part failure after creation leaves the id on record, so the retry reuses that upload.
+    vi.mocked(f.store.uploadPart).mockRejectedValueOnce(new Error('fictional network failure'));
+    await expect(jobs.advancePrivacyExportJob(context(),{jobId:job},20000,new AbortController().signal)).rejects.toThrow('storage_unavailable');
+    const recorded=(await db.query<{upload_id:string|null}>('select upload_id from clinical_private.owned_privacy_export_jobs where id=$1',[job])).rows[0].upload_id;
+    expect(recorded).toMatch(/^u-/);expect(f.uploads.size).toBe(2);
+    await db.query('update clinical_private.owned_privacy_export_jobs set lease_until=null where id=$1',[job]);
+    const {view}=await drive(jobs,job);
+    expect(view.status).toBe('ready');expect(f.store.createUpload).toHaveBeenCalledTimes(2);
+    expect(f.uploads.size).toBe(1); // the orphan from the lost response
+    await db.query("update clinical_private.owned_privacy_export_jobs set expires_at=clock_timestamp()-interval '1 second' where id=$1",[job]);
+    expect(await jobs.cleanupPrivacyExportJobs(context(),new AbortController().signal)).toEqual({cleaned:1,remaining:0});
+    expect(f.uploads.size).toBe(0);expect([...f.objects.values()].every(v=>v.size===0)).toBe(true);
+  });
+  it('removes a superseded staging version that failed to delete during the pass, once the job is finished',async()=>{
+    const f=fakeStore(),jobs=jobsWith(f.store,PRIVACY_EXPORT_TEST_LARGE_PART,onePagePerPass());
+    const job=(await jobs.requestPrivacyExportJob(context(),{requestId:randomUUID()})).jobId;
+    vi.mocked(f.store.deleteVersion).mockRejectedValueOnce(new Error('fictional delete failure'));
+    const {view,passes}=await drive(jobs,job);
+    expect(view.status).toBe('ready');expect(passes).toBeGreaterThanOrEqual(2);expect(f.store.put).toHaveBeenCalled();
+    const key=[...f.objects.keys()].find(k=>k.endsWith('.json'))!;
+    expect(f.objects.get(key+'.staging')!.size).toBeGreaterThanOrEqual(1);
+    await jobs.cancelPrivacyExportJob(context(),{jobId:job});
+    expect(await jobs.cleanupPrivacyExportJobs(context(),new AbortController().signal)).toEqual({cleaned:1,remaining:0});
+    expect(f.objects.get(key+'.staging')!.size).toBe(0);expect(f.objects.get(key)!.size).toBe(0);
+  });
+  it('recovers when the completion response is lost, and fails closed on a mismatched or ambiguous object instead of resending parts',async()=>{
+    const f=fakeStore(),jobs=jobsWith(f.store);
+    const job=(await jobs.requestPrivacyExportJob(context(),{requestId:randomUUID()})).jobId;
+    const real=vi.mocked(f.store.completeUpload).getMockImplementation()!;
+    vi.mocked(f.store.completeUpload).mockImplementationOnce(async(...a)=>{await real(...a);throw new Error('fictional lost response');});
+    await expect(drive(jobs,job)).rejects.toThrow('storage_unavailable');
+    await db.query('update clinical_private.owned_privacy_export_jobs set lease_until=null where id=$1',[job]);
+    vi.mocked(f.store.uploadPart).mockClear();
+    const {view}=await drive(jobs,job);
+    expect(view.status).toBe('ready');expect(f.store.uploadPart).not.toHaveBeenCalled();
+    const key=[...f.objects.keys()].find(k=>k.endsWith('.json'))!;
+    expect(f.objects.get(key)!.size).toBe(1);
+    // Ambiguity: a second full version under the job's key fails the job; cleanup removes both.
+    await jobs.cancelPrivacyExportJob(context(),{jobId:job});await jobs.cleanupPrivacyExportJobs(context(),new AbortController().signal);
+    await db.query("update clinical_private.owned_privacy_export_jobs set created_at=created_at-interval '2 hours'");
+    const second=(await jobs.requestPrivacyExportJob(context(),{requestId:randomUUID()})).jobId;
+    vi.mocked(f.store.completeUpload).mockImplementationOnce(async(...a)=>{const r=await real(...a);const k=a[1] as string;f.objects.get(k)!.set('v-stray',Buffer.from('{}'));return r;});
+    vi.mocked(f.store.completeUpload).mockImplementationOnce(async()=>{throw new Error('fictional interruption');});
+    let failedOnce=false;
+    const guarded=createOwnedPrivacyExportJobs((c,work)=>adapter().runPrivacy(c,tx=>work({...tx,query:async(sql:string,args?:unknown[])=>{
+      if(!failedOnce&&sql.includes('complete_owned_privacy_export_job')){failedOnce=true;throw new Error('fictional database interruption');}return tx.query(sql,args);}} as ClinicalCoreTransaction)),{store:f.store,storage,partBytes:8192});
+    await expect(drive(guarded,second)).rejects.toThrow('storage_unavailable');
+    await db.query('update clinical_private.owned_privacy_export_jobs set lease_until=null where id=$1',[second]);
+    const failed=await drive(guarded,second);
+    expect(failed.view).toMatchObject({status:'failed',failureCode:'object_ambiguous'});
+    const key2=[...f.objects.keys()].filter(k=>k.endsWith('.json')).find(k=>k!==key)!;
+    expect(f.objects.get(key2)!.size).toBe(2);
+    expect(await jobs.cleanupPrivacyExportJobs(context(),new AbortController().signal)).toEqual({cleaned:1,remaining:0});
+    expect(f.objects.get(key2)!.size).toBe(0);
+  });
+  it('lets exactly one of two concurrent polls run a pass; the other sees a conflict and nothing is written twice',async()=>{
+    const f=fakeStore(),jobs=jobsWith(f.store);
+    const job=(await jobs.requestPrivacyExportJob(context(),{requestId:randomUUID()})).jobId;
+    const results=await Promise.allSettled([1,2].map(()=>jobs.advancePrivacyExportJob(context(),{jobId:job},20000,new AbortController().signal)));
+    expect(results.filter(r=>r.status==='fulfilled')).toHaveLength(1);
+    expect(results.find(r=>r.status==='rejected')).toMatchObject({reason:expect.objectContaining({message:'conflict'})});
+    expect(f.store.uploadPart).toHaveBeenCalledTimes(1);
+    expect(await jobs.getPrivacyExportJob(context(),{jobId:job})).toMatchObject({status:'running',parts:1});
+    await jobs.cancelPrivacyExportJob(context(),{jobId:job});
+  });
+});
+
+describe('assigned-operator retention pass (migration 95)',()=>{
+  it('removes finished and deadline-passed export objects of assigned owners with listing proof, audits the operator, and stays pending when the store refuses',async()=>{
+    const f=fakeStore(),jobs=jobsWith(f.store),retention=retentionWith(f.store);
+    // Earlier tests' finished jobs (their fictional stores are gone) are certified first so this pass is about one job.
+    await jobs.cleanupPrivacyExportJobs(context(),new AbortController().signal);
+    const abandoned=(await jobs.requestPrivacyExportJob(context(),{requestId:randomUUID()})).jobId;
+    await jobs.advancePrivacyExportJob(context(),{jobId:abandoned},20000,new AbortController().signal);
+    await db.query("update clinical_private.owned_privacy_export_jobs set expires_at=clock_timestamp()-interval '1 second',lease_until=null where id=$1",[abandoned]);
+    expect(f.uploads.size).toBe(1);
+    // A still-running job the owner never came back for is failed by the operator's listing and its upload removed.
+    vi.mocked(f.store.abortUpload).mockRejectedValueOnce(new Error('AccessDenied'));
+    expect(await retention.cleanupAssignedPrivacyExports(operatorContext(),10,new AbortController().signal)).toMatchObject({cleaned:0,remaining:1,items:[{jobId:abandoned,status:'failed',outcome:'pending'}]});
+    expect(f.uploads.size).toBe(1);
+    expect(await jobs.getPrivacyExportJob(context(),{jobId:abandoned})).toMatchObject({status:'failed',failureCode:'deadline_passed',objectDeleted:false});
+    expect(await retention.cleanupAssignedPrivacyExports(operatorContext(),10,new AbortController().signal)).toMatchObject({cleaned:1,remaining:0,items:[{jobId:abandoned,outcome:'deleted'}]});
+    expect(f.uploads.size).toBe(0);
+    expect(await jobs.getPrivacyExportJob(context(),{jobId:abandoned})).toMatchObject({objectDeleted:true});
+    const audit=(await db.query<{action:string;operator_id:string|null}>(`select e.action,e.operator_id from clinical_audit.owned_privacy_export_events e
+      join clinical_private.owned_privacy_export_jobs j on j.export_id=e.export_id where j.id=$1 and e.action in ('job.failed','object.deleted') order by e.recorded_at`,[abandoned])).rows;
+    expect(audit).toEqual([{action:'job.failed',operator_id:operator},{action:'object.deleted',operator_id:operator}]);
+  });
+  it('includes a ready copy past expiry after the owner account closed, and never touches unassigned owners or accepts consumers',async()=>{
+    const f=fakeStore(),jobs=jobsWith(f.store),retention=retentionWith(f.store);
+    await db.query("update clinical_private.owned_privacy_export_jobs set created_at=created_at-interval '2 hours'");
+    const ready=(await jobs.requestPrivacyExportJob(context(),{requestId:randomUUID()})).jobId;
+    expect((await drive(jobs,ready)).view.status).toBe('ready');
+    const foreign=(await jobs.requestPrivacyExportJob(context(other),{requestId:randomUUID()})).jobId;
+    await jobs.advancePrivacyExportJob(context(other),{jobId:foreign},20000,new AbortController().signal);
+    await jobs.cancelPrivacyExportJob(context(other),{jobId:foreign});
+    await db.query("update clinical_private.owned_privacy_export_jobs set expires_at=clock_timestamp()-interval '1 second' where id=$1",[ready]);
+    await db.query("update clinical_core.persons set status='disabled' where id=$1",[owner]);
+    try{
+      await expect(jobs.getPrivacyExportJob(context(),{jobId:ready})).rejects.toThrow('owner_required');
+      const key=[...f.objects.keys()].find(k=>k.endsWith('.json')&&k.startsWith(privacyExportPrefix(owner)))!;
+      expect(f.objects.get(key)!.size).toBe(1);
+      const result=await retention.cleanupAssignedPrivacyExports(operatorContext(),10,new AbortController().signal);
+      expect(result).toMatchObject({cleaned:1,remaining:0,items:[{jobId:ready,status:'expired',outcome:'deleted'}]});
+      expect(f.objects.get(key)!.size).toBe(0);
+      // The other owner's cancelled copy (one fictional record completes in a single pass) is not this operator's to touch.
+      const foreignKey=[...f.objects.keys()].find(k=>k.endsWith('.json')&&k.startsWith(privacyExportPrefix(other)))!;
+      expect(f.objects.get(foreignKey)!.size).toBe(1);
+      expect((await db.query<{status:string;deleted:boolean}>('select status,object_deleted_at is not null deleted from clinical_private.owned_privacy_export_jobs where id=$1',[ready])).rows[0]).toEqual({status:'expired',deleted:true});
+      expect(await retention.cleanupAssignedPrivacyExports(operatorContext(unassigned),10,new AbortController().signal)).toEqual({cleaned:0,remaining:0,items:[]});
+      await expect(retention.cleanupAssignedPrivacyExports(context(),10,new AbortController().signal)).rejects.toThrow('owner_required');
+      await expect(retention.cleanupAssignedPrivacyExports(operatorContext(),11,new AbortController().signal)).rejects.toThrow('request_invalid');
+      await expect(db.query('select clinical_private.record_privacy_export_object_deleted_by_operator($1,$2,1)',[other,foreign])).rejects.toThrow();
+    }finally{
+      await db.query("update clinical_core.persons set status='active' where id=$1",[owner]);
+      expect(await jobs.cleanupPrivacyExportJobs(context(other),new AbortController().signal)).toEqual({cleaned:1,remaining:0});
+    }
+  });
+});
 
 describe('large personal-storage export jobs (migration 93)',()=>{
   it('packages the snapshot in bounded passes into one encrypted object under the owner digest prefix, with counts that match the inline export exactly',async()=>{

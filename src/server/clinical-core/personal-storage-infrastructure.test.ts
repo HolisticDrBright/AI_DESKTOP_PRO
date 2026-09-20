@@ -46,7 +46,13 @@ describe('functional personal storage deployment candidate',()=>{
     // Export delivery is a second, separately reviewed condition: no bucket, key or review hash means no S3 or KMS statement at all.
     expect((policies[2] as Record<string,Json>)['Fn::If']).toEqual(['ExportDelivery',expect.any(Object),{Ref:'AWS::NoValue'}]);
     expect(JSON.stringify(policies[1])).not.toMatch(/s3:/);
-    expect(JSON.stringify(policies[2])).not.toMatch(/s3:ListBucket|s3:DeleteObject"|s3:\*|kms:\*/);
+    // Listing exists only for the export prefix (cleanup proof); never the whole bucket, all buckets or unversioned deletes.
+    expect(JSON.stringify(policies[2])).not.toMatch(/s3:ListBucket"|s3:ListAllMyBuckets|s3:DeleteObject"|s3:\*|kms:\*/);
+    const exportStatements=(((policies[2] as Record<string,Json>)['Fn::If'] as Json[])[1] as {PolicyDocument:{Statement:Array<{Action:string[];Resource:Json;Condition:Json}>}}).PolicyDocument.Statement;
+    const listing=exportStatements.find(s=>s.Action.includes('s3:ListBucketVersions'))!;
+    expect(listing.Action).toEqual(['s3:ListBucketVersions','s3:ListBucketMultipartUploads']);
+    expect(JSON.stringify(listing.Resource)).not.toContain('personal-exports');
+    expect(listing.Condition).toMatchObject({StringLike:{'s3:prefix':'personal-exports/*'}});
     expect(condition(candidate.Conditions.ExportDelivery,approved)).toBe(false);
     const delivery={...approved,ExportBucketName:'fictional-export-bucket',ExportKmsKeyArn:'arn:aws:kms:us-east-2:123456789012:key/11111111-1111-4111-8111-111111111111',ExportReviewSha256:'c'.repeat(64)};
     expect(condition(candidate.Conditions.ExportDelivery,delivery)).toBe(true);

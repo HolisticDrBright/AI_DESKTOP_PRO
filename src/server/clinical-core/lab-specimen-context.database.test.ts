@@ -60,8 +60,10 @@ afterAll(async()=>{await db?.close();});
 
 describe('specimen context SQL against in-memory PostgreSQL (not hosted Aurora)',()=>{
   it('keeps the production overlay identical apart from the authenticated boundary',()=>{
-    const source=readFileSync('infra/aws-clinical-core/migrations/20260916080000_synthetic_lab_specimen_context.sql','utf8');
-    expect(readFileSync('infra/aws-clinical-core/production-migrations/20260916080000_production_lab_specimen_context.sql','utf8'))
+    // Line endings are a checkout artifact (.gitattributes pins LF); every other byte must match exactly.
+    const lf=(text:string)=>text.replaceAll('\r\n','\n');
+    const source=lf(readFileSync('infra/aws-clinical-core/migrations/20260916080000_synthetic_lab_specimen_context.sql','utf8'));
+    expect(lf(readFileSync('infra/aws-clinical-core/production-migrations/20260916080000_production_lab_specimen_context.sql','utf8')))
       .toBe(source.replaceAll('assert_synthetic_context','assert_production_context'));
   });
   it('inserts exact context and gives an idempotent hash-bound receipt',async()=>{
