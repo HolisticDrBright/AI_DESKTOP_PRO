@@ -164,7 +164,11 @@ correction rules, database category mapping and API status mapping; the infrastr
 builds `npm run build:aws-recording-transcription` and executes the blocked handler without
 AWS credentials. No hosted migration, provider call, activation or PHI has occurred. Review-only
 AI drafting from a transcript version is documented in `docs/encounter-drafting.md`;
-transcript retention across backups and provider-side copies is not covered. The encounter panel has unit evidence for its controller and proxy only; no browser,
-provider or hosted run has exercised it. The page controller drops opened transcript text
+transcript retention across backups and provider-side copies is not covered. The encounter panel runs in a real Chromium under `e2e/aws-recording-transcription.spec.ts`
+(CI job `e2e-aws-recording-consent`, every proxy answered by contract-exact fictional
+responses): request, advance, open, correction textarea refresh and the new version, a fresh
+request after a terminal failure (`Request transcription again`, keyboard-activated), text
+dropped on authorization loss with no raw refusal detail rendered, and the real proxy's cookie
+refusal. No provider or hosted run has exercised it. The page controller drops opened transcript text
 whenever a refresh is refused for authorization (`forbidden`, `unauthenticated`), currency
 (`conflict`) or absence (`not_found`); only transient failures keep it on screen.

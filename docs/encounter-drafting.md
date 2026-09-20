@@ -93,8 +93,12 @@ Local only: PGlite tests (consent, latest-version rule, release refusal, idempot
 completion, immutability, withdrawal during processing, cancellation on cleanup, artifact
 registry and inventory), processor and API unit tests with a fake provider, provider
 request/response boundary tests with a fake secret and fetch, infrastructure tests on the
-built `npm run build:aws-recording-drafting` candidate, proxy and controller tests. No hosted
-migration, provider call, OpenAI project configuration, activation, browser run or PHI has
+built `npm run build:aws-recording-drafting` candidate, proxy and controller tests, and a
+Chromium run in `e2e/aws-recording-transcription.spec.ts` (request from the stored transcript,
+the single drafting step, opening the proposal with its cautions, insertion disabled until an
+unsigned note is explicitly opened, insertion with `proposed_note` provenance saved through the
+composer, refusal without a transcript, and an opened proposal dropped on authorization loss).
+No hosted migration, provider call, OpenAI project configuration, activation or PHI has
 occurred. The executed OpenAI HIPAA amendment supplied by the practice owner must be checked for the
 covered entity, the project it names and its retention terms; the HIPAA-eligible project, the
 documented zero-data retention setting and the prompt release review are recorded outside the

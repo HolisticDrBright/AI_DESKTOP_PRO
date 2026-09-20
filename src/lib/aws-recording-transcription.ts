@@ -59,10 +59,11 @@ export class AwsRecordingTranscription {
   /** Starts a new job with a fresh command ID, or replays the pending one. */
   requestTranscription() {
     const operation = this.state.pending ?? { operation: 'request' as const, input: { recordingId: this.state.recordingId, commandId: this.uuid() } };
-    return this.run<{ status: string; replayed: boolean }>(operation, receipt => ({
+    return this.run<{ jobId: string; status: string; replayed: boolean; segmentCount: number; inventorySha256: string }>(operation, receipt => ({
       notice: receipt.replayed ? 'The earlier request was already accepted.' : 'Transcription requested. Advance to run the next step.',
-      listing: this.state.listing ? { ...this.state.listing, job: { ...(this.state.listing.job ?? { jobId: '', providerJobName: null, failureCode: null, segmentCount: 1,
-        inventorySha256: '0'.repeat(64), createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString() }), status: receipt.status as 'requested' } } : null }));
+      // The receipt describes the new job; an earlier failed or cancelled job is not merged into it.
+      listing: this.state.listing ? { ...this.state.listing, job: { jobId: receipt.jobId, status: receipt.status as 'requested', providerJobName: null, failureCode: null,
+        segmentCount: receipt.segmentCount, inventorySha256: receipt.inventorySha256, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() } } : null }));
   }
   /** One bounded service step: assemble and start, or poll and store. */
   advance() { return this.run<TranscriptionListing>({ operation: 'advance', input: { recordingId: this.state.recordingId } }, listing => ({ listing,

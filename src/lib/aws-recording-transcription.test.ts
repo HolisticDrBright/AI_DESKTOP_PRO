@@ -57,6 +57,19 @@ describe('page-owned transcription review', () => {
     f.owner.dispose(); expect(f.owner.snapshot().content).toBeNull();
     await f.owner.load(); expect(f.calls).toHaveLength(6);
   });
+  it('offers a fresh request after a terminal failure and describes the new job from the receipt, never the failed one', async () => {
+    const failed = { ...listing('completed').job!, jobId: recordingId, status: 'failed' as const, failureCode: 'provider_unavailable' };
+    const f = fixture(op => {
+      if (op.operation === 'list') return { ...listing(null), job: failed };
+      if (op.operation === 'request') return { jobId, recordingId, commandId: op.input.commandId, status: 'requested', segmentCount: 3, inventorySha256: hash, replayed: false };
+      throw new AdapterError('invalid');
+    });
+    await f.owner.load(); expect(f.owner.snapshot().listing?.job).toMatchObject({ status: 'failed', failureCode: 'provider_unavailable' });
+    await f.owner.requestTranscription();
+    expect(f.calls[1]).toMatchObject({ operation: 'request', input: { recordingId, commandId: '44444441-4444-4444-8444-444444444444' } });
+    expect(f.owner.snapshot().listing?.job).toMatchObject({ jobId, status: 'requested', failureCode: null, segmentCount: 3 });
+    expect(f.owner.snapshot().pending).toBeNull();
+  });
   it('retains only an uncertain request for exact replay and blocks other operations until it is resolved', async () => {
     let fail = true;
     const f = fixture(op => {

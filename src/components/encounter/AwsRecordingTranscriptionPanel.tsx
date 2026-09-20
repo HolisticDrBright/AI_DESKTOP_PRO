@@ -32,10 +32,12 @@ function RecordingTranscription({ capture, available }: { capture: FinishedCaptu
     <div className="flex flex-wrap gap-2">
       <button className={button} disabled={disabled || !!snapshot.pending} onClick={() => void owner.current?.load()}>Load transcription status</button>
       {snapshot.pending ? <button className={button} disabled={disabled} onClick={() => void owner.current?.requestTranscription()}>Retry the same transcription request</button>
-        : snapshot.listing && !job ? <button className={button} disabled={disabled} onClick={() => void owner.current?.requestTranscription()}>Request transcription</button> : null}
+        : snapshot.listing && !job ? <button className={button} disabled={disabled} onClick={() => void owner.current?.requestTranscription()}>Request transcription</button>
+        : job && ['failed', 'cancelled'].includes(job.status) ? <button className={button} disabled={disabled} onClick={() => void owner.current?.requestTranscription()}>Request transcription again</button> : null}
       {job && ['requested', 'processing'].includes(job.status) ? <button className={button} disabled={disabled || !!snapshot.pending} onClick={() => void owner.current?.advance()}>Advance one step</button> : null}
     </div>
     {snapshot.listing && !job ? <p className="text-xs text-subtle">Requesting requires effective transcription consent from every participant and re-checks holds and deletion. Nothing is sent to the provider until you advance.</p> : null}
+    {job && ['failed', 'cancelled'].includes(job.status) ? <p className="text-xs text-subtle">{job.failureCode ? `Recorded failure: ${job.failureCode}. ` : ''}A new request starts a new job under the same consent checks; the failed job stays in the record.</p> : null}
     {versions.length ? <ul className="space-y-1 text-sm">{versions.map(v => <li key={v.transcriptId} className="flex flex-wrap items-center gap-2">
       <span>Version {v.version} · {v.kind === 'provider' ? 'provider transcript' : 'correction'} · {v.wordCount} words · {new Date(v.createdAt).toLocaleString()}{v.reason ? ` · ${v.reason}` : ''}</span>
       <button className={button} disabled={disabled || snapshot.content?.transcriptId === v.transcriptId} onClick={() => void owner.current?.read(v.transcriptId)}>Open version {v.version}</button>
