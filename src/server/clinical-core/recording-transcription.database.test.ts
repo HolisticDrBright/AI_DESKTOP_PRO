@@ -116,15 +116,16 @@ describe('encounter transcription authority',()=>{
     await expect(call('select clinical_private.get_recording_transcript_object($1) as result',[stored.transcriptId],colleague)).rejects.toThrow(/recording_access_refused/);
     await expect(db.query("update clinical_private.recording_transcripts set content_sha256=repeat('f',64) where id=$1",[stored.transcriptId])).rejects.toThrow();
   });
-  it('fails the job and stores nothing when consent is withdrawn between request and completion',async()=>{
+  it('cancels the open job and stores nothing when consent is withdrawn between request and completion',async()=>{
     const release=await transcriptionRelease(),ready=await finished();
     const job=(await request(ready.c.recordingId,release))!.jobId;
     await call("select clinical_private.mark_recording_transcription_processing($1,'fictional-provider-job-2') as result",[job]);
     await withdraw(ready.grants[0]);
-    const outcome=await call<{status:string;failureCode:string;transcriptId:null}>('select clinical_private.complete_recording_transcription($1,$2,$3,120,20) as result',[job,'transcripts/fictional/2.json','d'.repeat(64)]);
-    expect(outcome).toMatchObject({status:'failed',transcriptId:null});expect(outcome!.failureCode).toMatch(/recording_consent_required|recording_transcription_refused/);
-    const row=(await db.query<{status:string;failure_code:string}>('select status,failure_code from clinical_private.recording_transcription_jobs where id=$1',[job])).rows[0];
-    expect(row.status).toBe('failed');expect(row.failure_code).toMatch(/recording_consent_required|recording_transcription_refused/);
+    // Withdrawal reaches the job immediately (migration 92): a provider result arriving afterwards is refused, not stored.
+    await expect(call('select clinical_private.complete_recording_transcription($1,$2,$3,120,20) as result',[job,'transcripts/fictional/2.json','d'.repeat(64)])).rejects.toThrow(/recording_transcription_conflict/);
+    const row=(await db.query<{status:string;failure_code:string|null}>('select status,failure_code from clinical_private.recording_transcription_jobs where id=$1',[job])).rows[0];
+    expect(row.status).toBe('cancelled');
+    expect((await db.query("select count(*)::int as n from clinical_private.recording_transcription_events where job_id=$1 and action='transcription.cancelled'",[job])).rows[0]).toEqual({n:1});
     expect((await db.query<{n:number}>('select count(*)::int n from clinical_private.recording_transcripts where job_id=$1',[job])).rows[0].n).toBe(0);
     // A withdrawn recording cannot be requested again either.
     await expect(request(ready.c.recordingId,release)).rejects.toThrow(/recording_transcription_refused|recording_consent_required/);
@@ -305,5 +306,99 @@ describe('declared object intents, orphan registration and storage lookup (recov
     expect(storage).toMatchObject({recordingId:f.c.recordingId,organizationId:org,storage:{bucket:'fictional-recording-storage',expectedBucketOwner:'123456789012',region:'us-east-2',maxSegmentBytes:1000000}});
     await expect(call('select clinical_private.get_recording_storage($1) as result',[f.c.recordingId],colleague)).rejects.toThrow('recording_access_refused');
     await expect(call('select clinical_private.get_recording_storage($1) as result',[randomUUID()])).rejects.toThrow(/recording_access_refused|recording_not_found/);
+  });
+});
+
+describe('processing consent withdrawal retention (migration 92)',()=>{
+  type Intent={reason:string;scope:string;version:string;due_at:string};
+  const intent=async(recording:string)=>(await db.query<Intent>('select reason,scope,version::text,due_at from clinical_private.recording_cleanup_intents where recording_id=$1',[recording])).rows[0];
+  const operatorCall=<T,>(sql:string,args:unknown[],who=actor)=>db.transaction(async tx=>{
+    await tx.exec('set local role clinical_core_api');
+    await tx.query("select clinical_private.set_request_context($1,$2,'workforce',$3,'consent_management','production-clinical','clinical_phi')",[who,org,'subject-'+who]);
+    return (await tx.query<{result:T}>(sql,args)).rows[0]?.result;
+  });
+  async function cleanupRelease(captureRelease:string){
+    const storage=(await db.query<{id:string}>('select id from clinical_private.recording_storage_releases where capture_release_id=$1',[captureRelease])).rows[0].id;
+    const policyVersion='fictional-'+randomUUID(),release=randomUUID();
+    await db.query(`insert into clinical_private.owned_retention_policies(version,content,content_sha256,approved_by,approved_at)
+      values($1,'FICTIONAL RECORDING RETENTION',encode(public.digest('FICTIONAL RECORDING RETENTION','sha256'),'hex'),'FICTIONAL REVIEW ONLY',clock_timestamp()-interval '1 hour')`,[policyVersion]);
+    await db.query(`insert into clinical_private.recording_cleanup_releases(id,capture_release_id,storage_release_id,retention_policy_version,retention_policy_sha256,worker_sha256,qualification_sha256,approved_by,approved_at,expires_at)
+      values($1,$2,$3,$4,encode(public.digest('FICTIONAL RECORDING RETENTION','sha256'),'hex'),repeat('c',64),repeat('d',64),'FICTIONAL CLEANUP QUALIFICATION',clock_timestamp()-interval '1 day',clock_timestamp()+interval '1 day')`,
+      [release,captureRelease,storage,policyVersion]);
+    return release;
+  }
+  beforeAll(async()=>{
+    await db.query(`insert into clinical_private.recording_cleanup_operators(organization_id,operator_id,reviewed_by,evidence_sha256,approved_at,expires_at)
+      values($1,$2,$3,repeat('e',64),clock_timestamp()-interval '1 hour',clock_timestamp()+interval '1 day')`,[org,actor,colleague]);
+  });
+  it('schedules processing objects for cleanup now when a participant withdraws transcription consent, cancels the open job, and leaves audio on its own deadline',async()=>{
+    const f=await finished(),release=await transcriptionRelease();
+    expect(await intent(f.c.recordingId)).toMatchObject({reason:'retention_deadline',scope:'recording',version:'1'});
+    const job=(await request(f.c.recordingId,release))!;
+    await call('select clinical_private.mark_recording_transcription_processing($1,$2) as result',[job.jobId,'alp-'+job.jobId]);
+    await withdraw(f.grants[0]);
+    const after=await intent(f.c.recordingId);
+    expect(after).toMatchObject({reason:'processing_consent_revoked',scope:'processing',version:'2'});
+    expect(Date.parse(after.due_at)).toBeLessThanOrEqual(Date.now()+1000);
+    expect((await db.query<{status:string}>('select status from clinical_private.recording_transcription_jobs where id=$1',[job.jobId])).rows[0].status).toBe('cancelled');
+    expect((await db.query<{scope:string;reason:string}>('select scope,reason from clinical_private.recording_cleanup_intent_events where recording_id=$1 and version=2',[f.c.recordingId])).rows[0]).toEqual({scope:'processing',reason:'processing_consent_revoked'});
+    // A second processing withdrawal is a no-op; a recording-consent withdrawal widens the scope to the whole recording.
+    await withdraw(f.grants[1]);
+    expect(await intent(f.c.recordingId)).toMatchObject({reason:'processing_consent_revoked',scope:'processing',version:'2'});
+    const recordingGrant=(await db.query<{id:string}>(`select g.id from clinical_private.recording_consent_grants g join clinical_private.recording_consent_releases d on d.id=g.release_id
+      where d.scope='recording' and g.participant_id in (select unnest(participant_ids) from clinical_private.encounter_captures where id=$1) order by g.granted_at limit 1`,[f.c.recordingId])).rows[0].id;
+    await withdraw(recordingGrant);
+    expect(await intent(f.c.recordingId)).toMatchObject({reason:'consent_revoked',scope:'recording',version:'3'});
+    // The scope never narrows back to processing once the whole recording is due.
+    await expect(db.query("update clinical_private.recording_cleanup_intents set reason='processing_consent_revoked',scope='processing',version=version+1 where recording_id=$1",[f.c.recordingId])).rejects.toThrow('recording_cleanup_intent_immutable');
+    await expect(db.query("update clinical_private.recording_cleanup_intents set scope='processing',version=version+1 where recording_id=$1",[f.c.recordingId])).rejects.toThrow('recording_cleanup_intent_immutable');
+  });
+  it('does not schedule processing cleanup for a withdrawal no job relied on, and never for another recording',async()=>{
+    const idle=await finished();
+    await withdraw(idle.grants[0]);
+    expect(await intent(idle.c.recordingId)).toMatchObject({reason:'retention_deadline',scope:'recording',version:'1'});
+    const other=await finished(),release=await transcriptionRelease();
+    await request(other.c.recordingId,release);
+    await withdraw(idle.grants[1]);
+    expect(await intent(other.c.recordingId)).toMatchObject({reason:'retention_deadline',version:'1'});
+    await expect(db.query("select clinical_private.enqueue_recording_cleanup($1,'processing_consent_revoked')",[idle.c.recordingId])).rejects.toThrow('recording_cleanup_state_invalid');
+  });
+  it('admits a processing-scope intent with audio not actionable until the capture deadline, and reports honest deletion counts',async()=>{
+    const f=await finished(),release=await transcriptionRelease();
+    const job=(await request(f.c.recordingId,release))!;
+    await call('select clinical_private.mark_recording_transcription_processing($1,$2) as result',[job.jobId,'alp-'+job.jobId]);
+    const prefix=`encounter-recordings/${org}/${f.c.recordingId}/transcription/${job.jobId}/`;
+    const done=(await complete(job.jobId,prefix+'transcript-v1.txt','5'.repeat(64)))!;
+    const registered=(await call<{artifactId:string}>('select clinical_private.register_recording_transcription_artifact($1,$2,$3,$4,$5,$6,$7) as result',[job.jobId,'transcript',prefix+'transcript-v1.txt','v-t1','5'.repeat(64),120,done.transcriptId]))!;
+    await call('select clinical_private.declare_recording_object($1,false,$2,$3,$4,$5::integer) as result',[job.jobId,'provider',prefix+'provider.json',null,null]);
+    await withdraw(f.grants[0]);
+    const current=await intent(f.c.recordingId);
+    expect(current).toMatchObject({reason:'processing_consent_revoked',scope:'processing'});
+    const cleanup=await cleanupRelease((await db.query<{release_id:string}>('select release_id from clinical_private.encounter_captures where id=$1',[f.c.recordingId])).rows[0].release_id);
+    // The stored segment's reservation window is still open; a stored segment is immutable, so admission does not wait for it.
+    expect((await db.query<{n:number}>("select count(*)::int n from clinical_private.recording_segments where recording_id=$1 and status='stored' and accept_before>clock_timestamp()",[f.c.recordingId])).rows[0].n).toBe(1);
+    const args=[f.c.recordingId,Number(current.version),cleanup,'c'.repeat(64)];
+    const admitted=(await operatorCall<{scope:string;audioActionable:boolean;transcriptionInventory:{artifactId:string}[];audioDeleted:boolean}>('select clinical_private.admit_recording_cleanup($1,$2::bigint,$3,$4) as result',args))!;
+    expect(admitted).toMatchObject({scope:'processing',audioActionable:false,audioDeleted:false});
+    expect(admitted.transcriptionInventory.map(a=>a.artifactId)).toEqual([registered.artifactId]);
+    const status=(await operatorCall<Record<string,unknown>>('select clinical_private.recording_processing_deletion_status($1) as result',[f.c.recordingId]))!;
+    expect(status).toMatchObject({scope:'processing',reason:'processing_consent_revoked',audioActionable:false,processed:true,openJobs:0,
+      artifacts:{registered:1,deleteAcknowledged:0,retained:0,unknown:0,unattempted:1},declaredWithoutArtifact:1,processingObjectsDeleted:false,
+      providerCopy:'not_verifiable_no_delete_permission',backups:'not_covered',audioDeleted:false});
+    await expect(operatorCall('select clinical_private.recording_processing_deletion_status($1) as result',[f.c.recordingId],colleague)).rejects.toThrow(/recording_cleanup_operator_required/);
+    // An acknowledged exact-version delete counts; the declared provider object without a row still blocks a deletion claim.
+    const attempt=randomUUID();
+    await operatorCall('select clinical_private.prepare_recording_cleanup_artifact_attempt($1,$2::bigint,$3,$4,$5,$6,$7,$8,$9,$10) as result',
+      [...args,attempt,registered.artifactId,'v-t1','object',(await operatorCall<{inventorySha256:string}>('select clinical_private.admit_recording_cleanup($1,$2::bigint,$3,$4) as result',args))!.inventorySha256,'a'.repeat(64)]);
+    await operatorCall('select clinical_private.record_recording_cleanup_attempt($1,$2,$3) as result',[attempt,'delete_acknowledged','b'.repeat(64)]);
+    expect(await operatorCall<Record<string,unknown>>('select clinical_private.recording_processing_deletion_status($1) as result',[f.c.recordingId])).toMatchObject({
+      artifacts:{registered:1,deleteAcknowledged:1,unattempted:0},declaredWithoutArtifact:1,processingObjectsDeleted:false});
+    await call('select clinical_private.register_recording_orphan_artifact($1,$2,$3,$4) as result',[prefix+'provider.json','v-p','6'.repeat(64),20]);
+    expect(await operatorCall<Record<string,unknown>>('select clinical_private.recording_processing_deletion_status($1) as result',[f.c.recordingId])).toMatchObject({
+      artifacts:{registered:2,deleteAcknowledged:1},declaredWithoutArtifact:0,processingObjectsDeleted:false});
+    // Audio becomes actionable under the same intent once the capture's own deadline passes.
+    await db.query("update clinical_private.encounter_captures set deletion_deadline=clock_timestamp()-interval '1 second' where id=$1",[f.c.recordingId]);
+    expect(await operatorCall<{audioActionable:boolean}>('select clinical_private.admit_recording_cleanup($1,$2::bigint,$3,$4) as result',args)).toMatchObject({scope:'processing',audioActionable:true});
+    expect(JSON.stringify(status)).not.toMatch(/bucket|token|transcript text/);
   });
 });

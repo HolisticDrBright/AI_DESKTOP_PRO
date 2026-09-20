@@ -23,6 +23,10 @@ export function personalStorageCandidate(disabled) {
     AlarmTopicArn: {Type:'String',Default:'',AllowedPattern:'^$|^arn:aws:sns:[a-z0-9-]+:[0-9]{12}:[A-Za-z0-9_-]+$'},
     CodeVersion: {Type:'String',MinLength:1,MaxLength:1024,AllowedPattern:'^(?!null$).+$'},
     SourceCommit: {Type:'String',AllowedPattern:'^[a-f0-9]{40}$'},
+    // Large-export delivery is optional and separately reviewed: without all three the job routes refuse.
+    ExportBucketName: {Type:'String',Default:'',AllowedPattern:'^$|^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$'},
+    ExportKmsKeyArn: {Type:'String',Default:'',AllowedPattern:'^$|^arn:aws:kms:[a-z0-9-]+:[0-9]{12}:key/[a-f0-9-]{36}$'},
+    ExportReviewSha256: {Type:'String',Default:'',AllowedPattern:'^$|^[a-f0-9]{64}$'},
   });
   const required = ['ActivationEvidenceSha256','DatabaseReviewSha256','AllowedScopes','AlarmTopicArn'];
   template.Conditions = {
@@ -31,12 +35,20 @@ export function personalStorageCandidate(disabled) {
       {'Fn::Equals':[ref('Activation'),'approved']}, ...required.map(nonempty),
     ]},
     HasAlarmRecipient: nonempty('AlarmTopicArn'),
+    ExportDelivery: {'Fn::And':[{'Fn::Equals':[ref('PhiAllowed'),'true']},{'Fn::Equals':[ref('Activation'),'approved']},...required.map(nonempty),
+      nonempty('ExportBucketName'),nonempty('ExportKmsKeyArn'),nonempty('ExportReviewSha256')]},
   };
   template.Rules = {ActivationRequiresReviewedConfiguration: {
     RuleCondition: {'Fn::Equals':[ref('PhiAllowed'),'true']},
     Assertions: [
       {Assert:{'Fn::Equals':[ref('Activation'),'approved']},AssertDescription:'Reviewed activation is required'},
       ...required.map(name => ({Assert:nonempty(name),AssertDescription:`${name} required before activation`})),
+    ],
+  },ExportDeliveryRequiresReview: {
+    RuleCondition: {'Fn::Not':[{'Fn::Equals':[ref('ExportBucketName'),'']}]},
+    Assertions: [
+      {Assert:nonempty('ExportKmsKeyArn'),AssertDescription:'ExportKmsKeyArn required with an export bucket'},
+      {Assert:nonempty('ExportReviewSha256'),AssertDescription:'ExportReviewSha256 required with an export bucket'},
     ],
   }};
   const r = template.Resources;
@@ -56,6 +68,15 @@ export function personalStorageCandidate(disabled) {
       }}},
     ]},
   },ref('AWS::NoValue')]});
+  // Export objects live under one prefix in the reviewed bucket; deletes are by exact version, no listing, no other prefix.
+  r.Role.Properties.Policies.push({'Fn::If':['ExportDelivery',{
+    PolicyName:'ReviewedPersonalExportObjectsOnly',PolicyDocument:{Version:'2012-10-17',Statement:[
+      {Effect:'Allow',Action:['s3:PutObject','s3:GetObject','s3:GetObjectVersion','s3:DeleteObjectVersion','s3:AbortMultipartUpload','s3:ListMultipartUploadParts'],
+        Resource:sub('arn:${AWS::Partition}:s3:::${ExportBucketName}/personal-exports/*'),Condition:account},
+      {Effect:'Allow',Action:['kms:GenerateDataKey','kms:Decrypt'],Resource:ref('ExportKmsKeyArn'),Condition:{StringEquals:{
+        'kms:ViaService':sub('s3.${AWS::Region}.amazonaws.com'),'kms:CallerAccount':ref('AWS::AccountId')}}},
+    ]},
+  },ref('AWS::NoValue')]});
   r.Function.Properties.FunctionName=sub('${ApiId}-personal-storage');
   r.Function.Properties.Code.S3ObjectVersion=ref('CodeVersion');
   r.Function.Properties.ReservedConcurrentExecutions=4;
@@ -65,6 +86,9 @@ export function personalStorageCandidate(disabled) {
     PERSONAL_STORAGE_EVIDENCE_SHA256:ref('ActivationEvidenceSha256'),PERSONAL_STORAGE_ALLOWED_SCOPES:ref('AllowedScopes'),
     CLINICAL_DATABASE_CLUSTER_ARN:ref('DatabaseClusterArn'),CLINICAL_DATABASE_SECRET_ARN:ref('DatabaseSecretArn'),CLINICAL_DATABASE_NAME:ref('DatabaseName'),
     KNOWLEDGE_RELEASE_MODE:'disabled',SOURCE_COMMIT:ref('SourceCommit'),
+    PERSONAL_EXPORT_BUCKET:{'Fn::If':['ExportDelivery',ref('ExportBucketName'),'']},
+    PERSONAL_EXPORT_KMS_KEY_ARN:{'Fn::If':['ExportDelivery',ref('ExportKmsKeyArn'),'']},
+    PERSONAL_EXPORT_BUCKET_OWNER:{'Fn::If':['ExportDelivery',ref('AWS::AccountId'),'']},
   };
   r.ConsumerAuthorizer={Type:'AWS::ApiGatewayV2::Authorizer',Properties:{
     ApiId:ref('ApiId'),Name:sub('${ApiId}-personal-storage-consumer'),AuthorizerType:'JWT',

@@ -101,10 +101,14 @@ export function createRecordingCleanupWorker(deps:{authorize:ReturnType<typeof c
     const initial=await authorize(context,request,async(a,signal)=>({a,page:verifiedPage(a,await deps.storage.list(a,signal))}));
     if(initial.page.versions.length===0)return {state:'empty_observed',deleteAcknowledged:0,audioDeleted:false,requiresRecheck:true};
     let acknowledged=0;
-    const objects=[...initial.page.versions].sort((a,b)=>Number(a.kind==='delete_marker')-Number(b.kind==='delete_marker')).slice(0,25);
+    // A processing-scope pass leaves audio segments (and their delete markers) in place until the recording's own deadline.
+    const actionable=initial.page.versions.filter(v=>initial.a.audioActionable||cleanupTarget(initial.a,v).kind==='artifact');
+    if(actionable.length===0)return {state:'needs_recheck',deleteAcknowledged:0,audioDeleted:false,requiresRecheck:true};
+    const objects=[...actionable].sort((a,b)=>Number(a.kind==='delete_marker')-Number(b.kind==='delete_marker')).slice(0,25);
     for(const object of objects){
       const proof=await authorize(context,request,async(a,signal)=>{
-        if(a.inventorySha256!==initial.a.inventorySha256||a.transcriptionInventorySha256!==initial.a.transcriptionInventorySha256)throw new RecordingCleanupError('not_ready');
+        if(a.inventorySha256!==initial.a.inventorySha256||a.transcriptionInventorySha256!==initial.a.transcriptionInventorySha256
+          ||a.scope!==initial.a.scope||a.audioActionable!==initial.a.audioActionable)throw new RecordingCleanupError('not_ready');
         if(object.kind==='object')return verifyObject(a,object,await deps.storage.inspect(a,object,signal));
         const page=verifiedPage(a,await deps.storage.list(a,signal));
         if(!page.versions.some(v=>v.key===object.key&&v.version===object.version&&v.kind===object.kind))throw new RecordingCleanupError('not_ready');
@@ -122,7 +126,9 @@ export function createRecordingCleanupWorker(deps:{authorize:ReturnType<typeof c
             ||a.attempt.objectVersion!==object.version||a.attempt.kind!==object.kind||a.attempt.evidenceSha256!==proof)
             throw new RecordingCleanupError('access_refused');
           // Both inventories must still be the ones this pass verified; the database pins the audio inventory, the worker pins both.
-          if(a.inventorySha256!==initial.a.inventorySha256||a.transcriptionInventorySha256!==initial.a.transcriptionInventorySha256)throw new RecordingCleanupError('not_ready');
+          if(a.inventorySha256!==initial.a.inventorySha256||a.transcriptionInventorySha256!==initial.a.transcriptionInventorySha256
+            ||a.scope!==initial.a.scope||a.audioActionable!==initial.a.audioActionable)throw new RecordingCleanupError('not_ready');
+          if(!a.audioActionable&&cleanupTarget(a,object).kind==='segment')throw new RecordingCleanupError('not_ready');
           let freshProof:string;
           if(object.kind==='object')freshProof=verifyObject(a,object,await deps.storage.inspect(a,object,signal));
           else{

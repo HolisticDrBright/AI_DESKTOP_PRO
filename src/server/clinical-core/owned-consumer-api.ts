@@ -5,6 +5,7 @@ import { createOwnedConsumerRecordsAdapter,OwnedStorageError,OWNED_STORAGE_SCOPE
 import { OWNED_COLLECTIONS as CONSUMER_CLINICAL_COLLECTIONS,type OwnedCollection as ConsumerClinicalCollection } from './owned-lab-observations';
 import {buildOwnedChatContext} from './owned-chat-context';
 import type {KnowledgeLoader} from './aws-reviewed-knowledge';
+import type {createOwnedPrivacyExportJobs} from './owned-privacy-export-job';
 
 export type OwnedConsumerApiConfiguration = {
   consumerIssuer:string; consumerAudience:string;
@@ -13,7 +14,9 @@ export type OwnedConsumerApiConfiguration = {
 };
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const BASE="/clinical-core/consumer/personal";
-export const OWNED_CONSUMER_ROUTES=[`GET ${BASE}/records`,`GET ${BASE}/record`,`POST ${BASE}/records`,`GET ${BASE}/consent`,`POST ${BASE}/consent`,`GET ${BASE}/posture`,`GET ${BASE}/chat-context`,`POST ${BASE}/privacy-export`,`GET ${BASE}/privacy-export`,`GET ${BASE}/active-plan`,`POST ${BASE}/active-plan`,`POST ${BASE}/active-plan/release`,`GET ${BASE}/privacy-request`,`POST ${BASE}/privacy-request`,`POST ${BASE}/privacy-request/tombstone`] as const;
+export const OWNED_CONSUMER_ROUTES=[`GET ${BASE}/records`,`GET ${BASE}/record`,`POST ${BASE}/records`,`GET ${BASE}/consent`,`POST ${BASE}/consent`,`GET ${BASE}/posture`,`GET ${BASE}/chat-context`,`POST ${BASE}/privacy-export`,`GET ${BASE}/privacy-export`,`POST ${BASE}/privacy-export/job`,`GET ${BASE}/privacy-export/job`,`POST ${BASE}/privacy-export/job/cancel`,`POST ${BASE}/privacy-export/job/download`,`GET ${BASE}/active-plan`,`POST ${BASE}/active-plan`,`POST ${BASE}/active-plan/release`,`GET ${BASE}/privacy-request`,`POST ${BASE}/privacy-request`,`POST ${BASE}/privacy-request/tombstone`] as const;
+/** Each poll of a running job performs one bounded packaging pass under the owner's identity. */
+export const PRIVACY_EXPORT_PASS_BUDGET_MS=8000;
 const COLLECTION_SCOPE:Record<ConsumerClinicalCollection,OwnedStorageScope>={
   lab_observations:'lab_history',
   lab_analyses:'lab_history',
@@ -27,7 +30,9 @@ const COLLECTION_SCOPE:Record<ConsumerClinicalCollection,OwnedStorageScope>={
 
 /** API Gateway MUST verify the JWT signature. This adds exact consumer claims,
  * expiry, scope and activation checks; it never decodes an unverified header. */
-export function createOwnedConsumerApi(input:{configuration:OwnedConsumerApiConfiguration;adapter:()=>ReturnType<typeof createOwnedConsumerRecordsAdapter>;now?:()=>number;knowledgeLoader?:KnowledgeLoader}) {
+export function createOwnedConsumerApi(input:{configuration:OwnedConsumerApiConfiguration;adapter:()=>ReturnType<typeof createOwnedConsumerRecordsAdapter>;now?:()=>number;knowledgeLoader?:KnowledgeLoader;
+  /** Large-export packaging and delivery; absent when no reviewed export bucket is configured, and the job routes then refuse. */
+  exportJobs?:()=>ReturnType<typeof createOwnedPrivacyExportJobs>;passBudgetMs?:number}) {
   const c=input.configuration;
   if (!/^https:\/\/cognito-idp\.[a-z0-9-]+\.amazonaws\.com\/[A-Za-z0-9_-]+$/.test(c.consumerIssuer)
     || !/^[a-zA-Z0-9]{20,128}$/.test(c.consumerAudience)) throw new Error("owned_api_configuration_invalid");
@@ -40,7 +45,7 @@ export function createOwnedConsumerApi(input:{configuration:OwnedConsumerApiConf
       const route=event.routeKey??"";
       if (!(OWNED_CONSUMER_ROUTES as readonly string[]).includes(route)) return response(404,{error:"route_not_found"});
       const consent=route.endsWith("/consent");
-      const privacy=route.endsWith('/privacy-export')||route.includes('/privacy-request');
+      const privacy=route.includes('/privacy-export')||route.includes('/privacy-request');
       const posture=route.endsWith('/posture');
       const context=ownedConsumerIdentity(event,c,consent||privacy||posture?"consent_management":"clinical_data",input.now?.()??Date.now());
       const post=route.startsWith("POST ");
@@ -74,6 +79,37 @@ export function createOwnedConsumerApi(input:{configuration:OwnedConsumerApiConf
           const page=await adapter.listPrivacyRequestPage(context,{...(body.limit===undefined?{}:{limit:Number(body.limit)}),
             ...(body.afterId===undefined?{}:{after:{submittedAt:String(body.afterSubmittedAt),privacyRequestId:String(body.afterId)}})});
           return response(200,{data:{requests:page.requests,coverage:PERSONAL_DELETION_COVERAGE,nextAfter:page.nextAfter}});
+        }
+        if(route.includes('/privacy-export/job')){
+          if(!input.exportJobs)return response(503,{error:'export_delivery_not_configured'});
+          const jobs=input.exportJobs(),signal=AbortSignal.timeout((input.passBudgetMs??PRIVACY_EXPORT_PASS_BUDGET_MS)+4000);
+          if(route.endsWith('/download')){
+            // Delivery needs a sign-in within the last five minutes, not merely a valid token.
+            exact(body,['jobId']);
+            const authTime=Number(event.requestContext?.authorizer?.jwt?.claims?.auth_time);
+            if(!Number.isSafeInteger(authTime)||authTime<=0)return response(401,{error:'reauth_required'});
+            return response(200,{data:await jobs.issuePrivacyExportDownload(context,{jobId:String(body.jobId??'')},authTime*1000,signal)});
+          }
+          if(route.endsWith('/cancel')){
+            exact(body,['jobId']);
+            const cancelled=await jobs.cancelPrivacyExportJob(context,{jobId:String(body.jobId??'')});
+            const cleanup=await jobs.cleanupPrivacyExportJobs(context,signal);
+            return response(200,{data:{...cancelled,cleanup}});
+          }
+          if(post){
+            exact(body,['requestId']);
+            const requested=await jobs.requestPrivacyExportJob(context,{requestId:String(body.requestId??'')});
+            // The owner's earlier finished jobs are cleaned while they are here.
+            const cleanup=await jobs.cleanupPrivacyExportJobs(context,signal);
+            return response(200,{data:{...requested,cleanup}});
+          }
+          exact(body,['jobId','advance']);
+          const jobId=String(body.jobId??'');
+          if(body.advance!==undefined&&body.advance!=='true')invalid();
+          const current=await jobs.getPrivacyExportJob(context,{jobId});
+          if(body.advance==='true'&&['requested','running'].includes(current.status))
+            return response(200,{data:await jobs.advancePrivacyExportJob(context,{jobId},input.passBudgetMs??PRIVACY_EXPORT_PASS_BUDGET_MS,signal)});
+          return response(200,{data:current});
         }
         if(post){exact(body,['requestId']);return response(200,{data:await adapter.startPrivacyExport(context,{requestId:String(body.requestId??'')})});}
         exact(body,['exportId','section','limit','cursor']);

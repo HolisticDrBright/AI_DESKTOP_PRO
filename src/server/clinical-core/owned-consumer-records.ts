@@ -56,6 +56,8 @@ export function createOwnedConsumerRecordsAdapter(database: ClinicalCoreDatabase
     });
   };
   return {
+    /** Consent-management transaction under the same identity gate and rejection mapping; used by export jobs. */
+    runPrivacy:<T>(context:ProductionClinicalRequestContext,work:(tx:ClinicalCoreTransaction)=>Promise<T>)=>run(context,'consent_management',work),
     ...createOwnedPrivacyExport((context, work) => run(context, 'consent_management', work)),
     ...createOwnedActivePlan((context, work) => run(context, 'clinical_data', work)),
     ...createOwnedPrivacyRequests((context, work) => run(context, 'consent_management', work)),

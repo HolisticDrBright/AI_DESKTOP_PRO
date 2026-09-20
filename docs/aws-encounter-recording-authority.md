@@ -272,7 +272,10 @@ acceptance. Original commercial-release scopes and clinical holds are unchanged.
 - Hold-aware retention/deletion across backups and provider-side copies, with
   actual receipts rather than a status-only claim. Audio, assembled media,
   provider output and transcript versions are now inventoried and removed by the
-  same bounded pass (`docs/encounter-transcription.md`, migration 85).
+  same bounded pass (`docs/encounter-transcription.md`, migration 85); withdrawal
+  of transcription or drafting consent now schedules those processing objects
+  and cancels open jobs under a recorded default policy (migration 92), with an
+  operator status that names provider copies and backups as not covered.
 - Deployment/configuration/rollback, concurrent request testing and physical
   microphone/Safari/provider/restore acceptance. No paid mobile build or PHI
   activation has been performed.
@@ -910,7 +913,10 @@ event history. Capture insertion atomically creates a work item at that capture'
 original retention deadline, so abandoned/no-disposition captures are not omitted.
 Discard advances the due time; capture revocation and withdrawal of a recorded
 recording grant do likewise, including withdrawal after a successful finish.
-Finish alone does not shorten the original deadline or start processing.
+Finish alone does not shorten the original deadline or start processing. Since
+migration 92, withdrawal of transcription or drafting consent makes the intent
+due now with scope `processing`: transcription and drafting objects only, audio
+unchanged until its own deadline.
 
 This is a handoff for a reviewed cleanup worker, NOT authority to delete. A due
 item must still pass fresh retention/legal-hold, in-flight writer, full version

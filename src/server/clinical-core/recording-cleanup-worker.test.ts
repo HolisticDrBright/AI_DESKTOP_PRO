@@ -13,7 +13,7 @@ function fixture(count=1){
     storage:{bucket:'fictional-bucket',expectedBucketOwner:'123456789012',region:'us-east-2',kmsKeyArn:'arn:aws:kms:us-east-2:123456789012:key/11111111-1111-4111-8111-111111111111',maxSegmentBytes:10000},
     inventory:[{segmentId:randomUUID(),sequence:0,sha256:'b'.repeat(64),bytes:3,status:'reserved',objectKey:key,objectVersion:null,storageReleaseId,
       authorityEpoch:1,participantIds:[randomUUID()],recordingGrantIds:[randomUUID()]}],inventorySha256:'c'.repeat(64),
-    transcriptionInventory:[],transcriptionInventorySha256:'e'.repeat(64),validUntil:new Date(Date.now()+5000).toISOString(),audioDeleted:false};
+    transcriptionInventory:[],transcriptionInventorySha256:'e'.repeat(64),scope:'recording',audioActionable:true,validUntil:new Date(Date.now()+5000).toISOString(),audioDeleted:false};
   let versions:CleanupObjectVersion[]=Array.from({length:count},(_,i)=>({key,version:'version-'+i,kind:'object'}));
   let held=false;const prepared=new Map<string,CleanupPrepared>(),events:{id:string;outcome:string}[]=[];
   const authorize:ReturnType<typeof createRecordingCleanupAuthority>=async(_ctx,r,operation)=>{
@@ -159,6 +159,30 @@ describe('recording cleanup worker: transcription artifacts under the same holds
     // The attempt phase re-reads both inventories; a change is an unknown outcome for that attempt, never a delete.
     expect(await changed.worker()).toMatchObject({state:'needs_recheck',deleteAcknowledged:0});
     expect(changed.storage.remove).not.toHaveBeenCalled();expect(changed.events).toEqual([{id:[...changed.prepared.keys()][0],outcome:'unknown'}]);
+  });
+  it('under a processing-scope admission deletes only transcription and drafting objects and leaves audio segments and their markers in place',async()=>{
+    const f=artifactFixture();
+    const segment=f.a.inventory[0],segmentKey=segment.objectKey;
+    Object.assign(f.a,{scope:'processing',audioActionable:false});
+    f.setVersions([{key:segmentKey,version:'segment-version',kind:'object'},{key:segmentKey,version:'marker-version',kind:'delete_marker'},f.v]);
+    expect(await f.worker()).toMatchObject({state:'needs_recheck',deleteAcknowledged:1,audioDeleted:false});
+    const prepared=[...f.prepared.values()];
+    expect(prepared).toHaveLength(1);expect(prepared[0]).toMatchObject({segmentId:null,artifactId:f.artifactId});
+    expect(f.storage.remove).toHaveBeenCalledOnce();expect(vi.mocked(f.storage.remove).mock.calls[0][1]).toEqual(f.v);
+    // Only audio left: nothing is deleted and the pass stays provisional rather than reporting an empty recording.
+    const audioOnly=artifactFixture();Object.assign(audioOnly.a,{scope:'processing',audioActionable:false});
+    audioOnly.setVersions([{key:audioOnly.a.inventory[0].objectKey,version:'segment-version',kind:'object'}]);
+    expect(await audioOnly.worker()).toMatchObject({state:'needs_recheck',deleteAcknowledged:0});
+    expect(audioOnly.storage.inspect).not.toHaveBeenCalled();expect(audioOnly.attempts.prepare).not.toHaveBeenCalled();
+    // Once the recording's own deadline arrives the same processing intent covers audio too.
+    const due=artifactFixture();Object.assign(due.a,{scope:'processing',audioActionable:true});
+    due.setVersions([due.v]);expect(await due.worker()).toMatchObject({deleteAcknowledged:1});
+  });
+  it('stops an attempt when the admission scope or audio actionability changes between verification and deletion',async()=>{
+    const f=artifactFixture();let n=0;const original=f.storage.inspect;
+    f.storage.inspect=vi.fn(async(a,v,s)=>{if(++n===1)Object.assign(f.a,{scope:'processing',audioActionable:false});return original(a,v,s);});
+    expect(await f.worker()).toMatchObject({state:'needs_recheck',deleteAcknowledged:0});
+    expect(f.storage.remove).not.toHaveBeenCalled();expect(f.events).toEqual([{id:[...f.prepared.keys()][0],outcome:'unknown'}]);
   });
   it('treats an artifact legal hold like an audio hold: the pass stops held and nothing is deleted',async()=>{
     const f=artifactFixture('media');f.setInspection({legalHold:'ON'});

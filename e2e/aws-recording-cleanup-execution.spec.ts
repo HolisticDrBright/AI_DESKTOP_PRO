@@ -5,7 +5,7 @@ const id=(n:number)=>'00000000-0000-4000-8000-'+String(n).padStart(12,'0');
 const date='2026-09-17T00:00:00Z';
 const reviewCapabilities={review:true,dispatch:false,storageDeletion:false};
 const capabilities={boundedPass:true,scheduledDispatch:false,holdMutation:false,wholeRecordingErasure:false};
-const queue={data:{items:[{recordingId:id(1),patientRecordId:id(99),version:3,reason:'discard',dueAt:date,nextCheckAt:date,
+const queue={data:{items:[{recordingId:id(1),patientRecordId:id(99),version:3,reason:'discard',scope:'recording',dueAt:date,nextCheckAt:date,
   leaseUntil:null,lastOutcome:null,consecutiveFailures:0,unresolvedAttempts:1,audioDeleted:false,requiresRecheck:true}],nextAfter:null},capabilities:reviewCapabilities};
 const history={data:{recordingId:id(1),runs:[],nextAfter:null},capabilities:reviewCapabilities};
 const panel=(page:Page)=>page.getByTestId('recording-cleanup-execution');

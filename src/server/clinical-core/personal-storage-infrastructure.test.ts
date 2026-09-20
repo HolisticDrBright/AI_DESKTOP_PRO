@@ -40,9 +40,18 @@ describe('functional personal storage deployment candidate',()=>{
     expect(condition(candidate.Conditions.Active,approved)).toBe(true);
     for(const key of ['PhiAllowed','Activation','ActivationEvidenceSha256','DatabaseReviewSha256','AllowedScopes','AlarmTopicArn'])expect(condition(candidate.Conditions.Active,{...approved,[key]:defaults[key]}),key).toBe(false);
     const policies=candidate.Resources.Role.Properties.Policies as Json[];
-    expect(policies).toHaveLength(2);
-    expect(JSON.stringify(policies[0])).not.toMatch(/rds-data:|secretsmanager:|kms:/);
+    expect(policies).toHaveLength(3);
+    expect(JSON.stringify(policies[0])).not.toMatch(/rds-data:|secretsmanager:|kms:|s3:/);
     expect((policies[1] as Record<string,Json>)['Fn::If']).toEqual(['Active',expect.any(Object),{Ref:'AWS::NoValue'}]);
+    // Export delivery is a second, separately reviewed condition: no bucket, key or review hash means no S3 or KMS statement at all.
+    expect((policies[2] as Record<string,Json>)['Fn::If']).toEqual(['ExportDelivery',expect.any(Object),{Ref:'AWS::NoValue'}]);
+    expect(JSON.stringify(policies[1])).not.toMatch(/s3:/);
+    expect(JSON.stringify(policies[2])).not.toMatch(/s3:ListBucket|s3:DeleteObject"|s3:\*|kms:\*/);
+    expect(condition(candidate.Conditions.ExportDelivery,approved)).toBe(false);
+    const delivery={...approved,ExportBucketName:'fictional-export-bucket',ExportKmsKeyArn:'arn:aws:kms:us-east-2:123456789012:key/11111111-1111-4111-8111-111111111111',ExportReviewSha256:'c'.repeat(64)};
+    expect(condition(candidate.Conditions.ExportDelivery,delivery)).toBe(true);
+    for(const key of ['ExportBucketName','ExportKmsKeyArn','ExportReviewSha256','PhiAllowed','Activation'])expect(condition(candidate.Conditions.ExportDelivery,{...delivery,[key]:defaults[key]}),key).toBe(false);
+    expect(JSON.stringify(candidate.Rules.ExportDeliveryRequiresReview)).toContain('ExportReviewSha256');
     for(const key of ['Activation','ActivationEvidenceSha256','DatabaseReviewSha256','AllowedScopes','AlarmTopicArn'])expect(JSON.stringify(candidate.Rules)).toContain(key);
   });
   it('allows exactly the personal API routes under a dedicated matching consumer authorizer',()=>{

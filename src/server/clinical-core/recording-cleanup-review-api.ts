@@ -3,7 +3,7 @@ import {recordingWorkforceActivation,recordingWorkforceIdentity,type RecordingAu
 import {RecordingAuthorityError} from './encounter-recording-operations';
 import {RecordingCleanupError} from './recording-cleanup-authority';
 import type {createRecordingCleanupQueue} from './recording-cleanup-queue';
-import {cleanupReviewRequestSchema,cleanupWorkPageSchema,cleanupHistoryPageSchema} from '@/contracts/recordingCleanupReview';
+import {cleanupReviewRequestSchema,cleanupWorkPageSchema,cleanupHistoryPageSchema,processingDeletionStatusSchema} from '@/contracts/recordingCleanupReview';
 export const RECORDING_CLEANUP_REVIEW_ROUTE='POST /clinical-core/workforce/encounter-recording/cleanup-review';
 export type CleanupReviewConfiguration=RecordingAuthorityConfiguration&{cleanupReviewSha256?:string};
 const reply=(statusCode:number,value:unknown):ApiGatewayV2Response=>({statusCode,body:JSON.stringify(value),
@@ -11,7 +11,7 @@ const reply=(statusCode:number,value:unknown):ApiGatewayV2Response=>({statusCode
 /** Read interface only: the service type deliberately has no claim/finish/run,
  * storage or approval operation. A later dispatcher needs independent authority. */
 export function createRecordingCleanupReviewApi(input:{configuration:CleanupReviewConfiguration;
-  service:()=>Pick<ReturnType<typeof createRecordingCleanupQueue>,'list'|'history'>;now?:()=>number}){
+  service:()=>Pick<ReturnType<typeof createRecordingCleanupQueue>,'list'|'history'|'processing'>;now?:()=>number}){
   const c=input.configuration,active=recordingWorkforceActivation(c)&&/^[a-f0-9]{64}$/.test(c.cleanupReviewSha256??'');
   if(c.phiAllowed&&!active)throw new Error('recording_cleanup_review_activation_invalid');
   return async(event:ApiGatewayV2Event):Promise<ApiGatewayV2Response>=>{
@@ -29,7 +29,10 @@ export function createRecordingCleanupReviewApi(input:{configuration:CleanupRevi
       const parsed=cleanupReviewRequestSchema.safeParse(raw);if(!parsed.success)throw new RecordingCleanupError('request_invalid');
       const request=parsed.data,service=input.service();let data:unknown;
       if(request.action==='queue')data=cleanupWorkPageSchema.parse(await service.list(context,request.after));
-      else{
+      else if(request.action==='processing'){
+        const status=processingDeletionStatusSchema.parse(await service.processing(context,request.recordingId));
+        if(status.recordingId!==request.recordingId)throw new RecordingCleanupError('service_unavailable');data=status;
+      }else{
         const result=cleanupHistoryPageSchema.parse(await service.history(context,request.recordingId,request.after));
         if(result.recordingId!==request.recordingId)throw new RecordingCleanupError('service_unavailable');data=result;
       }

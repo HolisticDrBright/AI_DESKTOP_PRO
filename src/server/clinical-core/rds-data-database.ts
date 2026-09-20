@@ -242,7 +242,8 @@ function classifyDatabaseRejection(error: unknown): ClinicalCoreDatabaseRejectio
   if (/\bowned_account_deletion_write_blocked\b/.test(message)) return new ClinicalCoreDatabaseRejection("account_deletion_write_blocked");
   if (/\bconsumer_owner_required\b/.test(message)) return new ClinicalCoreDatabaseRejection("identity_refused");
   if (/\b(consumer_storage_consent_required|reviewed_consent_release_required)\b/.test(message)) return new ClinicalCoreDatabaseRejection("consent_required");
-  if (/\b(owned_record_revision_conflict|owned_record_idempotency_conflict|consent_revision_conflict|privacy_export_conflict)\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");
+  if (/\b(owned_record_revision_conflict|owned_record_idempotency_conflict|consent_revision_conflict|privacy_export_conflict|privacy_export_job_state|privacy_export_job_busy)\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");
+  if (/\bprivacy_export_job_refused\b/.test(message)) return new ClinicalCoreDatabaseRejection("identity_refused");
   if (/\b(owned_record_request_invalid|consent_request_invalid|privacy_export_request_invalid)\b/.test(message)) return new ClinicalCoreDatabaseRejection("request_invalid");
   if (/\b(request_context_refused|synthetic_context_refused|production_context_refused|clinical_role_required|consumer_identity_required|consent_actor_refused|consumer_connection_refused|patient_access_refused)\b/.test(message)) {
     return new ClinicalCoreDatabaseRejection("identity_refused");

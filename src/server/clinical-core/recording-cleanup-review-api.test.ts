@@ -15,7 +15,11 @@ function event(body:unknown={action:'queue'},claims:Record<string,unknown>={}):A
 }
 function fixture(c=configuration){
   const list=vi.fn().mockResolvedValue({items:[],nextAfter:null}),history=vi.fn().mockResolvedValue({recordingId,runs:[],nextAfter:null});
-  const service=vi.fn(()=>({list,history}));return {list,history,service,call:createRecordingCleanupReviewApi({configuration:c,service,now:()=>now})};
+  const status={recordingId,scope:'processing',reason:'processing_consent_revoked',dueAt:new Date(now).toISOString(),version:2,audioActionable:false,
+    audioDeadline:new Date(now+3600000).toISOString(),processed:true,openJobs:0,artifacts:{registered:2,deleteAcknowledged:1,retained:0,unknown:1,unattempted:0},
+    declaredWithoutArtifact:0,processingObjectsDeleted:false,providerCopy:'not_verifiable_no_delete_permission',backups:'not_covered',audioDeleted:false};
+  const processing=vi.fn().mockResolvedValue(status);
+  const service=vi.fn(()=>({list,history,processing}));return {list,history,processing,status,service,call:createRecordingCleanupReviewApi({configuration:c,service,now:()=>now})};
 }
 describe('metadata-only cleanup operator API',()=>{
   it('does not construct services while blocked; independent review is mandatory',async()=>{
@@ -62,6 +66,18 @@ describe('metadata-only cleanup operator API',()=>{
     expect((await f.call(event({action:'history',recordingId}))).statusCode).toBe(503);
     f.list.mockResolvedValue({items:[],nextAfter:null,objectKey:'must not leak'});
     const bad=await f.call(event());expect(bad.statusCode).toBe(503);expect(bad.body).not.toContain('must not leak');
+  });
+  it('serves processing-deletion counts for one recording and refuses a status that claims completion it cannot support',async()=>{
+    const f=fixture();const response=await f.call(event({action:'processing',recordingId}));
+    expect(response.statusCode).toBe(200);expect(JSON.parse(response.body).data).toEqual(f.status);
+    expect(f.processing).toHaveBeenCalledWith(expect.objectContaining({purpose:'consent_management'}),recordingId);
+    f.processing.mockResolvedValue({...f.status,processingObjectsDeleted:true});
+    expect((await f.call(event({action:'processing',recordingId}))).statusCode).toBe(503);
+    f.processing.mockResolvedValue({...f.status,recordingId:randomUUID()});
+    expect((await f.call(event({action:'processing',recordingId}))).statusCode).toBe(503);
+    f.processing.mockResolvedValue({...f.status,audioDeleted:true});
+    expect((await f.call(event({action:'processing',recordingId}))).statusCode).toBe(503);
+    expect((await f.call(event({action:'processing',recordingId,after:randomUUID()}))).statusCode).toBe(400);
   });
   it.each([['access_refused',403],['not_ready',409],['service_unavailable',503]] as const)('sanitizes %s refusal',async(code,status)=>{
     const f=fixture();f.list.mockRejectedValue(new RecordingCleanupError(code));expect((await f.call(event())).statusCode).toBe(status);

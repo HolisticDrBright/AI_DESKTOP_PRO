@@ -16,7 +16,7 @@ function fixture(){
     inventory:[{segmentId:randomUUID(),sequence:0,sha256:'b'.repeat(64),bytes:3,status:'reserved',objectVersion:null,
       objectKey:`encounter-recordings/${context.organizationId}/${request.recordingId}/${sessionId}/0-${'b'.repeat(64)}`,
       storageReleaseId,authorityEpoch:1,participantIds:[randomUUID()],recordingGrantIds:[randomUUID()]}],
-    inventorySha256:'c'.repeat(64),transcriptionInventory:[],transcriptionInventorySha256:'e'.repeat(64),validUntil:new Date(Date.now()+5000).toISOString(),audioDeleted:false};
+    inventorySha256:'c'.repeat(64),transcriptionInventory:[],transcriptionInventorySha256:'e'.repeat(64),scope:'recording',audioActionable:true,validUntil:new Date(Date.now()+5000).toISOString(),audioDeleted:false};
   let active=false;const commits=vi.fn(),rollbacks=vi.fn(),query=vi.fn();
   const db:ClinicalCoreDatabase={transaction:async work=>{
     active=true;

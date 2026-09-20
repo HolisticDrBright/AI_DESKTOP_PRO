@@ -5,7 +5,7 @@ import {clinicalUuid,ClinicalCoreDatabaseRejection,type ClinicalCoreDatabase} fr
 import {assertRecordingCleanupContext,RecordingCleanupError,recordingCleanupRequestSchema} from './recording-cleanup-authority';
 import type {ProductionClinicalRequestContext} from './aws-identity-consent';
 import type {createRecordingCleanupWorker} from './recording-cleanup-worker';
-import {cleanupWorkItemSchema as itemSchema,cleanupOutcomeSchema,cleanupHistoryItemSchema} from '@/contracts/recordingCleanupReview';
+import {cleanupWorkItemSchema as itemSchema,cleanupOutcomeSchema,cleanupHistoryItemSchema,processingDeletionStatusSchema} from '@/contracts/recordingCleanupReview';
 const uuid=z.string().uuid(),date=z.string().datetime({offset:true});
 export const cleanupRunRequestSchema=recordingCleanupRequestSchema.omit({attemptId:true,runId:true}).strict();
 export const cleanupRunOutcomeSchema=cleanupOutcomeSchema;
@@ -65,6 +65,13 @@ export function createRecordingCleanupQueue(database:ClinicalCoreDatabase){
       [clinicalUuid(recordingId),after?clinicalUuid(after):null],z.array(cleanupHistoryItemSchema).max(25));
     if(runs.some((r,i)=>i>0&&r.runId<=runs[i-1].runId||after!==undefined&&r.runId<=after))throw new RecordingCleanupError('service_unavailable');
     return {recordingId,runs,nextAfter:runs.length===25?runs.at(-1)!.runId:null};
+  },
+  /** Processing-object deletion counts for one recording; never a receipt (see the contract). */
+  async processing(context:ProductionClinicalRequestContext,recordingId:string){
+    if(!uuid.safeParse(recordingId).success)throw new RecordingCleanupError('request_invalid');
+    const status=await query(context,'select clinical_private.recording_processing_deletion_status($1) as data',[clinicalUuid(recordingId)],processingDeletionStatusSchema);
+    if(status.recordingId!==recordingId)throw new RecordingCleanupError('service_unavailable');
+    return status;
   }};
 }
 

@@ -28,8 +28,11 @@ export const recordingCleanupAdmissionSchema=z.object({recordingId:uuid,sessionI
   version:z.number().int().positive().safe(),cleanupReleaseId:uuid,workerSha256:sha,storageReleaseId:uuid,storage:recordingStorageSchema,
   inventory:z.array(segmentSchema).max(4096),inventorySha256:sha,
   transcriptionInventory:z.array(artifactSchema).max(512),transcriptionInventorySha256:sha,
+  /** `processing`: only transcription and drafting objects are due; audio keeps the recording's own retention until `audioActionable`. */
+  scope:z.enum(['recording','processing']),audioActionable:z.boolean(),
   validUntil:z.string().datetime({offset:true}),audioDeleted:z.literal(false),
   attempt:recordingCleanupAttemptSchema.optional(),runId:uuid.optional()}).strict()
+  .refine(r=>r.scope==='processing'||r.audioActionable===true)
   .refine(r=>new Set(r.inventory.map(s=>s.segmentId)).size===r.inventory.length
     && new Set(r.inventory.map(s=>s.sequence)).size===r.inventory.length
     && r.inventory.every(s=>s.storageReleaseId===r.storageReleaseId && s.bytes<=r.storage.maxSegmentBytes

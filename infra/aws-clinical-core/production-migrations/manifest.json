@@ -324,6 +324,14 @@
     {
       "version": "20260920090000",
       "file": "20260920090000_production_recording_object_intents.sql"
+    },
+    {
+      "version": "20260920100000",
+      "file": "20260920100000_production_recording_processing_retention.sql"
+    },
+    {
+      "version": "20260920110000",
+      "file": "20260920110000_production_owned_privacy_export_jobs.sql"
     }
   ]
 }

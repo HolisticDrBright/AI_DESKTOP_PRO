@@ -140,15 +140,19 @@ describe('review-only encounter drafting authority',()=>{
     const inventory=(await db.query<{result:{kind:string;jobId:string;objectKey:string}[]}>('select clinical_private.recording_transcription_inventory($1) as result',[f.c.recordingId])).rows[0].result;
     expect(inventory).toEqual([{artifactId:expect.any(String),jobId:job.jobId,kind:'proposed_note',objectKey:key,objectVersion:'v-p1',sha256:'8'.repeat(64),bytes:900,transcriptId:null}]);
   });
-  it('fails instead of storing when ai_drafting consent is withdrawn after the request, and cancels open jobs on cleanup',async()=>{
+  it('cancels the job and stores nothing when ai_drafting consent is withdrawn after the request, and cancels open jobs on cleanup',async()=>{
     const release=await draftingRelease(),f=await transcribed();
     const job=(await request(f.c.recordingId,f.transcriptId,release))!;
     await withdraw(f.draftingGrants[0]);
-    await expect(call('select clinical_private.get_recording_drafting_input($1) as result',[job.jobId])).rejects.toThrow(/recording_consent_required/);
+    // Withdrawal reaches the job at once (migration 92): the processing intent cancels it and a late provider result is refused.
+    expect((await db.query<{status:string}>('select status from clinical_private.recording_drafting_jobs where id=$1',[job.jobId])).rows[0].status).toBe('cancelled');
+    expect((await db.query<{reason:string;scope:string}>('select reason,scope from clinical_private.recording_cleanup_intents where recording_id=$1',[f.c.recordingId])).rows[0]).toEqual({reason:'processing_consent_revoked',scope:'processing'});
+    await expect(call('select clinical_private.get_recording_drafting_input($1) as result',[job.jobId])).rejects.toThrow(/recording_drafting_conflict/);
     const key=`encounter-recordings/${org}/${f.c.recordingId}/drafting/${job.jobId}/proposed-v1.json`;
-    const outcome=(await complete(job.jobId,key,'8'.repeat(64)))!;
-    expect(outcome).toMatchObject({status:'failed',proposedNoteId:null,version:null});expect(outcome.failureCode).toMatch(/recording_consent_required/);
+    await expect(complete(job.jobId,key,'8'.repeat(64))).rejects.toThrow(/recording_drafting_conflict/);
     expect((await db.query<{n:number}>('select count(*)::int n from clinical_private.recording_proposed_notes where recording_id=$1',[f.c.recordingId])).rows[0].n).toBe(0);
+    // A new request under the withdrawn consent is refused as well.
+    await expect(request(f.c.recordingId,f.transcriptId,release)).rejects.toThrow(/recording_consent_required|recording_drafting_refused|recording_drafting_conflict/);
     // Cancellation by cleanup: withdrawing recording consent enqueues consent_revoked cleanup.
     const g=await transcribed();
     const open=(await request(g.c.recordingId,g.transcriptId,release))!;
@@ -158,8 +162,9 @@ describe('review-only encounter drafting authority',()=>{
     expect((await db.query<{status:string}>('select status from clinical_private.recording_drafting_jobs where id=$1',[open.jobId])).rows[0].status).toBe('cancelled');
     await expect(call('select clinical_private.get_recording_drafting_input($1) as result',[open.jobId])).rejects.toThrow(/recording_drafting_conflict/);
     expect((await db.query<{n:number}>("select count(*)::int n from clinical_private.recording_drafting_events where job_id=$1 and action='drafting.cancelled'",[open.jobId])).rows[0]).toEqual({n:1});
-    const failed=(await call<{status:string;replayed:boolean}>("select clinical_private.fail_recording_drafting($1,'provider_unavailable') as result",[job.jobId]))!;
-    expect(failed).toMatchObject({status:'failed',replayed:true});
+    // A cancelled job is terminal: a late provider failure cannot relabel it.
+    await expect(call("select clinical_private.fail_recording_drafting($1,'provider_unavailable') as result",[job.jobId])).rejects.toThrow(/recording_drafting_conflict/);
+    expect((await db.query<{status:string}>('select status from clinical_private.recording_drafting_jobs where id=$1',[job.jobId])).rows[0].status).toBe('cancelled');
   });
 });
 

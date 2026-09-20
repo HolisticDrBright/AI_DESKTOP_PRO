@@ -101,11 +101,38 @@ re-reads holds and retention before each delete, prepares artifact attempts thro
 changed during the pass. Reviewed cleanup IAM already covers the recording prefix, so no
 template changed.
 
-Not covered: withdrawing transcription consent after a transcript exists stops further jobs
-and corrections but does not schedule deletion of stored transcripts; whether a produced
-transcript is part of the retained clinical record is a policy decision recorded separately.
-Backups, provider-side copies and a registration that fails after an object was written
-(the next pass stops on the unregistered key and surfaces it) remain outside this layer.
+Backups and provider-side copies remain outside this layer; a registration that fails after
+an object was written is repaired by reconciliation (migrations 89 and 91 below).
+
+## Retention after processing-consent withdrawal (migration 92)
+
+Enforced default policy, recorded in
+`20260920100000_production_recording_processing_retention.sql` (a different policy needs a
+new migration, not a flag): when any participant withdraws transcription or AI-drafting
+consent for a recording that has a transcription or drafting job, every processing object
+derived under that consent (assembled media, provider output, transcript objects,
+proposed-note objects and declared orphans) is scheduled for hold-aware deletion now, and
+open jobs are cancelled at once, so a provider result arriving afterwards is refused rather
+than stored. Audio segments keep the recording's own retention: they are governed by
+recording consent and the capture deadline. Database rows (digests, versions, events) stay
+as the immutable record that processing happened and what was deleted.
+
+Mechanics: the cleanup intent gains a `scope` (`recording` or `processing`) and the reason
+`processing_consent_revoked`; the scope narrows to processing only from a future retention
+deadline and widens back to the whole recording on discard or recording-consent withdrawal,
+never the other way. Admission carries `scope` and `audioActionable` (true for a whole
+recording intent, or for a processing intent once the capture deadline has arrived); the
+worker deletes only transcription and drafting objects while audio is not actionable and
+stops an attempt if either flag changes mid-pass. Admission now waits only for open
+reservations, since a stored segment is immutable.
+
+Status, not receipt: `recording_processing_deletion_status` (cleanup-review action
+`processing`, shown on the cleanup review page) reports registered objects, acknowledged
+exact-version deletions, holds, unknown outcomes, unattempted objects, declared objects with
+no registration, open jobs, and states plainly that the provider copy is not verifiable (no
+delete permission is granted) and backups are not covered. `processingObjectsDeleted` is
+true only when every registered object has an acknowledged deletion, nothing declared is
+unregistered and no job is open; it never claims audio, provider or backup deletion.
 
 ## Reconciliation of unregistered objects (migration 89)
 

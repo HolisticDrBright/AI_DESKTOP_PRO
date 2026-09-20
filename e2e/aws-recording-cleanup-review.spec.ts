@@ -6,7 +6,7 @@ const endpoint='**/api/live/recording-cleanup-review';
 const id=(n:number)=>'00000000-0000-4000-8000-'+String(n).padStart(12,'0');
 const date='2026-09-17T00:00:00Z';
 const capabilities={review:true,dispatch:false,storageDeletion:false};
-const item=(n=1)=>({recordingId:id(n),patientRecordId:id(999),version:1,reason:'discard',dueAt:date,nextCheckAt:date,
+const item=(n=1)=>({recordingId:id(n),patientRecordId:id(999),version:1,reason:'discard',scope:'recording',dueAt:date,nextCheckAt:date,
   leaseUntil:null,lastOutcome:null,consecutiveFailures:0,unresolvedAttempts:2,audioDeleted:false,requiresRecheck:true});
 const queue={data:{items:[item()],nextAfter:null},capabilities};
 const history={data:{recordingId:id(1),runs:[{runId:id(2),version:1,claimedAt:date,leaseUntil:date,leaseActive:false,

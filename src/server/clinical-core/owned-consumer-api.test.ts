@@ -111,3 +111,57 @@ describe('authoritative active plan routes',()=>{
     const released=await t.handler(release);expect(released.statusCode).toBe(200);expect(JSON.parse(released.body).data.current).toBeNull();
   });
 });
+
+describe('large-export job routes',()=>{
+  const job={contract:'personal-storage-export-job/1',jobId:id,status:'running',asOf:'2026-09-08T00:00:00.000Z',requestedAt:'2026-09-08T00:00:00.000Z',readyAt:null,expiresAt:'2026-09-10T00:00:00.000Z',
+    recordCount:6000,consentCount:3,exportedRecords:100,exportedConsents:0,parts:1,bytesWritten:5242880,byteLength:null,objectChecksum:null,failureCode:null,objectDeleted:false,version:3,
+    coverage:{completeAccountExport:false,included:[],excluded:[]}};
+  function jobSetup(){
+    const s=setup();
+    const jobs={requestPrivacyExportJob:vi.fn(async()=>({...job,status:'requested',replayed:false})),getPrivacyExportJob:vi.fn(async()=>job),
+      advancePrivacyExportJob:vi.fn(async()=>({...job,exportedRecords:300,parts:2})),cancelPrivacyExportJob:vi.fn(async()=>({...job,status:'cancelled'})),
+      issuePrivacyExportDownload:vi.fn(async()=>({jobId:id,url:'https://fictional-bucket.s3.us-east-2.amazonaws.com/personal-exports/x/y.json?X-Amz-Expires=300',expiresInSeconds:300,byteLength:12,objectChecksum:'c'})),
+      cleanupPrivacyExportJobs:vi.fn(async()=>({cleaned:0,remaining:0}))};
+    return {...s,jobs,handler:createOwnedConsumerApi({configuration:config,adapter:s.adapter,now:()=>now,exportJobs:()=>jobs as never,passBudgetMs:1000})};
+  }
+  const route=(method:'GET'|'POST',suffix='')=>`${method} /clinical-core/consumer/personal/privacy-export/job${suffix}`;
+  const call=(s:ReturnType<typeof jobSetup>,r:string,body?:Record<string,unknown>,query?:Record<string,string>,claims:Record<string,unknown>={})=>{
+    const e=event(r);e.queryStringParameters=query??{};if(body){e.body=JSON.stringify(body);e.headers={'content-type':'application/json'};}
+    Object.assign(e.requestContext!.authorizer!.jwt!.claims!,claims);return s.handler(e);};
+  it('refuses every job route with a clear code when no reviewed export delivery is configured',async()=>{
+    const s=setup();
+    for(const [r,body,query] of [[route('POST'),{requestId:id},undefined],[route('GET'),undefined,{jobId:id}],[route('POST','/cancel'),{jobId:id},undefined],[route('POST','/download'),{jobId:id},undefined]] as const){
+      const e=event(r);e.queryStringParameters=query?{...query}:{};if(body){e.body=JSON.stringify(body);e.headers={'content-type':'application/json'};}
+      const response=await s.handler(e);expect(response.statusCode).toBe(503);expect(JSON.parse(response.body)).toEqual({error:'export_delivery_not_configured'});
+    }
+    expect(s.query).not.toHaveBeenCalled();
+  });
+  it('requests, polls with one bounded pass per advance, cancels with cleanup, and never advances a finished job',async()=>{
+    const s=jobSetup();
+    const requested=await call(s,route('POST'),{requestId:id});
+    expect(requested.statusCode).toBe(200);expect(JSON.parse(requested.body).data).toMatchObject({status:'requested',cleanup:{cleaned:0}});
+    expect(s.jobs.requestPrivacyExportJob).toHaveBeenCalledWith(expect.objectContaining({purpose:'consent_management',identityPool:'consumer'}),{requestId:id});
+    const polled=await call(s,route('GET'),undefined,{jobId:id});
+    expect(JSON.parse(polled.body).data).toMatchObject({status:'running',exportedRecords:100});expect(s.jobs.advancePrivacyExportJob).not.toHaveBeenCalled();
+    const advanced=await call(s,route('GET'),undefined,{jobId:id,advance:'true'});
+    expect(JSON.parse(advanced.body).data).toMatchObject({exportedRecords:300,parts:2});
+    expect(s.jobs.advancePrivacyExportJob).toHaveBeenCalledWith(expect.any(Object),{jobId:id},1000,expect.any(AbortSignal));
+    s.jobs.getPrivacyExportJob.mockResolvedValueOnce({...job,status:'ready'});
+    await call(s,route('GET'),undefined,{jobId:id,advance:'true'});expect(s.jobs.advancePrivacyExportJob).toHaveBeenCalledTimes(1);
+    expect((await call(s,route('GET'),undefined,{jobId:id,advance:'yes'})).statusCode).toBe(400);
+    expect((await call(s,route('GET'),undefined,{jobId:id,ownerId:id})).statusCode).toBe(400);
+    const cancelled=await call(s,route('POST','/cancel'),{jobId:id});
+    expect(JSON.parse(cancelled.body).data).toMatchObject({status:'cancelled',cleanup:{cleaned:0,remaining:0}});
+    expect(s.jobs.cleanupPrivacyExportJobs).toHaveBeenCalledTimes(2);
+  });
+  it('issues a download only with a sign-in in the last five minutes and never echoes a non-https link',async()=>{
+    const s=jobSetup();
+    const fresh=await call(s,route('POST','/download'),{jobId:id},undefined,{auth_time:now/1000-120});
+    expect(fresh.statusCode).toBe(200);expect(JSON.parse(fresh.body).data.url).toMatch(/^https:\/\//);
+    expect(s.jobs.issuePrivacyExportDownload).toHaveBeenCalledWith(expect.any(Object),{jobId:id},(now/1000-120)*1000,expect.any(AbortSignal));
+    expect((await call(s,route('POST','/download'),{jobId:id})).statusCode).toBe(401);
+    expect(JSON.parse((await call(s,route('POST','/download'),{jobId:id})).body)).toEqual({error:'reauth_required'});
+    expect((await call(s,route('POST','/download'),{jobId:id,confirm:true},undefined,{auth_time:now/1000-120})).statusCode).toBe(400);
+    expect(s.jobs.issuePrivacyExportDownload).toHaveBeenCalledTimes(1);
+  });
+});
