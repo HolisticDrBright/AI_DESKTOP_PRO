@@ -130,8 +130,11 @@ working credentials. This turn did not change any deployment flags.
 September 20 successor: the `cleanupExports` action (migration 20260920130000) is the
 assigned operator's retention pass over finished and expired personal-storage export jobs,
 separately activated (`ExportCleanupEnabled`, evidence hash, export bucket and key); see
-[personal-storage-privacy-export.md](personal-storage-privacy-export.md). It is locally
-verified against PGlite and a fictional store only.
+[personal-storage-privacy-export.md](personal-storage-privacy-export.md). Migration
+20260920140000 adds the settlement rule (no certification while a pass may still be writing)
+and its role reads no object: listing, abort and versioned delete only. It is locally verified
+against PGlite and a fictional store only, and it runs when an operator calls it, not on a
+timer.
 
 September 19 successor: [external purge and deletion completion](privacy-external-purge.md)
 adds the operator-led purge of inventoried lab and voice jobs, disposition and retention

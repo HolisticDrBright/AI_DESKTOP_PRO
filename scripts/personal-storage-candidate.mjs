@@ -74,8 +74,11 @@ export function personalStorageCandidate(disabled) {
     PolicyName:'ReviewedPersonalExportObjectsOnly',PolicyDocument:{Version:'2012-10-17',Statement:[
       {Effect:'Allow',Action:['s3:PutObject','s3:GetObject','s3:GetObjectVersion','s3:DeleteObjectVersion','s3:AbortMultipartUpload','s3:ListMultipartUploadParts'],
         Resource:sub('arn:${AWS::Partition}:s3:::${ExportBucketName}/personal-exports/*'),Condition:account},
-      {Effect:'Allow',Action:['s3:ListBucketVersions','s3:ListBucketMultipartUploads'],Resource:sub('arn:${AWS::Partition}:s3:::${ExportBucketName}'),
+      // Version listing is bound to the export prefix. s3:ListBucketMultipartUploads has no supported prefix condition, so it is a
+      // bucket-level grant: the export bucket must be dedicated to personal exports (part of the ExportReviewSha256 review).
+      {Effect:'Allow',Action:'s3:ListBucketVersions',Resource:sub('arn:${AWS::Partition}:s3:::${ExportBucketName}'),
         Condition:{StringLike:{'s3:prefix':'personal-exports/*'},StringEquals:{'aws:ResourceAccount':ref('AWS::AccountId')}}},
+      {Effect:'Allow',Action:'s3:ListBucketMultipartUploads',Resource:sub('arn:${AWS::Partition}:s3:::${ExportBucketName}'),Condition:account},
       {Effect:'Allow',Action:['kms:GenerateDataKey','kms:Decrypt'],Resource:ref('ExportKmsKeyArn'),Condition:{StringEquals:{
         'kms:ViaService':sub('s3.${AWS::Region}.amazonaws.com'),'kms:CallerAccount':ref('AWS::AccountId')}}},
     ]},

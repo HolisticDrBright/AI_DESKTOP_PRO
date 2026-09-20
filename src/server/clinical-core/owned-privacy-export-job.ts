@@ -18,7 +18,14 @@ import {createOwnedPrivacyExport,PERSONAL_EXPORT_COVERAGE} from './owned-privacy
  * is recorded before any part is sent; a job whose parts are all recorded is
  * recovered from what the store holds, never by sending an empty part; a job
  * past its deadline fails in a committed transition; and nothing is certified
- * deleted until a listing under the job's key shows no upload and no version. */
+ * deleted until a listing under the job's key shows no upload and no version.
+ *
+ * Second recheck (migration 20260920140000): the recovered or completed object
+ * is accepted only when its S3 composite checksum equals the one derived from
+ * the recorded part digests; every storage request of a pass is aborted at the
+ * lease boundary and a finished job is certified deleted only once its last
+ * lease is a settlement window old, so a request admitted before cancellation
+ * cannot land after the certificate. */
 export const PRIVACY_EXPORT_JOB_CONTRACT='personal-storage-export-job/1';
 export type PrivacyExportObjectStorage={bucket:string;region:string;kmsKeyArn:string;expectedBucketOwner:string};
 export interface PrivacyExportStore {
@@ -28,7 +35,8 @@ export interface PrivacyExportStore {
   abortUpload(s:PrivacyExportObjectStorage,key:string,uploadId:string,signal:AbortSignal):Promise<void>;
   put(s:PrivacyExportObjectStorage,key:string,body:Uint8Array,sha256Hex:string,signal:AbortSignal):Promise<{version:string}>;
   get(s:PrivacyExportObjectStorage,key:string,version:string,maxBytes:number,signal:AbortSignal):Promise<Uint8Array>;
-  head(s:PrivacyExportObjectStorage,key:string,version:string,signal:AbortSignal):Promise<{exists:boolean;bytes?:number;encryption?:string;kmsKeyArn?:string;checksum?:string}|null>;
+  /** Metadata for one version. The checksum is requested only when `checksum` is set: reading an SSE-KMS checksum needs the key. */
+  head(s:PrivacyExportObjectStorage,key:string,version:string,signal:AbortSignal,options?:{checksum:boolean}):Promise<{exists:boolean;bytes?:number;encryption?:string;kmsKeyArn?:string;checksum?:string}|null>;
   deleteVersion(s:PrivacyExportObjectStorage,key:string,version:string,signal:AbortSignal):Promise<void>;
   signDownload(s:PrivacyExportObjectStorage,key:string,version:string,seconds:number,fileName:string,signal:AbortSignal):Promise<string>;
   /** Every open multipart upload whose key starts with the prefix (a job's key is unique to it). */
@@ -46,6 +54,10 @@ const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]
 const STATUSES:PrivacyExportJobStatus[]=['requested','running','ready','failed','cancelled','expired'];
 export const PRIVACY_EXPORT_PART_BYTES=5*1024*1024, PRIVACY_EXPORT_MAX_BYTES=2*1024*1024*1024, PRIVACY_EXPORT_DOWNLOAD_SECONDS=300, PRIVACY_EXPORT_FRESH_AUTH_MS=5*60_000;
 const sha256=(b:Uint8Array)=>createHash('sha256').update(b).digest('hex');
+/** S3's composite checksum for a multipart object: base64(sha256(concat(raw part digests)))-partCount. The recorded
+ * part digests therefore fix exactly one acceptable object checksum. */
+export const compositeChecksum=(partSha256Hex:string[])=>createHash('sha256').update(Buffer.concat(partSha256Hex.map(h=>Buffer.from(h,'hex')))).digest('base64')+'-'+partSha256Hex.length;
+const COMPOSITE=/^[A-Za-z0-9+/]{43}=-[1-9][0-9]{0,4}$/;
 function invalid():never{throw new OwnedStorageError('request_invalid');}
 function unavailable():never{throw new OwnedStorageError('storage_unavailable');}
 function object(raw:unknown):Record<string,unknown>{try{const v=typeof raw==='string'?JSON.parse(raw):raw;if(!v||typeof v!=='object'||Array.isArray(v))unavailable();return v;}catch{unavailable();}}
@@ -84,10 +96,12 @@ async function removeJobObjects(store:PrivacyExportStore,storage:PrivacyExportOb
   for(const v of (await store.listVersions(storage,key,signal)).filter(v=>owned(v.key)))targets.set(v.key+'\n'+v.version,{key:v.key,version:v.version});
   for(const [k,v] of [[staging(key),recorded.stagingVersion],[key,recorded.objectVersion]] as [string,unknown][])if(version(v))targets.set(k+'\n'+v,{key:k,version:v as string});
   for(const t of targets.values())await store.deleteVersion(storage,t.key,t.version,signal);
+  // Proof is the listing alone: it needs no key material and a denied listing throws rather than reading as absence.
   if((await store.listUploads(storage,key,signal)).some(u=>owned(u.key)))unavailable();
   if((await store.listVersions(storage,key,signal)).some(v=>owned(v.key)))unavailable();
-  for(const t of targets.values()){const head=await store.head(storage,t.key,t.version,signal);if(head?.exists)unavailable();}
 }
+/** A finished job may still have an admitted writer until its last lease is a settlement window old; it is not certifiable before then. */
+const settled=(item:Record<string,unknown>)=>item.settled===true;
 
 export function createOwnedPrivacyExportJobs(run:Run,delivery:{store:PrivacyExportStore;storage:PrivacyExportObjectStorage;now?:()=>number;partBytes?:number}){
   const now=()=>delivery.now?.()??Date.now(), partBytes=delivery.partBytes??PRIVACY_EXPORT_PART_BYTES, {store,storage}=delivery;
@@ -96,10 +110,11 @@ export function createOwnedPrivacyExportJobs(run:Run,delivery:{store:PrivacyExpo
   const jobInput=(input:unknown):string=>{if(!input||typeof input!=='object'||Object.keys(input).join(',')!=='jobId'||!UUID.test((input as {jobId:string}).jobId))invalid();return (input as {jobId:string}).jobId;};
   const complete=(context:ProductionClinicalRequestContext,jobId:string,version:number,objectVersion:string,checksum:string)=>
     run(context,tx=>call(tx,'select clinical_core.complete_owned_privacy_export_job($1,$2::bigint,$3,$4) as result',[clinicalUuid(jobId),version,objectVersion,checksum])).then(view);
-  const verified=async(key:string,objectVersion:string,bytes:number,signal:AbortSignal)=>{
-    const head=await store.head(storage,key,objectVersion,signal);
+  /** The stored version must be the reviewed key's, the recorded length, and carry exactly the checksum the recorded parts fix. */
+  const verified=async(key:string,objectVersion:string,bytes:number,checksum:string,signal:AbortSignal)=>{
+    const head=await store.head(storage,key,objectVersion,signal,{checksum:true});
     if(!head?.exists||head.encryption!=='aws:kms'||head.kmsKeyArn!==storage.kmsKeyArn||head.bytes!==bytes)unavailable();
-    return head;
+    return head.checksum===checksum;
   };
   return {
     async requestPrivacyExportJob(context:ProductionClinicalRequestContext,input:{requestId:string}):Promise<PrivacyExportJobView&{replayed:boolean}>{
@@ -118,8 +133,8 @@ export function createOwnedPrivacyExportJobs(run:Run,delivery:{store:PrivacyExpo
     async advancePrivacyExportJob(context:ProductionClinicalRequestContext,input:{jobId:string},budgetMs:number,signal:AbortSignal):Promise<PrivacyExportJobView>{
       const jobId=jobInput(input);
       if(!Number.isSafeInteger(budgetMs)||budgetMs<500||budgetMs>20000)invalid();
-      const deadline=now()+budgetMs;
-      const lease=object(await run(context,tx=>call(tx,'select clinical_core.lease_owned_privacy_export_pass($1,$2::integer) as result',[clinicalUuid(jobId),Math.min(60,Math.ceil(budgetMs/1000)+10)])));
+      const deadline=now()+budgetMs,leaseSeconds=Math.min(60,Math.ceil(budgetMs/1000)+10);
+      const lease=object(await run(context,tx=>call(tx,'select clinical_core.lease_owned_privacy_export_pass($1,$2::integer) as result',[clinicalUuid(jobId),leaseSeconds])));
       // The deadline transition is committed by the lease call itself; the caller sees the failed job on its next read.
       if(lease.leased===false)throw new OwnedStorageError('conflict');
       if(lease.leased!==true)unavailable();
@@ -132,26 +147,34 @@ export function createOwnedPrivacyExportJobs(run:Run,delivery:{store:PrivacyExpo
         ||!['records','consents','done'].includes(state.section)||!count(state.parts)||!Array.isArray(state.partSha256s)||!Array.isArray(state.partEtags)
         ||state.partSha256s.length!==state.parts||state.partEtags.length!==state.parts||!count(state.version)||!count(state.bytesWritten)
         ||(state.uploadId!==null&&!version(state.uploadId))||(state.stagingVersion!==null&&!version(state.stagingVersion)))unavailable();
-      const fail=async(code:string)=>{try{await run(context,tx=>call(tx,'select clinical_core.fail_owned_privacy_export_job($1,$2) as result',[clinicalUuid(jobId),code]));}catch{/* the lease expires; the next poll sees the state */}};
+      // Failing from inside the pass names the held version: this pass is the only admitted writer and has finished, so its lease is released.
+      let held=state.version;
+      const fail=async(code:string)=>{try{await run(context,tx=>call(tx,'select clinical_core.fail_owned_privacy_export_job($1,$2,$3::bigint) as result',[clinicalUuid(jobId),code,held]));}catch{/* the lease settles; the next poll sees the state */}};
       const recordedParts=()=>state.partSha256s.map((sha,i)=>({partNumber:i+1,etag:state.partEtags[i],sha256Hex:sha}));
+      // Every storage request of this pass ends at the lease boundary, so the settlement window measured from lease_until
+      // bounds when an aborted request could still land. The caller's own signal still applies.
+      const callerSignal=signal;
+      signal=AbortSignal.any([callerSignal,AbortSignal.timeout(Math.max(1000,leaseSeconds*1000-1500))]);
       try{
         if(state.section==='done'){
           // Every part is recorded. Either the store already holds the completed object (the completion receipt was
           // interrupted) or the upload is still open; an empty part is never sent to a completed upload.
           if(state.parts<1){await fail('object_missing');return this.getPrivacyExportJob(context,input);}
+          const expected=compositeChecksum(state.partSha256s);
           const versions=(await store.listVersions(storage,state.key,signal)).filter(v=>v.key===state.key);
           const live=versions.filter(v=>!v.deleteMarker);
           if(live.length===1&&versions.length===1){
-            const head=await store.head(storage,state.key,live[0].version,signal);
-            if(head?.exists&&head.encryption==='aws:kms'&&head.kmsKeyArn===storage.kmsKeyArn&&head.bytes===state.bytesWritten&&typeof head.checksum==='string'&&head.checksum)
-              return await complete(context,jobId,state.version,live[0].version,head.checksum);
+            // Same length is not the same object: the checksum must be the one the recorded part digests fix.
+            const head=await store.head(storage,state.key,live[0].version,signal,{checksum:true});
+            if(head?.exists&&head.encryption==='aws:kms'&&head.kmsKeyArn===storage.kmsKeyArn&&head.bytes===state.bytesWritten&&head.checksum===expected)
+              return await complete(context,jobId,state.version,live[0].version,expected);
             await fail('object_mismatch');return this.getPrivacyExportJob(context,input);
           }
           if(versions.length===0&&state.uploadId){
             const completed=await store.completeUpload(storage,state.key,state.uploadId,recordedParts(),signal);
-            if(!version(completed.version)||!completed.checksum)unavailable();
-            await verified(state.key,completed.version,state.bytesWritten,signal);
-            return await complete(context,jobId,state.version,completed.version,completed.checksum);
+            if(!version(completed.version))unavailable();
+            if(completed.checksum!==expected||!(await verified(state.key,completed.version,state.bytesWritten,expected,signal))){await fail('object_mismatch');return this.getPrivacyExportJob(context,input);}
+            return await complete(context,jobId,state.version,completed.version,expected);
           }
           await fail(versions.length===0?'object_missing':'object_ambiguous');return this.getPrivacyExportJob(context,input);
         }
@@ -193,7 +216,7 @@ export function createOwnedPrivacyExportJobs(run:Run,delivery:{store:PrivacyExpo
             if(!version(uploadId))unavailable();
             const receipt=object(await run(context,tx=>call(tx,'select clinical_core.record_owned_privacy_export_upload($1,$2::bigint,$3) as result',[clinicalUuid(jobId),leased,uploadId])));
             if(receipt.uploadId!==uploadId||!count(receipt.version))unavailable();
-            leased=receipt.version as number;
+            leased=receipt.version as number;held=leased;
           }
           partSha=sha256(body);
           partEtag=(await store.uploadPart(storage,state.key,uploadId,state.parts+1,body,partSha,signal)).etag;
@@ -207,10 +230,12 @@ export function createOwnedPrivacyExportJobs(run:Run,delivery:{store:PrivacyExpo
         // The old staging object is superseded either way; removal is best effort here and proven by the cleanup pass.
         if(state.stagingVersion){try{await store.deleteVersion(storage,staging(state.key),state.stagingVersion,signal);}catch{/* cleanup pass */}}
         if(partReady&&section==='done'){
+          held=recorded.version;
+          const expected=compositeChecksum([...state.partSha256s,partSha!]);
           const completed=await store.completeUpload(storage,state.key,uploadId!,[...recordedParts(),{partNumber:state.parts+1,etag:partEtag!,sha256Hex:partSha!}],signal);
-          if(!version(completed.version)||!completed.checksum)unavailable();
-          await verified(state.key,completed.version,state.bytesWritten+body.byteLength,signal);
-          return await complete(context,jobId,recorded.version,completed.version,completed.checksum);
+          if(!version(completed.version))unavailable();
+          if(completed.checksum!==expected||!(await verified(state.key,completed.version,state.bytesWritten+body.byteLength,expected,signal))){await fail('object_mismatch');return this.getPrivacyExportJob(context,input);}
+          return await complete(context,jobId,recorded.version,completed.version,expected);
         }
         return recorded;
       }catch(error){
@@ -230,18 +255,20 @@ export function createOwnedPrivacyExportJobs(run:Run,delivery:{store:PrivacyExpo
       if(!Number.isFinite(authTimeMs)||now()-authTimeMs>PRIVACY_EXPORT_FRESH_AUTH_MS||authTimeMs>now()+60_000)throw new OwnedStorageError('owner_required');
       const issued=object(await run(context,tx=>call(tx,'select clinical_core.issue_owned_privacy_export_download($1) as result',[clinicalUuid(jobId)])));
       if(issued.jobId!==jobId||typeof issued.objectKey!=='string'||!issued.objectKey.startsWith(privacyExportPrefix(context.actorPersonId))
-        ||!version(issued.objectVersion)||typeof issued.objectChecksum!=='string'||!count(issued.byteLength))unavailable();
-      await verified(issued.objectKey,issued.objectVersion as string,issued.byteLength as number,signal);
+        ||!version(issued.objectVersion)||typeof issued.objectChecksum!=='string'||!COMPOSITE.test(issued.objectChecksum)||!count(issued.byteLength))unavailable();
+      if(!(await verified(issued.objectKey,issued.objectVersion as string,issued.byteLength as number,issued.objectChecksum,signal)))unavailable();
       const url=await store.signDownload(storage,issued.objectKey,issued.objectVersion as string,PRIVACY_EXPORT_DOWNLOAD_SECONDS,'alp-personal-storage-copy.json',signal);
       if(!/^https:\/\//.test(url))unavailable();
       return {jobId,url,expiresInSeconds:PRIVACY_EXPORT_DOWNLOAD_SECONDS,byteLength:issued.byteLength as number,objectChecksum:issued.objectChecksum};
     },
-    /** Removes the owner's own finished jobs' objects and open uploads, certifying each only after the store lists nothing under its key. */
+    /** Removes the owner's own finished jobs' objects and open uploads, certifying each only after the store lists nothing under its
+     * key and no pass could still be writing (settlement); an unsettled job counts as remaining. */
     async cleanupPrivacyExportJobs(context:ProductionClinicalRequestContext,signal:AbortSignal):Promise<{cleaned:number;remaining:number}>{
       const listed=items(await run(context,tx=>call<unknown>(tx,'select clinical_core.list_owned_privacy_export_cleanup() as result',[])));
       let cleaned=0,remaining=0;
       for(const item of listed){
         if(signal.aborted){remaining++;continue;}
+        if(!settled(item)){remaining++;continue;}
         try{
           const key=String(item.objectKey);
           if(!key.startsWith(privacyExportPrefix(context.actorPersonId))||!UUID.test(String(item.jobId))||!count(item.version))unavailable();
@@ -274,7 +301,7 @@ export function createPrivacyExportRetention(run:Run,delivery:{store:PrivacyExpo
       for(const item of listed){
         const jobId=String(item.jobId),ownerId=String(item.ownerId),key=String(item.objectKey),status=item.status as PrivacyExportJobStatus;
         if(!UUID.test(jobId)||!UUID.test(ownerId)||!STATUSES.includes(status)||!key.startsWith(privacyExportPrefix(ownerId))||!count(item.version))unavailable();
-        if(signal.aborted){out.push({jobId,status,outcome:'pending'});continue;}
+        if(signal.aborted||!settled(item)){out.push({jobId,status,outcome:'pending'});continue;}
         try{
           await removeJobObjects(store,storage,key,{stagingVersion:item.stagingVersion,objectVersion:item.objectVersion},signal);
           const receipt=object(await run(context,tx=>call(tx,'select clinical_private.record_privacy_export_object_deleted_by_operator($1,$2,$3::bigint) as result',[clinicalUuid(ownerId),clinicalUuid(jobId),item.version as number])));

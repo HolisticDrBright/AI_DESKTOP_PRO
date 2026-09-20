@@ -117,11 +117,15 @@ const template={AWSTemplateFormatVersion:'2010-09-09',Description:'Owner-assigne
         {Effect:'Allow',Action:['cognito-idp:AdminDisableUser','cognito-idp:AdminUserGlobalSignOut','cognito-idp:AdminDeleteUser'],
           Resource:sub('arn:${AWS::Partition}:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/${ConsumerUserPoolId}')},
       ]}},ref('AWS::NoValue')]},
-      // Export retention: list what remains under one export prefix, abort uploads, delete exact versions, confirm by HEAD. No reads of content, no writes, no KMS.
+      // Export retention: list what remains under one export prefix, abort uploads, delete exact versions, prove absence by listing again.
+      // No object reads (no HEAD, no GetObject), no writes, no KMS. s3:ListBucketMultipartUploads has no supported prefix condition and is
+      // therefore a bucket-level grant on the dedicated export bucket.
       {'Fn::If':['ExportCleanupActive',{PolicyName:'ReviewedPersonalExportRetention',PolicyDocument:{Version:'2012-10-17',Statement:[
-        {Effect:'Allow',Action:['s3:ListBucketVersions','s3:ListBucketMultipartUploads'],Resource:sub('arn:${AWS::Partition}:s3:::${ExportBucketName}'),
+        {Effect:'Allow',Action:'s3:ListBucketVersions',Resource:sub('arn:${AWS::Partition}:s3:::${ExportBucketName}'),
           Condition:{StringLike:{'s3:prefix':'personal-exports/*'},StringEquals:{'aws:ResourceAccount':ref('AWS::AccountId')}}},
-        {Effect:'Allow',Action:['s3:AbortMultipartUpload','s3:DeleteObjectVersion','s3:GetObjectVersion','s3:GetObjectVersionAttributes'],
+        {Effect:'Allow',Action:'s3:ListBucketMultipartUploads',Resource:sub('arn:${AWS::Partition}:s3:::${ExportBucketName}'),
+          Condition:{StringEquals:{'aws:ResourceAccount':ref('AWS::AccountId')}}},
+        {Effect:'Allow',Action:['s3:AbortMultipartUpload','s3:DeleteObjectVersion'],
           Resource:sub('arn:${AWS::Partition}:s3:::${ExportBucketName}/personal-exports/*'),Condition:{StringEquals:{'aws:ResourceAccount':ref('AWS::AccountId')}}},
       ]}},ref('AWS::NoValue')]},
     ]}},

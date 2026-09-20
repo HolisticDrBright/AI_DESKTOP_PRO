@@ -48,11 +48,12 @@ describe('functional personal storage deployment candidate',()=>{
     expect(JSON.stringify(policies[1])).not.toMatch(/s3:/);
     // Listing exists only for the export prefix (cleanup proof); never the whole bucket, all buckets or unversioned deletes.
     expect(JSON.stringify(policies[2])).not.toMatch(/s3:ListBucket"|s3:ListAllMyBuckets|s3:DeleteObject"|s3:\*|kms:\*/);
-    const exportStatements=(((policies[2] as Record<string,Json>)['Fn::If'] as Json[])[1] as {PolicyDocument:{Statement:Array<{Action:string[];Resource:Json;Condition:Json}>}}).PolicyDocument.Statement;
-    const listing=exportStatements.find(s=>s.Action.includes('s3:ListBucketVersions'))!;
-    expect(listing.Action).toEqual(['s3:ListBucketVersions','s3:ListBucketMultipartUploads']);
-    expect(JSON.stringify(listing.Resource)).not.toContain('personal-exports');
-    expect(listing.Condition).toMatchObject({StringLike:{'s3:prefix':'personal-exports/*'}});
+    const exportStatements=(((policies[2] as Record<string,Json>)['Fn::If'] as Json[])[1] as {PolicyDocument:{Statement:Array<{Action:string|string[];Resource:Json;Condition:Json}>}}).PolicyDocument.Statement;
+    // s3:prefix is a supported condition for ListBucketVersions but not for ListBucketMultipartUploads: the two are separate statements.
+    const versions=exportStatements.find(s=>s.Action==='s3:ListBucketVersions')!,uploads=exportStatements.find(s=>s.Action==='s3:ListBucketMultipartUploads')!;
+    expect(JSON.stringify(versions.Resource)).not.toContain('personal-exports');expect(versions.Condition).toMatchObject({StringLike:{'s3:prefix':'personal-exports/*'}});
+    expect(JSON.stringify(uploads.Resource)).not.toContain('personal-exports');expect(JSON.stringify(uploads.Condition)).not.toContain('s3:prefix');
+    expect(exportStatements.filter(s=>JSON.stringify(s.Action).includes('ListBucketMultipartUploads'))).toHaveLength(1);
     expect(condition(candidate.Conditions.ExportDelivery,approved)).toBe(false);
     const delivery={...approved,ExportBucketName:'fictional-export-bucket',ExportKmsKeyArn:'arn:aws:kms:us-east-2:123456789012:key/11111111-1111-4111-8111-111111111111',ExportReviewSha256:'c'.repeat(64)};
     expect(condition(candidate.Conditions.ExportDelivery,delivery)).toBe(true);

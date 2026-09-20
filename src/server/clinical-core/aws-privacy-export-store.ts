@@ -38,12 +38,14 @@ export function createAwsPrivacyExportStore(clientForRegion=(region:string)=>new
       if(r.ContentLength===undefined||r.ContentLength>maxBytes||!r.Body)throw new Error('privacy_export_staging_invalid');
       const bytes=await r.Body.transformToByteArray();if(bytes.byteLength!==r.ContentLength)throw new Error('privacy_export_staging_invalid');return bytes;
     },
-    async head(s,key,version,signal){
+    async head(s,key,version,signal,options){
+      // The checksum of an SSE-KMS object is returned only with ChecksumMode and key access; cleanup never asks for it.
       try{
-        const r=await client(s.region).send(new HeadObjectCommand({...base(s,key),VersionId:version,ChecksumMode:'ENABLED'}),{abortSignal:signal});
-        return {exists:r.DeleteMarker!==true,bytes:r.ContentLength,encryption:r.ServerSideEncryption,kmsKeyArn:r.SSEKMSKeyId,checksum:r.ChecksumSHA256};
+        const r=await client(s.region).send(new HeadObjectCommand({...base(s,key),VersionId:version,...(options?.checksum?{ChecksumMode:'ENABLED'}:{})}),{abortSignal:signal});
+        return {exists:r.DeleteMarker!==true,bytes:r.ContentLength,encryption:r.ServerSideEncryption,kmsKeyArn:r.SSEKMSKeyId,...(options?.checksum?{checksum:r.ChecksumSHA256}:{})};
       }catch(error){
         const name=(error as {name?:string;$metadata?:{httpStatusCode?:number}})?.name,status=(error as {$metadata?:{httpStatusCode?:number}})?.$metadata?.httpStatusCode;
+        // Only an explicit 404 is absence. A 403 (no bucket-list permission, denied key) is not absence and is rethrown.
         if(name==='NotFound'||name==='NoSuchKey'||name==='NoSuchVersion'||status===404)return {exists:false};
         throw error;
       }

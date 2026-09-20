@@ -122,9 +122,11 @@ none of the earlier cases changed.
 | Expired unfinished jobs stayed `running`. | The lease no longer raises after updating: it commits the `failed`/`deadline_passed` transition with its audit row and returns `leased:false`, which the API reports as a conflict. Status reads and both cleanup listings commit the same transition for requested, running and ready jobs. |
 
 The store interface gained `listUploads` and `listVersions` (S3 `ListMultipartUploads` and
-`ListObjectVersions`, bound to one job's key prefix). The personal-storage candidate grants
-`s3:ListBucketVersions` and `s3:ListBucketMultipartUploads` on the export bucket only with
-`s3:prefix` under `personal-exports/*`; no bucket-wide listing and no unversioned delete.
+`ListObjectVersions`, requested with one job's key prefix). The personal-storage candidate
+grants `s3:ListBucketVersions` with `s3:prefix` under `personal-exports/*`. AWS does not
+support `s3:prefix` for `s3:ListBucketMultipartUploads`, so that action is a separate
+bucket-level statement: the export bucket must be dedicated to personal exports, which is part
+of what `ExportReviewSha256` attests. No unversioned delete.
 
 Additional cases in the same file: denied then timed-out abort (pending twice, certified on
 the third pass), abort that returns while the upload is still listed, a recorded upload that
@@ -148,15 +150,40 @@ carries counts and per-job outcomes only, never keys, owners or content.
 
 Activation is separate: `ExportCleanupEnabled`, `ExportCleanupEvidenceSha256`,
 `ExportBucketName` and `ExportKmsKeyArn` on the privacy-operations candidate. The IAM policy
-under that condition allows prefix-bound listing, `s3:AbortMultipartUpload`,
-`s3:DeleteObjectVersion` and `s3:GetObjectVersion` (HEAD) on `personal-exports/*`; no
-`GetObject`, no `PutObject`, no KMS grant. Whether `HeadObject` on an SSE-KMS version succeeds
-without `kms:Decrypt` under this role is a hosted check, not a local one. A bucket lifecycle
-rule that aborts incomplete multipart uploads and expires noncurrent versions is still
-recommended as defence in depth and is bucket configuration outside this repository.
+under that condition allows `s3:ListBucketVersions` with the export prefix condition,
+`s3:ListBucketMultipartUploads` on the dedicated export bucket (no prefix condition exists
+for it), and `s3:AbortMultipartUpload` and `s3:DeleteObjectVersion` on `personal-exports/*`.
+It reads no object at all: cleanup proves absence by listing again, so there is no HEAD, no
+`GetObject` and no KMS grant, and the SSE-KMS checksum question does not arise for this role.
+A bucket lifecycle rule that aborts incomplete multipart uploads and expires noncurrent
+versions is still recommended as defence in depth and is bucket configuration outside this
+repository.
 
 This is scheduled by a person, not by a timer: there is still no service identity, so the
 pass runs when an assigned operator (or a reviewed scheduled invocation using an operator
-identity, which does not exist yet) calls it.
+identity, which does not exist yet) calls it. A 48-hour download deadline is therefore not a
+48-hour deletion guarantee until a scheduled mechanism or a staffed process with a stated
+service level exists; that decision is open.
+
+## Second recheck: integrity binding and settlement (migration 20260920140000)
+
+Two further reproductions against migration 95, both added unmodified
+(`describe('Codex migration95 adversarial boundaries')`) and passing:
+
+| Finding | Repair |
+|---|---|
+| Recovery accepted a same-length object whose checksum was unrelated to the recorded parts. | The recorded part digests fix exactly one acceptable object: S3's composite `base64(sha256(concat(part digests)))-count` (`compositeChecksum`). Recovery, the normal completion path and download issuance all compare against it; a differing, missing, malformed, wrong-count or reordered checksum fails the job closed (`object_mismatch`) or refuses the download. The fictional store now returns S3-shaped checksums (full-object for PUT, composite for multipart) instead of a placeholder. |
+| Cancel and cleanup could certify deletion while a pass had a storage request in flight; the request then landed with no obligation left. | The lease is the record of an admitted writer and nothing erases it except the pass that finished its own storage work: cancel, fail (by another caller) and expiry keep `lease_until`; a recorded pass releases it only when no completion step remains; completion, and the leaseholder failing its own job, release it. Every storage request of a pass is aborted at the lease boundary. A finished job is `settled`, and certifiable, only when its last lease is at least 60 seconds old (`privacy_export_settlement`); both listings report the flag, both cleanup paths count an unsettled job as pending, and both certification functions refuse an unsettled job at the SQL boundary. |
+
+The 60-second settlement window is the assumed bound on how long a request aborted
+client-side at the lease boundary can still land in S3. It is a reviewed constant in one SQL
+function, not a measured hosted value; the hosted run should confirm it or widen it.
+
+Cases in the same file: missing, malformed, wrong-count and reordered checksums, correct
+recovery with the download HEAD bound to the same checksum and refused when it differs, a
+completed upload whose returned checksum differs from the parts, a late staging put, a late
+part and a late completion landing after cancel or expiry (pending inside the window, found by
+listing and removed once the window has passed, certificate only then), and the operator pass
+under the same rule with SQL-level refusal of an unsettled certification.
 
 This is still the inline export's coverage, not a complete account export.

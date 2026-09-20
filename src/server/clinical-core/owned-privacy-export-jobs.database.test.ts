@@ -30,25 +30,30 @@ const adapter=()=>createOwnedConsumerRecordsAdapter(database);
 const storage:PrivacyExportObjectStorage={bucket:'fictional-export-bucket',region:'us-east-2',kmsKeyArn:'arn:aws:kms:us-east-2:123456789012:key/11111111-1111-4111-8111-111111111111',expectedBucketOwner:'123456789012'};
 function fakeStore(){
   const objects=new Map<string,Map<string,Uint8Array>>(),uploads=new Map<string,{key:string;parts:Map<number,{bytes:Uint8Array;etag:string}>}>();
+  const checksums=new Map<string,string>(); // key+'\n'+version → the checksum S3 would return
   let versions=0;const version=()=>'v'+(++versions);
-  const put=(key:string,bytes:Uint8Array)=>{const v=version();if(!objects.has(key))objects.set(key,new Map());objects.get(key)!.set(v,bytes);return v;};
+  const put=(key:string,bytes:Uint8Array,checksum:string)=>{const v=version();if(!objects.has(key))objects.set(key,new Map());objects.get(key)!.set(v,bytes);checksums.set(key+'\n'+v,checksum);return v;};
+  // S3 semantics: a single PUT carries the full-object SHA-256; a multipart object carries the composite of its part digests with the part count.
+  const fullChecksum=(bytes:Uint8Array)=>createHash('sha256').update(bytes).digest('base64');
+  const composite=(parts:Uint8Array[])=>createHash('sha256').update(Buffer.concat(parts.map(p=>createHash('sha256').update(p).digest()))).digest('base64')+'-'+parts.length;
   const store:PrivacyExportStore={
     createUpload:vi.fn(async(_s,key)=>{const uploadId='u-'+randomUUID();uploads.set(uploadId,{key,parts:new Map()});return {uploadId};}),
     uploadPart:vi.fn(async(_s,key,uploadId,partNumber,body,sha)=>{const u=uploads.get(uploadId);if(!u||u.key!==key)throw new Error('NoSuchUpload');
       if(createHash('sha256').update(body).digest('hex')!==sha)throw new Error('BadDigest');const etag='"'+createHash('md5').update(body).digest('hex')+'"';u.parts.set(partNumber,{bytes:body,etag});return {etag};}),
     completeUpload:vi.fn(async(_s,key,uploadId,parts)=>{const u=uploads.get(uploadId);if(!u||u.key!==key)throw new Error('NoSuchUpload');
       const ordered=parts.map((p:{partNumber:number;etag:string})=>{const stored=u.parts.get(p.partNumber);if(!stored||stored.etag!==p.etag)throw new Error('InvalidPart');return stored.bytes;});
-      const bytes=Buffer.concat(ordered);uploads.delete(uploadId);return {version:put(key,bytes),checksum:createHash('sha256').update(bytes).digest('base64')+'-'+parts.length};}),
+      const bytes=Buffer.concat(ordered),checksum=composite(ordered);uploads.delete(uploadId);return {version:put(key,bytes,checksum),checksum};}),
     abortUpload:vi.fn(async(_s,_key,uploadId)=>{uploads.delete(uploadId);}),
-    put:vi.fn(async(_s,key,body,sha)=>{if(createHash('sha256').update(body).digest('hex')!==sha)throw new Error('BadDigest');return {version:put(key,body)};}),
+    put:vi.fn(async(_s,key,body,sha)=>{if(createHash('sha256').update(body).digest('hex')!==sha)throw new Error('BadDigest');return {version:put(key,body,fullChecksum(body))};}),
     get:vi.fn(async(_s,key,v,max)=>{const b=objects.get(key)?.get(v);if(!b)throw new Error('NoSuchVersion');if(b.byteLength>max)throw new Error('too large');return b;}),
-    head:vi.fn(async(_s,key,v)=>{const b=objects.get(key)?.get(v);return b?{exists:true,bytes:b.byteLength,encryption:'aws:kms',kmsKeyArn:storage.kmsKeyArn,checksum:'x'}:{exists:false};}),
+    head:vi.fn(async(_s,key,v,_signal,options)=>{const b=objects.get(key)?.get(v);
+      return b?{exists:true,bytes:b.byteLength,encryption:'aws:kms',kmsKeyArn:storage.kmsKeyArn,...(options?.checksum?{checksum:checksums.get(key+'\n'+v)}:{})}:{exists:false};}),
     deleteVersion:vi.fn(async(_s,key,v)=>{objects.get(key)?.delete(v);}),
     signDownload:vi.fn(async(_s,key,v,seconds,name)=>`https://fictional-export-bucket.s3.us-east-2.amazonaws.com/${key}?versionId=${v}&X-Amz-Expires=${seconds}&name=${encodeURIComponent(name)}`),
     listUploads:vi.fn(async(_s,prefix)=>[...uploads.entries()].filter(([,u])=>u.key.startsWith(prefix)).map(([uploadId,u])=>({key:u.key,uploadId}))),
     listVersions:vi.fn(async(_s,prefix)=>[...objects.entries()].filter(([k])=>k.startsWith(prefix)).flatMap(([key,vs])=>[...vs.entries()].map(([version,b])=>({key,version,bytes:b.byteLength,deleteMarker:false})))),
   };
-  return {store,objects,uploads};
+  return {store,objects,uploads,checksums};
 }
 const PRIVACY_EXPORT_TEST_LARGE_PART=64*1024;
 const jobsWith=(store:PrivacyExportStore,partBytes=8192,now?:()=>number)=>createOwnedPrivacyExportJobs((c,work)=>adapter().runPrivacy(c,work),{store,storage,partBytes,...(now?{now}:{})});
@@ -86,12 +91,58 @@ beforeEach(async()=>{
   // Each test starts without an open job and outside the hourly request limit; earlier tests' objects are irrelevant to it.
   await db.query("update clinical_private.owned_privacy_export_jobs set status='cancelled',cancelled_at=clock_timestamp(),ready_at=null,lease_until=null,version=version+1 where status in ('requested','running','ready')");
   await db.query("update clinical_private.owned_privacy_export_jobs set created_at=created_at-interval '2 hours'");
+  // Earlier tests' finished jobs are past their settlement window here (their fictional stores are gone); each test states its own settlement cases.
+  await db.query("update clinical_private.owned_privacy_export_jobs set lease_until=null where status in ('cancelled','failed','expired')");
 });
 const drive=async(jobs:ReturnType<typeof jobsWith>,jobId:string,who=owner)=>{
   let view=await jobs.getPrivacyExportJob(context(who),{jobId});let passes=0;
   while(['requested','running'].includes(view.status)&&passes<200){view=await jobs.advancePrivacyExportJob(context(who),{jobId},20000,new AbortController().signal);passes++;}
   return {view,passes};
 };
+
+describe('Codex migration95 adversarial boundaries',()=>{
+  it('does not recover a same-length object with a checksum unrelated to the recorded parts',async()=>{
+    const f=fakeStore(),jobs=jobsWith(f.store);
+    let partLengths:number[]=[];
+    const job=(await jobs.requestPrivacyExportJob(context(),{requestId:randomUUID()})).jobId;
+    const realComplete=vi.mocked(f.store.completeUpload).getMockImplementation()!;
+    vi.mocked(f.store.completeUpload).mockImplementationOnce(async(...args)=>{
+      partLengths=args[3].map(p=>f.uploads.get(args[2])!.parts.get(p.partNumber)!.bytes.length);
+      await realComplete(...args);throw new Error('fictional lost completion response');
+    });
+    await expect(drive(jobs,job)).rejects.toThrow('storage_unavailable');
+    const key=[...f.objects.keys()].find(k=>k.endsWith('.json'))!;
+    const [version,bytes]=[...f.objects.get(key)!.entries()][0];
+    const changed=Buffer.from(bytes);changed[changed.length-1]^=1;
+    f.objects.get(key)!.set(version,changed);
+    let offset=0;
+    const partDigests=partLengths.map(n=>{const digest=createHash('sha256').update(changed.subarray(offset,offset+n)).digest();offset+=n;return digest;});
+    const changedComposite=createHash('sha256').update(Buffer.concat(partDigests)).digest('base64')+'-'+partLengths.length;
+    const realHead=vi.mocked(f.store.head).getMockImplementation()!;
+    vi.mocked(f.store.head).mockImplementation(async(...args)=>{
+      const h=await realHead(...args);
+      return h?.exists?{...h,checksum:changedComposite}:h;
+    });
+    await db.query('update clinical_private.owned_privacy_export_jobs set lease_until=null where id=$1',[job]);
+    expect((await drive(jobs,job)).view).toMatchObject({status:'failed',failureCode:'object_mismatch'});
+  });
+  it('does not certify removal before a cancelled in-flight create-upload operation has finished',async()=>{
+    const f=fakeStore(),jobs=jobsWith(f.store);
+    const job=(await jobs.requestPrivacyExportJob(context(),{requestId:randomUUID()})).jobId;
+    const realCreate=vi.mocked(f.store.createUpload).getMockImplementation()!;
+    vi.mocked(f.store.createUpload).mockImplementationOnce(async(...args)=>{
+      // Storage request is in flight. Cancellation and both empty listings happen before it lands.
+      await jobs.cancelPrivacyExportJob(context(),{jobId:job});
+      await jobs.cleanupPrivacyExportJobs(context(),new AbortController().signal);
+      return realCreate(...args);
+    });
+    await expect(jobs.advancePrivacyExportJob(context(),{jobId:job},20000,new AbortController().signal)).rejects.toThrow();
+    expect(f.uploads.size).toBe(1);
+    await jobs.cleanupPrivacyExportJobs(context(),new AbortController().signal);
+    const current=await jobs.getPrivacyExportJob(context(),{jobId:job});
+    expect(current.objectDeleted&&f.uploads.size>0).toBe(false);
+  });
+});
 
 describe('Codex recheck export failure boundaries',()=>{
   it('durably expires an unfinished job so its open upload becomes cleanup eligible',async()=>{
@@ -314,6 +365,110 @@ describe('assigned-operator retention pass (migration 95)',()=>{
       await db.query("update clinical_core.persons set status='active' where id=$1",[owner]);
       expect(await jobs.cleanupPrivacyExportJobs(context(other),new AbortController().signal)).toEqual({cleaned:1,remaining:0});
     }
+  });
+});
+
+describe('integrity binding and settlement (migration 96)',()=>{
+  const lostCompletion=async(f:ReturnType<typeof fakeStore>,jobs:ReturnType<typeof jobsWith>,who=owner)=>{
+    const job=(await jobs.requestPrivacyExportJob(context(who),{requestId:randomUUID()})).jobId;
+    const real=vi.mocked(f.store.completeUpload).getMockImplementation()!;
+    vi.mocked(f.store.completeUpload).mockImplementationOnce(async(...a)=>{await real(...a);throw new Error('fictional lost completion response');});
+    await expect(drive(jobs,job,who)).rejects.toThrow('storage_unavailable');
+    await db.query('update clinical_private.owned_privacy_export_jobs set lease_until=null where id=$1',[job]);
+    const key=[...f.objects.keys()].find(k=>k.endsWith('.json'))!;
+    return {job,key,version:[...f.objects.get(key)!.keys()][0]};
+  };
+  it('recovers only the object whose composite checksum is the one the recorded part digests fix; missing, malformed and reordered checksums fail closed',async()=>{
+    for(const [label,tamper] of [
+      ['missing',()=>undefined as string|undefined],
+      ['malformed',(c:string|undefined)=>c!.replace(/-\d+$/,'')],
+      ['part count',(c:string|undefined)=>c!.replace(/-(\d+)$/,(_m,n)=>'-'+(Number(n)+1))],
+    ] as [string,(c:string|undefined)=>string|undefined][]){
+      const f=fakeStore(),jobs=jobsWith(f.store);
+      const {job,key,version}=await lostCompletion(f,jobs);
+      const good=f.checksums.get(key+'\n'+version)!;
+      f.checksums.set(key+'\n'+version,tamper(good) as string);
+      expect((await drive(jobs,job)).view,label).toMatchObject({status:'failed',failureCode:'object_mismatch'});
+      await db.query("update clinical_private.owned_privacy_export_jobs set created_at=created_at-interval '2 hours'");
+    }
+    // Reordered parts: the same bytes in a different part order give a different composite; the recorded order is the only acceptable one.
+    const f=fakeStore(),jobs=jobsWith(f.store);
+    const {job,key,version}=await lostCompletion(f,jobs);
+    const parts=(await db.query<{p:string[]}>('select part_sha256s p from clinical_private.owned_privacy_export_jobs where id=$1',[job])).rows[0].p;
+    expect(parts.length).toBeGreaterThan(1);
+    const reordered=[parts[1],parts[0],...parts.slice(2)];
+    f.checksums.set(key+'\n'+version,createHash('sha256').update(Buffer.concat(reordered.map(h=>Buffer.from(h,'hex')))).digest('base64')+'-'+parts.length);
+    expect((await drive(jobs,job)).view).toMatchObject({status:'failed',failureCode:'object_mismatch'});
+    // Correct recovery (the other fictional owner, so this owner's download audit count stays that of the download test), then the
+    // download HEAD must still carry that exact checksum.
+    const g=fakeStore(),good=jobsWith(g.store);
+    const ok=await lostCompletion(g,good,other);
+    const ready=(await drive(good,ok.job,other)).view;
+    expect(ready).toMatchObject({status:'ready',objectChecksum:g.checksums.get(ok.key+'\n'+ok.version)});
+    expect(ready.objectChecksum).toMatch(/^[A-Za-z0-9+/]{43}=-\d+$/);
+    await expect(good.issuePrivacyExportDownload(context(other),{jobId:ok.job},Date.now(),new AbortController().signal)).resolves.toMatchObject({objectChecksum:ready.objectChecksum});
+    g.checksums.set(ok.key+'\n'+ok.version,'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=-1');
+    await expect(good.issuePrivacyExportDownload(context(other),{jobId:ok.job},Date.now(),new AbortController().signal)).rejects.toThrow('storage_unavailable');
+    await good.cancelPrivacyExportJob(context(other),{jobId:ok.job});
+    expect(await good.cleanupPrivacyExportJobs(context(other),new AbortController().signal)).toEqual({cleaned:1,remaining:0});
+  });
+  it('fails a completed upload whose returned checksum differs from the recorded parts instead of marking it ready',async()=>{
+    const f=fakeStore(),jobs=jobsWith(f.store);
+    const job=(await jobs.requestPrivacyExportJob(context(),{requestId:randomUUID()})).jobId;
+    const real=vi.mocked(f.store.completeUpload).getMockImplementation()!;
+    vi.mocked(f.store.completeUpload).mockImplementationOnce(async(...a)=>({...(await real(...a)),checksum:'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=-1'}));
+    expect((await drive(jobs,job)).view).toMatchObject({status:'failed',failureCode:'object_mismatch'});
+    const cleaned=await jobs.cleanupPrivacyExportJobs(context(),new AbortController().signal);
+    expect(cleaned.cleaned).toBeGreaterThanOrEqual(1);expect(cleaned.remaining).toBe(0);
+    expect([...f.objects.values()].every(v=>v.size===0)).toBe(true);
+  });
+  it('keeps a cancelled or expired job pending while a pass may still be writing (staging put, part, completion), then removes what landed late',async()=>{
+    for(const [label,method,finish] of [
+      ['staging put','put',(jobs:ReturnType<typeof jobsWith>,job:string)=>jobs.cancelPrivacyExportJob(context(),{jobId:job})],
+      ['upload part','uploadPart',(jobs:ReturnType<typeof jobsWith>,job:string)=>jobs.cancelPrivacyExportJob(context(),{jobId:job})],
+      ['completion','completeUpload',async(_jobs:ReturnType<typeof jobsWith>,job:string)=>{await db.query("update clinical_private.owned_privacy_export_jobs set expires_at=clock_timestamp()-interval '1 second' where id=$1",[job]);}],
+    ] as [string,'put'|'uploadPart'|'completeUpload',(jobs:ReturnType<typeof jobsWith>,job:string)=>Promise<unknown>][]){
+      const f=fakeStore(),jobs=jobsWith(f.store,method==='put'?PRIVACY_EXPORT_TEST_LARGE_PART:8192,method==='put'?onePagePerPass():undefined);
+      const job=(await jobs.requestPrivacyExportJob(context(),{requestId:randomUUID()})).jobId;
+      const real=vi.mocked(f.store[method]).getMockImplementation()! as (...a:unknown[])=>Promise<unknown>;
+      vi.mocked(f.store[method] as unknown as (...a:unknown[])=>Promise<unknown>).mockImplementationOnce(async(...a:unknown[])=>{
+        await finish(jobs,job);
+        expect(await jobs.cleanupPrivacyExportJobs(context(),new AbortController().signal),label).toEqual({cleaned:0,remaining:1});
+        return real(...a);
+      });
+      await expect(drive(jobs,job),label).rejects.toThrow(/conflict|storage_unavailable/);
+      const landed=[...f.objects.values()].some(v=>v.size>0)||f.uploads.size>0;
+      expect(landed,label).toBe(true);
+      // Still inside the settlement window: honest pending, never a certificate beside a surviving object.
+      expect(await jobs.cleanupPrivacyExportJobs(context(),new AbortController().signal),label).toEqual({cleaned:0,remaining:1});
+      expect(await jobs.getPrivacyExportJob(context(),{jobId:job}),label).toMatchObject({objectDeleted:false});
+      // The window passes (the lease is aged, as the clock would): the late artefact is found by listing and removed before certification.
+      await db.query("update clinical_private.owned_privacy_export_jobs set lease_until=clock_timestamp()-interval '61 seconds' where id=$1",[job]);
+      expect(await jobs.cleanupPrivacyExportJobs(context(),new AbortController().signal),label).toEqual({cleaned:1,remaining:0});
+      expect(f.uploads.size,label).toBe(0);expect([...f.objects.values()].every(v=>v.size===0),label).toBe(true);
+      expect(await jobs.getPrivacyExportJob(context(),{jobId:job}),label).toMatchObject({objectDeleted:true});
+      await db.query("update clinical_private.owned_privacy_export_jobs set created_at=created_at-interval '2 hours'");
+    }
+  });
+  it('applies the same settlement to the operator pass and refuses certification of an unsettled job at the SQL boundary',async()=>{
+    const f=fakeStore(),jobs=jobsWith(f.store),retention=retentionWith(f.store);
+    await jobs.cleanupPrivacyExportJobs(context(),new AbortController().signal);
+    const job=(await jobs.requestPrivacyExportJob(context(),{requestId:randomUUID()})).jobId;
+    vi.mocked(f.store.uploadPart).mockRejectedValueOnce(new Error('fictional network failure'));
+    await expect(jobs.advancePrivacyExportJob(context(),{jobId:job},20000,new AbortController().signal)).rejects.toThrow('storage_unavailable');
+    await jobs.cancelPrivacyExportJob(context(),{jobId:job}); // lease kept: the failed pass may still have a request in flight
+    expect(await retention.cleanupAssignedPrivacyExports(operatorContext(),10,new AbortController().signal)).toMatchObject({cleaned:0,remaining:1,items:[{jobId:job,outcome:'pending'}]});
+    const version=(await db.query<{version:string}>('select version::text from clinical_private.owned_privacy_export_jobs where id=$1',[job])).rows[0].version;
+    await expect(db.transaction(async tx=>{await tx.exec('set local role clinical_core_api');
+      await tx.query("select clinical_private.set_request_context($1,$2,'workforce',$3,'consent_management','production-clinical','clinical_phi')",[operator,org,'subject-'+operator]);
+      await tx.query('select clinical_private.record_privacy_export_object_deleted_by_operator($1,$2,$3::bigint)',[owner,job,version]);})).rejects.toThrow('privacy_export_job_state');
+    await expect(db.transaction(async tx=>{await tx.exec('set local role clinical_core_api');
+      await tx.query("select clinical_private.set_request_context($1,$2,'consumer',$3,'consent_management','production-clinical','clinical_phi')",[owner,org,'subject-'+owner]);
+      await tx.query('select clinical_core.record_owned_privacy_export_object_deleted($1,$2::bigint)',[job,version]);})).rejects.toThrow('privacy_export_job_state');
+    expect(f.uploads.size).toBe(1);
+    await db.query("update clinical_private.owned_privacy_export_jobs set lease_until=clock_timestamp()-interval '61 seconds' where id=$1",[job]);
+    expect(await retention.cleanupAssignedPrivacyExports(operatorContext(),10,new AbortController().signal)).toMatchObject({cleaned:1,remaining:0});
+    expect(f.uploads.size).toBe(0);
   });
 });
 

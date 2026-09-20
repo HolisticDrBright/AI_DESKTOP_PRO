@@ -75,9 +75,14 @@ describe('privacy operations deployable candidate',()=>{
     const policies=t.Resources.Role.Properties.Policies as Record<string,Json>[];
     const branch=policies[5]['Fn::If'] as Json[];expect(branch[0]).toBe('ExportCleanupActive');
     const text=JSON.stringify(branch[1]);
-    for(const action of ['s3:ListBucketVersions','s3:ListBucketMultipartUploads','s3:AbortMultipartUpload','s3:DeleteObjectVersion','s3:GetObjectVersion'])expect(text).toContain(action);
-    for(const forbidden of ['s3:GetObject"','s3:PutObject','s3:DeleteObject"','kms:','"Resource":"*"','personal-labs','personal-voice'])expect(text).not.toContain(forbidden);
-    expect(text).toContain('"s3:prefix":"personal-exports/*"');expect(text).toContain('personal-exports/*');
+    for(const action of ['s3:ListBucketVersions','s3:ListBucketMultipartUploads','s3:AbortMultipartUpload','s3:DeleteObjectVersion'])expect(text).toContain(action);
+    // No object reads at all: cleanup proves absence by listing, so no HEAD (GetObjectVersion), no GetObject, no KMS.
+    for(const forbidden of ['s3:GetObject','s3:PutObject','s3:DeleteObject"','kms:','"Resource":"*"','personal-labs','personal-voice'])expect(text).not.toContain(forbidden);
+    const statements=((branch[1] as Record<string,Json>).PolicyDocument as Record<string,Json>).Statement as Record<string,Json>[];
+    const versions=statements.find(s=>s.Action==='s3:ListBucketVersions')!,uploads=statements.find(s=>s.Action==='s3:ListBucketMultipartUploads')!;
+    expect(versions.Condition).toMatchObject({StringLike:{'s3:prefix':'personal-exports/*'}});
+    expect(JSON.stringify(uploads.Condition)).not.toContain('s3:prefix'); // unsupported for this action; bucket-level on the dedicated export bucket
+    expect(text).toContain('personal-exports/*');
     expect(branch[2]).toEqual({Ref:'AWS::NoValue'});
     expect(t.Rules).toMatchObject({ReviewedExportCleanup:{RuleCondition:{'Fn::Equals':[{Ref:'ExportCleanupEnabled'},'true']}}});
     const defaults=Object.fromEntries(Object.entries(t.Parameters).map(([k,v])=>[k,v.Default??'']));
