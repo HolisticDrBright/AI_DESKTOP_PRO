@@ -1,6 +1,6 @@
 if (typeof window !== 'undefined') throw new Error('aws-recording-transcription-clients is server-only');
 import { createHash } from 'node:crypto';
-import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { GetTranscriptionJobCommand, StartTranscriptionJobCommand, TranscribeClient } from '@aws-sdk/client-transcribe';
 import type { TranscriptionMediaStore, TranscriptionProvider } from './recording-transcription';
 
@@ -25,6 +25,18 @@ export function createAwsTranscriptionMediaStore(clientForRegion = (region: stri
         ServerSideEncryption: 'aws:kms', SSEKMSKeyId: storage.kmsKeyArn,
         Metadata: { 'recording-id': tags.recordingId, 'job-id': tags.jobId, 'artifact-kind': tags.kind } }));
       return { version: result.VersionId ?? null };
+    },
+    async head(storage, key) {
+      try {
+        const result = await client(storage.region).send(new HeadObjectCommand({ Bucket: storage.bucket, Key: key, ExpectedBucketOwner: storage.expectedBucketOwner, ChecksumMode: 'ENABLED' }));
+        if (typeof result.ContentLength !== 'number' || result.DeleteMarker) return null;
+        const sha256 = result.ChecksumType === 'FULL_OBJECT' && result.ChecksumSHA256 ? Buffer.from(result.ChecksumSHA256, 'base64').toString('hex') : null;
+        return { version: result.VersionId ?? null, bytes: result.ContentLength, sha256 };
+      } catch (error) {
+        const status = (error as { $metadata?: { httpStatusCode?: number } })?.$metadata?.httpStatusCode;
+        if (status === 404) return null;
+        throw error;
+      }
     },
   };
 }

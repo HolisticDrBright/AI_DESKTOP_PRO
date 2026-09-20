@@ -9,7 +9,7 @@ import type { ProductionClinicalRequestContext } from './aws-identity-consent';
 import { ClinicalCoreDatabaseRejection, type ClinicalCoreDatabase } from './database';
 import type { ApiGatewayV2Event } from './aws-identity-api';
 
-const id = '11111111-1111-4111-8111-111111111111', other = '22222222-2222-4222-8222-222222222222', third = '33333333-3333-4333-8333-333333333333';
+const id = '11111111-1111-4111-8111-111111111111', other = '22222222-2222-4222-8222-222222222222', third = '33333333-3333-4333-8333-333333333333', fourth = '44444444-4444-4444-8444-444444444444';
 const context: ProductionClinicalRequestContext = { actorPersonId: id, organizationId: id, identityPool: 'workforce',
   identitySubject: 'fictional-subject', purpose: 'clinical_data', environment: 'production-clinical',
   dataClassification: 'clinical_phi', containsPhi: true, realPatientData: true, productionBound: true };
@@ -32,17 +32,19 @@ const version = (n: number, text: string, kind: 'provider' | 'correction' = n ==
   contentSha256: sha(text), byteLength: Buffer.byteLength(text), wordCount: text.split(/\s+/).length, supersedesId: n === 1 ? null : third, authorId: id,
   reason: n === 1 ? null : 'speaker name corrected', createdAt: at });
 const providerDocument = JSON.stringify({ jobName: `alp-${other}`, results: { transcripts: [{ transcript: 'fictional transcript text' }], items: [] }, status: 'COMPLETED' });
-function fixture(state: 'requested' | 'processing' = 'requested') {
+function fixture(state: 'requested' | 'processing' | 'completed' = 'requested') {
   const objects = new Map<string, Uint8Array>([['k0', seg0], ['k1', seg1]]);
   const versionOf = (key: string) => 'v-' + createHash('sha256').update(key).digest('hex').slice(0, 8);
   const store: TranscriptionMediaStore & { puts: { key: string; contentType: string; tags: unknown }[] } = { puts: [],
     get: vi.fn(async (_s, key, _v, max) => { const b = objects.get(key); if (!b) throw new RecordingTranscriptionError('storage_unverified');
       if (b.length > max) throw new RecordingTranscriptionError('storage_unverified'); return { bytes: b, version: versionOf(key) }; }),
     put: vi.fn(async (_s, key, bytes, contentType, tags) => { if (objects.has(key)) throw new RecordingTranscriptionError('conflict'); objects.set(key, bytes);
-      store.puts.push({ key, contentType, tags }); return { version: versionOf(key) }; }) };
+      store.puts.push({ key, contentType, tags }); return { version: versionOf(key) }; }),
+    head: vi.fn(async (_s, key) => { const b = objects.get(key); return b ? { version: versionOf(key), bytes: b.length, sha256: key.endsWith('provider.json') ? null : sha(b) } : null; }) };
   const artifacts: { jobId: string; kind: string; key: string; version: string; sha256: string; bytes: number; transcriptId?: string }[] = [];
+  let unregistered: import('./recording-transcription').UnregisteredObject[] = [];
   const provider: TranscriptionProvider = { start: vi.fn(async () => undefined), status: vi.fn(async () => ({ state: 'processing' as const })) };
-  let current = media(state), list = listing(state);
+  let current = media(state === 'completed' ? 'processing' : state), list = listing(state);
   const repository: RecordingTranscriptionRepository = {
     request: vi.fn(async (_c, recordingId, commandId) => ({ jobId: other, recordingId, commandId, status: 'requested' as const, segmentCount: 2, inventorySha256: 'b'.repeat(64), replayed: false })),
     media: vi.fn(async () => current),
@@ -58,10 +60,12 @@ function fixture(state: 'requested' | 'processing' = 'requested') {
     object: vi.fn(async (_c, transcriptId) => { const v = list.versions.find(v => v.transcriptId === transcriptId); if (!v) throw new RecordingTranscriptionError('refused');
       return { transcriptId, recordingId: id, version: v.version, objectKey: `${transcriptionPrefix(current)}/transcript-v${v.version}.txt`, contentSha256: v.contentSha256, byteLength: v.byteLength, storage }; }),
     registerArtifact: vi.fn(async (_c, jobId, kind, key, version, sha256, bytes, transcriptId) => {
-      artifacts.push({ jobId, kind, key, version, sha256, bytes, transcriptId }); return { artifactId: third, jobId, kind, replayed: false }; }),
+      artifacts.push({ jobId, kind, key, version, sha256, bytes, transcriptId }); unregistered = unregistered.filter(o => o.objectKey !== key); return { artifactId: third, jobId, kind, replayed: false }; }),
+    unregistered: vi.fn(async () => unregistered),
   };
   const processor = createRecordingTranscriptionProcessor({ repository, media: store, provider, releaseId: third });
-  return { objects, store, provider, repository, processor, artifacts, versionOf, setMedia: (m: TranscriptionMedia) => { current = m; } };
+  return { objects, store, provider, repository, processor, artifacts, versionOf, setMedia: (m: TranscriptionMedia) => { current = m; },
+    setUnregistered: (o: import('./recording-transcription').UnregisteredObject[]) => { unregistered = o; } };
 }
 describe('bounded encounter transcription processor', () => {
   it('requests only under the deployed release and assembles verified media before starting the provider once', async () => {
@@ -136,6 +140,34 @@ describe('bounded encounter transcription processor', () => {
     expect(malformed.artifacts.map(a => a.kind)).toEqual(['provider']);
     expect(() => providerTranscriptText('not json')).toThrow(RecordingTranscriptionError);
     expect(providerTranscriptText(providerDocument)).toBe('fictional transcript text');
+  });
+  it('registers objects an interrupted step wrote but never registered, skipping absent ones and refusing mismatched ones', async () => {
+    const f = fixture('processing');
+    f.objects.set(`${transcriptionPrefix(media())}/provider.json`, Buffer.from(providerDocument));
+    const mediaKey = `${transcriptionPrefix(media())}/media.webm`, orphanKey = `${transcriptionPrefix(media())}/transcript-v1.txt`;
+    f.objects.set(mediaKey, Buffer.concat([seg0, seg1]));
+    // Media exists unregistered; the provider document exists without a checksum; a second job's media never got written.
+    f.setUnregistered([{ kind: 'media', jobId: other, objectKey: mediaKey, sha256: null, bytes: null, transcriptId: null, proposedNoteId: null },
+      { kind: 'media', jobId: fourth, objectKey: `encounter-recordings/${id}/${id}/transcription/${fourth}/media.webm`, sha256: null, bytes: null, transcriptId: null, proposedNoteId: null }]);
+    vi.mocked(f.provider.status).mockResolvedValueOnce({ state: 'completed' });
+    await f.processor.advance(context, id);
+    expect(f.artifacts.map(a => [a.kind, a.key])).toEqual([['provider', `${transcriptionPrefix(media())}/provider.json`], ['transcript', orphanKey], ['media', mediaKey]]);
+    expect(f.artifacts[2]).toMatchObject({ version: f.versionOf(mediaKey), sha256: sha(Buffer.concat([seg0, seg1])), bytes: seg0.length + seg1.length });
+    // Explicit reconciliation after a completed job: a transcript row whose object was written but not registered.
+    const g = fixture('completed');
+    g.objects.set(orphanKey, Buffer.from('fictional transcript text'));
+    vi.mocked(g.repository.list).mockResolvedValue({ ...listing('completed', [version(1, 'fictional transcript text')]) });
+    vi.mocked(g.repository.object).mockResolvedValue({ transcriptId: third, recordingId: id, version: 1, objectKey: orphanKey, contentSha256: sha('fictional transcript text'), byteLength: 25, storage });
+    g.setUnregistered([{ kind: 'transcript', jobId: other, objectKey: orphanKey, sha256: sha('fictional transcript text'), bytes: 25, transcriptId: third, proposedNoteId: null }]);
+    await g.processor.reconcile(context, id);
+    expect(g.artifacts).toEqual([{ jobId: other, kind: 'transcript', key: orphanKey, version: g.versionOf(orphanKey), sha256: sha('fictional transcript text'), bytes: 25, transcriptId: third }]);
+    const tampered = fixture('completed');
+    tampered.objects.set(orphanKey, Buffer.from('fictional transcript TEXT'));
+    vi.mocked(tampered.repository.list).mockResolvedValue({ ...listing('completed', [version(1, 'fictional transcript text')]) });
+    vi.mocked(tampered.repository.object).mockResolvedValue({ transcriptId: third, recordingId: id, version: 1, objectKey: orphanKey, contentSha256: sha('fictional transcript text'), byteLength: 25, storage });
+    tampered.setUnregistered([{ kind: 'transcript', jobId: other, objectKey: orphanKey, sha256: sha('fictional transcript text'), bytes: 25, transcriptId: third, proposedNoteId: null }]);
+    await expect(tampered.processor.reconcile(context, id)).rejects.toMatchObject({ code: 'storage_unverified' });
+    expect(tampered.artifacts).toEqual([]);
   });
   it('appends corrections as new versions and refuses empty, identical or unanchored corrections', async () => {
     const f = fixture('processing');

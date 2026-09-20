@@ -45,6 +45,8 @@ export interface RecordingTranscriptionRepository {
   correct(context: ProductionClinicalRequestContext, recordingId: string, objectKey: string, sha256: string, bytes: number, words: number, reason: string): Promise<z.infer<typeof correctionSchema>>;
   list(context: ProductionClinicalRequestContext, recordingId: string): Promise<TranscriptionListing>;
   object(context: ProductionClinicalRequestContext, transcriptId: string): Promise<z.infer<typeof objectSchema>>;
+  /** Expected transcription and drafting objects that have no artifact row yet. */
+  unregistered(context: ProductionClinicalRequestContext, recordingId: string): Promise<UnregisteredObject[]>;
   /** Registers an object the processor wrote or read back so hold-aware cleanup can verify and delete it. */
   registerArtifact(context: ProductionClinicalRequestContext, jobId: string, kind: Exclude<TranscriptionArtifactKind, 'proposed_note'>, objectKey: string, objectVersion: string,
     sha256: string, bytes: number, transcriptId?: string): Promise<z.infer<typeof artifactReceiptSchema>>;
@@ -95,6 +97,7 @@ export function createRecordingTranscriptionRepository(database: ClinicalCoreDat
       [id(recordingId), objectKey, sha256, bytes, words, reason], correctionSchema),
     list: async (c, recordingId) => query(c, 'select clinical_private.list_recording_transcripts($1) as data', [id(recordingId)], transcriptionListingSchema),
     object: async (c, transcriptId) => query(c, 'select clinical_private.get_recording_transcript_object($1) as data', [id(transcriptId)], objectSchema),
+    unregistered: async (c, recordingId) => query(c, 'select clinical_private.list_unregistered_recording_objects($1) as data', [id(recordingId)], z.array(unregisteredObjectSchema).max(512)),
     async registerArtifact(c, jobId, kind, objectKey, objectVersion, sha256, bytes, transcriptId) {
       if (!/^[A-Za-z0-9+/=._-]{1,1024}$/.test(objectVersion) || objectVersion === 'null') throw new RecordingTranscriptionError('storage_unverified');
       return query(c, 'select clinical_private.register_recording_transcription_artifact($1,$2,$3,$4,$5,$6::integer,$7) as data',
@@ -112,6 +115,35 @@ export interface TranscriptionMediaStore {
   get(storage: TranscriptionStorage, key: string, version: string | undefined, maxBytes: number): Promise<{ bytes: Uint8Array; version: string | null }>;
   /** Create-only write with a full-object SHA-256 checksum and provenance metadata; returns the version created. */
   put(storage: TranscriptionStorage, key: string, bytes: Uint8Array, contentType: string, tags: TranscriptionObjectTags): Promise<{ version: string | null }>;
+  /** Current version, size and full-object SHA-256 (when S3 reports one) of an object, or null when it does not exist. */
+  head(storage: TranscriptionStorage, key: string): Promise<{ version: string | null; bytes: number; sha256: string | null } | null>;
+}
+export const unregisteredObjectSchema = z.object({ kind: z.enum(['media', 'provider', 'transcript', 'proposed_note']), jobId: uuid, objectKey: z.string().min(1).max(512),
+  sha256: hash.nullable(), bytes: z.number().int().min(1).max(268435456).nullable(), transcriptId: uuid.nullable(), proposedNoteId: uuid.nullable() }).strict();
+export type UnregisteredObject = z.infer<typeof unregisteredObjectSchema>;
+/** Registers every expected object that exists but has no artifact row: exact
+ * version and size from HEAD, digest from HEAD when S3 reports one or from a
+ * bounded read otherwise. Objects that do not exist are skipped; the database
+ * verifies each registration. Never writes or deletes an object. */
+export async function reconcileRecordingArtifacts(input: { media: TranscriptionMediaStore; storage: TranscriptionStorage; objects: UnregisteredObject[];
+  register: (object: UnregisteredObject, version: string, sha256: string, bytes: number) => Promise<void> }): Promise<{ registered: number; skipped: number }> {
+  let registered = 0, skipped = 0;
+  for (const object of input.objects.slice(0, 64)) {
+    const head = await input.media.head(input.storage, object.objectKey);
+    if (!head || !head.version) { skipped += 1; continue; }
+    if (object.bytes !== null && head.bytes !== object.bytes) throw new RecordingTranscriptionError('storage_unverified');
+    let digest = head.sha256;
+    if (!digest) {
+      if (head.bytes > 16 * 1024 * 1024) throw new RecordingTranscriptionError('storage_unverified');
+      const read = await input.media.get(input.storage, object.objectKey, head.version, head.bytes);
+      if (read.bytes.length !== head.bytes) throw new RecordingTranscriptionError('storage_unverified');
+      digest = createHash('sha256').update(read.bytes).digest('hex');
+    }
+    if (object.sha256 !== null && digest !== object.sha256) throw new RecordingTranscriptionError('storage_unverified');
+    await input.register(object, head.version, digest, head.bytes);
+    registered += 1;
+  }
+  return { registered, skipped };
 }
 export interface TranscriptionProvider {
   start(input: { jobName: string; storage: TranscriptionStorage; mediaKey: string; contentType: string; outputKey: string; languageCode: string }): Promise<void>;
@@ -160,9 +192,24 @@ export function createRecordingTranscriptionProcessor(input: { repository: Recor
     if (!version) throw new RecordingTranscriptionError('storage_unverified');
     await repository.registerArtifact(context, jobId, kind, key, version, digest, bytes, transcriptId);
   }
+  /** Transcription-side objects only; proposed notes are reconciled by the drafting processor. */
+  async function reconcile(context: ProductionClinicalRequestContext, recordingId: string, storage: TranscriptionStorage) {
+    const objects = (await repository.unregistered(context, recordingId)).filter(o => o.kind !== 'proposed_note');
+    if (!objects.length) return;
+    await reconcileRecordingArtifacts({ media, storage, objects, register: (o, version, digest, bytes) =>
+      repository.registerArtifact(context, o.jobId, o.kind as Exclude<TranscriptionArtifactKind, 'proposed_note'>, o.objectKey, version, digest, bytes, o.transcriptId ?? undefined).then(() => undefined) });
+  }
   return {
     request(context: ProductionClinicalRequestContext, recordingId: string, commandId: string) {
       return repository.request(context, recordingId, commandId, input.releaseId);
+    },
+    /** Registers any object written before a crash prevented its registration. Storage coordinates come from a transcript object the owner can read. */
+    async reconcile(context: ProductionClinicalRequestContext, recordingId: string): Promise<void> {
+      const listing = await repository.list(context, recordingId);
+      const latest = listing.versions.at(-1);
+      if (!latest) return;
+      const object = await repository.object(context, latest.transcriptId);
+      await reconcile(context, recordingId, object.storage);
     },
     /** One bounded step per call: assemble and start, or poll and store. */
     async advance(context: ProductionClinicalRequestContext, recordingId: string): Promise<TranscriptionListing> {
@@ -192,6 +239,8 @@ export function createRecordingTranscriptionProcessor(input: { repository: Recor
       const completion = await repository.complete(context, m.jobId, key, sha256(bytes), bytes.length, words(text));
       if (completion.status === 'completed' && completion.transcriptId)
         await register(context, m.jobId, 'transcript', key, written.version, sha256(bytes), bytes.length, completion.transcriptId);
+      // Anything an earlier interrupted step wrote but could not register is picked up now.
+      await reconcile(context, recordingId, m.storage);
       return repository.list(context, recordingId);
     },
     async correct(context: ProductionClinicalRequestContext, recordingId: string, text: string, reason: string) {

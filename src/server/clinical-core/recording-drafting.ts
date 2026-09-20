@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { clinicalUuid, ClinicalCoreDatabaseRejection, type ClinicalCoreDatabase } from './database';
 import type { ProductionClinicalRequestContext } from './aws-identity-consent';
 import { recordingStorageSchema } from './recording-segments';
-import type { TranscriptionMediaStore } from './recording-transcription';
+import { reconcileRecordingArtifacts, unregisteredObjectSchema, type TranscriptionMediaStore, type UnregisteredObject } from './recording-transcription';
 import { draftingListingSchema, draftingReceiptSchema, proposedNoteContentSchema, proposedNoteDocumentSchema, DRAFTING_SECTIONS,
   type DraftingListing, type DraftingReceipt, type DraftingNoteType, type ProposedNoteContent, type ProposedNoteDocument } from '@/contracts/encounterRecordingDrafting';
 
@@ -38,6 +38,8 @@ export interface RecordingDraftingRepository {
   list(context: ProductionClinicalRequestContext, recordingId: string): Promise<DraftingListing>;
   object(context: ProductionClinicalRequestContext, proposedNoteId: string): Promise<z.infer<typeof objectSchema>>;
   registerArtifact(context: ProductionClinicalRequestContext, jobId: string, objectKey: string, objectVersion: string, sha256: string, bytes: number, proposedNoteId: string): Promise<z.infer<typeof artifactReceiptSchema>>;
+  /** Expected recording objects with no artifact row; the drafting processor handles the proposed-note ones. */
+  unregistered(context: ProductionClinicalRequestContext, recordingId: string): Promise<UnregisteredObject[]>;
 }
 export function createRecordingDraftingRepository(database: ClinicalCoreDatabase): RecordingDraftingRepository {
   async function query<T>(context: ProductionClinicalRequestContext, sql: string, parameters: unknown[], schema: z.ZodType<T>): Promise<T> {
@@ -75,6 +77,7 @@ export function createRecordingDraftingRepository(database: ClinicalCoreDatabase
       [id(jobId), objectKey, sha256, bytes, sections, model], completionSchema),
     list: async (c, recordingId) => query(c, 'select clinical_private.list_recording_proposed_notes($1) as data', [id(recordingId)], draftingListingSchema),
     object: async (c, proposedNoteId) => query(c, 'select clinical_private.get_recording_proposed_note_object($1) as data', [id(proposedNoteId)], objectSchema),
+    unregistered: async (c, recordingId) => query(c, 'select clinical_private.list_unregistered_recording_objects($1) as data', [id(recordingId)], z.array(unregisteredObjectSchema).max(512)),
     async registerArtifact(c, jobId, objectKey, objectVersion, sha256, bytes, proposedNoteId) {
       if (!/^[A-Za-z0-9+/=._-]{1,1024}$/.test(objectVersion) || objectVersion === 'null') throw new RecordingDraftingError('storage_unverified');
       return query(c, 'select clinical_private.register_recording_drafting_artifact($1,$2,$3,$4,$5::integer,$6) as data',
@@ -138,6 +141,10 @@ export function createRecordingDraftingProcessor(input: { repository: RecordingD
       const completion = await repository.complete(context, job.jobId, key, sha256(bytes), bytes.length, document.sections.length, job.provider.model);
       if (completion.status === 'completed' && completion.proposedNoteId)
         await repository.registerArtifact(context, job.jobId, key, written.version, sha256(bytes), bytes.length, completion.proposedNoteId);
+      // A proposed note written before a crash prevented its registration is picked up now.
+      const objects = (await repository.unregistered(context, recordingId)).filter(o => o.kind === 'proposed_note' && o.proposedNoteId);
+      if (objects.length) await reconcileRecordingArtifacts({ media, storage: job.storage, objects, register: (o, version, digest, size) =>
+        repository.registerArtifact(context, o.jobId, o.objectKey, version, digest, size, o.proposedNoteId!).then(() => undefined) });
       return repository.list(context, recordingId);
     },
     async read(context: ProductionClinicalRequestContext, proposedNoteId: string): Promise<ProposedNoteContent> {

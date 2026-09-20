@@ -107,6 +107,20 @@ transcript is part of the retained clinical record is a policy decision recorded
 Backups, provider-side copies and a registration that fails after an object was written
 (the next pass stops on the unregistered key and surfaces it) remain outside this layer.
 
+## Reconciliation of unregistered objects (migration 89)
+
+A crash between an object write and its registration would leave cleanup refusing an
+unknown key indefinitely, with no way to repair it. Migration 89
+(`20260920070000_production_recording_artifact_reconciliation.sql`) adds an owner-locked
+listing of the objects a recording's transcription and drafting jobs are expected to have
+written (assembled media per job, provider output once a provider job was started,
+transcript versions and proposed notes with rows) minus those already registered. The
+media store gains a bounded `head`; after every `advance` step, and through an explicit
+`reconcile` on the transcription processor, each expected object that exists is registered
+with its exact version and size, its digest from the S3 full-object checksum or from a
+bounded read when the provider wrote it, and skipped when it does not exist. A size or
+digest that contradicts the database row is refused. Nothing is written or deleted.
+
 ## Evidence and what remains
 
 Local only: PGlite tests exercise request gating, idempotency, consent, release refusal,

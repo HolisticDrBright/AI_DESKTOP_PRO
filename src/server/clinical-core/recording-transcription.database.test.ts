@@ -217,3 +217,24 @@ describe('transcription artifact registry and cleanup coordination',()=>{
     expect((await db.query("select count(*)::int as n from clinical_private.recording_transcription_events where job_id=$1 and action='transcription.cancelled'",[job.jobId])).rows[0]).toEqual({n:1});
   });
 });
+
+describe('unregistered recording objects for reconciliation',()=>{
+  it('lists expected media, provider and transcript objects that lack artifact rows, owner-only, and shrinks as registrations land',async()=>{
+    const f=await finished(),release=await transcriptionRelease();
+    const job=(await request(f.c.recordingId,release))!;
+    const prefix=`encounter-recordings/${org}/${f.c.recordingId}/transcription/${job.jobId}/`;
+    const list=()=>call<{kind:string;objectKey:string;jobId:string;sha256:string|null;bytes:number|null;transcriptId:string|null}[]>('select clinical_private.list_unregistered_recording_objects($1) as result',[f.c.recordingId]);
+    expect((await list())!.map(o=>[o.kind,o.objectKey])).toEqual([['media',prefix+'media.webm']]);
+    await call('select clinical_private.mark_recording_transcription_processing($1,$2) as result',[job.jobId,'alp-'+job.jobId]);
+    const done=(await complete(job.jobId,prefix+'transcript-v1.txt','5'.repeat(64)))!;
+    const all=(await list())!;
+    expect(all.map(o=>o.kind).sort()).toEqual(['media','provider','transcript']);
+    expect(all.find(o=>o.kind==='transcript')).toMatchObject({objectKey:prefix+'transcript-v1.txt',sha256:'5'.repeat(64),bytes:120,transcriptId:done.transcriptId,jobId:job.jobId});
+    expect(all.find(o=>o.kind==='provider')).toMatchObject({objectKey:prefix+'provider.json',sha256:null,bytes:null});
+    await call('select clinical_private.register_recording_transcription_artifact($1,$2,$3,$4,$5,$6,$7) as result',[job.jobId,'transcript',prefix+'transcript-v1.txt','v-t1','5'.repeat(64),120,done.transcriptId]);
+    await call('select clinical_private.register_recording_transcription_artifact($1,$2,$3,$4,$5,$6,$7) as result',[job.jobId,'media',prefix+'media.webm','v-m','1'.repeat(64),9,null]);
+    expect((await list())!.map(o=>o.kind)).toEqual(['provider']);
+    await expect(call('select clinical_private.list_unregistered_recording_objects($1) as result',[f.c.recordingId],colleague)).rejects.toThrow(/recording_access_refused/);
+    expect(JSON.stringify(all)).not.toMatch(/bucket|token/);
+  });
+});

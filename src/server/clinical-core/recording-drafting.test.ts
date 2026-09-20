@@ -29,11 +29,13 @@ function fixture(state: 'none' | 'requested' | 'completed' = 'requested', noteTy
   const versionOf = (key: string) => 'v-' + sha(key).slice(0, 8);
   const store: TranscriptionMediaStore & { puts: { key: string; contentType: string; tags: unknown }[] } = { puts: [],
     get: vi.fn(async (_s, key, _v, max) => { const b = objects.get(key); if (!b || b.length > max) throw new RecordingDraftingError('storage_unverified'); return { bytes: b, version: versionOf(key) }; }),
-    put: vi.fn(async (_s, key, bytes, contentType, tags) => { if (objects.has(key)) throw new RecordingDraftingError('conflict'); objects.set(key, bytes); store.puts.push({ key, contentType, tags }); return { version: versionOf(key) }; }) };
+    put: vi.fn(async (_s, key, bytes, contentType, tags) => { if (objects.has(key)) throw new RecordingDraftingError('conflict'); objects.set(key, bytes); store.puts.push({ key, contentType, tags }); return { version: versionOf(key) }; }),
+    head: vi.fn(async (_s, key) => { const b = objects.get(key); return b ? { version: versionOf(key), bytes: b.length, sha256: sha(b) } : null; }) };
+  let unregistered: import('./recording-transcription').UnregisteredObject[] = [];
   const provider: DraftingProvider = { draft: vi.fn(async () => goodOutput) };
   let listing: DraftingListing = { recordingId: id, status: 'closed', latestTranscript: { transcriptId: third, version: 1 }, versions: [],
     job: state === 'none' ? null : { jobId: other, status: state, noteType, transcriptId: third, failureCode: null, createdAt: at, updatedAt: at } };
-  const artifacts: unknown[] = [];
+  const artifacts: { jobId: string; key: string; version: string; sha256: string; bytes: number; proposedNoteId: string }[] = [];
   const repository: RecordingDraftingRepository = {
     request: vi.fn(async (_c, recordingId, transcriptId, commandId, _release, type) => { listing = { ...listing, job: { jobId: other, status: 'requested', noteType: type, transcriptId, failureCode: null, createdAt: at, updatedAt: at } };
       return { jobId: other, recordingId, transcriptId, commandId, noteType: type, status: 'requested' as const, replayed: false }; }),
@@ -46,10 +48,12 @@ function fixture(state: 'none' | 'requested' | 'completed' = 'requested', noteTy
     list: vi.fn(async () => listing),
     object: vi.fn(async (_c, proposedNoteId) => { const v = listing.versions.find(v => v.proposedNoteId === proposedNoteId); if (!v) throw new RecordingDraftingError('refused');
       return { proposedNoteId, recordingId: id, transcriptId: third, noteType, version: v.version, objectKey: `${draftingPrefix(input())}/proposed-v${v.version}.json`, contentSha256: v.contentSha256, byteLength: v.byteLength, storage }; }),
-    registerArtifact: vi.fn(async (_c, jobId, key, version, sha256, bytes, proposedNoteId) => { artifacts.push({ jobId, key, version, sha256, bytes, proposedNoteId }); return { artifactId: fourth, jobId, kind: 'proposed_note' as const, replayed: false }; }),
+    registerArtifact: vi.fn(async (_c, jobId, key, version, sha256, bytes, proposedNoteId) => { artifacts.push({ jobId, key, version, sha256, bytes, proposedNoteId }); unregistered = unregistered.filter(o => o.objectKey !== key); return { artifactId: fourth, jobId, kind: 'proposed_note' as const, replayed: false }; }),
+    unregistered: vi.fn(async () => unregistered),
   };
   const processor = createRecordingDraftingProcessor({ repository, media: store, provider, releaseId: third, providerTimeoutMs: 1000 });
-  return { objects, store, provider, repository, processor, artifacts, versionOf, setListing: (patch: Partial<DraftingListing>) => { listing = { ...listing, ...patch }; } };
+  return { objects, store, provider, repository, processor, artifacts, versionOf, setListing: (patch: Partial<DraftingListing>) => { listing = { ...listing, ...patch }; },
+    setUnregistered: (o: import('./recording-transcription').UnregisteredObject[]) => { unregistered = o; } };
 }
 describe('review-only drafting processor', () => {
   it('reads the verified transcript, calls the provider once with the exact note structure, stores an immutable proposed note and registers it', async () => {
@@ -73,6 +77,16 @@ describe('review-only drafting processor', () => {
     await expect(f.processor.read(context, fourth)).rejects.toMatchObject({ code: 'storage_unverified' });
     // Nothing to do when no job is open.
     const idle = fixture('none'); expect((await idle.processor.advance(context, id)).job).toBeNull(); expect(idle.provider.draft).not.toHaveBeenCalled();
+    // A proposed note from an earlier interrupted step is registered during the next step; absent ones are skipped.
+    const g = fixture();
+    const orphan = `${draftingPrefix(input())}/proposed-v7.json`, missing = `${draftingPrefix(input())}/proposed-v8.json`;
+    g.objects.set(orphan, Buffer.from('{"contract":"proposed-note/1"}'));
+    g.setUnregistered([{ kind: 'proposed_note', jobId: other, objectKey: orphan, sha256: sha('{"contract":"proposed-note/1"}'), bytes: 30, transcriptId: null, proposedNoteId: third },
+      { kind: 'proposed_note', jobId: other, objectKey: missing, sha256: 'f'.repeat(64), bytes: 10, transcriptId: null, proposedNoteId: fourth },
+      { kind: 'media', jobId: other, objectKey: 'not-mine', sha256: null, bytes: null, transcriptId: null, proposedNoteId: null }]);
+    await g.processor.advance(context, id);
+    expect(g.artifacts.map(a => a.key)).toEqual([`${draftingPrefix(input())}/proposed-v1.json`, orphan]);
+    expect(g.artifacts[1]).toMatchObject({ version: g.versionOf(orphan), sha256: sha('{"contract":"proposed-note/1"}'), bytes: 30, proposedNoteId: third });
   });
   it('records provider failure, invalid output, oversized or tampered transcripts as failed jobs without storing text', async () => {
     const down = fixture(); vi.mocked(down.provider.draft).mockRejectedValueOnce(new Error('socket closed'));

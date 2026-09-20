@@ -312,6 +312,10 @@
     {
       "version": "20260920060000",
       "file": "20260920060000_production_owned_privacy_request_paging.sql"
+    },
+    {
+      "version": "20260920070000",
+      "file": "20260920070000_production_recording_artifact_reconciliation.sql"
     }
   ]
 }
