@@ -2,7 +2,7 @@
   "name": "ai-desktop-pro",
   "version": "0.1.0",
   "private": true,
-  "description": "AI Longevity Pro — Clinical Intelligence. Desktop-first practitioner platform (Phase 1 front end).",
+  "description": "AI Longevity Pro \u2014 Clinical Intelligence. Desktop-first practitioner platform (Phase 1 front end).",
   "engines": {
     "node": ">=22.0.0"
   },
@@ -80,7 +80,8 @@
     "build:security-qualification": "node scripts/build-security-qualification.mjs",
     "qualify:security": "node dist/qualification/security-qualification.cjs",
     "test:aws-provider-configuration": "node scripts/check-aws-provider-configuration.test.mjs",
-    "test:aws-data-plane-migration": "node scripts/check-aws-data-plane-migration.test.mjs"
+    "test:aws-data-plane-migration": "node scripts/check-aws-data-plane-migration.test.mjs",
+    "build:aws-recording-drafting": "node scripts/build-aws-recording-authority.mjs --drafting"
   },
   "dependencies": {
     "@aws-sdk/client-cognito-identity-provider": "^3.1120.0",

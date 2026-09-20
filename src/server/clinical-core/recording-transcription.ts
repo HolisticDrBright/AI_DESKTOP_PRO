@@ -33,7 +33,8 @@ const completionSchema = z.object({ jobId: uuid, status: z.enum(['completed', 'f
   failureCode: z.string().optional(), contentSha256: hash.optional(), replayed: z.boolean() }).passthrough();
 const correctionSchema = z.object({ transcriptId: uuid, jobId: uuid, version: z.number().int().min(2), supersedesId: uuid, contentSha256: hash }).strict();
 const artifactReceiptSchema = z.object({ artifactId: uuid, jobId: uuid, kind: z.enum(['media', 'provider', 'transcript']), replayed: z.boolean() }).strict();
-export type TranscriptionArtifactKind = z.infer<typeof artifactReceiptSchema>['kind'];
+/** Every object kind the recording services write under a recording prefix; cleanup verifies each by kind. */
+export type TranscriptionArtifactKind = z.infer<typeof artifactReceiptSchema>['kind'] | 'proposed_note';
 
 export interface RecordingTranscriptionRepository {
   request(context: ProductionClinicalRequestContext, recordingId: string, commandId: string, releaseId: string): Promise<TranscriptionReceipt>;
@@ -45,7 +46,7 @@ export interface RecordingTranscriptionRepository {
   list(context: ProductionClinicalRequestContext, recordingId: string): Promise<TranscriptionListing>;
   object(context: ProductionClinicalRequestContext, transcriptId: string): Promise<z.infer<typeof objectSchema>>;
   /** Registers an object the processor wrote or read back so hold-aware cleanup can verify and delete it. */
-  registerArtifact(context: ProductionClinicalRequestContext, jobId: string, kind: TranscriptionArtifactKind, objectKey: string, objectVersion: string,
+  registerArtifact(context: ProductionClinicalRequestContext, jobId: string, kind: Exclude<TranscriptionArtifactKind, 'proposed_note'>, objectKey: string, objectVersion: string,
     sha256: string, bytes: number, transcriptId?: string): Promise<z.infer<typeof artifactReceiptSchema>>;
 }
 export function createRecordingTranscriptionRepository(database: ClinicalCoreDatabase): RecordingTranscriptionRepository {
@@ -154,7 +155,7 @@ export function createRecordingTranscriptionProcessor(input: { repository: Recor
     return key;
   }
   /** Every object under the transcription prefix is registered with its exact version and digest before the step returns. */
-  async function register(context: ProductionClinicalRequestContext, jobId: string, kind: TranscriptionArtifactKind, key: string, version: string | null,
+  async function register(context: ProductionClinicalRequestContext, jobId: string, kind: Exclude<TranscriptionArtifactKind, 'proposed_note'>, key: string, version: string | null,
     digest: string, bytes: number, transcriptId?: string) {
     if (!version) throw new RecordingTranscriptionError('storage_unverified');
     await repository.registerArtifact(context, jobId, kind, key, version, digest, bytes, transcriptId);

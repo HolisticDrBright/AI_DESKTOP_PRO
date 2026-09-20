@@ -300,6 +300,10 @@
     {
       "version": "20260920030000",
       "file": "20260920030000_production_recording_transcription_artifacts.sql"
+    },
+    {
+      "version": "20260920040000",
+      "file": "20260920040000_production_recording_drafting.sql"
     }
   ]
 }

@@ -301,7 +301,9 @@ export function EncounterWorkspace({ encounterId, patientId, recordingMode = "aw
       </div>
 
       {recordingMode === "aws" ? <AwsRecordingConsentPanel key={encounterId} encounterId={encounterId}
-        ownerRef={recordingOwner} encounterOpen={encounter.status === 'in_progress'} /> : <RecordingScribePanel
+        ownerRef={recordingOwner} encounterOpen={encounter.status === 'in_progress'}
+        canInsertProposal={Boolean(activeDraftNoteId)}
+        onProposedInsert={({ text, provenance }) => setNoteInsert({ seq: ++insertSeq.current, text, provenance })} /> : <RecordingScribePanel
         key={encounterId}
         encounterId={encounterId}
         encounterOpen={open}

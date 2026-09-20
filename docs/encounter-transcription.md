@@ -114,7 +114,7 @@ completion, immutability, consent withdrawal during processing, holds and correc
 tests cover assembly verification, oversized media, provider failure, malformed results,
 correction rules, database category mapping and API status mapping; the infrastructure test
 builds `npm run build:aws-recording-transcription` and executes the blocked handler without
-AWS credentials. No hosted migration, provider call, activation or PHI has occurred. AI
-drafting and review-only proposed notes are still engineering; transcript retention across
-backups and provider-side copies is not covered. The encounter panel has unit evidence for its controller and proxy only; no browser,
+AWS credentials. No hosted migration, provider call, activation or PHI has occurred. Review-only
+AI drafting from a transcript version is documented in `docs/encounter-drafting.md`;
+transcript retention across backups and provider-side copies is not covered. The encounter panel has unit evidence for its controller and proxy only; no browser,
 provider or hosted run has exercised it.

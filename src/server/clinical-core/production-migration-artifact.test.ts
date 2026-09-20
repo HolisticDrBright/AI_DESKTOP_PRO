@@ -24,9 +24,9 @@ beforeAll(async () => {
 describe('isolated canonical production migration artifact', () => {
   it('produces identical complete manifests and SQL from concurrent builders', () => {
     expect(parallel[0]).toEqual(parallel[1]);
-    expect(parallel[0].manifest.migrations).toHaveLength(85);
-    expect(Object.keys(parallel[0].files)).toHaveLength(85);
-    expect(parallel[0].manifest.migrations.at(-1)?.file).toBe('20260920030000_production_recording_transcription_artifacts.sql');
+    expect(parallel[0].manifest.migrations).toHaveLength(86);
+    expect(Object.keys(parallel[0].files)).toHaveLength(86);
+    expect(parallel[0].manifest.migrations.at(-1)?.file).toBe('20260920040000_production_recording_drafting.sql');
   });
   it('matches the normal release files byte for byte and verifies the release digest', () => {
     const artifact = parallel[0];

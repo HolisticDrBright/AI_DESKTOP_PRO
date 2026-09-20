@@ -12,9 +12,12 @@ const version=z.string().min(1).max(1024).regex(/^[A-Za-z0-9+/=._-]+$/).refine(v
 /** Exactly one target: an audio segment or a registered transcription artifact. */
 export const recordingCleanupAttemptSchema=z.object({id:uuid,segmentId:uuid.nullable(),artifactId:uuid.nullable().default(null),objectVersion:version,
   kind:z.enum(['object','delete_marker']),evidenceSha256:sha}).strict().refine(a=>(a.segmentId===null)!==(a.artifactId===null));
-const artifactSchema=z.object({artifactId:uuid,jobId:uuid,kind:z.enum(['media','provider','transcript']),objectKey:z.string().min(1).max(512),
+const artifactSchema=z.object({artifactId:uuid,jobId:uuid,kind:z.enum(['media','provider','transcript','proposed_note']),objectKey:z.string().min(1).max(512),
   objectVersion:version,sha256:sha,bytes:z.number().int().min(1).max(268435456),transcriptId:uuid.nullable()}).strict()
   .refine(t=>(t.kind==='transcript')===(t.transcriptId!==null));
+/** Transcription jobs write under `transcription/<job>/`; drafting jobs under `drafting/<job>/`. */
+export const artifactPrefix=(organizationId:string,recordingId:string,t:{kind:string;jobId:string})=>
+  `encounter-recordings/${organizationId}/${recordingId}/${t.kind==='proposed_note'?'drafting':'transcription'}/${t.jobId}/`;
 export type RecordingCleanupArtifact=z.infer<typeof artifactSchema>;
 const segmentSchema=z.object({segmentId:uuid,sequence:z.number().int().min(0).max(4095),sha256:sha,
   bytes:z.number().int().min(1).max(4194304),status:z.enum(['reserved','stored']),objectKey:z.string().max(512),
@@ -33,7 +36,7 @@ export const recordingCleanupAdmissionSchema=z.object({recordingId:uuid,sessionI
       && s.objectKey===`encounter-recordings/${r.organizationId}/${r.recordingId}/${r.sessionId}/${s.sequence}-${s.sha256}`))
   .refine(r=>new Set(r.transcriptionInventory.map(t=>t.artifactId)).size===r.transcriptionInventory.length
     && new Set(r.transcriptionInventory.map(t=>t.objectKey)).size===r.transcriptionInventory.length
-    && r.transcriptionInventory.every(t=>t.objectKey.startsWith(`encounter-recordings/${r.organizationId}/${r.recordingId}/transcription/${t.jobId}/`)
+    && r.transcriptionInventory.every(t=>t.objectKey.startsWith(artifactPrefix(r.organizationId,r.recordingId,t))
       && !r.inventory.some(s=>s.objectKey===t.objectKey)));
 export type RecordingCleanupAdmission=z.infer<typeof recordingCleanupAdmissionSchema>;
 export class RecordingCleanupError extends Error {
