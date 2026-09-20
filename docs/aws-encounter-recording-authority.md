@@ -264,8 +264,10 @@ acceptance. Original commercial-release scopes and clinical holds are unchanged.
   credential rotation, lost-token recovery and revoked-session disposition.
 - S3/KMS upload transport, bounded memory/deadlines, chunk identity/deduplication,
   receipt reconciliation and independently verified byte/type/size limits.
-- Provider processing reauthorization, transcript versions/corrections,
-  provenance and review-only proposed notes without overwriting signed notes.
+- Review-only proposed notes without overwriting signed notes and AI drafting
+  reauthorization. Provider transcription, transcript versions and corrections
+  now have a blocked candidate (`docs/encounter-transcription.md`, migration 83);
+  the encounter UI does not mount it and nothing is hosted.
 - Hold-aware retention/deletion across audio, transcripts, provider artifacts
   and backups, with actual receipts rather than a status-only claim.
 - Deployment/configuration/rollback, concurrent request testing and physical

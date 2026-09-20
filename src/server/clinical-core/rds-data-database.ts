@@ -227,6 +227,10 @@ function classifyDatabaseRejection(error: unknown): ClinicalCoreDatabaseRejectio
   if (/\bspecimen_context_invalid\b/.test(message)) return new ClinicalCoreDatabaseRejection("request_invalid");
   if (/\b(specimen_context_refused|specimen_provider_approval_required)\b/.test(message)) return new ClinicalCoreDatabaseRejection("operation_refused");
   if (/\b(owned_record_legal_hold|privacy_request_held|recording_cleanup_legal_hold)\b/.test(message)) return new ClinicalCoreDatabaseRejection("legal_hold");
+  if (/\brecording_legal_hold\b/.test(message)) return new ClinicalCoreDatabaseRejection("legal_hold");
+  if (/\b(recording_transcription_refused|recording_transcript_missing|recording_transcription_release_refused)\b/.test(message)) return new ClinicalCoreDatabaseRejection("operation_refused");
+  if (/\b(recording_transcription_conflict|recording_segments_unresolved)\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");
+  if (/\brecording_transcription_invalid\b/.test(message)) return new ClinicalCoreDatabaseRejection("request_invalid");
   if (/\brecording_cleanup_not_ready\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");
   if (/\brecording_cleanup_attempt_conflict\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");
   if (/\brecording_cleanup_run_conflict\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");

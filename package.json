@@ -60,6 +60,7 @@
     "build:aws-recording-capture": "node scripts/build-aws-recording-authority.mjs --capture",
     "build:aws-recording-cleanup-review": "node scripts/build-aws-recording-authority.mjs --cleanup-review",
     "build:aws-recording-cleanup-execution": "node scripts/build-aws-recording-authority.mjs --cleanup-execution",
+    "build:aws-recording-transcription": "node scripts/build-aws-recording-authority.mjs --transcription",
     "build:aws-production-clinical-core-verifier": "node scripts/build-aws-production-clinical-core-verifier.mjs",
     "build:aws-production-migration-operator": "node scripts/build-aws-production-migration-operator.mjs",
     "check:aws-production-clinical-core": "node scripts/check-aws-production-clinical-core.mjs",

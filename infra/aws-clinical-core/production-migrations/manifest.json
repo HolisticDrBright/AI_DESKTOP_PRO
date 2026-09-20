@@ -288,6 +288,10 @@
     {
       "version": "20260919030000",
       "file": "20260919030000_production_owned_record_tombstones.sql"
+    },
+    {
+      "version": "20260920010000",
+      "file": "20260920010000_production_recording_transcription.sql"
     }
   ]
 }
