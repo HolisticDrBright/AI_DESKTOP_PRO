@@ -332,6 +332,10 @@
     {
       "version": "20260920110000",
       "file": "20260920110000_production_owned_privacy_export_jobs.sql"
+    },
+    {
+      "version": "20260920120000",
+      "file": "20260920120000_production_owned_correction_lists.sql"
     }
   ]
 }

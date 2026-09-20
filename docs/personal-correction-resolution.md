@@ -112,3 +112,13 @@ Required release verification: exact-source CI and coordinated SQL/API/mobile
 rollout, hosted JWT/role tests, distributed concurrency, physical keyboard and
 account-switch tests. No policy, operator assignment, PHI scope, clinical hold,
 source verification or provider approval is activated by these changes.
+
+September 20 lists: migration 94 (`20260920120000_production_owned_correction_lists.sql`) lets a
+path segment be a list index (0 to 9999, no leading zero), so a plain value inside a list (a
+dose in the second medication) is addressable, and lets a leaf that is a list of plain values
+(allergies, tags) be replaced as a whole by another list of at most 200 plain values. Submission
+requires the leaf to exist with the same shape as the request (scalar for scalar, plain list for
+list) and to differ; resolution verifies `jsonb_set(before, path, value)` exactly as before; the
+operator detail shows only the addressed value. Lists of objects as a whole, objects and null
+leaves still need a domain-specific workflow, and signed practitioner notes are never corrected
+through this path (Desktop notes carry their own addendum workflow).

@@ -558,6 +558,30 @@ describe('privacy fulfillment: executable production SQL with fictional data (no
     const result=await resolveCorrection(id,'applied',3);
     expect(result.rows[0]).toMatchObject({result:{status:'completed',correctionResolution:{outcome:'applied',appliedRevision:3}}});
   });
+  it('corrects a list of plain values as a whole and a scalar inside a list by index, refusing lists of objects and oversized lists',async()=>{
+    const recordId=randomUUID(),payload={allergies:['fictional pollen','fictional dust'],medications:[{name:'Fictional A',dose_mg:5},{name:'Fictional B',dose_mg:10}],label:'Fictional'};
+    await asActor("select clinical_core.write_owned_consumer_record('wellness_profiles',$1,0,$2,$3::jsonb,false,1)",[recordId,randomUUID(),JSON.stringify(payload)],owner,'consumer','clinical_data');
+    const row=(await asActor("select clinical_core.list_owned_correction_targets('wellness_profiles',25,null) as result",[],owner,'consumer')).rows[0] as {result:{recordId:string;payloadSha256:string}[]};
+    const hash=row.result.find(r=>r.recordId===recordId)!.payloadSha256;
+    const base={version:'personal-correction/1',collection:'wellness_profiles',recordId,expectedRevision:1,expectedPayloadSha256:hash,reason:'Fictional list correction'};
+    for(const bad of [{field:'medications',requestedValue:['x']},{field:'allergies',requestedValue:[{a:1}]},{field:'allergies',requestedValue:['fictional pollen','fictional dust']},
+      {field:'allergies',requestedValue:Array.from({length:201},(_,i)=>'a'+i)},{field:'allergies',requestedValue:'x'},{field:'medications.1',requestedValue:['x']},
+      {field:'medications.7.dose_mg',requestedValue:1},{field:'medications.01.dose_mg',requestedValue:1},{field:'medications.-1.dose_mg',requestedValue:1},{field:'label',requestedValue:['x']}])
+      await expect(submitCorrection({...base,...bad})).rejects.toThrow('privacy_correction_invalid');
+    const list=(await submitCorrection({...base,field:'allergies',requestedValue:['fictional pollen']})).rows[0] as {result:{privacyRequestId:string;correctionTarget:{requestedValue:unknown}}};
+    expect(list.result.correctionTarget.requestedValue).toEqual(['fictional pollen']);
+    // Only the list changed; the second medication is untouched.
+    await asActor("select clinical_core.write_owned_consumer_record('wellness_profiles',$1,1,$2,$3::jsonb,false,1)",[recordId,randomUUID(),JSON.stringify({...payload,allergies:['fictional pollen']})],owner,'consumer','clinical_data');
+    const detail=(await asActor('select clinical_private.get_assigned_privacy_request($1) as result',[list.result.privacyRequestId])).rows[0] as {result:{correction:{originalValue:unknown;currentValue:unknown}}};
+    expect(detail.result.correction).toMatchObject({originalValue:['fictional pollen','fictional dust'],currentValue:['fictional pollen']});
+    expect(JSON.stringify(detail.result.correction)).not.toMatch(/Fictional A|dose_mg|"label"/);
+    expect((await resolveCorrection(list.result.privacyRequestId,'applied',2)).rows[0]).toMatchObject({result:{status:'completed',correctionResolution:{outcome:'applied',appliedRevision:2}}});
+    // A scalar inside a list by index, at the new revision.
+    const row2=(await asActor("select clinical_core.list_owned_correction_targets('wellness_profiles',25,null) as result",[],owner,'consumer')).rows[0] as {result:{recordId:string;payloadSha256:string}[]};
+    const indexed=(await submitCorrection({...base,expectedRevision:2,expectedPayloadSha256:row2.result.find(r=>r.recordId===recordId)!.payloadSha256,field:'medications.1.dose_mg',requestedValue:20},randomUUID())).rows[0] as {result:{privacyRequestId:string}};
+    await asActor("select clinical_core.write_owned_consumer_record('wellness_profiles',$1,2,$2,$3::jsonb,false,1)",[recordId,randomUUID(),JSON.stringify({...payload,allergies:['fictional pollen'],medications:[payload.medications[0],{name:'Fictional B',dose_mg:20}]})],owner,'consumer','clinical_data');
+    expect((await resolveCorrection(indexed.result.privacyRequestId,'applied',3)).rows[0]).toMatchObject({result:{status:'completed',correctionResolution:{outcome:'applied',appliedRevision:3}}});
+  });
   it('rejects stale, forged, missing and cross-owner correction targets before submission',async()=>{
     const {correction}=await correctionFixture();
     for(const patch of [{expectedRevision:2},{expectedPayloadSha256:'b'.repeat(64)},{recordId:randomUUID()}]){
