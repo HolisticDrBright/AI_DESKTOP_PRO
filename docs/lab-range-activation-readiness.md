@@ -12,7 +12,7 @@ September 16, 2026. Offline tooling; no key is created or read, nothing is pinne
 | --- | --- | --- |
 | Signature | `signedEnvelope {payload, signature}`, `trustedSha256`, `publicKeyPem` | missing; trusted hash differs from the prepared bytes; signed payload differs from the prepared bytes; Ed25519 verification fails (`verifyLabRangeRelease`) |
 | Holds | `holds[] {id, sourceId|null, status, placedBy, placedAt, releasedBy?, releasedAt?}` | any `open` hold whose `sourceId` is null (release freeze) or matches a shipped `source.id`; a `released` hold without reviewer and time is invalid evidence |
-| Safety regression | `safetyRegression {status, approvedBy, approvedAt, payloadSha256, evidenceSha256}` | missing; not `approved`; approved for a different payload hash; future-dated |
+| Safety regression | `safetyRegression {status, approvedBy, approvedAt, payloadSha256, evidenceSha256}` | missing; not `approved`; approved for a different payload hash; future-dated. The evidence hash comes from the offline regression report (`docs/clinical-safety-regression.md`) |
 | Synthetic acceptance | `syntheticAcceptance {evidenceSha256, runAt, payloadSha256, phiAllowed:false}` | missing; for a different payload hash; future-dated; `phiAllowed` other than `false` is invalid evidence |
 | Release itself | prepared JSON | invalid `lab-ranges/2`; empty; expired; any review or verification date in the future (schema already requires source verification `V`) |
 

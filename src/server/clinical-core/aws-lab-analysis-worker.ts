@@ -63,6 +63,10 @@ const RULES = [
   { name: "HDL Cholesterol", aliases: ["hdl cholesterol", "hdl-c", "hdl"], units: ["mg/dl"], min: 60, max: 100 },
   { name: "LDL Cholesterol", aliases: ["ldl cholesterol", "ldl-c", "ldl"], units: ["mg/dl"], min: 0, max: 100 },
 ] as const;
+/** The extraction vocabulary as data for release regression: every marker the
+ * worker can recognize by name, alias and unit. Read-only; no fixture bounds. */
+export const LAB_INPUT_MARKERS: ReadonlyArray<{ name: string; aliases: readonly string[]; units: readonly string[] }> =
+  RULES.map(rule => ({ name: rule.name, aliases: rule.aliases, units: rule.units }));
 
 function required(name: string) { const value = process.env[name]; if (!value) throw new Error("lab_runtime_configuration_missing"); return value; }
 function stableUuid(value: string): string {
@@ -385,6 +389,8 @@ const PLAUSIBLE_VALUE_RULES: Array<{ name: RegExp; min: number; max: number }> =
   { name: /^(?:ferritin)$/i, min: 0, max: 100_000 },
   { name: /^(?:iron)$/i, min: 0, max: 5_000 },
 ];
+/** Analyte names the plausibility filter recognizes beyond the extraction rules. */
+export const LAB_PLAUSIBILITY_MARKERS: readonly string[] = ["HOMA-IR", "Myeloperoxidase", "Homocysteine", "Ferritin", "Iron"];
 
 function plausibleClinicalValue(name: string, value: number, unit: string): boolean {
   const rule = PLAUSIBLE_VALUE_RULES.find((candidate) => candidate.name.test(name.trim()));
