@@ -14,7 +14,7 @@ try {
   }
   const report = runClinicalSafetyRegression(JSON.parse(readFileSync(resolve(preparedFile), "utf8")), inputs);
   writeFileSync(resolve(outputFile), JSON.stringify({ ...report, runAt: new Date().toISOString() }, null, 2), { encoding: "utf8", flag: "wx" });
-  console.log(JSON.stringify({ status: report.status, failing: report.checks.filter(c => c.status === "fail").map(c => c.id),
+  console.log(JSON.stringify({ status: report.status, coverage: report.coverage, failing: report.checks.filter(c => c.status === "fail").map(c => c.id),
     notApplicable: report.checks.filter(c => c.status === "not_applicable").map(c => c.id), payloadSha256: report.payloadSha256, evidenceSha256: report.evidenceSha256 }));
   if (report.status !== "pass") process.exitCode = 2;
 } catch {

@@ -19,7 +19,9 @@ const holdSchema = z.object({
   status: z.enum(["open", "released"]), placedBy: text(160), placedAt: datetime,
   releasedBy: text(160).optional(), releasedAt: datetime.optional(),
 }).strict().refine(h => h.status === "open" || (h.releasedBy !== undefined && h.releasedAt !== undefined), "release_requires_reviewer");
-const approvalSchema = z.object({ status: z.enum(["approved", "rejected", "pending"]), approvedBy: text(160), approvedAt: datetime, payloadSha256: sha, evidenceSha256: sha }).strict();
+const approvalSchema = z.object({ status: z.enum(["approved", "rejected", "pending"]), approvedBy: text(160), approvedAt: datetime, payloadSha256: sha, evidenceSha256: sha,
+  /** Copied from the regression report; only a `full` run (every artifact supplied, no check skipped) qualifies a release. */
+  coverage: z.enum(["full", "partial"]).optional() }).strict();
 export const activationEvidenceSchema = z.object({
   signedEnvelope: z.object({ payload: z.string().max(2_000_000), signature: z.string().max(128) }).strict().nullable(),
   trustedSha256: sha.nullable(),
@@ -73,6 +75,7 @@ export function assessLabRangeActivation(prepared: unknown, evidence: unknown, n
   else if (e.safetyRegression.status !== "approved") blockers.push(`safety_regression_${e.safetyRegression.status}`);
   else if (e.safetyRegression.payloadSha256 !== payloadSha256) blockers.push("safety_regression_approval_for_different_release");
   else if (Date.parse(e.safetyRegression.approvedAt) > now) blockers.push("safety_regression_approval_future_dated");
+  else if (e.safetyRegression.coverage !== "full") blockers.push("safety_regression_coverage_not_full");
   // 4. Synthetic acceptance evidence for the same payload, PHI disabled.
   if (!e.syntheticAcceptance) blockers.push("synthetic_acceptance_missing");
   else if (e.syntheticAcceptance.payloadSha256 !== payloadSha256) blockers.push("synthetic_acceptance_for_different_release");

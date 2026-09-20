@@ -35,8 +35,26 @@ describe("clinical safety regression evidence", () => {
     expect(report.ranges).toBe(release.ranges.length);
     const { evidenceSha256, ...body } = report;
     expect(evidenceSha256).toBe(createHash("sha256").update(JSON.stringify(body)).digest("hex"));
-    expect(report).toMatchObject({ approvalPerformed: false, activationPerformed: false });
+    expect(report).toMatchObject({ approvalPerformed: false, activationPerformed: false, coverage: "partial" });
     expect(runClinicalSafetyRegression(release, { exclusions }, now)).toEqual(report);
+  });
+  test("a declared full run fails when catalog or knowledge is missing or the population list is empty, and reports full coverage only when nothing was skipped", () => {
+    const release = fullRelease();
+    const missing = runClinicalSafetyRegression(release, { exclusions, coverage: "full" }, now);
+    expect(missing.status).toBe("fail"); expect(missing.coverage).toBe("partial");
+    expect(missing.checks.find(c => c.id === "full_release_inputs_supplied")!.findings).toEqual([
+      "check not applicable in a full run: catalog_iron_and_reproductive_exclusions", "check not applicable in a full run: offers_and_counts_agree", "check not applicable in a full run: knowledge_aliases_resolve"]);
+    const empty = runClinicalSafetyRegression(release, { exclusions, requiredPopulations: [] }, now);
+    expect(ids(empty, "fail")).toEqual(["regression_inputs_valid"]);
+    const catalog = { products: [{ stableId: "safe", displayName: "Fictional safe", productType: "supplement", accessTier: "open", declaredRestricted: false, directOrderAllowed: true,
+      clinicalPayload: { contraindicationRuleIds: [], autoSelectionEligible: true, ingredients: ["fictional herb"], cautionFlags: [], restrictions: [] } }],
+      commercialOffers: [{ stableId: "o1", productStableId: "safe", destinationUrl: "https://example.invalid/safe", declaredRestricted: false, directOrderAllowed: true }], counts: { products: 1, commercialOffers: 1 } };
+    const knowledge = { entries: [{ id: "k1", biomarkerAliases: ["glucose"], reviewStatus: "approved", contested: false }] };
+    const full = runClinicalSafetyRegression(release, { exclusions, coverage: "full", catalog, knowledgeRelease: knowledge }, now);
+    expect(full.status).toBe("pass"); expect(full.coverage).toBe("full"); expect(ids(full, "not_applicable")).toEqual([]);
+    expect(full.checks.find(c => c.id === "full_release_inputs_supplied")).toMatchObject({ status: "pass", findings: [] });
+    // Supplying every artifact without declaring a full run stays partial evidence.
+    expect(runClinicalSafetyRegression(release, { exclusions, catalog, knowledgeRelease: knowledge }, now).coverage).toBe("partial");
   });
   test("fails when an input marker is neither represented nor excluded, or an exclusion is unknown, future-dated or contradicts a range", () => {
     const release = fullRelease();

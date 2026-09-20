@@ -26,7 +26,7 @@ function evidence(prepared = release(), key = keys): ActivationEvidence {
     signedEnvelope: { payload, signature: sign(null, Buffer.from(payload), key.privateKey).toString("base64") },
     trustedSha256: payloadSha256, publicKeyPem: keys.publicKey.export({ type: "spki", format: "pem" }).toString(),
     holds: [{ id: "hold-1", sourceId, reason: "Synthetic hold", status: "released", placedBy: "Reviewer", placedAt: "2026-09-01T00:00:00Z", releasedBy: "Reviewer", releasedAt: "2026-09-02T00:00:00Z" }],
-    safetyRegression: { status: "approved", approvedBy: "Safety reviewer", approvedAt: "2026-09-03T00:00:00Z", payloadSha256, evidenceSha256: "c".repeat(64) },
+    safetyRegression: { status: "approved", approvedBy: "Safety reviewer", approvedAt: "2026-09-03T00:00:00Z", payloadSha256, evidenceSha256: "c".repeat(64), coverage: "full" },
     syntheticAcceptance: { evidenceSha256: "d".repeat(64), runAt: "2026-09-03T00:00:00Z", payloadSha256, phiAllowed: false },
   };
 }
@@ -62,6 +62,11 @@ describe("lab range activation readiness", () => {
     expect(assessLabRangeActivation(release(), future, now).blockers).toEqual(["synthetic_acceptance_future_dated"]);
     const none = evidence(); none.safetyRegression = null; none.syntheticAcceptance = null;
     expect(assessLabRangeActivation(release(), none, now).blockers).toEqual(["safety_regression_approval_missing", "synthetic_acceptance_missing"]);
+    // A partial regression run (catalog or knowledge not supplied, or a skipped check) never qualifies a release.
+    const partial = evidence(); partial.safetyRegression = { ...partial.safetyRegression!, coverage: "partial" };
+    expect(assessLabRangeActivation(release(), partial, now).blockers).toEqual(["safety_regression_coverage_not_full"]);
+    const undeclared = evidence(); delete undeclared.safetyRegression!.coverage;
+    expect(assessLabRangeActivation(release(), undeclared, now).blockers).toEqual(["safety_regression_coverage_not_full"]);
     expect(() => assessLabRangeActivation(release(), { ...evidence(), syntheticAcceptance: { ...evidence().syntheticAcceptance!, phiAllowed: true } }, now)).not.toThrow();
     expect(assessLabRangeActivation(release(), { ...evidence(), syntheticAcceptance: { ...evidence().syntheticAcceptance!, phiAllowed: true } }, now).blockers).toEqual(["evidence_invalid"]);
   });

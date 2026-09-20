@@ -26,7 +26,12 @@ release and the regression inputs and reports one row per check:
 | `knowledge_aliases_resolve` | with a reviewed knowledge payload: an entry is not approved or is contested, or none of its aliases resolves to a recognized marker or shipped range |
 
 Catalog and knowledge checks report `not_applicable` when those artifacts are not supplied,
-and the report says so. The report carries `payloadSha256` (the prepared bytes, the same
+and the report says so. Every report carries `coverage`: `full` only when the inputs declared
+`coverage: "full"`, every artifact was supplied and no check was skipped; otherwise `partial`.
+A declared full run adds `full_release_inputs_supplied`, which fails for every skipped check,
+and `requiredPopulations` may not be empty. `assessLabRangeActivation` blocks a release whose
+`safetyRegression` approval does not carry `coverage: "full"`
+(`safety_regression_coverage_not_full`), so partial evidence can never qualify a release. The report carries `payloadSha256` (the prepared bytes, the same
 value `assessLabRangeActivation` compares) and `evidenceSha256` (the digest of the report
 without that field), plus `approvalPerformed: false` and `activationPerformed: false`. Two runs
 over the same inputs produce identical bytes.
@@ -39,7 +44,8 @@ node dist/lab-range-tools/safety-regression.cjs <prepared-release.json> <regress
 ```
 
 `regression-inputs.json` holds `exclusions` (`marker`, `reason`, `reviewedBy`, `reviewedAt`,
-optional `populations`), optional `requiredPopulations`, and may name `catalogFile` and
+optional `populations`), optional non-empty `requiredPopulations`, optional `coverage`
+(`partial` by default; `full` for a release-qualifying run), and may name `catalogFile` and
 `knowledgeReleaseFile` instead of inlining `catalog` and `knowledgeRelease`. The report is
 created exclusively. Exit code 2 means at least one check failed, 1 means the inputs could not
 be assessed; failure output never echoes paths or artifact contents.
@@ -47,7 +53,7 @@ be assessed; failure output never echoes paths or artifact contents.
 ## Boundary
 
 A passing report is evidence for the safety reviewer, not the approval. The reviewer records
-`safetyRegression {status:'approved', approvedBy, approvedAt, payloadSha256, evidenceSha256}`
+`safetyRegression {status:'approved', approvedBy, approvedAt, payloadSha256, evidenceSha256, coverage}`
 with the values printed by the tool; `assessLabRangeActivation` then refuses any release whose
 bytes differ. The tool does not read the deployed pipeline, hosted catalog or provider output,
 does not judge clinical correctness of a range, and does not replace the physical acceptance

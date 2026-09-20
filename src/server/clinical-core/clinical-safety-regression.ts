@@ -22,10 +22,13 @@ export const markerExclusionSchema = z.object({ marker: text(160), reason: text(
   populations: z.array(text(240)).max(20).optional() }).strict();
 export const regressionInputsSchema = z.object({
   exclusions: z.array(markerExclusionSchema).max(500),
-  requiredPopulations: z.array(z.object({ label: text(240), sex: z.enum(["female", "male", "other"]), ageYears: z.number().int().min(0).max(125) }).strict()).max(20)
+  // An empty list would silently skip population coverage; at least one population must be named.
+  requiredPopulations: z.array(z.object({ label: text(240), sex: z.enum(["female", "male", "other"]), ageYears: z.number().int().min(0).max(125) }).strict()).min(1).max(20)
     .default([{ label: "adult female", sex: "female", ageYears: 40 }, { label: "adult male", sex: "male", ageYears: 40 }]),
   catalog: z.unknown().nullable().default(null),
   knowledgeRelease: z.unknown().nullable().default(null),
+  /** `full` declares a release-qualifying run: every artifact must be supplied and no check may be not_applicable. */
+  coverage: z.enum(["partial", "full"]).default("partial"),
 }).strict();
 export type RegressionInputs = z.infer<typeof regressionInputsSchema>;
 const catalogSchema = z.object({
@@ -39,6 +42,8 @@ const knowledgeSchema = z.object({ entries: z.array(z.object({ id: text(120), bi
 export type RegressionCheck = { id: string; status: "pass" | "fail" | "not_applicable"; findings: string[] };
 export type ClinicalSafetyRegressionReport = {
   contract: "clinical-safety-regression/1"; status: "pass" | "fail"; payloadSha256: string | null; releaseVersion: string | null;
+  /** `full` only when the run was declared full, every artifact was supplied and every check was applicable; otherwise `partial`. */
+  coverage: "full" | "partial";
   ranges: number; inputMarkers: number; checks: RegressionCheck[]; evidenceSha256: string;
   /** Always true: this tool reports; a human approves; the authorized operator pins. */
   approvalPerformed: false; activationPerformed: false;
@@ -58,8 +63,14 @@ export function runClinicalSafetyRegression(prepared: unknown, inputsValue: unkn
   const checks: RegressionCheck[] = [];
   const parsedRelease = preciseLabRangeReleaseSchema.safeParse(prepared), inputs = regressionInputsSchema.safeParse(inputsValue);
   const finish = (payloadSha256: string | null, releaseVersion: string | null, ranges: number, inputMarkers: number): ClinicalSafetyRegressionReport => {
+    const declaredFull = inputs.success && inputs.data.coverage === "full";
+    if (declaredFull) {
+      const missing = checks.filter(c => c.status === "not_applicable").map(c => `check not applicable in a full run: ${c.id}`);
+      checks.push(check("full_release_inputs_supplied", missing));
+    }
+    const coverage = declaredFull && checks.every(c => c.status !== "not_applicable") ? "full" as const : "partial" as const;
     const body = { contract: "clinical-safety-regression/1" as const, status: checks.every(c => c.status !== "fail") ? "pass" as const : "fail" as const,
-      payloadSha256, releaseVersion, ranges, inputMarkers, checks, approvalPerformed: false as const, activationPerformed: false as const };
+      payloadSha256, releaseVersion, coverage, ranges, inputMarkers, checks, approvalPerformed: false as const, activationPerformed: false as const };
     return { ...body, evidenceSha256: createHash("sha256").update(JSON.stringify(body)).digest("hex") };
   };
   if (!inputs.success) { checks.push(check("regression_inputs_valid", ["regression inputs are not the documented shape"])); return finish(null, null, 0, 0); }
