@@ -4,7 +4,9 @@ import { z } from 'zod';
 import { clinicalUuid, ClinicalCoreDatabaseRejection, type ClinicalCoreDatabase } from './database';
 import type { ProductionClinicalRequestContext } from './aws-identity-consent';
 import { recordingStorageSchema } from './recording-segments';
-import { reconcileRecordingArtifacts, unregisteredObjectSchema, type TranscriptionMediaStore, type UnregisteredObject } from './recording-transcription';
+import { putOnce, reconcileRecordingArtifacts, unregisteredObjectSchema, type TranscriptionMediaStore, type UnregisteredObject } from './recording-transcription';
+import { DRAFTING_PROMPT_SHA256 } from './recording-drafting-prompt';
+export { DRAFTING_PROMPT_SHA256, DRAFTING_BOUNDARY, draftingPromptArtifact } from './recording-drafting-prompt';
 import { draftingListingSchema, draftingReceiptSchema, proposedNoteContentSchema, proposedNoteDocumentSchema, DRAFTING_SECTIONS,
   type DraftingListing, type DraftingReceipt, type DraftingNoteType, type ProposedNoteContent, type ProposedNoteDocument } from '@/contracts/encounterRecordingDrafting';
 
@@ -14,7 +16,7 @@ import { draftingListingSchema, draftingReceiptSchema, proposedNoteContentSchema
  * here reads or writes clinical notes. */
 export class RecordingDraftingError extends Error {
   constructor(readonly code: 'request_invalid' | 'access_refused' | 'consent_required' | 'conflict' | 'refused' | 'legal_hold'
-    | 'service_unavailable' | 'storage_unverified' | 'provider_unavailable' | 'provider_output_invalid') { super(code); this.name = 'RecordingDraftingError'; }
+    | 'service_unavailable' | 'storage_unverified' | 'provider_unavailable' | 'provider_output_invalid' | 'prompt_unreviewed') { super(code); this.name = 'RecordingDraftingError'; }
 }
 const uuid = z.string().uuid(), hash = z.string().regex(/^[a-f0-9]{64}$/);
 const providerConfigurationSchema = z.object({ provider: z.literal('openai_responses'), model: z.string().min(3).max(100), promptSha256: hash,
@@ -40,6 +42,11 @@ export interface RecordingDraftingRepository {
   registerArtifact(context: ProductionClinicalRequestContext, jobId: string, objectKey: string, objectVersion: string, sha256: string, bytes: number, proposedNoteId: string): Promise<z.infer<typeof artifactReceiptSchema>>;
   /** Expected recording objects with no artifact row; the drafting processor handles the proposed-note ones. */
   unregistered(context: ProductionClinicalRequestContext, recordingId: string): Promise<UnregisteredObject[]>;
+  /** Declares the proposed-note object before it is written. */
+  declare(context: ProductionClinicalRequestContext, jobId: string, objectKey: string, sha256: string, bytes: number): Promise<void>;
+  /** Storage coordinates for reconciliation of a recording. */
+  storage(context: ProductionClinicalRequestContext, recordingId: string): Promise<z.infer<typeof recordingStorageSchema>>;
+  registerOrphan(context: ProductionClinicalRequestContext, objectKey: string, objectVersion: string, sha256: string, bytes: number): Promise<void>;
 }
 export function createRecordingDraftingRepository(database: ClinicalCoreDatabase): RecordingDraftingRepository {
   async function query<T>(context: ProductionClinicalRequestContext, sql: string, parameters: unknown[], schema: z.ZodType<T>): Promise<T> {
@@ -78,6 +85,16 @@ export function createRecordingDraftingRepository(database: ClinicalCoreDatabase
     list: async (c, recordingId) => query(c, 'select clinical_private.list_recording_proposed_notes($1) as data', [id(recordingId)], draftingListingSchema),
     object: async (c, proposedNoteId) => query(c, 'select clinical_private.get_recording_proposed_note_object($1) as data', [id(proposedNoteId)], objectSchema),
     unregistered: async (c, recordingId) => query(c, 'select clinical_private.list_unregistered_recording_objects($1) as data', [id(recordingId)], z.array(unregisteredObjectSchema).max(512)),
+    async declare(c, jobId, objectKey, sha256, bytes) {
+      await query(c, 'select clinical_private.declare_recording_object($1,true,$2,$3,$4,$5::integer) as data', [id(jobId), 'proposed_note', objectKey, sha256, bytes], z.object({ intentId: uuid, replayed: z.boolean() }).strict());
+    },
+    storage: async (c, recordingId) => (await query(c, 'select clinical_private.get_recording_storage($1) as data', [id(recordingId)],
+      z.object({ recordingId: uuid, organizationId: uuid, storage: recordingStorageSchema }).strict())).storage,
+    async registerOrphan(c, objectKey, objectVersion, sha256, bytes) {
+      if (!/^[A-Za-z0-9+/=._-]{1,1024}$/.test(objectVersion) || objectVersion === 'null') throw new RecordingDraftingError('storage_unverified');
+      await query(c, 'select clinical_private.register_recording_orphan_artifact($1,$2,$3,$4::integer) as data', [objectKey, objectVersion, sha256, bytes],
+        z.object({ artifactId: uuid, jobId: uuid, kind: z.string(), replayed: z.boolean() }).strict());
+    },
     async registerArtifact(c, jobId, objectKey, objectVersion, sha256, bytes, proposedNoteId) {
       if (!/^[A-Za-z0-9+/=._-]{1,1024}$/.test(objectVersion) || objectVersion === 'null') throw new RecordingDraftingError('storage_unverified');
       return query(c, 'select clinical_private.register_recording_drafting_artifact($1,$2,$3,$4,$5::integer,$6) as data',
@@ -111,40 +128,68 @@ export function proposedNoteFromProvider(raw: unknown, input: DraftingInput, tra
 export function createRecordingDraftingProcessor(input: { repository: RecordingDraftingRepository; media: TranscriptionMediaStore; provider: DraftingProvider; releaseId: string;
   providerTimeoutMs?: number }) {
   const { repository, media, provider } = input;
+  /** Proposed notes with rows and declared drafting orphans; transcription-side objects belong to the transcription processor. */
+  async function reconcile(context: ProductionClinicalRequestContext, recordingId: string, storage: z.infer<typeof recordingStorageSchema>) {
+    const objects = (await repository.unregistered(context, recordingId)).filter(o => o.kind === 'proposed_note' || o.kind === 'orphan' && o.objectKey.includes('/drafting/'));
+    if (!objects.length) return;
+    await reconcileRecordingArtifacts({ media, storage, objects, register: (o, version, digest, size) =>
+      o.kind === 'proposed_note' && o.proposedNoteId ? repository.registerArtifact(context, o.jobId, o.objectKey, version, digest, size, o.proposedNoteId).then(() => undefined)
+        : repository.registerOrphan(context, o.objectKey, version, digest, size) });
+  }
   return {
     request(context: ProductionClinicalRequestContext, recordingId: string, transcriptId: string, commandId: string, noteType: DraftingNoteType) {
       return repository.request(context, recordingId, transcriptId, commandId, input.releaseId, noteType);
+    },
+    /** Registers proposed-note objects written before a crash prevented their registration, with or without a completed job. */
+    async reconcile(context: ProductionClinicalRequestContext, recordingId: string): Promise<DraftingListing> {
+      await reconcile(context, recordingId, await repository.storage(context, recordingId));
+      return repository.list(context, recordingId);
     },
     /** One bounded step: read and verify the transcript, call the provider once, store and register the proposed note. */
     async advance(context: ProductionClinicalRequestContext, recordingId: string): Promise<DraftingListing> {
       const listing = await repository.list(context, recordingId);
       if (!listing.job || listing.job.status !== 'requested') return listing;
       const job = await repository.input(context, listing.job.jobId);
+      // The release must pin exactly the prompt this build sends; otherwise nothing is read or sent.
+      if (job.provider.promptSha256 !== DRAFTING_PROMPT_SHA256) throw new RecordingDraftingError('prompt_unreviewed');
       if (job.transcript.byteLength > MAX_DRAFTING_TRANSCRIPT_BYTES) { await repository.fail(context, job.jobId, 'transcript_too_large'); return repository.list(context, recordingId); }
-      const read = await media.get(job.storage, job.transcript.objectKey, undefined, job.transcript.byteLength);
-      if (read.bytes.length !== job.transcript.byteLength || sha256(read.bytes) !== job.transcript.contentSha256) throw new RecordingDraftingError('storage_unverified');
-      const transcript = Buffer.from(read.bytes).toString('utf8');
-      let raw: unknown;
-      try {
-        raw = await provider.draft({ model: job.provider.model, promptSha256: job.provider.promptSha256, noteType: job.noteType, sections: DRAFTING_SECTIONS[job.noteType],
-          transcript, jobId: job.jobId }, AbortSignal.timeout(input.providerTimeoutMs ?? 25000));
-      } catch { await repository.fail(context, job.jobId, 'provider_unavailable'); return repository.list(context, recordingId); }
-      let document: ProposedNoteDocument;
-      try { document = proposedNoteFromProvider(raw, job, job.transcript.contentSha256); }
-      catch { await repository.fail(context, job.jobId, 'provider_output_invalid'); return repository.list(context, recordingId); }
-      const bytes = Buffer.from(JSON.stringify(document), 'utf8');
       const version = (listing.versions.at(-1)?.version ?? 0) + 1;
       const key = `${draftingPrefix(job)}/proposed-v${version}.json`;
-      // Authority is re-checked inside completion; the object is create-only and registered with its exact version.
-      const written = await media.put(job.storage, key, bytes, 'application/json', { recordingId: job.recordingId, jobId: job.jobId, kind: 'proposed_note' });
-      if (!written.version) throw new RecordingDraftingError('storage_unverified');
+      // An earlier interrupted step may already have stored this job's proposal: reuse it instead of asking the provider again.
+      let document: ProposedNoteDocument | null = null, bytes: Buffer | null = null;
+      const existing = await media.head(job.storage, key);
+      if (existing?.version) {
+        const stored = await media.get(job.storage, key, existing.version, Math.min(existing.bytes, 1048576));
+        let parsed: unknown; try { parsed = JSON.parse(Buffer.from(stored.bytes).toString('utf8')); } catch { throw new RecordingDraftingError('conflict'); }
+        const candidate = proposedNoteDocumentSchema.safeParse(parsed);
+        if (!candidate.success || candidate.data.transcriptId !== job.transcript.transcriptId || candidate.data.transcriptSha256 !== job.transcript.contentSha256
+          || candidate.data.noteType !== job.noteType || candidate.data.model !== job.provider.model || candidate.data.promptSha256 !== job.provider.promptSha256)
+          throw new RecordingDraftingError('conflict');
+        document = candidate.data; bytes = Buffer.from(stored.bytes);
+      } else {
+        const read = await media.get(job.storage, job.transcript.objectKey, undefined, job.transcript.byteLength);
+        if (read.bytes.length !== job.transcript.byteLength || sha256(read.bytes) !== job.transcript.contentSha256) throw new RecordingDraftingError('storage_unverified');
+        const transcript = Buffer.from(read.bytes).toString('utf8');
+        let raw: unknown;
+        try {
+          raw = await provider.draft({ model: job.provider.model, promptSha256: job.provider.promptSha256, noteType: job.noteType, sections: DRAFTING_SECTIONS[job.noteType],
+            transcript, jobId: job.jobId }, AbortSignal.timeout(input.providerTimeoutMs ?? 25000));
+        } catch (error) {
+          if (error instanceof RecordingDraftingError && error.code === 'prompt_unreviewed') throw error;
+          await repository.fail(context, job.jobId, 'provider_unavailable'); return repository.list(context, recordingId);
+        }
+        try { document = proposedNoteFromProvider(raw, job, job.transcript.contentSha256); }
+        catch { await repository.fail(context, job.jobId, 'provider_output_invalid'); return repository.list(context, recordingId); }
+        bytes = Buffer.from(JSON.stringify(document), 'utf8');
+      }
+      // Declared before the write, written once; authority is re-checked inside completion.
+      await repository.declare(context, job.jobId, key, sha256(bytes), bytes.length);
+      const written = await putOnce(media, job.storage, key, bytes, 'application/json', { recordingId: job.recordingId, jobId: job.jobId, kind: 'proposed_note' });
       const completion = await repository.complete(context, job.jobId, key, sha256(bytes), bytes.length, document.sections.length, job.provider.model);
       if (completion.status === 'completed' && completion.proposedNoteId)
         await repository.registerArtifact(context, job.jobId, key, written.version, sha256(bytes), bytes.length, completion.proposedNoteId);
-      // A proposed note written before a crash prevented its registration is picked up now.
-      const objects = (await repository.unregistered(context, recordingId)).filter(o => o.kind === 'proposed_note' && o.proposedNoteId);
-      if (objects.length) await reconcileRecordingArtifacts({ media, storage: job.storage, objects, register: (o, version, digest, size) =>
-        repository.registerArtifact(context, o.jobId, o.objectKey, version, digest, size, o.proposedNoteId!).then(() => undefined) });
+      // Anything an earlier interrupted step wrote but could not register is picked up now.
+      await reconcile(context, recordingId, job.storage);
       return repository.list(context, recordingId);
     },
     async read(context: ProductionClinicalRequestContext, proposedNoteId: string): Promise<ProposedNoteContent> {

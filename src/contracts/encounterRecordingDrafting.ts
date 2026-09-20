@@ -23,6 +23,7 @@ export const draftingOperationSchema = z.discriminatedUnion('operation', [
   z.object({ operation: z.literal('advance'), input: draftingRecordingSchema }).strict(),
   z.object({ operation: z.literal('list'), input: draftingRecordingSchema }).strict(),
   z.object({ operation: z.literal('read'), input: draftingReadSchema }).strict(),
+  z.object({ operation: z.literal('reconcile'), input: draftingRecordingSchema }).strict(),
 ]);
 export type DraftingOperation = z.infer<typeof draftingOperationSchema>;
 export const draftingReceiptSchema = z.object({ jobId: uuid, recordingId: uuid, transcriptId: uuid, commandId: uuid, noteType: draftingNoteTypeSchema,

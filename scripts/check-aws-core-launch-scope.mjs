@@ -8,7 +8,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const read = (relative) => readFileSync(path.join(root, relative), "utf8");
+// Canonical release bytes are LF; a CRLF checkout is normalized rather than re-pinned.
+const read = (relative) => readFileSync(path.join(root, relative), "utf8").replace(/\r\n/g, "\n");
 const errors = [];
 const assert = (condition, message) => { if (!condition) errors.push(message); };
 

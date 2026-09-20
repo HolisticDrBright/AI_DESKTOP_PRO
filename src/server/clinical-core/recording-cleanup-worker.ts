@@ -56,7 +56,7 @@ function verifyObject(a:RecordingCleanupAdmission,v:CleanupObjectVersion,h:Clean
     // its checksum is verified only when S3 reports one; version, size and key are exact.
     if(v.version!==x.objectVersion||h.version!==v.version||h.bytes!==x.bytes||h.encryption!=='aws:kms'||h.kmsKeyArn!==a.storage.kmsKeyArn||h.deleteMarker===true
       ||(x.kind!=='provider'&&(h.checksum!==checksum||h.checksumType!=='FULL_OBJECT'||h.metadata?.['recording-id']!==a.recordingId
-        ||h.metadata?.['job-id']!==x.jobId||h.metadata?.['artifact-kind']!==x.kind))
+        ||h.metadata?.['job-id']!==x.jobId||(x.kind==='orphan'?!['transcript','proposed_note'].includes(h.metadata?.['artifact-kind']??''):h.metadata?.['artifact-kind']!==x.kind)))
       ||(x.kind==='provider'&&h.checksum!==undefined&&(h.checksum!==checksum||h.checksumType!=='FULL_OBJECT')))
       throw new RecordingCleanupError('access_refused');
     verifyHolds(h);

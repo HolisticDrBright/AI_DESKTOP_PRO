@@ -1,0 +1,4 @@
+# Release manifests are hashed byte for byte; keep LF on every platform.
+infra/aws-clinical-core/core-launch-scope.json text eol=lf
+infra/aws-clinical-core/production-migrations/*.sql text eol=lf
+infra/aws-clinical-core/production-migrations/manifest.json text eol=lf

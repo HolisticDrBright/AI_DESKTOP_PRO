@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createHash } from 'node:crypto';
-import { createRecordingDraftingProcessor, createRecordingDraftingRepository, proposedNoteFromProvider, draftingPrefix, RecordingDraftingError,
+import { createRecordingDraftingProcessor, createRecordingDraftingRepository, proposedNoteFromProvider, draftingPrefix, RecordingDraftingError, DRAFTING_PROMPT_SHA256,
   type DraftingInput, type DraftingProvider, type RecordingDraftingRepository } from './recording-drafting';
 import { createRecordingDraftingApi, RECORDING_DRAFTING_ROUTE, type RecordingDraftingConfiguration } from './recording-drafting-api';
 import type { TranscriptionMediaStore } from './recording-transcription';
@@ -20,7 +20,7 @@ const transcriptKey = `encounter-recordings/${id}/${id}/transcription/${third}/t
 function input(noteType: DraftingInput['noteType'] = 'soap'): DraftingInput {
   return { jobId: other, recordingId: id, organizationId: id, noteType, status: 'requested', storage,
     transcript: { transcriptId: third, version: 1, objectKey: transcriptKey, contentSha256: sha(transcriptText), byteLength: Buffer.byteLength(transcriptText) },
-    provider: { provider: 'openai_responses', model: 'fictional-model-1', promptSha256: '7'.repeat(64), zeroDataRetention: true } };
+    provider: { provider: 'openai_responses', model: 'fictional-model-1', promptSha256: DRAFTING_PROMPT_SHA256, zeroDataRetention: true } };
 }
 const goodOutput = { sections: [{ key: 'S', text: 'Reports fictional fatigue for two weeks.' }, { key: 'O', text: 'Not stated in transcript.' }, { key: 'A', text: 'Fatigue, cause not established in transcript.' },
   { key: 'P', text: 'Clinician stated plan to recheck labs.' }], cautions: ['No examination findings were spoken.'] };
@@ -36,6 +36,7 @@ function fixture(state: 'none' | 'requested' | 'completed' = 'requested', noteTy
   let listing: DraftingListing = { recordingId: id, status: 'closed', latestTranscript: { transcriptId: third, version: 1 }, versions: [],
     job: state === 'none' ? null : { jobId: other, status: state, noteType, transcriptId: third, failureCode: null, createdAt: at, updatedAt: at } };
   const artifacts: { jobId: string; key: string; version: string; sha256: string; bytes: number; proposedNoteId: string }[] = [];
+  const declared: { jobId: string; key: string; sha256: string; bytes: number }[] = [];
   const repository: RecordingDraftingRepository = {
     request: vi.fn(async (_c, recordingId, transcriptId, commandId, _release, type) => { listing = { ...listing, job: { jobId: other, status: 'requested', noteType: type, transcriptId, failureCode: null, createdAt: at, updatedAt: at } };
       return { jobId: other, recordingId, transcriptId, commandId, noteType: type, status: 'requested' as const, replayed: false }; }),
@@ -50,11 +51,39 @@ function fixture(state: 'none' | 'requested' | 'completed' = 'requested', noteTy
       return { proposedNoteId, recordingId: id, transcriptId: third, noteType, version: v.version, objectKey: `${draftingPrefix(input())}/proposed-v${v.version}.json`, contentSha256: v.contentSha256, byteLength: v.byteLength, storage }; }),
     registerArtifact: vi.fn(async (_c, jobId, key, version, sha256, bytes, proposedNoteId) => { artifacts.push({ jobId, key, version, sha256, bytes, proposedNoteId }); unregistered = unregistered.filter(o => o.objectKey !== key); return { artifactId: fourth, jobId, kind: 'proposed_note' as const, replayed: false }; }),
     unregistered: vi.fn(async () => unregistered),
+    declare: vi.fn(async (_c, jobId, key, sha256, bytes) => { declared.push({ jobId, key, sha256, bytes }); }),
+    storage: vi.fn(async () => storage),
+    registerOrphan: vi.fn(async (_c, key, version, sha256, bytes) => { artifacts.push({ jobId: other, key, version, sha256, bytes, proposedNoteId: 'orphan' }); unregistered = unregistered.filter(o => o.objectKey !== key); }),
   };
   const processor = createRecordingDraftingProcessor({ repository, media: store, provider, releaseId: third, providerTimeoutMs: 1000 });
-  return { objects, store, provider, repository, processor, artifacts, versionOf, setListing: (patch: Partial<DraftingListing>) => { listing = { ...listing, ...patch }; },
+  return { objects, store, provider, repository, processor, artifacts, declared, versionOf, setListing: (patch: Partial<DraftingListing>) => { listing = { ...listing, ...patch }; },
     setUnregistered: (o: import('./recording-transcription').UnregisteredObject[]) => { unregistered = o; } };
 }
+describe('Codex audit recovery regressions', () => {
+  it('recovers a proposed object after database completion failed without regenerating', async () => {
+    const f = fixture();
+    vi.mocked(f.repository.complete).mockRejectedValueOnce(new Error('temporary database outage'));
+    await expect(f.processor.advance(context, id)).rejects.toThrow('temporary database outage');
+    await expect(f.processor.advance(context, id)).resolves.toMatchObject({ job: { status: 'completed' } });
+    expect(f.provider.draft).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('reviewed prompt binding', () => {
+  it('refuses to advance a job whose release pins a prompt digest other than the reviewed prompt, without calling the provider or storing anything', async () => {
+    const f = fixture();
+    vi.mocked(f.repository.input).mockResolvedValue({ ...input(), provider: { ...input().provider, promptSha256: '7'.repeat(64) } });
+    await expect(f.processor.advance(context, id)).rejects.toMatchObject({ code: 'prompt_unreviewed' });
+    expect(f.provider.draft).not.toHaveBeenCalled(); expect(f.store.puts).toHaveLength(0); expect(f.repository.complete).not.toHaveBeenCalled();
+    expect(f.repository.fail).not.toHaveBeenCalled();
+  });
+  it('declares the proposed object before writing it and reuses an already written object on retry', async () => {
+    const f = fixture();
+    await f.processor.advance(context, id);
+    expect(f.declared).toHaveLength(1); expect(f.declared[0].key).toBe(f.store.puts[0].key);
+    expect(f.artifacts.map(a => a.key)).toEqual([f.store.puts[0].key]);
+  });
+});
 describe('review-only drafting processor', () => {
   it('reads the verified transcript, calls the provider once with the exact note structure, stores an immutable proposed note and registers it', async () => {
     const f = fixture();
@@ -62,7 +91,7 @@ describe('review-only drafting processor', () => {
     expect(after.job?.status).toBe('completed'); expect(after.versions).toHaveLength(1);
     expect(f.provider.draft).toHaveBeenCalledOnce();
     const call = vi.mocked(f.provider.draft).mock.calls[0][0];
-    expect(call).toMatchObject({ model: 'fictional-model-1', promptSha256: '7'.repeat(64), noteType: 'soap', transcript: transcriptText, jobId: other });
+    expect(call).toMatchObject({ model: 'fictional-model-1', promptSha256: DRAFTING_PROMPT_SHA256, noteType: 'soap', transcript: transcriptText, jobId: other });
     expect(call.sections.map(s => s.key)).toEqual(['S', 'O', 'A', 'P']);
     const key = `${draftingPrefix(input())}/proposed-v1.json`;
     expect(f.store.puts).toEqual([{ key, contentType: 'application/json', tags: { recordingId: id, jobId: other, kind: 'proposed_note' } }]);
@@ -143,7 +172,7 @@ function api(configuration = config) {
   return { ...f, factory, handler: createRecordingDraftingApi({ configuration, processor: factory, now: () => now }) };
 }
 describe('workforce drafting API', () => {
-  it('serves the four operations with fresh workforce identity, declares that it never writes notes, and rejects caller-chosen releases and extra fields', async () => {
+  it('serves the five operations with fresh workforce identity, declares that it never writes notes, and rejects caller-chosen releases and extra fields', async () => {
     const a = api();
     const listed = await a.handler(event({ operation: 'list', input: { recordingId: id } }));
     expect(listed.statusCode).toBe(200); expect(JSON.parse(listed.body).capabilities).toEqual({ aiDrafting: true, writesClinicalNotes: false, reason: 'review_only' });
@@ -153,6 +182,9 @@ describe('workforce drafting API', () => {
     expect(advanced.data.job.status).toBe('completed'); expect(JSON.stringify(advanced)).not.toContain('fictional fatigue');
     const read = JSON.parse((await a.handler(event({ operation: 'read', input: { proposedNoteId: fourth } }))).body);
     expect(read.data.document.sections).toHaveLength(4);
+    const reconciled = await a.handler(event({ operation: 'reconcile', input: { recordingId: id } }));
+    expect(reconciled.statusCode).toBe(200); expect(JSON.parse(reconciled.body).data.job.status).toBe('completed');
+    expect(a.repository.storage).toHaveBeenCalledWith(expect.objectContaining({ identityPool: 'workforce' }), id);
     for (const bad of [{ operation: 'request', input: { recordingId: id, transcriptId: third, commandId: fourth, noteType: 'soap', releaseId: other } },
       { operation: 'request', input: { recordingId: id, transcriptId: third, commandId: fourth, noteType: 'letter' } }, { operation: 'correct', input: { recordingId: id } },
       { operation: 'list', input: { recordingId: id, organizationId: other } }, { operation: 'read', input: { proposedNoteId: 'x' } }])

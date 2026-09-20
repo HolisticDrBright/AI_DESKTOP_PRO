@@ -120,6 +120,40 @@ media store gains a bounded `head`; after every `advance` step, and through an e
 with its exact version and size, its digest from the S3 full-object checksum or from a
 bounded read when the provider wrote it, and skipped when it does not exist. A size or
 digest that contradicts the database row is refused. Nothing is written or deleted.
+Migration 91 below extends this to objects whose result row was never created.
+
+## Retry safety, declared objects and orphans (migration 91)
+
+An independent audit on September 20 reproduced three failures that migration 89 did not
+cover: a retry after the assembled media was written but the provider start failed stopped
+on `conflict`; a retry after the transcript was written but the database completion failed
+stopped the same way; and a first job whose only object was media could not be reconciled
+because reconciliation looked storage coordinates up through a transcript that did not exist.
+Migration 91 (`20260920090000_production_recording_object_intents.sql`) and the processor
+changes repair them without weakening any check:
+
+- **Declared before written.** `declare_recording_object` records the job, kind, key and,
+  when known, the exact digest and size of every object the processor is about to write or
+  is about to ask the provider to write. Declarations are owner-scoped, prefix-checked,
+  idempotent on the key, immutable, and refused when a digest changes.
+- **Create-only put that tolerates its own retry.** `putOnce` heads the key first; an
+  existing object with the same digest is reused with its stored version, a different
+  digest is `conflict`, and only an absent key is written (create-only). The provider is
+  looked up by its exact job name (`find`) before a start, so an uncertain earlier start is
+  resumed rather than duplicated.
+- **Orphans.** `list_unregistered_recording_objects` now unions declared intents that have no
+  result row (flag `declared: true`). `register_recording_orphan_artifact` registers such an
+  object under the `orphan` kind (media and provider output keep their kinds) after verifying
+  version, size and digest against the declaration, refusing keys with result rows, so
+  hold-aware cleanup removes it. The cleanup worker treats an orphan like any other artifact:
+  exact version, verified digest, no listing beyond the recording prefix.
+- **Storage without a transcript.** `get_recording_storage` returns the capture's storage
+  release under the owner lock, so `reconcile` works on a recording whose jobs never produced
+  a transcript. `reconcile` is now an explicit workforce operation on both routes.
+
+The three audit cases run as `Codex audit recovery regressions` in
+`recording-transcription.test.ts`; PGlite tests cover declaration rules, orphan listing and
+registration, the result-row refusal and storage lookup.
 
 ## Evidence and what remains
 
@@ -131,4 +165,6 @@ builds `npm run build:aws-recording-transcription` and executes the blocked hand
 AWS credentials. No hosted migration, provider call, activation or PHI has occurred. Review-only
 AI drafting from a transcript version is documented in `docs/encounter-drafting.md`;
 transcript retention across backups and provider-side copies is not covered. The encounter panel has unit evidence for its controller and proxy only; no browser,
-provider or hosted run has exercised it.
+provider or hosted run has exercised it. The page controller drops opened transcript text
+whenever a refresh is refused for authorization (`forbidden`, `unauthenticated`), currency
+(`conflict`) or absence (`not_found`); only transient failures keep it on screen.

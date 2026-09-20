@@ -53,6 +53,14 @@ export function createAwsTranscriptionProvider(clientForRegion = (region: string
         // Speaker labels only; no vocabulary filtering, content redaction toggles or custom models are configured here.
         Settings: { ShowSpeakerLabels: true, MaxSpeakerLabels: 4 } }));
     },
+    async find(jobName, storage) {
+      try { return { state: (await this.status(jobName, storage)).state }; }
+      catch (error) {
+        const name = (error as { name?: string })?.name ?? '';
+        if (['NotFoundException', 'BadRequestException'].includes(name)) return null;
+        throw error;
+      }
+    },
     async status(jobName, storage) {
       const result = await client(storage.region).send(new GetTranscriptionJobCommand({ TranscriptionJobName: jobName }));
       const status = result.TranscriptionJob?.TranscriptionJobStatus;

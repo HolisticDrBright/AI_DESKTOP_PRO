@@ -43,7 +43,8 @@ function fixture(state: 'requested' | 'processing' | 'completed' = 'requested') 
     head: vi.fn(async (_s, key) => { const b = objects.get(key); return b ? { version: versionOf(key), bytes: b.length, sha256: key.endsWith('provider.json') ? null : sha(b) } : null; }) };
   const artifacts: { jobId: string; kind: string; key: string; version: string; sha256: string; bytes: number; transcriptId?: string }[] = [];
   let unregistered: import('./recording-transcription').UnregisteredObject[] = [];
-  const provider: TranscriptionProvider = { start: vi.fn(async () => undefined), status: vi.fn(async () => ({ state: 'processing' as const })) };
+  const provider: TranscriptionProvider = { start: vi.fn(async () => undefined), status: vi.fn(async () => ({ state: 'processing' as const })), find: vi.fn(async () => null) };
+  const declared: { jobId: string; kind: string; key: string; sha256: string | null; bytes: number | null }[] = [];
   let current = media(state === 'completed' ? 'processing' : state), list = listing(state);
   const repository: RecordingTranscriptionRepository = {
     request: vi.fn(async (_c, recordingId, commandId) => ({ jobId: other, recordingId, commandId, status: 'requested' as const, segmentCount: 2, inventorySha256: 'b'.repeat(64), replayed: false })),
@@ -62,11 +63,39 @@ function fixture(state: 'requested' | 'processing' | 'completed' = 'requested') 
     registerArtifact: vi.fn(async (_c, jobId, kind, key, version, sha256, bytes, transcriptId) => {
       artifacts.push({ jobId, kind, key, version, sha256, bytes, transcriptId }); unregistered = unregistered.filter(o => o.objectKey !== key); return { artifactId: third, jobId, kind, replayed: false }; }),
     unregistered: vi.fn(async () => unregistered),
+    declare: vi.fn(async (_c, jobId, kind, key, sha256, bytes) => { declared.push({ jobId, kind, key, sha256, bytes }); }),
+    storage: vi.fn(async () => storage),
+    registerOrphan: vi.fn(async (_c, key, version, sha256, bytes) => { artifacts.push({ jobId: other, kind: 'orphan', key, version, sha256, bytes }); unregistered = unregistered.filter(o => o.objectKey !== key); }),
   };
   const processor = createRecordingTranscriptionProcessor({ repository, media: store, provider, releaseId: third });
-  return { objects, store, provider, repository, processor, artifacts, versionOf, setMedia: (m: TranscriptionMedia) => { current = m; },
+  return { objects, store, provider, repository, processor, artifacts, declared, versionOf, setMedia: (m: TranscriptionMedia) => { current = m; },
     setUnregistered: (o: import('./recording-transcription').UnregisteredObject[]) => { unregistered = o; } };
 }
+describe('Codex audit recovery regressions', () => {
+  it('retries after media PUT succeeds but provider dispatch fails', async () => {
+    const f = fixture();
+    vi.mocked(f.provider.start).mockRejectedValueOnce(new Error('temporary provider outage'));
+    await expect(f.processor.advance(context, id)).rejects.toThrow('temporary provider outage');
+    await expect(f.processor.advance(context, id)).resolves.toMatchObject({ job: { status: 'processing' } });
+  });
+  it('retries after transcript PUT succeeds but database completion fails', async () => {
+    const f = fixture('processing');
+    f.objects.set(`${transcriptionPrefix(media())}/provider.json`, Buffer.from(providerDocument));
+    vi.mocked(f.provider.status).mockResolvedValue({ state: 'completed' });
+    vi.mocked(f.repository.complete).mockRejectedValueOnce(new Error('temporary database outage'));
+    await expect(f.processor.advance(context, id)).rejects.toThrow('temporary database outage');
+    await expect(f.processor.advance(context, id)).resolves.toMatchObject({ job: { status: 'completed' } });
+  });
+  it('reconciles a first-job orphan without requiring an existing transcript', async () => {
+    const f = fixture();
+    const key = `${transcriptionPrefix(media())}/media.webm`;
+    f.objects.set(key, Buffer.concat([seg0, seg1]));
+    f.setUnregistered([{ kind: 'media', jobId: other, objectKey: key, sha256: null, bytes: null, transcriptId: null, proposedNoteId: null }]);
+    await f.processor.reconcile(context, id);
+    expect(f.artifacts.some(a => a.key === key)).toBe(true);
+  });
+});
+
 describe('bounded encounter transcription processor', () => {
   it('requests only under the deployed release and assembles verified media before starting the provider once', async () => {
     const f = fixture();
@@ -221,7 +250,7 @@ function api(configuration = config) {
   return { ...f, factory, handler: createRecordingTranscriptionApi({ configuration, processor: factory, now: () => now }) };
 }
 describe('workforce transcription API', () => {
-  it('serves the five operations only with fresh workforce identity and rejects caller-chosen releases, queries and extra fields', async () => {
+  it('serves the six operations only with fresh workforce identity and rejects caller-chosen releases, queries and extra fields', async () => {
     const a = api();
     a.objects.set(`${transcriptionPrefix(media())}/provider.json`, Buffer.from(providerDocument));
     vi.mocked(a.provider.status).mockResolvedValueOnce({ state: 'completed' });
@@ -235,6 +264,10 @@ describe('workforce transcription API', () => {
     expect(read.data.text).toBe('fictional transcript text');
     const corrected = await a.handler(event({ operation: 'correct', input: { recordingId: id, text: 'fictional corrected transcript text', reason: 'speaker name corrected' } }));
     expect(JSON.parse(corrected.body).data.versions).toHaveLength(2);
+    const reconciled = await a.handler(event({ operation: 'reconcile', input: { recordingId: id } }));
+    expect(reconciled.statusCode).toBe(200); expect(JSON.parse(reconciled.body).data.versions).toHaveLength(2);
+    expect(a.repository.storage).toHaveBeenCalledWith(expect.objectContaining({ identityPool: 'workforce' }), id);
+    expect(JSON.stringify(JSON.parse(reconciled.body))).not.toContain('fictional transcript text');
     for (const bad of [{ operation: 'request', input: { recordingId: id, commandId: third, releaseId: other } }, { operation: 'list', input: { recordingId: id, organizationId: other } },
       { operation: 'read', input: { transcriptId: 'x' } }, { operation: 'correct', input: { recordingId: id, text: 'x', reason: '' } }, { operation: 'delete', input: { recordingId: id } }])
       expect((await a.handler(event(bad))).statusCode).toBe(400);

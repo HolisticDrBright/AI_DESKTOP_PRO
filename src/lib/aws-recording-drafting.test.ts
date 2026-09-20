@@ -54,8 +54,11 @@ describe('page-owned proposed-note review', () => {
     fail = false; await f.owner.requestDraft('narrative');
     expect(f.calls[2]).toEqual(pending); expect(f.owner.snapshot().pending).toBeNull(); expect(f.owner.snapshot().notice).toContain('already accepted');
     for (const [code, fragment] of [['forbidden', 'refused'], ['unauthenticated', 'Sign in again'], ['conflict', 'newest transcript'], ['unavailable', 'in any note']] as const) {
-      const g = fixture(() => { throw new AdapterError(code); });
+      const g = fixture(op => { if (op.operation === 'read') return { proposedNoteId: noteId, recordingId, version: 1, contentSha256: hash, document }; throw new AdapterError(code); });
+      await g.owner.read(noteId); expect(g.owner.snapshot().content).not.toBeNull();
       await g.owner.load(); expect(g.owner.snapshot().error).toContain(fragment); expect(g.owner.snapshot().error).not.toMatch(/arn:|sql|stack/i);
+      // Opened proposal text survives only a transient failure; lost authorization or a superseded transcript drops it.
+      expect(g.owner.snapshot().content === null).toBe(code !== 'unavailable');
     }
   });
 });

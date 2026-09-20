@@ -51,7 +51,7 @@ export class AwsRecordingDrafting {
       const safe = failure instanceof AdapterError ? failure : new AdapterError('unavailable');
       const uncertain = operation.operation === 'request' && ['unavailable', 'unknown'].includes(safe.code);
       this.set({ error: MESSAGES[safe.code as keyof typeof MESSAGES] ?? MESSAGES.unavailable, pending: uncertain ? operation : null,
-        content: safe.code === 'conflict' ? null : this.state.content,
+        content: ['conflict', 'forbidden', 'unauthenticated', 'not_found'].includes(safe.code) ? null : this.state.content,
         notice: uncertain ? 'The request outcome is uncertain. Retry the same request; a second request is refused by the service.' : '' });
     } finally { this.running = false; this.set({ busy: false }); }
   }

@@ -40,6 +40,7 @@ export function createRecordingTranscriptionApi(input: { configuration: Recordin
       if (op.operation === 'request') data = transcriptionReceiptSchema.parse(await processor.request(context, op.input.recordingId, op.input.commandId));
       else if (op.operation === 'advance') data = transcriptionListingSchema.parse(await processor.advance(context, op.input.recordingId));
       else if (op.operation === 'list') data = transcriptionListingSchema.parse(await processor.list(context, op.input.recordingId));
+      else if (op.operation === 'reconcile') data = transcriptionListingSchema.parse(await processor.reconcile(context, op.input.recordingId));
       else if (op.operation === 'correct') { await processor.correct(context, op.input.recordingId, op.input.text, op.input.reason);
         data = transcriptionListingSchema.parse(await processor.list(context, op.input.recordingId)); }
       else data = transcriptContentSchema.parse(await processor.read(context, op.input.transcriptId));

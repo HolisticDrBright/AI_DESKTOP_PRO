@@ -162,3 +162,24 @@ describe('review-only encounter drafting authority',()=>{
     expect(failed).toMatchObject({status:'failed',replayed:true});
   });
 });
+
+describe('declared proposed-note objects for recovery',()=>{
+  it('declares a proposed note under the drafting prefix, lists it as a drafting orphan until completion, and registers the orphan for cleanup',async()=>{
+    const release=await draftingRelease(),f=await transcribed();
+    const job=(await request(f.c.recordingId,f.transcriptId,release))!;
+    const key=`encounter-recordings/${org}/${f.c.recordingId}/drafting/${job.jobId}/proposed-v1.json`;
+    const declared=(await call<{intentId:string;replayed:boolean}>('select clinical_private.declare_recording_object($1,true,$2,$3,$4,$5::integer) as result',[job.jobId,'proposed_note',key,'8'.repeat(64),900]))!;
+    expect(declared).toMatchObject({replayed:false});
+    await expect(call('select clinical_private.declare_recording_object($1,true,$2,$3,$4,$5::integer) as result',[job.jobId,'transcript',key,'8'.repeat(64),900])).rejects.toThrow(/recording_transcription_artifact_invalid/);
+    await expect(call('select clinical_private.declare_recording_object($1,true,$2,$3,$4,$5::integer) as result',[job.jobId,'proposed_note',key.replace('/drafting/','/transcription/'),'8'.repeat(64),900])).rejects.toThrow(/recording_transcription_artifact_invalid/);
+    await expect(call('select clinical_private.declare_recording_object($1,true,$2,$3,$4,$5::integer) as result',[job.jobId,'proposed_note',key,'8'.repeat(64),900],colleague)).rejects.toThrow(/recording_access_refused/);
+    const unregistered=(await call<{kind:string;objectKey:string;jobId:string;declared:boolean}[]>('select clinical_private.list_unregistered_recording_objects($1) as result',[f.c.recordingId]))!;
+    expect(unregistered.find(o=>o.objectKey===key)).toMatchObject({kind:'orphan',jobId:job.jobId,declared:true});
+    const orphan=(await call<{kind:string;jobId:string;replayed:boolean}>('select clinical_private.register_recording_orphan_artifact($1,$2,$3,$4) as result',[key,'v-p1','8'.repeat(64),900]))!;
+    expect(orphan).toMatchObject({kind:'orphan',jobId:job.jobId,replayed:false});
+    const inventory=(await db.query<{result:{kind:string;jobId:string;objectKey:string}[]}>('select clinical_private.recording_transcription_inventory($1) as result',[f.c.recordingId])).rows[0].result;
+    expect(inventory.filter(a=>a.objectKey===key)).toEqual([expect.objectContaining({kind:'orphan',jobId:job.jobId,objectKey:key})]);
+    // Completing the job afterwards is refused for that key path only through the ordinary registration, never by re-labelling the orphan.
+    await expect(call('select clinical_private.register_recording_drafting_artifact($1,$2,$3,$4,$5,$6) as result',[job.jobId,key,'v-p1','8'.repeat(64),900,randomUUID()])).rejects.toThrow(/recording_transcription_artifact_invalid|recording_transcription_artifact_conflict/);
+  });
+});

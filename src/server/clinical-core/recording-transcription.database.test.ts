@@ -238,3 +238,72 @@ describe('unregistered recording objects for reconciliation',()=>{
     expect(JSON.stringify(all)).not.toMatch(/bucket|token/);
   });
 });
+
+describe('declared object intents, orphan registration and storage lookup (recovery)',()=>{
+  const declare=(job:string,drafting:boolean,kind:string,key:string,sha:string|null,bytes:number|null,who=actor)=>call<{intentId:string;replayed:boolean}>(
+    'select clinical_private.declare_recording_object($1,$2,$3,$4,$5,$6::integer) as result',[job,drafting,kind,key,sha,bytes],who);
+  const orphan=(key:string,version:string,sha:string,bytes:number,who=actor)=>call<{artifactId:string;jobId:string;kind:string;replayed:boolean}>(
+    'select clinical_private.register_recording_orphan_artifact($1,$2,$3,$4) as result',[key,version,sha,bytes],who);
+  const list=(recording:string,who=actor)=>call<{kind:string;objectKey:string;jobId:string;sha256:string|null;bytes:number|null;declared:boolean}[]>(
+    'select clinical_private.list_unregistered_recording_objects($1) as result',[recording],who);
+  it('declares expected objects under the job prefix exactly once, owner-only, and refuses foreign prefixes, wrong kinds and digest changes',async()=>{
+    const f=await finished(),release=await transcriptionRelease();
+    const job=(await request(f.c.recordingId,release))!;
+    const prefix=`encounter-recordings/${org}/${f.c.recordingId}/transcription/${job.jobId}/`;
+    const first=(await declare(job.jobId,false,'media',prefix+'media.webm','1'.repeat(64),9))!;
+    expect(first).toMatchObject({replayed:false});
+    expect(await declare(job.jobId,false,'media',prefix+'media.webm','1'.repeat(64),9)).toEqual({intentId:first.intentId,replayed:true});
+    expect(await declare(job.jobId,false,'media',prefix+'media.webm',null,null)).toEqual({intentId:first.intentId,replayed:true});
+    await expect(declare(job.jobId,false,'media',prefix+'media.webm','2'.repeat(64),9)).rejects.toThrow('recording_transcription_artifact_conflict');
+    for(const [kind,key,sha] of [['proposed_note',prefix+'proposed-v1.json',null],['media',`encounter-recordings/${org}/${f.c.recordingId}/transcription/${randomUUID()}/media.webm`,null],
+      ['provider',prefix+'provider.json','not-a-digest'],['drawing',prefix+'x',null]] as const)
+      await expect(declare(job.jobId,false,kind,key,sha,null)).rejects.toThrow('recording_transcription_artifact_invalid');
+    await expect(declare(job.jobId,false,'provider',prefix+'provider.json',null,null,colleague)).rejects.toThrow('recording_access_refused');
+    expect((await db.query("select count(*)::int as n from clinical_private.recording_transcription_events where job_id=$1 and action='object.declared'",[job.jobId])).rows[0]).toEqual({n:1});
+    await expect(db.query('delete from clinical_private.recording_object_intents where id=$1',[first.intentId])).rejects.toThrow();
+  });
+  it('lists a declared transcript with no result row as an orphan and lets the owner register it so cleanup removes it',async()=>{
+    const f=await finished(),release=await transcriptionRelease();
+    const job=(await request(f.c.recordingId,release))!;
+    const prefix=`encounter-recordings/${org}/${f.c.recordingId}/transcription/${job.jobId}/`;
+    await call('select clinical_private.mark_recording_transcription_processing($1,$2) as result',[job.jobId,'alp-'+job.jobId]);
+    // The processor declared and wrote the transcript, then crashed before complete_recording_transcription.
+    await declare(job.jobId,false,'transcript',prefix+'transcript-v1.txt','5'.repeat(64),120);
+    const before=(await list(f.c.recordingId))!;
+    expect(before.find(o=>o.objectKey===prefix+'transcript-v1.txt')).toMatchObject({kind:'orphan',declared:true,sha256:'5'.repeat(64),bytes:120,jobId:job.jobId});
+    expect(before.find(o=>o.kind==='media')).toMatchObject({declared:false});
+    await expect(orphan(prefix+'transcript-v1.txt','v-t1','6'.repeat(64),120)).rejects.toThrow('recording_transcription_artifact_invalid');
+    await expect(orphan(prefix+'transcript-v1.txt','v-t1','5'.repeat(64),121)).rejects.toThrow('recording_transcription_artifact_invalid');
+    await expect(orphan(prefix+'never-declared.txt','v','5'.repeat(64),120)).rejects.toThrow('recording_transcription_artifact_invalid');
+    await expect(orphan(prefix+'transcript-v1.txt','v-t1','5'.repeat(64),120,colleague)).rejects.toThrow('recording_access_refused');
+    const registered=(await orphan(prefix+'transcript-v1.txt','v-t1','5'.repeat(64),120))!;
+    expect(registered).toMatchObject({kind:'orphan',jobId:job.jobId,replayed:false});
+    expect(await orphan(prefix+'transcript-v1.txt','v-t1','5'.repeat(64),120)).toMatchObject({artifactId:registered.artifactId,replayed:true});
+    await expect(orphan(prefix+'transcript-v1.txt','v-other','5'.repeat(64),120)).rejects.toThrow('recording_transcription_artifact_conflict');
+    expect((await list(f.c.recordingId))!.some(o=>o.objectKey===prefix+'transcript-v1.txt')).toBe(false);
+    const inventory=(await db.query<{result:{kind:string;objectKey:string}[]}>('select clinical_private.recording_transcription_inventory($1) as result',[f.c.recordingId])).rows[0].result;
+    expect(inventory).toEqual([{...inventory[0],kind:'orphan',objectKey:prefix+'transcript-v1.txt'}]);
+    expect((await db.query("select count(*)::int as n from clinical_private.recording_transcription_events where job_id=$1 and action='orphan.registered'",[job.jobId])).rows[0]).toEqual({n:1});
+  });
+  it('registers a declared media or provider object under its own kind and refuses the orphan path once a result row exists for the key',async()=>{
+    const f=await finished(),release=await transcriptionRelease();
+    const job=(await request(f.c.recordingId,release))!;
+    const prefix=`encounter-recordings/${org}/${f.c.recordingId}/transcription/${job.jobId}/`;
+    await declare(job.jobId,false,'media',prefix+'media.webm',null,null);
+    expect(await orphan(prefix+'media.webm','v-m','1'.repeat(64),9)).toMatchObject({kind:'media',replayed:false});
+    await call('select clinical_private.mark_recording_transcription_processing($1,$2) as result',[job.jobId,'alp-'+job.jobId]);
+    await declare(job.jobId,false,'transcript',prefix+'transcript-v1.txt','5'.repeat(64),120);
+    await complete(job.jobId,prefix+'transcript-v1.txt','5'.repeat(64));
+    // A completed row means the ordinary transcript registration applies; the listing no longer marks it declared-only.
+    await expect(orphan(prefix+'transcript-v1.txt','v-t1','5'.repeat(64),120)).rejects.toThrow('recording_transcription_artifact_conflict');
+    expect((await list(f.c.recordingId))!.find(o=>o.objectKey===prefix+'transcript-v1.txt')).toMatchObject({kind:'transcript',declared:false});
+  });
+  it('returns the recording’s storage coordinates for reconciliation without any transcript, owner-only',async()=>{
+    const f=await finished();
+    const storage=(await call<{recordingId:string;organizationId:string;storage:{bucket:string;expectedBucketOwner:string;region:string;kmsKeyArn:string;maxSegmentBytes:number}}>(
+      'select clinical_private.get_recording_storage($1) as result',[f.c.recordingId]))!;
+    expect(storage).toMatchObject({recordingId:f.c.recordingId,organizationId:org,storage:{bucket:'fictional-recording-storage',expectedBucketOwner:'123456789012',region:'us-east-2',maxSegmentBytes:1000000}});
+    await expect(call('select clinical_private.get_recording_storage($1) as result',[f.c.recordingId],colleague)).rejects.toThrow('recording_access_refused');
+    await expect(call('select clinical_private.get_recording_storage($1) as result',[randomUUID()])).rejects.toThrow(/recording_access_refused|recording_not_found/);
+  });
+});

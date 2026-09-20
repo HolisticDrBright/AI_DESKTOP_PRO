@@ -66,6 +66,27 @@ queries, encodings, unknown operations and caller-supplied release or model fiel
 forwards to `RECORDING_DRAFTING_AWS_API_ORIGIN`, and validates that every response declares
 `writesClinicalNotes: false`.
 
+## Reviewed prompt binding and recovery (migration 91)
+
+The drafting release row pins `promptSha256`, but until September 20 nothing compared it with
+the prompt the code actually sends, so a release approved against one prompt would have run
+whatever prompt the deployed code contained. The prompt text now lives in
+`recording-drafting-prompt.ts`; `DRAFTING_PROMPT_SHA256` is the digest of the exact artifact
+(boundary text plus the response contract) and is exported for release preparation. The
+processor refuses a job whose release digest differs (`prompt_unreviewed`, HTTP 409, job left
+untouched, provider never called), and `buildDraftingRequest` makes the same check before the
+API key is read, so an unreviewed prompt never reaches the provider or the secret.
+
+Recovery follows the transcription rules: the proposed-note key is declared before the
+provider is called, the write is create-only, and a retry after the write succeeded but the
+database completion failed heads the existing `proposed-vN.json`, verifies that it belongs to
+this job, transcript and prompt release, and completes with its stored digest instead of
+regenerating. A different document under that key is `conflict`. Declared proposed notes with
+no row are listed as drafting orphans and registered for cleanup; `reconcile` is an explicit
+operation on the drafting route. The page controller drops an opened proposal on
+authorization loss, superseded transcript or absence, keeping it only through transient
+failures.
+
 ## Evidence and what remains
 
 Local only: PGlite tests (consent, latest-version rule, release refusal, idempotency, input,
@@ -74,7 +95,9 @@ registry and inventory), processor and API unit tests with a fake provider, prov
 request/response boundary tests with a fake secret and fetch, infrastructure tests on the
 built `npm run build:aws-recording-drafting` candidate, proxy and controller tests. No hosted
 migration, provider call, OpenAI project configuration, activation, browser run or PHI has
-occurred. The executed OpenAI BAA, the HIPAA-eligible project, the documented zero-data
-retention setting and the prompt release review are recorded outside the code and gate the
-release row; nothing here asserts they exist. Quality review of proposed documentation
+occurred. The executed OpenAI HIPAA amendment supplied by the practice owner must be checked for the
+covered entity, the project it names and its retention terms; the HIPAA-eligible project, the
+documented zero-data retention setting and the prompt release review are recorded outside the
+code and gate the release row. `store: false` alone does not establish coverage, and nothing
+here asserts the review has happened. Quality review of proposed documentation
 against real transcripts is clinical acceptance, not covered by these tests.

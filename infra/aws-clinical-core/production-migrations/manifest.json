@@ -320,6 +320,10 @@
     {
       "version": "20260920080000",
       "file": "20260920080000_production_owned_correction_paths.sql"
+    },
+    {
+      "version": "20260920090000",
+      "file": "20260920090000_production_recording_object_intents.sql"
     }
   ]
 }

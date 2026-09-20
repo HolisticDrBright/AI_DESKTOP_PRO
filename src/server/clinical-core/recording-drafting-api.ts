@@ -40,11 +40,12 @@ export function createRecordingDraftingApi(input: { configuration: RecordingDraf
       if (op.operation === 'request') data = draftingReceiptSchema.parse(await processor.request(context, op.input.recordingId, op.input.transcriptId, op.input.commandId, op.input.noteType));
       else if (op.operation === 'advance') data = draftingListingSchema.parse(await processor.advance(context, op.input.recordingId));
       else if (op.operation === 'list') data = draftingListingSchema.parse(await processor.list(context, op.input.recordingId));
+      else if (op.operation === 'reconcile') data = draftingListingSchema.parse(await processor.reconcile(context, op.input.recordingId));
       else data = proposedNoteContentSchema.parse(await processor.read(context, op.input.proposedNoteId));
       return reply(200, { data, capabilities: { aiDrafting: true, writesClinicalNotes: false, reason: 'review_only' } });
     } catch (error) {
       const known = ['request_invalid', 'access_refused', 'consent_required', 'conflict', 'refused', 'legal_hold', 'service_unavailable', 'storage_unverified',
-        'provider_unavailable', 'provider_output_invalid'];
+        'provider_unavailable', 'provider_output_invalid', 'prompt_unreviewed'];
       const code = error instanceof RecordingAuthorityError ? error.code
         : error instanceof Error && error.name === 'RecordingDraftingError' && 'code' in error && typeof error.code === 'string' && known.includes(error.code) ? error.code
         : 'service_unavailable';

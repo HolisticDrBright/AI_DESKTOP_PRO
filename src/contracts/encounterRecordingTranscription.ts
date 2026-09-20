@@ -14,6 +14,7 @@ export const transcriptionOperationSchema = z.discriminatedUnion('operation', [
   z.object({ operation: z.literal('list'), input: transcriptionRecordingSchema }).strict(),
   z.object({ operation: z.literal('correct'), input: transcriptionCorrectionSchema }).strict(),
   z.object({ operation: z.literal('read'), input: transcriptionReadSchema }).strict(),
+  z.object({ operation: z.literal('reconcile'), input: transcriptionRecordingSchema }).strict(),
 ]);
 export type TranscriptionOperation = z.infer<typeof transcriptionOperationSchema>;
 export const transcriptionReceiptSchema = z.object({ jobId: uuid, recordingId: uuid, commandId: uuid, status: transcriptionJobStatusSchema,

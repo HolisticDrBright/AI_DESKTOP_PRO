@@ -19,6 +19,19 @@ function fixture(behaviour: (operation: TranscriptionOperation) => unknown) {
   const owner = new AwsRecordingTranscription({ recordingId, request, changed: s => snapshots.push(s), uuid: () => `4444444${++n}-4444-4444-8444-444444444444` });
   return { owner, calls, snapshots, request };
 }
+describe('Codex audit authorization regression', () => {
+  it('clears previously opened transcript text when refreshed authorization is refused', async () => {
+    const f = fixture(op => {
+      if (op.operation === 'read') return {transcriptId,recordingId,version:1,contentSha256:hash,text:'FICTIONAL prior transcript'};
+      throw new AdapterError('forbidden');
+    });
+    await f.owner.read(transcriptId);
+    await f.owner.load();
+    expect(f.owner.snapshot().error).toBeTruthy();
+    expect(f.owner.snapshot().content).toBeNull();
+  });
+});
+
 describe('page-owned transcription review', () => {
   it('walks request, advance, read and correct as explicit steps and never keeps text after a correction', async () => {
     let status: 'requested' | 'processing' | 'completed' | null = null;
@@ -27,7 +40,8 @@ describe('page-owned transcription review', () => {
       if (op.operation === 'request') { status = 'requested'; return { jobId, recordingId, commandId: op.input.commandId, status, segmentCount: 1, inventorySha256: hash, replayed: false }; }
       if (op.operation === 'advance') { status = status === 'requested' ? 'processing' : 'completed'; return listing(status, status === 'completed' ? [version] : []); }
       if (op.operation === 'read') return { transcriptId, recordingId, version: 1, contentSha256: hash, text: 'hello' };
-      return listing('completed', [version, { ...version, transcriptId: recordingId, version: 2, kind: 'correction', supersedesId: transcriptId, reason: op.input.reason }]);
+      if (op.operation === 'correct') return listing('completed', [version, { ...version, transcriptId: recordingId, version: 2, kind: 'correction', supersedesId: transcriptId, reason: op.input.reason }]);
+      return listing(status);
     });
     await f.owner.load(); expect(f.owner.snapshot().listing?.job).toBeNull();
     await f.owner.requestTranscription();
@@ -60,12 +74,12 @@ describe('page-owned transcription review', () => {
     await advanceFailure.owner.advance();
     expect(advanceFailure.owner.snapshot().pending).toBeNull(); expect(advanceFailure.owner.snapshot().error).toContain('unavailable');
   });
-  it('maps refusals to patient-safe messages, drops stale text on conflict and serializes concurrent calls', async () => {
+  it('maps refusals to patient-safe messages, drops opened text once authorization or currency is lost, and serializes concurrent calls', async () => {
     for (const [code, fragment] of [['forbidden', 'refused'], ['unauthenticated', 'Sign in again'], ['conflict', 'latest version'], ['invalid', 'could not be accepted']] as const) {
       const f = fixture(op => { if (op.operation === 'read') return { transcriptId, recordingId, version: 1, contentSha256: hash, text: 'hello' }; throw new AdapterError(code); });
       await f.owner.read(transcriptId); await f.owner.load();
       expect(f.owner.snapshot().error).toContain(fragment); expect(f.owner.snapshot().error).not.toMatch(/arn:|sql|stack/i);
-      expect(f.owner.snapshot().content?.text).toBe(code === 'conflict' ? undefined : 'hello');
+      expect(f.owner.snapshot().content?.text).toBe(code === 'invalid' ? 'hello' : undefined);
     }
     let release!: () => void;
     const f = fixture(() => new Promise(resolve => { release = () => resolve(listing(null)); }));
