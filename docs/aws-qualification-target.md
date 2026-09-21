@@ -179,3 +179,13 @@ Then run the hosted harnesses against that API and keep only reports whose `exec
 - Not hosted verified: no qualification candidate has been deployed; the hosted harnesses have not
   run against the qualification database. That is the owner's next step, after which whatever they find
   is new engineering.
+- Hosted CI at `f3dcbff`: the main job (typecheck, lint, unit, every gate, cfn-lint on every template
+  including the six recording candidates, the PowerShell runner test, builds) and six of seven browser
+  jobs passed. The live-fixture browser job failed on one test, `live-scribe.spec.ts` "microphone loss
+  mid-recording pauses with an unmistakable status": the recording status reached `unconfirmed` instead
+  of `recording` within ten seconds, at minute 25 of the job with the dev server's heap at 7.1 GB. The
+  commit changes nothing under the Next app (`src/app`, `src/components`, `src/lib`) and none of the
+  changed modules is reachable from it; the same test passed on the previous run and passed three of
+  three repetitions locally against the committed contract fixture (30 of 30 scribe tests). It is
+  recorded here as a runner-side timing failure, not a pass: CI could not be re-run from the cloud
+  session (no permission), so the next push re-runs it.
