@@ -162,7 +162,13 @@ CloudFormation refuses (cfn-lint E3001); CI now builds and lints all six recordi
 
 ### Deploying the qualification profile (owner, Windows terminal)
 
-For each candidate, deploy with `PhiAllowed=false`, `Activation=blocked`, `DatabaseName=clinical_core_qualification`,
+Copy-and-fill parameter files for all ten candidate stacks live in
+`infra/aws-clinical-core/qualification-parameters/` (`<candidate>.example.json`, with a README naming
+every placeholder to replace). They are generated from the built templates
+(`npm run build:aws-qualification-parameters`), CI refuses drift (`check:aws-qualification-parameters`),
+and `qualification-parameters.test.ts` proves each file names exactly its template's parameters,
+satisfies every pattern, makes `Qualification` true only in the synthetic account, and never makes
+`Active` true. In words, each candidate deploys with `PhiAllowed=false`, `Activation=blocked`, `DatabaseName=clinical_core_qualification`,
 `QualificationExecution=enabled`, `QualificationAccountId=588966314750`, `QualificationReviewSha256=<reviewed>`,
 `QualificationIdentitySubjects=<manifest consumer and workforce subjects>`, plus the candidate's reviewed
 inputs (database review, MFA review, alarm topic, scopes, export bucket and key where export delivery is
@@ -188,4 +194,5 @@ Then run the hosted harnesses against that API and keep only reports whose `exec
   changed modules is reachable from it; the same test passed on the previous run and passed three of
   three repetitions locally against the committed contract fixture (30 of 30 scribe tests). It is
   recorded here as a runner-side timing failure, not a pass: CI could not be re-run from the cloud
-  session (no permission), so the next push re-runs it.
+  session (no permission), so the next push re-ran it. At `079bad0` (documentation only on top of
+  `f3dcbff`) all eight jobs passed, the live-fixture browser job included.

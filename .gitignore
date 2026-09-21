@@ -61,3 +61,4 @@ next-env.d.ts
 /infra/aws-clinical-core/production-readiness.json
 /infra/aws-clinical-core/first-real-data-pilot-readiness.json
 /supabase/.temp/
+infra/aws-clinical-core/qualification-parameters/*.filled.json

@@ -1,0 +1,94 @@
+[
+  {
+    "ParameterKey": "ClinicalApiId",
+    "ParameterValue": "abcdefghij"
+  },
+  {
+    "ParameterKey": "ConsumerJwtAuthorizerId",
+    "ParameterValue": "replace-with-consumer-authorizer-id"
+  },
+  {
+    "ParameterKey": "ClinicalCoreKeyArn",
+    "ParameterValue": "arn:aws:kms:us-east-2:588966314750:key/33333333-3333-4333-8333-333333333333"
+  },
+  {
+    "ParameterKey": "LambdaCodeBucket",
+    "ParameterValue": "ai-clinical-core-code-588966314750"
+  },
+  {
+    "ParameterKey": "VoiceJobsCodeKey",
+    "ParameterValue": "qualification/owned-voice/voice-jobs.zip"
+  },
+  {
+    "ParameterKey": "ConsumerIssuer",
+    "ParameterValue": "https://cognito-idp.us-east-2.amazonaws.com/us-east-2_REPLACEconsumer"
+  },
+  {
+    "ParameterKey": "ConsumerAudience",
+    "ParameterValue": "replaceconsumerappclientid0001"
+  },
+  {
+    "ParameterKey": "PhiAllowed",
+    "ParameterValue": "false"
+  },
+  {
+    "ParameterKey": "Activation",
+    "ParameterValue": "blocked"
+  },
+  {
+    "ParameterKey": "CleanupEvidenceSha256",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "ActivationEvidenceSha256",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "ProviderEvidenceSha256",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "AllowedScopes",
+    "ParameterValue": "ai_context,voice_transcription"
+  },
+  {
+    "ParameterKey": "DatabaseClusterArn",
+    "ParameterValue": "arn:aws:rds:us-east-2:588966314750:cluster:ai-clinical-core-synthetic-clinicaldatabasecluster-lftvrccuflxa"
+  },
+  {
+    "ParameterKey": "DatabaseSecretArn",
+    "ParameterValue": "arn:aws:secretsmanager:us-east-2:588966314750:secret:rds!cluster-replace-with-secret-suffix"
+  },
+  {
+    "ParameterKey": "SecretKmsKeyArn",
+    "ParameterValue": "arn:aws:kms:us-east-2:588966314750:key/11111111-1111-4111-8111-111111111111"
+  },
+  {
+    "ParameterKey": "DatabaseName",
+    "ParameterValue": "clinical_core_qualification"
+  },
+  {
+    "ParameterKey": "BillingApiOrigin",
+    "ParameterValue": "https://abcdefghij.execute-api.us-east-2.amazonaws.com"
+  },
+  {
+    "ParameterKey": "AlarmTopicArn",
+    "ParameterValue": "arn:aws:sns:us-east-2:588966314750:ai-clinical-core-qualification-alarms"
+  },
+  {
+    "ParameterKey": "QualificationExecution",
+    "ParameterValue": "enabled"
+  },
+  {
+    "ParameterKey": "QualificationReviewSha256",
+    "ParameterValue": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  },
+  {
+    "ParameterKey": "QualificationAccountId",
+    "ParameterValue": "588966314750"
+  },
+  {
+    "ParameterKey": "QualificationIdentitySubjects",
+    "ParameterValue": "replace-with-consumer-cognito-sub,replace-with-workforce-cognito-sub"
+  }
+]
