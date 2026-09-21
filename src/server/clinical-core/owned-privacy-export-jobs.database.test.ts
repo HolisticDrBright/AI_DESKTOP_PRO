@@ -813,13 +813,13 @@ describe('cross-store export coverage',()=>{
     const f=fakeStore(),cross=fakeCrossStore({labs:true,voice:true});
     const jobs=createOwnedPrivacyExportJobs((c,work)=>adapter().runPrivacy(c,work),{store:f.store,storage,partBytes:8192,crossStore:cross,now:onePagePerPass()});
     const requested=await jobs.requestPrivacyExportJob(context(),{requestId:randomUUID()});
-    expect(requested.coverage).toMatchObject({completeAccountExport:false,crossStore:{labs:'included',voice:'included'}});
+    expect(requested.coverage).toMatchObject({completeAccountExport:false,crossStore:{labs:'included',voice:'included',consistency:'live_read_per_item'}});
     expect(requested.coverage.included).toEqual(expect.arrayContaining(['lab_processing_jobs_and_documents','chat_and_voice_transcripts']));
     expect(requested.coverage.excluded).not.toContain('lab_processing_jobs_and_documents');
     const {view}=await drive(jobs,requested.jobId);
     expect(view.status).toBe('ready');
     const doc=await document(f);
-    expect((doc.manifest as {coverage:{crossStore:unknown}}).coverage.crossStore).toEqual({labs:'included',voice:'included'});
+    expect((doc.manifest as {coverage:{crossStore:unknown}}).coverage.crossStore).toEqual({labs:'included',voice:'included',consistency:'live_read_per_item'});
     expect((doc.records as unknown[]).length).toBe(view.recordCount);expect((doc.consents as unknown[]).length).toBe(view.consentCount);
     expect(doc.labs).toEqual([expect.objectContaining({jobId:'11111111-1111-4111-8111-111111111111'}),expect.objectContaining({jobId:'33333333-3333-4333-8333-333333333333'})]);
     expect(doc.voice).toEqual([{kind:'voice_job',jobId:'a'.repeat(64),state:'ready',transcript:'FICTIONAL TRANSCRIPT'}]);
@@ -831,7 +831,7 @@ describe('cross-store export coverage',()=>{
     const f=fakeStore(),cross=fakeCrossStore({labs:false,voice:true});
     const jobs=createOwnedPrivacyExportJobs((c,work)=>adapter().runPrivacy(c,work),{store:f.store,storage,partBytes:8192,crossStore:cross});
     const requested=await jobs.requestPrivacyExportJob(context(),{requestId:randomUUID()});
-    expect(requested.coverage.crossStore).toEqual({labs:'not_configured',voice:'included'});
+    expect(requested.coverage.crossStore).toEqual({labs:'not_configured',voice:'included',consistency:'live_read_per_item'});
     expect(requested.coverage.excluded).toContain('lab_processing_jobs_and_documents');
     expect((await drive(jobs,requested.jobId)).view.status).toBe('ready');
     const doc=await document(f);
@@ -843,7 +843,7 @@ describe('cross-store export coverage',()=>{
     await db.query("update clinical_private.owned_privacy_export_jobs set created_at=created_at-interval '2 hours'");
     const g=fakeStore(),plain=jobsWith(g.store);
     const plainJob=await plain.requestPrivacyExportJob(context(),{requestId:randomUUID()});
-    expect(plainJob.coverage.crossStore).toEqual({labs:'not_configured',voice:'not_configured'});
+    expect(plainJob.coverage.crossStore).toEqual({labs:'not_configured',voice:'not_configured',consistency:'live_read_per_item'});
     expect((await drive(plain,plainJob.jobId)).view.status).toBe('ready');
     expect(Object.keys(await document(g))).toEqual(['contract','manifest','records','consents']);
   });

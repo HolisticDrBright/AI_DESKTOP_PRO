@@ -4,7 +4,7 @@ import type {ProductionClinicalRequestContext} from './aws-identity-consent';
 import {clinicalUuid,ClinicalCoreDatabaseRejection,type ClinicalCoreTransaction} from './database';
 import {OwnedStorageError} from './owned-consumer-records';
 import {createOwnedPrivacyExport,PERSONAL_EXPORT_COVERAGE} from './owned-privacy-export';
-import type {CrossStoreExportReader,CrossStoreExportSection} from './aws-cross-store-export-reader';
+import {CROSS_STORE_CONSISTENCY,type CrossStoreExportReader,type CrossStoreExportSection} from './aws-cross-store-export-reader';
 
 /** Large personal-storage exports packaged server-side in owner-authorized,
  * bounded passes (migrations 20260920110000 and 20260920130000). A pass runs
@@ -54,14 +54,15 @@ export type PrivacyExportJobView={contract:typeof PRIVACY_EXPORT_JOB_CONTRACT;jo
   asOf:string;requestedAt:string;readyAt:string|null;expiresAt:string;recordCount:number;consentCount:number;exportedRecords:number;exportedConsents:number;
   parts:number;bytesWritten:number;byteLength:number|null;objectChecksum:string|null;failureCode:string|null;objectDeleted:boolean;version:number;
   retention:PrivacyExportRetentionState;coverage:PrivacyExportCoverage};
-export type PrivacyExportCoverage={completeAccountExport:false;included:string[];excluded:string[];crossStore:{labs:'included'|'not_configured';voice:'included'|'not_configured'}};
+export type PrivacyExportCoverage={completeAccountExport:false;included:string[];excluded:string[];crossStore:{labs:'included'|'not_configured';voice:'included'|'not_configured';consistency:typeof CROSS_STORE_CONSISTENCY}};
 export type ExportSection='records'|'consents'|'labs'|'voice'|'done';
 const SECTIONS:ExportSection[]=['records','consents','labs','voice','done'];
 /** What the prepared copy will hold, decided by which external stores this deployment names for the export reader. */
 export function privacyExportCoverage(crossStore?:CrossStoreExportReader):PrivacyExportCoverage{
   const labs=crossStore?.configured('labs')?'included':'not_configured',voice=crossStore?.configured('voice')?'included':'not_configured';
   const included=[...PERSONAL_EXPORT_COVERAGE.included,...(labs==='included'?['lab_processing_jobs_and_documents']:[]),...(voice==='included'?['chat_and_voice_transcripts']:[])];
-  return {completeAccountExport:false,included,excluded:PERSONAL_EXPORT_COVERAGE.excluded.filter(e=>!included.includes(e)),crossStore:{labs,voice}};
+  // Store sections are read live, item by item, at packaging time; only records and consents come from the one snapshot.
+  return {completeAccountExport:false,included,excluded:PERSONAL_EXPORT_COVERAGE.excluded.filter(e=>!included.includes(e)),crossStore:{labs,voice,consistency:CROSS_STORE_CONSISTENCY}};
 }
 type Run=<T>(context:ProductionClinicalRequestContext,work:(tx:ClinicalCoreTransaction)=>Promise<T>)=>Promise<T>;
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;

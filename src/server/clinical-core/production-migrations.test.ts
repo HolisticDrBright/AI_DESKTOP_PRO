@@ -31,7 +31,7 @@ function databaseFor(options: {
       }
       if (sql.startsWith("select\n      (select count(*)")) {
         return { rows: [{
-          table_count: 114,
+          table_count: 123,
           contract_count: 81,
           clinical_row_count: 0,
           ...options.verification,
@@ -258,7 +258,7 @@ describe("production clinical-core migrations", () => {
     expect(result).toEqual({
       applied: [migration.version],
       alreadyApplied: [],
-      tableCount: 114,
+      tableCount: 123,
       contractCount: 81,
       clinicalRowCount: 0,
     });

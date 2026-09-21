@@ -46,11 +46,10 @@ export function personalStorageCandidate(disabled) {
     HasAlarmRecipient: nonempty('AlarmTopicArn'),
     ExportDelivery: {'Fn::And':[{'Fn::Equals':[ref('PhiAllowed'),'true']},{'Fn::Equals':[ref('Activation'),'approved']},...required.map(nonempty),
       nonempty('ExportBucketName'),nonempty('ExportKmsKeyArn'),nonempty('ExportReviewSha256')]},
-    CrossStoreLabExport: {'Fn::And':[{'Fn::Equals':[ref('PhiAllowed'),'true']},{'Fn::Equals':[ref('Activation'),'approved']},...required.map(nonempty),
-      nonempty('ExportBucketName'),nonempty('ExportKmsKeyArn'),nonempty('ExportReviewSha256'),
+    // Fn::And accepts at most ten conditions: each store builds on the ExportDelivery condition rather than restating it.
+    CrossStoreLabExport: {'Fn::And':[{Condition:'ExportDelivery'},
       nonempty('ExportLabJobTableArn'),nonempty('ExportLabDocumentBucketName'),nonempty('ExportLabKmsKeyArn'),nonempty('CrossStoreExportReviewSha256')]},
-    CrossStoreVoiceExport: {'Fn::And':[{'Fn::Equals':[ref('PhiAllowed'),'true']},{'Fn::Equals':[ref('Activation'),'approved']},...required.map(nonempty),
-      nonempty('ExportBucketName'),nonempty('ExportKmsKeyArn'),nonempty('ExportReviewSha256'),
+    CrossStoreVoiceExport: {'Fn::And':[{Condition:'ExportDelivery'},
       nonempty('ExportVoiceJobTableArn'),nonempty('ExportTranscriptionBucketName'),nonempty('ExportVoiceKmsKeyArn'),nonempty('CrossStoreExportReviewSha256')]},
   };
   template.Rules = {ActivationRequiresReviewedConfiguration: {

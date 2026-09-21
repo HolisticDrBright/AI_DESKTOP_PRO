@@ -30,6 +30,7 @@ function condition(value:Json,parameters:Record<string,string>):unknown {
   if(value['Fn::Equals']){const v=condition(value['Fn::Equals'],parameters) as unknown[];return v[0]===v[1];}
   if(value['Fn::Not'])return !(condition(value['Fn::Not'],parameters) as unknown[])[0];
   if(value['Fn::And'])return (condition(value['Fn::And'],parameters) as unknown[]).every(Boolean);
+  if(typeof value.Condition==='string')return condition(candidate.Conditions[value.Condition],parameters);
   throw new Error('unsupported condition');
 }
 describe('functional personal storage deployment candidate',()=>{

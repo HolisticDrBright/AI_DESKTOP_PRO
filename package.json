@@ -64,6 +64,7 @@
     "build:aws-production-clinical-core-verifier": "node scripts/build-aws-production-clinical-core-verifier.mjs",
     "build:aws-production-migration-operator": "node scripts/build-aws-production-migration-operator.mjs",
     "build:aws-retention-service-release-operator": "node scripts/build-aws-retention-service-release-operator.mjs",
+    "build:aws-qualification-target-operator": "node scripts/build-aws-qualification-target-operator.mjs",
     "check:aws-production-clinical-core": "node scripts/check-aws-production-clinical-core.mjs",
     "check:aws-production-clinical-api": "node scripts/check-aws-production-clinical-api.mjs",
     "check:aws-production-sync-bridge": "node scripts/check-aws-production-sync-bridge.mjs",

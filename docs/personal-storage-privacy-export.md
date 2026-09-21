@@ -305,6 +305,34 @@ bucket prefix and key (`ReviewedCrossStoreLabExportReadOnly`, `ReviewedCrossStor
 Nothing is configured in any deployed stack. Locally verified: reader unit tests with fictional
 clients, and PGlite export runs with fictional store readers (both stores, one store, none).
 
+### September 21: byte bounds, page budgets and temporal coverage (audit repair)
+
+An independent audit reproduced a defect in the first reader: it checked the saved `byteSize`
+and then consumed the whole S3 object, so a 6 MiB + 1 byte object declared as one byte, and a
+smaller length mismatch, were both exported. The reader now streams every object through
+`readBoundedObject`: a `ContentLength` that is negative, non-integer, above the 6 MiB document
+bound (2 MiB for transcripts) or unequal to the saved size refuses before any byte is read; a
+body is consumed chunk by chunk up to the smaller of the bound and the declared size and destroyed
+the moment it runs over (`exceeds_inline_bound` or `length_mismatch`), falls short
+(`length_mismatch`) or the pass aborts (`cross_store_export_aborted`); the digest is checked on the
+received bytes. Saved sizes that are absent, zero, negative or fractional are listed as
+`size_metadata_invalid` and never fetched. A page also carries an inline budget (8 MiB by default,
+never below one document): before each read the declared size is added to what the page already
+holds, and a page that would exceed the budget returns a cursor that resumes inside the same listing
+after the last job and document emitted, so a job with many bounded documents is delivered across
+passes without duplicating or losing one. Voice pages resume by scan key and by the same budget.
+
+Temporal coverage is now disclosed rather than implied. The personal `records` and `consents`
+sections come from one snapshot at the job's cut-off; the `labs` and `voice` sections are read live
+from their stores at packaging time, item by item, and every store item carries its own `readAt`.
+The manifest and every job view say so: `coverage.crossStore.consistency` is
+`live_read_per_item`, and the V2 export card explains that only personal records and consents are
+one snapshot. A stable cross-store snapshot would need store-side versioning that the lab and voice
+tables do not have, so it is not claimed. Locally verified: reader unit tests with streamed
+fictional bodies (exact-limit success, over-declared and under-delivered objects, absent and
+inconsistent `ContentLength`, abort mid-read, page budget resume across a listing, voice paging)
+and PGlite export runs. Nothing hosted has exercised the bounded reads yet.
+
 This remains a bounded export, not complete account fulfillment: clinic records, identity and billing,
 device-only data, recovery archives, backups and audit logs stay excluded, and the coverage statement
 says so on every job.

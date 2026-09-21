@@ -18,6 +18,11 @@ export class ProductionClinicalCoreMigrationError extends Error {
   }
 }
 
+/** Application tables in clinical_core and clinical_audit (ledger excluded) after the full artifact. */
+export const PRODUCTION_APPLICATION_TABLE_COUNT = 123;
+/** Desktop contract functions the artifact must define. */
+export const PRODUCTION_CONTRACT_COUNT = 81;
+
 export type ProductionClinicalCoreMigrationResult = {
   applied: string[];
   alreadyApplied: string[];
@@ -279,7 +284,10 @@ export async function applyProductionClinicalCoreMigrations(
         + (select count(*) from clinical_private.recording_access_events)
       )::int as clinical_row_count`);
     const row = verification.rows[0];
-    if (!row || Number(row.table_count) !== 114 || Number(row.contract_count) !== 81
+    // Pinned to the built artifact (100 migrations): 123 application tables across clinical_core and clinical_audit and 81
+    // counted contracts. qualification-fixtures.database.test.ts applies the real artifact and holds these numbers; the
+    // previous pin (114) predated migrations 79 to 100 and would have rolled back every fresh apply as verification_failed.
+    if (!row || Number(row.table_count) !== PRODUCTION_APPLICATION_TABLE_COUNT || Number(row.contract_count) !== PRODUCTION_CONTRACT_COUNT
       || Number(row.clinical_row_count) !== 0) {
       throw new ProductionClinicalCoreMigrationError("verification_failed");
     }
