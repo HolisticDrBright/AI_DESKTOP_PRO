@@ -1,5 +1,6 @@
 import type {ApiGatewayV2Event,ApiGatewayV2Response} from './aws-identity-api';
 import {ownedConsumerIdentity} from './owned-consumer-api';
+import {assertQualificationConfiguration,markQualificationResponse,qualificationAdmits,type QualificationExecution} from './qualification-execution';
 import {OwnedStorageError,type createOwnedConsumerRecordsAdapter} from './owned-consumer-records';
 import {createOwnedVoiceAuthorization,voiceOwner} from './owned-voice-authorization';
 import {VoiceAuthorizationRevoked,type VoiceAuthorizationPolicy} from './voice-authorization';
@@ -10,6 +11,8 @@ import {CoreSubscriptionError,requireConsumerCore} from './core-subscription-gua
 export type OwnedVoiceConfiguration={
   consumerIssuer:string;consumerAudience:string;phiAllowed:boolean;activationState:'blocked'|'approved'|'draining';
   activationEvidenceSha256?:string;providerEvidenceSha256?:string;cleanupEvidenceSha256?:string;allowedScopes:readonly string[];
+  /** Qualification execution (docs/aws-qualification-target.md): present only with PHI disabled and activation blocked. */
+  qualification?:QualificationExecution;
 };
 const ROOT='/clinical-core/consumer/chat-transcription/jobs';
 export type OwnedVoiceEvent=ApiGatewayV2Event&{source?:string;rawPath?:string;requestContext?:ApiGatewayV2Event['requestContext']&{http?:{method?:string}}};
@@ -31,23 +34,27 @@ export function createOwnedVoiceApi(input:{
   if(c.activationState==='draining'&&!draining)throw new Error('owned_voice_cleanup_configuration_invalid');
   const featureEnabled=['ai_context','voice_transcription'].every(s=>c.allowedScopes.includes(s));
   if(c.phiAllowed&&!active)throw new Error('owned_voice_activation_invalid');
+  // Qualification execution: the designated fictional identities are served with every check below unchanged; never while draining.
+  const qualification=assertQualificationConfiguration({phiAllowed:c.phiAllowed,activation:c.activationState,qualification:c.qualification});
+  const serving=active||qualification!==undefined;
   const authorization=createOwnedVoiceAuthorization(input.adapter,input.now);
   const policy:VoiceAuthorizationPolicy={verify:job=>{
-    if(!active||!featureEnabled)throw new VoiceAuthorizationRevoked();
+    if(!serving||!featureEnabled)throw new VoiceAuthorizationRevoked();
     return authorization.policy.verify(job);
   }};
-  return async(event:OwnedVoiceEvent,budget:VoiceWorkBudget=createVoiceWorkBudget()):Promise<ApiGatewayV2Response>=>{
-    if((active||draining)&&event.source==='aws.events'&&!event.requestContext&&!event.rawPath&&!event.body){
+  const handle=async(event:OwnedVoiceEvent,budget:VoiceWorkBudget=createVoiceWorkBudget()):Promise<ApiGatewayV2Response>=>{
+    if((serving||draining)&&event.source==='aws.events'&&!event.requestContext&&!event.rawPath&&!event.body){
       try{const sweep=await input.service(policy,budget).sweep();return reply(200,{swept:true,sweep});}
       catch{throw new Error('owned_voice_sweep_retry_required');}
     }
-    if(!active)return reply(503,{error:draining?'voice_cleanup_only':'production_not_activated',phiAllowed:false});
+    if(!serving)return reply(503,{error:draining?'voice_cleanup_only':'production_not_activated',phiAllowed:false});
     try{
       const method=event.requestContext?.http?.method;
       const path=event.rawPath??'';
       const id=path.startsWith(ROOT+'/')?path.slice(ROOT.length+1):undefined;
       if(!(method==='POST'&&path===ROOT)&&!(id&&/^[a-f0-9]{64}$/.test(id)&&['GET','DELETE'].includes(method??'')))return reply(404,{error:'voice_job_not_found'});
       const context=ownedConsumerIdentity(event,c,'consent_management',input.now?.()??Date.now());
+      if(!active&&!qualificationAdmits(qualification,context.identitySubject))return reply(503,{error:'production_not_activated',phiAllowed:false});
       if(Object.keys(event.queryStringParameters??{}).length)throw invalid();
       // This DB call revalidates active identity, even on cancellation after withdrawal.
       await input.adapter().consentState(context,'voice_transcription');
@@ -74,6 +81,7 @@ export function createOwnedVoiceApi(input:{
       return reply([400,404].includes(status)?status:503,{error:status===404?'voice_job_not_found':status===400?'voice_request_refused':'chat_transcription_unavailable'});
     }
   };
+  return async(event:OwnedVoiceEvent,budget?:VoiceWorkBudget):Promise<ApiGatewayV2Response>=>markQualificationResponse(qualification,await handle(event,budget));
 }
 function parse(event:ApiGatewayV2Event):Record<string,unknown>{
   const type=Object.entries(event.headers??{}).find(([k])=>k.toLowerCase()==='content-type')?.[1];

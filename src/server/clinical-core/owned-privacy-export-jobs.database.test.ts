@@ -752,6 +752,11 @@ describe('retention sweep activation path (release row operator and a local swee
     await expect(runRetentionSweep(database,sweepConfiguration({enabled:false}),{store:f.store as never,emit})).rejects.toThrow('retention_sweep_configuration_invalid');
     await expect(runRetentionSweep(database,sweepConfiguration({phiAllowed:false}),{store:f.store as never,emit})).rejects.toThrow('retention_sweep_configuration_invalid');
     await expect(runRetentionSweep(database,sweepConfiguration({bucket:'Bad Bucket'}),{store:f.store as never,emit})).rejects.toThrow('retention_sweep_configuration_invalid');
+    // Qualification execution: PHI disabled, the designated fixture service identity only; the release requirement still applies.
+    const qualification={reviewSha256:'e'.repeat(64),accountId:'588966314750',databaseName:'clinical_core_qualification',identitySubjects:['subject-'+retentionService]};
+    expect(await runRetentionSweep(database,sweepConfiguration({phiAllowed:false,qualification}),{store:f.store as never,emit})).toMatchObject({ok:false,refused:'retention_service_release_required'});
+    await expect(runRetentionSweep(database,sweepConfiguration({phiAllowed:false,qualification:{...qualification,identitySubjects:['subject-someone-else']}}),{store:f.store as never,emit})).rejects.toThrow('retention_sweep_configuration_invalid');
+    await expect(runRetentionSweep(database,sweepConfiguration({phiAllowed:true,qualification}),{store:f.store as never,emit})).rejects.toThrow('qualification_execution_invalid');
     await jobs.cleanupPrivacyExportJobs(context(other),new AbortController().signal);
     const foreign=(await jobs.requestPrivacyExportJob(context(other),{requestId:randomUUID()})).jobId;
     await jobs.advancePrivacyExportJob(context(other),{jobId:foreign},20000,new AbortController().signal);

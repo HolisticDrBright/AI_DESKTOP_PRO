@@ -1,4 +1,5 @@
 import {createPrivacyExportRetention,type PrivacyExportBacklog} from './owned-privacy-export-job';
+import {assertQualificationConfiguration,qualificationAdmits,resolveQualificationExecution,type QualificationExecution} from './qualification-execution';
 import {createAwsPrivacyExportStore} from './aws-privacy-export-store';
 import {createRdsDataClinicalCoreDatabase} from './rds-data-database';
 import {clinicalUuid,type ClinicalCoreDatabase} from './database';
@@ -17,10 +18,14 @@ import {OwnedStorageError} from './owned-consumer-records';
  * the reviewed threshold. Nothing here reads export content. */
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 export type RetentionSweepConfiguration={enabled:boolean;evidenceSha256?:string;servicePersonId?:string;serviceSubject?:string;organizationId?:string;
-  bucket?:string;kmsKeyArn?:string;bucketOwner?:string;region?:string;phiAllowed:boolean};
+  bucket?:string;kmsKeyArn?:string;bucketOwner?:string;region?:string;phiAllowed:boolean;
+  /** Qualification execution (docs/aws-qualification-target.md): the sweep runs with PHI disabled only for a designated fixture service identity. */
+  qualification?:QualificationExecution};
 export function retentionSweepContext(c:RetentionSweepConfiguration):ProductionClinicalRequestContext{
-  if(!c.enabled||!c.phiAllowed||!/^[a-f0-9]{64}$/.test(c.evidenceSha256??'')||!UUID.test(c.servicePersonId??'')||!UUID.test(c.organizationId??'')
+  const qualification=assertQualificationConfiguration({phiAllowed:c.phiAllowed,activation:'blocked',qualification:c.qualification});
+  if(!c.enabled||!(c.phiAllowed||qualification)||!/^[a-f0-9]{64}$/.test(c.evidenceSha256??'')||!UUID.test(c.servicePersonId??'')||!UUID.test(c.organizationId??'')
     ||!/^[A-Za-z0-9:_-]{8,128}$/.test(c.serviceSubject??''))throw new Error('retention_sweep_configuration_invalid');
+  if(!c.phiAllowed&&!qualificationAdmits(qualification,c.serviceSubject??''))throw new Error('retention_sweep_configuration_invalid');
   return {actorPersonId:c.servicePersonId!,organizationId:c.organizationId!,identityPool:'workforce',identitySubject:c.serviceSubject!,purpose:'consent_management',
     environment:'production-clinical',dataClassification:'clinical_phi',containsPhi:true,realPatientData:true,productionBound:true};
 }
@@ -66,8 +71,10 @@ export function embeddedMetrics(r:RetentionSweepResult){
     OldestOverdueSeconds:b?.oldestOverdueSeconds??0,Reopened:r.reconcile?.reopened??0,Cleaned:r.cleanup?.cleaned??0,refused:r.refused,ok:r.ok};
 }
 export function retentionSweepConfigurationFromEnv(e:NodeJS.ProcessEnv):RetentionSweepConfiguration{
+  const qualification=resolveQualificationExecution(e,e.PRIVACY_OPERATIONS_ACTIVATION==='approved'?'approved':'blocked');
   return {enabled:e.RETENTION_SWEEP_ENABLED==='true',evidenceSha256:e.RETENTION_SWEEP_EVIDENCE_SHA256,servicePersonId:e.RETENTION_SERVICE_PERSON_ID,serviceSubject:e.RETENTION_SERVICE_SUBJECT,
-    organizationId:e.RETENTION_SERVICE_ORGANIZATION_ID,bucket:e.PERSONAL_EXPORT_BUCKET,kmsKeyArn:e.PERSONAL_EXPORT_KMS_KEY_ARN,bucketOwner:e.PERSONAL_EXPORT_BUCKET_OWNER,region:e.AWS_REGION,phiAllowed:e.PHI_ALLOWED==='true'};
+    organizationId:e.RETENTION_SERVICE_ORGANIZATION_ID,bucket:e.PERSONAL_EXPORT_BUCKET,kmsKeyArn:e.PERSONAL_EXPORT_KMS_KEY_ARN,bucketOwner:e.PERSONAL_EXPORT_BUCKET_OWNER,region:e.AWS_REGION,phiAllowed:e.PHI_ALLOWED==='true',
+    ...(qualification?{qualification}:{})};
 }
 export async function handler(){
   const e=process.env,c=retentionSweepConfigurationFromEnv(e);

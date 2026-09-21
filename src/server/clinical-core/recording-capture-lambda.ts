@@ -1,4 +1,5 @@
 import type { ApiGatewayV2Event } from './aws-identity-api';
+import { qualificationActivation, qualificationFrom } from './qualification-execution';
 import { createRecordingCaptureApi } from './recording-capture-api';
 import type { createRecordingCaptureRuntime } from './recording-capture-runtime';
 
@@ -16,7 +17,7 @@ export async function handler(event: ApiGatewayV2Event) {
     const e = process.env;
     cached = createRecordingCaptureApi({ configuration: {
       workforceIssuer: e.WORKFORCE_ISSUER ?? '', workforceAudience: e.WORKFORCE_AUDIENCE ?? '', organizationId: e.RECORDING_ORGANIZATION_ID ?? '',
-      phiAllowed: e.PHI_ALLOWED === 'true', activation: e.RECORDING_CAPTURE_ACTIVATION === 'approved' ? 'approved' : 'blocked',
+      phiAllowed: e.PHI_ALLOWED === 'true', activation: qualificationActivation(e.RECORDING_CAPTURE_ACTIVATION), ...qualificationFrom(e, e.RECORDING_CAPTURE_ACTIVATION),
       activationEvidenceSha256: e.RECORDING_CAPTURE_EVIDENCE_SHA256, mfaReviewSha256: e.WORKFORCE_MFA_REVIEW_SHA256,
       databaseReviewSha256: e.DATABASE_REVIEW_SHA256, captureReleaseId: e.RECORDING_CAPTURE_RELEASE_ID ?? '',
       captureReviewSha256: e.RECORDING_CAPTURE_REVIEW_SHA256, storageReviewSha256: e.RECORDING_STORAGE_REVIEW_SHA256,

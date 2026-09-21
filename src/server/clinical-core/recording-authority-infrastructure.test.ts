@@ -29,7 +29,17 @@ describe("recording authority deployable candidate", () => {
       expect(evaluate(template.Conditions.Active, { ...approved, [key]: defaults[key] })).toBe(false);
     const policies = template.Resources.Role.Properties.Policies as Json[];
     expect(JSON.stringify(policies[0])).not.toMatch(/rds-data:|secretsmanager:|kms:/);
-    expect((policies[1] as Record<string, Json>)["Fn::If"]).toEqual(["Active", expect.any(Object), { Ref: "AWS::NoValue" }]);
+    expect((policies[1] as Record<string, Json>)["Fn::If"]).toEqual(["Enabled", expect.any(Object), { Ref: "AWS::NoValue" }]);
+    // Enabled is the production activation or the qualification execution (docs/aws-qualification-target.md), both false by default;
+    // the qualification condition needs PHI disabled, activation blocked, the deploying synthetic account, a non-staging database
+    // and every reviewed input other than the production activation evidence.
+    expect(template.Conditions.Enabled).toEqual({ "Fn::Or": [{ Condition: "Active" }, { Condition: "Qualification" }] });
+    expect(template.Parameters.QualificationExecution.Default).toBe("disabled");
+    expect(JSON.stringify(template.Conditions.QualificationPosture)).toContain("173535830222");
+    expect(JSON.stringify(template.Conditions.Qualification)).toContain("DatabaseReviewSha256");
+    expect(JSON.stringify(template.Conditions.Qualification)).not.toContain("ActivationEvidenceSha256");
+    expect((template.Resources.Function.Properties.Environment as { Variables: Record<string, Json> }).Variables.QUALIFICATION_EXECUTION).toEqual({ "Fn::If": ["Qualification", "enabled", "disabled"] });
+    expect(JSON.stringify((template as unknown as { Rules: Json }).Rules)).toContain("QualificationRequiresSyntheticPosture");
     expect(JSON.stringify(policies)).not.toMatch(/s3:|transcribe:|bedrock:|"Resource":"\*"/);
     expect(JSON.stringify(policies)).toContain("kms:EncryptionContext:SecretARN");
   });

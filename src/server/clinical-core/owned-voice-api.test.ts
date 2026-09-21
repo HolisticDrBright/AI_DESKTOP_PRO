@@ -39,6 +39,20 @@ beforeEach(()=>{
     transcript:vi.fn().mockResolvedValue('Fictional voice.'),remove:vi.fn().mockResolvedValue(undefined)};
 });
 describe('independent production voice',()=>{
+  it('under qualification execution serves only the designated fictional identity with marked responses, never while draining, and refuses unsafe configuration',async()=>{
+    const qualification={reviewSha256:'e'.repeat(64),accountId:'588966314750',databaseName:'clinical_core_qualification',identitySubjects:['owned-consumer-a']};
+    const blocked={...config,phiAllowed:false,activationState:'blocked' as const,activationEvidenceSha256:undefined,providerEvidenceSha256:undefined};
+    const s=setup({...blocked,qualification});
+    const started=await s.handler(event('POST'));expect(started.statusCode).toBe(202);expect(started.headers['x-clinical-execution']).toBe('qualification');expect(rows.size).toBe(1);
+    const other=setup({...blocked,qualification});const e=event('POST');e.requestContext!.authorizer!.jwt!.claims!.sub='owned-consumer-b';
+    const refused=await other.handler(e);expect(refused.statusCode).toBe(503);expect(JSON.parse(refused.body)).toEqual({error:'production_not_activated',phiAllowed:false});expect(other.adapter).not.toHaveBeenCalled();
+    // The scheduled sweep runs under qualification (jobs exist only for admitted identities and re-verify consent per pass).
+    const swept=await s.handler({source:'aws.events'} as OwnedVoiceEvent);expect(swept.statusCode).toBe(200);expect(JSON.parse(swept.body).swept).toBe(true);
+    expect((await setup().handler(event('POST'))).headers['x-clinical-execution']).toBeUndefined();
+    expect(()=>setup({...config,qualification})).toThrow('qualification_execution_invalid');
+    expect(()=>setup({...blocked,activationState:'draining',cleanupEvidenceSha256:'c'.repeat(64),activationEvidenceSha256:'a'.repeat(64),providerEvidenceSha256:'b'.repeat(64),allowedScopes:[],qualification})).toThrow('qualification_execution_invalid');
+    expect(()=>setup({...blocked,qualification:{...qualification,accountId:'173535830222'}})).toThrow('qualification_execution_invalid');
+  });
   it('refuses new audio on account deletion without writing a job or calling its provider',async()=>{
     deletionBlocked=true;const s=setup(),response=await s.handler(event());
     expect(response.statusCode).toBe(403);expect(JSON.parse(response.body)).toEqual({error:'account_deletion_write_blocked'});

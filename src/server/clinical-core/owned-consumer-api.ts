@@ -6,11 +6,14 @@ import { OWNED_COLLECTIONS as CONSUMER_CLINICAL_COLLECTIONS,type OwnedCollection
 import {buildOwnedChatContext} from './owned-chat-context';
 import type {KnowledgeLoader} from './aws-reviewed-knowledge';
 import type {createOwnedPrivacyExportJobs} from './owned-privacy-export-job';
+import {assertQualificationConfiguration,markQualificationResponse,qualificationAdmits,type QualificationExecution} from './qualification-execution';
 
 export type OwnedConsumerApiConfiguration = {
   consumerIssuer:string; consumerAudience:string;
   phiAllowed:boolean; activationState:"blocked"|"approved";
   activationEvidenceSha256?:string; allowedScopes:readonly OwnedStorageScope[];
+  /** Qualification execution (docs/aws-qualification-target.md): present only with PHI disabled and activation blocked. */
+  qualification?:QualificationExecution;
 };
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const BASE="/clinical-core/consumer/personal";
@@ -39,8 +42,12 @@ export function createOwnedConsumerApi(input:{configuration:OwnedConsumerApiConf
   const active=c.phiAllowed===true && c.activationState==="approved" && /^[a-f0-9]{64}$/.test(c.activationEvidenceSha256??"")
     && c.allowedScopes.length>0 && c.allowedScopes.every(scope=>OWNED_STORAGE_SCOPES.includes(scope));
   if (c.phiAllowed && !active) throw new Error("owned_api_activation_invalid");
-  return async(event:ApiGatewayV2Event):Promise<ApiGatewayV2Response>=>{
-    if (!active) return response(503,{error:"production_not_activated",phiAllowed:false});
+  // Qualification execution serves the designated fictional identities only, with every check below unchanged; any other
+  // verified identity is refused exactly as when nothing is activated, and every response it produces is marked.
+  const qualification=assertQualificationConfiguration({phiAllowed:c.phiAllowed,activation:c.activationState,qualification:c.qualification});
+  if (qualification && !(c.allowedScopes.length>0 && c.allowedScopes.every(scope=>OWNED_STORAGE_SCOPES.includes(scope)))) throw new Error("qualification_execution_invalid");
+  const handle=async(event:ApiGatewayV2Event):Promise<ApiGatewayV2Response>=>{
+    if (!active && !qualification) return response(503,{error:"production_not_activated",phiAllowed:false});
     try {
       const route=event.routeKey??"";
       if (!(OWNED_CONSUMER_ROUTES as readonly string[]).includes(route)) return response(404,{error:"route_not_found"});
@@ -48,6 +55,7 @@ export function createOwnedConsumerApi(input:{configuration:OwnedConsumerApiConf
       const privacy=route.includes('/privacy-export')||route.includes('/privacy-request');
       const posture=route.endsWith('/posture');
       const context=ownedConsumerIdentity(event,c,consent||privacy||posture?"consent_management":"clinical_data",input.now?.()??Date.now());
+      if (!active && !qualificationAdmits(qualification,context.identitySubject)) return response(503,{error:"production_not_activated",phiAllowed:false});
       const post=route.startsWith("POST ");
       const q=event.queryStringParameters??{};
       if (post && Object.keys(q).length || !post && event.body) invalid();
@@ -174,6 +182,7 @@ export function createOwnedConsumerApi(input:{configuration:OwnedConsumerApiConf
       return response(503,{error:"storage_unavailable"});
     }
   };
+  return async(event:ApiGatewayV2Event):Promise<ApiGatewayV2Response>=>markQualificationResponse(qualification,await handle(event));
 }
 export function ownedConsumerIdentity(event:ApiGatewayV2Event,c:Pick<OwnedConsumerApiConfiguration,'consumerIssuer'|'consumerAudience'>,purpose:ProductionClinicalRequestContext["purpose"],now:number):ProductionClinicalRequestContext {
   const v=event.requestContext?.authorizer?.jwt?.claims??{};

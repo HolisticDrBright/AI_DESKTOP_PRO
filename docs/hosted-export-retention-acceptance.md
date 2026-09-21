@@ -28,6 +28,12 @@ it left behind (`retained`), and an evidence hash over everything but timestamps
 step to pass or be skipped for a stated reason and the ready step to have passed; a run against a
 deployment that refuses is therefore never `ok`.
 
+The report also records which execution answered (`execution`: `production`, `qualification`, `mixed`
+or `unobserved`) from the `x-clinical-execution` marker that qualification candidates send on every
+response (`docs/aws-qualification-target.md`), and `productionActivationEvidence`, which is true only
+for a run answered by production responses alone. Both are inside the evidence hash: a qualification
+run is the qualification record and never production activation evidence.
+
 ## Boundaries
 
 - The runner (`scripts/run-aws-export-retention-acceptance.ps1`) pins the account with

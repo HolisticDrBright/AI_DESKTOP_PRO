@@ -1,5 +1,6 @@
 import type {ApiGatewayV2Event,ApiGatewayV2Response} from './aws-identity-api';
 import {ownedConsumerIdentity} from './owned-consumer-api';
+import {assertQualificationConfiguration,markQualificationResponse,qualificationAdmits,type QualificationExecution} from './qualification-execution';
 import {OwnedStorageError,type createOwnedConsumerRecordsAdapter} from './owned-consumer-records';
 import {createOwnedLabAuthorization,LabAuthorizationRevoked,LAB_AUTHORIZATION_SCOPES} from './owned-lab-authorization';
 import {createLabAnalysisApi,type ApiEvent,type Claims,type LabApiOptions} from './aws-lab-analysis-api';
@@ -15,6 +16,8 @@ import {publishLabResult,retractLabPublication} from './owned-lab-publication';
 export type OwnedLabConfiguration={
   consumerIssuer:string;consumerAudience:string;phiAllowed:boolean;activationState:'blocked'|'approved';
   activationEvidenceSha256?:string;providerEvidenceSha256?:string;allowedScopes:readonly string[];
+  /** Qualification execution (docs/aws-qualification-target.md): present only with PHI disabled and activation blocked. */
+  qualification?:QualificationExecution;
 };
 const ROOT='/clinical-core/consumer/labs';
 export type OwnedLabEvent=ApiGatewayV2Event&ApiEvent&{rawPath?:string;requestContext?:ApiGatewayV2Event['requestContext']&{http?:{method?:string}}};
@@ -34,6 +37,9 @@ export function createOwnedLabApi(input:{
   const active=c.phiAllowed===true&&c.activationState==='approved'
     &&[c.activationEvidenceSha256,c.providerEvidenceSha256].every(v=>/^[a-f0-9]{64}$/.test(v??''));
   if(c.phiAllowed&&!active)throw new Error('owned_lab_activation_invalid');
+  // Qualification execution: the designated fictional identities are served with every check below unchanged.
+  const qualification=assertQualificationConfiguration({phiAllowed:c.phiAllowed,activation:c.activationState,qualification:c.qualification});
+  const serving=active||qualification!==undefined;
   const featureEnabled=LAB_AUTHORIZATION_SCOPES.every(s=>c.allowedScopes.includes(s));
   const now=input.now??(()=>Date.now());
   const authorization=createOwnedLabAuthorization(input.adapter,now);
@@ -49,12 +55,12 @@ export function createOwnedLabApi(input:{
       await input.adapter().consentState(context,'lab_history');
     },
     capture:async event=>{
-      if(!active||!featureEnabled)throw new LabAuthorizationRevoked();
+      if(!serving||!featureEnabled)throw new LabAuthorizationRevoked();
       return authorization.capture(ownedConsumerIdentity(event as ApiGatewayV2Event,c,'consent_management',now()));
     },
-    policy:{verify:job=>{if(!active||!featureEnabled)throw new LabAuthorizationRevoked();return authorization.policy.verify(job);}},
+    policy:{verify:job=>{if(!serving||!featureEnabled)throw new LabAuthorizationRevoked();return authorization.policy.verify(job);}},
     publish:async job=>{
-      if(!active||!featureEnabled)throw new LabAuthorizationRevoked();
+      if(!serving||!featureEnabled)throw new LabAuthorizationRevoked();
       // Publication re-verifies the job's consent binding before the personal copy is written.
       await authorization.policy.verify(job);
       return publishLabResult({job,now,adapter:()=>{
@@ -64,7 +70,7 @@ export function createOwnedLabApi(input:{
       }});
     },
     retract:async job=>{
-      if(!active||!featureEnabled)throw new LabAuthorizationRevoked();
+      if(!serving||!featureEnabled)throw new LabAuthorizationRevoked();
       // Deletion does not re-verify the job's consent binding: a withdrawn
       // consent must not stop the owner removing old work. The tombstone write
       // itself binds the revision and reports a retained copy when refused.
@@ -76,12 +82,13 @@ export function createOwnedLabApi(input:{
     },
     requireCore:input.requireCore??requireConsumerCore,
   });
-  return async(event:OwnedLabEvent):Promise<ApiGatewayV2Response>=>{
-    if(!active)return reply(503,{error:'production_not_activated',phiAllowed:false});
+  const handle=async(event:OwnedLabEvent):Promise<ApiGatewayV2Response>=>{
+    if(!serving)return reply(503,{error:'production_not_activated',phiAllowed:false});
     try{
       const path=event.rawPath??'';
       if(path!==ROOT&&!path.startsWith(ROOT+'/'))return reply(404,{error:'lab_analysis_request_refused'});
       const context=ownedConsumerIdentity(event,c,'clinical_data',now());
+      if(!active&&!qualificationAdmits(qualification,context.identitySubject))return reply(503,{error:'production_not_activated',phiAllowed:false});
       if(!featureEnabled)return reply(403,{error:'feature_scope_not_enabled'});
       // This DB call revalidates the active database identity before any job
       // row is read, even for inventory listing and cancellation.
@@ -99,6 +106,7 @@ export function createOwnedLabApi(input:{
       return reply(503,{error:'lab_analysis_unavailable'});
     }
   };
+  return async(event:OwnedLabEvent):Promise<ApiGatewayV2Response>=>markQualificationResponse(qualification,await handle(event));
 }
 function reply(statusCode:number,data:unknown):ApiGatewayV2Response{
   return {statusCode,headers:{'content-type':'application/json','cache-control':'no-store','x-content-type-options':'nosniff'},body:JSON.stringify({data})};

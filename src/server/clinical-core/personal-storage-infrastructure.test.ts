@@ -30,6 +30,7 @@ function condition(value:Json,parameters:Record<string,string>):unknown {
   if(value['Fn::Equals']){const v=condition(value['Fn::Equals'],parameters) as unknown[];return v[0]===v[1];}
   if(value['Fn::Not'])return !(condition(value['Fn::Not'],parameters) as unknown[])[0];
   if(value['Fn::And'])return (condition(value['Fn::And'],parameters) as unknown[]).every(Boolean);
+  if(value['Fn::Or'])return (condition(value['Fn::Or'],parameters) as unknown[]).some(Boolean);
   if(typeof value.Condition==='string')return condition(candidate.Conditions[value.Condition],parameters);
   throw new Error('unsupported condition');
 }
@@ -43,7 +44,9 @@ describe('functional personal storage deployment candidate',()=>{
     const policies=candidate.Resources.Role.Properties.Policies as Json[];
     expect(policies).toHaveLength(5);
     expect(JSON.stringify(policies[0])).not.toMatch(/rds-data:|secretsmanager:|kms:|s3:/);
-    expect((policies[1] as Record<string,Json>)['Fn::If']).toEqual(['Active',expect.any(Object),{Ref:'AWS::NoValue'}]);
+    // Database access rides Enabled: the production activation or the qualification execution, both false by default.
+    expect((policies[1] as Record<string,Json>)['Fn::If']).toEqual(['Enabled',expect.any(Object),{Ref:'AWS::NoValue'}]);
+    expect(condition(candidate.Conditions.Enabled,defaults)).toBe(false);
     // Export delivery is a second, separately reviewed condition: no bucket, key or review hash means no S3 or KMS statement at all.
     expect((policies[2] as Record<string,Json>)['Fn::If']).toEqual(['ExportDelivery',expect.any(Object),{Ref:'AWS::NoValue'}]);
     expect(JSON.stringify(policies[1])).not.toMatch(/s3:/);
@@ -61,6 +64,31 @@ describe('functional personal storage deployment candidate',()=>{
     for(const key of ['ExportBucketName','ExportKmsKeyArn','ExportReviewSha256','PhiAllowed','Activation'])expect(condition(candidate.Conditions.ExportDelivery,{...delivery,[key]:defaults[key]}),key).toBe(false);
     expect(JSON.stringify(candidate.Rules.ExportDeliveryRequiresReview)).toContain('ExportReviewSha256');
     for(const key of ['Activation','ActivationEvidenceSha256','DatabaseReviewSha256','AllowedScopes','AlarmTopicArn'])expect(JSON.stringify(candidate.Rules)).toContain(key);
+  });
+  it('enables qualification execution only with PHI disabled, activation blocked, the deploying synthetic account, a qualification database and every reviewed input, and never together with production activation',()=>{
+    const defaults=Object.fromEntries(Object.entries(candidate.Parameters).map(([k,v])=>[k,v.Default??'']));
+    expect(candidate.Parameters.QualificationExecution.Default).toBe('disabled');
+    const qualified={...defaults,'AWS::AccountId':'588966314750',QualificationExecution:'enabled',QualificationReviewSha256:'e'.repeat(64),QualificationAccountId:'588966314750',
+      QualificationIdentitySubjects:'consumer-sub-00000001,workforce-sub-00000001',DatabaseName:'clinical_core_qualification',DatabaseReviewSha256:'b'.repeat(64),AllowedScopes:'lab_history',AlarmTopicArn:'arn:aws:sns:us-east-2:588966314750:alarms'};
+    expect(condition(candidate.Conditions.Qualification,qualified)).toBe(true);
+    expect(condition(candidate.Conditions.Enabled,qualified)).toBe(true);
+    expect(condition(candidate.Conditions.Active,qualified)).toBe(false);
+    for(const key of ['QualificationExecution','QualificationReviewSha256','QualificationAccountId','QualificationIdentitySubjects','DatabaseReviewSha256','AllowedScopes','AlarmTopicArn'])
+      expect(condition(candidate.Conditions.Qualification,{...qualified,[key]:defaults[key]}),key).toBe(false);
+    // The staging database, another deploying account, the production account, PHI allowed or an approved activation all disable it.
+    expect(condition(candidate.Conditions.Qualification,{...qualified,DatabaseName:'clinical_core'})).toBe(false);
+    expect(condition(candidate.Conditions.Qualification,{...qualified,'AWS::AccountId':'123456789012'})).toBe(false);
+    expect(condition(candidate.Conditions.Qualification,{...qualified,'AWS::AccountId':'173535830222',QualificationAccountId:'173535830222',AlarmTopicArn:'arn:aws:sns:us-east-2:173535830222:alarms'})).toBe(false);
+    expect(condition(candidate.Conditions.Qualification,{...qualified,PhiAllowed:'true'})).toBe(false);
+    expect(condition(candidate.Conditions.Qualification,{...qualified,Activation:'approved'})).toBe(false);
+    // Export delivery under qualification needs the same reviewed export inputs as production.
+    expect(condition(candidate.Conditions.ExportDelivery,qualified)).toBe(false);
+    expect(condition(candidate.Conditions.ExportDelivery,{...qualified,ExportBucketName:'fictional-export-bucket',ExportKmsKeyArn:'arn:aws:kms:us-east-2:588966314750:key/11111111-1111-4111-8111-111111111111',ExportReviewSha256:'c'.repeat(64)})).toBe(true);
+    const env=candidate.Resources.Function.Properties.Environment as {Variables:Record<string,Json>};
+    expect(env.Variables.QUALIFICATION_EXECUTION).toEqual({'Fn::If':['Qualification','enabled','disabled']});
+    expect(env.Variables.QUALIFICATION_IDENTITY_SUBJECTS).toEqual({'Fn::If':['Qualification',{Ref:'QualificationIdentitySubjects'},'']});
+    expect(JSON.stringify(candidate.Rules.QualificationRequiresSyntheticPosture)).toContain('173535830222');
+    for(const key of ['PhiAllowed','Activation','QualificationReviewSha256','QualificationAccountId','QualificationIdentitySubjects','DatabaseName'])expect(JSON.stringify(candidate.Rules.QualificationRequiresSyntheticPosture)).toContain(key);
   });
   it('grants cross-store export reads only with a complete, reviewed store configuration on top of export delivery, read-only and bound to the named stores',()=>{
     const policies=candidate.Resources.Role.Properties.Policies as Json[];

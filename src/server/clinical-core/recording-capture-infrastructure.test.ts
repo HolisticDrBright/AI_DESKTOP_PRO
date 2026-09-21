@@ -40,7 +40,7 @@ describe('independently blocked recording capture deployment', () => {
       expect(evaluate(template.Conditions.Active, { ...approved, [key]: defaults[key] })).toBe(false);
     const policies = template.Resources.Role.Properties.Policies as Json[];
     expect(JSON.stringify(policies[0])).not.toMatch(/rds-data:|s3:|kms:|secretsmanager:/);
-    expect((policies[1] as Record<string, Json>)['Fn::If']).toEqual(['Active', expect.any(Object), { Ref: 'AWS::NoValue' }]);
+    expect((policies[1] as Record<string, Json>)['Fn::If']).toEqual(['Enabled', expect.any(Object), { Ref: 'AWS::NoValue' }]);
     const text = JSON.stringify(policies);
     expect(text).not.toMatch(/s3:Delete|s3:List|s3:\*|kms:\*|transcribe:|bedrock:|"Resource":"\*"/);
     expect(text).toContain('${RecordingBucket}/encounter-recordings/${OrganizationId}/*');
@@ -56,10 +56,10 @@ describe('independently blocked recording capture deployment', () => {
     expect(Object.values(r).filter(v => v.Type === 'AWS::ApiGatewayV2::Route')).toHaveLength(6);
     expect(Object.values(r).some(v => v.Type === 'AWS::Lambda::Url')).toBe(false);
     for (const action of ['readiness', 'start', 'state', 'command', 'segment', 'reconcile']) {
-      expect(r['Route_' + action].Properties).toMatchObject({ RouteKey: 'POST /clinical-core/workforce/encounter-recording/' + action,
+      expect(r['Route' + action[0].toUpperCase() + action.slice(1)].Properties).toMatchObject({ RouteKey: 'POST /clinical-core/workforce/encounter-recording/' + action,
         AuthorizationType: 'JWT', AuthorizerId: { Ref: 'Authorizer' } });
-      expect(JSON.stringify(r['Invoke_' + action].Properties.SourceArn)).toContain('/POST/clinical-core/workforce/encounter-recording/' + action);
-      expect(r['Invoke_' + action].Properties.SourceAccount).toEqual({ Ref: 'AWS::AccountId' });
+      expect(JSON.stringify(r['Invoke' + action[0].toUpperCase() + action.slice(1)].Properties.SourceArn)).toContain('/POST/clinical-core/workforce/encounter-recording/' + action);
+      expect(r['Invoke' + action[0].toUpperCase() + action.slice(1)].Properties.SourceAccount).toEqual({ Ref: 'AWS::AccountId' });
     }
     expect(r.Authorizer.Properties.JwtConfiguration).toEqual({ Issuer: { Ref: 'WorkforceIssuer' }, Audience: [{ Ref: 'WorkforceAudience' }] });
     expect(r.Function.Properties.Code).toMatchObject({ S3ObjectVersion: { Ref: 'CodeVersion' } });

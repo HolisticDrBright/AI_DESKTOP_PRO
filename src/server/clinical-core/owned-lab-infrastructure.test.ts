@@ -16,7 +16,7 @@ describe('production lab release candidate',()=>{
     expect(env.CLINICAL_DATABASE_CLUSTER_ARN).toEqual({Ref:'DatabaseClusterArn'});
     expect(env.CLINICAL_DATABASE_SECRET_ARN).toEqual({Ref:'DatabaseSecretArn'});
     const role=template.Resources.LabCleanupRole.Properties.Policies[1]['Fn::If'];
-    expect(role[0]).toBe('Active');
+    expect(role[0]).toBe('Enabled');
     expect(role[1].PolicyDocument.Statement).toContainEqual({Effect:'Allow',Action:['rds-data:BeginTransaction','rds-data:CommitTransaction','rds-data:RollbackTransaction','rds-data:ExecuteStatement'],Resource:{Ref:'DatabaseClusterArn'}});
     expect(role[1].PolicyDocument.Statement).toContainEqual({Effect:'Allow',Action:'secretsmanager:GetSecretValue',Resource:{Ref:'DatabaseSecretArn'}});
     expect(role[1].PolicyDocument.Statement).toContainEqual({Effect:'Allow',Action:'kms:Decrypt',Resource:{Ref:'SecretKmsKeyArn'},Condition:{StringEquals:{
@@ -30,13 +30,23 @@ describe('production lab release candidate',()=>{
       const policies=template.Resources[role].Properties.Policies as Policy[];
       expect(policies[0].PolicyName).toBe('LogsOnly');
       expect(policies[0].PolicyDocument!.Statement.flatMap(s=>s.Action)).toEqual(['logs:CreateLogStream','logs:PutLogEvents']);
-      expect(policies.slice(1).every(p=>p['Fn::If']?.[0]==='Active')).toBe(true);
+      expect(policies.slice(1).every(p=>p['Fn::If']?.[0]==='Enabled')).toBe(true);
     }
     expect(JSON.stringify(template.Rules.ActivationRequiresReviewedConfiguration)).toContain('reviewed_release');
     for(const name of ['ProviderEvidenceSha256','AlarmTopicArn','BillingApiOrigin','DatabaseClusterArn'])expect(JSON.stringify(template.Rules)).toContain(name);
     expect(JSON.stringify(template.Resources)).not.toMatch(/synthetic-labs|synthetic-lab-|synthetic_only|synthetic-staging|SyntheticSupabase/);
-    for(const name of ['LabCleanupSweepRule','LabCleanupObjectRule'])expect(template.Resources[name].Properties.State['Fn::If']).toEqual(['Active','ENABLED','DISABLED']);
-    for(const name of ['LabCancellationPolicy','LabInventoryQueryPolicy'])expect(template.Resources[name].Condition).toBe('Active');
+    for(const name of ['LabCleanupSweepRule','LabCleanupObjectRule'])expect(template.Resources[name].Properties.State['Fn::If']).toEqual(['Enabled','ENABLED','DISABLED']);
+    for(const name of ['LabCancellationPolicy','LabInventoryQueryPolicy'])expect(template.Resources[name].Condition).toBe('Enabled');
+    // Enabled is the production activation or the qualification execution; the qualification condition requires PHI disabled,
+    // activation blocked, the deploying synthetic account, a non-staging database and every reviewed input, and is disabled by default.
+    expect(template.Conditions.Enabled).toEqual({'Fn::Or':[{Condition:'Active'},{Condition:'Qualification'}]});
+    expect(template.Parameters.QualificationExecution.Default).toBe('disabled');
+    expect(JSON.stringify(template.Conditions.QualificationPosture)).toContain('"clinical_core"');expect(JSON.stringify(template.Conditions.QualificationPosture)).toContain('173535830222');
+    expect(JSON.stringify(template.Conditions.QualificationPosture)).toContain('{"Ref":"AWS::AccountId"}');
+    expect(JSON.stringify(template.Conditions.Qualification)).toContain('QualificationIdentitySubjects');
+    expect(JSON.stringify(template.Rules.QualificationRequiresSyntheticPosture)).toContain('reviewed_release');
+    expect(template.Resources.LabApiFunction.Properties.Environment.Variables.QUALIFICATION_EXECUTION).toEqual({'Fn::If':['Qualification','enabled','disabled']});
+    expect(template.Resources.LabWorkerFunction.Properties.Environment.Variables.QUALIFICATION_IDENTITY_SUBJECTS).toEqual({'Fn::If':['Qualification',{Ref:'QualificationIdentitySubjects'},'']});
   });
   it('keeps only consumer JWT routes and binds identity to explicit production pool parameters',()=>{
     const routes=Object.values(template.Resources as Record<string,{Type:string;Properties:{RouteKey:string;AuthorizationType:string}}>).filter(r=>r.Type==='AWS::ApiGatewayV2::Route');

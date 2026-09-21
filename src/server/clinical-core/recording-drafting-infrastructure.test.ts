@@ -40,7 +40,7 @@ describe('independently blocked recording drafting deployment', () => {
       expect(evaluate(template.Conditions.Active, { ...approved, [key]: defaults[key] })).toBe(false);
     const policies = template.Resources.Role.Properties.Policies as Json[];
     expect(JSON.stringify(policies[0])).not.toMatch(/rds-data:|s3:|kms:|secretsmanager:|transcribe:/);
-    expect((policies[1] as Record<string, Json>)['Fn::If']).toEqual(['Active', expect.any(Object), { Ref: 'AWS::NoValue' }]);
+    expect((policies[1] as Record<string, Json>)['Fn::If']).toEqual(['Enabled', expect.any(Object), { Ref: 'AWS::NoValue' }]);
     const text = JSON.stringify(policies);
     expect(text).not.toMatch(/s3:Delete|s3:List|s3:\*|kms:\*|bedrock:|comprehend|secretsmanager:\*|"Resource":"\*"/);
     expect(text).toContain('${RecordingBucket}/encounter-recordings/${OrganizationId}/*');

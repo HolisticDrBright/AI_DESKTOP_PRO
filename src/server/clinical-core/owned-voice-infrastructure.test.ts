@@ -12,7 +12,11 @@ describe('production voice release candidate',()=>{
     expect(template.Parameters.AllowedScopes.Default).toBe('');
     expect(template.Resources.VoiceJobRole.Properties.Policies[0].PolicyDocument.Statement.flatMap((s:{Action:string[]})=>s.Action))
       .toEqual(['logs:CreateLogStream','logs:PutLogEvents']);
-    expect(template.Resources.VoiceJobRole.Properties.Policies[1]['Fn::If'][0]).toBe('Active');
+    expect(template.Resources.VoiceJobRole.Properties.Policies[1]['Fn::If'][0]).toBe('Enabled');
+    expect(template.Conditions.Enabled).toEqual({'Fn::Or':[{Condition:'Active'},{Condition:'Qualification'}]});
+    expect(template.Parameters.QualificationExecution.Default).toBe('disabled');
+    expect(JSON.stringify(template.Conditions.QualificationPosture)).toContain('173535830222');
+    expect(template.Resources.VoiceJobFunction.Properties.Environment.Variables.QUALIFICATION_EXECUTION).toEqual({'Fn::If':['Qualification','enabled','disabled']});
     expect(template.Resources.VoiceSweepRule.Properties.State['Fn::If']).toEqual(['SweepEnabled','ENABLED','DISABLED']);
     expect(JSON.stringify(template.Rules)).toContain('ProviderEvidenceSha256');
     expect(JSON.stringify(template.Rules)).toContain('AlarmTopicArn');
@@ -39,7 +43,7 @@ describe('production voice release candidate',()=>{
         'kms:ViaService':{'Fn::Sub':'secretsmanager.${AWS::Region}.amazonaws.com'},'kms:EncryptionContext:SecretARN':{Ref:'DatabaseSecretArn'}}}});
     expect(JSON.stringify(template.Rules.DrainRequiresReviewedCleanup)).toContain('DatabaseClusterArn');
     expect(JSON.stringify(template.Rules.DrainRequiresReviewedCleanup)).toContain('SecretKmsKeyArn');
-    expect(template.Conditions.SweepEnabled).toEqual({'Fn::Or':[{Condition:'Active'},{Condition:'Draining'}]});
+    expect(template.Conditions.SweepEnabled).toEqual({'Fn::Or':[{Condition:'Enabled'},{Condition:'Draining'}]});
   });
   it('never applies native expiry to personal jobs, audio or transcript versions',()=>{
     expect(template.Resources.TranscriptionBucket.Properties.LifecycleConfiguration).toBeUndefined();

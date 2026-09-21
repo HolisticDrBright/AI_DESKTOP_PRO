@@ -11,6 +11,22 @@ const event=(patch:Record<string,unknown>={}):ApiGatewayV2Event=>({routeKey:PRIV
     'custom:person_id':uuid,'custom:organization_id':uuid,'custom:production_bound':'true',email_verified:'true',
     exp:time+600,iat:time,auth_time:time,...patch}}}}});
 describe('privacy workforce API claims and activation',()=>{
+  it('under qualification execution serves only the designated fictional workforce identity, admits sub-activations on their own evidence, marks responses and refuses unsafe configuration',async()=>{
+    const qualification={reviewSha256:'e'.repeat(64),accountId:'588966314750',databaseName:'clinical_core_qualification',identitySubjects:['workforce-subject']};
+    const blocked:PrivacyOperationsConfiguration={...config,phiAllowed:false,activation:'blocked',evidenceSha256:undefined};
+    const call=vi.fn().mockResolvedValue({items:[]});
+    const handler=createPrivacyOperationsApi({configuration:{...blocked,qualification,personalPurgeEnabled:true,personalPurgeEvidenceSha256:'c'.repeat(64)},operations:()=>call,now:()=>now});
+    const listed=await handler(event());expect(listed.statusCode).toBe(200);expect(listed.headers['x-clinical-execution']).toBe('qualification');expect(call).toHaveBeenCalledTimes(1);
+    expect((await handler({...event(),body:JSON.stringify({action:'previewPersonalPurge',privacyRequestId:uuid,policyVersion:'fictional'})})).statusCode).toBe(200);
+    const refused=await handler(event({sub:'real-practitioner-0001'}));
+    expect(refused.statusCode).toBe(503);expect(JSON.parse(refused.body)).toEqual({error:'production_not_activated',phiAllowed:false});expect(call).toHaveBeenCalledTimes(2);
+    expect((await handler(event({'custom:synthetic_attested':'true'}))).statusCode).toBe(401);
+    expect((await createPrivacyOperationsApi({configuration:config,operations:()=>call,now:()=>now})(event())).headers['x-clinical-execution']).toBeUndefined();
+    expect(()=>createPrivacyOperationsApi({configuration:{...config,qualification},operations:()=>call})).toThrow('qualification_execution_invalid');
+    expect(()=>createPrivacyOperationsApi({configuration:{...blocked,activation:'approved',qualification},operations:()=>call})).toThrow('qualification_execution_invalid');
+    expect(()=>createPrivacyOperationsApi({configuration:{...blocked,qualification:{...qualification,accountId:'173535830222'}},operations:()=>call})).toThrow('qualification_execution_invalid');
+    expect(()=>createPrivacyOperationsApi({configuration:{...blocked,qualification,personalPurgeEnabled:true},operations:()=>call})).toThrow('privacy_purge_activation_invalid');
+  });
   it('keeps purge separately disabled and refuses unreviewed activation before opening the database',async()=>{
     const operations=vi.fn();
     const handler=createPrivacyOperationsApi({configuration:config,operations,now:()=>now});

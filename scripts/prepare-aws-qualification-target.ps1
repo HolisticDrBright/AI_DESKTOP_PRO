@@ -19,8 +19,15 @@ param(
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
+# All commands, including the direct migration-operator path, must enforce the
+# qualification name boundary before any network, build, or migration operation.
+if ($QualificationDatabaseName -cnotmatch '^[a-z][a-z0-9_]{0,62}$' -or
+    -not $QualificationDatabaseName.Contains('qualification') -or
+    $QualificationDatabaseName -in @('clinical_core','postgres','rdsadmin','template0','template1')) {
+  throw 'qualification_name_refused'
+}
 if (-not (Get-Command aws -ErrorAction SilentlyContinue)) { throw "AWS CLI is required. Nothing was attempted." }
-if ($Command -ne 'inspect' -and -not $ConfirmQualificationTarget) { throw "Refusing $Command: pass -ConfirmQualificationTarget after reading docs/aws-qualification-target.md." }
+if ($Command -ne 'inspect' -and -not $ConfirmQualificationTarget) { throw "Refusing ${Command}: pass -ConfirmQualificationTarget after reading docs/aws-qualification-target.md." }
 if ($Command -eq 'fixtures' -and -not $SyntheticManifestPath) { throw "fixtures needs -SyntheticManifestPath (the reviewed synthetic acceptance manifest)." }
 $deployment = Get-Content -Raw -LiteralPath $DeploymentManifestPath | ConvertFrom-Json
 if ($deployment.aws_account_id -eq '173535830222') { throw "The production account is never a qualification target." }

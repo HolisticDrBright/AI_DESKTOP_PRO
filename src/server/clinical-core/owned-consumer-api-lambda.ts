@@ -6,6 +6,7 @@ import {loadReviewedKnowledge} from './aws-reviewed-knowledge';
 import {createOwnedPrivacyExportJobs} from './owned-privacy-export-job';
 import {createAwsPrivacyExportStore} from './aws-privacy-export-store';
 import {createAwsCrossStoreExportReader} from './aws-cross-store-export-reader';
+import {resolveQualificationExecution} from './qualification-execution';
 let cached:ReturnType<typeof createOwnedConsumerApi>|undefined;
 /** Export delivery exists only with a reviewed bucket, key and owner account; otherwise the job routes refuse. */
 function exportDelivery(env:NodeJS.ProcessEnv){
@@ -34,7 +35,9 @@ export async function handler(event:ApiGatewayV2Event){
     if(scopes.some(scope=>!OWNED_STORAGE_SCOPES.includes(scope as OwnedStorageScope)))throw new Error('owned_storage_configuration_invalid');
     const delivery=exportDelivery(env);
     const database=()=>createRdsDataClinicalCoreDatabase({clusterArn:env.CLINICAL_DATABASE_CLUSTER_ARN??'',secretArn:env.CLINICAL_DATABASE_SECRET_ARN??'',databaseName:env.CLINICAL_DATABASE_NAME??'',region:env.AWS_REGION});
-    cached=createOwnedConsumerApi({configuration:{consumerIssuer:env.CONSUMER_ISSUER??'',consumerAudience:env.CONSUMER_AUDIENCE??'',phiAllowed:env.PHI_ALLOWED==='true',activationState:env.PERSONAL_STORAGE_ACTIVATION==='approved'?'approved':'blocked',activationEvidenceSha256:env.PERSONAL_STORAGE_EVIDENCE_SHA256,allowedScopes:scopes as OwnedStorageScope[]},
+    const activationState=env.PERSONAL_STORAGE_ACTIVATION==='approved'?'approved' as const:'blocked' as const;
+    const qualification=resolveQualificationExecution(env,activationState);
+    cached=createOwnedConsumerApi({configuration:{consumerIssuer:env.CONSUMER_ISSUER??'',consumerAudience:env.CONSUMER_AUDIENCE??'',phiAllowed:env.PHI_ALLOWED==='true',activationState,...(qualification?{qualification}:{}),activationEvidenceSha256:env.PERSONAL_STORAGE_EVIDENCE_SHA256,allowedScopes:scopes as OwnedStorageScope[]},
       knowledgeLoader:loadReviewedKnowledge,
       adapter:()=>createOwnedConsumerRecordsAdapter(database()),
       ...(delivery?{exportJobs:()=>createOwnedPrivacyExportJobs((context,work)=>createOwnedConsumerRecordsAdapter(database()).runPrivacy(context,work),delivery)}:{})});

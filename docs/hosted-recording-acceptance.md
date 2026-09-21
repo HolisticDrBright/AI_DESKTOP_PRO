@@ -41,6 +41,11 @@ the run used (origin, account, encounter, locale, jurisdiction, audio digest), t
 digest and segment count, the AWS account it asserted, every step's outcome and status, the recording it
 left behind (`retained`, with its deletion deadline) and an evidence hash over everything but timestamps.
 
+The report also records which execution answered (`execution`: `production`, `qualification`, `mixed`
+or `unobserved`) from the `x-clinical-execution` marker that qualification candidates send
+(`docs/aws-qualification-target.md`), and `productionActivationEvidence`, true only for a run answered
+by production responses alone; both are inside the evidence hash.
+
 ## Boundaries
 
 - The runner (`scripts/run-aws-recording-acceptance.ps1`) pins the account with

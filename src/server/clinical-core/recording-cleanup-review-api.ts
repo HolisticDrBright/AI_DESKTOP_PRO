@@ -1,5 +1,6 @@
 import type {ApiGatewayV2Event,ApiGatewayV2Response} from './aws-identity-api';
-import {recordingWorkforceActivation,recordingWorkforceIdentity,type RecordingAuthorityConfiguration} from './recording-authority-api';
+import {recordingWorkforceAdmits,recordingWorkforceExecution,recordingWorkforceIdentity,type RecordingAuthorityConfiguration} from './recording-authority-api';
+import {markQualificationResponse} from './qualification-execution';
 import {RecordingAuthorityError} from './encounter-recording-operations';
 import {RecordingCleanupError} from './recording-cleanup-authority';
 import type {createRecordingCleanupQueue} from './recording-cleanup-queue';
@@ -12,13 +13,16 @@ const reply=(statusCode:number,value:unknown):ApiGatewayV2Response=>({statusCode
  * storage or approval operation. A later dispatcher needs independent authority. */
 export function createRecordingCleanupReviewApi(input:{configuration:CleanupReviewConfiguration;
   service:()=>Pick<ReturnType<typeof createRecordingCleanupQueue>,'list'|'history'|'processing'>;now?:()=>number}){
-  const c=input.configuration,active=recordingWorkforceActivation(c)&&/^[a-f0-9]{64}$/.test(c.cleanupReviewSha256??'');
+  const c=input.configuration,execution=recordingWorkforceExecution(c),configured=/^[a-f0-9]{64}$/.test(c.cleanupReviewSha256??'');
+  const active=execution.active&&configured,serving=execution.serving&&configured;
   if(c.phiAllowed&&!active)throw new Error('recording_cleanup_review_activation_invalid');
-  return async(event:ApiGatewayV2Event):Promise<ApiGatewayV2Response>=>{
-    if(!active)return reply(503,{error:'production_not_activated',phiAllowed:false});
+  if(execution.qualification&&!configured)throw new Error('qualification_execution_invalid');
+  const handle=async(event:ApiGatewayV2Event):Promise<ApiGatewayV2Response>=>{
+    if(!serving)return reply(503,{error:'production_not_activated',phiAllowed:false});
     if(event.routeKey!==RECORDING_CLEANUP_REVIEW_ROUTE)return reply(404,{error:'route_not_found'});
     try{
       const context={...recordingWorkforceIdentity(event,c,input.now?.()??Date.now()),purpose:'consent_management' as const};
+      if(!recordingWorkforceAdmits(execution,context))return reply(503,{error:'production_not_activated',phiAllowed:false});
       const types=Object.entries(event.headers??{}).filter(([k])=>k.toLowerCase()==='content-type');
       if(types.length!==1||types[0][1]?.split(';')[0].trim().toLowerCase()!=='application/json'
         ||Object.keys(event.queryStringParameters??{}).length||Object.keys(event.headers??{}).some(k=>k.toLowerCase().startsWith('x-alp-'))
@@ -44,4 +48,5 @@ export function createRecordingCleanupReviewApi(input:{configuration:CleanupRevi
       return reply(code==='reauth_required'?401:code==='request_invalid'?400:code==='access_refused'?403:code==='not_ready'||code==='legal_hold'?409:503,{error:code});
     }
   };
+  return async(event:ApiGatewayV2Event):Promise<ApiGatewayV2Response>=>markQualificationResponse(execution.qualification,await handle(event));
 }

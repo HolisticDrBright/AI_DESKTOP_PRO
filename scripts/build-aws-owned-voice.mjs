@@ -1,4 +1,5 @@
 import {build} from 'esbuild';
+import {qualificationConditions,qualificationEnvironment,qualificationParameters,qualificationRules} from './qualification-execution-template.mjs';
 import {readFileSync,mkdirSync,writeFileSync} from 'node:fs';
 const out='dist/aws-clinical-core/owned-voice';mkdirSync(out,{recursive:true});
 await build({entryPoints:['src/server/clinical-core/owned-voice-api-lambda.ts'],outfile:`${out}/index.js`,bundle:true,platform:'node',target:'node22',format:'cjs',minify:true,legalComments:'none'});
@@ -14,8 +15,12 @@ const template={AWSTemplateFormatVersion:'2010-09-09',Description:'Independent c
   Conditions:{Active:{'Fn::And':[
     {'Fn::Equals':[ref('PhiAllowed'),'true']},{'Fn::Equals':[ref('Activation'),'approved']},
     {'Fn::Not':[{'Fn::Equals':[ref('ActivationEvidenceSha256'),'']}]},{'Fn::Not':[{'Fn::Equals':[ref('ProviderEvidenceSha256'),'']}]}
-  ]},HasAlarmRecipient:{'Fn::Not':[{'Fn::Equals':[ref('AlarmTopicArn'),'']}]}},
-  Resources:resources,Outputs:{PhiAllowed:{Value:ref('PhiAllowed')},Activation:{Value:ref('Activation')},JobTable:{Value:ref('VoiceJobTable')},AudioBucket:{Value:ref('TranscriptionBucket')}}};
+  ]},
+  // Qualification execution (docs/aws-qualification-target.md): designated fictional identities against the isolated
+  // qualification database with PHI disabled; data permissions ride Enabled (Active or Qualification), never while draining.
+  ...qualificationConditions(['AllowedScopes','AlarmTopicArn','BillingApiOrigin']),
+  HasAlarmRecipient:{'Fn::Not':[{'Fn::Equals':[ref('AlarmTopicArn'),'']}]}},
+  Resources:resources,Outputs:{PhiAllowed:{Value:ref('PhiAllowed')},Activation:{Value:ref('Activation')},QualificationExecution:{Value:{'Fn::If':['Qualification','enabled','disabled']}},JobTable:{Value:ref('VoiceJobTable')},AudioBucket:{Value:ref('TranscriptionBucket')}}};
 Object.assign(template.Parameters,{
   ConsumerIssuer:{Type:'String',AllowedPattern:'^https://cognito-idp\\.[a-z0-9-]+\\.amazonaws\\.com/[A-Za-z0-9_-]+$'},
   ConsumerAudience:{Type:'String',AllowedPattern:'^[a-zA-Z0-9]{20,128}$'},
@@ -30,11 +35,13 @@ Object.assign(template.Parameters,{
   SecretKmsKeyArn:{Type:'String',AllowedPattern:'^arn:aws:kms:[a-z0-9-]+:[0-9]{12}:key/[a-f0-9-]{36}$'},
   DatabaseName:{Type:'String',AllowedPattern:'^[a-z][a-z0-9_]{0,62}$'},
   BillingApiOrigin:{Type:'String',Default:'',AllowedPattern:'^$|^https://[a-z0-9-]+\\.execute-api\\.[a-z0-9-]+\\.amazonaws\\.com$'},
-  AlarmTopicArn:{Type:'String',Default:'',AllowedPattern:'^$|^arn:aws:sns:[a-z0-9-]+:[0-9]{12}:[A-Za-z0-9_-]+$'}
+  AlarmTopicArn:{Type:'String',Default:'',AllowedPattern:'^$|^arn:aws:sns:[a-z0-9-]+:[0-9]{12}:[A-Za-z0-9_-]+$'},
+  ...qualificationParameters()
 });
 delete template.Parameters.VoiceJobsCodeKey.Default;
 template.Parameters.VoiceJobsCodeKey.AllowedPattern='^[A-Za-z0-9/_.-]{1,1024}$';
-template.Rules={ActivationRequiresReviewedConfiguration:{RuleCondition:{'Fn::Equals':[ref('PhiAllowed'),'true']},Assertions:[
+template.Rules={...qualificationRules({extra:[{Assert:{'Fn::Equals':[ref('AllowedScopes'),'ai_context,voice_transcription']},AssertDescription:'Explicit voice and AI scopes required for qualification execution'}]}),
+  ActivationRequiresReviewedConfiguration:{RuleCondition:{'Fn::Equals':[ref('PhiAllowed'),'true']},Assertions:[
   {Assert:{'Fn::Equals':[ref('Activation'),'approved']},AssertDescription:'Activation review must be approved'},
   ...['ActivationEvidenceSha256','ProviderEvidenceSha256','DatabaseClusterArn','DatabaseSecretArn','DatabaseName','AlarmTopicArn','BillingApiOrigin'].map(name=>({Assert:{'Fn::Not':[{'Fn::Equals':[ref(name),'']}]},AssertDescription:`${name} required before activation`})),
   {Assert:{'Fn::Equals':[ref('AllowedScopes'),'ai_context,voice_transcription']},AssertDescription:'Explicit voice and AI scopes required'}
@@ -43,7 +50,7 @@ template.Conditions.Draining={'Fn::And':[
   {'Fn::Equals':[ref('PhiAllowed'),'false']},{'Fn::Equals':[ref('Activation'),'draining']},
   {'Fn::Not':[{'Fn::Equals':[ref('CleanupEvidenceSha256'),'']}]}
 ]};
-template.Conditions.SweepEnabled={'Fn::Or':[{Condition:'Active'},{Condition:'Draining'}]};
+template.Conditions.SweepEnabled={'Fn::Or':[{Condition:'Enabled'},{Condition:'Draining'}]};
 template.Rules.DrainRequiresReviewedCleanup={RuleCondition:{'Fn::Equals':[ref('Activation'),'draining']},Assertions:[
   {Assert:{'Fn::Equals':[ref('PhiAllowed'),'false']},AssertDescription:'New content processing must be disabled during drain'},
   {Assert:{'Fn::Equals':[ref('AllowedScopes'),'']},AssertDescription:'No feature scopes during drain'},
@@ -63,7 +70,8 @@ resources.VoiceJobFunction.Properties.Environment.Variables={
   PERSONAL_VOICE_CLEANUP_EVIDENCE_SHA256:ref('CleanupEvidenceSha256'),
   PERSONAL_VOICE_PROVIDER_EVIDENCE_SHA256:ref('ProviderEvidenceSha256'),PERSONAL_VOICE_ALLOWED_SCOPES:ref('AllowedScopes'),
   BILLING_AWS_API_ORIGIN:ref('BillingApiOrigin'),
-  CLINICAL_DATABASE_CLUSTER_ARN:ref('DatabaseClusterArn'),CLINICAL_DATABASE_SECRET_ARN:ref('DatabaseSecretArn'),CLINICAL_DATABASE_NAME:ref('DatabaseName')
+  CLINICAL_DATABASE_CLUSTER_ARN:ref('DatabaseClusterArn'),CLINICAL_DATABASE_SECRET_ARN:ref('DatabaseSecretArn'),CLINICAL_DATABASE_NAME:ref('DatabaseName'),
+  ...qualificationEnvironment()
 };
 resources.VoiceJobFunction.Properties.ReservedConcurrentExecutions=4;
 const logPolicy={PolicyName:'LogsOnly',PolicyDocument:{Version:'2012-10-17',Statement:[resources.VoiceJobRole.Properties.Policies[0].PolicyDocument.Statement[0]]}};
@@ -78,7 +86,7 @@ const holdDatabase=[{Effect:'Allow',Action:['rds-data:BeginTransaction','rds-dat
   {Effect:'Allow',Action:['kms:Decrypt'],Resource:ref('SecretKmsKeyArn'),Condition:{StringEquals:{
     'kms:ViaService':sub('secretsmanager.${AWS::Region}.amazonaws.com'),'kms:EncryptionContext:SecretARN':ref('DatabaseSecretArn')}}}];
 statements.push(...holdDatabase);
-resources.VoiceJobRole.Properties.Policies=[logPolicy,{'Fn::If':['Active',{PolicyName:'ScopedOwnedVoiceData',PolicyDocument:{Version:'2012-10-17',Statement:statements}},ref('AWS::NoValue')]}];
+resources.VoiceJobRole.Properties.Policies=[logPolicy,{'Fn::If':['Enabled',{PolicyName:'ScopedOwnedVoiceData',PolicyDocument:{Version:'2012-10-17',Statement:statements}},ref('AWS::NoValue')]}];
 // Drain retains only maintenance access: no audio/transcript reads or writes,
 // provider starts, billing or unrestricted KMS decryption. The scoped database
 // guard is necessary during drain too; there is no hold-bypass cleanup mode.

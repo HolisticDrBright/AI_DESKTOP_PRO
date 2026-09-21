@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { ApiGatewayV2Event, ApiGatewayV2Response } from './aws-identity-api';
-import { recordingWorkforceActivation, recordingWorkforceIdentity, type RecordingAuthorityConfiguration } from './recording-authority-api';
+import { recordingWorkforceAdmits, recordingWorkforceExecution, recordingWorkforceIdentity, type RecordingAuthorityConfiguration } from './recording-authority-api';
+import { markQualificationResponse } from './qualification-execution';
 import { RecordingAuthorityError } from './encounter-recording-operations';
 import { recordingContentTypeSchema, recordingStartSchema, recordingStartReceiptSchema, recordingLifecycleCommandSchema,
   recordingLifecycleReceiptSchema, recordingRecoveryStateSchema, RecordingLifecycleError, type createRecordingLifecycleRepository } from './recording-lifecycle';
@@ -51,15 +52,18 @@ export function createRecordingCaptureApi(input: { configuration: RecordingCaptu
   reconcile: () => ReturnType<typeof createRecordingReconciler>;
   upload: () => ReturnType<typeof createRecordingSegmentUploader>; now?: () => number }) {
   const c = input.configuration;
-  const active = recordingWorkforceActivation(c) && id.safeParse(c.captureReleaseId).success
-    && [c.captureReviewSha256, c.storageReviewSha256, c.retentionReviewSha256].every(v => hash.test(v ?? ''));
+  const execution = recordingWorkforceExecution(c);
+  const configured = id.safeParse(c.captureReleaseId).success && [c.captureReviewSha256, c.storageReviewSha256, c.retentionReviewSha256].every(v => hash.test(v ?? ''));
+  const active = execution.active && configured, serving = execution.serving && configured;
   if (c.phiAllowed && !active) throw new Error('recording_capture_activation_invalid');
-  return async (event: ApiGatewayV2Event): Promise<ApiGatewayV2Response> => {
-    if (!active) return reply(503, { error: 'production_not_activated', phiAllowed: false });
+  if (execution.qualification && !configured) throw new Error('qualification_execution_invalid');
+  const handle = async (event: ApiGatewayV2Event): Promise<ApiGatewayV2Response> => {
+    if (!serving) return reply(503, { error: 'production_not_activated', phiAllowed: false });
     if (!Object.values(RECORDING_CAPTURE_ROUTES).includes(event.routeKey as typeof RECORDING_CAPTURE_ROUTES[keyof typeof RECORDING_CAPTURE_ROUTES]))
       return reply(404, { error: 'route_not_found' });
     try {
       const context = recordingWorkforceIdentity(event, c, input.now?.() ?? Date.now());
+      if (!recordingWorkforceAdmits(execution, context)) return reply(503, { error: 'production_not_activated', phiAllowed: false });
       if (Object.keys(event.queryStringParameters ?? {}).length || Object.keys(event.headers ?? {}).some(k =>
         k.toLowerCase().startsWith('x-alp-') && !uploadHeaders.includes(k.toLowerCase()))) throw new RecordingLifecycleError('request_invalid');
       let data: unknown;
@@ -111,4 +115,5 @@ export function createRecordingCaptureApi(input: { configuration: RecordingCaptu
         : ['access_refused', 'consent_required', 'recording_access_refused', 'recording_consent_required'].includes(code) ? 403 : 503, { error: code });
     }
   };
+  return async (event: ApiGatewayV2Event): Promise<ApiGatewayV2Response> => markQualificationResponse(execution.qualification, await handle(event));
 }

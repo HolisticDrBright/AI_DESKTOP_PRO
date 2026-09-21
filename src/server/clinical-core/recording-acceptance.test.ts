@@ -55,6 +55,7 @@ describe("hosted recording, transcription and drafting acceptance", () => {
   test("drives consent, capture, segments, close, transcription, review-only drafting and cleanup review, and binds the report to source, migrations, audio and configuration", async () => {
     const d = deployment();
     const report = await runRecordingAcceptance({ ...base, fetch: d.fetch });
+    expect(report.execution).toBe("production"); expect(report.productionActivationEvidence).toBe(true);
     expect(report.steps.filter((s) => s.outcome !== "passed")).toEqual([]);
     expect(report.ok).toBe(true);
     expect(report.steps.map((s) => s.name)).toEqual(["consent workspace", "consumer token refused on workforce recording routes", "participants and consents", "readiness", "start capture", "start replay is idempotent",
@@ -77,6 +78,14 @@ describe("hosted recording, transcription and drafting acceptance", () => {
     expect(report).toMatchObject({ schemaVersion: "recording-acceptance/1", environment: "synthetic-staging", awsAccountId: "588966314750", encounterId: enc });
     expect(report.configurationSha256).toMatch(/^[a-f0-9]{64}$/); expect(report.evidenceSha256).toMatch(/^[a-f0-9]{64}$/);
     expect(JSON.stringify(report)).not.toContain(token("w").slice(0, 20)); expect(JSON.stringify(report)).not.toContain("d".repeat(64));
+  });
+  test("a run answered by qualification execution is reported as such and is never production activation evidence", async () => {
+    const d = deployment();
+    const marked = async (url: string, init?: RequestInit) => { const r = await d.fetch(url, init); return new Response(await r.arrayBuffer(), { status: r.status, headers: { "content-type": "application/json", "x-clinical-execution": "qualification" } }); };
+    const report = await runRecordingAcceptance({ ...base, fetch: marked });
+    expect(report.execution).toBe("qualification"); expect(report.productionActivationEvidence).toBe(false); expect(report.ok).toBe(true);
+    const plain = await runRecordingAcceptance({ ...base, fetch: deployment().fetch });
+    expect(plain.evidenceSha256).not.toBe(report.evidenceSha256);
   });
   test("a recording plane that is not activated is not_configured and everything after is skipped; never a pass", async () => {
     const d = deployment({ "authority:workspace": () => json(503, { error: "production_not_activated", phiAllowed: false }) });

@@ -1,5 +1,6 @@
 if (typeof window !== "undefined") throw new Error("clinical-core/recording-acceptance is server-only.");
 import { createHash } from "node:crypto";
+import { observeExecution, summariseExecution, type ObservedExecution } from "./qualification-execution";
 
 /** Hosted synthetic acceptance for encounter recording, transcription and
  * review-only drafting (Desktop migrations 20260917070000 onward). Runs only
@@ -19,7 +20,9 @@ export type RecordingAcceptanceReport = {
   sourceCommit: string; migrationReleaseHash: string; configurationSha256: string; awsAccountId: string; encounterId: string;
   audio: { source: "generated_tone" | "supplied_file"; contentType: "audio/wav"; bytes: number; sha256: string; segments: number };
   startedAt: string; finishedAt: string; steps: RecordingAcceptanceStep[];
-  retained: { recordingId: string; state: string; deletionDeadline: string | null }[]; evidenceSha256: string;
+  retained: { recordingId: string; state: string; deletionDeadline: string | null }[];
+  /** Which execution answered (docs/aws-qualification-target.md): a qualification run is never production activation evidence. */
+  execution: ObservedExecution; productionActivationEvidence: boolean; evidenceSha256: string;
 };
 type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 export class RecordingAcceptanceError extends Error { constructor(readonly category: "configuration_invalid" | "boundary_refused") { super(category); } }
@@ -65,6 +68,7 @@ export async function runRecordingAcceptance(input: {
     catch (error) { const detail = error instanceof Error && /^[a-z_:0-9-]+$/.test(error.message) ? error.message : "step_failed"; steps.push({ index, name, expected, outcome: "failed", detail }); return { outcome: "failed" as const, detail }; }
   };
   const skip = async (names: string[], detail: string) => { for (const name of names) await step(name, "not run", async () => ({ outcome: "skipped", detail })); };
+  const executions = new Set<string>();
   const send = async (path: string, bearer: string, body: Uint8Array | Record<string, unknown>, headers: Record<string, string> = {}) => {
     let response: Response;
     try {
@@ -72,6 +76,7 @@ export async function runRecordingAcceptance(input: {
       response = await fetcher(`${origin}${path}`, { method: "POST", headers: { authorization: `Bearer ${bearer}`, ...(json ? { "content-type": "application/json" } : {}), ...headers },
         body: json ? JSON.stringify(body) : (body as unknown as BodyInit), redirect: "manual", signal: AbortSignal.timeout(25_000) });
     } catch { return { status: 0, body: null as unknown }; }
+    observeExecution(executions, response.headers);
     const bytes = new Uint8Array(await response.arrayBuffer());
     if (bytes.byteLength > 4 * 1024 * 1024) return { status: response.status, body: null as unknown };
     try { return { status: response.status, body: JSON.parse(new TextDecoder().decode(bytes)) as unknown }; } catch { return { status: response.status, body: null as unknown }; }
@@ -275,7 +280,7 @@ export async function runRecordingAcceptance(input: {
     // Positive acceptance needs the whole pipeline: consent, capture, close, transcript and a review-only draft. Refusals are reported, never counted.
     const ok = steps.every((s) => s.outcome === "passed" || s.outcome === "skipped") && ["finish", "transcription completes", "transcript read", "proposed note read"].every(passed);
     const report: Omit<RecordingAcceptanceReport, "evidenceSha256"> = { schemaVersion: "recording-acceptance/1", environment: "synthetic-staging", ok, sourceCommit: input.sourceCommit,
-      migrationReleaseHash: input.migrationReleaseHash, configurationSha256, awsAccountId: input.expectedAwsAccountId, encounterId: input.encounterId, audio, startedAt, finishedAt, steps, retained };
+      migrationReleaseHash: input.migrationReleaseHash, configurationSha256, awsAccountId: input.expectedAwsAccountId, encounterId: input.encounterId, audio, startedAt, finishedAt, steps, retained, ...summariseExecution(executions) };
     return { ...report, evidenceSha256: sha256(JSON.stringify({ ...report, startedAt: undefined, finishedAt: undefined })) };
   }
 }

@@ -14,6 +14,8 @@ function evaluate(v:Json,p:Record<string,string>):unknown{
   const equals=v['Fn::Equals'];if(equals){const a=evaluate(equals,p) as unknown[];return a[0]===a[1];}
   if(v['Fn::Not'])return !(evaluate(v['Fn::Not'],p) as unknown[])[0];
   if(v['Fn::And'])return (evaluate(v['Fn::And'],p) as unknown[]).every(Boolean);
+  if(v['Fn::Or'])return (evaluate(v['Fn::Or'],p) as unknown[]).some(Boolean);
+  if(typeof v.Condition==='string')return evaluate(t.Conditions[v.Condition],p);
   throw new Error('unsupported_condition');
 }
 describe('privacy operations deployable candidate',()=>{
@@ -129,14 +131,39 @@ describe('privacy operations deployable candidate',()=>{
       expect(evaluate(t.Conditions.Active,{...approved,[key]:defaults[key]})).toBe(false);
     const policies=t.Resources.Role.Properties.Policies as Json[];
     expect(JSON.stringify(policies[0])).not.toMatch(/rds-data:|secretsmanager:|kms:/);
-    expect((policies[1] as Record<string,Json>)['Fn::If']).toEqual(['Active',expect.any(Object),{Ref:'AWS::NoValue'}]);
+    // Database access rides Enabled: the production activation or the qualification execution, both false by default.
+    expect((policies[1] as Record<string,Json>)['Fn::If']).toEqual(['Enabled',expect.any(Object),{Ref:'AWS::NoValue'}]);
+    expect(evaluate(t.Conditions.Enabled,defaults)).toBe(false);
     expect(JSON.stringify(policies)).not.toContain('"Resource":"*"');
+  });
+  it('enables qualification execution only with PHI disabled, activation blocked, the deploying synthetic account, a qualification database and the reviewed inputs, and lets the sub-activations ride it on their own evidence',()=>{
+    const defaults=Object.fromEntries(Object.entries(t.Parameters).map(([k,v])=>[k,String((v as {Default?:unknown}).Default??'')]));
+    expect(t.Parameters.QualificationExecution.Default).toBe('disabled');
+    const qualified={...defaults,'AWS::AccountId':'588966314750',QualificationExecution:'enabled',QualificationReviewSha256:'e'.repeat(64),QualificationAccountId:'588966314750',
+      QualificationIdentitySubjects:'workforce-sub-00000001',DatabaseName:'clinical_core_qualification',DatabaseReviewSha256:'b'.repeat(64),WorkforceMfaReviewSha256:'c'.repeat(64),AlarmTopicArn:'arn:aws:sns:us-east-2:588966314750:alarms'};
+    expect(evaluate(t.Conditions.Qualification,qualified)).toBe(true);expect(evaluate(t.Conditions.Enabled,qualified)).toBe(true);expect(evaluate(t.Conditions.Active,qualified)).toBe(false);
+    for(const key of ['QualificationExecution','QualificationReviewSha256','QualificationAccountId','QualificationIdentitySubjects','DatabaseReviewSha256','WorkforceMfaReviewSha256','AlarmTopicArn'])
+      expect(evaluate(t.Conditions.Qualification,{...qualified,[key]:defaults[key]}),key).toBe(false);
+    expect(evaluate(t.Conditions.Qualification,{...qualified,DatabaseName:'clinical_core'})).toBe(false);
+    expect(evaluate(t.Conditions.Qualification,{...qualified,'AWS::AccountId':'173535830222',QualificationAccountId:'173535830222'})).toBe(false);
+    expect(evaluate(t.Conditions.Qualification,{...qualified,PhiAllowed:'true'})).toBe(false);
+    expect(evaluate(t.Conditions.Qualification,{...qualified,Activation:'approved'})).toBe(false);
+    // Export cleanup and the retention schedule need the same reviewed inputs under qualification as in production.
+    expect(evaluate(t.Conditions.ExportCleanupActive,qualified)).toBe(false);
+    const cleanup={...qualified,ExportCleanupEnabled:'true',ExportCleanupEvidenceSha256:'d'.repeat(64),ExportBucketName:'fictional-export-bucket',ExportKmsKeyArn:'arn:aws:kms:us-east-2:588966314750:key/11111111-1111-4111-8111-111111111111'};
+    expect(evaluate(t.Conditions.ExportCleanupActive,cleanup)).toBe(true);
+    expect(evaluate(t.Conditions.RetentionScheduleActive,cleanup)).toBe(false);
+    expect(evaluate(t.Conditions.RetentionScheduleActive,{...cleanup,RetentionScheduleEnabled:'true',RetentionScheduleEvidenceSha256:'f'.repeat(64),RetentionServicePersonId:'11111111-1111-4111-8111-111111111111',RetentionServiceSubject:'workforce-sub-00000001',RetentionServiceOrganizationId:'22222222-2222-4222-8222-222222222222'})).toBe(true);
+    const env=(t.Resources.Function.Properties.Environment as {Variables:Record<string,Json>}).Variables,sweep=(t.Resources.RetentionSweep.Properties.Environment as {Variables:Record<string,Json>}).Variables;
+    expect(env.QUALIFICATION_EXECUTION).toEqual({'Fn::If':['Qualification','enabled','disabled']});
+    expect(sweep.QUALIFICATION_EXECUTION).toEqual({'Fn::If':['Qualification','enabled','disabled']});expect(sweep.PRIVACY_OPERATIONS_ACTIVATION).toEqual({Ref:'Activation'});
+    expect(JSON.stringify((t.Rules as Record<string,Json>).QualificationRequiresSyntheticPosture)).toContain('173535830222');
   });
   it('has one dedicated workforce JWT route and bounded encrypted infrastructure',()=>{
     expect(t.Parameters.PersonalPurgeEnabled.Default).toBe('false');
     expect(t.Parameters.PersonalPurgeEvidenceSha256.Default).toBe('');
     expect(t.Rules).toMatchObject({ReviewedPersonalPurge:{RuleCondition:{'Fn::Equals':[{Ref:'PersonalPurgeEnabled'},'true']},
-      Assertions:[{Assert:{'Fn::Equals':[{Ref:'PhiAllowed'},'true']},AssertDescription:expect.any(String)},
+      Assertions:[{Assert:{'Fn::Or':[{'Fn::Equals':[{Ref:'PhiAllowed'},'true']},{'Fn::Equals':[{Ref:'QualificationExecution'},'enabled']}]},AssertDescription:expect.any(String)},
         {Assert:{'Fn::Not':[{'Fn::Equals':[{Ref:'PersonalPurgeEvidenceSha256'},'']}]},AssertDescription:expect.any(String)}]}});
     expect(Object.values(t.Resources).filter(r=>r.Type==='AWS::ApiGatewayV2::Route')).toHaveLength(1);
     expect(t.Resources.Route.Properties).toMatchObject({RouteKey:'POST /clinical-core/workforce/privacy-operations',AuthorizationType:'JWT',AuthorizerId:{Ref:'Authorizer'}});

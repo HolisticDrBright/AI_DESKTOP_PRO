@@ -2,12 +2,15 @@ import type {ApiGatewayV2Event,ApiGatewayV2Response} from './aws-identity-api';
 import type {ProductionClinicalRequestContext} from './aws-identity-consent';
 import {privacyOperationSchema} from '@/contracts/privacyOperations';
 import {PrivacyOperationError,type createPrivacyOperations} from './privacy-operations';
+import {assertQualificationConfiguration,markQualificationResponse,qualificationAdmits,type QualificationExecution} from './qualification-execution';
 export const PRIVACY_OPERATIONS_ROUTE='POST /clinical-core/workforce/privacy-operations';
 export type PrivacyOperationsConfiguration={workforceIssuer:string;workforceAudience:string;phiAllowed:boolean;
   activation:'blocked'|'approved';evidenceSha256?:string;mfaReviewSha256?:string;
   personalPurgeEnabled?:boolean;personalPurgeEvidenceSha256?:string;externalInventoryEnabled?:boolean;externalInventoryEvidenceSha256?:string;
   externalPurgeEnabled?:boolean;externalPurgeEvidenceSha256?:string;identityDeletionEnabled?:boolean;identityDeletionEvidenceSha256?:string;
-  exportCleanupEnabled?:boolean;exportCleanupEvidenceSha256?:string};
+  exportCleanupEnabled?:boolean;exportCleanupEvidenceSha256?:string;
+  /** Qualification execution (docs/aws-qualification-target.md): present only with PHI disabled and activation blocked. */
+  qualification?:QualificationExecution};
 export function createPrivacyOperationsApi(input:{configuration:PrivacyOperationsConfiguration;
   operations:()=>ReturnType<typeof createPrivacyOperations>;now?:()=>number}){
   const c=input.configuration,hash=/^[a-f0-9]{64}$/;
@@ -15,23 +18,28 @@ export function createPrivacyOperationsApi(input:{configuration:PrivacyOperation
     ||!/^[a-zA-Z0-9]{20,128}$/.test(c.workforceAudience))throw new Error('privacy_api_configuration_invalid');
   const active=c.phiAllowed&&c.activation==='approved'&&hash.test(c.evidenceSha256??'')&&hash.test(c.mfaReviewSha256??'');
   if(c.phiAllowed&&!active)throw new Error('privacy_api_activation_invalid');
-  const purgeActive=active&&c.personalPurgeEnabled===true&&hash.test(c.personalPurgeEvidenceSha256??'');
+  // Qualification execution: the designated fictional workforce identities are served, with every check below unchanged,
+  // and the separately reviewed sub-activations are admitted on the same evidence they need in production.
+  const qualification=assertQualificationConfiguration({phiAllowed:c.phiAllowed,activation:c.activation,qualification:c.qualification});
+  const serving=active||qualification!==undefined;
+  const purgeActive=serving&&c.personalPurgeEnabled===true&&hash.test(c.personalPurgeEvidenceSha256??'');
   if(c.personalPurgeEnabled&&!purgeActive)throw new Error('privacy_purge_activation_invalid');
-  const inventoryActive=active&&c.externalInventoryEnabled===true&&hash.test(c.externalInventoryEvidenceSha256??'');
+  const inventoryActive=serving&&c.externalInventoryEnabled===true&&hash.test(c.externalInventoryEvidenceSha256??'');
   if(c.externalInventoryEnabled&&!inventoryActive)throw new Error('privacy_inventory_activation_invalid');
   // Purging inventoried stores needs the inventory and its own reviewed evidence.
   const externalPurgeActive=inventoryActive&&c.externalPurgeEnabled===true&&hash.test(c.externalPurgeEvidenceSha256??'');
   if(c.externalPurgeEnabled&&!externalPurgeActive)throw new Error('privacy_external_purge_activation_invalid');
-  const identityDeletionActive=active&&c.identityDeletionEnabled===true&&hash.test(c.identityDeletionEvidenceSha256??'');
+  const identityDeletionActive=serving&&c.identityDeletionEnabled===true&&hash.test(c.identityDeletionEvidenceSha256??'');
   if(c.identityDeletionEnabled&&!identityDeletionActive)throw new Error('privacy_identity_deletion_activation_invalid');
   // Export retention needs the reviewed export bucket configuration (checked by the lambda) and its own evidence.
-  const exportCleanupActive=active&&c.exportCleanupEnabled===true&&hash.test(c.exportCleanupEvidenceSha256??'');
+  const exportCleanupActive=serving&&c.exportCleanupEnabled===true&&hash.test(c.exportCleanupEvidenceSha256??'');
   if(c.exportCleanupEnabled&&!exportCleanupActive)throw new Error('privacy_export_cleanup_activation_invalid');
-  return async(event:ApiGatewayV2Event):Promise<ApiGatewayV2Response>=>{
-    if(!active)return response(503,{error:'production_not_activated',phiAllowed:false});
+  const handle=async(event:ApiGatewayV2Event):Promise<ApiGatewayV2Response>=>{
+    if(!serving)return response(503,{error:'production_not_activated',phiAllowed:false});
     if(event.routeKey!==PRIVACY_OPERATIONS_ROUTE)return response(404,{error:'route_not_found'});
     try{
       const context=identity(event,c,input.now?.()??Date.now());
+      if(!active&&!qualificationAdmits(qualification,context.identitySubject))return response(503,{error:'production_not_activated',phiAllowed:false});
       const type=Object.entries(event.headers??{}).find(([k])=>k.toLowerCase()==='content-type')?.[1];
       if(Object.keys(event.queryStringParameters??{}).length||!type?.toLowerCase().startsWith('application/json')
         ||typeof event.body!=='string'||event.body.length>16000)throw new PrivacyOperationError('request_invalid');
@@ -53,6 +61,7 @@ export function createPrivacyOperationsApi(input:{configuration:PrivacyOperation
         code==='request_invalid'?400:code==='conflict'?409:503,{error:code});
     }
   };
+  return async(event:ApiGatewayV2Event):Promise<ApiGatewayV2Response>=>markQualificationResponse(qualification,await handle(event));
 }
 // Only API Gateway verified claims are consumed. Workforce-pool MFA is a
 // separately reviewed deployment prerequisite; auth_time enforces fresh login.

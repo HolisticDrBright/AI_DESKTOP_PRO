@@ -1,4 +1,5 @@
 import type { ApiGatewayV2Event } from './aws-identity-api';
+import { qualificationActivation, qualificationFrom } from './qualification-execution';
 import { createRecordingDraftingApi } from './recording-drafting-api';
 import type { createRecordingDraftingRuntime } from './recording-drafting-runtime';
 
@@ -15,7 +16,7 @@ export async function handler(event: ApiGatewayV2Event) {
     const e = process.env;
     cached = createRecordingDraftingApi({ configuration: {
       workforceIssuer: e.WORKFORCE_ISSUER ?? '', workforceAudience: e.WORKFORCE_AUDIENCE ?? '', organizationId: e.RECORDING_ORGANIZATION_ID ?? '',
-      phiAllowed: e.PHI_ALLOWED === 'true', activation: e.RECORDING_DRAFTING_ACTIVATION === 'approved' ? 'approved' : 'blocked',
+      phiAllowed: e.PHI_ALLOWED === 'true', activation: qualificationActivation(e.RECORDING_DRAFTING_ACTIVATION), ...qualificationFrom(e, e.RECORDING_DRAFTING_ACTIVATION),
       activationEvidenceSha256: e.RECORDING_DRAFTING_EVIDENCE_SHA256, mfaReviewSha256: e.WORKFORCE_MFA_REVIEW_SHA256,
       databaseReviewSha256: e.DATABASE_REVIEW_SHA256, draftingReleaseId: e.RECORDING_DRAFTING_RELEASE_ID ?? '',
       draftingReviewSha256: e.RECORDING_DRAFTING_REVIEW_SHA256, providerReviewSha256: e.RECORDING_PROVIDER_REVIEW_SHA256,

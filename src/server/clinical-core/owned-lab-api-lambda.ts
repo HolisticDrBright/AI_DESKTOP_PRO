@@ -3,9 +3,12 @@ import {createOwnedLabApi,type OwnedLabEvent} from './owned-lab-api';
 import {createOwnedConsumerRecordsAdapter} from './owned-consumer-records';
 import {createRdsDataClinicalCoreDatabase} from './rds-data-database';
 import {ownedExternalDeletionGuardFromEnv} from './owned-external-deletion';
+import {resolveQualificationExecution} from './qualification-execution';
 export function ownedLabConfigurationFromEnv(env:Record<string,string|undefined>){
+  const activationState=env.PERSONAL_LAB_ACTIVATION==='approved'?'approved' as const:'blocked' as const;
+  const qualification=resolveQualificationExecution(env,activationState);
   return {consumerIssuer:env.CONSUMER_ISSUER??'',consumerAudience:env.CONSUMER_AUDIENCE??'',
-    phiAllowed:env.PHI_ALLOWED==='true',activationState:env.PERSONAL_LAB_ACTIVATION==='approved'?'approved' as const:'blocked' as const,
+    phiAllowed:env.PHI_ALLOWED==='true',activationState,...(qualification?{qualification}:{}),
     activationEvidenceSha256:env.PERSONAL_LAB_EVIDENCE_SHA256,providerEvidenceSha256:env.PERSONAL_LAB_PROVIDER_EVIDENCE_SHA256,
     allowedScopes:(env.PERSONAL_LAB_ALLOWED_SCOPES??'').split(',').filter(Boolean)};
 }

@@ -2,13 +2,30 @@ import type { ApiGatewayV2Event, ApiGatewayV2Response } from "./aws-identity-api
 import type { ProductionClinicalRequestContext } from "./aws-identity-consent";
 import { recordingAuthorityRequestSchema } from "@/contracts/encounterRecordingAuthority";
 import { RecordingAuthorityError, type createEncounterRecordingOperations } from "./encounter-recording-operations";
+import { assertQualificationConfiguration, markQualificationResponse, qualificationAdmits, type QualificationExecution } from "./qualification-execution";
 
 export const RECORDING_AUTHORITY_ROUTE = "POST /clinical-core/workforce/encounter-recording/authority";
 export type RecordingAuthorityConfiguration = {
   workforceIssuer: string; workforceAudience: string; organizationId: string;
   phiAllowed: boolean; activation: "blocked" | "approved";
   activationEvidenceSha256?: string; mfaReviewSha256?: string; databaseReviewSha256?: string;
+  /** Qualification execution (docs/aws-qualification-target.md): present only with PHI disabled and activation blocked. */
+  qualification?: QualificationExecution;
 };
+/** The production activation, the qualification policy (if any) and whether the API serves at all: `serving` is true under
+ * either mode; `active` only under production. Candidate-specific reviewed inputs are added by each API on top. */
+export type RecordingWorkforceExecution = { active: boolean; qualification?: QualificationExecution; serving: boolean };
+export function recordingWorkforceExecution(c: RecordingAuthorityConfiguration): RecordingWorkforceExecution {
+  const active = recordingWorkforceActivation(c);
+  const qualification = assertQualificationConfiguration({ phiAllowed: c.phiAllowed, activation: c.activation, qualification: c.qualification });
+  // The database review is a reviewed input in both modes; the qualification review hash stands in for the activation evidence.
+  if (qualification && !hash.test(c.databaseReviewSha256 ?? "")) throw new Error("qualification_execution_invalid");
+  return { active, qualification, serving: active || qualification !== undefined };
+}
+/** Under qualification only the designated fixture subjects are admitted; production admits every verified workforce identity. */
+export function recordingWorkforceAdmits(x: RecordingWorkforceExecution, context: ProductionClinicalRequestContext): boolean {
+  return x.active || qualificationAdmits(x.qualification, context.identitySubject);
+}
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const hash = /^[a-f0-9]{64}$/;
 /** API Gateway must verify JWT signatures; caller headers are never decoded as
@@ -18,12 +35,13 @@ export function createRecordingAuthorityApi(input: {
   operations: () => ReturnType<typeof createEncounterRecordingOperations>;
   now?: () => number;
 }) {
-  const c = input.configuration, active = recordingWorkforceActivation(c);
-  return async (event: ApiGatewayV2Event): Promise<ApiGatewayV2Response> => {
-    if (!active) return reply(503, { error: "production_not_activated", phiAllowed: false });
+  const c = input.configuration, execution = recordingWorkforceExecution(c);
+  const handle = async (event: ApiGatewayV2Event): Promise<ApiGatewayV2Response> => {
+    if (!execution.serving) return reply(503, { error: "production_not_activated", phiAllowed: false });
     if (event.routeKey !== RECORDING_AUTHORITY_ROUTE) return reply(404, { error: "route_not_found" });
     try {
       const context = recordingWorkforceIdentity(event, c, input.now?.() ?? Date.now());
+      if (!recordingWorkforceAdmits(execution, context)) return reply(503, { error: "production_not_activated", phiAllowed: false });
       const type = Object.entries(event.headers ?? {}).find(([k]) => k.toLowerCase() === "content-type")?.[1];
       if (Object.keys(event.queryStringParameters ?? {}).length || type?.split(";")[0]?.trim().toLowerCase() !== "application/json"
         || typeof event.body !== "string" || event.body.length > 16000) throw new RecordingAuthorityError("request_invalid");
@@ -43,6 +61,7 @@ export function createRecordingAuthorityApi(input: {
         : ["recording_access_refused", "recording_consent_required"].includes(code) ? 403 : 503, { error: code });
     }
   };
+  return async (event: ApiGatewayV2Event): Promise<ApiGatewayV2Response> => markQualificationResponse(execution.qualification, await handle(event));
 }
 /** Shared validation only; capture adds independent storage/retention reviews. */
 export function recordingWorkforceActivation(c: RecordingAuthorityConfiguration): boolean {

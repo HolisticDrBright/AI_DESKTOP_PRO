@@ -76,6 +76,24 @@ describe('independent production lab processing',()=>{
     }
     expect(s.adapter).not.toHaveBeenCalled();expect(s.requireCore).not.toHaveBeenCalled();expect(mock.db).not.toHaveBeenCalled();
   });
+  it('under qualification execution serves only the designated fictional identity with marked responses, and refuses other identities and unsafe configuration',async()=>{
+    const qualification={reviewSha256:'e'.repeat(64),accountId:'588966314750',databaseName:'clinical_core_qualification',identitySubjects:['33333333-3333-4333-8333-333333333333']};
+    const blocked={...config,phiAllowed:false,activationState:'blocked' as const,activationEvidenceSha256:undefined,providerEvidenceSha256:undefined};
+    const s=setup({...blocked,qualification});
+    const inventory=await s.handler(event('GET','inventory'));
+    expect(inventory.statusCode).toBe(200);expect(inventory.headers['x-clinical-execution']).toBe('qualification');expect(s.adapter).toHaveBeenCalled();
+    const created=await s.handler(event('POST','requests/saved',planInput()));expect(created.statusCode).toBe(200);expect(created.headers['x-clinical-execution']).toBe('qualification');expect(rows.size).toBeGreaterThan(0);
+    // A verified identity that is not designated is refused as if nothing were activated, before consent, billing or storage access.
+    const other=setup({...blocked,qualification});
+    const refused=await other.handler(event('GET','inventory',undefined,{sub:'44444444-4444-4444-8444-444444444444'}));
+    expect(refused.statusCode).toBe(503);expect(JSON.parse(refused.body)).toEqual({data:{error:'production_not_activated',phiAllowed:false}});expect(other.adapter).not.toHaveBeenCalled();
+    // An unverifiable token is still a 401; production responses carry no marker; unsafe configurations are refused at construction.
+    expect((await setup({...blocked,qualification}).handler(event('GET','inventory',undefined,{'custom:synthetic_attested':'true'}))).statusCode).toBe(401);
+    expect((await setup().handler(event('GET','inventory'))).headers['x-clinical-execution']).toBeUndefined();
+    expect(()=>setup({...config,qualification})).toThrow('qualification_execution_invalid');
+    expect(()=>setup({...blocked,qualification:{...qualification,accountId:'173535830222'}})).toThrow('qualification_execution_invalid');
+    expect(()=>setup({...blocked,qualification:{...qualification,databaseName:'clinical_core'}})).toThrow('qualification_execution_invalid');
+  });
   it.each([{'custom:synthetic_attested':'true'},{'custom:production_bound':'false'},{email_verified:'false'},{iss:'https://cognito-idp.us-east-2.amazonaws.com/other'},{aud:'99999999999999999999'},{exp:now/1000-1},{token_use:'access'}])
     ('refuses non-production identity %j before any job access',async patch=>{
       const s=setup();const response=await s.handler(event('POST','requests/saved',planInput(),patch));

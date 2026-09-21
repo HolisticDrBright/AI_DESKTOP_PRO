@@ -34,7 +34,7 @@ describe('cleanup review deployment candidate',()=>{
     for(const key of [...reviews,'PhiAllowed','Activation','AlarmTopicArn'])expect(evaluate(template.Conditions.Active,{...approved,[key]:defaults[key]})).toBe(false);
     const policies=template.Resources.Role.Properties.Policies as Json[];
     expect(JSON.stringify(policies[0])).not.toMatch(/rds-data:|s3:|kms:|secretsmanager:/);
-    expect((policies[1] as Record<string,Json>)['Fn::If']).toEqual(['Active',expect.any(Object),{Ref:'AWS::NoValue'}]);
+    expect((policies[1] as Record<string,Json>)['Fn::If']).toEqual(['Enabled',expect.any(Object),{Ref:'AWS::NoValue'}]);
     expect(JSON.stringify(policies)).not.toMatch(/s3:|lambda:Invoke|scheduler:|states:|"Resource":"\*"/);
     for(const review of reviews)expect(JSON.stringify(template.Rules)).toContain(review);
   });

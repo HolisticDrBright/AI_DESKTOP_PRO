@@ -10,6 +10,17 @@ const job = "11111111-1111-4111-8111-111111111111";
 const view = (status: string, extra: Record<string, unknown> = {}) => ({ data: { jobId: job, status, retention: status === "ready" ? "downloadable" : "packaging", recordCount: 3, exportedRecords: status === "ready" ? 3 : 1, parts: 2,
   objectChecksum: status === "ready" ? "A".repeat(43) + "=-2" : null, byteLength: status === "ready" ? 4096 : null, ...extra } });
 describe("hosted export and retention acceptance", () => {
+  test("a run answered by qualification execution is reported as such and never as production activation evidence", async () => {
+    const marked = (status: number, value: unknown) => new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json", "x-clinical-execution": "qualification" } });
+    const queue = [marked(200, { data: { contractVersion: "personal-posture/1", launchTier: "core", enabledScopes: [] } }), marked(503, { error: "export_delivery_not_configured" })];
+    const report = await runExportRetentionAcceptance({ ...base, fetch: async () => queue.shift() ?? marked(503, { error: "unexpected" }) });
+    expect(report.execution).toBe("qualification"); expect(report.productionActivationEvidence).toBe(false); expect(report.ok).toBe(false);
+    // Mixed answers (one production, one qualification) are neither, and are never production evidence.
+    const mixed = [json(200, { data: { contractVersion: "personal-posture/1", launchTier: "core", enabledScopes: [] } }), marked(503, { error: "export_delivery_not_configured" })];
+    const report2 = await runExportRetentionAcceptance({ ...base, fetch: async () => mixed.shift() ?? json(503, { error: "unexpected" }) });
+    expect(report2.execution).toBe("mixed"); expect(report2.productionActivationEvidence).toBe(false);
+    expect(report.evidenceSha256).not.toBe(report2.evidenceSha256);
+  });
   test("drives request, isolation, passes, download, cancel with cleanup and the operator actions, and binds the report to source, migrations and configuration", async () => {
     const calls: Array<{ url: string; auth: string; body: unknown }> = [];
     const queue = [
@@ -26,6 +37,8 @@ describe("hosted export and retention acceptance", () => {
     ];
     const report = await runExportRetentionAcceptance({ ...base, fetch: async (url, init) => { calls.push({ url, auth: String((init?.headers as Record<string, string>).authorization), body: init?.body ? JSON.parse(String(init.body)) : null }); return queue.shift()!; } });
     expect(report.ok).toBe(true);
+    // Production candidates never send the execution marker: this run counts toward production activation evidence.
+    expect(report.execution).toBe("production"); expect(report.productionActivationEvidence).toBe(true);
     expect(report.steps.map((s) => [s.name, s.outcome])).toEqual([
       ["consumer posture", "passed"], ["request export job", "passed"], ["cross-owner read refused", "passed"], ["advance passes to ready", "passed"],
       ["stale sign-in download refused", "skipped"], ["download link for the exact version", "passed"], ["cancel and cleanup", "passed"],

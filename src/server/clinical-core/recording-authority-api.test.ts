@@ -16,6 +16,21 @@ const event = (patch: Record<string, unknown> = {}): ApiGatewayV2Event => ({
 });
 
 describe("recording authority workforce API", () => {
+  it("under qualification execution serves only the designated fictional workforce identity with marked responses, keeps the database review, and refuses unsafe configuration", async () => {
+    const qualification = { reviewSha256: "e".repeat(64), accountId: "588966314750", databaseName: "clinical_core_qualification", identitySubjects: ["FICTIONAL-workforce-subject"] };
+    const blocked: RecordingAuthorityConfiguration = { ...config, phiAllowed: false, activation: "blocked", activationEvidenceSha256: undefined };
+    const call = vi.fn().mockResolvedValue({ workspace: {} });
+    const handler = createRecordingAuthorityApi({ configuration: { ...blocked, qualification }, operations: () => call, now: () => now });
+    const served = await handler(event()); expect(served.statusCode).toBe(200); expect(served.headers["x-clinical-execution"]).toBe("qualification"); expect(call).toHaveBeenCalledTimes(1);
+    const refused = await handler(event({ sub: "real-practitioner-0001" }));
+    expect(refused.statusCode).toBe(503); expect(JSON.parse(refused.body)).toEqual({ error: "production_not_activated", phiAllowed: false }); expect(call).toHaveBeenCalledTimes(1);
+    expect((await handler(event({ "custom:synthetic_attested": "true" }))).statusCode).toBe(401);
+    expect((await createRecordingAuthorityApi({ configuration: config, operations: () => call, now: () => now })(event())).headers["x-clinical-execution"]).toBeUndefined();
+    expect(() => createRecordingAuthorityApi({ configuration: { ...config, qualification }, operations: () => call })).toThrow("qualification_execution_invalid");
+    expect(() => createRecordingAuthorityApi({ configuration: { ...blocked, activation: "approved", qualification }, operations: () => call })).toThrow("qualification_execution_invalid");
+    expect(() => createRecordingAuthorityApi({ configuration: { ...blocked, databaseReviewSha256: "", qualification }, operations: () => call })).toThrow("qualification_execution_invalid");
+    expect(() => createRecordingAuthorityApi({ configuration: { ...blocked, qualification: { ...qualification, accountId: "173535830222" } }, operations: () => call })).toThrow("qualification_execution_invalid");
+  });
   it("refuses blocked activation before constructing a database service", async () => {
     const operations = vi.fn();
     const handler = createRecordingAuthorityApi({ configuration: { ...config, phiAllowed: false, activation: "blocked" }, operations });

@@ -92,6 +92,13 @@ jobs:
           cfn-lint dist/aws-clinical-core/privacy-operations/template.json
           cfn-lint dist/aws-clinical-core/personal-storage/disabled-template.json dist/aws-clinical-core/personal-storage/template.json
           npm run check:aws-chat-transcription
+      - name: Qualification target runner (syntax and pre-network name refusals, no AWS calls)
+        shell: pwsh
+        run: ./scripts/test-qualification-runner.ps1
+      - name: Build and validate the six recording candidates (no deployment)
+        run: |
+          for mode in "" --capture --cleanup-review --cleanup-execution --transcription --drafting; do node scripts/build-aws-recording-authority.mjs $mode; done
+          cfn-lint dist/aws-clinical-core/recording-authority/template.json dist/aws-clinical-core/recording-capture/template.json dist/aws-clinical-core/recording-cleanup-review/template.json dist/aws-clinical-core/recording-cleanup-execution/template.json dist/aws-clinical-core/recording-transcription/template.json dist/aws-clinical-core/recording-drafting/template.json
       - name: AWS production provider-removal and foundation gates
         run: |
           npm run check:aws-data-plane-migration

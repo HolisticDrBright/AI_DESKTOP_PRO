@@ -22,6 +22,26 @@ describe("independent consumer API",()=>{
     expect((await s.handler(event())).statusCode).toBe(503); expect(s.adapter).not.toHaveBeenCalled();
     expect(()=>setup({...config,activationEvidenceSha256:undefined})).toThrow("owned_api_activation_invalid");
   });
+  it("under qualification execution serves only the designated fictional identity, marks every response, and refuses everyone else and every unsafe configuration",async()=>{
+    const qualification={reviewSha256:"e".repeat(64),accountId:"588966314750",databaseName:"clinical_core_qualification",identitySubjects:["consumer-person","other-fixture-0001"]};
+    const blocked={...config,phiAllowed:false,activationState:"blocked" as const,activationEvidenceSha256:undefined};
+    const s=setup({...blocked,qualification});
+    const r=await s.handler(event()); expect(r.statusCode).toBe(200); expect(r.headers["x-clinical-execution"]).toBe("qualification"); expect(s.query.mock.calls.length).toBe(2);
+    // A verified identity that is not designated is refused exactly as when nothing is activated, before any data access.
+    const foreign=setup({...blocked,qualification}); const e=event(); e.requestContext!.authorizer!.jwt!.claims!.sub="real-consumer-0001";
+    const refused=await foreign.handler(e); expect(refused.statusCode).toBe(503); expect(JSON.parse(refused.body)).toEqual({error:"production_not_activated",phiAllowed:false}); expect(foreign.adapter).not.toHaveBeenCalled();
+    expect(refused.headers["x-clinical-execution"]).toBe("qualification");
+    // Identity checks still run first: an unverifiable token is a 401, not an admission.
+    const bad=setup({...blocked,qualification}); const b=event(); Object.assign(b.requestContext!.authorizer!.jwt!.claims!,{"custom:synthetic_attested":"true"}); expect((await bad.handler(b)).statusCode).toBe(401);
+    // Production responses carry no marker; a production deployment never carries the policy.
+    expect((await setup().handler(event())).headers["x-clinical-execution"]).toBeUndefined();
+    expect(()=>setup({...config,qualification})).toThrow("qualification_execution_invalid");
+    expect(()=>setup({...blocked,activationState:"approved",qualification})).toThrow("qualification_execution_invalid");
+    expect(()=>setup({...blocked,qualification:{...qualification,accountId:"173535830222"}})).toThrow("qualification_execution_invalid");
+    expect(()=>setup({...blocked,qualification:{...qualification,databaseName:"clinical_core"}})).toThrow("qualification_execution_invalid");
+    expect(()=>setup({...blocked,qualification:{...qualification,identitySubjects:[]}})).toThrow("qualification_execution_invalid");
+    expect(()=>setup({...blocked,qualification,allowedScopes:[]})).toThrow("qualification_execution_invalid");
+  });
   it("reads with verified ownership, without a fixed clinic organization",async()=>{
     const s=setup(); const e=event(); e.requestContext!.authorizer!.jwt!.claims!["custom:organization_id"]="22222222-2222-4222-8222-222222222222";
     const r=await s.handler(e); expect(r.statusCode).toBe(200); expect(JSON.parse(r.body).data).toEqual({items:[],nextCursor:null});

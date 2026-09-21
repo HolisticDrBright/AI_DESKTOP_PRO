@@ -81,16 +81,13 @@ real artifact through the real `applyProductionClinicalCoreMigrations` in PGlite
 counts, so the pin can no longer drift silently behind a mock. The previous mock-only test kept 114
 passing.
 
-## Remaining design decision (not decided here)
+## Design decision (decided September 21, later): qualification execution
 
-Candidates set the request context to `production-clinical`/`clinical_phi` and carry
-`PHI_ALLOWED=false`. Positive hosted acceptance of flows that are blocked while PHI is disabled
-(transcription, drafting, export delivery, cleanup, retention sweep) needs their reviewed
-test-provider and test-bucket parameters, which are human-provided, not a flag flip: "do not turn
-real-PHI flags on just to make a test pass" stands. Whether a per-candidate qualification mode
-(explicit fictional-provider authority under `PHI_ALLOWED=false`) is added, or the reviewed
-parameters are supplied per candidate as the runbooks already describe, is the open decision; the
-tooling above does not depend on it.
+The recheck showed that reviewed test parameters alone could not produce positive hosted acceptance,
+because every candidate refuses to serve while PHI is disabled. The decision is an explicit,
+disabled-by-default qualification execution profile, described in the section of that name below. It
+does not turn any PHI flag on: "do not turn real-PHI flags on just to make a test pass" stands, and the
+production activation conditions are unchanged.
 
 ## Status
 
@@ -101,3 +98,84 @@ tooling above does not depend on it.
 - Not hosted verified: no database was created, inspected or seeded from the container (the AWS
   sign-in host is blocked by the container's network policy). Steps 1 to 6 are the owner's Windows
   terminal work.
+
+## Qualification execution (September 21, later): serving fixture identities with PHI disabled
+
+The recheck confirmed the database side of the target and named the next blocker: every candidate
+serves requests only while `phiAllowed === true` and its production activation is approved, and every
+template attaches its data permissions under a condition that requires `PhiAllowed=true`. Reviewed
+test buckets and providers alone could not yield positive hosted acceptance. Qualification execution is
+the one reviewed way a candidate serves requests with PHI disabled, and it is built so that it cannot
+widen production activation.
+
+### Policy (`qualification-execution.ts`, shared by every candidate)
+
+- **Disabled by default.** A deployment names it with `QualificationExecution=enabled`; nothing else
+  turns it on. An unset or `disabled` value leaves every candidate exactly as before.
+- **Never together with production.** The policy is refused (`qualification_execution_invalid`, at
+  function start, before any request) when `PHI_ALLOWED` is not `false`, when the candidate's own
+  activation is not `blocked`, or when a voice candidate is draining. `Active` and `Qualification` can
+  never both be true; `Enabled` is their disjunction and is what the data permissions ride.
+- **Pinned.** `QualificationAccountId` must equal the deploying account (a template condition on
+  `AWS::AccountId`) and must not be the production account `173535830222`; the database cluster ARN
+  must belong to that account; `DatabaseName` must be a qualification name (contains `qualification`,
+  never `clinical_core`, `postgres`, `rdsadmin` or a template database). The same checks run again in
+  the function from its environment, so a template edit cannot bypass them.
+- **Reviewed.** `QualificationReviewSha256` (the reviewed qualification execution policy evidence)
+  stands in for the production activation evidence; every other reviewed input a candidate needs in
+  production (database review, MFA review, alarm topic, scopes, provider and storage reviews, release
+  ids) is required in qualification too. A candidate that is missing one refuses at start rather than
+  serving partially.
+- **Designated identities only.** `QualificationIdentitySubjects` (1 to 16 Cognito subjects from the
+  reviewed synthetic acceptance manifest) are the only identities served. Every request still passes
+  the real JWT verification first (issuer, audience, production binding, no synthetic attestation,
+  expiry, fresh login for workforce); a verified identity that is not designated receives exactly the
+  refusal an unactivated deployment gives (`503 production_not_activated`), before any consent,
+  billing or storage access. Ordinary consumer or practitioner traffic therefore never reaches the
+  qualification target even if it is pointed at it.
+- **Unchanged authorization.** Owner and clinic isolation, consent state, processing consent, legal
+  holds, deletion fences and every sub-activation's own evidence run exactly as in production. The
+  privacy sub-activations (personal purge, external inventory and purge, identity deletion, export
+  cleanup, retention schedule) ride `Enabled` with their own reviewed evidence; the retention sweep's
+  service identity must be a designated subject.
+- **Marked evidence.** Every response produced under qualification carries
+  `x-clinical-execution: qualification`. Both hosted harnesses record what answered them:
+  `execution` (`production`, `qualification`, `mixed`, `unobserved`) and
+  `productionActivationEvidence`, which is true only for a run answered by production responses
+  alone. The field is part of the report's evidence hash, so a qualification report can never be
+  passed off as production evidence, and a `mixed` run counts for neither.
+
+### Where it lives
+
+| Candidate | Template (`Enabled` gates the data IAM) | Function | Extra |
+|---|---|---|---|
+| personal-storage | `scripts/personal-storage-candidate.mjs` | `owned-consumer-api` | export delivery and cross-store readers ride `Enabled` with the same reviewed export inputs |
+| owned-lab | `scripts/build-aws-owned-lab.mjs` | `owned-lab-api`, worker, cleanup | qualification requires `AllowedScopes=ai_context,lab_history` and `LabRangeMode=reviewed_release`; cleanup runs hold-aware under the personal namespace |
+| owned-voice | `scripts/build-aws-owned-voice.mjs` | `owned-voice-api` and its sweep | never while draining; `AllowedScopes=ai_context,voice_transcription` |
+| privacy-operations | `scripts/build-aws-privacy-operations.mjs` | `privacy-operations-api`, retention sweep | sub-activation rules accept `PhiAllowed=true` or `QualificationExecution=enabled`; the sweep needs a designated service subject |
+| recording (6) | `scripts/build-aws-recording-authority.mjs` and modes | authority, capture, transcription, drafting, cleanup review, cleanup execution | one shared execution helper; each keeps its own release ids and review hashes |
+
+Shared template profile: `scripts/qualification-execution-template.mjs` (parameters, `QualificationPosture`,
+`Qualification`, `Enabled`, the `QualificationRequiresSyntheticPosture` rule, environment). Fixed on the
+way: the recording-capture template's route and permission logical ids contained underscores, which
+CloudFormation refuses (cfn-lint E3001); CI now builds and lints all six recording templates.
+
+### Deploying the qualification profile (owner, Windows terminal)
+
+For each candidate, deploy with `PhiAllowed=false`, `Activation=blocked`, `DatabaseName=clinical_core_qualification`,
+`QualificationExecution=enabled`, `QualificationAccountId=588966314750`, `QualificationReviewSha256=<reviewed>`,
+`QualificationIdentitySubjects=<manifest consumer and workforce subjects>`, plus the candidate's reviewed
+inputs (database review, MFA review, alarm topic, scopes, export bucket and key where export delivery is
+under test, provider releases and review hashes for recording). Stack outputs report
+`QualificationExecution=enabled`; a stack that reports `disabled` has a failing boundary and serves no one.
+Then run the hosted harnesses against that API and keep only reports whose `execution` is
+`qualification` for the qualification record; none of them is production activation evidence.
+
+### Status
+
+- Implemented and locally verified: policy module (resolution, every refusal, admission, marker),
+  eleven handlers and their lambdas, seven templates with condition evaluation tests, harness report
+  binding (production, qualification, mixed), full Desktop suite and cfn-lint on every template.
+- Not hosted verified: no qualification candidate has been deployed; the hosted harnesses have not
+  run against the qualification database. That is the owner's next step, after which whatever they find
+  is new engineering.

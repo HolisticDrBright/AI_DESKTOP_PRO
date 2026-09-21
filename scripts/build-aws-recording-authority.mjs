@@ -2,6 +2,7 @@ import { build } from "esbuild";
 import { mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
+import { qualificationConditions, qualificationEnvironment, qualificationParameters, qualificationRules } from './qualification-execution-template.mjs';
 
 const args=process.argv.slice(2),outputArgs=args.filter(arg=>arg.startsWith('--out-dir='));
 const modes=args.filter(arg=>!arg.startsWith('--out-dir='));
@@ -48,12 +49,16 @@ const template = {
     CodeBucket: { Type: "String" }, CodeKey: { Type: "String" },
     CodeVersion: { Type: "String", MinLength: 1, MaxLength: 1024, AllowedPattern: "^(?!null$).+$" },
     SourceCommit: { Type: "String", AllowedPattern: "^[a-f0-9]{40}$" },
+    // Qualification execution (docs/aws-qualification-target.md): designated fictional workforce identities against the isolated
+    // qualification database with PHI disabled; the data policy rides Enabled (Active or Qualification), never a third state.
+    ...qualificationParameters(),
   },
   Conditions: {
     Active: { "Fn::And": [{ "Fn::Equals": [ref("PhiAllowed"), "true"] }, { "Fn::Equals": [ref("Activation"), "approved"] }, ...required.map(nonempty)] },
+    ...qualificationConditions(required.filter(name => name !== "ActivationEvidenceSha256")),
     HasAlarmRecipient: nonempty("AlarmTopicArn"),
   },
-  Rules: { ReviewedActivation: { RuleCondition: { "Fn::Equals": [ref("PhiAllowed"), "true"] }, Assertions: [
+  Rules: { ...qualificationRules(), ReviewedActivation: { RuleCondition: { "Fn::Equals": [ref("PhiAllowed"), "true"] }, Assertions: [
     { Assert: { "Fn::Equals": [ref("Activation"), "approved"] }, AssertDescription: "Reviewed activation required" },
     ...required.map(name => ({ Assert: nonempty(name), AssertDescription: name + " required before activation" })),
   ] } },
@@ -67,7 +72,7 @@ const template = {
       { PolicyName: "bounded-logs", PolicyDocument: { Version: "2012-10-17", Statement: [
         { Effect: "Allow", Action: ["logs:CreateLogStream", "logs:PutLogEvents"], Resource: { "Fn::GetAtt": ["Logs", "Arn"] } },
       ] } },
-      { "Fn::If": ["Active", { PolicyName: "ReviewedRecordingAuthority", PolicyDocument: { Version: "2012-10-17", Statement: [
+      { "Fn::If": ["Enabled", { PolicyName: "ReviewedRecordingAuthority", PolicyDocument: { Version: "2012-10-17", Statement: [
         { Effect: "Allow", Action: ["rds-data:BeginTransaction", "rds-data:CommitTransaction", "rds-data:RollbackTransaction", "rds-data:ExecuteStatement"], Resource: ref("DatabaseClusterArn") },
         { Effect: "Allow", Action: "secretsmanager:GetSecretValue", Resource: ref("DatabaseSecretArn") },
         { Effect: "Allow", Action: "kms:Decrypt", Resource: ref("SecretKmsKeyArn"), Condition: { StringEquals: {
@@ -85,6 +90,7 @@ const template = {
         RECORDING_AUTHORITY_EVIDENCE_SHA256: ref("ActivationEvidenceSha256"), WORKFORCE_MFA_REVIEW_SHA256: ref("WorkforceMfaReviewSha256"),
         DATABASE_REVIEW_SHA256: ref("DatabaseReviewSha256"), CLINICAL_DATABASE_CLUSTER_ARN: ref("DatabaseClusterArn"),
         CLINICAL_DATABASE_SECRET_ARN: ref("DatabaseSecretArn"), CLINICAL_DATABASE_NAME: ref("DatabaseName"), SOURCE_COMMIT: ref("SourceCommit"),
+        ...qualificationEnvironment(),
       } } } },
     Authorizer: { Type: "AWS::ApiGatewayV2::Authorizer", Properties: { ApiId: ref("ApiId"), Name: sub(`\${ApiId}-${suffix}-workforce`),
       AuthorizerType: "JWT", IdentitySource: ["$request.header.Authorization"], JwtConfiguration: { Issuer: ref("WorkforceIssuer"), Audience: [ref("WorkforceAudience")] },
@@ -99,7 +105,7 @@ const template = {
       SourceAccount: ref("AWS::AccountId"), SourceArn: sub("arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiId}/*/POST/clinical-core/workforce/encounter-recording/authority"),
     } },
   },
-  Outputs: { PhiAllowed: { Value: ref("PhiAllowed") }, Activation: { Value: ref("Activation") }, SourceCommit: { Value: ref("SourceCommit") } },
+  Outputs: { PhiAllowed: { Value: ref("PhiAllowed") }, Activation: { Value: ref("Activation") }, QualificationExecution: { Value: { "Fn::If": ["Qualification", "enabled", "disabled"] } }, SourceCommit: { Value: ref("SourceCommit") } },
 };
 if (capture) {
   Object.assign(template.Parameters, {
@@ -130,10 +136,12 @@ if (capture) {
   );
   const route = template.Resources.Route, permission = template.Resources.Invoke;
   delete template.Resources.Route; delete template.Resources.Invoke;
+  // Logical ids must be alphanumeric (cfn-lint E3001; CloudFormation refuses underscores), so each action is title-cased.
   for (const action of ['readiness', 'start', 'state', 'command', 'segment', 'reconcile']) {
-    template.Resources['Route_' + action] = { ...route, Properties: { ...route.Properties,
+    const logical = action[0].toUpperCase() + action.slice(1);
+    template.Resources['Route' + logical] = { ...route, Properties: { ...route.Properties,
       RouteKey: 'POST /clinical-core/workforce/encounter-recording/' + action } };
-    template.Resources['Invoke_' + action] = { ...permission, Properties: { ...permission.Properties,
+    template.Resources['Invoke' + logical] = { ...permission, Properties: { ...permission.Properties,
       SourceArn: sub('arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiId}/*/POST/clinical-core/workforce/encounter-recording/' + action) } };
   }
 }

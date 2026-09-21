@@ -2,6 +2,7 @@
 const ref = name => ({Ref: name});
 const sub = value => ({'Fn::Sub': value});
 const nonempty = name => ({'Fn::Not': [{'Fn::Equals': [ref(name), '']}]});
+import {qualificationConditions,qualificationEnvironment,qualificationParameters,qualificationRules} from './qualification-execution-template.mjs';
 export function personalStorageCandidate(disabled) {
   const template = structuredClone(disabled);
   template.Description = 'Independent personal storage production candidate; blocked and logs-only by default';
@@ -36,6 +37,10 @@ export function personalStorageCandidate(disabled) {
     ExportTranscriptionBucketName: {Type:'String',Default:'',AllowedPattern:'^$|^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$'},
     ExportVoiceKmsKeyArn: {Type:'String',Default:'',AllowedPattern:'^$|^arn:aws:kms:[a-z0-9-]+:[0-9]{12}:key/[a-f0-9-]{36}$'},
     CrossStoreExportReviewSha256: {Type:'String',Default:'',AllowedPattern:'^$|^[a-f0-9]{64}$'},
+    // Qualification execution: serves only the designated fictional identities against the isolated qualification database
+    // with PHI disabled and production activation blocked (docs/aws-qualification-target.md). Disabled by default; never
+    // combinable with PhiAllowed=true or Activation=approved; pinned to the deploying account, which is never production.
+    ...qualificationParameters(),
   });
   const required = ['ActivationEvidenceSha256','DatabaseReviewSha256','AllowedScopes','AlarmTopicArn'];
   template.Conditions = {
@@ -43,8 +48,10 @@ export function personalStorageCandidate(disabled) {
       {'Fn::Equals':[ref('PhiAllowed'),'true']},
       {'Fn::Equals':[ref('Activation'),'approved']}, ...required.map(nonempty),
     ]},
+    ...qualificationConditions(['DatabaseReviewSha256','AllowedScopes','AlarmTopicArn']),
     HasAlarmRecipient: nonempty('AlarmTopicArn'),
-    ExportDelivery: {'Fn::And':[{'Fn::Equals':[ref('PhiAllowed'),'true']},{'Fn::Equals':[ref('Activation'),'approved']},...required.map(nonempty),
+    // Export delivery rides either mode: the production activation or the qualification execution, never a third state.
+    ExportDelivery: {'Fn::And':[{Condition:'Enabled'},
       nonempty('ExportBucketName'),nonempty('ExportKmsKeyArn'),nonempty('ExportReviewSha256')]},
     // Fn::And accepts at most ten conditions: each store builds on the ExportDelivery condition rather than restating it.
     CrossStoreLabExport: {'Fn::And':[{Condition:'ExportDelivery'},
@@ -52,7 +59,7 @@ export function personalStorageCandidate(disabled) {
     CrossStoreVoiceExport: {'Fn::And':[{Condition:'ExportDelivery'},
       nonempty('ExportVoiceJobTableArn'),nonempty('ExportTranscriptionBucketName'),nonempty('ExportVoiceKmsKeyArn'),nonempty('CrossStoreExportReviewSha256')]},
   };
-  template.Rules = {ActivationRequiresReviewedConfiguration: {
+  template.Rules = {...qualificationRules(),ActivationRequiresReviewedConfiguration: {
     RuleCondition: {'Fn::Equals':[ref('PhiAllowed'),'true']},
     Assertions: [
       {Assert:{'Fn::Equals':[ref('Activation'),'approved']},AssertDescription:'Reviewed activation is required'},
@@ -87,7 +94,7 @@ export function personalStorageCandidate(disabled) {
   };
   r.Logs.DeletionPolicy='Retain'; r.Logs.UpdateReplacePolicy='Retain';
   const account = {StringEquals:{'aws:ResourceAccount':ref('AWS::AccountId')}};
-  r.Role.Properties.Policies.push({'Fn::If':['Active',{
+  r.Role.Properties.Policies.push({'Fn::If':['Enabled',{
     PolicyName:'ReviewedPersonalRecordsOnly',PolicyDocument:{Version:'2012-10-17',Statement:[
       {Effect:'Allow',Action:['rds-data:BeginTransaction','rds-data:CommitTransaction','rds-data:RollbackTransaction','rds-data:ExecuteStatement'],Resource:ref('DatabaseClusterArn'),Condition:account},
       {Effect:'Allow',Action:'secretsmanager:GetSecretValue',Resource:ref('DatabaseSecretArn'),Condition:account},
@@ -139,6 +146,7 @@ export function personalStorageCandidate(disabled) {
     PERSONAL_STORAGE_EVIDENCE_SHA256:ref('ActivationEvidenceSha256'),PERSONAL_STORAGE_ALLOWED_SCOPES:ref('AllowedScopes'),
     CLINICAL_DATABASE_CLUSTER_ARN:ref('DatabaseClusterArn'),CLINICAL_DATABASE_SECRET_ARN:ref('DatabaseSecretArn'),CLINICAL_DATABASE_NAME:ref('DatabaseName'),
     KNOWLEDGE_RELEASE_MODE:'disabled',SOURCE_COMMIT:ref('SourceCommit'),
+    ...qualificationEnvironment(),
     PERSONAL_EXPORT_BUCKET:{'Fn::If':['ExportDelivery',ref('ExportBucketName'),'']},
     PERSONAL_EXPORT_KMS_KEY_ARN:{'Fn::If':['ExportDelivery',ref('ExportKmsKeyArn'),'']},
     PERSONAL_EXPORT_BUCKET_OWNER:{'Fn::If':['ExportDelivery',ref('AWS::AccountId'),'']},
@@ -165,7 +173,7 @@ export function personalStorageCandidate(disabled) {
     Statistic:'Sum',Period:60,EvaluationPeriods:1,Threshold:1,ComparisonOperator:'GreaterThanOrEqualToThreshold',TreatMissingData:'notBreaching',
     AlarmActions:{'Fn::If':['HasAlarmRecipient',[ref('AlarmTopicArn')],ref('AWS::NoValue')]},
   }};
-  template.Outputs={PhiAllowed:{Value:ref('PhiAllowed')},Activation:{Value:ref('Activation')},
+  template.Outputs={PhiAllowed:{Value:ref('PhiAllowed')},Activation:{Value:ref('Activation')},QualificationExecution:{Value:{'Fn::If':['Qualification','enabled','disabled']}},
     FunctionArn:{Value:{'Fn::GetAtt':['Function','Arn']}},SourceCommit:{Value:ref('SourceCommit')},
     ActivationEvidenceSha256:{Value:ref('ActivationEvidenceSha256')},DatabaseReviewSha256:{Value:ref('DatabaseReviewSha256')}};
   return template;

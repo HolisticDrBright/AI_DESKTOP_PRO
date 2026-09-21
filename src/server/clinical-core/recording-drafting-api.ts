@@ -1,5 +1,6 @@
 import type { ApiGatewayV2Event, ApiGatewayV2Response } from './aws-identity-api';
-import { recordingWorkforceActivation, recordingWorkforceIdentity, type RecordingAuthorityConfiguration } from './recording-authority-api';
+import { recordingWorkforceAdmits, recordingWorkforceExecution, recordingWorkforceIdentity, type RecordingAuthorityConfiguration } from './recording-authority-api';
+import { markQualificationResponse } from './qualification-execution';
 import { RecordingAuthorityError } from './encounter-recording-operations';
 import { RecordingDraftingError, type createRecordingDraftingProcessor } from './recording-drafting';
 import { draftingOperationSchema, draftingListingSchema, draftingReceiptSchema, proposedNoteContentSchema } from '@/contracts/encounterRecordingDrafting';
@@ -17,14 +18,17 @@ const reply = (statusCode: number, value: unknown): ApiGatewayV2Response => ({ s
 export function createRecordingDraftingApi(input: { configuration: RecordingDraftingConfiguration;
   processor: () => ReturnType<typeof createRecordingDraftingProcessor>; now?: () => number }) {
   const c = input.configuration;
-  const active = recordingWorkforceActivation(c) && uuid.test(c.draftingReleaseId) && secretArn.test(c.openAiSecretArn)
-    && [c.draftingReviewSha256, c.providerReviewSha256, c.storageReviewSha256].every(v => hash.test(v ?? ''));
+  const execution = recordingWorkforceExecution(c);
+  const configured = uuid.test(c.draftingReleaseId) && secretArn.test(c.openAiSecretArn) && [c.draftingReviewSha256, c.providerReviewSha256, c.storageReviewSha256].every(v => hash.test(v ?? ''));
+  const active = execution.active && configured, serving = execution.serving && configured;
   if (c.phiAllowed && !active) throw new Error('recording_api_activation_invalid');
-  return async (event: ApiGatewayV2Event): Promise<ApiGatewayV2Response> => {
-    if (!active) return reply(503, { error: 'production_not_activated', phiAllowed: false });
+  if (execution.qualification && !configured) throw new Error('qualification_execution_invalid');
+  const handle = async (event: ApiGatewayV2Event): Promise<ApiGatewayV2Response> => {
+    if (!serving) return reply(503, { error: 'production_not_activated', phiAllowed: false });
     if (event.routeKey !== RECORDING_DRAFTING_ROUTE) return reply(404, { error: 'route_not_found' });
     try {
       const context = recordingWorkforceIdentity(event, c, input.now?.() ?? Date.now());
+      if (!recordingWorkforceAdmits(execution, context)) return reply(503, { error: 'production_not_activated', phiAllowed: false });
       const type = Object.entries(event.headers ?? {}).find(([k]) => k.toLowerCase() === 'content-type')?.[1];
       if (Object.keys(event.queryStringParameters ?? {}).length || type?.split(';')[0]?.trim().toLowerCase() !== 'application/json'
         || typeof event.body !== 'string' || event.body.length > 20_000) throw new RecordingDraftingError('request_invalid');
@@ -53,4 +57,5 @@ export function createRecordingDraftingApi(input: { configuration: RecordingDraf
         : ['access_refused', 'consent_required', 'refused', 'legal_hold', 'recording_access_refused', 'recording_consent_required'].includes(code) ? 403 : 503, { error: code });
     }
   };
+  return async (event: ApiGatewayV2Event): Promise<ApiGatewayV2Response> => markQualificationResponse(execution.qualification, await handle(event));
 }

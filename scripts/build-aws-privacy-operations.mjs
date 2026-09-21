@@ -1,4 +1,5 @@
 import {build} from 'esbuild';
+import {qualificationConditions,qualificationEnvironment,qualificationParameters,qualificationRules} from './qualification-execution-template.mjs';
 import {mkdirSync,writeFileSync} from 'node:fs';
 const out='dist/aws-clinical-core/privacy-operations';mkdirSync(out,{recursive:true});
 await build({entryPoints:['src/server/clinical-core/privacy-operations-lambda.ts'],outfile:out+'/index.js',
@@ -46,23 +47,27 @@ const template={AWSTemplateFormatVersion:'2010-09-09',Description:'Owner-assigne
     AlarmTopicArn:{Type:'String',Default:'',AllowedPattern:'^$|^arn:aws:sns:[a-z0-9-]+:[0-9]{12}:[A-Za-z0-9_-]+$'},
     CodeBucket:{Type:'String'},CodeKey:{Type:'String'},CodeVersion:{Type:'String',MinLength:1,MaxLength:1024,AllowedPattern:'^(?!null$).+$'},
     SourceCommit:{Type:'String',AllowedPattern:'^[a-f0-9]{40}$'},
+    // Qualification execution (docs/aws-qualification-target.md): designated fictional workforce identities against the isolated
+    // qualification database with PHI disabled; every data permission and sub-activation rides Enabled (Active or Qualification).
+    ...qualificationParameters(),
   },
   Conditions:{Active:{'Fn::And':[{'Fn::Equals':[ref('PhiAllowed'),'true']},{'Fn::Equals':[ref('Activation'),'approved']},...required.map(nonempty)]},
-    HasAlarmRecipient:nonempty('AlarmTopicArn'),InventoryActive:{'Fn::And':[{Condition:'Active'},
+    ...qualificationConditions(required.filter(n=>n!=='ActivationEvidenceSha256')),
+    HasAlarmRecipient:nonempty('AlarmTopicArn'),InventoryActive:{'Fn::And':[{Condition:'Enabled'},
       {'Fn::Equals':[ref('ExternalInventoryEnabled'),'true']},...['ExternalInventoryEvidenceSha256','LabTableArn','VoiceTableArn','LabTableKmsKeyArn','VoiceTableKmsKeyArn'].map(nonempty)]},
     PurgeActive:{'Fn::And':[{Condition:'InventoryActive'},{'Fn::Equals':[ref('ExternalPurgeEnabled'),'true']},
       ...['ExternalPurgeEvidenceSha256','LabDocumentBucket','LabStateMachineArn','VoiceBucket','VoiceKmsKeyArn'].map(nonempty)]},
-    IdentityDeletionActive:{'Fn::And':[{Condition:'Active'},{'Fn::Equals':[ref('IdentityDeletionEnabled'),'true']},
+    IdentityDeletionActive:{'Fn::And':[{Condition:'Enabled'},{'Fn::Equals':[ref('IdentityDeletionEnabled'),'true']},
       ...['IdentityDeletionEvidenceSha256','ConsumerUserPoolId'].map(nonempty)]},
-    ExportCleanupActive:{'Fn::And':[{Condition:'Active'},{'Fn::Equals':[ref('ExportCleanupEnabled'),'true']},
+    ExportCleanupActive:{'Fn::And':[{Condition:'Enabled'},{'Fn::Equals':[ref('ExportCleanupEnabled'),'true']},
       ...['ExportCleanupEvidenceSha256','ExportBucketName','ExportKmsKeyArn'].map(nonempty)]},
     RetentionScheduleActive:{'Fn::And':[{Condition:'ExportCleanupActive'},{'Fn::Equals':[ref('RetentionScheduleEnabled'),'true']},
       ...['RetentionScheduleEvidenceSha256','RetentionServicePersonId','RetentionServiceSubject','RetentionServiceOrganizationId'].map(nonempty)]}},
-  Rules:{ReviewedActivation:{RuleCondition:{'Fn::Equals':[ref('PhiAllowed'),'true']},Assertions:[
+  Rules:{...qualificationRules(),ReviewedActivation:{RuleCondition:{'Fn::Equals':[ref('PhiAllowed'),'true']},Assertions:[
     {Assert:{'Fn::Equals':[ref('Activation'),'approved']},AssertDescription:'Reviewed activation required'},
     ...required.map(n=>({Assert:nonempty(n),AssertDescription:n+' required before activation'}))]},
     ReviewedExternalInventory:{RuleCondition:{'Fn::Equals':[ref('ExternalInventoryEnabled'),'true']},Assertions:[
-      {Assert:{'Fn::Equals':[ref('PhiAllowed'),'true']},AssertDescription:'Privacy service activation required'},
+      {Assert:{'Fn::Or':[{'Fn::Equals':[ref('PhiAllowed'),'true']},{'Fn::Equals':[ref('QualificationExecution'),'enabled']}]},AssertDescription:'Privacy service activation or qualification execution required'},
       ...['ExternalInventoryEvidenceSha256','LabTableArn','VoiceTableArn','LabTableKmsKeyArn','VoiceTableKmsKeyArn'].map(n=>({Assert:nonempty(n),AssertDescription:n+' required'})),
     ]},
     ReviewedExternalPurge:{RuleCondition:{'Fn::Equals':[ref('ExternalPurgeEnabled'),'true']},Assertions:[
@@ -70,11 +75,11 @@ const template={AWSTemplateFormatVersion:'2010-09-09',Description:'Owner-assigne
       ...['ExternalPurgeEvidenceSha256','LabDocumentBucket','LabStateMachineArn','VoiceBucket','VoiceKmsKeyArn'].map(n=>({Assert:nonempty(n),AssertDescription:n+' required'})),
     ]},
     ReviewedIdentityDeletion:{RuleCondition:{'Fn::Equals':[ref('IdentityDeletionEnabled'),'true']},Assertions:[
-      {Assert:{'Fn::Equals':[ref('PhiAllowed'),'true']},AssertDescription:'Privacy service activation required'},
+      {Assert:{'Fn::Or':[{'Fn::Equals':[ref('PhiAllowed'),'true']},{'Fn::Equals':[ref('QualificationExecution'),'enabled']}]},AssertDescription:'Privacy service activation or qualification execution required'},
       ...['IdentityDeletionEvidenceSha256','ConsumerUserPoolId'].map(n=>({Assert:nonempty(n),AssertDescription:n+' required'})),
     ]},
     ReviewedExportCleanup:{RuleCondition:{'Fn::Equals':[ref('ExportCleanupEnabled'),'true']},Assertions:[
-      {Assert:{'Fn::Equals':[ref('PhiAllowed'),'true']},AssertDescription:'Privacy service activation required'},
+      {Assert:{'Fn::Or':[{'Fn::Equals':[ref('PhiAllowed'),'true']},{'Fn::Equals':[ref('QualificationExecution'),'enabled']}]},AssertDescription:'Privacy service activation or qualification execution required'},
       ...['ExportCleanupEvidenceSha256','ExportBucketName','ExportKmsKeyArn'].map(n=>({Assert:nonempty(n),AssertDescription:n+' required'})),
     ]},
     ReviewedRetentionSchedule:{RuleCondition:{'Fn::Equals':[ref('RetentionScheduleEnabled'),'true']},Assertions:[
@@ -82,7 +87,7 @@ const template={AWSTemplateFormatVersion:'2010-09-09',Description:'Owner-assigne
       ...['RetentionScheduleEvidenceSha256','RetentionServicePersonId','RetentionServiceSubject','RetentionServiceOrganizationId'].map(n=>({Assert:nonempty(n),AssertDescription:n+' required'})),
     ]},
     ReviewedPersonalPurge:{RuleCondition:{'Fn::Equals':[ref('PersonalPurgeEnabled'),'true']},Assertions:[
-      {Assert:{'Fn::Equals':[ref('PhiAllowed'),'true']},AssertDescription:'Privacy service activation required'},
+      {Assert:{'Fn::Or':[{'Fn::Equals':[ref('PhiAllowed'),'true']},{'Fn::Equals':[ref('QualificationExecution'),'enabled']}]},AssertDescription:'Privacy service activation or qualification execution required'},
       {Assert:nonempty('PersonalPurgeEvidenceSha256'),AssertDescription:'Separate reviewed purge evidence required'},
     ]}},
   Resources:{
@@ -92,7 +97,7 @@ const template={AWSTemplateFormatVersion:'2010-09-09',Description:'Owner-assigne
       {Effect:'Allow',Principal:{Service:'lambda.amazonaws.com'},Action:'sts:AssumeRole'}]},Policies:[
       {PolicyName:'bounded-logs',PolicyDocument:{Version:'2012-10-17',Statement:[
         {Effect:'Allow',Action:['logs:CreateLogStream','logs:PutLogEvents'],Resource:{'Fn::GetAtt':['Logs','Arn']}}]}},
-      {'Fn::If':['Active',{PolicyName:'ReviewedPrivacyOperations',PolicyDocument:{Version:'2012-10-17',Statement:[
+      {'Fn::If':['Enabled',{PolicyName:'ReviewedPrivacyOperations',PolicyDocument:{Version:'2012-10-17',Statement:[
         {Effect:'Allow',Action:['rds-data:BeginTransaction','rds-data:CommitTransaction','rds-data:RollbackTransaction','rds-data:ExecuteStatement'],
           Resource:ref('DatabaseClusterArn'),Condition:{StringEquals:{'aws:ResourceAccount':ref('AWS::AccountId')}}},
         {Effect:'Allow',Action:'secretsmanager:GetSecretValue',Resource:ref('DatabaseSecretArn'),Condition:{StringEquals:{'aws:ResourceAccount':ref('AWS::AccountId')}}},
@@ -162,6 +167,7 @@ const template={AWSTemplateFormatVersion:'2010-09-09',Description:'Owner-assigne
         RETENTION_SWEEP_ENABLED:'false',
         WORKFORCE_MFA_REVIEW_SHA256:ref('WorkforceMfaReviewSha256'),CLINICAL_DATABASE_CLUSTER_ARN:ref('DatabaseClusterArn'),
         CLINICAL_DATABASE_SECRET_ARN:ref('DatabaseSecretArn'),CLINICAL_DATABASE_NAME:ref('DatabaseName'),SOURCE_COMMIT:ref('SourceCommit'),
+        ...qualificationEnvironment(),
       }}}},
     // Scheduled retention sweep: same role (database and export retention statements), no API route, no JWT; the database
     // refuses every call until a reviewed release row names this service identity. Hourly; the alarm watches the oldest pending removal.
@@ -169,7 +175,8 @@ const template={AWSTemplateFormatVersion:'2010-09-09',Description:'Owner-assigne
       Role:{'Fn::GetAtt':['Role','Arn']},Timeout:600,MemorySize:256,ReservedConcurrentExecutions:1,
       Code:{S3Bucket:ref('CodeBucket'),S3Key:ref('CodeKey'),S3ObjectVersion:ref('CodeVersion')},
       LoggingConfig:{LogGroup:ref('Logs')},Environment:{Variables:{
-        PHI_ALLOWED:ref('PhiAllowed'),RETENTION_SWEEP_ENABLED:ref('RetentionScheduleEnabled'),RETENTION_SWEEP_EVIDENCE_SHA256:ref('RetentionScheduleEvidenceSha256'),
+        PHI_ALLOWED:ref('PhiAllowed'),PRIVACY_OPERATIONS_ACTIVATION:ref('Activation'),RETENTION_SWEEP_ENABLED:ref('RetentionScheduleEnabled'),RETENTION_SWEEP_EVIDENCE_SHA256:ref('RetentionScheduleEvidenceSha256'),
+        ...qualificationEnvironment(),
         RETENTION_SERVICE_PERSON_ID:ref('RetentionServicePersonId'),RETENTION_SERVICE_SUBJECT:ref('RetentionServiceSubject'),RETENTION_SERVICE_ORGANIZATION_ID:ref('RetentionServiceOrganizationId'),
         PERSONAL_EXPORT_BUCKET:ref('ExportBucketName'),PERSONAL_EXPORT_KMS_KEY_ARN:ref('ExportKmsKeyArn'),PERSONAL_EXPORT_BUCKET_OWNER:ref('AWS::AccountId'),
         CLINICAL_DATABASE_CLUSTER_ARN:ref('DatabaseClusterArn'),CLINICAL_DATABASE_SECRET_ARN:ref('DatabaseSecretArn'),CLINICAL_DATABASE_NAME:ref('DatabaseName'),SOURCE_COMMIT:ref('SourceCommit'),
@@ -196,7 +203,7 @@ const template={AWSTemplateFormatVersion:'2010-09-09',Description:'Owner-assigne
     Invoke:{Type:'AWS::Lambda::Permission',Properties:{FunctionName:ref('Function'),Action:'lambda:InvokeFunction',Principal:'apigateway.amazonaws.com',
       SourceAccount:ref('AWS::AccountId'),SourceArn:sub('arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiId}/*/POST/clinical-core/workforce/privacy-operations')}},
   },
-  Outputs:{PhiAllowed:{Value:ref('PhiAllowed')},Activation:{Value:ref('Activation')},SourceCommit:{Value:ref('SourceCommit')}},
+  Outputs:{PhiAllowed:{Value:ref('PhiAllowed')},Activation:{Value:ref('Activation')},QualificationExecution:{Value:{'Fn::If':['Qualification','enabled','disabled']}},SourceCommit:{Value:ref('SourceCommit')}},
 };
 for(const metric of ['Errors','Throttles'])template.Resources[metric+'Alarm']={Type:'AWS::CloudWatch::Alarm',Properties:{
   Namespace:'AWS/Lambda',MetricName:metric,Dimensions:[{Name:'FunctionName',Value:ref('Function')}],Statistic:'Sum',Period:60,

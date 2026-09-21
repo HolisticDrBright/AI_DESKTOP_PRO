@@ -42,7 +42,7 @@ describe('separately disabled cleanup execution candidate',()=>{
     for(const key of reviews)expect(JSON.stringify(template.Rules)).toContain(key);
     const policies=template.Resources.Role.Properties.Policies as Json[];
     expect(JSON.stringify(policies[0])).not.toMatch(/rds-data:|s3:|kms:|secretsmanager:/);
-    expect((policies[1] as Record<string,Json>)['Fn::If']).toEqual(['Active',expect.any(Object),{Ref:'AWS::NoValue'}]);
+    expect((policies[1] as Record<string,Json>)['Fn::If']).toEqual(['Enabled',expect.any(Object),{Ref:'AWS::NoValue'}]);
   });
   it('permits only exact-version deletion within the configured organization prefix and cannot alter holds or schedule jobs',()=>{
     const policies=JSON.stringify(template.Resources.Role.Properties.Policies);

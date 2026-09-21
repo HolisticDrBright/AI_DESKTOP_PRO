@@ -1,5 +1,6 @@
 if (typeof window !== "undefined") throw new Error("clinical-core/export-retention-acceptance is server-only.");
 import { createHash } from "node:crypto";
+import { observeExecution, summariseExecution, type ObservedExecution } from "./qualification-execution";
 
 /** Hosted synthetic acceptance for the personal-storage export job and its
  * retention (Desktop migrations 93 to 97). Runs only against the synthetic
@@ -16,7 +17,9 @@ export type ExportAcceptanceStep = { index: number; name: string; expected: stri
 export type ExportAcceptanceReport = {
   schemaVersion: "export-retention-acceptance/1"; environment: "synthetic-staging"; ok: boolean;
   sourceCommit: string; migrationReleaseHash: string; configurationSha256: string; awsAccountId: string; startedAt: string; finishedAt: string;
-  steps: ExportAcceptanceStep[]; retained: { jobId: string; state: string }[]; evidenceSha256: string;
+  steps: ExportAcceptanceStep[]; retained: { jobId: string; state: string }[];
+  /** Which execution answered (docs/aws-qualification-target.md): a qualification run is never production activation evidence. */
+  execution: ObservedExecution; productionActivationEvidence: boolean; evidenceSha256: string;
 };
 type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 export class ExportAcceptanceError extends Error { constructor(readonly category: "configuration_invalid" | "boundary_refused") { super(category); } }
@@ -44,6 +47,7 @@ export async function runExportRetentionAcceptance(input: {
       response = await fetcher(`${origin}${path}`, { method: method ?? (body ? "POST" : "GET"), headers: { authorization: `Bearer ${bearer}`, ...(body ? { "content-type": "application/json" } : {}) },
         ...(body ? { body: JSON.stringify(body) } : {}), redirect: "manual", signal: AbortSignal.timeout(25_000) });
     } catch { return { status: 0, body: null as unknown }; }
+    observeExecution(executions, response.headers);
     const bytes = new Uint8Array(await response.arrayBuffer());
     if (bytes.byteLength > 65_536) return { status: response.status, body: null as unknown };
     try { return { status: response.status, body: JSON.parse(new TextDecoder().decode(bytes)) as unknown }; } catch { return { status: response.status, body: null as unknown }; }
@@ -51,6 +55,7 @@ export async function runExportRetentionAcceptance(input: {
   const data = (r: { body: unknown }) => (r.body && typeof r.body === "object" && "data" in (r.body as object) ? (r.body as { data: unknown }).data : null) as Record<string, unknown> | null;
   const errorCode = (r: { body: unknown }) => (r.body && typeof r.body === "object" && typeof (r.body as { error?: unknown }).error === "string" ? (r.body as { error: string }).error : undefined);
   const retained: { jobId: string; state: string }[] = [];
+  const executions = new Set<string>();
   let jobId: string | null = null, configured = true;
 
   // 1. Posture: the deployment must be the synthetic boundary before any write.
@@ -142,7 +147,7 @@ export async function runExportRetentionAcceptance(input: {
   const configurationSha256 = createHash("sha256").update(JSON.stringify({ origin, account: input.expectedAwsAccountId, sourceCommit: input.sourceCommit, migrationReleaseHash: input.migrationReleaseHash })).digest("hex");
   const ok = steps.every((s) => s.outcome === "passed" || s.outcome === "skipped") && steps.some((s) => s.outcome === "passed" && s.name === "advance passes to ready");
   const report: Omit<ExportAcceptanceReport, "evidenceSha256"> = { schemaVersion: "export-retention-acceptance/1", environment: "synthetic-staging", ok, sourceCommit: input.sourceCommit,
-    migrationReleaseHash: input.migrationReleaseHash, configurationSha256, awsAccountId: input.expectedAwsAccountId, startedAt, finishedAt, steps, retained };
+    migrationReleaseHash: input.migrationReleaseHash, configurationSha256, awsAccountId: input.expectedAwsAccountId, startedAt, finishedAt, steps, retained, ...summariseExecution(executions) };
   return { ...report, evidenceSha256: createHash("sha256").update(JSON.stringify({ ...report, startedAt: undefined, finishedAt: undefined })).digest("hex") };
 }
 
