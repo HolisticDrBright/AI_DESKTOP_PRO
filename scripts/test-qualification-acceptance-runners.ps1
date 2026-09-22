@@ -17,6 +17,7 @@ foreach ($file in (Get-ChildItem -LiteralPath $PSScriptRoot -Filter '*.ps1' | So
 $work = Join-Path ([System.IO.Path]::GetTempPath()) ("qualification-runner-test-" + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $work | Out-Null
 $commit = 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678'
+$global:Commit = $commit
 $target = [ordered]@{
   schemaVersion = 'aws-clinical-core-qualification-target/1'; environment = 'synthetic-staging'; dataClassification = 'synthetic_only'; containsPhi = $false
   awsAccountId = '588966314750'; awsRegion = 'us-east-2'; foundationStackName = 'ai-clinical-core-qualification-foundation'
@@ -24,8 +25,9 @@ $target = [ordered]@{
   databaseClusterArn = 'arn:aws:rds:us-east-2:588966314750:cluster:ai-clinical-core-synthetic-clinicaldatabasecluster-lftvrccuflxa'
   databaseSecretArn = 'arn:aws:secretsmanager:us-east-2:588966314750:secret:fictional-qualification-AbCdEf'
   databaseName = 'clinical_core_qualification'; exportBucket = 'alp-qualification-exports-588966314750-us-east-2'
+  recordingBucket = 'alp-qualification-recordings-588966314750-us-east-2'
   sourceCommit = $commit; migrationReleaseHash = ('b' * 64)
-  identitySubjects = [ordered]@{ consumer = '11111111-2222-4333-8444-555555555555'; workforce = '66666666-7777-4888-8999-000000000000' }
+  identitySubjects = [ordered]@{ consumer = '11111111-2222-4333-8444-555555555555'; workforce = '66666666-7777-4888-8999-000000000000'; foreignConsumer = '22222222-3333-4444-8555-666666666666' }
   stacks = [ordered]@{ 'personal-storage' = 'ai-clinical-core-qualification-personal-storage'; 'privacy-operations' = 'ai-clinical-core-qualification-privacy-operations'
     'recording-authority' = 'ai-clinical-core-qualification-recording-authority'; 'recording-capture' = 'ai-clinical-core-qualification-recording-capture'
     'recording-transcription' = 'ai-clinical-core-qualification-recording-transcription'; 'recording-drafting' = 'ai-clinical-core-qualification-recording-drafting'
@@ -54,10 +56,27 @@ $global:External = 0
 $global:StackOutputs = @{
   'ai-clinical-core-qualification-foundation' = '{"Outputs":[{"OutputKey":"PhiAllowed","OutputValue":"false"},{"OutputKey":"Activation","OutputValue":"blocked"},{"OutputKey":"QualificationExecution","OutputValue":"disabled"},{"OutputKey":"ApiId","OutputValue":"6zt8e9qz04"}],"Parameters":[]}'
 }
-function global:CandidateStack([string]$name, [string]$phi = 'false', [string]$activation = 'blocked', [string]$execution = 'enabled', [string]$source = $commit, [string]$database = 'clinical_core_qualification') {
-  return "{""Outputs"":[{""OutputKey"":""PhiAllowed"",""OutputValue"":""$phi""},{""OutputKey"":""Activation"",""OutputValue"":""$activation""},{""OutputKey"":""QualificationExecution"",""OutputValue"":""$execution""},{""OutputKey"":""SourceCommit"",""OutputValue"":""$source""}],""Parameters"":[{""ParameterKey"":""DatabaseName"",""ParameterValue"":""$database""},{""ParameterKey"":""ApiId"",""ParameterValue"":""6zt8e9qz04""}]}"
+function global:CandidateStack([hashtable]$Patch = @{}) {
+  # A fictional deployed stack: reviewed posture, and the resources the manifest names. $Patch replaces one, or drops it with $null.
+  $outputs = [ordered]@{ PhiAllowed = 'false'; Activation = 'blocked'; QualificationExecution = 'enabled'; SourceCommit = $global:Commit }
+  $parameters = [ordered]@{ DatabaseClusterArn = 'arn:aws:rds:us-east-2:588966314750:cluster:ai-clinical-core-synthetic-clinicaldatabasecluster-lftvrccuflxa'
+    DatabaseSecretArn = 'arn:aws:secretsmanager:us-east-2:588966314750:secret:fictional-qualification-AbCdEf'
+    DatabaseName = 'clinical_core_qualification'; QualificationAccountId = '588966314750'; ApiId = '6zt8e9qz04'
+    ExportBucketName = 'alp-qualification-exports-588966314750-us-east-2'; RecordingBucket = 'alp-qualification-recordings-588966314750-us-east-2'
+    SourceCommit = $global:Commit; QualificationIdentitySubjects = '11111111-2222-4333-8444-555555555555,66666666-7777-4888-8999-000000000000,22222222-3333-4444-8555-666666666666' }
+  $status = 'CREATE_COMPLETE'
+  foreach ($key in $Patch.Keys) {
+    if ($key -eq 'StackStatus') { $status = $Patch[$key]; continue }
+    if ($key -in @('PhiAllowed','Activation','QualificationExecution')) { $outputs[$key] = $Patch[$key]; continue }
+    if ($key -eq 'SourceCommit') { $outputs[$key] = $Patch[$key]; $parameters[$key] = $Patch[$key]; continue }
+    if ($null -eq $Patch[$key]) { $parameters.Remove($key) } else { $parameters[$key] = $Patch[$key] }
+  }
+  $body = [ordered]@{ StackStatus = $status
+    Outputs = @($outputs.Keys | ForEach-Object { [ordered]@{ OutputKey = $_; OutputValue = $outputs[$_] } })
+    Parameters = @($parameters.Keys | ForEach-Object { [ordered]@{ ParameterKey = $_; ParameterValue = $parameters[$_] } }) }
+  return ($body | ConvertTo-Json -Depth 6 -Compress)
 }
-foreach ($candidate in $target.stacks.Values) { $global:StackOutputs[$candidate] = (CandidateStack $candidate) }
+foreach ($candidate in $target.stacks.Values) { $global:StackOutputs[$candidate] = (CandidateStack) }
 function aws {
   $global:External++
   if ($args[0] -eq 'sts') { $global:LASTEXITCODE = 0; return $global:StsAccount }
@@ -139,20 +158,36 @@ Invoke-Case 'an unfilled example target' { Export-Run (Write-Target @{ sourceCom
 $global:Head = 'f' * 40
 Invoke-Case 'a checkout that is not the deployed commit' { Export-Run $good } 'qualification_target_refused:sourceCommit_checkout'
 $global:Head = $commit
-$global:StackOutputs['ai-clinical-core-qualification-personal-storage'] = (CandidateStack 'x' 'true')
-Invoke-Case 'a candidate with PHI enabled' { Export-Run $good } 'qualification_target_refused:stack_phi.personal-storage'
-$global:StackOutputs['ai-clinical-core-qualification-personal-storage'] = (CandidateStack 'x' 'false' 'approved')
-Invoke-Case 'a candidate with production activation approved' { Export-Run $good } 'qualification_target_refused:stack_activation.personal-storage'
-$global:StackOutputs['ai-clinical-core-qualification-personal-storage'] = (CandidateStack 'x' 'false' 'blocked' 'disabled')
-Invoke-Case 'a candidate whose qualification execution is disabled' { Export-Run $good } 'qualification_target_refused:stack_execution.personal-storage'
-$global:StackOutputs['ai-clinical-core-qualification-personal-storage'] = (CandidateStack 'x' 'false' 'blocked' 'enabled' ('c' * 40))
-Invoke-Case 'a candidate deployed from another commit' { Export-Run $good } 'qualification_target_refused:stack_source.personal-storage'
-$global:StackOutputs['ai-clinical-core-qualification-personal-storage'] = (CandidateStack 'x' 'false' 'blocked' 'enabled' $commit 'clinical_core')
-Invoke-Case 'a candidate pointed at the staging database' { Export-Run $good } 'qualification_target_refused:stack_database.personal-storage'
-$global:StackOutputs['ai-clinical-core-qualification-personal-storage'] = (CandidateStack 'x')
+function Invoke-CandidateCase([string]$name, [hashtable]$patch, [string]$expect, [string]$stack = 'ai-clinical-core-qualification-personal-storage', [scriptblock]$body) {
+  if (-not $body) { $body = { Export-Run $good } }
+  $global:StackOutputs[$stack] = (CandidateStack $patch)
+  Invoke-Case $name $body $expect
+  $global:StackOutputs[$stack] = (CandidateStack)
+}
+Invoke-CandidateCase 'a candidate with PHI enabled' @{ PhiAllowed = 'true' } 'qualification_target_refused:stack_phi.personal-storage'
+Invoke-CandidateCase 'a candidate with production activation approved' @{ Activation = 'approved' } 'qualification_target_refused:stack_activation.personal-storage'
+Invoke-CandidateCase 'a candidate whose qualification execution is disabled' @{ QualificationExecution = 'disabled' } 'qualification_target_refused:stack_execution.personal-storage'
+Invoke-CandidateCase 'a candidate deployed from another commit' @{ SourceCommit = ('c' * 40) } 'qualification_target_refused:stack_source.personal-storage'
+Invoke-CandidateCase 'a candidate that has not finished deploying' @{ StackStatus = 'UPDATE_IN_PROGRESS' } 'qualification_target_refused:stack_status.personal-storage'
+# A database or API name does not identify one database or API: the cluster, the secret and the buckets are compared too.
+Invoke-CandidateCase 'a candidate pointed at the staging database' @{ DatabaseName = 'clinical_core' } 'qualification_target_refused:stack_parameter.personal-storage.DatabaseName'
+Invoke-CandidateCase 'a candidate on another cluster' @{ DatabaseClusterArn = 'arn:aws:rds:us-east-2:588966314750:cluster:some-other-cluster' } 'qualification_target_refused:stack_parameter.personal-storage.DatabaseClusterArn'
+Invoke-CandidateCase 'a candidate with another database secret' @{ DatabaseSecretArn = 'arn:aws:secretsmanager:us-east-2:588966314750:secret:some-other-secret' } 'qualification_target_refused:stack_parameter.personal-storage.DatabaseSecretArn'
+Invoke-CandidateCase 'a candidate delivering to another export bucket' @{ ExportBucketName = 'some-other-bucket' } 'qualification_target_refused:stack_parameter.personal-storage.ExportBucketName'
+Invoke-CandidateCase 'a candidate on the staging API' @{ ApiId = 'wxv734oi12' } 'qualification_target_refused:stack_parameter.personal-storage.ApiId'
+Invoke-CandidateCase 'a candidate pinned to another account' @{ QualificationAccountId = '111111111111' } 'qualification_target_refused:stack_parameter.personal-storage.QualificationAccountId'
+Invoke-CandidateCase 'a candidate missing the cluster parameter' @{ DatabaseClusterArn = $null } 'qualification_target_refused:stack_parameter_missing.personal-storage.DatabaseClusterArn'
+Invoke-CandidateCase 'a candidate missing the export bucket parameter' @{ ExportBucketName = $null } 'qualification_target_refused:stack_parameter_missing.personal-storage.ExportBucketName'
+Invoke-CandidateCase 'a candidate serving an undesignated identity' @{ QualificationIdentitySubjects = '11111111-2222-4333-8444-555555555555,66666666-7777-4888-8999-000000000000,22222222-3333-4444-8555-666666666666,99999999-9999-4999-8999-999999999999' } 'qualification_target_refused:stack_subjects.personal-storage'
+Invoke-CandidateCase 'a candidate that does not serve the second consumer' @{ QualificationIdentitySubjects = '11111111-2222-4333-8444-555555555555,66666666-7777-4888-8999-000000000000' } 'qualification_target_refused:stack_subjects.personal-storage'
+Invoke-CandidateCase 'a recording candidate storing audio in another bucket' @{ RecordingBucket = 'some-other-bucket' } 'qualification_target_refused:stack_parameter.recording-capture.RecordingBucket' 'ai-clinical-core-qualification-recording-capture' { Recording-Run $good }
+Invoke-CandidateCase 'a recording candidate missing the recording bucket parameter' @{ RecordingBucket = $null } 'qualification_target_refused:stack_parameter_missing.recording-capture.RecordingBucket' 'ai-clinical-core-qualification-recording-capture' { Recording-Run $good }
 $global:StackOutputs.Remove('ai-clinical-core-qualification-recording-capture')
 Invoke-Case 'a recording candidate that is not deployed' { Recording-Run $good } 'qualification_target_refused:stack_missing.recording-capture'
-$global:StackOutputs['ai-clinical-core-qualification-recording-capture'] = (CandidateStack 'x')
+$global:StackOutputs['ai-clinical-core-qualification-recording-capture'] = (CandidateStack)
+# The manifest itself must name the second consumer and a recording bucket distinct from the export bucket.
+Invoke-Case 'a manifest without the second consumer' { Export-Run (Write-Target @{ identitySubjects = [ordered]@{ consumer = '11111111-2222-4333-8444-555555555555'; workforce = '66666666-7777-4888-8999-000000000000' } }) } 'qualification_target_refused:identitySubjects'
+Invoke-Case 'a manifest whose recording bucket is the export bucket' { Export-Run (Write-Target @{ recordingBucket = 'alp-qualification-exports-588966314750-us-east-2' }) } 'qualification_target_refused:recordingBucket'
 $global:StackOutputs['ai-clinical-core-qualification-foundation'] = '{"Outputs":[{"OutputKey":"PhiAllowed","OutputValue":"true"}],"Parameters":[]}'
 Invoke-Case 'a foundation that does not state PHI false' { Export-Run $good } 'qualification_target_refused:foundation_phi'
 $global:StackOutputs['ai-clinical-core-qualification-foundation'] = '{"Outputs":[{"OutputKey":"PhiAllowed","OutputValue":"false"},{"OutputKey":"ApiId","OutputValue":"wxv734oi12"}],"Parameters":[]}'

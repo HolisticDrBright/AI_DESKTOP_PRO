@@ -65,10 +65,15 @@ synthetic-account report is never production approval.
   `SourceCommit`, `DatabaseName` and `ApiId`. The Node CLI loads the same manifest itself
   (`qualification-target-manifest.ts`), so a direct CLI run cannot bypass the binding, and refuses an
   ambient `CLINICAL_API_ORIGIN` or `CLINICAL_DATABASE_NAME` that disagrees with it rather than obeying
-  it. The harness re-checks the asserted and observed account and refuses production whatever the
+  it. In acceptance mode the CLI also makes the observations itself rather than trusting the wrapper's:
+  it reads the checkout's head, the signed-in account and both candidate stacks
+  (`qualification-target-observation.ts`), comparing each stack's cluster, secret, database, API,
+  export bucket and designated subjects with the manifest. `SOURCE_COMMIT` and
+  `OBSERVED_AWS_ACCOUNT_ID` are assertions, not observations, and cannot produce an acceptance verdict;
+  a run on asserted values must say `ACCEPTANCE_MODE=exploratory`. The harness re-checks the asserted and observed account and refuses production whatever the
   caller says. The API origin must be an `execute-api` host; tokens must be distinct JWTs; tokens are
   read from the process environment and removed afterwards; no token or URL appears in the report.
-  `scripts/test-qualification-acceptance-runners.ps1` proves all of this credential-free in CI (31
+  `scripts/test-qualification-acceptance-runners.ps1` proves all of this credential-free in CI (45
   cases: the staging foundation, API and database, the production account, another account, a stale
   checkout, an unfilled example, a missing or wrongly posed candidate stack).
 - Fixtures: the run creates one export job for the fixture consumer and cancels it. Its objects are

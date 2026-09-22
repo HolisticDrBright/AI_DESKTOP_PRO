@@ -4,12 +4,15 @@ import { assertQualificationFoundationOutputs, assertQualificationStackOutputs, 
 
 // The reviewed example, and a filled fictional copy of it: every value below is fictional (no real API, bucket or identity).
 const example = JSON.parse(readFileSync("infra/aws-clinical-core/qualification-target.example.json", "utf8")) as Record<string, unknown>;
-const filled = (): Record<string, unknown> => ({ ...example,
+const filled = (): Record<string, unknown> => ({ ...example, exportBucket: "alp-qualification-exports-588966314750-us-east-2", recordingBucket: "alp-qualification-recordings-588966314750-us-east-2",
   databaseSecretArn: "arn:aws:secretsmanager:us-east-2:588966314750:secret:fictional-qualification-AbCdEf", sourceCommit: "a".repeat(40), migrationReleaseHash: "b".repeat(64),
-  identitySubjects: { consumer: "11111111-2222-4333-8444-555555555555", workforce: "66666666-7777-4888-8999-000000000000" } });
+  identitySubjects: { consumer: "11111111-2222-4333-8444-555555555555", workforce: "66666666-7777-4888-8999-000000000000", foreignConsumer: "22222222-3333-4444-8555-666666666666" } });
 const refuse = (patch: Record<string, unknown>, category: string) => expect(() => validateQualificationTargetManifest({ ...filled(), ...patch })).toThrow(category);
 const manifest = (): QualificationTargetManifest => validateQualificationTargetManifest(filled());
 const observed = { awsAccountId: "588966314750", sourceCommit: "a".repeat(40), migrationReleaseHash: "b".repeat(64) };
+const parameters = (): Record<string, string | undefined> => ({ DatabaseClusterArn: manifest().databaseClusterArn, DatabaseSecretArn: manifest().databaseSecretArn, DatabaseName: "clinical_core_qualification",
+  QualificationAccountId: "588966314750", ApiId: "6zt8e9qz04", ExportBucketName: "alp-qualification-exports-588966314750-us-east-2", RecordingBucket: "alp-qualification-recordings-588966314750-us-east-2",
+  SourceCommit: "a".repeat(40), QualificationIdentitySubjects: "11111111-2222-4333-8444-555555555555,66666666-7777-4888-8999-000000000000,22222222-3333-4444-8555-666666666666" });
 
 describe("qualification target manifest", () => {
   test("the committed example is the reviewed shape but is refused as a run target until its placeholders are filled", () => {
@@ -34,7 +37,12 @@ describe("qualification target manifest", () => {
     refuse({ apiOrigin: "https://6zt8e9qz04.execute-api.us-west-2.amazonaws.com" }, "target_manifest_invalid");
     refuse({ apiOrigin: "http://6zt8e9qz04.execute-api.us-east-2.amazonaws.com" }, "target_manifest_invalid");
     refuse({ containsPhi: true }, "target_manifest_invalid");
-    refuse({ identitySubjects: { consumer: "same", workforce: "same" } }, "target_manifest_invalid");
+    refuse({ identitySubjects: { consumer: "same", workforce: "same", foreignConsumer: "other" } }, "target_manifest_invalid");
+    // The second consumer is designated too: an identity the outer qualification gate refuses proves nothing about owner isolation.
+    refuse({ identitySubjects: { consumer: "a", workforce: "b" } }, "target_manifest_invalid");
+    refuse({ identitySubjects: { consumer: "a", workforce: "b", foreignConsumer: "c", extra: "d" } }, "target_manifest_invalid");
+    refuse({ recordingBucket: "alp-qualification-exports-588966314750-us-east-2" }, "target_manifest_invalid");
+    refuse({ recordingBucket: "replace-with-recordings" }, "target_placeholder");
     refuse({ stacks: { "personal-storage": "only-one" } }, "target_manifest_invalid");
     refuse({ extra: 1 }, "target_manifest_invalid");
     refuse({ sourceCommit: "0".repeat(40) }, "target_placeholder");
@@ -65,9 +73,39 @@ describe("qualification target manifest", () => {
   test("a candidate stack must report PHI false, activation blocked, qualification enabled and the manifest's source commit", () => {
     const m = manifest();
     const good = { PhiAllowed: "false", Activation: "blocked", QualificationExecution: "enabled", SourceCommit: "a".repeat(40) };
-    expect(() => assertQualificationStackOutputs("personal-storage", good, m)).not.toThrow();
+    expect(() => assertQualificationStackOutputs("personal-storage", good, m, parameters(), "CREATE_COMPLETE")).not.toThrow();
     for (const bad of [{ PhiAllowed: "true" }, { Activation: "approved" }, { QualificationExecution: "disabled" }, { SourceCommit: "c".repeat(40) }, { SourceCommit: undefined }]) {
-      expect(() => assertQualificationStackOutputs("personal-storage", { ...good, ...bad }, m)).toThrow("target_stack_refused");
+      expect(() => assertQualificationStackOutputs("personal-storage", { ...good, ...bad }, m, parameters(), "CREATE_COMPLETE")).toThrow("target_stack_refused");
     }
+  });
+  test("a candidate stack must also name the manifest's cluster, secret, database, API, buckets and designated subjects, and have finished", () => {
+    const m = manifest();
+    const outputs = { PhiAllowed: "false", Activation: "blocked", QualificationExecution: "enabled", SourceCommit: "a".repeat(40) };
+    const check = (candidate: string, patch: Record<string, string | undefined>, status = "CREATE_COMPLETE") =>
+      expect(() => assertQualificationStackOutputs(candidate, outputs, m, { ...parameters(), ...patch }, status)).toThrow("target_stack_refused");
+    expect(() => assertQualificationStackOutputs("personal-storage", outputs, m, parameters(), "UPDATE_COMPLETE")).not.toThrow();
+    // A database or API name does not identify one database or API: the cluster, the secret and the buckets do.
+    check("personal-storage", { DatabaseClusterArn: "arn:aws:rds:us-east-2:588966314750:cluster:other-cluster" });
+    check("personal-storage", { DatabaseSecretArn: "arn:aws:secretsmanager:us-east-2:588966314750:secret:other-secret" });
+    check("personal-storage", { DatabaseName: "clinical_core" });
+    check("personal-storage", { ApiId: "wxv734oi12" });
+    check("personal-storage", { ExportBucketName: "some-other-bucket" });
+    check("personal-storage", { QualificationAccountId: "111111111111" });
+    check("recording-capture", { RecordingBucket: "some-other-bucket" });
+    // A parameter the candidate uses but does not carry is a refusal, not a pass.
+    for (const missing of ["DatabaseClusterArn", "DatabaseSecretArn", "DatabaseName", "QualificationAccountId", "ApiId", "ExportBucketName", "QualificationIdentitySubjects"]) check("personal-storage", { [missing]: undefined });
+    check("recording-capture", { RecordingBucket: undefined });
+    // Every designated subject must be served, and no undesignated one.
+    check("personal-storage", { QualificationIdentitySubjects: "11111111-2222-4333-8444-555555555555,66666666-7777-4888-8999-000000000000" });
+    check("personal-storage", { QualificationIdentitySubjects: parameters().QualificationIdentitySubjects + ",99999999-9999-4999-8999-999999999999" });
+    // A stack that did not finish, and a candidate the manifest does not know, are refused.
+    check("personal-storage", {}, "ROLLBACK_COMPLETE");
+    check("personal-storage", {}, "UPDATE_IN_PROGRESS");
+    check("unknown-candidate", {});
+    // The candidates without their own API or buckets are not asked for them.
+    expect(() => assertQualificationStackOutputs("owned-lab", outputs, m, { ...parameters(), ApiId: undefined, ExportBucketName: undefined }, "CREATE_COMPLETE")).not.toThrow();
+    // A retention service subject, when the manifest names one, must be served too.
+    const withService = validateQualificationTargetManifest({ ...filled(), identitySubjects: { ...(filled().identitySubjects as Record<string, string>), retentionService: "77777777-8888-4999-8aaa-bbbbbbbbbbbb" } });
+    expect(() => assertQualificationStackOutputs("personal-storage", outputs, withService, parameters(), "CREATE_COMPLETE")).toThrow("target_stack_refused");
   });
 });

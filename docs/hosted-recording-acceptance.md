@@ -68,7 +68,10 @@ boolean promotes a synthetic report into production activation evidence.
   `QualificationExecution=enabled`, the manifest's `SourceCommit`, `DatabaseName` and `ApiId`. The Node
   CLI loads the same manifest itself (`qualification-target-manifest.ts`), so a direct CLI run cannot
   bypass the binding, and refuses an ambient `CLINICAL_API_ORIGIN` or `CLINICAL_DATABASE_NAME` that
-  disagrees with it. The harness re-checks the asserted and observed account and refuses production
+  disagrees with it. It also observes the live target itself before an acceptance run, and before every
+  fixture write whatever the mode: the checkout's head, the signed-in account and the five recording
+  stacks, each compared with the manifest's cluster, secret, database, API, recording bucket and
+  designated subjects. `SOURCE_COMMIT` and `OBSERVED_AWS_ACCOUNT_ID` are assertions, not observations. The harness re-checks the asserted and observed account and refuses production
   whatever the caller says. The API origin must be an `execute-api` host; tokens must be distinct JWTs
   read from the process environment and removed afterwards; no token, capture token or URL appears in
   the report. `scripts/test-qualification-acceptance-runners.ps1` proves this credential-free in CI.

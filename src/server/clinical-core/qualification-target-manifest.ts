@@ -30,12 +30,17 @@ export type QualificationTargetManifest = {
   databaseName: string;
   /** The reviewed export bucket the personal-storage candidate delivers to; the export harness downloads from this host only. */
   exportBucket: string;
+  /** The reviewed recording bucket the recording candidates store fictional audio in. */
+  recordingBucket: string;
   /** The exact commit every candidate stack was deployed from; a run from another checkout is refused. */
   sourceCommit: string;
   /** The release hash of the migration artifact the database was applied with; a run with another built artifact is refused. */
   migrationReleaseHash: string;
-  /** The designated fictional identities (the reviewed synthetic acceptance manifest's subjects). */
-  identitySubjects: { consumer: string; workforce: string };
+  /** The designated fictional identities (the reviewed synthetic acceptance manifest's subjects). The second consumer is
+   * designated too: an identity the qualification gate refuses outright proves nothing about owner isolation, because the
+   * refusal would come from the outer gate rather than from the owner check under test. The retention service subject is
+   * present only when the scheduled sweep is under test. */
+  identitySubjects: { consumer: string; workforce: string; foreignConsumer: string; retentionService?: string };
   /** Candidate stack names the wrappers verify (PHI false, activation blocked, qualification enabled, same source commit). */
   stacks: Record<string, string>;
   refused: { stagingFoundationStackName: string; stagingApiOrigin: string; stagingDatabaseName: string };
@@ -49,7 +54,7 @@ export class QualificationTargetManifestError extends Error {
 }
 
 const TOP = ["schemaVersion", "environment", "dataClassification", "containsPhi", "awsAccountId", "awsRegion", "foundationStackName", "apiId", "apiOrigin", "databaseClusterArn", "databaseSecretArn", "databaseName", "exportBucket",
-  "sourceCommit", "migrationReleaseHash", "identitySubjects", "stacks", "refused", "reviewedAt"] as const;
+  "recordingBucket", "sourceCommit", "migrationReleaseHash", "identitySubjects", "stacks", "refused", "reviewedAt"] as const;
 const CANDIDATES = ["personal-storage", "privacy-operations", "recording-authority", "recording-capture", "recording-transcription", "recording-drafting", "recording-cleanup-review"] as const;
 const API_ID = /^[a-z0-9]{10}$/, REGION = /^[a-z]{2}-[a-z]+-\d$/, BUCKET = /^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/, STACK = /^[A-Za-z][A-Za-z0-9-]{0,127}$/, HEX40 = /^[a-f0-9]{40}$/, HEX64 = /^[a-f0-9]{64}$/;
 const CLUSTER = /^arn:aws:rds:([a-z0-9-]+):(\d{12}):cluster:[A-Za-z0-9-]{1,63}$/, SECRET = /^arn:aws:secretsmanager:([a-z0-9-]+):(\d{12}):secret:[A-Za-z0-9/_+=.@!-]+$/;
@@ -58,6 +63,12 @@ const FORBIDDEN_KEY = /(email|phone|password|secret_value|token|authorization|co
 
 function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }
 function str(value: unknown, field: string): string { if (typeof value !== "string" || value.length === 0 || value.length > 512) throw new QualificationTargetManifestError("target_manifest_invalid", field); return value; }
+
+/** Every designated subject, in the order a stack parameter lists them: consumer, workforce, the second consumer, and the
+ * retention service when the sweep is under test. */
+export function designatedSubjects(subjects: QualificationTargetManifest["identitySubjects"]): string[] {
+  return [subjects.consumer, subjects.workforce, subjects.foreignConsumer, ...(subjects.retentionService ? [subjects.retentionService] : [])];
+}
 
 export function loadQualificationTargetManifest(file: string): QualificationTargetManifest {
   let parsed: unknown;
@@ -90,11 +101,16 @@ export function validateQualificationTargetManifest(value: unknown): Qualificati
   if (foundationStackName === refused.stagingFoundationStackName) throw new QualificationTargetManifestError("target_staging_refused", "foundationStackName");
   const databaseName = str(value.databaseName, "databaseName");
   try { assertQualificationDatabaseName(databaseName, refused.stagingDatabaseName); } catch { throw new QualificationTargetManifestError("target_database_refused", "databaseName"); }
-  const exportBucket = str(value.exportBucket, "exportBucket"), sourceCommit = str(value.sourceCommit, "sourceCommit"), migrationReleaseHash = str(value.migrationReleaseHash, "migrationReleaseHash");
-  if (!BUCKET.test(exportBucket) || !HEX40.test(sourceCommit) || !HEX64.test(migrationReleaseHash)) throw new QualificationTargetManifestError("target_manifest_invalid", "exportBucket");
-  if (!isRecord(value.identitySubjects) || Object.keys(value.identitySubjects).length !== 2) throw new QualificationTargetManifestError("target_manifest_invalid", "identitySubjects");
-  const identitySubjects = { consumer: str(value.identitySubjects.consumer, "identitySubjects"), workforce: str(value.identitySubjects.workforce, "identitySubjects") };
-  if (identitySubjects.consumer === identitySubjects.workforce) throw new QualificationTargetManifestError("target_manifest_invalid", "identitySubjects");
+  const exportBucket = str(value.exportBucket, "exportBucket"), recordingBucket = str(value.recordingBucket, "recordingBucket");
+  const sourceCommit = str(value.sourceCommit, "sourceCommit"), migrationReleaseHash = str(value.migrationReleaseHash, "migrationReleaseHash");
+  if (!BUCKET.test(exportBucket) || !BUCKET.test(recordingBucket) || !HEX40.test(sourceCommit) || !HEX64.test(migrationReleaseHash)) throw new QualificationTargetManifestError("target_manifest_invalid", "exportBucket");
+  if (exportBucket === recordingBucket) throw new QualificationTargetManifestError("target_manifest_invalid", "recordingBucket");
+  const subjectValues = value.identitySubjects;
+  if (!isRecord(subjectValues) || Object.keys(subjectValues).some((k) => !["consumer", "workforce", "foreignConsumer", "retentionService"].includes(k))) throw new QualificationTargetManifestError("target_manifest_invalid", "identitySubjects");
+  const identitySubjects: QualificationTargetManifest["identitySubjects"] = { consumer: str(subjectValues.consumer, "identitySubjects"), workforce: str(subjectValues.workforce, "identitySubjects"),
+    foreignConsumer: str(subjectValues.foreignConsumer, "identitySubjects"), ...(subjectValues.retentionService === undefined ? {} : { retentionService: str(subjectValues.retentionService, "identitySubjects") }) };
+  const designated = designatedSubjects(identitySubjects);
+  if (new Set(designated).size !== designated.length) throw new QualificationTargetManifestError("target_manifest_invalid", "identitySubjects");
   const stackValues = value.stacks;
   if (!isRecord(stackValues) || CANDIDATES.some((c) => !(c in stackValues)) || Object.keys(stackValues).length !== CANDIDATES.length) throw new QualificationTargetManifestError("target_manifest_invalid", "stacks");
   const stacks: Record<string, string> = {};
@@ -109,11 +125,11 @@ export function validateQualificationTargetManifest(value: unknown): Qualificati
   const reviewedAt = str(value.reviewedAt, "reviewedAt");
   if (Number.isNaN(Date.parse(reviewedAt))) throw new QualificationTargetManifestError("target_manifest_invalid", "reviewedAt");
   for (const [field, candidate] of [["apiId", apiId], ["exportBucket", exportBucket], ["sourceCommit", sourceCommit], ["migrationReleaseHash", migrationReleaseHash], ["databaseSecretArn", secret[0]],
-    ["identitySubjects", identitySubjects.consumer], ["identitySubjects", identitySubjects.workforce]] as const) {
+    ["recordingBucket", recordingBucket], ...designated.map((subject) => ["identitySubjects", subject] as const)] as const) {
     if (PLACEHOLDER.test(candidate)) throw new QualificationTargetManifestError("target_placeholder", field);
   }
   return { schemaVersion: "aws-clinical-core-qualification-target/1", environment: "synthetic-staging", dataClassification: "synthetic_only", containsPhi: false, awsAccountId: account, awsRegion: region, foundationStackName, apiId, apiOrigin,
-    databaseClusterArn: cluster[0], databaseSecretArn: secret[0], databaseName, exportBucket, sourceCommit, migrationReleaseHash, identitySubjects, stacks, refused, reviewedAt };
+    databaseClusterArn: cluster[0], databaseSecretArn: secret[0], databaseName, exportBucket, recordingBucket, sourceCommit, migrationReleaseHash, identitySubjects, stacks, refused, reviewedAt };
 }
 
 export type BoundQualificationTarget = {
@@ -143,11 +159,44 @@ export function bindQualificationTarget(manifest: QualificationTargetManifest, o
     database: { clusterArn: manifest.databaseClusterArn, secretArn: manifest.databaseSecretArn, databaseName: manifest.databaseName, stagingDatabaseName: manifest.refused.stagingDatabaseName } };
 }
 
-/** What a wrapper reads from each candidate stack, checked the same way in Node so the PowerShell check is not the only one. */
-export function assertQualificationStackOutputs(candidate: string, outputs: Record<string, string | undefined>, manifest: QualificationTargetManifest): void {
-  if (outputs.PhiAllowed !== "false" || outputs.Activation !== "blocked" || outputs.QualificationExecution !== "enabled" || outputs.SourceCommit !== manifest.sourceCommit) {
-    throw new QualificationTargetManifestError("target_stack_refused", candidate);
+/** Resource parameters each candidate must carry, beyond the ones every candidate has. A database or API name does not
+ * identify one database or API: the cluster, the secret and the buckets are what say which resources a run will touch. */
+export const QUALIFICATION_STACK_RESOURCES: Record<string, ReadonlyArray<"ApiId" | "ExportBucketName" | "RecordingBucket">> = {
+  "personal-storage": ["ApiId", "ExportBucketName"],
+  "privacy-operations": ["ApiId", "ExportBucketName"],
+  "recording-authority": ["ApiId"],
+  "recording-capture": ["ApiId", "RecordingBucket"],
+  "recording-transcription": ["ApiId", "RecordingBucket"],
+  "recording-drafting": ["ApiId", "RecordingBucket"],
+  "recording-cleanup-review": ["ApiId"],
+  "recording-cleanup-execution": ["ApiId", "RecordingBucket"],
+  "owned-lab": [],
+  "owned-voice": [],
+};
+const USABLE_STACK_STATUS = new Set(["CREATE_COMPLETE", "UPDATE_COMPLETE", "UPDATE_ROLLBACK_COMPLETE", "IMPORT_COMPLETE", "IMPORT_ROLLBACK_COMPLETE"]);
+
+/** What a wrapper reads from each candidate stack, checked the same way in Node so the PowerShell check is not the only one:
+ * the posture and source outputs, a stack that actually finished, and every resource parameter the candidate uses against
+ * the manifest's own identifiers. A parameter the candidate needs but does not carry is a refusal, not a pass. */
+export function assertQualificationStackOutputs(candidate: string, outputs: Record<string, string | undefined>, manifest: QualificationTargetManifest,
+  parameters: Record<string, string | undefined> = {}, stackStatus?: string): void {
+  const refuse = (): never => { throw new QualificationTargetManifestError("target_stack_refused", candidate); };
+  if (outputs.PhiAllowed !== "false" || outputs.Activation !== "blocked" || outputs.QualificationExecution !== "enabled" || outputs.SourceCommit !== manifest.sourceCommit) refuse();
+  if (stackStatus !== undefined && !USABLE_STACK_STATUS.has(stackStatus)) refuse();
+  const resources = QUALIFICATION_STACK_RESOURCES[candidate];
+  if (!resources) refuse();
+  const expected: Record<string, string> = { DatabaseClusterArn: manifest.databaseClusterArn, DatabaseSecretArn: manifest.databaseSecretArn, DatabaseName: manifest.databaseName,
+    QualificationAccountId: manifest.awsAccountId, ApiId: manifest.apiId, ExportBucketName: manifest.exportBucket, RecordingBucket: manifest.recordingBucket };
+  for (const name of ["DatabaseClusterArn", "DatabaseSecretArn", "DatabaseName", "QualificationAccountId", ...resources!]) {
+    if (parameters[name] === undefined || parameters[name] !== expected[name]) refuse();
   }
+  if (parameters.SourceCommit !== undefined && parameters.SourceCommit !== manifest.sourceCommit) refuse();
+  // The stack serves exactly the designated fictional identities: an undesignated subject would be refused by the outer
+  // qualification gate, and a missing one (the second consumer, or the retention service when the sweep is under test)
+  // would make its case untestable.
+  const listed = (parameters.QualificationIdentitySubjects ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  const required = designatedSubjects(manifest.identitySubjects);
+  if (listed.length !== required.length || required.some((subject) => !listed.includes(subject))) refuse();
 }
 
 /** The qualification foundation's outputs: PHI false and, where it states them, the manifest's API and database. Its

@@ -9,6 +9,7 @@ import { loadClinicalCoreMigrations } from "./migrations";
 import { inspectProductionClinicalCoreMigrations, productionArtifactReleaseHash } from "./production-migrations";
 import { assertQualificationDatabaseName } from "./qualification-target";
 import { bindQualificationTarget, loadQualificationTargetManifest, QualificationTargetManifestError } from "./qualification-target-manifest";
+import { observeQualificationTarget, RECORDING_ACCEPTANCE_CANDIDATES } from "./qualification-target-observation";
 
 /** Hosted runner, bound to the reviewed qualification target manifest (`CLINICAL_QUALIFICATION_TARGET`). `fixture` starts
  * (or reuses) the acceptance encounter for the synthetic fixture patient through the administrative path, in the
@@ -24,8 +25,12 @@ async function main() {
   if (command !== "fixture" && command !== "run") throw new Error("acceptance_command_invalid");
   const manifest = loadQualificationTargetManifest(required("CLINICAL_QUALIFICATION_TARGET"));
   const migrations = loadClinicalCoreMigrations(path.join(process.cwd(), "dist", "aws-clinical-core", "production-migrations"));
-  const sourceCommit = process.env.SOURCE_COMMIT?.trim() || execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
-  const target = bindQualificationTarget(manifest, { awsAccountId: required("OBSERVED_AWS_ACCOUNT_ID"), sourceCommit, migrationReleaseHash: productionArtifactReleaseHash(migrations) }, process.env);
+  const mode = process.env.ACCEPTANCE_MODE?.trim() === "exploratory" ? "exploratory" : "acceptance";
+  // The fixture writes to the qualification database, so it observes the live target too, whatever the mode.
+  const observation = mode === "acceptance" || command === "fixture" ? observeQualificationTarget(manifest, RECORDING_ACCEPTANCE_CANDIDATES) : null;
+  const sourceCommit = observation?.sourceCommit ?? (process.env.SOURCE_COMMIT?.trim() || execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim());
+  const awsAccountId = observation?.awsAccountId ?? required("OBSERVED_AWS_ACCOUNT_ID");
+  const target = bindQualificationTarget(manifest, { awsAccountId, sourceCommit, migrationReleaseHash: productionArtifactReleaseHash(migrations) }, process.env);
   if (command === "fixture") {
     const synthetic = loadSyntheticAcceptanceManifest(required("CLINICAL_SYNTHETIC_MANIFEST"));
     if (synthetic.awsAccountId !== target.expectedAwsAccountId || synthetic.awsAccountId === "173535830222") throw new Error("boundary_refused");
@@ -34,11 +39,10 @@ async function main() {
     const database = createRdsDataAdministrativeDatabase({ clusterArn: target.database.clusterArn, secretArn: target.database.secretArn, databaseName: target.database.databaseName, region: target.region }, { purpose: "reviewed_synthetic_migration" });
     const ledger = await inspectProductionClinicalCoreMigrations(database, migrations);
     if (!ledger.ledgerPresent || ledger.missing.length || ledger.mismatched.length || ledger.unknown.length || ledger.artifactReleaseHash !== target.migrationReleaseHash) throw new Error("qualification_schema_incomplete");
-    console.log(JSON.stringify({ ok: true, mode: "recording_acceptance_fixture", database: target.database.databaseName, ...(await provisionRecordingAcceptanceEncounter(database, synthetic)) }));
+    console.log(JSON.stringify({ ok: true, mode: "recording_acceptance_fixture", database: target.database.databaseName, target: { source: "observed", stacks: observation!.stacks }, ...(await provisionRecordingAcceptanceEncounter(database, synthetic)) }));
     return;
   }
   const audioFile = process.env.CLINICAL_RECORDING_AUDIO_FILE?.trim();
-  const mode = process.env.ACCEPTANCE_MODE?.trim() === "exploratory" ? "exploratory" : "acceptance";
   const report = await runRecordingAcceptance({
     apiOrigin: target.apiOrigin, workforceIdToken: required("CLINICAL_WORKFORCE_ID_TOKEN"), consumerIdToken: required("CLINICAL_CONSUMER_ID_TOKEN"),
     encounterId: required("CLINICAL_RECORDING_ENCOUNTER_ID"), jurisdiction: required("CLINICAL_RECORDING_JURISDICTION"), locale: process.env.CLINICAL_RECORDING_LOCALE?.trim() || undefined,
@@ -50,6 +54,7 @@ async function main() {
   const out = `dist/qualification/recording-acceptance-${report.finishedAt.replace(/[:.]/g, "-")}.json`;
   writeFileSync(out, JSON.stringify(report, null, 2), { flag: "wx" });
   console.log(JSON.stringify({ ok: report.ok, report: out, evidenceSha256: report.evidenceSha256, execution: report.execution, unmarkedDenials: report.unmarkedDenials, verdict: report.verdict,
+    target: observation ? { source: "observed", stacks: observation.stacks } : { source: "asserted_by_caller", stacks: [] },
     notConfigured: report.steps.filter((s) => s.outcome === "not_configured").map((s) => `${s.name}:${s.detail ?? ""}`),
     failed: report.steps.filter((s) => s.outcome === "failed").map((s) => `${s.name}:${s.detail ?? ""}`), retained: report.retained }));
   if (!report.ok) process.exitCode = 1;

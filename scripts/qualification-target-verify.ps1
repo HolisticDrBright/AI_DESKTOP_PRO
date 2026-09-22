@@ -7,6 +7,15 @@
 $QualificationTargetProductionAccount = '173535830222'
 $QualificationTargetReservedDatabases = @('clinical_core', 'postgres', 'rdsadmin', 'template0', 'template1')
 
+function Get-QualificationSubjects($Target) {
+  # The designated fictional identities a candidate may serve: the owner, the workforce operator, the second consumer
+  # whose refusal proves owner isolation (an identity the outer gate refuses would prove nothing), and, when the sweep is
+  # under test, the retention service.
+  $subjects = @($Target.identitySubjects.consumer, $Target.identitySubjects.workforce, $Target.identitySubjects.foreignConsumer)
+  if ($Target.identitySubjects.PSObject.Properties.Name -contains 'retentionService' -and $Target.identitySubjects.retentionService) { $subjects += $Target.identitySubjects.retentionService }
+  return $subjects
+}
+
 function Read-QualificationTarget([string]$Path, [string]$Region) {
   # Pre-network checks on the manifest itself; the Node CLI validates it again in full (qualification-target-manifest.ts).
   $target = Get-Content -Raw -LiteralPath $Path | ConvertFrom-Json
@@ -23,6 +32,9 @@ function Read-QualificationTarget([string]$Path, [string]$Region) {
   if ($target.sourceCommit -cnotmatch '^[a-f0-9]{40}$' -or $target.sourceCommit -match '^0+$') { throw 'qualification_target_refused:sourceCommit' }
   if ($target.migrationReleaseHash -cnotmatch '^[a-f0-9]{64}$' -or $target.migrationReleaseHash -match '^0+$') { throw 'qualification_target_refused:migrationReleaseHash' }
   if (-not $target.exportBucket -or $target.exportBucket -match 'replace') { throw 'qualification_target_refused:exportBucket' }
+  if (-not $target.recordingBucket -or $target.recordingBucket -match 'replace' -or $target.recordingBucket -eq $target.exportBucket) { throw 'qualification_target_refused:recordingBucket' }
+  if (-not $target.identitySubjects -or -not $target.identitySubjects.consumer -or -not $target.identitySubjects.workforce -or -not $target.identitySubjects.foreignConsumer) { throw 'qualification_target_refused:identitySubjects' }
+  foreach ($subject in (Get-QualificationSubjects $target)) { if ($subject -match 'replace') { throw 'qualification_target_refused:identitySubjects' } }
   if (-not $target.foundationStackName -or $target.foundationStackName -eq $target.refused.stagingFoundationStackName -or $target.foundationStackName -match 'synthetic-staging') { throw 'qualification_target_refused:foundationStackName' }
   if (-not $target.stacks) { throw 'qualification_target_refused:stacks' }
   foreach ($stack in $target.stacks.PSObject.Properties) {
@@ -92,8 +104,22 @@ function Assert-QualificationStacks($Target, [string[]]$Candidates, [string]$Reg
     if ($outputs['Activation'] -ne 'blocked') { throw "qualification_target_refused:stack_activation.$candidate" }
     if ($outputs['QualificationExecution'] -ne 'enabled') { throw "qualification_target_refused:stack_execution.$candidate" }
     if ($outputs['SourceCommit'] -ne $Target.sourceCommit) { throw "qualification_target_refused:stack_source.$candidate" }
-    if ($parameters['DatabaseName'] -ne $Target.databaseName) { throw "qualification_target_refused:stack_database.$candidate" }
-    if ($parameters.ContainsKey('ApiId') -and $parameters['ApiId'] -ne $Target.apiId) { throw "qualification_target_refused:stack_api.$candidate" }
+    if ($stack.StackStatus -notin @('CREATE_COMPLETE','UPDATE_COMPLETE','UPDATE_ROLLBACK_COMPLETE','IMPORT_COMPLETE','IMPORT_ROLLBACK_COMPLETE')) { throw "qualification_target_refused:stack_status.$candidate" }
+    # A database or API name does not identify one database or API: compare the resources themselves. Every candidate
+    # carries the cluster, secret, database and account; the API and the buckets are required of the candidates that use them.
+    $required = [ordered]@{ DatabaseClusterArn = $Target.databaseClusterArn; DatabaseSecretArn = $Target.databaseSecretArn; DatabaseName = $Target.databaseName; QualificationAccountId = $Target.awsAccountId }
+    if ($candidate -notin @('owned-lab','owned-voice')) { $required['ApiId'] = $Target.apiId }
+    if ($candidate -in @('personal-storage','privacy-operations')) { $required['ExportBucketName'] = $Target.exportBucket }
+    if ($candidate -in @('recording-capture','recording-transcription','recording-drafting','recording-cleanup-execution')) { $required['RecordingBucket'] = $Target.recordingBucket }
+    foreach ($key in $required.Keys) {
+      if (-not $parameters.ContainsKey($key)) { throw "qualification_target_refused:stack_parameter_missing.$candidate.$key" }
+      if ($parameters[$key] -ne $required[$key]) { throw "qualification_target_refused:stack_parameter.$candidate.$key" }
+    }
+    if ($parameters.ContainsKey('SourceCommit') -and $parameters['SourceCommit'] -ne $Target.sourceCommit) { throw "qualification_target_refused:stack_source.$candidate" }
+    $expectedSubjects = Get-QualificationSubjects $Target
+    $listed = @()
+    if ($parameters.ContainsKey('QualificationIdentitySubjects')) { $listed = @($parameters['QualificationIdentitySubjects'] -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ }) }
+    if ($listed.Count -ne $expectedSubjects.Count -or (@($expectedSubjects | Where-Object { $_ -notin $listed }).Count -gt 0)) { throw "qualification_target_refused:stack_subjects.$candidate" }
     Write-Host "Verified qualification stack $name ($candidate)."
   }
 }

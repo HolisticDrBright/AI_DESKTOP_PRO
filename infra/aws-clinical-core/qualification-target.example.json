@@ -12,11 +12,14 @@
   "databaseSecretArn": "arn:aws:secretsmanager:us-east-2:588966314750:secret:replace-with-qualification-database-secret",
   "databaseName": "clinical_core_qualification",
   "exportBucket": "alp-qualification-exports-588966314750-us-east-2",
+  "recordingBucket": "alp-qualification-recordings-588966314750-us-east-2",
   "sourceCommit": "0000000000000000000000000000000000000000",
   "migrationReleaseHash": "0000000000000000000000000000000000000000000000000000000000000000",
   "identitySubjects": {
     "consumer": "replace-with-consumer-cognito-sub",
-    "workforce": "replace-with-workforce-cognito-sub"
+    "workforce": "replace-with-workforce-cognito-sub",
+    "foreignConsumer": "replace-with-second-consumer-cognito-sub",
+    "retentionService": "replace-with-retention-service-cognito-sub"
   },
   "stacks": {
     "personal-storage": "ai-clinical-core-qualification-personal-storage",

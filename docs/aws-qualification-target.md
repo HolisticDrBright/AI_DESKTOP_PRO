@@ -174,17 +174,29 @@ now bound to an explicit reviewed manifest instead: `infra/aws-clinical-core/qua
 its placeholders are).
 
 It names one API (`apiId` and the origin derived from it), the account and region, the qualification
-foundation stack, the Aurora cluster, secret and qualification database, the export bucket, the exact
-`sourceCommit` and `migrationReleaseHash` the candidates were deployed and the database applied from,
-the designated fictional consumer and workforce subjects, the candidate stack names, and — explicitly —
+foundation stack, the Aurora cluster, secret and qualification database, the export and recording
+buckets, the exact `sourceCommit` and `migrationReleaseHash` the candidates were deployed and the
+database applied from, the designated fictional subjects (consumer, workforce, the second consumer,
+and the retention service when the sweep is under test), the candidate stack names, and — explicitly —
 the staging foundation stack, staging API origin and staging database that must be refused.
+
+The second consumer is designated deliberately. An identity the qualification gate refuses outright
+cannot demonstrate owner isolation, because the refusal would come from the outer gate rather than
+from the owner check under test; the cross-owner cases need an admitted identity that the owner checks
+then refuse.
 
 Both wrappers (`scripts/qualification-target-verify.ps1`) verify, before any request or fixture write:
 the manifest's own shape and posture, the reviewed deployment manifest's account and region, the STS
 account (never `173535830222`), that the checkout is the manifest's commit, the qualification
 foundation (PHI false, and its API or database where it states them), and every candidate stack the
-run depends on (`PhiAllowed=false`, `Activation=blocked`, `QualificationExecution=enabled`, the
-manifest's `SourceCommit`, `DatabaseName`, `ApiId`). Codex's prepared foundation
+run depends on. A stack passes only when its outputs read `PhiAllowed=false`, `Activation=blocked`,
+`QualificationExecution=enabled` and the manifest's `SourceCommit`, its status is a completed one, and
+its **parameters name the manifest's own resources**: `DatabaseClusterArn`, `DatabaseSecretArn`,
+`DatabaseName` and `QualificationAccountId` for every candidate, `ApiId` for every candidate that has
+an API, `ExportBucketName` for personal-storage and privacy-operations, `RecordingBucket` for the
+recording candidates that store audio, and `QualificationIdentitySubjects` equal to the manifest's
+designated subjects. A database or API *name* does not identify one database or API across clusters,
+and a parameter a candidate uses but does not carry is a refusal rather than a pass. Codex's prepared foundation
 (`ai-clinical-core-qualification-foundation`, API `6zt8e9qz04`, September 21) reports
 `QualificationExecution=disabled` and `QualificationInfrastructure=prepared_no_candidates` by design:
 that is prepared infrastructure, not candidate execution evidence, and the candidates are verified one
@@ -192,11 +204,19 @@ by one.
 
 Both CLIs load the same manifest themselves (`qualification-target-manifest.ts`), so running a CLI
 directly cannot bypass the binding; an ambient `CLINICAL_API_ORIGIN` or `CLINICAL_DATABASE_NAME` that
-disagrees with the manifest is refused rather than obeyed. The recording `fixture` command re-checks
+disagrees with the manifest is refused rather than obeyed. An acceptance verdict, moreover, is issued
+only from observations the CLI made itself (`qualification-target-observation.ts`): in acceptance mode,
+its default, it runs `git rev-parse HEAD`, `aws sts get-caller-identity` and
+`aws cloudformation describe-stacks` for the candidates that harness depends on, and applies the same
+posture, source, status, resource and subject checks before the first request. `SOURCE_COMMIT` and
+`OBSERVED_AWS_ACCOUNT_ID` are assertions by whoever set them, never a substitute for that; the
+recording `fixture` command observes the target whatever the mode, because it writes. A diagnostic run
+on asserted values needs `ACCEPTANCE_MODE=exploratory`, and its report line says
+`target.source: asserted_by_caller` so it cannot read as acceptance. The recording `fixture` command re-checks
 the qualification database name, the designated subjects and the database's migration ledger against
 the built artifact before writing the encounter, so the populated staging database is refused by its
 own history. `scripts/test-qualification-acceptance-runners.ps1` runs all of these refusals
-credential-free in CI (31 cases, no AWS call, no request, no fixture write), alongside the 32-case
+credential-free in CI (45 cases, no AWS call, no request, no fixture write), alongside the 32-case
 name-refusal test for the preparation runner.
 
 ### Deploying the qualification profile (owner, Windows terminal)
