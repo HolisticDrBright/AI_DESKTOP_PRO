@@ -1,5 +1,6 @@
 import { defineConfig } from "@playwright/test";
 import { devServerEnvironment } from "./scripts/e2e-dev-resources.mjs";
+import { EXPECT_TIMEOUT_MS, TEST_TIMEOUT_MS } from "./e2e/support/budgets";
 
 /**
  * E2E suite for the MOCK/demo app (no live backend required).
@@ -30,14 +31,26 @@ const PORT = Number(process.env.E2E_PORT ?? 3114);
  * The longer timeouts below are for `next dev`'s on-demand compilation —
  * the first navigation to a route compiles it. They are not flake
  * tolerance: `retries` stays 0 in both modes, and no assertion is relaxed.
+ *
+ * The dev-mode budgets were raised after the single-process battery lost one
+ * test per run to compilation rather than to the product. The shape was always
+ * the same: the first assertion after a navigation reports `element(s) not
+ * found`, with the call log still waiting for that navigation to finish, while
+ * every other assertion in the same file passes. Which test loses depends on
+ * the machine — CI lost `live-overview-reasoning` at :79, a 6 GiB local run of
+ * the same battery lost `live-programs` at :328 and passed the first — because
+ * by then the one dev server has served 300 tests and carries several GiB of
+ * heap, so a cold route compiles slowly. 20 s charged compilation to the
+ * assertion; 45 s does not, and it stays well inside the test timeout, so an
+ * app that renders the wrong thing still fails, just later.
  */
 const DEV_SERVER = process.env.E2E_DEV_SERVER === "1";
 
 export default defineConfig({
   testDir: "./e2e",
   workers: 1, // session-state flows stay deterministic
-  timeout: DEV_SERVER ? 90_000 : 30_000,
-  expect: { timeout: DEV_SERVER ? 20_000 : 5_000 },
+  timeout: TEST_TIMEOUT_MS,
+  expect: { timeout: EXPECT_TIMEOUT_MS },
   retries: 0,
   reporter: [["list"]],
   use: {
