@@ -25,7 +25,44 @@ retention service identity is, and who approves releases. Its SHA-256 is passed 
 `retention_schedule_evidence_sha256`, and written into the release row. The wrapper refuses a
 `release` whose hash differs from the manifest.
 
+## The three numbers, and why they are kept apart
+
+| Number | Where it lives | What it is |
+|---|---|---|
+| **24 hours** | `RetentionSweepSchedule` in the privacy-operations candidate | How often the sweep runs |
+| **48 hours** | The job deadline enforced in the database (migration `20260920110000`), and this runbook | When a finished or cancelled prepared copy is removed |
+| **72 hours** | The published privacy policy, and nowhere else | What the person is told: removal *within* 72 hours |
+
+Each has slack against the next, and they are deliberately in different artifacts. Publishing measured behaviour turns
+every timing bug into a misstatement, and 48 leaves no headroom for a slow backup or a missed pass. "Within" is the
+load-bearing word in the published commitment: faster is compliant, and only slower is a failure. Nobody should
+reconcile them — a change to any one of them is a separate reviewed decision.
+
+## What each run must record
+
+The sweep's report is the scheduled-cleanup evidence. Without it a missed pass is indistinguishable from a policy
+failure, so every run emits one line carrying `startedAt`, `endedAt`, `durationMs`, `examined`, `removed` and
+`outcome` (`completed`, `refused` or `failed`), beside the counts. `examined` is what the pass handled — copies cleaned
+or deferred, certificates confirmed or reopened — not what remains in the backlog. A failed run reports before the
+error propagates, because an unreported failure looks exactly like a sweep that never ran.
+
+Three alarms watch it, all on the qualification alarm topic:
+
+| Alarm | Fires when |
+|---|---|
+| `RetentionSweepMissedAlarm` | No completed sweep reported in 24 hours (a missing datapoint breaches) |
+| `RetentionSweepFailedAlarm` | The sweep function errored |
+| `RetentionSweepConsecutiveFailureAlarm` | Two consecutive sweeps failed |
+
+**The alarm topic has no subscribers.** Until a real recipient is subscribed, every alarm above is a fiction and the
+failure path does not exist. Fix that before the release, not after.
+
 ## The retention service identity
+
+The sweep runs under its own role (`RetentionSweepRole`), holding only the database and export-retention statements —
+not the inventory, purge or identity-deletion grants the operator function carries — and under a named non-human
+service identity. The release path refuses a subject that is not named `svc-…`
+(`retention_release_human_identity`), so the sweep cannot be released to run under a person's credentials.
 
 An ordinary workforce identity row (`clinical_core.identities`, pool `workforce`, `production_bound`,
 status `active`, belonging to an active person). It is provisioned like any workforce identity; it has

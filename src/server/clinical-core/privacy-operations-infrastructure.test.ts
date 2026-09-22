@@ -102,11 +102,17 @@ describe('privacy operations deployable candidate',()=>{
     expect(env.EXPORT_CLEANUP_ENABLED).toEqual({Ref:'ExportCleanupEnabled'});
     expect(env.PERSONAL_EXPORT_BUCKET).toEqual({'Fn::If':['ExportCleanupActive',{Ref:'ExportBucketName'},'']});
   });
-  it('ships the scheduled retention sweep disabled: its function, hourly rule, permission and alarms exist only under RetentionScheduleActive, which needs the reviewed service identity',()=>{
+  it('ships the scheduled retention sweep disabled: its function, daily rule, own role, permission and alarms exist only under RetentionScheduleActive, which needs the reviewed service identity',()=>{
     expect(t.Parameters.RetentionScheduleEnabled.Default).toBe('false');expect(t.Parameters.RetentionServicePersonId.Default).toBe('');expect(t.Parameters.RetentionServiceSubject.Default).toBe('');
-    for(const name of ['RetentionSweep','RetentionSweepSchedule','RetentionSweepInvoke','RetentionOverdueAlarm','RetentionRefusedAlarm'])expect((t.Resources[name] as {Condition?:string}).Condition).toBe('RetentionScheduleActive');
+    for(const name of ['RetentionSweep','RetentionSweepRole','RetentionSweepSchedule','RetentionSweepInvoke','RetentionOverdueAlarm','RetentionRefusedAlarm',
+      'RetentionSweepMissedAlarm','RetentionSweepFailedAlarm','RetentionSweepConsecutiveFailureAlarm'])expect((t.Resources[name] as {Condition?:string}).Condition).toBe('RetentionScheduleActive');
     expect(t.Resources.RetentionSweep.Properties).toMatchObject({Handler:'retention-sweep.handler',ReservedConcurrentExecutions:1,Timeout:600});
-    expect(t.Resources.RetentionSweepSchedule.Properties).toMatchObject({ScheduleExpression:'rate(1 hour)'});
+    // Every 24 hours: inside the 48-hour implemented removal deadline, which is inside the published 72-hour commitment.
+    expect(t.Resources.RetentionSweepSchedule.Properties).toMatchObject({ScheduleExpression:'rate(24 hours)'});
+    // Its own role, carrying only logs, the database and export retention — not the inventory, purge or deletion grants.
+    expect(t.Resources.RetentionSweep.Properties.Role).toEqual({'Fn::GetAtt':['RetentionSweepRole','Arn']});
+    expect((t.Resources.RetentionSweepRole.Properties.Policies as {PolicyName:string}[]).map(p=>p.PolicyName).sort())
+      .toEqual(['ReviewedRetentionSweepDatabase','ReviewedRetentionSweepExports','bounded-logs']);
     expect(t.Resources.RetentionSweepInvoke.Properties).toMatchObject({Principal:'events.amazonaws.com'});
     expect(t.Resources.RetentionOverdueAlarm.Properties).toMatchObject({Namespace:'ALP/PrivacyExportRetention',MetricName:'OldestOverdueSeconds',TreatMissingData:'breaching',Threshold:{Ref:'RetentionOverdueAlarmSeconds'}});
     expect(t.Resources.RetentionRefusedAlarm.Properties).toMatchObject({MetricName:'SweepRefused',TreatMissingData:'breaching'});

@@ -12,7 +12,12 @@ import type {ProductionClinicalRequestContext} from './aws-identity-consent';
 // store. No bucket, hosted database, signed link or real account is involved.
 const owner=randomUUID(),other=randomUUID(),operator=randomUUID(),unassigned=randomUUID(),reviewer=randomUUID(),org=randomUUID();
 let db:PGlite;
-const context=(who=owner):ProductionClinicalRequestContext=>({actorPersonId:who,organizationId:org,identityPool:'consumer',identitySubject:'subject-'+who,
+const retentionService=randomUUID(); // a workforce identity that a reviewed release row may name as the retention service (never seeded)
+// Named on its face as a non-human service identity, which the release path now requires.
+const retentionServiceSubject='svc-retention-sweep-'+retentionService.slice(0,8);
+// The retention service's subject is its own: a request context must present the same subject its identity row carries.
+const subjectFor=(who:string)=>who===retentionService?retentionServiceSubject:'subject-'+who;
+const context=(who=owner):ProductionClinicalRequestContext=>({actorPersonId:who,organizationId:org,identityPool:'consumer',identitySubject:subjectFor(who),
   purpose:'consent_management',environment:'production-clinical',dataClassification:'clinical_phi',containsPhi:true,realPatientData:true,productionBound:true});
 const operatorContext=(who=operator):ProductionClinicalRequestContext=>({...context(who),identityPool:'workforce'});
 // Replaces only the RDS transport: the same server-authored codes are classified the way rds-data-database does.
@@ -65,14 +70,14 @@ const workforceRun=(c:ProductionClinicalRequestContext,work:(tx:ClinicalCoreTran
   return work(tx);
 });
 const retentionWith=(store:PrivacyExportStore,authority:'operator'|'retention_service'='operator')=>createPrivacyExportRetention(workforceRun as never,{store,storage},authority);
-const retentionService=randomUUID(); // a workforce identity that a reviewed release row may name as the retention service (never seeded)
 beforeAll(async()=>{
   const {manifest,files}=JSON.parse(execFileSync(process.execPath,['scripts/build-aws-production-clinical-core.mjs','--json'],{encoding:'utf8',maxBuffer:8*1024*1024,timeout:10000}));
   db=new PGlite({extensions:{pgcrypto}});for(const m of manifest.migrations)await db.exec(files[m.file]);
   await db.query("insert into clinical_core.organizations(id,organization_label) values($1,'FICTIONAL')",[org]);
   for(const [id,pool] of [[owner,'consumer'],[other,'consumer'],[operator,'workforce'],[unassigned,'workforce'],[reviewer,'workforce'],[retentionService,'workforce']]){
     await db.query('insert into clinical_core.persons(id,subject_key) values($1,$2)',[id,'subject_'+id.replaceAll('-','')]);
-    await db.query('insert into clinical_core.identities(person_id,identity_pool,identity_subject,production_bound) values($1,$2,$3,true)',[id,pool,'subject-'+id]);
+    await db.query('insert into clinical_core.identities(person_id,identity_pool,identity_subject,production_bound) values($1,$2,$3,true)',
+      [id,pool,id===retentionService?retentionServiceSubject:'subject-'+id]);
   }
   await db.query(`insert into clinical_private.owned_privacy_operator_assignments(operator_id,owner_id,reviewed_by,evidence_sha256,approved_at,expires_at)
     values($1,$2,$3,$4,now()-interval '1 day',now()+interval '1 day')`,[operator,owner,reviewer,'a'.repeat(64)]);
@@ -608,7 +613,7 @@ describe('settlement qualification and operated retention (migration 97)',()=>{
     await jobs.advancePrivacyExportJob(context(other),{jobId:foreign},20000,new AbortController().signal);
     await jobs.cancelPrivacyExportJob(context(other),{jobId:foreign});
     await db.query(`insert into clinical_private.privacy_retention_service_releases(version,service_person_id,identity_subject,evidence_sha256,approved_by,approved_at)
-      values('test-release',$1,$2,$3,$4,clock_timestamp()-interval '1 minute')`,[retentionService,'subject-'+retentionService,'b'.repeat(64),reviewer]);
+      values('test-release',$1,$2,$3,$4,clock_timestamp()-interval '1 minute')`,[retentionService,retentionServiceSubject,'b'.repeat(64),reviewer]);
     try{
       // Another workforce identity is not the service even with a release present.
       await expect(retentionWith(f.store,'retention_service').privacyExportBacklog(operatorContext(unassigned))).rejects.toThrow('owner_required');
@@ -740,12 +745,14 @@ const adminDatabase:ClinicalCoreDatabase={transaction:async work=>db.transaction
   tx.query(sql,args.map(v=>typeof v==='object'&&v!==null&&'kind' in v&&v.kind==='uuid'&&'value' in v?v.value:v))} as unknown as ClinicalCoreTransaction))} as ClinicalCoreDatabase;
 describe('retention sweep activation path (release row operator and a local sweep run)',()=>{
   const sweepConfiguration=(patch:Partial<RetentionSweepConfiguration>={}):RetentionSweepConfiguration=>({enabled:true,phiAllowed:true,evidenceSha256:'b'.repeat(64),servicePersonId:retentionService,
-    serviceSubject:'subject-'+retentionService,organizationId:org,bucket:storage.bucket,kmsKeyArn:storage.kmsKeyArn,bucketOwner:storage.expectedBucketOwner,region:storage.region,...patch});
+    serviceSubject:retentionServiceSubject,organizationId:org,bucket:storage.bucket,kmsKeyArn:storage.kmsKeyArn,bucketOwner:storage.expectedBucketOwner,region:storage.region,...patch});
   const release=(patch:Partial<Parameters<typeof releaseRetentionService>[1]>={})=>releaseRetentionService(adminDatabase,{version:'ops-2026-09-20',servicePersonId:retentionService,
-    serviceSubject:'subject-'+retentionService,approvedByPersonId:reviewer,evidenceSha256:'b'.repeat(64),...patch});
+    serviceSubject:retentionServiceSubject,approvedByPersonId:reviewer,evidenceSha256:'b'.repeat(64),...patch});
   it('refuses a release that the sweep would later refuse, and never inserts on refusal',async()=>{
     for(const [patch,code] of [[{version:''},'retention_release_invalid'],[{version:'x'.repeat(81)},'retention_release_invalid'],[{evidenceSha256:'B'.repeat(64)},'retention_release_invalid'],
       [{serviceSubject:'short'},'retention_release_invalid'],[{approvedByPersonId:retentionService},'retention_release_self_approval'],
+      // A real, production-bound workforce identity is still refused when it is a person's rather than a service's.
+      [{servicePersonId:operator,serviceSubject:'subject-'+operator},'retention_release_human_identity'],
       [{serviceSubject:'subject-'+operator},'retention_service_identity_required'],[{servicePersonId:owner,serviceSubject:'subject-'+owner},'retention_service_identity_required'],
       [{servicePersonId:randomUUID(),serviceSubject:'subject-nobody-here'},'retention_service_identity_required'],[{approvedByPersonId:owner},'retention_approver_required'],
       [{approvedByPersonId:randomUUID()},'retention_approver_required']] as const)
@@ -759,7 +766,7 @@ describe('retention sweep activation path (release row operator and a local swee
     await expect(runRetentionSweep(database,sweepConfiguration({phiAllowed:false}),{store:f.store as never,emit})).rejects.toThrow('retention_sweep_configuration_invalid');
     await expect(runRetentionSweep(database,sweepConfiguration({bucket:'Bad Bucket'}),{store:f.store as never,emit})).rejects.toThrow('retention_sweep_configuration_invalid');
     // Qualification execution: PHI disabled, the designated fixture service identity only; the release requirement still applies.
-    const qualification={reviewSha256:'e'.repeat(64),accountId:'588966314750',databaseName:'clinical_core_qualification',identitySubjects:['subject-'+retentionService]};
+    const qualification={reviewSha256:'e'.repeat(64),accountId:'588966314750',databaseName:'clinical_core_qualification',identitySubjects:[retentionServiceSubject]};
     expect(await runRetentionSweep(database,sweepConfiguration({phiAllowed:false,qualification}),{store:f.store as never,emit})).toMatchObject({ok:false,refused:'retention_service_release_required'});
     await expect(runRetentionSweep(database,sweepConfiguration({phiAllowed:false,qualification:{...qualification,identitySubjects:['subject-someone-else']}}),{store:f.store as never,emit})).rejects.toThrow('retention_sweep_configuration_invalid');
     await expect(runRetentionSweep(database,sweepConfiguration({phiAllowed:true,qualification}),{store:f.store as never,emit})).rejects.toThrow('qualification_execution_invalid');
@@ -768,12 +775,15 @@ describe('retention sweep activation path (release row operator and a local swee
     await jobs.advancePrivacyExportJob(context(other),{jobId:foreign},20000,new AbortController().signal);
     await jobs.cancelPrivacyExportJob(context(other),{jobId:foreign});
     const refused=await runRetentionSweep(database,sweepConfiguration(),{store:f.store as never,emit});
-    expect(refused).toEqual({ok:false,refused:'retention_service_release_required',cleanup:null,reconcile:null,backlog:null});
+    expect(refused).toMatchObject({ok:false,refused:'retention_service_release_required',cleanup:null,reconcile:null,backlog:null});
+    // The run itself is the evidence: a refusal is a reported outcome, with a start, an end and nothing examined.
+    expect(refused.run).toMatchObject({outcome:'refused',examined:0,removed:0});
+    expect(refused.run.endedAt>=refused.run.startedAt).toBe(true);
     expect(JSON.parse(lines.at(-1)!)).toMatchObject({SweepRefused:1,Cleaned:0,ok:false,refused:'retention_service_release_required'});
     expect((await jobs.getPrivacyExportJob(context(other),{jobId:foreign})).objectDeleted).toBe(false);
     try{
       const released=await release();
-      expect(released).toMatchObject({version:'ops-2026-09-20',servicePersonId:retentionService,identitySubject:'subject-'+retentionService,approvedBy:reviewer,revokedAt:null,live:true});
+      expect(released).toMatchObject({version:'ops-2026-09-20',servicePersonId:retentionService,identitySubject:retentionServiceSubject,approvedBy:reviewer,revokedAt:null,live:true});
       await expect(release()).rejects.toThrow('retention_release_exists');
       await expect(release({version:'ops-2026-09-21'})).rejects.toThrow('retention_release_live');
       expect(await inspectRetentionServiceReleases(adminDatabase)).toMatchObject({live:1,releases:[{version:'ops-2026-09-20',live:true}]});

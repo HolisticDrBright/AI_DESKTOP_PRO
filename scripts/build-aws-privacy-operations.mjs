@@ -10,6 +10,29 @@ await build({entryPoints:['src/server/clinical-core/privacy-retention-sweep-lamb
 const ref=n=>({Ref:n}),sub=v=>({'Fn::Sub':v}),nonempty=n=>({'Fn::Not':[{'Fn::Equals':[ref(n),'']}]}),
   hash={Type:'String',Default:'',AllowedPattern:'^$|^[a-f0-9]{64}$'};
 const required=['ActivationEvidenceSha256','DatabaseReviewSha256','WorkforceMfaReviewSha256','AlarmTopicArn'];
+
+/** The database reads and writes every privacy function needs, and nothing else. Shared so the sweep's own role holds
+ * exactly these and not the inventory, purge or identity-deletion grants beside them. */
+const databaseStatements=[
+  {Effect:'Allow',Action:['rds-data:BeginTransaction','rds-data:CommitTransaction','rds-data:RollbackTransaction','rds-data:ExecuteStatement'],
+    Resource:ref('DatabaseClusterArn'),Condition:{StringEquals:{'aws:ResourceAccount':ref('AWS::AccountId')}}},
+  {Effect:'Allow',Action:'secretsmanager:GetSecretValue',Resource:ref('DatabaseSecretArn'),Condition:{StringEquals:{'aws:ResourceAccount':ref('AWS::AccountId')}}},
+  {Effect:'Allow',Action:'kms:Decrypt',Resource:ref('SecretKmsKeyArn'),Condition:{StringEquals:{
+    'kms:ViaService':sub('secretsmanager.${AWS::Region}.amazonaws.com'),'kms:EncryptionContext:SecretARN':ref('DatabaseSecretArn'),
+    'kms:CallerAccount':ref('AWS::AccountId')}}},
+];
+
+/** Export retention: list what remains under one export prefix, abort uploads, delete exact versions, prove absence by
+ * listing again. No object reads (no HEAD, no GetObject), no writes, no KMS. `s3:ListBucketMultipartUploads` has no
+ * supported prefix condition and is therefore a bucket-level grant on the dedicated export bucket. */
+const exportRetentionStatements=[
+  {Effect:'Allow',Action:'s3:ListBucketVersions',Resource:sub('arn:${AWS::Partition}:s3:::${ExportBucketName}'),
+    Condition:{StringLike:{'s3:prefix':'personal-exports/*'},StringEquals:{'aws:ResourceAccount':ref('AWS::AccountId')}}},
+  {Effect:'Allow',Action:'s3:ListBucketMultipartUploads',Resource:sub('arn:${AWS::Partition}:s3:::${ExportBucketName}'),
+    Condition:{StringEquals:{'aws:ResourceAccount':ref('AWS::AccountId')}}},
+  {Effect:'Allow',Action:['s3:AbortMultipartUpload','s3:DeleteObjectVersion'],
+    Resource:sub('arn:${AWS::Partition}:s3:::${ExportBucketName}/personal-exports/*'),Condition:{StringEquals:{'aws:ResourceAccount':ref('AWS::AccountId')}}},
+];
 const template={AWSTemplateFormatVersion:'2010-09-09',Description:'Owner-assigned privacy workforce queue; blocked and logs-only by default',
   Parameters:{
     ApiId:{Type:'String',AllowedPattern:'[a-z0-9]{10}'},
@@ -97,14 +120,7 @@ const template={AWSTemplateFormatVersion:'2010-09-09',Description:'Owner-assigne
       {Effect:'Allow',Principal:{Service:'lambda.amazonaws.com'},Action:'sts:AssumeRole'}]},Policies:[
       {PolicyName:'bounded-logs',PolicyDocument:{Version:'2012-10-17',Statement:[
         {Effect:'Allow',Action:['logs:CreateLogStream','logs:PutLogEvents'],Resource:{'Fn::GetAtt':['Logs','Arn']}}]}},
-      {'Fn::If':['Enabled',{PolicyName:'ReviewedPrivacyOperations',PolicyDocument:{Version:'2012-10-17',Statement:[
-        {Effect:'Allow',Action:['rds-data:BeginTransaction','rds-data:CommitTransaction','rds-data:RollbackTransaction','rds-data:ExecuteStatement'],
-          Resource:ref('DatabaseClusterArn'),Condition:{StringEquals:{'aws:ResourceAccount':ref('AWS::AccountId')}}},
-        {Effect:'Allow',Action:'secretsmanager:GetSecretValue',Resource:ref('DatabaseSecretArn'),Condition:{StringEquals:{'aws:ResourceAccount':ref('AWS::AccountId')}}},
-        {Effect:'Allow',Action:'kms:Decrypt',Resource:ref('SecretKmsKeyArn'),Condition:{StringEquals:{
-          'kms:ViaService':sub('secretsmanager.${AWS::Region}.amazonaws.com'),'kms:EncryptionContext:SecretARN':ref('DatabaseSecretArn'),
-          'kms:CallerAccount':ref('AWS::AccountId')}}},
-      ]}},ref('AWS::NoValue')]},
+      {'Fn::If':['Enabled',{PolicyName:'ReviewedPrivacyOperations',PolicyDocument:{Version:'2012-10-17',Statement:databaseStatements}},ref('AWS::NoValue')]},
       {'Fn::If':['InventoryActive',{PolicyName:'ReadOnlyRetainedJobInventory',PolicyDocument:{Version:'2012-10-17',Statement:[
         ...[['Lab',['pk','personId','organizationId','ownerSub','dataClassification','state','updatedAt','contractVersion','cleanupPartition','lastVerifiedAt']],
           ['Voice',['id','owner','authorization','state']]].map(([kind,attributes])=>({Effect:'Allow',Action:'dynamodb:Scan',Resource:ref(kind+'TableArn'),
@@ -136,17 +152,7 @@ const template={AWSTemplateFormatVersion:'2010-09-09',Description:'Owner-assigne
         {Effect:'Allow',Action:['cognito-idp:AdminDisableUser','cognito-idp:AdminUserGlobalSignOut','cognito-idp:AdminDeleteUser'],
           Resource:sub('arn:${AWS::Partition}:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/${ConsumerUserPoolId}')},
       ]}},ref('AWS::NoValue')]},
-      // Export retention: list what remains under one export prefix, abort uploads, delete exact versions, prove absence by listing again.
-      // No object reads (no HEAD, no GetObject), no writes, no KMS. s3:ListBucketMultipartUploads has no supported prefix condition and is
-      // therefore a bucket-level grant on the dedicated export bucket.
-      {'Fn::If':['ExportCleanupActive',{PolicyName:'ReviewedPersonalExportRetention',PolicyDocument:{Version:'2012-10-17',Statement:[
-        {Effect:'Allow',Action:'s3:ListBucketVersions',Resource:sub('arn:${AWS::Partition}:s3:::${ExportBucketName}'),
-          Condition:{StringLike:{'s3:prefix':'personal-exports/*'},StringEquals:{'aws:ResourceAccount':ref('AWS::AccountId')}}},
-        {Effect:'Allow',Action:'s3:ListBucketMultipartUploads',Resource:sub('arn:${AWS::Partition}:s3:::${ExportBucketName}'),
-          Condition:{StringEquals:{'aws:ResourceAccount':ref('AWS::AccountId')}}},
-        {Effect:'Allow',Action:['s3:AbortMultipartUpload','s3:DeleteObjectVersion'],
-          Resource:sub('arn:${AWS::Partition}:s3:::${ExportBucketName}/personal-exports/*'),Condition:{StringEquals:{'aws:ResourceAccount':ref('AWS::AccountId')}}},
-      ]}},ref('AWS::NoValue')]},
+      {'Fn::If':['ExportCleanupActive',{PolicyName:'ReviewedPersonalExportRetention',PolicyDocument:{Version:'2012-10-17',Statement:exportRetentionStatements}},ref('AWS::NoValue')]},
     ]}},
     Function:{Type:'AWS::Lambda::Function',Properties:{FunctionName:sub('${ApiId}-privacy-operations'),Runtime:'nodejs22.x',Handler:'index.handler',
       Role:{'Fn::GetAtt':['Role','Arn']},Timeout:60,MemorySize:256,ReservedConcurrentExecutions:2,
@@ -169,10 +175,22 @@ const template={AWSTemplateFormatVersion:'2010-09-09',Description:'Owner-assigne
         CLINICAL_DATABASE_SECRET_ARN:ref('DatabaseSecretArn'),CLINICAL_DATABASE_NAME:ref('DatabaseName'),SOURCE_COMMIT:ref('SourceCommit'),
         ...qualificationEnvironment(),
       }}}},
-    // Scheduled retention sweep: same role (database and export retention statements), no API route, no JWT; the database
-    // refuses every call until a reviewed release row names this service identity. Hourly; the alarm watches the oldest pending removal.
+    // Scheduled retention sweep: its own role and its own service identity, no API route, no JWT; the database refuses
+    // every call until a reviewed release row names that identity. Every 24 hours, which nests inside the 48-hour
+    // implemented removal deadline, which nests inside the 72-hour published commitment — each with slack against the
+    // next, and each kept in its own artifact so nobody reconciles them.
+    // The sweep runs under its own non-human service identity, with its own role holding only the database and export
+    // retention statements — not the inventory, purge or identity-deletion grants the operator function also carries.
+    RetentionSweepRole:{Type:'AWS::IAM::Role',Condition:'RetentionScheduleActive',Properties:{
+      AssumeRolePolicyDocument:{Version:'2012-10-17',Statement:[{Effect:'Allow',Principal:{Service:'lambda.amazonaws.com'},Action:'sts:AssumeRole'}]},
+      Policies:[
+        {PolicyName:'bounded-logs',PolicyDocument:{Version:'2012-10-17',Statement:[
+          {Effect:'Allow',Action:['logs:CreateLogStream','logs:PutLogEvents'],Resource:{'Fn::GetAtt':['Logs','Arn']}}]}},
+        {PolicyName:'ReviewedRetentionSweepDatabase',PolicyDocument:{Version:'2012-10-17',Statement:databaseStatements}},
+        {PolicyName:'ReviewedRetentionSweepExports',PolicyDocument:{Version:'2012-10-17',Statement:exportRetentionStatements}},
+      ]}},
     RetentionSweep:{Type:'AWS::Lambda::Function',Condition:'RetentionScheduleActive',Properties:{FunctionName:sub('${ApiId}-privacy-retention-sweep'),Runtime:'nodejs22.x',Handler:'retention-sweep.handler',
-      Role:{'Fn::GetAtt':['Role','Arn']},Timeout:600,MemorySize:256,ReservedConcurrentExecutions:1,
+      Role:{'Fn::GetAtt':['RetentionSweepRole','Arn']},Timeout:600,MemorySize:256,ReservedConcurrentExecutions:1,
       Code:{S3Bucket:ref('CodeBucket'),S3Key:ref('CodeKey'),S3ObjectVersion:ref('CodeVersion')},
       LoggingConfig:{LogGroup:ref('Logs')},Environment:{Variables:{
         PHI_ALLOWED:ref('PhiAllowed'),PRIVACY_OPERATIONS_ACTIVATION:ref('Activation'),RETENTION_SWEEP_ENABLED:ref('RetentionScheduleEnabled'),RETENTION_SWEEP_EVIDENCE_SHA256:ref('RetentionScheduleEvidenceSha256'),
@@ -181,7 +199,7 @@ const template={AWSTemplateFormatVersion:'2010-09-09',Description:'Owner-assigne
         PERSONAL_EXPORT_BUCKET:ref('ExportBucketName'),PERSONAL_EXPORT_KMS_KEY_ARN:ref('ExportKmsKeyArn'),PERSONAL_EXPORT_BUCKET_OWNER:ref('AWS::AccountId'),
         CLINICAL_DATABASE_CLUSTER_ARN:ref('DatabaseClusterArn'),CLINICAL_DATABASE_SECRET_ARN:ref('DatabaseSecretArn'),CLINICAL_DATABASE_NAME:ref('DatabaseName'),SOURCE_COMMIT:ref('SourceCommit'),
       }}}},
-    RetentionSweepSchedule:{Type:'AWS::Events::Rule',Condition:'RetentionScheduleActive',Properties:{Name:sub('${ApiId}-privacy-retention-sweep'),ScheduleExpression:'rate(1 hour)',State:'ENABLED',
+    RetentionSweepSchedule:{Type:'AWS::Events::Rule',Condition:'RetentionScheduleActive',Properties:{Name:sub('${ApiId}-privacy-retention-sweep'),ScheduleExpression:'rate(24 hours)',State:'ENABLED',
       Targets:[{Id:'sweep',Arn:{'Fn::GetAtt':['RetentionSweep','Arn']}}]}},
     RetentionSweepInvoke:{Type:'AWS::Lambda::Permission',Condition:'RetentionScheduleActive',Properties:{FunctionName:ref('RetentionSweep'),Action:'lambda:InvokeFunction',Principal:'events.amazonaws.com',
       SourceArn:{'Fn::GetAtt':['RetentionSweepSchedule','Arn']}}},
@@ -194,6 +212,18 @@ const template={AWSTemplateFormatVersion:'2010-09-09',Description:'Owner-assigne
       EvaluationPeriods:1,Threshold:0,ComparisonOperator:'GreaterThanThreshold',TreatMissingData:'breaching',
       AlarmDescription:'The scheduled sweep ran without a live retention service release, or did not run.',
       AlarmActions:[ref('AlarmTopicArn')]}},
+    // A sweep that does not report is indistinguishable from a sweep that did not run, so a missing datapoint breaches.
+    RetentionSweepMissedAlarm:{Type:'AWS::CloudWatch::Alarm',Condition:'RetentionScheduleActive',Properties:{Namespace:'ALP/PrivacyExportRetention',
+      MetricName:'SweepCompleted',Statistic:'Sum',Period:86400,EvaluationPeriods:1,Threshold:1,ComparisonOperator:'LessThanThreshold',
+      TreatMissingData:'breaching',AlarmDescription:'No completed retention sweep reported in 24 hours.',AlarmActions:[ref('AlarmTopicArn')]}},
+    RetentionSweepFailedAlarm:{Type:'AWS::CloudWatch::Alarm',Condition:'RetentionScheduleActive',Properties:{Namespace:'AWS/Lambda',
+      MetricName:'Errors',Dimensions:[{Name:'FunctionName',Value:ref('RetentionSweep')}],Statistic:'Sum',Period:86400,EvaluationPeriods:1,Threshold:1,
+      ComparisonOperator:'GreaterThanOrEqualToThreshold',TreatMissingData:'notBreaching',
+      AlarmDescription:'The scheduled retention sweep errored.',AlarmActions:[ref('AlarmTopicArn')]}},
+    RetentionSweepConsecutiveFailureAlarm:{Type:'AWS::CloudWatch::Alarm',Condition:'RetentionScheduleActive',Properties:{Namespace:'ALP/PrivacyExportRetention',
+      MetricName:'SweepFailed',Statistic:'Sum',Period:86400,EvaluationPeriods:2,DatapointsToAlarm:2,Threshold:1,
+      ComparisonOperator:'GreaterThanOrEqualToThreshold',TreatMissingData:'notBreaching',
+      AlarmDescription:'Two consecutive scheduled retention sweeps failed.',AlarmActions:[ref('AlarmTopicArn')]}},
     Authorizer:{Type:'AWS::ApiGatewayV2::Authorizer',Properties:{ApiId:ref('ApiId'),Name:sub('${ApiId}-privacy-workforce'),
       AuthorizerType:'JWT',IdentitySource:['$request.header.Authorization'],JwtConfiguration:{Issuer:ref('WorkforceIssuer'),Audience:[ref('WorkforceAudience')]}}},
     Integration:{Type:'AWS::ApiGatewayV2::Integration',Properties:{ApiId:ref('ApiId'),IntegrationType:'AWS_PROXY',

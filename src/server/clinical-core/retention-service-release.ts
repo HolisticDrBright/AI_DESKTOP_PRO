@@ -15,11 +15,14 @@ import {clinicalUuid,type ClinicalCoreDatabase} from './database';
  * database path used for reviewed migrations. */
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SUBJECT=/^[A-Za-z0-9:_-]{8,128}$/,HASH=/^[a-f0-9]{64}$/,VERSION=/^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/;
+/** The sweep runs under a named non-human service identity, never a person's credentials. The name says so on its face,
+ * so an operator reading an audit row or an IAM trail can tell at a glance which it was. */
+const SERVICE_SUBJECT=/^svc-[a-z0-9][a-z0-9-]{2,60}$/;
 export type RetentionServiceReleaseInput={version:string;servicePersonId:string;serviceSubject:string;approvedByPersonId:string;evidenceSha256:string};
 export type RetentionServiceRelease={version:string;servicePersonId:string;identitySubject:string;evidenceSha256:string;approvedBy:string;approvedAt:string;revokedAt:string|null;live:boolean};
 export class RetentionServiceReleaseError extends Error{
-  constructor(readonly code:'retention_release_invalid'|'retention_service_identity_required'|'retention_approver_required'|'retention_release_self_approval'
-    |'retention_release_exists'|'retention_release_live'|'retention_release_not_live'){super(code);this.name='RetentionServiceReleaseError';}
+  constructor(readonly code:'retention_release_invalid'|'retention_release_human_identity'|'retention_service_identity_required'|'retention_approver_required'
+    |'retention_release_self_approval'|'retention_release_exists'|'retention_release_live'|'retention_release_not_live'){super(code);this.name='RetentionServiceReleaseError';}
 }
 const row=(r:Record<string,unknown>):RetentionServiceRelease=>({version:String(r.version),servicePersonId:String(r.service_person_id),identitySubject:String(r.identity_subject),
   evidenceSha256:String(r.evidence_sha256),approvedBy:String(r.approved_by),approvedAt:new Date(String(r.approved_at)).toISOString(),
@@ -50,6 +53,9 @@ export async function releaseRetentionService(database:ClinicalCoreDatabase,rawI
       where i.person_id=$1 and i.identity_pool='workforce' and i.identity_subject=$2 and i.status='active' and i.production_bound=true and p.status='active') ok`,
       [clinicalUuid(input.servicePersonId),input.serviceSubject]);
     if(!service.rows[0]?.ok)throw new RetentionServiceReleaseError('retention_service_identity_required');
+    // The identity exists and is a production-bound workforce identity. It must also be a named service identity: the
+    // sweep runs under no person's credentials, and the name is what says so to anyone reading an audit row later.
+    if(!SERVICE_SUBJECT.test(input.serviceSubject))throw new RetentionServiceReleaseError('retention_release_human_identity');
     const approver=await tx.query<{ok:boolean}>(`select exists(select 1 from clinical_core.identities i join clinical_core.persons p on p.id=i.person_id
       where i.person_id=$1 and i.identity_pool='workforce' and i.status='active' and p.status='active') ok`,[clinicalUuid(input.approvedByPersonId)]);
     if(!approver.rows[0]?.ok)throw new RetentionServiceReleaseError('retention_approver_required');

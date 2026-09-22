@@ -35,8 +35,12 @@ export function retentionSweepStorage(c:RetentionSweepConfiguration){
     ||!/^[0-9]{12}$/.test(storage.expectedBucketOwner)||!/^[a-z0-9-]+$/.test(storage.region))throw new Error('retention_sweep_configuration_invalid');
   return storage;
 }
+export type RetentionSweepOutcome='completed'|'refused'|'failed';
 export type RetentionSweepResult={ok:boolean;refused:'retention_service_release_required'|null;cleanup:{cleaned:number;remaining:number;deferred:number}|null;
-  reconcile:{confirmed:number;reopened:number;pending:number}|null;backlog:PrivacyExportBacklog|null};
+  reconcile:{confirmed:number;reopened:number;pending:number}|null;backlog:PrivacyExportBacklog|null;
+  /** The run itself, which is the scheduled-cleanup evidence: without start, end, what was looked at, what was removed
+   * and how it ended, a sweep is unfalsifiable. Counts only; nothing here reads or reports export content. */
+  run:{startedAt:string;endedAt:string;durationMs:number;examined:number;removed:number;outcome:RetentionSweepOutcome}};
 /** One sweep. A refusal because no release row is live is a normal, reported outcome, not an error. */
 export async function runRetentionSweep(database:ClinicalCoreDatabase,c:RetentionSweepConfiguration,deps:{store?:ReturnType<typeof createAwsPrivacyExportStore>;signal?:AbortSignal;emit?:(line:string)=>void}={}):Promise<RetentionSweepResult>{
   const context=retentionSweepContext(c),storage=retentionSweepStorage(c),signal=deps.signal??AbortSignal.timeout(600_000);
@@ -45,7 +49,19 @@ export async function runRetentionSweep(database:ClinicalCoreDatabase,c:Retentio
     return work(tx);
   });
   const retention=createPrivacyExportRetention(run,{store:deps.store??createAwsPrivacyExportStore(),storage},'retention_service');
-  const result:RetentionSweepResult={ok:false,refused:null,cleanup:null,reconcile:null,backlog:null};
+  const startedAtMs=Date.now(),startedAt=new Date(startedAtMs).toISOString();
+  const result:RetentionSweepResult={ok:false,refused:null,cleanup:null,reconcile:null,backlog:null,
+    run:{startedAt,endedAt:startedAt,durationMs:0,examined:0,removed:0,outcome:'failed'}};
+  const emit=deps.emit??(line=>process.stdout.write(line+'\n'));
+  const close=(outcome:RetentionSweepOutcome)=>{
+    const endedAtMs=Date.now();
+    // Examined is what this pass actually handled: the copies it cleaned or deferred, and the certificates it
+    // confirmed or reopened. Backlog counts are what remains, not what was looked at, so they are not added here.
+    result.run={startedAt,endedAt:new Date(endedAtMs).toISOString(),durationMs:endedAtMs-startedAtMs,
+      examined:(result.cleanup?.cleaned??0)+(result.cleanup?.deferred??0)+(result.reconcile?.confirmed??0)+(result.reconcile?.reopened??0),
+      removed:result.cleanup?.cleaned??0,outcome};
+    emit(JSON.stringify(embeddedMetrics(result)));
+  };
   try{
     const cleanup=await retention.cleanupAssignedPrivacyExports(context,100,signal);
     result.cleanup={cleaned:cleanup.cleaned,remaining:cleanup.remaining,deferred:cleanup.deferred};
@@ -54,11 +70,12 @@ export async function runRetentionSweep(database:ClinicalCoreDatabase,c:Retentio
     result.backlog=await retention.privacyExportBacklog(context);
     result.ok=true;
   }catch(error){
-    // owner_required covers the missing release row (identity_refused). Anything else is a real failure for the alarm.
+    // owner_required covers the missing release row (identity_refused). Anything else is a real failure for the alarm,
+    // and a failed run still reports: an unreported failure is indistinguishable from a sweep that never ran.
     if(error instanceof OwnedStorageError&&error.code==='owner_required'){result.refused='retention_service_release_required';}
-    else throw error;
+    else{close('failed');throw error;}
   }
-  (deps.emit??(line=>process.stdout.write(line+'\n')))(JSON.stringify(embeddedMetrics(result)));
+  close(result.refused?'refused':'completed');
   return result;
 }
 /** CloudWatch embedded metric format: counts only, no identifiers. */
@@ -66,9 +83,13 @@ export function embeddedMetrics(r:RetentionSweepResult){
   const b=r.backlog;
   return {_aws:{Timestamp:Date.now(),CloudWatchMetrics:[{Namespace:'ALP/PrivacyExportRetention',Dimensions:[[]],Metrics:[
     {Name:'SweepRefused',Unit:'Count'},{Name:'CleanupPending',Unit:'Count'},{Name:'CleanupDeferred',Unit:'Count'},{Name:'Settling',Unit:'Count'},
-    {Name:'OldestOverdueSeconds',Unit:'Seconds'},{Name:'Reopened',Unit:'Count'},{Name:'Cleaned',Unit:'Count'}]}]},
+    {Name:'OldestOverdueSeconds',Unit:'Seconds'},{Name:'Reopened',Unit:'Count'},{Name:'Cleaned',Unit:'Count'},
+    {Name:'SweepCompleted',Unit:'Count'},{Name:'SweepFailed',Unit:'Count'},{Name:'SweepExamined',Unit:'Count'},{Name:'SweepDurationMs',Unit:'Milliseconds'}]}]},
     SweepRefused:r.refused?1:0,CleanupPending:b?.cleanupPending??0,CleanupDeferred:b?.deferred??0,Settling:b?.settling??0,
-    OldestOverdueSeconds:b?.oldestOverdueSeconds??0,Reopened:r.reconcile?.reopened??0,Cleaned:r.cleanup?.cleaned??0,refused:r.refused,ok:r.ok};
+    OldestOverdueSeconds:b?.oldestOverdueSeconds??0,Reopened:r.reconcile?.reopened??0,Cleaned:r.cleanup?.cleaned??0,
+    SweepCompleted:r.run.outcome==='completed'?1:0,SweepFailed:r.run.outcome==='failed'?1:0,
+    SweepExamined:r.run.examined,SweepDurationMs:r.run.durationMs,
+    refused:r.refused,ok:r.ok,run:r.run};
 }
 export function retentionSweepConfigurationFromEnv(e:NodeJS.ProcessEnv):RetentionSweepConfiguration{
   const qualification=resolveQualificationExecution(e,e.PRIVACY_OPERATIONS_ACTIVATION==='approved'?'approved':'blocked');
