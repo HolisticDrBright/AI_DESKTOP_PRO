@@ -113,6 +113,7 @@ jobs:
           npm run check:aws-desktop-operation-inventory
           npm run check:aws-core-launch-scope
           npm run check:aws-production-clinical-core
+          npm run check:aws-covered-entity-coverage
           npm run check:aws-production-clinical-api
           npm run check:aws-production-closed-boundary-exercise
           npm run check:aws-production-pitr-recovery-exercise
@@ -120,6 +121,8 @@ jobs:
           npm run build:aws-production-rollback-acceptance
           npm run build:aws-production-clinical-core-verifier
           npm run build:aws-production-migration-operator
+          npm run build:aws-model-vendor-authority-operator
+          npm run build:aws-covered-entity-deletion-operator
           npm run build:aws-production-foundation
           npm run check:aws-production-foundation
           npm run test:aws-production-foundation

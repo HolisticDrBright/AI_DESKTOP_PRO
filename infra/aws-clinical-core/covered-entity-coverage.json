@@ -1,0 +1,1633 @@
+{
+  "record": "covered-entity-coverage/1",
+  "tables": [
+    {
+      "table": "clinical_audit.consumer_storage_events",
+      "scope": "retained",
+      "class": "individual_account",
+      "reason": "Rooted at the individual's own account, which a person may hold across organizations; its content is consumer-self-entered and is removed by the individual deletion path, not by a covered entity's termination."
+    },
+    {
+      "table": "clinical_audit.events",
+      "scope": "organization_column",
+      "column": "organization_id"
+    },
+    {
+      "table": "clinical_audit.owned_privacy_export_events",
+      "scope": "retained",
+      "class": "individual_account",
+      "reason": "Rooted at the individual's own account, which a person may hold across organizations; its content is consumer-self-entered and is removed by the individual deletion path, not by a covered entity's termination."
+    },
+    {
+      "table": "clinical_audit.patient_relationship_events",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.patient_records",
+        "clinical_core.patient_relationships"
+      ]
+    },
+    {
+      "table": "clinical_audit.privacy_operator_access",
+      "scope": "retained",
+      "class": "individual_account",
+      "reason": "Rooted at the individual's own account, which a person may hold across organizations; its content is consumer-self-entered and is removed by the individual deletion path, not by a covered entity's termination."
+    },
+    {
+      "table": "clinical_core.appointment_status_events",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.appointments"
+      ]
+    },
+    {
+      "table": "clinical_core.appointments",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.patient_records"
+      ]
+    },
+    {
+      "table": "clinical_core.billing_events",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.billing_invoices"
+      ]
+    },
+    {
+      "table": "clinical_core.billing_invoices",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.appointments",
+        "clinical_core.billing_locations",
+        "clinical_core.patient_records"
+      ]
+    },
+    {
+      "table": "clinical_core.billing_locations",
+      "scope": "organization_column",
+      "column": "organization_id"
+    },
+    {
+      "table": "clinical_core.billing_payments",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.billing_invoices"
+      ]
+    },
+    {
+      "table": "clinical_core.billing_plan_versions",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.billing_plans"
+      ]
+    },
+    {
+      "table": "clinical_core.billing_plans",
+      "scope": "organization_column",
+      "column": "organization_id"
+    },
+    {
+      "table": "clinical_core.billing_products",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.billing_suppliers",
+        "clinical_core.billing_tax_rates"
+      ]
+    },
+    {
+      "table": "clinical_core.billing_provider_registrations",
+      "scope": "organization_column",
+      "column": "organization_id"
+    },
+    {
+      "table": "clinical_core.billing_refunds",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.billing_payments"
+      ]
+    },
+    {
+      "table": "clinical_core.billing_suppliers",
+      "scope": "organization_column",
+      "column": "organization_id"
+    },
+    {
+      "table": "clinical_core.billing_tax_rates",
+      "scope": "organization_column",
+      "column": "organization_id"
+    },
+    {
+      "table": "clinical_core.clinical_facts",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.patient_records",
+        "clinical_core.reasoning_snapshots"
+      ]
+    },
+    {
+      "table": "clinical_core.clinical_hypotheses",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.patient_records",
+        "clinical_core.reasoning_snapshots"
+      ]
+    },
+    {
+      "table": "clinical_core.clinical_knowledge_import_batches",
+      "scope": "retained",
+      "class": "curated_knowledge",
+      "reason": "Reviewed knowledge and catalog curation attributed to the organization that reviewed it, shared with every other organization and holding no individual's information."
+    },
+    {
+      "table": "clinical_core.clinical_knowledge_import_items",
+      "scope": "retained",
+      "class": "curated_knowledge",
+      "reason": "Reviewed knowledge and catalog curation attributed to the organization that reviewed it, shared with every other organization and holding no individual's information."
+    },
+    {
+      "table": "clinical_core.clinical_note_versions",
+      "scope": "parent",
+      "column": "note_id",
+      "parent": "clinical_core.clinical_notes",
+      "parentColumn": "id",
+      "dependsOn": [
+        "clinical_core.clinical_notes"
+      ]
+    },
+    {
+      "table": "clinical_core.clinical_notes",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.encounters",
+        "clinical_core.patient_records"
+      ]
+    },
+    {
+      "table": "clinical_core.clinical_pathway_versions",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.clinical_pathways"
+      ]
+    },
+    {
+      "table": "clinical_core.clinical_pathways",
+      "scope": "organization_column",
+      "column": "organization_id"
+    },
+    {
+      "table": "clinical_core.communication_preferences",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.consent_artifacts",
+        "clinical_core.patient_records"
+      ]
+    },
+    {
+      "table": "clinical_core.connection_invitations",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.patient_connections",
+        "clinical_core.patient_records"
+      ]
+    },
+    {
+      "table": "clinical_core.consent_artifacts",
+      "scope": "organization_column",
+      "column": "organization_id"
+    },
+    {
+      "table": "clinical_core.consent_grants",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.consent_artifacts",
+        "clinical_core.patient_connections",
+        "clinical_core.patient_records"
+      ]
+    },
+    {
+      "table": "clinical_core.consumer_clinical_record_versions",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.patient_connections",
+        "clinical_core.patient_records"
+      ]
+    },
+    {
+      "table": "clinical_core.consumer_storage_consents",
+      "scope": "retained",
+      "class": "individual_account",
+      "reason": "Rooted at the individual's own account, which a person may hold across organizations; its content is consumer-self-entered and is removed by the individual deletion path, not by a covered entity's termination."
+    },
+    {
+      "table": "clinical_core.conversation_events",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.conversations",
+        "clinical_core.messages"
+      ]
+    },
+    {
+      "table": "clinical_core.conversation_reads",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.conversations"
+      ]
+    },
+    {
+      "table": "clinical_core.conversations",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.patient_records"
+      ]
+    },
+    {
+      "table": "clinical_core.desktop_compatibility_operations",
+      "scope": "retained",
+      "class": "service_operations",
+      "reason": "Records an operator authorization or schema state, never a covered entity's information."
+    },
+    {
+      "table": "clinical_core.differential_questions",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.encounters",
+        "clinical_core.lens_evaluations",
+        "clinical_core.patient_records"
+      ]
+    },
+    {
+      "table": "clinical_core.encounters",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.appointments",
+        "clinical_core.patient_records"
+      ]
+    },
+    {
+      "table": "clinical_core.entitlement_ledger",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.entitlements"
+      ]
+    },
+    {
+      "table": "clinical_core.entitlement_reservations",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.appointments",
+        "clinical_core.entitlements"
+      ]
+    },
+    {
+      "table": "clinical_core.entitlements",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.billing_invoices",
+        "clinical_core.billing_plan_versions",
+        "clinical_core.patient_records"
+      ]
+    },
+    {
+      "table": "clinical_core.evidence_items",
+      "scope": "parent",
+      "column": "hypothesis_id",
+      "parent": "clinical_core.clinical_hypotheses",
+      "parentColumn": "id",
+      "dependsOn": [
+        "clinical_core.clinical_facts",
+        "clinical_core.clinical_hypotheses"
+      ]
+    },
+    {
+      "table": "clinical_core.guardian_authorities",
+      "scope": "retained",
+      "class": "individual_account",
+      "reason": "Rooted at the individual's own account, which a person may hold across organizations; its content is consumer-self-entered and is removed by the individual deletion path, not by a covered entity's termination."
+    },
+    {
+      "table": "clinical_core.hypothesis_reviews",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.clinical_hypotheses",
+        "clinical_core.patient_records"
+      ]
+    },
+    {
+      "table": "clinical_core.identities",
+      "scope": "retained",
+      "class": "individual_account",
+      "reason": "Rooted at the individual's own account, which a person may hold across organizations; its content is consumer-self-entered and is removed by the individual deletion path, not by a covered entity's termination."
+    },
+    {
+      "table": "clinical_core.inventory_ledger",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.billing_locations",
+        "clinical_core.billing_products",
+        "clinical_core.billing_suppliers"
+      ]
+    },
+    {
+      "table": "clinical_core.inventory_stock",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.billing_locations",
+        "clinical_core.billing_products"
+      ]
+    },
+    {
+      "table": "clinical_core.knowledge_import_conflict_resolutions",
+      "scope": "retained",
+      "class": "curated_knowledge",
+      "reason": "Reviewed knowledge and catalog curation attributed to the organization that reviewed it, shared with every other organization and holding no individual's information."
+    },
+    {
+      "table": "clinical_core.lab_import_events",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.patient_connections",
+        "clinical_core.patient_records",
+        "clinical_core.sync_providers"
+      ]
+    },
+    {
+      "table": "clinical_core.lab_observations",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.lab_import_events",
+        "clinical_core.patient_records"
+      ]
+    },
+    {
+      "table": "clinical_core.lab_specimen_context_versions",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.consent_grants",
+        "clinical_core.lab_import_events",
+        "clinical_core.patient_connections",
+        "clinical_core.patient_records"
+      ]
+    },
+    {
+      "table": "clinical_core.lens_evaluations",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.encounters",
+        "clinical_core.patient_records"
+      ]
+    },
+    {
+      "table": "clinical_core.lens_safety_blocks",
+      "scope": "parent",
+      "column": "evaluation_id",
+      "parent": "clinical_core.lens_evaluations",
+      "parentColumn": "id",
+      "dependsOn": [
+        "clinical_core.lens_evaluations"
+      ]
+    },
+    {
+      "table": "clinical_core.message_ai_reviews",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.conversations"
+      ]
+    },
+    {
+      "table": "clinical_core.message_attachments",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.conversations",
+        "clinical_core.messages"
+      ]
+    },
+    {
+      "table": "clinical_core.message_draft_revisions",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.messages"
+      ]
+    },
+    {
+      "table": "clinical_core.message_outbox",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.messages"
+      ]
+    },
+    {
+      "table": "clinical_core.messages",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.conversations"
+      ]
+    },
+    {
+      "table": "clinical_core.messaging_provider_registrations",
+      "scope": "organization_column",
+      "column": "organization_id"
+    },
+    {
+      "table": "clinical_core.missing_data_recommendations",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.clinical_hypotheses",
+        "clinical_core.patient_records"
+      ]
+    },
+    {
+      "table": "clinical_core.note_addenda",
+      "scope": "parent",
+      "column": "note_id",
+      "parent": "clinical_core.clinical_notes",
+      "parentColumn": "id",
+      "dependsOn": [
+        "clinical_core.clinical_note_versions",
+        "clinical_core.clinical_notes"
+      ]
+    },
+    {
+      "table": "clinical_core.note_provenance_refs",
+      "scope": "parent",
+      "column": "note_id",
+      "parent": "clinical_core.clinical_notes",
+      "parentColumn": "id",
+      "dependsOn": [
+        "clinical_core.clinical_notes"
+      ]
+    },
+    {
+      "table": "clinical_core.note_signatures",
+      "scope": "parent",
+      "column": "note_id",
+      "parent": "clinical_core.clinical_notes",
+      "parentColumn": "id",
+      "dependsOn": [
+        "clinical_core.clinical_note_versions",
+        "clinical_core.clinical_notes"
+      ]
+    },
+    {
+      "table": "clinical_core.nutrition_amendments",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.nutrition_plan_versions"
+      ]
+    },
+    {
+      "table": "clinical_core.nutrition_checkins",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.nutrition_plan_versions",
+        "clinical_core.patient_records"
+      ]
+    },
+    {
+      "table": "clinical_core.nutrition_constraints",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.nutrition_plan_versions"
+      ]
+    },
+    {
+      "table": "clinical_core.nutrition_events",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.nutrition_plan_versions",
+        "clinical_core.nutrition_plans",
+        "clinical_core.nutrition_templates"
+      ]
+    },
+    {
+      "table": "clinical_core.nutrition_plan_versions",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.nutrition_plans",
+        "clinical_core.nutrition_template_versions",
+        "clinical_core.patient_records"
+      ]
+    },
+    {
+      "table": "clinical_core.nutrition_plans",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.patient_records"
+      ]
+    },
+    {
+      "table": "clinical_core.nutrition_safety_flags",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.nutrition_plan_versions"
+      ]
+    },
+    {
+      "table": "clinical_core.nutrition_template_versions",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.nutrition_templates"
+      ]
+    },
+    {
+      "table": "clinical_core.nutrition_templates",
+      "scope": "organization_column",
+      "column": "organization_id"
+    },
+    {
+      "table": "clinical_core.org_billing_policies",
+      "scope": "organization_column",
+      "column": "organization_id"
+    },
+    {
+      "table": "clinical_core.organization_memberships",
+      "scope": "organization_column",
+      "column": "organization_id"
+    },
+    {
+      "table": "clinical_core.organizations",
+      "scope": "retained",
+      "class": "organization_shell",
+      "reason": "The row carries the organization's label and status, not any individual's information. It is kept so the destruction record stays readable and so reviewed reference data remains attributable to the review that produced it."
+    },
+    {
+      "table": "clinical_core.owned_consumer_active_plan_history",
+      "scope": "retained",
+      "class": "individual_account",
+      "reason": "Rooted at the individual's own account, which a person may hold across organizations; its content is consumer-self-entered and is removed by the individual deletion path, not by a covered entity's termination."
+    },
+    {
+      "table": "clinical_core.owned_consumer_active_plans",
+      "scope": "retained",
+      "class": "individual_account",
+      "reason": "Rooted at the individual's own account, which a person may hold across organizations; its content is consumer-self-entered and is removed by the individual deletion path, not by a covered entity's termination."
+    },
+    {
+      "table": "clinical_core.owned_consumer_record_versions",
+      "scope": "retained",
+      "class": "individual_account",
+      "reason": "Rooted at the individual's own account, which a person may hold across organizations; its content is consumer-self-entered and is removed by the individual deletion path, not by a covered entity's termination."
+    },
+    {
+      "table": "clinical_core.patient_connections",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.patient_records"
+      ]
+    },
+    {
+      "table": "clinical_core.patient_credit_entries",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.billing_invoices",
+        "clinical_core.patient_records"
+      ]
+    },
+    {
+      "table": "clinical_core.patient_memberships",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.billing_plan_versions",
+        "clinical_core.patient_records"
+      ]
+    },
+    {
+      "table": "clinical_core.patient_protocol_items",
+      "scope": "parent",
+      "column": "protocol_version_id",
+      "parent": "clinical_core.patient_protocol_versions",
+      "parentColumn": "id",
+      "dependsOn": [
+        "clinical_core.patient_protocol_phases",
+        "clinical_core.patient_protocol_versions"
+      ]
+    },
+    {
+      "table": "clinical_core.patient_protocol_phases",
+      "scope": "parent",
+      "column": "protocol_version_id",
+      "parent": "clinical_core.patient_protocol_versions",
+      "parentColumn": "id",
+      "dependsOn": [
+        "clinical_core.patient_protocol_versions"
+      ]
+    },
+    {
+      "table": "clinical_core.patient_protocol_versions",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.patient_protocols"
+      ]
+    },
+    {
+      "table": "clinical_core.patient_protocols",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.patient_records"
+      ]
+    },
+    {
+      "table": "clinical_core.patient_records",
+      "scope": "organization_column",
+      "column": "organization_id"
+    },
+    {
+      "table": "clinical_core.patient_relationships",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.patient_records"
+      ]
+    },
+    {
+      "table": "clinical_core.persons",
+      "scope": "retained",
+      "class": "individual_account",
+      "reason": "Rooted at the individual's own account, which a person may hold across organizations; its content is consumer-self-entered and is removed by the individual deletion path, not by a covered entity's termination."
+    },
+    {
+      "table": "clinical_core.plan_acceptances",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.billing_invoices",
+        "clinical_core.billing_plan_versions",
+        "clinical_core.patient_records"
+      ]
+    },
+    {
+      "table": "clinical_core.plan_events",
+      "scope": "organization_column",
+      "column": "organization_id"
+    },
+    {
+      "table": "clinical_core.privacy_requests",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.patient_connections",
+        "clinical_core.patient_records"
+      ]
+    },
+    {
+      "table": "clinical_core.program_enrollments",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.patient_records",
+        "clinical_core.program_offers",
+        "clinical_core.program_versions",
+        "clinical_core.programs"
+      ]
+    },
+    {
+      "table": "clinical_core.program_offers",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.programs"
+      ]
+    },
+    {
+      "table": "clinical_core.program_progress",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.program_enrollments"
+      ]
+    },
+    {
+      "table": "clinical_core.program_template_versions",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.program_templates"
+      ]
+    },
+    {
+      "table": "clinical_core.program_templates",
+      "scope": "organization_column",
+      "column": "organization_id"
+    },
+    {
+      "table": "clinical_core.program_version_events",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.program_template_versions",
+        "clinical_core.program_versions"
+      ]
+    },
+    {
+      "table": "clinical_core.program_versions",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.programs"
+      ]
+    },
+    {
+      "table": "clinical_core.programs",
+      "scope": "organization_column",
+      "column": "organization_id"
+    },
+    {
+      "table": "clinical_core.protocol_template_versions",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.patient_protocol_versions",
+        "clinical_core.protocol_templates"
+      ]
+    },
+    {
+      "table": "clinical_core.protocol_templates",
+      "scope": "organization_column",
+      "column": "organization_id"
+    },
+    {
+      "table": "clinical_core.question_answers",
+      "scope": "parent",
+      "column": "question_id",
+      "parent": "clinical_core.differential_questions",
+      "parentColumn": "id",
+      "dependsOn": [
+        "clinical_core.differential_questions"
+      ]
+    },
+    {
+      "table": "clinical_core.question_feedback",
+      "scope": "parent",
+      "column": "question_id",
+      "parent": "clinical_core.differential_questions",
+      "parentColumn": "id",
+      "dependsOn": [
+        "clinical_core.differential_questions"
+      ]
+    },
+    {
+      "table": "clinical_core.question_status_transitions",
+      "scope": "parent",
+      "column": "question_id",
+      "parent": "clinical_core.differential_questions",
+      "parentColumn": "id",
+      "dependsOn": [
+        "clinical_core.differential_questions"
+      ]
+    },
+    {
+      "table": "clinical_core.reasoning_snapshots",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.encounters",
+        "clinical_core.patient_records"
+      ]
+    },
+    {
+      "table": "clinical_core.reconciliation_exceptions",
+      "scope": "organization_column",
+      "column": "organization_id"
+    },
+    {
+      "table": "clinical_core.research_handoff_item_reviews",
+      "scope": "organization_column",
+      "column": "organization_id"
+    },
+    {
+      "table": "clinical_core.review_queue_items",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.patient_records"
+      ]
+    },
+    {
+      "table": "clinical_core.sync_callback_nonces",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.sync_providers"
+      ]
+    },
+    {
+      "table": "clinical_core.sync_circuit_states",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.sync_providers"
+      ]
+    },
+    {
+      "table": "clinical_core.sync_conflicts",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.patient_connections",
+        "clinical_core.patient_records",
+        "clinical_core.sync_inbound_events",
+        "clinical_core.sync_outbound_events"
+      ]
+    },
+    {
+      "table": "clinical_core.sync_dead_letters",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.patient_records",
+        "clinical_core.sync_outbound_events"
+      ]
+    },
+    {
+      "table": "clinical_core.sync_delivery_attempts",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.patient_records",
+        "clinical_core.sync_outbound_events"
+      ]
+    },
+    {
+      "table": "clinical_core.sync_delivery_events",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.patient_records",
+        "clinical_core.sync_outbound_events",
+        "clinical_core.sync_providers"
+      ]
+    },
+    {
+      "table": "clinical_core.sync_inbound_corrections",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.patient_records",
+        "clinical_core.sync_inbound_events"
+      ]
+    },
+    {
+      "table": "clinical_core.sync_inbound_events",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.patient_connections",
+        "clinical_core.patient_records",
+        "clinical_core.sync_providers"
+      ]
+    },
+    {
+      "table": "clinical_core.sync_inbound_lab_imports",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.lab_import_events",
+        "clinical_core.patient_records",
+        "clinical_core.sync_inbound_events"
+      ]
+    },
+    {
+      "table": "clinical_core.sync_outbound_events",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.patient_connections",
+        "clinical_core.patient_records",
+        "clinical_core.sync_providers"
+      ]
+    },
+    {
+      "table": "clinical_core.sync_providers",
+      "scope": "organization_column",
+      "column": "organization_id"
+    },
+    {
+      "table": "clinical_core.sync_resource_acks",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.patient_connections",
+        "clinical_core.patient_records",
+        "clinical_core.sync_outbound_events"
+      ]
+    },
+    {
+      "table": "clinical_core.sync_worker_cycles",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.sync_providers"
+      ]
+    },
+    {
+      "table": "clinical_core.workforce_identity_directory",
+      "scope": "retained",
+      "class": "individual_account",
+      "reason": "Rooted at the individual's own account, which a person may hold across organizations; its content is consumer-self-entered and is removed by the individual deletion path, not by a covered entity's termination."
+    },
+    {
+      "table": "clinical_private.consumer_storage_consent_releases",
+      "scope": "retained",
+      "class": "service_operations",
+      "reason": "Records an operator authorization or schema state, never a covered entity's information."
+    },
+    {
+      "table": "clinical_private.encounter_captures",
+      "scope": "parent",
+      "column": "encounter_id",
+      "parent": "clinical_private.recording_controls",
+      "parentColumn": "encounter_id",
+      "dependsOn": [
+        "clinical_private.recording_capture_releases",
+        "clinical_private.recording_controls"
+      ]
+    },
+    {
+      "table": "clinical_private.owned_correction_resolutions",
+      "scope": "retained",
+      "class": "individual_account",
+      "reason": "Rooted at the individual's own account, which a person may hold across organizations; its content is consumer-self-entered and is removed by the individual deletion path, not by a covered entity's termination."
+    },
+    {
+      "table": "clinical_private.owned_correction_targets",
+      "scope": "retained",
+      "class": "individual_account",
+      "reason": "Rooted at the individual's own account, which a person may hold across organizations; its content is consumer-self-entered and is removed by the individual deletion path, not by a covered entity's termination."
+    },
+    {
+      "table": "clinical_private.owned_dispute_resolutions",
+      "scope": "retained",
+      "class": "individual_account",
+      "reason": "Rooted at the individual's own account, which a person may hold across organizations; its content is consumer-self-entered and is removed by the individual deletion path, not by a covered entity's termination."
+    },
+    {
+      "table": "clinical_private.owned_dispute_targets",
+      "scope": "retained",
+      "class": "individual_account",
+      "reason": "Rooted at the individual's own account, which a person may hold across organizations; its content is consumer-self-entered and is removed by the individual deletion path, not by a covered entity's termination."
+    },
+    {
+      "table": "clinical_private.owned_external_inventories",
+      "scope": "retained",
+      "class": "individual_account",
+      "reason": "Rooted at the individual's own account, which a person may hold across organizations; its content is consumer-self-entered and is removed by the individual deletion path, not by a covered entity's termination."
+    },
+    {
+      "table": "clinical_private.owned_external_inventory_items",
+      "scope": "retained",
+      "class": "individual_account",
+      "reason": "Rooted at the individual's own account, which a person may hold across organizations; its content is consumer-self-entered and is removed by the individual deletion path, not by a covered entity's termination."
+    },
+    {
+      "table": "clinical_private.owned_external_purge_items",
+      "scope": "retained",
+      "class": "individual_account",
+      "reason": "Rooted at the individual's own account, which a person may hold across organizations; its content is consumer-self-entered and is removed by the individual deletion path, not by a covered entity's termination."
+    },
+    {
+      "table": "clinical_private.owned_identity_deletions",
+      "scope": "retained",
+      "class": "individual_account",
+      "reason": "Rooted at the individual's own account, which a person may hold across organizations; its content is consumer-self-entered and is removed by the individual deletion path, not by a covered entity's termination."
+    },
+    {
+      "table": "clinical_private.owned_legal_holds",
+      "scope": "retained",
+      "class": "individual_account",
+      "reason": "Rooted at the individual's own account, which a person may hold across organizations; its content is consumer-self-entered and is removed by the individual deletion path, not by a covered entity's termination."
+    },
+    {
+      "table": "clinical_private.owned_personal_purge_commands",
+      "scope": "retained",
+      "class": "individual_account",
+      "reason": "Rooted at the individual's own account, which a person may hold across organizations; its content is consumer-self-entered and is removed by the individual deletion path, not by a covered entity's termination."
+    },
+    {
+      "table": "clinical_private.owned_privacy_export_jobs",
+      "scope": "retained",
+      "class": "individual_account",
+      "reason": "Rooted at the individual's own account, which a person may hold across organizations; its content is consumer-self-entered and is removed by the individual deletion path, not by a covered entity's termination."
+    },
+    {
+      "table": "clinical_private.owned_privacy_exports",
+      "scope": "retained",
+      "class": "individual_account",
+      "reason": "Rooted at the individual's own account, which a person may hold across organizations; its content is consumer-self-entered and is removed by the individual deletion path, not by a covered entity's termination."
+    },
+    {
+      "table": "clinical_private.owned_privacy_fulfillment",
+      "scope": "retained",
+      "class": "individual_account",
+      "reason": "Rooted at the individual's own account, which a person may hold across organizations; its content is consumer-self-entered and is removed by the individual deletion path, not by a covered entity's termination."
+    },
+    {
+      "table": "clinical_private.owned_privacy_operator_assignments",
+      "scope": "retained",
+      "class": "individual_account",
+      "reason": "Rooted at the individual's own account, which a person may hold across organizations; its content is consumer-self-entered and is removed by the individual deletion path, not by a covered entity's termination."
+    },
+    {
+      "table": "clinical_private.owned_privacy_requests",
+      "scope": "retained",
+      "class": "individual_account",
+      "reason": "Rooted at the individual's own account, which a person may hold across organizations; its content is consumer-self-entered and is removed by the individual deletion path, not by a covered entity's termination."
+    },
+    {
+      "table": "clinical_private.owned_retention_policies",
+      "scope": "retained",
+      "class": "service_operations",
+      "reason": "Records an operator authorization or schema state, never a covered entity's information."
+    },
+    {
+      "table": "clinical_private.privacy_retention_service_releases",
+      "scope": "retained",
+      "class": "service_operations",
+      "reason": "Records an operator authorization or schema state, never a covered entity's information."
+    },
+    {
+      "table": "clinical_private.recording_access_events",
+      "scope": "parent",
+      "column": "encounter_id",
+      "parent": "clinical_core.encounters",
+      "parentColumn": "id",
+      "dependsOn": [
+        "clinical_core.encounters",
+        "clinical_private.recording_consent_releases"
+      ]
+    },
+    {
+      "table": "clinical_private.recording_authority_events",
+      "scope": "parent",
+      "column": "encounter_id",
+      "parent": "clinical_private.recording_controls",
+      "parentColumn": "encounter_id",
+      "dependsOn": [
+        "clinical_private.recording_controls"
+      ]
+    },
+    {
+      "table": "clinical_private.recording_capture_releases",
+      "scope": "organization_column",
+      "column": "organization_id"
+    },
+    {
+      "table": "clinical_private.recording_cleanup_access_events",
+      "scope": "parent",
+      "column": "recording_id",
+      "parent": "clinical_private.encounter_captures",
+      "parentColumn": "id",
+      "dependsOn": [
+        "clinical_core.patient_records",
+        "clinical_private.encounter_captures",
+        "clinical_private.recording_cleanup_releases"
+      ]
+    },
+    {
+      "table": "clinical_private.recording_cleanup_attempt_events",
+      "scope": "parent",
+      "column": "attempt_id",
+      "parent": "clinical_private.recording_cleanup_attempts",
+      "parentColumn": "id",
+      "dependsOn": [
+        "clinical_private.recording_cleanup_attempts"
+      ]
+    },
+    {
+      "table": "clinical_private.recording_cleanup_attempts",
+      "scope": "parent",
+      "column": "recording_id",
+      "parent": "clinical_private.recording_cleanup_intents",
+      "parentColumn": "recording_id",
+      "dependsOn": [
+        "clinical_private.recording_cleanup_intents",
+        "clinical_private.recording_cleanup_releases",
+        "clinical_private.recording_segments"
+      ]
+    },
+    {
+      "table": "clinical_private.recording_cleanup_intent_events",
+      "scope": "parent",
+      "column": "recording_id",
+      "parent": "clinical_private.recording_cleanup_intents",
+      "parentColumn": "recording_id",
+      "dependsOn": [
+        "clinical_private.recording_cleanup_intents"
+      ]
+    },
+    {
+      "table": "clinical_private.recording_cleanup_intents",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.patient_records",
+        "clinical_private.encounter_captures",
+        "clinical_private.recording_capture_releases"
+      ]
+    },
+    {
+      "table": "clinical_private.recording_cleanup_operators",
+      "scope": "organization_column",
+      "column": "organization_id"
+    },
+    {
+      "table": "clinical_private.recording_cleanup_releases",
+      "scope": "parent",
+      "column": "capture_release_id",
+      "parent": "clinical_private.recording_capture_releases",
+      "parentColumn": "id",
+      "dependsOn": [
+        "clinical_private.recording_capture_releases",
+        "clinical_private.recording_storage_releases"
+      ]
+    },
+    {
+      "table": "clinical_private.recording_cleanup_review_events",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_private.recording_cleanup_intents"
+      ]
+    },
+    {
+      "table": "clinical_private.recording_cleanup_run_results",
+      "scope": "parent",
+      "column": "run_id",
+      "parent": "clinical_private.recording_cleanup_runs",
+      "parentColumn": "id",
+      "dependsOn": [
+        "clinical_private.recording_cleanup_runs"
+      ]
+    },
+    {
+      "table": "clinical_private.recording_cleanup_runs",
+      "scope": "parent",
+      "column": "recording_id",
+      "parent": "clinical_private.recording_cleanup_intents",
+      "parentColumn": "recording_id",
+      "dependsOn": [
+        "clinical_private.recording_cleanup_intents",
+        "clinical_private.recording_cleanup_releases"
+      ]
+    },
+    {
+      "table": "clinical_private.recording_cleanup_subjects",
+      "scope": "parent",
+      "column": "recording_id",
+      "parent": "clinical_private.encounter_captures",
+      "parentColumn": "id",
+      "dependsOn": [
+        "clinical_private.encounter_captures"
+      ]
+    },
+    {
+      "table": "clinical_private.recording_cleanup_work",
+      "scope": "parent",
+      "column": "recording_id",
+      "parent": "clinical_private.recording_cleanup_intents",
+      "parentColumn": "recording_id",
+      "dependsOn": [
+        "clinical_private.recording_cleanup_intents",
+        "clinical_private.recording_cleanup_runs"
+      ]
+    },
+    {
+      "table": "clinical_private.recording_consent_grants",
+      "scope": "parent",
+      "column": "participant_id",
+      "parent": "clinical_private.recording_participants",
+      "parentColumn": "id",
+      "dependsOn": [
+        "clinical_private.recording_consent_releases",
+        "clinical_private.recording_participants",
+        "clinical_private.recording_representative_authorities"
+      ]
+    },
+    {
+      "table": "clinical_private.recording_consent_releases",
+      "scope": "organization_column",
+      "column": "organization_id"
+    },
+    {
+      "table": "clinical_private.recording_consent_withdrawals",
+      "scope": "parent",
+      "column": "grant_id",
+      "parent": "clinical_private.recording_consent_grants",
+      "parentColumn": "id",
+      "dependsOn": [
+        "clinical_private.recording_consent_grants"
+      ]
+    },
+    {
+      "table": "clinical_private.recording_controls",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.encounters"
+      ]
+    },
+    {
+      "table": "clinical_private.recording_dispositions",
+      "scope": "parent",
+      "column": "recording_id",
+      "parent": "clinical_private.encounter_captures",
+      "parentColumn": "id",
+      "dependsOn": [
+        "clinical_private.encounter_captures"
+      ]
+    },
+    {
+      "table": "clinical_private.recording_drafting_events",
+      "scope": "parent",
+      "column": "recording_id",
+      "parent": "clinical_private.encounter_captures",
+      "parentColumn": "id",
+      "dependsOn": [
+        "clinical_private.encounter_captures",
+        "clinical_private.recording_drafting_jobs"
+      ]
+    },
+    {
+      "table": "clinical_private.recording_drafting_jobs",
+      "scope": "parent",
+      "column": "recording_id",
+      "parent": "clinical_private.encounter_captures",
+      "parentColumn": "id",
+      "dependsOn": [
+        "clinical_private.encounter_captures",
+        "clinical_private.recording_drafting_releases",
+        "clinical_private.recording_transcripts"
+      ]
+    },
+    {
+      "table": "clinical_private.recording_drafting_releases",
+      "scope": "organization_column",
+      "column": "organization_id"
+    },
+    {
+      "table": "clinical_private.recording_legal_holds",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": [
+        "clinical_core.patient_records"
+      ]
+    },
+    {
+      "table": "clinical_private.recording_lifecycle_commands",
+      "scope": "parent",
+      "column": "recording_id",
+      "parent": "clinical_private.encounter_captures",
+      "parentColumn": "id",
+      "dependsOn": [
+        "clinical_private.encounter_captures"
+      ]
+    },
+    {
+      "table": "clinical_private.recording_lifecycle_events",
+      "scope": "parent",
+      "column": "recording_id",
+      "parent": "clinical_private.encounter_captures",
+      "parentColumn": "id",
+      "dependsOn": [
+        "clinical_private.encounter_captures"
+      ]
+    },
+    {
+      "table": "clinical_private.recording_object_intents",
+      "scope": "parent",
+      "column": "recording_id",
+      "parent": "clinical_private.encounter_captures",
+      "parentColumn": "id",
+      "objectKeyColumns": [
+        "object_key"
+      ],
+      "dependsOn": [
+        "clinical_private.encounter_captures",
+        "clinical_private.recording_drafting_jobs",
+        "clinical_private.recording_transcription_jobs"
+      ]
+    },
+    {
+      "table": "clinical_private.recording_participant_commands",
+      "scope": "parent",
+      "column": "participant_id",
+      "parent": "clinical_private.recording_participants",
+      "parentColumn": "id",
+      "dependsOn": [
+        "clinical_private.recording_controls",
+        "clinical_private.recording_participants"
+      ]
+    },
+    {
+      "table": "clinical_private.recording_participants",
+      "scope": "parent",
+      "column": "encounter_id",
+      "parent": "clinical_private.recording_controls",
+      "parentColumn": "encounter_id",
+      "dependsOn": [
+        "clinical_private.recording_controls"
+      ]
+    },
+    {
+      "table": "clinical_private.recording_proposed_notes",
+      "scope": "parent",
+      "column": "recording_id",
+      "parent": "clinical_private.encounter_captures",
+      "parentColumn": "id",
+      "objectKeyColumns": [
+        "object_key"
+      ],
+      "dependsOn": [
+        "clinical_private.encounter_captures",
+        "clinical_private.recording_drafting_jobs",
+        "clinical_private.recording_transcripts"
+      ]
+    },
+    {
+      "table": "clinical_private.recording_reconciliation_events",
+      "scope": "parent",
+      "column": "recording_id",
+      "parent": "clinical_private.encounter_captures",
+      "parentColumn": "id",
+      "dependsOn": [
+        "clinical_private.encounter_captures",
+        "clinical_private.recording_segments"
+      ]
+    },
+    {
+      "table": "clinical_private.recording_representative_authorities",
+      "scope": "parent",
+      "column": "participant_id",
+      "parent": "clinical_private.recording_participants",
+      "parentColumn": "id",
+      "dependsOn": [
+        "clinical_private.recording_participants"
+      ]
+    },
+    {
+      "table": "clinical_private.recording_segment_events",
+      "scope": "parent",
+      "column": "segment_id",
+      "parent": "clinical_private.recording_segments",
+      "parentColumn": "id",
+      "dependsOn": [
+        "clinical_private.recording_segments"
+      ]
+    },
+    {
+      "table": "clinical_private.recording_segments",
+      "scope": "parent",
+      "column": "recording_id",
+      "parent": "clinical_private.encounter_captures",
+      "parentColumn": "id",
+      "objectKeyColumns": [
+        "object_key"
+      ],
+      "dependsOn": [
+        "clinical_private.encounter_captures",
+        "clinical_private.recording_storage_releases"
+      ]
+    },
+    {
+      "table": "clinical_private.recording_storage_releases",
+      "scope": "parent",
+      "column": "capture_release_id",
+      "parent": "clinical_private.recording_capture_releases",
+      "parentColumn": "id",
+      "dependsOn": [
+        "clinical_private.recording_capture_releases"
+      ]
+    },
+    {
+      "table": "clinical_private.recording_transcription_artifacts",
+      "scope": "parent",
+      "column": "recording_id",
+      "parent": "clinical_private.encounter_captures",
+      "parentColumn": "id",
+      "objectKeyColumns": [
+        "object_key"
+      ],
+      "dependsOn": [
+        "clinical_private.encounter_captures",
+        "clinical_private.recording_transcription_jobs",
+        "clinical_private.recording_transcripts"
+      ]
+    },
+    {
+      "table": "clinical_private.recording_transcription_events",
+      "scope": "parent",
+      "column": "recording_id",
+      "parent": "clinical_private.encounter_captures",
+      "parentColumn": "id",
+      "dependsOn": [
+        "clinical_private.encounter_captures",
+        "clinical_private.recording_transcription_jobs"
+      ]
+    },
+    {
+      "table": "clinical_private.recording_transcription_jobs",
+      "scope": "parent",
+      "column": "recording_id",
+      "parent": "clinical_private.encounter_captures",
+      "parentColumn": "id",
+      "dependsOn": [
+        "clinical_private.encounter_captures",
+        "clinical_private.recording_transcription_releases"
+      ]
+    },
+    {
+      "table": "clinical_private.recording_transcription_releases",
+      "scope": "organization_column",
+      "column": "organization_id"
+    },
+    {
+      "table": "clinical_private.recording_transcripts",
+      "scope": "parent",
+      "column": "recording_id",
+      "parent": "clinical_private.encounter_captures",
+      "parentColumn": "id",
+      "objectKeyColumns": [
+        "object_key"
+      ],
+      "dependsOn": [
+        "clinical_private.encounter_captures",
+        "clinical_private.recording_transcription_jobs"
+      ]
+    },
+    {
+      "table": "clinical_reference.catalog_import_batches",
+      "scope": "retained",
+      "class": "global_reference",
+      "reason": "Reviewed reference data shared by every organization; holds no covered entity's information."
+    },
+    {
+      "table": "clinical_reference.catalog_product_versions",
+      "scope": "retained",
+      "class": "global_reference",
+      "reason": "Reviewed reference data shared by every organization; holds no covered entity's information."
+    },
+    {
+      "table": "clinical_reference.catalog_products",
+      "scope": "retained",
+      "class": "global_reference",
+      "reason": "Reviewed reference data shared by every organization; holds no covered entity's information."
+    },
+    {
+      "table": "clinical_reference.catalog_review_actions",
+      "scope": "retained",
+      "class": "global_reference",
+      "reason": "Reviewed reference data shared by every organization; holds no covered entity's information."
+    },
+    {
+      "table": "clinical_reference.clinical_domains",
+      "scope": "retained",
+      "class": "global_reference",
+      "reason": "Reviewed reference data shared by every organization; holds no covered entity's information."
+    },
+    {
+      "table": "clinical_reference.clinical_knowledge_sources",
+      "scope": "retained",
+      "class": "global_reference",
+      "reason": "Reviewed reference data shared by every organization; holds no covered entity's information."
+    },
+    {
+      "table": "clinical_reference.clinical_paradigms",
+      "scope": "retained",
+      "class": "global_reference",
+      "reason": "Reviewed reference data shared by every organization; holds no covered entity's information."
+    },
+    {
+      "table": "clinical_reference.import_source_files",
+      "scope": "retained",
+      "class": "global_reference",
+      "reason": "Reviewed reference data shared by every organization; holds no covered entity's information."
+    },
+    {
+      "table": "clinical_reference.knowledge_references",
+      "scope": "retained",
+      "class": "global_reference",
+      "reason": "Reviewed reference data shared by every organization; holds no covered entity's information."
+    },
+    {
+      "table": "clinical_reference.product_label_candidates",
+      "scope": "retained",
+      "class": "global_reference",
+      "reason": "Reviewed reference data shared by every organization; holds no covered entity's information."
+    },
+    {
+      "table": "clinical_reference.product_label_records",
+      "scope": "retained",
+      "class": "global_reference",
+      "reason": "Reviewed reference data shared by every organization; holds no covered entity's information."
+    },
+    {
+      "table": "clinical_reference.product_label_verifications",
+      "scope": "retained",
+      "class": "global_reference",
+      "reason": "Reviewed reference data shared by every organization; holds no covered entity's information."
+    },
+    {
+      "table": "clinical_reference.protocol_template_items",
+      "scope": "retained",
+      "class": "global_reference",
+      "reason": "Reviewed reference data shared by every organization; holds no covered entity's information."
+    },
+    {
+      "table": "clinical_reference.protocol_template_safety_reviews",
+      "scope": "retained",
+      "class": "global_reference",
+      "reason": "Reviewed reference data shared by every organization; holds no covered entity's information."
+    },
+    {
+      "table": "clinical_reference.protocol_template_versions",
+      "scope": "retained",
+      "class": "global_reference",
+      "reason": "Reviewed reference data shared by every organization; holds no covered entity's information."
+    },
+    {
+      "table": "clinical_reference.protocol_templates",
+      "scope": "retained",
+      "class": "global_reference",
+      "reason": "Reviewed reference data shared by every organization; holds no covered entity's information."
+    },
+    {
+      "table": "clinical_reference.restricted_review_decisions",
+      "scope": "retained",
+      "class": "global_reference",
+      "reason": "Reviewed reference data shared by every organization; holds no covered entity's information."
+    },
+    {
+      "table": "clinical_reference.warning_resolutions",
+      "scope": "retained",
+      "class": "global_reference",
+      "reason": "Reviewed reference data shared by every organization; holds no covered entity's information."
+    },
+    {
+      "table": "commercial_reference.affiliate_offer_versions",
+      "scope": "retained",
+      "class": "global_reference",
+      "reason": "Reviewed reference data shared by every organization; holds no covered entity's information."
+    },
+    {
+      "table": "commercial_reference.affiliate_offers",
+      "scope": "retained",
+      "class": "global_reference",
+      "reason": "Reviewed reference data shared by every organization; holds no covered entity's information."
+    },
+    {
+      "table": "commercial_reference.product_links",
+      "scope": "retained",
+      "class": "global_reference",
+      "reason": "Reviewed reference data shared by every organization; holds no covered entity's information."
+    }
+  ]
+}

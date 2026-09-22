@@ -87,7 +87,7 @@ describe("the key is unobtainable without the gate", () => {
 
 describe("the operator switch", () => {
   const secretArn = "arn:aws:secretsmanager:us-east-2:588966314750:secret:vendor-key-AbC123";
-  const environment = { MODEL_VENDOR_SECRET_ARN: secretArn, EXPECTED_AWS_ACCOUNT_ID: "588966314750" } as NodeJS.ProcessEnv;
+  const environment = { MODEL_VENDOR_SECRET_ARN: secretArn, EXPECTED_AWS_ACCOUNT_ID: "588966314750" } as unknown as NodeJS.ProcessEnv;
   const client = (secretString: string) => {
     const writes: string[] = [];
     return {

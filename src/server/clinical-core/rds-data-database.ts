@@ -45,10 +45,10 @@ export function createRdsDataClinicalCoreDatabase(
 /** Administrative access is reserved for reviewed migration/import operator paths. */
 export function createRdsDataAdministrativeDatabase(
   configuration: RdsDataConfiguration,
-  authorization: { purpose: "reviewed_synthetic_migration" | "reviewed_reference_catalog_import" | "reviewed_production_schema_migration" | "reviewed_retention_service_release" },
+  authorization: { purpose: "reviewed_synthetic_migration" | "reviewed_reference_catalog_import" | "reviewed_production_schema_migration" | "reviewed_retention_service_release" | "reviewed_covered_entity_termination" },
   client: RdsDataCommandClient = new RDSDataClient({ region: configuration.region }),
 ): ClinicalCoreDatabase {
-  if (!["reviewed_synthetic_migration", "reviewed_reference_catalog_import", "reviewed_production_schema_migration", "reviewed_retention_service_release"].includes(authorization.purpose)) {
+  if (!["reviewed_synthetic_migration", "reviewed_reference_catalog_import", "reviewed_production_schema_migration", "reviewed_retention_service_release", "reviewed_covered_entity_termination"].includes(authorization.purpose)) {
     throw new RdsDataDatabaseError("configuration_invalid");
   }
   return createRdsDataDatabase(configuration, client);
