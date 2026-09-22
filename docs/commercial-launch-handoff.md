@@ -128,19 +128,13 @@ Junction was removed from the selected wearable design. Do not buy or reactivate
 
 ## Remaining engineering (not completed by obtaining contracts)
 
-Latest source increment (September 16, branch `claude/gracious-hypatia-jbd3br`, head
-`a9df3f1f84ddb49168bc84e41070c67cfbf51dcb`): production-owned lab/document candidate
-and device-bound delivery claims (`f04dfa4`, `c7cc4a1`), authoritative active-plan
-pointer (`8f2b635`), privacy request ledger with legal holds, retention gate and
-guardian authority (`771f54c`), owner collection context on lab observations with
-reproductive-consent enforcement plus range activation readiness tooling (`fc59202`),
-provider configuration gate and workforce payment reconciliation (`454e3f5`), and
-security/load/application-rollback qualification harnesses (`a9df3f1`). Each is
-documented in `docs/` (owned-lab, lab-delivery-claim, owned-active-plan,
-owned-privacy-requests, owned-lab-collection-context, lab-range-activation-readiness,
-provider-failure-reconciliation, release-qualification-harnesses). None is deployed;
-no hosted, Aurora or device evidence; PHI stays disabled. The authoritative six-phase
-ledger lives in V2 `expo/docs/commercial-six-phase-ledger.md`.
+Source status is no longer tracked in this document: it went stale within days and a
+stale status list is worse than none. The authoritative record is V2
+`expo/docs/commercial-six-phase-ledger.md` (one entry per increment, newest first) and
+the current handoff `expo/docs/claude-code-handoff-2026-09-20.md`. Nothing in either is
+deployed; PHI stays disabled. The eight items below are the engineering that obtaining
+contracts does not complete, and they are reviewed against the ledger rather than
+restated here.
 
 Previous source increment: [independent personal lab history](personal-lab-history-readiness.md).
 Lab-specific storage/AI consent, owner-only observation history, duplicate protection,

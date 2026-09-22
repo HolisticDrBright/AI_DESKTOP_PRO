@@ -256,14 +256,32 @@ acceptance. Original commercial-release scopes and clinical holds are unchanged.
 
 ## Remaining implementation (do not activate this layer alone)
 
-- Hosted deployment acceptance of the typed workforce API and Desktop consent
-  integration below; capture UI/transport still requires implementation.
-- Participant/capacity/guardian verification and reviewed jurisdiction-specific
-  consent release workflow; no invented signatures or approvals.
-- Durable per-segment consent provenance; explicit pause/resume, short-lived
-  credential rotation, lost-token recovery and revoked-session disposition.
-- S3/KMS upload transport, bounded memory/deadlines, chunk identity/deduplication,
-  receipt reconciliation and independently verified byte/type/size limits.
+This list was written before the capture layer existed and had drifted. Corrected
+September 22 against the source, so that what it names as missing really is:
+
+**Built since, and no longer outstanding** (each still unhosted and unactivated):
+capture transport and its UI (`recording-capture-api.ts`, `recording-segments.ts`,
+`aws-recording-segment-store.ts`, `AwsRecordingCapturePanel.tsx`, with the browser
+suite `e2e/aws-recording-capture.spec.ts`); the five lifecycle commands, including
+explicit `pause`, `resume`, short-lived credential rotation through `renew` and
+`discard`, each fenced by an expected credential version; lost-token recovery
+through the `state` route's recovery view; per-segment provenance, which reserves
+each segment against the live consent, authority epoch, capture token and release
+before the upload and rechecks them in a separate transaction afterwards; chunk
+identity and deduplication by sequence and digest in the object key, with the
+declared digest recomputed from the received bytes; and receipt reconciliation
+(`recording-reconciliation.ts`). Byte, type and size limits are enforced against
+the readiness record rather than the caller's claim.
+
+**Genuinely remaining:**
+
+- Hosted deployment acceptance of the typed workforce API, the consent
+  integration and the capture transport. The harness for it exists
+  (`recording-acceptance.ts`, sixteen graded steps with fictional audio) and has
+  never been run against a deployment.
+- Participant capacity and guardian verification, and the reviewed
+  jurisdiction-specific consent release workflow; no invented signatures or
+  approvals. Guardian authority remains explicitly deferred.
 - Hosted acceptance and clinical quality review of provider transcription and
   review-only AI drafting. Transcription (`docs/encounter-transcription.md`,
   migrations 83 to 85) and proposed notes that never touch signed notes
