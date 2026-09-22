@@ -196,7 +196,7 @@ disagrees with the manifest is refused rather than obeyed. The recording `fixtur
 the qualification database name, the designated subjects and the database's migration ledger against
 the built artifact before writing the encounter, so the populated staging database is refused by its
 own history. `scripts/test-qualification-acceptance-runners.ps1` runs all of these refusals
-credential-free in CI (27 cases, no AWS call, no request, no fixture write), alongside the 32-case
+credential-free in CI (31 cases, no AWS call, no request, no fixture write), alongside the 32-case
 name-refusal test for the preparation runner.
 
 ### Deploying the qualification profile (owner, Windows terminal)

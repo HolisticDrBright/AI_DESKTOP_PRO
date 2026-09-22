@@ -68,7 +68,7 @@ synthetic-account report is never production approval.
   it. The harness re-checks the asserted and observed account and refuses production whatever the
   caller says. The API origin must be an `execute-api` host; tokens must be distinct JWTs; tokens are
   read from the process environment and removed afterwards; no token or URL appears in the report.
-  `scripts/test-qualification-acceptance-runners.ps1` proves all of this credential-free in CI (27
+  `scripts/test-qualification-acceptance-runners.ps1` proves all of this credential-free in CI (31
   cases: the staging foundation, API and database, the production account, another account, a stale
   checkout, an unfilled example, a missing or wrongly posed candidate stack).
 - Fixtures: the run creates one export job for the fixture consumer and cancels it. Its objects are

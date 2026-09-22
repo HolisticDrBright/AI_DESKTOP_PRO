@@ -166,7 +166,17 @@ Invoke-Case 'exploratory without a stale sign-in token' { Export-Run $good 'expl
 if ($global:Selected.mode -ne 'exploratory') { throw 'exploratory mode was not passed through' }
 $global:StaleToken = $true
 
-# 5. The synthetic-only confirmation is still required, and no external call happens without it.
+# 5. The retention service release is bound the same way: the row is written to the qualification database the manifest
+#    names, never to a database a foundation stack exports, and exactly one target may be named.
+$retentionRunner = Join-Path $PSScriptRoot 'release-aws-retention-service.ps1'
+function Retention-Run([string]$targetFile) { & $retentionRunner -Command inspect -QualificationTargetPath $targetFile -DeploymentManifestPath $deploymentManifest }
+Invoke-Case 'retention release selects the qualification database' { Retention-Run $good } $null
+if ($global:Selected.databaseEnv -ne 'clinical_core_qualification') { throw 'retention release did not select the qualification database' }
+Invoke-Case 'retention release refuses the staging database' { Retention-Run (Write-Target @{ databaseName = 'clinical_core' }) } 'qualification_target_refused:databaseName'
+Invoke-Case 'retention release refuses two targets at once' { & $retentionRunner -Command inspect -QualificationTargetPath $good -FoundationStackName 'ai-clinical-core-synthetic-staging' -DeploymentManifestPath $deploymentManifest } 'exactly one target'
+Invoke-Case 'retention release refuses no target at all' { & $retentionRunner -Command inspect -DeploymentManifestPath $deploymentManifest } 'exactly one target'
+
+# 6. The synthetic-only confirmation is still required, and no external call happens without it.
 Invoke-Case 'no synthetic-only confirmation' { & $exportRunner -QualificationTargetPath $good -DeploymentManifestPath $deploymentManifest } 'synthetic-only boundary'
 if ($global:External -ne 0) { throw 'an external call happened before the synthetic-only confirmation' }
 
