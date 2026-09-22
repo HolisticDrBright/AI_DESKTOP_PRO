@@ -250,6 +250,13 @@ Then run the hosted harnesses against that API and keep only reports whose `exec
 - Not hosted verified: no qualification candidate has been deployed; the hosted harnesses have not
   run against the qualification database. That is the owner's next step, after which whatever they find
   is new engineering.
+- Hosted CI on the repair commits: `e021188` (run 767) and `892bb40` (run 768) passed all eight jobs; `d2fb454`
+  (run 769) failed one browser test in the 26-minute single-process live-fixture job,
+  `live-overview-reasoning.spec.ts` "reasoning workspace: snapshot meta, stale state, split evidence, inference
+  labeling", with 291 passing beside it. That commit changes only PowerShell and test files, the same job passed on the
+  two commits after it (`8b2894d` run 770, `e87fc3a` run 771), and the test passed 15 of 15 locally across three
+  repetitions of the whole spec. It is recorded as a runner-side timing failure, not a pass, and it is the second such
+  failure in that job, after the scribe one at `f3dcbff`.
 - Hosted CI at `f3dcbff`: the main job (typecheck, lint, unit, every gate, cfn-lint on every template
   including the six recording candidates, the PowerShell runner test, builds) and six of seven browser
   jobs passed. The live-fixture browser job failed on one test, `live-scribe.spec.ts` "microphone loss
