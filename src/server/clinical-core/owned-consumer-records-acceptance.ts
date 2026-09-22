@@ -126,7 +126,9 @@ async function run() {
       const apiBody={collection:"wellness_profiles",recordId:apiId,requestId:apiRequest,expectedRevision:0,consentRevision:3,deleted:false,payload:{id:apiId,goals:[],onboardingCompleted:false,role:"patient"}};
       for (const duplicate of [false,true]) {
         const r=await api(apiEvent(a,subA,"POST /clinical-core/consumer/personal/records",undefined,apiBody));
-        if (r.statusCode!==200 || JSON.parse(r.body).data.duplicate!==duplicate) { console.error(JSON.stringify({apiStatus:r.statusCode,code:JSON.parse(r.body).error})); throw new Error("api_write_failed"); } checks++;
+        const parsed=JSON.parse(r.body) as {data?:{duplicate?:boolean};error?:string};
+        // Report the refusal code only. The response body is a record the operator log must not retain.
+        if (r.statusCode!==200 || parsed.data?.duplicate!==duplicate) { console.error(JSON.stringify({apiStatus:r.statusCode,code:parsed.error})); throw new Error("api_write_failed"); } checks++;
       }
       const own=await api(apiEvent(a,subA,"GET /clinical-core/consumer/personal/record",{collection:"wellness_profiles",recordId:apiId}));
       if(own.statusCode!==200 || JSON.parse(own.body).data.payload.id!==apiId) throw new Error("api_read_failed"); checks++;

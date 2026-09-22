@@ -5,6 +5,7 @@ if (typeof window !== "undefined") {
 import { createHash } from "node:crypto";
 import { clinicalUuid, ClinicalCoreDatabaseRejection, type ClinicalCoreTransaction } from "./database";
 import { createRdsDataAdministrativeDatabase } from "./rds-data-database";
+import { errorCode } from "./log-safe-error";
 
 const ORG = "71000000-0000-4000-8000-000000000001";
 const OTHER_ORG = "71000000-0000-4000-8000-000000000002";
@@ -1198,7 +1199,6 @@ run().catch((error) => {
     process.exitCode = 1;
     return;
   }
-  console.error(error instanceof Error && /^[a-z0-9_:.-]+$/.test(error.message)
-    ? error.message : "production_acceptance_failed");
+  console.error(errorCode(error, "production_acceptance_failed"));
   process.exitCode = 1;
 });

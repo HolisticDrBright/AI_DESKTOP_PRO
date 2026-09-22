@@ -9,6 +9,7 @@ import { createQualificationDatabase, inspectQualificationTarget, QualificationT
 import { provisionQualificationFixtures, QualificationFixtureError } from "./qualification-fixtures";
 import { createRdsDataAdministrativeDatabase } from "./rds-data-database";
 import { loadSyntheticAcceptanceManifest } from "./synthetic-fixtures";
+import { errorCode } from "./log-safe-error";
 
 function required(name: string): string {
   const value = process.env[name]?.trim();
@@ -60,6 +61,6 @@ run().catch((error) => {
     process.exitCode = error.category === "qualification_database_exists" ? 2 : 1;
     return;
   }
-  console.error(error instanceof Error ? error.message : "qualification_target_failed");
+  console.error(errorCode(error, "qualification_target_failed"));
   process.exitCode = 1;
 });

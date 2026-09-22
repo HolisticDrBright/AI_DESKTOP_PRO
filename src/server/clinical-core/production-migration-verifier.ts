@@ -11,6 +11,7 @@ import {
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { loadClinicalCoreMigrations, splitPostgresStatements } from "./migrations";
+import { errorCode } from "./log-safe-error";
 
 const ARN = /^arn:(aws|aws-us-gov|aws-cn):rds:[a-z0-9-]+:\d{12}:cluster:[A-Za-z0-9-]{1,63}$/;
 const SECRET_ARN = /^arn:(aws|aws-us-gov|aws-cn):secretsmanager:[a-z0-9-]+:\d{12}:secret:[A-Za-z0-9/_+=.@!-]+$/;
@@ -108,6 +109,6 @@ async function verify() {
 }
 
 verify().catch((error) => {
-  console.error(error instanceof Error ? error.message : "production_migration_verification_failed");
+  console.error(errorCode(error, "production_migration_verification_failed"));
   process.exitCode = 1;
 });
