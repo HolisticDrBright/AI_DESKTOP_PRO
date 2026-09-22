@@ -364,6 +364,10 @@
     {
       "version": "20260921010000",
       "file": "20260921010000_production_owned_privacy_export_part_sizes.sql"
+    },
+    {
+      "version": "20260922010000",
+      "file": "20260922010000_production_record_source_regime.sql"
     }
   ]
 }

@@ -36,7 +36,7 @@ beforeAll(async () => {
   await db.exec("create extension if not exists pgcrypto");
   const applied = await applyProductionClinicalCoreMigrations(admin(db), migrations);
   // The real artifact through the real apply: the verification pins (table and contract counts) hold here, not in a mock.
-  expect(applied.applied.length).toBe(101); expect(applied.clinicalRowCount).toBe(0); expect(applied.tableCount).toBe(123); expect(applied.contractCount).toBe(81);
+  expect(applied.applied.length).toBe(102); expect(applied.clinicalRowCount).toBe(0); expect(applied.tableCount).toBe(123); expect(applied.contractCount).toBe(81);
 }, 120000);
 afterAll(async () => { await db?.close(); });
 
