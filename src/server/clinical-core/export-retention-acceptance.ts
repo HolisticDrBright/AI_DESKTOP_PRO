@@ -96,12 +96,14 @@ export async function runExportRetentionAcceptance(input: {
       await step(name, "not run", async () => ({ outcome: "skipped", detail: "export_delivery_not_configured" }));
   } else if (jobId) {
     const id = jobId;
-    // 3. Another identity never reads the job (workforce token on a consumer route, and a second consumer when supplied).
-    await step("cross-owner read refused", "401/403 for a workforce token; 401/403 for another consumer", async () => {
+    // 3. Another identity never reads the job, and never has a copy delivered to it: the second consumer is refused the job view
+    //    and the download link, which is where cross-owner delivery is actually decided (a signed URL is issued to nobody else).
+    await step("cross-owner read refused", "401/403 for a workforce token; 401/403 for another consumer, on the job view and on the download link", async () => {
       const w = await call(`${CONSUMER}?jobId=${id}`, input.workforceIdToken);
       const f = input.foreignConsumerIdToken ? await call(`${CONSUMER}?jobId=${id}`, input.foreignConsumerIdToken) : null;
-      const ok = [401, 403].includes(w.status) && (!f || [401, 403].includes(f.status));
-      return { outcome: ok ? "passed" : "failed", status: w.status, detail: f ? `foreign:${f.status}` : "foreign_token_absent" };
+      const d = input.foreignConsumerIdToken ? await call(`${CONSUMER}/download`, input.foreignConsumerIdToken, { jobId: id }) : null;
+      const ok = [401, 403].includes(w.status) && (!f || [401, 403].includes(f.status)) && (!d || [401, 403].includes(d.status));
+      return { outcome: ok ? "passed" : "failed", status: w.status, detail: f ? `foreign:${f.status};delivery:${d!.status}` : "foreign_token_absent" };
     });
     // 4. Advance in bounded passes until ready; each pass must move or hold the state honestly.
     let view: Record<string, unknown> | null = null;
@@ -152,6 +154,9 @@ export async function runExportRetentionAcceptance(input: {
       try { response = await fetcher(link.url, { method: "GET", redirect: "manual", signal: AbortSignal.timeout(60_000) }); } catch { return { outcome: "failed", detail: "download_unreachable" }; }
       if (response.status >= 300 && response.status < 400) return { outcome: "failed", status: response.status, detail: "redirect_refused" };
       if (response.status !== 200) return { outcome: "failed", status: response.status, detail: response.status === 403 ? "object_access_denied" : "download_failed" };
+      // S3 names the version it served; a copy from any other version of the key is not the prepared export.
+      const served = response.headers.get("x-amz-version-id");
+      if (served !== null && served !== target.searchParams.get("versionId")) return { outcome: "failed", status: 200, detail: "object_version_mismatch" };
       const bytes = await readBounded(response, link.byteLength);
       if (bytes === "oversized") return { outcome: "failed", status: 200, detail: "object_oversized" };
       if (bytes.byteLength !== link.byteLength) return { outcome: "failed", status: 200, detail: "object_truncated" };

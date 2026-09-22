@@ -14,12 +14,13 @@ Gateway authorizers, the real database and the real export bucket:
 |---|---|---|---|
 | 1 | consumer posture | `personal-posture/1`, tier `core` | |
 | 2 | request export job | 200, status `requested`, retention `packaging` | 503 `export_delivery_not_configured` (`not_configured`; every later step `skipped`) |
-| 3 | cross-owner read refused | workforce token and a second consumer token both get 401/403 | |
+| 3 | cross-owner read and delivery refused | workforce token and a second consumer token both get 401/403 on the job view, and the second consumer is also refused the download link, which is where delivery to another owner is decided | |
 | 4 | advance passes to ready | each advance 200 (409 busy is retried after 1.5 s), final status `ready`, retention `downloadable`, composite checksum present, exported counts equal snapshot counts | |
 | 5 | stale sign-in download refused | 401 when the consumer token's `auth_time` is older than five minutes | `skipped` when the token is fresh (the harness never forges a claim) |
-| 6 | download link for the exact version | 200, `https`, 300 seconds, checksum and length equal to the view | 401 recorded as `skipped` with the reason |
-| 7 | cancel and cleanup | `cancelled`; then either `objectDeleted:true` with retention `removal_recorded`, or `objectDeleted:false` with `cleanup_pending` (settlement or backoff, listed under `retained`) | any other combination fails |
-| 8 to 10 | operator backlog, cleanup pass, reconcile pass | 200 with each action's summary shape | 503 `export_cleanup_not_activated` or `production_not_activated` (`not_configured`); 403 (`skipped`, operator not assigned) |
+| 6 | download link for the exact version | 200, `https`, 300 seconds, checksum, length and the part list (digests and sizes accounting for every byte and reproducing the composite) equal to the view | 401 recorded as `skipped` with the reason |
+| 7 | download and verify the delivered object | 200 from the reviewed bucket host and the link's exact version (`x-amz-version-id` must agree when S3 sends it), no redirect followed, exactly `byteLength` bytes, every part digest in order, the composite recomputed with S3's semantics, and the document's contract, manifest counts and coverage matching the job | `skipped` only when no link was issued; denied, redirected, wrong host, unversioned, truncated, oversized, corrupt, wrong version and mismatched manifests all fail |
+| 8 | cancel and cleanup | `cancelled`; then either `objectDeleted:true` with retention `removal_recorded`, or `objectDeleted:false` with `cleanup_pending` (settlement or backoff, listed under `retained`) | any other combination fails |
+| 9 to 11 | operator backlog, cleanup pass, reconcile pass | 200 with each action's summary shape | 503 `export_cleanup_not_activated` or `production_not_activated` (`not_configured`); 403 (`skipped`, operator not assigned) |
 
 The report (`dist/qualification/export-retention-acceptance-<time>.json`, exclusive-create) carries the
 source commit, the production migration release hash (recomputed from the built artifact), a hash of

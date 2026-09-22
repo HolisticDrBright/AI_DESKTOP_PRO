@@ -8,6 +8,7 @@ const json = (status: number, value: unknown) => new Response(JSON.stringify(val
 const base = { apiOrigin: "https://abcdefghij.execute-api.us-east-2.amazonaws.com", consumerIdToken: token("c"), workforceIdToken: token("w"), foreignConsumerIdToken: token("f"), expectedExportBucket: "fictional-export-bucket",
   expectedAwsAccountId: "588966314750", observedAwsAccountId: "588966314750", sourceCommit: "a".repeat(40), migrationReleaseHash: "b".repeat(64), now: () => 1_800_000_000_000 };
 const job = "11111111-1111-4111-8111-111111111111";
+const CONSUMER_DOWNLOAD = "/clinical-core/consumer/personal/privacy-export/job/download";
 // A fictional prepared copy: two parts, real digests, S3's composite checksum, so the download step can verify what it receives.
 const exportObject = Buffer.from(JSON.stringify({ contract: "personal-storage-export-job/1", manifest: { version: "personal-storage-export/1", exportId: job, asOf: "2026-09-21T00:00:00Z", recordCount: 3, consentCount: 0,
   coverage: { completeAccountExport: false, included: [], excluded: [], crossStore: { labs: "not_configured", voice: "not_configured", consistency: "live_read_per_item" } } }, records: [{ a: 1 }, { b: 2 }, { c: 3 }], consents: [] }), "utf8");
@@ -37,7 +38,7 @@ describe("hosted export and retention acceptance", () => {
     const queue = [
       json(200, { data: { contractVersion: "personal-posture/1", launchTier: "core", enabledScopes: [] } }),
       json(200, { data: { jobId: job, status: "requested", retention: "packaging" } }),
-      json(401, { error: "owner_required" }), json(403, { error: "owner_required" }),
+      json(401, { error: "owner_required" }), json(403, { error: "owner_required" }), json(403, { error: "owner_required" }),
       json(200, view("running")), json(409, { error: "record_conflict" }), json(200, view("ready")),
       link(), object(),
       json(200, { data: { jobId: job, status: "cancelled", cleanup: { cleaned: 1, remaining: 0 }, reconcile: { confirmed: 0, reopened: 0, pending: 0 } } }),
@@ -61,7 +62,9 @@ describe("hosted export and retention acceptance", () => {
     expect(report.retained).toEqual([]);
     expect(calls[1]).toMatchObject({ url: base.apiOrigin + "/clinical-core/consumer/personal/privacy-export/job", auth: "Bearer " + token("c") });
     expect(calls[2].auth).toBe("Bearer " + token("w")); expect(calls[3].auth).toBe("Bearer " + token("f"));
-    expect(calls[4].url).toContain("advance=true");
+    // The second consumer is refused the delivery itself, not only the job view.
+    expect(calls[4]).toMatchObject({ url: base.apiOrigin + CONSUMER_DOWNLOAD, auth: "Bearer " + token("f"), body: { jobId: job } });
+    expect(calls[5].url).toContain("advance=true");
     expect(calls.at(-3)!.body).toEqual({ action: "exportBacklog" }); expect(calls.at(-3)!.auth).toBe("Bearer " + token("w"));
     expect(report).toMatchObject({ schemaVersion: "export-retention-acceptance/1", environment: "synthetic-staging", sourceCommit: "a".repeat(40), migrationReleaseHash: "b".repeat(64), awsAccountId: "588966314750" });
     expect(report.configurationSha256).toMatch(/^[a-f0-9]{64}$/); expect(report.evidenceSha256).toMatch(/^[a-f0-9]{64}$/);
@@ -78,7 +81,7 @@ describe("hosted export and retention acceptance", () => {
     const queue = [
       json(200, { data: { contractVersion: "personal-posture/1", launchTier: "core", enabledScopes: [] } }),
       json(200, { data: { jobId: job, status: "requested", retention: "packaging" } }),
-      json(403, {}), json(403, {}), json(200, view("ready")),
+      json(403, {}), json(403, {}), json(403, {}), json(200, view("ready")),
       json(200, { data: { jobId: job, url: "https://x", expiresInSeconds: 300, byteLength: 4096, objectChecksum: "A".repeat(43) + "=-2" } }),
       json(200, { data: { jobId: job, status: "cancelled", cleanup: { cleaned: 0, remaining: 1 } } }),
       json(200, { data: { jobId: job, status: "cancelled", objectDeleted: false, retention: "removal_verified" } }),
@@ -101,7 +104,7 @@ describe("hosted export and retention acceptance", () => {
   test("a complete run answered by mixed executions never qualifies, and an expected execution that did not answer never qualifies", async () => {
     const marked = (status: number, value: unknown) => new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json", "x-clinical-execution": "qualification" } });
     const full = () => [json(200, { data: { contractVersion: "personal-posture/1", launchTier: "core", enabledScopes: [] } }), marked(200, { data: { jobId: job, status: "requested", retention: "packaging" } }),
-      json(401, {}), json(403, {}), marked(200, view("ready")), link(), object(),
+      json(401, {}), json(403, {}), json(403, {}), marked(200, view("ready")), link(), object(),
       marked(200, { data: { jobId: job, status: "cancelled", cleanup: { cleaned: 1, remaining: 0 } } }), marked(200, { data: { jobId: job, status: "cancelled", objectDeleted: true, retention: "removal_recorded" } }),
       json(200, { data: { scope: "assigned_owners", cleanupPending: 0, settling: 0 } }), json(200, { data: { cleaned: 0, remaining: 0, deferred: 0, items: [] } }), json(200, { data: { confirmed: 0, reopened: 0, pending: 0, items: [] } })];
     let queue = full();
@@ -120,7 +123,7 @@ describe("hosted export and retention acceptance", () => {
     // The API answers marked; the authorizer denials (401/403) and the S3 object itself are unmarked, as they are in a hosted run, and neither counts as production.
     const markedLink = () => marked(200, { data: { jobId: job, url: linkUrl, expiresInSeconds: 300, byteLength: exportObject.byteLength, objectChecksum: composite, parts } });
     const queue = [marked(200, { data: { contractVersion: "personal-posture/1", launchTier: "core", enabledScopes: [] } }), marked(200, { data: { jobId: job, status: "requested", retention: "packaging" } }),
-      json(401, {}), json(403, {}), marked(200, view("ready")), marked(401, { error: "reauth_required" }), markedLink(), object(),
+      json(401, {}), json(403, {}), json(403, {}), marked(200, view("ready")), marked(401, { error: "reauth_required" }), markedLink(), object(),
       marked(200, { data: { jobId: job, status: "cancelled", cleanup: { cleaned: 1, remaining: 0 } } }), marked(200, { data: { jobId: job, status: "cancelled", objectDeleted: true, retention: "removal_recorded" } }),
       json(403, {}), json(403, {}), json(403, {})];
     const denied = await runExportRetentionAcceptance({ ...acceptance, fetch: async () => queue.shift()! });
@@ -136,7 +139,7 @@ describe("hosted export and retention acceptance", () => {
   test("the delivered object is verified, not just the link: denied, redirected, wrong host, unversioned, truncated, oversized, corrupt and mismatched documents all fail", async () => {
     const run = async (linkResponse: Response, objectResponse: Response | null) => {
       const queue = [json(200, { data: { contractVersion: "personal-posture/1", launchTier: "core", enabledScopes: [] } }), json(200, { data: { jobId: job, status: "requested", retention: "packaging" } }),
-        json(401, {}), json(403, {}), json(200, view("ready")), linkResponse, ...(objectResponse ? [objectResponse] : []),
+        json(401, {}), json(403, {}), json(403, {}), json(200, view("ready")), linkResponse, ...(objectResponse ? [objectResponse] : []),
         json(200, { data: { jobId: job, status: "cancelled", cleanup: { cleaned: 1, remaining: 0 } } }), json(200, { data: { jobId: job, status: "cancelled", objectDeleted: true, retention: "removal_recorded" } }),
         json(200, { data: { scope: "assigned_owners", cleanupPending: 0, settling: 0 } }), json(200, { data: { cleaned: 0, remaining: 0, deferred: 0, items: [] } }), json(200, { data: { confirmed: 0, reopened: 0, pending: 0, items: [] } })];
       const report = await runExportRetentionAcceptance({ ...base, fetch: async () => queue.shift() ?? json(500, { error: "queue_exhausted" }) });
@@ -145,6 +148,8 @@ describe("hosted export and retention acceptance", () => {
     expect(await run(link(), object(exportObject, 403))).toMatchObject({ outcome: "failed", detail: "object_access_denied" });
     expect(await run(link(), new Response(null, { status: 302, headers: { location: "https://elsewhere.example/x" } }))).toMatchObject({ outcome: "failed", detail: "redirect_refused" });
     expect(await run(link("https://other-bucket.s3.us-east-2.amazonaws.com/x?versionId=v1&X-Amz-Expires=300"), null)).toMatchObject({ outcome: "failed", detail: "bucket_host_mismatch" });
+    // S3 names the version it served; a different one is not the prepared copy, whatever its bytes.
+    expect(await run(link(), new Response(new Uint8Array(exportObject), { status: 200, headers: { "x-amz-version-id": "v2" } }))).toMatchObject({ outcome: "failed", detail: "object_version_mismatch" });
     expect(await run(link("https://fictional-export-bucket.s3.us-east-2.amazonaws.com/x?X-Amz-Expires=300"), null)).toMatchObject({ outcome: "failed", detail: "version_or_expiry_missing" });
     expect(await run(link(), object(exportObject.subarray(0, exportObject.byteLength - 5)))).toMatchObject({ outcome: "failed", detail: "object_truncated" });
     expect(await run(link(), object(Buffer.concat([exportObject, Buffer.from("x")])))).toMatchObject({ outcome: "failed", detail: "object_oversized" });
@@ -158,7 +163,7 @@ describe("hosted export and retention acceptance", () => {
     const otherParts = [other.subarray(0, 10), other.subarray(10)].map((b, i) => ({ partNumber: i + 1, bytes: b.byteLength, sha256: createHash("sha256").update(b).digest("hex") }));
     const otherComposite = createHash("sha256").update(Buffer.concat(otherParts.map((p) => Buffer.from(p.sha256, "hex")))).digest("base64") + "-2";
     const queue = [json(200, { data: { contractVersion: "personal-posture/1", launchTier: "core", enabledScopes: [] } }), json(200, { data: { jobId: job, status: "requested", retention: "packaging" } }),
-      json(401, {}), json(403, {}), json(200, view("ready", { objectChecksum: otherComposite, byteLength: other.byteLength })),
+      json(401, {}), json(403, {}), json(403, {}), json(200, view("ready", { objectChecksum: otherComposite, byteLength: other.byteLength })),
       json(200, { data: { jobId: job, url: linkUrl, expiresInSeconds: 300, byteLength: other.byteLength, objectChecksum: otherComposite, parts: otherParts } }), object(other)];
     const report = await runExportRetentionAcceptance({ ...base, fetch: async () => queue.shift() ?? json(500, {}) });
     expect(report.steps.find((s) => s.name === "download and verify the delivered object")).toMatchObject({ outcome: "failed", detail: "document_manifest_mismatch" });
