@@ -2,6 +2,7 @@ param(
   [Parameter(Mandatory = $true)][string]$QualificationTargetPath,
   [Parameter(Mandatory = $true)][string]$DeploymentManifestPath,
   [ValidateSet('acceptance', 'exploratory')][string]$Mode = 'acceptance',
+  [int]$ScheduledCleanupWaitMinutes = 0,
   [string]$Region = "us-east-2",
   [switch]$ConfirmSyntheticOnly
 )
@@ -35,9 +36,15 @@ try {
   $env:OBSERVED_AWS_ACCOUNT_ID = $account
   $env:SOURCE_COMMIT = $sourceCommit
   $env:ACCEPTANCE_MODE = $Mode
+  # Pass -ScheduledCleanupWaitMinutes only when the retention sweep is released and active: the run then waits for the
+  # schedule to record the removal of the copy the owner's own pass left pending, and fails if it never does.
+  if ($ScheduledCleanupWaitMinutes -gt 0) {
+    if ($ScheduledCleanupWaitMinutes -gt 180) { throw "ScheduledCleanupWaitMinutes must be 180 or fewer." }
+    $env:SCHEDULED_CLEANUP_WAIT_MINUTES = "$ScheduledCleanupWaitMinutes"
+  }
   node dist/aws-clinical-core/deployment-tools/exportRetentionAcceptance.js
   if ($LASTEXITCODE -ne 0) { throw "Export and retention acceptance did not pass; read the report under dist/qualification." }
 } finally {
-  foreach ($name in 'CLINICAL_QUALIFICATION_TARGET','OBSERVED_AWS_ACCOUNT_ID','SOURCE_COMMIT','ACCEPTANCE_MODE','CLINICAL_WORKFORCE_ID_TOKEN','CLINICAL_CONSUMER_ID_TOKEN','CLINICAL_FOREIGN_CONSUMER_ID_TOKEN','CLINICAL_STALE_CONSUMER_ID_TOKEN') { Remove-Item "Env:$name" -ErrorAction SilentlyContinue }
+  foreach ($name in 'CLINICAL_QUALIFICATION_TARGET','OBSERVED_AWS_ACCOUNT_ID','SOURCE_COMMIT','ACCEPTANCE_MODE','SCHEDULED_CLEANUP_WAIT_MINUTES','CLINICAL_WORKFORCE_ID_TOKEN','CLINICAL_CONSUMER_ID_TOKEN','CLINICAL_FOREIGN_CONSUMER_ID_TOKEN','CLINICAL_STALE_CONSUMER_ID_TOKEN') { Remove-Item "Env:$name" -ErrorAction SilentlyContinue }
 }
 Write-Host "Export and retention acceptance completed ($Mode) against $($target.apiOrigin); tokens were not printed or written."

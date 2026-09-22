@@ -108,7 +108,9 @@ refused by the sweep too.
    `scripts/run-aws-export-retention-acceptance.ps1` afterwards (with `-QualificationTargetPath`, the
    reviewed qualification target manifest; it never reads a foundation stack for its target): its
    cancelled fixture job should be removed by the sweep once settled, and its report is the first
-   hosted evidence.
+   hosted evidence. Pass `-ScheduledCleanupWaitMinutes <n>` so the run waits for the schedule itself to
+   record that removal and fails if it never comes; without it the scheduled step is skipped rather
+   than assumed, because a pending cleanup state is not completed deletion.
 7. Any later change of policy, identity or approver: `revoke`, then `release` a new version. Rows are
    never deleted.
 

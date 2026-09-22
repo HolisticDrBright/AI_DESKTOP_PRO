@@ -20,6 +20,7 @@ Gateway authorizers, the real database and the real export bucket:
 | 6 | download link for the exact version | 200, `https`, 300 seconds, checksum, length and the part list (digests and sizes accounting for every byte and reproducing the composite) equal to the view | 401 recorded as `skipped` with the reason |
 | 7 | download and verify the delivered object | 200 from the reviewed bucket host and the link's exact version (`x-amz-version-id` must agree when S3 sends it), no redirect followed, exactly `byteLength` bytes, every part digest in order, the composite recomputed with S3's semantics, and the document's contract, manifest counts and coverage matching the job | `skipped` only when no link was issued; denied, redirected, wrong host, unversioned, truncated, oversized, corrupt, wrong version and mismatched manifests all fail |
 | 8 | cancel and cleanup | `cancelled`; then either `objectDeleted:true` with retention `removal_recorded`, or `objectDeleted:false` with `cleanup_pending` (settlement or backoff, listed under `retained`) | any other combination fails |
+| 8b | scheduled cleanup removed the copy | with `-ScheduledCleanupWaitMinutes` (only when the retention sweep is released and active): the copy the owner's pass left pending reaches `objectDeleted` with retention `removal_recorded` inside the stated window, without another owner or operator pass | `skipped` when the sweep is not declared active; a copy still pending at the deadline fails and stays listed under `retained` with its honest state |
 | 9 to 11 | operator backlog, cleanup pass, reconcile pass | 200 with each action's summary shape | 503 `export_cleanup_not_activated` or `production_not_activated` (`not_configured`); 403 (`skipped`, operator not assigned) |
 
 The report (`dist/qualification/export-retention-acceptance-<time>.json`, exclusive-create) carries the
@@ -100,6 +101,10 @@ $env:CLINICAL_FOREIGN_CONSUMER_ID_TOKEN = ...; $env:CLINICAL_STALE_CONSUMER_ID_T
 .\scripts\run-aws-export-retention-acceptance.ps1 -QualificationTargetPath .\infra\aws-clinical-core\qualification-target.json `
   -DeploymentManifestPath .\infra\aws-clinical-core\deployment-manifest.json -ConfirmSyntheticOnly
 ```
+
+Add `-ScheduledCleanupWaitMinutes <n>` once the retention service release is in place and the sweep is running: the run
+then waits for the schedule itself to record the removal, because a pending cleanup state is not completed deletion.
+Without it the step is skipped and says so, and it is not counted as mandatory.
 
 Add `-Mode exploratory` for a partial run before every reviewed row exists; its report says
 `verdict.mode: exploratory` and is never acceptance evidence. Acceptance mode requires the second

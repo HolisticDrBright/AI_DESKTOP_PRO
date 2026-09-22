@@ -23,6 +23,11 @@ async function main() {
   const manifest = loadQualificationTargetManifest(required("CLINICAL_QUALIFICATION_TARGET"));
   const migrations = loadClinicalCoreMigrations(path.join(process.cwd(), "dist", "aws-clinical-core", "production-migrations"));
   const mode = process.env.ACCEPTANCE_MODE?.trim() === "exploratory" ? "exploratory" : "acceptance";
+  // Declared only when the scheduled retention sweep is released and active: the run then waits for the schedule itself
+  // to record the removal, because a pending cleanup state is not completed deletion.
+  const scheduledMinutes = process.env.SCHEDULED_CLEANUP_WAIT_MINUTES?.trim();
+  const scheduledCleanupWaitMs = scheduledMinutes ? Number(scheduledMinutes) * 60_000 : undefined;
+  if (scheduledCleanupWaitMs !== undefined && (!Number.isSafeInteger(scheduledCleanupWaitMs) || scheduledCleanupWaitMs <= 0 || scheduledCleanupWaitMs > 3 * 60 * 60_000)) throw new Error("scheduled_cleanup_wait_invalid");
   const observation = mode === "acceptance" ? observeQualificationTarget(manifest, EXPORT_ACCEPTANCE_CANDIDATES) : null;
   const sourceCommit = observation?.sourceCommit ?? (process.env.SOURCE_COMMIT?.trim() || execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim());
   const awsAccountId = observation?.awsAccountId ?? required("OBSERVED_AWS_ACCOUNT_ID");
@@ -32,6 +37,7 @@ async function main() {
     foreignConsumerIdToken: process.env.CLINICAL_FOREIGN_CONSUMER_ID_TOKEN || undefined, staleConsumerIdToken: process.env.CLINICAL_STALE_CONSUMER_ID_TOKEN || undefined,
     expectedAwsAccountId: target.expectedAwsAccountId, observedAwsAccountId: target.observedAwsAccountId, sourceCommit: target.sourceCommit, migrationReleaseHash: target.migrationReleaseHash,
     mode, expectedExecution: "qualification", expectedExportBucket: target.expectedExportBucket, expectedRegion: target.region,
+    ...(scheduledCleanupWaitMs === undefined ? {} : { scheduledCleanupWaitMs }),
   });
   mkdirSync("dist/qualification", { recursive: true });
   const out = `dist/qualification/export-retention-acceptance-${report.finishedAt.replace(/[:.]/g, "-")}.json`;

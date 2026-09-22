@@ -27,7 +27,8 @@ export type ExportAcceptanceReport = {
 export type ExportAcceptanceVerdict = { mode: "exploratory" | "acceptance"; expectedExecution: ObservedExecution | null; mandatory: string[]; unmet: string[] };
 /** Every step of the export flow; in acceptance mode all of them must pass (no skip, no not_configured). */
 export const EXPORT_ACCEPTANCE_STEPS = ["consumer posture", "request export job", "cross-owner read refused", "advance passes to ready", "stale sign-in download refused",
-  "download link for the exact version", "download and verify the delivered object", "cancel and cleanup", "operator backlog", "operator cleanup pass", "operator reconcile pass"] as const;
+  "download link for the exact version", "download and verify the delivered object", "cancel and cleanup", "operator backlog", "operator cleanup pass", "operator reconcile pass",
+  "scheduled cleanup removed the copy"] as const;
 type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 export class ExportAcceptanceError extends Error { constructor(readonly category: "configuration_invalid" | "boundary_refused") { super(category); } }
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -43,6 +44,10 @@ export async function runExportRetentionAcceptance(input: {
   mode?: "exploratory" | "acceptance"; expectedExecution?: "qualification" | "production";
   /** The reviewed export bucket and its region: the delivered object must come from exactly that host. Required in acceptance mode. */
   expectedExportBucket?: string; expectedRegion?: string;
+  /** How long to wait for the *scheduled* retention sweep to finish removing a copy the owner's own pass left pending.
+   * Given only when the sweep is released and active; the step is then mandatory, because a pending cleanup state is not
+   * completed deletion and the scheduled path is the thing under test. Omitted, the step is skipped and says so. */
+  scheduledCleanupWaitMs?: number;
   fetch?: FetchLike; now?: () => number; maxPasses?: number;
 }): Promise<ExportAcceptanceReport> {
   const fetcher = input.fetch ?? fetch, now = input.now ?? Date.now, startedAt = new Date(now()).toISOString();
@@ -185,6 +190,32 @@ export async function runExportRetentionAcceptance(input: {
       if (!deleted && retention === "cleanup_pending") { retained.push({ jobId: id, state: "cleanup_pending" }); return { outcome: "passed", status: 200, detail: "pending_settlement_or_backoff" }; }
       retained.push({ jobId: id, state: retention }); return { outcome: "failed", status: 200, detail: `retention:${retention}` };
     });
+    // 7b. The scheduled sweep, when it is released and active: a copy the owner's pass left pending must actually be
+    //     removed by the schedule inside the stated window. A pending state is not completed deletion, so when the caller
+    //     declares the sweep active this waits for the recorded removal rather than accepting the pending state.
+    await step("scheduled cleanup removed the copy", "the job's copy reaches objectDeleted with retention removal_recorded inside the stated window, without an owner or operator pass", async () => {
+      const waitMs = input.scheduledCleanupWaitMs;
+      if (waitMs === undefined) return { outcome: "skipped", detail: "scheduled_sweep_not_declared_active" };
+      if (!Number.isSafeInteger(waitMs) || waitMs <= 0 || waitMs > 3 * 60 * 60_000) return { outcome: "failed", detail: "scheduled_wait_invalid" };
+      const settled = retained.find((r) => r.jobId === id);
+      if (!settled) return { outcome: "passed", detail: "already_removed_by_the_owner_pass" };
+      const deadline = now() + waitMs;
+      let retention = settled.state;
+      while (now() < deadline) {
+        await sleep(Math.min(30_000, Math.max(1_000, Math.floor(waitMs / 20))));
+        const after = data(await call(`${CONSUMER}?jobId=${id}`, input.consumerIdToken));
+        retention = String(after?.retention);
+        if (after?.objectDeleted === true && retention === "removal_recorded") {
+          const index = retained.findIndex((r) => r.jobId === id);
+          if (index >= 0) retained.splice(index, 1);
+          return { outcome: "passed", status: 200, detail: "removed_by_the_schedule" };
+        }
+        if (retention !== "cleanup_pending") break;
+      }
+      const index = retained.findIndex((r) => r.jobId === id);
+      if (index >= 0) retained[index] = { jobId: id, state: retention };
+      return { outcome: "failed", status: 200, detail: `still_${retention}` };
+    });
     // 8 to 10. Operator retention actions (workforce). 503 export_cleanup_not_activated is reported, not passed.
     for (const [name, body, check] of [
       ["operator backlog", { action: "exportBacklog" }, (d: Record<string, unknown>) => d.scope === "assigned_owners" && typeof d.cleanupPending === "number"],
@@ -205,7 +236,11 @@ export async function runExportRetentionAcceptance(input: {
   const observed = summariseExecution(executions);
   // Acceptance needs every step passed; exploration tolerates stated skips but never a failure. Either way the execution that
   // answered must be the expected one (a mixed or unobserved run qualifies nothing), and a report is written whatever the verdict.
-  const mandatory: string[] = mode === "acceptance" ? [...EXPORT_ACCEPTANCE_STEPS] : ["consumer posture", "request export job", "advance passes to ready", "download link for the exact version", "download and verify the delivered object"];
+  // In acceptance mode every case is mandatory, except the scheduled sweep when the caller did not declare it active:
+  // a sweep that is not released cannot be waited for, and pretending otherwise would be the opposite of honest.
+  const mandatory: string[] = mode === "acceptance"
+    ? EXPORT_ACCEPTANCE_STEPS.filter((name) => name !== "scheduled cleanup removed the copy" || input.scheduledCleanupWaitMs !== undefined)
+    : ["consumer posture", "request export job", "advance passes to ready", "download link for the exact version", "download and verify the delivered object"];
   const unmet = mandatory.filter((name) => !steps.some((s) => s.name === name && s.outcome === "passed"));
   const executionOk = expectedExecution ? observed.execution === expectedExecution : observed.execution === "production" || observed.execution === "qualification";
   const ok = steps.every((s) => s.outcome === "passed" || s.outcome === "skipped") && unmet.length === 0 && executionOk;
@@ -238,6 +273,8 @@ function tokenAuthTime(token: string): number | null {
 }
 
 /** Reads at most `limit` bytes; one byte more is an oversized object. */
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
 async function readBounded(response: Response, limit: number): Promise<Uint8Array | "oversized"> {
   const chunks: Uint8Array[] = []; let total = 0;
   const body = response.body;
