@@ -21,9 +21,14 @@ export type RecordingAcceptanceReport = {
   audio: { source: "generated_tone" | "supplied_file"; contentType: "audio/wav"; bytes: number; sha256: string; segments: number };
   startedAt: string; finishedAt: string; steps: RecordingAcceptanceStep[];
   retained: { recordingId: string; state: string; deletionDeadline: string | null }[];
-  /** Which execution answered (docs/aws-qualification-target.md): a qualification run is never production activation evidence. */
-  execution: ObservedExecution; productionActivationEvidence: boolean; evidenceSha256: string;
+  /** Which execution answered (docs/aws-qualification-target.md). Unmarked 401/403 responses are authorizer denials, counted apart. */
+  execution: ObservedExecution; unmarkedDenials: boolean;
+  /** The verdict: `ok` is true only when every mandatory case passed and the expected execution answered; partial runs are kept, never promoted. */
+  verdict: { mode: "exploratory" | "acceptance"; expectedExecution: ObservedExecution | null; mandatory: string[]; unmet: string[] }; evidenceSha256: string;
 };
+/** Every step of the recording flow; in acceptance mode all of them must pass (no skip, no not_configured). */
+export const RECORDING_ACCEPTANCE_STEPS = ["consent workspace", "consumer token refused on workforce recording routes", "participants and consents", "readiness", "start capture", "start replay is idempotent",
+  "segment uploads", "recovery state", "finish", "transcription request", "transcription completes", "transcript read", "drafting request", "drafting completes", "proposed note read", "cleanup review"] as const;
 type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 export class RecordingAcceptanceError extends Error { constructor(readonly category: "configuration_invalid" | "boundary_refused") { super(category); } }
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -54,9 +59,13 @@ const sha256 = (bytes: Uint8Array | string) => createHash("sha256").update(bytes
 export async function runRecordingAcceptance(input: {
   apiOrigin: string; workforceIdToken: string; consumerIdToken: string; encounterId: string; locale?: string; jurisdiction: string;
   audio?: { bytes: Uint8Array; source: "supplied_file" }; expectedAwsAccountId: string; observedAwsAccountId: string; sourceCommit: string; migrationReleaseHash: string;
+  /** `acceptance` requires every step to pass and the expected execution to answer; `exploratory` (default) keeps partial results honest. */
+  mode?: "exploratory" | "acceptance"; expectedExecution?: "qualification" | "production";
   fetch?: FetchLike; now?: () => number; wait?: (ms: number) => Promise<void>; maxPasses?: number;
 }): Promise<RecordingAcceptanceReport> {
   const fetcher = input.fetch ?? fetch, now = input.now ?? Date.now, wait = input.wait ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const mode = input.mode ?? "exploratory", expectedExecution = input.expectedExecution ?? null;
+  if (mode === "acceptance" && !expectedExecution) throw new RecordingAcceptanceError("configuration_invalid");
   const startedAt = new Date(now()).toISOString(), origin = validate(input), locale = input.locale ?? "en";
   const audioBytes = input.audio?.bytes ?? fictionalWav();
   if (audioBytes.byteLength < 44 || audioBytes.byteLength > 64 * 1024 * 1024 || Buffer.from(audioBytes.subarray(0, 4)).toString("latin1") !== "RIFF") throw new RecordingAcceptanceError("configuration_invalid");
@@ -76,7 +85,7 @@ export async function runRecordingAcceptance(input: {
       response = await fetcher(`${origin}${path}`, { method: "POST", headers: { authorization: `Bearer ${bearer}`, ...(json ? { "content-type": "application/json" } : {}), ...headers },
         body: json ? JSON.stringify(body) : (body as unknown as BodyInit), redirect: "manual", signal: AbortSignal.timeout(25_000) });
     } catch { return { status: 0, body: null as unknown }; }
-    observeExecution(executions, response.headers);
+    observeExecution(executions, response.headers, response.status);
     const bytes = new Uint8Array(await response.arrayBuffer());
     if (bytes.byteLength > 4 * 1024 * 1024) return { status: response.status, body: null as unknown };
     try { return { status: response.status, body: JSON.parse(new TextDecoder().decode(bytes)) as unknown }; } catch { return { status: response.status, body: null as unknown }; }
@@ -278,9 +287,14 @@ export async function runRecordingAcceptance(input: {
     const configurationSha256 = sha256(JSON.stringify({ origin, account: input.expectedAwsAccountId, encounterId: input.encounterId, locale, jurisdiction: input.jurisdiction, audio: audio.sha256, sourceCommit: input.sourceCommit, migrationReleaseHash: input.migrationReleaseHash }));
     const passed = (name: string) => steps.some((s) => s.name === name && s.outcome === "passed");
     // Positive acceptance needs the whole pipeline: consent, capture, close, transcript and a review-only draft. Refusals are reported, never counted.
-    const ok = steps.every((s) => s.outcome === "passed" || s.outcome === "skipped") && ["finish", "transcription completes", "transcript read", "proposed note read"].every(passed);
+    const observed = summariseExecution(executions);
+    const mandatory: string[] = mode === "acceptance" ? [...RECORDING_ACCEPTANCE_STEPS] : ["finish", "transcription completes", "transcript read", "proposed note read"];
+    const unmet = mandatory.filter((name) => !passed(name));
+    const executionOk = expectedExecution ? observed.execution === expectedExecution : observed.execution === "production" || observed.execution === "qualification";
+    const ok = steps.every((s) => s.outcome === "passed" || s.outcome === "skipped") && unmet.length === 0 && executionOk;
     const report: Omit<RecordingAcceptanceReport, "evidenceSha256"> = { schemaVersion: "recording-acceptance/1", environment: "synthetic-staging", ok, sourceCommit: input.sourceCommit,
-      migrationReleaseHash: input.migrationReleaseHash, configurationSha256, awsAccountId: input.expectedAwsAccountId, encounterId: input.encounterId, audio, startedAt, finishedAt, steps, retained, ...summariseExecution(executions) };
+      migrationReleaseHash: input.migrationReleaseHash, configurationSha256, awsAccountId: input.expectedAwsAccountId, encounterId: input.encounterId, audio, startedAt, finishedAt, steps, retained, ...observed,
+      verdict: { mode, expectedExecution, mandatory, unmet } };
     return { ...report, evidenceSha256: sha256(JSON.stringify({ ...report, startedAt: undefined, finishedAt: undefined })) };
   }
 }

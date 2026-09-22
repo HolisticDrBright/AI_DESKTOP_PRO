@@ -55,7 +55,8 @@ describe("hosted recording, transcription and drafting acceptance", () => {
   test("drives consent, capture, segments, close, transcription, review-only drafting and cleanup review, and binds the report to source, migrations, audio and configuration", async () => {
     const d = deployment();
     const report = await runRecordingAcceptance({ ...base, fetch: d.fetch });
-    expect(report.execution).toBe("production"); expect(report.productionActivationEvidence).toBe(true);
+    expect(report.execution).toBe("production"); expect(report).not.toHaveProperty("productionActivationEvidence");
+    expect(report.verdict).toEqual({ mode: "exploratory", expectedExecution: null, mandatory: ["finish", "transcription completes", "transcript read", "proposed note read"], unmet: [] });
     expect(report.steps.filter((s) => s.outcome !== "passed")).toEqual([]);
     expect(report.ok).toBe(true);
     expect(report.steps.map((s) => s.name)).toEqual(["consent workspace", "consumer token refused on workforce recording routes", "participants and consents", "readiness", "start capture", "start replay is idempotent",
@@ -80,10 +81,19 @@ describe("hosted recording, transcription and drafting acceptance", () => {
     expect(JSON.stringify(report)).not.toContain(token("w").slice(0, 20)); expect(JSON.stringify(report)).not.toContain("d".repeat(64));
   });
   test("a run answered by qualification execution is reported as such and is never production activation evidence", async () => {
-    const d = deployment();
-    const marked = async (url: string, init?: RequestInit) => { const r = await d.fetch(url, init); return new Response(await r.arrayBuffer(), { status: r.status, headers: { "content-type": "application/json", "x-clinical-execution": "qualification" } }); };
-    const report = await runRecordingAcceptance({ ...base, fetch: marked });
-    expect(report.execution).toBe("qualification"); expect(report.productionActivationEvidence).toBe(false); expect(report.ok).toBe(true);
+    // Each run gets its own fictional deployment: replay counters carry across calls, so a shared one would answer a second start as a replay.
+    const marked = (d = deployment()) => async (url: string, init?: RequestInit) => { const r = await d.fetch(url, init); return new Response(await r.arrayBuffer(), { status: r.status, headers: { "content-type": "application/json", "x-clinical-execution": "qualification" } }); };
+    const report = await runRecordingAcceptance({ ...base, fetch: marked() });
+    expect(report.execution).toBe("qualification"); expect(report.ok).toBe(true);
+    // In acceptance mode every step is mandatory and the expected execution must answer; a production-answered run cannot qualify as qualification.
+    const accepted = await runRecordingAcceptance({ ...base, mode: "acceptance", expectedExecution: "qualification", fetch: marked() });
+    expect(accepted.ok).toBe(true); expect(accepted.verdict.mandatory).toHaveLength(16); expect(accepted.verdict.unmet).toEqual([]);
+    const wrong = await runRecordingAcceptance({ ...base, mode: "acceptance", expectedExecution: "qualification", fetch: deployment().fetch });
+    expect(wrong.ok).toBe(false); expect(wrong.execution).toBe("production");
+    const notActivated = deployment({ "authority:workspace": () => json(503, { error: "production_not_activated", phiAllowed: false }) });
+    const partial = await runRecordingAcceptance({ ...base, mode: "acceptance", expectedExecution: "production", fetch: notActivated.fetch });
+    expect(partial.ok).toBe(false); expect(partial.verdict.unmet).toHaveLength(16); expect(partial.steps).toHaveLength(16);
+    await expect(runRecordingAcceptance({ ...base, mode: "acceptance", fetch: deployment().fetch })).rejects.toThrow("configuration_invalid");
     const plain = await runRecordingAcceptance({ ...base, fetch: deployment().fetch });
     expect(plain.evidenceSha256).not.toBe(report.evidenceSha256);
   });

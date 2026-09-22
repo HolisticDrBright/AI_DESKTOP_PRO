@@ -33,8 +33,12 @@ the team made for this purpose. It never records or uploads anything from a real
 | 15 | proposed note read | 200 `proposed-note/1` document for the exact note, bound to the transcript, with sections and visible cautions | |
 | 16 | cleanup review | 200 processing status for the recording and a queue page | 503 (`not_configured`) |
 
-`ok` requires every step to pass or be skipped for a stated reason **and** steps 9, 11, 12 and 15 to
-have passed: a run in which any plane refuses is therefore never `ok`, whatever else passed. The report
+`ok` is the verdict. In `acceptance` mode (the CLI's default) every one of the sixteen steps is
+mandatory and must have **passed**, and the execution that answered must be the expected one; in
+`exploratory` mode (`ACCEPTANCE_MODE=exploratory`, `-Mode exploratory`) the run keeps its partial
+results honestly and can never be read as acceptance. The report carries `verdict` (`mode`,
+`expectedExecution`, `mandatory`, `unmet`), so a run in which any plane refuses, or in which responses
+come from mixed executions, is never `ok`, whatever else passed. The report
 (`dist/qualification/recording-acceptance-<time>.json`, exclusive-create) carries the source commit,
 the production migration release hash (recomputed from the built artifact), a hash of the configuration
 the run used (origin, account, encounter, locale, jurisdiction, audio digest), the audio's source, size,
@@ -43,22 +47,43 @@ left behind (`retained`, with its deletion deadline) and an evidence hash over e
 
 The report also records which execution answered (`execution`: `production`, `qualification`, `mixed`
 or `unobserved`) from the `x-clinical-execution` marker that qualification candidates send
-(`docs/aws-qualification-target.md`), and `productionActivationEvidence`, true only for a run answered
-by production responses alone; both are inside the evidence hash.
+(`docs/aws-qualification-target.md`), and `unmarkedDenials`, true when some 401/403 arrived without a
+marker: API Gateway answers an unauthorized request before the Lambda, so an unmarked denial is
+classified separately and counts towards neither execution. Both are inside the evidence hash, and no
+boolean promotes a synthetic report into production activation evidence.
 
 ## Boundaries
 
-- The runner (`scripts/run-aws-recording-acceptance.ps1`) pins the account with
-  `aws sts get-caller-identity` against the deployment manifest, refuses account 173535830222 and
-  requires the foundation stack to state the synthetic-only posture; the Node harness re-checks the
-  asserted and observed account and refuses production whatever the caller says. The API origin must
-  be an `execute-api` host; tokens must be distinct JWTs read from the process environment and removed
-  afterwards; no token, capture token or URL appears in the report.
+- The target: the runner (`scripts/run-aws-recording-acceptance.ps1`) takes `-QualificationTargetPath`,
+  a filled copy of `infra/aws-clinical-core/qualification-target.example.json`, and reads the API
+  origin, account, region, database, source commit and migration release hash from it alone. It
+  consults no foundation stack: the previous runner took the fixture database and the API origin from
+  whatever foundation was named, and the documented name was the staging foundation, so the documented
+  command wrote the fixture encounter into the staging database and drove the staging API. The manifest
+  names the staging foundation stack, staging API origin and staging database it must refuse, and they
+  are refused by name. Before any request or fixture write the runner verifies the STS account (never
+  173535830222), the checkout's commit, the dedicated qualification foundation (PHI false; its
+  `QualificationExecution=disabled` output is prepared infrastructure, not candidate evidence) and the
+  five recording candidate stacks: `PhiAllowed=false`, `Activation=blocked`,
+  `QualificationExecution=enabled`, the manifest's `SourceCommit`, `DatabaseName` and `ApiId`. The Node
+  CLI loads the same manifest itself (`qualification-target-manifest.ts`), so a direct CLI run cannot
+  bypass the binding, and refuses an ambient `CLINICAL_API_ORIGIN` or `CLINICAL_DATABASE_NAME` that
+  disagrees with it. The harness re-checks the asserted and observed account and refuses production
+  whatever the caller says. The API origin must be an `execute-api` host; tokens must be distinct JWTs
+  read from the process environment and removed afterwards; no token, capture token or URL appears in
+  the report. `scripts/test-qualification-acceptance-runners.ps1` proves this credential-free in CI.
 - The encounter: recording needs an open encounter for the fixture patient, and encounters are started
   by the Desktop's clinical workflow, not a public route. Without `-EncounterId` the wrapper runs
   `recordingAcceptance.js fixture`, which starts (or reuses) a telehealth encounter for the synthetic
   fixture patient as the fixture practitioner through the administrative path
   (`recording-acceptance-fixture.ts`, same SQL entry point as the Desktop). It creates nothing else.
+  The fixture command guards itself rather than trusting its caller: the database must be the
+  manifest's qualification database (a name containing `qualification`, never `clinical_core`, a
+  maintenance database or the staging database), the synthetic acceptance manifest's account and
+  designated consumer and workforce subjects must equal the target manifest's, and the database's
+  migration ledger must equal the built production artifact exactly (nothing missing, mismatched or
+  unknown, same release hash) before the encounter is written. The populated staging database fails
+  that ledger check by its own history, so it cannot receive a fixture write even if it were named.
 - Reviewed rows the harness does not create and reports as `not_configured` when absent: consent
   releases per scope (locale and jurisdiction must match the run's), the capture release and storage
   release (readiness), the transcription release and provider qualification, the drafting release,
@@ -69,6 +94,23 @@ by production responses alone; both are inside the evidence hash.
 - Provider output on a tone: the transcript may be empty or near-empty and the draft's cautions should
   say so. The harness grades the pipeline (job states, bindings, digests, review-only capabilities),
   not the clinical content, which is fictional by construction.
+
+## Running it
+
+Fill a copy of `infra/aws-clinical-core/qualification-target.example.json` (keep it out of the
+repository), then:
+
+```powershell
+$env:CLINICAL_WORKFORCE_ID_TOKEN = ...; $env:CLINICAL_CONSUMER_ID_TOKEN = ...
+.\scripts\run-aws-recording-acceptance.ps1 -QualificationTargetPath .\infra\aws-clinical-core\qualification-target.json `
+  -DeploymentManifestPath .\infra\aws-clinical-core\deployment-manifest.json `
+  -SyntheticManifestPath .\infra\aws-clinical-core\synthetic-acceptance-manifest.json `
+  -Jurisdiction US-SYNTHETIC -ConfirmSyntheticOnly
+```
+
+Add `-Mode exploratory` before every reviewed release row exists; that report is not acceptance
+evidence. `-EncounterId` reuses an encounter and skips the fixture step; `-AudioFile` supplies
+fictional audio instead of the generated tone.
 
 ## Not yet done
 

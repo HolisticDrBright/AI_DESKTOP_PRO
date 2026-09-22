@@ -1,0 +1,36 @@
+{
+  "schemaVersion": "aws-clinical-core-qualification-target/1",
+  "environment": "synthetic-staging",
+  "dataClassification": "synthetic_only",
+  "containsPhi": false,
+  "awsAccountId": "588966314750",
+  "awsRegion": "us-east-2",
+  "foundationStackName": "ai-clinical-core-qualification-foundation",
+  "apiId": "6zt8e9qz04",
+  "apiOrigin": "https://6zt8e9qz04.execute-api.us-east-2.amazonaws.com",
+  "databaseClusterArn": "arn:aws:rds:us-east-2:588966314750:cluster:ai-clinical-core-synthetic-clinicaldatabasecluster-lftvrccuflxa",
+  "databaseSecretArn": "arn:aws:secretsmanager:us-east-2:588966314750:secret:replace-with-qualification-database-secret",
+  "databaseName": "clinical_core_qualification",
+  "exportBucket": "alp-qualification-exports-588966314750-us-east-2",
+  "sourceCommit": "0000000000000000000000000000000000000000",
+  "migrationReleaseHash": "0000000000000000000000000000000000000000000000000000000000000000",
+  "identitySubjects": {
+    "consumer": "replace-with-consumer-cognito-sub",
+    "workforce": "replace-with-workforce-cognito-sub"
+  },
+  "stacks": {
+    "personal-storage": "ai-clinical-core-qualification-personal-storage",
+    "privacy-operations": "ai-clinical-core-qualification-privacy-operations",
+    "recording-authority": "ai-clinical-core-qualification-recording-authority",
+    "recording-capture": "ai-clinical-core-qualification-recording-capture",
+    "recording-transcription": "ai-clinical-core-qualification-recording-transcription",
+    "recording-drafting": "ai-clinical-core-qualification-recording-drafting",
+    "recording-cleanup-review": "ai-clinical-core-qualification-recording-cleanup-review"
+  },
+  "refused": {
+    "stagingFoundationStackName": "ai-clinical-core-synthetic-staging",
+    "stagingApiOrigin": "https://wxv734oi12.execute-api.us-east-2.amazonaws.com",
+    "stagingDatabaseName": "clinical_core"
+  },
+  "reviewedAt": "2026-09-21T00:00:00Z"
+}

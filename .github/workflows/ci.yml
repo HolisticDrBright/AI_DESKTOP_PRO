@@ -95,6 +95,9 @@ jobs:
       - name: Qualification target runner (syntax and pre-network name refusals, no AWS calls)
         shell: pwsh
         run: ./scripts/test-qualification-runner.ps1
+      - name: Hosted acceptance runners bind to the qualification target (no AWS calls)
+        shell: pwsh
+        run: ./scripts/test-qualification-acceptance-runners.ps1
       - name: Build and validate the six recording candidates (no deployment)
         run: |
           for mode in "" --capture --cleanup-review --cleanup-execution --transcription --drafting; do node scripts/build-aws-recording-authority.mjs $mode; done

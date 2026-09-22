@@ -4,7 +4,7 @@ import {pgcrypto} from '@electric-sql/pglite/contrib/pgcrypto';
 import {execFileSync} from 'node:child_process';
 import {createHash,randomUUID} from 'node:crypto';
 import {createOwnedConsumerRecordsAdapter} from './owned-consumer-records';
-import {createOwnedPrivacyExportJobs,createPrivacyExportRetention,privacyExportPrefix,type PrivacyExportStore,type PrivacyExportObjectStorage} from './owned-privacy-export-job';
+import {compositeChecksum,createOwnedPrivacyExportJobs,createPrivacyExportRetention,privacyExportPrefix,type PrivacyExportStore,type PrivacyExportObjectStorage} from './owned-privacy-export-job';
 import {ClinicalCoreDatabaseRejection,type ClinicalCoreDatabase,type ClinicalCoreTransaction} from './database';
 import type {ProductionClinicalRequestContext} from './aws-identity-consent';
 
@@ -666,6 +666,12 @@ describe('large personal-storage export jobs (migration 93)',()=>{
     const issued=await jobs.issuePrivacyExportDownload(context(),{jobId:job},Date.now()-30_000,new AbortController().signal);
     expect(issued).toMatchObject({jobId:job,expiresInSeconds:300});
     expect(issued.url).toMatch(/^https:\/\//);expect(issued.url).toContain('X-Amz-Expires=300');expect(issued.url).not.toContain(owner);
+    // The part list accounts for every byte and reproduces the recorded composite, so a receiver can verify the delivered bytes.
+    expect(issued.parts.length).toBeGreaterThan(0);expect(issued.parts.map(p=>p.partNumber)).toEqual(issued.parts.map((_,i)=>i+1));
+    expect(issued.parts.reduce((n,p)=>n+p.bytes,0)).toBe(issued.byteLength);
+    expect(compositeChecksum(issued.parts.map(p=>p.sha256))).toBe(issued.objectChecksum);
+    const stored=await f.store.get(storage,issued.url.includes('personal-exports')?decodeURIComponent(new URL(issued.url).pathname.slice(1)):'',null as never,issued.byteLength+1,new AbortController().signal).catch(()=>null);
+    if(stored){let offset=0;for(const p of issued.parts){expect(createHash('sha256').update(stored.subarray(offset,offset+p.bytes)).digest('hex')).toBe(p.sha256);offset+=p.bytes;}}
     expect((await db.query("select count(*)::int n from clinical_audit.owned_privacy_export_events where owner_id=$1 and action='download.issued'",[owner])).rows[0]).toEqual({n:1});
   });
   it('cancels a running job, aborts the open upload, removes staging and object versions with verification, and refuses a second open job until then',async()=>{

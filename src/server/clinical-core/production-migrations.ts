@@ -50,11 +50,17 @@ export type ProductionClinicalCoreMigrationInspection = {
 };
 /** Read-only comparison of the database's migration ledger against the built artifact. Nothing is created or applied;
  * a database without the ledger table reports every artifact version as missing. */
+/** The release hash of a built production artifact: the one the operator's `inspect` prints, the qualification target
+ * manifest records, and the hosted harness reports carry. */
+export function productionArtifactReleaseHash(migrations: ClinicalCoreMigration[]): string {
+  return createHash("sha256").update(migrations.map((m) => `${m.version}:${m.sha256}`).join("\n")).digest("hex");
+}
+
 export async function inspectProductionClinicalCoreMigrations(
   database: ClinicalCoreDatabase,
   migrations: ClinicalCoreMigration[],
 ): Promise<ProductionClinicalCoreMigrationInspection> {
-  const artifactReleaseHash = createHash("sha256").update(migrations.map((m) => `${m.version}:${m.sha256}`).join("\n")).digest("hex");
+  const artifactReleaseHash = productionArtifactReleaseHash(migrations);
   return database.transaction(async (tx) => {
     const ledger = await tx.query<{ present: boolean }>("select to_regclass('clinical_core.schema_migrations') is not null as present");
     const ledgerPresent = ledger.rows[0]?.present === true;

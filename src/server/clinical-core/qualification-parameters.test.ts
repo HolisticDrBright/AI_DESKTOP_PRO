@@ -1,5 +1,8 @@
-import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { readFileSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { beforeAll, describe, expect, it } from "vitest";
 import { CANDIDATES, loadTemplate, qualificationParameters, QUALIFICATION_ACCOUNT_ID, QUALIFICATION_DATABASE_NAME } from "../../../scripts/build-aws-qualification-parameters.mjs";
 
 // The copy-and-fill parameter files for deploying each candidate with the qualification execution profile: each must name
@@ -18,9 +21,29 @@ function evaluate(t: Template, v: Json, p: Record<string, string>): unknown {
   throw new Error("unsupported_condition");
 }
 describe("qualification parameter examples", () => {
+  // Template builds are setup, not assertions: they run once here under a bounded timeout so a slow build never reads as a
+  // semantic parameter failure.
+  const templates: Record<string, Template> = {};
+  beforeAll(() => { for (const candidate of Object.keys(CANDIDATES)) templates[candidate] = loadTemplate(candidate) as Template; }, 120_000);
+  it("compares drift on content, not line endings, and still rejects a changed value", () => {
+    const dir = mkdtempSync(join(tmpdir(), "qualification-parameters-"));
+    try {
+      const script = join(process.cwd(), "scripts/build-aws-qualification-parameters.mjs");
+      const crlf = readFileSync("infra/aws-clinical-core/qualification-parameters/recording-authority.example.json", "utf8").replace(/\n/g, "\r\n");
+      expect(crlf).toContain("\r\n");
+      // The check reads the committed directory, so exercise the comparison the script performs on CRLF text and on a changed value.
+      const generated = JSON.stringify(qualificationParameters("recording-authority", templates["recording-authority"]), null, 2) + "\n";
+      expect(crlf.replace(/\r\n/g, "\n")).toBe(generated);
+      const changed = generated.replace('"ParameterValue": "false"', '"ParameterValue": "true"');
+      expect(changed).not.toBe(generated);
+      expect(changed.replace(/\r\n/g, "\n")).not.toBe(generated);
+      writeFileSync(join(dir, "probe.json"), crlf);
+      expect(execFileSync(process.execPath, [script, "--check"], { encoding: "utf8" })).toContain("match their templates");
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
   for (const candidate of Object.keys(CANDIDATES)) {
     it(`${candidate}: matches its template, satisfies every constraint, and enables qualification without production activation`, () => {
-      const template = loadTemplate(candidate) as Template;
+      const template = templates[candidate];
       const generated = qualificationParameters(candidate, template) as Array<{ ParameterKey: string; ParameterValue: string }>;
       const committed = JSON.parse(readFileSync(`infra/aws-clinical-core/qualification-parameters/${candidate}.example.json`, "utf8"));
       expect(committed).toEqual(generated);

@@ -87,13 +87,18 @@ export function qualificationFrom(env: QualificationExecutionEnvironment, activa
   return q ? { qualification: q } : {};
 }
 
-/** What a hosted harness observed across its responses: production candidates never send the marker, qualification
- * candidates always do. Only a run that saw production responses alone can count toward production activation evidence. */
+/** What a hosted harness observed across its responses: qualification candidates mark every response they produce,
+ * production candidates never do. A 401 or 403 without the marker is not evidence of either: API Gateway's authorizer
+ * answers those before any function runs, so such denials are counted separately and never classify the execution.
+ * The observation describes the run; it is never activation evidence, which is a separate reviewed record. */
 export type ObservedExecution = "production" | "qualification" | "mixed" | "unobserved";
-export function observeExecution(seen: Set<string>, headers: { get(name: string): string | null } | undefined): void {
-  seen.add(headers?.get(QUALIFICATION_EXECUTION_HEADER) === QUALIFICATION_EXECUTION_MODE ? QUALIFICATION_EXECUTION_MODE : "production");
+export function observeExecution(seen: Set<string>, headers: { get(name: string): string | null } | undefined, status: number): void {
+  if (headers?.get(QUALIFICATION_EXECUTION_HEADER) === QUALIFICATION_EXECUTION_MODE) { seen.add(QUALIFICATION_EXECUTION_MODE); return; }
+  if (status === 401 || status === 403) { seen.add("unmarked_denial"); return; }
+  if (status > 0) seen.add("production");
 }
-export function summariseExecution(seen: Set<string>): { execution: ObservedExecution; productionActivationEvidence: boolean } {
-  const execution: ObservedExecution = seen.size === 0 ? "unobserved" : seen.size > 1 ? "mixed" : seen.has(QUALIFICATION_EXECUTION_MODE) ? "qualification" : "production";
-  return { execution, productionActivationEvidence: execution === "production" };
+export function summariseExecution(seen: Set<string>): { execution: ObservedExecution; unmarkedDenials: boolean } {
+  const modes = new Set([...seen].filter((s) => s !== "unmarked_denial"));
+  const execution: ObservedExecution = modes.size === 0 ? "unobserved" : modes.size > 1 ? "mixed" : modes.has(QUALIFICATION_EXECUTION_MODE) ? "qualification" : "production";
+  return { execution, unmarkedDenials: seen.has("unmarked_denial") };
 }

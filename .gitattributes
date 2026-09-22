@@ -3,3 +3,4 @@ infra/aws-clinical-core/core-launch-scope.json text eol=lf
 infra/aws-clinical-core/migrations/*.sql text eol=lf
 infra/aws-clinical-core/production-migrations/*.sql text eol=lf
 infra/aws-clinical-core/production-migrations/manifest.json text eol=lf
+infra/aws-clinical-core/qualification-parameters/*.json text eol=lf

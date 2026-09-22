@@ -71,6 +71,21 @@ export const PRIVACY_EXPORT_PART_BYTES=5*1024*1024, PRIVACY_EXPORT_MAX_BYTES=2*1
 const sha256=(b:Uint8Array)=>createHash('sha256').update(b).digest('hex');
 /** S3's composite checksum for a multipart object: base64(sha256(concat(raw part digests)))-partCount. The recorded
  * part digests therefore fix exactly one acceptable object checksum. */
+export type PrivacyExportDownload={jobId:string;url:string;expiresInSeconds:number;byteLength:number;objectChecksum:string;
+  /** Each part's size and SHA-256 (hex) in order: split the delivered bytes by size, hash each part, and the composite of those digests must equal objectChecksum. */
+  parts:Array<{partNumber:number;bytes:number;sha256:string}>};
+/** The recorded part digests and sizes as the receiver's verification list, or null when they do not account for the object. */
+export function exportParts(sha256s:unknown,sizes:unknown,byteLength:number,objectChecksum:string):PrivacyExportDownload['parts']|null{
+  if(!Array.isArray(sha256s)||!Array.isArray(sizes)||sha256s.length!==sizes.length||sha256s.length<1||sha256s.length>10_000)return null;
+  const parts:PrivacyExportDownload['parts']=[];let total=0;
+  for(let i=0;i<sha256s.length;i++){
+    const sha256=sha256s[i],bytes=Number(sizes[i]);
+    if(typeof sha256!=='string'||!/^[a-f0-9]{64}$/.test(sha256)||!Number.isSafeInteger(bytes)||bytes<1)return null;
+    parts.push({partNumber:i+1,bytes,sha256});total+=bytes;
+  }
+  if(total!==byteLength||compositeChecksum(parts.map(p=>p.sha256))!==objectChecksum)return null;
+  return parts;
+}
 export const compositeChecksum=(partSha256Hex:string[])=>createHash('sha256').update(Buffer.concat(partSha256Hex.map(h=>Buffer.from(h,'hex')))).digest('base64')+'-'+partSha256Hex.length;
 const COMPOSITE=/^[A-Za-z0-9+/]{43}=-[1-9][0-9]{0,4}$/;
 function invalid():never{throw new OwnedStorageError('request_invalid');}
@@ -360,16 +375,20 @@ export function createOwnedPrivacyExportJobs(run:Run,delivery:{store:PrivacyExpo
       return run(context,async tx=>view(await call(tx,'select clinical_core.cancel_owned_privacy_export_job($1) as result',[clinicalUuid(jobId)])));
     },
     /** A signed link for the exact ready version. `authTime` is the token's sign-in time: only a fresh sign-in may download. */
-    async issuePrivacyExportDownload(context:ProductionClinicalRequestContext,input:{jobId:string},authTimeMs:number,signal:AbortSignal):Promise<{jobId:string;url:string;expiresInSeconds:number;byteLength:number;objectChecksum:string}>{
+    async issuePrivacyExportDownload(context:ProductionClinicalRequestContext,input:{jobId:string},authTimeMs:number,signal:AbortSignal):Promise<PrivacyExportDownload>{
       const jobId=jobInput(input);
       if(!Number.isFinite(authTimeMs)||now()-authTimeMs>PRIVACY_EXPORT_FRESH_AUTH_MS||authTimeMs>now()+60_000)throw new OwnedStorageError('owner_required');
       const issued=object(await run(context,tx=>call(tx,'select clinical_core.issue_owned_privacy_export_download($1) as result',[clinicalUuid(jobId)])));
       if(issued.jobId!==jobId||typeof issued.objectKey!=='string'||!issued.objectKey.startsWith(privacyExportPrefix(context.actorPersonId))
         ||!version(issued.objectVersion)||typeof issued.objectChecksum!=='string'||!COMPOSITE.test(issued.objectChecksum)||!count(issued.byteLength))unavailable();
+      // The part digests and sizes let the receiver verify the delivered bytes with S3's composite semantics: they must
+      // account for every byte and reproduce the recorded composite before the link is issued.
+      const parts=exportParts(issued.partSha256s,issued.partBytes,issued.byteLength as number,issued.objectChecksum);
+      if(!parts)unavailable();
       if(!(await verified(issued.objectKey,issued.objectVersion as string,issued.byteLength as number,issued.objectChecksum,signal)))unavailable();
       const url=await store.signDownload(storage,issued.objectKey,issued.objectVersion as string,PRIVACY_EXPORT_DOWNLOAD_SECONDS,'alp-personal-storage-copy.json',signal);
       if(!/^https:\/\//.test(url))unavailable();
-      return {jobId,url,expiresInSeconds:PRIVACY_EXPORT_DOWNLOAD_SECONDS,byteLength:issued.byteLength as number,objectChecksum:issued.objectChecksum};
+      return {jobId,url,expiresInSeconds:PRIVACY_EXPORT_DOWNLOAD_SECONDS,byteLength:issued.byteLength as number,objectChecksum:issued.objectChecksum,parts};
     },
     /** Removes the owner's own finished jobs' objects and open uploads, certifying each only after the store lists nothing under its
      * key and no pass could still be writing (settlement); an unsettled or failed job counts as remaining and failures back off. */

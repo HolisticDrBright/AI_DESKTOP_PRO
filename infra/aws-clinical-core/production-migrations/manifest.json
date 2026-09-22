@@ -360,6 +360,10 @@
     {
       "version": "20260920180000",
       "file": "20260920180000_production_owned_privacy_export_cross_store.sql"
+    },
+    {
+      "version": "20260921010000",
+      "file": "20260921010000_production_owned_privacy_export_part_sizes.sql"
     }
   ]
 }

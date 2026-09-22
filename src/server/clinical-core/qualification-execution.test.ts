@@ -43,3 +43,19 @@ describe("qualification execution policy", () => {
     expect(markQualificationResponse(undefined, { statusCode: 200, body: "{}" })).toEqual({ statusCode: 200, body: "{}" });
   });
 });
+
+describe("observed execution", () => {
+  const marked = { get: (n: string) => (n === "x-clinical-execution" ? "qualification" : null) }, plain = { get: () => null };
+  test("classifies marked and unmarked responses, never an unmarked authorizer denial, and never promotes a run to activation evidence", async () => {
+    const { observeExecution, summariseExecution } = await import("./qualification-execution");
+    const q = new Set<string>(); observeExecution(q, marked, 200); observeExecution(q, marked, 503); observeExecution(q, plain, 401); observeExecution(q, plain, 403);
+    expect(summariseExecution(q)).toEqual({ execution: "qualification", unmarkedDenials: true });
+    const p = new Set<string>(); observeExecution(p, plain, 200); observeExecution(p, plain, 409);
+    expect(summariseExecution(p)).toEqual({ execution: "production", unmarkedDenials: false });
+    const m = new Set<string>(); observeExecution(m, plain, 200); observeExecution(m, marked, 200);
+    expect(summariseExecution(m).execution).toBe("mixed");
+    const d = new Set<string>(); observeExecution(d, plain, 401); observeExecution(d, plain, 403); observeExecution(d, plain, 0);
+    expect(summariseExecution(d)).toEqual({ execution: "unobserved", unmarkedDenials: true });
+    expect(Object.keys(summariseExecution(p))).not.toContain("productionActivationEvidence");
+  });
+});

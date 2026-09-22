@@ -103,7 +103,9 @@ if (process.argv[1] && /build-aws-qualification-parameters\.mjs$/.test(process.a
   for (const candidate of Object.keys(CANDIDATES)) {
     const content = JSON.stringify(qualificationParameters(candidate, loadTemplate(candidate)), null, 2) + '\n';
     const file = `${OUT}/${candidate}.example.json`;
-    if (check) { if (!existsSync(file) || readFileSync(file, 'utf8') !== content) { drift += 1; console.error(`qualification parameters out of date: ${file}`); } }
+    // Drift is compared on content, not line endings: a Windows checkout may carry CRLF (the files are pinned to LF in
+    // .gitattributes); any changed key, value or order still fails.
+    if (check) { if (!existsSync(file) || readFileSync(file, 'utf8').replace(/\r\n/g, '\n') !== content) { drift += 1; console.error(`qualification parameters out of date: ${file}`); } }
     else writeFileSync(file, content);
   }
   if (check && drift) process.exit(1);

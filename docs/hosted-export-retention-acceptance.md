@@ -24,23 +24,52 @@ Gateway authorizers, the real database and the real export bucket:
 The report (`dist/qualification/export-retention-acceptance-<time>.json`, exclusive-create) carries the
 source commit, the production migration release hash (recomputed from the built artifact), a hash of
 the configuration the run used, the AWS account it asserted, every step's outcome and status, the jobs
-it left behind (`retained`), and an evidence hash over everything but timestamps. `ok` requires every
-step to pass or be skipped for a stated reason and the ready step to have passed; a run against a
-deployment that refuses is therefore never `ok`.
+it left behind (`retained`), and an evidence hash over everything but timestamps.
+
+`ok` is the verdict, not a summary of what happened. The report carries `verdict`:
+
+| Field | Meaning |
+|---|---|
+| `mode` | `acceptance` (the CLI's default) makes **every** step mandatory; `exploratory` (`ACCEPTANCE_MODE=exploratory`) keeps a partial run honest and can never be read as acceptance |
+| `expectedExecution` | the execution that must have answered; the CLI passes `qualification` for a qualification target |
+| `mandatory` | the case names this mode requires to have **passed**; in acceptance mode that is all eleven steps, the stale sign-in and the three operator actions included |
+| `unmet` | the mandatory cases that did not pass, kept in the report |
+
+`ok` is true only when no step failed, `unmet` is empty and the observed execution is the expected one.
+A skipped mandatory case, a denied operator action, a missing second owner or stale-login token, or a
+mixed set of responses therefore cannot produce a pass, and the CLI's exit status is that verdict.
 
 The report also records which execution answered (`execution`: `production`, `qualification`, `mixed`
 or `unobserved`) from the `x-clinical-execution` marker that qualification candidates send on every
-response (`docs/aws-qualification-target.md`), and `productionActivationEvidence`, which is true only
-for a run answered by production responses alone. Both are inside the evidence hash: a qualification
-run is the qualification record and never production activation evidence.
+response (`docs/aws-qualification-target.md`), and `unmarkedDenials`, true when some 401/403 arrived
+without a marker. A missing marker on a 401/403 is **not** read as production: API Gateway answers an
+unauthorized request before the Lambda runs, so those responses are classified separately and count
+towards neither execution. There is no boolean that promotes a report into production activation
+evidence: the observed execution is a description of the run, inside the evidence hash, and a
+synthetic-account report is never production approval.
 
 ## Boundaries
 
-- The runner (`scripts/run-aws-export-retention-acceptance.ps1`) pins the account with
-  `aws sts get-caller-identity` against the deployment manifest and refuses account 173535830222; the
-  Node harness re-checks the asserted and observed account and refuses production whatever the
+- The target: the runner (`scripts/run-aws-export-retention-acceptance.ps1`) takes
+  `-QualificationTargetPath`, a filled copy of `infra/aws-clinical-core/qualification-target.example.json`,
+  and reads the API origin, account, region, database, export bucket, source commit and migration
+  release hash from it alone. It consults no foundation stack: the previous runner took the API origin
+  from whatever foundation was named, and the documented name was the staging foundation, so the
+  documented command drove the existing staging API. The manifest names the staging foundation stack,
+  staging API origin and staging database it must refuse, and they are refused by name. Before any
+  request the runner verifies the STS account (never 173535830222), the checkout's commit, the
+  dedicated qualification foundation (PHI false; its `QualificationExecution=disabled` output describes
+  prepared infrastructure and is not candidate evidence) and each candidate stack this run depends on:
+  `PhiAllowed=false`, `Activation=blocked`, `QualificationExecution=enabled`, the manifest's
+  `SourceCommit`, `DatabaseName` and `ApiId`. The Node CLI loads the same manifest itself
+  (`qualification-target-manifest.ts`), so a direct CLI run cannot bypass the binding, and refuses an
+  ambient `CLINICAL_API_ORIGIN` or `CLINICAL_DATABASE_NAME` that disagrees with it rather than obeying
+  it. The harness re-checks the asserted and observed account and refuses production whatever the
   caller says. The API origin must be an `execute-api` host; tokens must be distinct JWTs; tokens are
   read from the process environment and removed afterwards; no token or URL appears in the report.
+  `scripts/test-qualification-acceptance-runners.ps1` proves all of this credential-free in CI (27
+  cases: the staging foundation, API and database, the production account, another account, a stale
+  checkout, an unfilled example, a missing or wrongly posed candidate stack).
 - Fixtures: the run creates one export job for the fixture consumer and cancels it. Its objects are
   removed by the owner's cleanup pass inside the run when the settlement window allows, or reported
   under `retained` with the honest state for the operator pass or the sweep to finish. The run never
@@ -52,15 +81,23 @@ run is the qualification record and never production activation evidence.
 
 ## Running it
 
-After migrations 79 to 97 are applied and the personal-storage and privacy-operations candidates are
-redeployed with export parameters reviewed (or left empty, in which case the run reports
-`not_configured`):
+After the qualification database is applied and seeded (`docs/aws-qualification-target.md`) and the
+personal-storage and privacy-operations candidates are deployed with the qualification execution
+profile and reviewed export parameters, fill a copy of
+`infra/aws-clinical-core/qualification-target.example.json` (keep it out of the repository) and run:
 
 ```powershell
-# tokens for the fixture consumer, an unassigned/second consumer (optional) and a workforce operator, as in run-aws-synthetic-live-acceptance.ps1
-$env:CLINICAL_CONSUMER_ID_TOKEN = ...; $env:CLINICAL_WORKFORCE_ID_TOKEN = ...; $env:CLINICAL_FOREIGN_CONSUMER_ID_TOKEN = ...
-.\scripts\run-aws-export-retention-acceptance.ps1 -FoundationStackName ai-clinical-core-synthetic-staging -DeploymentManifestPath .\infra\aws-clinical-core\deployment-manifest.json -ConfirmSyntheticOnly
+# tokens for the fixture consumer, a second consumer, a workforce operator, and a legitimately issued
+# consumer token whose sign-in is older than five minutes, as in run-aws-synthetic-live-acceptance.ps1
+$env:CLINICAL_CONSUMER_ID_TOKEN = ...; $env:CLINICAL_WORKFORCE_ID_TOKEN = ...
+$env:CLINICAL_FOREIGN_CONSUMER_ID_TOKEN = ...; $env:CLINICAL_STALE_CONSUMER_ID_TOKEN = ...
+.\scripts\run-aws-export-retention-acceptance.ps1 -QualificationTargetPath .\infra\aws-clinical-core\qualification-target.json `
+  -DeploymentManifestPath .\infra\aws-clinical-core\deployment-manifest.json -ConfirmSyntheticOnly
 ```
+
+Add `-Mode exploratory` for a partial run before every reviewed row exists; its report says
+`verdict.mode: exploratory` and is never acceptance evidence. Acceptance mode requires the second
+consumer and stale sign-in tokens, because those cases are mandatory.
 
 The unit test (`export-retention-acceptance.test.ts`) pins the request sequence and grading with a
 fictional transport: a full pass, delivery not configured, a retained copy behind a wrong state, and
