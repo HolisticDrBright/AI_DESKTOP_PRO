@@ -41,23 +41,27 @@ enforces `service_person_id <> approved_by`; the module also refuses it before t
 
 - pins the AWS account with `aws sts get-caller-identity` against the deployment manifest and the
   region against the manifest;
-- reads `PhiAllowed`, `DatabaseClusterArn`, `DatabaseSecretArn` and `DatabaseName` from the
-  foundation stack outputs (nothing is typed in by hand, no secret is printed);
+- takes the database from the reviewed qualification target manifest with `-QualificationTargetPath`
+  (the manifest's qualification database, never the staging database a foundation stack exports; the
+  qualification foundation is read only for its PHI posture), or, with `-FoundationStackName`, reads
+  `PhiAllowed`, `DatabaseClusterArn`, `DatabaseSecretArn` and `DatabaseName` from that stack's outputs
+  for a staging or production release; exactly one of the two must be named, and nothing is typed in by
+  hand or printed;
 - runs through the administrative RDS Data path with purpose `reviewed_retention_service_release`
   (the table is closed to the API role);
 - removes every variable it set from the process afterwards.
 
 ```powershell
 # Read-only: every release row, live or revoked, and the count of live rows.
-.\scripts\release-aws-retention-service.ps1 -Command inspect -FoundationStackName <stack> -DeploymentManifestPath <manifest.json>
+.\scripts\release-aws-retention-service.ps1 -Command inspect -QualificationTargetPath <qualification-target.json> -DeploymentManifestPath <manifest.json>
 
 # Insert the one live release. Refused unless the operating policy approval is confirmed here and the hash matches the manifest.
-.\scripts\release-aws-retention-service.ps1 -Command release -FoundationStackName <stack> -DeploymentManifestPath <manifest.json> `
+.\scripts\release-aws-retention-service.ps1 -Command release -QualificationTargetPath <qualification-target.json> -DeploymentManifestPath <manifest.json> `
   -ReleaseVersion ops-2026-09-20 -ServicePersonId <uuid> -ServiceSubject <cognito sub> -ApprovedByPersonId <uuid> `
   -PolicyEvidenceSha256 <64 hex> -ConfirmRetentionOperatingPolicyApproved
 
 # End it. The next scheduled sweep is refused and RetentionRefusedAlarm fires until a new version is released.
-.\scripts\release-aws-retention-service.ps1 -Command revoke -FoundationStackName <stack> -DeploymentManifestPath <manifest.json> `
+.\scripts\release-aws-retention-service.ps1 -Command revoke -QualificationTargetPath <qualification-target.json> -DeploymentManifestPath <manifest.json> `
   -ReleaseVersion ops-2026-09-20 -ConfirmRetentionOperatingPolicyApproved
 ```
 
@@ -101,8 +105,10 @@ refused by the sweep too.
    with the deployment evidence.
 6. First sweep within the hour: `SweepRefused` drops to 0, `Cleaned`, `CleanupPending`, `Settling`,
    `OldestOverdueSeconds` appear in `ALP/PrivacyExportRetention`; `RetentionRefusedAlarm` clears. Run
-   `scripts/run-aws-export-retention-acceptance.ps1` afterwards: its cancelled fixture job should be
-   removed by the sweep once settled, and its report is the first hosted evidence.
+   `scripts/run-aws-export-retention-acceptance.ps1` afterwards (with `-QualificationTargetPath`, the
+   reviewed qualification target manifest; it never reads a foundation stack for its target): its
+   cancelled fixture job should be removed by the sweep once settled, and its report is the first
+   hosted evidence.
 7. Any later change of policy, identity or approver: `revoke`, then `release` a new version. Rows are
    never deleted.
 

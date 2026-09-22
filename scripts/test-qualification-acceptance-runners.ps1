@@ -6,10 +6,12 @@ $ErrorActionPreference = 'Stop'
 # qualification target manifest.
 $exportRunner = Join-Path $PSScriptRoot 'run-aws-export-retention-acceptance.ps1'
 $recordingRunner = Join-Path $PSScriptRoot 'run-aws-recording-acceptance.ps1'
-foreach ($file in @($exportRunner, $recordingRunner, (Join-Path $PSScriptRoot 'qualification-target-verify.ps1'))) {
+# Every operator script must parse. A script that does not parse cannot refuse anything: the retention service release
+# runner carried an invalid "$Command:" interpolation and would have failed at load, whatever it was asked to do.
+foreach ($file in (Get-ChildItem -LiteralPath $PSScriptRoot -Filter '*.ps1' | Sort-Object Name)) {
   $tokens = $null; $parseErrors = $null
-  [System.Management.Automation.Language.Parser]::ParseFile($file, [ref]$tokens, [ref]$parseErrors) > $null
-  if ($parseErrors.Count) { throw "acceptance_runner_parse_failed: $file" }
+  [System.Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$tokens, [ref]$parseErrors) > $null
+  if ($parseErrors.Count) { throw ("powershell_parse_failed: " + $file.Name + " - " + $parseErrors[0].Message) }
 }
 
 $work = Join-Path ([System.IO.Path]::GetTempPath()) ("qualification-runner-test-" + [guid]::NewGuid().ToString('N'))
