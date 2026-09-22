@@ -4,6 +4,7 @@ import type { LongitudinalContext, PatientContext } from "./aws-lab-analysis-api
 import { buildDirectionalLabContext } from "./aws-lab-directional-context";
 import {loadReviewedKnowledge} from './aws-reviewed-knowledge';
 import {KNOWLEDGE_MODEL_BOUNDARY,assertKnowledgeCitations,type KnowledgeContext} from './reviewed-knowledge';
+import { assertModelCallsPermitted, MODEL_VENDOR_AUTHORITY_FIELD, parseModelVendorAuthority, phiAllowedFromEnvironment } from "./model-vendor-authority";
 
 const secrets = new SecretsManagerClient({});
 const OPENAI_ORIGIN = "https://api.openai.com";
@@ -309,9 +310,17 @@ function required(name: string): string {
   return value;
 }
 
-export function parseOpenAISecret(secretString: string): string {
+/**
+ * The only way any path obtains the vendor key, so the authority to call the vendor is checked here and nowhere else.
+ * A key is returned only when a call may be sent right now; otherwise this throws a ModelVendorAuthorityRefusal whose
+ * category names why. Nothing caches the result, so revoking the authority in the secret stops the next call.
+ */
+export function parseOpenAISecret(secretString: string, phiAllowed = phiAllowedFromEnvironment()): string {
   const trimmed = secretString.trim();
-  if (trimmed.startsWith("sk-") && trimmed.length >= 24) return trimmed;
+  if (trimmed.startsWith("sk-") && trimmed.length >= 24) {
+    assertModelCallsPermitted({ authority: null, phiAllowed });
+    return trimmed;
+  }
   let parsed: unknown;
   try {
     parsed = JSON.parse(trimmed);
@@ -320,12 +329,14 @@ export function parseOpenAISecret(secretString: string): string {
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("openai_secret_malformed");
   const record = parsed as Record<string, unknown>;
-  const allowed = new Set(["OPENAI_API_KEY", "apiKey", LEGACY_SECRET_FIELD]);
+  const allowed = new Set(["OPENAI_API_KEY", "apiKey", LEGACY_SECRET_FIELD, MODEL_VENDOR_AUTHORITY_FIELD]);
   if (Object.keys(record).some((key) => !allowed.has(key))) throw new Error("openai_secret_malformed");
   const candidate = record.OPENAI_API_KEY ?? record.apiKey ?? record[LEGACY_SECRET_FIELD];
   if (typeof candidate !== "string" || !candidate.startsWith("sk-") || candidate.length < 24) {
     throw new Error("openai_secret_malformed");
   }
+  const authority = MODEL_VENDOR_AUTHORITY_FIELD in record ? parseModelVendorAuthority(record[MODEL_VENDOR_AUTHORITY_FIELD]) : null;
+  assertModelCallsPermitted({ authority, phiAllowed });
   return candidate;
 }
 

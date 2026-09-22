@@ -1,6 +1,7 @@
 if (typeof window !== 'undefined') throw new Error('aws-recording-drafting-openai is server-only');
 import { GetSecretValueCommand, SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
 import { parseOpenAISecret } from './aws-lab-openai';
+import { ModelVendorAuthorityRefusal } from './model-vendor-authority';
 import { RecordingDraftingError, type DraftingProvider } from './recording-drafting';
 
 const RESPONSES_URL = 'https://api.openai.com/v1/responses';
@@ -55,7 +56,9 @@ export function createAwsDraftingProvider(input: { secretArn: string; secrets?: 
   async function apiKey(): Promise<string> {
     const response = await secrets.send(new GetSecretValueCommand({ SecretId: input.secretArn }));
     if (typeof response.SecretString !== 'string') throw new RecordingDraftingError('provider_unavailable');
-    try { return parseOpenAISecret(response.SecretString); } catch { throw new RecordingDraftingError('provider_unavailable'); }
+    // A withdrawn vendor authority reads as an unavailable provider to the reviewer; the operator log keeps the reason.
+    try { return parseOpenAISecret(response.SecretString); }
+    catch (error) { if (error instanceof ModelVendorAuthorityRefusal) console.error(error.category); throw new RecordingDraftingError('provider_unavailable'); }
   }
   return {
     async draft(request, signal) {

@@ -65,6 +65,7 @@
     "build:aws-production-migration-operator": "node scripts/build-aws-production-migration-operator.mjs",
     "build:aws-retention-service-release-operator": "node scripts/build-aws-retention-service-release-operator.mjs",
     "build:aws-qualification-target-operator": "node scripts/build-aws-qualification-target-operator.mjs",
+    "build:aws-model-vendor-authority-operator": "node scripts/build-aws-model-vendor-authority-operator.mjs",
     "build:aws-qualification-parameters": "node scripts/build-aws-qualification-parameters.mjs",
     "check:aws-qualification-parameters": "node scripts/build-aws-qualification-parameters.mjs --check",
     "check:aws-production-clinical-core": "node scripts/check-aws-production-clinical-core.mjs",
