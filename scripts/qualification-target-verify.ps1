@@ -85,7 +85,7 @@ function Assert-QualificationFoundation($Target, [string]$Region) {
   Write-Host "Verified qualification foundation $($Target.foundationStackName) (prepared infrastructure only; not candidate evidence)."
 }
 
-function Assert-QualificationStacks($Target, [string[]]$Candidates, [string]$Region) {
+function Assert-QualificationStacks($Target, [string[]]$Candidates, [string]$Region, [ValidateSet('qualification','drain')][string]$Posture = 'qualification') {
   # Every candidate the run depends on must be deployed from the target's commit with PHI false, production activation
   # blocked and qualification execution enabled, against the target's API and database. A stack that reports otherwise
   # (or the staging foundation, or a missing stack) stops the run before any request.
@@ -101,14 +101,23 @@ function Assert-QualificationStacks($Target, [string[]]$Candidates, [string]$Reg
     $parameters = @{}
     foreach ($entry in @($stack.Parameters)) { if ($entry) { $parameters[$entry.ParameterKey] = $entry.ParameterValue } }
     if ($outputs['PhiAllowed'] -ne 'false') { throw "qualification_target_refused:stack_phi.$candidate" }
-    if ($outputs['Activation'] -ne 'blocked') { throw "qualification_target_refused:stack_activation.$candidate" }
-    if ($outputs['QualificationExecution'] -ne 'enabled') { throw "qualification_target_refused:stack_execution.$candidate" }
-    if ($outputs['SourceCommit'] -ne $Target.sourceCommit) { throw "qualification_target_refused:stack_source.$candidate" }
+    if ($Posture -eq 'drain') {
+      # The voice shutdown posture: the candidate serves no one, and qualification execution is refused by policy while draining.
+      if ($outputs['Activation'] -ne 'draining') { throw "qualification_target_refused:stack_activation.$candidate" }
+      if ($outputs['QualificationExecution'] -ne 'disabled') { throw "qualification_target_refused:stack_execution.$candidate" }
+    } else {
+      if ($outputs['Activation'] -ne 'blocked') { throw "qualification_target_refused:stack_activation.$candidate" }
+      if ($outputs['QualificationExecution'] -ne 'enabled') { throw "qualification_target_refused:stack_execution.$candidate" }
+    }
+    # owned-lab and owned-voice attach to the shared API and export no SourceCommit; the others must export the manifest's.
+    if ($candidate -in @('owned-lab','owned-voice')) {
+      if ($outputs.ContainsKey('SourceCommit') -and $outputs['SourceCommit'] -ne $Target.sourceCommit) { throw "qualification_target_refused:stack_source.$candidate" }
+    } elseif ($outputs['SourceCommit'] -ne $Target.sourceCommit) { throw "qualification_target_refused:stack_source.$candidate" }
     if ($stack.StackStatus -notin @('CREATE_COMPLETE','UPDATE_COMPLETE','UPDATE_ROLLBACK_COMPLETE','IMPORT_COMPLETE','IMPORT_ROLLBACK_COMPLETE')) { throw "qualification_target_refused:stack_status.$candidate" }
     # A database or API name does not identify one database or API: compare the resources themselves. Every candidate
     # carries the cluster, secret, database and account; the API and the buckets are required of the candidates that use them.
     $required = [ordered]@{ DatabaseClusterArn = $Target.databaseClusterArn; DatabaseSecretArn = $Target.databaseSecretArn; DatabaseName = $Target.databaseName; QualificationAccountId = $Target.awsAccountId }
-    if ($candidate -notin @('owned-lab','owned-voice')) { $required['ApiId'] = $Target.apiId }
+    if ($candidate -in @('owned-lab','owned-voice')) { $required['ClinicalApiId'] = $Target.apiId } else { $required['ApiId'] = $Target.apiId }
     if ($candidate -in @('personal-storage','privacy-operations')) { $required['ExportBucketName'] = $Target.exportBucket }
     if ($candidate -in @('recording-capture','recording-transcription','recording-drafting','recording-cleanup-execution')) { $required['RecordingBucket'] = $Target.recordingBucket }
     foreach ($key in $required.Keys) {
@@ -116,6 +125,7 @@ function Assert-QualificationStacks($Target, [string[]]$Candidates, [string]$Reg
       if ($parameters[$key] -ne $required[$key]) { throw "qualification_target_refused:stack_parameter.$candidate.$key" }
     }
     if ($parameters.ContainsKey('SourceCommit') -and $parameters['SourceCommit'] -ne $Target.sourceCommit) { throw "qualification_target_refused:stack_source.$candidate" }
+    if ($Posture -eq 'drain') { Write-Host "Verified draining candidate $name ($candidate); it serves no one."; continue }
     $expectedSubjects = Get-QualificationSubjects $Target
     $listed = @()
     if ($parameters.ContainsKey('QualificationIdentitySubjects')) { $listed = @($parameters['QualificationIdentitySubjects'] -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ }) }

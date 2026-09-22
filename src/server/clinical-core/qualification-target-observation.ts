@@ -1,6 +1,6 @@
 if (typeof window !== "undefined") throw new Error("clinical-core/qualification-target-observation is server-only.");
 import { execFileSync } from "node:child_process";
-import { assertQualificationStackOutputs, designatedSubjects, QualificationTargetManifestError, type QualificationTargetManifest } from "./qualification-target-manifest";
+import { assertQualificationStackOutputs, designatedSubjects, QualificationTargetManifestError, type QualificationStackPosture, type QualificationTargetManifest } from "./qualification-target-manifest";
 
 /**
  * What a hosted run observed for itself. The acceptance CLIs used to take the account from
@@ -31,7 +31,7 @@ function run(runner: Runner, file: string, args: string[], category: Qualificati
 }
 
 /** Observes the live target for the candidates this run needs. Nothing is written and nothing but read-only calls are made. */
-export function observeQualificationTarget(manifest: QualificationTargetManifest, candidates: readonly string[], options: { runner?: Runner } = {}): QualificationObservation {
+export function observeQualificationTarget(manifest: QualificationTargetManifest, candidates: readonly string[], options: { runner?: Runner; posture?: QualificationStackPosture } = {}): QualificationObservation {
   const runner = options.runner ?? defaultRunner;
   const sourceCommit = run(runner, "git", ["rev-parse", "HEAD"], "target_source_mismatch", "git");
   if (sourceCommit !== manifest.sourceCommit) throw new QualificationTargetManifestError("target_source_mismatch", "checkout");
@@ -47,7 +47,7 @@ export function observeQualificationTarget(manifest: QualificationTargetManifest
     const stackName = manifest.stacks[candidate];
     if (!stackName || stackName === manifest.refused.stagingFoundationStackName || stackName === manifest.foundationStackName) throw new QualificationTargetManifestError("target_stack_refused", candidate);
     const stack = describe(runner, stackName, manifest.awsRegion, candidate);
-    assertQualificationStackOutputs(candidate, stack.outputs, manifest, stack.parameters, stack.status);
+    assertQualificationStackOutputs(candidate, stack.outputs, manifest, stack.parameters, stack.status, options.posture ?? "qualification");
     stacks.push({ candidate, stackName, stackStatus: stack.status });
   }
   return { source: "observed", awsAccountId, sourceCommit, stacks };

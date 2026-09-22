@@ -120,7 +120,35 @@ The [worker backlog/deadline repair](voice-worker-backlog-budget.md) now paginat
 due jobs and carries a fresh invocation deadline into cleanup SDK calls. It does
 not replace the independent whole-deployment inventory above or certify erasure.
 
-Remaining: actual IAM/provider and deployment-transition acceptance, independent
+## Hosted acceptance of the transition (source ready, not executed)
+
+`voice-shutdown-acceptance.ts` qualifies the transition itself, which nothing did
+before: that a deployment set to `draining` really refuses every public request
+with `voice_cleanup_only` (starting work, reading a job, and the owner's own
+cancellation, which the cleanup worker performs on their behalf), that a workforce
+token gets no privileged way back in, that **no response carries the qualification
+marker** (the execution policy refuses qualification while draining, so a marked
+response means a deployment serving the fictional identities in a state that is
+supposed to serve nobody), and that the operator's two read-only inventory reports
+are `owned-voice-inventory/1` with `deletionCertified` and `atomicSnapshot` false
+and no count grown between them.
+
+Run it with `scripts/run-aws-voice-shutdown-acceptance.ps1 -QualificationTargetPath
+<manifest> -DeploymentManifestPath <manifest> -InventoryPath <two-reports.json>
+-ConfirmSyntheticOnly`. It is bound to the reviewed qualification target like the
+other harnesses, and it verifies the owned-voice stack's **drain** posture before
+asking the deployment anything: PHI false, `Activation=draining`,
+`QualificationExecution=disabled`, the manifest's cluster, secret, database and
+shared API. `-Mode exploratory` records the refusals without the inventories and
+can never read as acceptance.
+
+The report states `certifies: {deletion: false, atomicSnapshot: false}` on its
+face and lists what the latest inventory still holds under `retained`. Present
+work is honest; it is simply not completion. Completion stays a reviewed human
+step, and nothing here shortens it.
+
+Remaining: actual IAM/provider and deployment-transition acceptance (this harness
+is the instrument for the transition part; it has not been run), independent
 inventory completion review, backlog/load/failure alarms, operator/legal-hold
 decisions and full account privacy fulfillment. Clinical holds and source checks
 are unchanged. No paid mobile build, real data or PHI activation.

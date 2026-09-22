@@ -50,6 +50,7 @@ the production schema. The isolated target qualifies the artifact that productio
 | 3 | `-Command apply -ConfirmQualificationTarget` | Builds and gates the artifact, builds the migration operator, runs its `inspect` against the qualification database and applies all 100 migrations only when `safeToApply`. The staging name never reaches the operator. | Any mismatched or unknown ledger entry; a non-empty clinical dataset; a table or contract count other than the pinned artifact counts. |
 | 4 | `-Command fixtures -ConfirmQualificationTarget -SyntheticManifestPath <manifest>` | Inserts the fictional fixtures (below) after re-checking that the target's ledger equals the artifact. | A manifest that is not synthetic-only; a ledger with anything missing, mismatched or unknown (so the staging database is refused by its own history); a manifest account other than the pinned account. |
 | 5 | Deploy candidates with `DatabaseName=<qualification name>` | Identity, owned-lab, owned-voice, personal-storage, privacy-operations, recording candidates, in the dependency order of the handoff table. | Unchanged candidate refusals: export delivery, cleanup, retention schedule, transcription and drafting stay blocked until their reviewed parameters exist. |
+| 6b | Qualify the voice shutdown transition (when the owned-voice candidate is set to drain) | `run-aws-voice-shutdown-acceptance.ps1` with the target manifest and two read-only inventory reports; the stack must report `Activation=draining` with qualification execution disabled. | A candidate that is not draining, one that still enables qualification execution while draining, any response that is not the `voice_cleanup_only` refusal, and any claim of erasure. |
 | 6 | Run the hosted harnesses against the qualification API | `run-aws-export-retention-acceptance.ps1` and `run-aws-recording-acceptance.ps1`, each with `-QualificationTargetPath` (below), retention `release` then the sweep; `not_configured` is never a pass. | The staging foundation, API and database by name; any candidate stack that is not PHI-false, activation-blocked, qualification-enabled and deployed from the manifest's commit against the manifest's API and database. |
 
 Rollback of the target is `drop database` by a human after review; the tooling never drops. Rollback
@@ -202,6 +203,11 @@ and a parameter a candidate uses but does not carry is a refusal rather than a p
 that is prepared infrastructure, not candidate execution evidence, and the candidates are verified one
 by one.
 
+A filled manifest can be checked before anything is deployed, with no AWS access at all:
+`npm run check:aws-qualification-target -- <file>` validates the same shape the runners do and prints what the run would
+bind to. With no argument it checks the committed example, which must stay a valid shape and must stay refused as a run
+target because of its placeholders; CI runs that.
+
 Both CLIs load the same manifest themselves (`qualification-target-manifest.ts`), so running a CLI
 directly cannot bypass the binding; an ambient `CLINICAL_API_ORIGIN` or `CLINICAL_DATABASE_NAME` that
 disagrees with the manifest is refused rather than obeyed. An acceptance verdict, moreover, is issued
@@ -216,7 +222,7 @@ on asserted values needs `ACCEPTANCE_MODE=exploratory`, and its report line says
 the qualification database name, the designated subjects and the database's migration ledger against
 the built artifact before writing the encounter, so the populated staging database is refused by its
 own history. `scripts/test-qualification-acceptance-runners.ps1` runs all of these refusals
-credential-free in CI (45 cases, no AWS call, no request, no fixture write), alongside the 32-case
+credential-free in CI (52 cases, no AWS call, no request, no fixture write), alongside the 32-case
 name-refusal test for the preparation runner.
 
 ### Deploying the qualification profile (owner, Windows terminal)

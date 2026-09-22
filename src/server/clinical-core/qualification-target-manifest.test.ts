@@ -21,7 +21,7 @@ describe("qualification target manifest", () => {
     expect((example.refused as Record<string, string>).stagingApiOrigin).toBe("https://wxv734oi12.execute-api.us-east-2.amazonaws.com");
     expect((example.refused as Record<string, string>).stagingFoundationStackName).toBe("ai-clinical-core-synthetic-staging");
     const m = manifest();
-    expect(m.apiOrigin).toBe("https://6zt8e9qz04.execute-api.us-east-2.amazonaws.com"); expect(m.foundationStackName).toBe("ai-clinical-core-qualification-foundation"); expect(Object.keys(m.stacks)).toHaveLength(7);
+    expect(m.apiOrigin).toBe("https://6zt8e9qz04.execute-api.us-east-2.amazonaws.com"); expect(m.foundationStackName).toBe("ai-clinical-core-qualification-foundation"); expect(Object.keys(m.stacks)).toHaveLength(10);
   });
   test("the staging API, the staging database, the staging foundation stack, the production account and a foreign cluster are refused", () => {
     refuse({ apiId: "wxv734oi12", apiOrigin: "https://wxv734oi12.execute-api.us-east-2.amazonaws.com" }, "target_staging_refused");
@@ -102,8 +102,20 @@ describe("qualification target manifest", () => {
     check("personal-storage", {}, "ROLLBACK_COMPLETE");
     check("personal-storage", {}, "UPDATE_IN_PROGRESS");
     check("unknown-candidate", {});
-    // The candidates without their own API or buckets are not asked for them.
-    expect(() => assertQualificationStackOutputs("owned-lab", outputs, m, { ...parameters(), ApiId: undefined, ExportBucketName: undefined }, "CREATE_COMPLETE")).not.toThrow();
+    // owned-lab and owned-voice attach to the shared API as ClinicalApiId and export no SourceCommit, so they are asked
+    // for what they actually carry, not for the other candidates' parameter names.
+    const shared = { ...parameters(), ApiId: undefined, ExportBucketName: undefined, RecordingBucket: undefined, SourceCommit: undefined, ClinicalApiId: "6zt8e9qz04" };
+    const sharedOutputs = { PhiAllowed: "false", Activation: "blocked", QualificationExecution: "enabled" };
+    expect(() => assertQualificationStackOutputs("owned-lab", sharedOutputs, m, shared, "CREATE_COMPLETE")).not.toThrow();
+    expect(() => assertQualificationStackOutputs("owned-voice", sharedOutputs, m, shared, "CREATE_COMPLETE")).not.toThrow();
+    expect(() => assertQualificationStackOutputs("owned-voice", sharedOutputs, m, { ...shared, ClinicalApiId: "wxv734oi12" }, "CREATE_COMPLETE")).toThrow("target_stack_refused");
+    expect(() => assertQualificationStackOutputs("owned-voice", { ...sharedOutputs, SourceCommit: "c".repeat(40) }, m, shared, "CREATE_COMPLETE")).toThrow("target_stack_refused");
+    // The drain posture is the voice shutdown's: draining, qualification execution disabled, and no identity served.
+    const draining = { PhiAllowed: "false", Activation: "draining", QualificationExecution: "disabled" };
+    expect(() => assertQualificationStackOutputs("owned-voice", draining, m, { ...shared, QualificationIdentitySubjects: undefined }, "CREATE_COMPLETE", "drain")).not.toThrow();
+    expect(() => assertQualificationStackOutputs("owned-voice", sharedOutputs, m, shared, "CREATE_COMPLETE", "drain")).toThrow("target_stack_refused");
+    expect(() => assertQualificationStackOutputs("owned-voice", { ...draining, QualificationExecution: "enabled" }, m, shared, "CREATE_COMPLETE", "drain")).toThrow("target_stack_refused");
+    expect(() => assertQualificationStackOutputs("personal-storage", outputs, m, parameters(), "CREATE_COMPLETE", "drain")).toThrow("target_stack_refused");
     // A retention service subject, when the manifest names one, must be served too.
     const withService = validateQualificationTargetManifest({ ...filled(), identitySubjects: { ...(filled().identitySubjects as Record<string, string>), retentionService: "77777777-8888-4999-8aaa-bbbbbbbbbbbb" } });
     expect(() => assertQualificationStackOutputs("personal-storage", outputs, withService, parameters(), "CREATE_COMPLETE")).toThrow("target_stack_refused");

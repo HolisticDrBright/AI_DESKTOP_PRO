@@ -29,9 +29,10 @@ $target = [ordered]@{
   sourceCommit = $commit; migrationReleaseHash = ('b' * 64)
   identitySubjects = [ordered]@{ consumer = '11111111-2222-4333-8444-555555555555'; workforce = '66666666-7777-4888-8999-000000000000'; foreignConsumer = '22222222-3333-4444-8555-666666666666' }
   stacks = [ordered]@{ 'personal-storage' = 'ai-clinical-core-qualification-personal-storage'; 'privacy-operations' = 'ai-clinical-core-qualification-privacy-operations'
+    'owned-lab' = 'ai-clinical-core-qualification-owned-lab'; 'owned-voice' = 'ai-clinical-core-qualification-owned-voice'
     'recording-authority' = 'ai-clinical-core-qualification-recording-authority'; 'recording-capture' = 'ai-clinical-core-qualification-recording-capture'
     'recording-transcription' = 'ai-clinical-core-qualification-recording-transcription'; 'recording-drafting' = 'ai-clinical-core-qualification-recording-drafting'
-    'recording-cleanup-review' = 'ai-clinical-core-qualification-recording-cleanup-review' }
+    'recording-cleanup-review' = 'ai-clinical-core-qualification-recording-cleanup-review'; 'recording-cleanup-execution' = 'ai-clinical-core-qualification-recording-cleanup-execution' }
   refused = [ordered]@{ stagingFoundationStackName = 'ai-clinical-core-synthetic-staging'; stagingApiOrigin = 'https://wxv734oi12.execute-api.us-east-2.amazonaws.com'; stagingDatabaseName = 'clinical_core' }
   reviewedAt = '2026-09-21T00:00:00Z'
 }
@@ -201,7 +202,48 @@ Invoke-Case 'exploratory without a stale sign-in token' { Export-Run $good 'expl
 if ($global:Selected.mode -ne 'exploratory') { throw 'exploratory mode was not passed through' }
 $global:StaleToken = $true
 
-# 5. The retention service release is bound the same way: the row is written to the qualification database the manifest
+# 5. The voice shutdown runner expects the drain posture, not the qualification one, and needs two inventories.
+$voiceRunner = Join-Path $PSScriptRoot 'run-aws-voice-shutdown-acceptance.ps1'
+$inventoryFile = Join-Path $work 'inventories.json'
+'[{"version":"owned-voice-inventory/1","atomicSnapshot":false,"deletionCertified":false,"counts":{"jobMetadata":0,"uncleanJobs":0,"objectVersions":0,"providerJobs":0},"fingerprint":"aaaa","observedAt":"2026-09-21T10:00:00Z"}]' | Set-Content -LiteralPath $inventoryFile -Encoding utf8
+function Voice-Run([string]$targetFile, [string]$mode = 'acceptance', [string]$inventory = $inventoryFile) {
+  if ($inventory) { & $voiceRunner -QualificationTargetPath $targetFile -DeploymentManifestPath $deploymentManifest -InventoryPath $inventory -Mode $mode -ConfirmSyntheticOnly }
+  else { & $voiceRunner -QualificationTargetPath $targetFile -DeploymentManifestPath $deploymentManifest -Mode $mode -ConfirmSyntheticOnly }
+}
+$voiceStack = $target.stacks['owned-voice']
+if (-not $voiceStack) { $voiceStack = 'ai-clinical-core-qualification-owned-voice' }
+function global:DrainingVoiceStack([hashtable]$Patch = @{}) {
+  $outputs = [ordered]@{ PhiAllowed = 'false'; Activation = 'draining'; QualificationExecution = 'disabled' }
+  $parameters = [ordered]@{ DatabaseClusterArn = 'arn:aws:rds:us-east-2:588966314750:cluster:ai-clinical-core-synthetic-clinicaldatabasecluster-lftvrccuflxa'
+    DatabaseSecretArn = 'arn:aws:secretsmanager:us-east-2:588966314750:secret:fictional-qualification-AbCdEf'
+    DatabaseName = 'clinical_core_qualification'; QualificationAccountId = '588966314750'; ClinicalApiId = '6zt8e9qz04' }
+  $status = 'CREATE_COMPLETE'
+  foreach ($key in $Patch.Keys) {
+    if ($key -eq 'StackStatus') { $status = $Patch[$key]; continue }
+    if ($outputs.Contains($key)) { $outputs[$key] = $Patch[$key]; continue }
+    if ($null -eq $Patch[$key]) { $parameters.Remove($key) } else { $parameters[$key] = $Patch[$key] }
+  }
+  $body = [ordered]@{ StackStatus = $status
+    Outputs = @($outputs.Keys | ForEach-Object { [ordered]@{ OutputKey = $_; OutputValue = $outputs[$_] } })
+    Parameters = @($parameters.Keys | ForEach-Object { [ordered]@{ ParameterKey = $_; ParameterValue = $parameters[$_] } }) }
+  return ($body | ConvertTo-Json -Depth 6 -Compress)
+}
+$global:StackOutputs[$voiceStack] = (DrainingVoiceStack)
+Invoke-Case 'the voice shutdown run accepts a draining candidate' { Voice-Run $good } $null
+if ($global:Selected.target -ne $good -or $global:Selected.mode -ne 'acceptance') { throw 'voice shutdown runner passed the wrong binding' }
+$global:StackOutputs[$voiceStack] = (DrainingVoiceStack @{ Activation = 'blocked' })
+Invoke-Case 'a voice candidate that is not draining' { Voice-Run $good } 'qualification_target_refused:stack_activation.owned-voice'
+$global:StackOutputs[$voiceStack] = (DrainingVoiceStack @{ QualificationExecution = 'enabled' })
+Invoke-Case 'a draining voice candidate that still enables qualification execution' { Voice-Run $good } 'qualification_target_refused:stack_execution.owned-voice'
+$global:StackOutputs[$voiceStack] = (DrainingVoiceStack @{ ClinicalApiId = 'wxv734oi12' })
+Invoke-Case 'a draining voice candidate on the staging API' { Voice-Run $good } 'qualification_target_refused:stack_parameter.owned-voice.ClinicalApiId'
+$global:StackOutputs[$voiceStack] = (DrainingVoiceStack @{ DatabaseName = 'clinical_core' })
+Invoke-Case 'a draining voice candidate on the staging database' { Voice-Run $good } 'qualification_target_refused:stack_parameter.owned-voice.DatabaseName'
+$global:StackOutputs[$voiceStack] = (DrainingVoiceStack)
+Invoke-Case 'voice shutdown acceptance without inventories' { Voice-Run $good 'acceptance' '' } 'two read-only inventory reports'
+Invoke-Case 'voice shutdown exploration without inventories' { Voice-Run $good 'exploratory' '' } $null
+
+# 6. The retention service release is bound the same way: the row is written to the qualification database the manifest
 #    names, never to a database a foundation stack exports, and exactly one target may be named.
 $retentionRunner = Join-Path $PSScriptRoot 'release-aws-retention-service.ps1'
 function Retention-Run([string]$targetFile) { & $retentionRunner -Command inspect -QualificationTargetPath $targetFile -DeploymentManifestPath $deploymentManifest }
@@ -211,7 +253,7 @@ Invoke-Case 'retention release refuses the staging database' { Retention-Run (Wr
 Invoke-Case 'retention release refuses two targets at once' { & $retentionRunner -Command inspect -QualificationTargetPath $good -FoundationStackName 'ai-clinical-core-synthetic-staging' -DeploymentManifestPath $deploymentManifest } 'exactly one target'
 Invoke-Case 'retention release refuses no target at all' { & $retentionRunner -Command inspect -DeploymentManifestPath $deploymentManifest } 'exactly one target'
 
-# 6. The synthetic-only confirmation is still required, and no external call happens without it.
+# 7. The synthetic-only confirmation is still required, and no external call happens without it.
 Invoke-Case 'no synthetic-only confirmation' { & $exportRunner -QualificationTargetPath $good -DeploymentManifestPath $deploymentManifest } 'synthetic-only boundary'
 if ($global:External -ne 0) { throw 'an external call happened before the synthetic-only confirmation' }
 

@@ -24,11 +24,14 @@
   "stacks": {
     "personal-storage": "ai-clinical-core-qualification-personal-storage",
     "privacy-operations": "ai-clinical-core-qualification-privacy-operations",
+    "owned-lab": "ai-clinical-core-qualification-owned-lab",
+    "owned-voice": "ai-clinical-core-qualification-owned-voice",
     "recording-authority": "ai-clinical-core-qualification-recording-authority",
     "recording-capture": "ai-clinical-core-qualification-recording-capture",
     "recording-transcription": "ai-clinical-core-qualification-recording-transcription",
     "recording-drafting": "ai-clinical-core-qualification-recording-drafting",
-    "recording-cleanup-review": "ai-clinical-core-qualification-recording-cleanup-review"
+    "recording-cleanup-review": "ai-clinical-core-qualification-recording-cleanup-review",
+    "recording-cleanup-execution": "ai-clinical-core-qualification-recording-cleanup-execution"
   },
   "refused": {
     "stagingFoundationStackName": "ai-clinical-core-synthetic-staging",

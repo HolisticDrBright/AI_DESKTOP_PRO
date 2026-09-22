@@ -87,7 +87,8 @@
     "test:aws-data-plane-migration": "node scripts/check-aws-data-plane-migration.test.mjs",
     "build:aws-recording-drafting": "node scripts/build-aws-recording-authority.mjs --drafting",
     "build:release-record": "node scripts/build-release-record.mjs",
-    "test:release-record": "node --test scripts/build-release-record.test.mjs"
+    "test:release-record": "node --test scripts/build-release-record.test.mjs",
+    "check:aws-qualification-target": "node scripts/check-aws-qualification-target.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-cognito-identity-provider": "^3.1120.0",

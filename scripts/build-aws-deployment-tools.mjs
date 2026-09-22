@@ -12,6 +12,7 @@ await build({
     acceptance: "src/server/clinical-core/aws-acceptance-cli.ts",
     exportRetentionAcceptance: "src/server/clinical-core/export-retention-acceptance-cli.ts",
     recordingAcceptance: "src/server/clinical-core/recording-acceptance-cli.ts",
+    voiceShutdownAcceptance: "src/server/clinical-core/voice-shutdown-acceptance-cli.ts",
   },
   outdir,
   bundle: true,

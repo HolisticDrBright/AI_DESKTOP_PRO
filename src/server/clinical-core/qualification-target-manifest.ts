@@ -55,7 +55,10 @@ export class QualificationTargetManifestError extends Error {
 
 const TOP = ["schemaVersion", "environment", "dataClassification", "containsPhi", "awsAccountId", "awsRegion", "foundationStackName", "apiId", "apiOrigin", "databaseClusterArn", "databaseSecretArn", "databaseName", "exportBucket",
   "recordingBucket", "sourceCommit", "migrationReleaseHash", "identitySubjects", "stacks", "refused", "reviewedAt"] as const;
-const CANDIDATES = ["personal-storage", "privacy-operations", "recording-authority", "recording-capture", "recording-transcription", "recording-drafting", "recording-cleanup-review"] as const;
+// Every candidate stack the qualification target holds. A run verifies the ones its harness depends on, but the manifest
+// names them all, so a stack that is quietly missing from the target is visible before a run rather than after one.
+const CANDIDATES = ["personal-storage", "privacy-operations", "owned-lab", "owned-voice", "recording-authority", "recording-capture",
+  "recording-transcription", "recording-drafting", "recording-cleanup-review", "recording-cleanup-execution"] as const;
 const API_ID = /^[a-z0-9]{10}$/, REGION = /^[a-z]{2}-[a-z]+-\d$/, BUCKET = /^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/, STACK = /^[A-Za-z][A-Za-z0-9-]{0,127}$/, HEX40 = /^[a-f0-9]{40}$/, HEX64 = /^[a-f0-9]{64}$/;
 const CLUSTER = /^arn:aws:rds:([a-z0-9-]+):(\d{12}):cluster:[A-Za-z0-9-]{1,63}$/, SECRET = /^arn:aws:secretsmanager:([a-z0-9-]+):(\d{12}):secret:[A-Za-z0-9/_+=.@!-]+$/;
 const PLACEHOLDER = /replace|^0+$|^REPLACE/i;
@@ -159,48 +162,62 @@ export function bindQualificationTarget(manifest: QualificationTargetManifest, o
     database: { clusterArn: manifest.databaseClusterArn, secretArn: manifest.databaseSecretArn, databaseName: manifest.databaseName, stagingDatabaseName: manifest.refused.stagingDatabaseName } };
 }
 
-/** Resource parameters each candidate must carry, beyond the ones every candidate has. A database or API name does not
- * identify one database or API: the cluster, the secret and the buckets are what say which resources a run will touch. */
-export const QUALIFICATION_STACK_RESOURCES: Record<string, ReadonlyArray<"ApiId" | "ExportBucketName" | "RecordingBucket">> = {
-  "personal-storage": ["ApiId", "ExportBucketName"],
-  "privacy-operations": ["ApiId", "ExportBucketName"],
-  "recording-authority": ["ApiId"],
-  "recording-capture": ["ApiId", "RecordingBucket"],
-  "recording-transcription": ["ApiId", "RecordingBucket"],
-  "recording-drafting": ["ApiId", "RecordingBucket"],
-  "recording-cleanup-review": ["ApiId"],
-  "recording-cleanup-execution": ["ApiId", "RecordingBucket"],
-  "owned-lab": [],
-  "owned-voice": [],
+/** What each candidate stack is, in the terms its own template uses. The candidates do not all speak the same dialect:
+ * personal-storage, privacy-operations and the recording candidates take `ApiId` and export `SourceCommit`, while
+ * owned-lab and owned-voice attach to the shared API as `ClinicalApiId` and export neither, so a single required set
+ * would refuse a correctly deployed stack. Buckets are required only of the candidates that use them. */
+type QualificationStackSpec = { api: "ApiId" | "ClinicalApiId" | null; buckets: ReadonlyArray<"ExportBucketName" | "RecordingBucket">; sourceCommitOutput: boolean };
+export const QUALIFICATION_STACK_SPECS: Record<string, QualificationStackSpec> = {
+  "personal-storage": { api: "ApiId", buckets: ["ExportBucketName"], sourceCommitOutput: true },
+  "privacy-operations": { api: "ApiId", buckets: ["ExportBucketName"], sourceCommitOutput: true },
+  "recording-authority": { api: "ApiId", buckets: [], sourceCommitOutput: true },
+  "recording-capture": { api: "ApiId", buckets: ["RecordingBucket"], sourceCommitOutput: true },
+  "recording-transcription": { api: "ApiId", buckets: ["RecordingBucket"], sourceCommitOutput: true },
+  "recording-drafting": { api: "ApiId", buckets: ["RecordingBucket"], sourceCommitOutput: true },
+  "recording-cleanup-review": { api: "ApiId", buckets: [], sourceCommitOutput: true },
+  "recording-cleanup-execution": { api: "ApiId", buckets: ["RecordingBucket"], sourceCommitOutput: true },
+  "owned-lab": { api: "ClinicalApiId", buckets: [], sourceCommitOutput: false },
+  "owned-voice": { api: "ClinicalApiId", buckets: [], sourceCommitOutput: false },
 };
 const USABLE_STACK_STATUS = new Set(["CREATE_COMPLETE", "UPDATE_COMPLETE", "UPDATE_ROLLBACK_COMPLETE", "IMPORT_COMPLETE", "IMPORT_ROLLBACK_COMPLETE"]);
+
+/** The posture a run expects of a candidate. `qualification` is the ordinary one: production activation blocked and the
+ * qualification profile serving the designated identities. `drain` is the voice shutdown posture, where the candidate
+ * answers every public request with `voice_cleanup_only` and qualification execution is refused by policy, so its stack
+ * must report `Activation=draining` and `QualificationExecution=disabled`. */
+export type QualificationStackPosture = "qualification" | "drain";
 
 /** What a wrapper reads from each candidate stack, checked the same way in Node so the PowerShell check is not the only one:
  * the posture and source outputs, a stack that actually finished, and every resource parameter the candidate uses against
  * the manifest's own identifiers. A parameter the candidate needs but does not carry is a refusal, not a pass. */
 export function assertQualificationStackOutputs(candidate: string, outputs: Record<string, string | undefined>, manifest: QualificationTargetManifest,
-  parameters: Record<string, string | undefined> = {}, stackStatus?: string): void {
+  parameters: Record<string, string | undefined> = {}, stackStatus?: string, posture: QualificationStackPosture = "qualification"): void {
   const refuse = (): never => { throw new QualificationTargetManifestError("target_stack_refused", candidate); };
-  if (outputs.PhiAllowed !== "false" || outputs.Activation !== "blocked" || outputs.QualificationExecution !== "enabled" || outputs.SourceCommit !== manifest.sourceCommit) refuse();
+  const spec = QUALIFICATION_STACK_SPECS[candidate];
+  if (!spec) refuse();
+  if (outputs.PhiAllowed !== "false") refuse();
+  if (posture === "drain") {
+    if (outputs.Activation !== "draining" || outputs.QualificationExecution !== "disabled") refuse();
+  } else if (outputs.Activation !== "blocked" || outputs.QualificationExecution !== "enabled") refuse();
+  if (spec!.sourceCommitOutput && outputs.SourceCommit !== manifest.sourceCommit) refuse();
+  if (outputs.SourceCommit !== undefined && outputs.SourceCommit !== manifest.sourceCommit) refuse();
   if (stackStatus !== undefined && !USABLE_STACK_STATUS.has(stackStatus)) refuse();
-  const resources = QUALIFICATION_STACK_RESOURCES[candidate];
-  if (!resources) refuse();
   const expected: Record<string, string> = { DatabaseClusterArn: manifest.databaseClusterArn, DatabaseSecretArn: manifest.databaseSecretArn, DatabaseName: manifest.databaseName,
-    QualificationAccountId: manifest.awsAccountId, ApiId: manifest.apiId, ExportBucketName: manifest.exportBucket, RecordingBucket: manifest.recordingBucket };
-  for (const name of ["DatabaseClusterArn", "DatabaseSecretArn", "DatabaseName", "QualificationAccountId", ...resources!]) {
+    QualificationAccountId: manifest.awsAccountId, ApiId: manifest.apiId, ClinicalApiId: manifest.apiId, ExportBucketName: manifest.exportBucket, RecordingBucket: manifest.recordingBucket };
+  for (const name of ["DatabaseClusterArn", "DatabaseSecretArn", "DatabaseName", "QualificationAccountId", ...(spec!.api ? [spec!.api] : []), ...spec!.buckets]) {
     if (parameters[name] === undefined || parameters[name] !== expected[name]) refuse();
   }
   if (parameters.SourceCommit !== undefined && parameters.SourceCommit !== manifest.sourceCommit) refuse();
   // The stack serves exactly the designated fictional identities: an undesignated subject would be refused by the outer
   // qualification gate, and a missing one (the second consumer, or the retention service when the sweep is under test)
-  // would make its case untestable.
-  const listed = (parameters.QualificationIdentitySubjects ?? "").split(",").map((s) => s.trim()).filter(Boolean);
-  const required = designatedSubjects(manifest.identitySubjects);
-  if (listed.length !== required.length || required.some((subject) => !listed.includes(subject))) refuse();
+  // would make its case untestable. A draining candidate serves nobody, so its subject list is not required.
+  if (posture === "qualification") {
+    const listed = (parameters.QualificationIdentitySubjects ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+    const required = designatedSubjects(manifest.identitySubjects);
+    if (listed.length !== required.length || required.some((subject) => !listed.includes(subject))) refuse();
+  }
 }
 
-/** The qualification foundation's outputs: PHI false and, where it states them, the manifest's API and database. Its
- * `QualificationExecution` output reads `disabled` by design (it deploys no candidate) and proves nothing about candidates. */
 export function assertQualificationFoundationOutputs(outputs: Record<string, string | undefined>, manifest: QualificationTargetManifest): void {
   if (outputs.PhiAllowed !== "false") throw new QualificationTargetManifestError("target_stack_refused", "foundation");
   if (outputs.ApiId !== undefined && outputs.ApiId !== manifest.apiId) throw new QualificationTargetManifestError("target_stack_refused", "foundation");
