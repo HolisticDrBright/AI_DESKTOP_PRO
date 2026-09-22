@@ -181,6 +181,13 @@ jobs:
   e2e-live-fixture:
     name: Browser suite (live mode vs contract fixture)
     runs-on: ubuntu-latest
+    # Sharded because one `next dev` server degrades across a 300-test battery: by the end it carries several GiB of
+    # heap and a request's effect can miss any reasonable budget. Each shard boots its own stub and dev server, which
+    # the suites already allow — every spec resets the fixture backend in beforeAll, so any subset runs in any order.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -209,12 +216,12 @@ jobs:
           CLINICAL_DEMO_EMAIL=demo@local \
           CLINICAL_DEMO_PASSWORD=demo \
           CLINICAL_ORG_ID=org-fixture \
-          npm run test:e2e -- live- --trace retain-on-failure
+          npm run test:e2e -- live- --trace retain-on-failure --shard=${{ matrix.shard }}/3
       - name: Preserve synthetic contract-fixture failure evidence
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: synthetic-live-fixture-failures
+          name: synthetic-live-fixture-failures-shard-${{ matrix.shard }}
           path: test-results/
           retention-days: 7
           if-no-files-found: ignore
