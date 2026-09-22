@@ -453,9 +453,18 @@ export function sanitizeMeasuredLabBiomarkers(
   });
 }
 
+/** The version of the rule table that produced a consideration, and the version of the rule that fired. A clinician
+ * reviewing the basis of a recommendation has to be able to name the basis; "the rules as they were at some point" is not
+ * a basis. Stamping both means an output can be traced to an exact, citable rule rather than to a moving target. */
+export const SUPPLEMENT_CONSIDERATION_RULESET_VERSION = "measured-supplement-considerations/1" as const;
+
 type MeasuredSupplementConsideration = {
   recommendationId: string;
   kind: "supplement";
+  /** The rule table this came from, and the individual rule, both fixed at generation. */
+  rulesetVersion: typeof SUPPLEMENT_CONSIDERATION_RULESET_VERSION;
+  ruleKey: string;
+  ruleVersion: string;
   productId: null;
   labelVersionId: null;
   name: string;
@@ -481,35 +490,35 @@ type SupplementEvidenceCitation = {
 
 const SUPPLEMENT_CONSIDERATION_RULES = [
   {
-    key: "vitamin-d", signals: [{ aliases: ["vitamin d", "vitamin d3", "25 oh vitamin d", "25 hydroxy vitamin d"], direction: "below" as const }],
+    key: "vitamin-d", version: "vitamin-d/1", signals: [{ aliases: ["vitamin d", "vitamin d3", "25 oh vitamin d", "25 hydroxy vitamin d"], direction: "below" as const }],
     name: "Vitamin D support consideration",
     mechanism: "Vitamin D supports calcium metabolism, bone health, and neuromuscular function. The appropriate product and dose depend on the full clinical context.",
     title: "NIH Office of Dietary Supplements — Vitamin D Fact Sheet for Health Professionals",
     url: "https://ods.od.nih.gov/factsheets/VitaminD-HealthProfessional/",
   },
   {
-    key: "vitamin-b12", signals: [{ aliases: ["vitamin b12", "b12", "cobalamin"], direction: "below" as const }],
+    key: "vitamin-b12", version: "vitamin-b12/1", signals: [{ aliases: ["vitamin b12", "b12", "cobalamin"], direction: "below" as const }],
     name: "Vitamin B12 support consideration",
     mechanism: "Vitamin B12 is required for red blood cell formation and neurologic function. Cause, medication interactions, product form, and dose need review before starting.",
     title: "NIH Office of Dietary Supplements — Vitamin B12 Fact Sheet for Health Professionals",
     url: "https://ods.od.nih.gov/factsheets/VitaminB12-HealthProfessional/",
   },
   {
-    key: "folate", signals: [{ aliases: ["folate", "folic acid", "vitamin b9"], direction: "below" as const }],
+    key: "folate", version: "folate/1", signals: [{ aliases: ["folate", "folic acid", "vitamin b9"], direction: "below" as const }],
     name: "Folate support consideration",
     mechanism: "Folate supports one-carbon metabolism and blood cell formation. Vitamin B12 status and medication interactions should be considered before supplementation.",
     title: "NIH Office of Dietary Supplements — Folate Fact Sheet for Health Professionals",
     url: "https://ods.od.nih.gov/factsheets/Folate-HealthProfessional/",
   },
   {
-    key: "iron", signals: [{ aliases: ["iron", "ferritin"], direction: "below" as const }],
+    key: "iron", version: "iron/1", signals: [{ aliases: ["iron", "ferritin"], direction: "below" as const }],
     name: "Iron status support consideration",
     mechanism: "Iron is required for oxygen transport. Low iron markers have multiple possible causes, and unnecessary iron can be harmful, so confirm the pattern and safety before starting a product.",
     title: "NIH Office of Dietary Supplements — Iron Fact Sheet for Health Professionals",
     url: "https://ods.od.nih.gov/factsheets/Iron-HealthProfessional/",
   },
   {
-    key: "omega-3",
+    key: "omega-3", version: "omega-3/1",
     signals: [
       { aliases: ["omega 3", "omega 3 index", "eicosapentaenoate epa 20 5n3", "docosahexaenoate dha 22 6n3", "eicosapentaenoic acid epa", "docosahexaenoic acid dha"], direction: "below" as const },
       { aliases: ["triglyceride", "triglycerides"], direction: "above" as const },
@@ -550,7 +559,7 @@ export function buildMeasuredSupplementConsiderations(biomarkers: Array<{
     const claimId = stableUuid(`supplement-evidence-claim:${rule.key}:below-reporting-lab-range`);
     citations.push({
       sourceId,
-      sourceVersion: "nih-ods-health-professional/current",
+      sourceVersion: "nih-ods-health-professional/2026-09",
       claimIds: [claimId],
       title: rule.title,
       url: rule.url,
@@ -558,6 +567,9 @@ export function buildMeasuredSupplementConsiderations(biomarkers: Array<{
     recommendations.push({
       recommendationId: stableUuid(`supplement-consideration:${rule.key}:${biomarker.canonicalName}:${biomarker.unit}`),
       kind: "supplement",
+      rulesetVersion: SUPPLEMENT_CONSIDERATION_RULESET_VERSION,
+      ruleKey: rule.key,
+      ruleVersion: rule.version,
       productId: null,
       labelVersionId: null,
       name: rule.name,

@@ -1,5 +1,5 @@
-import { describe, expect, test } from "vitest";
-import { assertExactExtractedMeasurements, buildMeasuredSupplementConsiderations, functionalRangeStatus, normalizeExtractedLabLines, normalizeExtractedLabTables, normalizeStructuredLabBiomarkers, reviewedMeasurementStatus, sanitizeMeasuredLabBiomarkers } from "./aws-lab-analysis-worker";
+import { describe, expect, it, test } from "vitest";
+import { assertExactExtractedMeasurements, buildMeasuredSupplementConsiderations, SUPPLEMENT_CONSIDERATION_RULESET_VERSION, functionalRangeStatus, normalizeExtractedLabLines, normalizeExtractedLabTables, normalizeStructuredLabBiomarkers, reviewedMeasurementStatus, sanitizeMeasuredLabBiomarkers } from "./aws-lab-analysis-worker";
 
 const documentId = "22222222-2222-4222-8222-222222222222";
 
@@ -303,5 +303,42 @@ describe("synthetic AWS functional lab rules", () => {
     ]);
     expect(output.recommendations).toEqual([]);
     expect(output.citations).toEqual([]);
+  });
+});
+
+// A clinician reviewing the basis of a recommendation has to be able to name the basis. Every consideration therefore
+// carries the rule table's version, the rule's own version and its key, and the evidence citation names a dated source
+// rather than "current", so an output can be traced to an exact artefact rather than to a moving target.
+describe("recommendation provenance", () => {
+  const low = [{ canonicalName: "Vitamin D", value: 12, unit: "ng/mL", labMin: 30, labMax: 100, functionalMin: 40, functionalMax: 80 }];
+  it("stamps the ruleset, the rule and its version on every consideration", () => {
+    const { recommendations, citations } = buildMeasuredSupplementConsiderations(low);
+    expect(recommendations).toHaveLength(1);
+    expect(recommendations[0]).toMatchObject({
+      rulesetVersion: SUPPLEMENT_CONSIDERATION_RULESET_VERSION,
+      ruleKey: "vitamin-d",
+      ruleVersion: "vitamin-d/1",
+      dose: null,
+      productId: null,
+      interactionReview: "required_before_starting",
+      recommendationStatus: "suggested",
+    });
+    expect(citations[0].sourceVersion).toBe("nih-ods-health-professional/2026-09");
+    expect(citations[0].sourceVersion).not.toMatch(/current/);
+  });
+  it("gives every rule a version, so no rule can fire without one", () => {
+    const seen = new Set<string>();
+    for (const marker of [
+      { canonicalName: "Vitamin D", value: 12, unit: "ng/mL", labMin: 30, labMax: 100 },
+      { canonicalName: "Vitamin B12", value: 100, unit: "pg/mL", labMin: 200, labMax: 900 },
+      { canonicalName: "Folate", value: 2, unit: "ng/mL", labMin: 3, labMax: 20 },
+      { canonicalName: "Ferritin", value: 5, unit: "ng/mL", labMin: 30, labMax: 300 },
+    ]) {
+      for (const recommendation of buildMeasuredSupplementConsiderations([marker]).recommendations) {
+        expect(recommendation.ruleVersion, recommendation.ruleKey).toMatch(/^[a-z0-9-]+\/\d+$/);
+        seen.add(recommendation.ruleKey);
+      }
+    }
+    expect(seen.size).toBeGreaterThanOrEqual(3);
   });
 });
