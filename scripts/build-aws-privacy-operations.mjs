@@ -194,6 +194,7 @@ const template={AWSTemplateFormatVersion:'2010-09-09',Description:'Owner-assigne
       Code:{S3Bucket:ref('CodeBucket'),S3Key:ref('CodeKey'),S3ObjectVersion:ref('CodeVersion')},
       LoggingConfig:{LogGroup:ref('Logs')},Environment:{Variables:{
         PHI_ALLOWED:ref('PhiAllowed'),PRIVACY_OPERATIONS_ACTIVATION:ref('Activation'),RETENTION_SWEEP_ENABLED:ref('RetentionScheduleEnabled'),RETENTION_SWEEP_EVIDENCE_SHA256:ref('RetentionScheduleEvidenceSha256'),
+        RETENTION_SCHEDULE_ARN:sub('arn:${AWS::Partition}:events:${AWS::Region}:${AWS::AccountId}:rule/${ApiId}-privacy-retention-sweep'),
         ...qualificationEnvironment(),
         RETENTION_SERVICE_PERSON_ID:ref('RetentionServicePersonId'),RETENTION_SERVICE_SUBJECT:ref('RetentionServiceSubject'),RETENTION_SERVICE_ORGANIZATION_ID:ref('RetentionServiceOrganizationId'),
         PERSONAL_EXPORT_BUCKET:ref('ExportBucketName'),PERSONAL_EXPORT_KMS_KEY_ARN:ref('ExportKmsKeyArn'),PERSONAL_EXPORT_BUCKET_OWNER:ref('AWS::AccountId'),

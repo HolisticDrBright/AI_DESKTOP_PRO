@@ -134,13 +134,18 @@ are `owned-voice-inventory/1` with `deletionCertified` and `atomicSnapshot` fals
 and no count grown between them.
 
 Run it with `scripts/run-aws-voice-shutdown-acceptance.ps1 -QualificationTargetPath
-<manifest> -DeploymentManifestPath <manifest> -InventoryPath <two-reports.json>
+<manifest> -DeploymentManifestPath <manifest>
 -ConfirmSyntheticOnly`. It is bound to the reviewed qualification target like the
 other harnesses, and it verifies the owned-voice stack's **drain** posture before
 asking the deployment anything: PHI false, `Activation=draining`,
 `QualificationExecution=disabled`, the manifest's cluster, secret, database and
-shared API. `-Mode exploratory` records the refusals without the inventories and
-can never read as acceptance.
+shared API. Acceptance collects both inventories directly from AWS and refuses
+caller-supplied inventory files. It validates all four nonnegative integer counts,
+ordered observation times and a stable deployed configuration. Workforce 401/403
+at the consumer authorizer is recorded separately from a Lambda drain refusal.
+`-Mode exploratory -InventoryPath <two-reports.json>` permits supplied reports for
+diagnostics only and can never read as acceptance. Neither mode establishes that
+old invocations have finished; operators must settle those writers before this run.
 
 The report states `certifies: {deletion: false, atomicSnapshot: false}` on its
 face and lists what the latest inventory still holds under `retained`. Present

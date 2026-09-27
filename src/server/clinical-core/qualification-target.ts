@@ -31,7 +31,7 @@ export type QualificationTargetInspection = {
 };
 
 export class QualificationTargetError extends Error {
-  constructor(readonly category: "configuration_refused" | "account_boundary_refused" | "qualification_name_refused" | "qualification_database_exists" | "qualification_database_missing" | "statement_failed") {
+  constructor(readonly category: "configuration_refused" | "account_boundary_refused" | "qualification_name_refused" | "qualification_database_exists" | "qualification_database_missing" | "statement_failed" | "database_resuming_retry_later") {
     super(category);
     this.name = "QualificationTargetError";
   }
@@ -64,7 +64,8 @@ async function statement(client: RdsDataCommandClient, configuration: Qualificat
   try {
     const output = await client.send(new ExecuteStatementCommand({ resourceArn: configuration.clusterArn, secretArn: configuration.secretArn, database, sql, parameters }));
     return ((output as { records?: Row[] }).records ?? []);
-  } catch {
+  } catch (error) {
+    if(error!==null&&typeof error==='object'&&(error as {name?:unknown}).name==='DatabaseResumingException')throw new QualificationTargetError("database_resuming_retry_later");
     throw new QualificationTargetError("statement_failed");
   }
 }

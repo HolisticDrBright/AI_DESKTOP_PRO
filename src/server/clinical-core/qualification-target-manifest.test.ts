@@ -1,4 +1,7 @@
-import { readFileSync } from "node:fs";
+import { readFileSync,writeFileSync,mkdtempSync,rmSync } from "node:fs";
+import {execFileSync,spawnSync} from "node:child_process";
+import {tmpdir} from "node:os";
+import {join} from "node:path";
 import { describe, expect, test } from "vitest";
 import { assertQualificationFoundationOutputs, assertQualificationStackOutputs, bindQualificationTarget, loadQualificationTargetManifest, validateQualificationTargetManifest, type QualificationTargetManifest } from "./qualification-target-manifest";
 
@@ -15,6 +18,19 @@ const parameters = (): Record<string, string | undefined> => ({ DatabaseClusterA
   SourceCommit: "a".repeat(40), QualificationIdentitySubjects: "11111111-2222-4333-8444-555555555555,66666666-7777-4888-8999-000000000000,22222222-3333-4444-8555-666666666666" });
 
 describe("qualification target manifest", () => {
+  test("offline CLI works without npx or node on PATH and rejects changed manifests",()=>{
+    const dir=mkdtempSync(join(tmpdir(),"qualification-cli-test-"));
+    try{
+      const file=join(dir,"target.json");writeFileSync(file,JSON.stringify(filled()));
+      const env={...process.env};for(const key of Object.keys(env))if(key.toLowerCase()==="path")delete env[key];env.PATH=dir;
+      const options={encoding:"utf8" as const,env,timeout:30_000,windowsHide:true};
+      expect(JSON.parse(execFileSync(process.execPath,["scripts/check-aws-qualification-target.mjs",file],options)).ok).toBe(true);
+      expect(JSON.parse(execFileSync(process.execPath,["scripts/check-aws-qualification-target.mjs"],options)).refusedAsRunTarget).toBe("target_placeholder");
+      writeFileSync(file,JSON.stringify({...filled(),containsPhi:true}));
+      const refused=spawnSync(process.execPath,["scripts/check-aws-qualification-target.mjs",file],options);
+      expect(refused.status).toBe(1);expect(JSON.parse(refused.stderr).error).toBe("target_manifest_invalid");
+    }finally{rmSync(dir,{recursive:true,force:true});}
+  },40_000);
   test("the committed example is the reviewed shape but is refused as a run target until its placeholders are filled", () => {
     expect(() => loadQualificationTargetManifest("infra/aws-clinical-core/qualification-target.example.json")).toThrow("target_placeholder");
     expect(example.databaseName).toBe("clinical_core_qualification"); expect(example.awsAccountId).toBe("588966314750");

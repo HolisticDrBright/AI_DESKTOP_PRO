@@ -129,9 +129,9 @@ describe("hosted export and retention acceptance", () => {
     const denied = await runExportRetentionAcceptance({ ...acceptance, fetch: async () => queue.shift()! });
     expect(denied.steps.find((s) => s.name === "stale sign-in download refused")).toMatchObject({ outcome: "passed", status: 401 });
     expect(denied.steps.filter((s) => s.outcome === "skipped").map((s) => s.name)).toEqual(["scheduled cleanup removed the copy", "operator backlog", "operator cleanup pass", "operator reconcile pass"]);
-    expect(denied.ok).toBe(false); expect(denied.verdict).toMatchObject({ mode: "acceptance", expectedExecution: "qualification", unmet: ["operator backlog", "operator cleanup pass", "operator reconcile pass"] });
-    // The scheduled sweep is not declared active here, so it is not mandatory; everything else is.
-    expect(denied.verdict.mandatory).toHaveLength(11); expect(denied.verdict.mandatory).not.toContain("scheduled cleanup removed the copy"); expect(denied.execution).toBe("qualification"); expect(denied.evidenceSha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(denied.ok).toBe(false); expect(denied.verdict).toMatchObject({ mode: "acceptance", expectedExecution: "qualification", unmet: ["operator backlog", "operator cleanup pass", "operator reconcile pass", "scheduled cleanup removed the copy"] });
+    // Omitting schedule configuration cannot turn partial export checks into full retention acceptance.
+    expect(denied.verdict.mandatory).toHaveLength(12); expect(denied.verdict.mandatory).toContain("scheduled cleanup removed the copy"); expect(denied.execution).toBe("qualification"); expect(denied.evidenceSha256).toMatch(/^[a-f0-9]{64}$/);
     // A stale token that is not actually stale fails the case rather than skipping it.
     const fresh = [marked(200, { data: { contractVersion: "personal-posture/1", launchTier: "core", enabledScopes: [] } }), marked(503, { error: "export_delivery_not_configured" })];
     const notStale = await runExportRetentionAcceptance({ ...acceptance, staleConsumerIdToken: token("c"), fetch: async () => fresh.shift()! });
@@ -143,15 +143,17 @@ describe("hosted export and retention acceptance", () => {
     const pending = { data: { jobId: job, status: "cancelled", objectDeleted: false, retention: "cleanup_pending" } };
     // The owner's pass leaves the copy pending; the schedule is declared active, so the run waits for the recorded removal.
     // Responses are answered by what is asked for, so the job view keeps answering however many times the wait polls it.
-    const run = async (afterSweep: Record<string, unknown>, waitMs: number | undefined) => {
+    const run = async (afterSweep: Record<string, unknown>, waitMs: number | undefined, observed=true, ownerRemoved=false) => {
       const consumer = [marked(200, { data: { contractVersion: "personal-posture/1", launchTier: "core", enabledScopes: [] } }), marked(200, { data: { jobId: job, status: "requested", retention: "packaging" } }),
         json(401, {}), json(403, {}), json(403, {}), marked(200, view("ready")), marked(401, { error: "reauth_required" }),
         marked(200, { data: { jobId: job, url: linkUrl, expiresInSeconds: 300, byteLength: exportObject.byteLength, objectChecksum: composite, parts } }),
-        marked(200, { data: { jobId: job, status: "cancelled", cleanup: { cleaned: 0, remaining: 1 } } }), marked(200, pending.data)];
+        marked(200, { data: { jobId: job, status: "cancelled", cleanup: { cleaned: 0, remaining: 1 } } }), marked(200, {data:ownerRemoved ? {jobId:job,status:"cancelled",objectDeleted:true,retention:"removal_recorded"} : pending.data})];
       const operator = [marked(200, { data: { scope: "assigned_owners", cleanupPending: 0, settling: 0 } }), marked(200, { data: { cleaned: 0, remaining: 0, deferred: 0, items: [] } }),
         marked(200, { data: { confirmed: 0, reopened: 0, pending: 0, items: [] } })];
       let clock = 1_800_000_000_000;
-      return runExportRetentionAcceptance({ ...acceptance, scheduledCleanupWaitMs: waitMs, now: () => (clock += 2_000), fetch: async (url) => {
+      return runExportRetentionAcceptance({ ...acceptance, scheduledCleanupWaitMs: waitMs, observeScheduledRemoval:async(id,since)=>{
+        expect(id).toBe(job); expect(Date.parse(since)).toBeGreaterThan(0); return observed;
+      }, now: () => (clock += 2_000), fetch: async (url) => {
         if (url.startsWith("https://fictional-export-bucket.s3.")) return object();
         if (url.includes("/privacy-operations")) return operator.shift() ?? marked(200, { data: {} });
         // Once the scripted consumer calls are spent, every further job read is the state the sweep left behind.
@@ -159,7 +161,7 @@ describe("hosted export and retention acceptance", () => {
       } });
     };
     const removed = await run({ data: { jobId: job, status: "cancelled", objectDeleted: true, retention: "removal_recorded" } }, 20_000);
-    expect(removed.steps.find((s) => s.name === "scheduled cleanup removed the copy")).toMatchObject({ outcome: "passed", detail: "removed_by_the_schedule" });
+    expect(removed.steps.find((s) => s.name === "scheduled cleanup removed the copy")).toMatchObject({ outcome: "passed", detail: "removed_by_observed_schedule_and_service_audit" });
     expect(removed.retained).toEqual([]);
     expect(removed.verdict.mandatory).toContain("scheduled cleanup removed the copy");
     // A copy the schedule never removes is a failure, and stays listed as retained with its honest state.
@@ -167,6 +169,12 @@ describe("hosted export and retention acceptance", () => {
     expect(stuck.ok).toBe(false);
     expect(stuck.steps.find((s) => s.name === "scheduled cleanup removed the copy")).toMatchObject({ outcome: "failed", detail: "still_cleanup_pending" });
     expect(stuck.retained).toEqual([{ jobId: job, state: "cleanup_pending" }]);
+    const owner = await run({},20_000,true,true);
+    expect(owner.ok).toBe(false);
+    expect(owner.steps.find(s=>s.name==="scheduled cleanup removed the copy")).toMatchObject({outcome:"failed",detail:"schedule_not_exercised_owner_removed_copy"});
+    const unattributed=await run({data:{jobId:job,status:"cancelled",objectDeleted:true,retention:"removal_recorded"}},8_000,false);
+    expect(unattributed.ok).toBe(false);
+    expect(unattributed.steps.find(s=>s.name==="scheduled cleanup removed the copy")).toMatchObject({outcome:"failed",detail:"scheduled_removal_not_attributed"});
   }, 30_000);
   test("the delivered object is verified, not just the link: denied, redirected, wrong host, unversioned, truncated, oversized, corrupt and mismatched documents all fail", async () => {
     const run = async (linkResponse: Response, objectResponse: Response | null) => {

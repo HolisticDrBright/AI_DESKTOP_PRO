@@ -95,6 +95,11 @@ jobs:
       - name: Qualification target runner (syntax and pre-network name refusals, no AWS calls)
         shell: pwsh
         run: ./scripts/test-qualification-runner.ps1
+      - name: Isolated qualification foundation remains synthetic infrastructure only
+        run: |
+          npm run build:aws-qualification-foundation
+          npm run test:aws-qualification-foundation
+          cfn-lint dist/aws-clinical-core/qualification-foundation/template.json
       - name: Hosted acceptance runners bind to the qualification target (no AWS calls)
         shell: pwsh
         run: ./scripts/test-qualification-acceptance-runners.ps1

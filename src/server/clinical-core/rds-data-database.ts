@@ -12,6 +12,7 @@ import {
   type SqlParameter,
 } from "@aws-sdk/client-rds-data";
 import { ClinicalCoreDatabaseRejection, type ClinicalCoreDatabase, type ClinicalCoreQueryResult, type ClinicalCoreTransaction, type ClinicalUuid } from "./database";
+import {retryDatabaseResume} from './rds-resume-retry';
 
 export type RdsDataConfiguration = {
   clusterArn: string;
@@ -71,7 +72,7 @@ function createRdsDataDatabase(
       let transactionId: string | undefined;
       let workError: unknown;
       try {
-        const begun = await client.send(new BeginTransactionCommand(common));
+        const begun = await retryDatabaseResume(()=>client.send(new BeginTransactionCommand(common)));
         transactionId = stringProperty(begun, "transactionId");
         if (!transactionId) throw new RdsDataDatabaseError("transaction_failed");
 

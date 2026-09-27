@@ -97,9 +97,19 @@ export function retentionSweepConfigurationFromEnv(e:NodeJS.ProcessEnv):Retentio
     organizationId:e.RETENTION_SERVICE_ORGANIZATION_ID,bucket:e.PERSONAL_EXPORT_BUCKET,kmsKeyArn:e.PERSONAL_EXPORT_KMS_KEY_ARN,bucketOwner:e.PERSONAL_EXPORT_BUCKET_OWNER,region:e.AWS_REGION,phiAllowed:e.PHI_ALLOWED==='true',
     ...(qualification?{qualification}:{})};
 }
-export async function handler(){
+/** Trigger metadata is operational evidence, not a patient identifier. Never log the event body. */
+export function retentionScheduleInvocation(event:unknown,requestId:unknown,expectedRuleArn:string){
+  const value=event as {source?:unknown;'detail-type'?:unknown;resources?:unknown;id?:unknown}|null;
+  if(!/^arn:aws:events:[a-z0-9-]+:[0-9]{12}:rule\/[A-Za-z0-9_-]+$/.test(expectedRuleArn)
+    ||value?.source!=='aws.events'||value['detail-type']!=='Scheduled Event'
+    ||!Array.isArray(value.resources)||value.resources.length!==1||value.resources[0]!==expectedRuleArn
+    ||typeof value.id!=='string'||!UUID.test(value.id)||typeof requestId!=='string'||!UUID.test(requestId))throw new Error('retention_schedule_trigger_refused');
+  return {source:'aws.events',ruleArn:expectedRuleArn,eventId:value.id,requestId};
+}
+export async function handler(event:unknown,context:{awsRequestId?:string}={}){
   const e=process.env,c=retentionSweepConfigurationFromEnv(e);
   if(!c.enabled)return {ok:false,refused:'retention_sweep_disabled'};
+  const invocation=retentionScheduleInvocation(event,context.awsRequestId,e.RETENTION_SCHEDULE_ARN??'');
   const database=createRdsDataClinicalCoreDatabase({clusterArn:e.CLINICAL_DATABASE_CLUSTER_ARN??'',secretArn:e.CLINICAL_DATABASE_SECRET_ARN??'',databaseName:e.CLINICAL_DATABASE_NAME??'',region:e.AWS_REGION});
-  return runRetentionSweep(database,c);
+  return runRetentionSweep(database,c,{emit:line=>process.stdout.write(JSON.stringify({...JSON.parse(line),invocation})+'\n')});
 }

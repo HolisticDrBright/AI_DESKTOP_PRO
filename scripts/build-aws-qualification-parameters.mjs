@@ -4,8 +4,10 @@
 // qualification database) and the test proves each file's keys equal its template's parameters, every value satisfies
 // the template's AllowedPattern or AllowedValues, and the template's Qualification condition evaluates true with them.
 // Usage: node scripts/build-aws-qualification-parameters.mjs [--check]  (writes infra/aws-clinical-core/qualification-parameters/)
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 
 export const QUALIFICATION_ACCOUNT_ID = '588966314750';
 export const QUALIFICATION_DATABASE_NAME = 'clinical_core_qualification';
@@ -91,7 +93,15 @@ export function qualificationParameters(candidate, template) {
 
 export function loadTemplate(candidate, { build = true } = {}) {
   const { build: command, template } = CANDIDATES[candidate];
-  if (build || !existsSync(template)) execFileSync(process.execPath, command, { stdio: 'pipe' });
+  if ((build || !existsSync(template)) && command[0] === 'scripts/build-aws-recording-authority.mjs') {
+    // Parameter checks must not replace runtime files while another test verifies its release manifest.
+    const dir=mkdtempSync(join(tmpdir(),'qualification-recording-template-'));
+    try {
+      execFileSync(process.execPath,[...command,'--out-dir='+dir],{stdio:'pipe',timeout:60_000});
+      return JSON.parse(readFileSync(join(dir,'template.json'),'utf8'));
+    } finally {rmSync(dir,{recursive:true,force:true});}
+  }
+  if (build || !existsSync(template)) execFileSync(process.execPath, command, { stdio: 'pipe',timeout:60_000 });
   return JSON.parse(readFileSync(template, 'utf8'));
 }
 

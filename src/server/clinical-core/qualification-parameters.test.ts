@@ -29,7 +29,7 @@ describe("qualification parameter examples", () => {
     const dir = mkdtempSync(join(tmpdir(), "qualification-parameters-"));
     try {
       const script = join(process.cwd(), "scripts/build-aws-qualification-parameters.mjs");
-      const crlf = readFileSync("infra/aws-clinical-core/qualification-parameters/recording-authority.example.json", "utf8").replace(/\n/g, "\r\n");
+      const crlf = readFileSync("infra/aws-clinical-core/qualification-parameters/recording-authority.example.json", "utf8").replace(/\r\n/g, "\n").replace(/\n/g, "\r\n");
       expect(crlf).toContain("\r\n");
       // The check reads the committed directory, so exercise the comparison the script performs on CRLF text and on a changed value.
       const generated = JSON.stringify(qualificationParameters("recording-authority", templates["recording-authority"]), null, 2) + "\n";
@@ -38,9 +38,9 @@ describe("qualification parameter examples", () => {
       expect(changed).not.toBe(generated);
       expect(changed.replace(/\r\n/g, "\n")).not.toBe(generated);
       writeFileSync(join(dir, "probe.json"), crlf);
-      expect(execFileSync(process.execPath, [script, "--check"], { encoding: "utf8" })).toContain("match their templates");
+      expect(execFileSync(process.execPath, [script, "--check"], { encoding: "utf8", timeout:120_000 })).toContain("match their templates");
     } finally { rmSync(dir, { recursive: true, force: true }); }
-  });
+  }, 125_000);
   for (const candidate of Object.keys(CANDIDATES)) {
     it(`${candidate}: matches its template, satisfies every constraint, and enables qualification without production activation`, () => {
       const template = templates[candidate];

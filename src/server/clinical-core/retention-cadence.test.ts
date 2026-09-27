@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll,describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 
@@ -12,14 +12,15 @@ const SWEEP_HOURS = 24;
 const IMPLEMENTED_HOURS = 48;
 const PUBLISHED_HOURS = 72;
 
-function template(): Record<string, { Type: string; Properties: Record<string, unknown> }> {
-  execFileSync(process.execPath, ["scripts/build-aws-privacy-operations.mjs"], { stdio: "pipe" });
-  return JSON.parse(readFileSync("dist/aws-clinical-core/privacy-operations/template.json", "utf8")).Resources;
-}
+let resources:Record<string, { Type: string; Properties: Record<string, unknown> }>;
+beforeAll(()=>{
+  execFileSync(process.execPath, ["scripts/build-aws-privacy-operations.mjs"], { stdio: "pipe",timeout:60_000 });
+  resources=JSON.parse(readFileSync("dist/aws-clinical-core/privacy-operations/template.json", "utf8")).Resources;
+},65_000);
 
 describe("the retention cadence", () => {
   it("sweeps every 24 hours", () => {
-    expect(template().RetentionSweepSchedule.Properties.ScheduleExpression).toBe(`rate(${SWEEP_HOURS} hours)`);
+    expect(resources.RetentionSweepSchedule.Properties.ScheduleExpression).toBe(`rate(${SWEEP_HOURS} hours)`);
   });
 
   it("nests inside the implemented deadline, which nests inside the published commitment", () => {
@@ -32,7 +33,6 @@ describe("the retention cadence", () => {
   });
 
   it("runs under its own role and reports every run, with alarms for missed, errored and twice-failed", () => {
-    const resources = template();
     expect(resources.RetentionSweep.Properties.Role).toEqual({ "Fn::GetAtt": ["RetentionSweepRole", "Arn"] });
     const policies = resources.RetentionSweepRole.Properties.Policies as { PolicyName: string }[];
     expect(policies.map((policy) => policy.PolicyName).sort())

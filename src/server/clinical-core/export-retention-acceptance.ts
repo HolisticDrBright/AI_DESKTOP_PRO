@@ -48,6 +48,8 @@ export async function runExportRetentionAcceptance(input: {
    * Given only when the sweep is released and active; the step is then mandatory, because a pending cleanup state is not
    * completed deletion and the scheduled path is the thing under test. Omitted, the step is skipped and says so. */
   scheduledCleanupWaitMs?: number;
+  /** CLI-owned read-only observation of the scheduled invocation AND this job's service-attributed deletion audit. */
+  observeScheduledRemoval?: (jobId:string,since:string) => Promise<boolean>;
   fetch?: FetchLike; now?: () => number; maxPasses?: number;
 }): Promise<ExportAcceptanceReport> {
   const fetcher = input.fetch ?? fetch, now = input.now ?? Date.now, startedAt = new Date(now()).toISOString();
@@ -198,23 +200,26 @@ export async function runExportRetentionAcceptance(input: {
       if (waitMs === undefined) return { outcome: "skipped", detail: "scheduled_sweep_not_declared_active" };
       if (!Number.isSafeInteger(waitMs) || waitMs <= 0 || waitMs > 3 * 60 * 60_000) return { outcome: "failed", detail: "scheduled_wait_invalid" };
       const settled = retained.find((r) => r.jobId === id);
-      if (!settled) return { outcome: "passed", detail: "already_removed_by_the_owner_pass" };
+      if (!settled) return { outcome: "failed", detail: "schedule_not_exercised_owner_removed_copy" };
+      if (!input.observeScheduledRemoval) return { outcome: "failed", detail: "scheduled_removal_observer_missing" };
       const deadline = now() + waitMs;
       let retention = settled.state;
       while (now() < deadline) {
         await sleep(Math.min(30_000, Math.max(1_000, Math.floor(waitMs / 20))));
         const after = data(await call(`${CONSUMER}?jobId=${id}`, input.consumerIdToken));
         retention = String(after?.retention);
-        if (after?.objectDeleted === true && retention === "removal_recorded") {
+        if (after?.objectDeleted === true && ["removal_recorded","removal_verified"].includes(retention)) {
           const index = retained.findIndex((r) => r.jobId === id);
           if (index >= 0) retained.splice(index, 1);
-          return { outcome: "passed", status: 200, detail: "removed_by_the_schedule" };
+          if (await input.observeScheduledRemoval(id,startedAt)) return { outcome: "passed", status: 200, detail: "removed_by_observed_schedule_and_service_audit" };
+          // CloudWatch delivery can lag the committed audit row. Keep checking; never infer the actor from a status.
+          continue;
         }
         if (retention !== "cleanup_pending") break;
       }
       const index = retained.findIndex((r) => r.jobId === id);
       if (index >= 0) retained[index] = { jobId: id, state: retention };
-      return { outcome: "failed", status: 200, detail: `still_${retention}` };
+      return { outcome: "failed", status: 200, detail: ["removal_recorded","removal_verified"].includes(retention) ? "scheduled_removal_not_attributed" : `still_${retention}` };
     });
     // 8 to 10. Operator retention actions (workforce). 503 export_cleanup_not_activated is reported, not passed.
     for (const [name, body, check] of [
@@ -236,10 +241,10 @@ export async function runExportRetentionAcceptance(input: {
   const observed = summariseExecution(executions);
   // Acceptance needs every step passed; exploration tolerates stated skips but never a failure. Either way the execution that
   // answered must be the expected one (a mixed or unobserved run qualifies nothing), and a report is written whatever the verdict.
-  // In acceptance mode every case is mandatory, except the scheduled sweep when the caller did not declare it active:
-  // a sweep that is not released cannot be waited for, and pretending otherwise would be the opposite of honest.
+  // Full acceptance includes the scheduled sweep. Omitting its configuration records an unmet case,
+  // never a green retention verdict. Exploration can still inspect an unreleased deployment.
   const mandatory: string[] = mode === "acceptance"
-    ? EXPORT_ACCEPTANCE_STEPS.filter((name) => name !== "scheduled cleanup removed the copy" || input.scheduledCleanupWaitMs !== undefined)
+    ? [...EXPORT_ACCEPTANCE_STEPS]
     : ["consumer posture", "request export job", "advance passes to ready", "download link for the exact version", "download and verify the delivered object"];
   const unmet = mandatory.filter((name) => !steps.some((s) => s.name === name && s.outcome === "passed"));
   const executionOk = expectedExecution ? observed.execution === expectedExecution : observed.execution === "production" || observed.execution === "qualification";

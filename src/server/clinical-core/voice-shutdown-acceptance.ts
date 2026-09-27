@@ -46,14 +46,16 @@ export async function runVoiceShutdownAcceptance(input: {
   expectedAwsAccountId: string; observedAwsAccountId: string; sourceCommit: string; migrationReleaseHash: string;
   /** Two read-only inventory reports, taken apart in time after old invocations ended (`owned-voice/inventory.cjs --read-only`). */
   inventories?: readonly VoiceInventoryObservation[];
+  /** The CLI obtains both inventories directly from the reviewed AWS stack in acceptance mode. */
+  readInventory?: () => Promise<VoiceInventoryObservation>;
   mode?: "exploratory" | "acceptance";
   fetch?: FetchLike; now?: () => number;
 }): Promise<VoiceShutdownReport> {
   const fetcher = input.fetch ?? fetch, now = input.now ?? Date.now, startedAt = new Date(now()).toISOString();
   const origin = validate(input);
   const mode = input.mode ?? "exploratory";
-  const inventories = input.inventories ?? [];
-  if (mode === "acceptance" && inventories.length < 2) throw new VoiceShutdownAcceptanceError("configuration_invalid");
+  const inventories = input.readInventory ? [await input.readInventory()] : [...(input.inventories ?? [])];
+  if (mode === "acceptance" && !input.readInventory && inventories.length < 2) throw new VoiceShutdownAcceptanceError("configuration_invalid");
   const steps: VoiceShutdownStep[] = [];
   const executions = new Set<string>();
   let index = 0;
@@ -94,11 +96,14 @@ export async function runVoiceShutdownAcceptance(input: {
     const r = await call(`${ROOT}/${FICTIONAL_JOB}`, input.consumerIdToken, "DELETE");
     return { outcome: cleanupOnly(r) ? "passed" : "failed", status: r.status, detail: cleanupOnly(r) ? undefined : errorCode(r) };
   });
-  // 4. No identity has a way back in: a workforce token is refused exactly as the owner is, and never served.
-  await step("drain refuses another identity the same way", "503 voice_cleanup_only for a workforce token; never 200", async () => {
+  // 4. No identity has a way back in. Cross-pool authorizer denial is distinct from a Lambda drain refusal.
+  await step("drain refuses another identity the same way", "unmarked 401/403 at the consumer authorizer or 503 voice_cleanup_only; never served", async () => {
     const r = await call(`${ROOT}/${FICTIONAL_JOB}`, input.workforceIdToken, "GET");
-    const ok = cleanupOnly(r) || (r.status === 503 && (r.body as { error?: unknown } | null)?.error === "production_not_activated");
-    return { outcome: ok ? "passed" : "failed", status: r.status, detail: ok ? undefined : errorCode(r) };
+    // The consumer-only JWT authorizer rejects a workforce token before Lambda.
+    // This proves cross-pool denial, not that the gateway emitted a drain response.
+    const gatewayDenied = (r.status === 401 || r.status === 403) && !r.marked;
+    const ok = cleanupOnly(r) || gatewayDenied;
+    return { outcome: ok ? "passed" : "failed", status: r.status, detail: gatewayDenied ? "workforce_denied_by_consumer_authorizer" : ok ? undefined : errorCode(r) };
   });
   // 5. Qualification execution is refused while draining, by policy. A marked response here means a deployment that
   //    serves the fictional identities in a state that is supposed to serve no one.
@@ -107,15 +112,16 @@ export async function runVoiceShutdownAcceptance(input: {
     return { outcome: marked ? "failed" : "passed", detail: marked ? "qualification_marker_while_draining" : undefined };
   });
   // 6 and 7. The operator's inventories: read-only, certifying nothing, and not growing while the deployment drains.
+  if (input.readInventory) inventories.push(await input.readInventory());
   await step("inventory reports are read-only and certify nothing", "each report is owned-voice-inventory/1 with deletionCertified and atomicSnapshot false", async () => {
     if (inventories.length === 0) return { outcome: "skipped", detail: "no_inventory_supplied" };
-    const ok = inventories.every((report) => report?.version === "owned-voice-inventory/1" && report.deletionCertified === false && report.atomicSnapshot === false
-      && /^[a-f0-9]{64}$/.test(String(report.fingerprint)) && typeof report.counts?.jobMetadata === "number");
+    const ok = inventories.every(validInventory);
     return { outcome: ok ? "passed" : "failed", detail: ok ? `reports:${inventories.length}` : "inventory_report_invalid" };
   });
   const latest = inventories.at(-1) ?? null;
   await step("inventory did not grow between the two observations", "two reports taken apart in time; no count increased while draining", async () => {
     if (inventories.length < 2) return { outcome: "skipped", detail: "fewer_than_two_inventories" };
+    if (!inventories.every(validInventory)) return { outcome: "failed", detail: "inventory_report_invalid" };
     const [before, after] = [inventories[0]!, inventories.at(-1)!];
     if (!(Date.parse(after.observedAt) > Date.parse(before.observedAt))) return { outcome: "failed", detail: "observations_not_ordered" };
     const grew = (["jobMetadata", "uncleanJobs", "objectVersions", "providerJobs"] as const).filter((key) => Number(after.counts[key]) > Number(before.counts[key]));
@@ -133,10 +139,17 @@ export async function runVoiceShutdownAcceptance(input: {
   const report: Omit<VoiceShutdownReport, "evidenceSha256"> = {
     schemaVersion: "voice-shutdown-acceptance/1", environment: "synthetic-staging", ok, sourceCommit: input.sourceCommit, migrationReleaseHash: input.migrationReleaseHash,
     configurationSha256, awsAccountId: input.expectedAwsAccountId, startedAt, finishedAt, steps,
-    retained: latest ? { jobMetadata: latest.counts.jobMetadata, uncleanJobs: latest.counts.uncleanJobs, objectVersions: latest.counts.objectVersions, providerJobs: latest.counts.providerJobs } : null,
+    retained: latest && validInventory(latest) ? { jobMetadata: latest.counts.jobMetadata, uncleanJobs: latest.counts.uncleanJobs, objectVersions: latest.counts.objectVersions, providerJobs: latest.counts.providerJobs } : null,
     ...observed, certifies: { deletion: false, atomicSnapshot: false }, verdict: { mode, mandatory, unmet },
   };
   return { ...report, evidenceSha256: createHash("sha256").update(JSON.stringify({ ...report, startedAt: undefined, finishedAt: undefined })).digest("hex") };
+}
+
+function validInventory(report: VoiceInventoryObservation): boolean {
+  const keys = ["jobMetadata", "uncleanJobs", "objectVersions", "providerJobs"] as const;
+  return report?.version === "owned-voice-inventory/1" && report.deletionCertified === false && report.atomicSnapshot === false
+    && /^[a-f0-9]{64}$/.test(String(report.fingerprint)) && typeof report.observedAt === "string" && Number.isFinite(Date.parse(report.observedAt))
+    && report.counts != null && keys.every(key => Number.isSafeInteger(report.counts[key]) && report.counts[key] >= 0);
 }
 
 function errorCode(r: { status: number; body: unknown }): string {

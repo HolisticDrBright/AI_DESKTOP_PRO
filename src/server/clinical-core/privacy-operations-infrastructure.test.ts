@@ -1,7 +1,7 @@
 import {beforeAll,describe,expect,it} from 'vitest';
 import {execFileSync,execFile} from 'node:child_process';
 import {promisify} from 'node:util';
-import {readFileSync} from 'node:fs';
+import {readFileSync,statSync} from 'node:fs';
 type Json=null|boolean|number|string|Json[]|{[key:string]:Json};
 let t:{Parameters:Record<string,{Default?:string}>;Conditions:Record<string,Json>;Rules:Json;Resources:Record<string,{Type:string;Properties:Record<string,Json>;DeletionPolicy?:string}>};
 beforeAll(()=>{
@@ -122,7 +122,7 @@ describe('privacy operations deployable candidate',()=>{
     expect((t.Resources.Function.Properties.Environment as {Variables:Record<string,Json>}).Variables.RETENTION_SWEEP_ENABLED).toBe('false');
     expect(t.Rules).toMatchObject({ReviewedRetentionSchedule:{RuleCondition:{'Fn::Equals':[{Ref:'RetentionScheduleEnabled'},'true']}}});
     expect(Object.values(t.Resources).filter(r=>r.Type==='AWS::ApiGatewayV2::Route')).toHaveLength(1);
-    expect(readFileSync('dist/aws-clinical-core/privacy-operations/retention-sweep.js','utf8').length).toBeGreaterThan(1000);
+    expect(statSync('dist/aws-clinical-core/privacy-operations/retention-sweep.js').size).toBeGreaterThan(1000);
     const lifecycle=JSON.parse(readFileSync('infra/aws-clinical-core/personal-export-bucket-lifecycle.json','utf8')) as {Rules:Array<Record<string,Json>>};
     expect(lifecycle.Rules.every(r=>(r.Filter as {Prefix:string}).Prefix==='personal-exports/'&&r.Status==='Enabled')).toBe(true);
     expect(lifecycle.Rules.some(r=>(r.AbortIncompleteMultipartUpload as {DaysAfterInitiation:number})?.DaysAfterInitiation===1)).toBe(true);

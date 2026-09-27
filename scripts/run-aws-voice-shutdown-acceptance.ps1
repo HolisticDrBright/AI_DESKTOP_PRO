@@ -9,9 +9,8 @@ param(
 # Hosted acceptance of the reviewed voice shutdown (drain) transition, against the reviewed qualification target only.
 # The owned-voice candidate must already be in the drain posture: PHI false, Activation=draining, qualification execution
 # disabled (the policy refuses qualification execution while draining, so a drain deployment serves no one at all).
-# -InventoryPath names a JSON array of two read-only inventory reports from
-# `node dist/aws-clinical-core/owned-voice/inventory.cjs --read-only <account> <region> <stack>`, taken apart in time
-# after old invocations ended, each with an `observedAt` timestamp added. Acceptance mode requires them.
+# Acceptance reads two inventories directly from the reviewed AWS stack. -InventoryPath is exploratory only;
+# caller-supplied reports cannot stand in for hosted observations.
 # This run proves refusals and records what remains. It never certifies erasure, and no report it writes claims to.
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
@@ -22,7 +21,7 @@ $target = Read-QualificationTarget -Path $QualificationTargetPath -Region $Regio
 $deployment = Assert-QualificationDeploymentManifest -Target $target -DeploymentManifestPath $DeploymentManifestPath -Region $Region
 if (-not (Get-Command aws -ErrorAction SilentlyContinue)) { throw "AWS CLI is required. No acceptance request was attempted." }
 if (-not $env:CLINICAL_WORKFORCE_ID_TOKEN -or -not $env:CLINICAL_CONSUMER_ID_TOKEN) { throw "Fresh consumer and workforce Cognito ID tokens must be set in this PowerShell process only." }
-if ($Mode -eq 'acceptance' -and -not $InventoryPath) { throw "Acceptance mode needs -InventoryPath: two read-only inventory reports taken apart in time; use -Mode exploratory for a refusal-only run." }
+if ($Mode -eq 'acceptance' -and $InventoryPath) { throw "Acceptance mode reads both inventories from the reviewed AWS stack itself; caller-supplied inventories are exploratory only." }
 if ($InventoryPath -and -not (Test-Path -LiteralPath $InventoryPath)) { throw "InventoryPath does not exist." }
 $sourceCommit = Assert-QualificationSourceCommit -Target $target
 $account = Assert-QualificationAccount -Target $target

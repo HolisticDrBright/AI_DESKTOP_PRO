@@ -14,6 +14,25 @@ const inventory = (patch: Omit<Partial<VoiceInventoryObservation>, "counts"> & {
 const drained = (answers: Response[] = []) => { const queue = [...answers]; return async () => queue.shift() ?? cleanup(); };
 
 describe("hosted voice shutdown acceptance", () => {
+  test("missing, coerced, negative and nonfinite inventory counts cannot qualify", async () => {
+    for (const key of ["jobMetadata", "uncleanJobs", "objectVersions", "providerJobs"]) {
+      for (const value of [undefined, null, "0", -1, 0.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+        const bad = inventory({ observedAt: "2026-09-21T11:00:00Z" });
+        (bad.counts as Record<string, unknown>)[key] = value;
+        const result = await runVoiceShutdownAcceptance({ ...base, mode: "acceptance", inventories: [inventory(), bad], fetch: drained() });
+        expect(result.ok, `${key}:${String(value)}`).toBe(false);
+        expect(result.steps.at(-1)?.outcome).toBe("failed");
+      }
+    }
+  });
+  test("consumer authorizer denial of a workforce token is distinct from the consumer drain refusal", async () => {
+    for (const status of [401, 403]) {
+      const result = await runVoiceShutdownAcceptance({ ...base, mode: "acceptance", inventories: [inventory(), inventory({ observedAt: "2026-09-21T11:00:00Z" })],
+        fetch: drained([cleanup(), cleanup(), cleanup(), json(status, { message: "Unauthorized" })]) });
+      expect(result.ok).toBe(true);
+      expect(result.steps[3]).toMatchObject({status,detail:"workforce_denied_by_consumer_authorizer"});
+    }
+  });
   test("a draining deployment refuses every public method, and the run records what the inventories still hold without certifying anything", async () => {
     const calls: Array<{ url: string; method: string; auth: string }> = [];
     const report = await runVoiceShutdownAcceptance({ ...base, mode: "acceptance",

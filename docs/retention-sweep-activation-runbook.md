@@ -15,7 +15,7 @@ order below is the order they are normally cleared.
 | Layer | Mechanism | Cleared by | Status |
 |---|---|---|---|
 | 1. Stack | `RetentionScheduleActive` condition on the privacy-operations candidate: needs `ExportCleanupActive` (`ExportCleanupEnabled=true`, `ExportCleanupEvidenceSha256`, `ExportBucketName`, `ExportKmsKeyArn`), `RetentionScheduleEnabled=true`, `RetentionScheduleEvidenceSha256`, `RetentionServicePersonId`, `RetentionServiceSubject`, `RetentionServiceOrganizationId`. Without it the function, schedule and alarms do not exist. | A reviewed stack update with those parameters. | not deployed |
-| 2. Function | `retentionSweepContext` refuses unless `PHI_ALLOWED=true`, the evidence hash and identity parameters are well formed (`retention_sweep_configuration_invalid`). `PHI_ALLOWED` is the foundation stack's `PhiAllowed`. | PHI activation of the privacy-operations plane, a separate human decision. With PHI disabled the sweep cannot act even if layers 1 and 3 are cleared. | PHI disabled |
+| 2. Function | `retentionSweepContext` requires either approved production posture or the account/database/subject-bound qualification execution profile, plus reviewed evidence and identity parameters. The handler also requires the configured scheduled-rule event. | Qualification uses fictional designated identities with PHI false and activation blocked. Production activation remains a separate human decision. | No qualification candidate deployed; PHI disabled |
 | 3. Database | `clinical_private.retention_sweep_actor()` requires the caller to be an active, production-bound workforce identity named by a live row in `clinical_private.privacy_retention_service_releases` (`approved_at` passed, `revoked_at` null). No migration seeds a row. Without it every sweep call refuses `retention_service_release_required`, the run reports `SweepRefused=1` and `RetentionRefusedAlarm` fires. | The `release` command below. | no row |
 
 The evidence hash is one reviewed document: the retention operating policy that names the service
@@ -54,8 +54,9 @@ Three alarms watch it, all on the qualification alarm topic:
 | `RetentionSweepFailedAlarm` | The sweep function errored |
 | `RetentionSweepConsecutiveFailureAlarm` | Two consecutive sweeps failed |
 
-**The alarm topic has no subscribers.** Until a real recipient is subscribed, every alarm above is a fiction and the
-failure path does not exist. Fix that before the release, not after.
+**Alarm delivery remains unverified.** On September 27 a new confirmation was sent to the owner's selected
+info@AILongevityPro.app destination; it remained pending at inspection. Confirm the subscription and test actual
+alarm delivery before release. Configured alarms alone are not evidence that anyone receives them.
 
 ## The retention service identity
 
@@ -133,21 +134,35 @@ refused by the sweep too.
 2. Retention service workforce identity provisioned and its person id, subject and organization id
    recorded. `inspect` should still show `live: 0`.
 3. Privacy-operations stack updated with `ExportCleanup*` and `RetentionSchedule*` parameters. The
-   function and schedule now exist; every hourly run reports `SweepRefused=1`, `RetentionRefusedAlarm`
+   function and schedule now exist; every daily run reports `SweepRefused=1`, `RetentionRefusedAlarm`
    fires. That alarm firing is the expected state between steps 3 and 5 and should be acknowledged as
    such, not silenced.
-4. PHI activation of the privacy-operations plane, if and when approved. Until then the sweep reports
-   `retention_sweep_configuration_invalid` rather than sweeping, whatever the database holds.
+4. For synthetic qualification, deploy the reviewed qualification profile on the isolated database with PHI false.
+   For production, PHI activation of the privacy-operations plane remains separately approved. Never enable PHI
+   to make a qualification run pass.
 5. `release`. Record the printed JSON (version, service person id, subject, approver, `approved_at`)
    with the deployment evidence.
-6. First sweep within the hour: `SweepRefused` drops to 0, `Cleaned`, `CleanupPending`, `Settling`,
+6. First scheduled sweep within the 24-hour cadence: `SweepRefused` drops to 0, `Cleaned`, `CleanupPending`, `Settling`,
    `OldestOverdueSeconds` appear in `ALP/PrivacyExportRetention`; `RetentionRefusedAlarm` clears. Run
    `scripts/run-aws-export-retention-acceptance.ps1` afterwards (with `-QualificationTargetPath`, the
    reviewed qualification target manifest; it never reads a foundation stack for its target): its
    cancelled fixture job should be removed by the sweep once settled, and its report is the first
    hosted evidence. Pass `-ScheduledCleanupWaitMinutes <n>` so the run waits for the schedule itself to
    record that removal and fails if it never comes; without it the scheduled step is skipped rather
-   than assumed, because a pending cleanup state is not completed deletion.
+   than assumed, because a pending cleanup state is not completed deletion. A skipped
+   scheduled step leaves full acceptance unmet; use exploratory mode for partial checks.
+   The bounded harness waits at most three hours: start it before the next scheduled
+   occurrence, not immediately after an arbitrary deployment. Do not shorten the
+   production cadence or manually invoke the function to fabricate scheduled evidence.
+   Acceptance requires a pending copy (owner deletion does not exercise the schedule),
+   a completed scheduled invocation in the deployed function's CloudWatch stream, and
+   a deletion audit for that exact job attributed to the designated service during
+   that invocation. Missing logs, a different actor, or a refused read is not a pass.
+   The observer needs read-only Events/Lambda/CloudWatch access and a reviewed
+   administrative read of the isolated qualification database. It never reads export
+   contents. The function validates its rule ARN and logs only operational invocation
+   identifiers and counts. Administrator evidence fabrication is outside this correlation
+   check; preserve IAM separation and independently review the hosted evidence.
 7. Any later change of policy, identity or approver: `revoke`, then `release` a new version. Rows are
    never deleted.
 

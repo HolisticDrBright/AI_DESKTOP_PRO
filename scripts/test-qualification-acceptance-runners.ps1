@@ -206,7 +206,7 @@ $global:StaleToken = $true
 $voiceRunner = Join-Path $PSScriptRoot 'run-aws-voice-shutdown-acceptance.ps1'
 $inventoryFile = Join-Path $work 'inventories.json'
 '[{"version":"owned-voice-inventory/1","atomicSnapshot":false,"deletionCertified":false,"counts":{"jobMetadata":0,"uncleanJobs":0,"objectVersions":0,"providerJobs":0},"fingerprint":"aaaa","observedAt":"2026-09-21T10:00:00Z"}]' | Set-Content -LiteralPath $inventoryFile -Encoding utf8
-function Voice-Run([string]$targetFile, [string]$mode = 'acceptance', [string]$inventory = $inventoryFile) {
+function Voice-Run([string]$targetFile, [string]$mode = 'acceptance', [string]$inventory = '') {
   if ($inventory) { & $voiceRunner -QualificationTargetPath $targetFile -DeploymentManifestPath $deploymentManifest -InventoryPath $inventory -Mode $mode -ConfirmSyntheticOnly }
   else { & $voiceRunner -QualificationTargetPath $targetFile -DeploymentManifestPath $deploymentManifest -Mode $mode -ConfirmSyntheticOnly }
 }
@@ -240,7 +240,7 @@ Invoke-Case 'a draining voice candidate on the staging API' { Voice-Run $good } 
 $global:StackOutputs[$voiceStack] = (DrainingVoiceStack @{ DatabaseName = 'clinical_core' })
 Invoke-Case 'a draining voice candidate on the staging database' { Voice-Run $good } 'qualification_target_refused:stack_parameter.owned-voice.DatabaseName'
 $global:StackOutputs[$voiceStack] = (DrainingVoiceStack)
-Invoke-Case 'voice shutdown acceptance without inventories' { Voice-Run $good 'acceptance' '' } 'two read-only inventory reports'
+Invoke-Case 'voice shutdown acceptance refuses caller inventories' { Voice-Run $good 'acceptance' $inventoryFile } 'caller-supplied inventories are exploratory only'
 Invoke-Case 'voice shutdown exploration without inventories' { Voice-Run $good 'exploratory' '' } $null
 
 # 6. The retention service release is bound the same way: the row is written to the qualification database the manifest

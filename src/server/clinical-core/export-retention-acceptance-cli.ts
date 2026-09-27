@@ -6,6 +6,7 @@ import { loadClinicalCoreMigrations } from "./migrations";
 import { productionArtifactReleaseHash } from "./production-migrations";
 import { bindQualificationTarget, loadQualificationTargetManifest, QualificationTargetManifestError } from "./qualification-target-manifest";
 import { EXPORT_ACCEPTANCE_CANDIDATES, observeQualificationTarget } from "./qualification-target-observation";
+import { observeScheduledRetentionRemoval } from "./scheduled-retention-observation";
 
 /** Hosted runner, bound to the reviewed qualification target manifest (`CLINICAL_QUALIFICATION_TARGET`): the API origin,
  * account, export bucket, source commit and migration ledger come from it and from nothing else. The PowerShell wrapper
@@ -38,6 +39,12 @@ async function main() {
     expectedAwsAccountId: target.expectedAwsAccountId, observedAwsAccountId: target.observedAwsAccountId, sourceCommit: target.sourceCommit, migrationReleaseHash: target.migrationReleaseHash,
     mode, expectedExecution: "qualification", expectedExportBucket: target.expectedExportBucket, expectedRegion: target.region,
     ...(scheduledCleanupWaitMs === undefined ? {} : { scheduledCleanupWaitMs }),
+    ...(mode === "acceptance" && scheduledCleanupWaitMs !== undefined ? {observeScheduledRemoval:(jobId:string,since:string)=>observeScheduledRetentionRemoval(manifest,jobId,since,async args=>{
+      const raw=execFileSync("aws",[...args,"--region",manifest.awsRegion,"--output","json","--no-cli-pager"],{
+        encoding:"utf8",timeout:30_000,maxBuffer:20_000_000,windowsHide:true,stdio:["ignore","pipe","pipe"],
+      });
+      return JSON.parse(raw);
+    })} : {}),
   });
   mkdirSync("dist/qualification", { recursive: true });
   const out = `dist/qualification/export-retention-acceptance-${report.finishedAt.replace(/[:.]/g, "-")}.json`;
