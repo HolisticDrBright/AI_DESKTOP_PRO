@@ -51,10 +51,14 @@ export function assertQualificationDatabaseName(name: string, stagingDatabaseNam
   if (!name.includes("qualification") || RESERVED.has(name) || name === stagingDatabaseName) throw new QualificationTargetError("qualification_name_refused");
 }
 
-function assertConfiguration(configuration: QualificationTargetConfiguration): void {
+export function assertQualificationConfiguration(configuration: QualificationTargetConfiguration, region?: string): void {
   const cluster = configuration.clusterArn.match(CLUSTER_ARN);
   if (!cluster || !SECRET_ARN.test(configuration.secretArn) || !/^\d{12}$/.test(configuration.expectedAccountId)) throw new QualificationTargetError("configuration_refused");
   if (cluster[2] !== configuration.expectedAccountId || configuration.expectedAccountId === PRODUCTION_ACCOUNT_ID) throw new QualificationTargetError("account_boundary_refused");
+  const clusterParts = configuration.clusterArn.split(':');
+  const secretParts = configuration.secretArn.split(':');
+  if (secretParts[4] !== configuration.expectedAccountId || secretParts[1] !== clusterParts[1]) throw new QualificationTargetError('account_boundary_refused');
+  if (secretParts[3] !== clusterParts[3] || (region !== undefined && region !== clusterParts[3])) throw new QualificationTargetError('configuration_refused');
   assertQualificationDatabaseName(configuration.qualificationDatabaseName, configuration.stagingDatabaseName);
 }
 
@@ -85,7 +89,7 @@ async function ledger(client: RdsDataCommandClient, configuration: Qualification
 
 /** Read-only: whether the qualification database exists and what both ledgers hold. Nothing is created. */
 export async function inspectQualificationTarget(client: RdsDataCommandClient, configuration: QualificationTargetConfiguration): Promise<QualificationTargetInspection> {
-  assertConfiguration(configuration);
+  assertQualificationConfiguration(configuration);
   const exists = await databaseExists(client, configuration, configuration.qualificationDatabaseName);
   const qualification = exists ? await ledger(client, configuration, configuration.qualificationDatabaseName) : { ledgerPresent: false, ledgerVersions: 0, latestVersion: null };
   const stagingExists = await databaseExists(client, configuration, configuration.stagingDatabaseName);
@@ -101,7 +105,7 @@ export async function inspectQualificationTarget(client: RdsDataCommandClient, c
 /** Creates the empty qualification database and nothing else: no schema, no ledger, no rows. Refuses when it exists,
  * so a populated target is never re-created or reset from here; dropping one is a reviewed manual action. */
 export async function createQualificationDatabase(client: RdsDataCommandClient, configuration: QualificationTargetConfiguration): Promise<{ mode: "qualification_database_created"; name: string; stagingDatabase: string; nextStep: string }> {
-  assertConfiguration(configuration);
+  assertQualificationConfiguration(configuration);
   if (await databaseExists(client, configuration, configuration.qualificationDatabaseName)) throw new QualificationTargetError("qualification_database_exists");
   // The name passed the identifier pattern above, so it is quoted as an identifier rather than bound as a parameter,
   // which `create database` does not accept.

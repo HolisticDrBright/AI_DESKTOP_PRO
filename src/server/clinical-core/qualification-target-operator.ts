@@ -5,10 +5,10 @@ if (typeof window !== "undefined") {
 import path from "node:path";
 import { RDSDataClient } from "@aws-sdk/client-rds-data";
 import { loadClinicalCoreMigrations } from "./migrations";
-import { createQualificationDatabase, inspectQualificationTarget, QualificationTargetError } from "./qualification-target";
+import { assertQualificationConfiguration, createQualificationDatabase, inspectQualificationTarget, QualificationTargetError } from "./qualification-target";
 import { provisionQualificationFixtures, QualificationFixtureError } from "./qualification-fixtures";
 import { createRdsDataAdministrativeDatabase } from "./rds-data-database";
-import { loadSyntheticAcceptanceManifest } from "./synthetic-fixtures";
+import { loadQualificationFixtureManifest } from "./qualification-fixture-manifest";
 import { errorCode } from "./log-safe-error";
 
 function required(name: string): string {
@@ -34,6 +34,9 @@ async function run() {
     expectedAccountId: required("EXPECTED_AWS_ACCOUNT_ID"),
   };
   const region = required("AWS_REGION");
+  // `fixtures` must enforce the same account/ARN/database checks as inspect/create,
+  // even when the operator is called directly rather than through PowerShell.
+  assertQualificationConfiguration(configuration, region);
   const client = new RDSDataClient({ region });
   if (command === "inspect") {
     console.log(JSON.stringify(await inspectQualificationTarget(client, configuration)));
@@ -43,8 +46,8 @@ async function run() {
     console.log(JSON.stringify(await createQualificationDatabase(client, configuration)));
     return;
   }
-  const manifest = loadSyntheticAcceptanceManifest(required("CLINICAL_SYNTHETIC_MANIFEST"));
-  if (manifest.awsAccountId !== configuration.expectedAccountId) throw new Error("account_boundary_refused");
+  const manifest = loadQualificationFixtureManifest(required("CLINICAL_SYNTHETIC_MANIFEST"));
+  if (manifest.awsAccountId !== configuration.expectedAccountId || manifest.awsRegion !== region || configuration.expectedAccountId !== '588966314750') throw new Error("account_boundary_refused");
   const directory = process.env.CLINICAL_PRODUCTION_MIGRATIONS?.trim() || path.join(process.cwd(), "dist", "aws-clinical-core", "production-migrations");
   const migrations = loadClinicalCoreMigrations(directory);
   const database = createRdsDataAdministrativeDatabase(

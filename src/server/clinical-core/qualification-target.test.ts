@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { assertQualificationDatabaseName, createQualificationDatabase, inspectQualificationTarget, QualificationTargetError } from "./qualification-target";
+import { assertQualificationConfiguration, assertQualificationDatabaseName, createQualificationDatabase, inspectQualificationTarget, QualificationTargetError } from "./qualification-target";
 
 // The isolated qualification database: created empty on the synthetic cluster, never the populated staging database.
 const CONFIG = {
@@ -77,5 +77,11 @@ describe("qualification target", () => {
   test("a failing statement is reported as one category, never with the statement or secret", async () => {
     const failing = { async send() { throw new Error("secret:arn:aws:secretsmanager:..."); } };
     await expect(inspectQualificationTarget(failing, CONFIG)).rejects.toThrow("statement_failed");
+  });
+  test('shared operator guard binds the secret and region, including direct fixture execution', () => {
+    expect(() => assertQualificationConfiguration(CONFIG,'us-east-2')).not.toThrow();
+    expect(() => assertQualificationConfiguration({...CONFIG,secretArn:CONFIG.secretArn.replace('123456789012','173535830222')},'us-east-2')).toThrow('account_boundary_refused');
+    expect(() => assertQualificationConfiguration({...CONFIG,secretArn:CONFIG.secretArn.replace('us-east-2','us-west-2')},'us-east-2')).toThrow('configuration_refused');
+    expect(() => assertQualificationConfiguration(CONFIG,'us-west-2')).toThrow('configuration_refused');
   });
 });

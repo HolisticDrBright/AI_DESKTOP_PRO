@@ -3,10 +3,10 @@ import { clinicalUuid, type ClinicalCoreDatabase, type ClinicalCoreTransaction }
 import type { ClinicalCoreMigration } from "./migrations";
 import { inspectProductionClinicalCoreMigrations } from "./production-migrations";
 import { assertQualificationDatabaseName } from "./qualification-target";
-import type { SyntheticAcceptanceManifest } from "./synthetic-fixtures";
+import { validateQualificationFixtureManifest, type QualificationFixtureManifest } from "./qualification-fixture-manifest";
 
 export class QualificationFixtureError extends Error {
-  constructor(readonly category: "fixture_boundary_refused" | "qualification_schema_incomplete" | "fixture_failed", readonly operationIndex?: number) {
+  constructor(readonly category: "fixture_boundary_refused" | "qualification_schema_incomplete" | "fixture_mismatch" | "fixture_failed", readonly operationIndex?: number) {
     super(category);
     this.name = "QualificationFixtureError";
   }
@@ -33,33 +33,55 @@ const key = (prefix: string, id: string) => `${prefix}_${id.replaceAll("-", "")}
  */
 export async function provisionQualificationFixtures(
   database: ClinicalCoreDatabase,
-  manifest: SyntheticAcceptanceManifest,
+  manifest: QualificationFixtureManifest,
   migrations: ClinicalCoreMigration[],
   target: { qualificationDatabaseName: string; stagingDatabaseName: string },
 ): Promise<QualificationFixtureResult> {
   if (manifest.environment !== "synthetic-staging" || manifest.dataClassification !== "synthetic_only" || manifest.containsPhi !== false) throw new QualificationFixtureError("fixture_boundary_refused");
+  try { validateQualificationFixtureManifest(manifest); } catch { throw new QualificationFixtureError("fixture_boundary_refused"); }
   try { assertQualificationDatabaseName(target.qualificationDatabaseName, target.stagingDatabaseName); } catch { throw new QualificationFixtureError("fixture_boundary_refused"); }
   const inspection = await inspectProductionClinicalCoreMigrations(database, migrations);
   if (!inspection.ledgerPresent || inspection.missing.length || inspection.mismatched.length || inspection.unknown.length || migrations.length === 0) throw new QualificationFixtureError("qualification_schema_incomplete");
   const f = manifest.fixture;
+  const isolation = manifest.schemaVersion === 'aws-clinical-core-qualification-fixtures/2'
+    ? { person: manifest.fixture.isolationConsumerPersonId, subject: manifest.fixture.isolationConsumerSubject, pool: 'consumer' as const, label: 'qualification_isolation_consumer' }
+    : { person: manifest.fixture.isolationWorkforcePersonId, subject: manifest.fixture.isolationWorkforceSubject, pool: 'workforce' as const, label: 'qualification_isolation_workforce' };
   let operationIndex = 0;
   let inserted = 0;
   try {
     return await database.transaction(async (raw) => {
       const tx: ClinicalCoreTransaction = { query: async <R extends Record<string, unknown>>(sql: string, parameters: readonly unknown[] = []) => { operationIndex += 1; return raw.query<R>(sql, parameters); } };
       const insert = async (sql: string, parameters: readonly unknown[]) => { const r = await tx.query<{ n: number }>(sql, parameters); inserted += r.rows.length; };
+      const requireCount = async (sql: string, parameters: readonly unknown[], expected = 1) => {
+        const result = await tx.query<{ n: number }>(sql, parameters);
+        if (Number(result.rows[0]?.n) !== expected) throw new QualificationFixtureError('fixture_mismatch', operationIndex);
+      };
       await tx.query("select pg_advisory_xact_lock(hashtext($1))", ["ai-desktop-pro:qualification-fixtures"]);
       await insert("insert into clinical_core.organizations(id,organization_label) values($1,$2) on conflict (id) do nothing returning 1 as n", [clinicalUuid(f.organizationId), f.organizationLabel]);
       await insert("insert into clinical_core.organizations(id,organization_label) values($1,$2) on conflict (id) do nothing returning 1 as n", [clinicalUuid(f.isolationOrganizationId), f.isolationOrganizationLabel]);
-      for (const [person, label] of [[f.workforcePersonId, "qualification_workforce"], [f.consumerPersonId, "qualification_consumer"], [f.isolationWorkforcePersonId, "qualification_isolation_workforce"]] as const) {
-        await insert("insert into clinical_core.persons(id,subject_key) values($1,$2) on conflict (id) do nothing returning 1 as n", [clinicalUuid(person), `subject_${label}_${person.replaceAll("-", "").slice(0, 12)}`]);
+      for (const [id, label] of [[f.organizationId, f.organizationLabel], [f.isolationOrganizationId, f.isolationOrganizationLabel]]) {
+        await requireCount("select count(*)::int n from clinical_core.organizations where id=$1 and organization_label=$2 and status='active'", [clinicalUuid(id), label]);
       }
-      for (const [person, pool, subject] of [[f.workforcePersonId, "workforce", f.workforceSubject], [f.consumerPersonId, "consumer", f.consumerSubject], [f.isolationWorkforcePersonId, "workforce", f.isolationWorkforceSubject]] as const) {
+      for (const [person, label] of [[f.workforcePersonId, "qualification_workforce"], [f.consumerPersonId, "qualification_consumer"], [isolation.person, isolation.label]] as const) {
+        await insert("insert into clinical_core.persons(id,subject_key) values($1,$2) on conflict (id) do nothing returning 1 as n", [clinicalUuid(person), `subject_${label}_${person.replaceAll("-", "").slice(0, 12)}`]);
+        await requireCount("select count(*)::int n from clinical_core.persons where id=$1 and subject_key=$2 and status='active'", [clinicalUuid(person), `subject_${label}_${person.replaceAll("-", "").slice(0, 12)}`]);
+      }
+      for (const [person, pool, subject] of [[f.workforcePersonId, "workforce", f.workforceSubject], [f.consumerPersonId, "consumer", f.consumerSubject], [isolation.person, isolation.pool, isolation.subject]] as const) {
         await insert("insert into clinical_core.identities(person_id,identity_pool,identity_subject,production_bound) values($1,$2,$3,true) on conflict (identity_pool,identity_subject) do nothing returning 1 as n", [clinicalUuid(person), pool, subject]);
+        await requireCount("select count(*)::int n from clinical_core.identities where person_id=$1 and identity_pool=$2 and identity_subject=$3 and production_bound=true and status='active'", [clinicalUuid(person), pool, subject]);
+        await requireCount("select count(*)::int n from clinical_core.identities where person_id=$1", [clinicalUuid(person)]);
       }
       await insert("insert into clinical_core.organization_memberships(organization_id,person_id,role) values($1,$2,'practitioner') on conflict (organization_id,person_id) do nothing returning 1 as n", [clinicalUuid(f.organizationId), clinicalUuid(f.workforcePersonId)]);
-      await insert("insert into clinical_core.organization_memberships(organization_id,person_id,role) values($1,$2,'practitioner') on conflict (organization_id,person_id) do nothing returning 1 as n", [clinicalUuid(f.isolationOrganizationId), clinicalUuid(f.isolationWorkforcePersonId)]);
+      await requireCount("select count(*)::int n from clinical_core.organization_memberships where organization_id=$1 and person_id=$2 and role='practitioner' and status='active'", [clinicalUuid(f.organizationId), clinicalUuid(f.workforcePersonId)]);
+      if (isolation.pool === 'workforce') {
+        await insert("insert into clinical_core.organization_memberships(organization_id,person_id,role) values($1,$2,'practitioner') on conflict (organization_id,person_id) do nothing returning 1 as n", [clinicalUuid(f.isolationOrganizationId), clinicalUuid(isolation.person)]);
+        await requireCount("select count(*)::int n from clinical_core.organization_memberships where organization_id=$1 and person_id=$2 and role='practitioner' and status='active'", [clinicalUuid(f.isolationOrganizationId), clinicalUuid(isolation.person)]);
+      } else {
+        await requireCount("select count(*)::int n from clinical_core.organization_memberships where person_id=$1", [clinicalUuid(isolation.person)], 0);
+        await requireCount("select count(*)::int n from clinical_core.patient_connections where consumer_person_id=$1", [clinicalUuid(isolation.person)], 0);
+      }
       await insert("insert into clinical_core.patient_records(id,organization_id,patient_key,first_name,last_name) values($1,$2,$3,'Fictional','Qualification') on conflict (id) do nothing returning 1 as n", [clinicalUuid(f.patientRecordId), clinicalUuid(f.organizationId), key("patient", f.patientRecordId)]);
+      await requireCount("select count(*)::int n from clinical_core.patient_records where id=$1 and organization_id=$2 and patient_key=$3 and first_name='Fictional' and last_name='Qualification' and email is null and mrn is null", [clinicalUuid(f.patientRecordId), clinicalUuid(f.organizationId), key('patient', f.patientRecordId)]);
       // The consumer's verified connection to the fixture patient: the one relationship the consumer routes read.
       const connection = await tx.query<{ id: string }>("select id::text id from clinical_core.patient_connections where organization_id=$1 and patient_record_id=$2 and consumer_person_id=$3 and state='verified' order by created_at limit 1",
         [clinicalUuid(f.organizationId), clinicalUuid(f.patientRecordId), clinicalUuid(f.consumerPersonId)]);
@@ -70,6 +92,7 @@ export async function provisionQualificationFixtures(
         patientConnectionId = created.rows[0]?.id; inserted += 1;
       }
       if (!patientConnectionId) throw new QualificationFixtureError("fixture_failed", operationIndex);
+      await requireCount("select count(*)::int n from clinical_core.patient_connections where patient_record_id=$1", [clinicalUuid(f.patientRecordId)]);
       const artifacts = [
         ["programs", f.consentArtifactId, f.consentArtifactSha256], ["lab_results_import", f.labConsentArtifactId, f.labConsentArtifactSha256],
         ["protocols_supplements", f.protocolConsentArtifactId, f.protocolConsentArtifactSha256], ["nutrition", f.nutritionConsentArtifactId, f.nutritionConsentArtifactSha256],
@@ -78,15 +101,19 @@ export async function provisionQualificationFixtures(
       for (const [scope, id, sha256] of artifacts) {
         await insert("insert into clinical_core.consent_artifacts(id,organization_id,scope,artifact_version,content_sha256,jurisdiction,status,approved_at,approved_by_person_id) values($1,$2,$3,$4,$5,'US-FICTIONAL','approved',clock_timestamp(),$6) on conflict (id) do nothing returning 1 as n",
           [clinicalUuid(id), clinicalUuid(f.organizationId), scope, `qualification-${id.replaceAll("-", "").slice(0, 20)}`, sha256, clinicalUuid(f.workforcePersonId)]);
+        await requireCount("select count(*)::int n from clinical_core.consent_artifacts where id=$1 and organization_id=$2 and scope=$3 and content_sha256=$4 and jurisdiction='US-FICTIONAL' and status='approved' and approved_by_person_id=$5", [clinicalUuid(id), clinicalUuid(f.organizationId), scope, sha256, clinicalUuid(f.workforcePersonId)]);
+        await requireCount("select count(*)::int n from clinical_core.consent_grants where connection_id=$1 and scope=$2 and (status<>'granted' or artifact_id<>$3)", [clinicalUuid(patientConnectionId), scope, clinicalUuid(id)], 0);
         const granted = await tx.query<{ n: number }>("select count(*)::int n from clinical_core.consent_grants where organization_id=$1 and patient_record_id=$2 and connection_id=$3 and scope=$4 and status='granted'",
           [clinicalUuid(f.organizationId), clinicalUuid(f.patientRecordId), clinicalUuid(patientConnectionId), scope]);
         if (Number(granted.rows[0]?.n ?? 0) === 0) {
           await insert("insert into clinical_core.consent_grants(organization_id,patient_record_id,connection_id,artifact_id,scope,status,method,representative_authority,version,recorded_by_person_id) values($1,$2,$3,$4,$5,'granted','patient_app','self',1,$6) returning 1 as n",
             [clinicalUuid(f.organizationId), clinicalUuid(f.patientRecordId), clinicalUuid(patientConnectionId), clinicalUuid(id), scope, clinicalUuid(f.consumerPersonId)]);
         }
+        await requireCount("select count(*)::int n from clinical_core.consent_grants where organization_id=$1 and patient_record_id=$2 and connection_id=$3 and artifact_id=$4 and scope=$5 and status='granted' and method='patient_app' and representative_authority='self' and recorded_by_person_id=$6", [clinicalUuid(f.organizationId), clinicalUuid(f.patientRecordId), clinicalUuid(patientConnectionId), clinicalUuid(id), scope, clinicalUuid(f.consumerPersonId)]);
       }
       await insert("insert into clinical_core.sync_providers(id,organization_id,stable_id,contract_version,lab_contract_version,adapter_version,state,reviewed_by_person_id,reviewed_at) values($1,$2,'alp_patient_sync','patient-sync/1','lab-result/1','aws-clinical-state/1','active',$3,clock_timestamp()) on conflict (id) do nothing returning 1 as n",
         [clinicalUuid(f.syncProviderId), clinicalUuid(f.organizationId), clinicalUuid(f.workforcePersonId)]);
+      await requireCount("select count(*)::int n from clinical_core.sync_providers where id=$1 and organization_id=$2 and stable_id='alp_patient_sync' and contract_version='patient-sync/1' and lab_contract_version='lab-result/1' and adapter_version='aws-clinical-state/1' and state='active' and reviewed_by_person_id=$3", [clinicalUuid(f.syncProviderId), clinicalUuid(f.organizationId), clinicalUuid(f.workforcePersonId)]);
       return {
         provisioned: true as const, inserted, artifactReleaseHash: inspection.artifactReleaseHash,
         fixture: { organizationId: f.organizationId, workforcePersonId: f.workforcePersonId, consumerPersonId: f.consumerPersonId, patientRecordId: f.patientRecordId, patientConnectionId, isolationOrganizationId: f.isolationOrganizationId },
