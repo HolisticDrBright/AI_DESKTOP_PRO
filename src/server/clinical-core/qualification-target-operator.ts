@@ -8,7 +8,7 @@ import { loadClinicalCoreMigrations } from "./migrations";
 import { createQualificationDatabase, inspectQualificationTarget, QualificationTargetError } from "./qualification-target";
 import { provisionQualificationFixtures, QualificationFixtureError } from "./qualification-fixtures";
 import { createRdsDataAdministrativeDatabase } from "./rds-data-database";
-import { loadSyntheticAcceptanceManifest } from "./synthetic-fixtures";
+import { loadQualificationFixtureManifest } from "./qualification-fixture-manifest";
 import { errorCode } from "./log-safe-error";
 
 function required(name: string): string {
@@ -43,7 +43,7 @@ async function run() {
     console.log(JSON.stringify(await createQualificationDatabase(client, configuration)));
     return;
   }
-  const manifest = loadSyntheticAcceptanceManifest(required("CLINICAL_SYNTHETIC_MANIFEST"));
+  const manifest = loadQualificationFixtureManifest(required("CLINICAL_SYNTHETIC_MANIFEST"));
   if (manifest.awsAccountId !== configuration.expectedAccountId) throw new Error("account_boundary_refused");
   const directory = process.env.CLINICAL_PRODUCTION_MIGRATIONS?.trim() || path.join(process.cwd(), "dist", "aws-clinical-core", "production-migrations");
   const migrations = loadClinicalCoreMigrations(directory);

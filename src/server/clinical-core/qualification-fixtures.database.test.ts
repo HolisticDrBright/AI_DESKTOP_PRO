@@ -8,6 +8,7 @@ import type { ClinicalCoreMigration } from "./migrations";
 import { applyProductionClinicalCoreMigrations } from "./production-migrations";
 import { provisionQualificationFixtures } from "./qualification-fixtures";
 import type { SyntheticAcceptanceManifest } from "./synthetic-fixtures";
+import { validateQualificationFixtureManifest, type QualificationConsumerFixtureManifest } from "./qualification-fixture-manifest";
 
 // The production-shaped fixtures go into a database whose ledger equals the built artifact, after the production apply
 // (which requires an empty clinical dataset) and never into one whose history differs.
@@ -16,12 +17,12 @@ let migrations: ClinicalCoreMigration[];
 const manifest: SyntheticAcceptanceManifest = {
   schemaVersion: "aws-clinical-core-synthetic-acceptance/1", environment: "synthetic-staging", dataClassification: "synthetic_only", containsPhi: false,
   awsAccountId: "123456789012", awsRegion: "us-east-2", reviewedAt: "2026-09-21T00:00:00Z",
-  fixture: { organizationId: "11111111-1111-4111-8111-111111111111", organizationLabel: "Fictional qualification clinic", workforcePersonId: "22222222-2222-4222-8222-222222222222", workforceSubject: "workforce-sub-00000001",
+  fixture: { organizationId: "11111111-1111-4111-8111-111111111111", organizationLabel: "Synthetic acceptance qualification clinic", workforcePersonId: "22222222-2222-4222-8222-222222222222", workforceSubject: "workforce-sub-00000001",
     consumerPersonId: "33333333-3333-4333-8333-333333333333", consumerSubject: "consumer-sub-00000001", patientRecordId: "44444444-4444-4444-8444-444444444444",
     consentArtifactId: "55555555-5555-4555-8555-555555555555", consentArtifactSha256: "a".repeat(64), labConsentArtifactId: "99999999-9999-4999-8999-999999999999", labConsentArtifactSha256: "b".repeat(64),
     protocolConsentArtifactId: "12121212-1212-4121-8121-121212121212", protocolConsentArtifactSha256: "c".repeat(64), nutritionConsentArtifactId: "13131313-1313-4131-8131-131313131313", nutritionConsentArtifactSha256: "d".repeat(64),
     symptomsConsentArtifactId: "14141414-1414-4141-8141-141414141414", symptomsConsentArtifactSha256: "e".repeat(64), formsConsentArtifactId: "15151515-1515-4151-8151-151515151515", formsConsentArtifactSha256: "f".repeat(64),
-    syncProviderId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", isolationOrganizationId: "66666666-6666-4666-8666-666666666666", isolationOrganizationLabel: "Fictional qualification isolation clinic",
+    syncProviderId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", isolationOrganizationId: "66666666-6666-4666-8666-666666666666", isolationOrganizationLabel: "Synthetic acceptance qualification isolation clinic",
     isolationWorkforcePersonId: "77777777-7777-4777-8777-777777777777", isolationWorkforceSubject: "isolation-workforce-sub-0001" },
 };
 const unwrap = (v: unknown) => (typeof v === "object" && v !== null && "kind" in v && (v as { kind: string }).kind === "uuid" && "value" in v ? (v as { value: string }).value : v);
@@ -80,5 +81,37 @@ describe("qualification fixtures", () => {
       await expect(provisionQualificationFixtures(admin(other), manifest, migrations, target)).rejects.toThrow("qualification_schema_incomplete");
       expect((await other.query<{ n: number }>("select count(*)::int n from information_schema.tables where table_schema='clinical_core'")).rows[0].n).toBe(1);
     } finally { await other.close(); }
+  });
+  it("provisions the second consumer without workforce authority, refuses collisions, and keeps retries idempotent", async () => {
+    const { isolationWorkforcePersonId: _person, isolationWorkforceSubject: _subject, ...common } = manifest.fixture;
+    void _person; void _subject;
+    const v2: QualificationConsumerFixtureManifest = { ...manifest, schemaVersion: "aws-clinical-core-qualification-fixtures/2", fixture: {
+      ...common, isolationConsumerPersonId: "88888888-8888-4888-8888-888888888888", isolationConsumerSubject: "foreign-consumer-sub-0001",
+    } };
+    expect(validateQualificationFixtureManifest(v2)).toEqual(v2);
+    const first = await provisionQualificationFixtures(admin(db), v2, migrations, target);
+    expect(first.inserted).toBe(2);
+    expect((await provisionQualificationFixtures(admin(db), v2, migrations, target)).inserted).toBe(0);
+    const identities = (await db.query("select identity_pool from clinical_core.identities where person_id=$1", [v2.fixture.isolationConsumerPersonId])).rows;
+    expect(identities).toEqual([{ identity_pool: "consumer" }]);
+    expect((await db.query("select id from clinical_core.organization_memberships where person_id=$1", [v2.fixture.isolationConsumerPersonId])).rows).toEqual([]);
+    expect((await db.query("select id from clinical_core.patient_connections where consumer_person_id=$1", [v2.fixture.isolationConsumerPersonId])).rows).toEqual([]);
+    const before = await count("clinical_core.persons");
+    await expect(provisionQualificationFixtures(admin(db), { ...v2, fixture: { ...v2.fixture, isolationConsumerPersonId: "abababab-abab-4bab-8bab-abababababab" } }, migrations, target)).rejects.toThrow("fixture_boundary_refused");
+    expect(await count("clinical_core.persons")).toBe(before);
+    await db.query("insert into clinical_core.organization_memberships(organization_id,person_id,role) values($1,$2,'practitioner')", [v2.fixture.organizationId, v2.fixture.isolationConsumerPersonId]);
+    try {
+      await expect(provisionQualificationFixtures(admin(db), v2, migrations, target)).rejects.toThrow("fixture_boundary_refused");
+    } finally { await db.query("delete from clinical_core.organization_memberships where person_id=$1", [v2.fixture.isolationConsumerPersonId]); }
+  });
+  it("rejects mixed identity roles, duplicate subjects and unknown fields before any database operation", async () => {
+    const { isolationWorkforcePersonId, isolationWorkforceSubject, ...common } = manifest.fixture;
+    const value = { ...manifest, schemaVersion: "aws-clinical-core-qualification-fixtures/2", fixture: { ...common, isolationConsumerPersonId: isolationWorkforcePersonId, isolationConsumerSubject: isolationWorkforceSubject } };
+    for (const fixture of [
+      { ...value.fixture, isolationWorkforceSubject },
+      { ...value.fixture, isolationConsumerSubject: common.consumerSubject },
+      { ...value.fixture, email: "not-allowed@example.invalid" },
+      { ...value.fixture, isolationConsumerPersonId: undefined },
+    ]) expect(() => validateQualificationFixtureManifest({ ...value, fixture })).toThrow("manifest_invalid");
   });
 });

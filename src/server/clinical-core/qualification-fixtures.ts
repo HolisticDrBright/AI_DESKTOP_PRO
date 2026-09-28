@@ -3,7 +3,7 @@ import { clinicalUuid, type ClinicalCoreDatabase, type ClinicalCoreTransaction }
 import type { ClinicalCoreMigration } from "./migrations";
 import { inspectProductionClinicalCoreMigrations } from "./production-migrations";
 import { assertQualificationDatabaseName } from "./qualification-target";
-import type { SyntheticAcceptanceManifest } from "./synthetic-fixtures";
+import { validateQualificationFixtureManifest, type QualificationFixtureManifest } from "./qualification-fixture-manifest";
 
 export class QualificationFixtureError extends Error {
   constructor(readonly category: "fixture_boundary_refused" | "qualification_schema_incomplete" | "fixture_failed", readonly operationIndex?: number) {
@@ -33,15 +33,18 @@ const key = (prefix: string, id: string) => `${prefix}_${id.replaceAll("-", "")}
  */
 export async function provisionQualificationFixtures(
   database: ClinicalCoreDatabase,
-  manifest: SyntheticAcceptanceManifest,
+  manifest: QualificationFixtureManifest,
   migrations: ClinicalCoreMigration[],
   target: { qualificationDatabaseName: string; stagingDatabaseName: string },
 ): Promise<QualificationFixtureResult> {
-  if (manifest.environment !== "synthetic-staging" || manifest.dataClassification !== "synthetic_only" || manifest.containsPhi !== false) throw new QualificationFixtureError("fixture_boundary_refused");
+  try { validateQualificationFixtureManifest(manifest); } catch { throw new QualificationFixtureError("fixture_boundary_refused"); }
   try { assertQualificationDatabaseName(target.qualificationDatabaseName, target.stagingDatabaseName); } catch { throw new QualificationFixtureError("fixture_boundary_refused"); }
   const inspection = await inspectProductionClinicalCoreMigrations(database, migrations);
   if (!inspection.ledgerPresent || inspection.missing.length || inspection.mismatched.length || inspection.unknown.length || migrations.length === 0) throw new QualificationFixtureError("qualification_schema_incomplete");
   const f = manifest.fixture;
+  const isolation = manifest.schemaVersion === "aws-clinical-core-qualification-fixtures/2"
+    ? { person: manifest.fixture.isolationConsumerPersonId, subject: manifest.fixture.isolationConsumerSubject, pool: "consumer" as const, label: "qualification_isolation_consumer" }
+    : { person: manifest.fixture.isolationWorkforcePersonId, subject: manifest.fixture.isolationWorkforceSubject, pool: "workforce" as const, label: "qualification_isolation_workforce" };
   let operationIndex = 0;
   let inserted = 0;
   try {
@@ -51,14 +54,22 @@ export async function provisionQualificationFixtures(
       await tx.query("select pg_advisory_xact_lock(hashtext($1))", ["ai-desktop-pro:qualification-fixtures"]);
       await insert("insert into clinical_core.organizations(id,organization_label) values($1,$2) on conflict (id) do nothing returning 1 as n", [clinicalUuid(f.organizationId), f.organizationLabel]);
       await insert("insert into clinical_core.organizations(id,organization_label) values($1,$2) on conflict (id) do nothing returning 1 as n", [clinicalUuid(f.isolationOrganizationId), f.isolationOrganizationLabel]);
-      for (const [person, label] of [[f.workforcePersonId, "qualification_workforce"], [f.consumerPersonId, "qualification_consumer"], [f.isolationWorkforcePersonId, "qualification_isolation_workforce"]] as const) {
+      for (const [person, label] of [[f.workforcePersonId, "qualification_workforce"], [f.consumerPersonId, "qualification_consumer"], [isolation.person, isolation.label]] as const) {
         await insert("insert into clinical_core.persons(id,subject_key) values($1,$2) on conflict (id) do nothing returning 1 as n", [clinicalUuid(person), `subject_${label}_${person.replaceAll("-", "").slice(0, 12)}`]);
       }
-      for (const [person, pool, subject] of [[f.workforcePersonId, "workforce", f.workforceSubject], [f.consumerPersonId, "consumer", f.consumerSubject], [f.isolationWorkforcePersonId, "workforce", f.isolationWorkforceSubject]] as const) {
+      for (const [person, pool, subject] of [[f.workforcePersonId, "workforce", f.workforceSubject], [f.consumerPersonId, "consumer", f.consumerSubject], [isolation.person, isolation.pool, isolation.subject]] as const) {
         await insert("insert into clinical_core.identities(person_id,identity_pool,identity_subject,production_bound) values($1,$2,$3,true) on conflict (identity_pool,identity_subject) do nothing returning 1 as n", [clinicalUuid(person), pool, subject]);
+        // Idempotence must never silently adopt an existing subject bound to someone else.
+        const binding = await tx.query<{ n: number }>("select count(*)::int n from clinical_core.identities where person_id=$1 and identity_pool=$2 and identity_subject=$3 and production_bound=true and status='active'", [clinicalUuid(person), pool, subject]);
+        if (Number(binding.rows[0]?.n) !== 1) throw new QualificationFixtureError("fixture_boundary_refused", operationIndex);
       }
       await insert("insert into clinical_core.organization_memberships(organization_id,person_id,role) values($1,$2,'practitioner') on conflict (organization_id,person_id) do nothing returning 1 as n", [clinicalUuid(f.organizationId), clinicalUuid(f.workforcePersonId)]);
-      await insert("insert into clinical_core.organization_memberships(organization_id,person_id,role) values($1,$2,'practitioner') on conflict (organization_id,person_id) do nothing returning 1 as n", [clinicalUuid(f.isolationOrganizationId), clinicalUuid(f.isolationWorkforcePersonId)]);
+      if (isolation.pool === "workforce") {
+        await insert("insert into clinical_core.organization_memberships(organization_id,person_id,role) values($1,$2,'practitioner') on conflict (organization_id,person_id) do nothing returning 1 as n", [clinicalUuid(f.isolationOrganizationId), clinicalUuid(isolation.person)]);
+      } else {
+        const existingAccess = await tx.query<{ n: number }>("select ((select count(*) from clinical_core.organization_memberships where person_id=$1) + (select count(*) from clinical_core.patient_connections where consumer_person_id=$1))::int n", [clinicalUuid(isolation.person)]);
+        if (Number(existingAccess.rows[0]?.n) !== 0) throw new QualificationFixtureError("fixture_boundary_refused", operationIndex);
+      }
       await insert("insert into clinical_core.patient_records(id,organization_id,patient_key,first_name,last_name) values($1,$2,$3,'Fictional','Qualification') on conflict (id) do nothing returning 1 as n", [clinicalUuid(f.patientRecordId), clinicalUuid(f.organizationId), key("patient", f.patientRecordId)]);
       // The consumer's verified connection to the fixture patient: the one relationship the consumer routes read.
       const connection = await tx.query<{ id: string }>("select id::text id from clinical_core.patient_connections where organization_id=$1 and patient_record_id=$2 and consumer_person_id=$3 and state='verified' order by created_at limit 1",

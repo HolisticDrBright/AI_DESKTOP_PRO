@@ -227,6 +227,21 @@ name-refusal test for the preparation runner.
 
 ### Deploying the qualification profile (owner, Windows terminal)
 
+Before CloudFormation changes, build all candidate templates and run
+`npm run check:aws-qualification-capacity -- --api-id <qualification-api-id> --profile ai-synthetic-staging`.
+This read-only, account-pinned preflight counts reservations from the actual built templates and
+observes existing named reservations. CloudFormation-generated function names receive no existing-capacity
+credit. It conservatively preserves 100 unreserved executions; a reduced-quota account is refused,
+not repaired by removing function caps. A ready report is capacity planning, never hosted acceptance.
+See `readiness-qualification-2026-09-28.md` for the observed quota blocker and support case.
+
+The fixture operator also accepts `aws-clinical-core-qualification-fixtures/2`: retain the legacy
+manifest's strict fields, but replace `isolationWorkforcePersonId`/`isolationWorkforceSubject` with
+`isolationConsumerPersonId`/`isolationConsumerSubject`. This creates the approved second consumer
+without any clinic membership or patient connection. The legacy version remains available for its
+two-practitioner matrix. Conflicting identity bindings and pre-existing second-consumer access are
+refused transactionally; never rename a consumer into a workforce identity to satisfy a manifest.
+
 Copy-and-fill parameter files for all ten candidate stacks live in
 `infra/aws-clinical-core/qualification-parameters/` (`<candidate>.example.json`, with a README naming
 every placeholder to replace). They are generated from the built templates
