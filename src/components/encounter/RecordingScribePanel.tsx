@@ -7,6 +7,7 @@ import { CapturePreparationError, prepareCapture } from "@/lib/capture-start";
 import { authorizeCaptureResume, type CaptureReply } from "@/lib/capture-resume";
 import { createCaptureAudioBridge, type CaptureAudioBridge } from "@/lib/capture-audio-bridge";
 import { CaptureUploadBuffer } from "@/lib/capture-upload-buffer";
+import { requestCaptureChunk } from "@/lib/capture-chunk-request";
 
 /**
  * Consent-gated encounter recording + AI scribe (Milestone 1).
@@ -339,7 +340,7 @@ export function RecordingScribePanel({
         if (!token || !chunk) break;
         let res: Response;
         try {
-          res = await fetch("/api/live/scribe/chunk", {
+          res = await requestCaptureChunk({
             method: "POST",
             headers: { "content-type": "application/octet-stream", "x-recording-id": queue.recordingId, "x-capture-token": token },
             body: chunk,

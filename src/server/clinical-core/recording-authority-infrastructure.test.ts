@@ -1,13 +1,19 @@
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { execFileSync, execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 let template: { Parameters: Record<string, { Default?: string }>; Conditions: Record<string, Json>;
   Resources: Record<string, { Type: string; Properties: Record<string, Json>; DeletionPolicy?: string }> };
+const artifactDirectory = mkdtempSync(join(tmpdir(), "alp-authority-artifact-"));
+afterAll(() => rmSync(artifactDirectory, { recursive: true, force: true }));
 beforeAll(() => {
-  execFileSync(process.execPath, ["scripts/build-aws-recording-authority.mjs"], { stdio: "pipe" });
-  template = JSON.parse(readFileSync("dist/aws-clinical-core/recording-authority/template.json", "utf8"));
+  // Test exactly the artifact this suite built, never a concurrently overwritten
+  // release directory. No activation or execution deadline is relaxed.
+  execFileSync(process.execPath, ["scripts/build-aws-recording-authority.mjs", `--out-dir=${artifactDirectory}`], { stdio: "pipe" });
+  template = JSON.parse(readFileSync(join(artifactDirectory, "template.json"), "utf8"));
 }, 20000);
 function evaluate(value: Json, parameters: Record<string, string>): unknown {
   if (value === null || typeof value !== "object") return value;
@@ -56,7 +62,7 @@ describe("recording authority deployable candidate", () => {
     expect(JSON.stringify(resources.Invoke.Properties.SourceArn)).toContain("/POST/clinical-core/workforce/encounter-recording/authority");
   });
   it("runs the actual bundled default-blocked handler without database configuration or AWS credentials", async () => {
-    const child = await promisify(execFile)(process.execPath, ["-e", "require('./dist/aws-clinical-core/recording-authority/index.js').handler({}).then(r=>console.log(JSON.stringify(r)))"], {
+    const child = await promisify(execFile)(process.execPath, ["-e", `require(${JSON.stringify(join(artifactDirectory, "index.js"))}).handler({}).then(r=>console.log(JSON.stringify(r)))`], {
       // A deployment child must not inherit test-runner preloads/worker state.
       // Artifact behavior test, not a latency SLO: retain the original bounded
       // native process budget and give the outer harness time to reap it.

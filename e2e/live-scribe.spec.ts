@@ -327,7 +327,22 @@ test("a late participant join pauses capture until they are identified and conse
   await expect(phase(page)).toHaveAttribute("data-phase", "processing", { timeout: EXPECT_TIMEOUT_MS });
 });
 
-test("network interruption buffers locally and recovers without losing the recording", async ({ page }) => {
+for (const interruption of ["network interruption", "stalled upload"] as const) {
+test(`${interruption} buffers locally and recovers without losing the recording`, async ({ page }) => {
+  // Keep interception installed throughout: unroute racing an in-flight retry
+  // can strand Chromium's intercepted request instead of restoring the network.
+  let offline = false;
+  let held = false;
+  let release!: () => void;
+  const blocked = new Promise<void>(resolve => { release = resolve; });
+  await page.route("**/api/live/scribe/chunk", async route => {
+    if (offline && interruption === "stalled upload" && !held) {
+      held = true;
+      await blocked; // No fixture write occurs; simulate a hung transport.
+      await route.abort().catch(() => {}); // Already aborted by the app deadline.
+    } else if (offline) await route.abort();
+    else await route.continue();
+  });
   await openNewEncounter(page);
   await consentEveryone(page, ["recording", "transcription"]);
   await page.getByTestId("start-recording").click();
@@ -335,16 +350,18 @@ test("network interruption buffers locally and recovers without losing the recor
   await page.waitForTimeout(1800);
 
   // Kill the chunk route: the recorder keeps capturing, chunks buffer locally.
-  await page.route("**/api/live/scribe/chunk", (route) => route.abort());
+  offline = true;
   await expect(phase(page)).toHaveAttribute("data-phase", "reconnecting", { timeout: 15_000 });
   await expect(phase(page)).toContainText("retrying upload");
-  await page.unroute("**/api/live/scribe/chunk");
+  offline = false;
   await expect(phase(page)).toHaveAttribute("data-phase", "recording", { timeout: 15_000 });
+  release();
 
   // Everything buffered arrives; the workflow completes normally.
   await page.getByTestId("stop-recording").click();
   await expect(phase(page)).toHaveAttribute("data-phase", "transcript_ready", { timeout: EXPECT_TIMEOUT_MS });
 });
+}
 
 test("microphone loss mid-recording pauses with an unmistakable status", async ({ page }) => {
   await page.addInitScript(() => {
