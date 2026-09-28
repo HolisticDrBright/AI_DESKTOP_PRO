@@ -99,6 +99,8 @@ jobs:
         run: ./scripts/test-qualification-runner.ps1
       - name: Initial qualification deployment capacity and retained-resource preflight (no AWS calls)
         run: npm run test:qualification-create-preflight
+      - name: Test read-only retained-log recovery planner
+        run: npm run test:qualification-log-recovery
       - name: Isolated qualification foundation remains synthetic infrastructure only
         run: |
           npm run build:aws-qualification-foundation

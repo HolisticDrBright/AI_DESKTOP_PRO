@@ -20,6 +20,42 @@ The live run against the uploaded `a300c633ac81909842503ad37e77170ad63ed605` per
 
 ## Recovery sequence, not yet executed
 
+### Read-only preparation tool (September 28)
+
+`node scripts/prepare-qualification-log-recovery.mjs --out dist/log-recovery-proposal.json`
+observes the fixed synthetic profile/account, qualification foundation, exact failed personal-storage
+stack, stack resource inventory, retained-log template policies, actual log properties, absent
+function and enabled KMS key. Any other surviving resource, unexpected inventory, changed stack
+state, wrong database, PHI/activation boundary, missing retain policy or changed encryption/retention
+refuses. The planner deliberately supports this exact failed stack only, not arbitrary stack recovery.
+
+It writes one exclusive-create local proposal containing the import-only template, resource identifier
+and metadata hashes. It performs **no AWS writes**: no stack deletion, import, changeset or deployment.
+Its `executionAuthorized` and `activationEvidence` fields remain false. Nonzero stored bytes are
+preserved just as zero bytes are; neither grants deletion authority. Observations are non-atomic,
+and no log events are read or absence of log content certified. Re-observe before any reviewed change.
+
+The intended future sequence is a separately reviewed retirement of the failed stack record with
+the log retained, identity verification of that same log, import-only changeset review/execution,
+then drift verification and a normal candidate-update review after capacity and target-manifest
+requirements pass. This tool does not implement or authorize that mutation sequence, and the
+initial-create preflight must not be bypassed for the subsequent update/import path.
+
+AWS lists `AWS::Logs::LogGroup` as supporting resource import in its
+[resource support table](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/resource-import-supported-resources.html).
+Follow the separate [import review procedure](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/resource-import-existing-stack.html);
+resource-type support alone does not establish that this proposal is safe or has been executed.
+
+Verification: 23 standalone tests cover nonempty-log preservation, wrong account/stack/DB,
+PHI settings, duplicate metadata, unexpected or still-live resources, wrong retention/key, disabled
+key, lost retain policies, read-only call inventory and CLI mutation-flag refusal. A live read-only
+run generated proposal hash `8680a90052c705a3a45559a64542680a5ec893a1a63431094c84232f4a0db991`.
+The encrypted log remains in the failed stack inventory as `DELETE_SKIPPED`; no recovery is claimed.
+AWS `validate-template` accepted that proposed import-only template, and `get-template-summary`
+returned `LogGroupName` as the import identifier for its sole `Logs` resource. These are read-only
+template checks, not an import changeset or execution. The 14 initial-create preflight tests and
+targeted script lint also passed; the new standalone test is wired into CI.
+
 1. Check Support Center and verify the granted live regional quota. Reconcile aggregate concurrency from every exact candidate, including existing reservations.
 2. Inventory all resources of the rolled-back stack again. Review a recovery plan that preserves the retained encrypted logs. Do not blindly delete/recreate the stack or log group. Prefer a reviewed CloudFormation import/preservation path; validate import support and changeset before execution.
 3. Prepare a new deployment operator incorporating this preflight (or an equally strict update/import check after reviewed recovery), exact-version artifacts and the full target-manifest verifier. The stale local `-Deploy` operator must remain refused until replaced.
