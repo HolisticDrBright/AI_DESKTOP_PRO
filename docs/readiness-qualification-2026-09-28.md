@@ -37,5 +37,15 @@ Local verification: 20 Node preflight tests; 16 fixture/database-target tests ag
 
 ## Local operator evidence (no credentials in Git)
 
+### Retention monitoring follow-up (source only)
+
+The scheduled retention worker and its four custom CloudWatch alarms previously used a dimensionless namespace, allowing separate stacks in the same account/region to share heartbeat and backlog metrics. Emission and alarm selection now both require `FunctionName`; the runtime reads the Lambda-provided name and refuses missing/malformed scope before database or storage work. No patient/job/request identifiers are metric dimensions.
+
+The two hourly observed-backlog/refusal alarms previously treated silence as breaching despite a daily schedule. They now use `notBreaching` for sparse hourly observations; the separate daily completed-sweep heartbeat still treats missing data as breaching, and Lambda errors remain monitored. Hosted cadence, metric extraction, missed/failed sweeps, isolation and physical notification delivery still need qualification.
+
+The runbook and test comments no longer falsely describe 48 hours as removal: it is a download cutoff from the snapshot time. V2's existing 72-hour public promise remains a launch blocker pending reviewed policy and measured behavior, not approved by arithmetic between constants. No V2 privacy terms were rewritten or policy approval inferred.
+
+Local evidence: 56 tests across metrics, cadence, infrastructure, real-migration/PGlite export jobs and scheduled-removal attribution; typecheck; targeted ESLint; candidate template cfn-lint; all ten generated parameter examples match their templates. These checks do not establish real CloudWatch/S3 behavior or commercial/PHI readiness.
+
 Workspace handoffs: `handoffs/2026-09-28-qualification-personal-storage-review.md` (SHA-256 `7cfa9d65893f736709a49e3c1b35178c5688c40266387b48cd1542537fa53438`), `handoffs/2026-09-28-qualification-database-review.md` (`8ba8c615789f893627dd13d9653a9bf6b1c2567010e90800d2d92744dda7ca39`), and `handoffs/2026-09-28-security-retention-review.md`.
 Public fixture/identity inputs and immutable upload receipts remain under `work/DESKTOP_RELEASE_A300C63_20260928/dist/qualification-identities/` and `dist/qualification-packages/`. The DPAPI-encrypted credential file must never be printed, copied into handoff text or committed. The old one-off deployment operator is held against reuse pending quota and rolled-back-resource recovery.

@@ -17,7 +17,7 @@ import {OwnedStorageError} from './owned-consumer-records';
  * embedded metrics so an alarm fires when the oldest pending removal ages past
  * the reviewed threshold. Nothing here reads export content. */
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-export type RetentionSweepConfiguration={enabled:boolean;evidenceSha256?:string;servicePersonId?:string;serviceSubject?:string;organizationId?:string;
+export type RetentionSweepConfiguration={enabled:boolean;functionName?:string;evidenceSha256?:string;servicePersonId?:string;serviceSubject?:string;organizationId?:string;
   bucket?:string;kmsKeyArn?:string;bucketOwner?:string;region?:string;phiAllowed:boolean;
   /** Qualification execution (docs/aws-qualification-target.md): the sweep runs with PHI disabled only for a designated fixture service identity. */
   qualification?:QualificationExecution};
@@ -43,6 +43,7 @@ export type RetentionSweepResult={ok:boolean;refused:'retention_service_release_
   run:{startedAt:string;endedAt:string;durationMs:number;examined:number;removed:number;outcome:RetentionSweepOutcome}};
 /** One sweep. A refusal because no release row is live is a normal, reported outcome, not an error. */
 export async function runRetentionSweep(database:ClinicalCoreDatabase,c:RetentionSweepConfiguration,deps:{store?:ReturnType<typeof createAwsPrivacyExportStore>;signal?:AbortSignal;emit?:(line:string)=>void}={}):Promise<RetentionSweepResult>{
+  const functionName=retentionMetricFunctionName(c.functionName);
   const context=retentionSweepContext(c),storage=retentionSweepStorage(c),signal=deps.signal??AbortSignal.timeout(600_000);
   const run=async<T>(ctx:ProductionClinicalRequestContext,work:(tx:Parameters<Parameters<ClinicalCoreDatabase['transaction']>[0]>[0])=>Promise<T>):Promise<T>=>database.transaction(async tx=>{
     await tx.query('select clinical_private.set_request_context($1,$2,$3,$4,$5,$6,$7)',[clinicalUuid(ctx.actorPersonId),clinicalUuid(ctx.organizationId),ctx.identityPool,ctx.identitySubject,ctx.purpose,ctx.environment,ctx.dataClassification]);
@@ -60,7 +61,7 @@ export async function runRetentionSweep(database:ClinicalCoreDatabase,c:Retentio
     result.run={startedAt,endedAt:new Date(endedAtMs).toISOString(),durationMs:endedAtMs-startedAtMs,
       examined:(result.cleanup?.cleaned??0)+(result.cleanup?.deferred??0)+(result.reconcile?.confirmed??0)+(result.reconcile?.reopened??0),
       removed:result.cleanup?.cleaned??0,outcome};
-    emit(JSON.stringify(embeddedMetrics(result)));
+    emit(JSON.stringify(embeddedMetrics(result,functionName)));
   };
   try{
     const cleanup=await retention.cleanupAssignedPrivacyExports(context,100,signal);
@@ -78,10 +79,15 @@ export async function runRetentionSweep(database:ClinicalCoreDatabase,c:Retentio
   close(result.refused?'refused':'completed');
   return result;
 }
-/** CloudWatch embedded metric format: counts only, no identifiers. */
-export function embeddedMetrics(r:RetentionSweepResult){
+/** One low-cardinality infrastructure dimension. Never use patient, job or request IDs. */
+export function retentionMetricFunctionName(value:unknown):string{
+  if(typeof value!=='string'||!/^[-A-Za-z0-9_]{1,64}$/.test(value))throw new Error('retention_metric_scope_invalid');
+  return value;
+}
+/** CloudWatch embedded metric format: counts only, scoped to this deployed function. */
+export function embeddedMetrics(r:RetentionSweepResult,functionName:string){
   const b=r.backlog;
-  return {_aws:{Timestamp:Date.now(),CloudWatchMetrics:[{Namespace:'ALP/PrivacyExportRetention',Dimensions:[[]],Metrics:[
+  return {FunctionName:retentionMetricFunctionName(functionName),_aws:{Timestamp:Date.now(),CloudWatchMetrics:[{Namespace:'ALP/PrivacyExportRetention',Dimensions:[['FunctionName']],Metrics:[
     {Name:'SweepRefused',Unit:'Count'},{Name:'CleanupPending',Unit:'Count'},{Name:'CleanupDeferred',Unit:'Count'},{Name:'Settling',Unit:'Count'},
     {Name:'OldestOverdueSeconds',Unit:'Seconds'},{Name:'Reopened',Unit:'Count'},{Name:'Cleaned',Unit:'Count'},
     {Name:'SweepCompleted',Unit:'Count'},{Name:'SweepFailed',Unit:'Count'},{Name:'SweepExamined',Unit:'Count'},{Name:'SweepDurationMs',Unit:'Milliseconds'}]}]},
@@ -93,7 +99,7 @@ export function embeddedMetrics(r:RetentionSweepResult){
 }
 export function retentionSweepConfigurationFromEnv(e:NodeJS.ProcessEnv):RetentionSweepConfiguration{
   const qualification=resolveQualificationExecution(e,e.PRIVACY_OPERATIONS_ACTIVATION==='approved'?'approved':'blocked');
-  return {enabled:e.RETENTION_SWEEP_ENABLED==='true',evidenceSha256:e.RETENTION_SWEEP_EVIDENCE_SHA256,servicePersonId:e.RETENTION_SERVICE_PERSON_ID,serviceSubject:e.RETENTION_SERVICE_SUBJECT,
+  return {enabled:e.RETENTION_SWEEP_ENABLED==='true',functionName:e.AWS_LAMBDA_FUNCTION_NAME,evidenceSha256:e.RETENTION_SWEEP_EVIDENCE_SHA256,servicePersonId:e.RETENTION_SERVICE_PERSON_ID,serviceSubject:e.RETENTION_SERVICE_SUBJECT,
     organizationId:e.RETENTION_SERVICE_ORGANIZATION_ID,bucket:e.PERSONAL_EXPORT_BUCKET,kmsKeyArn:e.PERSONAL_EXPORT_KMS_KEY_ARN,bucketOwner:e.PERSONAL_EXPORT_BUCKET_OWNER,region:e.AWS_REGION,phiAllowed:e.PHI_ALLOWED==='true',
     ...(qualification?{qualification}:{})};
 }

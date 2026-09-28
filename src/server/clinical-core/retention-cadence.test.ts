@@ -3,14 +3,11 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 
 /**
- * Three numbers that nest: the sweep runs every 24 hours, the copy is removed at 48, and the published commitment is
- * 72. Each has slack against the next, and they live in different artifacts on purpose — the published one is weaker
- * than the implementation because publishing measured behaviour turns a timing bug into a misstatement. This does not
- * reconcile them; it holds each where it belongs and checks that they still nest.
+ * Verify deployed cadence and monitoring structure, not a deletion guarantee.
+ * The download cutoff, sweep cadence and public removal commitment have different anchors.
+ * Comparing three constants cannot establish that storage is removed on time.
  */
 const SWEEP_HOURS = 24;
-const IMPLEMENTED_HOURS = 48;
-const PUBLISHED_HOURS = 72;
 
 let resources:Record<string, { Type: string; Properties: Record<string, unknown> }>;
 beforeAll(()=>{
@@ -23,13 +20,23 @@ describe("the retention cadence", () => {
     expect(resources.RetentionSweepSchedule.Properties.ScheduleExpression).toBe(`rate(${SWEEP_HOURS} hours)`);
   });
 
-  it("nests inside the implemented deadline, which nests inside the published commitment", () => {
-    expect(SWEEP_HOURS).toBeLessThan(IMPLEMENTED_HOURS);
-    expect(IMPLEMENTED_HOURS).toBeLessThan(PUBLISHED_HOURS);
+  it("documents the download cutoff separately from unverified removal commitments", () => {
     const runbook = readFileSync("docs/retention-sweep-activation-runbook.md", "utf8");
     expect(runbook).toContain("**48 hours**");
     expect(runbook).toContain("**72 hours**");
-    expect(runbook).toContain("The published privacy policy, and nowhere else");
+    expect(runbook).toContain("not a deletion guarantee");
+    const migration = readFileSync('infra/aws-clinical-core/production-migrations/20260920110000_production_owned_privacy_export_jobs.sql', 'utf8');
+    expect(migration).toContain("_as_of+interval '48 hours'");
+  });
+
+  it('separates each deployment and distinguishes daily silence from an observed refusal', () => {
+    for (const alarm of ['RetentionOverdueAlarm', 'RetentionRefusedAlarm', 'RetentionSweepMissedAlarm', 'RetentionSweepConsecutiveFailureAlarm']) {
+      expect(resources[alarm].Properties.Dimensions).toEqual([{ Name: 'FunctionName', Value: { Ref: 'RetentionSweep' } }]);
+    }
+    for (const alarm of ['RetentionOverdueAlarm', 'RetentionRefusedAlarm']) {
+      expect(resources[alarm].Properties).toMatchObject({ Period: 3600, TreatMissingData: 'notBreaching' });
+    }
+    expect(resources.RetentionSweepMissedAlarm.Properties).toMatchObject({ MetricName: 'SweepCompleted', Statistic: 'Sum', Period: 86400, Threshold: 1, ComparisonOperator: 'LessThanThreshold', TreatMissingData: 'breaching' });
   });
 
   it("runs under its own role and reports every run, with alarms for missed, errored and twice-failed", () => {

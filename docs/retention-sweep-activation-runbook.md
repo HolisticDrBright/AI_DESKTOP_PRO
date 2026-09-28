@@ -25,18 +25,19 @@ retention service identity is, and who approves releases. Its SHA-256 is passed 
 `retention_schedule_evidence_sha256`, and written into the release row. The wrapper refuses a
 `release` whose hash differs from the manifest.
 
-## The three numbers, and why they are kept apart
+## Timing anchors and the unverified public commitment
 
 | Number | Where it lives | What it is |
 |---|---|---|
 | **24 hours** | `RetentionSweepSchedule` in the privacy-operations candidate | How often the sweep runs |
-| **48 hours** | The job deadline enforced in the database (migration `20260920110000`), and this runbook | When a finished or cancelled prepared copy is removed |
-| **72 hours** | The published privacy policy, and nowhere else | What the person is told: removal *within* 72 hours |
+| **48 hours** | The job deadline enforced in the database (migration `20260920110000`) | Download cutoff from the export snapshot time; packaging uses part of this window. This is not a deletion guarantee. |
+| **72 hours** | V2's published privacy-policy source | A promise of removal from completion/cancellation, not yet supported by hosted operating evidence or the separate policy review |
 
-Each has slack against the next, and they are deliberately in different artifacts. Publishing measured behaviour turns
-every timing bug into a misstatement, and 48 leaves no headroom for a slow backup or a missed pass. "Within" is the
-load-bearing word in the published commitment: faster is compliant, and only slower is a failure. Nobody should
-reconcile them — a change to any one of them is a separate reviewed decision.
+These are different clocks. A daily sweep may fail, defer an unsettled writer, or leave a backlog. Comparing 24 < 48 < 72
+does not establish timely removal. The overdue metric starts at the job's cleanup-pending time, not necessarily its
+completion time. Reconcile the public wording, actual timing anchors, operating capacity, alert threshold and human
+backup before launch. Do not present this runbook or a passing configuration test as approval of the public promise.
+Original records, legal holds, backups and provider copies are outside prepared-copy removal evidence.
 
 ## What each run must record
 
@@ -46,11 +47,23 @@ failure, so every run emits one line carrying `startedAt`, `endedAt`, `durationM
 or deferred, certificates confirmed or reopened — not what remains in the backlog. A failed run reports before the
 error propagates, because an unreported failure looks exactly like a sweep that never ran.
 
-Three alarms watch it, all on the qualification alarm topic:
+The custom metrics use exactly one infrastructure dimension, `FunctionName`, supplied by the Lambda runtime. Every
+custom alarm selects that same function, so another stack's successful sweep cannot mask this stack's missing report.
+There is no dimensionless aggregate or patient/job/request dimension. Function configuration without this name refuses
+before work. AWS treats dimension combinations as distinct metrics: [EMF specification](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/CloudWatch_Embedded_Metric_Format_Specification.html).
+
+Hourly overdue/refusal alarms evaluate observed reports and use `notBreaching` for missing hourly data, because this
+worker runs daily. The separate daily heartbeat alarm retains `breaching` for missing reports; errors are also monitored.
+This avoids routine false alarms without counting silence as a successful sweep. CloudWatch period boundaries and actual
+delivery latency still need hosted testing, not a claim of an exact rolling 24-hour guarantee.
+
+Alarms watch it, all on the reviewed alarm topic:
 
 | Alarm | Fires when |
 |---|---|
-| `RetentionSweepMissedAlarm` | No completed sweep reported in 24 hours (a missing datapoint breaches) |
+| `RetentionOverdueAlarm` | An observed backlog exceeds the separately reviewed overdue threshold |
+| `RetentionRefusedAlarm` | An observed sweep reports a missing live service release |
+| `RetentionSweepMissedAlarm` | No completed sweep in the evaluated daily period (a missing datapoint breaches) |
 | `RetentionSweepFailedAlarm` | The sweep function errored |
 | `RetentionSweepConsecutiveFailureAlarm` | Two consecutive sweeps failed |
 

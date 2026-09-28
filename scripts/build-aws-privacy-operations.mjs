@@ -176,9 +176,9 @@ const template={AWSTemplateFormatVersion:'2010-09-09',Description:'Owner-assigne
         ...qualificationEnvironment(),
       }}}},
     // Scheduled retention sweep: its own role and its own service identity, no API route, no JWT; the database refuses
-    // every call until a reviewed release row names that identity. Every 24 hours, which nests inside the 48-hour
-    // implemented removal deadline, which nests inside the 72-hour published commitment — each with slack against the
-    // next, and each kept in its own artifact so nobody reconciles them.
+    // every call until a reviewed release row names that identity. The daily cadence is not a removal deadline:
+    // the database's 48 hours limits download availability, and real cleanup can be deferred or fail.
+    // A public removal commitment needs separate reviewed policy and measured hosted evidence.
     // The sweep runs under its own non-human service identity, with its own role holding only the database and export
     // retention statements — not the inventory, purge or identity-deletion grants the operator function also carries.
     RetentionSweepRole:{Type:'AWS::IAM::Role',Condition:'RetentionScheduleActive',Properties:{
@@ -205,16 +205,19 @@ const template={AWSTemplateFormatVersion:'2010-09-09',Description:'Owner-assigne
     RetentionSweepInvoke:{Type:'AWS::Lambda::Permission',Condition:'RetentionScheduleActive',Properties:{FunctionName:ref('RetentionSweep'),Action:'lambda:InvokeFunction',Principal:'events.amazonaws.com',
       SourceArn:{'Fn::GetAtt':['RetentionSweepSchedule','Arn']}}},
     RetentionOverdueAlarm:{Type:'AWS::CloudWatch::Alarm',Condition:'RetentionScheduleActive',Properties:{Namespace:'ALP/PrivacyExportRetention',MetricName:'OldestOverdueSeconds',Statistic:'Maximum',Period:3600,
-      EvaluationPeriods:1,Threshold:ref('RetentionOverdueAlarmSeconds'),ComparisonOperator:'GreaterThanThreshold',TreatMissingData:'breaching',
-      AlarmDescription:'Oldest pending export removal is older than the reviewed threshold; a missing sweep report also alarms.',
+      Dimensions:[{Name:'FunctionName',Value:ref('RetentionSweep')}],
+      EvaluationPeriods:1,Threshold:ref('RetentionOverdueAlarmSeconds'),ComparisonOperator:'GreaterThanThreshold',TreatMissingData:'notBreaching',
+      AlarmDescription:'An observed pending export removal is older than the reviewed threshold. Missing daily reports are monitored separately.',
       // RetentionScheduleActive implies Active, which requires AlarmTopicArn: the recipient is unconditional here (cfn-lint W1028 otherwise).
       AlarmActions:[ref('AlarmTopicArn')]}},
     RetentionRefusedAlarm:{Type:'AWS::CloudWatch::Alarm',Condition:'RetentionScheduleActive',Properties:{Namespace:'ALP/PrivacyExportRetention',MetricName:'SweepRefused',Statistic:'Maximum',Period:3600,
-      EvaluationPeriods:1,Threshold:0,ComparisonOperator:'GreaterThanThreshold',TreatMissingData:'breaching',
-      AlarmDescription:'The scheduled sweep ran without a live retention service release, or did not run.',
+      Dimensions:[{Name:'FunctionName',Value:ref('RetentionSweep')}],
+      EvaluationPeriods:1,Threshold:0,ComparisonOperator:'GreaterThanThreshold',TreatMissingData:'notBreaching',
+      AlarmDescription:'The scheduled sweep reported a missing live retention service release. Missing daily reports are monitored separately.',
       AlarmActions:[ref('AlarmTopicArn')]}},
     // A sweep that does not report is indistinguishable from a sweep that did not run, so a missing datapoint breaches.
     RetentionSweepMissedAlarm:{Type:'AWS::CloudWatch::Alarm',Condition:'RetentionScheduleActive',Properties:{Namespace:'ALP/PrivacyExportRetention',
+      Dimensions:[{Name:'FunctionName',Value:ref('RetentionSweep')}],
       MetricName:'SweepCompleted',Statistic:'Sum',Period:86400,EvaluationPeriods:1,Threshold:1,ComparisonOperator:'LessThanThreshold',
       TreatMissingData:'breaching',AlarmDescription:'No completed retention sweep reported in 24 hours.',AlarmActions:[ref('AlarmTopicArn')]}},
     RetentionSweepFailedAlarm:{Type:'AWS::CloudWatch::Alarm',Condition:'RetentionScheduleActive',Properties:{Namespace:'AWS/Lambda',
@@ -222,6 +225,7 @@ const template={AWSTemplateFormatVersion:'2010-09-09',Description:'Owner-assigne
       ComparisonOperator:'GreaterThanOrEqualToThreshold',TreatMissingData:'notBreaching',
       AlarmDescription:'The scheduled retention sweep errored.',AlarmActions:[ref('AlarmTopicArn')]}},
     RetentionSweepConsecutiveFailureAlarm:{Type:'AWS::CloudWatch::Alarm',Condition:'RetentionScheduleActive',Properties:{Namespace:'ALP/PrivacyExportRetention',
+      Dimensions:[{Name:'FunctionName',Value:ref('RetentionSweep')}],
       MetricName:'SweepFailed',Statistic:'Sum',Period:86400,EvaluationPeriods:2,DatapointsToAlarm:2,Threshold:1,
       ComparisonOperator:'GreaterThanOrEqualToThreshold',TreatMissingData:'notBreaching',
       AlarmDescription:'Two consecutive scheduled retention sweeps failed.',AlarmActions:[ref('AlarmTopicArn')]}},

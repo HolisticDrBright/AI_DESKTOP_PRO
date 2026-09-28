@@ -744,7 +744,7 @@ import {inspectRetentionServiceReleases,releaseRetentionService,revokeRetentionS
 const adminDatabase:ClinicalCoreDatabase={transaction:async work=>db.transaction(async tx=>work({query:async(sql:string,args:unknown[]=[])=>
   tx.query(sql,args.map(v=>typeof v==='object'&&v!==null&&'kind' in v&&v.kind==='uuid'&&'value' in v?v.value:v))} as unknown as ClinicalCoreTransaction))} as ClinicalCoreDatabase;
 describe('retention sweep activation path (release row operator and a local sweep run)',()=>{
-  const sweepConfiguration=(patch:Partial<RetentionSweepConfiguration>={}):RetentionSweepConfiguration=>({enabled:true,phiAllowed:true,evidenceSha256:'b'.repeat(64),servicePersonId:retentionService,
+  const sweepConfiguration=(patch:Partial<RetentionSweepConfiguration>={}):RetentionSweepConfiguration=>({enabled:true,functionName:'fictional-privacy-retention-sweep',phiAllowed:true,evidenceSha256:'b'.repeat(64),servicePersonId:retentionService,
     serviceSubject:retentionServiceSubject,organizationId:org,bucket:storage.bucket,kmsKeyArn:storage.kmsKeyArn,bucketOwner:storage.expectedBucketOwner,region:storage.region,...patch});
   const release=(patch:Partial<Parameters<typeof releaseRetentionService>[1]>={})=>releaseRetentionService(adminDatabase,{version:'ops-2026-09-20',servicePersonId:retentionService,
     serviceSubject:retentionServiceSubject,approvedByPersonId:reviewer,evidenceSha256:'b'.repeat(64),...patch});
@@ -796,6 +796,8 @@ describe('retention sweep activation path (release row operator and a local swee
       const metrics=JSON.parse(lines.at(-1)!);
       expect(metrics).toMatchObject({SweepRefused:0,ok:true,refused:null});
       expect(metrics._aws.CloudWatchMetrics[0].Namespace).toBe('ALP/PrivacyExportRetention');
+      expect(metrics._aws.CloudWatchMetrics[0].Dimensions).toEqual([['FunctionName']]);
+      expect(metrics.FunctionName).toBe('fictional-privacy-retention-sweep');
       // Counts only: no job, owner or key identifiers leave the sweep.
       expect(JSON.stringify(metrics)).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|personal-exports/);
       const revoked=await revokeRetentionServiceRelease(adminDatabase,'ops-2026-09-20');

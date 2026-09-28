@@ -107,15 +107,15 @@ describe('privacy operations deployable candidate',()=>{
     for(const name of ['RetentionSweep','RetentionSweepRole','RetentionSweepSchedule','RetentionSweepInvoke','RetentionOverdueAlarm','RetentionRefusedAlarm',
       'RetentionSweepMissedAlarm','RetentionSweepFailedAlarm','RetentionSweepConsecutiveFailureAlarm'])expect((t.Resources[name] as {Condition?:string}).Condition).toBe('RetentionScheduleActive');
     expect(t.Resources.RetentionSweep.Properties).toMatchObject({Handler:'retention-sweep.handler',ReservedConcurrentExecutions:1,Timeout:600});
-    // Every 24 hours: inside the 48-hour implemented removal deadline, which is inside the published 72-hour commitment.
+    // Daily cadence is not evidence of a removal deadline.
     expect(t.Resources.RetentionSweepSchedule.Properties).toMatchObject({ScheduleExpression:'rate(24 hours)'});
     // Its own role, carrying only logs, the database and export retention — not the inventory, purge or deletion grants.
     expect(t.Resources.RetentionSweep.Properties.Role).toEqual({'Fn::GetAtt':['RetentionSweepRole','Arn']});
     expect((t.Resources.RetentionSweepRole.Properties.Policies as {PolicyName:string}[]).map(p=>p.PolicyName).sort())
       .toEqual(['ReviewedRetentionSweepDatabase','ReviewedRetentionSweepExports','bounded-logs']);
     expect(t.Resources.RetentionSweepInvoke.Properties).toMatchObject({Principal:'events.amazonaws.com'});
-    expect(t.Resources.RetentionOverdueAlarm.Properties).toMatchObject({Namespace:'ALP/PrivacyExportRetention',MetricName:'OldestOverdueSeconds',TreatMissingData:'breaching',Threshold:{Ref:'RetentionOverdueAlarmSeconds'}});
-    expect(t.Resources.RetentionRefusedAlarm.Properties).toMatchObject({MetricName:'SweepRefused',TreatMissingData:'breaching'});
+    expect(t.Resources.RetentionOverdueAlarm.Properties).toMatchObject({Namespace:'ALP/PrivacyExportRetention',MetricName:'OldestOverdueSeconds',TreatMissingData:'notBreaching',Threshold:{Ref:'RetentionOverdueAlarmSeconds'}});
+    expect(t.Resources.RetentionRefusedAlarm.Properties).toMatchObject({MetricName:'SweepRefused',TreatMissingData:'notBreaching'});
     const env=(t.Resources.RetentionSweep.Properties.Environment as {Variables:Record<string,Json>}).Variables;
     expect(env.RETENTION_SWEEP_ENABLED).toEqual({Ref:'RetentionScheduleEnabled'});expect(env.RETENTION_SERVICE_PERSON_ID).toEqual({Ref:'RetentionServicePersonId'});
     expect(JSON.stringify(env)).not.toMatch(/WORKFORCE_ISSUER|CONSUMER_USER_POOL_ID|VOICE_BUCKET/);
