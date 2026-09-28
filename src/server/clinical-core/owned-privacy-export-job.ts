@@ -233,6 +233,14 @@ export function createOwnedPrivacyExportJobs(run:Run,delivery:{store:PrivacyExpo
         return {...view(raw),replayed:raw.replayed as boolean};
       });
     },
+    /** Explicit discovery, including a finished copy whose cleanup is still pending.
+     * No caller-chosen owner or job ID; never starts work or returns storage keys. */
+    async findLatestPrivacyExportJob(context:ProductionClinicalRequestContext):Promise<{contract:'personal-storage-export-current/1';job:PrivacyExportJobView|null}>{
+      return run(context,async tx=>{
+        const raw=await call(tx,'select clinical_core.find_latest_owned_privacy_export_job() as result',[]);
+        return {contract:'personal-storage-export-current/1',job:raw===null?null:view(raw)};
+      });
+    },
     async getPrivacyExportJob(context:ProductionClinicalRequestContext,input:{jobId:string}):Promise<PrivacyExportJobView>{
       const jobId=jobInput(input);
       return run(context,async tx=>view(await call(tx,'select clinical_core.get_owned_privacy_export_job($1) as result',[clinicalUuid(jobId)])));

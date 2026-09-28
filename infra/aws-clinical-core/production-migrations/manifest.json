@@ -368,6 +368,10 @@
     {
       "version": "20260922010000",
       "file": "20260922010000_production_record_source_regime.sql"
+    },
+    {
+      "version": "20260928010000",
+      "file": "20260928010000_production_owned_privacy_export_discovery.sql"
     }
   ]
 }

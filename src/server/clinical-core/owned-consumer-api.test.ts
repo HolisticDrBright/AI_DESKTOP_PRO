@@ -139,6 +139,7 @@ describe('large-export job routes',()=>{
   function jobSetup(){
     const s=setup();
     const jobs={requestPrivacyExportJob:vi.fn(async()=>({...job,status:'requested',replayed:false})),getPrivacyExportJob:vi.fn(async()=>job),
+      findLatestPrivacyExportJob:vi.fn(async()=>({contract:'personal-storage-export-current/1',job})),
       advancePrivacyExportJob:vi.fn(async()=>({...job,exportedRecords:300,parts:2})),cancelPrivacyExportJob:vi.fn(async()=>({...job,status:'cancelled'})),
       issuePrivacyExportDownload:vi.fn(async()=>({jobId:id,url:'https://fictional-bucket.s3.us-east-2.amazonaws.com/personal-exports/x/y.json?X-Amz-Expires=300',expiresInSeconds:300,byteLength:12,objectChecksum:'c'})),
       cleanupPrivacyExportJobs:vi.fn(async()=>({cleaned:0,remaining:0})),reconcilePrivacyExportJobs:vi.fn(async()=>({confirmed:0,reopened:0,pending:0}))};
@@ -148,9 +149,19 @@ describe('large-export job routes',()=>{
   const call=(s:ReturnType<typeof jobSetup>,r:string,body?:Record<string,unknown>,query?:Record<string,string>,claims:Record<string,unknown>={})=>{
     const e=event(r);e.queryStringParameters=query??{};if(body){e.body=JSON.stringify(body);e.headers={'content-type':'application/json'};}
     Object.assign(e.requestContext!.authorizer!.jwt!.claims!,claims);return s.handler(e);};
+  it('discovers only from verified owner context and refuses caller IDs or automatic advance',async()=>{
+    const s=jobSetup();
+    const result=await call(s,route('GET','/current'));
+    expect(result.statusCode).toBe(200);expect(JSON.parse(result.body).data.job.jobId).toBe(id);
+    expect(s.jobs.findLatestPrivacyExportJob).toHaveBeenCalledWith(expect.objectContaining({purpose:'consent_management',identityPool:'consumer'}));
+    for(const query of [{ownerId:id},{jobId:id},{advance:'true'}] as Record<string,string>[])expect((await call(s,route('GET','/current'),undefined,query)).statusCode).toBe(400);
+    expect(s.jobs.findLatestPrivacyExportJob).toHaveBeenCalledTimes(1);
+    expect(s.jobs.advancePrivacyExportJob).not.toHaveBeenCalled();expect(s.jobs.cleanupPrivacyExportJobs).not.toHaveBeenCalled();
+    expect(s.jobs.issuePrivacyExportDownload).not.toHaveBeenCalled();
+  });
   it('refuses every job route with a clear code when no reviewed export delivery is configured',async()=>{
     const s=setup();
-    for(const [r,body,query] of [[route('POST'),{requestId:id},undefined],[route('GET'),undefined,{jobId:id}],[route('POST','/cancel'),{jobId:id},undefined],[route('POST','/download'),{jobId:id},undefined]] as const){
+    for(const [r,body,query] of [[route('GET','/current'),undefined,undefined],[route('POST'),{requestId:id},undefined],[route('GET'),undefined,{jobId:id}],[route('POST','/cancel'),{jobId:id},undefined],[route('POST','/download'),{jobId:id},undefined]] as const){
       const e=event(r);e.queryStringParameters=query?{...query}:{};if(body){e.body=JSON.stringify(body);e.headers={'content-type':'application/json'};}
       const response=await s.handler(e);expect(response.statusCode).toBe(503);expect(JSON.parse(response.body)).toEqual({error:'export_delivery_not_configured'});
     }

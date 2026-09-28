@@ -17,8 +17,10 @@ export type OwnedConsumerApiConfiguration = {
 };
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const BASE="/clinical-core/consumer/personal";
-export const OWNED_CONSUMER_ROUTES=[`GET ${BASE}/records`,`GET ${BASE}/record`,`POST ${BASE}/records`,`GET ${BASE}/consent`,`POST ${BASE}/consent`,`GET ${BASE}/posture`,`GET ${BASE}/chat-context`,`POST ${BASE}/privacy-export`,`GET ${BASE}/privacy-export`,`POST ${BASE}/privacy-export/job`,`GET ${BASE}/privacy-export/job`,`POST ${BASE}/privacy-export/job/cancel`,`POST ${BASE}/privacy-export/job/download`,`GET ${BASE}/active-plan`,`POST ${BASE}/active-plan`,`POST ${BASE}/active-plan/release`,`GET ${BASE}/privacy-request`,`POST ${BASE}/privacy-request`,`POST ${BASE}/privacy-request/tombstone`] as const;
-/** Each poll of a running job performs one bounded packaging pass under the owner's identity. */
+export const OWNED_CONSUMER_ROUTES=[`GET ${BASE}/records`,`GET ${BASE}/record`,`POST ${BASE}/records`,`GET ${BASE}/consent`,`POST ${BASE}/consent`,`GET ${BASE}/posture`,`GET ${BASE}/chat-context`,`POST ${BASE}/privacy-export`,`GET ${BASE}/privacy-export`,`POST ${BASE}/privacy-export/job`,`GET ${BASE}/privacy-export/job`,`POST ${BASE}/privacy-export/job/cancel`,`POST ${BASE}/privacy-export/job/download`,`GET ${BASE}/active-plan`,`POST ${BASE}/active-plan`,`POST ${BASE}/active-plan/release`,`GET ${BASE}/privacy-request`,`POST ${BASE}/privacy-request`,`POST ${BASE}/privacy-request/tombstone`,`GET ${BASE}/privacy-export/job/current`] as const;
+// Append instead of renumbering the existing deployed route resources.
+const EXPORT_CURRENT_ROUTE=`GET ${BASE}/privacy-export/job/current`;
+/** Each advancing poll of a running job performs one bounded packaging pass under the owner's identity. */
 export const PRIVACY_EXPORT_PASS_BUDGET_MS=8000;
 const COLLECTION_SCOPE:Record<ConsumerClinicalCollection,OwnedStorageScope>={
   lab_observations:'lab_history',
@@ -91,6 +93,7 @@ export function createOwnedConsumerApi(input:{configuration:OwnedConsumerApiConf
         if(route.includes('/privacy-export/job')){
           if(!input.exportJobs)return response(503,{error:'export_delivery_not_configured'});
           const jobs=input.exportJobs(),signal=AbortSignal.timeout((input.passBudgetMs??PRIVACY_EXPORT_PASS_BUDGET_MS)+4000);
+          if(route===EXPORT_CURRENT_ROUTE){exact(body,[]);return response(200,{data:await jobs.findLatestPrivacyExportJob(context)});}
           if(route.endsWith('/download')){
             // Delivery needs a sign-in within the last five minutes, not merely a valid token.
             exact(body,['jobId']);

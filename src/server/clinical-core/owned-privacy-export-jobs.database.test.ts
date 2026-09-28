@@ -108,6 +108,50 @@ const drive=async(jobs:ReturnType<typeof jobsWith>,jobId:string,who=owner)=>{
 };
 
 describe('Codex migration95 adversarial boundaries',()=>{
+  it('recovers the latest owner job on a new service instance without creating or packaging it',async()=>{
+    const f=fakeStore(),jobs=jobsWith(f.store);
+    const first=await jobs.requestPrivacyExportJob(context(),{requestId:randomUUID()});
+    const restarted=jobsWith(f.store);
+    const recovered=await restarted.findLatestPrivacyExportJob(context());
+    expect(recovered).toMatchObject({contract:'personal-storage-export-current/1',job:{jobId:first.jobId,status:'requested'}});
+    expect(JSON.stringify(recovered)).not.toMatch(/objectKey|uploadId|objectVersion|stagingVersion|personal-exports\//);
+    for(const method of Object.values(f.store))expect(method).not.toHaveBeenCalled();
+    expect((await db.query<{n:number}>("select count(*)::int n from clinical_audit.owned_privacy_export_events where owner_id=$1 and action='job.recovered'",[owner])).rows[0].n).toBeGreaterThan(0);
+    // Both devices discover the same job; a different request still cannot bypass the one-open limit.
+    expect((await jobsWith(f.store).findLatestPrivacyExportJob(context())).job?.jobId).toBe(first.jobId);
+    await expect(restarted.requestPrivacyExportJob(context(),{requestId:randomUUID()})).rejects.toThrow('conflict');
+  });
+  it('discovers no foreign job, refuses workforce and purpose substitution, and keeps private tables inaccessible',async()=>{
+    const f=fakeStore(),jobs=jobsWith(f.store),fresh=randomUUID();
+    await db.query('insert into clinical_core.persons(id,subject_key) values($1,$2)',[fresh,'subject_'+fresh.replaceAll('-','')]);
+    await db.query("insert into clinical_core.identities(person_id,identity_pool,identity_subject,production_bound) values($1,'consumer',$2,true)",[fresh,subjectFor(fresh)]);
+    const first=await jobs.requestPrivacyExportJob(context(),{requestId:randomUUID()});
+    expect(await jobs.findLatestPrivacyExportJob(context(fresh))).toEqual({contract:'personal-storage-export-current/1',job:null});
+    await expect(jobs.getPrivacyExportJob(context(fresh),{jobId:first.jobId})).rejects.toThrow();
+    await expect(jobs.findLatestPrivacyExportJob(operatorContext())).rejects.toThrow();
+    await expect(jobs.findLatestPrivacyExportJob({...context(),purpose:'clinical_data'})).rejects.toThrow();
+    await expect(jobs.findLatestPrivacyExportJob({...context(),identitySubject:'wrong-subject'})).rejects.toThrow();
+    await expect(database.transaction(tx=>tx.query('select * from clinical_private.owned_privacy_export_jobs'))).rejects.toThrow();
+  });
+  it('commits overdue state during recovery and can discover a cancelled latest job without changing its cleanup claim',async()=>{
+    const f=fakeStore(),jobs=jobsWith(f.store);
+    const first=await jobs.requestPrivacyExportJob(context(),{requestId:randomUUID()});
+    await db.query("update clinical_private.owned_privacy_export_jobs set expires_at=clock_timestamp()-interval '1 second' where id=$1",[first.jobId]);
+    expect((await jobs.findLatestPrivacyExportJob(context())).job).toMatchObject({jobId:first.jobId,status:'failed',failureCode:'deadline_passed',objectDeleted:false});
+    expect((await jobs.getPrivacyExportJob(context(),{jobId:first.jobId})).status).toBe('failed');
+    await db.query("update clinical_private.owned_privacy_export_jobs set created_at=created_at-interval '2 hours' where id=$1",[first.jobId]);
+    const latest=await jobs.requestPrivacyExportJob(context(),{requestId:randomUUID()});
+    await jobs.cancelPrivacyExportJob(context(),{jobId:latest.jobId});
+    expect((await jobs.findLatestPrivacyExportJob(context())).job).toMatchObject({jobId:latest.jobId,status:'cancelled',objectDeleted:false,retention:'cleanup_pending'});
+    expect(f.store.signDownload).not.toHaveBeenCalled();
+  });
+  it('reproduces a lost-request restart: a different request ID cannot replace an open export',async()=>{
+    const f=fakeStore(),jobs=jobsWith(f.store),requestId=randomUUID();
+    const first=await jobs.requestPrivacyExportJob(context(),{requestId});
+    await expect(jobs.requestPrivacyExportJob(context(),{requestId:randomUUID()})).rejects.toThrow('conflict');
+    expect(await jobs.requestPrivacyExportJob(context(),{requestId})).toMatchObject({jobId:first.jobId,replayed:true});
+    expect(f.store.createUpload).not.toHaveBeenCalled();
+  });
   it('does not recover a same-length object with a checksum unrelated to the recorded parts',async()=>{
     const f=fakeStore(),jobs=jobsWith(f.store);
     let partLengths:number[]=[];
