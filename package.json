@@ -110,6 +110,7 @@
     "@aws-sdk/client-sfn": "^3.1109.0",
     "@aws-sdk/client-textract": "^3.1109.0",
     "@aws-sdk/client-transcribe": "^3.1123.0",
+    "@aws-sdk/credential-provider-ini": "3.973.15",
     "@aws-sdk/lib-dynamodb": "^3.1109.0",
     "@aws-sdk/s3-request-presigner": "^3.1109.0",
     "@tanstack/react-query": "^5.101.2",

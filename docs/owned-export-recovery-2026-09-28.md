@@ -61,6 +61,9 @@ and owner/foreign-owner/response-loss/device journeys on the matched release.
 
 The new artifact builder release hash is
 `8a9a8f321fafc1f4e2c20b44825845cc64bb291c1746b1cdacfe7f23bfa3c9c2`;
-the production identity hash is
-`06572c1889bf6d3e6bf6c65e8b687dd10500d445338ebc3233f9b447fe5c543f`.
-They are different contracts, not interchangeable approval evidence.
+the actual production ledger identity hash is
+`9bc30d04930816a523a7dc67b95944fba1d294dad4d71cf7585158fbc3a874aa`.
+The gate's combined-SQL checksum is
+`06572c1889bf6d3e6bf6c65e8b687dd10500d445338ebc3233f9b447fe5c543f`;
+an earlier version of this note incorrectly called that the production identity.
+All three are different contracts, not interchangeable approval evidence.

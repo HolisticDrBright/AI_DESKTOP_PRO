@@ -56,6 +56,8 @@ jobs:
       - run: npm run build:lab-range-tools
       - name: Build read-only retained-lab privacy operator (no AWS calls)
         run: node scripts/build-lab-privacy-inventory.mjs
+      - name: Build qualification-only schema upgrade operator (no AWS calls or migration)
+        run: node scripts/build-aws-qualification-schema-upgrade.mjs
       - name: AWS clinical-core synthetic safety gate
         run: npm run check:aws-clinical-core
       - name: AWS identity, invitation, and consent safety gate

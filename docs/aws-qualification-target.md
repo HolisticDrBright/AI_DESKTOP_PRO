@@ -1,5 +1,10 @@
 # AWS qualification target (isolated, production-shaped, synthetic-only)
 
+September 28: a populated qualification database at release 102 must use the separate
+[bounded migration 103 upgrade](qualification-schema-upgrade-103.md), not the empty
+installer below. The exact before/after ledger identities and data-preservation tests
+are documented there. Nothing authorizes clearing fixtures or rewriting old hashes.
+
 ## Why the existing staging database is not a target
 
 The September 21 audit inspected account `588966314750` (profile `ai-synthetic-staging`, region
