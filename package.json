@@ -42,6 +42,8 @@
     "build:aws-deployment-tools": "node scripts/build-aws-deployment-tools.mjs",
     "check:aws-deployment-acceptance": "node scripts/check-aws-deployment-acceptance.mjs",
     "preflight:aws-synthetic": "node scripts/preflight-aws-synthetic.mjs",
+    "preflight:qualification-create": "node scripts/preflight-qualification-create.mjs",
+    "test:qualification-create-preflight": "node --test scripts/preflight-qualification-create.test.mjs",
     "check:aws-production-readiness": "node scripts/check-aws-production-readiness.mjs",
     "test:aws-production-readiness": "node scripts/check-aws-production-readiness.test.mjs",
     "check:aws-first-real-data-pilot": "node scripts/check-aws-first-real-data-pilot.mjs",

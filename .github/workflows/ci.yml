@@ -95,6 +95,8 @@ jobs:
       - name: Qualification target runner (syntax and pre-network name refusals, no AWS calls)
         shell: pwsh
         run: ./scripts/test-qualification-runner.ps1
+      - name: Initial qualification deployment capacity and retained-resource preflight (no AWS calls)
+        run: npm run test:qualification-create-preflight
       - name: Isolated qualification foundation remains synthetic infrastructure only
         run: |
           npm run build:aws-qualification-foundation

@@ -244,6 +244,8 @@ Then run the hosted harnesses against that API and keep only reports whose `exec
 
 ### Status
 
+September 28 deployment follow-up: the first personal-storage create rolled back under the account's capacity restriction, retaining its encrypted log group. Before any retry, follow [initial-create preflight and preserving recovery](qualification-create-recovery.md). This is a current deployment blocker, not successful qualification. No concurrency bound was removed and no retained log was deleted.
+
 - Implemented and locally verified: policy module (resolution, every refusal, admission, marker),
   eleven handlers and their lambdas, seven templates with condition evaluation tests, harness report
   binding (production, qualification, mixed), full Desktop suite and cfn-lint on every template.
