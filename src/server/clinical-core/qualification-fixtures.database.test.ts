@@ -47,6 +47,29 @@ beforeAll(async () => {
 afterAll(async () => { await db?.close(); });
 
 describe("qualification fixtures", () => {
+  it('v2 creates exactly 24 fictional rows on a fresh qualified database and refuses malformed manifests', async () => {
+    const fresh = new PGlite({ extensions: { pgcrypto } });
+    try {
+      await fresh.exec('create extension if not exists pgcrypto');
+      await applyProductionClinicalCoreMigrations(admin(fresh), migrations);
+      const first = await provisionQualificationFixtures(admin(fresh), consumerManifest, migrations, target);
+      expect(first.inserted).toBe(24);
+      expect((await provisionQualificationFixtures(admin(fresh), consumerManifest, migrations, target)).inserted).toBe(0);
+      expect((await fresh.query("select identity_pool from clinical_core.identities where person_id=$1", [consumerManifest.fixture.isolationConsumerPersonId])).rows).toEqual([{ identity_pool: 'consumer' }]);
+      expect((await fresh.query("select id from clinical_core.organization_memberships where person_id=$1", [consumerManifest.fixture.isolationConsumerPersonId])).rows).toEqual([]);
+      expect((await fresh.query("select id from clinical_core.patient_connections where consumer_person_id=$1", [consumerManifest.fixture.isolationConsumerPersonId])).rows).toEqual([]);
+      // Withdrawal is an appended event, never an edit or deletion of prior consent.
+      await fresh.query("insert into clinical_core.consent_grants(organization_id,patient_record_id,connection_id,artifact_id,scope,status,method,representative_authority,reason_code,version,recorded_by_person_id) select organization_id,patient_record_id,connection_id,null,scope,'revoked',method,representative_authority,'patient_request',version+1,recorded_by_person_id from clinical_core.consent_grants where artifact_id=$1", [consumerManifest.fixture.formsConsentArtifactId]);
+      await expect(provisionQualificationFixtures(admin(fresh), consumerManifest, migrations, target)).rejects.toThrow('fixture_mismatch');
+      expect((await fresh.query("select status from clinical_core.consent_grants where scope='forms_checkins' order by version")).rows).toEqual([{ status: 'granted' }, { status: 'revoked' }]);
+    } finally { await fresh.close(); }
+    for (const fixture of [
+      { ...consumerManifest.fixture, isolationWorkforceSubject: legacySubject },
+      { ...consumerManifest.fixture, isolationConsumerSubject: consumerManifest.fixture.consumerSubject },
+      { ...consumerManifest.fixture, isolationConsumerPersonId: undefined },
+      { ...consumerManifest.fixture, email: 'not-allowed@example.invalid' },
+    ]) expect(() => validateQualificationFixtureManifest({ ...consumerManifest, fixture })).toThrow('manifest_invalid');
+  }, 120000);
   it("provisions fictional production-shaped rows once, idempotently, with the consumer's verified connection and every consent granted", async () => {
     const first = await provisionQualificationFixtures(admin(db), manifest, migrations, target);
     expect(first.provisioned).toBe(true); expect(first.inserted).toBe(25);
@@ -122,6 +145,12 @@ describe("qualification fixtures", () => {
     for(const fixture of [{...consumerManifest.fixture,formsConsentArtifactSha256:'0'.repeat(64)}, {...consumerManifest.fixture,organizationLabel:'Synthetic acceptance changed clinic'}]) {
       await expect(provisionQualificationFixtures(admin(db),{...consumerManifest,fixture},migrations,target)).rejects.toThrow('fixture_mismatch');
     }
+  });
+  it('does not silently adopt a changed provider on replay', async () => {
+    await db.query("update clinical_core.sync_providers set adapter_version='changed-adapter/1' where id=$1", [consumerManifest.fixture.syncProviderId]);
+    try {
+      await expect(provisionQualificationFixtures(admin(db), consumerManifest, migrations, target)).rejects.toThrow('fixture_mismatch');
+    } finally { await db.query("update clinical_core.sync_providers set adapter_version='aws-clinical-state/1' where id=$1", [consumerManifest.fixture.syncProviderId]); }
   });
   it('refuses unexpected clinic access for the designated isolation consumer without repairing permissions', async () => {
     const person=consumerManifest.fixture.isolationConsumerPersonId;

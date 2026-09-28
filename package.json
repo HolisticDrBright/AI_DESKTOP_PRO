@@ -95,7 +95,9 @@
     "build:aws-recording-drafting": "node scripts/build-aws-recording-authority.mjs --drafting",
     "build:release-record": "node scripts/build-release-record.mjs",
     "test:release-record": "node --test scripts/build-release-record.test.mjs",
-    "check:aws-qualification-target": "node scripts/check-aws-qualification-target.mjs"
+    "check:aws-qualification-target": "node scripts/check-aws-qualification-target.mjs",
+    "check:aws-qualification-capacity": "node scripts/check-aws-qualification-capacity.mjs",
+    "test:aws-qualification-capacity": "node --test scripts/check-aws-qualification-capacity.test.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-cognito-identity-provider": "^3.1120.0",

@@ -8,7 +8,7 @@ The personal-storage candidate stack is `ROLLBACK_COMPLETE`. Its Lambda function
 
 The support API refused case inspection with `SubscriptionRequiredException`. This does not establish the case's current status. Read case `179061879900755` through the signed-in Support Center; do not purchase support just to query it.
 
-AWS requires 100 executions to remain unreserved when assigning reserved concurrency: <https://docs.aws.amazon.com/lambda/latest/api/API_PutFunctionConcurrency.html>. The personal-storage function reserves 4, so a fresh create needs at least 104 currently unreserved executions. The complete intended fleet reserves 35 according to the existing deployment plan; verify the aggregate against all exact templates before deployment. A request for 35 *total* is not equivalent to capacity for 35 *reserved*. Never remove per-function bounds to work around this.
+The documented AWS unreserved floor is 100 when assigning reserved concurrency: <https://docs.aws.amazon.com/lambda/latest/api/API_PutFunctionConcurrency.html>. This reduced-quota account's actual failed create reported a 10-unit minimum instead. Both preflights deliberately use the conservative documented floor, not a claim that the observed error required 100. The personal-storage function reserves 4, so this initial-create preflight requires at least 104 currently unreserved executions. The complete intended fleet reserves 35 according to the existing deployment plan; verify the aggregate against all exact templates before deployment. A request for 35 *total* is not equivalent to capacity for 35 *reserved*. Never remove per-function bounds to work around this.
 
 ## Read-only initial-create preflight
 
