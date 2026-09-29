@@ -4,9 +4,22 @@ import {readBoundedRequestBody} from '@/server/bounded-request-body';
 import {careMessageRequest,parseCareMessageResponse} from '@/contracts/careMessages';
 import {liveGuard} from '../route-helpers';
 const json=(status:number,value:unknown)=>NextResponse.json(value,{status,headers:{'Cache-Control':'no-store'}});
+function sameBrowserOrigin(request:Request):boolean{
+ // App Runner terminates TLS before Next's internal 0.0.0.0 listener. Host is
+ // the browser's public authority; forwarded-host must never grant access.
+ const raw=request.headers.get('origin'),host=request.headers.get('host');
+ if(!raw||!host)return false;
+ if(request.headers.has('sec-fetch-site')&&request.headers.get('sec-fetch-site')!=='same-origin')return false;
+ try{
+  const origin=new URL(raw);
+  if(raw!==origin.origin||origin.host!==host)return false;
+  return origin.protocol==='https:'||(origin.protocol==='http:'&&['localhost','127.0.0.1','[::1]'].includes(origin.hostname)
+   &&origin.origin===new URL(request.url).origin);
+ }catch{return false;}
+}
 export async function POST(request:Request){
  const blocked=liveGuard();if(blocked)return blocked;
- if(request.headers.get('origin')!==new URL(request.url).origin)return json(403,{error:'identity_refused'});
+ if(!sameBrowserOrigin(request))return json(403,{error:'identity_refused'});
  const session=await getRequestSession();if(!session.token)return json(401,{error:'reauth_required'});
  try{
   const body=careMessageRequest.parse(JSON.parse(new TextDecoder().decode(await readBoundedRequestBody(request,20480,5000))));
