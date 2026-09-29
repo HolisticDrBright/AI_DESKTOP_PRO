@@ -12,5 +12,6 @@ private-import
 !.env.example
 docs
 e2e
+playwright*.ts
 supabase
 *.log
