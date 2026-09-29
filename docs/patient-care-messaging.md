@@ -24,6 +24,25 @@ Rebuild the migration tools from `src/server/clinical-core/migrations.ts` before
 using the operator. `inspect|migrate|verify receipt` selects the separate reviewed
 receipt migration; the original reviewed migration/ledger file is unchanged.
 
+### API checkpoint after the database check
+
+- Source `43687b5a3573c54c430b3ba590f59fe8d376e09a`; artifact SHA-256
+  `bacddfe421ca7a705c3e8acbb684190aa8b767fda66e86e53fc1d11ae90b0b13`.
+  Change set `care-message-receipts-43687b5-20260929` changed only existing Lambda
+  code and its integration reference. Stack UPDATE_COMPLETE; Lambda checksum
+  matches, Active/Successful. Previous artifact `75aee02b…` remains for rollback;
+  the additive receipt function need not be removed for old-code rollback.
+- Full Desktop suite: 273 files, 3,308 passed, 11 skipped. Typecheck and scoped lint
+  passed. Actual Cognito/JWT API acceptance passed 15 cases at
+  2026-09-29T21:45:40Z, including unresolved/committed receipt, ownership and role
+  isolation, paused-link refusal, and existing send/reply/idempotency behavior.
+- Actual V2 journal/transport-to-AWS recovery passed at 21:47:09Z: simulated lost
+  response, recreated journal, positive receipt reconciliation, one send total.
+  Native storage/session injected, not physical-device evidence. Test fixtures
+  are fictional, the paused link was restored, and existing dedicated accounts
+  reused. Desktop web image remains `c6efae0`; this increment required only API
+  deployment. TestFlight 71 remains unchanged. No PHI or production activation.
+
 ## Status
 
 Implemented as a **synthetic-only first release**. AWS database migration and the two authenticated API routes were deployed September 29; Desktop and mobile UI releases are still pending. This is not a PHI activation or commercial-readiness claim.
