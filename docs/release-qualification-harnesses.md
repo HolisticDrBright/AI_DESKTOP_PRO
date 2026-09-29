@@ -8,7 +8,53 @@ September 16, 2026. Credential-free source tooling. Nothing here is a hosted pen
 
 ## Load qualification
 
-`infra/aws-clinical-core/load-qualification-plan.json` describes refusal-path load scenarios only: unauthenticated bursts against personal records and lab jobs, oversized-body refusals and unknown-route probes, each with a concurrency, request count, the refusal statuses allowed and an SLO (p95 latency, maximum error rate). `npm run qualify:load-plan` validates the plan and prints the schedule without sending anything (CI). `node scripts/run-aws-load-qualification.mjs --execute --origin <synthetic API origin>` requires `LOAD_QUALIFICATION_CONFIRM_SYNTHETIC=1`, an origin matching the synthetic execute-api pattern and free of production markers, and writes `dist/qualification/load-qualification.json` with p50/p95/max latency, status distribution and an evidence hash. Any 2xx, any status outside the allowed refusals, or an SLO breach fails the run. The self-test (`npm run test:aws-load-qualification`) drives the runner against a local stub server to prove refusals pass, acceptance fails and unexpected statuses fail.
+September 28 hardening: the URL pattern and a confirmation environment variable
+are no longer sufficient for a hosted run. `--execute --origin <origin>` also
+requires `--target <reviewed-qualification-target.json>`. Set `AWS_PROFILE` to the
+approved synthetic profile and use a clean, exact-source checkout. The runner
+loads the shared target validator and observes the actual STS account, source
+commit, foundation and personal-storage/owned-lab candidate stacks before sending
+any load request. Wrong/missing targets, placeholders, staging resources, dirty
+source and mismatched live bindings are refused. Local self-tests stay explicitly
+marked as local/unverified transport evidence, not hosted qualification.
+
+`infra/aws-clinical-core/load-qualification-plan.json` describes refusal-path load
+scenarios only: unauthenticated bursts against personal records and lab jobs,
+oversized-body refusals and unknown-route probes, with bounded concurrency,
+request counts and latency/error-rate objectives. `npm run qualify:load-plan`
+validates and prints the schedule without sending anything. Hosted execution uses
+`node scripts/run-aws-load-qualification.mjs --execute --origin <qualification API origin> --target <reviewed-target.json>`
+with `LOAD_QUALIFICATION_CONFIRM_SYNTHETIC=1` and the live checks above. It writes
+`dist/qualification/load-qualification.json` exclusively, recording latency,
+status distribution and an evidence hash. Any 2xx fails; unexpected statuses or
+transport failures above the scenario's error budget, or a latency breach, also
+fail. The committed plan permits no errors. `npm run test:aws-load-qualification`
+uses a local stub to prove refusal success, 2xx failure and unexpected-status failure.
+
+Reports now include their target observation. Even a passing hosted refusal-path
+load run is explicitly `positiveClinicalAcceptance: false` and
+`activationEvidence: false`. Its migration hash is declared by the reviewed target;
+this load tool does not inspect the database ledger or certify provider behavior.
+Keep the separate positive acceptance and database checks. Empty/malformed plans,
+empty refusal lists and ambiguous paths fail before dispatch. No hosted load run
+was executed while implementing this hardening.
+
+## Local release-record verification
+
+`npm run build:release-record` executes the real command on Windows as well as
+Linux/macOS. The old file-URL/path comparison silently skipped the CLI on Windows.
+`SOURCE_COMMIT`, if set, must match observed Git HEAD rather than replacing it.
+New records are create-only; choose `--output <new-file>` for another snapshot.
+`--verify <record>` reports source/artifact differences and refuses dirty snapshots
+or a dirty current checkout. A dirty inventory can still be written, explicitly
+marked dirty; it cannot pass verification. Missing, duplicate, malformed or
+path-escaping migration entries are refused rather than hashed as missing data.
+
+The seven release-record tests now run in CI, including actual command execution
+from paths with spaces, missing records, source-label spoofing, overwrite refusal,
+dirty-to-dirty verification and migration failures. A matching record is only a
+local file inventory: it does not prove that those files were built from that
+commit, were deployed, passed hosted/device tests or received human approval.
 
 ## Application rollback rehearsal
 

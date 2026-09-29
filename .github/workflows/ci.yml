@@ -147,6 +147,7 @@ jobs:
           npm run check:aws-application-rollback
           npm run test:aws-load-qualification
           npm run qualify:load-plan
+          npm run test:release-record
       - name: Credential-free security qualification (source evidence, not a hosted test)
         run: |
           npm run build:security-qualification

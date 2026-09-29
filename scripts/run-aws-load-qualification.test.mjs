@@ -18,6 +18,16 @@ const unconfirmed = spawnSync(process.execPath, [script, "--execute", "--origin"
 assert.equal(unconfirmed.status, 1); assert.match(unconfirmed.stderr, /confirm a synthetic target/);
 const forbidden = spawnSync(process.execPath, [script, "--execute", "--origin", "https://api.ailongevitypro.app"], { encoding: "utf8", env: { ...process.env, LOAD_QUALIFICATION_CONFIRM_SYNTHETIC: "1" } });
 assert.equal(forbidden.status, 1); assert.match(forbidden.stderr, /not the synthetic staging pattern/);
+const missingTarget = spawnSync(process.execPath, [script, "--execute", "--origin", "https://abcdefghij.execute-api.us-east-2.amazonaws.com"],
+  { encoding: "utf8", env: { ...process.env, LOAD_QUALIFICATION_CONFIRM_SYNTHETIC: "1" } });
+assert.equal(missingTarget.status, 1); assert.match(missingTarget.stderr, /load_target_manifest_required/);
+const exampleTarget = spawnSync(process.execPath, [script, "--execute", "--origin", "https://6zt8e9qz04.execute-api.us-east-2.amazonaws.com", "--target", "infra/aws-clinical-core/qualification-target.example.json"],
+  { encoding: "utf8", env: { ...process.env, LOAD_QUALIFICATION_CONFIRM_SYNTHETIC: "1" } });
+assert.equal(exampleTarget.status, 1); assert.match(exampleTarget.stderr, /target_placeholder/);
+for (const scenarios of [[], {}, null]) assert.ok(validatePlan({ ...plan, scenarios }).length);
+for (const invalidPath of ["//external.invalid", "/\\external", "/encoded%2fhost", "/path#fragment", "/path with spaces"])
+  assert.ok(validatePlan({ ...plan, scenarios: [{ ...plan.scenarios[0], path: invalidPath }] }).length);
+await assert.rejects(executePlan({ ...plan, scenarios: [] }, "http://127.0.0.1:1"), /load_plan_invalid/);
 
 const small = { ...plan, scenarios: plan.scenarios.map(s => ({ ...s, requests: 12, concurrency: 4 })) };
 let status = 401;
@@ -27,6 +37,8 @@ const origin = `http://127.0.0.1:${server.address().port}`;
 try {
   const refusing = await executePlan(small, origin);
   assert.equal(refusing.passed, true, JSON.stringify(refusing.scenarios));
+  assert.equal(refusing.targetEvidence.kind, "unverified_transport_test");
+  assert.equal(refusing.targetEvidence.activationEvidence, false);
   assert.ok(refusing.scenarios.every(s => s.p95Ms >= 5 && s.successes === 0));
   assert.match(refusing.evidenceSha256, /^[a-f0-9]{64}$/);
   status = 200;
