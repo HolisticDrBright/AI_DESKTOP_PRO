@@ -140,6 +140,11 @@
       "version": "20260916080000",
       "file": "20260916080000_synthetic_lab_specimen_context.sql",
       "production_transform": false
+    },
+    {
+      "version": "20260929090000",
+      "file": "20260929090000_synthetic_care_messages.sql",
+      "production_transform": false
     }
   ]
 }

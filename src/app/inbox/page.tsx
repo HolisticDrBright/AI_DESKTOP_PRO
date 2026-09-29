@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { InboxWorkspace } from "@/components/inbox/InboxWorkspace";
+import {CareMessagesPanel} from '@/components/inbox/CareMessagesPanel';
 
 export const metadata: Metadata = { title: "Inbox — AI Longevity Pro" };
 
@@ -11,8 +12,8 @@ export const dynamic = "force-dynamic";
  * Inbox (phase 4): the real org-scoped communication workspace. Threads,
  * messages, drafts, assignments, and counts are persisted rows read and
  * written exclusively through the Desktop-owned RPC boundary. Sending fails
- * closed — no delivery provider is configured, so nothing on this screen can
- * claim a message was sent, delivered, or read by the patient app.
+ * closed for external delivery. The separate synthetic patient-app panel
+ * reports database storage receipts only, never patient-read confirmation.
  */
 export default async function InboxPage({
   searchParams,
@@ -29,6 +30,7 @@ export default async function InboxPage({
         sub="Org-scoped patient communication — threads, drafts, triage, and workflow"
       />
       <div className="mb-4"><a className="inline-flex rounded-lg border px-3 py-2 text-sm font-semibold text-primary" href="/telehealth-requests">Open telehealth scheduling requests</a></div>
+      <CareMessagesPanel />
       <InboxWorkspace initialThreadId={thread} />
     </section>
   );

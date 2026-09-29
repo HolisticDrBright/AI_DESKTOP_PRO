@@ -4,6 +4,7 @@ import { createAwsIdentityApiHandler, type ApiGatewayV2Event } from "./aws-ident
 import type { LabSpecimenTransfer } from "../../contracts/labSpecimenTransfer";
 import { isProductionPilotRouteAllowed, isProductionPilotConsentScopeAllowed } from "./production-pilot-policy";
 import { ClinicalStateError } from "./aws-clinical-state";
+import type {ClinicalCoreDatabase,ClinicalCoreTransaction} from './database';
 
 const PERSON = "11111111-1111-4111-8111-111111111111";
 const ORG = "22222222-2222-4222-8222-222222222222";
@@ -59,6 +60,31 @@ function handler(service = adapter()) {
     }),
   };
 }
+
+describe('synthetic patient-to-practitioner messaging API',()=>{
+ function setup(){
+  const query=vi.fn(async()=>({rows:[{data:{action:'list',threads:[],nextBefore:null}}]}));
+  const database:ClinicalCoreDatabase={transaction:work=>work({query:query as ClinicalCoreTransaction['query']})};
+  const run=createAwsIdentityApiHandler({database,adapter:adapter(),configuration:{
+   workforceIssuer:WORKFORCE_ISSUER,workforceAudience:WORKFORCE_AUD,consumerIssuer:CONSUMER_ISSUER,consumerAudience:CONSUMER_AUD}});
+  return {run,query};
+ }
+ test.each(['consumer','workforce'] as const)('accepts %s only with current authenticated claims',async pool=>{
+  const t=setup(),e=event('POST /clinical-core/'+pool+'/messages',pool,{action:'list'},{exp:Math.floor(Date.now()/1000)+60});
+  expect((await t.run(e)).statusCode).toBe(200);
+  expect(t.query).toHaveBeenCalledWith('select clinical_core.care_message_request($1::jsonb) as data',['{"action":"list"}']);
+ });
+ test.each([undefined,0,1,'invalid'])('rejects absent or expired expiry %s before database',async exp=>{
+  const t=setup();expect((await t.run(event('POST /clinical-core/consumer/messages','consumer',{action:'list'},{exp}))).statusCode).toBe(403);
+  expect(t.query).not.toHaveBeenCalled();
+ });
+ test('rejects wrong identity pool and supplied sender',async()=>{
+  const t=setup();
+  expect((await t.run(event('POST /clinical-core/workforce/messages','consumer',{action:'list'},{exp:Date.now()/1000+60}))).statusCode).toBe(403);
+  expect((await t.run(event('POST /clinical-core/consumer/messages','consumer',{action:'list',sender:PERSON},{exp:Date.now()/1000+60}))).statusCode).toBe(400);
+  expect(t.query).not.toHaveBeenCalled();
+ });
+});
 
 describe("separately consented specimen-context API", () => {
   const post = "POST /clinical-core/consumer/labs/specimen-context";
