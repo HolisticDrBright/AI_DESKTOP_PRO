@@ -1,5 +1,29 @@
 # Patient ↔ practitioner text messaging — 2026-09-29
 
+## Latest receipt recovery checkpoint
+
+The first messaging release is already deployed as Desktop `c6efae0` and submitted
+as synthetic TestFlight build 71 from V2 `ed3ab67`. Older unreleased notes below are
+historical. Build 71 does not contain the new receipt-only restart recovery.
+
+The additive receipt migration `20260929100000` was applied to account
+588966314750 / `clinical_core` on September 29, after inspecting the exact prior
+31-entry ledger. The ledger now has 32 entries; no qualification or production
+database was changed. SHA-256:
+`b15cc1c0f84fe5121363983dfa21f493a20fc49b5c30d4942f76fb64d565117e`.
+
+`node scripts/deploy-care-messages-migration.mjs verify receipt` passed 14 real
+Aurora rollback checks: receipt absence stays unresolved, late send recovery,
+metadata-only result, idempotency, changed-payload refusal, owner/workforce/clinic
+isolation, paused-link refusals, and direct-table refusal. Fictional fixtures were
+rolled back and absence verified. This is database evidence, not JWT/API or phone
+acceptance. 64 focused local tests, typecheck and scoped lint passed. Full suite
+and the matching API deployment are pending at this checkpoint. PHI remains off.
+
+Rebuild the migration tools from `src/server/clinical-core/migrations.ts` before
+using the operator. `inspect|migrate|verify receipt` selects the separate reviewed
+receipt migration; the original reviewed migration/ledger file is unchanged.
+
 ## Status
 
 Implemented as a **synthetic-only first release**. AWS database migration and the two authenticated API routes were deployed September 29; Desktop and mobile UI releases are still pending. This is not a PHI activation or commercial-readiness claim.
@@ -68,6 +92,14 @@ Deployment checklist (steps 1–3 completed September 29; remaining steps are no
 Nothing in this increment merges branches, pushes GitHub, publishes a mobile build, approves clinical content, modifies the mock curriculum, or certifies commercial readiness.
 
 ## Hosted backend evidence — September 29
+
+### Restart-safe receipt lookup (source-only follow-up)
+
+Additive synthetic migration `20260929100000_synthetic_care_message_receipts.sql` introduces a consumer-only receipt lookup through the same consumer messages route. It is **not yet deployed or hosted verified**. The prior migration and reviewed deployment ledger remain unchanged.
+
+Request: `{action:'receipt', requestId:UUID, connectionId:UUID}`. A committed result returns precisely `action`, `requestId`, `connectionId`, `status:'committed'`, `threadId`, and `messageId`. Otherwise it returns only the first three fields and `status:'unresolved'`. Unresolved is a point-in-time absence, **not** cancellation or permission to create a replacement send: an in-flight request may still commit. No subject, body, digest or clinical content is returned.
+
+Every lookup checks the active synthetic consumer identity, organization, linked record, exact verified connection, sender ownership and request ID. Cross-owner, workforce, switched-clinic, revoked and archived access is refused; another valid connection never exposes the old receipt. Receipt access is audited without content. Production remains unavailable; this migration must not be applied to the qualification or production schema.
 
 - Synthetic AWS account 588966314750, API wxv734oi12, database clinical_core only; PHI remains false.
 - Migration 20260929090000 and two JWT messaging routes deployed. Existing identity Lambda checksum matches artifact 161747a85e416b523786341871daaa1032348887f05a52b7c859c67b29682dc5. No additional reservations or unrelated pending routes deployed.

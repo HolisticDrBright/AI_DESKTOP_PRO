@@ -145,6 +145,11 @@
       "version": "20260929090000",
       "file": "20260929090000_synthetic_care_messages.sql",
       "production_transform": false
+    },
+    {
+      "version": "20260929100000",
+      "file": "20260929100000_synthetic_care_message_receipts.sql",
+      "production_transform": false
     }
   ]
 }

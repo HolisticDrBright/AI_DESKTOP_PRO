@@ -78,6 +78,20 @@ describe('synthetic patient-to-practitioner messaging API',()=>{
   const t=setup();expect((await t.run(event('POST /clinical-core/consumer/messages','consumer',{action:'list'},{exp}))).statusCode).toBe(403);
   expect(t.query).not.toHaveBeenCalled();
  });
+ test('routes consumer receipts, refuses workforce and rejects mismatched database receipts',async()=>{
+  const t=setup(),input={action:'receipt',requestId:ARTIFACT,connectionId:CONNECTION};
+  const receipt={...input,status:'unresolved'};
+  t.query.mockResolvedValue({rows:[{data:receipt}]} as never);
+  const accepted=await t.run(event('POST /clinical-core/consumer/messages','consumer',input,{exp:Date.now()/1000+60}));
+  expect(accepted.statusCode).toBe(200);expect(JSON.parse(accepted.body)).toEqual({data:receipt});
+  expect(t.query).toHaveBeenCalledWith('select clinical_core.care_message_receipt($1::jsonb) as data',[JSON.stringify(input)]);
+  t.query.mockClear();
+  expect((await t.run(event('POST /clinical-core/workforce/messages','workforce',input,{exp:Date.now()/1000+60}))).statusCode).toBe(403);
+  expect(t.query).not.toHaveBeenCalled();
+  t.query.mockResolvedValue({rows:[{data:{...receipt,connectionId:PATIENT}}]} as never);
+  const mismatch=await t.run(event('POST /clinical-core/consumer/messages','consumer',input,{exp:Date.now()/1000+60}));
+  expect(mismatch.statusCode).toBe(503);expect(mismatch.body).not.toContain(PATIENT);
+ });
  test('rejects wrong identity pool and supplied sender',async()=>{
   const t=setup();
   expect((await t.run(event('POST /clinical-core/workforce/messages','consumer',{action:'list'},{exp:Date.now()/1000+60}))).statusCode).toBe(403);
