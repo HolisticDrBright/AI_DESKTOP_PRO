@@ -4,13 +4,13 @@ import {requestPrivacyOperation} from '@/server/clinical-core/privacy-operations
 import {PrivacyOperationError} from '@/server/clinical-core/privacy-operations';
 import {privacyOperationSchema} from '@/contracts/privacyOperations';
 import {liveGuard} from '../route-helpers';
+import {sameBrowserOrigin} from '@/server/same-browser-origin';
 export const dynamic='force-dynamic';
 const json=(value:unknown,status=200)=>NextResponse.json(value,{status,headers:{'cache-control':'no-store','x-content-type-options':'nosniff'}});
 export async function POST(req:NextRequest){
   const blocked=liveGuard();if(blocked)return blocked;
   // Same-origin only, including reads: field-level correction evidence is private.
-  const origin=req.headers.get('origin');
-  if(origin!==req.nextUrl.origin||req.headers.get('sec-fetch-site')==='cross-site')return json({error:'privacy_access_refused'},403);
+  if(!sameBrowserOrigin(req))return json({error:'privacy_access_refused'},403);
   if(!req.headers.get('content-type')?.toLowerCase().startsWith('application/json'))return json({error:'request_invalid'},400);
   const session=await getRequestSession();
   if(!session.token)return json({error:'reauth_required'},401);

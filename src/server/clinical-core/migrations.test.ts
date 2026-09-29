@@ -44,11 +44,14 @@ afterEach(() => {
 describe("AWS clinical-core migration runner", () => {
   test("loads ordered migrations and computes their content hash", () => {
     const migrations = loadClinicalCoreMigrations();
-    expect(migrations).toHaveLength(33);
-    expect(migrations.at(-1)).toMatchObject({version:"20260929110000",name:"synthetic_care_message_settlement"});
-    expect(migrations.at(-1)!.sql).toContain("create function clinical_core.care_message_settle");
-    expect(migrations.at(-2)).toMatchObject({version:"20260929100000",name:"synthetic_care_message_receipts"});
-    expect(migrations.at(-2)!.sql).toContain("create function clinical_core.care_message_receipt");
+    expect(migrations).toHaveLength(34);
+    expect(migrations.at(-1)).toMatchObject({version:"20260929120000",name:"synthetic_program_assignments"});
+    expect(migrations.at(-1)!.sql).toContain("create function clinical_core.program_assignment_request");
+    expect(migrations.at(-1)!.sql).toContain("create function clinical_private.program_review");
+    expect(migrations.at(-2)).toMatchObject({version:"20260929110000",name:"synthetic_care_message_settlement"});
+    expect(migrations.at(-2)!.sql).toContain("create function clinical_core.care_message_settle");
+    expect(migrations.at(-3)).toMatchObject({version:"20260929100000",name:"synthetic_care_message_receipts"});
+    expect(migrations.at(-3)!.sql).toContain("create function clinical_core.care_message_receipt");
     expect(migrations[0]).toMatchObject({
       version: "20260812010000",
       name: "synthetic_identity_consent",
@@ -229,7 +232,7 @@ describe("AWS clinical-core migration runner", () => {
     const db = migrationDatabase();
     const result = await applyClinicalCoreMigrations(db.database);
     expect(result).toEqual({
-      applied: ["20260812010000", "20260812220000", "20260821010000", "20260821020000", "20260821030000", "20260821040000", "20260821045000", "20260821046000", "20260821047000", "20260821048000", "20260821049000", "20260821049500", "20260821049700", "20260821049800", "20260821049900", "20260903010000", "20260903020000", "20260903030000", "20260903060000", "20260903070000", "20260903163000", "20260903170000", "20260903180000", "20260903200000", "20260903201000", "20260903202000", "20260903210000", "20260903211000", "20260904090000", "20260916080000", "20260929090000", "20260929100000", "20260929110000"],
+      applied: ["20260812010000", "20260812220000", "20260821010000", "20260821020000", "20260821030000", "20260821040000", "20260821045000", "20260821046000", "20260821047000", "20260821048000", "20260821049000", "20260821049500", "20260821049700", "20260821049800", "20260821049900", "20260903010000", "20260903020000", "20260903030000", "20260903060000", "20260903070000", "20260903163000", "20260903170000", "20260903180000", "20260903200000", "20260903201000", "20260903202000", "20260903210000", "20260903211000", "20260904090000", "20260916080000", "20260929090000", "20260929100000", "20260929110000", "20260929120000"],
       alreadyApplied: [],
     });
     expect(db.transactions()).toBe(1);

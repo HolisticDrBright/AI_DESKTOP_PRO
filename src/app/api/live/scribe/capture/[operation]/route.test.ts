@@ -12,7 +12,7 @@ const state = { recordingId: id, sessionId: other, status: 'capturing', credenti
 const upstream = vi.fn();
 function req(input: unknown = { recordingId: id }, headers: Record<string, string> = {}, search = '') {
   return new Request('https://desktop.example/api/live/scribe/capture/state' + search, { method: 'POST',
-    headers: { origin: 'https://desktop.example', 'content-type': 'application/json', ...headers }, body: JSON.stringify(input) });
+    headers: { host:'desktop.example',origin: 'https://desktop.example', 'content-type': 'application/json', ...headers }, body: JSON.stringify(input) });
 }
 const post = (request = req(), operation = 'state') => POST(request, { params: Promise.resolve({ operation }) });
 beforeEach(() => {
@@ -111,7 +111,7 @@ const audio = new Uint8Array([1,2,3,4]);
 const sha = createHash('sha256').update(audio).digest('hex');
 function segment(overrides: Record<string,string> = {}, body: Uint8Array = audio) {
   return new Request('https://desktop.example/api/live/scribe/capture/segment', { method:'POST',
-    headers: { origin: 'https://desktop.example', 'content-type':'audio/webm', 'x-alp-recording-id':id,
+    headers: { host:'desktop.example',origin: 'https://desktop.example', 'content-type':'audio/webm', 'x-alp-recording-id':id,
       'x-alp-session-id':other, 'x-alp-capture-token':hash, 'x-alp-sequence':'0', 'x-alp-sha256':sha, ...overrides },
     body: body as BodyInit });
 }

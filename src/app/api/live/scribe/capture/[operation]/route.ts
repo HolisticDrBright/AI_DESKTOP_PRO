@@ -4,6 +4,7 @@ import { recordingCaptureRequest } from '@/adapters/recording-capture.server';
 import { recordingCaptureRequestSchema } from '@/contracts/encounterRecordingCapture';
 import { AdapterError, HTTP_STATUS } from '@/adapters/errors';
 import { BoundedBodyError, readBoundedRequestBody } from '@/server/bounded-request-body';
+import {sameBrowserOrigin} from '@/server/same-browser-origin';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -12,8 +13,7 @@ const uploadHeaders = ['x-alp-recording-id', 'x-alp-session-id', 'x-alp-capture-
 export async function POST(request: Request, context: { params: Promise<{ operation: string }> }) {
   const guard = liveGuard(); if (guard) { guard.headers.set('cache-control', 'no-store'); return guard; }
   try {
-    if (request.headers.get('origin') !== new URL(request.url).origin
-      || request.headers.has('sec-fetch-site') && request.headers.get('sec-fetch-site') !== 'same-origin') throw new AdapterError('forbidden');
+    if (!sameBrowserOrigin(request)) throw new AdapterError('forbidden');
     const session = await getRequestSession();
     if (!session.signedIn || !session.token) throw new AdapterError('unauthenticated');
     const { operation } = await context.params;

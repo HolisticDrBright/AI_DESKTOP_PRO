@@ -11,7 +11,7 @@ const payload={data:{state:'already_claimed',runId:requestId,recordingId:id,audi
 const upstream=vi.fn();
 function req(data:unknown=request,headers:Record<string,string>={},query=''){
   return new Request('https://desktop.example/api/live/recording-cleanup-execution'+query,{method:'POST',
-    headers:{origin:'https://desktop.example','content-type':'application/json',...headers},body:JSON.stringify(data)});
+    headers:{host:'desktop.example',origin:'https://desktop.example','content-type':'application/json',...headers},body:JSON.stringify(data)});
 }
 beforeEach(()=>{vi.clearAllMocks();vi.stubGlobal('fetch',upstream);
   vi.stubEnv('RECORDING_CLEANUP_EXECUTION_API_ORIGIN','https://abcdefghij.execute-api.us-east-2.amazonaws.com');

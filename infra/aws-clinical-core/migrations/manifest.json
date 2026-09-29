@@ -155,6 +155,11 @@
       "version": "20260929110000",
       "file": "20260929110000_synthetic_care_message_settlement.sql",
       "production_transform": false
+    },
+    {
+      "version": "20260929120000",
+      "file": "20260929120000_synthetic_program_assignments.sql",
+      "production_transform": false
     }
   ]
 }

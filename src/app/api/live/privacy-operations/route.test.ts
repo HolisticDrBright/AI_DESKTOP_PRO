@@ -6,7 +6,7 @@ vi.mock('@/server/clinical-core/privacy-operations-client',()=>({requestPrivacyO
 vi.mock('../route-helpers',()=>({liveGuard:()=>null}));
 import {POST} from './route';
 const request=(body:unknown={action:'list',includeClosed:false},origin='https://desktop.example')=>new NextRequest('https://desktop.example/api/live/privacy-operations',{
-  method:'POST',headers:{origin,'content-type':'application/json'},body:JSON.stringify(body)});
+  method:'POST',headers:{host:'desktop.example',origin,'content-type':'application/json'},body:JSON.stringify(body)});
 beforeEach(()=>{vi.clearAllMocks();mocks.session.mockResolvedValue({token:'fixture-token'});mocks.client.mockResolvedValue({items:[],nextAfter:null});});
 describe('privacy Desktop route',()=>{
   it('refuses missing or cross-origin requests before session or data access',async()=>{

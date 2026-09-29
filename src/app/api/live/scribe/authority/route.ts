@@ -3,6 +3,7 @@ import { getRequestSession } from "@/server/session";
 import { recordingAuthorityRequest } from "@/adapters/recording-authority.server";
 import { AdapterError, HTTP_STATUS } from "@/adapters/errors";
 import { BoundedBodyError, readBoundedRequestBody } from "@/server/bounded-request-body";
+import {sameBrowserOrigin} from '@/server/same-browser-origin';
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -10,9 +11,7 @@ const headers = { "cache-control": "no-store", "x-content-type-options": "nosnif
 export async function POST(request: Request) {
   const guard = liveGuard(); if (guard) { guard.headers.set("cache-control", "no-store"); return guard; }
   try {
-    if (request.headers.get("origin") !== new URL(request.url).origin
-      || request.headers.has("sec-fetch-site") && request.headers.get("sec-fetch-site") !== "same-origin")
-      throw new AdapterError("forbidden");
+    if (!sameBrowserOrigin(request)) throw new AdapterError('forbidden');
     const session = await getRequestSession();
     if (!session.signedIn || !session.token) throw new AdapterError("unauthenticated");
     if (new URL(request.url).search || request.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() !== "application/json")

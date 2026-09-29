@@ -162,3 +162,27 @@ refusals, SQL shape validation and table sealing. **Not applied to any AWS
 target and not hosted-verified** — Codex owns application, in ledger order, and
 hosted acceptance. V2 counterpart and client behaviour:
 `expo/docs/patient-care-messaging.md`.
+
+### Shared same-origin validation (source-only follow-up)
+
+The App Runner origin fix described above lived inside this route only. An audit of
+the rest of the `/api/live/*` surface found seven other mutating routes —
+`privacy-operations`, the four `scribe/*` routes, and both `recording-cleanup-*`
+routes — still comparing the browser's `Origin` against the INTERNAL request URL
+(`new URL(request.url).origin`, `req.nextUrl.origin`, or a local `url.origin`).
+Behind TLS termination that comparison never matches, so the defence those routes
+were reaching for was not running, and a legitimate same-origin browser request
+would have been refused in the hosted deployment.
+
+`src/server/same-browser-origin.ts` is now the single implementation, used by all
+eight. `Host` is the only header allowed to decide; `X-Forwarded-*` is never
+consulted. Plain HTTP is accepted only for loopback development, and only when the
+listener's own origin agrees.
+
+This is defence in depth, not the CSRF defence. Cross-site mutation is refused for
+every live route by the session cookie's `httpOnly, sameSite: lax` policy, which
+`same-origin-coverage.test.ts` now pins alongside the rule that any route checking
+an origin must do it through the shared helper. Adding an explicit origin check to
+the remaining ~183 mutating routes is a separate decision, recorded rather than
+taken here: the cookie policy already refuses cross-site mutation, and changing
+every route's guard carries regression risk disproportionate to the added margin.

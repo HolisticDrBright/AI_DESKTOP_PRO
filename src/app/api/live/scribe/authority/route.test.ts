@@ -12,7 +12,7 @@ const capabilities = { consentManagement: true, audioCapture: false, reason: "au
 const upstream = vi.fn();
 function req(data: unknown = request, headers: Record<string, string> = {}) {
   return new Request("https://desktop.example/api/live/scribe/authority", { method: "POST",
-    headers: { origin: "https://desktop.example", "content-type": "application/json", ...headers }, body: JSON.stringify(data) });
+    headers: { host:'desktop.example',origin: "https://desktop.example", "content-type": "application/json", ...headers }, body: JSON.stringify(data) });
 }
 beforeEach(() => {
   vi.clearAllMocks(); vi.stubGlobal("fetch", upstream);
@@ -80,7 +80,7 @@ it("bounds request and response bodies and rejects malformed UTF-8", async () =>
   upstream.mockResolvedValue(new Response("a".repeat(256001), { headers: { "content-type": "application/json" } }));
   expect((await POST(req())).status).toBe(503);
   const bad = new Request("https://desktop.example/api/live/scribe/authority", { method: "POST",
-    headers: { origin: "https://desktop.example", "content-type": "application/json" }, body: new Uint8Array([0xff]) });
+    headers: { host:'desktop.example',origin: "https://desktop.example", "content-type": "application/json" }, body: new Uint8Array([0xff]) });
   expect((await POST(bad)).status).toBe(400);
 });
 it("bounds a stalled upstream body and cancels it without returning partial content", async () => {

@@ -10,7 +10,7 @@ const payload={data:{items:[],nextAfter:null},capabilities};
 const upstream=vi.fn();
 function req(data:unknown={action:'queue'},headers:Record<string,string>={},query=''){
   return new Request('https://desktop.example/api/live/recording-cleanup-review'+query,{method:'POST',
-    headers:{origin:'https://desktop.example','content-type':'application/json',...headers},body:JSON.stringify(data)});
+    headers:{host:'desktop.example',origin:'https://desktop.example','content-type':'application/json',...headers},body:JSON.stringify(data)});
 }
 beforeEach(()=>{vi.clearAllMocks();vi.stubGlobal('fetch',upstream);
   vi.stubEnv('RECORDING_CLEANUP_REVIEW_API_ORIGIN','https://abcdefghij.execute-api.us-east-2.amazonaws.com');

@@ -9,7 +9,7 @@ const listing = { recordingId: id, status: 'closed', job: null, versions: [] };
 const upstream = vi.fn();
 function req(body: unknown = { operation: 'list', input: { recordingId: id } }, headers: Record<string, string> = {}, search = '') {
   return new Request('https://desktop.example/api/live/scribe/transcription' + search, { method: 'POST',
-    headers: { origin: 'https://desktop.example', 'content-type': 'application/json', ...headers }, body: typeof body === 'string' ? body : JSON.stringify(body) });
+    headers: { host:'desktop.example',origin: 'https://desktop.example', 'content-type': 'application/json', ...headers }, body: typeof body === 'string' ? body : JSON.stringify(body) });
 }
 beforeEach(() => {
   vi.clearAllMocks(); vi.stubGlobal('fetch', upstream);
