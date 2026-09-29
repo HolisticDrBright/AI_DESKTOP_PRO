@@ -40,27 +40,31 @@ export async function executePlan(plan, origin, options = {}) {
   const fetchImpl = options.fetch ?? fetch;
   const results = [];
   for (const scenario of plan.scenarios) {
-    const latencies = []; let unexpected = 0; let failures = 0; let successes = 0; const statuses = {};
+    const latencies = []; let unexpected = 0; let failures = 0; let successes = 0; let failedRequests = 0; const statuses = {};
     const body = scenario.method === "POST" ? JSON.stringify({ filler: "x".repeat(scenario.bodyBytes ?? 1024) }) : undefined;
     let next = 0;
     const worker = async () => {
       while (next < scenario.requests) {
-        next += 1; const started = performance.now();
+        next += 1; const started = performance.now(); let requestFailed = false;
         try {
           const response = await fetchImpl(`${origin}${scenario.path}`, { method: scenario.method, redirect: "manual", signal: AbortSignal.timeout(15_000),
             headers: body ? { "content-type": "application/json" } : {}, body });
-          // We need status and timing only. Release connections without reading
-          // or retaining provider response content during a refusal-path test.
-          await response.body?.cancel();
-          latencies.push(performance.now() - started);
+          // Preserve the observed status before disposal: a disposal failure must
+          // never disguise a 2xx as a tolerable transport error.
           statuses[response.status] = (statuses[response.status] ?? 0) + 1;
-          if (response.status >= 200 && response.status < 300) successes += 1;
-          else if (!scenario.expectedStatuses.includes(response.status)) unexpected += 1;
-        } catch { failures += 1; latencies.push(performance.now() - started); }
+          if (response.status >= 200 && response.status < 300) { successes += 1; requestFailed = true; }
+          else if (!scenario.expectedStatuses.includes(response.status)) { unexpected += 1; requestFailed = true; }
+          // We need status and timing only, never provider response content.
+          await response.body?.cancel();
+        } catch { failures += 1; requestFailed = true; }
+        finally {
+          if (requestFailed) failedRequests += 1;
+          latencies.push(performance.now() - started);
+        }
       }
     };
     await Promise.all(Array.from({ length: scenario.concurrency }, worker));
-    const errorRate = (unexpected + failures + successes) / scenario.requests;
+    const errorRate = failedRequests / scenario.requests;
     const p95Ms = percentile(latencies, 0.95);
     const passed = successes === 0 && errorRate <= scenario.slo.maxErrorRate && p95Ms !== null && p95Ms <= scenario.slo.p95Ms;
     results.push({ id: scenario.id, requests: scenario.requests, concurrency: scenario.concurrency, statuses, successes, unexpected, failures, errorRate,

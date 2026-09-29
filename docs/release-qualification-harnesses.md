@@ -31,6 +31,14 @@ transport failures above the scenario's error budget, or a latency breach, also
 fail. The committed plan permits no errors. `npm run test:aws-load-qualification`
 uses a local stub to prove refusal success, 2xx failure and unexpected-status failure.
 
+September 28 follow-up: a negative test reproduced a false pass when an observed
+2xx response's body cancellation threw. Status observations now precede disposal,
+so no allowed transport-error budget can hide a 2xx. Request error rates count
+each request once even when its status and disposal both fail. Regression cases
+cover one and all 2xx disposal failures plus a refused response's disposal error
+within an explicitly configured transport allowance. The committed plan still
+permits zero errors; these are local transport tests, not hosted acceptance.
+
 Reports now include their target observation. Even a passing hosted refusal-path
 load run is explicitly `positiveClinicalAcceptance: false` and
 `activationEvidence: false`. Its migration hash is declared by the reviewed target;

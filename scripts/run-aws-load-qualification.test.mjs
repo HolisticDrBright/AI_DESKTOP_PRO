@@ -29,6 +29,36 @@ for (const invalidPath of ["//external.invalid", "/\\external", "/encoded%2fhost
   assert.ok(validatePlan({ ...plan, scenarios: [{ ...plan.scenarios[0], path: invalidPath }] }).length);
 await assert.rejects(executePlan({ ...plan, scenarios: [] }, "http://127.0.0.1:1"), /load_plan_invalid/);
 
+// An unexpected 2xx is a safety failure even when disposing of its body fails.
+// One error in twenty fits the permitted transport budget but must never hide it.
+const tolerant = { ...plan, scenarios: [{ ...plan.scenarios[0], requests: 20, concurrency: 1,
+  slo: { p95Ms: 1000, maxErrorRate: 0.05 } }] };
+let disposalCalls = 0;
+const disposalFailure = await executePlan(tolerant, "http://127.0.0.1:1", { fetch: async () => {
+  const first = disposalCalls++ === 0;
+  return { status: first ? 200 : 401, body: { cancel: async () => { if (first) throw new Error("cancel_failed"); } } };
+} });
+assert.equal(disposalFailure.passed, false, "body cancellation must not hide an observed successful response");
+assert.equal(disposalFailure.scenarios[0].successes, 1);
+assert.equal(disposalFailure.scenarios[0].statuses[200], 1);
+assert.equal(disposalFailure.scenarios[0].failures, 1);
+assert.equal(disposalFailure.scenarios[0].errorRate, 0.05, "each failed request is counted only once");
+const allDisposalFailures = await executePlan(tolerant, "http://127.0.0.1:1", { fetch: async () =>
+  ({ status: 200, body: { cancel: async () => { throw new Error("cancel_failed"); } } }) });
+assert.equal(allDisposalFailures.passed, false);
+assert.equal(allDisposalFailures.scenarios[0].successes, 20);
+assert.equal(allDisposalFailures.scenarios[0].failures, 20);
+assert.equal(allDisposalFailures.scenarios[0].errorRate, 1, "overlapping failure observations are not extra requests");
+let refusalDisposalCalls = 0;
+const refusalDisposalFailure = await executePlan(tolerant, "http://127.0.0.1:1", { fetch: async () => {
+  const first = refusalDisposalCalls++ === 0;
+  return { status: 401, body: { cancel: async () => { if (first) throw new Error("cancel_failed"); } } };
+} });
+assert.equal(refusalDisposalFailure.passed, true, "the explicitly declared transport error allowance is preserved");
+assert.equal(refusalDisposalFailure.scenarios[0].statuses[401], 20);
+assert.equal(refusalDisposalFailure.scenarios[0].failures, 1);
+assert.equal(refusalDisposalFailure.scenarios[0].errorRate, 0.05);
+
 const small = { ...plan, scenarios: plan.scenarios.map(s => ({ ...s, requests: 12, concurrency: 4 })) };
 let status = 401;
 const server = createServer((_request, response) => { setTimeout(() => { response.statusCode = status; response.end("{}"); }, 5); });
