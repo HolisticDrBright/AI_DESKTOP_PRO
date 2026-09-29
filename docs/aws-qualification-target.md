@@ -290,3 +290,12 @@ September 28 deployment follow-up: the first personal-storage create rolled back
   recorded here as a runner-side timing failure, not a pass: CI could not be re-run from the cloud
   session (no permission), so the next push re-ran it. At `079bad0` (documentation only on top of
   `f3dcbff`) all eight jobs passed, the live-fixture browser job included.
+
+## AWS execution list (September 29, 2026)
+
+The current, consolidated list of AWS work — targets, blockers, unapplied migrations,
+activation items with their operators, hosted acceptance runs, provider configuration,
+and the prerequisites the gated capability build-out will need — is maintained in the
+V2 repository at `expo/docs/aws-work-for-codex-2026-09-29.md`. It supersedes the
+scattered per-document Codex notes as the single place to work from. This document
+remains authoritative for the qualification target's own architecture and policy.

@@ -11,9 +11,8 @@ describe('same-origin validation behind a TLS-terminating proxy',()=>{
  it('accepts the browser public origin without trusting the internal listener URL',()=>{
   expect(sameBrowserOrigin(hosted())).toBe(true);
   // Absent sec-fetch-site (older browsers, non-browser clients) is not by itself a refusal.
-  const {['sec-fetch-site']:_omit,...rest}={'sec-fetch-site':'same-origin'};
   expect(sameBrowserOrigin(new Request('http://0.0.0.0:3000/api/live/x',
-   {method:'POST',headers:{host:HOST,origin:'https://'+HOST,...rest}}))).toBe(true);
+   {method:'POST',headers:{host:HOST,origin:'https://'+HOST}}))).toBe(true);
  });
  it('never lets a forwarding header decide',()=>{
   expect(sameBrowserOrigin(hosted({'x-forwarded-host':'evil.example',origin:'https://evil.example'}))).toBe(false);

@@ -28,10 +28,12 @@ describe("authenticated synthetic API infrastructure", () => {
   test("all clinical routes are JWT-authenticated and the Lambda is tightly bounded", () => {
     const resources = JSON.parse(readFileSync(extensionPath, "utf8")).Resources;
     const routes = Object.values(resources).filter((resource: unknown) => (resource as { Type: string }).Type === "AWS::ApiGatewayV2::Route") as Array<{ Properties: Record<string, unknown> }>;
-    expect(routes).toHaveLength(35);
+    expect(routes).toHaveLength(37);
     expect(routes.map(route=>route.Properties.RouteKey)).toEqual(expect.arrayContaining([
       "POST /clinical-core/consumer/messages",
       "POST /clinical-core/workforce/messages",
+      "POST /clinical-core/consumer/programs",
+      "POST /clinical-core/workforce/programs",
       "POST /clinical-core/consumer/labs/specimen-context",
       "GET /clinical-core/consumer/labs/specimen-context",
       "GET /clinical-core/workforce/labs/specimen-context",

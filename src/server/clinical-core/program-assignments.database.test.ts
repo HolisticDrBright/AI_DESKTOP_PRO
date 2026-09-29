@@ -2,7 +2,6 @@ import {beforeAll,afterAll,describe,it,expect} from 'vitest';
 import {PGlite} from '@electric-sql/pglite';
 import {pgcrypto} from '@electric-sql/pglite/contrib/pgcrypto';
 import {readFileSync} from 'node:fs';
-import {createHash} from 'node:crypto';
 import {programAssignmentResponse,type ProgramAssignmentRequest} from '../../contracts/programAssignments';
 import {createProgramAssignments} from './program-assignments';
 import {ClinicalCoreDatabaseRejection,type ClinicalCoreDatabase} from './database';
@@ -44,7 +43,6 @@ const phases=(over:{transition?:'scheduled'|'check_in'|'practitioner';extra?:unk
  {id:'phase-1',title:'Phase one',days:1,transition:over.transition??'scheduled',items:[lesson('a'),...(over.extra??[])]},
  {id:'phase-2',title:'Phase two',days:1,transition:'scheduled' as const,items:[lesson('b')]},
 ] as ProgramAssignmentRequest extends never?never:never[]as never;
-const digestOf=(value:unknown)=>createHash('sha256');
 
 async function assign(content:unknown,versionId=published,actor=clinician){
  return call({action:'assign',connectionId:connection,programVersionId:versionId,
