@@ -126,3 +126,39 @@ Every lookup checks the active synthetic consumer identity, organization, linked
 - Follow-up after owner approval: three dedicated messaging test accounts created without resetting existing users. Actual Cognito JWT invitation/send/reply/retry/access-denial tests now pass. Fixed missing AWS database error translations discovered by hosted testing; replacement code artifact75aee02b0e3c3737b2a91b99f5606147989f4c048d5f1ff1de835b056b9c58b8 deployed and checksum verified. Local150/150 tests, typecheck and targeted lint passed.
 - Exact V2 messaging transport → real AWS → local Desktop browser/proxy → reply → V2 transport verified, without intercepted responses. Four proxy responses200, no page errors, session-change text clearing verified. This does not replace native phone testing or a hosted Desktop release. Evidence and reusable test operators are linked in the root messaging handoff.
 - Desktop UI and V2 binary unchanged. No full-suite CI, physical-device, commercial or PHI-readiness claim. Full resource/rollback details: root handoffs/2026-09-29-patient-care-messaging.md.
+
+### Server-authoritative settlement (source-only follow-up)
+
+Receipt lookup could report a delivery but could not resolve its own absence, so
+an owner whose send was interrupted and whose text could not be reconstructed had
+no exit. Migration `20260929110000_synthetic_care_message_settlement.sql` (ledger
+entry 33, `production_transform: false`) adds the decision the server has to make.
+
+- `clinical_core.care_message_settlements` — tombstones keyed `unique(sender_id,
+  request_id)`, RLS on, revoked from `clinical_core_api`, immutable by trigger.
+- `clinical_core.care_message_settle(jsonb)` — consumer pool only. Takes the same
+  `pg_advisory_xact_lock(hashtextextended(_actor::text,0))` the send branch takes,
+  which is the single point that serialises the two. Returns `committed` (with
+  thread and message IDs), `cancelled`, or `withheld`.
+- `clinical_private.refuse_settled_care_message()` — a `before insert` trigger on
+  `care_messages` raising `40001 care_message_settled`. Put there rather than in
+  the send function so every insert path is covered, now and later.
+- `care_message_receipt` is replaced (not edited in place) to add `cancelled`, so a
+  second device converges instead of reporting an unresolved send that can no
+  longer commit.
+
+Existence is deliberately checked by `(sender_id, request_id)` alone and **not**
+narrowed to the connection the caller named: narrowing it would answer `cancelled`
+for a send that committed on a link the owner named wrongly, which is a false
+cancellation. The named connection decides disclosure only — hence `withheld`,
+which confirms delivery without naming a thread the owner can no longer read.
+Ownership of the link authorises settling it; current verification does not, so a
+revoked or replaced clinic cannot strand an owner with an unresolvable send.
+
+Verification: `care-messaging.database.test.ts` 21/21 against real PostgreSQL via
+PGlite, covering both race orders, the late-admission refusal, idempotent
+settling, the replaced-link disclosure rules, cross-owner/clinic/workforce
+refusals, SQL shape validation and table sealing. **Not applied to any AWS
+target and not hosted-verified** — Codex owns application, in ledger order, and
+hosted acceptance. V2 counterpart and client behaviour:
+`expo/docs/patient-care-messaging.md`.

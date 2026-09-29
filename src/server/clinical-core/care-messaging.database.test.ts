@@ -30,7 +30,7 @@ async function raw(input:unknown){
 }
 beforeAll(async()=>{
  db=new PGlite({extensions:{pgcrypto}});
- for(const file of ['20260812010000_synthetic_identity_consent.sql','20260812220000_identity_function_column_qualification.sql','20260821010000_governed_synthetic_lab_import.sql','20260929090000_synthetic_care_messages.sql','20260929100000_synthetic_care_message_receipts.sql'])
+ for(const file of ['20260812010000_synthetic_identity_consent.sql','20260812220000_identity_function_column_qualification.sql','20260821010000_governed_synthetic_lab_import.sql','20260929090000_synthetic_care_messages.sql','20260929100000_synthetic_care_message_receipts.sql','20260929110000_synthetic_care_message_settlement.sql'])
   await db.exec(readFileSync('infra/aws-clinical-core/migrations/'+file,'utf8'));
  await db.query("insert into clinical_core.organizations(id,synthetic_label) values($1,'Fictional A'),($2,'Fictional B')",[org,otherOrg]);
  for(const [person,pool] of [[owner,'consumer'],[other,'consumer'],[clinician,'workforce'],[outside,'workforce'],[admin,'workforce']]){
@@ -173,6 +173,86 @@ describe('synthetic care messages: real adapter and PostgreSQL, not hosted AWS',
   await expect(db.exec('delete from clinical_core.care_message_audit')).rejects.toThrow();
   const audit=await db.query('select * from clinical_core.care_message_audit limit 1');
   expect(audit.rows[0]).not.toHaveProperty('body');expect(audit.rows[0]).not.toHaveProperty('subject');
+ });
+ // Settlement: the owner's way out of a send whose response was lost. The body is
+ // gone by design, so "retry" is not available and clearing the journal alone would
+ // leave the original request free to commit later.
+ it('reports the delivery instead of a false cancellation when the send already committed',async()=>{
+  const input=command();if(input.action!=='send')throw Error();
+  const sent=await request(input);if(sent.action!=='send')throw Error();
+  const settle={action:'settle' as const,requestId:input.requestId,connectionId:connection};
+  expect(await request(settle)).toEqual({...settle,status:'committed',threadId:sent.threadId,messageId:sent.messageId});
+  // Observing a committed send writes no tombstone, so the idempotent retry still works.
+  expect(await request(input)).toEqual({...sent,duplicate:true});
+  expect((await db.query('select count(*)::int as n from clinical_core.care_message_settlements where request_id=$1',[input.requestId])).rows[0]).toEqual({n:0});
+ });
+ it('makes a cancelled request permanently inadmissible and tells later lookups so',async()=>{
+  const input=command();if(input.action!=='send')throw Error();
+  const settle={action:'settle' as const,requestId:input.requestId,connectionId:connection};
+  expect(await request(settle)).toEqual({...settle,status:'cancelled'});
+  // The late admission loses, whichever path attempts it.
+  await expect(request(input)).rejects.toMatchObject({category:'conflict'});
+  await expect(raw(input)).rejects.toThrow('care_message_settled');
+  expect(await request({action:'receipt',requestId:input.requestId,connectionId:connection}))
+   .toEqual({action:'receipt',requestId:input.requestId,connectionId:connection,status:'cancelled'});
+  // Settling twice is the same decision, not a second one.
+  expect(await request(settle)).toEqual({...settle,status:'cancelled'});
+  expect((await db.query('select count(*)::int as n from clinical_core.care_message_settlements where request_id=$1',[input.requestId])).rows[0]).toEqual({n:1});
+ });
+ it('confirms delivery without naming the thread when the link is replaced',async()=>{
+  // One live link per consumer, so "revoked" and "replaced" are the same event.
+  const input=command();if(input.action!=='send')throw Error();
+  const sent=await request(input);if(sent.action!=='send')throw Error();
+  const record=id(++serial),replacement=id(++serial);
+  await db.query("update clinical_core.patient_connections set state='revoked' where id=$1",[connection]);
+  await db.query('insert into clinical_core.patient_records(id,organization_id,synthetic_record_key) values($1,$2,$3)',[record,org,'patient_syn_settle_'+record.replaceAll('-','')]);
+  await db.query("insert into clinical_core.patient_connections(id,organization_id,patient_record_id,consumer_person_id,state,verified_at) values($1,$2,$3,$4,'verified',now())",[replacement,org,record,owner]);
+  try{
+   const settle={action:'settle' as const,requestId:input.requestId,connectionId:connection};
+   expect(await request(settle)).toEqual({...settle,status:'withheld'});
+   // Naming the wrong link must not manufacture a cancellation for a send that landed.
+   expect(await request({...settle,connectionId:replacement})).toEqual({...settle,connectionId:replacement,status:'withheld'});
+   expect((await db.query('select count(*)::int as n from clinical_core.care_message_settlements where request_id=$1',[input.requestId])).rows[0]).toEqual({n:0});
+   // A revoked link is never a reason the owner can no longer resolve a stuck send.
+   const stuck={action:'settle' as const,requestId:id(++serial),connectionId:connection};
+   expect(await request(stuck)).toEqual({...stuck,status:'cancelled'});
+   // Receipt still refuses outright: it is a content lookup, not a settlement.
+   await expect(request({action:'receipt',requestId:input.requestId,connectionId:connection})).rejects.toMatchObject({category:'identity_refused'});
+  }finally{
+   await db.query("update clinical_core.patient_connections set state='revoked' where id=$1",[replacement]);
+   await db.query("update clinical_core.patient_connections set state='verified' where id=$1",[connection]);
+  }
+ });
+ it('refuses settlement by other owners, other clinics and workforce',async()=>{
+  const settle={action:'settle' as const,requestId:id(++serial),connectionId:connection};
+  for(const [actor,organization,pool] of [[other,org,'consumer'],[owner,otherOrg,'consumer'],[clinician,org,'workforce']] as const)
+   await expect(request(settle,actor,organization,pool)).rejects.toMatchObject({category:'identity_refused'});
+  await expect(request({...settle,connectionId:id(++serial)})).rejects.toMatchObject({category:'identity_refused'});
+  await expect(db.transaction(async tx=>{
+   await tx.exec('set local role clinical_core_api');
+   await tx.query("select clinical_private.set_request_context($1,$2,'workforce',$3,'clinical_data','synthetic-staging','synthetic_only')",[clinician,org,'subject-'+clinician]);
+   await tx.query('select clinical_core.care_message_settle($1::jsonb)',[JSON.stringify(settle)]);
+  })).rejects.toThrow('care_message_refused');
+  expect((await db.query('select count(*)::int as n from clinical_core.care_message_settlements where request_id=$1',[settle.requestId])).rows[0]).toEqual({n:0});
+ });
+ it('validates settlement shape in SQL and keeps the tombstone table sealed and immutable',async()=>{
+  for(const body of [{action:'settle',requestId:id(++serial)},{action:'settle',requestId:id(++serial),connectionId:connection,note:'extra'},
+   {action:'settle',requestId:'not-a-uuid',connectionId:connection},{action:'settle',requestId:id(++serial),connectionId:[connection]}])
+   await expect(db.transaction(async tx=>{
+    await tx.exec('set local role clinical_core_api');
+    await tx.query("select clinical_private.set_request_context($1,$2,'consumer',$3,'clinical_data','synthetic-staging','synthetic_only')",[owner,org,'subject-'+owner]);
+    await tx.query('select clinical_core.care_message_settle($1::jsonb)',[JSON.stringify(body)]);
+   })).rejects.toThrow('care_message_invalid');
+  await expect(db.transaction(async tx=>{await tx.exec('set local role clinical_core_api');await tx.query('select * from clinical_core.care_message_settlements');})).rejects.toThrow('permission denied');
+  await expect(db.exec('update clinical_core.care_message_settlements set request_id=gen_random_uuid()')).rejects.toThrow();
+  await expect(db.exec('delete from clinical_core.care_message_settlements')).rejects.toThrow();
+  const rows=await db.query('select * from clinical_core.care_message_settlements limit 1');
+  expect(rows.rows[0]).not.toHaveProperty('body');expect(rows.rows[0]).not.toHaveProperty('subject');
+ });
+ it('refuses settlement in production and outside the consumer pool before touching the database',async()=>{
+  const settle={action:'settle' as const,requestId:id(++serial),connectionId:connection};
+  await expect(createCareMessaging({transaction:()=>{throw Error('must not run');}})({...context(),environment:'production'} as unknown as SyntheticRequestContext,settle)).rejects.toMatchObject({category:'identity_refused'});
+  await expect(createCareMessaging({transaction:()=>{throw Error('must not run');}})(context(clinician,org,'workforce'),settle)).rejects.toMatchObject({category:'identity_refused'});
  });
  it('refuses production before touching the database',async()=>{
   await expect(createCareMessaging({transaction:()=>{throw Error('must not run');}})({...context(),environment:'production'} as unknown as SyntheticRequestContext,command())).rejects.toMatchObject({category:'identity_refused'});
