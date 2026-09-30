@@ -264,6 +264,12 @@ function classifyDatabaseRejection(error: unknown): ClinicalCoreDatabaseRejectio
   if (/\bclinical_dispute_forbidden\b/.test(message)) return new ClinicalCoreDatabaseRejection("identity_refused");
   if (/\b(clinical_dispute_absent|clinical_dispute_subject_absent|clinical_dispute_connection_absent|clinical_dispute_immutable|revision_notice_absent|revision_notice_immutable|revision_version_absent|revision_version_unpublished)\b/.test(message)) return new ClinicalCoreDatabaseRejection("operation_refused");
   if (/\b(clinical_dispute_exists|clinical_dispute_closed|clinical_dispute_state_invalid|clinical_dispute_revision_stale)\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");
+  // The practice's own note templates and house style. A stale digest is the only conflict
+  // here, and it means the draft changed between being read and being published.
+  if (/\b(note_template_invalid|note_template_sections_invalid|note_style_invalid)\b/.test(message)) return new ClinicalCoreDatabaseRejection("request_invalid");
+  if (/\bnote_template_forbidden\b/.test(message)) return new ClinicalCoreDatabaseRejection("identity_refused");
+  if (/\b(note_template_absent|note_template_draft_absent|note_template_version_immutable|practice_note_style_immutable)\b/.test(message)) return new ClinicalCoreDatabaseRejection("operation_refused");
+  if (/\bnote_template_digest_mismatch\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");
   if (/\bspecimen_consent_required\b/.test(message)) return new ClinicalCoreDatabaseRejection("consent_required");
   if (/\bspecimen_context_conflict\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");
   if (/\bspecimen_context_invalid\b/.test(message)) return new ClinicalCoreDatabaseRejection("request_invalid");

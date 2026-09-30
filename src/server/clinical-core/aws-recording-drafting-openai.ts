@@ -15,8 +15,13 @@ export function buildDraftingRequest(input: Parameters<DraftingProvider['draft']
     model: input.model,
     input: [
       { role: 'system', content: `${DRAFTING_BOUNDARY}\nPrompt release ${input.promptSha256}.` },
-      { role: 'user', content: JSON.stringify({ contract: 'proposed-note-request/1', noteType: input.noteType,
-        sections: input.sections.map(s => ({ key: s.key, label: s.label })), transcript: input.transcript }) },
+      // The template's headings, the clinician's per-section guidance and the house style all
+      // travel in the user message, as data alongside the transcript. The system message is the
+      // pinned boundary and says the boundary outranks every one of them.
+      { role: 'user', content: JSON.stringify({ contract: 'proposed-note-request/2', noteType: input.noteType,
+        sections: input.sections.map(s => ({ key: s.key, label: s.label,
+          ...(s.guidance ? { guidance: s.guidance } : {}) })),
+        ...(input.style ? { style: input.style } : {}), transcript: input.transcript }) },
     ],
     text: { format: { type: 'json_schema', name: 'proposed_note_v1', strict: true, schema: {
       type: 'object', additionalProperties: false, required: ['sections', 'cautions'],
@@ -26,7 +31,7 @@ export function buildDraftingRequest(input: Parameters<DraftingProvider['draft']
         cautions: { type: 'array', maxItems: 20, items: { type: 'string', maxLength: 400 } },
       } } } },
     store: false, reasoning: { effort: 'none' }, max_output_tokens: 4000,
-    metadata: { contract: 'proposed-note-request/1', job: input.jobId },
+    metadata: { contract: 'proposed-note-request/2', job: input.jobId },
   };
 }
 function outputText(response: Record<string, unknown>): string {

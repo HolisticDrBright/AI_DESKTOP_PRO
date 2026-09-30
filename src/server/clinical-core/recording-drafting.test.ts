@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createHash } from 'node:crypto';
 import { createRecordingDraftingProcessor, createRecordingDraftingRepository, proposedNoteFromProvider, draftingPrefix, RecordingDraftingError, DRAFTING_PROMPT_SHA256,
-  type DraftingInput, type DraftingProvider, type RecordingDraftingRepository } from './recording-drafting';
+  type DraftingInput, type DraftingProvider, type NoteTemplateSource, type RecordingDraftingRepository,
+  type ResolvedNoteTemplate } from './recording-drafting';
 import { createRecordingDraftingApi, RECORDING_DRAFTING_ROUTE, type RecordingDraftingConfiguration } from './recording-drafting-api';
 import type { TranscriptionMediaStore } from './recording-transcription';
 import type { DraftingListing } from '@/contracts/encounterRecordingDrafting';
@@ -55,8 +56,12 @@ function fixture(state: 'none' | 'requested' | 'completed' = 'requested', noteTy
     storage: vi.fn(async () => storage),
     registerOrphan: vi.fn(async (_c, key, version, sha256, bytes) => { artifacts.push({ jobId: other, key, version, sha256, bytes, proposedNoteId: 'orphan' }); unregistered = unregistered.filter(o => o.objectKey !== key); }),
   };
-  const processor = createRecordingDraftingProcessor({ repository, media: store, provider, releaseId: third, providerTimeoutMs: 1000 });
-  return { objects, store, provider, repository, processor, artifacts, declared, versionOf, setListing: (patch: Partial<DraftingListing>) => { listing = { ...listing, ...patch }; },
+  let template: ResolvedNoteTemplate | null = null;
+  const templates: NoteTemplateSource = { resolve: vi.fn(async () => template) };
+  const processor = createRecordingDraftingProcessor({ repository, media: store, provider, releaseId: third, templates, providerTimeoutMs: 1000 });
+  return { objects, store, provider, repository, processor, artifacts, declared, versionOf, templates,
+    setTemplate: (value: ResolvedNoteTemplate | null) => { template = value; },
+    setListing: (patch: Partial<DraftingListing>) => { listing = { ...listing, ...patch }; },
     setUnregistered: (o: import('./recording-transcription').UnregisteredObject[]) => { unregistered = o; } };
 }
 describe('Codex audit recovery regressions', () => {
@@ -208,5 +213,87 @@ describe('workforce drafting API', () => {
     for (const key of ['draftingReleaseId', 'draftingReviewSha256', 'providerReviewSha256', 'storageReviewSha256', 'openAiSecretArn', 'activationEvidenceSha256'] as const)
       expect(() => api({ ...config, [key]: '' })).toThrow('recording_api_activation_invalid');
     expect(() => api({ ...config, openAiSecretArn: 'arn:aws:secretsmanager:us-east-2:123456789012:secret:x;rm' })).toThrow('recording_api_activation_invalid');
+  });
+});
+
+/**
+ * Drafting into the practitioner's own template.
+ *
+ * The claims worth asserting are the ones a clinician would be harmed by if they were false. A
+ * template must actually replace the product's structure, or the feature is decoration. A draft
+ * must record which template version produced it, or "why does this read like that" has no
+ * answer. And when the clinician asked the draft to see the previous note and it could not, the
+ * document must say the context was withheld rather than leaving it looking like it was seen.
+ */
+const practiceStyle = { verbosity: 'terse', person: 'third', tense: 'past', bullets: true,
+  quotePatientWords: true, headingCase: 'upper', contextBreadth: 'none' } as const;
+const practiceTemplate = (over: Partial<ResolvedNoteTemplate> = {}): ResolvedNoteTemplate => ({
+  templateId: id, version: 2, templateSha256: 'a'.repeat(64), styleSha256: 'b'.repeat(64),
+  sections: [{ key: 'STORY', label: 'Their story', guidance: 'Their own words first.' },
+    { key: 'FIND', label: 'What I found' }, { key: 'PLAN', label: 'What we agreed' }],
+  style: practiceStyle, contextBreadth: 'none', contextAvailable: false, ...over });
+const templateOutput = { sections: [{ key: 'STORY', text: 'Reports fictional fatigue for two weeks.' },
+  { key: 'FIND', text: 'Not stated in transcript.' }, { key: 'PLAN', text: 'Recheck labs.' }], cautions: [] };
+
+describe('drafting into the practice template', () => {
+  it('asks for the template\'s own sections and style, not the product\'s', async () => {
+    const f = fixture();
+    f.setTemplate(practiceTemplate());
+    vi.mocked(f.provider.draft).mockResolvedValue(templateOutput);
+    await f.processor.advance(context, id);
+    const call = vi.mocked(f.provider.draft).mock.calls[0][0];
+    expect(call.sections.map(s => s.key)).toEqual(['STORY', 'FIND', 'PLAN']);
+    expect(call.sections[0].guidance).toBe('Their own words first.');
+    expect(call.style).toEqual(practiceStyle);
+    const stored = JSON.parse(Buffer.from(f.objects.get(`${draftingPrefix(input())}/proposed-v1.json`)!).toString('utf8'));
+    expect(stored.sections.map((s: { key: string; label: string }) => [s.key, s.label]))
+      .toEqual([['STORY', 'Their story'], ['FIND', 'What I found'], ['PLAN', 'What we agreed']]);
+    expect(stored.template).toEqual({ templateId: id, version: 2, templateSha256: 'a'.repeat(64),
+      styleSha256: 'b'.repeat(64), contextBreadth: 'none', contextUsed: 'none' });
+  });
+
+  it('records context as withheld when a wider breadth could not be supplied', async () => {
+    const f = fixture();
+    f.setTemplate(practiceTemplate({ contextBreadth: 'last_note', contextAvailable: false }));
+    vi.mocked(f.provider.draft).mockResolvedValue(templateOutput);
+    await f.processor.advance(context, id);
+    const stored = JSON.parse(Buffer.from(f.objects.get(`${draftingPrefix(input())}/proposed-v1.json`)!).toString('utf8'));
+    expect(stored.template).toMatchObject({ contextBreadth: 'last_note', contextUsed: 'none' });
+  });
+
+  it('rejects output shaped to the product\'s sections when a template is in force', async () => {
+    const f = fixture();
+    f.setTemplate(practiceTemplate());
+    await f.processor.advance(context, id);  // the default provider still answers S/O/A/P
+    expect(f.repository.fail).toHaveBeenCalledWith(context, other, 'provider_output_invalid');
+    expect(f.store.puts).toHaveLength(0);
+  });
+
+  it('will not resume an interrupted job under a template that has since changed', async () => {
+    const f = fixture();
+    f.setTemplate(practiceTemplate());
+    vi.mocked(f.provider.draft).mockResolvedValue(templateOutput);
+    vi.mocked(f.repository.complete).mockRejectedValueOnce(new Error('temporary database outage'));
+    await expect(f.processor.advance(context, id)).rejects.toThrow('temporary database outage');
+    f.setTemplate(practiceTemplate({ version: 3, templateSha256: 'c'.repeat(64) }));
+    await expect(f.processor.advance(context, id)).rejects.toMatchObject({ code: 'conflict' });
+    expect(f.provider.draft).toHaveBeenCalledTimes(1);
+  });
+
+  it('falls back to the product structure when the practice has published no template', async () => {
+    const f = fixture();
+    f.setTemplate(null);
+    await f.processor.advance(context, id);
+    const stored = JSON.parse(Buffer.from(f.objects.get(`${draftingPrefix(input())}/proposed-v1.json`)!).toString('utf8'));
+    expect(stored.sections.map((s: { key: string }) => s.key)).toEqual(['S', 'O', 'A', 'P']);
+    expect(stored.template ?? null).toBeNull();
+  });
+
+  it('fails the step rather than drafting in the wrong layout when the template store is unreachable', async () => {
+    const f = fixture();
+    vi.mocked(f.templates.resolve).mockRejectedValueOnce(new Error('template store unreachable'));
+    await expect(f.processor.advance(context, id)).rejects.toThrow('template store unreachable');
+    expect(f.provider.draft).not.toHaveBeenCalled();
+    expect(f.store.puts).toHaveLength(0);
   });
 });

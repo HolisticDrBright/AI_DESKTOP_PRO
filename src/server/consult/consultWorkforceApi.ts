@@ -12,6 +12,12 @@ import {
   type RevisionWorkforceRequest, type RevisionWorkforceResponse,
 } from '@/contracts/clinicalDisputes';
 import {
+  noteTemplateAdminRequest, noteDraftingContextRequest,
+  parseNoteTemplateAdminResponse, parseNoteDraftingContextResponse,
+  type NoteTemplateAdminRequest, type NoteTemplateAdminResponse,
+  type NoteDraftingContextRequest, type NoteDraftingContextResponse,
+} from '@/contracts/noteTemplates';
+import {
   intakeFormAdminRequest, intakePacketWorkforceRequest, intakePacketConsumerRequest,
   parseIntakeFormAdminResponse, parseIntakePacketWorkforceResponse, parseIntakePacketConsumerResponse,
   type IntakeFormAdminRequest, type IntakeFormAdminResponse,
@@ -97,4 +103,15 @@ export const revisionNoticeCall = (token: string, signal?: AbortSignal) =>
   call<RevisionWorkforceRequest, RevisionWorkforceResponse>({
     token, signal, path: '/clinical-core/workforce/content-revisions',
     parse: body => revisionWorkforceRequest.parse(body), bind: parseRevisionWorkforceResponse,
+  });
+export const noteTemplateCall = (token: string, signal?: AbortSignal) =>
+  call<NoteTemplateAdminRequest, NoteTemplateAdminResponse>({
+    token, signal, path: '/clinical-core/workforce/note-templates',
+    parse: body => noteTemplateAdminRequest.parse(body), bind: parseNoteTemplateAdminResponse,
+  });
+/** What drafting is handed: the published template, the house style, and what context it may see. */
+export const noteDraftingContextCall = (token: string, signal?: AbortSignal) =>
+  call<NoteDraftingContextRequest, NoteDraftingContextResponse>({
+    token, signal, path: '/clinical-core/workforce/note-drafting-context',
+    parse: body => noteDraftingContextRequest.parse(body), bind: parseNoteDraftingContextResponse,
   });

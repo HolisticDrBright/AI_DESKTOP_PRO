@@ -39,9 +39,22 @@ export const draftingListingSchema = z.object({ recordingId: uuid, status: z.enu
   versions: z.array(proposedNoteVersionSchema).max(200) }).strict();
 export type DraftingListing = z.infer<typeof draftingListingSchema>;
 export const proposedNoteSectionSchema = z.object({ key: z.string().min(1).max(8), label: z.string().min(1).max(80), text: z.string().max(20_000) }).strict();
+/**
+ * Which practice template and house style produced a draft, and how much of the chart it saw.
+ *
+ * `contextBreadth` is what the clinician asked for and `contextUsed` is what the draft actually
+ * had. They differ whenever a wider breadth could not be supplied, and recording only one of
+ * them would make a note impossible to interpret afterwards. `null` for the whole object means
+ * the product's own fixed structure was used, which is still the default.
+ */
+export const proposedNoteTemplateSchema = z.object({ templateId: uuid, version: z.number().int().positive(),
+  templateSha256: hash, styleSha256: hash,
+  contextBreadth: z.enum(['none', 'last_note', 'problem_list']),
+  contextUsed: z.enum(['none', 'last_note', 'problem_list']) }).strict();
 /** The stored proposed-note document. `cautions` are the model's own flagged uncertainties; they are shown, never hidden. */
 export const proposedNoteDocumentSchema = z.object({ contract: z.literal('proposed-note/1'), noteType: draftingNoteTypeSchema, transcriptId: uuid,
-  transcriptSha256: hash, model: z.string().min(3).max(100), promptSha256: hash, sections: z.array(proposedNoteSectionSchema).min(1).max(8),
+  transcriptSha256: hash, model: z.string().min(3).max(100), promptSha256: hash,
+  template: proposedNoteTemplateSchema.nullish(), sections: z.array(proposedNoteSectionSchema).min(1).max(8),
   cautions: z.array(z.string().min(1).max(400)).max(20) }).strict();
 export type ProposedNoteDocument = z.infer<typeof proposedNoteDocumentSchema>;
 export const proposedNoteContentSchema = z.object({ proposedNoteId: uuid, recordingId: uuid, version: z.number().int().positive(), contentSha256: hash,

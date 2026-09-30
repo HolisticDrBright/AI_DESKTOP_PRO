@@ -195,6 +195,11 @@
       "version": "20260930160000",
       "file": "20260930160000_synthetic_clinical_disputes_and_revisions.sql",
       "production_transform": false
+    },
+    {
+      "version": "20260930170000",
+      "file": "20260930170000_synthetic_note_templates_and_house_style.sql",
+      "production_transform": false
     }
   ]
 }

@@ -7,6 +7,7 @@ import { recordingStorageSchema } from './recording-segments';
 import { putOnce, reconcileRecordingArtifacts, unregisteredObjectSchema, type TranscriptionMediaStore, type UnregisteredObject } from './recording-transcription';
 import { DRAFTING_PROMPT_SHA256 } from './recording-drafting-prompt';
 export { DRAFTING_PROMPT_SHA256, DRAFTING_BOUNDARY, draftingPromptArtifact } from './recording-drafting-prompt';
+import type { NoteTemplateSection, PracticeNoteStyle } from '@/contracts/noteTemplates';
 import { draftingListingSchema, draftingReceiptSchema, proposedNoteContentSchema, proposedNoteDocumentSchema, DRAFTING_SECTIONS,
   type DraftingListing, type DraftingReceipt, type DraftingNoteType, type ProposedNoteContent, type ProposedNoteDocument } from '@/contracts/encounterRecordingDrafting';
 
@@ -105,8 +106,29 @@ export function createRecordingDraftingRepository(database: ClinicalCoreDatabase
 
 /** The only provider surface: transcript text in, structured sections out. */
 export interface DraftingProvider {
-  draft(input: { model: string; promptSha256: string; noteType: DraftingNoteType; sections: { key: string; label: string }[]; transcript: string; jobId: string },
-    signal: AbortSignal): Promise<unknown>;
+  draft(input: { model: string; promptSha256: string; noteType: DraftingNoteType; sections: { key: string; label: string; guidance?: string | null }[];
+    style?: PracticeNoteStyle; transcript: string; jobId: string }, signal: AbortSignal): Promise<unknown>;
+}
+/**
+ * The practice's own template and house style, resolved for one drafting job.
+ *
+ * It arrives here rather than from the job row because the template store is the practice's
+ * synthetic clinical core while a drafting job is in the production family: the caller reads
+ * one and hands it to the other, and the digests below are what binds the two together.
+ *
+ * `contextAvailable` is carried through rather than dropped. A breadth wider than `none` that
+ * could not be satisfied must be recorded as withheld, because a proposed note that silently
+ * saw less than the clinician asked for is a note nobody can interpret later.
+ */
+export interface ResolvedNoteTemplate {
+  templateId: string; version: number; templateSha256: string;
+  sections: NoteTemplateSection[];
+  style: PracticeNoteStyle; styleSha256: string;
+  contextBreadth: PracticeNoteStyle['contextBreadth'];
+  contextAvailable: boolean;
+}
+export interface NoteTemplateSource {
+  resolve(context: ProductionClinicalRequestContext, noteType: DraftingNoteType): Promise<ResolvedNoteTemplate | null>;
 }
 export const MAX_DRAFTING_TRANSCRIPT_BYTES = 2 * 1024 * 1024;
 const providerOutputSchema = z.object({ sections: z.array(z.object({ key: z.string().min(1).max(8), text: z.string().max(20_000) }).strict()).min(1).max(8),
@@ -114,19 +136,31 @@ const providerOutputSchema = z.object({ sections: z.array(z.object({ key: z.stri
 const sha256 = (bytes: Uint8Array | string) => createHash('sha256').update(bytes).digest('hex');
 export const draftingPrefix = (input: Pick<DraftingInput, 'organizationId' | 'recordingId' | 'jobId'>) =>
   `encounter-recordings/${input.organizationId}/${input.recordingId}/drafting/${input.jobId}`;
-/** Accepts only the exact section set of the requested note type, in order, with no extra keys. */
-export function proposedNoteFromProvider(raw: unknown, input: DraftingInput, transcriptSha256: string): ProposedNoteDocument {
+/**
+ * Accepts only the exact section set that was asked for, in order, with no extra keys.
+ *
+ * When a practice template is in force, that set is the template's, not the product's. The
+ * check is the same either way: a provider that returned a different shape is not trusted to
+ * have followed anything else in the boundary either.
+ */
+export function proposedNoteFromProvider(raw: unknown, input: DraftingInput, transcriptSha256: string,
+  template?: ResolvedNoteTemplate | null): ProposedNoteDocument {
   const parsed = providerOutputSchema.safeParse(raw);
   if (!parsed.success) throw new RecordingDraftingError('provider_output_invalid');
-  const expected = DRAFTING_SECTIONS[input.noteType];
+  const expected = template ? template.sections : DRAFTING_SECTIONS[input.noteType];
   if (parsed.data.sections.length !== expected.length || parsed.data.sections.some((s, i) => s.key !== expected[i].key)) throw new RecordingDraftingError('provider_output_invalid');
   if (!parsed.data.sections.some(s => s.text.trim())) throw new RecordingDraftingError('provider_output_invalid');
   return proposedNoteDocumentSchema.parse({ contract: 'proposed-note/1', noteType: input.noteType, transcriptId: input.transcript.transcriptId, transcriptSha256,
     model: input.provider.model, promptSha256: input.provider.promptSha256,
+    template: template ? { templateId: template.templateId, version: template.version,
+      templateSha256: template.templateSha256, styleSha256: template.styleSha256,
+      // What the clinician asked the draft to see, and what it actually saw.
+      contextBreadth: template.contextBreadth,
+      contextUsed: template.contextAvailable ? template.contextBreadth : 'none' } : null,
     sections: parsed.data.sections.map((s, i) => ({ key: s.key, label: expected[i].label, text: s.text.trim() })), cautions: parsed.data.cautions.map(c => c.trim()).filter(Boolean) });
 }
 export function createRecordingDraftingProcessor(input: { repository: RecordingDraftingRepository; media: TranscriptionMediaStore; provider: DraftingProvider; releaseId: string;
-  providerTimeoutMs?: number }) {
+  templates?: NoteTemplateSource; providerTimeoutMs?: number }) {
   const { repository, media, provider } = input;
   /** Proposed notes with rows and declared drafting orphans; transcription-side objects belong to the transcription processor. */
   async function reconcile(context: ProductionClinicalRequestContext, recordingId: string, storage: z.infer<typeof recordingStorageSchema>) {
@@ -153,6 +187,9 @@ export function createRecordingDraftingProcessor(input: { repository: RecordingD
       // The release must pin exactly the prompt this build sends; otherwise nothing is read or sent.
       if (job.provider.promptSha256 !== DRAFTING_PROMPT_SHA256) throw new RecordingDraftingError('prompt_unreviewed');
       if (job.transcript.byteLength > MAX_DRAFTING_TRANSCRIPT_BYTES) { await repository.fail(context, job.jobId, 'transcript_too_large'); return repository.list(context, recordingId); }
+      // Resolved before anything is read or sent, so a template store that is unreachable
+      // fails the step rather than quietly producing a note in the product's own layout.
+      const template = input.templates ? await input.templates.resolve(context, job.noteType) : null;
       const version = (listing.versions.at(-1)?.version ?? 0) + 1;
       const key = `${draftingPrefix(job)}/proposed-v${version}.json`;
       // An earlier interrupted step may already have stored this job's proposal: reuse it instead of asking the provider again.
@@ -163,7 +200,10 @@ export function createRecordingDraftingProcessor(input: { repository: RecordingD
         let parsed: unknown; try { parsed = JSON.parse(Buffer.from(stored.bytes).toString('utf8')); } catch { throw new RecordingDraftingError('conflict'); }
         const candidate = proposedNoteDocumentSchema.safeParse(parsed);
         if (!candidate.success || candidate.data.transcriptId !== job.transcript.transcriptId || candidate.data.transcriptSha256 !== job.transcript.contentSha256
-          || candidate.data.noteType !== job.noteType || candidate.data.model !== job.provider.model || candidate.data.promptSha256 !== job.provider.promptSha256)
+          || candidate.data.noteType !== job.noteType || candidate.data.model !== job.provider.model || candidate.data.promptSha256 !== job.provider.promptSha256
+          // An interrupted step must not be resumed under a template that has changed since.
+          || (candidate.data.template?.templateSha256 ?? null) !== (template?.templateSha256 ?? null)
+          || (candidate.data.template?.styleSha256 ?? null) !== (template?.styleSha256 ?? null))
           throw new RecordingDraftingError('conflict');
         document = candidate.data; bytes = Buffer.from(stored.bytes);
       } else {
@@ -172,13 +212,15 @@ export function createRecordingDraftingProcessor(input: { repository: RecordingD
         const transcript = Buffer.from(read.bytes).toString('utf8');
         let raw: unknown;
         try {
-          raw = await provider.draft({ model: job.provider.model, promptSha256: job.provider.promptSha256, noteType: job.noteType, sections: DRAFTING_SECTIONS[job.noteType],
+          raw = await provider.draft({ model: job.provider.model, promptSha256: job.provider.promptSha256, noteType: job.noteType,
+            sections: template ? template.sections : DRAFTING_SECTIONS[job.noteType],
+            ...(template ? { style: template.style } : {}),
             transcript, jobId: job.jobId }, AbortSignal.timeout(input.providerTimeoutMs ?? 25000));
         } catch (error) {
           if (error instanceof RecordingDraftingError && error.code === 'prompt_unreviewed') throw error;
           await repository.fail(context, job.jobId, 'provider_unavailable'); return repository.list(context, recordingId);
         }
-        try { document = proposedNoteFromProvider(raw, job, job.transcript.contentSha256); }
+        try { document = proposedNoteFromProvider(raw, job, job.transcript.contentSha256, template); }
         catch { await repository.fail(context, job.jobId, 'provider_output_invalid'); return repository.list(context, recordingId); }
         bytes = Buffer.from(JSON.stringify(document), 'utf8');
       }

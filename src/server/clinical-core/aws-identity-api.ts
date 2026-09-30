@@ -10,6 +10,7 @@ import {createCareDataLifecycle,CareDataError} from './care-data-lifecycle';
 import {createPublicConsultIntake,createConsultLinkAdmin,createConsultRequestReview,ConsultRequestError} from './consult-requests';
 import {createIntakeFormAdmin,createIntakePacketWorkforce,createIntakePacketConsumer,IntakeFormError} from './intake-forms';
 import {createDisputeConsumer,createDisputeWorkforce,createRevisionConsumer,createRevisionWorkforce,ClinicalDisputeError} from './clinical-disputes';
+import {createNoteTemplateAdmin,createNoteDraftingContext,NoteTemplateError} from './note-templates';
 import {labSpecimenTransferSchema} from "../../contracts/labSpecimenTransfer";
 
 import {
@@ -116,7 +117,8 @@ type RouteDefinition = {
       | "consult_links" | "consult_requests"
       | "intake_forms" | "intake_packets_workforce" | "intake_packets_consumer"
       | "disputes_workforce" | "disputes_consumer"
-      | "revisions_workforce" | "revisions_consumer";
+      | "revisions_workforce" | "revisions_consumer"
+      | "note_templates" | "note_drafting_context";
 };
 
 /**
@@ -150,6 +152,8 @@ const ROUTES: Readonly<Record<string, RouteDefinition>> = {
   "POST /clinical-core/consumer/disputes": {pool:"consumer",purpose:"clinical_data",operation:"disputes_consumer"},
   "POST /clinical-core/workforce/content-revisions": {pool:"workforce",purpose:"clinical_data",operation:"revisions_workforce"},
   "POST /clinical-core/consumer/content-revisions": {pool:"consumer",purpose:"clinical_data",operation:"revisions_consumer"},
+  "POST /clinical-core/workforce/note-templates": {pool:"workforce",purpose:"clinical_data",operation:"note_templates"},
+  "POST /clinical-core/workforce/note-drafting-context": {pool:"workforce",purpose:"clinical_data",operation:"note_drafting_context"},
   "POST /clinical-core/workforce/messages": {pool:"workforce",purpose:"clinical_data",operation:"care_messages"},
   "GET /clinical-core/workforce/posture": { pool: "workforce", purpose: "identity_link", operation: "posture" },
   "GET /clinical-core/consumer/posture": { pool: "consumer", purpose: "identity_link", operation: "posture" },
@@ -300,6 +304,8 @@ function createIdentityApiHandler<Context extends ClinicalRequestContext>(input:
   const disputesConsumer=input.database ? createDisputeConsumer(input.database) : undefined;
   const revisionsWorkforce=input.database ? createRevisionWorkforce(input.database) : undefined;
   const revisionsConsumer=input.database ? createRevisionConsumer(input.database) : undefined;
+  const noteTemplates=input.database ? createNoteTemplateAdmin(input.database) : undefined;
+  const noteDraftingContext=input.database ? createNoteDraftingContext(input.database) : undefined;
   validateConfiguration(input.configuration);
 
   return async (event: ApiGatewayV2Event): Promise<ApiGatewayV2Response> => {
@@ -371,6 +377,18 @@ function createIdentityApiHandler<Context extends ClinicalRequestContext>(input:
         const service = route.operation === "disputes_workforce" ? disputesWorkforce
           : route.operation === "disputes_consumer" ? disputesConsumer
             : route.operation === "revisions_workforce" ? revisionsWorkforce : revisionsConsumer;
+        if(!service)return response(503,{error:"service_unavailable"});
+        const claims=event.requestContext?.authorizer?.jwt?.claims;
+        const expiry=Number(claims?.exp);
+        if(!Number.isFinite(expiry)||expiry*1000<=Date.now())return response(403,{error:"identity_refused"});
+        if(Object.keys(event.queryStringParameters??{}).length)return response(400,{error:"request_invalid"});
+        return response(200,{data:await service(context,parseBody(event))});
+      }
+      if (route.operation === "note_templates" || route.operation === "note_drafting_context") {
+        // Practice configuration rather than patient data, but on the same boundary and with
+        // the same posture: synthetic only, a live JWT, and no query string around the body.
+        if(input.boundary!=="synthetic")return response(403,{error:"pilot_scope_refused"});
+        const service = route.operation === "note_templates" ? noteTemplates : noteDraftingContext;
         if(!service)return response(503,{error:"service_unavailable"});
         const claims=event.requestContext?.authorizer?.jwt?.claims;
         const expiry=Number(claims?.exp);
@@ -731,6 +749,14 @@ function createIdentityApiHandler<Context extends ClinicalRequestContext>(input:
       if(error instanceof CareMessageError||error instanceof ProgramAssignmentError||error instanceof ExternalCalendarError
         ||error instanceof CareDataError) {
         return response(error.category==="identity_refused"?403:error.category==="conflict"?409:error.category==="request_invalid"?400:503,{error:error.category});
+      }
+      if(error instanceof NoteTemplateError) {
+        // A stale digest is a 409 the screen retries after re-reading; everything else is the
+        // same vocabulary as the other domains on this boundary.
+        const status=error.category==="identity_refused"||error.category==="operation_refused"?403
+          :error.category==="digest_stale"?409
+            :error.category==="request_invalid"?400:503;
+        return response(status,{error:error.category});
       }
       if(error instanceof ClinicalDisputeError) {
         const status=error.category==="identity_refused"?403
