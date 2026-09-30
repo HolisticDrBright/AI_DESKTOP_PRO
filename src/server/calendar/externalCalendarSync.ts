@@ -143,7 +143,13 @@ export function bookingRefusal(
   return null;
 }
 
-/** Configuration this connector needs. Names only — never a value, here or anywhere. */
+/**
+ * Configuration this connector needs. Names only — never a value, here or anywhere.
+ *
+ * The key ARN is separate from the client secret ARN on purpose: one authenticates
+ * this application to the provider, the other seals the practitioner's refresh token
+ * at rest. Rotating either should not require touching the other.
+ */
 export const REQUIRED_CALENDAR_CONFIGURATION = [
   'EXTERNAL_CALENDAR_ENABLED',
   'EXTERNAL_CALENDAR_PROVIDER',
@@ -151,6 +157,7 @@ export const REQUIRED_CALENDAR_CONFIGURATION = [
   'EXTERNAL_CALENDAR_CLIENT_SECRET_ARN',
   'EXTERNAL_CALENDAR_REDIRECT_URI',
   'EXTERNAL_CALENDAR_SCOPES',
+  'EXTERNAL_CALENDAR_TOKEN_KEY_ARN',
 ] as const;
 
 /** Disabled unless explicitly enabled. There is no default-on path. */

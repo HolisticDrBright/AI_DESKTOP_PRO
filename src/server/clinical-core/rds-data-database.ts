@@ -218,6 +218,10 @@ function classifyDatabaseRejection(error: unknown): ClinicalCoreDatabaseRejectio
   if (/\bprogram_assignment_invalid\b/.test(message)) return new ClinicalCoreDatabaseRejection("request_invalid");
   if (/\b(program_assignment_refused|program_assignment_unpublished|program_item_held|program_assignment_immutable)\b/.test(message)) return new ClinicalCoreDatabaseRejection("operation_refused");
   if (/\b(program_assignment_conflict|program_assignment_version_changed|program_assignment_revision_stale|program_review_stale|program_assignment_state_invalid|program_tasks_remaining|program_phase_not_due|program_check_in_required|program_practitioner_review_required|program_clinical_items_held)\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");
+  if (/\bexternal_calendar_invalid\b/.test(message)) return new ClinicalCoreDatabaseRejection("request_invalid");
+  if (/\bexternal_calendar_forbidden\b/.test(message)) return new ClinicalCoreDatabaseRejection("identity_refused");
+  if (/\b(external_calendar_scope_refused|external_calendar_immutable|external_calendar_absent)\b/.test(message)) return new ClinicalCoreDatabaseRejection("operation_refused");
+  if (/\b(external_calendar_not_pending|external_calendar_state_mismatch|external_calendar_authorization_expired|external_calendar_revision_stale|external_calendar_not_connected|external_calendar_reauthorization_required)\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");
   if (/\b(recording_access_refused|recording_capture_refused|recording_representative_authority_required)\b/.test(message)) return new ClinicalCoreDatabaseRejection("operation_refused");
   if (/\b(recording_consent_required|recording_consent_release_required|recording_capture_release_required|recording_roster_required|recording_storage_release_required)\b/.test(message)) return new ClinicalCoreDatabaseRejection("consent_required");
   if (/\b(recording_segment_conflict|recording_segment_order_required|recording_reservation_expired)\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");

@@ -160,6 +160,11 @@
       "version": "20260929120000",
       "file": "20260929120000_synthetic_program_assignments.sql",
       "production_transform": false
+    },
+    {
+      "version": "20260930100000",
+      "file": "20260930100000_synthetic_external_calendar_connections.sql",
+      "production_transform": false
     }
   ]
 }

@@ -127,6 +127,10 @@ describe('configuration and posture',()=>{
  });
  it('names its configuration and holds no value',()=>{
   expect(REQUIRED_CALENDAR_CONFIGURATION).toContain('EXTERNAL_CALENDAR_CLIENT_SECRET_ARN');
+  // Sealing the practitioner's refresh token is a separate key from the one that
+  // authenticates this application to the provider.
+  expect(REQUIRED_CALENDAR_CONFIGURATION).toContain('EXTERNAL_CALENDAR_TOKEN_KEY_ARN');
+  expect(new Set(REQUIRED_CALENDAR_CONFIGURATION).size).toBe(REQUIRED_CALENDAR_CONFIGURATION.length);
   const source=readFileSync('src/server/calendar/externalCalendarSync.ts','utf8');
   // Credential-free: no client id, no secret, no token, no network call.
   for(const forbidden of ['apps.googleusercontent.com','client_secret=','fetch(','https://oauth2.googleapis.com/token'])

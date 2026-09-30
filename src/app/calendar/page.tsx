@@ -1,4 +1,5 @@
 import { CalendarView } from "@/components/calendar/CalendarView";
+import { ExternalCalendarConnectionPanel } from "@/components/calendar/ExternalCalendarConnectionPanel";
 import { ClinicalNote } from "@/components/ui/ClinicalStates";
 import { scheduleLive } from "@/adapters/schedule.live";
 import { isAdapterError } from "@/adapters/errors";
@@ -37,8 +38,12 @@ export default async function Page({
         <ClinicalNote>
           <strong>ALP clinical calendar.</strong> Appointments shown here are stored in the governed
           AWS clinical service. Click any open time to add an appointment or choose “Break / admin.”
-          Google Calendar is not connected to this environment.
+          An external calendar can be connected below for read-only busy time; no provider is
+          configured in this environment yet, so nothing outside this clinic is being read.
         </ClinicalNote>
+      </div>
+      <div className="px-5">
+        <ExternalCalendarConnectionPanel />
       </div>
       <CalendarView initialApptId={initialApptId} initialCalendar={initialCalendar} />
     </div>
