@@ -276,6 +276,12 @@ function classifyDatabaseRejection(error: unknown): ClinicalCoreDatabaseRejectio
   if (/\bprotocol_cart_invalid\b/.test(message)) return new ClinicalCoreDatabaseRejection("request_invalid");
   if (/\bprotocol_cart_forbidden\b/.test(message)) return new ClinicalCoreDatabaseRejection("identity_refused");
   if (/\b(protocol_cart_absent|protocol_cart_version_absent|protocol_cart_version_unpublished|protocol_cart_no_supplements|protocol_cart_immutable)\b/.test(message)) return new ClinicalCoreDatabaseRejection("operation_refused");
+  // The practice outcome ledger. An undeclared code and an absent connection are one answer, and
+  // a missing research consent is its own, because that one the practitioner can act on.
+  if (/\b(outcome_ledger_invalid|outcome_age_out_of_range)\b/.test(message)) return new ClinicalCoreDatabaseRejection("request_invalid");
+  if (/\boutcome_ledger_forbidden\b/.test(message)) return new ClinicalCoreDatabaseRejection("identity_refused");
+  if (/\boutcome_consent_absent\b/.test(message)) return new ClinicalCoreDatabaseRejection("consent_required");
+  if (/\b(outcome_code_absent|outcome_connection_absent)\b/.test(message)) return new ClinicalCoreDatabaseRejection("operation_refused");
   if (/\bspecimen_consent_required\b/.test(message)) return new ClinicalCoreDatabaseRejection("consent_required");
   if (/\bspecimen_context_conflict\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");
   if (/\bspecimen_context_invalid\b/.test(message)) return new ClinicalCoreDatabaseRejection("request_invalid");

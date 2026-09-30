@@ -205,6 +205,11 @@
       "version": "20260930180000",
       "file": "20260930180000_synthetic_protocol_cart_compilation.sql",
       "production_transform": false
+    },
+    {
+      "version": "20260930190000",
+      "file": "20260930190000_synthetic_practice_outcome_ledger.sql",
+      "production_transform": false
     }
   ]
 }

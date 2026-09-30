@@ -30,7 +30,7 @@ export function validateAuthenticatedApi(foundation, extension) {
   }
 
   const routeEntries = Object.entries(resources).filter(([, resource]) => resource.Type === "AWS::ApiGatewayV2::Route");
-  assert(errors, routeEntries.length === 52, "extension must expose exactly fifty-two routes");
+  assert(errors, routeEntries.length === 54, "extension must expose exactly fifty-four routes");
   // Exactly one route on this API is unauthenticated, and it is named here rather than
   // inferred. A second one appearing without this list changing is the failure this guards.
   const PUBLIC_ROUTES = new Set(["POST /clinical-core/public/consult-intake"]);
@@ -87,6 +87,8 @@ export function validateAuthenticatedApi(foundation, extension) {
     "POST /clinical-core/workforce/note-templates",
     "POST /clinical-core/workforce/note-drafting-context",
     "POST /clinical-core/workforce/protocol-carts",
+    "POST /clinical-core/workforce/outcome-ledger",
+    "POST /clinical-core/workforce/outcome-report",
   ]);
   for (const [logicalId, route] of routeEntries) {
     assert(errors, expectedRoutes.delete(route.Properties?.RouteKey), `${logicalId} route is unexpected or duplicated`);

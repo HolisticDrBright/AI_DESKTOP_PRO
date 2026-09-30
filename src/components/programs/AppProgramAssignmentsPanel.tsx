@@ -4,6 +4,7 @@ import {parseProgramAssignmentResponse,type ProgramAssignmentRequest,type Progra
 import {onWorkforceSessionChange} from '@/lib/workforce-session-change';
 import {RevisionAnnouncePanel} from '@/components/governance/RevisionAnnouncePanel';
 import {ProtocolCartPanel} from './ProtocolCartPanel';
+import {OutcomeRecordPanel} from '@/components/reasoning/OutcomeRecordPanel';
 
 type Status=Extract<ProgramAssignmentResponse,{action:'status'}>;
 type Connections=Extract<ProgramAssignmentResponse,{action:'connections'}>;
@@ -131,6 +132,8 @@ export function AppProgramAssignmentsPanel(){
    {programVersionId.trim()?<RevisionAnnouncePanel toVersionId={programVersionId.trim()}/>:null}
    {/* The supplement list this version compiles to, with its exclusions already applied. */}
    {programVersionId.trim()?<ProtocolCartPanel programVersionId={programVersionId.trim()}/>:null}
+   {/* What happened for this patient, for counting later. Needs its own research consent. */}
+   {connectionId.trim()?<OutcomeRecordPanel connectionId={connectionId.trim()}/>:null}
   {preview?<div className="rounded-lg border p-3" data-testid="program-preview">
     <p className="font-semibold">{preview.title}</p>
     <p className="text-sm">Version {preview.programVersion}. This is what the patient would see; it comes from the

@@ -12,6 +12,12 @@ import {
   type RevisionWorkforceRequest, type RevisionWorkforceResponse,
 } from '@/contracts/clinicalDisputes';
 import {
+  outcomeLedgerRequest, outcomeReportRequest,
+  parseOutcomeLedgerResponse, parseOutcomeReportResponse,
+  type OutcomeLedgerRequest, type OutcomeLedgerResponse,
+  type OutcomeReportRequest, type OutcomeReportResponse,
+} from '@/contracts/practiceOutcomes';
+import {
   protocolCartRequest, parseProtocolCartResponse,
   type ProtocolCartRequest, type ProtocolCartResponse,
 } from '@/contracts/protocolCarts';
@@ -124,4 +130,15 @@ export const protocolCartCall = (token: string, signal?: AbortSignal) =>
   call<ProtocolCartRequest, ProtocolCartResponse>({
     token, signal, path: '/clinical-core/workforce/protocol-carts',
     parse: body => protocolCartRequest.parse(body), bind: parseProtocolCartResponse,
+  });
+export const outcomeLedgerCall = (token: string, signal?: AbortSignal) =>
+  call<OutcomeLedgerRequest, OutcomeLedgerResponse>({
+    token, signal, path: '/clinical-core/workforce/outcome-ledger',
+    parse: body => outcomeLedgerRequest.parse(body), bind: parseOutcomeLedgerResponse,
+  });
+/** Counts only. The suppression that makes them safe to read is in the clinic, not here. */
+export const outcomeReportCall = (token: string, signal?: AbortSignal) =>
+  call<OutcomeReportRequest, OutcomeReportResponse>({
+    token, signal, path: '/clinical-core/workforce/outcome-report',
+    parse: body => outcomeReportRequest.parse(body), bind: parseOutcomeReportResponse,
   });

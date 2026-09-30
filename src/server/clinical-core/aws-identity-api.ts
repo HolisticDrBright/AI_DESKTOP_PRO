@@ -12,6 +12,7 @@ import {createIntakeFormAdmin,createIntakePacketWorkforce,createIntakePacketCons
 import {createDisputeConsumer,createDisputeWorkforce,createRevisionConsumer,createRevisionWorkforce,ClinicalDisputeError} from './clinical-disputes';
 import {createNoteTemplateAdmin,createNoteDraftingContext,NoteTemplateError} from './note-templates';
 import {createProtocolCartWorkforce,ProtocolCartError} from './protocol-carts';
+import {createOutcomeLedgerWorkforce,createOutcomeReport,PracticeOutcomeError} from './practice-outcomes';
 import {labSpecimenTransferSchema} from "../../contracts/labSpecimenTransfer";
 
 import {
@@ -119,7 +120,8 @@ type RouteDefinition = {
       | "intake_forms" | "intake_packets_workforce" | "intake_packets_consumer"
       | "disputes_workforce" | "disputes_consumer"
       | "revisions_workforce" | "revisions_consumer"
-      | "note_templates" | "note_drafting_context" | "protocol_carts";
+      | "note_templates" | "note_drafting_context" | "protocol_carts"
+      | "outcome_ledger" | "outcome_report";
 };
 
 /**
@@ -153,6 +155,8 @@ const ROUTES: Readonly<Record<string, RouteDefinition>> = {
   "POST /clinical-core/consumer/disputes": {pool:"consumer",purpose:"clinical_data",operation:"disputes_consumer"},
   "POST /clinical-core/workforce/content-revisions": {pool:"workforce",purpose:"clinical_data",operation:"revisions_workforce"},
   "POST /clinical-core/consumer/content-revisions": {pool:"consumer",purpose:"clinical_data",operation:"revisions_consumer"},
+  "POST /clinical-core/workforce/outcome-ledger": {pool:"workforce",purpose:"clinical_data",operation:"outcome_ledger"},
+  "POST /clinical-core/workforce/outcome-report": {pool:"workforce",purpose:"clinical_data",operation:"outcome_report"},
   "POST /clinical-core/workforce/protocol-carts": {pool:"workforce",purpose:"clinical_data",operation:"protocol_carts"},
   "POST /clinical-core/workforce/note-templates": {pool:"workforce",purpose:"clinical_data",operation:"note_templates"},
   "POST /clinical-core/workforce/note-drafting-context": {pool:"workforce",purpose:"clinical_data",operation:"note_drafting_context"},
@@ -309,6 +313,8 @@ function createIdentityApiHandler<Context extends ClinicalRequestContext>(input:
   const noteTemplates=input.database ? createNoteTemplateAdmin(input.database) : undefined;
   const noteDraftingContext=input.database ? createNoteDraftingContext(input.database) : undefined;
   const protocolCarts=input.database ? createProtocolCartWorkforce(input.database) : undefined;
+  const outcomeLedger=input.database ? createOutcomeLedgerWorkforce(input.database) : undefined;
+  const outcomeReport=input.database ? createOutcomeReport(input.database) : undefined;
   validateConfiguration(input.configuration);
 
   return async (event: ApiGatewayV2Event): Promise<ApiGatewayV2Response> => {
@@ -380,6 +386,17 @@ function createIdentityApiHandler<Context extends ClinicalRequestContext>(input:
         const service = route.operation === "disputes_workforce" ? disputesWorkforce
           : route.operation === "disputes_consumer" ? disputesConsumer
             : route.operation === "revisions_workforce" ? revisionsWorkforce : revisionsConsumer;
+        if(!service)return response(503,{error:"service_unavailable"});
+        const claims=event.requestContext?.authorizer?.jwt?.claims;
+        const expiry=Number(claims?.exp);
+        if(!Number.isFinite(expiry)||expiry*1000<=Date.now())return response(403,{error:"identity_refused"});
+        if(Object.keys(event.queryStringParameters??{}).length)return response(400,{error:"request_invalid"});
+        return response(200,{data:await service(context,parseBody(event))});
+      }
+      if (route.operation === "outcome_ledger" || route.operation === "outcome_report") {
+        // Counts, not records. Same posture as the rest of this boundary.
+        if(input.boundary!=="synthetic")return response(403,{error:"pilot_scope_refused"});
+        const service = route.operation === "outcome_ledger" ? outcomeLedger : outcomeReport;
         if(!service)return response(503,{error:"service_unavailable"});
         const claims=event.requestContext?.authorizer?.jwt?.claims;
         const expiry=Number(claims?.exp);
@@ -763,6 +780,12 @@ function createIdentityApiHandler<Context extends ClinicalRequestContext>(input:
       if(error instanceof CareMessageError||error instanceof ProgramAssignmentError||error instanceof ExternalCalendarError
         ||error instanceof CareDataError) {
         return response(error.category==="identity_refused"?403:error.category==="conflict"?409:error.category==="request_invalid"?400:503,{error:error.category});
+      }
+      if(error instanceof PracticeOutcomeError) {
+        const status=error.category==="identity_refused"||error.category==="operation_refused"?403
+          :error.category==="consent_required"?409
+            :error.category==="request_invalid"?400:503;
+        return response(status,{error:error.category});
       }
       if(error instanceof ProtocolCartError) {
         const status=error.category==="identity_refused"||error.category==="operation_refused"?403

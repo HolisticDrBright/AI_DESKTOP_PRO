@@ -1146,6 +1146,38 @@
           "Fn::Sub": "integrations/${IdentityApiIntegration}"
         }
       }
+    },
+    "WorkforceOutcomeLedgerRoute": {
+      "Type": "AWS::ApiGatewayV2::Route",
+      "Properties": {
+        "ApiId": {
+          "Ref": "ClinicalApiId"
+        },
+        "RouteKey": "POST /clinical-core/workforce/outcome-ledger",
+        "AuthorizationType": "JWT",
+        "AuthorizerId": {
+          "Ref": "WorkforceJwtAuthorizer"
+        },
+        "Target": {
+          "Fn::Sub": "integrations/${IdentityApiIntegration}"
+        }
+      }
+    },
+    "WorkforceOutcomeReportRoute": {
+      "Type": "AWS::ApiGatewayV2::Route",
+      "Properties": {
+        "ApiId": {
+          "Ref": "ClinicalApiId"
+        },
+        "RouteKey": "POST /clinical-core/workforce/outcome-report",
+        "AuthorizationType": "JWT",
+        "AuthorizerId": {
+          "Ref": "WorkforceJwtAuthorizer"
+        },
+        "Target": {
+          "Fn::Sub": "integrations/${IdentityApiIntegration}"
+        }
+      }
     }
   },
   "Outputs": {
