@@ -9,9 +9,11 @@ function fixture(mutate = () => {}) {
   const directory = mkdtempSync(join(tmpdir(), "provider-configuration-"));
   mkdirSync(join(directory, "infra/aws-clinical-core"), { recursive: true });
   mkdirSync(join(directory, "src/server/clinical-core"), { recursive: true });
+  mkdirSync(join(directory, "src/server/calendar"), { recursive: true });
   for (const file of ["telehealth-requests-extension.json", "fullscript-connector-extension.json", "consumer-account-extension.json", "external-provider-readiness.json"])
     cpSync(join("infra/aws-clinical-core", file), join(directory, "infra/aws-clinical-core", file));
   for (const file of ["aws-telehealth-requests-lambda.ts", "aws-telehealth-requests.ts"]) cpSync(join("src/server/clinical-core", file), join(directory, "src/server/clinical-core", file));
+  cpSync("src/server/calendar/externalCalendarSync.ts", join(directory, "src/server/calendar/externalCalendarSync.ts"));
   mutate(directory);
   return spawnSync(process.execPath, [script, directory], { encoding: "utf8" });
 }
@@ -33,4 +35,16 @@ assert.equal(enabled.status, 1); assert.match(enabled.stderr, /transactional_ema
 
 const secret = fixture((d) => edit(d, "infra/aws-clinical-core/fullscript-connector-extension.json", (t) => { t.Parameters.FullscriptClientSecret.Default = "sk_test_ABCDEFGHIJKLMNOP"; }));
 assert.equal(secret.status, 1); assert.match(secret.stderr, /must not contain credential material/);
+
+const calendarWriteScope = fixture((d) => {
+  const path = join(d, "src/server/calendar/externalCalendarSync.ts");
+  writeFileSync(path, readFileSync(path, "utf8").replaceAll('calendar.freebusy', 'calendar.events'));
+});
+assert.equal(calendarWriteScope.status, 1); assert.match(calendarWriteScope.stderr, /external calendar must not allow a write scope/);
+
+const calendarNetwork = fixture((d) => {
+  const path = join(d, "src/server/calendar/externalCalendarSync.ts");
+  writeFileSync(path, readFileSync(path, "utf8") + '\nfetch("https://fictional.invalid");\n');
+});
+assert.equal(calendarNetwork.status, 1); assert.match(calendarNetwork.stderr, /must stay credential-free and make no provider call/);
 console.log("check-aws-provider-configuration tests passed");
