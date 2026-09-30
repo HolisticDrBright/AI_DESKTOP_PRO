@@ -175,6 +175,16 @@
       "version": "20260930120000",
       "file": "20260930120000_synthetic_external_busy_booking.sql",
       "production_transform": false
+    },
+    {
+      "version": "20260930130000",
+      "file": "20260930130000_synthetic_public_consult_requests.sql",
+      "production_transform": false
+    },
+    {
+      "version": "20260930140000",
+      "file": "20260930140000_synthetic_intake_forms_and_signatures.sql",
+      "production_transform": false
     }
   ]
 }

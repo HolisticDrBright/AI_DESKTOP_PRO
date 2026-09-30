@@ -242,6 +242,21 @@ function classifyDatabaseRejection(error: unknown): ClinicalCoreDatabaseRejectio
     if (/\bexternal_inventory_conflict\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");
     if (/\bexternal_inventory_invalid\b/.test(message)) return new ClinicalCoreDatabaseRejection("request_invalid");
     // Exact server-authored codes only. Never forward SQL/provider detail.
+  // The public consult link and the clinic's queue. `consult_link_unavailable` is the one
+  // answer given for an absent, disabled or expired slug, so the classification must not
+  // split them either.
+  if (/\b(consult_request_invalid|consult_link_invalid|consult_review_invalid)\b/.test(message)) return new ClinicalCoreDatabaseRejection("request_invalid");
+  if (/\bconsult_request_forbidden\b/.test(message)) return new ClinicalCoreDatabaseRejection("identity_refused");
+  if (/\b(consult_link_unavailable|consult_request_unavailable|consult_link_absent|consult_request_absent|consult_request_immutable)\b/.test(message)) return new ClinicalCoreDatabaseRejection("operation_refused");
+  if (/\b(consult_link_closed|consult_link_slug_taken|consult_record_key_taken|consult_reference_unavailable|consult_request_state_invalid|consult_request_revision_stale)\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");
+  // Pre-visit forms. A form that is not published, and a packet or item that is not there,
+  // are refusals about the object; a changed document or a recorded answer is a conflict the
+  // caller has to re-read before retrying.
+  if (/\b(intake_form_invalid|intake_packet_invalid|intake_form_content_invalid|intake_answers_invalid|intake_item_not_questionnaire|intake_item_not_document)\b/.test(message)) return new ClinicalCoreDatabaseRejection("request_invalid");
+  if (/\bintake_packet_forbidden\b/.test(message)) return new ClinicalCoreDatabaseRejection("identity_refused");
+  if (/\bintake_consent_absent\b/.test(message)) return new ClinicalCoreDatabaseRejection("consent_required");
+  if (/\b(intake_form_unpublished|intake_form_absent|intake_packet_absent|intake_item_absent|intake_form_immutable|intake_connection_absent|intake_connection_unavailable)\b/.test(message)) return new ClinicalCoreDatabaseRejection("operation_refused");
+  if (/\b(intake_form_not_draft|intake_form_not_published|intake_packet_state_invalid|intake_packet_revision_stale|intake_packet_past_due|intake_response_recorded|intake_signature_recorded|intake_form_changed|intake_agreement_changed)\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");
   if (/\bspecimen_consent_required\b/.test(message)) return new ClinicalCoreDatabaseRejection("consent_required");
   if (/\bspecimen_context_conflict\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");
   if (/\bspecimen_context_invalid\b/.test(message)) return new ClinicalCoreDatabaseRejection("request_invalid");

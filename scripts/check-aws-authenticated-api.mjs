@@ -30,7 +30,10 @@ export function validateAuthenticatedApi(foundation, extension) {
   }
 
   const routeEntries = Object.entries(resources).filter(([, resource]) => resource.Type === "AWS::ApiGatewayV2::Route");
-  assert(errors, routeEntries.length === 39, "extension must expose exactly thirty-nine authenticated routes");
+  assert(errors, routeEntries.length === 45, "extension must expose exactly forty-five routes");
+  // Exactly one route on this API is unauthenticated, and it is named here rather than
+  // inferred. A second one appearing without this list changing is the failure this guards.
+  const PUBLIC_ROUTES = new Set(["POST /clinical-core/public/consult-intake"]);
   const expectedRoutes = new Set([
     "GET /clinical-core/workforce/posture",
     "GET /clinical-core/consumer/posture",
@@ -71,10 +74,24 @@ export function validateAuthenticatedApi(foundation, extension) {
     "POST /clinical-core/workforce/programs",
     "POST /clinical-core/workforce/calendar-connection",
     "POST /clinical-core/consumer/care-data",
+    "POST /clinical-core/workforce/consult-links",
+    "POST /clinical-core/workforce/consult-requests",
+    "POST /clinical-core/workforce/intake-forms",
+    "POST /clinical-core/workforce/intake-packets",
+    "POST /clinical-core/consumer/intake-packets",
+    "POST /clinical-core/public/consult-intake",
   ]);
   for (const [logicalId, route] of routeEntries) {
     assert(errors, expectedRoutes.delete(route.Properties?.RouteKey), `${logicalId} route is unexpected or duplicated`);
-    assert(errors, route.Properties?.AuthorizationType === "JWT" && route.Properties?.AuthorizerId, `${logicalId} must use a JWT authorizer`);
+    if (PUBLIC_ROUTES.has(route.Properties?.RouteKey)) {
+      // A visitor asking for a first appointment has no account to authenticate with. What
+      // makes it safe is the narrowness of what it reaches, not an authorizer, so the one
+      // thing asserted here is that it carries no authorizer at all rather than a broken one.
+      assert(errors, route.Properties?.AuthorizationType === "NONE" && !route.Properties?.AuthorizerId,
+        `${logicalId} must be declared unauthenticated, with no authorizer attached`);
+    } else {
+      assert(errors, route.Properties?.AuthorizationType === "JWT" && route.Properties?.AuthorizerId, `${logicalId} must use a JWT authorizer`);
+    }
   }
   assert(errors, expectedRoutes.size === 0, "one or more required routes are missing");
 

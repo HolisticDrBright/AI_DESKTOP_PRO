@@ -7,6 +7,8 @@ import {createCareMessaging,CareMessageError} from './care-messaging';
 import {createProgramAssignments,ProgramAssignmentError} from './program-assignments';
 import {createExternalCalendarConnections,ExternalCalendarError} from './external-calendar-connections';
 import {createCareDataLifecycle,CareDataError} from './care-data-lifecycle';
+import {createPublicConsultIntake,createConsultLinkAdmin,createConsultRequestReview,ConsultRequestError} from './consult-requests';
+import {createIntakeFormAdmin,createIntakePacketWorkforce,createIntakePacketConsumer,IntakeFormError} from './intake-forms';
 import {labSpecimenTransferSchema} from "../../contracts/labSpecimenTransfer";
 
 import {
@@ -109,8 +111,26 @@ type RouteDefinition = {
       | "list_family_requests" | "approve_family" | "claim_family"
       | "list_delegated" | "read_delegated" | "revoke_family" | "get_chat_context"
       | "consumer_chat" | "workforce_chat" | "care_messages" | "program_assignments"
-      | "calendar_connection" | "care_data_lifecycle";
+      | "calendar_connection" | "care_data_lifecycle"
+      | "consult_links" | "consult_requests"
+      | "intake_forms" | "intake_packets_workforce" | "intake_packets_consumer";
 };
+
+/**
+ * The one route on this API that carries no identity.
+ *
+ * It is kept in its own table, and looked up before any claim is read, because a visitor
+ * asking a clinic for a first appointment has no account and cannot be given one first.
+ * Everything that makes that safe is elsewhere and is deliberately narrow: the database
+ * function it reaches can describe a link and add one request and nothing else, it derives
+ * the organization from the slug rather than from the caller, and it accepts only a sealed
+ * contact envelope — the plaintext name and address are sealed by the web tier before they
+ * ever arrive here, so this route cannot receive them.
+ */
+const PUBLIC_ROUTES: Readonly<Record<string,{operation:"consult_intake_public"}>> = {
+  "POST /clinical-core/public/consult-intake": {operation:"consult_intake_public"},
+};
+export const PUBLIC_IDENTITY_API_ROUTES = Object.keys(PUBLIC_ROUTES);
 
 const ROUTES: Readonly<Record<string, RouteDefinition>> = {
   "POST /clinical-core/consumer/messages": {pool:"consumer",purpose:"clinical_data",operation:"care_messages"},
@@ -118,6 +138,11 @@ const ROUTES: Readonly<Record<string, RouteDefinition>> = {
   "POST /clinical-core/workforce/programs": {pool:"workforce",purpose:"clinical_data",operation:"program_assignments"},
   "POST /clinical-core/workforce/calendar-connection": {pool:"workforce",purpose:"clinical_data",operation:"calendar_connection"},
   "POST /clinical-core/consumer/care-data": {pool:"consumer",purpose:"consent_management",operation:"care_data_lifecycle"},
+  "POST /clinical-core/workforce/consult-links": {pool:"workforce",purpose:"clinical_data",operation:"consult_links"},
+  "POST /clinical-core/workforce/consult-requests": {pool:"workforce",purpose:"clinical_data",operation:"consult_requests"},
+  "POST /clinical-core/workforce/intake-forms": {pool:"workforce",purpose:"clinical_data",operation:"intake_forms"},
+  "POST /clinical-core/workforce/intake-packets": {pool:"workforce",purpose:"clinical_data",operation:"intake_packets_workforce"},
+  "POST /clinical-core/consumer/intake-packets": {pool:"consumer",purpose:"clinical_data",operation:"intake_packets_consumer"},
   "POST /clinical-core/workforce/messages": {pool:"workforce",purpose:"clinical_data",operation:"care_messages"},
   "GET /clinical-core/workforce/posture": { pool: "workforce", purpose: "identity_link", operation: "posture" },
   "GET /clinical-core/consumer/posture": { pool: "consumer", purpose: "identity_link", operation: "posture" },
@@ -258,10 +283,26 @@ function createIdentityApiHandler<Context extends ClinicalRequestContext>(input:
   const programAssignments=input.database ? createProgramAssignments(input.database) : undefined;
   const calendarConnections=input.database ? createExternalCalendarConnections(input.database) : undefined;
   const careDataLifecycle=input.database ? createCareDataLifecycle(input.database) : undefined;
+  const publicConsultIntake=input.database ? createPublicConsultIntake(input.database) : undefined;
+  const consultLinks=input.database ? createConsultLinkAdmin(input.database) : undefined;
+  const consultRequests=input.database ? createConsultRequestReview(input.database) : undefined;
+  const intakeForms=input.database ? createIntakeFormAdmin(input.database) : undefined;
+  const intakePacketsWorkforce=input.database ? createIntakePacketWorkforce(input.database) : undefined;
+  const intakePacketsConsumer=input.database ? createIntakePacketConsumer(input.database) : undefined;
   validateConfiguration(input.configuration);
 
   return async (event: ApiGatewayV2Event): Promise<ApiGatewayV2Response> => {
     try {
+      // Looked up first, and answered without reading a claim: there is no identity on this
+      // path, so anything that assumed one would either throw or invent one.
+      const open = event.routeKey ? PUBLIC_ROUTES[event.routeKey] : undefined;
+      if (open) {
+        if (input.boundary !== "synthetic") return response(403, { error: "pilot_scope_refused" });
+        if (input.productionPilot) return response(403, { error: "pilot_scope_refused" });
+        if (!publicConsultIntake) return response(503, { error: "service_unavailable" });
+        if (Object.keys(event.queryStringParameters ?? {}).length) return response(400, { error: "request_invalid" });
+        return response(200, { data: await publicConsultIntake(parseBody(event)) });
+      }
       const route = event.routeKey ? ROUTES[event.routeKey] : undefined;
       if (!route) return response(404, { error: "route_not_found" });
       if (input.productionPilot && !isProductionPilotRouteAllowed(event.routeKey)) {
@@ -310,6 +351,23 @@ function createIdentityApiHandler<Context extends ClinicalRequestContext>(input:
         if(!Number.isFinite(expiry)||expiry*1000<=Date.now())return response(403,{error:"identity_refused"});
         if(Object.keys(event.queryStringParameters??{}).length)return response(400,{error:"request_invalid"});
         return response(200,{data:await careDataLifecycle(context,parseBody(event))});
+      }
+      if (route.operation === "consult_links" || route.operation === "consult_requests"
+        || route.operation === "intake_forms" || route.operation === "intake_packets_workforce"
+        || route.operation === "intake_packets_consumer") {
+        // Same posture as the other domains added on this boundary: synthetic only, a live
+        // JWT, and no query string around the body contract.
+        if(input.boundary!=="synthetic")return response(403,{error:"pilot_scope_refused"});
+        const service = route.operation === "consult_links" ? consultLinks
+          : route.operation === "consult_requests" ? consultRequests
+            : route.operation === "intake_forms" ? intakeForms
+              : route.operation === "intake_packets_workforce" ? intakePacketsWorkforce : intakePacketsConsumer;
+        if(!service)return response(503,{error:"service_unavailable"});
+        const claims=event.requestContext?.authorizer?.jwt?.claims;
+        const expiry=Number(claims?.exp);
+        if(!Number.isFinite(expiry)||expiry*1000<=Date.now())return response(403,{error:"identity_refused"});
+        if(Object.keys(event.queryStringParameters??{}).length)return response(400,{error:"request_invalid"});
+        return response(200,{data:await service(context,parseBody(event))});
       }
       if (route.operation === "calendar_connection") {
         // Same posture as programs and messaging: synthetic boundary only, live JWT only,
@@ -647,6 +705,16 @@ function createIdentityApiHandler<Context extends ClinicalRequestContext>(input:
       if(error instanceof CareMessageError||error instanceof ProgramAssignmentError||error instanceof ExternalCalendarError
         ||error instanceof CareDataError) {
         return response(error.category==="identity_refused"?403:error.category==="conflict"?409:error.category==="request_invalid"?400:503,{error:error.category});
+      }
+      if(error instanceof ConsultRequestError||error instanceof IntakeFormError) {
+        // An unavailable link, an unpublished form and an absent packet are all
+        // `operation_refused`: one status for all of them, so a caller cannot use the
+        // status to tell which clinics or forms exist.
+        const status=error.category==="identity_refused"?403
+          :error.category==="operation_refused"?403
+            :error.category==="consent_required"||error.category==="conflict"?409
+              :error.category==="request_invalid"?400:503;
+        return response(status,{error:error.category});
       }
       if (error instanceof PatientChatError) {
         const status = error.category === "chat_refused" ? 403

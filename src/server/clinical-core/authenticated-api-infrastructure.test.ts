@@ -25,10 +25,10 @@ describe("authenticated synthetic API infrastructure", () => {
     }
   });
 
-  test("all clinical routes are JWT-authenticated and the Lambda is tightly bounded", () => {
+  test("every clinical route but the declared public one is JWT-authenticated, and the Lambda is tightly bounded", () => {
     const resources = JSON.parse(readFileSync(extensionPath, "utf8")).Resources;
     const routes = Object.values(resources).filter((resource: unknown) => (resource as { Type: string }).Type === "AWS::ApiGatewayV2::Route") as Array<{ Properties: Record<string, unknown> }>;
-    expect(routes).toHaveLength(39);
+    expect(routes).toHaveLength(45);
     expect(routes.map(route=>route.Properties.RouteKey)).toEqual(expect.arrayContaining([
       "POST /clinical-core/consumer/messages",
       "POST /clinical-core/workforce/messages",
@@ -37,10 +37,22 @@ describe("authenticated synthetic API infrastructure", () => {
       "POST /clinical-core/consumer/labs/specimen-context",
       "GET /clinical-core/consumer/labs/specimen-context",
       "GET /clinical-core/workforce/labs/specimen-context",
+      "POST /clinical-core/workforce/consult-links",
+      "POST /clinical-core/workforce/consult-requests",
+      "POST /clinical-core/workforce/intake-forms",
+      "POST /clinical-core/workforce/intake-packets",
+      "POST /clinical-core/consumer/intake-packets",
     ]));
     expect(routes.map((route) => route.Properties.RouteKey))
       .toContain("POST /clinical-core/workforce/data-compatibility");
-    expect(routes.every((route) => route.Properties.AuthorizationType === "JWT")).toBe(true);
+    // One route is unauthenticated by design, because a stranger asking for a first
+    // appointment has no account yet. It is asserted by name, and asserted to be the only
+    // one, so a second unauthenticated route cannot appear unnoticed.
+    const unauthenticated = routes.filter((route) => route.Properties.AuthorizationType !== "JWT");
+    expect(unauthenticated.map((route) => route.Properties.RouteKey))
+      .toEqual(["POST /clinical-core/public/consult-intake"]);
+    expect(unauthenticated[0].Properties.AuthorizationType).toBe("NONE");
+    expect(unauthenticated[0].Properties).not.toHaveProperty("AuthorizerId");
     expect(resources.IdentityApiFunction.Properties).toMatchObject({ Timeout: 15, MemorySize: 256 });
     expect(resources.IdentityApiFunction.Properties.FunctionName)
       .toEqual({ "Fn::Sub": "${ClinicalApiId}-synthetic-identity" });
