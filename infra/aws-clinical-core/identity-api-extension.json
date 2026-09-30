@@ -1178,6 +1178,22 @@
           "Fn::Sub": "integrations/${IdentityApiIntegration}"
         }
       }
+    },
+    "WorkforceConsultRetentionRoute": {
+      "Type": "AWS::ApiGatewayV2::Route",
+      "Properties": {
+        "ApiId": {
+          "Ref": "ClinicalApiId"
+        },
+        "RouteKey": "POST /clinical-core/workforce/consult-retention",
+        "AuthorizationType": "JWT",
+        "AuthorizerId": {
+          "Ref": "WorkforceJwtAuthorizer"
+        },
+        "Target": {
+          "Fn::Sub": "integrations/${IdentityApiIntegration}"
+        }
+      }
     }
   },
   "Outputs": {

@@ -282,6 +282,11 @@ function classifyDatabaseRejection(error: unknown): ClinicalCoreDatabaseRejectio
   if (/\boutcome_ledger_forbidden\b/.test(message)) return new ClinicalCoreDatabaseRejection("identity_refused");
   if (/\boutcome_consent_absent\b/.test(message)) return new ClinicalCoreDatabaseRejection("consent_required");
   if (/\b(outcome_code_absent|outcome_connection_absent)\b/.test(message)) return new ClinicalCoreDatabaseRejection("operation_refused");
+  // Consult contact retention. `consult_contact_purged` is what an attempt to open an erased
+  // envelope gets; it is a refusal about the object, not a failure to retry.
+  if (/\bconsult_retention_invalid\b/.test(message)) return new ClinicalCoreDatabaseRejection("request_invalid");
+  if (/\bconsult_retention_forbidden\b/.test(message)) return new ClinicalCoreDatabaseRejection("identity_refused");
+  if (/\b(consult_contact_purged|consult_retention_immutable)\b/.test(message)) return new ClinicalCoreDatabaseRejection("operation_refused");
   if (/\bspecimen_consent_required\b/.test(message)) return new ClinicalCoreDatabaseRejection("consent_required");
   if (/\bspecimen_context_conflict\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");
   if (/\bspecimen_context_invalid\b/.test(message)) return new ClinicalCoreDatabaseRejection("request_invalid");

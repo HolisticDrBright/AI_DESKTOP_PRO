@@ -12,6 +12,10 @@ import {
   type RevisionWorkforceRequest, type RevisionWorkforceResponse,
 } from '@/contracts/clinicalDisputes';
 import {
+  consultRetentionRequest, parseConsultRetentionResponse,
+  type ConsultRetentionRequest, type ConsultRetentionResponse,
+} from '@/contracts/consultRetention';
+import {
   outcomeLedgerRequest, outcomeReportRequest,
   parseOutcomeLedgerResponse, parseOutcomeReportResponse,
   type OutcomeLedgerRequest, type OutcomeLedgerResponse,
@@ -141,4 +145,10 @@ export const outcomeReportCall = (token: string, signal?: AbortSignal) =>
   call<OutcomeReportRequest, OutcomeReportResponse>({
     token, signal, path: '/clinical-core/workforce/outcome-report',
     parse: body => outcomeReportRequest.parse(body), bind: parseOutcomeReportResponse,
+  });
+/** The retention policy, and erasing an enquirer's contact details. No consumer counterpart. */
+export const consultRetentionCall = (token: string, signal?: AbortSignal) =>
+  call<ConsultRetentionRequest, ConsultRetentionResponse>({
+    token, signal, path: '/clinical-core/workforce/consult-retention',
+    parse: body => consultRetentionRequest.parse(body), bind: parseConsultRetentionResponse,
   });

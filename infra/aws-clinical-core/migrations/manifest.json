@@ -210,6 +210,11 @@
       "version": "20260930190000",
       "file": "20260930190000_synthetic_practice_outcome_ledger.sql",
       "production_transform": false
+    },
+    {
+      "version": "20260930200000",
+      "file": "20260930200000_synthetic_consult_contact_retention.sql",
+      "production_transform": false
     }
   ]
 }
