@@ -94,9 +94,18 @@ than superseded. **Migration 33 is unchanged and was not touched.**
 | `20260929120000_synthetic_program_assignments.sql` (corrected) | `8d6bcac8dfbe5582e7ee63d5f7ed6a5b4466760195f251d10780f08e3fb4a1d8` |
 | `20260930100000_synthetic_external_calendar_connections.sql` (new, unapplied) | `d6ca115e4ee3093859569e7a18f51867fb2204fb550795bc29a8e76ddaa486be` |
 | `20260930110000_synthetic_care_data_lifecycle.sql` (new, unapplied) | `f30ae4449b5ae2f5269d804bb69da6f942e0d2e3686c932d0cd1a7b7c7e26496` |
+| `20260930120000_synthetic_external_busy_booking.sql` (new, unapplied) | `80e2ce0e2c73a8985721c42bafe88ea5cf7a55c039c34aca2f57bb1603b72951` |
 
-Ledger is now **36** entries. Composite of all 36 `version:sha256` lines:
-`824b8fd513e54d5f97c8344ba648bb1df49611bcdc090224050f3a85336a2aff`. Recompute from the
+Ledger is now **37** entries. Composite of all 37 `version:sha256` lines:
+`7db2b63fec0e2991cd464dfac72d21a73201f14dc8ab215a93f77cba6e28bbd1`.
+
+**Migration 37 fixes a pre-existing runtime defect in `book_appointment`.** Its audit insert
+named `patient_record_id` and `safe_message`, and `clinical_audit.events` in this family has
+neither column, so every booking raised `column "patient_record_id" ... does not exist`.
+Booking on the synthetic Desktop calendar could not have worked. Nothing caught it because no
+test had executed the function against the real SQL — the adapter tests mock the RPC. The
+insert now names the columns that exist; the appointment id remains the audit resource and
+resolves to its patient through `clinical_core.appointments`. Recompute from the
 checkout before applying; do not trust this line alone.
 
 Migration 36 replaces the append-only trigger on `care_messages`,

@@ -1,6 +1,6 @@
 'use client';
 import {useCallback,useEffect,useRef,useState} from 'react';
-import {externalCalendarStarted,parseExternalCalendarResponse,type ExternalCalendarBrowserRequest,type ExternalCalendarResponse,type ExternalCalendarStarted} from '@/contracts/externalCalendar';
+import {externalCalendarBusySynced,externalCalendarStarted,parseExternalCalendarResponse,type ExternalCalendarBrowserRequest,type ExternalCalendarBusySynced,type ExternalCalendarResponse,type ExternalCalendarStarted} from '@/contracts/externalCalendar';
 import {onWorkforceSessionChange} from '@/lib/workforce-session-change';
 
 type Read=Extract<ExternalCalendarResponse,{action:'read'}>;
@@ -38,7 +38,7 @@ export function ExternalCalendarConnectionPanel(){
 
  const clear=useCallback(()=>{epoch.current++;working.current=false;setBusy(false);setConnection(null);setNotice('');},[]);
 
- const run=useCallback(async(input:ExternalCalendarBrowserRequest):Promise<ExternalCalendarResponse|ExternalCalendarStarted|null>=>{
+ const run=useCallback(async(input:ExternalCalendarBrowserRequest):Promise<ExternalCalendarResponse|ExternalCalendarStarted|ExternalCalendarBusySynced|null>=>{
   if(working.current)return null;
   working.current=true;setBusy(true);setError('');setNotice('');
   const generation=epoch.current;
@@ -57,6 +57,7 @@ export function ExternalCalendarConnectionPanel(){
    if(!alive.current||epoch.current!==generation)return null;
    // `start` is this route's own answer, not one of the stored contract's replies.
    if(input.action==='start')return externalCalendarStarted.parse(payload);
+   if(input.action==='sync_busy')return externalCalendarBusySynced.parse(payload);
    return parseExternalCalendarResponse(input,payload);
   }catch{
    if(alive.current&&epoch.current===generation)setError('The calendar service could not be reached. Nothing changed.');
@@ -92,6 +93,21 @@ export function ExternalCalendarConnectionPanel(){
   if(!connection?.revision)return;
   const data=await run({action:'disconnect',expectedRevision:connection.revision});
   if(data&&data.action==='disconnect'){setNotice('Calendar disconnected. The stored authorization was erased.');void refresh();}
+ }
+
+ async function refreshBusy(){
+  // The window the booking screen works in. Busy time only answers for a window it was
+  // read for, so the same bounds are used here and in the refusal.
+  const from=new Date();from.setHours(0,0,0,0);
+  const to=new Date(from.getTime()+14*86_400_000);
+  const data=await run({action:'sync_busy',windowFrom:from.toISOString(),windowTo:to.toISOString()});
+  if(data&&data.action==='sync_busy'){
+   setNotice(data.complete
+    ? `Busy time refreshed for the next two weeks: ${data.stored} busy period${data.stored===1?'':'s'}.`
+    : `Refreshed, but ${data.unavailableCalendars} calendar${data.unavailableCalendars===1?'':'s'} could not be read. `
+      +'Until every chosen calendar answers, bookings will not be confirmed against this one.');
+   void refresh();
+  }
  }
 
  async function saveCalendars(){
@@ -154,7 +170,14 @@ export function ExternalCalendarConnectionPanel(){
       <input value={calendars} onChange={event=>setCalendars(event.target.value)}
        className="mt-1 w-full rounded border border-slate-300 px-2 py-1 text-xs" />
      </label>
+     <p className="text-xs text-slate-600">
+      A booking is confirmed against busy time that has been read recently for the time in
+      question. If it has not been, the booking is refused rather than guessed at.
+     </p>
      <div className="flex gap-2">
+      <button type="button" onClick={()=>{void refreshBusy();}} disabled={busy}
+       className="rounded border border-slate-300 px-3 py-1 text-xs font-medium disabled:opacity-50"
+       data-testid="external-calendar-refresh-busy">Refresh busy time</button>
       <button type="button" onClick={saveCalendars} disabled={busy}
        className="rounded border border-slate-300 px-3 py-1 text-xs font-medium disabled:opacity-50">Save calendars</button>
       <button type="button" onClick={disconnect} disabled={busy}

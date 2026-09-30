@@ -170,6 +170,11 @@
       "version": "20260930110000",
       "file": "20260930110000_synthetic_care_data_lifecycle.sql",
       "production_transform": false
+    },
+    {
+      "version": "20260930120000",
+      "file": "20260930120000_synthetic_external_busy_booking.sql",
+      "production_transform": false
     }
   ]
 }

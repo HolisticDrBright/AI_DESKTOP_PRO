@@ -32,7 +32,12 @@ export function createExternalCalendarConnections(database: ClinicalCoreDatabase
           { kind: 'uuid', value: context.actorPersonId }, { kind: 'uuid', value: context.organizationId },
           context.identityPool, context.identitySubject, context.purpose, context.environment, context.dataClassification,
         ]);
-        const result = await tx.query<{ data: unknown }>('select clinical_core.external_calendar_request($1::jsonb) as data', [JSON.stringify(request)]);
+        // Busy time has its own function so its argument shape is checked where it is
+        // used, rather than widening the connection function's vocabulary.
+        const routine = request.action === 'busy_sync'
+          ? 'clinical_core.external_calendar_busy_sync'
+          : 'clinical_core.external_calendar_request';
+        const result = await tx.query<{ data: unknown }>(`select ${routine}($1::jsonb) as data`, [JSON.stringify(request)]);
         const raw = result.rows[0]?.data;
         return parseExternalCalendarResponse(request, typeof raw === 'string' ? JSON.parse(raw) : raw);
       });

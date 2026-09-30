@@ -237,7 +237,7 @@ describe("synthetic AWS functional lab rules", () => {
       { canonicalName: "Iron", value: 128, unit: "ug/dL", labMin: 59, labMax: 158 },
       { canonicalName: "Fasting Insulin", value: 10.7, unit: "uIU/mL", labMin: 2.6, labMax: 24.9 },
       { canonicalName: "HOMA-IR", value: 2.3, unit: "ratio", labMin: 0.7, labMax: 2 },
-    ].map((row, index) => ({
+    ].map((row) => ({
       ...row,
       reportedName: row.canonicalName,
       functionalMin: null,

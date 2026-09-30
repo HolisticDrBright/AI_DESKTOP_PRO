@@ -49,6 +49,16 @@ export const externalCalendarRequest = z.discriminatedUnion('action', [
   }).strict(),
   z.object({ action: z.literal('set_calendars'), expectedRevision: revision, calendarIds }).strict(),
   z.object({ action: z.literal('disconnect'), expectedRevision: revision }).strict(),
+  // Busy time is stored rather than read at booking time, because an HTTP read cannot be
+  // inside the transaction that commits the appointment. Only intervals travel here.
+  z.object({
+    action: z.literal('busy_sync'),
+    windowFrom: z.string().datetime({ offset: true }), windowTo: z.string().datetime({ offset: true }),
+    busy: z.array(z.object({
+      start: z.string().datetime({ offset: true }), end: z.string().datetime({ offset: true }),
+    }).strict()).max(500),
+    unavailableCalendars: z.number().int().min(0).max(10),
+  }).strict(),
 ]);
 export type ExternalCalendarRequest = z.infer<typeof externalCalendarRequest>;
 
@@ -63,6 +73,12 @@ export const externalCalendarBrowserRequest = z.discriminatedUnion('action', [
   z.object({ action: z.literal('start') }).strict(),
   z.object({ action: z.literal('set_calendars'), expectedRevision: revision, calendarIds }).strict(),
   z.object({ action: z.literal('disconnect'), expectedRevision: revision }).strict(),
+  // A page may ask for busy time to be refreshed for a window. It may not supply the
+  // intervals: those come from the provider, on the server.
+  z.object({
+    action: z.literal('sync_busy'),
+    windowFrom: z.string().datetime({ offset: true }), windowTo: z.string().datetime({ offset: true }),
+  }).strict(),
 ]);
 export type ExternalCalendarBrowserRequest = z.infer<typeof externalCalendarBrowserRequest>;
 
@@ -90,6 +106,13 @@ export const externalCalendarResponse = z.discriminatedUnion('action', [
   z.object({ ...connectionShape, action: z.literal('record_state'), hasRefreshToken: z.boolean() }).strict(),
   z.object({ ...connectionShape, action: z.literal('set_calendars'), calendarIds }).strict(),
   z.object({ ...connectionShape, action: z.literal('disconnect'), hasRefreshToken: z.literal(false) }).strict(),
+  z.object({
+    action: z.literal('busy_sync'), connectionId: z.string().uuid(),
+    stored: z.number().int().min(0), unavailableCalendars: z.number().int().min(0),
+    // A window the provider could not fully answer for is not a complete answer, and
+    // booking treats an incomplete window as no answer at all.
+    complete: z.boolean(), syncedAt: z.string().datetime({ offset: true }),
+  }).strict(),
 ]);
 export type ExternalCalendarResponse = z.infer<typeof externalCalendarResponse>;
 
@@ -117,3 +140,11 @@ export const externalCalendarStarted = z.object({
   connectionId: z.string().uuid(),
 }).strict();
 export type ExternalCalendarStarted = z.infer<typeof externalCalendarStarted>;
+
+/** What the browser gets back when it asks for busy time to be refreshed. */
+export const externalCalendarBusySynced = z.object({
+  action: z.literal('sync_busy'),
+  stored: z.number().int().min(0), unavailableCalendars: z.number().int().min(0),
+  complete: z.boolean(),
+}).strict();
+export type ExternalCalendarBusySynced = z.infer<typeof externalCalendarBusySynced>;

@@ -22,7 +22,6 @@ import {
 } from "./aws-governed-catalog";
 import { GovernedCatalogSourcePackageError, loadAndAdaptGovernedCatalogSourcePackage } from "./aws-governed-catalog-seed-adapter";
 
-const SHA256 = /^[0-9a-f]{64}$/;
 const ORDINARY_TYPES = new Set(["supplement", "medical_food", "protein_meal_replacement"]);
 const AUTO_EXCLUDED = new Set(["oral_peptide", "bioregulator_peptide", "bundle", "protocol_kit", "topical", "other"]);
 

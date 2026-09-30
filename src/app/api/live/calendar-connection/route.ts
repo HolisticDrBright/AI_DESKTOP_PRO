@@ -3,7 +3,7 @@ import { NextResponse } from 'next/server';
 
 import { externalCalendarBrowserRequest } from '@/contracts/externalCalendar';
 import { readBoundedRequestBody } from '@/server/bounded-request-body';
-import { beginCalendarAuthorization } from '@/server/calendar/externalCalendarConnectionFlow';
+import { beginCalendarAuthorization, syncCalendarBusyTime } from '@/server/calendar/externalCalendarConnectionFlow';
 import { createCalendarHttp } from '@/server/calendar/externalCalendarHttp';
 import { createCalendarTokenKeyResolver } from '@/server/calendar/externalCalendarKey';
 import { readCalendarConfiguration } from '@/server/calendar/externalCalendarTransport';
@@ -34,19 +34,39 @@ export async function POST(request: Request) {
   try {
     const body = externalCalendarBrowserRequest.parse(JSON.parse(new TextDecoder().decode(await readBoundedRequestBody(request, 65536, 5000))));
     const workforce = calendarWorkforceCall(session.token, request.signal);
-    if (body.action !== 'start') return json(200, { data: await workforce(body) });
+    if (body.action !== 'start' && body.action !== 'sync_busy') return json(200, { data: await workforce(body) });
     const configuration = readCalendarConfiguration(process.env as Record<string, string | undefined>);
     // Not configured is a plain answer, not a failure: the connector is off by default.
     if (!configuration.ok) return json(409, { error: 'calendar_not_configured', reason: configuration.refusal });
+    const secrets = new SecretsManagerClient({});
+    const tokenKey = createCalendarTokenKeyResolver({
+      environment: process.env as Record<string, string | undefined>, secrets,
+    });
+    const clientSecret = async () => {
+      const { GetSecretValueCommand } = await import('@aws-sdk/client-secrets-manager');
+      const secret = await secrets.send(
+        new GetSecretValueCommand({ SecretId: configuration.value.clientSecretArn }),
+      ) as { SecretString?: string };
+      if (typeof secret.SecretString !== 'string') throw new Error('client_secret_unreadable');
+      return secret.SecretString.trim();
+    };
+    if (body.action === 'sync_busy') {
+      const http = createCalendarHttp(fetch);
+      const synced = await syncCalendarBusyTime({
+        configuration: configuration.value, workforce,
+        postForm: http.postForm, postJson: http.postJson,
+        tokenKey, clientSecret, now: () => new Date(),
+      }, { from: body.windowFrom, to: body.windowTo });
+      // A refusal here is a decided answer about the connection, not a server fault.
+      if (!synced.ok) return json(409, { error: 'calendar_busy_sync_refused', reason: synced.refusal });
+      return json(200, { data: { action: 'sync_busy', ...synced.value } });
+    }
     const started = await beginCalendarAuthorization({
       configuration: configuration.value,
       workforce,
       postForm: createCalendarHttp(fetch).postForm,
-      tokenKey: createCalendarTokenKeyResolver({
-        environment: process.env as Record<string, string | undefined>,
-        secrets: new SecretsManagerClient({}),
-      }),
-      clientSecret: async () => { throw new Error('client_secret_not_needed_to_begin'); },
+      tokenKey,
+      clientSecret,
       now: () => new Date(),
     });
     if (!started.ok) return json(started.refusal === 'workforce_refused' ? 409 : 503, { error: 'calendar_authorization_refused', reason: started.refusal });

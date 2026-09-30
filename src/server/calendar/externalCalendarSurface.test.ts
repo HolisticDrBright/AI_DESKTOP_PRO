@@ -11,12 +11,27 @@ const CALLBACK_ROUTE = 'src/app/api/live/calendar-connection/callback/route.ts';
 const PANEL = 'src/components/calendar/ExternalCalendarConnectionPanel.tsx';
 
 describe('what a browser may ask about a calendar connection', () => {
-  it('accepts only the four actions a page has any business naming', () => {
-    for (const action of ['read', 'start', 'set_calendars', 'disconnect']) {
+  it('accepts only the actions a page has any business naming', () => {
+    for (const action of ['read', 'start', 'set_calendars', 'disconnect', 'sync_busy']) {
       const body = action === 'set_calendars' ? { action, expectedRevision: '1', calendarIds: ['a@example.com'] }
-        : action === 'disconnect' ? { action, expectedRevision: '1' } : { action };
+        : action === 'disconnect' ? { action, expectedRevision: '1' }
+        : action === 'sync_busy' ? { action, windowFrom: '2026-10-05T00:00:00.000Z', windowTo: '2026-10-06T00:00:00.000Z' }
+        : { action };
       expect(externalCalendarBrowserRequest.safeParse(body).success, action).toBe(true);
     }
+  });
+
+  it('will not let a page supply the busy intervals themselves', () => {
+    // The intervals come from the provider, on the server. A page that could name them
+    // could declare itself free.
+    expect(externalCalendarBrowserRequest.safeParse({
+      action: 'sync_busy', windowFrom: '2026-10-05T00:00:00.000Z', windowTo: '2026-10-06T00:00:00.000Z',
+      busy: [], unavailableCalendars: 0,
+    }).success).toBe(false);
+    expect(externalCalendarBrowserRequest.safeParse({
+      action: 'busy_sync', windowFrom: '2026-10-05T00:00:00.000Z', windowTo: '2026-10-06T00:00:00.000Z',
+      busy: [], unavailableCalendars: 0,
+    }).success).toBe(false);
   });
 
   it('cannot express the actions that move sealed material', () => {
@@ -100,6 +115,14 @@ describe('the panel', () => {
 
   it('cannot send a verifier, a state or a sealed token', () => {
     for (const forbidden of ['stateDigest', 'verifier', 'ciphertext', 'refresh:']) expect(source, forbidden).not.toContain(forbidden);
+  });
+
+  it('offers the busy refresh and says what an unconfirmed booking does', () => {
+    expect(source).toContain('external-calendar-refresh-busy');
+    // The consequence of not refreshing is on the screen, because it is a refusal the
+    // practitioner will otherwise meet at the moment of booking with no explanation.
+    expect(source).toMatch(/the booking is refused rather than guessed at/);
+    expect(source).toMatch(/bookings will not be confirmed against this one/);
   });
 });
 

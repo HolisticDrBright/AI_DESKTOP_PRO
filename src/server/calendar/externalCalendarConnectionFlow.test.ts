@@ -3,7 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 
 import type { ExternalCalendarRequest, ExternalCalendarResponse } from '../../contracts/externalCalendar';
-import { beginCalendarAuthorization, completeCalendarAuthorization, type CalendarFlowDependencies } from './externalCalendarConnectionFlow';
+import { beginCalendarAuthorization, completeCalendarAuthorization, syncCalendarBusyTime, type CalendarFlowDependencies } from './externalCalendarConnectionFlow';
 import { calendarStateDigest, openCalendarToken, readCalendarConfiguration, sealCalendarToken } from './externalCalendarTransport';
 
 const READ_SCOPE = 'https://www.googleapis.com/auth/calendar.readonly';
@@ -198,4 +198,103 @@ describe('completing a calendar authorization', () => {
     if (complete?.action !== 'complete') throw new Error('no complete');
     expect(complete.refresh).toBeNull();
   });
+});
+
+describe('syncing busy time',()=>{
+ const WINDOW={from:'2026-10-05T00:00:00.000Z',to:'2026-10-06T00:00:00.000Z'};
+ const refreshSealed=()=>{
+  const sealed=sealCalendarToken(key,CONNECTION,'refresh-token-value');
+  if(!sealed.ok)throw new Error(sealed.refusal);
+  return {...sealed.value,connectionId:CONNECTION};
+ };
+ type Over={
+  read?:Partial<Extract<ExternalCalendarResponse,{action:'read'}>>;
+  postForm?:CalendarFlowDependencies['postForm'];
+  postJson?:CalendarFlowDependencies['postJson'];
+  material?:'absent';
+ };
+ function busyDependencies(over:Over={},recorded:Recorded={requests:[]}):CalendarFlowDependencies{
+  const workforce:CalendarFlowDependencies['workforce']=async request=>{
+   recorded.requests.push(request);
+   if(request.action==='read')return {action:'read',state:'connected',connected:true,connectionId:CONNECTION,
+    provider:'google',scopes:[READ_SCOPE],calendarIds:['a@example.com'],hasRefreshToken:true,
+    expiresAt:'2026-10-05T09:00:00.000Z',revision:'2',...over.read} as ExternalCalendarResponse;
+   if(request.action==='material'){
+    if(over.material==='absent')throw new Error('reauthorization required');
+    return {action:'material',connectionId:CONNECTION,state:'connected',revision:'2',
+     expiresAt:'2026-10-05T09:00:00.000Z',refresh:refreshSealed()} as ExternalCalendarResponse;
+   }
+   if(request.action==='record_state')return {action:'record_state',connectionId:CONNECTION,
+    state:request.state,revision:'3',hasRefreshToken:true};
+   if(request.action==='busy_sync')return {action:'busy_sync',connectionId:CONNECTION,
+    stored:request.busy.length,unavailableCalendars:request.unavailableCalendars,
+    complete:request.unavailableCalendars===0,syncedAt:'2026-10-05T08:00:00.000Z'};
+   throw new Error('unexpected');
+  };
+  return {
+   configuration:configuration(),workforce,
+   postForm:over.postForm??(async()=>({status:200,
+    json:{access_token:'access-token-value',expires_in:3600,token_type:'Bearer',scope:READ_SCOPE}})),
+   postJson:over.postJson??(async()=>({status:200,
+    json:{calendars:{'a@example.com':{busy:[{start:'2026-10-05T09:00:00.000Z',end:'2026-10-05T10:00:00.000Z'}]}}}})),
+   tokenKey:async()=>key,clientSecret:async()=>'client-secret-value',
+   now:()=>new Date('2026-10-05T08:00:00.000Z'),entropy:()=>entropy,
+  };
+ }
+
+ it('refreshes, reads and stores, in that order',async()=>{
+  const recorded:Recorded={requests:[]};
+  const outcome=await syncCalendarBusyTime(busyDependencies({},recorded),WINDOW);
+  expect(outcome).toEqual({ok:true,value:{stored:1,unavailableCalendars:0,complete:true}});
+  expect(recorded.requests.map(request=>request.action))
+   .toEqual(['read','material','record_state','busy_sync']);
+ });
+
+ it('stores an incomplete window as incomplete rather than as free',async()=>{
+  const outcome=await syncCalendarBusyTime(busyDependencies({
+   postJson:async()=>({status:200,json:{calendars:{'a@example.com':{errors:[{reason:'notFound'}]}}}}),
+  }),WINDOW);
+  expect(outcome).toEqual({ok:true,value:{stored:0,unavailableCalendars:1,complete:false}});
+ });
+
+ it('records the revocation before giving up on an invalid grant',async()=>{
+  const recorded:Recorded={requests:[]};
+  const outcome=await syncCalendarBusyTime(busyDependencies({
+   postForm:async()=>({status:400,json:{error:'invalid_grant'}}),
+  },recorded),WINDOW);
+  expect(outcome).toEqual({ok:false,refusal:'invalid_grant'});
+  const state=recorded.requests.find(request=>request.action==='record_state');
+  expect(state).toMatchObject({action:'record_state',state:'revoked'});
+  // And nothing was stored on the strength of a failed refresh.
+  expect(recorded.requests.some(request=>request.action==='busy_sync')).toBe(false);
+ });
+
+ it('records the expiry when the provider rejects the read, and stores nothing',async()=>{
+  const recorded:Recorded={requests:[]};
+  const outcome=await syncCalendarBusyTime(busyDependencies({
+   postJson:async()=>({status:401,json:{error:'invalid_credentials'}}),
+  },recorded),WINDOW);
+  expect(outcome).toEqual({ok:false,refusal:'unauthorized'});
+  expect(recorded.requests.filter(request=>request.action==='record_state').at(-1))
+   .toMatchObject({state:'expired'});
+  expect(recorded.requests.some(request=>request.action==='busy_sync')).toBe(false);
+ });
+
+ it('refuses without a connection, without chosen calendars, and without material',async()=>{
+  await expect(syncCalendarBusyTime(busyDependencies({read:{connected:false}}),WINDOW))
+   .resolves.toEqual({ok:false,refusal:'not_connected'});
+  await expect(syncCalendarBusyTime(busyDependencies({read:{calendarIds:[]}}),WINDOW))
+   .resolves.toEqual({ok:false,refusal:'no_calendars_chosen'});
+  await expect(syncCalendarBusyTime(busyDependencies({material:'absent'}),WINDOW))
+   .resolves.toEqual({ok:false,refusal:'reauthorization_required'});
+ });
+
+ it('bounds the window it will ask about',async()=>{
+  for(const window of [{from:WINDOW.to,to:WINDOW.from},
+   {from:'2026-10-05T00:00:00.000Z',to:'2026-12-05T00:00:00.000Z'},
+   {from:'not-a-date',to:WINDOW.to}]){
+   await expect(syncCalendarBusyTime(busyDependencies(),window),JSON.stringify(window))
+    .resolves.toEqual({ok:false,refusal:'window_invalid'});
+  }
+ });
 });

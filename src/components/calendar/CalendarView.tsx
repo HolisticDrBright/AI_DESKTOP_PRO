@@ -1484,9 +1484,13 @@ function BookingDrawer({
       })
       .catch((e) => {
         setWorking(false);
+        // The overlap hint is only added when the message has not already explained why.
+        // A refusal from the practitioner's own connected calendar explains itself, and
+        // telling them to pick another slot would send them looking in the wrong place.
+        const explained = isAdapterError(e) && /calendar/i.test(e.safeMessage);
         setErrorMsg(
           isAdapterError(e)
-            ? `${e.safeMessage}${e.code === "invalid" ? " If the time overlaps an existing appointment, pick another slot." : ""}`
+            ? `${e.safeMessage}${e.code === "invalid" && !explained ? " If the time overlaps an existing appointment, pick another slot." : ""}`
             : "Could not book the appointment.",
         );
       });

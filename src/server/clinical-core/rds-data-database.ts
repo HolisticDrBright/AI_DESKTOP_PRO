@@ -225,6 +225,9 @@ function classifyDatabaseRejection(error: unknown): ClinicalCoreDatabaseRejectio
   if (/\bexternal_calendar_forbidden\b/.test(message)) return new ClinicalCoreDatabaseRejection("identity_refused");
   if (/\b(external_calendar_scope_refused|external_calendar_immutable|external_calendar_absent)\b/.test(message)) return new ClinicalCoreDatabaseRejection("operation_refused");
   if (/\b(external_calendar_not_pending|external_calendar_state_mismatch|external_calendar_authorization_expired|external_calendar_revision_stale|external_calendar_not_connected|external_calendar_reauthorization_required)\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");
+  // A booking refused because the practitioner's external calendar says otherwise, or
+  // because it cannot currently say anything. Both are decided answers, not faults.
+  if (/\b(external_busy_conflict|external_busy_unknown|external_busy_stale|external_busy_unreadable)\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");
   if (/\b(recording_access_refused|recording_capture_refused|recording_representative_authority_required)\b/.test(message)) return new ClinicalCoreDatabaseRejection("operation_refused");
   if (/\b(recording_consent_required|recording_consent_release_required|recording_capture_release_required|recording_roster_required|recording_storage_release_required)\b/.test(message)) return new ClinicalCoreDatabaseRejection("consent_required");
   if (/\b(recording_segment_conflict|recording_segment_order_required|recording_reservation_expired)\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");
