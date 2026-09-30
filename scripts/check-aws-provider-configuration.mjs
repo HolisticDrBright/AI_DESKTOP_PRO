@@ -57,6 +57,21 @@ if (fullscript) {
   require(fullscript.Parameters?.FullscriptClientSecret?.NoEcho === true, "Fullscript client secret parameter must be NoEcho");
   require(!fullscript.Parameters?.FullscriptClientSecret?.Default, "Fullscript client secret must have no default");
 }
+// The external calendar connector is source-only and has no template yet, so its posture is
+// asserted where it actually lives: the module must be disabled without an explicit opt-in,
+// must accept only read-only scopes, and must hold no credential or network call.
+const calendar = read("src/server/calendar/externalCalendarSync.ts");
+if (calendar) {
+  require(/EXTERNAL_CALENDAR_ENABLED \?\? ''\)\.trim\(\) === '1'/.test(calendar.replace(/"/g, "'")),
+    "external calendar must require an explicit EXTERNAL_CALENDAR_ENABLED=1");
+  require(!/auth\/calendar'/.test(calendar) && !/auth\/calendar\.events'/.test(calendar),
+    "external calendar must not allow a write scope");
+  require(/calendar\.freebusy/.test(calendar), "external calendar must offer the busy-time scope");
+  require(!/fetch\(|oauth2\.googleapis\.com|client_secret=|apps\.googleusercontent\.com/.test(calendar),
+    "external calendar core must stay credential-free and make no provider call");
+  require(/CLIENT_SECRET_ARN/.test(calendar), "external calendar must reference its secret by ARN name, never a value");
+}
+
 const account = json("infra/aws-clinical-core/consumer-account-extension.json");
 if (account) require(account.Parameters?.AccountActivation?.Default === "blocked", "consumer account activation must default to blocked");
 
@@ -69,5 +84,5 @@ if (errors.length) {
   for (const error of errors) console.error(`AWS provider configuration check failed: ${error}`);
   process.exitCode = 1;
 } else {
-  console.log("AWS provider configuration check passed: Zoom, SES reminders, Stripe test mode, Fullscript and consumer activation are disabled by default, credential-free and matched to their runtimes. Not provider approval or PHI activation.");
+  console.log("AWS provider configuration check passed: Zoom, SES reminders, Stripe test mode, Fullscript, the external calendar connector and consumer activation are disabled by default, credential-free and matched to their runtimes. Not provider approval or PHI activation.");
 }
