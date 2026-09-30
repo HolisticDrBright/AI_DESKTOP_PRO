@@ -93,16 +93,24 @@ than superseded. **Migration 33 is unchanged and was not touched.**
 | `20260929110000_synthetic_care_message_settlement.sql` (applied, unchanged) | `7777a42ab16df9d487e27914c59740230f72fbca6c183c44f18493e9dcd3929a` |
 | `20260929120000_synthetic_program_assignments.sql` (corrected) | `8d6bcac8dfbe5582e7ee63d5f7ed6a5b4466760195f251d10780f08e3fb4a1d8` |
 | `20260930100000_synthetic_external_calendar_connections.sql` (new, unapplied) | `d6ca115e4ee3093859569e7a18f51867fb2204fb550795bc29a8e76ddaa486be` |
+| `20260930110000_synthetic_care_data_lifecycle.sql` (new, unapplied) | `f30ae4449b5ae2f5269d804bb69da6f942e0d2e3686c932d0cd1a7b7c7e26496` |
 
-Ledger is now **35** entries. Composite of all 35 `version:sha256` lines:
-`b669ff72e6250e37f5e9628b217ca06322912817bea67b028423b35a959fa626`. Recompute from the
+Ledger is now **36** entries. Composite of all 36 `version:sha256` lines:
+`824b8fd513e54d5f97c8344ba648bb1df49611bcdc090224050f3a85336a2aff`. Recompute from the
 checkout before applying; do not trust this line alone.
+
+Migration 36 replaces the append-only trigger on `care_messages`,
+`care_message_settlements`, `program_assignment_completions` and
+`program_phase_authorizations` so a reviewed erasure can delete an owner's rows. The
+separate before-insert trigger that refuses a settled request id is a different trigger and
+is untouched; a test asserts it still fires after the replacement, because cancellation
+quietly ceasing to work is the one failure that would not announce itself.
 
 If migration 34 has been applied in any environment other than the inspected one, do not
 use this file — say so and an additive correction will be supplied instead.
 
-The API extension now declares **38** routes: the two program routes and one new workforce
-calendar-connection route. The route-count gate and its script were moved together. Deploy
+The API extension now declares **39** routes: the two program routes, one new workforce
+calendar-connection route and one new consumer care-data route. The route-count gate and its script were moved together. Deploy
 the program routes only after re-reviewing the corrected migration.
 
 ## Verification level

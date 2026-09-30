@@ -165,6 +165,11 @@
       "version": "20260930100000",
       "file": "20260930100000_synthetic_external_calendar_connections.sql",
       "production_transform": false
+    },
+    {
+      "version": "20260930110000",
+      "file": "20260930110000_synthetic_care_data_lifecycle.sql",
+      "production_transform": false
     }
   ]
 }

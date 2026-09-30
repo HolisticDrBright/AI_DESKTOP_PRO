@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 import {createCareMessaging,CareMessageError} from './care-messaging';
 import {createProgramAssignments,ProgramAssignmentError} from './program-assignments';
 import {createExternalCalendarConnections,ExternalCalendarError} from './external-calendar-connections';
+import {createCareDataLifecycle,CareDataError} from './care-data-lifecycle';
 import {labSpecimenTransferSchema} from "../../contracts/labSpecimenTransfer";
 
 import {
@@ -108,7 +109,7 @@ type RouteDefinition = {
       | "list_family_requests" | "approve_family" | "claim_family"
       | "list_delegated" | "read_delegated" | "revoke_family" | "get_chat_context"
       | "consumer_chat" | "workforce_chat" | "care_messages" | "program_assignments"
-      | "calendar_connection";
+      | "calendar_connection" | "care_data_lifecycle";
 };
 
 const ROUTES: Readonly<Record<string, RouteDefinition>> = {
@@ -116,6 +117,7 @@ const ROUTES: Readonly<Record<string, RouteDefinition>> = {
   "POST /clinical-core/consumer/programs": {pool:"consumer",purpose:"clinical_data",operation:"program_assignments"},
   "POST /clinical-core/workforce/programs": {pool:"workforce",purpose:"clinical_data",operation:"program_assignments"},
   "POST /clinical-core/workforce/calendar-connection": {pool:"workforce",purpose:"clinical_data",operation:"calendar_connection"},
+  "POST /clinical-core/consumer/care-data": {pool:"consumer",purpose:"consent_management",operation:"care_data_lifecycle"},
   "POST /clinical-core/workforce/messages": {pool:"workforce",purpose:"clinical_data",operation:"care_messages"},
   "GET /clinical-core/workforce/posture": { pool: "workforce", purpose: "identity_link", operation: "posture" },
   "GET /clinical-core/consumer/posture": { pool: "consumer", purpose: "identity_link", operation: "posture" },
@@ -255,6 +257,7 @@ function createIdentityApiHandler<Context extends ClinicalRequestContext>(input:
   const careMessaging=input.database ? createCareMessaging(input.database) : undefined;
   const programAssignments=input.database ? createProgramAssignments(input.database) : undefined;
   const calendarConnections=input.database ? createExternalCalendarConnections(input.database) : undefined;
+  const careDataLifecycle=input.database ? createCareDataLifecycle(input.database) : undefined;
   validateConfiguration(input.configuration);
 
   return async (event: ApiGatewayV2Event): Promise<ApiGatewayV2Response> => {
@@ -296,6 +299,17 @@ function createIdentityApiHandler<Context extends ClinicalRequestContext>(input:
         if(!Number.isFinite(expiry)||expiry*1000<=Date.now())return response(403,{error:"identity_refused"});
         if(Object.keys(event.queryStringParameters??{}).length)return response(400,{error:"request_invalid"});
         return response(200,{data:await programAssignments(context,parseBody(event))});
+      }
+      if (route.operation === "care_data_lifecycle") {
+        // The owner's own export and erasure for the messaging and program domains.
+        // Synthetic boundary only, like the domains themselves.
+        if(input.boundary!=="synthetic")return response(403,{error:"pilot_scope_refused"});
+        if(!careDataLifecycle)return response(503,{error:"service_unavailable"});
+        const claims=event.requestContext?.authorizer?.jwt?.claims;
+        const expiry=Number(claims?.exp);
+        if(!Number.isFinite(expiry)||expiry*1000<=Date.now())return response(403,{error:"identity_refused"});
+        if(Object.keys(event.queryStringParameters??{}).length)return response(400,{error:"request_invalid"});
+        return response(200,{data:await careDataLifecycle(context,parseBody(event))});
       }
       if (route.operation === "calendar_connection") {
         // Same posture as programs and messaging: synthetic boundary only, live JWT only,
@@ -630,7 +644,8 @@ function createIdentityApiHandler<Context extends ClinicalRequestContext>(input:
           : error.category === "consent_required" ? 409 : 503;
         return response(status, { error: error.category });
       }
-      if(error instanceof CareMessageError||error instanceof ProgramAssignmentError||error instanceof ExternalCalendarError) {
+      if(error instanceof CareMessageError||error instanceof ProgramAssignmentError||error instanceof ExternalCalendarError
+        ||error instanceof CareDataError) {
         return response(error.category==="identity_refused"?403:error.category==="conflict"?409:error.category==="request_invalid"?400:503,{error:error.category});
       }
       if (error instanceof PatientChatError) {

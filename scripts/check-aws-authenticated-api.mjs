@@ -30,7 +30,7 @@ export function validateAuthenticatedApi(foundation, extension) {
   }
 
   const routeEntries = Object.entries(resources).filter(([, resource]) => resource.Type === "AWS::ApiGatewayV2::Route");
-  assert(errors, routeEntries.length === 38, "extension must expose exactly thirty-eight authenticated routes");
+  assert(errors, routeEntries.length === 39, "extension must expose exactly thirty-nine authenticated routes");
   const expectedRoutes = new Set([
     "GET /clinical-core/workforce/posture",
     "GET /clinical-core/consumer/posture",
@@ -70,6 +70,7 @@ export function validateAuthenticatedApi(foundation, extension) {
     "POST /clinical-core/consumer/programs",
     "POST /clinical-core/workforce/programs",
     "POST /clinical-core/workforce/calendar-connection",
+    "POST /clinical-core/consumer/care-data",
   ]);
   for (const [logicalId, route] of routeEntries) {
     assert(errors, expectedRoutes.delete(route.Properties?.RouteKey), `${logicalId} route is unexpected or duplicated`);
