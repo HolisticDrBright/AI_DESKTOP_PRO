@@ -12,6 +12,10 @@ import {
   type RevisionWorkforceRequest, type RevisionWorkforceResponse,
 } from '@/contracts/clinicalDisputes';
 import {
+  protocolCartRequest, parseProtocolCartResponse,
+  type ProtocolCartRequest, type ProtocolCartResponse,
+} from '@/contracts/protocolCarts';
+import {
   noteTemplateAdminRequest, noteDraftingContextRequest,
   parseNoteTemplateAdminResponse, parseNoteDraftingContextResponse,
   type NoteTemplateAdminRequest, type NoteTemplateAdminResponse,
@@ -114,4 +118,10 @@ export const noteDraftingContextCall = (token: string, signal?: AbortSignal) =>
   call<NoteDraftingContextRequest, NoteDraftingContextResponse>({
     token, signal, path: '/clinical-core/workforce/note-drafting-context',
     parse: body => noteDraftingContextRequest.parse(body), bind: parseNoteDraftingContextResponse,
+  });
+/** Compiling and reading a cart from a published protocol. Nothing here delivers anything. */
+export const protocolCartCall = (token: string, signal?: AbortSignal) =>
+  call<ProtocolCartRequest, ProtocolCartResponse>({
+    token, signal, path: '/clinical-core/workforce/protocol-carts',
+    parse: body => protocolCartRequest.parse(body), bind: parseProtocolCartResponse,
   });

@@ -200,6 +200,11 @@
       "version": "20260930170000",
       "file": "20260930170000_synthetic_note_templates_and_house_style.sql",
       "production_transform": false
+    },
+    {
+      "version": "20260930180000",
+      "file": "20260930180000_synthetic_protocol_cart_compilation.sql",
+      "production_transform": false
     }
   ]
 }

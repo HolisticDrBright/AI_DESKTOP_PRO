@@ -3,6 +3,7 @@ import {useEffect,useRef,useState} from 'react';
 import {parseProgramAssignmentResponse,type ProgramAssignmentRequest,type ProgramAssignmentResponse} from '@/contracts/programAssignments';
 import {onWorkforceSessionChange} from '@/lib/workforce-session-change';
 import {RevisionAnnouncePanel} from '@/components/governance/RevisionAnnouncePanel';
+import {ProtocolCartPanel} from './ProtocolCartPanel';
 
 type Status=Extract<ProgramAssignmentResponse,{action:'status'}>;
 type Connections=Extract<ProgramAssignmentResponse,{action:'connections'}>;
@@ -128,6 +129,8 @@ export function AppProgramAssignmentsPanel(){
      onClick={()=>void run({action:'programs'})}>Load published programs</button>}
 
    {programVersionId.trim()?<RevisionAnnouncePanel toVersionId={programVersionId.trim()}/>:null}
+   {/* The supplement list this version compiles to, with its exclusions already applied. */}
+   {programVersionId.trim()?<ProtocolCartPanel programVersionId={programVersionId.trim()}/>:null}
   {preview?<div className="rounded-lg border p-3" data-testid="program-preview">
     <p className="font-semibold">{preview.title}</p>
     <p className="text-sm">Version {preview.programVersion}. This is what the patient would see; it comes from the

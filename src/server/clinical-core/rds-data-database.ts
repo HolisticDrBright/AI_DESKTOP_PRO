@@ -270,6 +270,12 @@ function classifyDatabaseRejection(error: unknown): ClinicalCoreDatabaseRejectio
   if (/\bnote_template_forbidden\b/.test(message)) return new ClinicalCoreDatabaseRejection("identity_refused");
   if (/\b(note_template_absent|note_template_draft_absent|note_template_version_immutable|practice_note_style_immutable)\b/.test(message)) return new ClinicalCoreDatabaseRejection("operation_refused");
   if (/\bnote_template_digest_mismatch\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");
+  // Compiling a cart from a published protocol. An absent manifest, an unpublished version and
+  // a protocol with nothing to buy are all `operation_refused`: one answer for all of them, so a
+  // caller cannot use the status to learn which protocols exist.
+  if (/\bprotocol_cart_invalid\b/.test(message)) return new ClinicalCoreDatabaseRejection("request_invalid");
+  if (/\bprotocol_cart_forbidden\b/.test(message)) return new ClinicalCoreDatabaseRejection("identity_refused");
+  if (/\b(protocol_cart_absent|protocol_cart_version_absent|protocol_cart_version_unpublished|protocol_cart_no_supplements|protocol_cart_immutable)\b/.test(message)) return new ClinicalCoreDatabaseRejection("operation_refused");
   if (/\bspecimen_consent_required\b/.test(message)) return new ClinicalCoreDatabaseRejection("consent_required");
   if (/\bspecimen_context_conflict\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");
   if (/\bspecimen_context_invalid\b/.test(message)) return new ClinicalCoreDatabaseRejection("request_invalid");
