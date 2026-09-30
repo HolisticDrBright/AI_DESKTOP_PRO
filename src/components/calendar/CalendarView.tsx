@@ -387,7 +387,11 @@ export function CalendarView({
 
   if (!anchor || !now) {
     return (
-      <section data-screen-label="Calendar" className="px-5 pt-4 pb-8">
+      <section data-screen-label="Calendar" className="px-5 pt-4 pb-8" data-testid="calendar-loading">
+        {/* The pulse says "loading" to someone looking at it and nothing at all to someone
+            using a screen reader, which leaves them unable to tell loading from empty from
+            broken. The status below is the same statement, made out loud. */}
+        <p role="status" className="sr-only">Loading the calendar.</p>
         <div className="h-[70vh] animate-pulse rounded-2xl bg-sunken" aria-hidden />
       </section>
     );

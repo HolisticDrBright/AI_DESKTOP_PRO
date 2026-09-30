@@ -33,9 +33,29 @@ and neither may be a blank page.
 `src/components/launch-surface-empty-states.test.ts` holds this: it requires all three
 branches per surface, fails if a `catch` reassures with "no results" or similar, and fails
 if a surface offers no action at all when empty. It is a source assertion — it checks the
-branches exist and are distinct, not what they look like on screen. A render harness does
-not exist in this repository, which is a real limitation and is why the visual half stays
-with the physical acceptance scripts.
+branches exist and are distinct, not which one renders.
+
+**Update, September 30, 2026: a render harness now exists, and it found one.**
+`src/test-support/renderToText.ts` renders a component with `react-dom/server`, which was
+already a dependency, so no new package was added. Tests using it are written with
+`createElement` because this project's tsconfig sets `jsx: "preserve"` for Next.js; the test
+transform's JSX runtime is overridden in `vitest.config.ts` and the Next build is untouched.
+
+`launch-surface-first-paint.test.ts` renders all five surfaces inside the app's real
+`FeedbackProvider` and asserts that the branch shown before any data has arrived claims
+neither emptiness nor failure — the two lies the structural test cannot catch.
+
+What it found: the calendar rendered a pulsing placeholder marked `aria-hidden` with no text
+at all. To someone looking at it that reads as loading; to someone using a screen reader it
+is silence, which leaves them unable to tell loading from empty from broken — the exact
+distinction this section is about. The loading branch now carries an audible status, and the
+assertion that every surface says something readable on first paint keeps it there.
+
+The limit is real and worth stating: effects do not run in this harness, so only the
+pre-data state is rendered. Asserting the states that follow a load needs a DOM environment
+and a testing library, which are new dependency trees on an application heading into a
+security review — an owner decision, not a test-helper detail. The visual half stays with
+the physical acceptance scripts.
 
 ## Same-origin validation
 

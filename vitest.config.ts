@@ -2,6 +2,10 @@ import { defineConfig } from "vitest/config";
 import path from "node:path";
 
 export default defineConfig({
+  // Next.js needs `jsx: "preserve"` in tsconfig, which leaves the test transform unable to
+  // parse the JSX in a component. This overrides it for the test compile only; tsconfig and
+  // the Next build are untouched.
+  oxc: { jsx: { runtime: "automatic", importSource: "react" } },
   resolve: {
     alias: { "@": path.resolve(__dirname, "src") },
   },
