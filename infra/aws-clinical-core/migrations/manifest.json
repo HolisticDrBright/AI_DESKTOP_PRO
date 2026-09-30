@@ -185,6 +185,11 @@
       "version": "20260930140000",
       "file": "20260930140000_synthetic_intake_forms_and_signatures.sql",
       "production_transform": false
+    },
+    {
+      "version": "20260930150000",
+      "file": "20260930150000_synthetic_intake_data_lifecycle.sql",
+      "production_transform": false
     }
   ]
 }

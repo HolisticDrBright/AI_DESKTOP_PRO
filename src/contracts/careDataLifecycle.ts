@@ -19,7 +19,8 @@ export const CARE_DATA_LIFECYCLE_ACK = 'care-data-lifecycle/1' as const;
 const cursor = z.string().min(1).max(200);
 const when = z.string().datetime({offset: true});
 
-export const careDataSection = z.enum(['threads', 'messages', 'settlements', 'assignments', 'completions', 'authorizations']);
+export const careDataSection = z.enum(['threads', 'messages', 'settlements', 'assignments', 'completions',
+  'authorizations', 'intake_packets', 'intake_responses', 'signatures', 'consult_requests']);
 export type CareDataSection = z.infer<typeof careDataSection>;
 /** A domain erase keeps the cancellation refusal. Closure is the only thing that ends it. */
 export const careDataEraseScope = z.enum(['domain', 'account_closure']);
@@ -47,22 +48,65 @@ const completion = z.object({enrollmentId: z.string().uuid(), itemId: z.string()
 const authorization = z.object({enrollmentId: z.string().uuid(), phaseId: z.string().min(1).max(160),
   kind: z.enum(['consumer_check_in', 'practitioner_release']), authorizedAt: when}).strict();
 
+const digest = z.string().regex(/^[a-f0-9]{64}$/);
+const intakePacket = z.object({packetId: z.string().uuid(), label: z.string().min(1).max(160),
+  status: z.enum(['open', 'completed', 'cancelled']), dueBefore: when.nullable(), assignedAt: when,
+  completedAt: when.nullable(),
+  forms: z.array(z.object({itemId: z.string().uuid(), position: z.number().int().positive(),
+    required: z.boolean(), formKey: z.string().min(3).max(49), version: z.number().int().positive(),
+    title: z.string().min(1).max(160), kind: z.enum(['questionnaire', 'consent_document']),
+    contentSha256: digest}).strict()).max(20)}).strict();
+const intakeResponse = z.object({responseId: z.string().uuid(), packetItemId: z.string().uuid(),
+  formKey: z.string().min(3).max(49), version: z.number().int().positive(), title: z.string().min(1).max(160),
+  formContentSha256: digest, answers: z.record(z.string(), z.unknown()), answersSha256: digest,
+  submittedAt: when}).strict();
+/**
+ * A signed document, in full.
+ *
+ * The document body and the agreement sentence travel with the signature because a copy of
+ * what they signed is the thing a person most needs to be able to keep; a digest alone would
+ * let them prove nothing to anybody.
+ */
+const signature = z.object({signatureId: z.string().uuid(), packetItemId: z.string().uuid(),
+  formKey: z.string().min(3).max(49), version: z.number().int().positive(), title: z.string().min(1).max(160),
+  document: z.record(z.string(), z.unknown()), formContentSha256: digest,
+  agreementStatement: z.string().min(20).max(1000), agreementSha256: digest,
+  signerName: z.string().min(2).max(120),
+  signerAuthority: z.enum(['self', 'guardian', 'healthcare_proxy', 'legal_representative']),
+  signedAt: when}).strict();
+const consultRequest = z.object({requestId: z.string().uuid(), reference: z.string().regex(/^[A-HJ-NP-Z2-9]{10}$/),
+  visitType: z.enum(['initial', 'follow_up', 'urgent_question']),
+  reasonCode: z.enum(['new_consultation', 'lab_review', 'follow_up_care', 'supplement_question',
+    'program_question', 'insurance_question', 'other']),
+  status: z.enum(['received', 'accepted', 'declined', 'withdrawn', 'converted']),
+  preferredWindows: z.array(z.object({from: when, to: when}).strict()).max(5),
+  timeZone: z.string().min(3).max(64).nullable(), receivedAt: when, decidedAt: when.nullable(),
+  declineReason: z.enum(['outside_scope', 'not_accepting', 'duplicate_request', 'unreachable']).nullable(),
+  convertedAt: when.nullable()}).strict();
+
 const erasureCounts = {
   messagesErased: z.number().int().min(0), threadsErased: z.number().int().min(0),
   threadsRetained: z.number().int().min(0), assignmentsErased: z.number().int().min(0),
   settlementsErased: z.number().int().min(0), settlementsRetained: z.number().int().min(0),
+  responsesErased: z.number().int().min(0),
+  packetsRetained: z.number().int().min(0), packetsErased: z.number().int().min(0),
+  signaturesRetained: z.number().int().min(0), signaturesErased: z.number().int().min(0),
+  consultRequestsErased: z.number().int().min(0),
   lateAdmissionRefusable: z.boolean(),
 };
 
 export const careDataResponse = z.discriminatedUnion('action', [
   z.object({
     action: z.literal('export'), section: careDataSection, next: cursor.nullable(),
-    items: z.array(z.union([thread, message, settlement, assignment, completion, authorization])).max(100),
+    items: z.array(z.union([thread, message, settlement, assignment, completion, authorization,
+      intakePacket, intakeResponse, signature, consultRequest])).max(100),
   }).strict(),
   z.object({
     action: z.literal('erase'), scope: careDataEraseScope, erasureId: z.string().uuid(), ...erasureCounts,
     retainedReason: z.literal('cancellation_refusal_must_outlive_late_admission').nullable(),
     threadsRetainedReason: z.literal('thread_holds_another_participant_record').nullable(),
+    packetsRetainedReason: z.literal('packet_is_the_clinic_record_of_what_was_asked').nullable(),
+    signaturesRetainedReason: z.literal('signature_is_the_recorded_basis_for_care_already_given').nullable(),
   }).strict(),
   z.object({
     action: z.literal('erasure_history'),

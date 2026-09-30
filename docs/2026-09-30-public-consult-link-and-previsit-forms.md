@@ -111,11 +111,50 @@ appear in none of them.
   NONE`, no authorizer). The gate and the infrastructure test both name that route explicitly and
   assert it is the only one, so a second unauthenticated route cannot appear unnoticed.
 
+### Migration 40 — `20260930150000_synthetic_intake_data_lifecycle.sql`
+`sha256 3dae779f3f84db058142c3d77dd6b5681c68113760d20eb42b50767af3f8fb78`
+
+The two domains above shipped with no lifecycle, which is the same failure the messaging
+domains had before migration 36: an owner asking for a copy of their data would have been
+handed messages and programs and told that was everything.
+
+Four export sections added — `intake_packets`, `intake_responses`, `signatures`,
+`consult_requests` — and the erasure extended, following migration 36's rules rather than
+inventing new ones:
+
+- Their **answers** are their own words, so a domain erase removes them.
+- A **packet and its items** are the clinic's record that it asked, so a domain erase keeps
+  them and says so (`packet_is_the_clinic_record_of_what_was_asked`), exactly as a thread the
+  clinic has written in is kept.
+- A **signature** is retained by a domain erase and removed only by account closure
+  (`signature_is_the_recorded_basis_for_care_already_given`), the same shape as a settlement
+  tombstone. **This is a retention decision, not a legal opinion** — if a real obligation
+  requires a signature to outlive the account, that is your decision with counsel, and the
+  comment in the migration names the one place to change it.
+- A **consult request** is removed only by account closure, and only when it was converted,
+  because an unconverted request is not reachable from any account: nobody proved it was
+  theirs. Unconverted requests are therefore **not covered by any lifecycle**, and there is no
+  retention sweep for them. That gap is real and is not claimed as closed.
+
+The signature export carries the document body and the agreement sentence, not only a digest,
+because a copy of what they signed is the thing a person most needs to be able to keep.
+
+Two defects the closure test found, which reading had not:
+
+1. `consult_request_audit.request_id` referenced the request, so an account closure failed
+   outright — the request could not go while a row pointed at it. Keeping the request to keep
+   the audit would defeat the closure; dropping the audit would destroy the record that a link
+   received anything. The reference is released instead.
+2. Releasing it failed too: `on delete set null` is an update, and the audit refuses every
+   update. The refusal is now narrowed rather than lifted — one update is permitted, releasing
+   a reference to a request that has gone, and a test asserts every other update and every
+   delete is still refused.
+
 ## Ledger
 
-Synthetic `clinical_core`: **39** migrations, composite
-`1502ab6082446f34df526658713f6601607a493eb882a0ea8288790a3ae89828`.
-Migration 33 remains applied and untouched. **34–39 are unapplied.**
+Synthetic `clinical_core`: **40** migrations, composite
+`97ee291988db4a4243f6b57918d399400fe8de04fc2e59e5d6a2bc7d4cb6a6c9`.
+Migration 33 remains applied and untouched. **34–40 are unapplied.**
 
 The production/qualification family is untouched: 103 migrations, release hash
 `8a9a8f321fafc1f4e2c20b44825845cc64bb291c1746b1cdacfe7f23bfa3c9c2`, unchanged. Both new migrations
@@ -123,7 +162,7 @@ carry `production_transform: false`.
 
 ## Local verification
 
-- Desktop: `test:unit` 3,612 passed / 11 skipped (295 files); typecheck clean; lint clean, zero
+- Desktop: `test:unit` 3,620 passed / 11 skipped (296 files); typecheck clean; lint clean, zero
   warnings; authenticated-API gate (45 routes, one declared public); clinical-core, identity/consent,
   provider-configuration, core-launch-scope, operation inventory (226 operations, 0 enabled),
   covered-entity (202 tables), production clinical-core (103), clinical-bundle, stub-reset,
@@ -133,6 +172,7 @@ carry `production_transform: false`.
   container as they did before this change, and no dependency or `app.json` entry was touched.
 - New tests: `consult-intake.database.test.ts` (17, real migration SQL under PGlite),
   `consult-service.test.ts` (7, services + sealing + PostgreSQL),
+  `intake-data-lifecycle.database.test.ts` (8, export and erasure under PGlite),
   `ConsultRequestView.render.test.ts` (4, rendered), `intake-packets.test.ts` (10, app-side).
 
 ## Not done, and not claimed
@@ -149,3 +189,7 @@ carry `production_transform: false`.
 - No email is sent to the visitor. SES production access is still not granted, and the clinic replies
   to the address it opens.
 - The §4D production port remains owed and sequencing-blocked behind the 103-migration pin.
+- **Consult requests that were never converted have no lifecycle.** They hold a sealed contact
+  envelope and age indefinitely; no account can reach them and no sweep removes them. A
+  retention period for them is an owner decision and then a small amount of work.
+- The signature retention rule above is a decision to confirm, not a conclusion to rely on.
