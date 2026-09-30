@@ -92,6 +92,9 @@ const erasureCounts = {
   packetsRetained: z.number().int().min(0), packetsErased: z.number().int().min(0),
   signaturesRetained: z.number().int().min(0), signaturesErased: z.number().int().min(0),
   consultRequestsErased: z.number().int().min(0),
+  disputeStatementsErased: z.number().int().min(0),
+  disputesRetained: z.number().int().min(0), disputesErased: z.number().int().min(0),
+  revisionNoticesErased: z.number().int().min(0),
   lateAdmissionRefusable: z.boolean(),
 };
 
@@ -107,6 +110,7 @@ export const careDataResponse = z.discriminatedUnion('action', [
     threadsRetainedReason: z.literal('thread_holds_another_participant_record').nullable(),
     packetsRetainedReason: z.literal('packet_is_the_clinic_record_of_what_was_asked').nullable(),
     signaturesRetainedReason: z.literal('signature_is_the_recorded_basis_for_care_already_given').nullable(),
+    disputesRetainedReason: z.literal('dispute_records_a_decision_and_the_disagreement_with_it').nullable(),
   }).strict(),
   z.object({
     action: z.literal('erasure_history'),

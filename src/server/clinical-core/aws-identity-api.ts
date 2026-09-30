@@ -9,6 +9,7 @@ import {createExternalCalendarConnections,ExternalCalendarError} from './externa
 import {createCareDataLifecycle,CareDataError} from './care-data-lifecycle';
 import {createPublicConsultIntake,createConsultLinkAdmin,createConsultRequestReview,ConsultRequestError} from './consult-requests';
 import {createIntakeFormAdmin,createIntakePacketWorkforce,createIntakePacketConsumer,IntakeFormError} from './intake-forms';
+import {createDisputeConsumer,createDisputeWorkforce,createRevisionConsumer,createRevisionWorkforce,ClinicalDisputeError} from './clinical-disputes';
 import {labSpecimenTransferSchema} from "../../contracts/labSpecimenTransfer";
 
 import {
@@ -113,7 +114,9 @@ type RouteDefinition = {
       | "consumer_chat" | "workforce_chat" | "care_messages" | "program_assignments"
       | "calendar_connection" | "care_data_lifecycle"
       | "consult_links" | "consult_requests"
-      | "intake_forms" | "intake_packets_workforce" | "intake_packets_consumer";
+      | "intake_forms" | "intake_packets_workforce" | "intake_packets_consumer"
+      | "disputes_workforce" | "disputes_consumer"
+      | "revisions_workforce" | "revisions_consumer";
 };
 
 /**
@@ -143,6 +146,10 @@ const ROUTES: Readonly<Record<string, RouteDefinition>> = {
   "POST /clinical-core/workforce/intake-forms": {pool:"workforce",purpose:"clinical_data",operation:"intake_forms"},
   "POST /clinical-core/workforce/intake-packets": {pool:"workforce",purpose:"clinical_data",operation:"intake_packets_workforce"},
   "POST /clinical-core/consumer/intake-packets": {pool:"consumer",purpose:"clinical_data",operation:"intake_packets_consumer"},
+  "POST /clinical-core/workforce/disputes": {pool:"workforce",purpose:"clinical_data",operation:"disputes_workforce"},
+  "POST /clinical-core/consumer/disputes": {pool:"consumer",purpose:"clinical_data",operation:"disputes_consumer"},
+  "POST /clinical-core/workforce/content-revisions": {pool:"workforce",purpose:"clinical_data",operation:"revisions_workforce"},
+  "POST /clinical-core/consumer/content-revisions": {pool:"consumer",purpose:"clinical_data",operation:"revisions_consumer"},
   "POST /clinical-core/workforce/messages": {pool:"workforce",purpose:"clinical_data",operation:"care_messages"},
   "GET /clinical-core/workforce/posture": { pool: "workforce", purpose: "identity_link", operation: "posture" },
   "GET /clinical-core/consumer/posture": { pool: "consumer", purpose: "identity_link", operation: "posture" },
@@ -289,6 +296,10 @@ function createIdentityApiHandler<Context extends ClinicalRequestContext>(input:
   const intakeForms=input.database ? createIntakeFormAdmin(input.database) : undefined;
   const intakePacketsWorkforce=input.database ? createIntakePacketWorkforce(input.database) : undefined;
   const intakePacketsConsumer=input.database ? createIntakePacketConsumer(input.database) : undefined;
+  const disputesWorkforce=input.database ? createDisputeWorkforce(input.database) : undefined;
+  const disputesConsumer=input.database ? createDisputeConsumer(input.database) : undefined;
+  const revisionsWorkforce=input.database ? createRevisionWorkforce(input.database) : undefined;
+  const revisionsConsumer=input.database ? createRevisionConsumer(input.database) : undefined;
   validateConfiguration(input.configuration);
 
   return async (event: ApiGatewayV2Event): Promise<ApiGatewayV2Response> => {
@@ -351,6 +362,21 @@ function createIdentityApiHandler<Context extends ClinicalRequestContext>(input:
         if(!Number.isFinite(expiry)||expiry*1000<=Date.now())return response(403,{error:"identity_refused"});
         if(Object.keys(event.queryStringParameters??{}).length)return response(400,{error:"request_invalid"});
         return response(200,{data:await careDataLifecycle(context,parseBody(event))});
+      }
+      if (route.operation === "disputes_workforce" || route.operation === "disputes_consumer"
+        || route.operation === "revisions_workforce" || route.operation === "revisions_consumer") {
+        // Same posture as the other domains on this boundary: synthetic only, a live JWT, and
+        // no query string around the body contract.
+        if(input.boundary!=="synthetic")return response(403,{error:"pilot_scope_refused"});
+        const service = route.operation === "disputes_workforce" ? disputesWorkforce
+          : route.operation === "disputes_consumer" ? disputesConsumer
+            : route.operation === "revisions_workforce" ? revisionsWorkforce : revisionsConsumer;
+        if(!service)return response(503,{error:"service_unavailable"});
+        const claims=event.requestContext?.authorizer?.jwt?.claims;
+        const expiry=Number(claims?.exp);
+        if(!Number.isFinite(expiry)||expiry*1000<=Date.now())return response(403,{error:"identity_refused"});
+        if(Object.keys(event.queryStringParameters??{}).length)return response(400,{error:"request_invalid"});
+        return response(200,{data:await service(context,parseBody(event))});
       }
       if (route.operation === "consult_links" || route.operation === "consult_requests"
         || route.operation === "intake_forms" || route.operation === "intake_packets_workforce"
@@ -705,6 +731,13 @@ function createIdentityApiHandler<Context extends ClinicalRequestContext>(input:
       if(error instanceof CareMessageError||error instanceof ProgramAssignmentError||error instanceof ExternalCalendarError
         ||error instanceof CareDataError) {
         return response(error.category==="identity_refused"?403:error.category==="conflict"?409:error.category==="request_invalid"?400:503,{error:error.category});
+      }
+      if(error instanceof ClinicalDisputeError) {
+        const status=error.category==="identity_refused"?403
+          :error.category==="operation_refused"?403
+            :error.category==="consent_required"||error.category==="conflict"?409
+              :error.category==="request_invalid"?400:503;
+        return response(status,{error:error.category});
       }
       if(error instanceof ConsultRequestError||error instanceof IntakeFormError) {
         // An unavailable link, an unpublished form and an absent packet are all

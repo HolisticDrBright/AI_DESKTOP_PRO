@@ -257,6 +257,13 @@ function classifyDatabaseRejection(error: unknown): ClinicalCoreDatabaseRejectio
   if (/\bintake_consent_absent\b/.test(message)) return new ClinicalCoreDatabaseRejection("consent_required");
   if (/\b(intake_form_unpublished|intake_form_absent|intake_packet_absent|intake_item_absent|intake_form_immutable|intake_connection_absent|intake_connection_unavailable)\b/.test(message)) return new ClinicalCoreDatabaseRejection("operation_refused");
   if (/\b(intake_form_not_draft|intake_form_not_published|intake_packet_state_invalid|intake_packet_revision_stale|intake_packet_past_due|intake_response_recorded|intake_signature_recorded|intake_form_changed|intake_agreement_changed)\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");
+  // Contesting a record, and revision notices. An absent subject and an absent dispute are
+  // refusals about the object; a closed dispute and a stale revision are conflicts the caller
+  // has to re-read before retrying.
+  if (/\b(clinical_dispute_invalid|revision_notice_invalid|revision_statement_required)\b/.test(message)) return new ClinicalCoreDatabaseRejection("request_invalid");
+  if (/\bclinical_dispute_forbidden\b/.test(message)) return new ClinicalCoreDatabaseRejection("identity_refused");
+  if (/\b(clinical_dispute_absent|clinical_dispute_subject_absent|clinical_dispute_connection_absent|clinical_dispute_immutable|revision_notice_absent|revision_notice_immutable|revision_version_absent|revision_version_unpublished)\b/.test(message)) return new ClinicalCoreDatabaseRejection("operation_refused");
+  if (/\b(clinical_dispute_exists|clinical_dispute_closed|clinical_dispute_state_invalid|clinical_dispute_revision_stale)\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");
   if (/\bspecimen_consent_required\b/.test(message)) return new ClinicalCoreDatabaseRejection("consent_required");
   if (/\bspecimen_context_conflict\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");
   if (/\bspecimen_context_invalid\b/.test(message)) return new ClinicalCoreDatabaseRejection("request_invalid");

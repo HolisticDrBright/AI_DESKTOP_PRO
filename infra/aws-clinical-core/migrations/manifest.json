@@ -190,6 +190,11 @@
       "version": "20260930150000",
       "file": "20260930150000_synthetic_intake_data_lifecycle.sql",
       "production_transform": false
+    },
+    {
+      "version": "20260930160000",
+      "file": "20260930160000_synthetic_clinical_disputes_and_revisions.sql",
+      "production_transform": false
     }
   ]
 }

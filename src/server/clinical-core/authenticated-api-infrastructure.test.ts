@@ -28,7 +28,7 @@ describe("authenticated synthetic API infrastructure", () => {
   test("every clinical route but the declared public one is JWT-authenticated, and the Lambda is tightly bounded", () => {
     const resources = JSON.parse(readFileSync(extensionPath, "utf8")).Resources;
     const routes = Object.values(resources).filter((resource: unknown) => (resource as { Type: string }).Type === "AWS::ApiGatewayV2::Route") as Array<{ Properties: Record<string, unknown> }>;
-    expect(routes).toHaveLength(45);
+    expect(routes).toHaveLength(49);
     expect(routes.map(route=>route.Properties.RouteKey)).toEqual(expect.arrayContaining([
       "POST /clinical-core/consumer/messages",
       "POST /clinical-core/workforce/messages",
@@ -42,6 +42,10 @@ describe("authenticated synthetic API infrastructure", () => {
       "POST /clinical-core/workforce/intake-forms",
       "POST /clinical-core/workforce/intake-packets",
       "POST /clinical-core/consumer/intake-packets",
+      "POST /clinical-core/workforce/disputes",
+      "POST /clinical-core/consumer/disputes",
+      "POST /clinical-core/workforce/content-revisions",
+      "POST /clinical-core/consumer/content-revisions",
     ]));
     expect(routes.map((route) => route.Properties.RouteKey))
       .toContain("POST /clinical-core/workforce/data-compatibility");

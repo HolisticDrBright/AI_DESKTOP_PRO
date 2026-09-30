@@ -6,6 +6,12 @@ import {
   type ConsultReviewRequest, type ConsultReviewResponse,
 } from '@/contracts/consultRequests';
 import {
+  disputeWorkforceRequest, revisionWorkforceRequest,
+  parseDisputeWorkforceResponse, parseRevisionWorkforceResponse,
+  type DisputeWorkforceRequest, type DisputeWorkforceResponse,
+  type RevisionWorkforceRequest, type RevisionWorkforceResponse,
+} from '@/contracts/clinicalDisputes';
+import {
   intakeFormAdminRequest, intakePacketWorkforceRequest, intakePacketConsumerRequest,
   parseIntakeFormAdminResponse, parseIntakePacketWorkforceResponse, parseIntakePacketConsumerResponse,
   type IntakeFormAdminRequest, type IntakeFormAdminResponse,
@@ -80,4 +86,15 @@ export const intakePacketConsumerCall = (token: string, signal?: AbortSignal) =>
   call<IntakePacketConsumerRequest, IntakePacketConsumerResponse>({
     token, signal, path: '/clinical-core/consumer/intake-packets',
     parse: body => intakePacketConsumerRequest.parse(body), bind: parseIntakePacketConsumerResponse,
+  });
+
+export const disputeQueueCall = (token: string, signal?: AbortSignal) =>
+  call<DisputeWorkforceRequest, DisputeWorkforceResponse>({
+    token, signal, path: '/clinical-core/workforce/disputes',
+    parse: body => disputeWorkforceRequest.parse(body), bind: parseDisputeWorkforceResponse,
+  });
+export const revisionNoticeCall = (token: string, signal?: AbortSignal) =>
+  call<RevisionWorkforceRequest, RevisionWorkforceResponse>({
+    token, signal, path: '/clinical-core/workforce/content-revisions',
+    parse: body => revisionWorkforceRequest.parse(body), bind: parseRevisionWorkforceResponse,
   });
