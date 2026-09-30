@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { InboxWorkspace } from "@/components/inbox/InboxWorkspace";
 import {CareMessagesPanel} from '@/components/inbox/CareMessagesPanel';
+import {AppProgramAssignmentsPanel} from '@/components/programs/AppProgramAssignmentsPanel';
 
 export const metadata: Metadata = { title: "Inbox — AI Longevity Pro" };
 
@@ -31,6 +32,7 @@ export default async function InboxPage({
       />
       <div className="mb-4"><a className="inline-flex rounded-lg border px-3 py-2 text-sm font-semibold text-primary" href="/telehealth-requests">Open telehealth scheduling requests</a></div>
       <CareMessagesPanel />
+      <AppProgramAssignmentsPanel />
       <InboxWorkspace initialThreadId={thread} />
     </section>
   );

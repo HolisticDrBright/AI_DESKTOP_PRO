@@ -105,7 +105,22 @@ describe('program assignment service: real adapter and PostgreSQL, not hosted AW
   expect(status).toMatchObject({action:'status'});
   if(status.action!=='status')throw Error();
   expect(status.assignments.find(a=>a.enrollmentId===assigned.enrollmentId))
-   .toMatchObject({state:'active',phaseIndex:0,phaseCount:2,completedCount:1,finished:false});
+   .toMatchObject({state:'active',phaseIndex:0,phaseCount:2,completedCount:1,finished:false,
+    patientRecordId:patient,connectionId:connection});
+  // A panel works at clinic scope, so no selector means the whole clinic.
+  const clinicWide=await call({action:'status'},clinician,org,'workforce');
+  if(clinicWide.action!=='status')throw Error();
+  expect(clinicWide.assignments.map(a=>a.enrollmentId)).toContain(assigned.enrollmentId);
+  // And the panel can name a patient from the links the workforce already sees.
+  const links=await call({action:'connections'},clinician,org,'workforce');
+  if(links.action!=='connections')throw Error();
+  expect(links.connections).toEqual(expect.arrayContaining([
+   expect.objectContaining({connectionId:connection,patientRecordId:patient})]));
+  // Neither is reachable from a consumer, and neither leaks another clinic's links.
+  await expect(call({action:'connections'},owner)).rejects.toMatchObject({category:'identity_refused'});
+  const foreign=await call({action:'connections'},outside,otherOrg,'workforce');
+  if(foreign.action!=='connections')throw Error();
+  expect(foreign.connections).toEqual([]);
  });
  it('advances only on the server clock, and only once the phase gate is satisfied',async()=>{
   const assigned=await fresh(phases({transition:'check_in'}));

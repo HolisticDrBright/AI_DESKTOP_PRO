@@ -45,7 +45,9 @@ export const programAssignmentRequest = z.discriminatedUnion('action', [
   z.object({ action: z.literal('withdraw'), ...owned }).strict(),
   z.object({ action: z.literal('assign'), connectionId: z.string().uuid(),
     programVersionId: z.string().uuid(), title: text(240), phases: programPhases }).strict(),
-  z.object({ action: z.literal('status'), connectionId: z.string().uuid() }).strict(),
+  // No connection means the whole clinic, which is the scope a workforce panel works at.
+  z.object({ action: z.literal('status'), connectionId: z.string().uuid().optional() }).strict(),
+  z.object({ action: z.literal('connections') }).strict(),
   z.object({ action: z.literal('release'), enrollmentId: z.string().uuid(), phaseId: key }).strict(),
 ]);
 export type ProgramAssignmentRequest = z.infer<typeof programAssignmentRequest>;
@@ -82,9 +84,13 @@ export const programAssignmentResponse = z.discriminatedUnion('action', [
     sourceDigest: z.string().regex(/^[a-f0-9]{64}$/), state, revision, duplicate: z.boolean() }).strict(),
   z.object({ action: z.literal('status'), assignments: z.array(z.object({
     enrollmentId: z.string().uuid(), title: text(240), state, revision,
+    patientRecordId: z.string().uuid(), connectionId: z.string().uuid(),
     phaseIndex: z.number().int().min(0), phaseCount: z.number().int().min(1), finished: z.boolean(),
     completedCount: z.number().int().min(0), assignedAt: z.string().datetime({ offset: true }),
     updatedAt: z.string().datetime({ offset: true }) }).strict()).max(50) }).strict(),
+  z.object({ action: z.literal('connections'), connections: z.array(z.object({
+    connectionId: z.string().uuid(), patientRecordId: z.string().uuid(),
+    verifiedAt: z.string().datetime({ offset: true }) }).strict()).max(50) }).strict(),
   z.object({ action: z.literal('release'), enrollmentId: z.string().uuid(), phaseId: key }).strict(),
 ]);
 export type ProgramAssignmentResponse = z.infer<typeof programAssignmentResponse>;

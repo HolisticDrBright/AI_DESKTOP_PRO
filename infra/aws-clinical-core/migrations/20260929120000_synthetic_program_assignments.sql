@@ -246,9 +246,9 @@ begin
  or (_pool='workforce' and not clinical_private.has_clinical_role(_org)) then
   raise exception using errcode='42501',message='program_assignment_refused'; end if;
  if _request is null or jsonb_typeof(_request)<>'object' or octet_length(_request::text)>262144
- or _action is null or _action not in('list','read','accept','complete','check_in','advance','pause','resume','withdraw','assign','status','release') then
+ or _action is null or _action not in('list','read','accept','complete','check_in','advance','pause','resume','withdraw','assign','status','release','connections') then
   raise exception using errcode='22023',message='program_assignment_invalid'; end if;
- if (_action in('assign','status','release')) <> (_pool='workforce') then
+ if (_action in('assign','status','release','connections')) <> (_pool='workforce') then
   raise exception using errcode='42501',message='program_assignment_refused'; end if;
 
  if _action='assign' then
@@ -287,15 +287,33 @@ begin
    'state',_row.state,'revision',_row.revision::text,'duplicate',_row.created_at<_now);
  end if;
 
+ if _action='connections' then
+  -- What the workforce already sees through messaging: which patients have a live app
+  -- link. A panel needs this to name a patient without inventing an identifier space.
+  if _request-array['action']<>'{}'::jsonb then raise exception using errcode='22023',message='program_assignment_invalid'; end if;
+  select coalesce(jsonb_agg(jsonb_build_object('connectionId',c.id,'patientRecordId',c.patient_record_id,
+    'verifiedAt',c.verified_at) order by c.verified_at desc),'[]'::jsonb) into _items
+  from (select c.* from clinical_core.patient_connections c join clinical_core.patient_records r on r.id=c.patient_record_id
+   where c.organization_id=_org and c.state='verified' and c.consumer_person_id is not null and r.status='active'
+   order by c.verified_at desc limit 50) c;
+  insert into clinical_core.program_assignment_audit(actor_id,organization_id,action) values(_actor,_org,'status');
+  return jsonb_build_object('action','connections','connections',_items);
+ end if;
+
  if _action='status' then
+  -- No selector means the whole clinic, which is the scope a workforce panel works at.
   if _request-array['action','connectionId']<>'{}'::jsonb then
    raise exception using errcode='22023',message='program_assignment_invalid'; end if;
   select coalesce(jsonb_agg(jsonb_build_object('enrollmentId',a.id,'title',a.title,'state',a.state,
-    'revision',a.revision::text,'phaseIndex',a.phase_index,'phaseCount',jsonb_array_length(a.content),
-    'finished',a.finished,'completedCount',(select count(*) from clinical_core.program_assignment_completions c where c.assignment_id=a.id),
+    'revision',a.revision::text,'patientRecordId',c.patient_record_id,'connectionId',c.id,
+    'phaseIndex',a.phase_index,'phaseCount',jsonb_array_length(a.content),
+    'finished',a.finished,'completedCount',(select count(*) from clinical_core.program_assignment_completions x where x.assignment_id=a.id),
     'assignedAt',a.created_at,'updatedAt',a.updated_at) order by a.created_at desc),'[]'::jsonb) into _items
-  from clinical_core.program_assignments a join clinical_core.patient_connections c on c.id=a.connection_id
-  where a.organization_id=_org and a.connection_id=(_request->>'connectionId')::uuid and c.organization_id=_org;
+  from (select a.* from clinical_core.program_assignments a
+   where a.organization_id=_org
+   and (_request->>'connectionId' is null or a.connection_id=(_request->>'connectionId')::uuid)
+   order by a.created_at desc limit 50) a
+  join clinical_core.patient_connections c on c.id=a.connection_id and c.organization_id=_org;
   insert into clinical_core.program_assignment_audit(actor_id,organization_id,action) values(_actor,_org,'status');
   return jsonb_build_object('action','status','assignments',_items);
  end if;

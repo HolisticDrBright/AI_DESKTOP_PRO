@@ -10,7 +10,7 @@ export class ProgramAssignmentError extends Error {
  constructor(readonly category:'request_invalid'|'identity_refused'|'conflict'|'service_unavailable') {super(category);}
 }
 const CONSUMER_ONLY=new Set(['list','read','accept','complete','check_in','advance','pause','resume','withdraw']);
-const WORKFORCE_ONLY=new Set(['assign','status','release']);
+const WORKFORCE_ONLY=new Set(['assign','status','release','connections']);
 export function createProgramAssignments(database:ClinicalCoreDatabase) {
  return async (context:ClinicalRequestContext,body:unknown):Promise<ProgramAssignmentResponse>=>{
   // Not a production activation path, for the same reason messaging is not.
