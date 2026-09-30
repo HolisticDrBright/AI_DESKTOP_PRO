@@ -59,3 +59,9 @@ Organization bootstrap and selection, session expiry, sign-out, unauthorized-rec
 error-recovery paths were **not** exercised through real route handlers in a browser, and
 family-access approval, claim and scope filtering was not re-inspected. Those need the
 hosted Desktop and a browser, which is Codex's and the owner's part.
+
+## Return handoff
+
+The full return handoff for this increment — commits, evidence levels, migration digests,
+the candidate manifest and the owner decisions — is `expo/docs/claude-code-handoff-2026-09-30.md`
+in the V2 repository.
