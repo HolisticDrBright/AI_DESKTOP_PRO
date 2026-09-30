@@ -43,8 +43,14 @@ export const programAssignmentRequest = z.discriminatedUnion('action', [
   z.object({ action: z.literal('pause'), ...owned }).strict(),
   z.object({ action: z.literal('resume'), ...owned }).strict(),
   z.object({ action: z.literal('withdraw'), ...owned }).strict(),
+  // A request NAMES a published version; it does not describe one. Title, phases,
+  // released flags, ingredient keys and purchase destinations are read from the
+  // published artifact on the server, because a caller-supplied body is not evidence
+  // that anything was approved — not even a body that hashes to a digest.
   z.object({ action: z.literal('assign'), connectionId: z.string().uuid(),
-    programVersionId: z.string().uuid(), title: text(240), phases: programPhases }).strict(),
+    programVersionId: z.string().uuid() }).strict(),
+  z.object({ action: z.literal('programs') }).strict(),
+  z.object({ action: z.literal('preview'), programVersionId: z.string().uuid() }).strict(),
   // No connection means the whole clinic, which is the scope a workforce panel works at.
   z.object({ action: z.literal('status'), connectionId: z.string().uuid().optional() }).strict(),
   z.object({ action: z.literal('connections') }).strict(),
@@ -62,6 +68,11 @@ const summary = z.object({
   assignedAt: z.string().datetime({ offset: true }),
 }).strict();
 const applied = { enrollmentId: z.string().uuid(), revision };
+export const programListing = z.object({
+  programVersionId: z.string().uuid(), programId: z.string().uuid(), programVersion: key,
+  programName: text(240), title: text(240), phaseCount: z.number().int().min(0),
+  assignable: z.boolean(), publishedAt: z.string().datetime({ offset: true }).nullable(),
+}).strict();
 export const programAssignmentResponse = z.discriminatedUnion('action', [
   z.object({ action: z.literal('list'), assignments: z.array(summary).max(50) }).strict(),
   z.object({ action: z.literal('read'),
@@ -92,11 +103,20 @@ export const programAssignmentResponse = z.discriminatedUnion('action', [
     connectionId: z.string().uuid(), patientRecordId: z.string().uuid(),
     verifiedAt: z.string().datetime({ offset: true }) }).strict()).max(50) }).strict(),
   z.object({ action: z.literal('release'), enrollmentId: z.string().uuid(), phaseId: key }).strict(),
+  z.object({ action: z.literal('programs'), programs: z.array(programListing).max(50) }).strict(),
+  // The preview is the compiled published artifact and the review it would produce, so
+  // a practitioner sees what a patient would see before anyone is offered anything.
+  z.object({ action: z.literal('preview'), programVersionId: z.string().uuid(), programVersion: key,
+    title: text(240), phases: programPhases, sourceDigest: z.string().regex(/^[a-f0-9]{64}$/),
+    review: programReview }).strict(),
 ]);
 export type ProgramAssignmentResponse = z.infer<typeof programAssignmentResponse>;
 export function parseProgramAssignmentResponse(input: ProgramAssignmentRequest, value: unknown): ProgramAssignmentResponse {
   const result = programAssignmentResponse.parse(value);
   if (result.action !== input.action) throw new Error('program_response_mismatch');
+  // A preview about a different version than the one asked about is not an answer.
+  if (result.action === 'preview' && input.action === 'preview'
+    && result.programVersionId !== input.programVersionId) throw new Error('program_response_mismatch');
   // A reply about a different enrollment than the one asked about is not an answer.
   const asked = 'enrollmentId' in input ? input.enrollmentId : null;
   const answered = 'enrollmentId' in result ? result.enrollmentId : null;

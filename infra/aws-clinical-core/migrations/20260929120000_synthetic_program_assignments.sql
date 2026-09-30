@@ -96,61 +96,110 @@ create trigger program_assignment_audit_immutable before update or delete on cli
 
 -- The consumer contract, enforced where it cannot be bypassed. A practitioner UI
 -- validates too, but this is the copy that decides.
+--
+-- Written as a sequence of explicit statements rather than one long boolean, because
+-- the first version of this function was wrong in a way a long boolean invites: a
+-- missing key makes `jsonb_typeof(x) <> 'number'` evaluate to NULL, NULL is not true,
+-- and an `if` on it does not fire. Content with `days` or `items` simply removed was
+-- therefore accepted. Every check below first requires the key to be present, and no
+-- comparison is relied on to reject an absent value.
 create function clinical_private.program_content_valid(_content jsonb) returns boolean
 language plpgsql immutable set search_path='' as $$
-declare _phase jsonb; _item jsonb; _ids text[]:='{}'; _phase_ids text[]:='{}'; _keys text[]; _product jsonb;
+declare
+ _phase jsonb; _item jsonb; _ids text[]:='{}'; _phase_ids text[]:='{}'; _keys text[]; _product jsonb;
+ _phase_keys text[]:=array['id','title','days','transition','items'];
+ _item_keys text[]:=array['id','title','kind','instructions','released'];
+ _product_keys text[]:=array['id','ingredientKeys','dose','purchaseUrl'];
+ _days numeric;
 begin
- if _content is null or jsonb_typeof(_content)<>'array'
- or jsonb_array_length(_content) not between 1 and 52
- or octet_length(_content::text)>262144 then return false; end if;
+ if _content is null or jsonb_typeof(_content)<>'array' then return false; end if;
+ if jsonb_array_length(_content) not between 1 and 52 then return false; end if;
+ if octet_length(_content::text)>262144 then return false; end if;
  for _phase in select value from jsonb_array_elements(_content) loop
-  if jsonb_typeof(_phase)<>'object'
-  or _phase-array['id','title','days','transition','items']<>'{}'::jsonb
-  or coalesce(_phase->>'id','') !~ '^[A-Za-z0-9_.:-]{1,160}$'
-  or char_length(coalesce(_phase->>'title','')) not between 1 and 240
-  or jsonb_typeof(_phase->'days')<>'number' or (_phase->>'days')::numeric<>floor((_phase->>'days')::numeric)
-  or (_phase->>'days')::numeric not between 1 and 365
-  or coalesce(_phase->>'transition','') not in('scheduled','check_in','practitioner')
-  or jsonb_typeof(_phase->'items')<>'array' or jsonb_array_length(_phase->'items')>100
-  then return false; end if;
+  if jsonb_typeof(_phase)<>'object' then return false; end if;
+  -- Every required key present, and nothing else. Both directions matter: a missing
+  -- key is unapproved by omission, an extra one is content nobody reviewed.
+  if not (_phase ?& _phase_keys) then return false; end if;
+  if _phase-_phase_keys<>'{}'::jsonb then return false; end if;
+  if jsonb_typeof(_phase->'id')<>'string' or _phase->>'id' !~ '^[A-Za-z0-9_.:-]{1,160}$' then return false; end if;
+  if jsonb_typeof(_phase->'title')<>'string' or char_length(_phase->>'title') not between 1 and 240 then return false; end if;
+  if jsonb_typeof(_phase->'days')<>'number' then return false; end if;
+  _days:=(_phase->>'days')::numeric;
+  if _days<>floor(_days) or _days not between 1 and 365 then return false; end if;
+  if jsonb_typeof(_phase->'transition')<>'string'
+   or _phase->>'transition' not in('scheduled','check_in','practitioner') then return false; end if;
+  if jsonb_typeof(_phase->'items')<>'array' or jsonb_array_length(_phase->'items')>100 then return false; end if;
   if _phase->>'id'=any(_phase_ids) then return false; end if;
   _phase_ids:=_phase_ids||(_phase->>'id');
   for _item in select value from jsonb_array_elements(_phase->'items') loop
-   if jsonb_typeof(_item)<>'object'
-   or coalesce(_item->>'id','') !~ '^[A-Za-z0-9_.:-]{1,160}$'
-   or char_length(coalesce(_item->>'title','')) not between 1 and 240
-   or jsonb_typeof(_item->'instructions')<>'string' or char_length(_item->>'instructions')>4000
-   or jsonb_typeof(_item->'released')<>'boolean'
-   or coalesce(_item->>'kind','') not in('lesson','diet','habit','supplement')
-   then return false; end if;
+   if jsonb_typeof(_item)<>'object' then return false; end if;
+   if not (_item ?& _item_keys) then return false; end if;
+   if jsonb_typeof(_item->'id')<>'string' or _item->>'id' !~ '^[A-Za-z0-9_.:-]{1,160}$' then return false; end if;
+   if jsonb_typeof(_item->'title')<>'string' or char_length(_item->>'title') not between 1 and 240 then return false; end if;
+   if jsonb_typeof(_item->'instructions')<>'string' or char_length(_item->>'instructions')>4000 then return false; end if;
+   if jsonb_typeof(_item->'released')<>'boolean' then return false; end if;
+   if jsonb_typeof(_item->'kind')<>'string'
+    or _item->>'kind' not in('lesson','diet','habit','supplement') then return false; end if;
    if _item->>'id'=any(_ids) then return false; end if;
    _ids:=_ids||(_item->>'id');
    if _item->>'kind'='supplement' then
+    -- A supplement without a governed product is not reviewable.
+    if not (_item ? 'product') then return false; end if;
+    if _item-(_item_keys||array['product'])<>'{}'::jsonb then return false; end if;
     _product:=_item->'product';
-    if _item-array['id','title','kind','instructions','released','product']<>'{}'::jsonb
-    or jsonb_typeof(_product)<>'object'
-    or _product-array['id','ingredientKeys','dose','purchaseUrl']<>'{}'::jsonb
-    or coalesce(_product->>'id','') !~ '^[A-Za-z0-9_.:-]{1,160}$'
-    or char_length(coalesce(_product->>'dose','')) not between 1 and 240
-    or jsonb_typeof(_product->'ingredientKeys')<>'array'
-    or jsonb_array_length(_product->'ingredientKeys') not between 1 and 40
+    if jsonb_typeof(_product)<>'object' then return false; end if;
+    if not (_product ?& _product_keys) then return false; end if;
+    if _product-_product_keys<>'{}'::jsonb then return false; end if;
+    if jsonb_typeof(_product->'id')<>'string' or _product->>'id' !~ '^[A-Za-z0-9_.:-]{1,160}$' then return false; end if;
+    if jsonb_typeof(_product->'dose')<>'string' or char_length(_product->>'dose') not between 1 and 240 then return false; end if;
+    if jsonb_typeof(_product->'ingredientKeys')<>'array'
+     or jsonb_array_length(_product->'ingredientKeys') not between 1 and 40 then return false; end if;
     -- A purchase destination must be an explicit https origin or explicitly absent.
     -- Syntax is not provider approval; it only stops an unusable value being stored.
-    or (jsonb_typeof(_product->'purchaseUrl')<>'null'
-        and (jsonb_typeof(_product->'purchaseUrl')<>'string' or _product->>'purchaseUrl' !~ '^https://[A-Za-z0-9._~-]+\.[A-Za-z]{2,}(/[^\s]*)?$'))
-    then return false; end if;
+    if jsonb_typeof(_product->'purchaseUrl')<>'null' then
+     if jsonb_typeof(_product->'purchaseUrl')<>'string'
+      or _product->>'purchaseUrl' !~ '^https://[A-Za-z0-9._~-]+\.[A-Za-z]{2,}(/[^\s]*)?$' then return false; end if;
+    end if;
+    if exists(select 1 from jsonb_array_elements(_product->'ingredientKeys') e where jsonb_typeof(e.value)<>'string') then
+     return false; end if;
     select array_agg(lower(btrim(value))) into _keys from jsonb_array_elements_text(_product->'ingredientKeys');
-    if _keys is null or array_length(_keys,1)<>jsonb_array_length(_product->'ingredientKeys')
-    or exists(select 1 from unnest(_keys) k where k !~ '^[A-Za-z0-9_.:-]{1,160}$')
-    or array_length(_keys,1)<>(select count(distinct k) from unnest(_keys) k) then return false; end if;
-   elsif _item ? 'product' or _item-array['id','title','kind','instructions','released']<>'{}'::jsonb then
-    return false;
+    if _keys is null or array_length(_keys,1)<>jsonb_array_length(_product->'ingredientKeys') then return false; end if;
+    if exists(select 1 from unnest(_keys) k where k !~ '^[A-Za-z0-9_.:-]{1,160}$') then return false; end if;
+    if array_length(_keys,1)<>(select count(distinct k) from unnest(_keys) k) then return false; end if;
+   else
+    -- A product on a lesson, a diet step or a habit is a claim nobody approved.
+    if _item ? 'product' then return false; end if;
+    if _item-_item_keys<>'{}'::jsonb then return false; end if;
    end if;
   end loop;
  end loop;
  return true;
 end $$;
 revoke all on function clinical_private.program_content_valid(jsonb) from public;
+
+-- The patient-facing program a published version actually approved.
+--
+-- Nothing a caller sends is evidence that content was reviewed. An assignment is
+-- compiled from this function's answer and from nothing else, so a request can name
+-- a version but cannot describe one. A published version that carries no valid
+-- consumer program has approved nothing for patients, and assignment refuses rather
+-- than falling back to whatever arrived with the request.
+create function clinical_private.program_consumer_content(_version_content jsonb) returns jsonb
+language plpgsql immutable set search_path='' as $$
+declare _program jsonb; _keys text[]:=array['title','phases'];
+begin
+ if _version_content is null or jsonb_typeof(_version_content)<>'object' then return null; end if;
+ if not (_version_content ? 'consumerProgram') then return null; end if;
+ _program:=_version_content->'consumerProgram';
+ if jsonb_typeof(_program)<>'object' then return null; end if;
+ if not (_program ?& _keys) then return null; end if;
+ if _program-_keys<>'{}'::jsonb then return null; end if;
+ if jsonb_typeof(_program->'title')<>'string' then return null; end if;
+ if char_length(btrim(_program->>'title')) not between 1 and 240 then return null; end if;
+ if not clinical_private.program_content_valid(_program->'phases') then return null; end if;
+ return jsonb_build_object('title',btrim(_program->>'title'),'phases',_program->'phases');
+end $$;
+revoke all on function clinical_private.program_consumer_content(jsonb) from public;
 
 -- What the account is already taking, as this target can answer it.
 --
@@ -246,45 +295,82 @@ begin
  or (_pool='workforce' and not clinical_private.has_clinical_role(_org)) then
   raise exception using errcode='42501',message='program_assignment_refused'; end if;
  if _request is null or jsonb_typeof(_request)<>'object' or octet_length(_request::text)>262144
- or _action is null or _action not in('list','read','accept','complete','check_in','advance','pause','resume','withdraw','assign','status','release','connections') then
+ or _action is null or _action not in('list','read','accept','complete','check_in','advance','pause','resume','withdraw','assign','status','release','connections','programs','preview') then
   raise exception using errcode='22023',message='program_assignment_invalid'; end if;
- if (_action in('assign','status','release','connections')) <> (_pool='workforce') then
+ if (_action in('assign','status','release','connections','programs','preview')) <> (_pool='workforce') then
   raise exception using errcode='42501',message='program_assignment_refused'; end if;
 
- if _action='assign' then
-  if _request-array['action','connectionId','programVersionId','title','phases']<>'{}'::jsonb
-  or (_request->>'connectionId') !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+ if _action in('assign','preview') then
+  -- A request may NAME a version. It may not describe one. Nothing about the content,
+  -- the title, the released flags, the ingredient keys or the purchase destinations is
+  -- taken from the caller, because a digest of a request body proves only that the body
+  -- was hashed -- not that it came from anything a clinic approved.
+  if _request-array['action','connectionId','programVersionId']<>'{}'::jsonb
   or (_request->>'programVersionId') !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
-  or char_length(coalesce(btrim(_request->>'title'),'')) not between 1 and 240
-  or not clinical_private.program_content_valid(_request->'phases') then
+  or (_action='assign') <> (_request ? 'connectionId')
+  or (_request ? 'connectionId' and (_request->>'connectionId') !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$') then
    raise exception using errcode='22023',message='program_assignment_invalid'; end if;
-  select * into _connection from clinical_core.patient_connections where id=(_request->>'connectionId')::uuid for update;
-  if _connection.id is null or _connection.organization_id<>_org or _connection.state<>'verified'
-  or _connection.consumer_person_id is null
-  or not exists(select 1 from clinical_core.patient_records where id=_connection.patient_record_id and organization_id=_org and status='active') then
-   raise exception using errcode='42501',message='program_assignment_refused'; end if;
   -- Only a published version may reach a patient. A draft or an in-review version is
   -- unapproved content, and superseded is no longer what the clinic stands behind.
   select * into _version from clinical_core.synthetic_desktop_program_versions
   where id=(_request->>'programVersionId')::uuid and organization_id=_org;
   if _version.id is null or _version.status<>'published' then
    raise exception using errcode='42501',message='program_assignment_unpublished'; end if;
-  _digest:=encode(public.digest(convert_to((_request->'phases')::text,'UTF8'),'sha256'),'hex');
+  -- The approved patient-facing program, compiled from the published artifact.
+  _items:=clinical_private.program_consumer_content(_version.content);
+  if _items is null then
+   -- Published, but nothing in it was approved for patients. Falling back to request
+   -- content here is exactly the bypass this refuses.
+   raise exception using errcode='42501',message='program_assignment_unpublished'; end if;
+  _digest:=encode(public.digest(convert_to((_items->'phases')::text,'UTF8'),'sha256'),'hex');
+  if _action='preview' then
+   _inventory:=clinical_private.program_plan_inventory(null);
+   _review:=clinical_private.program_review(_items->'phases',_inventory);
+   insert into clinical_core.program_assignment_audit(actor_id,organization_id,action) values(_actor,_org,'status');
+   return jsonb_build_object('action','preview','programVersionId',_version.id,
+    'programVersion',_version.version::text,'title',_items->>'title','phases',_items->'phases',
+    'sourceDigest',_digest,'review',_review);
+  end if;
+  select * into _connection from clinical_core.patient_connections where id=(_request->>'connectionId')::uuid for update;
+  if _connection.id is null or _connection.organization_id<>_org or _connection.state<>'verified'
+  or _connection.consumer_person_id is null
+  or not exists(select 1 from clinical_core.patient_records where id=_connection.patient_record_id and organization_id=_org and status='active') then
+   raise exception using errcode='42501',message='program_assignment_refused'; end if;
   select * into _row from clinical_core.program_assignments
   where connection_id=_connection.id and program_version_id=_version.id;
   if _row.id is null then
    insert into clinical_core.program_assignments(organization_id,connection_id,consumer_person_id,program_version_id,
     assigned_by,title,content,source_digest)
-   values(_org,_connection.id,_connection.consumer_person_id,_version.id,_actor,btrim(_request->>'title'),_request->'phases',_digest)
+   values(_org,_connection.id,_connection.consumer_person_id,_version.id,_actor,_items->>'title',_items->'phases',_digest)
    returning * into _row;
   elsif _row.source_digest<>_digest then
-   -- Re-assigning different content under the same pinned version would silently
-   -- change an artifact the owner may already have reviewed.
+   -- The published artifact changed under a version already assigned. The existing
+   -- assignment is what the owner reviewed, so this refuses rather than rewriting it.
    raise exception using errcode='40001',message='program_assignment_conflict';
   end if;
   insert into clinical_core.program_assignment_audit(actor_id,organization_id,assignment_id,action) values(_actor,_org,_row.id,'assign');
   return jsonb_build_object('action','assign','enrollmentId',_row.id,'sourceDigest',_row.source_digest,
    'state',_row.state,'revision',_row.revision::text,'duplicate',_row.created_at<_now);
+ end if;
+
+ if _action='programs' then
+  -- The picker's source: published versions in this organization that actually carry an
+  -- approved patient-facing program. One that does not is listed as not assignable with
+  -- the reason, rather than left out, so an author can see why it cannot be shared.
+  if _request-array['action']<>'{}'::jsonb then raise exception using errcode='22023',message='program_assignment_invalid'; end if;
+  select coalesce(jsonb_agg(jsonb_build_object(
+    'programVersionId',v.id,'programId',v.program_id,'programVersion',v.version::text,
+    'programName',p.name,
+    'title',coalesce(clinical_private.program_consumer_content(v.content)->>'title',p.name),
+    'phaseCount',coalesce(jsonb_array_length(clinical_private.program_consumer_content(v.content)->'phases'),0),
+    'assignable',clinical_private.program_consumer_content(v.content) is not null,
+    'publishedAt',v.published_at) order by v.published_at desc nulls last,v.version desc),'[]'::jsonb) into _items
+  from (select v.* from clinical_core.synthetic_desktop_program_versions v
+   where v.organization_id=_org and v.status='published'
+   order by v.published_at desc nulls last,v.version desc limit 50) v
+  join clinical_core.synthetic_desktop_programs p on p.id=v.program_id and p.organization_id=_org;
+  insert into clinical_core.program_assignment_audit(actor_id,organization_id,action) values(_actor,_org,'status');
+  return jsonb_build_object('action','programs','programs',_items);
  end if;
 
  if _action='connections' then

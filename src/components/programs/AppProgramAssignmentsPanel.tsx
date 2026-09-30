@@ -5,27 +5,38 @@ import {onWorkforceSessionChange} from '@/lib/workforce-session-change';
 
 type Status=Extract<ProgramAssignmentResponse,{action:'status'}>;
 type Connections=Extract<ProgramAssignmentResponse,{action:'connections'}>;
+type Programs=Extract<ProgramAssignmentResponse,{action:'programs'}>;
+type Preview=Extract<ProgramAssignmentResponse,{action:'preview'}>;
 
 /**
  * Assigning a published program to a linked patient app account, and seeing where
  * each assignment has got to.
  *
- * This panel authors nothing. The phases it sends come from a published program
- * version the clinic already approved, and the server validates them against the
- * consumer contract, pins them by digest and refuses a draft version outright. It
- * creates no enrollment, no charge and no protocol, and it never writes into the
+ * This panel authors nothing, and now it cannot: it sends no content at all. An
+ * earlier version asked the practitioner to paste a version id and a block of phases
+ * JSON, and claimed in this comment that it authored nothing — but there was no
+ * authenticated source lookup behind that claim, and the server trusted the paste. A
+ * published version whose own content was empty could carry any phases a caller typed.
+ *
+ * What is here instead: a picker of the clinic's published versions, a preview the
+ * server compiles from the published artifact, and an assign that names the version
+ * and nothing else. The title, the steps, the released flags and any product all come
+ * from what was published.
+ *
+ * It creates no enrollment, no charge and no protocol, and it never writes into the
  * patient's clinical plan — a program is an overlay the patient may add.
  */
 export function AppProgramAssignmentsPanel(){
  const [status,setStatus]=useState<Status|null>(null);
  const [links,setLinks]=useState<Connections|null>(null);
+ const [programs,setPrograms]=useState<Programs|null>(null);
+ const [preview,setPreview]=useState<Preview|null>(null);
  const [connectionId,setConnectionId]=useState('');
  const [programVersionId,setProgramVersionId]=useState('');
- const [title,setTitle]=useState('');
- const [phasesText,setPhasesText]=useState('');
  const [busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState('');
  const working=useRef(false),epoch=useRef(0),alive=useRef(true);
- function clear(){epoch.current++;working.current=false;setBusy(false);setStatus(null);setLinks(null);setNotice('');}
+ function clear(){epoch.current++;working.current=false;setBusy(false);setStatus(null);setLinks(null);
+  setPrograms(null);setPreview(null);setNotice('');}
  useEffect(()=>{
   alive.current=true;const lifecycleEpoch=epoch;
   const stop=onWorkforceSessionChange(()=>{clear();setError('Session changed. Refresh assignments.');});
@@ -53,11 +64,13 @@ export function AppProgramAssignmentsPanel(){
    if(!alive.current||epoch.current!==generation)return;
    if(data.action==='status')setStatus(data);
    if(data.action==='connections')setLinks(data);
+   if(data.action==='programs')setPrograms(data);
+   if(data.action==='preview')setPreview(data);
    if(data.action==='assign'){
     setNotice(data.duplicate
      ? 'That guide was already shared with this patient. Nothing changed and it was not shared twice.'
      : 'Shared with the patient app. They choose whether to add it; their plan is unchanged until they do.');
-    setPhasesText('');setTitle('');
+    setPreview(null);setProgramVersionId('');
     void run({action:'status'});
    }
    if(data.action==='release')setNotice('Phase released. The patient can move on once their steps are done and the phase has elapsed.');
@@ -66,11 +79,9 @@ export function AppProgramAssignmentsPanel(){
   }finally{if(alive.current&&epoch.current===generation){working.current=false;setBusy(false);}}
  }
 
- function assign(){
-  let phases:unknown;
-  try{phases=JSON.parse(phasesText);}
-  catch{setError('The phases are not valid JSON, so nothing was sent. Paste the published version’s phases exactly.');return;}
-  void run({action:'assign',connectionId,programVersionId,title:title.trim(),phases}as ProgramAssignmentRequest);
+ function choose(versionId:string){
+  setProgramVersionId(versionId);setPreview(null);
+  if(versionId)void run({action:'preview',programVersionId:versionId});
  }
 
  const button='rounded-lg border px-3 py-2 text-sm font-semibold disabled:opacity-50';
@@ -84,6 +95,7 @@ export function AppProgramAssignmentsPanel(){
   <div className="flex flex-wrap gap-2">
    <button className={button} disabled={busy} onClick={()=>void run({action:'status'})}>Load / refresh assignments</button>
    <button className={button} disabled={busy} onClick={()=>void run({action:'connections'})}>Load linked patients</button>
+   <button className={button} disabled={busy} onClick={()=>void run({action:'programs'})}>Load published programs</button>
   </div>
   {error?<p role="alert">{error}</p>:null}
   {notice?<p role="status">{notice}</p>:null}
@@ -98,18 +110,39 @@ export function AppProgramAssignmentsPanel(){
    {links.connections.length===0?<span className="block pt-1">No patients have a live app link yet.</span>:null}
   </label>:null}
 
-  {connectionId?<div className="space-y-2">
-   <label className="block text-sm">Published program version id
-    <input aria-label="Published program version id" className={field} value={programVersionId} disabled={busy}
-     onChange={event=>setProgramVersionId(event.target.value)}/></label>
-   <label className="block text-sm">Title the patient sees
-    <input aria-label="Title the patient sees" className={field} maxLength={240} value={title} disabled={busy}
-     onChange={event=>setTitle(event.target.value)}/></label>
-   <label className="block text-sm">Phases from that published version (JSON)
-    <textarea aria-label="Phases from that published version" className={field+' min-h-32 font-mono'} value={phasesText}
-     disabled={busy} onChange={event=>setPhasesText(event.target.value)}/></label>
-   <button className={button} disabled={busy||!programVersionId.trim()||!title.trim()||!phasesText.trim()}
-    onClick={assign}>Share with this patient</button>
+  {connectionId?<div className="space-y-2" data-testid="program-source-picker">
+   {programs?<label className="block text-sm">Published program
+    <select aria-label="Published program" className={field} value={programVersionId} disabled={busy}
+     onChange={event=>choose(event.target.value)}>
+     <option value="">Select a published program…</option>
+     {programs.programs.map(entry=><option key={entry.programVersionId} value={entry.programVersionId}
+      disabled={!entry.assignable}>
+      {entry.title} · v{entry.programVersion}{entry.assignable
+       ?` · ${entry.phaseCount} phases`
+       :' · nothing approved for patients in this version'}</option>)}
+    </select>
+    {programs.programs.length===0
+     ?<span className="block pt-1">No published programs yet. Publish a version before sharing it.</span>:null}
+   </label>:<button className={button} disabled={busy}
+     onClick={()=>void run({action:'programs'})}>Load published programs</button>}
+
+   {preview?<div className="rounded-lg border p-3" data-testid="program-preview">
+    <p className="font-semibold">{preview.title}</p>
+    <p className="text-sm">Version {preview.programVersion}. This is what the patient would see; it comes from the
+     published version, not from anything typed here.</p>
+    <ol className="mt-2 space-y-1 text-sm">{preview.phases.map(phase=><li key={phase.id}>
+     <span className="font-medium">{phase.title}</span> · {phase.days} days · {phase.items.length} steps
+     {phase.items.some(item=>preview.review.held.includes(item.id))
+      ?<span> · contains a step held for review, so this phase will not advance</span>:null}
+    </li>)}</ol>
+    {preview.review.held.length>0?<p className="mt-2 text-sm" data-testid="program-preview-held">
+     {preview.review.held.length} step{preview.review.held.length===1?'':'s'} held for review. Sharing is allowed; the
+     patient will not be able to pass a phase containing one until the governed catalogue can check it.</p>:null}
+   </div>:null}
+
+   <button className={button} disabled={busy||!programVersionId.trim()||!preview}
+    onClick={()=>void run({action:'assign',connectionId,programVersionId}as ProgramAssignmentRequest)}>
+    Share with this patient</button>
   </div>:null}
 
   {status?status.assignments.length===0

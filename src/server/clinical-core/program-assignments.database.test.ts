@@ -44,9 +44,18 @@ const phases=(over:{transition?:'scheduled'|'check_in'|'practitioner';extra?:unk
  {id:'phase-2',title:'Phase two',days:1,transition:'scheduled' as const,items:[lesson('b')]},
 ] as ProgramAssignmentRequest extends never?never:never[]as never;
 
+// Content is published, never requested. A caller names a version; the server compiles
+// the patient-facing program from that version's own approved content.
+async function publish(content:unknown,versionId:string,version:number,status='published'){
+ await db.query(`insert into clinical_core.synthetic_desktop_program_versions(id,organization_id,program_id,version,status,content,created_by_person_id)
+  values($1,$2,$3,$4,$5,$6::jsonb,$7)
+  on conflict (id) do update set content=excluded.content,status=excluded.status`,
+  [versionId,org,program,version,status,JSON.stringify({consumerProgram:{title:'Fictional thyroid guide',phases:content}}),clinician]);
+}
 async function assign(content:unknown,versionId=published,actor=clinician){
- return call({action:'assign',connectionId:connection,programVersionId:versionId,
-  title:'Fictional thyroid guide',phases:content as never},actor,org,'workforce');
+ if(content!==undefined)await db.query('update clinical_core.synthetic_desktop_program_versions set content=$2::jsonb where id=$1',
+  [versionId,JSON.stringify({consumerProgram:{title:'Fictional thyroid guide',phases:content}})]);
+ return call({action:'assign',connectionId:connection,programVersionId:versionId},actor,org,'workforce');
 }
 async function readOwn(enrollmentId:string,actor=owner){
  const result=await call({action:'read',enrollmentId},actor);
@@ -74,9 +83,8 @@ afterAll(async()=>{await db?.close();});
 async function fresh(content:unknown=phases()){
  // One live assignment per (connection, version), so each case needs its own version.
  const version=id(++serial);
- await db.query("insert into clinical_core.synthetic_desktop_program_versions(id,organization_id,program_id,version,status,created_by_person_id) values($1,$2,$3,$4,'published',$5)",
-  [version,org,program,serial,clinician]);
- const assigned=await assign(content,version);
+ await publish(content,version,serial);
+ const assigned=await assign(undefined,version);
  if(assigned.action!=='assign')throw Error();
  return assigned;
 }
@@ -170,8 +178,8 @@ describe('program assignment service: real adapter and PostgreSQL, not hosted AW
  it('refuses a draft version, another clinic, and content the contract rejects',async()=>{
   await expect(assign(phases(),draft)).rejects.toMatchObject({category:'identity_refused'});
   await expect(assign(phases(),published,outside)).rejects.toMatchObject({category:'identity_refused'});
-  await expect(call({action:'assign',connectionId:connection,programVersionId:published,title:'Fictional',
-   phases:phases()},owner,org,'consumer')).rejects.toMatchObject({category:'identity_refused'});
+  await expect(call({action:'assign',connectionId:connection,programVersionId:published},owner,org,'consumer'))
+   .rejects.toMatchObject({category:'identity_refused'});
   for(const bad of [
    [], // no phases
    [{id:'phase-1',title:'Phase',days:0,transition:'scheduled',items:[]}],
@@ -180,7 +188,14 @@ describe('program assignment service: real adapter and PostgreSQL, not hosted AW
    [{id:'phase-1',title:'Phase',days:1,transition:'scheduled',items:[{...supplementItem(),product:undefined}]}],
    [{id:'phase-1',title:'Phase',days:1,transition:'scheduled',items:[{...supplementItem(),product:{...supplementItem().product,purchaseUrl:'http://insecure.example.com'}}]}],
    [{id:'phase-1',title:'Phase',days:1,transition:'scheduled',items:[lesson('a'),lesson('a')]}],
-  ])await expect(assign(bad)).rejects.toMatchObject({category:'request_invalid'});
+  ]){
+   const version=id(++serial);
+   await publish(bad,version,serial);
+   // Published, but what it holds is not a valid patient program, so there is nothing
+   // approved to assign. The old shape reported this as a bad request because the
+   // content came from the request; it no longer can.
+   await expect(assign(undefined,version)).rejects.toMatchObject({category:'identity_refused'});
+  }
  });
  it('lets only the owner act, and never another patient or clinic',async()=>{
   const assigned=await fresh();
@@ -276,5 +291,129 @@ describe('program assignment service: real adapter and PostgreSQL, not hosted AW
   const inventory=await db.query<{data:Record<string,unknown>}>('select clinical_private.program_plan_inventory($1) as data',[connection]);
   expect(inventory.rows[0]!.data).toMatchObject({inventoryComplete:false,products:[],
    incompleteReason:'governed_ingredients_unavailable_in_target'});
+ });
+});
+
+/**
+ * The approval-bypass Codex reproduced, and the cases around it.
+ *
+ * The original service checked that a version was published, then hashed the caller's
+ * body and stored that. A digest of a request body proves the body was hashed — nothing
+ * about where it came from. So a practitioner could name a published version whose own
+ * content was empty and deliver whatever phases they liked, including a lesson marked
+ * released that no reviewer had seen.
+ *
+ * The repair is not a stricter check on the request. It is that the request no longer
+ * carries content at all: it names a version, and the server compiles the patient-facing
+ * program from that version's approved content or refuses.
+ */
+describe('program content is bound to what was published, not to what was asked',()=>{
+ it('gives a request no way to describe content, at the contract boundary',async()=>{
+  for(const body of [
+   {action:'assign',connectionId:connection,programVersionId:published,phases:phases()},
+   {action:'assign',connectionId:connection,programVersionId:published,title:'Anything'},
+   {action:'assign',connectionId:connection,programVersionId:published,phases:[],title:'Anything'},
+  ])await expect(call(body as never,clinician,org,'workforce')).rejects.toMatchObject({category:'request_invalid'});
+ });
+
+ it('refuses a published version whose own content approves nothing for patients',async()=>{
+  const version=id(++serial);
+  await db.query("insert into clinical_core.synthetic_desktop_program_versions(id,organization_id,program_id,version,status,content,created_by_person_id) values($1,$2,$3,$4,'published','{}'::jsonb,$5)",
+   [version,org,program,serial,clinician]);
+  // This is the audit's exact setup: published, empty, and previously assignable.
+  await expect(call({action:'assign',connectionId:connection,programVersionId:version},clinician,org,'workforce'))
+   .rejects.toMatchObject({category:'identity_refused'});
+ });
+
+ it('delivers the published text, released flags and product exactly, whatever a caller wanted',async()=>{
+  const version=id(++serial);
+  const releasedLesson={...lesson('a'),title:'Approved lesson title',instructions:'Approved instruction.',released:true};
+  const heldLesson={...lesson('b'),title:'Unapproved lesson title',instructions:'Unapproved.',released:false};
+  await publish([{id:'phase-1',title:'Approved phase',days:1,transition:'scheduled',items:[releasedLesson,heldLesson]}],version,serial);
+  const assigned=await call({action:'assign',connectionId:connection,programVersionId:version},clinician,org,'workforce');
+  if(assigned.action!=='assign')throw Error();
+  const read=await readOwn(assigned.enrollmentId);
+  const items=read.assignment.phases[0]!.items;
+  expect(items.map(item=>item.title)).toEqual(['Approved lesson title','Unapproved lesson title']);
+  expect(items.map(item=>item.released)).toEqual([true,false]);
+  // An unreleased item is present but is not offered to the patient.
+  expect(read.review.add).toEqual(['lesson-a']);
+ });
+
+ it('refuses a draft, an in-review and a superseded version',async()=>{
+  for(const status of ['draft','in_review','approved','superseded']){
+   const version=id(++serial);
+   await publish(phases(),version,serial,status);
+   await expect(call({action:'assign',connectionId:connection,programVersionId:version},clinician,org,'workforce'),status)
+    .rejects.toMatchObject({category:'identity_refused'});
+  }
+ });
+
+ it('refuses a version that belongs to another clinic',async()=>{
+  const assigned=await fresh();
+  if(assigned.action!=='assign')throw Error();
+  await expect(call({action:'assign',connectionId:connection,programVersionId:published},outside,otherOrg,'workforce'))
+   .rejects.toMatchObject({category:'identity_refused'});
+ });
+
+ it('refuses rather than rewriting an assignment when the published artifact changes under it',async()=>{
+  const version=id(++serial);
+  await publish(phases(),version,serial);
+  const first=await call({action:'assign',connectionId:connection,programVersionId:version},clinician,org,'workforce');
+  if(first.action!=='assign')throw Error();
+  // Republishing different content under the same version must not silently replace an
+  // artifact the patient may already have reviewed.
+  await publish([{id:'phase-1',title:'Changed phase',days:2,transition:'scheduled',items:[lesson('z')]}],version,serial);
+  await expect(call({action:'assign',connectionId:connection,programVersionId:version},clinician,org,'workforce'))
+   .rejects.toMatchObject({category:'conflict'});
+  const unchanged=await readOwn(first.enrollmentId);
+  expect(unchanged.assignment.sourceDigest).toBe(first.sourceDigest);
+  expect(unchanged.assignment.phases[0]!.title).toBe('Phase one');
+ });
+
+ it('lists published versions for a picker and says which cannot be assigned',async()=>{
+  const assignable=id(++serial);
+  await publish(phases(),assignable,serial);
+  const empty=id(++serial);
+  await db.query("insert into clinical_core.synthetic_desktop_program_versions(id,organization_id,program_id,version,status,content,created_by_person_id) values($1,$2,$3,$4,'published','{}'::jsonb,$5)",
+   [empty,org,program,serial,clinician]);
+  const listed=await call({action:'programs'},clinician,org,'workforce');
+  expect(listed.action).toBe('programs');
+  if(listed.action!=='programs')return;
+  const good=listed.programs.find(entry=>entry.programVersionId===assignable);
+  const bad=listed.programs.find(entry=>entry.programVersionId===empty);
+  expect(good).toMatchObject({assignable:true,phaseCount:2,title:'Fictional thyroid guide'});
+  // Listed, not hidden: an author needs to see why their version cannot be shared.
+  expect(bad).toMatchObject({assignable:false,phaseCount:0});
+ });
+
+ it('previews the compiled program and its holds without assigning anything',async()=>{
+  const version=id(++serial);
+  await publish(phases({extra:[supplementItem()]}),version,serial);
+  const preview=await call({action:'preview',programVersionId:version},clinician,org,'workforce');
+  expect(preview.action).toBe('preview');
+  if(preview.action!=='preview')return;
+  expect(preview.title).toBe('Fictional thyroid guide');
+  expect(preview.phases[0]!.items.map(item=>item.id)).toEqual(['lesson-a','supp-1']);
+  // Every supplement step stays held while the governed catalog is unreachable here.
+  expect(preview.review).toMatchObject({inventoryComplete:false,held:['supp-1']});
+  expect(preview.review.add).not.toContain('supp-1');
+  // Nothing was created by looking.
+  const count=await db.query<{n:string}>('select count(*)::text as n from clinical_core.program_assignments where program_version_id=$1',[version]);
+  expect(count.rows[0]!.n).toBe('0');
+ });
+
+ it('keeps the picker and the preview inside the caller\'s own clinic',async()=>{
+  for(const action of ['programs','preview'] as const){
+   const body=action==='programs'?{action}:{action,programVersionId:published};
+   await expect(call(body as never,owner,org,'consumer'),action).rejects.toMatchObject({category:'identity_refused'});
+  }
+  // The picker is scoped to the caller's organization, so another clinic sees its own
+  // (empty) list rather than a refusal — and never a version belonging to this one.
+  const theirs=await call({action:'programs'},outside,otherOrg,'workforce');
+  expect(theirs).toEqual({action:'programs',programs:[]});
+  // Previewing this clinic's version from the other one is refused outright.
+  await expect(call({action:'preview',programVersionId:published},outside,otherOrg,'workforce'))
+   .rejects.toMatchObject({category:'identity_refused'});
  });
 });

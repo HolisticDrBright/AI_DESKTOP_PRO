@@ -11,7 +11,7 @@ import {liveGuard} from '../route-helpers';
  * route is refused before anything leaves the process.
  */
 const json=(status:number,value:unknown)=>NextResponse.json(value,{status,headers:{'Cache-Control':'no-store'}});
-const WORKFORCE=new Set(['assign','status','release','connections']);
+const WORKFORCE=new Set(['assign','status','release','connections','programs','preview']);
 export async function POST(request:Request){
  const blocked=liveGuard();if(blocked)return blocked;
  if(!sameBrowserOrigin(request))return json(403,{error:'identity_refused'});

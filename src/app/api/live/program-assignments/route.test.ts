@@ -9,7 +9,9 @@ const connectionId='11111111-1111-4111-8111-111111111111';
 const programVersionId='22222222-2222-4222-8222-222222222222';
 const phases=[{id:'phase-1',title:'Phase one',days:7,transition:'scheduled',
  items:[{id:'lesson-a',title:'Fictional lesson',kind:'lesson',instructions:'Read it.',released:true}]}];
-const assign={action:'assign',connectionId,programVersionId,title:'Fictional thyroid guide',phases};
+// An assign request names a published version and carries no content: the title and the
+// phases are read from the published artifact on the server.
+const assign={action:'assign',connectionId,programVersionId};
 function req(body:unknown=assign,headers:Record<string,string>={},url='http://0.0.0.0:3000/api/live/program-assignments'){
  return new Request(url,{method:'POST',headers:{host,origin:'https://'+host,'sec-fetch-site':'same-origin',
   'content-type':'application/json',...headers},body:JSON.stringify(body)});
@@ -49,11 +51,24 @@ it('refuses a consumer action posted to the workforce route',async()=>{
   expect(upstream).not.toHaveBeenCalled();
  }
 });
-it('refuses content the assignment contract rejects, without calling upstream',async()=>{
- for(const body of [{...assign,phases:[]},{...assign,title:''},
+it('refuses a request that tries to describe the content, without calling upstream',async()=>{
+ // The paste-a-block shape is gone. A body carrying phases, a title, or both is not a
+ // valid assignment any more, and it is refused before anything leaves the process.
+ for(const body of [{...assign,phases},{...assign,title:'Fictional thyroid guide'},
+  {...assign,title:'Fictional thyroid guide',phases},
   {...assign,phases:[{...phases[0],items:[{...phases[0]!.items[0],kind:'supplement'}]}]}]){
   expect((await POST(req(body))).status).toBe(503);
   expect(upstream).not.toHaveBeenCalled();
+ }
+});
+it('carries the picker and the preview, which are workforce actions too',async()=>{
+ for(const body of [{action:'programs'},{action:'preview',programVersionId}]){
+  upstream.mockResolvedValueOnce(Response.json({data:body.action==='programs'
+   ?{action:'programs',programs:[]}
+   :{action:'preview',programVersionId,programVersion:'1',title:'Fictional thyroid guide',
+     phases,sourceDigest:'a'.repeat(64),
+     review:{planRevision:'none',inventoryComplete:false,add:['lesson-a'],duplicate:[],held:[],conflicts:[]}}}));
+  expect((await POST(req(body))).status).toBe(200);
  }
 });
 it('passes a refusal, an unpublished version and a re-pin conflict through as themselves',async()=>{

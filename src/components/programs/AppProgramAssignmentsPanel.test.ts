@@ -50,8 +50,25 @@ describe('the practitioner assignment panel',()=>{
   expect(source).toContain('visibilitychange');
   expect(source).toContain('response.status===401||response.status===403');
  });
- it('refuses to send phases it could not parse',()=>{
-  expect(source).toContain('not valid JSON, so nothing was sent');
+ it('sends no content at all, so there is nothing for it to parse',()=>{
+  // The panel used to take a paste of phases JSON and a title. The server trusted both,
+  // which is how a published-but-empty version could deliver unreviewed content. Neither
+  // the field nor the request shape exists now.
+  for(const forbidden of ['JSON.parse','phasesText','setTitle','Phases from that published version',
+   'Published program version id','title:','phases:'])
+   expect(source,forbidden).not.toContain(forbidden);
+ });
+ it('picks a published version and previews what the server compiled from it',()=>{
+  for(const required of ["action:'programs'","action:'preview'","program-source-picker","program-preview",
+   'Select a published program','nothing approved for patients in this version',
+   'it comes from the\n     published version, not from anything typed here'])
+   expect(source,required).toContain(required);
+ });
+ it('will not offer to share before a preview has come back',()=>{
+  expect(source).toContain('disabled={busy||!programVersionId.trim()||!preview}');
+ });
+ it('says that a held step blocks its phase, on the preview itself',()=>{
+  expect(source).toContain('will not be able to pass a phase containing one');
  });
  it('authors no clinical content of its own',()=>{
   // No default phases, no example markers, no generated instructions.
