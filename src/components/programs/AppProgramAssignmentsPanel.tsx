@@ -2,6 +2,7 @@
 import {useEffect,useRef,useState} from 'react';
 import {parseProgramAssignmentResponse,type ProgramAssignmentRequest,type ProgramAssignmentResponse} from '@/contracts/programAssignments';
 import {onWorkforceSessionChange} from '@/lib/workforce-session-change';
+import {RevisionAnnouncePanel} from '@/components/governance/RevisionAnnouncePanel';
 
 type Status=Extract<ProgramAssignmentResponse,{action:'status'}>;
 type Connections=Extract<ProgramAssignmentResponse,{action:'connections'}>;
@@ -126,7 +127,8 @@ export function AppProgramAssignmentsPanel(){
    </label>:<button className={button} disabled={busy}
      onClick={()=>void run({action:'programs'})}>Load published programs</button>}
 
-   {preview?<div className="rounded-lg border p-3" data-testid="program-preview">
+   {programVersionId.trim()?<RevisionAnnouncePanel toVersionId={programVersionId.trim()}/>:null}
+  {preview?<div className="rounded-lg border p-3" data-testid="program-preview">
     <p className="font-semibold">{preview.title}</p>
     <p className="text-sm">Version {preview.programVersion}. This is what the patient would see; it comes from the
      published version, not from anything typed here.</p>

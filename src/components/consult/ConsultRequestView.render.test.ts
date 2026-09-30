@@ -45,7 +45,8 @@ describe('public consult page', () => {
     expect(renderToText(form({ acceptingRequests: false })))
       .toContain('not taking new requests through this link at the moment');
     expect(markup).toContain('data-testid="consult-submit"');
-    expect(markup).toMatch(/data-testid="consult-submit"[^>]*disabled/);
+    // The attribute, not Tailwind's `disabled:` class, which would match either way.
+    expect(markup).toMatch(/data-testid="consult-submit"[^>]*disabled=""/);
   });
 
   it('distinguishes a received request from a refused one', () => {

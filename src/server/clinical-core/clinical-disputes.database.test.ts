@@ -87,7 +87,7 @@ beforeEach(async()=>{
 describe('contesting a record: real migration SQL, not hosted AWS',()=>{
  it('carries a dispute from the patient to the clinic and back with an answer',async()=>{
   const enrollment=await assign();
-  const raised=await rpc('clinical_dispute_consumer',{action:'raise',connectionId:connection,
+  const raised=await rpc('clinical_dispute_consumer',{action:'raise',
    subjectKind:'program_assignment',subjectId:enrollment,reasonCode:'disagree_with_conclusion',
    statement:'I have never had a thyroid problem and this guide assumes I do.'});
   expect(raised).toMatchObject({action:'raise',status:'open'});
@@ -113,8 +113,7 @@ describe('contesting a record: real migration SQL, not hosted AWS',()=>{
 
  it('keeps an upheld disagreement attached to the item instead of closing it away',async()=>{
   const enrollment=await assign();
-  await rpc('clinical_dispute_consumer',{action:'raise',connectionId:connection,
-   subjectKind:'program_assignment',subjectId:enrollment,reasonCode:'not_true_of_me',
+  await rpc('clinical_dispute_consumer',{action:'raise',subjectKind:'program_assignment',subjectId:enrollment,reasonCode:'not_true_of_me',
    statement:'This is not right about me.'});
   const queue=await asClinic('clinical_dispute_workforce',{action:'list'});
   const entry=(queue.disputes as Json[])[0];
@@ -133,8 +132,7 @@ describe('contesting a record: real migration SQL, not hosted AWS',()=>{
 
  it('refuses a resolution with no answer, and will not let an answer be rewritten',async()=>{
   const enrollment=await assign();
-  await rpc('clinical_dispute_consumer',{action:'raise',connectionId:connection,
-   subjectKind:'program_assignment',subjectId:enrollment,reasonCode:'other',
+  await rpc('clinical_dispute_consumer',{action:'raise',subjectKind:'program_assignment',subjectId:enrollment,reasonCode:'other',
    statement:'Something is wrong here.'});
   const entry=(await asClinic('clinical_dispute_workforce',{action:'list'})).disputes as Json[];
   const dispute=entry[0];
@@ -157,15 +155,14 @@ describe('contesting a record: real migration SQL, not hosted AWS',()=>{
   const enrollment=await assign();
   const theirs=await assign(otherConnection);
   // Another patient's assignment is not a subject this account may contest.
-  expect(await message(rpc('clinical_dispute_consumer',{action:'raise',connectionId:connection,
-   subjectKind:'program_assignment',subjectId:theirs,reasonCode:'other',statement:'Not mine.'})))
+  expect(await message(rpc('clinical_dispute_consumer',{action:'raise',subjectKind:'program_assignment',subjectId:theirs,reasonCode:'other',statement:'Not mine.'})))
    .toMatch(/clinical_dispute_subject_absent/);
-  // Nor may it borrow someone else's connection to reach its own.
-  expect(await message(rpc('clinical_dispute_consumer',{action:'raise',connectionId:otherConnection,
-   subjectKind:'program_assignment',subjectId:enrollment,reasonCode:'other',statement:'Not mine.'})))
-   .toMatch(/clinical_dispute_connection_absent/);
-  expect(await message(rpc('clinical_dispute_consumer',{action:'raise',connectionId:connection,
-   subjectKind:'lab_observation',subjectId:id(999),reasonCode:'other',statement:'No such thing.'})))
+  // And the other account cannot reach this one's assignment either: the connection search
+  // runs over the caller's own links only.
+  expect(await message(rpc('clinical_dispute_consumer',{action:'raise',
+   subjectKind:'program_assignment',subjectId:enrollment,reasonCode:'other',statement:'Not mine.'},
+   other,'consumer'))).toMatch(/clinical_dispute_subject_absent/);
+  expect(await message(rpc('clinical_dispute_consumer',{action:'raise',subjectKind:'lab_observation',subjectId:id(999),reasonCode:'other',statement:'No such thing.'})))
    .toMatch(/clinical_dispute_subject_absent/);
   // And a clinic session cannot raise a dispute on a patient's behalf.
   expect(await message(rpc('clinical_dispute_consumer',{action:'list'},clinician,'workforce')))
@@ -174,16 +171,14 @@ describe('contesting a record: real migration SQL, not hosted AWS',()=>{
 
  it('lets a patient add to and withdraw an open dispute, but not a resolved one',async()=>{
   const enrollment=await assign();
-  const raised=await rpc('clinical_dispute_consumer',{action:'raise',connectionId:connection,
-   subjectKind:'program_assignment',subjectId:enrollment,reasonCode:'missing_context',
+  const raised=await rpc('clinical_dispute_consumer',{action:'raise',subjectKind:'program_assignment',subjectId:enrollment,reasonCode:'missing_context',
    statement:'First thing.'});
   await rpc('clinical_dispute_consumer',{action:'add_statement',disputeId:raised.disputeId,
    statement:'Second thing I forgot.'});
   const mine=await rpc('clinical_dispute_consumer',{action:'list'});
   expect((mine.disputes as Json[])[0].statements).toHaveLength(2);
   // A duplicate complaint about the same item adds to the trail rather than forking it.
-  expect(await message(rpc('clinical_dispute_consumer',{action:'raise',connectionId:connection,
-   subjectKind:'program_assignment',subjectId:enrollment,reasonCode:'other',statement:'Again.'})))
+  expect(await message(rpc('clinical_dispute_consumer',{action:'raise',subjectKind:'program_assignment',subjectId:enrollment,reasonCode:'other',statement:'Again.'})))
    .toMatch(/clinical_dispute_exists/);
   const entry=(await asClinic('clinical_dispute_workforce',{action:'list'})).disputes as Json[];
   await asClinic('clinical_dispute_workforce',{action:'resolve',disputeId:entry[0].disputeId,
@@ -283,8 +278,7 @@ describe('correcting a record after it was delivered',()=>{
 describe('lifecycle for the contested and corrected record',()=>{
  async function history(){
   const enrollment=await assign();
-  await rpc('clinical_dispute_consumer',{action:'raise',connectionId:connection,
-   subjectKind:'program_assignment',subjectId:enrollment,reasonCode:'not_true_of_me',
+  await rpc('clinical_dispute_consumer',{action:'raise',subjectKind:'program_assignment',subjectId:enrollment,reasonCode:'not_true_of_me',
    statement:'My own words about this.'});
   const entry=(await asClinic('clinical_dispute_workforce',{action:'list'})).disputes as Json[];
   await asClinic('clinical_dispute_workforce',{action:'resolve',disputeId:entry[0].disputeId,

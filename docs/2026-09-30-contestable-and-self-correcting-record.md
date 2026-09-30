@@ -18,7 +18,7 @@ it, silently, forever.** That is the most dangerous quiet failure in the product
 a protocol the clinician has since changed. Jane, Practice Better and Biocanic all publish and forget.
 
 ## Migration 41 — `20260930160000_synthetic_clinical_disputes_and_revisions.sql`
-`sha256 24c4e70c9e28cbd27a1df42a069de0c2de3425e62c9fc3bb9fe37b685fadbdfe`
+`sha256 bca159d3bb7b9749f5fb4b975e6c91a23450cbb83ebabaee112c8582f9cabd73`
 
 ### Contesting a record
 `clinical_disputes` + `clinical_dispute_statements`, with
@@ -87,35 +87,51 @@ registry rather than a fourth copy.
 - **Desktop:** `contracts/clinicalDisputes.ts`, `server/clinical-core/clinical-disputes.ts`,
   `POST /api/live/care-governance`, and `DisputeQueuePanel` mounted **first** on the Inbox — a patient
   saying a record is wrong about them is the one inbound item that cannot wait behind ordinary
-  messages.
+  messages. The panel resolves `window.prompt` inside its handler rather than as a default parameter,
+  because the page server-renders and touching `window` during render would crash it.
+- **Desktop, announcing a revision:** `RevisionAnnounceView` (pure, rendered in tests) and
+  `RevisionAnnouncePanel`, mounted inside `AppProgramAssignmentsPanel` once a published version is
+  named. It previews before it sends — how many patients are on an older version and what changed for
+  each — and the send button stays disabled until a class is chosen, with `safety_withdrawal` also
+  requiring the clinician's own words. A rendered test asserts the disabled state by
+  `disabled=""`, not by a bare `disabled` that Tailwind's `disabled:opacity-50` would also match.
 - **App (V2):** `contracts/clinicalDisputes.ts`, `lib/clinicalData/awsClinicalDisputes.ts`,
   `CareUpdatesView` (pure, rendered in tests), `CareUpdatesCard`, screen `app/care-updates.tsx`,
   reached from the profile menu. A safety withdrawal sorts first, is outlined, and its button reads
   "I have read this and stopped".
+- **App (V2), raising a disagreement:** the same screen now carries the form. It offers only items not
+  already flagged — one trail per item — says in advance what happens if the practitioner keeps the
+  record ("your disagreement stays recorded alongside it"), and separates "nothing to flag yet" from
+  "you have already flagged everything here". `raise` no longer takes a connection id: the server
+  derives it from the subject over the connections that account owns, so the app never has to know its
+  own connection id and cannot name someone else's.
 - **Infrastructure:** four new authenticated routes — **49 total, 48 authenticated and still exactly
   one declared public.**
 
 ## Ledger
 Synthetic `clinical_core`: **41** migrations, composite
-`65f79de3b46794b5eda02e0817c449600a482c8492a10e71bfde9fbaeafccbcc`.
+`bb2cf81c567a0312a64351e36e998a781c23a70d6d39828e92d9681f80d10093`.
 Migration 33 applied and untouched. **34–41 unapplied.** Production family unchanged at 103,
 `8a9a8f321fafc1f4e2c20b44825845cc64bb291c1746b1cdacfe7f23bfa3c9c2`.
 
 ## Local verification
-- Desktop: 3,647 passed / 11 skipped (298 files); typecheck clean; lint clean, zero warnings; all AWS
-  gates pass, including the 49-route authenticated-API check, operation inventory (226 operations, 0
-  enabled), production clinical-core (103), clinical-bundle and mock-imports.
-- App: 2,150 passed / 1 skipped (197 files); typecheck clean; lint clean; surface-disclosure gate.
+- Desktop: 3,652 passed / 11 skipped (299 files); typecheck clean; lint clean, zero warnings; gates
+  pass — clinical-core, the 49-route authenticated-API check, operation inventory (226 operations, 0
+  enabled), production clinical-core (103 migrations, release hash unchanged), clinical-bundle,
+  mock-imports.
+- App: 2,154 passed / 1 skipped (197 files); typecheck clean; lint clean.
 - New tests: `clinical-disputes.database.test.ts` (13, real migration SQL under PGlite),
-  `DisputeQueueView.render.test.ts` (5, rendered), `care-updates.test.ts` (8, app-side rendered).
+  `DisputeQueueView.render.test.ts` (5, rendered), `RevisionAnnounceView.render.test.ts` (6,
+  rendered), `care-updates.test.ts` (12, app-side rendered).
 
 ## Not done, and not claimed
 - **Nothing is deployed.** No hosted check has run against any of this and no device has seen the app
-  screens.
-- **Publishing a revision notice has no Desktop UI yet.** The function, contract, service and route
-  exist and are tested; the practitioner-facing "you have published v2, tell the 6 patients on v1"
-  flow belongs in the program panel and is the next increment. Until then notices can only be created
-  through the API.
-- The patient cannot yet *raise* a dispute from the app UI — the transport and contract are there and
-  the list is rendered, but the raise form is not built. That is the other half of the next increment.
-- Lab-observation and form-response disputes are supported by the SQL and untested through a UI.
+  screens. **34–41 are unapplied.**
+- Lab-observation and form-response disputes are supported by the SQL and exercised only through the
+  database tests; the two UI surfaces built here cover program assignments, which is the subject that
+  can actually be revised today.
+- A revision notice is still announced per published version from the assignments panel. There is no
+  digest of "everything I published this week", and no reminder if a `safety_withdrawal` goes
+  unacknowledged for days — the practitioner view flags it, but nothing chases it.
+- The export function is now carried in a third near-identical copy. The next domain added should
+  refactor it into one function per section with a registry rather than a fourth copy.

@@ -363,8 +363,8 @@ begin
  end if;
 
  if _action='raise' then
-  if _request-array['action','connectionId','subjectKind','subjectId','reasonCode','statement']<>'{}'::jsonb
-  or (_request->>'connectionId') is null or (_request->>'subjectId') is null
+  if _request-array['action','subjectKind','subjectId','reasonCode','statement']<>'{}'::jsonb
+  or (_request->>'subjectId') is null
   or (_request->>'subjectKind') is null
   or (_request->>'subjectKind') not in('program_assignment','lab_observation','intake_response')
   or (_request->>'reasonCode') is null
@@ -373,20 +373,19 @@ begin
   or (_request->>'statement') is null
   or char_length(btrim(_request->>'statement')) not between 1 and 2000 then
    raise exception using errcode='22023',message='clinical_dispute_invalid'; end if;
+  -- The connection is derived from the subject rather than supplied. The search runs only
+  -- over connections this account owns, so a caller cannot name someone else's link, and the
+  -- patient's app does not have to know its own connection id to say a record is wrong.
   begin
-   select * into _connection from clinical_core.patient_connections
-    where id=(_request->>'connectionId')::uuid and organization_id=_org
-     and consumer_person_id=_actor;
+   select c.* into _connection from clinical_core.patient_connections c
+    where c.organization_id=_org and c.consumer_person_id=_actor
+     and clinical_private.dispute_subject_exists(c.id,_request->>'subjectKind',
+      (_request->>'subjectId')::uuid)
+    order by c.id limit 1;
   exception when invalid_text_representation then
    raise exception using errcode='22023',message='clinical_dispute_invalid'; end;
   if _connection.id is null then
-   raise exception using errcode='P0002',message='clinical_dispute_connection_absent'; end if;
-  begin
-   if not clinical_private.dispute_subject_exists(_connection.id,_request->>'subjectKind',
-    (_request->>'subjectId')::uuid) then
-    raise exception using errcode='P0002',message='clinical_dispute_subject_absent'; end if;
-  exception when invalid_text_representation then
-   raise exception using errcode='22023',message='clinical_dispute_invalid'; end;
+   raise exception using errcode='P0002',message='clinical_dispute_subject_absent'; end if;
   -- One open trail per item. A second complaint about the same thing is a statement added
   -- to the first, not a parallel dispute nobody is reading.
   if exists(select 1 from clinical_core.clinical_disputes

@@ -35,8 +35,9 @@ const disputeRecord = z.object({
 export const disputeConsumerRequest = z.discriminatedUnion('action', [
   z.object({ action: z.literal('list') }).strict(),
   z.object({
-    action: z.literal('raise'), connectionId: z.string().uuid(),
-    subjectKind: disputeSubjectKind, subjectId: z.string().uuid(),
+    // No connection id: the server derives it from the subject, searching only the
+    // connections this account owns.
+    action: z.literal('raise'), subjectKind: disputeSubjectKind, subjectId: z.string().uuid(),
     reasonCode: disputeReasonCode, statement,
   }).strict(),
   z.object({ action: z.literal('add_statement'), disputeId: z.string().uuid(), statement }).strict(),
