@@ -31,10 +31,18 @@ All authenticated responses below carried `x-clinical-execution: qualification`:
 
 The first attempted wellness write was refused `request_invalid` because the test payload included an extra fixture field. The test was corrected to the published schema before the successful run. This is evidence of schema refusal, not evidence of a production failure.
 
+## Hosted synthetic program assignment — later October 5
+
+The guarded program migration changed only staging `clinical_core`, not the isolated qualification database. A reviewed change set then updated `ai-clinical-core-synthetic-staging-authenticated-api`: two JWT routes were added (`POST /clinical-core/consumer/programs`, `POST /clinical-core/workforce/programs`) and the existing Lambda code was updated in place. No resource was replaced. The stack reached `UPDATE_COMPLETE`, the Lambda was Active/Successful, and its immutable S3 artifact is `clinical-core/authenticated-api/58f5978301be218896b269a44438fecb8ae89a690bee6671008b64f215f14247.zip` (SSE-KMS, bucket version `GsDkhEuyC.7rZk63usQjzzoUU5Pcc._3`). The previous artifact remains available for rollback. Staging `PhiAllowed=false` and its exact 35-row migration ledger were rechecked before preparing the change.
+
+`scripts/verify-synthetic-program-routes-hosted.mjs` ran through the real API with existing fictional, synthetic-attested Cognito users. It observed authenticated consumer/workforce reads, role and anonymous refusals, a published fictional version, practitioner assignment, consumer read and acceptance, cross-owner refusal, and a refusal to complete an unresolved supplement. The program review reported `inventoryComplete=false` with that supplement held; no product link or catalog approval was invented. The test fixture is fictional and retained for replay. An initial attempt using older fictional identities was refused because their immutable synthetic-attestation claim was absent. That guard was not weakened; the successful run used previously designated attested fictional accounts.
+
+This is a synthetic staging journey, not a qualification execution for the other ten candidate stacks, a current mobile/Desktop release, or PHI approval. The governed catalog is not reachable from this program target, so every supplement step remains held. No device journey or real patient data was tested. The user instructed us to hold TestFlight/paid mobile builds until the remaining updates are complete.
+
 ## Not proven
 
 - These requests exercised an older `a300c63` personal-storage candidate, not an exact matched current V2/Desktop release.
-- The other qualification candidates, current identity routes and latest synthetic migrations, full hosted harnesses, retention schedule, export delivery, recording/transcription/drafting, cross-clinic access, messaging settlement and program assignment were not accepted by this narrow run.
+- The other qualification candidates, full hosted harnesses, retention schedule, export delivery, recording/transcription/drafting, cross-clinic access, and exact matched release candidates were not accepted by this narrow run. Program assignment now has a separate fictional staging run above; that does not imply qualification-target or mobile acceptance.
 - At the start of this run the separate synthetic-staging database `clinical_core` had 33 applied migrations, latest `20260929110000`. The current manifest lists 45 migrations; a historical alias in the live ledger accounts for one extra row. After the narrow operation below, 11 manifest-listed migrations remain unapplied. None were included in this operation.
 - No physical iOS/Android journey, store billing, provider live-mode acceptance, or complete security/privacy/retention review was performed.
 - PHI remains disabled. Do not infer commercial readiness, HIPAA compliance, or readiness for real patients from this document.
