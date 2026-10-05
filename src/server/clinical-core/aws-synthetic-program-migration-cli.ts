@@ -75,4 +75,12 @@ async function main(){
     phiAllowed:false,alreadyApplied:observed?.alreadyApplied??false,reviewedPrior:33,
     selected:selected.map(({version,sha256})=>({version,sha256}))}));
 }
-main().catch(error=>{console.error(JSON.stringify({ok:false,error:error instanceof Error&&/^[a-z_]+$/.test(error.message)?error.message:'migration_failed'}));process.exitCode=1;});
+main().catch(error=>{
+  const category=error instanceof Error&&[
+    'command_refused','synthetic_account_required','synthetic_target_refused','migration_artifact_changed',
+    'reviewed_alias_missing','reviewed_history_changed','post_apply_ledger_mismatch','rehearsal_persisted',
+    'aws_read_failed',
+  ].includes(error.message)?error.message:'migration_failed';
+  console.error(JSON.stringify({ok:false,error:category}));
+  process.exitCode=1;
+});

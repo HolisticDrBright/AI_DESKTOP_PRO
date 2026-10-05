@@ -7,8 +7,8 @@ import {readFileSync} from 'node:fs';
  * clinical content, states plainly what sharing does and does not do, and treats a
  * refused revision as the server deciding rather than something to retry.
  */
-const source=readFileSync('src/components/programs/AppProgramAssignmentsPanel.tsx','utf8');
-const page=readFileSync('src/app/inbox/page.tsx','utf8');
+const source=readFileSync('src/components/programs/AppProgramAssignmentsPanel.tsx','utf8').replace(/\r\n?/g,'\n');
+const page=readFileSync('src/app/inbox/page.tsx','utf8').replace(/\r\n?/g,'\n');
 
 describe('the practitioner assignment panel',()=>{
  it('is reachable from a real screen',()=>{
