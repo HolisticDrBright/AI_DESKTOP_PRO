@@ -1,8 +1,7 @@
-import {readFileSync} from 'node:fs';
 import {execFileSync} from 'node:child_process';
 import {resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {CANDIDATES} from './build-aws-qualification-parameters.mjs';
+import {CANDIDATES,loadTemplate} from './build-aws-qualification-parameters.mjs';
 
 /** Conservative preflight, not a capacity guarantee. AWS documents a 100-unit unreserved floor.
  * Reduced-quota accounts can have a lower floor, but never silently remove the candidate caps. */
@@ -45,8 +44,8 @@ async function main() {
   const aws=(...parts)=>JSON.parse(execFileSync('aws',[...parts,'--profile',profile,'--region','us-east-2','--output','json'],{encoding:'utf8',timeout:30000,windowsHide:true,stdio:['ignore','pipe','pipe']}));
   if(aws('sts','get-caller-identity').Account!=='588966314750')throw new Error('synthetic_account_required');
   const functions=[];
-  for(const [candidateName,candidate] of Object.entries(CANDIDATES)) {
-    const template=JSON.parse(readFileSync(resolve(candidate.template),'utf8'));
+  for(const candidateName of Object.keys(CANDIDATES)) {
+    const template=loadTemplate(candidateName);
     for(const f of reservedFunctions(template,apiId)) {
       // CloudFormation-generated names are unknown before creation. Count the whole
       // reservation as additional rather than credit an unobserved existing function.

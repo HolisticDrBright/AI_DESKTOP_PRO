@@ -1,6 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {assessCapacity,reservedFunctions} from './check-aws-qualification-capacity.mjs';
+import {loadTemplate} from './build-aws-qualification-parameters.mjs';
 const f=[{name:'qualification-personal-storage',desired:4,existing:0}];
 test('the actual ten-unit account refuses before deployment without weakening caps',()=>{
   const r=assessCapacity({ConcurrentExecutions:10,UnreservedConcurrentExecutions:10},f);
@@ -29,4 +30,9 @@ test('template functions resolve only observed supported names and literal caps'
 test('clinical API names resolve and unnamed functions get no invented physical name',()=>{
   const template={Resources:{Worker:{Type:'AWS::Lambda::Function',Properties:{FunctionName:{'Fn::Sub':'${ClinicalApiId}-worker'},ReservedConcurrentExecutions:4}},Voice:{Type:'AWS::Lambda::Function',Properties:{ReservedConcurrentExecutions:4}}}};
   assert.deepEqual(reservedFunctions(template,'6zt8e9qz04'),[{name:'6zt8e9qz04-worker',desired:4},{name:null,logicalId:'Voice',desired:4}]);
+});
+test('capacity preflight loads recording templates without a persisted dist artifact',()=>{
+  const template=loadTemplate('recording-authority');
+  const functions=reservedFunctions(template,'6zt8e9qz04');
+  assert.ok(functions.some(f=>f.name==='6zt8e9qz04-recording-authority'&&f.desired===2));
 });
