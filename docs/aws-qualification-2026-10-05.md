@@ -39,3 +39,9 @@ The first attempted wellness write was refused `request_invalid` because the tes
 - No physical iOS/Android journey, store billing, provider live-mode acceptance, or complete security/privacy/retention review was performed.
 - PHI remains disabled. Do not infer commercial readiness, HIPAA compliance, or readiness for real patients from this document.
 - At source HEAD, the full Desktop dependency audit still reports five high findings through a development-only `braces` dependency chain. A runtime-only audit reports zero findings, but the full CI security gate is not green and must not be silently weakened.
+
+## Narrow staging migration rehearsal
+
+The source-bound program-assignment audit now reports no findings, and focused program and specimen-context tests pass. The staging ledger has 33 entries. Its only source-version alias is the previously reviewed `20260902230000` workforce directory row, whose digest matches source `20260821049700`. The source manifest also contains an older-numbered, unapplied lab-specimen-context migration; it must precede program assignments.
+
+`syntheticProgramMigration` is a guarded, synthetic-only operator for exactly those two migration digests. It checks the STS account, foundation posture, exact 33-row predecessor ledger including the alias, and the selected SQL hashes. `inspect` is read-only. `rehearse --confirm-synthetic-only` executes both migrations in one Aurora transaction, intentionally rolls them back, and verifies the ledger remains at 33. That rehearsal passed. `apply --confirm-synthetic-only` is a separate explicit step; it is not implied by rehearsal. No other migration is included.

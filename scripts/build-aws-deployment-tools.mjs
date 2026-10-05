@@ -8,6 +8,7 @@ mkdirSync(outdir, { recursive: true });
 await build({
   entryPoints: {
     operator: "src/server/clinical-core/aws-deployment-cli.ts",
+    syntheticProgramMigration: "src/server/clinical-core/aws-synthetic-program-migration-cli.ts",
     catalogOperator: "src/server/clinical-core/aws-catalog-import-cli.ts",
     acceptance: "src/server/clinical-core/aws-acceptance-cli.ts",
     exportRetentionAcceptance: "src/server/clinical-core/export-retention-acceptance-cli.ts",
