@@ -35,6 +35,7 @@ The first attempted wellness write was refused `request_invalid` because the tes
 
 - These requests exercised an older `a300c63` personal-storage candidate, not an exact matched current V2/Desktop release.
 - The other qualification candidates, current identity routes and latest synthetic migrations, full hosted harnesses, retention schedule, export delivery, recording/transcription/drafting, cross-clinic access, messaging settlement and program assignment were not accepted by this narrow run.
+- A read-only check of the separate synthetic-staging database `clinical_core` found 33 applied migrations, latest `20260929110000`; the current source tree contains 46 synthetic migrations. The remaining 13 were not applied by this run. In particular, program-assignment migration `20260929120000` was previously held for a source-bound content-validation finding; it must be reviewed and rollback-tested before application.
 - No physical iOS/Android journey, store billing, provider live-mode acceptance, or complete security/privacy/retention review was performed.
 - PHI remains disabled. Do not infer commercial readiness, HIPAA compliance, or readiness for real patients from this document.
 - At source HEAD, the full Desktop dependency audit still reports five high findings through a development-only `braces` dependency chain. A runtime-only audit reports zero findings, but the full CI security gate is not green and must not be silently weakened.
