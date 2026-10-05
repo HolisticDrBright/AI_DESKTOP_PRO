@@ -11,6 +11,8 @@ import {fromIni} from '@aws-sdk/credential-provider-ini';
 const root=process.argv[4];
 const account='588966314750',region='us-east-2',profile='ai-synthetic-staging';
 const api='https://wxv734oi12.execute-api.us-east-2.amazonaws.com';
+const deployedSourceCommit='b1f597d39fefde10d70a1e00d813967736df2e8f';
+const deployedArtifactSha256='58f5978301be218896b269a44438fecb8ae89a690bee6671008b64f215f14247';
 const assert=(ok,code)=>{if(!ok)throw Error(code);};
 function totp(secret){
  const alphabet='ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';let bits=0,value=0;const bytes=[];
@@ -23,6 +25,10 @@ async function main(){
  assert(process.argv.length===5&&process.argv[2]==='--confirm-fictional-only'&&process.argv[3]==='--identity-dir'&&isAbsolute(root),'command_refused');
  const identity=JSON.parse(execFileSync('aws',['sts','get-caller-identity','--profile',profile,'--region',region,'--output','json'],{encoding:'utf8',windowsHide:true}));
  assert(identity.Account===account,'account_refused');
+ const deployed=JSON.parse(execFileSync('aws',['cloudformation','describe-stacks','--stack-name','ai-clinical-core-synthetic-staging-authenticated-api','--profile',profile,'--region',region,'--output','json'],{encoding:'utf8',windowsHide:true})).Stacks[0];
+ assert(deployed.StackStatus==='UPDATE_COMPLETE'&&deployed.Parameters.some(p=>p.ParameterKey==='LambdaCodeKey'&&p.ParameterValue===`clinical-core/authenticated-api/${deployedArtifactSha256}.zip`),'deployed_artifact_changed');
+ const functionState=JSON.parse(execFileSync('aws',['lambda','get-function-configuration','--function-name','wxv734oi12-synthetic-identity','--profile',profile,'--region',region,'--output','json'],{encoding:'utf8',windowsHide:true}));
+ assert(functionState.State==='Active'&&functionState.LastUpdateStatus==='Successful'&&functionState.CodeSha256===Buffer.from(deployedArtifactSha256,'hex').toString('base64'),'deployed_code_changed');
  const sealed=readFileSync(root+'/credentials.dpapi.txt','utf8');
  const decrypt='$s=ConvertTo-SecureString ([Console]::In.ReadToEnd());$p=[Runtime.InteropServices.Marshal]::SecureStringToBSTR($s);try{[Console]::Out.Write([Runtime.InteropServices.Marshal]::PtrToStringBSTR($p))}finally{[Runtime.InteropServices.Marshal]::ZeroFreeBSTR($p)}';
  const opened=spawnSync('pwsh',['-NoProfile','-NonInteractive','-Command',decrypt],{input:sealed,encoding:'utf8',windowsHide:true,timeout:20000});
@@ -114,7 +120,7 @@ async function main(){
  const held=await request('consumer','/clinical-core/consumer/programs',{action:'complete',enrollmentId:assignment.data.enrollmentId,
   sourceDigest:assignment.data.sourceDigest,expectedRevision:revision,itemId:'supp-1'},403);
  assert(held.error==='identity_refused','held_product_completed');
- console.log(JSON.stringify({verdict:'pass',account,phiAllowed:false,sourceCommit:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),
+ console.log(JSON.stringify({verdict:'pass',account,phiAllowed:false,deployedSourceCommit,deployedArtifactSha256,
   observed:{consumerAssignments:list.data.assignments.length,foreignAssignments:other.data.assignments.length,publishedPrograms:programs.data.programs.length,
    consumerRoleRefused:true,workforceRoleRefused:true,unauthenticatedRefused:true,fictionalAssignmentAccepted:true,foreignOwnerRefused:true,unresolvedSupplementHeld:true},
   evidenceScope:'hosted fictional program assignment; no governed catalog release, device test or PHI approval'}));
