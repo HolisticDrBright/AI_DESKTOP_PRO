@@ -119,6 +119,26 @@ async function main(){
  assert(noIntakeAuth.status===401||noIntakeAuth.status===403,'intake_jwt_boundary_failed');
  const withheldPublic=await fetch(api+'/clinical-core/public/consult-intake',{method:'POST',headers:{'content-type':'application/json'},body:'{"action":"describe","slug":"fictional-longevity"}',redirect:'error'});
  assert(withheldPublic.status===404,'public_consult_route_exposed');
+ const finalReads=[
+  ['workforce','/clinical-core/workforce/disputes',{action:'list'}],
+  ['consumer','/clinical-core/consumer/disputes',{action:'list'}],
+  ['workforce','/clinical-core/workforce/content-revisions',{action:'list'}],
+  ['consumer','/clinical-core/consumer/content-revisions',{action:'list'}],
+  ['workforce','/clinical-core/workforce/note-templates',{action:'list'}],
+  ['workforce','/clinical-core/workforce/note-drafting-context',{action:'resolve',noteType:'soap'}],
+  ['workforce','/clinical-core/workforce/outcome-ledger',{action:'vocabulary'}],
+  ['workforce','/clinical-core/workforce/outcome-report',{action:'report',groupBy:[]}],
+  ['workforce','/clinical-core/workforce/consult-retention',{action:'settings_read'}],
+ ];
+ for(const [role,path,body] of finalReads){
+  const read=await request(role,path,body,200);
+  assert(read.data?.action===body.action,'final_route_read_failed');
+  const anonymous=await fetch(api+path,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body),redirect:'error'});
+  assert(anonymous.status===401||anonymous.status===403,'final_route_anonymous_allowed');
+  const wrongRole=role==='consumer'?'workforce':'consumer';
+  const denied=await fetch(api+path,{method:'POST',headers:{authorization:'Bearer '+tokens[wrongRole],'content-type':'application/json'},body:JSON.stringify(body),redirect:'error'});
+  assert(denied.status===401||denied.status===403,'final_route_role_boundary_failed');
+ }
  // A real hosted assignment journey, but with only fictional content and an
  // intentionally unresolved product. It may not become an approved catalog item.
  const stack=JSON.parse(execFileSync('aws',['cloudformation','describe-stacks','--stack-name','ai-clinical-core-synthetic-staging','--profile',profile,'--region',region,'--output','json'],{encoding:'utf8',windowsHide:true})).Stacks[0];
@@ -221,6 +241,12 @@ async function main(){
   await sql("insert into clinical_core.synthetic_desktop_program_versions(id,organization_id,program_id,version,status,content,created_by_person_id) values(:p0::uuid,:p1::uuid,:p2::uuid,1,'published',:p3::jsonb,:p4::uuid)",
    [versionId,state.organizationId,programId,JSON.stringify(content),state.users.workforce.personId]);
  }
+ const carts=await request('workforce','/clinical-core/workforce/protocol-carts',{action:'list',programId},200);
+ assert(carts.data?.action==='list'&&Array.isArray(carts.data.manifests),'protocol_cart_read_failed');
+ const cartBody=JSON.stringify({action:'list',programId});
+ const anonymousCarts=await fetch(api+'/clinical-core/workforce/protocol-carts',{method:'POST',headers:{'content-type':'application/json'},body:cartBody,redirect:'error'});
+ const consumerCarts=await fetch(api+'/clinical-core/workforce/protocol-carts',{method:'POST',headers:{authorization:'Bearer '+tokens.consumer,'content-type':'application/json'},body:cartBody,redirect:'error'});
+ assert((anonymousCarts.status===401||anonymousCarts.status===403)&&(consumerCarts.status===401||consumerCarts.status===403),'protocol_cart_authorization_failed');
  const published=await request('workforce','/clinical-core/workforce/programs',{action:'programs'},200);
  assert(published.data.programs.some(p=>p.programVersionId===versionId),'published_version_not_visible');
  const assignment=await request('workforce','/clinical-core/workforce/programs',{action:'assign',connectionId:fixture.connectionId,programVersionId:versionId},200);
@@ -247,7 +273,8 @@ async function main(){
    intakeFormCount:intakeForms.data.forms.length,workforcePacketCount:workforcePackets.data.packets.length,
    ownerPacketCount:consumerPackets.data.packets.length,foreignPacketCount:foreignPackets.data.packets.length,
    intakeRoleRefused:true,intakeUnauthenticatedRefused:true,publicConsultRouteWithheld:true,
-   fictionalFormCreatedOrReused:true,packetWithoutConsentRefused,deniedPacketNotPersisted,intakeJourney},
+   fictionalFormCreatedOrReused:true,packetWithoutConsentRefused,deniedPacketNotPersisted,intakeJourney,
+   finalDomainReadRoutes:finalReads.length+1,finalDomainRoleAndAnonymousRefusals:finalReads.length+1},
   evidenceScope:approvedConsentTest?'hosted fictional program assignment and fictional owner consent/form-packet journey; no public consult endpoint, governed catalog release, provider OAuth, device test or PHI approval':'hosted fictional program assignment, draft-only intake form and consent refusal; no public consult endpoint, form publication, packet delivery, governed catalog release, provider OAuth, device test or PHI approval'}));
 }
 main().catch(error=>{console.error(JSON.stringify({verdict:'blocked',error:/^[a-z0-9_]+$/.test(error.message)?error.message:'hosted_verification_failed'}));process.exitCode=1;});

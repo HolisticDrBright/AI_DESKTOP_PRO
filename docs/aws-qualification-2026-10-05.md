@@ -71,7 +71,13 @@ The runner is `scripts/verify-synthetic-program-routes-hosted.mjs --confirm-fict
 
 The new guarded `syntheticFinalMigrations` operator pinned the exact 41-row predecessor ledger, synthetic account/foundation, PHI-off posture, and the SHA-256s of the five remaining source migrations: clinical disputes/revisions, note templates, protocol-cart compilation, practice outcomes, and consult-contact retention (`20260930160000` through `20260930200000`). Their five focused database suites passed 70/70. A real Aurora rehearsal applied all five in one transaction, intentionally rolled it back, and verified the ledger remained at 41. The subsequent explicit synthetic-only apply committed just those five; a new inspect verified the 46-row target ledger, latest `20260930200000`. The extra row is the previously reviewed historical alias, not an untracked release. The isolated qualification database remained at 103 migrations. The existing fictional program and intake hosted journey passed again after the change.
 
-This was a **staging database schema** step. It did not add routes, update the Lambda, ship a matched V2/Desktop release, activate an external provider, or qualify the five new functions end to end. The existing public consult route remains withheld and PHI remains off.
+That initial step changed **only staging database schema**. The route rollout below followed after the schema and did not qualify the five new functions end to end. PHI remained off throughout.
+
+## Final ten JWT routes — October 6
+
+The guarded `scripts/prepare-synthetic-final-api-change.mjs` verified account `588966314750`, the PHI-off staging foundation, the exact 46-row ledger, a settled API stack, and the unchanged immutable Lambda code key. It prepared exactly ten authenticated routes: workforce and consumer disputes, workforce and consumer content revisions, workforce note templates and drafting context, workforce protocol carts, outcome ledger and report, and workforce consult-contact retention. The source template validated in CloudFormation. Reviewed change set `synthetic-final-jwt-routes-20261005` contained exactly ten `AWS::ApiGatewayV2::Route` additions, with no modifications, replacements, IAM changes, Lambda code changes or public route. The executed stack reached `UPDATE_COMPLETE` with the same Lambda ZIP `58f597...`.
+
+The hosted real-JWT fictional run then got expected read responses from all ten routes and 401/403 refusals for both anonymous and wrong-pool requests on each route. The earlier fictional program assignment and completed intake packet still passed, the public consult route remained 404, and the unresolved supplement remained held. These are narrow route/read and boundary checks. They do **not** prove dispute resolution, amendment delivery, note authoring, cart compilation or purchase, outcome contribution, retention purge, current release parity, device UI, provider acceptance, or PHI readiness.
 
 ## Not proven
 
