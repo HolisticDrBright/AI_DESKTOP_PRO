@@ -1,7 +1,7 @@
 /** Hosted smoke test of selected synthetic-only routes with designated fictional identities. */
 import {readFileSync} from 'node:fs';
 import {spawnSync,execFileSync} from 'node:child_process';
-import {createHmac,randomUUID} from 'node:crypto';
+import {createHash,createHmac,randomUUID} from 'node:crypto';
 import {isAbsolute} from 'node:path';
 import {isDeepStrictEqual} from 'node:util';
 import {CognitoIdentityProviderClient,AdminInitiateAuthCommand,AdminRespondToAuthChallengeCommand} from '@aws-sdk/client-cognito-identity-provider';
@@ -13,6 +13,10 @@ const account='588966314750',region='us-east-2',profile='ai-synthetic-staging';
 const api='https://wxv734oi12.execute-api.us-east-2.amazonaws.com';
 const deployedSourceCommit='b1f597d39fefde10d70a1e00d813967736df2e8f';
 const deployedArtifactSha256='58f5978301be218896b269a44438fecb8ae89a690bee6671008b64f215f14247';
+const approvedConsentTest=process.argv[5]==='--approved-fictional-intake-consent';
+const consentCopy='I agree to store and use fictional test intake data in the ALP synthetic staging service for software testing. No real personal or health information may be entered.';
+const consentVersion='fictional-intake-2026-10-05';
+const consentDigest=createHash('sha256').update(consentCopy,'utf8').digest('hex');
 const assert=(ok,code)=>{if(!ok)throw Error(code);};
 function totp(secret){
  const alphabet='ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';let bits=0,value=0;const bytes=[];
@@ -22,7 +26,7 @@ function totp(secret){
  return (hash.readUInt32BE(offset)&0x7fffffff)%1000000+'';
 }
 async function main(){
- assert(process.argv.length===5&&process.argv[2]==='--confirm-fictional-only'&&process.argv[3]==='--identity-dir'&&isAbsolute(root),'command_refused');
+ assert((process.argv.length===5||process.argv.length===6)&&process.argv[2]==='--confirm-fictional-only'&&process.argv[3]==='--identity-dir'&&isAbsolute(root)&&(!process.argv[5]||approvedConsentTest),'command_refused');
  const identity=JSON.parse(execFileSync('aws',['sts','get-caller-identity','--profile',profile,'--region',region,'--output','json'],{encoding:'utf8',windowsHide:true}));
  assert(identity.Account===account,'account_refused');
  const deployed=JSON.parse(execFileSync('aws',['cloudformation','describe-stacks','--stack-name','ai-clinical-core-synthetic-staging-authenticated-api','--profile',profile,'--region',region,'--output','json'],{encoding:'utf8',windowsHide:true})).Stacks[0];
@@ -86,6 +90,23 @@ async function main(){
  assert(consultRequests.data?.action==='list'&&Array.isArray(consultRequests.data.requests),'consult_requests_list_failed');
  const intakeForms=await request('workforce','/clinical-core/workforce/intake-forms',{action:'list'},200);
  assert(intakeForms.data?.action==='list'&&Array.isArray(intakeForms.data.forms),'intake_forms_list_failed');
+ const fictionalForm={sections:[{id:'fictional',title:'Fictional qualification',questions:[
+  {id:'choice',prompt:'Which fictional test option is selected?',type:'single_choice',required:true,
+   options:[{value:'one',label:'Option one'},{value:'two',label:'Option two'}]},
+ ]}]};
+ const priorDrafts=intakeForms.data.forms.filter(form=>form.formKey==='synthetic_qualification_route');
+ assert(priorDrafts.length<=1,'fictional_form_ambiguous');
+ let draftVersionId;
+ if(priorDrafts.length){
+  assert((priorDrafts[0].status==='draft'||approvedConsentTest&&priorDrafts[0].status==='published')&&priorDrafts[0].title==='Fictional route check','fictional_form_changed');
+  draftVersionId=priorDrafts[0].formVersionId;
+ }else{
+  const drafted=await request('workforce','/clinical-core/workforce/intake-forms',{
+   action:'draft',formKey:'synthetic_qualification_route',title:'Fictional route check',
+   kind:'questionnaire',content:fictionalForm},200);
+  assert(drafted.data?.action==='draft'&&drafted.data.status==='draft','fictional_draft_failed');
+  draftVersionId=drafted.data.formVersionId;
+ }
  const workforcePackets=await request('workforce','/clinical-core/workforce/intake-packets',{action:'list'},200);
  assert(workforcePackets.data?.action==='list'&&Array.isArray(workforcePackets.data.packets),'workforce_packets_list_failed');
  const consumerPackets=await request('consumer','/clinical-core/consumer/intake-packets',{action:'list'},200);
@@ -111,12 +132,77 @@ async function main(){
  }
  const fixture=JSON.parse(readFileSync(root+'/messaging-fixture.json','utf8'));
  assert(fixture.organizationId===state.organizationId,'connection_fixture_refused');
+ const draftRows=await sql('select content::text as content from clinical_core.intake_form_versions where id=:p0::uuid and organization_id=:p1::uuid',[draftVersionId,state.organizationId]);
+ assert(draftRows.length===1&&isDeepStrictEqual(JSON.parse(draftRows[0].content),fictionalForm),'fictional_form_content_changed');
+ const consentRows=await sql("select status,artifact_id from clinical_core.consent_grants where connection_id=:p0::uuid and scope='forms_checkins' order by version desc limit 1",[fixture.connectionId]);
+ assert(consentRows.length<=1&&(!consentRows.length||approvedConsentTest&&consentRows[0].status==='granted'),'fictional_forms_consent_state_changed');
+ let packetWithoutConsentRefused=false,deniedPacketNotPersisted=false;
+ if(!consentRows.length){
+  const before=await sql('select count(*)::int as count from clinical_core.intake_packets where connection_id=:p0::uuid',[fixture.connectionId]);
+  const deniedPacket=await request('workforce','/clinical-core/workforce/intake-packets',{
+   action:'assign',connectionId:fixture.connectionId,label:'Fictional qualification packet',
+   forms:[{formVersionId:draftVersionId,required:true}]},409);
+  assert(deniedPacket.error==='consent_required','packet_without_consent_not_refused');
+  const after=await sql('select count(*)::int as count from clinical_core.intake_packets where connection_id=:p0::uuid',[fixture.connectionId]);
+  assert(after[0]?.count===before[0]?.count,'denied_packet_persisted');
+  packetWithoutConsentRefused=true;deniedPacketNotPersisted=true;
+ }
  const ledger=await sql('select count(*)::int as count,max(version) as latest from clinical_core.schema_migrations');
  assert(ledger[0]?.count===41&&ledger[0]?.latest==='20260930150000','intake_migration_refused');
  const link=await sql("select organization_id,consumer_person_id,state from clinical_core.patient_connections where id=:p0::uuid",[fixture.connectionId]);
  assert(link[0]?.organization_id===state.organizationId&&link[0]?.consumer_person_id===state.users.consumer.personId&&link[0]?.state==='verified','connection_fixture_refused');
  const membership=await sql("select role from clinical_core.organization_memberships where organization_id=:p0::uuid and person_id=:p1::uuid",[state.organizationId,state.users.workforce.personId]);
  assert(membership[0]?.role==='practitioner','workforce_membership_refused');
+ let intakeJourney=null;
+ if(approvedConsentTest){
+  const artifacts=await sql("select id,artifact_version,content_sha256,status,approved_by_person_id from clinical_core.consent_artifacts where organization_id=:p0::uuid and scope='forms_checkins' order by created_at desc",[state.organizationId]);
+  assert(artifacts.length<=1,'fictional_consent_artifact_ambiguous');
+  let artifactId;
+  if(artifacts.length){
+   const artifact=artifacts[0];
+   assert(artifact.artifact_version===consentVersion&&artifact.content_sha256===consentDigest&&artifact.status==='approved'&&artifact.approved_by_person_id===state.users.workforce.personId,'fictional_consent_artifact_changed');
+   artifactId=artifact.id;
+  }else{
+   artifactId=randomUUID();
+   await sql("insert into clinical_core.consent_artifacts(id,organization_id,scope,artifact_version,content_sha256,jurisdiction,status,approved_at,approved_by_person_id) values(:p0::uuid,:p1::uuid,'forms_checkins',:p2,:p3,'synthetic-staging','approved',clock_timestamp(),:p4::uuid)",
+    [artifactId,state.organizationId,consentVersion,consentDigest,state.users.workforce.personId]);
+  }
+  const artifactResponse=await fetch(api+'/clinical-core/consumer/consent-artifact?scope=forms_checkins',{headers:{authorization:'Bearer '+tokens.consumer},redirect:'error',signal:AbortSignal.timeout(30000)});
+  assert(artifactResponse.status===200,'fictional_artifact_not_visible');
+  const visibleArtifact=await artifactResponse.json();
+  assert(visibleArtifact.data?.artifactId===artifactId&&visibleArtifact.data?.contentSha256===consentDigest&&visibleArtifact.data?.artifactVersion===consentVersion,'fictional_artifact_mismatch');
+  if(!consentRows.length){
+   const grant=await request('consumer','/clinical-core/consumer/consents/grant',{connectionId:fixture.connectionId,artifactId,scope:'forms_checkins',method:'patient_app',representativeAuthority:'self'},201);
+   assert(grant.data?.status==='granted'&&grant.data?.scope==='forms_checkins','fictional_consent_grant_failed');
+  }else assert(consentRows[0].artifact_id===artifactId,'fictional_grant_artifact_changed');
+  const priorPackets=await request('workforce','/clinical-core/workforce/intake-packets',{action:'list',connectionId:fixture.connectionId},200);
+  const matching=priorPackets.data.packets.filter(packet=>packet.label==='Fictional qualification packet');
+  assert(matching.length<=1,'fictional_packet_ambiguous');
+  let packetId=matching[0]?.packetId;
+  if(!packetId){
+   const draftRefusal=await request('workforce','/clinical-core/workforce/intake-packets',{action:'assign',connectionId:fixture.connectionId,label:'Fictional qualification packet',forms:[{formVersionId:draftVersionId,required:true}]},403);
+   assert(draftRefusal.error==='operation_refused','unpublished_form_delivered');
+   const published=await request('workforce','/clinical-core/workforce/intake-forms',{action:'publish',formVersionId:draftVersionId},200);
+   assert(published.data?.status==='published'&&published.data?.formVersionId===draftVersionId,'fictional_form_publish_failed');
+   const assigned=await request('workforce','/clinical-core/workforce/intake-packets',{action:'assign',connectionId:fixture.connectionId,label:'Fictional qualification packet',forms:[{formVersionId:draftVersionId,required:true}]},200);
+   assert(assigned.data?.status==='open'&&assigned.data?.items.length===1,'fictional_packet_assign_failed');
+   packetId=assigned.data.packetId;
+  }
+  const opened=await request('consumer','/clinical-core/consumer/intake-packets',{action:'open',packetId},200);
+  assert(opened.data?.items.length===1&&isDeepStrictEqual(opened.data.items[0].content,fictionalForm),'fictional_packet_content_changed');
+  const foreign=await request('foreignConsumer','/clinical-core/consumer/intake-packets',{action:'open',packetId},403);
+  assert(foreign.error==='identity_refused'||foreign.error==='operation_refused','foreign_packet_not_refused');
+  if(opened.data.status==='open'){
+   const item=opened.data.items[0];
+   const wrongDigest=await request('consumer','/clinical-core/consumer/intake-packets',{action:'submit',packetId,itemId:item.itemId,contentSha256:'0'.repeat(64),answers:{choice:'one'}},409);
+   assert(wrongDigest.error==='conflict','intake_digest_not_checked');
+   const submitted=await request('consumer','/clinical-core/consumer/intake-packets',{action:'submit',packetId,itemId:item.itemId,contentSha256:item.contentSha256,answers:{choice:'one'}},200);
+   assert(submitted.data?.packetStatus==='completed','fictional_packet_submit_failed');
+  }
+  const workforceOpen=await request('workforce','/clinical-core/workforce/intake-packets',{action:'open',packetId},200);
+  assert(workforceOpen.data?.status==='completed'&&workforceOpen.data?.items[0]?.answers?.choice==='one','fictional_packet_review_failed');
+  intakeJourney={consentVersion,consentSha256:consentDigest,artifactId,packetId,completed:true,foreignOwnerRefused:true};
+ }
  let programId=randomUUID(),versionId=randomUUID();
  const phases=[{id:'phase-1',title:'Fictional phase',days:1,transition:'scheduled',items:[
   {id:'lesson-a',title:'Fictional lesson',kind:'lesson',instructions:'Read the fictional lesson.',released:true},
@@ -160,7 +246,8 @@ async function main(){
    consultLinkCount:consultLinks.data.links.length,consultRequestCount:consultRequests.data.requests.length,
    intakeFormCount:intakeForms.data.forms.length,workforcePacketCount:workforcePackets.data.packets.length,
    ownerPacketCount:consumerPackets.data.packets.length,foreignPacketCount:foreignPackets.data.packets.length,
-   intakeRoleRefused:true,intakeUnauthenticatedRefused:true,publicConsultRouteWithheld:true},
-  evidenceScope:'hosted fictional program assignment and read-only lifecycle/calendar/consult/intake smoke; no public consult endpoint, governed catalog release, provider OAuth, device test or PHI approval'}));
+   intakeRoleRefused:true,intakeUnauthenticatedRefused:true,publicConsultRouteWithheld:true,
+   fictionalFormCreatedOrReused:true,packetWithoutConsentRefused,deniedPacketNotPersisted,intakeJourney},
+  evidenceScope:approvedConsentTest?'hosted fictional program assignment and fictional owner consent/form-packet journey; no public consult endpoint, governed catalog release, provider OAuth, device test or PHI approval':'hosted fictional program assignment, draft-only intake form and consent refusal; no public consult endpoint, form publication, packet delivery, governed catalog release, provider OAuth, device test or PHI approval'}));
 }
 main().catch(error=>{console.error(JSON.stringify({verdict:'blocked',error:/^[a-z0-9_]+$/.test(error.message)?error.message:'hosted_verification_failed'}));process.exitCode=1;});

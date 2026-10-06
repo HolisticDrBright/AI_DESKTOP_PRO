@@ -55,6 +55,18 @@ The reviewed CloudFormation change set `synthetic-intake-jwt-routes-20261005` ad
 
 Hosted real-JWT checks with the existing fictional accounts passed list reads on all five routes, a consumer-versus-workforce refusal, anonymous refusal, and an HTTP 404 on the withheld public route. All lists were empty; no consult request, form, response, signature, patient invitation or clinical data was created in this hosted run. The existing program journey still passed and held its unresolved supplement. This is route/read authorization evidence, not an end-to-end intake, public consultation, device, provider or PHI acceptance.
 
+## Hosted fictional forms-consent and completed packet — October 6
+
+The owner subsequently approved **only** this exact staging-test copy in this chat:
+
+> I agree to store and use fictional test intake data in the ALP synthetic staging service for software testing. No real personal or health information may be entered.
+
+The guarded hosted runner verified account `588966314750`, `PhiAllowed=false`, the exact 41-row staging ledger, fictional attested identities, the verified patient connection and its fictional practitioner membership before registering the `forms_checkins` artifact. Version `fictional-intake-2026-10-05` carries SHA-256 `419479f3bef2104852ae1ece32cf94467cb3fe235582932cca830f190351edc5`. The artifact's `approved_by_person_id` is the fictional workforce test facilitator required by the staging schema; the actual authorization for this *test copy* is the owner's answer in this chat, not a clinical or production consent approval. The database holds the content hash, not a text copy. The runner compared the API-visible artifact ID, version and hash with the exact approved text before the fictional consumer granted the scope through the real authenticated API.
+
+The same runner first proved that packet assignment without consent returned `consent_required` and persisted no packet. After the fictional grant, assignment of the unpublished draft was refused. The fictional practitioner then published that exact nonclinical, one-question version and assigned one packet; the fictional consumer opened it, a second consumer was refused, a wrong content digest was rejected, and the owner submitted `Option one`. The practitioner reopened the packet and observed `completed` with that answer. A second hosted run replayed the completed journey without creating another artifact or packet. The public consult intake route still returned 404. No real identity, health data, form signature, device UI, or production consent was used or verified.
+
+The runner is `scripts/verify-synthetic-program-routes-hosted.mjs --confirm-fictional-only --identity-dir <existing fictional identity directory> --approved-fictional-intake-consent`; without the final flag it cannot register the artifact or grant consent. This is a narrow synthetic staging acceptance, not qualification-fleet or commercial-release evidence.
+
 ## Not proven
 
 - These requests exercised an older `a300c63` personal-storage candidate, not an exact matched current V2/Desktop release.
@@ -62,7 +74,7 @@ Hosted real-JWT checks with the existing fictional accounts passed list reads on
 - Synthetic staging `clinical_core` now has 41 ledger rows, latest `20260930150000`. The source manifest lists 45 migrations; a historical alias in the live ledger accounts for one extra row. Five manifest-listed migrations remain unapplied. The isolated qualification database remains separate at 103 migrations.
 - No physical iOS/Android journey, store billing, provider live-mode acceptance, or complete security/privacy/retention review was performed.
 - PHI remains disabled. Do not infer commercial readiness, HIPAA compliance, or readiness for real patients from this document.
-- At source HEAD, the full Desktop dependency audit still reports five high findings through a development-only `braces` dependency chain. A runtime-only audit reports zero findings, but the full CI security gate is not green and must not be silently weakened.
+- At source HEAD, the full Desktop dependency audit still reports high findings through a development-only `braces` dependency chain and `source-map-js`. A runtime-only audit reports zero findings, but the full CI security gate is not green and must not be silently weakened.
 
 ## Narrow staging migration rehearsal
 
