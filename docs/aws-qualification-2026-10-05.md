@@ -67,11 +67,17 @@ The same runner first proved that packet assignment without consent returned `co
 
 The runner is `scripts/verify-synthetic-program-routes-hosted.mjs --confirm-fictional-only --identity-dir <existing fictional identity directory> --approved-fictional-intake-consent`; without the final flag it cannot register the artifact or grant consent. This is a narrow synthetic staging acceptance, not qualification-fleet or commercial-release evidence.
 
+## Remaining synthetic source migrations — October 6
+
+The new guarded `syntheticFinalMigrations` operator pinned the exact 41-row predecessor ledger, synthetic account/foundation, PHI-off posture, and the SHA-256s of the five remaining source migrations: clinical disputes/revisions, note templates, protocol-cart compilation, practice outcomes, and consult-contact retention (`20260930160000` through `20260930200000`). Their five focused database suites passed 70/70. A real Aurora rehearsal applied all five in one transaction, intentionally rolled it back, and verified the ledger remained at 41. The subsequent explicit synthetic-only apply committed just those five; a new inspect verified the 46-row target ledger, latest `20260930200000`. The extra row is the previously reviewed historical alias, not an untracked release. The isolated qualification database remained at 103 migrations. The existing fictional program and intake hosted journey passed again after the change.
+
+This was a **staging database schema** step. It did not add routes, update the Lambda, ship a matched V2/Desktop release, activate an external provider, or qualify the five new functions end to end. The existing public consult route remains withheld and PHI remains off.
+
 ## Not proven
 
 - These requests exercised an older `a300c63` personal-storage candidate, not an exact matched current V2/Desktop release.
 - The other qualification candidates, full hosted harnesses, retention schedule, export delivery, recording/transcription/drafting, cross-clinic access, and exact matched release candidates were not accepted by this narrow run. Program assignment now has a separate fictional staging run above; that does not imply qualification-target or mobile acceptance.
-- Synthetic staging `clinical_core` now has 41 ledger rows, latest `20260930150000`. The source manifest lists 45 migrations; a historical alias in the live ledger accounts for one extra row. Five manifest-listed migrations remain unapplied. The isolated qualification database remains separate at 103 migrations.
+- Synthetic staging `clinical_core` now has 46 ledger rows, latest `20260930200000`: all 45 source-manifest migrations plus one reviewed historical alias. The isolated qualification database remains separate at 103 migrations.
 - No physical iOS/Android journey, store billing, provider live-mode acceptance, or complete security/privacy/retention review was performed.
 - PHI remains disabled. Do not infer commercial readiness, HIPAA compliance, or readiness for real patients from this document.
 - After the source-lockfile update to `source-map-js@1.2.2`, the full Desktop dependency audit reports five high findings through the development-only `braces` chain. A runtime-only audit reports zero findings. The full CI security gate is not green and must not be silently weakened; the upstream `braces` advisory currently lists no patched version.

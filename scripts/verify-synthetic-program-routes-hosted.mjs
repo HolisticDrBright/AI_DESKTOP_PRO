@@ -148,7 +148,7 @@ async function main(){
   packetWithoutConsentRefused=true;deniedPacketNotPersisted=true;
  }
  const ledger=await sql('select count(*)::int as count,max(version) as latest from clinical_core.schema_migrations');
- assert(ledger[0]?.count===41&&ledger[0]?.latest==='20260930150000','intake_migration_refused');
+ assert(ledger[0]?.count===46&&ledger[0]?.latest==='20260930200000','synthetic_migration_refused');
  const link=await sql("select organization_id,consumer_person_id,state from clinical_core.patient_connections where id=:p0::uuid",[fixture.connectionId]);
  assert(link[0]?.organization_id===state.organizationId&&link[0]?.consumer_person_id===state.users.consumer.personId&&link[0]?.state==='verified','connection_fixture_refused');
  const membership=await sql("select role from clinical_core.organization_memberships where organization_id=:p0::uuid and person_id=:p1::uuid",[state.organizationId,state.users.workforce.personId]);
