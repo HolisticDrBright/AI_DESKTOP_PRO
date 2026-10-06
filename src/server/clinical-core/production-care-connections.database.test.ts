@@ -3,14 +3,13 @@ import { PGlite } from '@electric-sql/pglite';
 import { pgcrypto } from '@electric-sql/pglite/contrib/pgcrypto';
 import { createHash, randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
 import { clinicalUuid, ClinicalCoreDatabaseRejection, type ClinicalCoreDatabase, type ClinicalCoreTransaction } from './database';
 import type { ProductionClinicalRequestContext } from './aws-identity-consent';
 import { createProductionCareConnections } from './production-care-connections';
 import { parseCareConnectionResponse, type CareConnectionRequest } from '../../contracts/careConnections';
 import { createProductionCareMessaging } from './production-care-messaging';
 
-// Real 104 production migrations plus the unreleased port; fictional data only.
+// Real 105 canonical production migrations; fictional data only.
 // PGlite serializes transactions. These are not multi-session AWS race tests.
 let db: PGlite;
 let org: string, foreignOrg: string, owner: string, other: string, staff: string, outsider: string, patient: string;
@@ -64,10 +63,9 @@ const withdraw = (connectionId: string, expectedVersion: number): CareConnection
 beforeAll(async () => {
   const { manifest, files } = JSON.parse(execFileSync(process.execPath, ['scripts/build-aws-production-clinical-core.mjs', '--json'],
     { encoding: 'utf8', timeout: 10000, maxBuffer: 8 * 1024 * 1024 }));
-  expect(manifest.migrations).toHaveLength(104); // Historical release unchanged by this candidate.
+  expect(manifest.migrations).toHaveLength(105); // The 104 prefix remains immutable.
   db = new PGlite({ extensions: { pgcrypto } });
   for (const migration of manifest.migrations) await db.exec(files[migration.file]);
-  await db.exec(readFileSync('infra/aws-clinical-core/production-candidates/care-connections.sql', 'utf8'));
 }, 60000);
 afterAll(async () => { await db?.close(); });
 beforeEach(async () => {

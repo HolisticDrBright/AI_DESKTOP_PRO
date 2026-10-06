@@ -50,7 +50,7 @@ describe('care messaging deployment artifact', () => {
     expect(manifest.deploymentZipBytes).toBe(readFileSync(join(directory, 'deployment.zip')).length);
     expect(template.Parameters.SourceCommit.AllowedValues).toEqual([manifest.sourceCommit]);
     expect(template.Parameters.MigrationReleaseSha256.AllowedValues).toEqual([manifest.migrationReleaseSha256]);
-    expect(manifest.migrationReleaseSha256).toBe('57fdf022f0fdd7d70be12384d6e6d54caab1a0ddb4965a884e4d59eec4c552b0');
+    expect(manifest.migrationReleaseSha256).toBe('7da8e4ed999a3298bccc4ef33e7a1005201db45fa2b46682622a208486f17743');
     expect(manifest.functions).toHaveLength(7);
     expect(template.Resources.Function.Properties.Code).toEqual({ S3Bucket: { Ref: 'CodeBucket' }, S3Key: { Ref: 'CodeKey' }, S3ObjectVersion: { Ref: 'CodeVersion' } });
     expect(template.Parameters.CodeVersion).not.toHaveProperty('Default');

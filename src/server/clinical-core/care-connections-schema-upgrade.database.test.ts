@@ -2,7 +2,6 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { PGlite } from '@electric-sql/pglite';
 import { pgcrypto } from '@electric-sql/pglite/contrib/pgcrypto';
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import type { ClinicalCoreDatabase, ClinicalCoreTransaction } from './database';
 import type { ClinicalCoreMigration } from './migrations';
@@ -40,11 +39,9 @@ const atReceipt = (change: (tx: Parameters<Intercept>[1]) => Promise<void>) => d
 beforeAll(async () => {
   const { manifest, files } = JSON.parse(execFileSync(process.execPath, ['scripts/build-aws-production-clinical-core.mjs', '--json'],
     { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024, timeout: 10000 }));
-  expect(manifest.migrations).toHaveLength(104);
+  expect(manifest.migrations).toHaveLength(105);
   migrations = manifest.migrations.map((m: { version: string; file: string }) => ({ version: m.version, name: m.file.slice(15, -4),
     sql: files[m.file], sha256: sha(files[m.file]) }));
-  const sql = readFileSync('infra/aws-clinical-core/production-candidates/care-connections.sql', 'utf8').replace(/\r\n?/g, '\n');
-  migrations.push({ version: CARE_CONNECTIONS_UPGRADE.version, name: 'production_care_connections', sql, sha256: sha(sql) });
   pg = new PGlite({ extensions: { pgcrypto } });
   expect((await applyProductionClinicalCoreMigrations(database(), migrations.slice(0, 104))).tableCount).toBe(127);
   await pg.query("insert into clinical_core.organizations(id,organization_label) values($1,'FICTIONAL qualification')", [org]);

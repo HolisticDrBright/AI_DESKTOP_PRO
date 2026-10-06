@@ -19,9 +19,9 @@ export class ProductionClinicalCoreMigrationError extends Error {
 }
 
 /** Application tables in clinical_core and clinical_audit (ledger excluded) after the full artifact. */
-export const PRODUCTION_APPLICATION_TABLE_COUNT = 127;
+export const PRODUCTION_APPLICATION_TABLE_COUNT = 128;
 /** Desktop contract functions the artifact must define. */
-export const PRODUCTION_CONTRACT_COUNT = 84;
+export const PRODUCTION_CONTRACT_COUNT = 85;
 
 export type ProductionClinicalCoreMigrationResult = {
   applied: string[];
@@ -86,6 +86,7 @@ export async function applyProductionClinicalCoreMigrations(
   // Exact historical releases are still used by rollback/upgrade qualification.
   // Counts alone cannot admit an altered predecessor artifact.
   const release = productionArtifactReleaseHash(migrations);
+  const historical104 = release === '57fdf022f0fdd7d70be12384d6e6d54caab1a0ddb4965a884e4d59eec4c552b0';
   const historical = ['d6b0a8a5d61c465f8e1db1181c52d6bf4d90db0b65068042d8ebf56358dd82b3',
     '9bc30d04930816a523a7dc67b95944fba1d294dad4d71cf7585158fbc3a874aa'].includes(release);
   return database.transaction(async (tx) => {
@@ -170,8 +171,10 @@ export async function applyProductionClinicalCoreMigrations(
             'approve_patient_relationship','claim_patient_relationship_invitation',
             'list_my_delegated_patient_access','get_delegated_patient_records',
             'revoke_my_patient_relationship','get_patient_chat_context',
-            'production_care_message_request','production_care_message_resolve','production_care_message_export'))::int as contract_count,
+            'production_care_message_request','production_care_message_resolve','production_care_message_export',
+            'production_care_connection_request'))::int as contract_count,
       (
+        ${historical || historical104 ? '' : '(select count(*) from clinical_core.care_consent_texts) +'}
         ${historical ? '' : `(select count(*) from clinical_core.care_message_thread_links)
         + (select count(*) from clinical_core.care_message_receipts)
         + (select count(*) from clinical_core.care_message_cancellations)
@@ -302,8 +305,8 @@ export async function applyProductionClinicalCoreMigrations(
     const row = verification.rows[0];
     // Real-artifact database tests verify current counts, zero seed rows and exact
     // historical predecessors; no count-only historical exception is permitted.
-    if (!row || Number(row.table_count) !== (historical ? 123 : PRODUCTION_APPLICATION_TABLE_COUNT)
-      || Number(row.contract_count) !== (historical ? 81 : PRODUCTION_CONTRACT_COUNT)
+    if (!row || Number(row.table_count) !== (historical ? 123 : historical104 ? 127 : PRODUCTION_APPLICATION_TABLE_COUNT)
+      || Number(row.contract_count) !== (historical ? 81 : historical104 ? 84 : PRODUCTION_CONTRACT_COUNT)
       || Number(row.clinical_row_count) !== 0) {
       throw new ProductionClinicalCoreMigrationError("verification_failed");
     }

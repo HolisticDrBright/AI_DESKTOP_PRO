@@ -50,19 +50,29 @@ SQL and a byte/function-digest manifest. It never contacts AWS or applies SQL.
 The manifest declares `status: unreleased`, `deployable: false`, PHI disabled,
 source commit and dirty state. A dirty build is not a release candidate.
 
-The entire canonical prefix remains **104 migrations** with ledger hash
+The historical **104-migration** prefix remains unchanged, with ledger hash
 `57fdf022f0fdd7d70be12384d6e6d54caab1a0ddb4965a884e4d59eec4c552b0`.
-The candidate SQL is deliberately outside the canonical migration manifest.
-Its local overlay adds one forced-RLS, append-only table, producing 207 tables
-in the embedded test database; canonical coverage remains 206 tables.
-The manifest declares the proposed organization/consent-artifact dependency
-mapping as **not integrated**. The proposed 105 identity is derived from the
-104 predecessor plus the exact overlay bytes, not an applied release:
+Canonical source now includes the exact reviewed candidate bytes as ordered
+version `20261006020000`, the 105th migration. The assembly hash is
+`98f5b2db8dd2d62b4b00127beafd222585175b499c025fc1b9f0e31394d018b7`.
+The complete database ledger hash is:
 `7da8e4ed999a3298bccc4ef33e7a1005201db45fa2b46682622a208486f17743`.
-Its manifest explicitly records `canonical: false`, `hostedVerified: false`
-and `cliOperatorAvailable: false`. The proposed migration version is
-`20261006020000`; the canonical manifest still ends at 104.
-Historical 103-to-104 upgrade identities and deployed artifacts are unchanged.
+The table inventory contains 207 covered tables, including the immutable
+consent-copy table scoped by organization and dependent on its consent artifact.
+Inventory coverage does **not** authorize deletion: the immutable trigger keeps
+disposition blocked until a separate clinic retention procedure is reviewed.
+Current installers verify 128 application tables, 85 selected contracts and zero
+seed rows. Current messaging builders, whole-ledger observers and consent
+registrars require 105; they deliberately refuse a still-104 hosted target.
+The historical 103-to-104 upgrade library retains its original hashes and checks,
+and its CLI selects that exact immutable prefix rather than rewriting history.
+Old deployed artifacts and target manifests have not been promoted.
+
+The source manifest records `canonical: true`, `hostedVerified: false` and
+`cliOperatorAvailable: true`. The original candidate file is retained as a
+reviewed byte-for-byte reference; the builder refuses a difference. The API
+remains unreleased and non-deployable: a schema and upgrade operator are not
+a serving connection handler or V2 consent interface.
 
 The preserving-upgrade library pins the complete predecessor and proposed
 successor, account, Ohio region, qualification database and PHI-off posture.
@@ -74,11 +84,37 @@ security-definer and PUBLIC/API execution privileges. A rehearsal rolls the
 transaction back and separately reads the predecessor again. Upgrade replay
 can preserve a copy table populated later with approved fictional test text.
 Each table is bounded at 5,000 rows; larger qualification fixtures refuse,
-not truncate. This library is not an AWS operator or production upgrade path.
+not truncate. It is not a production upgrade path.
+
+### Qualification operator
+
+`npm run build:aws-production-clinical-core` and
+`npm run build:aws-care-connections-upgrade` build the ordered SQL and the
+operator at `dist/aws-clinical-core/care-connections-schema-upgrade/index.cjs`.
+Run from this repository root. Its commands are:
+
+- `node dist/aws-clinical-core/care-connections-schema-upgrade/index.cjs inspect`
+- `node dist/aws-clinical-core/care-connections-schema-upgrade/index.cjs rehearse --confirm-fictional-care-connections-upgrade`
+- `node dist/aws-clinical-core/care-connections-schema-upgrade/index.cjs upgrade --confirm-fictional-care-connections-upgrade`
+
+The write commands refuse a dirty source build. The operator uses only the
+`ai-synthetic-member` profile in Ohio, directly observes STS and the completed
+`ai-clinical-core-qualification-foundation`, and refuses root, production
+accounts, staging, active PHI or a changed artifact. CLI and SDK share that
+fixed profile. There are no target/profile/environment overrides. An upgrade
+always runs and verifies a physical rollback rehearsal before its apply; a
+failed rehearsal stops it. Rebuild after committing code, inspect the source
+and actual target, then run only against fictional qualification.
+
+An actual read-only run during development observed 104 migrations, 206 tables
+and 46 rows with digest
+`67648874524c0c8c5bc2d11774e19855f7be88e1ab11f236c128534092691345`.
+It was explicitly a dirty-source inspection, not migration or acceptance.
+Hosted rehearsal/apply evidence must be recorded separately.
 
 ## Verification
 
-The dedicated database suite applies the real 104 SQL files plus the candidate
+The dedicated database suite applies the real 105 canonical SQL files
 under PGlite, then calls the real service through `clinical_core_api`. It covers
 issuance parity with Desktop, single-use claiming, supersession, expiry, wrong
 owner/clinic/pool, approval text immutability and byte integrity, stale artifact,
@@ -124,15 +160,26 @@ is not recast as a pass. A separate clean full run at pushed runtime source
 11 existing skips**, in 279.46 seconds. Final standalone typecheck and changed-
 file lint pass. No source test was skipped to obtain this result.
 
+### Canonical 105 and operator verification, October 6, 2026
+
+The canonical-integration work passes **322 files, 3,925 tests**, with 11
+existing skips, in 335.03 seconds. Standalone typecheck and changed-file lint
+pass. Focused runs cover 88 database/artifact tests and 41 command/messaging
+tests, followed by the final seven artifact tests and 50 credential-free Node
+runner tests. The production gate reports 105 migrations and zero seeded rows;
+the coverage gate inventories 207 tables. Historical migration bytes and their
+104-prefix ledger hash remain unchanged. The new operator and both source
+builders build successfully. These are local source results, not hosted
+rehearsal, schema application, serving-route or physical-device acceptance.
+
 ## Remaining integration
 
-1. Promote the exact SQL as an ordered new migration and bind the tested
-   preserving-upgrade library to an AWS operator with exact source/STS/foundation
-   checks and mandatory hosted rollback rehearsal. Do not rewrite applied SQL
-   or transplant the staging ledger. Source rehearsal is not hosted acceptance.
-2. Integrate the new append-only table into hold-aware covered-entity lifecycle
-   mapping. Rebind current inspectors and candidate manifests deliberately;
-   keep historical operator identities intact.
+1. Use the clean exact-source operator for hosted rollback rehearsal and the
+   preserving qualification upgrade; rebind/rebuild all current targets and
+   candidates to the 105 release. Do not rewrite applied SQL or transplant the
+   staging ledger. Source rehearsal is not hosted acceptance.
+2. Complete the separately reviewed clinic hold-aware retention/disposition and
+   amendment procedure. The copy table is inventoried but still immutable.
 3. Add a reviewed copy-registration operator and per-transaction deployment
    contract verification, then a blocked-by-default handler/template with
    immutable code version, separate JWT routes, narrow IAM and alarms.

@@ -16,7 +16,7 @@ const errors = [];
 const assert = (condition, message) => { if (!condition) errors.push(message); };
 
 assert(manifest.contract_version === "clinical-core-migrations/1", "generated manifest contract is invalid");
-assert(manifest.migrations.length === 104, "expected ten transformed migrations and ninety-four production overlays");
+assert(manifest.migrations.length === 105, "expected ten transformed migrations and ninety-five production overlays");
 assert(manifest.migrations.some(entry => entry.file === '20260920120000_production_owned_correction_lists.sql'), "correction lists overlay missing");
 assert(manifest.migrations.some(entry => entry.file === '20260920130000_production_owned_privacy_export_recovery.sql'), "export recovery overlay missing");
 assert(manifest.migrations.some(entry => entry.file === '20260920140000_production_owned_privacy_export_settlement.sql'), "export settlement overlay missing");
@@ -26,7 +26,18 @@ assert(manifest.migrations.some(entry => entry.file === '20260920170000_producti
 assert(manifest.migrations.some(entry => entry.file === '20260921010000_production_owned_privacy_export_part_sizes.sql'), "export part-size overlay missing");
 assert(manifest.migrations.some(entry => entry.file === '20260922010000_production_record_source_regime.sql'), "record source-regime overlay missing");
 assert(manifest.migrations.some(entry => entry.file === '20260928010000_production_owned_privacy_export_discovery.sql'), "owner export discovery overlay missing");
-assert(manifest.migrations.at(-1)?.file === '20261006010000_production_care_messaging.sql', "care messaging overlay must be last");
+assert(manifest.migrations.at(-2)?.file === '20261006010000_production_care_messaging.sql', "historical care messaging overlay must remain penultimate");
+assert(manifest.migrations.at(-1)?.file === '20261006020000_production_care_connections.sql', "care connection overlay must be last");
+const connectionSql = readFileSync(path.join(directory, '20261006020000_production_care_connections.sql'), 'utf8');
+assert(createHash('sha256').update(connectionSql).digest('hex') === '0ade0879e0a5b5468461249d8dd39ffd8ea64fa51860e21af6a55cfc256642c5',
+  "canonical connection SQL must preserve the reviewed candidate bytes");
+const predecessorLedger = createHash('sha256').update(manifest.migrations.slice(0, 104).map(({ version, file }) =>
+  `${version}:${createHash('sha256').update(readFileSync(path.join(directory, file), 'utf8')).digest('hex')}`).join('\n')).digest('hex');
+assert(predecessorLedger === '57fdf022f0fdd7d70be12384d6e6d54caab1a0ddb4965a884e4d59eec4c552b0',
+  "the complete historical 104-migration ledger must remain unchanged");
+assert(connectionSql.includes('care_consent_texts force row level security')
+  && connectionSql.includes('care_consent_texts_immutable')
+  && connectionSql.includes('care_consent_release_serialized'), "connection consent safeguards missing");
 assert(manifest.migrations.some(entry => entry.file === '20260920110000_production_owned_privacy_export_jobs.sql'), "privacy export jobs overlay missing");
 assert(manifest.migrations.some(entry => entry.file === '20260920100000_production_recording_processing_retention.sql'), "recording processing retention overlay missing");
 assert(manifest.migrations.some(entry => entry.file === '20260920090000_production_recording_object_intents.sql'), "recording object intents overlay missing");
@@ -131,6 +142,9 @@ for (const marker of [
 const topLevelSql = combined.replace(/\$([A-Za-z_][A-Za-z0-9_]*)?\$[\s\S]*?\$\1\$/g, "");
 assert(!/insert\s+into\s+clinical_core\.(organizations|persons|identities|organization_memberships|patient_records)\b/i
   .test(topLevelSql), "production migrations must not seed organization, identity, membership, or patient rows");
+assert(!/insert\s+into\s+clinical_core\.(consent_artifacts|consent_grants|care_consent_texts)\b/i.test(
+  connectionSql.replace(/\$([A-Za-z_][A-Za-z0-9_]*)?\$[\s\S]*?\$\1\$/g, "")),
+  "connection migration must not seed approval, copy or patient consent rows");
 
 const overlay = readFileSync(path.join(root, "infra", "aws-clinical-core", "production-migrations",
   "20260821050000_production_patient_directory.sql"), "utf8");

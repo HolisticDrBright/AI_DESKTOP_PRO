@@ -96,7 +96,7 @@ function fixture(){
   return structuredClone(responses[key]);
  };
  return {responses,calls,counts,options:{artifact,head:artifact.manifest.sourceCommit,binding:structuredClone(binding),readAws,
-  readCodeVersion:async()=>artifact.zip,inspectLedger:async()=>({database:c.database,release:binding.migrationReleaseSha256,rows:104,rolledBack:true})}};
+  readCodeVersion:async()=>artifact.zip,inspectLedger:async()=>({database:c.database,release:binding.migrationReleaseSha256,rows:105,rolledBack:true})}};
 }
 test('ZIP is deterministic with correct CRC and a single exact stored UTF-8 entry',()=>{
  assert.equal(crc32(Buffer.from('123456789')),0xcbf43926);
@@ -142,7 +142,7 @@ const negatives=[
  ['unsigned reviews','review_binding_refused',f=>{f.options.binding.reviews.messaging='0'.repeat(64);}],
  ['null code version','binding_refused',f=>{f.options.binding.codeVersion='null';}],
  ['wrong source','artifact_refused',f=>{f.options.head='b'.repeat(40);}],
- ['wrong ledger','ledger_refused',f=>{f.options.inspectLedger=async()=>({database:c.database,release:'b'.repeat(64),rows:104,rolledBack:true});}],
+ ['wrong ledger','ledger_refused',f=>{f.options.inspectLedger=async()=>({database:c.database,release:'b'.repeat(64),rows:105,rolledBack:true});}],
  ['unfinished candidate','stack_refused',f=>{f.responses['cloudformation/describe-stacks/candidate'].Stacks[0].StackStatus='UPDATE_IN_PROGRESS';}],
  ['extra stack parameter','parameters_refused',f=>{f.responses['cloudformation/describe-stacks/candidate'].Stacks[0].Parameters.push({ParameterKey:'Extra',ParameterValue:'x'});}],
  ['template change','template_refused',f=>{f.responses['cloudformation/get-template']={TemplateBody:{}};}],

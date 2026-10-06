@@ -2,6 +2,14 @@
   "record": "covered-entity-coverage/1",
   "tables": [
     {
+      "table": "clinical_core.care_consent_texts",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "dependsOn": ["clinical_core.consent_artifacts"],
+      "appendOnly": true,
+      "disposition": "Blocked by immutable trigger until a separately reviewed clinic retention/disposition procedure exists; coverage is inventory, not deletion certification."
+    },
+    {
       "table": "clinical_audit.care_message_access_events",
       "scope": "organization_column",
       "column": "organization_id"

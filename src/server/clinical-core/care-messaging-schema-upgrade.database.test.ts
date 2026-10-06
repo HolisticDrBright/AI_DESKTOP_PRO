@@ -34,7 +34,7 @@ const predecessor = async () => {
 beforeAll(async () => {
   const { manifest, files } = JSON.parse(execFileSync(process.execPath, ['scripts/build-aws-production-clinical-core.mjs', '--json'],
     { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024, timeout: 10000 }));
-  migrations = manifest.migrations.map((m: { version: string; file: string }) => ({ version: m.version, name: m.file.slice(15, -4),
+  migrations = manifest.migrations.slice(0, 104).map((m: { version: string; file: string }) => ({ version: m.version, name: m.file.slice(15, -4),
     sql: files[m.file], sha256: createHash('sha256').update(files[m.file]).digest('hex') }));
   pg = new PGlite({ extensions: { pgcrypto } });
   expect((await applyProductionClinicalCoreMigrations(database(), migrations.slice(0, 103))).tableCount).toBe(123);

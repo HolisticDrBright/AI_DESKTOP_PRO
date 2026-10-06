@@ -22,7 +22,7 @@ function pairs(rows,key,value){
 }
 export function assertCareArtifact({manifest,code,templateBytes,zip},head){
  if(!record(manifest)||manifest.contract!=='care-messaging-deployment/1'||manifest.sourceClean!==true
-  ||manifest.sourceCommit!==head||!/^[a-f0-9]{40}$/.test(head)||manifest.migrationCount!==104
+  ||manifest.sourceCommit!==head||!/^[a-f0-9]{40}$/.test(head)||manifest.migrationCount!==105
   ||manifest.migrationReleaseSha256!==QUALIFICATION_CONSENT_LEDGER||manifest.deploymentPerformed!==false
   ||!Buffer.isBuffer(code)||!Buffer.isBuffer(templateBytes)||!Buffer.isBuffer(zip)
   ||manifest.codeSha256!==sha(code)||manifest.templateSha256!==sha(templateBytes)
@@ -128,7 +128,7 @@ export async function inspectCareMessagingQualification({artifact,head,binding,r
  if(startFoundation?.Stacks?.length!==1)refuse('foundation_refused');const f=assertCareFoundation(startFoundation.Stacks[0]);
  if(binding)assertCareBinding(binding,a,f);
  const ledger=await inspectLedger(f);
- if(ledger?.database!==c.database||ledger?.release!==QUALIFICATION_CONSENT_LEDGER||ledger?.rolledBack!==true||ledger?.rows!==104)refuse('ledger_refused');
+ if(ledger?.database!==c.database||ledger?.release!==QUALIFICATION_CONSENT_LEDGER||ledger?.rolledBack!==true||ledger?.rows!==105)refuse('ledger_refused');
  const api=await readAws('apigatewayv2','get-api',{ApiId:f.ApiId});
  if(api?.ApiId!==f.ApiId||api.ApiEndpoint!==f.ApiOrigin||api.ProtocolType!=='HTTP'||api.DisableExecuteApiEndpoint===true)refuse('api_refused');
  let start;

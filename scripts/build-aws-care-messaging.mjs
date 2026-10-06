@@ -14,7 +14,7 @@ const artifact = JSON.parse(execFileSync(process.execPath, ['scripts/build-aws-p
   encoding: 'utf8', timeout: 15000, maxBuffer: 8 * 1024 * 1024,
 }));
 const migrationReleaseSha256 = sha(artifact.manifest.migrations.map(m => `${m.version}:${sha(artifact.files[m.file])}`).join('\n'));
-if (artifact.manifest.migrations.length !== 104 || migrationReleaseSha256 !== '57fdf022f0fdd7d70be12384d6e6d54caab1a0ddb4965a884e4d59eec4c552b0') throw new Error('care_message_build_release_invalid');
+if (artifact.manifest.migrations.length !== 105 || migrationReleaseSha256 !== '7da8e4ed999a3298bccc4ef33e7a1005201db45fa2b46682622a208486f17743') throw new Error('care_message_build_release_invalid');
 const sql = artifact.files['20261006010000_production_care_messaging.sql'];
 const functions = [...sql.matchAll(/create function (clinical_(?:core|private))\.(production_care_message_[a-z]+)\([^]*?security definer set search_path='' as \$\$([^]*?)\$\$/g)]
   .map(([, schema, name, body]) => ({ schema, name, sha256: sha(body), callable: schema === 'clinical_core' }));
@@ -25,7 +25,7 @@ const sourceClean = !execFileSync('git', ['status', '--porcelain', '--untracked-
 mkdirSync(out, { recursive: true });
 await build({ entryPoints: ['src/server/clinical-core/care-messaging-lambda.ts'], outfile: `${out}/index.js`, bundle: true,
   platform: 'node', target: 'node22', format: 'cjs', minify: true, legalComments: 'none',
-  define: { __CARE_MESSAGING_BUILD__: JSON.stringify({ sourceCommit, sourceClean, migrationCount: 104, migrationReleaseSha256, functions }) } });
+  define: { __CARE_MESSAGING_BUILD__: JSON.stringify({ sourceCommit, sourceClean, migrationCount: 105, migrationReleaseSha256, functions }) } });
 const ref = name => ({ Ref: name }), sub = value => ({ 'Fn::Sub': value });
 const nonempty = name => ({ 'Fn::Not': [{ 'Fn::Equals': [ref(name), ''] }] });
 const hash = { Type: 'String', Default: '', AllowedPattern: '^$|^[a-f0-9]{64}$' };
@@ -130,7 +130,7 @@ writeFileSync(`${out}/template.json`, JSON.stringify(template, null, 2) + '\n');
 const zip=careMessagingZip(readFileSync(`${out}/index.js`));
 writeFileSync(`${out}/deployment.zip`,zip);
 writeFileSync(`${out}/artifact-manifest.json`, JSON.stringify({ contract: 'care-messaging-deployment/1', sourceCommit, sourceClean,
-  migrationCount: 104, migrationReleaseSha256, codeSha256: sha(readFileSync(`${out}/index.js`)), templateSha256: sha(readFileSync(`${out}/template.json`)),
+  migrationCount: 105, migrationReleaseSha256, codeSha256: sha(readFileSync(`${out}/index.js`)), templateSha256: sha(readFileSync(`${out}/template.json`)),
   deploymentZipSha256:sha(zip), deploymentZipBytes:zip.length,
   functions, defaults: { phiAllowed: false, activation: 'blocked', qualification: 'disabled' }, deploymentPerformed: false,
   remaining: ['independent reviews', 'hosted target/operator binding and acceptance', 'clinic lifecycle/amendments', 'V2 production wiring', 'device acceptance'] }, null, 2) + '\n');

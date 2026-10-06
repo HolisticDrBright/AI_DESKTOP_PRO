@@ -376,6 +376,10 @@
     {
       "version": "20261006010000",
       "file": "20261006010000_production_care_messaging.sql"
+    },
+    {
+      "version": "20261006020000",
+      "file": "20261006020000_production_care_connections.sql"
     }
   ]
 }

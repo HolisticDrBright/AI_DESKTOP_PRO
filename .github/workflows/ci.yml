@@ -32,6 +32,10 @@ jobs:
         run: |
           npx vitest run src/contracts/careConnections.test.ts src/server/clinical-core/production-care-connections.database.test.ts src/server/clinical-core/production-care-connections-api.test.ts src/server/clinical-core/care-connections-source-artifact.test.ts src/server/clinical-core/care-connections-schema-upgrade.database.test.ts
           npm run build:care-connections-source
+      - name: Bound qualification-only connection upgrade command (no AWS calls)
+        run: |
+          npx vitest run src/server/clinical-core/care-connections-upgrade-command.test.ts
+          npm run build:aws-care-connections-upgrade
       - name: Versioned target and complete fleet capacity regressions (no AWS access)
         run: |
           npx vitest run src/server/clinical-core/qualification-target-manifest.test.ts src/server/clinical-core/qualification-target-observation.test.ts

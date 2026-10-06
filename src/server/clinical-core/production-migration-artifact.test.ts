@@ -24,9 +24,9 @@ beforeAll(async () => {
 describe('isolated canonical production migration artifact', () => {
   it('produces identical complete manifests and SQL from concurrent builders', () => {
     expect(parallel[0]).toEqual(parallel[1]);
-    expect(parallel[0].manifest.migrations).toHaveLength(104);
-    expect(Object.keys(parallel[0].files)).toHaveLength(104);
-    expect(parallel[0].manifest.migrations.at(-1)?.file).toBe('20261006010000_production_care_messaging.sql');
+    expect(parallel[0].manifest.migrations).toHaveLength(105);
+    expect(Object.keys(parallel[0].files)).toHaveLength(105);
+    expect(parallel[0].manifest.migrations.at(-1)?.file).toBe('20261006020000_production_care_connections.sql');
   });
   it('matches the normal release files byte for byte and verifies the release digest', () => {
     const artifact = parallel[0];
@@ -37,5 +37,15 @@ describe('isolated canonical production migration artifact', () => {
     const digest = createHash('sha256').update(artifact.manifest.migrations.map(({ version, file }) =>
       `${version}:${file}:${createHash('sha256').update(artifact.files[file]).digest('hex')}`).join('\n')).digest('hex');
     expect(digest).toBe(artifact.releaseHash);
+  });
+  it('keeps the exact historic 104 prefix and admits only the reviewed canonical successor bytes', () => {
+    const artifact = parallel[0];
+    const ledger = (entries: typeof artifact.manifest.migrations) => createHash('sha256').update(entries.map(({ version, file }) =>
+      `${version}:${createHash('sha256').update(artifact.files[file]).digest('hex')}`).join('\n')).digest('hex');
+    expect(ledger(artifact.manifest.migrations.slice(0, 104))).toBe('57fdf022f0fdd7d70be12384d6e6d54caab1a0ddb4965a884e4d59eec4c552b0');
+    expect(ledger(artifact.manifest.migrations)).toBe('7da8e4ed999a3298bccc4ef33e7a1005201db45fa2b46682622a208486f17743');
+    const sql = artifact.files['20261006020000_production_care_connections.sql'];
+    expect(sql).toBe(readFileSync('infra/aws-clinical-core/production-candidates/care-connections.sql', 'utf8').replace(/\r\n?/g, '\n'));
+    expect(createHash('sha256').update(sql).digest('hex')).toBe('0ade0879e0a5b5468461249d8dd39ffd8ea64fa51860e21af6a55cfc256642c5');
   });
 });

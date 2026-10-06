@@ -102,6 +102,6 @@ export function inspectionLedgerReader(expected,makeClient=()=>new RDSDataClient
    catch{throw new CareObservationError('rollback_unverified');}finally{client.destroy();}
   }
   if(!verified||!rolledBack)throw new CareObservationError('ledger_refused');
-  return {database:CARE_OBSERVER.database,release:QUALIFICATION_CONSENT_LEDGER,rows:104,rolledBack:true};
+  return {database:CARE_OBSERVER.database,release:QUALIFICATION_CONSENT_LEDGER,rows:expected.length,rolledBack:true};
  };
 }

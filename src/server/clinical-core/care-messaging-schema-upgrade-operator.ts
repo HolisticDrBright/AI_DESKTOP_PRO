@@ -23,7 +23,9 @@ async function main() {
   const bound = qualificationUpgradeFromAws(aws(['sts', 'get-caller-identity']),
     aws(['cloudformation', 'describe-stacks', '--stack-name', foundation]));
   const configuration = { ...bound, fromReleaseSha256: CARE_MESSAGING_UPGRADE.from, toReleaseSha256: CARE_MESSAGING_UPGRADE.to };
-  const migrations = loadClinicalCoreMigrations('dist/aws-clinical-core/production-migrations');
+  // Historical 103->104 operator stays pinned to its exact immutable prefix.
+  // Its library refuses newer database history and any changed predecessor.
+  const migrations = loadClinicalCoreMigrations('dist/aws-clinical-core/production-migrations').slice(0, CARE_MESSAGING_UPGRADE.countAfter);
   const database = createRdsDataAdministrativeDatabase({ clusterArn: configuration.clusterArn, secretArn: configuration.secretArn,
     databaseName: configuration.qualificationDatabaseName, region }, { purpose: 'reviewed_production_schema_migration' },
   new RDSDataClient({ region, credentials: fromIni({ profile }) }));
