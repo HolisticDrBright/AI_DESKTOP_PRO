@@ -11,7 +11,7 @@ on:
 
 jobs:
   care-messaging-source:
-    name: Unreleased care messaging database and API regressions
+    name: Care messaging database API and blocked-deployment regressions
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -25,11 +25,16 @@ jobs:
           npm run check:aws-production-clinical-core
           npm run check:aws-covered-entity-coverage
       - name: Fictional embedded database only; no AWS access or activation
-        run: npx vitest run src/server/clinical-core/production-care-messaging.database.test.ts src/server/clinical-core/production-care-messaging-api.test.ts src/server/clinical-core/care-messaging-schema-upgrade.database.test.ts
+        run: npx vitest run src/server/clinical-core/production-care-messaging.database.test.ts src/server/clinical-core/production-care-messaging-api.test.ts src/server/clinical-core/care-messaging-schema-upgrade.database.test.ts src/server/clinical-core/care-messaging-deployment.test.ts src/server/clinical-core/care-messaging-artifact.test.ts
       - name: Build explicitly non-deployable source artifact
         run: npm run build:care-messaging-source
       - name: Build qualification-only preserving migration operator (no AWS execution)
         run: npm run build:aws-care-messaging-upgrade
+      - name: Build and lint blocked/logs-only messaging candidate (no AWS execution)
+        run: |
+          npm run build:aws-care-messaging
+          pip install --disable-pip-version-check --quiet cfn-lint==1.55.0
+          cfn-lint dist/aws-clinical-core/care-messaging/template.json
   e2e-aws-recording-consent:
     name: Browser suite (AWS recording controls, generated audio and cookie refusal)
     runs-on: ubuntu-latest

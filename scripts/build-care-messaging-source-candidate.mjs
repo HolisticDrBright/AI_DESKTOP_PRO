@@ -32,7 +32,8 @@ const manifest = {
   proposedRoutes: ['POST /clinical-core/consumer/messages', 'POST /clinical-core/workforce/messages', 'POST /clinical-core/consumer/messages/export'],
   newTables: ['clinical_core.care_message_thread_links', 'clinical_core.care_message_receipts', 'clinical_core.care_message_cancellations', 'clinical_audit.care_message_access_events'],
   privacyCoverage: 'retained in-app correspondence and cancellation receipts, live owner-scoped pages; not whole-account export or erasure',
-  remaining: ['hosted preserving upgrade and rollback acceptance', 'deployment template and artifact-bound Lambda handler',
+  deploymentCandidateBuild: 'npm run build:aws-care-messaging',
+  remaining: ['reviewed deployment target and candidate acceptance',
     'V2 production provider wiring', 'clinic hold-aware lifecycle and amendment mapping', 'synthetic hosted concurrency and device acceptance', 'independent activation reviews'],
 };
 writeFileSync(out + '/manifest.json', JSON.stringify(manifest, null, 2) + '\n');

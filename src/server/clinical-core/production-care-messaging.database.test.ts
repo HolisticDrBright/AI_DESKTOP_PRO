@@ -2,19 +2,22 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { PGlite } from '@electric-sql/pglite';
 import { pgcrypto } from '@electric-sql/pglite/contrib/pgcrypto';
 import { execFileSync } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { deleteCoveredEntityContent, inspectCoveredEntityContent, parseCoveredEntityCoverage, deletionOrder } from './covered-entity-deletion';
 import { createProductionCareMessaging, createProductionCareMessageExport } from './production-care-messaging';
 import { ClinicalCoreDatabaseRejection, type ClinicalCoreDatabase, type ClinicalCoreTransaction } from './database';
 import type { ProductionClinicalRequestContext } from './aws-identity-consent';
 import type { CareMessageRequest } from '../../contracts/careMessages';
+import { createCareMessagingHandler, bindCareMessagingDatabase, type CareMessagingBuild } from './care-messaging-deployment';
+import type { ApiGatewayV2Event } from './aws-identity-api';
 
 // Real canonical production SQL; unreleased API, fictional rows only.
 // This is not AWS, concurrency-load, activation or retention-policy evidence.
 let db: PGlite;
 let org: string, otherOrg: string, owner: string, other: string, staff: string, stranger: string;
 let patient: string, connection: string, artifact: string;
+let messagingBuild: CareMessagingBuild;
 const subject = (person: string) => 'subject-' + person;
 const context = (person = owner, pool: 'consumer' | 'workforce' = 'consumer', organization = org): ProductionClinicalRequestContext => ({
   actorPersonId: person, organizationId: organization, identitySubject: subject(person), identityPool: pool,
@@ -51,6 +54,11 @@ async function replacement() {
 }
 beforeAll(async () => {
   const { manifest, files } = JSON.parse(execFileSync(process.execPath, ['scripts/build-aws-production-clinical-core.mjs', '--json'], { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024, timeout: 10000 }));
+  const sql: string = files['20261006010000_production_care_messaging.sql'];
+  messagingBuild = { sourceCommit: '1'.repeat(40), sourceClean: true, migrationCount: 104,
+    migrationReleaseSha256: '57fdf022f0fdd7d70be12384d6e6d54caab1a0ddb4965a884e4d59eec4c552b0',
+    functions: [...sql.matchAll(/create function (clinical_(?:core|private))\.(production_care_message_[a-z]+)\([^]*?security definer set search_path='' as \$\$([^]*?)\$\$/g)]
+      .map(([, schema, name, body]) => ({ schema, name, sha256: createHash('sha256').update(body).digest('hex'), callable: schema === 'clinical_core' })) };
   db = new PGlite({ extensions: { pgcrypto } });
   for (const m of manifest.migrations) await db.exec(files[m.file]);
 }, 60000);
@@ -72,6 +80,52 @@ beforeEach(async () => {
 });
 
 describe('unreleased production messaging over canonical inbox', () => {
+  it('runs the deployment handler through the real API role, database contract and retained owner export', async () => {
+    const now = Date.now(), review = '2'.repeat(64);
+    const config = { SOURCE_COMMIT: messagingBuild.sourceCommit, MIGRATION_RELEASE_SHA256: messagingBuild.migrationReleaseSha256,
+      AWS_REGION: 'us-east-2', DEPLOYMENT_ACCOUNT_ID: '588966314750', PHI_ALLOWED: 'false', CARE_MESSAGING_ACTIVATION: 'blocked',
+      CONSUMER_ISSUER: 'https://cognito-idp.us-east-2.amazonaws.com/us-east-2_Consumer', CONSUMER_AUDIENCE: 'c'.repeat(26),
+      WORKFORCE_ISSUER: 'https://cognito-idp.us-east-2.amazonaws.com/us-east-2_Workforce', WORKFORCE_AUDIENCE: 'w'.repeat(26),
+      CARE_MESSAGING_ORGANIZATION_ID: org, CLINICAL_DATABASE_CLUSTER_ARN: 'arn:aws:rds:us-east-2:588966314750:cluster:fictional',
+      CLINICAL_DATABASE_SECRET_ARN: 'arn:aws:secretsmanager:us-east-2:588966314750:secret:fictional-AbCd12', CLINICAL_DATABASE_NAME: 'clinical_core_qualification',
+      DATABASE_REVIEW_SHA256: review, WORKFORCE_MFA_REVIEW_SHA256: review, MESSAGING_REVIEW_SHA256: review, RETENTION_REVIEW_SHA256: review,
+      QUALIFICATION_EXECUTION: 'enabled', QUALIFICATION_REVIEW_SHA256: review, QUALIFICATION_ACCOUNT_ID: '588966314750',
+      QUALIFICATION_IDENTITY_SUBJECTS: [owner, other, staff].map(subject).join(',') };
+    const handler = createCareMessagingHandler(config, messagingBuild, () => database, () => now);
+    const request = (body: unknown, who = owner, pool: 'consumer' | 'workforce' = 'consumer', privacy = false): ApiGatewayV2Event => ({
+      routeKey: `POST /clinical-core/${pool}/messages${privacy ? '/export' : ''}`, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+      requestContext: { authorizer: { jwt: { claims: { iss: config[pool === 'consumer' ? 'CONSUMER_ISSUER' : 'WORKFORCE_ISSUER'],
+        aud: config[pool === 'consumer' ? 'CONSUMER_AUDIENCE' : 'WORKFORCE_AUDIENCE'], sub: subject(who),
+        'custom:person_id': who, 'custom:organization_id': org, 'custom:production_bound': 'true', email_verified: 'true', token_use: 'id',
+        iat: Math.floor(now / 1000) - 10, exp: Math.floor(now / 1000) + 1000, auth_time: Math.floor(now / 1000) - 10 } } } },
+    });
+    const sent = await handler(request(send())); expect(sent).toMatchObject({ statusCode: 200, headers: { 'x-clinical-execution': 'qualification' } });
+    const result = JSON.parse(sent.body).data;
+    expect(await handler(request({ action: 'read', threadId: result.threadId }, other))).toMatchObject({ statusCode: 403 });
+    expect(await handler(request({ action: 'read', threadId: result.threadId }, staff, 'workforce'))).toMatchObject({ statusCode: 200 });
+    await withdraw();
+    expect(await handler(request({ action: 'read', threadId: result.threadId }))).toMatchObject({ statusCode: 403 });
+    const exported = await handler(request({ action: 'export', section: 'messages' }, owner, 'consumer', true));
+    expect(exported.statusCode).toBe(200); expect(JSON.parse(exported.body).data.records).toHaveLength(1);
+    expect(JSON.parse(exported.body).data.records[0].body).toBe('FICTIONAL patient message');
+  });
+  it('checks actual function search path, force-RLS, privileges and immutable trigger drift as the API role', async () => {
+    const guarded = bindCareMessagingDatabase(database, messagingBuild);
+    const check = () => guarded.transaction(async () => true);
+    expect(await check()).toBe(true);
+    const mutations = [
+      ["alter function clinical_private.production_care_message_actor() set search_path=public", "alter function clinical_private.production_care_message_actor() set search_path=''"],
+      ['alter table clinical_core.care_message_receipts no force row level security', 'alter table clinical_core.care_message_receipts force row level security'],
+      ['grant select on clinical_core.care_message_receipts to public', 'revoke select on clinical_core.care_message_receipts from public'],
+      ['alter table clinical_core.messages disable trigger stored_care_messages_immutable', 'alter table clinical_core.messages enable trigger stored_care_messages_immutable'],
+    ];
+    for (const [change, restore] of mutations) {
+      await db.exec(change);
+      try { await expect(check()).rejects.toThrow('service_unavailable'); }
+      finally { await db.exec(restore); }
+      expect(await check()).toBe(true);
+    }
+  });
   it('maps retained messaging to its clinic and detects a held app owner without staff membership', async () => {
     const sent = await call(send());
     if (sent.action !== 'send') throw new Error('wrong response');
