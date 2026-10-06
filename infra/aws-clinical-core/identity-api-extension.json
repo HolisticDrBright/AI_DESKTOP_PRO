@@ -176,7 +176,7 @@
           ]
         },
         "MemorySize": 256,
-        "Timeout": 15,
+        "Timeout": 29,
         "LoggingConfig": {
           "LogGroup": {
             "Ref": "IdentityApiLogGroup"
@@ -280,7 +280,7 @@
           ]
         },
         "PayloadFormatVersion": "2.0",
-        "TimeoutInMillis": 15000
+        "TimeoutInMillis": 30000
       }
     },
     "WorkforcePostureRoute": {

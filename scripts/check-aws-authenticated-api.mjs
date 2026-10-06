@@ -114,7 +114,8 @@ export function validateAuthenticatedApi(foundation, extension) {
 
   const fn = resources.IdentityApiFunction?.Properties;
   assert(errors, fn?.Runtime === "nodejs22.x" && fn?.Architectures?.[0] === "arm64", "Lambda runtime must be bounded and cost-efficient");
-  assert(errors, fn?.Timeout === 15 && fn?.MemorySize === 256 && !("ReservedConcurrentExecutions" in fn), "Lambda resource bounds must remain account-compatible");
+  assert(errors, fn?.Timeout === 29 && fn?.MemorySize === 256 && !("ReservedConcurrentExecutions" in fn), "Lambda resource bounds must remain account-compatible");
+  assert(errors, resources.IdentityApiIntegration?.Properties?.TimeoutInMillis === 30000, "HTTP integration must allow the bounded Aurora resume window");
   assert(errors, !fn?.VpcConfig, "Data API Lambda must not create NAT/VPC networking cost");
   const env = fn?.Environment?.Variables ?? {};
   assert(errors, Object.keys(env).sort().join(",") === [

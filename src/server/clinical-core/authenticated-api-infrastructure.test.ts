@@ -63,7 +63,8 @@ describe("authenticated synthetic API infrastructure", () => {
       .toEqual(["POST /clinical-core/public/consult-intake"]);
     expect(unauthenticated[0].Properties.AuthorizationType).toBe("NONE");
     expect(unauthenticated[0].Properties).not.toHaveProperty("AuthorizerId");
-    expect(resources.IdentityApiFunction.Properties).toMatchObject({ Timeout: 15, MemorySize: 256 });
+    expect(resources.IdentityApiFunction.Properties).toMatchObject({ Timeout: 29, MemorySize: 256 });
+    expect(resources.IdentityApiIntegration.Properties.TimeoutInMillis).toBe(30000);
     expect(resources.IdentityApiFunction.Properties.FunctionName)
       .toEqual({ "Fn::Sub": "${ClinicalApiId}-synthetic-identity" });
     expect(resources.IdentityApiFunction.Properties).not.toHaveProperty("ReservedConcurrentExecutions");
