@@ -92,6 +92,8 @@ The hosted real-JWT fictional run then got expected read responses from all ten 
 
 At source `24532a4`, `npm run build:clinical` completed locally (236 static pages generated), and `npm run check:clinical-bundle` passed: 291 client chunks contained no synthetic identity, demo-only copy or the 17 server-only markers checked by the scanner. The V2 branch `d8737f8` hosted App verification completed successfully. This is local build and bundle evidence, **not** a hosted Desktop release, a physical device test or PHI approval. Desktop hosted CI still fails in its dependency-security step before the build because the unpatched development-only `braces` chain is present; the gate was not bypassed. The qualification AWS account still has only the older-source personal-storage candidate deployed, with export bucket and export-review parameters empty. A clean build cannot stand in for missing hosted acceptance or reviewed candidate configuration.
 
+The existing qualification export bucket's read-only inspection, current source/artifact checkpoint, and still-open policy and hosted-test gates are recorded in [the October 6 export-bucket review](aws-qualification-export-bucket-review-2026-10-06.md). It does not authorize enabling export delivery.
+
 ## Narrow staging migration rehearsal
 
 The source-bound program-assignment audit now reports no findings, and focused program and specimen-context tests pass. The staging ledger has 33 entries. Its only source-version alias is the previously reviewed `20260902230000` workforce directory row, whose digest matches source `20260821049700`. The source manifest also contains an older-numbered, unapplied lab-specimen-context migration; it must precede program assignments.
