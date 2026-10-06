@@ -30,9 +30,15 @@ if ($Command -ne 'inspect' -and -not $ConfirmRetentionOperatingPolicyApproved) {
 if ($Command -eq 'release' -and (-not $ReleaseVersion -or -not $ServicePersonId -or -not $ServiceSubject -or -not $ApprovedByPersonId -or -not $PolicyEvidenceSha256)) { throw "release needs -ReleaseVersion, -ServicePersonId, -ServiceSubject, -ApprovedByPersonId and -PolicyEvidenceSha256." }
 if ($Command -eq 'revoke' -and -not $ReleaseVersion) { throw "revoke needs -ReleaseVersion." }
 $deployment = Get-Content -Raw -LiteralPath $DeploymentManifestPath | ConvertFrom-Json
-$account = aws sts get-caller-identity --query Account --output text
-if ($LASTEXITCODE -ne 0) { throw "AWS identity lookup failed." }
+$identityJson = aws sts get-caller-identity --output json
+if ($LASTEXITCODE -ne 0 -or -not $identityJson) { throw "AWS identity lookup failed." }
+try { $identity = $identityJson | ConvertFrom-Json -ErrorAction Stop }
+catch { throw "AWS identity lookup failed." }
+$account = "$($identity.Account)".Trim()
 if ($account -ne $deployment.aws_account_id) { throw "AWS account does not match the reviewed deployment manifest." }
+if ($QualificationTargetPath -and "$($identity.Arn)" -cnotmatch "^arn:aws:sts::$([regex]::Escape($account)):assumed-role/[A-Za-z0-9_+=,.@/-]+$") {
+  throw 'qualification_target_refused:principal'
+}
 if ($Region -ne $deployment.aws_region) { throw "AWS region does not match the reviewed manifest." }
 if ($QualificationTargetPath) {
   # The qualification target names the database; the qualification foundation is only read for its PHI posture.

@@ -33,7 +33,7 @@ Deploy each candidate with, for example:
 aws cloudformation deploy --stack-name ai-clinical-core-qualification-<candidate> \
   --template-file dist/aws-clinical-core/<candidate>/template.json \
   --parameter-overrides file://infra/aws-clinical-core/qualification-parameters/<candidate>.filled.json \
-  --capabilities CAPABILITY_IAM --region us-east-2 --profile ai-synthetic-staging
+  --capabilities CAPABILITY_IAM --region us-east-2 --profile ai-synthetic-member
 ```
 
 Keep filled files out of the repository (`*.filled.json` is ignored); they carry account-specific

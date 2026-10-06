@@ -60,10 +60,18 @@ function Assert-QualificationSourceCommit($Target) {
 }
 
 function Assert-QualificationAccount($Target) {
-  $account = aws sts get-caller-identity --query Account --output text
-  if ($LASTEXITCODE -ne 0 -or -not $account) { throw 'qualification_target_refused:sts' }
-  $account = "$account".Trim()
+  $identityJson = aws sts get-caller-identity --output json
+  if ($LASTEXITCODE -ne 0 -or -not $identityJson) { throw 'qualification_target_refused:sts' }
+  try { $identity = $identityJson | ConvertFrom-Json -ErrorAction Stop }
+  catch { throw 'qualification_target_refused:sts' }
+  $account = "$($identity.Account)".Trim()
   if ($account -eq $QualificationTargetProductionAccount -or $account -ne $Target.awsAccountId) { throw 'qualification_target_refused:account' }
+  # An account match alone admitted the synthetic account's root login. Qualification
+  # runs must use a short-lived assumed role; root and long-lived IAM-user keys are
+  # not acceptable operators even when they happen to name the correct account.
+  if ("$($identity.Arn)" -cnotmatch "^arn:aws:sts::$([regex]::Escape($account)):assumed-role/[A-Za-z0-9_+=,.@/-]+$") {
+    throw 'qualification_target_refused:principal'
+  }
   return $account
 }
 

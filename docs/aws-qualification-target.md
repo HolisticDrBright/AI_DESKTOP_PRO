@@ -235,7 +235,13 @@ name-refusal test for the preparation runner.
 ### Deploying the qualification profile (owner, Windows terminal)
 
 Before CloudFormation changes, build all candidate templates and run
-`npm run check:aws-qualification-capacity -- --api-id <qualification-api-id> --profile ai-synthetic-staging`.
+`npm run check:aws-qualification-capacity -- --api-id <qualification-api-id> --profile ai-synthetic-member`.
+
+For qualification execution and release operators, use the synthetic account's short-lived
+assumed-role profile `ai-synthetic-member`. The older `ai-synthetic-staging` profile currently
+resolves to the **account root** principal despite naming the same account. The qualification
+target verifier now refuses root and long-lived IAM-user principals before any acceptance
+request or fixture write. An account-ID match alone is not an adequate operator check.
 This read-only, account-pinned preflight counts reservations from the actual built templates and
 observes existing named reservations. CloudFormation-generated function names receive no existing-capacity
 credit. It conservatively preserves 100 unreserved executions; a reduced-quota account is refused,

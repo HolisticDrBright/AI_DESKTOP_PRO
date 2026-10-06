@@ -80,7 +80,11 @@ function global:CandidateStack([hashtable]$Patch = @{}) {
 foreach ($candidate in $target.stacks.Values) { $global:StackOutputs[$candidate] = (CandidateStack) }
 function aws {
   $global:External++
-  if ($args[0] -eq 'sts') { $global:LASTEXITCODE = 0; return $global:StsAccount }
+  if ($args[0] -eq 'sts') {
+    $global:LASTEXITCODE = 0
+    if ($args -contains 'Account') { return $global:StsAccount }
+    return (@{ Account = $global:StsAccount; Arn = $global:StsArn; UserId = 'fictional-session' } | ConvertTo-Json -Compress)
+  }
   if ($args[0] -eq 'cloudformation') {
     $name = $args[[array]::IndexOf($args, '--stack-name') + 1]
     if ($global:StackOutputs.ContainsKey($name)) { $global:LASTEXITCODE = 0; return $global:StackOutputs[$name] }
@@ -98,6 +102,7 @@ function node {
 }
 $global:Head = $commit
 $global:StsAccount = '588966314750'
+$global:StsArn = 'arn:aws:sts::588966314750:assumed-role/QualificationOperator/fictional-session'
 # Each runner clears the token variables in its finally block, as a real run must; the test sets fictional ones per case.
 $global:StaleToken = $true
 function Set-FictionalTokens {
@@ -148,6 +153,11 @@ Invoke-Case 'signed in to another account than the target' { Export-Run $good } 
 $global:StsAccount = '173535830222'
 Invoke-Case 'signed in to the production account' { Export-Run $good } 'qualification_target_refused:account'
 $global:StsAccount = '588966314750'
+$global:StsArn = 'arn:aws:iam::588966314750:root'
+Invoke-Case 'root principal in the right account' { Export-Run $good } 'qualification_target_refused:principal'
+$global:StsArn = 'arn:aws:iam::588966314750:user/long-lived-operator'
+Invoke-Case 'long-lived IAM user in the right account' { Recording-Run $good } 'qualification_target_refused:principal'
+$global:StsArn = 'arn:aws:sts::588966314750:assumed-role/QualificationOperator/fictional-session'
 Invoke-Case 'another region' { Export-Run (Write-Target @{ awsRegion = 'us-west-2' }) } 'qualification_target_refused:awsRegion'
 Invoke-Case 'a deployment manifest for another account' {
   $other = Join-Path $work 'other-deployment.json'
@@ -257,6 +267,9 @@ $retentionRunner = Join-Path $PSScriptRoot 'release-aws-retention-service.ps1'
 function Retention-Run([string]$targetFile) { & $retentionRunner -Command inspect -QualificationTargetPath $targetFile -DeploymentManifestPath $deploymentManifest }
 Invoke-Case 'retention release selects the qualification database' { Retention-Run $good } $null
 if ($global:Selected.databaseEnv -ne 'clinical_core_qualification') { throw 'retention release did not select the qualification database' }
+$global:StsArn = 'arn:aws:iam::588966314750:root'
+Invoke-Case 'retention release refuses root in qualification' { Retention-Run $good } 'qualification_target_refused:principal'
+$global:StsArn = 'arn:aws:sts::588966314750:assumed-role/QualificationOperator/fictional-session'
 Invoke-Case 'retention release refuses the staging database' { Retention-Run (Write-Target @{ databaseName = 'clinical_core' }) } 'qualification_target_refused:databaseName'
 Invoke-Case 'retention release refuses two targets at once' { & $retentionRunner -Command inspect -QualificationTargetPath $good -FoundationStackName 'ai-clinical-core-synthetic-staging' -DeploymentManifestPath $deploymentManifest } 'exactly one target'
 Invoke-Case 'retention release refuses no target at all' { & $retentionRunner -Command inspect -DeploymentManifestPath $deploymentManifest } 'exactly one target'

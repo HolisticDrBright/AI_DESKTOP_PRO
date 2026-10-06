@@ -31,9 +31,15 @@ if ($Command -ne 'inspect' -and -not $ConfirmQualificationTarget) { throw "Refus
 if ($Command -eq 'fixtures' -and -not $SyntheticManifestPath) { throw "fixtures needs -SyntheticManifestPath (the reviewed synthetic acceptance manifest)." }
 $deployment = Get-Content -Raw -LiteralPath $DeploymentManifestPath | ConvertFrom-Json
 if ($deployment.aws_account_id -eq '173535830222') { throw "The production account is never a qualification target." }
-$account = aws sts get-caller-identity --query Account --output text
-if ($LASTEXITCODE -ne 0) { throw "AWS identity lookup failed." }
+$identityJson = aws sts get-caller-identity --output json
+if ($LASTEXITCODE -ne 0 -or -not $identityJson) { throw "AWS identity lookup failed." }
+try { $identity = $identityJson | ConvertFrom-Json -ErrorAction Stop }
+catch { throw "AWS identity lookup failed." }
+$account = "$($identity.Account)".Trim()
 if ($account -ne $deployment.aws_account_id) { throw "AWS account does not match the reviewed deployment manifest." }
+if ("$($identity.Arn)" -cnotmatch "^arn:aws:sts::$([regex]::Escape($account)):assumed-role/[A-Za-z0-9_+=,.@/-]+$") {
+  throw 'qualification_operator_principal_refused'
+}
 if ($Region -ne $deployment.aws_region) { throw "AWS region does not match the reviewed manifest." }
 $outputs = aws cloudformation describe-stacks --stack-name $FoundationStackName --region $Region --query "Stacks[0].Outputs" --output json | ConvertFrom-Json
 function Output([string]$key) { $entry = $outputs | Where-Object OutputKey -eq $key; if (-not $entry) { throw "Foundation output $key is missing." }; return $entry.OutputValue }
