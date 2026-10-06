@@ -128,6 +128,20 @@ type Result = { contract: 'care-connections-schema-upgrade/1'; command: 'inspect
   dataPreserved: true; tableCount: number; rowCount: number; dataSha256: string; fromReleaseSha256: string; toReleaseSha256: string };
 class RehearsalRollback extends Error { constructor(readonly result: Result) { super('qualification_rehearsal_rollback'); } }
 
+/** Shared registration admission inside its own transaction. Does not apply SQL,
+ * register copy, approve a release or grant consent. Caller admits immutable
+ * artifact/configuration before opening the transaction. */
+export async function verifyCareConsentRegistrationTarget(tx: ClinicalCoreTransaction,
+  suppliedMigrations: ClinicalCoreMigration[], suppliedConfiguration: QualificationUpgradeConfiguration) {
+  const migrations = suppliedMigrations.map(m => ({ ...m })), configuration = { ...suppliedConfiguration };
+  assertCareConnectionsUpgrade(configuration, migrations);
+  if ((await tx.query<{ name: string }>('select current_database() as name')).rows[0]?.name !== configuration.qualificationDatabaseName)
+    fail('boundary_refused');
+  if (await history(tx, migrations) !== 105) fail('history_refused');
+  await inventory(tx, 105);
+  await verify(tx, migrations[104]);
+}
+
 /** Exact fictional qualification transition. Never touches staging, drops rows,
  * rewrites an earlier migration, enables APIs, grants consent or activates PHI. */
 export async function runCareConnectionsSchemaUpgrade(database: ClinicalCoreDatabase, suppliedMigrations: ClinicalCoreMigration[],

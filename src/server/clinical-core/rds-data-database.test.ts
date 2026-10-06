@@ -59,6 +59,13 @@ describe("Aurora RDS Data API transaction adapter", () => {
     )).not.toThrow();
   });
 
+  test("permits the explicit consent-copy registration operator purpose without granting request authority", async () => {
+    const mock = client();
+    const database = createRdsDataAdministrativeDatabase(CONFIG, { purpose: "reviewed_consent_copy_registration" }, mock.value);
+    await database.transaction(tx => tx.query("select 1"));
+    expect(mock.calls.filter(call => call.name === "ExecuteStatementCommand").map(call => call.input.sql)).toEqual(["select 1"]);
+  });
+
   test("converts positional placeholders to bounded named parameters", () => {
     expect(bindParameters("select $2, $1, $2", ["alpha", 7])).toEqual({
       sql: "select :p2, :p1, :p2",
