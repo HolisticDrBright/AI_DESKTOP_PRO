@@ -109,10 +109,8 @@ function Assert-QualificationStacks($Target, [string[]]$Candidates, [string]$Reg
       if ($outputs['Activation'] -ne 'blocked') { throw "qualification_target_refused:stack_activation.$candidate" }
       if ($outputs['QualificationExecution'] -ne 'enabled') { throw "qualification_target_refused:stack_execution.$candidate" }
     }
-    # owned-lab and owned-voice attach to the shared API and export no SourceCommit; the others must export the manifest's.
-    if ($candidate -in @('owned-lab','owned-voice')) {
-      if ($outputs.ContainsKey('SourceCommit') -and $outputs['SourceCommit'] -ne $Target.sourceCommit) { throw "qualification_target_refused:stack_source.$candidate" }
-    } elseif ($outputs['SourceCommit'] -ne $Target.sourceCommit) { throw "qualification_target_refused:stack_source.$candidate" }
+    # Every candidate must publish its source; the shared-API candidates are no exception.
+    if ($outputs['SourceCommit'] -ne $Target.sourceCommit) { throw "qualification_target_refused:stack_source.$candidate" }
     if ($stack.StackStatus -notin @('CREATE_COMPLETE','UPDATE_COMPLETE','UPDATE_ROLLBACK_COMPLETE','IMPORT_COMPLETE','IMPORT_ROLLBACK_COMPLETE')) { throw "qualification_target_refused:stack_status.$candidate" }
     # A database or API name does not identify one database or API: compare the resources themselves. Every candidate
     # carries the cluster, secret, database and account; the API and the buckets are required of the candidates that use them.
@@ -124,7 +122,7 @@ function Assert-QualificationStacks($Target, [string[]]$Candidates, [string]$Reg
       if (-not $parameters.ContainsKey($key)) { throw "qualification_target_refused:stack_parameter_missing.$candidate.$key" }
       if ($parameters[$key] -ne $required[$key]) { throw "qualification_target_refused:stack_parameter.$candidate.$key" }
     }
-    if ($parameters.ContainsKey('SourceCommit') -and $parameters['SourceCommit'] -ne $Target.sourceCommit) { throw "qualification_target_refused:stack_source.$candidate" }
+    if (-not $parameters.ContainsKey('SourceCommit') -or $parameters['SourceCommit'] -ne $Target.sourceCommit) { throw "qualification_target_refused:stack_source.$candidate" }
     if ($Posture -eq 'drain') { Write-Host "Verified draining candidate $name ($candidate); it serves no one."; continue }
     $expectedSubjects = Get-QualificationSubjects $Target
     $listed = @()

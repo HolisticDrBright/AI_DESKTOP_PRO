@@ -163,21 +163,20 @@ export function bindQualificationTarget(manifest: QualificationTargetManifest, o
 }
 
 /** What each candidate stack is, in the terms its own template uses. The candidates do not all speak the same dialect:
- * personal-storage, privacy-operations and the recording candidates take `ApiId` and export `SourceCommit`, while
- * owned-lab and owned-voice attach to the shared API as `ClinicalApiId` and export neither, so a single required set
- * would refuse a correctly deployed stack. Buckets are required only of the candidates that use them. */
-type QualificationStackSpec = { api: "ApiId" | "ClinicalApiId" | null; buckets: ReadonlyArray<"ExportBucketName" | "RecordingBucket">; sourceCommitOutput: boolean };
+ * owned-lab and owned-voice use `ClinicalApiId` while the others use `ApiId`. Every candidate must publish
+ * `SourceCommit`; buckets are required only of candidates that use them. */
+type QualificationStackSpec = { api: "ApiId" | "ClinicalApiId" | null; buckets: ReadonlyArray<"ExportBucketName" | "RecordingBucket"> };
 export const QUALIFICATION_STACK_SPECS: Record<string, QualificationStackSpec> = {
-  "personal-storage": { api: "ApiId", buckets: ["ExportBucketName"], sourceCommitOutput: true },
-  "privacy-operations": { api: "ApiId", buckets: ["ExportBucketName"], sourceCommitOutput: true },
-  "recording-authority": { api: "ApiId", buckets: [], sourceCommitOutput: true },
-  "recording-capture": { api: "ApiId", buckets: ["RecordingBucket"], sourceCommitOutput: true },
-  "recording-transcription": { api: "ApiId", buckets: ["RecordingBucket"], sourceCommitOutput: true },
-  "recording-drafting": { api: "ApiId", buckets: ["RecordingBucket"], sourceCommitOutput: true },
-  "recording-cleanup-review": { api: "ApiId", buckets: [], sourceCommitOutput: true },
-  "recording-cleanup-execution": { api: "ApiId", buckets: ["RecordingBucket"], sourceCommitOutput: true },
-  "owned-lab": { api: "ClinicalApiId", buckets: [], sourceCommitOutput: false },
-  "owned-voice": { api: "ClinicalApiId", buckets: [], sourceCommitOutput: false },
+  "personal-storage": { api: "ApiId", buckets: ["ExportBucketName"] },
+  "privacy-operations": { api: "ApiId", buckets: ["ExportBucketName"] },
+  "recording-authority": { api: "ApiId", buckets: [] },
+  "recording-capture": { api: "ApiId", buckets: ["RecordingBucket"] },
+  "recording-transcription": { api: "ApiId", buckets: ["RecordingBucket"] },
+  "recording-drafting": { api: "ApiId", buckets: ["RecordingBucket"] },
+  "recording-cleanup-review": { api: "ApiId", buckets: [] },
+  "recording-cleanup-execution": { api: "ApiId", buckets: ["RecordingBucket"] },
+  "owned-lab": { api: "ClinicalApiId", buckets: [] },
+  "owned-voice": { api: "ClinicalApiId", buckets: [] },
 };
 const USABLE_STACK_STATUS = new Set(["CREATE_COMPLETE", "UPDATE_COMPLETE", "UPDATE_ROLLBACK_COMPLETE", "IMPORT_COMPLETE", "IMPORT_ROLLBACK_COMPLETE"]);
 
@@ -199,15 +198,14 @@ export function assertQualificationStackOutputs(candidate: string, outputs: Reco
   if (posture === "drain") {
     if (outputs.Activation !== "draining" || outputs.QualificationExecution !== "disabled") refuse();
   } else if (outputs.Activation !== "blocked" || outputs.QualificationExecution !== "enabled") refuse();
-  if (spec!.sourceCommitOutput && outputs.SourceCommit !== manifest.sourceCommit) refuse();
-  if (outputs.SourceCommit !== undefined && outputs.SourceCommit !== manifest.sourceCommit) refuse();
+  if (outputs.SourceCommit !== manifest.sourceCommit) refuse();
   if (stackStatus !== undefined && !USABLE_STACK_STATUS.has(stackStatus)) refuse();
   const expected: Record<string, string> = { DatabaseClusterArn: manifest.databaseClusterArn, DatabaseSecretArn: manifest.databaseSecretArn, DatabaseName: manifest.databaseName,
     QualificationAccountId: manifest.awsAccountId, ApiId: manifest.apiId, ClinicalApiId: manifest.apiId, ExportBucketName: manifest.exportBucket, RecordingBucket: manifest.recordingBucket };
   for (const name of ["DatabaseClusterArn", "DatabaseSecretArn", "DatabaseName", "QualificationAccountId", ...(spec!.api ? [spec!.api] : []), ...spec!.buckets]) {
     if (parameters[name] === undefined || parameters[name] !== expected[name]) refuse();
   }
-  if (parameters.SourceCommit !== undefined && parameters.SourceCommit !== manifest.sourceCommit) refuse();
+  if (parameters.SourceCommit !== manifest.sourceCommit) refuse();
   // The stack serves exactly the designated fictional identities: an undesignated subject would be refused by the outer
   // qualification gate, and a missing one (the second consumer, or the retention service when the sweep is under test)
   // would make its case untestable. A draining candidate serves nobody, so its subject list is not required.

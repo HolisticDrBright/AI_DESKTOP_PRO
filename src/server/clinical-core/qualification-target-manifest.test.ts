@@ -118,16 +118,20 @@ describe("qualification target manifest", () => {
     check("personal-storage", {}, "ROLLBACK_COMPLETE");
     check("personal-storage", {}, "UPDATE_IN_PROGRESS");
     check("unknown-candidate", {});
-    // owned-lab and owned-voice attach to the shared API as ClinicalApiId and export no SourceCommit, so they are asked
-    // for what they actually carry, not for the other candidates' parameter names.
-    const shared = { ...parameters(), ApiId: undefined, ExportBucketName: undefined, RecordingBucket: undefined, SourceCommit: undefined, ClinicalApiId: "6zt8e9qz04" };
-    const sharedOutputs = { PhiAllowed: "false", Activation: "blocked", QualificationExecution: "enabled" };
+    // owned-lab and owned-voice attach through ClinicalApiId, but must still publish and pin SourceCommit.
+    const shared = { ...parameters(), ApiId: undefined, ExportBucketName: undefined, RecordingBucket: undefined, ClinicalApiId: "6zt8e9qz04" };
+    const sharedOutputs = { PhiAllowed: "false", Activation: "blocked", QualificationExecution: "enabled", SourceCommit: "a".repeat(40) };
     expect(() => assertQualificationStackOutputs("owned-lab", sharedOutputs, m, shared, "CREATE_COMPLETE")).not.toThrow();
     expect(() => assertQualificationStackOutputs("owned-voice", sharedOutputs, m, shared, "CREATE_COMPLETE")).not.toThrow();
     expect(() => assertQualificationStackOutputs("owned-voice", sharedOutputs, m, { ...shared, ClinicalApiId: "wxv734oi12" }, "CREATE_COMPLETE")).toThrow("target_stack_refused");
     expect(() => assertQualificationStackOutputs("owned-voice", { ...sharedOutputs, SourceCommit: "c".repeat(40) }, m, shared, "CREATE_COMPLETE")).toThrow("target_stack_refused");
+    for (const candidate of ["owned-lab", "owned-voice"]) {
+      expect(() => assertQualificationStackOutputs(candidate, { ...sharedOutputs, SourceCommit: undefined }, m, shared, "CREATE_COMPLETE")).toThrow("target_stack_refused");
+      expect(() => assertQualificationStackOutputs(candidate, sharedOutputs, m, { ...shared, SourceCommit: undefined }, "CREATE_COMPLETE")).toThrow("target_stack_refused");
+      expect(() => assertQualificationStackOutputs(candidate, sharedOutputs, m, { ...shared, SourceCommit: "c".repeat(40) }, "CREATE_COMPLETE")).toThrow("target_stack_refused");
+    }
     // The drain posture is the voice shutdown's: draining, qualification execution disabled, and no identity served.
-    const draining = { PhiAllowed: "false", Activation: "draining", QualificationExecution: "disabled" };
+    const draining = { PhiAllowed: "false", Activation: "draining", QualificationExecution: "disabled", SourceCommit: "a".repeat(40) };
     expect(() => assertQualificationStackOutputs("owned-voice", draining, m, { ...shared, QualificationIdentitySubjects: undefined }, "CREATE_COMPLETE", "drain")).not.toThrow();
     expect(() => assertQualificationStackOutputs("owned-voice", sharedOutputs, m, shared, "CREATE_COMPLETE", "drain")).toThrow("target_stack_refused");
     expect(() => assertQualificationStackOutputs("owned-voice", { ...draining, QualificationExecution: "enabled" }, m, shared, "CREATE_COMPLETE", "drain")).toThrow("target_stack_refused");

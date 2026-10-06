@@ -213,13 +213,15 @@ function Voice-Run([string]$targetFile, [string]$mode = 'acceptance', [string]$i
 $voiceStack = $target.stacks['owned-voice']
 if (-not $voiceStack) { $voiceStack = 'ai-clinical-core-qualification-owned-voice' }
 function global:DrainingVoiceStack([hashtable]$Patch = @{}) {
-  $outputs = [ordered]@{ PhiAllowed = 'false'; Activation = 'draining'; QualificationExecution = 'disabled' }
+  $outputs = [ordered]@{ PhiAllowed = 'false'; Activation = 'draining'; QualificationExecution = 'disabled'; SourceCommit = $global:Commit }
   $parameters = [ordered]@{ DatabaseClusterArn = 'arn:aws:rds:us-east-2:588966314750:cluster:ai-clinical-core-synthetic-clinicaldatabasecluster-lftvrccuflxa'
     DatabaseSecretArn = 'arn:aws:secretsmanager:us-east-2:588966314750:secret:fictional-qualification-AbCdEf'
-    DatabaseName = 'clinical_core_qualification'; QualificationAccountId = '588966314750'; ClinicalApiId = '6zt8e9qz04' }
+    DatabaseName = 'clinical_core_qualification'; QualificationAccountId = '588966314750'; ClinicalApiId = '6zt8e9qz04'; SourceCommit = $global:Commit }
   $status = 'CREATE_COMPLETE'
   foreach ($key in $Patch.Keys) {
     if ($key -eq 'StackStatus') { $status = $Patch[$key]; continue }
+    if ($key -eq 'SourceCommitOutput') { if ($null -eq $Patch[$key]) { $outputs.Remove('SourceCommit') } else { $outputs['SourceCommit'] = $Patch[$key] }; continue }
+    if ($key -eq 'SourceCommitParameter') { if ($null -eq $Patch[$key]) { $parameters.Remove('SourceCommit') } else { $parameters['SourceCommit'] = $Patch[$key] }; continue }
     if ($outputs.Contains($key)) { $outputs[$key] = $Patch[$key]; continue }
     if ($null -eq $Patch[$key]) { $parameters.Remove($key) } else { $parameters[$key] = $Patch[$key] }
   }
@@ -239,6 +241,12 @@ $global:StackOutputs[$voiceStack] = (DrainingVoiceStack @{ ClinicalApiId = 'wxv7
 Invoke-Case 'a draining voice candidate on the staging API' { Voice-Run $good } 'qualification_target_refused:stack_parameter.owned-voice.ClinicalApiId'
 $global:StackOutputs[$voiceStack] = (DrainingVoiceStack @{ DatabaseName = 'clinical_core' })
 Invoke-Case 'a draining voice candidate on the staging database' { Voice-Run $good } 'qualification_target_refused:stack_parameter.owned-voice.DatabaseName'
+$global:StackOutputs[$voiceStack] = (DrainingVoiceStack @{ SourceCommitOutput = $null })
+Invoke-Case 'a draining voice candidate without a source output' { Voice-Run $good } 'qualification_target_refused:stack_source.owned-voice'
+$global:StackOutputs[$voiceStack] = (DrainingVoiceStack @{ SourceCommitParameter = $null })
+Invoke-Case 'a draining voice candidate without a source parameter' { Voice-Run $good } 'qualification_target_refused:stack_source.owned-voice'
+$global:StackOutputs[$voiceStack] = (DrainingVoiceStack @{ SourceCommitParameter = ('c' * 40) })
+Invoke-Case 'a draining voice candidate with another source parameter' { Voice-Run $good } 'qualification_target_refused:stack_source.owned-voice'
 $global:StackOutputs[$voiceStack] = (DrainingVoiceStack)
 Invoke-Case 'voice shutdown acceptance refuses caller inventories' { Voice-Run $good 'acceptance' $inventoryFile } 'caller-supplied inventories are exploratory only'
 Invoke-Case 'voice shutdown exploration without inventories' { Voice-Run $good 'exploratory' '' } $null

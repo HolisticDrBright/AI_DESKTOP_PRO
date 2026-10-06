@@ -31,10 +31,11 @@ const template={AWSTemplateFormatVersion:'2010-09-09',Description:'Independent c
     ...qualificationConditions(['AllowedScopes','AlarmTopicArn','BillingApiOrigin']),
     HasAlarmRecipient:{'Fn::Not':[{'Fn::Equals':[ref('AlarmTopicArn'),'']}]}},
   Resources:renamed,
-  Outputs:{PhiAllowed:{Value:ref('PhiAllowed')},Activation:{Value:ref('Activation')},QualificationExecution:{Value:{'Fn::If':['Qualification','enabled','disabled']}},JobTable:{Value:ref('LabJobTable')},DocumentBucket:{Value:ref('LabDocumentsBucket')}}};
+  Outputs:{PhiAllowed:{Value:ref('PhiAllowed')},Activation:{Value:ref('Activation')},QualificationExecution:{Value:{'Fn::If':['Qualification','enabled','disabled']}},SourceCommit:{Value:ref('SourceCommit')},JobTable:{Value:ref('LabJobTable')},DocumentBucket:{Value:ref('LabDocumentsBucket')}}};
 Object.assign(template.Parameters,{
   ConsumerIssuer:{Type:'String',AllowedPattern:'^https://cognito-idp\\.[a-z0-9-]+\\.amazonaws\\.com/[A-Za-z0-9_-]+$'},
   ConsumerAudience:{Type:'String',AllowedPattern:'^[a-zA-Z0-9]{20,128}$'},
+  SourceCommit:{Type:'String',AllowedPattern:'^[a-f0-9]{40}$'},
   PhiAllowed:{Type:'String',AllowedValues:['false','true'],Default:'false'},
   Activation:{Type:'String',AllowedValues:['blocked','approved'],Default:'blocked'},
   ActivationEvidenceSha256:{Type:'String',Default:'',AllowedPattern:'^$|^[a-f0-9]{64}$'},
@@ -73,7 +74,7 @@ delete R.LabJobTable.Properties.TimeToLiveSpecification;
 delete R.LabDocumentsBucket.Properties.LifecycleConfiguration;
 const production={CONSUMER_ISSUER:ref('ConsumerIssuer'),CONSUMER_AUDIENCE:ref('ConsumerAudience'),PHI_ALLOWED:ref('PhiAllowed'),
   PERSONAL_LAB_ACTIVATION:ref('Activation'),PERSONAL_LAB_EVIDENCE_SHA256:ref('ActivationEvidenceSha256'),PERSONAL_LAB_PROVIDER_EVIDENCE_SHA256:ref('ProviderEvidenceSha256'),
-  PERSONAL_LAB_ALLOWED_SCOPES:ref('AllowedScopes'),BILLING_AWS_API_ORIGIN:ref('BillingApiOrigin'),LAB_OBJECT_PREFIX:'personal-labs',DATA_CLASSIFICATION:'personal_health_record',
+  PERSONAL_LAB_ALLOWED_SCOPES:ref('AllowedScopes'),BILLING_AWS_API_ORIGIN:ref('BillingApiOrigin'),SOURCE_COMMIT:ref('SourceCommit'),LAB_OBJECT_PREFIX:'personal-labs',DATA_CLASSIFICATION:'personal_health_record',
   CLINICAL_DATABASE_CLUSTER_ARN:ref('DatabaseClusterArn'),CLINICAL_DATABASE_SECRET_ARN:ref('DatabaseSecretArn'),CLINICAL_DATABASE_NAME:ref('DatabaseName'),
   ...qualificationEnvironment()};
 for(const name of ['LabApiFunction','LabWorkerFunction'])Object.assign(R[name].Properties.Environment.Variables,production);

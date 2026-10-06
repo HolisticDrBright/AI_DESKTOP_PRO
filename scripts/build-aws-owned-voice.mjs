@@ -20,10 +20,11 @@ const template={AWSTemplateFormatVersion:'2010-09-09',Description:'Independent c
   // qualification database with PHI disabled; data permissions ride Enabled (Active or Qualification), never while draining.
   ...qualificationConditions(['AllowedScopes','AlarmTopicArn','BillingApiOrigin']),
   HasAlarmRecipient:{'Fn::Not':[{'Fn::Equals':[ref('AlarmTopicArn'),'']}]}},
-  Resources:resources,Outputs:{PhiAllowed:{Value:ref('PhiAllowed')},Activation:{Value:ref('Activation')},QualificationExecution:{Value:{'Fn::If':['Qualification','enabled','disabled']}},JobTable:{Value:ref('VoiceJobTable')},AudioBucket:{Value:ref('TranscriptionBucket')}}};
+  Resources:resources,Outputs:{PhiAllowed:{Value:ref('PhiAllowed')},Activation:{Value:ref('Activation')},QualificationExecution:{Value:{'Fn::If':['Qualification','enabled','disabled']}},SourceCommit:{Value:ref('SourceCommit')},JobTable:{Value:ref('VoiceJobTable')},AudioBucket:{Value:ref('TranscriptionBucket')}}};
 Object.assign(template.Parameters,{
   ConsumerIssuer:{Type:'String',AllowedPattern:'^https://cognito-idp\\.[a-z0-9-]+\\.amazonaws\\.com/[A-Za-z0-9_-]+$'},
   ConsumerAudience:{Type:'String',AllowedPattern:'^[a-zA-Z0-9]{20,128}$'},
+  SourceCommit:{Type:'String',AllowedPattern:'^[a-f0-9]{40}$'},
   PhiAllowed:{Type:'String',AllowedValues:['false','true'],Default:'false'},
   Activation:{Type:'String',AllowedValues:['blocked','approved','draining'],Default:'blocked'},
   CleanupEvidenceSha256:{Type:'String',Default:'',AllowedPattern:'^$|^[a-f0-9]{64}$'},
@@ -69,6 +70,7 @@ resources.VoiceJobFunction.Properties.Environment.Variables={
   PERSONAL_VOICE_ACTIVATION:ref('Activation'),PERSONAL_VOICE_EVIDENCE_SHA256:ref('ActivationEvidenceSha256'),
   PERSONAL_VOICE_CLEANUP_EVIDENCE_SHA256:ref('CleanupEvidenceSha256'),
   PERSONAL_VOICE_PROVIDER_EVIDENCE_SHA256:ref('ProviderEvidenceSha256'),PERSONAL_VOICE_ALLOWED_SCOPES:ref('AllowedScopes'),
+  SOURCE_COMMIT:ref('SourceCommit'),
   BILLING_AWS_API_ORIGIN:ref('BillingApiOrigin'),
   CLINICAL_DATABASE_CLUSTER_ARN:ref('DatabaseClusterArn'),CLINICAL_DATABASE_SECRET_ARN:ref('DatabaseSecretArn'),CLINICAL_DATABASE_NAME:ref('DatabaseName'),
   ...qualificationEnvironment()

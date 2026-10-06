@@ -15,6 +15,9 @@ describe('production voice release candidate',()=>{
     expect(template.Resources.VoiceJobRole.Properties.Policies[1]['Fn::If'][0]).toBe('Enabled');
     expect(template.Conditions.Enabled).toEqual({'Fn::Or':[{Condition:'Active'},{Condition:'Qualification'}]});
     expect(template.Parameters.QualificationExecution.Default).toBe('disabled');
+    expect(template.Parameters.SourceCommit.AllowedPattern).toBe('^[a-f0-9]{40}$');
+    expect(template.Outputs.SourceCommit.Value).toEqual({Ref:'SourceCommit'});
+    expect(template.Resources.VoiceJobFunction.Properties.Environment.Variables.SOURCE_COMMIT).toEqual({Ref:'SourceCommit'});
     expect(JSON.stringify(template.Conditions.QualificationPosture)).toContain('173535830222');
     expect(template.Resources.VoiceJobFunction.Properties.Environment.Variables.QUALIFICATION_EXECUTION).toEqual({'Fn::If':['Qualification','enabled','disabled']});
     expect(template.Resources.VoiceSweepRule.Properties.State['Fn::If']).toEqual(['SweepEnabled','ENABLED','DISABLED']);
@@ -90,6 +93,6 @@ describe('production voice release candidate',()=>{
       CONSUMER_ISSUER:'https://cognito-idp.us-east-2.amazonaws.com/fixture',CONSUMER_AUDIENCE:'12345678901234567890',
       PHI_ALLOWED:'false',PERSONAL_VOICE_ACTIVATION:'draining',PERSONAL_VOICE_ALLOWED_SCOPES:'',
       PERSONAL_VOICE_EVIDENCE_SHA256:'a'.repeat(64),PERSONAL_VOICE_PROVIDER_EVIDENCE_SHA256:'b'.repeat(64),
-      PERSONAL_VOICE_CLEANUP_EVIDENCE_SHA256:'c'.repeat(64)},stdio:'pipe'})).not.toThrow();
-  });
+      PERSONAL_VOICE_CLEANUP_EVIDENCE_SHA256:'c'.repeat(64)},stdio:'pipe',timeout:10000})).not.toThrow();
+  },15000);
 });

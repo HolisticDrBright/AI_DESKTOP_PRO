@@ -41,11 +41,15 @@ describe('production lab release candidate',()=>{
     // activation blocked, the deploying synthetic account, a non-staging database and every reviewed input, and is disabled by default.
     expect(template.Conditions.Enabled).toEqual({'Fn::Or':[{Condition:'Active'},{Condition:'Qualification'}]});
     expect(template.Parameters.QualificationExecution.Default).toBe('disabled');
+    expect(template.Parameters.SourceCommit.AllowedPattern).toBe('^[a-f0-9]{40}$');
+    expect(template.Outputs.SourceCommit.Value).toEqual({Ref:'SourceCommit'});
     expect(JSON.stringify(template.Conditions.QualificationPosture)).toContain('"clinical_core"');expect(JSON.stringify(template.Conditions.QualificationPosture)).toContain('173535830222');
     expect(JSON.stringify(template.Conditions.QualificationPosture)).toContain('{"Ref":"AWS::AccountId"}');
     expect(JSON.stringify(template.Conditions.Qualification)).toContain('QualificationIdentitySubjects');
     expect(JSON.stringify(template.Rules.QualificationRequiresSyntheticPosture)).toContain('reviewed_release');
     expect(template.Resources.LabApiFunction.Properties.Environment.Variables.QUALIFICATION_EXECUTION).toEqual({'Fn::If':['Qualification','enabled','disabled']});
+    for(const name of ['LabApiFunction','LabWorkerFunction','LabCleanupFunction'])
+      expect(template.Resources[name].Properties.Environment.Variables.SOURCE_COMMIT).toEqual({Ref:'SourceCommit'});
     expect(template.Resources.LabWorkerFunction.Properties.Environment.Variables.QUALIFICATION_IDENTITY_SUBJECTS).toEqual({'Fn::If':['Qualification',{Ref:'QualificationIdentitySubjects'},'']});
   });
   it('keeps only consumer JWT routes and binds identity to explicit production pool parameters',()=>{

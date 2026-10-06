@@ -163,6 +163,8 @@ widen production activation.
 | privacy-operations | `scripts/build-aws-privacy-operations.mjs` | `privacy-operations-api`, retention sweep | sub-activation rules accept `PhiAllowed=true` or `QualificationExecution=enabled`; the sweep needs a designated service subject |
 | recording (6) | `scripts/build-aws-recording-authority.mjs` and modes | authority, capture, transcription, drafting, cleanup review, cleanup execution | one shared execution helper; each keeps its own release ids and review hashes |
 
+Every candidate now takes a required `SourceCommit` parameter and publishes it as a stack output, including owned-lab and owned-voice on the shared API. The PowerShell wrapper and Node manifest verifier both refuse a missing or mismatched output **or** parameter. An older lab/voice stack without these fields must be updated from a reviewed exact-source artifact before it can satisfy a matched-source hosted run; a successful earlier boundary smoke does not grandfather it in.
+
 Shared template profile: `scripts/qualification-execution-template.mjs` (parameters, `QualificationPosture`,
 `Qualification`, `Enabled`, the `QualificationRequiresSyntheticPosture` rule, environment). Fixed on the
 way: the recording-capture template's route and permission logical ids contained underscores, which
