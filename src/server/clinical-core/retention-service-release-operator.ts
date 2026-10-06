@@ -3,6 +3,9 @@ if (typeof window !== "undefined") {
 }
 
 import { createRdsDataAdministrativeDatabase } from "./rds-data-database";
+import { fromIni } from "@aws-sdk/credential-provider-ini";
+import { RDSDataClient } from "@aws-sdk/client-rds-data";
+import { assertOperatorAssumedRole, profileForOperatorAccount } from "./operator-aws-principal";
 import { inspectRetentionServiceReleases, releaseRetentionService, revokeRetentionServiceRelease, RetentionServiceReleaseError } from "./retention-service-release";
 
 /** Operator entry point for the retention service release row. `inspect` is read-only; `release` inserts the one live row
@@ -35,9 +38,13 @@ async function run() {
   if (!match || match[2] !== expectedAccountId || !SECRET_ARN.test(secretArn)) {
     throw new Error("account_boundary_refused");
   }
+  const region = required("AWS_REGION");
+  const profile = profileForOperatorAccount(expectedAccountId);
+  assertOperatorAssumedRole(profile, expectedAccountId, region);
   const database = createRdsDataAdministrativeDatabase(
-    { clusterArn, secretArn, databaseName: required("CLINICAL_DATABASE_NAME"), region: required("AWS_REGION") },
+    { clusterArn, secretArn, databaseName: required("CLINICAL_DATABASE_NAME"), region },
     { purpose: "reviewed_retention_service_release" },
+    new RDSDataClient({ region, credentials: fromIni({ profile }) }),
   );
   if (command === "inspect") {
     console.log(JSON.stringify({ mode: "retention_service_release_inspection_read_only", phiAllowed: process.env.PHI_ALLOWED === "true", ...(await inspectRetentionServiceReleases(database)) }));

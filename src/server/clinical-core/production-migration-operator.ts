@@ -4,7 +4,10 @@ if (typeof window !== "undefined") {
 
 import { createHash } from "node:crypto";
 import path from "node:path";
+import { fromIni } from "@aws-sdk/credential-provider-ini";
+import { RDSDataClient } from "@aws-sdk/client-rds-data";
 import { loadClinicalCoreMigrations } from "./migrations";
+import { assertOperatorAssumedRole, profileForOperatorAccount } from "./operator-aws-principal";
 import { applyProductionClinicalCoreMigrations, inspectProductionClinicalCoreMigrations, ProductionClinicalCoreMigrationError } from "./production-migrations";
 import { createRdsDataAdministrativeDatabase } from "./rds-data-database";
 
@@ -35,12 +38,15 @@ async function run() {
   }
   const databaseName = required("CLINICAL_DATABASE_NAME");
   const region = required("AWS_REGION");
+  const profile = profileForOperatorAccount(expectedAccountId);
+  assertOperatorAssumedRole(profile, expectedAccountId, region);
   const directory = process.env.CLINICAL_PRODUCTION_MIGRATIONS?.trim()
     || path.join(process.cwd(), "dist", "aws-clinical-core", "production-migrations");
   const migrations = loadClinicalCoreMigrations(directory);
   const database = createRdsDataAdministrativeDatabase(
     { clusterArn, secretArn, databaseName, region },
     { purpose: "reviewed_production_schema_migration" },
+    new RDSDataClient({ region, credentials: fromIni({ profile }) }),
   );
   if (command === "inspect") {
     const inspection = await inspectProductionClinicalCoreMigrations(database, migrations);

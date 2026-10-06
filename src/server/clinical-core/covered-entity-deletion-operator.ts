@@ -3,6 +3,8 @@ if (typeof window !== "undefined") {
 }
 
 import { readFileSync } from "node:fs";
+import { fromIni } from "@aws-sdk/credential-provider-ini";
+import { RDSDataClient } from "@aws-sdk/client-rds-data";
 
 import { errorCode } from "./log-safe-error";
 import {
@@ -12,6 +14,7 @@ import {
   parseCoveredEntityCoverage,
 } from "./covered-entity-deletion";
 import { createRdsDataAdministrativeDatabase } from "./rds-data-database";
+import { assertOperatorAssumedRole, profileForOperatorAccount } from "./operator-aws-principal";
 
 /**
  * Operator entry point for destroying one covered entity's information when its agreement ends.
@@ -47,9 +50,14 @@ async function run() {
   }
   const organizationId = required("ORGANIZATION_ID");
   const coverage = parseCoveredEntityCoverage(JSON.parse(readFileSync(process.env.COVERAGE_PATH?.trim() || COVERAGE_PATH, "utf8")));
+  const expectedAccountId = required("EXPECTED_AWS_ACCOUNT_ID");
+  const region = required("AWS_REGION");
+  const profile = profileForOperatorAccount(expectedAccountId);
+  assertOperatorAssumedRole(profile, expectedAccountId, region);
   const database = createRdsDataAdministrativeDatabase(
-    { clusterArn, secretArn, databaseName: required("CLINICAL_DATABASE_NAME"), region: required("AWS_REGION") },
+    { clusterArn, secretArn, databaseName: required("CLINICAL_DATABASE_NAME"), region },
     { purpose: "reviewed_covered_entity_termination" },
+    new RDSDataClient({ region, credentials: fromIni({ profile }) }),
   );
 
   const observed = await inspectCoveredEntityContent({ database, organizationId, coverage });

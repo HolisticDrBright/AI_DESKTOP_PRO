@@ -3,10 +3,12 @@ if (typeof window !== "undefined") {
 }
 
 import { SecretsManagerClient } from "@aws-sdk/client-secrets-manager";
+import { fromIni } from "@aws-sdk/credential-provider-ini";
 
 import { errorCode } from "./log-safe-error";
 import { ModelVendorAuthorityRefusal } from "./model-vendor-authority";
 import { runModelVendorAuthorityOperator } from "./model-vendor-authority-secret";
+import { assertOperatorAssumedRole, profileForOperatorAccount } from "./operator-aws-principal";
 
 /**
  * Operator entry point for the switch that stops every model call. `inspect` is read-only; `suspend` and `terminate`
@@ -20,10 +22,14 @@ function required(name: string): string {
 }
 
 async function run() {
+  const expectedAccountId = required("EXPECTED_AWS_ACCOUNT_ID");
+  const region = required("AWS_REGION");
+  const profile = profileForOperatorAccount(expectedAccountId);
+  assertOperatorAssumedRole(profile, expectedAccountId, region);
   const report = await runModelVendorAuthorityOperator({
     command: process.argv[2] ?? "",
     environment: process.env,
-    secrets: new SecretsManagerClient({ region: required("AWS_REGION") }),
+    secrets: new SecretsManagerClient({ region, credentials: fromIni({ profile }) }),
   });
   console.log(JSON.stringify(report));
 }
