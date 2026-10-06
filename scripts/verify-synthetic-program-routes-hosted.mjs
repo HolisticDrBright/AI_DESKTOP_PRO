@@ -269,6 +269,46 @@ async function main(){
    sourceDigest:assignment.data.sourceDigest,expectedRevision:revision,planRevision:offered.data.review.planRevision},200);
   assert(accepted.data?.state==='active','acceptance_failed');revision=accepted.data.revision;
  }else assert(offered.data.assignment.state==='active','replayed_assignment_not_active');
+ // A fictional assignment is already present. Exercise the actual owner-to-clinic
+ // dispute lifecycle without creating another chart or claiming a clinical correction.
+ const subjectId=assignment.data.enrollmentId;
+ const consumerDisputes=await request('consumer','/clinical-core/consumer/disputes',{action:'list'},200);
+ const prior=consumerDisputes.data?.disputes?.filter(d=>d.subjectKind==='program_assignment'&&d.subjectId===subjectId);
+ assert(Array.isArray(prior)&&prior.length<=1,'fictional_dispute_ambiguous');
+ const foreignRaise=await request('foreignConsumer','/clinical-core/consumer/disputes',{
+  action:'raise',subjectKind:'program_assignment',subjectId,reasonCode:'other',statement:'Fictional foreign-owner refusal.'},403);
+ assert(foreignRaise.error==='operation_refused','foreign_dispute_not_refused');
+ let disputeId=prior[0]?.disputeId;
+ if(!disputeId){
+  const raised=await request('consumer','/clinical-core/consumer/disputes',{
+   action:'raise',subjectKind:'program_assignment',subjectId,reasonCode:'other',
+   statement:'Fictional test: please review this sample assignment.'},200);
+  assert(raised.data?.status==='open'&&raised.data.disputeId,'fictional_dispute_raise_failed');
+  disputeId=raised.data.disputeId;
+ }
+ const workforceDisputes=await request('workforce','/clinical-core/workforce/disputes',{action:'list'},200);
+ const workforceEntry=workforceDisputes.data?.disputes?.filter(d=>d.disputeId===disputeId);
+ assert(Array.isArray(workforceEntry)&&workforceEntry.length===1&&workforceEntry[0].subjectId===subjectId,'fictional_dispute_queue_failed');
+ let current=workforceEntry[0];
+ if(current.status==='open'){
+  const acknowledged=await request('workforce','/clinical-core/workforce/disputes',{
+   action:'acknowledge',disputeId,expectedRevision:current.revision},200);
+  assert(acknowledged.data?.status==='acknowledged','fictional_dispute_acknowledge_failed');
+  current=acknowledged.data;
+ }
+ if(current.status==='acknowledged'){
+  const resolved=await request('workforce','/clinical-core/workforce/disputes',{
+   action:'resolve',disputeId,expectedRevision:current.revision,resolution:'upheld',
+   clinicianResponse:'Fictional test: the sample assignment is unchanged; the concern remains on record.'},200);
+  assert(resolved.data?.status==='resolved'&&resolved.data.resolution==='upheld','fictional_dispute_resolution_failed');
+ }else assert(current.status==='resolved'&&current.resolution==='upheld','fictional_dispute_state_changed');
+ const finalDisputes=await request('consumer','/clinical-core/consumer/disputes',{action:'list'},200);
+ const finalEntry=finalDisputes.data?.disputes?.find(d=>d.disputeId===disputeId);
+ assert(finalEntry?.status==='resolved'&&finalEntry.resolution==='upheld'
+  &&finalEntry.clinicianResponse==='Fictional test: the sample assignment is unchanged; the concern remains on record.',
+  'fictional_dispute_owner_readback_failed');
+ const foreignDisputes=await request('foreignConsumer','/clinical-core/consumer/disputes',{action:'list'},200);
+ assert(!foreignDisputes.data?.disputes?.some(d=>d.disputeId===disputeId),'fictional_dispute_foreign_read_leaked');
  const held=await request('consumer','/clinical-core/consumer/programs',{action:'complete',enrollmentId:assignment.data.enrollmentId,
   sourceDigest:assignment.data.sourceDigest,expectedRevision:revision,itemId:'supp-1'},403);
  assert(held.error==='identity_refused','held_product_completed');
@@ -283,7 +323,8 @@ async function main(){
    intakeRoleRefused:true,intakeUnauthenticatedRefused:true,publicConsultRouteWithheld:true,
    fictionalFormCreatedOrReused:true,packetWithoutConsentRefused,deniedPacketNotPersisted,intakeJourney,
    finalDomainReadRoutes:finalReads.length+1,finalDomainRoleAndAnonymousRefusals:finalReads.length+1,
-   fictionalCartCompiledWithUnresolvedProductExcluded:true,fictionalCartReplayIdempotent:true,cartDeliveryNotImplemented:true},
-  evidenceScope:approvedConsentTest?'hosted fictional program assignment and fictional owner consent/form-packet journey; no public consult endpoint, governed catalog release, provider OAuth, device test or PHI approval':'hosted fictional program assignment, draft-only intake form and consent refusal; no public consult endpoint, form publication, packet delivery, governed catalog release, provider OAuth, device test or PHI approval'}));
+   fictionalCartCompiledWithUnresolvedProductExcluded:true,fictionalCartReplayIdempotent:true,cartDeliveryNotImplemented:true,
+   fictionalDisputeRaisedAcknowledgedAndUpheld:true,fictionalDisputeOwnerReadback:true,fictionalDisputeForeignOwnerRefused:true},
+  evidenceScope:approvedConsentTest?'hosted fictional program assignment, owner consent/form-packet and program-dispute journey; no public consult endpoint, governed catalog release, provider OAuth, device test or PHI approval':'hosted fictional program assignment and program-dispute journey, draft-only intake form and consent refusal; no public consult endpoint, form publication, packet delivery, governed catalog release, provider OAuth, device test or PHI approval'}));
 }
 main().catch(error=>{console.error(JSON.stringify({verdict:'blocked',error:/^[a-z0-9_]+$/.test(error.message)?error.message:'hosted_verification_failed'}));process.exitCode=1;});
