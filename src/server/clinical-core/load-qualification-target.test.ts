@@ -28,7 +28,7 @@ function stack(foundation: boolean, overrides: Record<string, string> = {}) {
 }
 const observed = (file: string, args: string[]) => {
   if (file === "git") return args[0] === "status" ? "" : target.sourceCommit;
-  if (args[0] === "sts") return target.awsAccountId;
+  if (args[0] === "sts") return JSON.stringify({ Account: target.awsAccountId, Arn: `arn:aws:sts::${target.awsAccountId}:assumed-role/QualificationOperator/fictional-session` });
   return stack(args[args.indexOf("--stack-name") + 1] === target.foundationStackName);
 };
 beforeEach(() => { command.mockReset(); command.mockImplementation(observed); });
@@ -53,7 +53,7 @@ describe("load target binding reuses live qualification observations", () => {
     expect(command).toHaveBeenCalledTimes(1);
   });
   it("refuses wrong account and wrong source observations", () => {
-    command.mockImplementation((file, args) => args[0] === "sts" ? "173535830222" : observed(file, args));
+    command.mockImplementation((file, args) => args[0] === "sts" ? JSON.stringify({ Account: "173535830222", Arn: "arn:aws:sts::173535830222:assumed-role/Other/fictional-session" }) : observed(file, args));
     expect(() => inspectLoadQualificationTarget(file, target.apiOrigin)).toThrow("target_account_refused");
     command.mockImplementation((file, args) => args[0] === "rev-parse" ? "c".repeat(40) : observed(file, args));
     expect(() => inspectLoadQualificationTarget(file, target.apiOrigin)).toThrow("target_source_mismatch");

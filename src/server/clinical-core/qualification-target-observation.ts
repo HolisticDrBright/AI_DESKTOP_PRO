@@ -35,8 +35,17 @@ export function observeQualificationTarget(manifest: QualificationTargetManifest
   const runner = options.runner ?? defaultRunner;
   const sourceCommit = run(runner, "git", ["rev-parse", "HEAD"], "target_source_mismatch", "git");
   if (sourceCommit !== manifest.sourceCommit) throw new QualificationTargetManifestError("target_source_mismatch", "checkout");
-  const awsAccountId = run(runner, "aws", ["sts", "get-caller-identity", "--query", "Account", "--output", "text"], "target_account_refused", "sts");
-  if (!/^\d{12}$/.test(awsAccountId) || awsAccountId !== manifest.awsAccountId) throw new QualificationTargetManifestError("target_account_refused", "sts");
+  const identityText = run(runner, "aws", ["sts", "get-caller-identity", "--output", "json"], "target_account_refused", "sts");
+  let identity: { Account?: unknown; Arn?: unknown };
+  try { identity = JSON.parse(identityText) as { Account?: unknown; Arn?: unknown }; }
+  catch { throw new QualificationTargetManifestError("target_account_refused", "sts"); }
+  const awsAccountId = identity?.Account;
+  if (typeof awsAccountId !== "string" || !/^\d{12}$/.test(awsAccountId) || awsAccountId !== manifest.awsAccountId) {
+    throw new QualificationTargetManifestError("target_account_refused", "sts");
+  }
+  if (typeof identity.Arn !== "string" || !new RegExp(`^arn:aws:sts::${awsAccountId}:assumed-role/[A-Za-z0-9_+=,.@/-]+$`).test(identity.Arn)) {
+    throw new QualificationTargetManifestError("target_account_refused", "principal");
+  }
   const foundation = describe(runner, manifest.foundationStackName, manifest.awsRegion, "foundation");
   if (foundation.outputs.PhiAllowed !== "false") throw new QualificationTargetManifestError("target_stack_refused", "foundation");
   for (const [key, expected] of [["ApiId", manifest.apiId], ["ApiOrigin", manifest.apiOrigin], ["DatabaseName", manifest.databaseName], ["ExportBucketName", manifest.exportBucket]] as const) {

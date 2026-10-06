@@ -21,11 +21,12 @@ const candidateStack = (m: QualificationTargetManifest, patch: Record<string, st
 const foundationStack = JSON.stringify({ StackStatus: "CREATE_COMPLETE", Parameters: [], Outputs: [{ OutputKey: "PhiAllowed", OutputValue: "false" }, { OutputKey: "ApiId", OutputValue: "6zt8e9qz04" },
   { OutputKey: "QualificationExecution", OutputValue: "disabled" }] });
 
-type Recorded = { git?: string; account?: string; stacks?: Record<string, string>; failOn?: string };
+type Recorded = { git?: string; account?: string; principal?: string; stsResponse?: string; stacks?: Record<string, string>; failOn?: string };
 const runner = (recorded: Recorded, m: QualificationTargetManifest) => (file: string, args: string[]) => {
   if (file === recorded.failOn) throw new Error("command_failed");
   if (file === "git") return `${recorded.git ?? m.sourceCommit}\n`;
-  if (args[0] === "sts") return `${recorded.account ?? m.awsAccountId}\n`;
+  if (args[0] === "sts") return recorded.stsResponse ?? JSON.stringify({ Account: recorded.account ?? m.awsAccountId,
+    Arn: recorded.principal ?? `arn:aws:sts::${m.awsAccountId}:assumed-role/QualificationOperator/fictional-session` });
   const name = args[args.indexOf("--stack-name") + 1];
   const supplied = recorded.stacks?.[name];
   if (supplied !== undefined) return supplied;
@@ -48,6 +49,12 @@ describe("observing the qualification target from the command line", () => {
     expect(() => observe({ git: "c".repeat(40) })).toThrow("target_source_mismatch");
     expect(() => observe({ failOn: "git" })).toThrow("target_source_mismatch");
     expect(() => observe({ failOn: "aws" })).toThrow("target_account_refused");
+  });
+  test("a matching account root or IAM user is not an acceptable qualification operator", () => {
+    expect(() => observe({ principal: "arn:aws:iam::588966314750:root" })).toThrow("target_account_refused");
+    expect(() => observe({ principal: "arn:aws:iam::588966314750:user/long-lived" })).toThrow("target_account_refused");
+    expect(() => observe({ stsResponse: "not-json" })).toThrow("target_account_refused");
+    expect(() => observe({ stsResponse: JSON.stringify({ Account: "588966314750" }) })).toThrow("target_account_refused");
   });
   test("a missing, unfinished, wrongly posed or wrongly resourced candidate stack stops the run before the first request", () => {
     const m = manifest();
