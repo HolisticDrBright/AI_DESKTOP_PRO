@@ -275,9 +275,33 @@ empty ACL array and failed positive tests; null/empty ACLs are now handled
 explicitly, with both grant/refusal and post-revoke admission tested. Those
 failures are not reported as passes. The CI workflow's edited indentation was
 repaired and the complete YAML parsed successfully with the installed parser.
-The full regression suite is running and must be recorded separately.
+The final full regression run at source `d9b0a74c7d88ab271e8f332a8c754c1dd9446a6a`
+passes **323 files, 3,951 tests**, with 11 existing skips, in 371.85 seconds.
+Standalone typecheck and changed-file lint passed before that run. The canonical
+105/zero-seed gate and 207-table inventory gate passed again afterward.
+
+Clean `d9b0a74` operator bundle
+`286dc494d15e1d57bf76168b7de7580c3dcb1a152f9eef8b9740b08af40ce75e`
+passed actual read-only AWS inspection and rollback rehearsal with the stronger
+table/column privilege checks. Both observed 105 migrations, 207 tables and
+46 rows, digest `129abce49aec8e4f3f8e73f6c10c18e94827d0ae0108e176419aede5d36280bc`.
+Rehearsal returned `rolledBack:true`, `alreadyApplied:true`, `applied:false`.
+This is schema-contract evidence, not API-role serving or a new migration.
 
 This verifies local per-transaction contract metadata, not the full database
 ledger, an atomic deployment snapshot, real concurrent DDL or a deployed
 consumer connection. Copy registration, handler/template integration, V2 UI
 and the actual hosted serving/settlement/device matrix remain unfinished.
+
+### Additional transport finding, not yet repaired
+
+Inspection of the installed SDK's actual configuration found that
+`new RDSDataClient({region:'us-east-2'})` resolves `maxAttempts` to **3**;
+the check sent no requests. Several shared adapters/operators leave that
+default implicit, and two synthetic scripts explicitly set it to 2. They can
+therefore retry an ambiguous database mutation underneath the application-level
+no-retry rule. Next engineering: pin mutation clients to one SDK attempt,
+execute real SDK middleware tests with a fictional HTTP transport, preserve
+only the explicit provider-confirmed database-resume retry before a transaction
+starts, then requalify exact rebuilt candidates. Current successful receipts
+do not establish behavior under an ambiguous network/write/commit failure.
