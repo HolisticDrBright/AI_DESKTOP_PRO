@@ -117,10 +117,18 @@ describe('data-preserving qualification upgrade using actual 102/103 artifacts',
     await remains102();
   });
   it('refuses a table beyond the bounded qualification inventory without applying DDL', async () => {
-    await pg.query("insert into clinical_core.persons(subject_key) select 'subject_upgrade_bound_'||i::text from generate_series(1,5001) i");
-    try { await expect(upgrade()).rejects.toThrow('inventory_refused'); } finally { await pg.query("delete from clinical_core.persons where subject_key like 'subject_upgrade_bound_%'"); }
+    // The bound applies to every inventoried table. Use real inactive domain
+    // rows instead of 5,001 persons with dozens of incoming FKs; this keeps the
+    // same SQL/refusal/deadline without making cleanup a relationship benchmark.
+    await pg.query("insert into clinical_reference.clinical_domains(code,version,name,description) select 'upgrade_bound_'||i::text,1,'FICTIONAL bound fixture','FICTIONAL inactive domain for the 5000-row qualification bound' from generate_series(1,5001) i");
+    const queries: string[] = [];
+    try {
+      expect((await pg.query<{ n: number }>("select count(*)::int n from clinical_reference.clinical_domains where code like 'upgrade_bound_%'")).rows[0].n).toBe(5001);
+      await expect(upgrade(database(async sql => { queries.push(sql); }))).rejects.toThrow('inventory_refused');
+      expect(queries.some(sql => /^(create|alter|insert)/i.test(sql))).toBe(false);
+    } finally { await pg.query("delete from clinical_reference.clinical_domains where code like 'upgrade_bound_%'"); }
     await remains102();
-  }, 60000); // Includes creating/removing 5,001 real FK-bearing fixture rows; not an API latency assertion.
+  }, 60000); // Includes real 5,001-row fixture setup/cleanup; not an API latency assertion.
   it('upgrades exactly once, preserves every table fingerprint, and safely inspects/replays', async () => {
     const before = await inspect(); const queries: string[] = [];
     const applied = await upgrade(database(async sql => { queries.push(sql); }));

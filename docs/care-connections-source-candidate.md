@@ -45,7 +45,7 @@ features for a live launch.
 
 ## Release mapping
 
-`npm run build:care-connections-source` emits two compiled libraries, the exact
+`npm run build:care-connections-source` emits API, service and preserving-upgrade libraries, the exact
 SQL and a byte/function-digest manifest. It never contacts AWS or applies SQL.
 The manifest declares `status: unreleased`, `deployable: false`, PHI disabled,
 source commit and dirty state. A dirty build is not a release candidate.
@@ -56,8 +56,25 @@ The candidate SQL is deliberately outside the canonical migration manifest.
 Its local overlay adds one forced-RLS, append-only table, producing 207 tables
 in the embedded test database; canonical coverage remains 206 tables.
 The manifest declares the proposed organization/consent-artifact dependency
-mapping as **not integrated**. It does not invent a 105-migration release hash.
+mapping as **not integrated**. The proposed 105 identity is derived from the
+104 predecessor plus the exact overlay bytes, not an applied release:
+`7da8e4ed999a3298bccc4ef33e7a1005201db45fa2b46682622a208486f17743`.
+Its manifest explicitly records `canonical: false`, `hostedVerified: false`
+and `cliOperatorAvailable: false`. The proposed migration version is
+`20261006020000`; the canonical manifest still ends at 104.
 Historical 103-to-104 upgrade identities and deployed artifacts are unchanged.
+
+The preserving-upgrade library pins the complete predecessor and proposed
+successor, account, Ohio region, qualification database and PHI-off posture.
+It locks the ledger and table writers, checks inventory and forced RLS,
+compares database-side row digests, refuses seeded copy rows and verifies all
+seven added/replaced functions and four safety triggers. Function checks cover
+actual body, argument/return types, language, volatility, empty search path,
+security-definer and PUBLIC/API execution privileges. A rehearsal rolls the
+transaction back and separately reads the predecessor again. Upgrade replay
+can preserve a copy table populated later with approved fictional test text.
+Each table is bounded at 5,000 rows; larger qualification fixtures refuse,
+not truncate. This library is not an AWS operator or production upgrade path.
 
 ## Verification
 
@@ -77,18 +94,39 @@ manifest. CI runs these tests independently of the full dependency audit.
 PGlite serializes transactions: these tests do not establish real concurrent
 claiming, cancellation, release retirement or cross-device behavior on AWS.
 
-Final local verification passes **62 dedicated tests**, and the full Desktop
-suite passes **320 files and 3,904 tests**, with 11 existing skips. Standalone
+The original candidate passed **62 dedicated tests**, and its full Desktop
+suite passed **320 files and 3,904 tests**, with 11 existing skips. Standalone
 typecheck and lint pass. Canonical schema and coverage checks still report
 104 migrations, zero seeded rows and 206 covered tables. The clinical build
 and its 291-chunk client scan pass. These results cover source behavior and
 local builds, not installed apps, live Lambda calls or clinical approval.
 
+The preserving-upgrade increment passes **73 dedicated connection tests**,
+including ten real-SQL upgrade tests and a fourth artifact-mapping test.
+Before the final function-metadata tightening, the new and historical upgrade
+suites also passed together (23 tests). Negative cases include altered release
+bytes, unknown/rewritten history, changed old rows, injected new copy, lost RLS,
+extra tables, direct table/helper/PUBLIC grants, search-path/volatility drift,
+changed function bodies and disabled or rebound triggers. PGlite executes
+the SQL and rollback but substitutes its single database name; it does not
+establish Aurora multi-session locking, Lambda serving or physical-device use.
+The admitted artifact/configuration is copied before entering the asynchronous
+transaction; a caller mutation cannot change the SQL executed or the identity
+reported. The final focused suites and standalone typecheck pass after this fix.
+
+An overlapping full-suite run timed out in the historical 5,001-person fixture
+test (94.5 seconds against its unchanged 60-second deadline). That fixture now
+uses 5,001 real inactive clinical-domain rows, retains the same inventory bound
+and deadline, and explicitly verifies no migration DDL/receipt was attempted.
+All 12 historical qualification-upgrade tests pass with this repair. The failure
+is not recast as a pass; current full-suite evidence must be recorded separately.
+
 ## Remaining integration
 
-1. Promote the exact SQL as an ordered new migration and implement a preserving
-   upgrade from the entire 104 prefix, with rollback, inventory and replay
-   verification. Do not rewrite applied SQL or transplant the staging ledger.
+1. Promote the exact SQL as an ordered new migration and bind the tested
+   preserving-upgrade library to an AWS operator with exact source/STS/foundation
+   checks and mandatory hosted rollback rehearsal. Do not rewrite applied SQL
+   or transplant the staging ledger. Source rehearsal is not hosted acceptance.
 2. Integrate the new append-only table into hold-aware covered-entity lifecycle
    mapping. Rebind current inspectors and candidate manifests deliberately;
    keep historical operator identities intact.
@@ -118,3 +156,10 @@ dependency audit. Its independent messaging and fixture/browser jobs passed;
 deployed-backend steps were skipped for missing secrets. The development chain
 through `braces` has an [unpatched advisory](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm).
 The audit is not waived or narrowed, and a new source push is not claimed green.
+
+At candidate source `c92f35453f0ca74aa7dc82200d714acddbd7bf72`, run
+`37537563002` finished failed at the same full dependency gate (five high
+findings through braces); the independent connection/messaging job and all
+fixture browser jobs passed. Deployed-backend steps remain skipped, not
+acceptance. Run `37537556686` was still in progress when inspected. Neither
+receipt establishes the later preserving-upgrade increment as hosted verified.

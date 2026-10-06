@@ -7,6 +7,8 @@ import { basename, dirname, join, resolve } from 'node:path';
 let directory: string;
 type Manifest = { contract: string; status: string; deployable: boolean; sourceCommit: string; sourceDirty: boolean;
   baselineMigrationCount: number; baselineLedgerReleaseSha256: string; baselineAssemblySha256: string;
+  proposedUpgrade: { version: string; migrationCount: number; ledgerReleaseSha256: string; canonical: boolean;
+    hostedVerified: boolean; cliOperatorAvailable: boolean };
   schema: { file: string; sha256: string; bytes: number }; libraries: { file: string; sha256: string }[];
   functions: { name: string; bodySha256: string; apiExecute: boolean }[]; proposedRoutes: string[];
   proposedCoveredEntityMapping: { table: string; status: string; dependsOn: string[] };
@@ -36,12 +38,21 @@ describe('unreleased connection candidate mapping', () => {
   it('hashes actual emitted SQL and both runnable libraries, including every function body', () => {
     const sql = readFileSync(join(directory, manifest.schema.file), 'utf8');
     expect(sql).not.toContain('\r'); expect(manifest.schema.sha256).toBe(sha(sql)); expect(manifest.schema.bytes).toBe(Buffer.byteLength(sql));
-    expect(manifest.libraries.map(l => l.file)).toEqual(['api-library.cjs', 'service-library.cjs']);
+    expect(manifest.libraries.map(l => l.file)).toEqual(['api-library.cjs', 'service-library.cjs', 'upgrade-library.cjs']);
     for (const library of manifest.libraries) expect(library.sha256).toBe(sha(readFileSync(join(directory, library.file))));
     const functions = [...sql.matchAll(/create(?: or replace)? function ([a-z_]+\.[a-z_]+)\([^]*?as \$\$([^]*?)\$\$/g)]
       .map(([, name, body]) => ({ name, bodySha256: sha(body), apiExecute: name.startsWith('clinical_core.') }));
     expect(functions).toHaveLength(7); expect(manifest.functions).toEqual(functions);
     expect(functions.filter(f => f.apiExecute).map(f => f.name)).toEqual(['clinical_core.create_sync_invitation', 'clinical_core.production_care_connection_request']);
+  });
+  it('derives the proposed upgrade identity from exact predecessor and overlay bytes without claiming canonical or hosted status', () => {
+    const { manifest: baseline, files } = JSON.parse(execFileSync(process.execPath,
+      ['scripts/build-aws-production-clinical-core.mjs', '--json'], { encoding: 'utf8', timeout: 10000, maxBuffer: 8 * 1024 * 1024 }));
+    const ledger = [...baseline.migrations.map((m: { version: string; file: string }) => `${m.version}:${sha(files[m.file])}`),
+      `${manifest.proposedUpgrade.version}:${manifest.schema.sha256}`].join('\n');
+    expect(manifest.proposedUpgrade).toEqual({ version: '20261006020000', migrationCount: 105,
+      ledgerReleaseSha256: sha(ledger), canonical: false, hostedVerified: false, cliOperatorAvailable: false });
+    expect(manifest.proposedUpgrade.ledgerReleaseSha256).toBe('7da8e4ed999a3298bccc4ef33e7a1005201db45fa2b46682622a208486f17743');
   });
   it('declares pending lifecycle integration and the exact two routes instead of claiming a deployed handler', () => {
     expect(manifest.proposedRoutes).toEqual(['POST /clinical-core/consumer/connection', 'POST /clinical-core/workforce/connection']);
