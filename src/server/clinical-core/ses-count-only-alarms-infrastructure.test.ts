@@ -3,6 +3,19 @@ import { describe, expect, it } from 'vitest';
 
 const template = JSON.parse(readFileSync('infra/aws-clinical-core/ses-count-only-alarms-candidate.json', 'utf8'));
 const json = (value: unknown) => JSON.stringify(value);
+function evaluate(value: unknown, parameters: Record<string, string>): unknown {
+  if (value === null || typeof value !== 'object') return value;
+  if (Array.isArray(value)) return value.map(item => evaluate(item, parameters));
+  const node = value as Record<string, unknown>;
+  if (typeof node.Ref === 'string') return parameters[node.Ref] ?? '';
+  if (node['Fn::Equals']) {
+    const [left, right] = evaluate(node['Fn::Equals'], parameters) as unknown[];
+    return left === right;
+  }
+  if (node['Fn::Not']) return !(evaluate(node['Fn::Not'], parameters) as boolean[])[0];
+  if (node['Fn::And']) return (evaluate(node['Fn::And'], parameters) as boolean[]).every(Boolean);
+  throw new Error('unsupported_condition');
+}
 
 describe('count-only production SES alarm candidate', () => {
   it('is disabled until alert review and responder confirmation are supplied', () => {
@@ -15,6 +28,13 @@ describe('count-only production SES alarm candidate', () => {
     expect(condition).toContain('EnableAlarmActions');
     expect(condition).toContain('AlertReviewSha256');
     expect(condition).toContain('ResponderConfirmationSha256');
+    const defaults = { EnableAlarmActions: 'false', AlertReviewSha256: '', ResponderConfirmationSha256: '' };
+    const reviewed = { EnableAlarmActions: 'true', AlertReviewSha256: 'a'.repeat(64), ResponderConfirmationSha256: 'b'.repeat(64) };
+    expect(evaluate(template.Conditions.ActionsReviewed, defaults)).toBe(false);
+    expect(evaluate(template.Conditions.ActionsReviewed, reviewed)).toBe(true);
+    for (const key of Object.keys(reviewed)) {
+      expect(evaluate(template.Conditions.ActionsReviewed, { ...reviewed, [key]: defaults[key as keyof typeof defaults] })).toBe(false);
+    }
     for (const name of ['BounceCountAlarm', 'ComplaintCountAlarm', 'RejectCountAlarm']) {
       expect(template.Resources[name].Properties.ActionsEnabled).toEqual({ 'Fn::If': ['ActionsReviewed', true, false] });
     }
