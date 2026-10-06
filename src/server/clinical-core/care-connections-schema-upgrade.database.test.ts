@@ -125,6 +125,10 @@ describe('unreleased preserving connection 104->105 qualification upgrade', () =
   it('refuses PUBLIC/table/helper grants and lost API execution', async () => {
     for (const sql of ['grant select on clinical_core.care_consent_texts to clinical_core_api',
       'grant select on clinical_core.care_consent_texts to public',
+      'grant truncate on clinical_core.care_consent_texts to clinical_core_api',
+      'grant truncate on clinical_core.care_consent_texts to public',
+      'grant select(content) on clinical_core.care_consent_texts to clinical_core_api',
+      'grant select(content) on clinical_core.care_consent_texts to public',
       'grant execute on function clinical_private.care_connection_actor(text,text) to clinical_core_api',
       'grant execute on function clinical_core.production_care_connection_request(jsonb) to public',
       "alter function clinical_core.production_care_connection_request(jsonb) set search_path='public'",

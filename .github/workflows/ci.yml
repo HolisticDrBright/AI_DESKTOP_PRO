@@ -35,6 +35,7 @@ jobs:
       - name: Bound qualification-only connection upgrade command (no AWS calls)
         run: |
           npx vitest run src/server/clinical-core/care-connections-upgrade-command.test.ts
+          npx vitest run src/server/clinical-core/care-connections-database-binding.test.ts
           npm run build:aws-care-connections-upgrade
       - name: Versioned target and complete fleet capacity regressions (no AWS access)
         run: |

@@ -38,7 +38,7 @@ describe('unreleased connection candidate mapping', () => {
   it('hashes actual emitted SQL and both runnable libraries, including every function body', () => {
     const sql = readFileSync(join(directory, manifest.schema.file), 'utf8');
     expect(sql).not.toContain('\r'); expect(manifest.schema.sha256).toBe(sha(sql)); expect(manifest.schema.bytes).toBe(Buffer.byteLength(sql));
-    expect(manifest.libraries.map(l => l.file)).toEqual(['api-library.cjs', 'service-library.cjs', 'upgrade-library.cjs']);
+    expect(manifest.libraries.map(l => l.file)).toEqual(['api-library.cjs', 'service-library.cjs', 'database-binding-library.cjs', 'upgrade-library.cjs']);
     for (const library of manifest.libraries) expect(library.sha256).toBe(sha(readFileSync(join(directory, library.file))));
     const functions = [...sql.matchAll(/create(?: or replace)? function ([a-z_]+\.[a-z_]+)\([^]*?as \$\$([^]*?)\$\$/g)]
       .map(([, name, body]) => ({ name, bodySha256: sha(body), apiExecute: name.startsWith('clinical_core.') }));

@@ -8,6 +8,7 @@ import type { ProductionClinicalRequestContext } from './aws-identity-consent';
 import { createProductionCareConnections } from './production-care-connections';
 import { parseCareConnectionResponse, type CareConnectionRequest } from '../../contracts/careConnections';
 import { createProductionCareMessaging } from './production-care-messaging';
+import { bindCareConnectionDatabase, type CareConnectionFunctionBinding } from './care-connections-database-binding';
 
 // Real 105 canonical production migrations; fictional data only.
 // PGlite serializes transactions. These are not multi-session AWS race tests.
@@ -37,7 +38,9 @@ const database: ClinicalCoreDatabase = { transaction: work => db.transaction(asy
   };
   return work({ query });
 }) };
-const operations = createProductionCareConnections(database);
+let boundDatabase: ClinicalCoreDatabase;
+let contractFunctions: CareConnectionFunctionBinding[];
+const operations: ReturnType<typeof createProductionCareConnections> = (c, request) => createProductionCareConnections(boundDatabase)(c, request);
 const call = (request: CareConnectionRequest, person = owner, organization = org) => operations(context(person,
   request.action === 'issue' ? 'workforce' : 'consumer', request.action === 'issue' ? 'clinical_data'
     : request.action === 'claim' ? 'identity_link' : 'consent_management', organization), request);
@@ -66,6 +69,10 @@ beforeAll(async () => {
   expect(manifest.migrations).toHaveLength(105); // The 104 prefix remains immutable.
   db = new PGlite({ extensions: { pgcrypto } });
   for (const migration of manifest.migrations) await db.exec(files[migration.file]);
+  const sql: string = files['20261006020000_production_care_connections.sql'];
+  contractFunctions = [...sql.matchAll(/create(?: or replace)? function ([a-z_]+\.[a-z_]+)\([^]*?as \$\$([^]*?)\$\$/g)]
+    .map(([, name, body]) => ({ name, bodySha256: sha(body), apiExecute: name.startsWith('clinical_core.') }));
+  boundDatabase = bindCareConnectionDatabase(database, contractFunctions);
 }, 60000);
 afterAll(async () => { await db?.close(); });
 beforeEach(async () => {
@@ -80,6 +87,49 @@ beforeEach(async () => {
 });
 
 describe('unreleased production connection and consent port, actual API role and SQL', () => {
+  it.each([
+    ['alter function clinical_private.care_connection_actor(text,text) volatile', 'alter function clinical_private.care_connection_actor(text,text) stable'],
+    ['alter function clinical_core.production_care_connection_request(jsonb) security invoker', 'alter function clinical_core.production_care_connection_request(jsonb) security definer'],
+    ['alter function clinical_private.care_connection_actor(text,text) set search_path=public', `alter function clinical_private.care_connection_actor(text,text) set search_path=''`],
+    ['grant execute on function clinical_core.production_care_connection_request(jsonb) to public', 'revoke execute on function clinical_core.production_care_connection_request(jsonb) from public'],
+    ['grant execute on function clinical_private.care_connection_actor(text,text) to clinical_core_api', 'revoke execute on function clinical_private.care_connection_actor(text,text) from clinical_core_api'],
+    ['grant select on clinical_core.care_consent_texts to clinical_core_api', 'revoke select on clinical_core.care_consent_texts from clinical_core_api'],
+    ['grant select on clinical_core.care_consent_texts to public', 'revoke select on clinical_core.care_consent_texts from public'],
+    ['grant truncate on clinical_core.care_consent_texts to clinical_core_api', 'revoke truncate on clinical_core.care_consent_texts from clinical_core_api'],
+    ['grant truncate on clinical_core.care_consent_texts to public', 'revoke truncate on clinical_core.care_consent_texts from public'],
+    ['grant select(content) on clinical_core.care_consent_texts to clinical_core_api', 'revoke select(content) on clinical_core.care_consent_texts from clinical_core_api'],
+    ['grant select(content) on clinical_core.care_consent_texts to public', 'revoke select(content) on clinical_core.care_consent_texts from public'],
+    ['alter table clinical_core.care_consent_texts disable row level security', 'alter table clinical_core.care_consent_texts enable row level security'],
+    ['alter table clinical_core.care_consent_texts no force row level security', 'alter table clinical_core.care_consent_texts force row level security'],
+    ['alter table clinical_core.care_consent_texts disable trigger care_consent_texts_approved', 'alter table clinical_core.care_consent_texts enable trigger care_consent_texts_approved'],
+    ['alter table clinical_core.consent_artifacts disable trigger care_consent_release_serialized', 'alter table clinical_core.consent_artifacts enable trigger care_consent_release_serialized'],
+  ])('refuses deployed contract drift before connection work: %s', async (change, restore) => {
+    await db.exec(change);
+    try { await expect(call({ action: 'connection' })).rejects.toThrow('service_unavailable'); }
+    finally { await db.exec(restore); }
+    expect(await call({ action: 'connection' })).toEqual({ connection: null });
+  });
+  it('refuses contract checking under an administrative role before business work', async () => {
+    const admin: ClinicalCoreDatabase = { transaction: work => db.transaction(async tx => {
+      const query: ClinicalCoreTransaction['query'] = (sql, args = []) => tx.query(sql, [...args]);
+      return work({ query });
+    }) };
+    let entered = false;
+    await expect(bindCareConnectionDatabase(admin, contractFunctions).transaction(async () => { entered = true; }))
+      .rejects.toThrow('service_unavailable');
+    expect(entered).toBe(false);
+  });
+  it('refuses changed function bytes and an extra overload, then admits the restored contract', async () => {
+    const signature = 'clinical_core.production_care_connection_request(jsonb)';
+    const original = (await db.query<{ definition: string }>('select pg_get_functiondef($1::regprocedure) as definition', [signature])).rows[0].definition;
+    await db.exec(`create or replace function clinical_core.production_care_connection_request(_request jsonb) returns jsonb language plpgsql security definer set search_path='' as $$begin return '{"connection":null}'::jsonb; end$$`);
+    try { await expect(call({ action: 'connection' })).rejects.toThrow('service_unavailable'); }
+    finally { await db.exec(original); }
+    await db.exec(`create function clinical_private.care_connection_actor(integer) returns uuid language plpgsql security definer set search_path='' as $$begin return null; end$$`);
+    try { await expect(call({ action: 'connection' })).rejects.toThrow('service_unavailable'); }
+    finally { await db.exec('drop function clinical_private.care_connection_actor(integer)'); }
+    expect(await call({ action: 'connection' })).toEqual({ connection: null });
+  });
   it('extends the real canonical inventory without seeding copy, approval, identity or grants', async () => {
     // Before this test creates any fixture connection or consent, the candidate
     // itself must have added only the declared table and zero release rows.

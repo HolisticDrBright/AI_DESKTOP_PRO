@@ -24,6 +24,7 @@ if (sql !== readFileSync('infra/aws-clinical-core/production-candidates/care-con
 mkdirSync(out, { recursive: true });
 const libraries = [];
 for (const [name, entry] of [['api', 'production-care-connections-api.ts'], ['service', 'production-care-connections.ts'],
+  ['database-binding', 'care-connections-database-binding.ts'],
   ['upgrade', 'care-connections-schema-upgrade.ts']]) {
   const file = `${name}-library.cjs`;
   await build({ entryPoints: [`src/server/clinical-core/${entry}`], outfile: resolve(out, file),
@@ -57,7 +58,7 @@ const manifest = {
   activation: 'blocked', phiAllowed: false, seededApprovals: false, seededConsents: false,
   remaining: ['hosted preserving 104-prefix upgrade with rollback evidence using the bound CLI operator',
     'reviewed clinic retention/disposition procedure for the immutable copy table', 'reviewed consent-copy registration operator',
-    'handler and independently reviewed deployment template', 'V2 verified text display and compare-and-set acknowledgement',
+    'handler using the emitted per-transaction database binding and independently reviewed deployment template', 'V2 verified text display and compare-and-set acknowledgement',
     'actual qualification JWT identities, exact-source deployment and hosted concurrent races',
     'matched mobile and Desktop releases and physical-device acceptance', 'independent security, MFA, consent and provider reviews'],
 };

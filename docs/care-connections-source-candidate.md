@@ -45,7 +45,7 @@ features for a live launch.
 
 ## Release mapping
 
-`npm run build:care-connections-source` emits API, service and preserving-upgrade libraries, the exact
+`npm run build:care-connections-source` emits API, service, database-binding and preserving-upgrade libraries, the exact
 SQL and a byte/function-digest manifest. It never contacts AWS or applies SQL.
 The manifest declares `status: unreleased`, `deployable: false`, PHI disabled,
 source commit and dirty state. A dirty build is not a release candidate.
@@ -212,8 +212,8 @@ rehearsal, schema application, serving-route or physical-device acceptance.
    does not qualify a handler, concurrent claims or the full hosted matrix.
 2. Complete the separately reviewed clinic hold-aware retention/disposition and
    amendment procedure. The copy table is inventoried but still immutable.
-3. Add a reviewed copy-registration operator and per-transaction deployment
-   contract verification, then a blocked-by-default handler/template with
+3. Add a reviewed copy-registration operator, then a blocked-by-default
+   handler/template using the emitted per-transaction database binding, with
    immutable code version, separate JWT routes, narrow IAM and alarms.
 4. Wire V2 to display and hash-check actual approved text before acknowledgement,
    persist status and withdrawal, recover invitation claims without unsafe
@@ -251,3 +251,33 @@ the inspected main job failed at **Dependency security gate**. Full dependency
 audit remains unwaived. Exact integration source `42888f2` runs `37542557009`
 and `37542551276` are in progress at this checkpoint, not claimed green.
 Local full-suite success is not a substitute for that unresolved security gate.
+
+## Per-transaction connection contract binding
+
+The emitted `database-binding-library.cjs` is a new source-only component, not
+a serving handler. The handler must supply its independently compiled seven
+function-body digests; caller-supplied approval hashes are not used. The binding
+captures the input before asynchronous work and verifies each transaction
+before connection business SQL under `clinical_core_api`, never an admin role.
+It checks exact signatures, return types, bodies, language, security-definer,
+volatility, empty search path and PUBLIC/API execution privileges. Extra
+overloads refuse. It verifies the consent-copy table's forced RLS, all table
+privileges including truncate, API/PUBLIC column grants and four exact trigger
+table/function/event bindings. The preserving-upgrade verifier now checks
+truncate and column grants too. No canonical SQL or release identity changed.
+
+The final focused run passes **72 tests** across four files, including 49 actual
+API-role SQL tests, ten preserving-upgrade tests, nine transport-only admission
+tests and four emitted-artifact tests. Standalone typecheck and changed-file
+lint pass. An initial test replacement omitted the existing function parameter
+name; it was repaired. The initial column-ACL query incorrectly exploded an
+empty ACL array and failed positive tests; null/empty ACLs are now handled
+explicitly, with both grant/refusal and post-revoke admission tested. Those
+failures are not reported as passes. The CI workflow's edited indentation was
+repaired and the complete YAML parsed successfully with the installed parser.
+The full regression suite is running and must be recorded separately.
+
+This verifies local per-transaction contract metadata, not the full database
+ledger, an atomic deployment snapshot, real concurrent DDL or a deployed
+consumer connection. Copy registration, handler/template integration, V2 UI
+and the actual hosted serving/settlement/device matrix remain unfinished.

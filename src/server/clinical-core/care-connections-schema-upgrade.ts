@@ -104,9 +104,12 @@ async function verify(tx: ClinicalCoreTransaction, migration: ClinicalCoreMigrat
     if (result.rows[0]?.valid !== true) fail('verification_failed');
   }
   for (const table of NEW_TABLES) {
-    const result = await tx.query<{ valid: boolean }>(`select not has_table_privilege('clinical_core_api',$1,'SELECT,INSERT,UPDATE,DELETE')
+    const result = await tx.query<{ valid: boolean }>(`select not has_table_privilege('clinical_core_api',$1,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+      and not has_any_column_privilege('clinical_core_api',$1,'SELECT,INSERT,UPDATE,REFERENCES')
       and not exists(select 1 from pg_class c,lateral aclexplode(coalesce(c.relacl,acldefault('r',c.relowner))) a
-        where c.oid=$1::regclass and a.grantee=0 and a.privilege_type in ('SELECT','INSERT','UPDATE','DELETE')) as valid`, [table]);
+        where c.oid=$1::regclass and a.grantee=0)
+      and not exists(select 1 from pg_attribute a,lateral aclexplode(case when cardinality(a.attacl)>0 then a.attacl else null end) p
+        where a.attrelid=$1::regclass and p.grantee=0) as valid`, [table]);
     if (result.rows[0]?.valid !== true) fail('verification_failed');
   }
   const triggers = (await tx.query<{ valid: boolean }>(`with expected(table_name,trigger_name,function_name,event_mask) as (values
