@@ -48,11 +48,13 @@ export function inspectionArguments(service,operation,parameters,outputFile){
 export function inspectionAwsReader(execute=execFileSync){
  return async(service,operation,parameters,outputFile)=>{
   const args=inspectionArguments(service,operation,parameters,outputFile);
-  try{return JSON.parse(execute('aws',args,{encoding:'utf8',timeout:30000,maxBuffer:4*1024*1024,windowsHide:true}));}
+  try{return JSON.parse(execute('aws',args,{encoding:'utf8',timeout:30000,maxBuffer:4*1024*1024,windowsHide:true,stdio:['ignore','pipe','pipe']}));}
   catch(error){
    // Only AWS's exact DescribeStacks missing-stack response means absence.
    const missing=`An error occurred (ValidationError) when calling the DescribeStacks operation: Stack with id ${CARE_OBSERVER.stack} does not exist`;
-   if(service==='cloudformation'&&operation==='describe-stacks'&&parameters.StackName===CARE_OBSERVER.stack&&String(error?.stderr??'').trim()===missing)
+   const stderr=String(error?.stderr??'').trim();
+   if(service==='cloudformation'&&operation==='describe-stacks'&&parameters.StackName===CARE_OBSERVER.stack
+    &&[missing,'aws: [ERROR]: '+missing].includes(stderr))
     throw new CareObservationError('stack_missing');
    throw new CareObservationError('aws_read_failed');
   }

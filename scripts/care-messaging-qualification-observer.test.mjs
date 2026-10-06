@@ -171,6 +171,11 @@ test('CLI adapter is read-only, explicitly profile-pinned, and recognizes only e
  const args=inspectionArguments('cloudformation','describe-stacks',{StackName:c.stack});assert.ok(args.includes('ai-synthetic-member'));assert.ok(args.includes('us-east-2'));
  const read=inspectionAwsReader(()=>{throw {stderr:`An error occurred (ValidationError) when calling the DescribeStacks operation: Stack with id ${c.stack} does not exist\n`};});
  await assert.rejects(()=>read('cloudformation','describe-stacks',{StackName:c.stack}),/stack_missing/);
+ const formatted=inspectionAwsReader((_program,_args,options)=>{
+  assert.deepEqual(options.stdio,['ignore','pipe','pipe']);
+  throw {stderr:`\naws: [ERROR]: An error occurred (ValidationError) when calling the DescribeStacks operation: Stack with id ${c.stack} does not exist\n`};
+ });
+ await assert.rejects(()=>formatted('cloudformation','describe-stacks',{StackName:c.stack}),/stack_missing/);
  await assert.rejects(()=>inspectionAwsReader(()=>{throw {stderr:'AccessDenied'};})('cloudformation','describe-stacks',{StackName:c.stack}),/aws_read_failed/);
 });
 test('S3 reader refuses mismatched version or size before downloading',async()=>{

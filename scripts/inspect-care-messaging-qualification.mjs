@@ -7,7 +7,7 @@ import {CareObservationError,inspectCareMessagingQualification,canonical} from '
 import {inspectionAwsReader,inspectionCodeReader,inspectionLedgerReader} from './care-messaging-inspection-io.mjs';
 import {qualificationConsentArtifact} from './qualification-consent-ledger.mjs';
 
-const local=(program,args,maxBuffer=8*1024*1024)=>execFileSync(program,args,{encoding:'utf8',timeout:30000,maxBuffer,windowsHide:true});
+const local=(program,args,maxBuffer=8*1024*1024)=>execFileSync(program,args,{encoding:'utf8',timeout:30000,maxBuffer,windowsHide:true,stdio:['ignore','pipe','pipe']});
 const source=()=>({head:local('git',['rev-parse','HEAD']).trim(),dirty:local('git',['status','--porcelain','--untracked-files=all']).trim()});
 const load=directory=>{
  for(const [name,bound] of [['artifact-manifest.json',65536],['index.js',16*1024*1024],['template.json',1024*1024],['deployment.zip',16*1024*1024+1024]])
