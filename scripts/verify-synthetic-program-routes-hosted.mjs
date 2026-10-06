@@ -247,6 +247,14 @@ async function main(){
  const anonymousCarts=await fetch(api+'/clinical-core/workforce/protocol-carts',{method:'POST',headers:{'content-type':'application/json'},body:cartBody,redirect:'error'});
  const consumerCarts=await fetch(api+'/clinical-core/workforce/protocol-carts',{method:'POST',headers:{authorization:'Bearer '+tokens.consumer,'content-type':'application/json'},body:cartBody,redirect:'error'});
  assert((anonymousCarts.status===401||anonymousCarts.status===403)&&(consumerCarts.status===401||consumerCarts.status===403),'protocol_cart_authorization_failed');
+ const compiledCart=await request('workforce','/clinical-core/workforce/protocol-carts',{action:'compile',programVersionId:versionId},200);
+ assert(compiledCart.data?.action==='compile'&&compiledCart.data?.includedCount===0&&compiledCart.data?.excludedCount===1,'unresolved_cart_line_included');
+ const cartManifest=await request('workforce','/clinical-core/workforce/protocol-carts',{action:'read',manifestId:compiledCart.data.manifestId},200);
+ assert(cartManifest.data?.lines.length===1&&cartManifest.data.lines[0].itemId==='supp-1'
+  &&cartManifest.data.lines[0].included===false&&cartManifest.data.lines[0].exclusionReason==='no_purchase_destination'
+  &&cartManifest.data.delivery?.state==='not_implemented','unresolved_cart_line_not_held');
+ const replayedCart=await request('workforce','/clinical-core/workforce/protocol-carts',{action:'compile',programVersionId:versionId},200);
+ assert(replayedCart.data?.replayed===true&&replayedCart.data?.manifestId===compiledCart.data.manifestId,'cart_replay_created_second_manifest');
  const published=await request('workforce','/clinical-core/workforce/programs',{action:'programs'},200);
  assert(published.data.programs.some(p=>p.programVersionId===versionId),'published_version_not_visible');
  const assignment=await request('workforce','/clinical-core/workforce/programs',{action:'assign',connectionId:fixture.connectionId,programVersionId:versionId},200);
@@ -274,7 +282,8 @@ async function main(){
    ownerPacketCount:consumerPackets.data.packets.length,foreignPacketCount:foreignPackets.data.packets.length,
    intakeRoleRefused:true,intakeUnauthenticatedRefused:true,publicConsultRouteWithheld:true,
    fictionalFormCreatedOrReused:true,packetWithoutConsentRefused,deniedPacketNotPersisted,intakeJourney,
-   finalDomainReadRoutes:finalReads.length+1,finalDomainRoleAndAnonymousRefusals:finalReads.length+1},
+   finalDomainReadRoutes:finalReads.length+1,finalDomainRoleAndAnonymousRefusals:finalReads.length+1,
+   fictionalCartCompiledWithUnresolvedProductExcluded:true,fictionalCartReplayIdempotent:true,cartDeliveryNotImplemented:true},
   evidenceScope:approvedConsentTest?'hosted fictional program assignment and fictional owner consent/form-packet journey; no public consult endpoint, governed catalog release, provider OAuth, device test or PHI approval':'hosted fictional program assignment, draft-only intake form and consent refusal; no public consult endpoint, form publication, packet delivery, governed catalog release, provider OAuth, device test or PHI approval'}));
 }
 main().catch(error=>{console.error(JSON.stringify({verdict:'blocked',error:/^[a-z0-9_]+$/.test(error.message)?error.message:'hosted_verification_failed'}));process.exitCode=1;});
