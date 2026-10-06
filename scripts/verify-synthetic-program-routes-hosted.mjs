@@ -1,4 +1,4 @@
-/** Hosted smoke test of the two synthetic-only program routes with designated fictional identities. */
+/** Hosted smoke test of selected synthetic-only routes with designated fictional identities. */
 import {readFileSync} from 'node:fs';
 import {spawnSync,execFileSync} from 'node:child_process';
 import {createHmac,randomUUID} from 'node:crypto';
@@ -51,7 +51,7 @@ async function main(){
  async function request(role,path,body,expected){
   const result=await fetch(api+path,{method:'POST',headers:{authorization:'Bearer '+tokens[role],'content-type':'application/json'},body:JSON.stringify(body),redirect:'error',signal:AbortSignal.timeout(30000)});
   const raw=await result.text();assert(raw.length<250000,'response_oversize');let parsed;try{parsed=JSON.parse(raw);}catch{throw Error('response_not_json');}
-  if(result.status!==expected){const category=typeof parsed.error==='string'&&/^[a-z_]+$/.test(parsed.error)?parsed.error:'unknown';throw Error('unexpected_status_'+role+'_'+result.status+'_'+category);}
+  if(result.status!==expected){const category=typeof parsed.error==='string'&&/^[a-z_]+$/.test(parsed.error)?parsed.error:'unknown';throw Error('unexpected_status_'+role+'_'+path.replace(/[^a-z]/gi,'_')+'_'+result.status+'_'+category);}
   return parsed;
  }
  const list=await request('consumer','/clinical-core/consumer/programs',{action:'list'},200);
@@ -80,6 +80,24 @@ async function main(){
  assert(wrongCalendarRole.error==='request_invalid','care_data_vocabulary_boundary_failed');
  const noCalendarAuth=await fetch(api+'/clinical-core/workforce/calendar-connection',{method:'POST',headers:{'content-type':'application/json'},body:'{"action":"read"}',redirect:'error'});
  assert(noCalendarAuth.status===401||noCalendarAuth.status===403,'calendar_jwt_boundary_failed');
+ const consultLinks=await request('workforce','/clinical-core/workforce/consult-links',{action:'list'},200);
+ assert(consultLinks.data?.action==='list'&&Array.isArray(consultLinks.data.links),'consult_links_list_failed');
+ const consultRequests=await request('workforce','/clinical-core/workforce/consult-requests',{action:'list'},200);
+ assert(consultRequests.data?.action==='list'&&Array.isArray(consultRequests.data.requests),'consult_requests_list_failed');
+ const intakeForms=await request('workforce','/clinical-core/workforce/intake-forms',{action:'list'},200);
+ assert(intakeForms.data?.action==='list'&&Array.isArray(intakeForms.data.forms),'intake_forms_list_failed');
+ const workforcePackets=await request('workforce','/clinical-core/workforce/intake-packets',{action:'list'},200);
+ assert(workforcePackets.data?.action==='list'&&Array.isArray(workforcePackets.data.packets),'workforce_packets_list_failed');
+ const consumerPackets=await request('consumer','/clinical-core/consumer/intake-packets',{action:'list'},200);
+ assert(consumerPackets.data?.action==='list'&&Array.isArray(consumerPackets.data.packets),'consumer_packets_list_failed');
+ const foreignPackets=await request('foreignConsumer','/clinical-core/consumer/intake-packets',{action:'list'},200);
+ assert(foreignPackets.data?.action==='list'&&Array.isArray(foreignPackets.data.packets),'foreign_packets_list_failed');
+ const wrongIntakeRole=await fetch(api+'/clinical-core/workforce/intake-forms',{method:'POST',headers:{authorization:'Bearer '+tokens.consumer,'content-type':'application/json'},body:'{"action":"list"}',redirect:'error'});
+ assert(wrongIntakeRole.status===401||wrongIntakeRole.status===403,'intake_role_boundary_failed');
+ const noIntakeAuth=await fetch(api+'/clinical-core/workforce/intake-forms',{method:'POST',headers:{'content-type':'application/json'},body:'{"action":"list"}',redirect:'error'});
+ assert(noIntakeAuth.status===401||noIntakeAuth.status===403,'intake_jwt_boundary_failed');
+ const withheldPublic=await fetch(api+'/clinical-core/public/consult-intake',{method:'POST',headers:{'content-type':'application/json'},body:'{"action":"describe","slug":"fictional-longevity"}',redirect:'error'});
+ assert(withheldPublic.status===404,'public_consult_route_exposed');
  // A real hosted assignment journey, but with only fictional content and an
  // intentionally unresolved product. It may not become an approved catalog item.
  const stack=JSON.parse(execFileSync('aws',['cloudformation','describe-stacks','--stack-name','ai-clinical-core-synthetic-staging','--profile',profile,'--region',region,'--output','json'],{encoding:'utf8',windowsHide:true})).Stacks[0];
@@ -94,7 +112,7 @@ async function main(){
  const fixture=JSON.parse(readFileSync(root+'/messaging-fixture.json','utf8'));
  assert(fixture.organizationId===state.organizationId,'connection_fixture_refused');
  const ledger=await sql('select count(*)::int as count,max(version) as latest from clinical_core.schema_migrations');
- assert(ledger[0]?.count===38&&ledger[0]?.latest==='20260930120000','lifecycle_migration_refused');
+ assert(ledger[0]?.count===41&&ledger[0]?.latest==='20260930150000','intake_migration_refused');
  const link=await sql("select organization_id,consumer_person_id,state from clinical_core.patient_connections where id=:p0::uuid",[fixture.connectionId]);
  assert(link[0]?.organization_id===state.organizationId&&link[0]?.consumer_person_id===state.users.consumer.personId&&link[0]?.state==='verified','connection_fixture_refused');
  const membership=await sql("select role from clinical_core.organization_memberships where organization_id=:p0::uuid and person_id=:p1::uuid",[state.organizationId,state.users.workforce.personId]);
@@ -138,7 +156,11 @@ async function main(){
   observed:{consumerAssignments:list.data.assignments.length,foreignAssignments:other.data.assignments.length,publishedPrograms:programs.data.programs.length,
    consumerRoleRefused:true,workforceRoleRefused:true,unauthenticatedRefused:true,fictionalAssignmentAccepted:true,foreignOwnerRefused:true,unresolvedSupplementHeld:true,
    ownerErasureHistoryReadable:true,foreignErasureHistoryCount:otherErasures.data.erasures.length,ownerAssignmentExported:true,foreignAssignmentExportEmpty:true,
-   calendarConnected:calendar.data.connected,calendarUnauthenticatedRefused:true},
-  evidenceScope:'hosted fictional program assignment and read-only lifecycle/calendar smoke; no governed catalog release, provider OAuth, device test or PHI approval'}));
+   calendarConnected:calendar.data.connected,calendarUnauthenticatedRefused:true,
+   consultLinkCount:consultLinks.data.links.length,consultRequestCount:consultRequests.data.requests.length,
+   intakeFormCount:intakeForms.data.forms.length,workforcePacketCount:workforcePackets.data.packets.length,
+   ownerPacketCount:consumerPackets.data.packets.length,foreignPacketCount:foreignPackets.data.packets.length,
+   intakeRoleRefused:true,intakeUnauthenticatedRefused:true,publicConsultRouteWithheld:true},
+  evidenceScope:'hosted fictional program assignment and read-only lifecycle/calendar/consult/intake smoke; no public consult endpoint, governed catalog release, provider OAuth, device test or PHI approval'}));
 }
 main().catch(error=>{console.error(JSON.stringify({verdict:'blocked',error:/^[a-z0-9_]+$/.test(error.message)?error.message:'hosted_verification_failed'}));process.exitCode=1;});
