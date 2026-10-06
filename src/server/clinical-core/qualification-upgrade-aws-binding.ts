@@ -1,12 +1,14 @@
 import { assertQualificationConfiguration } from './qualification-target';
 import { EXPORT_RECOVERY_UPGRADE, QualificationUpgradeError, type QualificationUpgradeConfiguration } from './qualification-schema-upgrade';
-export const QUALIFICATION_UPGRADE_AWS = Object.freeze({ profile: 'ai-synthetic-staging', region: 'us-east-2', account: '588966314750', foundation: 'ai-clinical-core-qualification-foundation' });
+export const QUALIFICATION_UPGRADE_AWS = Object.freeze({ profile: 'ai-synthetic-member', region: 'us-east-2', account: '588966314750', foundation: 'ai-clinical-core-qualification-foundation' });
 function reject(): never { throw new QualificationUpgradeError('boundary_refused'); }
 const object = (v: unknown): Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : reject();
 /** Observations must come from STS and DescribeStacks in the CLI, not a caller manifest. */
 export function qualificationUpgradeFromAws(callerValue: unknown, responseValue: unknown): QualificationUpgradeConfiguration {
   const { account, region, foundation } = QUALIFICATION_UPGRADE_AWS;
-  if (object(callerValue).Account !== account) reject();
+  const caller = object(callerValue);
+  if (caller.Account !== account || typeof caller.Arn !== 'string'
+    || !new RegExp(`^arn:aws:sts::${account}:assumed-role/[A-Za-z0-9_+=,.@/-]+$`).test(caller.Arn)) reject();
   const stacks = object(responseValue).Stacks;
   if (!Array.isArray(stacks) || stacks.length !== 1) reject();
   const stack = object(stacks[0]);

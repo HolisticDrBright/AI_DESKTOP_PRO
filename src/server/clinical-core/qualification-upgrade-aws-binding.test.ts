@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { qualificationUpgradeFromAws } from './qualification-upgrade-aws-binding';
-const caller = { Account: '588966314750' };
+const caller = { Account: '588966314750', Arn: 'arn:aws:sts::588966314750:assumed-role/QualificationOperator/fictional-session' };
 const values = { PhiAllowed: 'false', Activation: 'blocked', QualificationExecution: 'disabled', DatabaseName: 'clinical_core_qualification',
   DatabaseClusterArn: 'arn:aws:rds:us-east-2:588966314750:cluster:synthetic', DatabaseSecretArn: 'arn:aws:secretsmanager:us-east-2:588966314750:secret:synthetic' };
 const stack = { StackStatus: 'CREATE_COMPLETE', StackId: 'arn:aws:cloudformation:us-east-2:588966314750:stack/ai-clinical-core-qualification-foundation/fixture-id',
@@ -11,7 +11,11 @@ describe('qualification upgrade AWS binding', () => {
     expect(qualificationUpgradeFromAws(caller, { Stacks: [stack] })).toMatchObject({ expectedAccountId: '588966314750', qualificationDatabaseName: 'clinical_core_qualification', phiAllowed: false, activation: 'blocked' });
   });
   it('refuses wrong callers, stacks, completion states, missing and duplicate outputs', () => {
-    for (const bad of [undefined, {}, { Account: '173535830222' }]) expect(() => qualificationUpgradeFromAws(bad, { Stacks: [stack] })).toThrow('boundary_refused');
+    for (const bad of [undefined, {}, { Account: '173535830222', Arn: 'arn:aws:sts::173535830222:assumed-role/Other/session' },
+      { Account: '588966314750' }, { Account: '588966314750', Arn: 'arn:aws:iam::588966314750:root' },
+      { Account: '588966314750', Arn: 'arn:aws:iam::588966314750:user/long-lived' }]) {
+      expect(() => qualificationUpgradeFromAws(bad, { Stacks: [stack] })).toThrow('boundary_refused');
+    }
     for (const bad of [{}, { Stacks: [] }, { Stacks: [stack, stack] }, { Stacks: [{ ...stack, StackStatus: 'UPDATE_IN_PROGRESS' }] },
       { Stacks: [{ ...stack, StackId: stack.StackId.replace('qualification-foundation', 'synthetic-staging') }] },
       { Stacks: [{ ...stack, Outputs: stack.Outputs.slice(1) }] }, { Stacks: [{ ...stack, Outputs: [...stack.Outputs, stack.Outputs[0]] }] }]) {
