@@ -51,7 +51,7 @@ Hosted checks with fictional attested identities passed: consumer erasure-histor
 
 - These requests exercised an older `a300c63` personal-storage candidate, not an exact matched current V2/Desktop release.
 - The other qualification candidates, full hosted harnesses, retention schedule, export delivery, recording/transcription/drafting, cross-clinic access, and exact matched release candidates were not accepted by this narrow run. Program assignment now has a separate fictional staging run above; that does not imply qualification-target or mobile acceptance.
-- At the start of this run the separate synthetic-staging database `clinical_core` had 33 applied migrations, latest `20260929110000`. The current manifest lists 45 migrations; a historical alias in the live ledger accounts for one extra row. After the narrow operation below, 11 manifest-listed migrations remain unapplied. None were included in this operation.
+- Synthetic staging `clinical_core` now has 38 ledger rows, latest `20260930120000`. The source manifest lists 45 migrations; a historical alias in the live ledger accounts for one extra row. Eight manifest-listed migrations remain unapplied. The isolated qualification database remains separate at 103 migrations.
 - No physical iOS/Android journey, store billing, provider live-mode acceptance, or complete security/privacy/retention review was performed.
 - PHI remains disabled. Do not infer commercial readiness, HIPAA compliance, or readiness for real patients from this document.
 - At source HEAD, the full Desktop dependency audit still reports five high findings through a development-only `braces` dependency chain. A runtime-only audit reports zero findings, but the full CI security gate is not green and must not be silently weakened.
