@@ -112,6 +112,38 @@ and 46 rows with digest
 It was explicitly a dirty-source inspection, not migration or acceptance.
 Hosted rehearsal/apply evidence must be recorded separately.
 
+### Hosted qualification upgrade, October 6, 2026
+
+Exact clean pushed source `42888f2f2ffa863a6eb60cdb62b4263718871174`
+built operator SHA-256
+`c3d7ae2ab24ff8853c93b30d696c0dce6d9c187d058d58be44ebdaacb47037de`.
+The fixed member-role operator physically observed account `588966314750`,
+Ohio, and the completed qualification foundation with PHI disabled.
+
+The separate rehearsal applied and verified the new contract inside its
+transaction, rolled back, then independently observed the original **104
+migrations, 206 tables and 46 rows**, with unchanged row-inventory digest
+`67648874524c0c8c5bc2d11774e19855f7be88e1ab11f236c128534092691345`.
+The upgrade repeated that mandatory rehearsal, then committed **105 migrations
+and 207 tables** with `applied:true`, `dataPreserved:true` and that same
+predecessor-row digest. The new consent-copy table was verified empty.
+
+A separate post-commit inspection verified the complete 105 ledger and
+contract. Upgrade replay repeated rehearsal and returned `alreadyApplied:true`,
+`applied:false`. Both observed 46 rows and full post-upgrade inventory digest
+`129abce49aec8e4f3f8e73f6c10c18e94827d0ae0108e176419aede5d36280bc`.
+This digest includes the additional empty table and therefore differs from the
+predecessor-only preservation digest. No row-content data was logged.
+
+This is real hosted **schema upgrade/rollback/replay** evidence only. There is
+still no serving connection candidate, consent-copy registration, patient
+grant, hosted claim/message race or physical-device acceptance. No identity,
+review or consent was created; PHI remains off. The generic source builder
+does not read AWS, so its `hostedVerified:false` remains an honest property of
+that generated source-only artifact, not a denial of this separate receipt.
+Earlier 104 candidate manifests/reports are historical and must be deliberately
+rebound/rebuilt; do not edit them into apparent current-release evidence.
+
 ## Verification
 
 The dedicated database suite applies the real 105 canonical SQL files
@@ -174,10 +206,10 @@ rehearsal, schema application, serving-route or physical-device acceptance.
 
 ## Remaining integration
 
-1. Use the clean exact-source operator for hosted rollback rehearsal and the
-   preserving qualification upgrade; rebind/rebuild all current targets and
-   candidates to the 105 release. Do not rewrite applied SQL or transplant the
-   staging ledger. Source rehearsal is not hosted acceptance.
+1. The exact hosted rollback/upgrade/replay above is complete. Rebind/rebuild
+   all current targets and candidates to the 105 release before serving tests.
+   Do not rewrite applied SQL or transplant the staging ledger. This receipt
+   does not qualify a handler, concurrent claims or the full hosted matrix.
 2. Complete the separately reviewed clinic hold-aware retention/disposition and
    amendment procedure. The copy table is inventoried but still immutable.
 3. Add a reviewed copy-registration operator and per-transaction deployment
@@ -213,3 +245,9 @@ findings through braces); the independent connection/messaging job and all
 fixture browser jobs passed. Deployed-backend steps remain skipped, not
 acceptance. Run `37537556686` was still in progress when inspected. Neither
 receipt establishes the later preserving-upgrade increment as hosted verified.
+
+The later `ebca789` runs `37540508649` and `37540502411` are terminal failures;
+the inspected main job failed at **Dependency security gate**. Full dependency
+audit remains unwaived. Exact integration source `42888f2` runs `37542557009`
+and `37542551276` are in progress at this checkpoint, not claimed green.
+Local full-suite success is not a substitute for that unresolved security gate.
