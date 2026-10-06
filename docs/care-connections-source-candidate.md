@@ -362,3 +362,90 @@ HTML is skipped for size. This is code navigation, not runtime acceptance.
 New source CI runs `37546178583` and `37546175030` are in progress at inspection,
 not claimed green. The full dependency scan still has five high findings; the
 security gate remains unchanged. Paid mobile builds and PHI activation stay held.
+
+## Approved consent copy registration
+
+The qualification-only registrar is implemented in source. It registers the
+exact UTF-8 text of an existing current approved artifact; it cannot create
+that approval or grant patient consent. An active workforce approver, active
+person, active clinical membership and active organization must all agree with
+the artifact. A newer approved artifact without registered text prevents an
+older release from being substituted. UUID spelling is normalized; consent text
+is neither trimmed nor newline-normalized.
+
+The operator fixes account `588966314750`, region `us-east-2`, the completed
+qualification foundation and database `clinical_core_qualification`. It refuses
+root, production/staging targets, activation overrides, changed migration
+artifacts and dirty-source writes. Every transaction checks the full 105-entry
+ledger, 207-table inventory, seven function contracts, copy-table privileges and
+four trigger bindings. Registration uses the consent-release lock and a short
+transaction. Read-only inventory and inspection do not register anything.
+
+The copy package has exactly these fields: `contract:care-consent-copy/1`,
+`artifactId`, `organizationId`, `scope`, `artifactVersion`, `contentSha256` and
+`content`. No reviewer, approval or activation field is accepted. The digest must
+match the exact valid UTF-8 content, bounded to 16,000 bytes. The CLI reads an
+absolute regular file, bounded to 65,536 bytes, and rejects invalid UTF-8.
+
+Build from the intended clean checkout with
+`npm run build:aws-production-clinical-core` then `npm run build:aws-care-consent-copy`.
+From that same checkout the generated command is
+`node dist/aws-clinical-core/care-consent-copy-registration/index.cjs inventory`.
+Inspection uses `inspect --copy-file=<absolute approved package path>`.
+Rehearsal or registration uses `rehearse` or `register` with that file argument
+and `--confirm-fictional-consent-copy-registration`. These are qualification
+commands, not a production consent or approval workflow. Do not run registration
+until the actual approved artifact and matching copy exist on the same target.
+
+Registration always performs rollback rehearsal with independent readback
+first. Exact replay reuses an identical copy without updating it. No automatic
+retry follows an ambiguous insert or commit. An observed session digest
+attributes the CLI receipt; it is **not** an approval hash. The immutable copy
+and `registered_at` link it to the approved artifact, but a separate application
+audit event naming the AWS operator is not yet implemented. Do not label this a
+complete production approval/audit workflow.
+
+The focused run passes **281 tests across seven files**, including the new
+68-case copy-registration and command suites, the real embedded schema, actual
+SDK transport checks and predecessor-upgrade regressions. Standalone typecheck,
+changed-file lint and complete CI YAML parsing pass. Canonical gates still report
+105 migrations with zero seeded rows and coverage of 207 tables. The registrar
+bundle builds; the pre-commit build reports `clean:false` and cannot register.
+Initial fixture errors used an invalid subject key, an incorrectly expanded
+argument row and an impossible unbound-identity update; those runs failed and
+were repaired before rerunning. The production identity constraint independently
+rejects that unbound update. The first full run failed the unchanged logging
+guard because a logging call without its own semicolon caused its scanner to
+include the following comment. The operator now explicitly terminates that call; the
+guard was not weakened. The 71-case consent/logging rerun passes. The final full
+Desktop run passes **326 files, 4,048 tests and 11 existing skips**, in 247.89
+seconds, with `TZ=America/Los_Angeles` and the unrelated Supabase anon-key
+environment variable unset. Typecheck and changed-file lint pass again.
+
+Previous runtime `6d3b841` CI runs `37546178583` and `37546175030` are terminal
+failures. The inspected first run fails at the unwaived Dependency security
+gate; its independent connection/message and fixture/browser jobs passed.
+Secret-dependent deployed-backend steps remain skipped, not hosted acceptance.
+No registrar AWS write, new approval, patient grant, serving deployment or paid
+mobile build has occurred. All six phases remain partial.
+
+The registrar is clean and pushed at
+`6e23091b4da8d6775e0eebdb7f239a2365f38843`. Its clean rebuilt bundle SHA-256 is
+`cb40cd8c6104502bde21e06c276253a559ccd2c8976d596ca4e0a6fa87ef41a6`.
+Actual AWS `inventory` exited successfully from that operator in account
+`588966314750`: qualification execution, PHI false, activation blocked, the exact
+105-migration ledger admitted, **six approved artifacts and zero registered
+copies**. Counts do not establish that every artifact remains eligible for a
+particular scope or that any copy has been approved for this registrar.
+`approvalsCreated:false`, `grantsCreated:false`, `copyInserted:false`.
+No rehearsal or registration was requested; this is read-only target/contract
+evidence, not positive hosted insertion, ambiguity or concurrent-release evidence.
+
+The next engineering includes a distinct operator audit event, the blocked
+connection handler/template with compiled binding, and V2 approved-copy review,
+grant/status/withdrawal and uncertain-claim recovery. Obtain the exact approved
+copy package for each enabled scope before positive hosted registration. No
+operator-created approval, invented review hash or fallback copy may satisfy
+that prerequisite. Retained clinic amendments/disposition, program assignments,
+matched serving/device/provider/store/security/retention/recovery evidence and
+the unwaived dependency security finding remain open.
