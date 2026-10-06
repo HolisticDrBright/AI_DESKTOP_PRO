@@ -7,9 +7,10 @@ import {isDeepStrictEqual} from 'node:util';
 import {CognitoIdentityProviderClient,AdminInitiateAuthCommand,AdminRespondToAuthChallengeCommand} from '@aws-sdk/client-cognito-identity-provider';
 import {RDSDataClient,ExecuteStatementCommand} from '@aws-sdk/client-rds-data';
 import {fromIni} from '@aws-sdk/credential-provider-ini';
+import {SYNTHETIC_MEMBER_PROFILE,observeSyntheticMemberIdentity} from './synthetic-aws-principal.mjs';
 
 const root=process.argv[4];
-const account='588966314750',region='us-east-2',profile='ai-synthetic-staging';
+const account='588966314750',region='us-east-2',profile=SYNTHETIC_MEMBER_PROFILE;
 const api='https://wxv734oi12.execute-api.us-east-2.amazonaws.com';
 const deployedSourceCommit='b1f597d39fefde10d70a1e00d813967736df2e8f';
 const deployedArtifactSha256='58f5978301be218896b269a44438fecb8ae89a690bee6671008b64f215f14247';
@@ -27,7 +28,7 @@ function totp(secret){
 }
 async function main(){
  assert((process.argv.length===5||process.argv.length===6)&&process.argv[2]==='--confirm-fictional-only'&&process.argv[3]==='--identity-dir'&&isAbsolute(root)&&(!process.argv[5]||approvedConsentTest),'command_refused');
- const identity=JSON.parse(execFileSync('aws',['sts','get-caller-identity','--profile',profile,'--region',region,'--output','json'],{encoding:'utf8',windowsHide:true}));
+ const identity=observeSyntheticMemberIdentity();
  assert(identity.Account===account,'account_refused');
  const deployed=JSON.parse(execFileSync('aws',['cloudformation','describe-stacks','--stack-name','ai-clinical-core-synthetic-staging-authenticated-api','--profile',profile,'--region',region,'--output','json'],{encoding:'utf8',windowsHide:true})).Stacks[0];
  assert(deployed.StackStatus==='UPDATE_COMPLETE'&&deployed.Parameters.some(p=>p.ParameterKey==='LambdaCodeKey'&&p.ParameterValue===`clinical-core/authenticated-api/${deployedArtifactSha256}.zip`),'deployed_artifact_changed');

@@ -1,12 +1,14 @@
 /** Register the owner-approved, fictional-only consent copy in the isolated qualification DB. */
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
+import { fromIni } from '@aws-sdk/credential-provider-ini';
+import { SYNTHETIC_MEMBER_PROFILE, observeSyntheticMemberIdentity } from './synthetic-aws-principal.mjs';
 import {
   RDSDataClient, BeginTransactionCommand, CommitTransactionCommand,
   RollbackTransactionCommand, ExecuteStatementCommand,
 } from '@aws-sdk/client-rds-data';
 
-const profile = 'ai-synthetic-staging';
+const profile = SYNTHETIC_MEMBER_PROFILE;
 const account = '588966314750';
 const region = 'us-east-2';
 const stack = 'ai-clinical-core-qualification-foundation';
@@ -22,7 +24,7 @@ function aws(...args) {
 function field(row, index) { return Object.values(row[index] ?? {})[0]; }
 
 if (process.argv[2] !== '--confirm-synthetic-only') throw new Error('Explicit synthetic-only confirmation required.');
-const identity = aws('sts', 'get-caller-identity');
+const identity = observeSyntheticMemberIdentity();
 if (identity.Account !== account) throw new Error('AWS account mismatch; no write attempted.');
 const foundation = aws('cloudformation', 'describe-stacks', '--stack-name', stack).Stacks?.[0];
 if (foundation?.StackStatus !== 'CREATE_COMPLETE' && foundation?.StackStatus !== 'UPDATE_COMPLETE') throw new Error('Qualification foundation is not ready.');
@@ -30,8 +32,7 @@ const outputs = Object.fromEntries((foundation.Outputs ?? []).map(({ OutputKey, 
 if (outputs.PhiAllowed !== 'false' || outputs.DatabaseName !== database || outputs.QualificationInfrastructure !== 'prepared_no_candidates' || !outputs.DatabaseClusterArn || !outputs.DatabaseSecretArn) {
   throw new Error('Qualification isolation or PHI-off posture is not verified.');
 }
-process.env.AWS_PROFILE = profile;
-const client = new RDSDataClient({ region });
+const client = new RDSDataClient({ region, credentials: fromIni({ profile }) });
 const base = { resourceArn: outputs.DatabaseClusterArn, secretArn: outputs.DatabaseSecretArn, database };
 const query = (sql, parameters = [], transactionId) => client.send(new ExecuteStatementCommand({ ...base, sql, parameters, transactionId }));
 let transactionId;
