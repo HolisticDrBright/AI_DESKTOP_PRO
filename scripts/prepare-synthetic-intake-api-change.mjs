@@ -2,8 +2,9 @@
 import {execFileSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {readFileSync,mkdirSync,writeFileSync} from 'node:fs';
+import {SYNTHETIC_MEMBER_PROFILE,observeSyntheticMemberIdentity} from './synthetic-aws-principal.mjs';
 
-const profile='ai-synthetic-staging',region='us-east-2',account='588966314750';
+const profile=SYNTHETIC_MEMBER_PROFILE,region='us-east-2',account='588966314750';
 const foundationName='ai-clinical-core-synthetic-staging';
 const stackName='ai-clinical-core-synthetic-staging-authenticated-api';
 const routeNames=[
@@ -18,7 +19,7 @@ function aws(...args){
 }
 const entries=rows=>Object.fromEntries(rows.map(x=>[x.OutputKey??x.ParameterKey,x.OutputValue??x.ParameterValue]));
 if(process.argv.length!==3||process.argv[2]!=='--prepare-synthetic-only')throw Error('command_refused');
-if(aws('sts','get-caller-identity').Account!==account)throw Error('synthetic_account_required');
+if(observeSyntheticMemberIdentity().Account!==account)throw Error('synthetic_account_required');
 const foundation=aws('cloudformation','describe-stacks','--stack-name',foundationName).Stacks?.[0];
 const fo=entries(foundation?.Outputs??[]);
 if(foundation?.StackStatus!=='UPDATE_COMPLETE'||fo.PhiAllowed!=='false'||fo.DataClassification!=='synthetic_only'

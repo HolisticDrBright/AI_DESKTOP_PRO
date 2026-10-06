@@ -31,3 +31,13 @@ test('active fictional intake runners pin both CLI and SDK to the observed membe
     assert.doesNotMatch(source, /ai-synthetic-staging/);
   }
 });
+
+test('synthetic route change preparers also refuse an ambient root identity', () => {
+  for (const file of ['prepare-synthetic-program-api-change.mjs', 'prepare-synthetic-intake-api-change.mjs',
+    'prepare-synthetic-lifecycle-api-change.mjs', 'prepare-synthetic-final-api-change.mjs']) {
+    const source = readFileSync(new URL(file, import.meta.url), 'utf8');
+    assert.match(source, /observeSyntheticMemberIdentity\(\)/);
+    assert.match(source, /profile=SYNTHETIC_MEMBER_PROFILE/);
+    assert.doesNotMatch(source, /ai-synthetic-staging/);
+  }
+});
