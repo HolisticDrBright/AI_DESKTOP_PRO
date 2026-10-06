@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { fromIni } from '@aws-sdk/credential-provider-ini';
 import { SYNTHETIC_MEMBER_PROFILE, observeSyntheticMemberIdentity } from './synthetic-aws-principal.mjs';
+import { qualificationConsentArtifact, assertQualificationConsentLedger, assertQualificationConsentFoundation, QUALIFICATION_CONSENT_LEDGER } from './qualification-consent-ledger.mjs';
 import {
   RDSDataClient, BeginTransactionCommand, CommitTransactionCommand,
   RollbackTransactionCommand, ExecuteStatementCommand,
@@ -23,15 +24,17 @@ function aws(...args) {
 }
 function field(row, index) { return Object.values(row[index] ?? {})[0]; }
 
-if (process.argv[2] !== '--confirm-synthetic-only') throw new Error('Explicit synthetic-only confirmation required.');
+const inspect=process.argv[2]==='--inspect';
+if(process.argv.length!==3 || !inspect && process.argv[2]!=='--confirm-synthetic-only')throw new Error('Explicit synthetic-only confirmation or read-only inspection required.');
+// A changed source artifact is refused before STS, secret access or a transaction.
+const expected=qualificationConsentArtifact(JSON.parse(execFileSync(process.execPath,['scripts/build-aws-production-clinical-core.mjs','--json'],
+  {encoding:'utf8',timeout:15000,maxBuffer:8*1024*1024,windowsHide:true})));
+if(!inspect && execFileSync('git',['status','--porcelain','--untracked-files=all','--','src','scripts','infra','package.json','package-lock.json','.github','.gitattributes'],
+  {encoding:'utf8',timeout:15000,windowsHide:true}).trim())throw new Error('qualification_consent_dirty_source_refused');
 const identity = observeSyntheticMemberIdentity();
 if (identity.Account !== account) throw new Error('AWS account mismatch; no write attempted.');
 const foundation = aws('cloudformation', 'describe-stacks', '--stack-name', stack).Stacks?.[0];
-if (foundation?.StackStatus !== 'CREATE_COMPLETE' && foundation?.StackStatus !== 'UPDATE_COMPLETE') throw new Error('Qualification foundation is not ready.');
-const outputs = Object.fromEntries((foundation.Outputs ?? []).map(({ OutputKey, OutputValue }) => [OutputKey, OutputValue]));
-if (outputs.PhiAllowed !== 'false' || outputs.DatabaseName !== database || outputs.QualificationInfrastructure !== 'prepared_no_candidates' || !outputs.DatabaseClusterArn || !outputs.DatabaseSecretArn) {
-  throw new Error('Qualification isolation or PHI-off posture is not verified.');
-}
+const outputs = assertQualificationConsentFoundation(foundation);
 const client = new RDSDataClient({ region, credentials: fromIni({ profile }) });
 const base = { resourceArn: outputs.DatabaseClusterArn, secretArn: outputs.DatabaseSecretArn, database };
 const query = (sql, parameters = [], transactionId) => client.send(new ExecuteStatementCommand({ ...base, sql, parameters, transactionId }));
@@ -39,19 +42,25 @@ let transactionId;
 try {
   const begin = await client.send(new BeginTransactionCommand(base));
   transactionId = begin.transactionId;
-  const marker = await query('select current_database(), (select count(*) from clinical_core.schema_migrations), (select max(version) from clinical_core.schema_migrations)', [], transactionId);
-  const row = marker.records?.[0] ?? [];
-  if (field(row, 0) !== database || Number(field(row, 1)) !== 103 || field(row, 2) !== '20260928010000') {
-    throw new Error('Qualification database or migration ledger mismatch; no consent release written.');
-  }
+  if(!transactionId)throw new Error('qualification_consent_transaction_refused');
+  await query('set transaction isolation level repeatable read'+(inspect?' read only':''),[],transactionId);
+  const marker = await query('select current_database()',[],transactionId);
+  const ledger = await query('select version,sha256 from clinical_core.schema_migrations order by version',[],transactionId);
+  assertQualificationConsentLedger(field(marker.records?.[0]??[],0),(ledger.records??[]).map(r=>({version:field(r,0),sha256:field(r,1)})),expected);
+  if(!inspect)await query("select pg_advisory_xact_lock(hashtextextended('qualification_test_consent_registration',0))",[],transactionId);
   const existing = await query("select scope, version, content_sha256, content from clinical_private.consumer_storage_consent_releases where scope in ('forms_checkins','lab_history')", [], transactionId);
   if (existing.records?.length) {
-    if (existing.records.length !== 2 || existing.records.some(r => field(r, 1) !== version || field(r, 2) !== digest || field(r, 3) !== copy)) {
+    if (existing.records.length !== 2 || new Set(existing.records.map(r=>field(r,0))).size!==2 || existing.records.some(r => !['forms_checkins','lab_history'].includes(field(r,0)) || field(r, 1) !== version || field(r, 2) !== digest || field(r, 3) !== copy)) {
       throw new Error('Existing consent release differs; refusing overwrite.');
     }
     await client.send(new RollbackTransactionCommand({ ...base, transactionId }));
     transactionId = undefined;
-    console.log(JSON.stringify({ status: 'already_registered', account, database, version, scopes: ['forms_checkins','lab_history'], contentSha256: digest, phiAllowed: false }));
+    console.log(JSON.stringify({ status: inspect?'inspected_existing':'already_registered', mutations: false, account, database, migrationReleaseHash:QUALIFICATION_CONSENT_LEDGER, version, scopes: ['forms_checkins','lab_history'], contentSha256: digest, phiAllowed: false }));
+    process.exit(0);
+  }
+  if(inspect) {
+    await client.send(new RollbackTransactionCommand({...base,transactionId})); transactionId=undefined;
+    console.log(JSON.stringify({status:'inspected_missing',mutations:false,account,database,migrationReleaseHash:QUALIFICATION_CONSENT_LEDGER,version,contentSha256:digest,phiAllowed:false}));
     process.exit(0);
   }
   await query("insert into clinical_private.consumer_storage_consent_releases(scope,version,content_sha256,content,approved_by,approved_at) values ('forms_checkins',:version,:digest,:copy,:approvedBy,clock_timestamp()),('lab_history',:version,:digest,:copy,:approvedBy,clock_timestamp())", [
@@ -63,7 +72,17 @@ try {
   await client.send(new CommitTransactionCommand({ ...base, transactionId }));
   transactionId = undefined;
   console.log(JSON.stringify({ status: 'registered', account, database, version, scopes: ['forms_checkins','lab_history'], contentSha256: digest, phiAllowed: false }));
+} catch(error) {
+  // Never dump a provider response, arbitrary SQL detail or an ambiguous commit.
+  // No automatic transaction, statement or write retry is performed.
+  const category=error?.name==='DatabaseResumingException' && !transactionId?'database_resuming':
+    /^qualification_consent_[a-z_]+$/.test(error?.message??'')?error.message:'qualification_consent_operation_failed';
+  console.error(JSON.stringify({status:'not_completed',category,account,database,phiAllowed:false,writeStatus:inspect?'none':'not_certified'}));
+  process.exitCode=1;
 } finally {
-  if (transactionId) await client.send(new RollbackTransactionCommand({ ...base, transactionId }));
+  if (transactionId) {
+    try { await client.send(new RollbackTransactionCommand({ ...base, transactionId })); }
+    catch { console.error(JSON.stringify({status:'not_completed',category:'rollback_unverified',writeStatus:inspect?'none':'not_certified'})); process.exitCode=1; }
+  }
   client.destroy();
 }

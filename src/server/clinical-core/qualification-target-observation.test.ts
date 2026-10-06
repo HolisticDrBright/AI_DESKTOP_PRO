@@ -36,6 +36,21 @@ const runner = (recorded: Recorded, m: QualificationTargetManifest) => (file: st
 const observe = (recorded: Recorded = {}, m = manifest()) => observeQualificationTarget(m, EXPORT_ACCEPTANCE_CANDIDATES, { runner: runner(recorded, m) });
 
 describe("observing the qualification target from the command line", () => {
+  test("messaging observation refuses a historical target or a missing/wrong live migration release", () => {
+    const old = manifest();
+    expect(() => observeQualificationTarget(old, ["care-messaging"], { runner: runner({}, old) })).toThrow("target_stack_refused");
+    const m = validateQualificationTargetManifest({ ...old, schemaVersion: "aws-clinical-core-qualification-target/2", stacks: { ...old.stacks, "care-messaging": "ai-clinical-core-qualification-care-messaging" } });
+    const parsed = JSON.parse(candidateStack(m)) as { Outputs: Array<{OutputKey: string; OutputValue: string}>; Parameters: Array<{ParameterKey: string; ParameterValue: string}> };
+    parsed.Outputs.push({ OutputKey: "MigrationReleaseSha256", OutputValue: m.migrationReleaseHash }, { OutputKey: "DatabaseName", OutputValue: m.databaseName });
+    parsed.Parameters.push({ ParameterKey: "MigrationReleaseSha256", ParameterValue: m.migrationReleaseHash });
+    const check = () => observeQualificationTarget(m, ["care-messaging"], { runner: runner({ stacks: { [m.stacks["care-messaging"]]: JSON.stringify(parsed) } }, m) });
+    expect(check().stacks).toHaveLength(1);
+    parsed.Outputs.find(p => p.OutputKey === "MigrationReleaseSha256")!.OutputValue = "c".repeat(64);
+    expect(check).toThrow("target_stack_refused");
+    parsed.Outputs.find(p => p.OutputKey === "MigrationReleaseSha256")!.OutputValue = m.migrationReleaseHash;
+    parsed.Parameters = parsed.Parameters.filter(p => p.ParameterKey !== "MigrationReleaseSha256");
+    expect(check).toThrow("target_stack_refused");
+  });
   test("the run looks at the live account, the checkout and every candidate stack it depends on", () => {
     const observation = observe();
     expect(observation).toMatchObject({ source: "observed", awsAccountId: "588966314750", sourceCommit: commit });

@@ -301,6 +301,8 @@ September 28 deployment follow-up: the first personal-storage create rolled back
 
 ## AWS execution list (September 29, 2026)
 
+October 6 extension: care messaging has its own compiled-source/104-migration deployment candidate. The new `infra/aws-clinical-core/qualification-target-messaging.example.json` is an unfilled **version 2, eleven-stack** target. The old version 1 example remains historical and exactly ten-stack; it cannot qualify messaging. Shared Node/PowerShell checks compare the messaging migration release in both stack parameters and outputs, and the read-only capacity planner includes its two reservations under an assumed-role-only synthetic account check. These source checks do not deploy candidates or qualify the entire ledger, uploaded code, authorizers, IAM, runtime or devices. See `docs/care-messaging-deployment-candidate.md` for the still-open candidate-specific operator and acceptance requirements. Earlier counts/statuses below remain dated evidence, not current matched-fleet acceptance.
+
 The current, consolidated list of AWS work — targets, blockers, unapplied migrations,
 activation items with their operators, hosted acceptance runs, provider configuration,
 and the prerequisites the gated capability build-out will need — is maintained in the

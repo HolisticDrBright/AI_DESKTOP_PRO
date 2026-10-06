@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 
 // Build in an isolated temporary directory: no AWS access, shared dist race,
 // upload, approval row or deployment. Shape placeholders are never real reviews.
@@ -31,7 +31,12 @@ beforeAll(() => {
   template = JSON.parse(readFileSync(join(directory, 'template.json'), 'utf8'));
   manifest = JSON.parse(readFileSync(join(directory, 'artifact-manifest.json'), 'utf8'));
 }, 65000);
-afterAll(() => { if (directory) rmSync(directory, { recursive: true, force: true }); });
+afterAll(() => {
+  if (!directory) return;
+  const target = resolve(directory);
+  if (dirname(target) !== resolve(tmpdir()) || !basename(target).startsWith('care-messaging-artifact-')) throw new Error('temporary_cleanup_boundary_refused');
+  rmSync(target, { recursive: true, force: true });
+});
 const defaults = () => Object.fromEntries(Object.entries(template.Parameters).map(([k, v]) => [k, v.Default ?? '']));
 const qualified = (): Record<string, Value> => ({ ...defaults(), 'AWS::AccountId': '588966314750', 'AWS::Region': 'us-east-2',
   QualificationExecution: 'enabled', QualificationAccountId: '588966314750', QualificationReviewSha256: 'fictional-review-placeholder',

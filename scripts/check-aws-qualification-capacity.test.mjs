@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {assessCapacity,reservedFunctions} from './check-aws-qualification-capacity.mjs';
+import {assessCapacity,reservedFunctions,CAPACITY_CANDIDATES,loadCapacityTemplate,assertCapacityPrincipal} from './check-aws-qualification-capacity.mjs';
 import {loadTemplate} from './build-aws-qualification-parameters.mjs';
 const f=[{name:'qualification-personal-storage',desired:4,existing:0}];
 test('the actual ten-unit account refuses before deployment without weakening caps',()=>{
@@ -35,4 +35,15 @@ test('capacity preflight loads recording templates without a persisted dist arti
   const template=loadTemplate('recording-authority');
   const functions=reservedFunctions(template,'6zt8e9qz04');
   assert.ok(functions.some(f=>f.name==='6zt8e9qz04-recording-authority'&&f.desired===2));
+});
+test('the eleventh messaging candidate adds its exact two reservations to fleet capacity',()=>{
+  assert.equal(CAPACITY_CANDIDATES.length,11);assert.equal(new Set(CAPACITY_CANDIDATES).size,11);
+  assert.ok(CAPACITY_CANDIDATES.includes('care-messaging'));
+  assert.deepEqual(reservedFunctions(loadCapacityTemplate('care-messaging'),'6zt8e9qz04'),[{name:'6zt8e9qz04-care-messaging',desired:2}]);
+  assert.equal(assessCapacity({ConcurrentExecutions:150,UnreservedConcurrentExecutions:136},[{name:'old-fleet',desired:35,existing:10},{name:'care-messaging',desired:2,existing:0}]).additionalReserved,27);
+});
+test('capacity observation refuses root, IAM user, foreign account and missing principal',()=>{
+  assert.doesNotThrow(()=>assertCapacityPrincipal({Account:'588966314750',Arn:'arn:aws:sts::588966314750:assumed-role/QualificationOperator/session'}));
+  for(const identity of [{},{Account:'588966314750'},{Account:'588966314750',Arn:'arn:aws:iam::588966314750:root'},
+    {Account:'588966314750',Arn:'arn:aws:iam::588966314750:user/operator'},{Account:'173535830222',Arn:'arn:aws:sts::173535830222:assumed-role/Operator/session'}])assert.throws(()=>assertCapacityPrincipal(identity),/synthetic_assumed_role_required/);
 });

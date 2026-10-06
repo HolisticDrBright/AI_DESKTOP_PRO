@@ -28,6 +28,14 @@ jobs:
         run: npx vitest run src/server/clinical-core/production-care-messaging.database.test.ts src/server/clinical-core/production-care-messaging-api.test.ts src/server/clinical-core/care-messaging-schema-upgrade.database.test.ts src/server/clinical-core/care-messaging-deployment.test.ts src/server/clinical-core/care-messaging-artifact.test.ts
       - name: Build explicitly non-deployable source artifact
         run: npm run build:care-messaging-source
+      - name: Versioned target and complete fleet capacity regressions (no AWS access)
+        run: |
+          npx vitest run src/server/clinical-core/qualification-target-manifest.test.ts src/server/clinical-core/qualification-target-observation.test.ts
+          node --test scripts/check-aws-qualification-capacity.test.mjs
+          node --test scripts/qualification-consent-ledger.test.mjs
+      - name: Qualification wrapper parity and principal refusals (no AWS calls)
+        shell: pwsh
+        run: ./scripts/test-qualification-acceptance-runners.ps1
       - name: Build qualification-only preserving migration operator (no AWS execution)
         run: npm run build:aws-care-messaging-upgrade
       - name: Build and lint blocked/logs-only messaging candidate (no AWS execution)

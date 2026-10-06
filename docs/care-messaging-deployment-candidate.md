@@ -30,7 +30,13 @@ Serving requires distinct database, workforce-MFA, messaging and retention revie
 
 The template includes Lambda exception and API-level count-only `5xx` alarms. A handled 503 does not necessarily increment Lambda `Errors`, so the API alarm is required too. The API alarm covers the whole named API, not an unverified per-route metric. AWS documents `ApiId` and `5xx` for HTTP APIs: [official metric/dimension reference](https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api-metrics.html). No request bodies, JWTs, recipient addresses or health content are put in alarm dimensions or application logs.
 
-Timeouts are Lambda 29 seconds/integration 30 seconds, consistent with V2's bounded 35-second clinical transport. The candidate adds two reserved executions. It is **not yet included in the historical ten-stack qualification manifest/capacity planner**; update those tools and account for this reservation before a serving deployment. An account-only capacity snapshot is not a fleet-acceptance pass.
+Timeouts are Lambda 29 seconds/integration 30 seconds, consistent with V2's bounded 35-second clinical transport. The candidate adds two reserved executions. The capacity planner now includes all eleven candidates and requires an observed synthetic-account assumed role. It credits only observed exact named reservations, never future reductions. A ready capacity report is not a deployment or fleet-acceptance pass.
+
+## Versioned hosted target
+
+`qualification-target-messaging.example.json` is the **unfilled** eleven-stack target (`aws-clinical-core-qualification-target/2`); it is deliberately refused as a run target. Version 1 remains a strictly ten-stack historical manifest for older journeys and cannot qualify messaging. Node and PowerShell target checks require all eleven names for version 2, exact source/resource/designated-subject pins, a finished messaging stack, and the migration release in **both** its parameters and outputs. Messaging cannot borrow the voice drain posture. Nothing upgrades a saved target, reviews a placeholder, or deploys a missing stack automatically.
+
+The eleven-stack target is only part of deployment/acceptance integration. The candidate-specific operator still must physically inspect the full database ledger, uploaded ZIP/version and Lambda code digest, actual authorizers/issuer/audiences, organization binding, runtime environment and IAM before hosted journeys. Existing source checks of template parameters are not evidence that these resources were created correctly. The reviewed declaration and tests must not fabricate review hashes to satisfy missing prerequisites.
 
 ## Verification and next work
 

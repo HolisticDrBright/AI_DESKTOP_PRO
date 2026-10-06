@@ -19,10 +19,11 @@ function Get-QualificationSubjects($Target) {
 function Read-QualificationTarget([string]$Path, [string]$Region) {
   # Pre-network checks on the manifest itself; the Node CLI validates it again in full (qualification-target-manifest.ts).
   $target = Get-Content -Raw -LiteralPath $Path | ConvertFrom-Json
-  if ($target.schemaVersion -ne 'aws-clinical-core-qualification-target/1') { throw 'qualification_target_refused:schemaVersion' }
+  if ($target.schemaVersion -notin @('aws-clinical-core-qualification-target/1','aws-clinical-core-qualification-target/2')) { throw 'qualification_target_refused:schemaVersion' }
   if ($target.environment -ne 'synthetic-staging' -or $target.dataClassification -ne 'synthetic_only' -or $target.containsPhi -ne $false) { throw 'qualification_target_refused:posture' }
   if ($target.awsAccountId -notmatch '^\d{12}$' -or $target.awsAccountId -eq $QualificationTargetProductionAccount -or $target.awsAccountId -eq '000000000000') { throw 'qualification_target_refused:awsAccountId' }
   if ($target.awsRegion -ne $Region) { throw 'qualification_target_refused:awsRegion' }
+  if ($target.schemaVersion -eq 'aws-clinical-core-qualification-target/2' -and ($target.awsAccountId -ne '588966314750' -or $target.awsRegion -ne 'us-east-2')) { throw 'qualification_target_refused:messaging_account_region' }
   if (-not $target.refused -or -not $target.refused.stagingApiOrigin -or -not $target.refused.stagingDatabaseName -or -not $target.refused.stagingFoundationStackName) { throw 'qualification_target_refused:refused' }
   if ($target.apiId -cnotmatch '^[a-z0-9]{10}$' -or $target.apiId -match 'replace') { throw 'qualification_target_refused:apiId' }
   if ($target.apiOrigin -ne "https://$($target.apiId).execute-api.$Region.amazonaws.com") { throw 'qualification_target_refused:apiOrigin' }
@@ -37,6 +38,10 @@ function Read-QualificationTarget([string]$Path, [string]$Region) {
   foreach ($subject in (Get-QualificationSubjects $target)) { if ($subject -match 'replace') { throw 'qualification_target_refused:identitySubjects' } }
   if (-not $target.foundationStackName -or $target.foundationStackName -eq $target.refused.stagingFoundationStackName -or $target.foundationStackName -match 'synthetic-staging') { throw 'qualification_target_refused:foundationStackName' }
   if (-not $target.stacks) { throw 'qualification_target_refused:stacks' }
+  $expectedCandidates = @('personal-storage','privacy-operations','owned-lab','owned-voice','recording-authority','recording-capture','recording-transcription','recording-drafting','recording-cleanup-review','recording-cleanup-execution')
+  if ($target.schemaVersion -eq 'aws-clinical-core-qualification-target/2') { $expectedCandidates += 'care-messaging' }
+  $listedCandidates = @($target.stacks.PSObject.Properties.Name)
+  if ($listedCandidates.Count -ne $expectedCandidates.Count -or @($expectedCandidates | Where-Object { $_ -notin $listedCandidates }).Count -gt 0) { throw 'qualification_target_refused:stacks' }
   foreach ($stack in $target.stacks.PSObject.Properties) {
     if (-not $stack.Value -or $stack.Value -eq $target.refused.stagingFoundationStackName -or $stack.Value -match 'synthetic-staging') { throw "qualification_target_refused:stacks.$($stack.Name)" }
   }
@@ -98,6 +103,7 @@ function Assert-QualificationStacks($Target, [string[]]$Candidates, [string]$Reg
   # blocked and qualification execution enabled, against the target's API and database. A stack that reports otherwise
   # (or the staging foundation, or a missing stack) stops the run before any request.
   foreach ($candidate in $Candidates) {
+    if ($candidate -eq 'care-messaging' -and ($Target.schemaVersion -ne 'aws-clinical-core-qualification-target/2' -or $Posture -ne 'qualification')) { throw 'qualification_target_refused:messaging_version_or_posture' }
     $name = $Target.stacks.$candidate
     if (-not $name -or $name -eq $Target.refused.stagingFoundationStackName) { throw "qualification_target_refused:stacks.$candidate" }
     $described = aws cloudformation describe-stacks --stack-name $name --region $Region --query 'Stacks[0]' --output json
@@ -131,6 +137,9 @@ function Assert-QualificationStacks($Target, [string[]]$Candidates, [string]$Reg
       if ($parameters[$key] -ne $required[$key]) { throw "qualification_target_refused:stack_parameter.$candidate.$key" }
     }
     if (-not $parameters.ContainsKey('SourceCommit') -or $parameters['SourceCommit'] -ne $Target.sourceCommit) { throw "qualification_target_refused:stack_source.$candidate" }
+    if ($candidate -eq 'care-messaging') {
+      if ($parameters['MigrationReleaseSha256'] -ne $Target.migrationReleaseHash -or $outputs['MigrationReleaseSha256'] -ne $Target.migrationReleaseHash -or $outputs['DatabaseName'] -ne $Target.databaseName) { throw 'qualification_target_refused:messaging_release' }
+    }
     if ($Posture -eq 'drain') { Write-Host "Verified draining candidate $name ($candidate); it serves no one."; continue }
     $expectedSubjects = Get-QualificationSubjects $Target
     $listed = @()

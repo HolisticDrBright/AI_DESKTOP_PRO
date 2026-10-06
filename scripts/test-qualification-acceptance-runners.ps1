@@ -278,6 +278,36 @@ Invoke-Case 'retention release refuses no target at all' { & $retentionRunner -C
 Invoke-Case 'no synthetic-only confirmation' { & $exportRunner -QualificationTargetPath $good -DeploymentManifestPath $deploymentManifest } 'synthetic-only boundary'
 if ($global:External -ne 0) { throw 'an external call happened before the synthetic-only confirmation' }
 
+# 8. Version two names messaging explicitly. The historical ten-stack manifest
+# cannot stand in for it, and both live parameter and output pins are mandatory.
+Invoke-Case 'version two omitting messaging' { Export-Run (Write-Target @{ schemaVersion = 'aws-clinical-core-qualification-target/2' }) } 'qualification_target_refused:stacks'
+Invoke-Case 'version one adding an undeclared messaging candidate' { Export-Run (Write-Target -PatchStacks @{ 'care-messaging' = 'ai-clinical-core-qualification-care-messaging' }) } 'qualification_target_refused:stacks'
+$versionTwo = Write-Target @{ schemaVersion = 'aws-clinical-core-qualification-target/2' } -PatchStacks @{ 'care-messaging' = 'ai-clinical-core-qualification-care-messaging' }
+Invoke-Case 'version two can still bind an export-only journey' { Export-Run $versionTwo } $null
+Invoke-Case 'version two refuses a foreign synthetic account' { Export-Run (Write-Target @{ schemaVersion = 'aws-clinical-core-qualification-target/2'; awsAccountId = '111111111111' } -PatchStacks @{ 'care-messaging' = 'ai-clinical-core-qualification-care-messaging' }) } 'qualification_target_refused:messaging_account_region'
+. (Join-Path $PSScriptRoot 'qualification-target-verify.ps1')
+$messagingTarget = Read-QualificationTarget $versionTwo 'us-east-2'
+$messagingStack = 'ai-clinical-core-qualification-care-messaging'
+function Set-MessagingStack([string]$ParameterRelease = ('b' * 64), [string]$OutputRelease = ('b' * 64)) {
+  $body = CandidateStack | ConvertFrom-Json
+  $body.Parameters += [pscustomobject]@{ ParameterKey = 'MigrationReleaseSha256'; ParameterValue = $ParameterRelease }
+  $body.Outputs += [pscustomobject]@{ OutputKey = 'MigrationReleaseSha256'; OutputValue = $OutputRelease }
+  $body.Outputs += [pscustomobject]@{ OutputKey = 'DatabaseName'; OutputValue = 'clinical_core_qualification' }
+  $global:StackOutputs[$messagingStack] = $body | ConvertTo-Json -Depth 6 -Compress
+}
+Set-MessagingStack
+Assert-QualificationStacks $messagingTarget @('care-messaging') 'us-east-2'
+$global:passed++
+Set-MessagingStack -ParameterRelease ('c' * 64)
+Invoke-Case 'messaging with a different parameter ledger' { Assert-QualificationStacks $messagingTarget @('care-messaging') 'us-east-2' } 'qualification_target_refused:messaging_release'
+Set-MessagingStack -OutputRelease ('c' * 64)
+Invoke-Case 'messaging with a different observed ledger' { Assert-QualificationStacks $messagingTarget @('care-messaging') 'us-east-2' } 'qualification_target_refused:messaging_release'
+Set-MessagingStack
+Invoke-Case 'messaging cannot use a drain posture' { Assert-QualificationStacks $messagingTarget @('care-messaging') 'us-east-2' 'drain' } 'qualification_target_refused:messaging_version_or_posture'
+
 foreach ($name in 'CLINICAL_WORKFORCE_ID_TOKEN','CLINICAL_CONSUMER_ID_TOKEN','CLINICAL_FOREIGN_CONSUMER_ID_TOKEN','CLINICAL_STALE_CONSUMER_ID_TOKEN') { Remove-Item "Env:$name" -ErrorAction SilentlyContinue }
-Remove-Item -Recurse -Force -LiteralPath $work
+$cleanupTarget = [System.IO.Path]::GetFullPath($work)
+$cleanupParent = [System.IO.Path]::GetDirectoryName($cleanupTarget)
+if ($cleanupParent -ne [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath()).TrimEnd([System.IO.Path]::DirectorySeparatorChar) -or -not [System.IO.Path]::GetFileName($cleanupTarget).StartsWith('qualification-runner-test-')) { throw 'temporary_cleanup_boundary_refused' }
+Remove-Item -Recurse -Force -LiteralPath $cleanupTarget
 Write-Host "Hosted acceptance runner target binding: $global:passed cases passed (no AWS calls, no requests, no fixture writes)."

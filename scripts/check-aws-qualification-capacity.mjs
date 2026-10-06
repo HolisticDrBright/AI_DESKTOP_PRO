@@ -1,7 +1,30 @@
 import {execFileSync} from 'node:child_process';
-import {resolve} from 'node:path';
+import {readFileSync,mkdtempSync,rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {resolve,join,basename,dirname} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {CANDIDATES,loadTemplate} from './build-aws-qualification-parameters.mjs';
+
+// The historical parameter-example registry still owns ten source-independent
+// examples. Messaging pins its exact source SHA and is built separately, but its
+// two reservations must never disappear from the complete fleet preflight.
+export const CAPACITY_CANDIDATES = [...Object.keys(CANDIDATES),'care-messaging'];
+export function assertCapacityPrincipal(identity) {
+  if(identity?.Account !== '588966314750' || typeof identity?.Arn !== 'string'
+    || !/^arn:aws:sts::588966314750:assumed-role\/[A-Za-z0-9_+=,.@/-]+$/.test(identity.Arn)) throw new Error('synthetic_assumed_role_required');
+}
+export function loadCapacityTemplate(candidateName) {
+  if(candidateName !== 'care-messaging')return loadTemplate(candidateName);
+  const directory=mkdtempSync(join(tmpdir(),'qualification-messaging-capacity-'));
+  try {
+    execFileSync(process.execPath,['scripts/build-aws-care-messaging.mjs','--out-dir='+directory],{stdio:'pipe',timeout:60_000,windowsHide:true});
+    return JSON.parse(readFileSync(join(directory,'template.json'),'utf8'));
+  } finally {
+    const target=resolve(directory);
+    if(dirname(target)!==resolve(tmpdir()) || !basename(target).startsWith('qualification-messaging-capacity-'))throw new Error('temporary_cleanup_boundary_refused');
+    rmSync(target,{recursive:true,force:true});
+  }
+}
 
 /** Conservative preflight, not a capacity guarantee. AWS documents a 100-unit unreserved floor.
  * Reduced-quota accounts can have a lower floor, but never silently remove the candidate caps. */
@@ -42,10 +65,10 @@ async function main() {
   if(args.length!==4||args[0]!=='--api-id'||args[2]!=='--profile')throw new Error('usage: --api-id <qualification-api> --profile <synthetic-profile>');
   const apiId=args[1],profile=args[3];
   const aws=(...parts)=>JSON.parse(execFileSync('aws',[...parts,'--profile',profile,'--region','us-east-2','--output','json'],{encoding:'utf8',timeout:30000,windowsHide:true,stdio:['ignore','pipe','pipe']}));
-  if(aws('sts','get-caller-identity').Account!=='588966314750')throw new Error('synthetic_account_required');
+  assertCapacityPrincipal(aws('sts','get-caller-identity'));
   const functions=[];
-  for(const candidateName of Object.keys(CANDIDATES)) {
-    const template=loadTemplate(candidateName);
+  for(const candidateName of CAPACITY_CANDIDATES) {
+    const template=loadCapacityTemplate(candidateName);
     for(const f of reservedFunctions(template,apiId)) {
       // CloudFormation-generated names are unknown before creation. Count the whole
       // reservation as additional rather than credit an unobserved existing function.

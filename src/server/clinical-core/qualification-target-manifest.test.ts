@@ -18,6 +18,30 @@ const parameters = (): Record<string, string | undefined> => ({ DatabaseClusterA
   SourceCommit: "a".repeat(40), QualificationIdentitySubjects: "11111111-2222-4333-8444-555555555555,66666666-7777-4888-8999-000000000000,22222222-3333-4444-8555-666666666666" });
 
 describe("qualification target manifest", () => {
+  test("version two requires eleven stacks and verifies the messaging ledger in both parameters and outputs", () => {
+    expect(() => loadQualificationTargetManifest("infra/aws-clinical-core/qualification-target-messaging.example.json")).toThrow("target_placeholder");
+    const legacy = filled();
+    const value = { ...legacy, schemaVersion: "aws-clinical-core-qualification-target/2", stacks: { ...(legacy.stacks as Record<string, string>), "care-messaging": "ai-clinical-core-qualification-care-messaging" } };
+    const m = validateQualificationTargetManifest(value);
+    expect(() => validateQualificationTargetManifest({ ...value, awsAccountId: "111111111111" })).toThrow("target_account_refused");
+    expect(() => validateQualificationTargetManifest({ ...value, awsRegion: "us-west-2" })).toThrow("target_account_refused");
+    expect(m.schemaVersion).toBe("aws-clinical-core-qualification-target/2"); expect(Object.keys(m.stacks)).toHaveLength(11);
+    expect(() => validateQualificationTargetManifest({ ...value, stacks: legacy.stacks })).toThrow("target_manifest_invalid");
+    expect(() => validateQualificationTargetManifest({ ...value, schemaVersion: "aws-clinical-core-qualification-target/1" })).toThrow("target_manifest_invalid");
+    expect(() => validateQualificationTargetManifest({ ...value, stacks: { ...value.stacks, extra: "unexpected-stack" } })).toThrow("target_manifest_invalid");
+    const outputs = { PhiAllowed: "false", Activation: "blocked", QualificationExecution: "enabled", SourceCommit: m.sourceCommit,
+      DatabaseName: m.databaseName, MigrationReleaseSha256: m.migrationReleaseHash };
+    const params: Record<string, string | undefined> = { ...parameters(), MigrationReleaseSha256: m.migrationReleaseHash };
+    const check = (output = outputs, input = params, target = m, posture: "qualification" | "drain" = "qualification") =>
+      assertQualificationStackOutputs("care-messaging", output, target, input, "CREATE_COMPLETE", posture);
+    expect(() => check()).not.toThrow();
+    expect(() => check(outputs, params, manifest())).toThrow("target_stack_refused");
+    expect(() => check(outputs, params, m, "drain")).toThrow("target_stack_refused");
+    expect(() => check({ ...outputs, MigrationReleaseSha256: "c".repeat(64) })).toThrow("target_stack_refused");
+    expect(() => check(outputs, { ...params, MigrationReleaseSha256: "c".repeat(64) })).toThrow("target_stack_refused");
+    expect(() => check({ ...outputs, DatabaseName: "clinical_core" })).toThrow("target_stack_refused");
+    expect(() => check(outputs, { ...params, QualificationIdentitySubjects: "not-designated" })).toThrow("target_stack_refused");
+  });
   test("offline CLI works without npx or node on PATH and rejects changed manifests",()=>{
     const dir=mkdtempSync(join(tmpdir(),"qualification-cli-test-"));
     try{
