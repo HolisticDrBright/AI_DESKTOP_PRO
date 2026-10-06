@@ -51,6 +51,8 @@ jobs:
       - run: npm run typecheck
       - name: Refuse root credentials in fictional intake operators
         run: npm run test:synthetic-aws-principal
+      - name: Keep fictional identity timeout changes narrow
+        run: npm run test:synthetic-identity-timeout
       - name: Dependency security gate
         run: npm audit --audit-level=high
       - run: npm run lint
