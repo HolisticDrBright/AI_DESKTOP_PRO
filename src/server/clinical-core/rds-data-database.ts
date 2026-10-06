@@ -213,6 +213,10 @@ function classifyDatabaseRejection(error: unknown): ClinicalCoreDatabaseRejectio
   if (/\bcare_message_consent_required\b/.test(message)) return new ClinicalCoreDatabaseRejection("consent_required");
   if (/\bcare_message_conflict\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");
   if (/\bcare_message_invalid\b/.test(message)) return new ClinicalCoreDatabaseRejection("request_invalid");
+  if (/\bcare_connection_refused\b/.test(message)) return new ClinicalCoreDatabaseRejection("identity_refused");
+  if (/\bcare_connection_approved_copy_required\b/.test(message)) return new ClinicalCoreDatabaseRejection("consent_required");
+  if (/\bcare_connection_conflict\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");
+  if (/\bcare_connection_invalid\b/.test(message)) return new ClinicalCoreDatabaseRejection("request_invalid");
   // A settled request id can never be admitted again; the caller must treat it as a
   // decided conflict, not as an identity problem it could retry past.
   if (/\bcare_message_settled\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");

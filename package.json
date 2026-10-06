@@ -62,6 +62,7 @@
     "check:aws-core-launch-scope": "node scripts/check-aws-core-launch-scope.mjs",
     "build:aws-production-clinical-core": "node scripts/build-aws-production-clinical-core.mjs",
     "build:care-messaging-source": "node scripts/build-care-messaging-source-candidate.mjs",
+    "build:care-connections-source": "node scripts/build-care-connections-source-candidate.mjs",
     "build:aws-care-messaging-upgrade": "node scripts/build-care-messaging-schema-upgrade.mjs",
     "build:aws-care-messaging": "node scripts/build-aws-care-messaging.mjs",
     "inspect:aws-care-messaging-qualification": "node scripts/inspect-care-messaging-qualification.mjs",
