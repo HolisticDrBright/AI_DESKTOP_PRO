@@ -294,7 +294,7 @@ async function main(){
    product:{id:'product-fictional-1',ingredientKeys:['fictional-mineral'],dose:'100 mg',purchaseUrl:null}},
  ]}];
  const content={consumerProgram:{title:'Fictional hosted guide',phases}};
- const previous=await sql("select p.id as program_id,v.id as version_id,v.content,v.status from clinical_core.synthetic_desktop_programs p join clinical_core.synthetic_desktop_program_versions v on v.program_id=p.id where p.organization_id=:p0::uuid and p.name='Fictional hosted program acceptance' and p.created_by_person_id=:p1::uuid",[state.organizationId,state.users.workforce.personId]);
+ const previous=await sql("select p.id as program_id,v.id as version_id,v.content,v.status from clinical_core.synthetic_desktop_programs p join clinical_core.synthetic_desktop_program_versions v on v.program_id=p.id where p.organization_id=:p0::uuid and p.name='Fictional hosted program acceptance' and p.created_by_person_id=:p1::uuid and v.version=1",[state.organizationId,state.users.workforce.personId]);
  assert(previous.length<=1,'ambiguous_test_program');
  if(previous.length){
   const stored=typeof previous[0].content==='string'?JSON.parse(previous[0].content):previous[0].content;
@@ -333,6 +333,67 @@ async function main(){
    sourceDigest:assignment.data.sourceDigest,expectedRevision:revision,planRevision:offered.data.review.planRevision},200);
   assert(accepted.data?.state==='active','acceptance_failed');revision=accepted.data.revision;
  }else assert(offered.data.assignment.state==='active','replayed_assignment_not_active');
+ // Publish a second fictional version and prove an amendment notice reaches the
+ // existing owner without silently replacing the version they accepted.
+ const revisedContent=structuredClone(content);
+ revisedContent.consumerProgram.phases[0].items[0].instructions='Read the revised fictional lesson.';
+ revisedContent.consumerProgram.phases[0].items.push({id:'lesson-b',title:'Another fictional lesson',kind:'lesson',
+  instructions:'Read the second fictional lesson.',released:true});
+ const revisedRows=await sql('select id,content,status from clinical_core.synthetic_desktop_program_versions where program_id=:p0::uuid and organization_id=:p1::uuid and version=2',[programId,state.organizationId]);
+ assert(revisedRows.length<=1,'fictional_amendment_ambiguous');
+ let revisedVersionId=revisedRows[0]?.id;
+ if(revisedRows.length){
+  const stored=typeof revisedRows[0].content==='string'?JSON.parse(revisedRows[0].content):revisedRows[0].content;
+  assert(revisedRows[0].status==='published'&&isDeepStrictEqual(stored,revisedContent),'fictional_amendment_changed');
+ }else{
+  revisedVersionId=randomUUID();
+  await sql("insert into clinical_core.synthetic_desktop_program_versions(id,organization_id,program_id,version,status,content,created_by_person_id) values(:p0::uuid,:p1::uuid,:p2::uuid,2,'published',:p3::jsonb,:p4::uuid)",
+   [revisedVersionId,state.organizationId,programId,JSON.stringify(revisedContent),state.users.workforce.personId]);
+ }
+ const amendmentStatement='Fictional test: one lesson was revised and another was added.';
+ const existingNotices=await request('workforce','/clinical-core/workforce/content-revisions',{action:'list'},200);
+ const matchingNotices=existingNotices.data?.notices?.filter(n=>n.assignmentId===assignment.data.enrollmentId&&n.statement===amendmentStatement);
+ assert(Array.isArray(matchingNotices)&&matchingNotices.length<=1,'fictional_amendment_notice_ambiguous');
+ const beforeRevision=await request('consumer','/clinical-core/consumer/programs',{action:'read',enrollmentId:assignment.data.enrollmentId},200);
+ const preview=await request('workforce','/clinical-core/workforce/content-revisions',
+  {action:'preview',toVersionId:revisedVersionId},200);
+ assert(preview.data?.affected===(matchingNotices.length?0:1),'fictional_amendment_preview_affected');
+ if(!matchingNotices.length){
+  assert(preview.data.assignments.length===1&&preview.data.assignments[0].assignmentId===assignment.data.enrollmentId
+   &&preview.data.assignments[0].fromVersion===1&&preview.data.assignments[0].itemsAdded===1
+   &&preview.data.assignments[0].itemsRemoved===0&&preview.data.assignments[0].itemsChanged===1,
+   'fictional_amendment_preview_counts');
+ }
+ const noticePublish=await request('workforce','/clinical-core/workforce/content-revisions',{
+  action:'publish_notices',toVersionId:revisedVersionId,revisionClass:'correction',statement:amendmentStatement},200);
+ assert(noticePublish.data?.noticesCreated===(matchingNotices.length?0:1),'fictional_amendment_duplicate_notice');
+ const workforceNotices=await request('workforce','/clinical-core/workforce/content-revisions',{action:'list'},200);
+ const noticeRows=workforceNotices.data?.notices?.filter(n=>n.assignmentId===assignment.data.enrollmentId&&n.statement===amendmentStatement);
+ assert(Array.isArray(noticeRows)&&noticeRows.length===1&&noticeRows[0].revisionClass==='correction'
+  &&noticeRows[0].itemsAdded===1&&noticeRows[0].itemsRemoved===0&&noticeRows[0].itemsChanged===1,
+  'fictional_amendment_notice_changed');
+ const noticeId=noticeRows[0].noticeId;
+ const foreignNotices=await request('foreignConsumer','/clinical-core/consumer/content-revisions',{action:'list'},200);
+ assert(!foreignNotices.data?.notices?.some(n=>n.noticeId===noticeId),'fictional_amendment_foreign_read_leaked');
+ const foreignAcknowledge=await request('foreignConsumer','/clinical-core/consumer/content-revisions',
+  {action:'acknowledge',noticeId},403);
+ assert(foreignAcknowledge.error==='operation_refused','fictional_amendment_foreign_acknowledge_allowed');
+ const ownerNotices=await request('consumer','/clinical-core/consumer/content-revisions',{action:'list'},200);
+ const ownerNotice=ownerNotices.data?.notices?.find(n=>n.noticeId===noticeId);
+ if(noticeRows[0].status!=='acknowledged'){
+  assert(ownerNotice?.assignmentId===assignment.data.enrollmentId&&ownerNotice.revisionClass==='correction'
+   &&ownerNotice.itemsAdded===1&&ownerNotice.itemsRemoved===0&&ownerNotice.itemsChanged===1
+   &&ownerNotice.requiresAcknowledgement===false,'fictional_amendment_owner_notice_missing');
+  const delivered=await request('workforce','/clinical-core/workforce/content-revisions',{action:'list'},200);
+  assert(delivered.data.notices.find(n=>n.noticeId===noticeId)?.status==='delivered','fictional_amendment_delivery_missing');
+  const acknowledged=await request('consumer','/clinical-core/consumer/content-revisions',
+   {action:'acknowledge',noticeId},200);
+  assert(acknowledged.data?.status==='acknowledged','fictional_amendment_acknowledgement_failed');
+ }else assert(!ownerNotice,'acknowledged_amendment_still_listed');
+ const afterRevision=await request('consumer','/clinical-core/consumer/programs',{action:'read',enrollmentId:assignment.data.enrollmentId},200);
+ assert(afterRevision.data?.sourceDigest===beforeRevision.data?.sourceDigest
+  &&isDeepStrictEqual(afterRevision.data?.assignment,beforeRevision.data?.assignment),
+  'fictional_amendment_replaced_accepted_program');
  // A fictional assignment is already present. Exercise the actual owner-to-clinic
  // dispute lifecycle without creating another chart or claiming a clinical correction.
  const subjectId=assignment.data.enrollmentId;
@@ -389,7 +450,8 @@ async function main(){
    finalDomainReadRoutes:finalReads.length+1,finalDomainRoleAndAnonymousRefusals:finalReads.length+1,
    fictionalCartCompiledWithUnresolvedProductExcluded:true,fictionalCartReplayIdempotent:true,cartDeliveryNotImplemented:true,
    fictionalDisputeRaisedAcknowledgedAndUpheld:true,fictionalDisputeOwnerReadback:true,fictionalDisputeForeignOwnerRefused:true,
+   fictionalAmendmentDeliveredAndAcknowledged:true,fictionalAmendmentReplayIdempotent:true,fictionalAmendmentOriginalPreserved:true,
    fictionalNoteTemplatePublishedAndResolved:true,fictionalNoteTemplateDigestRefusalTested:true},
-  evidenceScope:approvedConsentTest?'hosted fictional program assignment, owner consent/form-packet, program dispute and practitioner note-template journey; no generated note, public consult endpoint, governed catalog release, provider OAuth, device test or PHI approval':'hosted fictional program assignment, program dispute and practitioner note-template journey, draft-only intake form and consent refusal; no generated note, public consult endpoint, form publication, packet delivery, governed catalog release, provider OAuth, device test or PHI approval'}));
+  evidenceScope:approvedConsentTest?'hosted fictional program assignment and amendment notice, owner consent/form-packet, program dispute and practitioner note-template journey; no generated note, public consult endpoint, governed catalog release, provider OAuth, device test or PHI approval':'hosted fictional program assignment and amendment notice, program dispute and practitioner note-template journey, draft-only intake form and consent refusal; no generated note, public consult endpoint, form publication, packet delivery, governed catalog release, provider OAuth, device test or PHI approval'}));
 }
 main().catch(error=>{console.error(JSON.stringify({verdict:'blocked',error:/^[a-z0-9_]+$/.test(error.message)?error.message:'hosted_verification_failed'}));process.exitCode=1;});
