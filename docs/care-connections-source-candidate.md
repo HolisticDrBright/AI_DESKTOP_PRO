@@ -119,7 +119,10 @@ test (94.5 seconds against its unchanged 60-second deadline). That fixture now
 uses 5,001 real inactive clinical-domain rows, retains the same inventory bound
 and deadline, and explicitly verifies no migration DDL/receipt was attempted.
 All 12 historical qualification-upgrade tests pass with this repair. The failure
-is not recast as a pass; current full-suite evidence must be recorded separately.
+is not recast as a pass. A separate clean full run at pushed runtime source
+`845f5c189639c3f1a564222858abc5ade78da1c0` passes **321 files, 3,915 tests,
+11 existing skips**, in 279.46 seconds. Final standalone typecheck and changed-
+file lint pass. No source test was skipped to obtain this result.
 
 ## Remaining integration
 
