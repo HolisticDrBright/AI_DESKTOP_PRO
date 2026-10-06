@@ -74,7 +74,7 @@ The runner is `scripts/verify-synthetic-program-routes-hosted.mjs --confirm-fict
 - Synthetic staging `clinical_core` now has 41 ledger rows, latest `20260930150000`. The source manifest lists 45 migrations; a historical alias in the live ledger accounts for one extra row. Five manifest-listed migrations remain unapplied. The isolated qualification database remains separate at 103 migrations.
 - No physical iOS/Android journey, store billing, provider live-mode acceptance, or complete security/privacy/retention review was performed.
 - PHI remains disabled. Do not infer commercial readiness, HIPAA compliance, or readiness for real patients from this document.
-- At source HEAD, the full Desktop dependency audit still reports high findings through a development-only `braces` dependency chain and `source-map-js`. A runtime-only audit reports zero findings, but the full CI security gate is not green and must not be silently weakened.
+- After the source-lockfile update to `source-map-js@1.2.2`, the full Desktop dependency audit reports five high findings through the development-only `braces` chain. A runtime-only audit reports zero findings. The full CI security gate is not green and must not be silently weakened; the upstream `braces` advisory currently lists no patched version.
 
 ## Narrow staging migration rehearsal
 
