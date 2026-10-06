@@ -84,3 +84,39 @@ changed metadata or a rollback failure are incomplete, never a pass.
 
 No candidate was deployed by writing these tools. No new installed mobile build
 or commercial/PHI readiness claim follows from their fictional unit tests.
+
+## October 6 actual read-only checkpoint
+
+The exact clean source inspected was
+`ec291f9a9a9811de011bfc65897a098d83e64337`. Preserve all three observations:
+
+1. The first invocation at `d6c3635` returned `not_completed` /
+   `database_resuming`. No write or acceptance occurred.
+2. A separate warm invocation verified the ledger read but stopped on the AWS
+   CLI's prefixed missing-stack error. That was an inspector defect, repaired
+   at `ec291f9` with a strict regression for both exact missing-stack formats
+   and explicit stderr capture. It was not an acceptance pass.
+3. The corrected invocation independently rebuilt clean source, observed the
+   synthetic assumed-role/foundation/API bindings, verified all 104 ordered
+   migration hashes twice with successful read-only rollbacks, and observed the
+   exact candidate stack absent twice. Its report is `status: not_deployed`,
+   `wholeLedgerVerified: true`, `codeUploadedVerified: false`,
+   `mutations: false`, `acceptance: false`, `phiAllowed: false`.
+
+Ledger release:
+`57fdf022f0fdd7d70be12384d6e6d54caab1a0ddb4965a884e4d59eec4c552b0`.
+This verifies the warm database/predeployment state, not cold-resume reliability,
+deployed Lambda/S3/IAM/authorizers, positive messaging, approvals or PHI readiness.
+
+Local evidence: 46 inspector tests passed, including actual ZIP structure/CRC,
+fictional exact deployments, negative bindings, changed observations, read-only
+query/rollback failures and both CLI formats. The full Desktop run passed 316
+files / 3,842 tests with 11 existing skips before the narrow CLI-format correction;
+final focused inspector tests and lint passed after it. Typecheck, lint, canonical
+schema/coverage gates, blocked build and CloudFormation lint passed. Python's
+standard ZIP reader independently extracted the single exact compiled entry and
+verified its CRC. These remain source tests, not deployed-service acceptance.
+
+V2 runtime `9ba08d0` has green hosted source CI (`37529277316`, `37529271790`).
+New Desktop CI is pending; the previous Desktop full-audit failure remains unwaived.
+Neither source CI nor skipped deployed-backend steps establish live behavior.
