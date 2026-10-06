@@ -36,7 +36,7 @@ try { $identity = $identityJson | ConvertFrom-Json -ErrorAction Stop }
 catch { throw "AWS identity lookup failed." }
 $account = "$($identity.Account)".Trim()
 if ($account -ne $deployment.aws_account_id) { throw "AWS account does not match the reviewed deployment manifest." }
-if ($QualificationTargetPath -and "$($identity.Arn)" -cnotmatch "^arn:aws:sts::$([regex]::Escape($account)):assumed-role/[A-Za-z0-9_+=,.@/-]+$") {
+if ("$($identity.Arn)" -cnotmatch "^arn:aws:sts::$([regex]::Escape($account)):assumed-role/[A-Za-z0-9_+=,.@/-]+$") {
   throw 'qualification_target_refused:principal'
 }
 if ($Region -ne $deployment.aws_region) { throw "AWS region does not match the reviewed manifest." }
