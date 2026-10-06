@@ -39,6 +39,14 @@ The guarded program migration changed only staging `clinical_core`, not the isol
 
 This is a synthetic staging journey, not a qualification execution for the other ten candidate stacks, a current mobile/Desktop release, or PHI approval. The governed catalog is not reachable from this program target, so every supplement step remains held. No device journey or real patient data was tested. The user instructed us to hold TestFlight/paid mobile builds until the remaining updates are complete.
 
+## Hosted synthetic lifecycle and calendar reads — later October 5
+
+`syntheticLifecycleMigrations` pinned the exact 35-row synthetic staging ledger and three source SQL digests: `20260930100000` external calendar, `20260930110000` owner care-data lifecycle, and `20260930120000` external-busy booking. It executed all three in a transaction, rolled them back, verified no ledger change, then applied only those three. A second inspect verified the exact 38-row ledger. The isolated qualification database was not changed.
+
+A second reviewed CloudFormation change set, `synthetic-lifecycle-routes-20261005`, added only `POST /clinical-core/consumer/care-data` and `POST /clinical-core/workforce/calendar-connection` as JWT routes. It made no Lambda code, IAM or resource replacement change; the stack reached `UPDATE_COMPLETE`. The deployed Lambda artifact is still the program release ZIP above.
+
+Hosted checks with fictional attested identities passed: consumer erasure-history read, own assignment export, zero foreign-consumer assignment export, workforce calendar read reporting disconnected, and anonymous calendar refusal. A repeat of the program journey still held the unresolved supplement and refused a foreign owner. These checks did not erase data, connect Google OAuth, prove busy-time ingestion, book an appointment, verify a physical device, or qualify production-shaped candidates. Focused local calendar/booking/care-data tests passed 54/54. The source test runner is pinned to the deployed Lambda digest and synthetic account.
+
 ## Not proven
 
 - These requests exercised an older `a300c63` personal-storage candidate, not an exact matched current V2/Desktop release.

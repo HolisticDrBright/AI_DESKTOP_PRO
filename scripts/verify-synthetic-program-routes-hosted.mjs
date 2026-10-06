@@ -66,6 +66,20 @@ async function main(){
  assert(otherWrong.error==='identity_refused','workforce_role_boundary_failed');
  const noAuth=await fetch(api+'/clinical-core/consumer/programs',{method:'POST',headers:{'content-type':'application/json'},body:'{"action":"list"}',redirect:'error'});
  assert(noAuth.status===401||noAuth.status===403,'jwt_boundary_failed');
+ const erasures=await request('consumer','/clinical-core/consumer/care-data',{action:'erasure_history'},200);
+ assert(erasures.data?.action==='erasure_history'&&Array.isArray(erasures.data.erasures),'owner_erasure_history_failed');
+ const otherErasures=await request('foreignConsumer','/clinical-core/consumer/care-data',{action:'erasure_history'},200);
+ assert(otherErasures.data?.action==='erasure_history'&&Array.isArray(otherErasures.data.erasures),'foreign_erasure_history_failed');
+ const ownerCopy=await request('consumer','/clinical-core/consumer/care-data',{action:'export',section:'assignments',limit:10},200);
+ assert(ownerCopy.data?.action==='export'&&ownerCopy.data.items.some(item=>item.enrollmentId),'owner_assignment_export_failed');
+ const foreignCopy=await request('foreignConsumer','/clinical-core/consumer/care-data',{action:'export',section:'assignments',limit:10},200);
+ assert(foreignCopy.data?.action==='export'&&foreignCopy.data.items.length===0,'foreign_assignment_export_leaked');
+ const calendar=await request('workforce','/clinical-core/workforce/calendar-connection',{action:'read'},200);
+ assert(calendar.data?.action==='read'&&typeof calendar.data.connected==='boolean','calendar_read_failed');
+ const wrongCalendarRole=await request('consumer','/clinical-core/consumer/care-data',{action:'read'},400);
+ assert(wrongCalendarRole.error==='request_invalid','care_data_vocabulary_boundary_failed');
+ const noCalendarAuth=await fetch(api+'/clinical-core/workforce/calendar-connection',{method:'POST',headers:{'content-type':'application/json'},body:'{"action":"read"}',redirect:'error'});
+ assert(noCalendarAuth.status===401||noCalendarAuth.status===403,'calendar_jwt_boundary_failed');
  // A real hosted assignment journey, but with only fictional content and an
  // intentionally unresolved product. It may not become an approved catalog item.
  const stack=JSON.parse(execFileSync('aws',['cloudformation','describe-stacks','--stack-name','ai-clinical-core-synthetic-staging','--profile',profile,'--region',region,'--output','json'],{encoding:'utf8',windowsHide:true})).Stacks[0];
@@ -80,7 +94,7 @@ async function main(){
  const fixture=JSON.parse(readFileSync(root+'/messaging-fixture.json','utf8'));
  assert(fixture.organizationId===state.organizationId,'connection_fixture_refused');
  const ledger=await sql('select count(*)::int as count,max(version) as latest from clinical_core.schema_migrations');
- assert(ledger[0]?.count===35&&ledger[0]?.latest==='20260929120000','program_migration_refused');
+ assert(ledger[0]?.count===38&&ledger[0]?.latest==='20260930120000','lifecycle_migration_refused');
  const link=await sql("select organization_id,consumer_person_id,state from clinical_core.patient_connections where id=:p0::uuid",[fixture.connectionId]);
  assert(link[0]?.organization_id===state.organizationId&&link[0]?.consumer_person_id===state.users.consumer.personId&&link[0]?.state==='verified','connection_fixture_refused');
  const membership=await sql("select role from clinical_core.organization_memberships where organization_id=:p0::uuid and person_id=:p1::uuid",[state.organizationId,state.users.workforce.personId]);
@@ -122,7 +136,9 @@ async function main(){
  assert(held.error==='identity_refused','held_product_completed');
  console.log(JSON.stringify({verdict:'pass',account,phiAllowed:false,deployedSourceCommit,deployedArtifactSha256,
   observed:{consumerAssignments:list.data.assignments.length,foreignAssignments:other.data.assignments.length,publishedPrograms:programs.data.programs.length,
-   consumerRoleRefused:true,workforceRoleRefused:true,unauthenticatedRefused:true,fictionalAssignmentAccepted:true,foreignOwnerRefused:true,unresolvedSupplementHeld:true},
-  evidenceScope:'hosted fictional program assignment; no governed catalog release, device test or PHI approval'}));
+   consumerRoleRefused:true,workforceRoleRefused:true,unauthenticatedRefused:true,fictionalAssignmentAccepted:true,foreignOwnerRefused:true,unresolvedSupplementHeld:true,
+   ownerErasureHistoryReadable:true,foreignErasureHistoryCount:otherErasures.data.erasures.length,ownerAssignmentExported:true,foreignAssignmentExportEmpty:true,
+   calendarConnected:calendar.data.connected,calendarUnauthenticatedRefused:true},
+  evidenceScope:'hosted fictional program assignment and read-only lifecycle/calendar smoke; no governed catalog release, provider OAuth, device test or PHI approval'}));
 }
 main().catch(error=>{console.error(JSON.stringify({verdict:'blocked',error:/^[a-z0-9_]+$/.test(error.message)?error.message:'hosted_verification_failed'}));process.exitCode=1;});
