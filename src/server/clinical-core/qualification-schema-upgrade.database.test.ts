@@ -38,7 +38,8 @@ const remains102 = async () => {
 };
 beforeAll(async () => {
   const { manifest, files } = JSON.parse(execFileSync(process.execPath, ['scripts/build-aws-production-clinical-core.mjs', '--json'], { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 }));
-  migrations = manifest.migrations.map((m: { version: string; file: string }) => ({ version: m.version, name: m.file.slice(15, -4), sql: files[m.file], sha256: createHash('sha256').update(files[m.file]).digest('hex') }));
+  // This operator remains pinned to its historical 102->103 transition.
+  migrations = manifest.migrations.slice(0, 103).map((m: { version: string; file: string }) => ({ version: m.version, name: m.file.slice(15, -4), sql: files[m.file], sha256: createHash('sha256').update(files[m.file]).digest('hex') }));
   pg = new PGlite({ extensions: { pgcrypto } }); await pg.exec('create extension if not exists pgcrypto');
   await applyProductionClinicalCoreMigrations(database(), migrations.slice(0, 102));
   const legacy = JSON.parse(readFileSync('infra/aws-clinical-core/synthetic-acceptance-manifest.example.json', 'utf8'));

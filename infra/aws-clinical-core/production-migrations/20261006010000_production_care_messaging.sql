@@ -1,5 +1,5 @@
--- Candidate overlay over the canonical 103-migration release. Not in the
--- production manifest yet; no release, consent, identity or data is seeded.
+-- Care messaging contract over the preserved 103-migration predecessor.
+-- No release, consent, identity or data is seeded; serving stays separately gated.
 -- Patient messages use the existing clinical inbox, rather than a second inbox.
 -- Stored in-app communication is a retained clinical record. This candidate
 -- supplies owner export, but deliberately supplies no direct erasure function.

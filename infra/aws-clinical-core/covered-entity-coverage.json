@@ -2,6 +2,35 @@
   "record": "covered-entity-coverage/1",
   "tables": [
     {
+      "table": "clinical_audit.care_message_access_events",
+      "scope": "organization_column",
+      "column": "organization_id"
+    },
+    {
+      "table": "clinical_core.care_message_thread_links",
+      "scope": "parent",
+      "column": "connection_id",
+      "parent": "clinical_core.patient_connections",
+      "parentColumn": "id",
+      "dependsOn": ["clinical_core.conversations", "clinical_core.patient_connections"]
+    },
+    {
+      "table": "clinical_core.care_message_receipts",
+      "scope": "parent",
+      "column": "conversation_id",
+      "parent": "clinical_core.care_message_thread_links",
+      "parentColumn": "conversation_id",
+      "dependsOn": ["clinical_core.care_message_thread_links", "clinical_core.messages"]
+    },
+    {
+      "table": "clinical_core.care_message_cancellations",
+      "scope": "parent",
+      "column": "connection_id",
+      "parent": "clinical_core.patient_connections",
+      "parentColumn": "id",
+      "dependsOn": ["clinical_core.patient_connections"]
+    },
+    {
       "table": "clinical_audit.consumer_storage_events",
       "scope": "retained",
       "class": "individual_account",

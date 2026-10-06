@@ -216,7 +216,10 @@ export type CoveredEntityDeletionReport = {
 const HOLDS = `select count(*)::int as holds from clinical_private.owned_legal_holds h
 where h.released_at is null and (
   exists (select 1 from clinical_core.organization_memberships m where m.person_id = h.owner_id and m.organization_id = $1)
-  or exists (select 1 from clinical_core.patient_relationships r where r.recipient_person_id = h.owner_id and r.organization_id = $1))`;
+  or exists (select 1 from clinical_core.patient_relationships r where r.recipient_person_id = h.owner_id and r.organization_id = $1)
+  or exists (select 1 from clinical_core.patient_connections c where c.consumer_person_id = h.owner_id and c.organization_id = $1)
+  or exists (select 1 from clinical_core.care_message_thread_links l join clinical_core.conversations c on c.id=l.conversation_id
+    where l.consumer_person_id=h.owner_id and c.organization_id=$1))`;
 
 async function holdsPresent(tx: ClinicalCoreTransaction, organizationId: string): Promise<boolean> {
   const result = await tx.query<{ holds: number }>(HOLDS, [clinicalUuid(organizationId)]);

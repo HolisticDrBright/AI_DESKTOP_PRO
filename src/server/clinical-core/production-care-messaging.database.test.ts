@@ -4,12 +4,13 @@ import { pgcrypto } from '@electric-sql/pglite/contrib/pgcrypto';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { deleteCoveredEntityContent, inspectCoveredEntityContent, parseCoveredEntityCoverage, deletionOrder } from './covered-entity-deletion';
 import { createProductionCareMessaging, createProductionCareMessageExport } from './production-care-messaging';
 import { ClinicalCoreDatabaseRejection, type ClinicalCoreDatabase, type ClinicalCoreTransaction } from './database';
 import type { ProductionClinicalRequestContext } from './aws-identity-consent';
 import type { CareMessageRequest } from '../../contracts/careMessages';
 
-// Real canonical production SQL plus an UNRELEASED overlay; fictional rows only.
+// Real canonical production SQL; unreleased API, fictional rows only.
 // This is not AWS, concurrency-load, activation or retention-policy evidence.
 let db: PGlite;
 let org: string, otherOrg: string, owner: string, other: string, staff: string, stranger: string;
@@ -52,7 +53,6 @@ beforeAll(async () => {
   const { manifest, files } = JSON.parse(execFileSync(process.execPath, ['scripts/build-aws-production-clinical-core.mjs', '--json'], { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024, timeout: 10000 }));
   db = new PGlite({ extensions: { pgcrypto } });
   for (const m of manifest.migrations) await db.exec(files[m.file]);
-  await db.exec(readFileSync('infra/aws-clinical-core/production-candidates/care-messaging.sql', 'utf8'));
 }, 60000);
 afterAll(async () => { await db?.close(); });
 beforeEach(async () => {
@@ -72,6 +72,27 @@ beforeEach(async () => {
 });
 
 describe('unreleased production messaging over canonical inbox', () => {
+  it('maps retained messaging to its clinic and detects a held app owner without staff membership', async () => {
+    const sent = await call(send());
+    if (sent.action !== 'send') throw new Error('wrong response');
+    const coverage = parseCoveredEntityCoverage(JSON.parse(readFileSync('infra/aws-clinical-core/covered-entity-coverage.json', 'utf8')));
+    const order = deletionOrder(coverage);
+    expect(order.indexOf('clinical_core.care_message_receipts')).toBeLessThan(order.indexOf('clinical_core.messages'));
+    expect(order.indexOf('clinical_core.care_message_thread_links')).toBeLessThan(order.indexOf('clinical_core.conversations'));
+    const admin: ClinicalCoreDatabase = { transaction: work => db.transaction(async tx => work({ query: (sql, args = []) =>
+      tx.query(sql, args.map(v => v && typeof v === 'object' && 'kind' in v && v.kind === 'uuid' && 'value' in v ? v.value : v)) } as ClinicalCoreTransaction)) };
+    const inspect = (organizationId = org) => inspectCoveredEntityContent({ database: admin, organizationId, coverage });
+    expect((await inspect()).rows).toContainEqual({ table: 'clinical_core.care_message_receipts', rows: 1 });
+    expect((await inspect(otherOrg)).holds).toBe(false);
+    await db.query("insert into clinical_private.owned_legal_holds(owner_id,reason_code,placed_by) values($1,'owner_dispute',$2)", [owner, staff]);
+    expect((await inspect()).holds).toBe(true);
+    await expect(deleteCoveredEntityContent({ database: admin, organizationId: org, coverage,
+      termination: { confirmed: true, terminationReference: 'fictional-review' } })).rejects.toThrow('legal_hold_present');
+    // A reassigned connection must not hide the original correspondence owner's hold.
+    await db.query('update clinical_core.patient_connections set consumer_person_id=$1 where id=$2', [other, connection]);
+    expect((await inspect()).holds).toBe(true); expect((await inspect(otherOrg)).holds).toBe(false);
+    expect((await db.query('select body from clinical_core.messages where id=$1', [sent.messageId])).rows[0]).toEqual({ body: 'FICTIONAL patient message' });
+  });
   it('stores one patient message in the real inbox and allows a clinician reply', async () => {
     const result = await call(send());
     if (result.action !== 'send') throw new Error('wrong response');

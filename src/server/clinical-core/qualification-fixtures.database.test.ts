@@ -42,7 +42,7 @@ beforeAll(async () => {
   await db.exec("create extension if not exists pgcrypto");
   const applied = await applyProductionClinicalCoreMigrations(admin(db), migrations);
   // The real artifact through the real apply: the verification pins (table and contract counts) hold here, not in a mock.
-  expect(applied.applied.length).toBe(103); expect(applied.clinicalRowCount).toBe(0); expect(applied.tableCount).toBe(123); expect(applied.contractCount).toBe(81);
+  expect(applied.applied.length).toBe(104); expect(applied.clinicalRowCount).toBe(0); expect(applied.tableCount).toBe(127); expect(applied.contractCount).toBe(84);
 }, 120000);
 afterAll(async () => { await db?.close(); });
 
@@ -109,7 +109,8 @@ describe("qualification fixtures", () => {
       await expect(provisionQualificationFixtures(admin(other), manifest, migrations, target)).rejects.toThrow("qualification_schema_incomplete");
       expect((await other.query<{ n: number }>("select count(*)::int n from information_schema.tables where table_schema='clinical_core'")).rows[0].n).toBe(1);
     } finally { await other.close(); }
-  });
+    // Fresh embedded Postgres startup/teardown is setup, not an API latency assertion.
+  }, 60_000);
   it('v2 registers the isolation consumer without workforce membership or a patient connection, idempotently', async () => {
     expect(legacyPerson).toBeTruthy(); expect(legacySubject).toBeTruthy();
     expect(validateQualificationFixtureManifest(consumerManifest)).toEqual(consumerManifest);

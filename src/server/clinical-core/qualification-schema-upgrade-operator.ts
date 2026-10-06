@@ -4,7 +4,7 @@ import { fromIni } from '@aws-sdk/credential-provider-ini';
 import { RDSDataClient } from '@aws-sdk/client-rds-data';
 import { loadClinicalCoreMigrations } from './migrations';
 import { createRdsDataAdministrativeDatabase } from './rds-data-database';
-import { QualificationUpgradeError, runQualificationSchemaUpgrade } from './qualification-schema-upgrade';
+import { EXPORT_RECOVERY_UPGRADE, QualificationUpgradeError, runQualificationSchemaUpgrade } from './qualification-schema-upgrade';
 import { QUALIFICATION_UPGRADE_AWS, qualificationUpgradeFromAws } from './qualification-upgrade-aws-binding';
 
 declare const __QUALIFICATION_UPGRADE_BUILD__: { sourceCommit: string; clean: boolean };
@@ -27,7 +27,8 @@ async function main() {
   const database = createRdsDataAdministrativeDatabase({ clusterArn: configuration.clusterArn, secretArn: configuration.secretArn,
     databaseName: configuration.qualificationDatabaseName, region: REGION }, { purpose: 'reviewed_production_schema_migration' },
     new RDSDataClient({ region: REGION, credentials: fromIni({ profile: PROFILE }) }));
-  const migrations = loadClinicalCoreMigrations('dist/aws-clinical-core/production-migrations');
+  // Do not silently broaden the source-reviewed historical transition.
+  const migrations = loadClinicalCoreMigrations('dist/aws-clinical-core/production-migrations').slice(0, EXPORT_RECOVERY_UPGRADE.countAfter);
   const result = await runQualificationSchemaUpgrade(database, migrations, configuration, command as 'inspect' | 'upgrade');
   console.log(JSON.stringify({ ...result, operatorSource: __QUALIFICATION_UPGRADE_BUILD__, foundation: FOUNDATION, awsAccountId: ACCOUNT }));
 }

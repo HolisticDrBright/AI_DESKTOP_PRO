@@ -16,7 +16,7 @@ const errors = [];
 const assert = (condition, message) => { if (!condition) errors.push(message); };
 
 assert(manifest.contract_version === "clinical-core-migrations/1", "generated manifest contract is invalid");
-assert(manifest.migrations.length === 103, "expected ten transformed migrations and ninety-three production overlays");
+assert(manifest.migrations.length === 104, "expected ten transformed migrations and ninety-four production overlays");
 assert(manifest.migrations.some(entry => entry.file === '20260920120000_production_owned_correction_lists.sql'), "correction lists overlay missing");
 assert(manifest.migrations.some(entry => entry.file === '20260920130000_production_owned_privacy_export_recovery.sql'), "export recovery overlay missing");
 assert(manifest.migrations.some(entry => entry.file === '20260920140000_production_owned_privacy_export_settlement.sql'), "export settlement overlay missing");
@@ -25,7 +25,8 @@ assert(manifest.migrations.some(entry => entry.file === '20260920160000_producti
 assert(manifest.migrations.some(entry => entry.file === '20260920170000_production_owned_disputes.sql'), "owner disputes overlay missing");
 assert(manifest.migrations.some(entry => entry.file === '20260921010000_production_owned_privacy_export_part_sizes.sql'), "export part-size overlay missing");
 assert(manifest.migrations.some(entry => entry.file === '20260922010000_production_record_source_regime.sql'), "record source-regime overlay missing");
-assert(manifest.migrations.at(-1)?.file === '20260928010000_production_owned_privacy_export_discovery.sql', "owner export discovery overlay must be last");
+assert(manifest.migrations.some(entry => entry.file === '20260928010000_production_owned_privacy_export_discovery.sql'), "owner export discovery overlay missing");
+assert(manifest.migrations.at(-1)?.file === '20261006010000_production_care_messaging.sql', "care messaging overlay must be last");
 assert(manifest.migrations.some(entry => entry.file === '20260920110000_production_owned_privacy_export_jobs.sql'), "privacy export jobs overlay missing");
 assert(manifest.migrations.some(entry => entry.file === '20260920100000_production_recording_processing_retention.sql'), "recording processing retention overlay missing");
 assert(manifest.migrations.some(entry => entry.file === '20260920090000_production_recording_object_intents.sql'), "recording object intents overlay missing");

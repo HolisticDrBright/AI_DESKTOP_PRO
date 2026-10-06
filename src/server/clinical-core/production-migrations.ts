@@ -19,9 +19,9 @@ export class ProductionClinicalCoreMigrationError extends Error {
 }
 
 /** Application tables in clinical_core and clinical_audit (ledger excluded) after the full artifact. */
-export const PRODUCTION_APPLICATION_TABLE_COUNT = 123;
+export const PRODUCTION_APPLICATION_TABLE_COUNT = 127;
 /** Desktop contract functions the artifact must define. */
-export const PRODUCTION_CONTRACT_COUNT = 81;
+export const PRODUCTION_CONTRACT_COUNT = 84;
 
 export type ProductionClinicalCoreMigrationResult = {
   applied: string[];
@@ -83,6 +83,11 @@ export async function applyProductionClinicalCoreMigrations(
   database: ClinicalCoreDatabase,
   migrations: ClinicalCoreMigration[],
 ): Promise<ProductionClinicalCoreMigrationResult> {
+  // Exact historical releases are still used by rollback/upgrade qualification.
+  // Counts alone cannot admit an altered predecessor artifact.
+  const release = productionArtifactReleaseHash(migrations);
+  const historical = ['d6b0a8a5d61c465f8e1db1181c52d6bf4d90db0b65068042d8ebf56358dd82b3',
+    '9bc30d04930816a523a7dc67b95944fba1d294dad4d71cf7585158fbc3a874aa'].includes(release);
   return database.transaction(async (tx) => {
     await tx.query("select pg_advisory_xact_lock(hashtext($1))", [
       "ai-desktop-pro:production-clinical-core-migrations",
@@ -164,8 +169,13 @@ export async function applyProductionClinicalCoreMigrations(
             'add_org_member','activate_my_memberships','list_my_patient_relationship_requests',
             'approve_patient_relationship','claim_patient_relationship_invitation',
             'list_my_delegated_patient_access','get_delegated_patient_records',
-            'revoke_my_patient_relationship','get_patient_chat_context'))::int as contract_count,
+            'revoke_my_patient_relationship','get_patient_chat_context',
+            'production_care_message_request','production_care_message_resolve','production_care_message_export'))::int as contract_count,
       (
+        ${historical ? '' : `(select count(*) from clinical_core.care_message_thread_links)
+        + (select count(*) from clinical_core.care_message_receipts)
+        + (select count(*) from clinical_core.care_message_cancellations)
+        + (select count(*) from clinical_audit.care_message_access_events) +`}
         (select count(*) from clinical_core.organizations)
         + (select count(*) from clinical_core.persons)
         + (select count(*) from clinical_core.identities)
@@ -290,10 +300,10 @@ export async function applyProductionClinicalCoreMigrations(
         + (select count(*) from clinical_private.recording_access_events)
       )::int as clinical_row_count`);
     const row = verification.rows[0];
-    // Pinned to the built artifact (100 migrations): 123 application tables across clinical_core and clinical_audit and 81
-    // counted contracts. qualification-fixtures.database.test.ts applies the real artifact and holds these numbers; the
-    // previous pin (114) predated migrations 79 to 100 and would have rolled back every fresh apply as verification_failed.
-    if (!row || Number(row.table_count) !== PRODUCTION_APPLICATION_TABLE_COUNT || Number(row.contract_count) !== PRODUCTION_CONTRACT_COUNT
+    // Real-artifact database tests verify current counts, zero seed rows and exact
+    // historical predecessors; no count-only historical exception is permitted.
+    if (!row || Number(row.table_count) !== (historical ? 123 : PRODUCTION_APPLICATION_TABLE_COUNT)
+      || Number(row.contract_count) !== (historical ? 81 : PRODUCTION_CONTRACT_COUNT)
       || Number(row.clinical_row_count) !== 0) {
       throw new ProductionClinicalCoreMigrationError("verification_failed");
     }

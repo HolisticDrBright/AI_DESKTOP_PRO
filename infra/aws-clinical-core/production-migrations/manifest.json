@@ -372,6 +372,10 @@
     {
       "version": "20260928010000",
       "file": "20260928010000_production_owned_privacy_export_discovery.sql"
+    },
+    {
+      "version": "20261006010000",
+      "file": "20261006010000_production_care_messaging.sql"
     }
   ]
 }
