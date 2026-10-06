@@ -33,6 +33,22 @@ only data classification is fictional qualification; `PhiAllowed` accepts
 and three infrastructure tests pass. They do not prove S3 behavior until the
 stack is created and checked against the service.
 
+## Hosted result
+
+The source-pinned change set `recording-storage-fictional-20261006` showed
+exactly two `Add` actions (`RecordingBucket`, `RecordingBucketPolicy`), no role,
+route, Lambda, replacement, or modification. Stack
+`ai-clinical-core-qualification-recording-storage` reached `CREATE_COMPLETE`.
+Its outputs report `PhiAllowed=false`, source
+`5e63597ec1855a93fb2bdae0226b6f77230a5d92`, the named dedicated bucket,
+and the existing synthetic CMK. Live S3 readback found versioning enabled,
+Object Lock enabled with **no default retention rule**, no lifecycle policy,
+all four public-access blocks true, SSE-KMS with that exact key, and the three
+explicit deny policy statements. `ListObjectVersions` returned no versions or
+delete markers. No audio or other object was written. This is storage-baseline evidence, not a
+successful capture or deletion test. The existing owned-voice bucket was not
+modified.
+
 Before any fictional audio is written, obtain the separate capture, storage,
 and retention reviews and register the correct release rows. The cleanup
 worker's real S3 Object Lock/retention responses, IAM scope, late writes,
