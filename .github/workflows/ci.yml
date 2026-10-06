@@ -33,6 +33,7 @@ jobs:
           npx vitest run src/server/clinical-core/qualification-target-manifest.test.ts src/server/clinical-core/qualification-target-observation.test.ts
           node --test scripts/check-aws-qualification-capacity.test.mjs
           node --test scripts/qualification-consent-ledger.test.mjs
+          npm run test:care-messaging-qualification-observer
       - name: Qualification wrapper parity and principal refusals (no AWS calls)
         shell: pwsh
         run: ./scripts/test-qualification-acceptance-runners.ps1

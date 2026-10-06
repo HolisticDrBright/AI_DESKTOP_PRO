@@ -4,6 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { careMessagingZip } from './care-messaging-zip.mjs';
 import { qualificationConditions, qualificationEnvironment, qualificationParameters, qualificationRules } from './qualification-execution-template.mjs';
 const args = process.argv.slice(2);
 if (args.length > 1 || args.length && !/^--out-dir=.+$/.test(args[0])) throw new Error('care_message_build_argument_invalid');
@@ -126,8 +127,11 @@ for (const [name, pool, path] of [['ConsumerMessages', 'Consumer', 'consumer/mes
     Principal: 'apigateway.amazonaws.com', SourceAccount: ref('AWS::AccountId'), SourceArn: sub(`arn:\${AWS::Partition}:execute-api:\${AWS::Region}:\${AWS::AccountId}:\${ApiId}/*/POST/clinical-core/${path}`) } };
 }
 writeFileSync(`${out}/template.json`, JSON.stringify(template, null, 2) + '\n');
+const zip=careMessagingZip(readFileSync(`${out}/index.js`));
+writeFileSync(`${out}/deployment.zip`,zip);
 writeFileSync(`${out}/artifact-manifest.json`, JSON.stringify({ contract: 'care-messaging-deployment/1', sourceCommit, sourceClean,
   migrationCount: 104, migrationReleaseSha256, codeSha256: sha(readFileSync(`${out}/index.js`)), templateSha256: sha(readFileSync(`${out}/template.json`)),
+  deploymentZipSha256:sha(zip), deploymentZipBytes:zip.length,
   functions, defaults: { phiAllowed: false, activation: 'blocked', qualification: 'disabled' }, deploymentPerformed: false,
   remaining: ['independent reviews', 'hosted target/operator binding and acceptance', 'clinic lifecycle/amendments', 'V2 production wiring', 'device acceptance'] }, null, 2) + '\n');
 console.log('Built care messaging deployment candidate: artifact-pinned, blocked/logs-only by default. No AWS access or activation.');

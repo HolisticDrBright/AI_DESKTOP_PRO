@@ -10,7 +10,7 @@ import { basename, dirname, join, resolve } from 'node:path';
 let directory: string;
 type Value = null | string | number | boolean | Value[] | { [name: string]: Value };
 type Template = { Parameters: Record<string, { Default?: Value; AllowedValues?: string[] }>; Conditions: Record<string, Value>; Resources: Record<string, { Type: string; Properties: Record<string, Value> }>; Rules: Record<string, Value> };
-let template: Template, manifest: { sourceCommit: string; sourceClean: boolean; migrationReleaseSha256: string; codeSha256: string; templateSha256: string; functions: unknown[]; defaults: unknown };
+let template: Template, manifest: { sourceCommit: string; sourceClean: boolean; migrationReleaseSha256: string; codeSha256: string; templateSha256: string; deploymentZipSha256: string; deploymentZipBytes: number; functions: unknown[]; defaults: unknown };
 function evaluate(value: Value, parameters: Record<string, Value>): unknown {
   if (value === null || typeof value !== 'object') return value;
   if (Array.isArray(value)) return value.map(v => evaluate(v, parameters));
@@ -46,6 +46,8 @@ describe('care messaging deployment artifact', () => {
   it('pins immutable object version, compiled source/release and exact emitted byte hashes', () => {
     const sha = (file: string) => createHash('sha256').update(readFileSync(join(directory, file))).digest('hex');
     expect(manifest.codeSha256).toBe(sha('index.js')); expect(manifest.templateSha256).toBe(sha('template.json'));
+    expect(manifest.deploymentZipSha256).toBe(sha('deployment.zip'));
+    expect(manifest.deploymentZipBytes).toBe(readFileSync(join(directory, 'deployment.zip')).length);
     expect(template.Parameters.SourceCommit.AllowedValues).toEqual([manifest.sourceCommit]);
     expect(template.Parameters.MigrationReleaseSha256.AllowedValues).toEqual([manifest.migrationReleaseSha256]);
     expect(manifest.migrationReleaseSha256).toBe('57fdf022f0fdd7d70be12384d6e6d54caab1a0ddb4965a884e4d59eec4c552b0');

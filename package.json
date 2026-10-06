@@ -64,6 +64,8 @@
     "build:care-messaging-source": "node scripts/build-care-messaging-source-candidate.mjs",
     "build:aws-care-messaging-upgrade": "node scripts/build-care-messaging-schema-upgrade.mjs",
     "build:aws-care-messaging": "node scripts/build-aws-care-messaging.mjs",
+    "inspect:aws-care-messaging-qualification": "node scripts/inspect-care-messaging-qualification.mjs",
+    "test:care-messaging-qualification-observer": "node --test scripts/care-messaging-qualification-observer.test.mjs",
     "build:aws-recording-authority": "node scripts/build-aws-recording-authority.mjs",
     "build:aws-recording-capture": "node scripts/build-aws-recording-authority.mjs --capture",
     "build:aws-recording-cleanup-review": "node scripts/build-aws-recording-authority.mjs --cleanup-review",
