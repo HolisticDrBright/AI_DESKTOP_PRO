@@ -333,3 +333,32 @@ are terminal failures. The inspected main jobs fail at **Dependency security
 gate**; independent connection/message and fixture/browser jobs pass. A gated
 deployed-backend job can report success while its secret-dependent steps are
 skipped; it is not hosted acceptance. The full audit is not waived.
+
+### Exact source and AWS inspection receipts
+
+The repair is clean and pushed at
+`6d3b84160d143133035be075d6a4d0d8e3bc3ad2`. The canonical zero-seed gate
+still reports 105 migrations and the coverage gate 207 tables. The connection
+source library, blocked messaging candidate and qualification-only operator
+rebuild successfully from that exact clean source. Messaging ZIP SHA-256 is
+`8131f662028f4ecb2bce3fae302c7f4fda30ef6f01b14cd6436726fa26fdc261`;
+operator bundle SHA-256 is
+`3142f9ad188c7d518659c016234b71e44752d5599725c2ef96ec5f9d1c115f8e`.
+No candidate was uploaded or deployed.
+
+Actual AWS member-role inspection first failed with
+`upgrade_failed:transaction_start`; it is not acceptance. A separate read-only
+inspection passed, followed by an already-applied rollback rehearsal and its
+independent readback. Both observed 105 migrations, 207 tables, 46 rows and
+digest `129abce49aec8e4f3f8e73f6c10c18e94827d0ae0108e176419aede5d36280bc`.
+Rehearsal returned `rolledBack:true`, `alreadyApplied:true`, `applied:false`.
+No new SQL, row, identity, copy, consent, provider or activation was committed.
+The generic start failure does not identify its provider cause; the warm pass
+does not close cold-start reliability or prove ambiguous-failure behavior on AWS.
+
+AST-only Graphify regeneration completed with 12,705 nodes, 25,660 edges and
+908 communities. Forty-nine unsupported/unparsed source files remain absent;
+HTML is skipped for size. This is code navigation, not runtime acceptance.
+New source CI runs `37546178583` and `37546175030` are in progress at inspection,
+not claimed green. The full dependency scan still has five high findings; the
+security gate remains unchanged. Paid mobile builds and PHI activation stay held.
