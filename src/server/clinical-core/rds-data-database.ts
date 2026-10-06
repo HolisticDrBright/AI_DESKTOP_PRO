@@ -210,6 +210,7 @@ function classifyDatabaseRejection(error: unknown): ClinicalCoreDatabaseRejectio
   if (record.name !== "DatabaseErrorException" || typeof record.message !== "string") return undefined;
   const message = record.message;
   if (/\bcare_message_refused\b/.test(message)) return new ClinicalCoreDatabaseRejection("identity_refused");
+  if (/\bcare_message_consent_required\b/.test(message)) return new ClinicalCoreDatabaseRejection("consent_required");
   if (/\bcare_message_conflict\b/.test(message)) return new ClinicalCoreDatabaseRejection("conflict");
   if (/\bcare_message_invalid\b/.test(message)) return new ClinicalCoreDatabaseRejection("request_invalid");
   // A settled request id can never be admitted again; the caller must treat it as a

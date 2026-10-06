@@ -19,6 +19,7 @@ const consentCopy='I agree to store and use fictional test intake data in the AL
 const consentVersion='fictional-intake-2026-10-05';
 const consentDigest=createHash('sha256').update(consentCopy,'utf8').digest('hex');
 const assert=(ok,code)=>{if(!ok)throw Error(code);};
+let firstRequestObservation;
 function totp(secret){
  const alphabet='ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';let bits=0,value=0;const bytes=[];
  for(const letter of secret.toUpperCase().replace(/=+$/,'')){const digit=alphabet.indexOf(letter);assert(digit>=0,'mfa_secret_invalid');value=(value<<5)|digit;bits+=5;if(bits>=8){bits-=8;bytes.push((value>>bits)&255);}}
@@ -54,7 +55,9 @@ async function main(){
   assert(claims.token_use==='id','token_kind_refused');
  }
  async function request(role,path,body,expected){
+  const startedAt=new Date().toISOString(),started=performance.now();
   const result=await fetch(api+path,{method:'POST',headers:{authorization:'Bearer '+tokens[role],'content-type':'application/json'},body:JSON.stringify(body),redirect:'error',signal:AbortSignal.timeout(30000)});
+  firstRequestObservation??={route:path,startedAt,status:result.status,durationMs:Math.round(performance.now()-started)};
   const raw=await result.text();assert(raw.length<250000,'response_oversize');let parsed;try{parsed=JSON.parse(raw);}catch{throw Error('response_not_json');}
   if(result.status!==expected){const category=typeof parsed.error==='string'&&/^[a-z_]+$/.test(parsed.error)?parsed.error:'unknown';throw Error('unexpected_status_'+role+'_'+path.replace(/[^a-z]/gi,'_')+'_'+result.status+'_'+category);}
   return parsed;
@@ -439,6 +442,7 @@ async function main(){
   sourceDigest:assignment.data.sourceDigest,expectedRevision:revision,itemId:'supp-1'},403);
  assert(held.error==='identity_refused','held_product_completed');
  console.log(JSON.stringify({verdict:'pass',account,phiAllowed:false,deployedSourceCommit,deployedArtifactSha256,
+  firstRequestObservation,
   observed:{consumerAssignments:list.data.assignments.length,foreignAssignments:other.data.assignments.length,publishedPrograms:programs.data.programs.length,
    consumerRoleRefused:true,workforceRoleRefused:true,unauthenticatedRefused:true,fictionalAssignmentAccepted:true,foreignOwnerRefused:true,unresolvedSupplementHeld:true,
    ownerErasureHistoryReadable:true,foreignErasureHistoryCount:otherErasures.data.erasures.length,ownerAssignmentExported:true,foreignAssignmentExportEmpty:true,
@@ -455,4 +459,4 @@ async function main(){
    fictionalNoteTemplatePublishedAndResolved:true,fictionalNoteTemplateDigestRefusalTested:true},
   evidenceScope:approvedConsentTest?'hosted fictional program assignment and amendment notice, owner consent/form-packet, program dispute and practitioner note-template journey; no generated note, public consult endpoint, governed catalog release, provider OAuth, device test or PHI approval':'hosted fictional program assignment and amendment notice, program dispute and practitioner note-template journey, draft-only intake form and consent refusal; no generated note, public consult endpoint, form publication, packet delivery, governed catalog release, provider OAuth, device test or PHI approval'}));
 }
-main().catch(error=>{console.error(JSON.stringify({verdict:'blocked',error:/^[a-z0-9_]+$/.test(error.message)?error.message:'hosted_verification_failed'}));process.exitCode=1;});
+main().catch(error=>{console.error(JSON.stringify({verdict:'blocked',firstRequestObservation,error:/^[a-z0-9_]+$/.test(error.message)?error.message:'hosted_verification_failed'}));process.exitCode=1;});
