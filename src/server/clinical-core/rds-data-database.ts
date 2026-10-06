@@ -6,13 +6,13 @@ import {
   BeginTransactionCommand,
   CommitTransactionCommand,
   ExecuteStatementCommand,
-  RDSDataClient,
   RollbackTransactionCommand,
   type Field,
   type SqlParameter,
 } from "@aws-sdk/client-rds-data";
 import { ClinicalCoreDatabaseRejection, type ClinicalCoreDatabase, type ClinicalCoreQueryResult, type ClinicalCoreTransaction, type ClinicalUuid } from "./database";
 import {retryDatabaseResume} from './rds-resume-retry';
+import { createSingleAttemptRdsClient } from './rds-single-attempt-client';
 
 export type RdsDataConfiguration = {
   clusterArn: string;
@@ -38,7 +38,7 @@ const DB_NAME = /^[a-z][a-z0-9_]{0,62}$/;
 
 export function createRdsDataClinicalCoreDatabase(
   configuration: RdsDataConfiguration,
-  client: RdsDataCommandClient = new RDSDataClient({ region: configuration.region }),
+  client: RdsDataCommandClient = createSingleAttemptRdsClient({ region: configuration.region }),
 ): ClinicalCoreDatabase {
   return createRdsDataDatabase(configuration, client, "clinical_core_api");
 }
@@ -47,7 +47,7 @@ export function createRdsDataClinicalCoreDatabase(
 export function createRdsDataAdministrativeDatabase(
   configuration: RdsDataConfiguration,
   authorization: { purpose: "reviewed_synthetic_migration" | "reviewed_reference_catalog_import" | "reviewed_production_schema_migration" | "reviewed_retention_service_release" | "reviewed_covered_entity_termination" },
-  client: RdsDataCommandClient = new RDSDataClient({ region: configuration.region }),
+  client: RdsDataCommandClient = createSingleAttemptRdsClient({ region: configuration.region }),
 ): ClinicalCoreDatabase {
   if (!["reviewed_synthetic_migration", "reviewed_reference_catalog_import", "reviewed_production_schema_migration", "reviewed_retention_service_release", "reviewed_covered_entity_termination"].includes(authorization.purpose)) {
     throw new RdsDataDatabaseError("configuration_invalid");

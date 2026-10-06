@@ -212,7 +212,7 @@ async function main(){
  const stack=JSON.parse(execFileSync('aws',['cloudformation','describe-stacks','--stack-name','ai-clinical-core-synthetic-staging','--profile',profile,'--region',region,'--output','json'],{encoding:'utf8',windowsHide:true})).Stacks[0];
  const outputs=Object.fromEntries(stack.Outputs.map(x=>[x.OutputKey,x.OutputValue]));
  assert(outputs.PhiAllowed==='false'&&outputs.DataClassification==='synthetic_only'&&outputs.DatabaseName==='clinical_core','clinical_target_refused');
- const rds=new RDSDataClient({region,credentials:fromIni({profile})});
+ const rds=new RDSDataClient({region,credentials:fromIni({profile}),maxAttempts:1});
  async function sql(statement,values=[]){
   const result=await rds.send(new ExecuteStatementCommand({resourceArn:outputs.DatabaseClusterArn,secretArn:outputs.DatabaseSecretArn,database:'clinical_core',sql:statement,
    parameters:values.map((v,i)=>({name:'p'+i,value:{stringValue:String(v)}})),formatRecordsAs:'JSON'}));

@@ -57,7 +57,7 @@ async function run() {
   const database = createRdsDataAdministrativeDatabase(
     { clusterArn, secretArn, databaseName: required("CLINICAL_DATABASE_NAME"), region },
     { purpose: "reviewed_covered_entity_termination" },
-    new RDSDataClient({ region, credentials: fromIni({ profile }) }),
+    new RDSDataClient({ region, credentials: fromIni({ profile }), maxAttempts: 1 }),
   );
 
   const observed = await inspectCoveredEntityContent({ database, organizationId, coverage });

@@ -45,7 +45,7 @@ async function run() {
   const identity = JSON.parse(execFileSync("aws", ["sts", "get-caller-identity", "--profile", profile, "--region", region, "--output", "json"],
     { encoding: "utf8", timeout: 30000, stdio: ["ignore", "pipe", "pipe"] }));
   assertQualificationOperatorIdentity(identity, configuration.expectedAccountId);
-  const client = new RDSDataClient({ region, credentials: fromIni({ profile }) });
+  const client = new RDSDataClient({ region, credentials: fromIni({ profile }), maxAttempts: 1 });
   if (command === "inspect") {
     console.log(JSON.stringify(await inspectQualificationTarget(client, configuration)));
     return;

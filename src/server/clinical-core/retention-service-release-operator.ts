@@ -44,7 +44,7 @@ async function run() {
   const database = createRdsDataAdministrativeDatabase(
     { clusterArn, secretArn, databaseName: required("CLINICAL_DATABASE_NAME"), region },
     { purpose: "reviewed_retention_service_release" },
-    new RDSDataClient({ region, credentials: fromIni({ profile }) }),
+    new RDSDataClient({ region, credentials: fromIni({ profile }), maxAttempts: 1 }),
   );
   if (command === "inspect") {
     console.log(JSON.stringify({ mode: "retention_service_release_inspection_read_only", phiAllowed: process.env.PHI_ALLOWED === "true", ...(await inspectRetentionServiceReleases(database)) }));

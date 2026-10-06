@@ -36,6 +36,7 @@ jobs:
         run: |
           npx vitest run src/server/clinical-core/care-connections-upgrade-command.test.ts
           npx vitest run src/server/clinical-core/care-connections-database-binding.test.ts
+          npx vitest run src/server/clinical-core/rds-single-attempt-client.test.ts src/server/clinical-core/rds-data-database.test.ts src/server/clinical-core/rds-resume-retry.test.ts
           npm run build:aws-care-connections-upgrade
       - name: Versioned target and complete fleet capacity regressions (no AWS access)
         run: |

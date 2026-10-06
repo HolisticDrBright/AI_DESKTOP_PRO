@@ -46,7 +46,7 @@ async function run() {
   const database = createRdsDataAdministrativeDatabase(
     { clusterArn, secretArn, databaseName, region },
     { purpose: "reviewed_production_schema_migration" },
-    new RDSDataClient({ region, credentials: fromIni({ profile }) }),
+    new RDSDataClient({ region, credentials: fromIni({ profile }), maxAttempts: 1 }),
   );
   if (command === "inspect") {
     const inspection = await inspectProductionClinicalCoreMigrations(database, migrations);

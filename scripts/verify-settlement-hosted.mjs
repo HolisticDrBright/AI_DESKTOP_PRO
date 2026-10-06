@@ -34,7 +34,7 @@ async function main() {
     check(claims.sub === user.subject && claims['custom:person_id'] === user.personId && claims['custom:organization_id'] === state.organizationId && claims['custom:synthetic_attested'] === 'true' && claims.exp * 1000 > Date.now() + 300000, 'fresh_identity_required');
   }
   check(Boolean(state.users.workforce.mfaChallengeVerifiedAt), 'workforce_mfa_missing');
-  const client = new RDSDataClient({ region, credentials: fromIni({ profile }), maxAttempts: 2 });
+  const client = new RDSDataClient({ region, credentials: fromIni({ profile }), maxAttempts: 1 });
   const common = { resourceArn: o.DatabaseClusterArn, secretArn: o.DatabaseSecretArn, database: o.DatabaseName };
   const q = async (sql, values = [], transactionId) => {
     const result = await client.send(new ExecuteStatementCommand({ ...common, transactionId, sql, parameters: values.map((v, i) => ({ name: 'p' + i, value: { stringValue: String(v) } })), formatRecordsAs: 'JSON' }));

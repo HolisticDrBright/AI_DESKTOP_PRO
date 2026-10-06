@@ -34,7 +34,7 @@ async function main() {
   const local = loadClinicalCoreMigrations();
   const migration = local.find(x => x.version === version);
   check(migration?.sha256 === expectedHash, 'artifact_changed');
-  const client = new RDSDataClient({ region, credentials: fromIni({ profile }), maxAttempts: 2 });
+  const client = new RDSDataClient({ region, credentials: fromIni({ profile }), maxAttempts: 1 });
   const common = { resourceArn: o.DatabaseClusterArn, secretArn: o.DatabaseSecretArn, database: o.DatabaseName };
   const q = async (sql, parameters = [], transactionId) => {
     statementNumber++;

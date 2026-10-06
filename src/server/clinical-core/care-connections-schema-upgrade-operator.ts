@@ -19,7 +19,7 @@ executeCareConnectionsUpgradeCommand(process.argv.slice(2), __CARE_CONNECTIONS_U
   loadMigrations: () => loadClinicalCoreMigrations('dist/aws-clinical-core/production-migrations'),
   createDatabase: c => createRdsDataAdministrativeDatabase({ clusterArn: c.clusterArn, secretArn: c.secretArn,
     databaseName: c.qualificationDatabaseName, region }, { purpose: 'reviewed_production_schema_migration' },
-    new RDSDataClient({ region, credentials: fromIni({ profile }) })),
+    new RDSDataClient({ region, credentials: fromIni({ profile }), maxAttempts: 1 })),
 }).then(result => console.log(JSON.stringify(result))).catch(error => {
   console.error(error instanceof CareConnectionsUpgradeError ? `${error.category}${error.stage ? ':' + error.stage : ''}` : 'care_connections_upgrade_operator_failed');
   process.exitCode = 1;

@@ -293,15 +293,43 @@ ledger, an atomic deployment snapshot, real concurrent DDL or a deployed
 consumer connection. Copy registration, handler/template integration, V2 UI
 and the actual hosted serving/settlement/device matrix remain unfinished.
 
-### Additional transport finding, not yet repaired
+### RDS mutation transport repair
 
-Inspection of the installed SDK's actual configuration found that
-`new RDSDataClient({region:'us-east-2'})` resolves `maxAttempts` to **3**;
-the check sent no requests. Several shared adapters/operators leave that
-default implicit, and two synthetic scripts explicitly set it to 2. They can
-therefore retry an ambiguous database mutation underneath the application-level
-no-retry rule. Next engineering: pin mutation clients to one SDK attempt,
-execute real SDK middleware tests with a fictional HTTP transport, preserve
-only the explicit provider-confirmed database-resume retry before a transaction
-starts, then requalify exact rebuilt candidates. Current successful receipts
-do not establish behavior under an ambiguous network/write/commit failure.
+The installed SDK's default was **three attempts**. Before the repair, actual
+SDK middleware tests with a fictional HTTP transport reproduced three requests
+for each retryable begin, mutation and commit failure. No AWS requests were
+sent by these regression tests. The shared clinical and administrative database
+adapters now use a single-attempt factory. It captures configuration once,
+overrides supplied retry-count providers and refuses custom retry strategies.
+Every other shipped RDS constructor in source and scripts now explicitly pins
+`maxAttempts:1`, including the two synthetic scripts that previously set 2.
+
+The explicit `DatabaseResumingException` retry remains limited to admission
+before a transaction begins and eligible read-only inspection. No timeout,
+throttling response, general server failure, transaction body or commit is
+automatically repeated. An uncertain rollback remains best effort, not proof
+of success, non-delivery or deletion.
+
+All **202 focused tests** pass across the actual-SDK, database-adapter, resume
+and connection-command suites. They cover begin/write/commit timeouts, throttling
+and server errors, uncertain rollback, supplied retry options and source-level
+constructor regressions. The AST check rejects unsafe spread overrides, computed
+retry keys, aliased imports and namespace constructors. Standalone typecheck,
+changed-file lint and complete CI YAML parsing pass. The 50 credential-free
+deployment/ledger/registrar tests pass too. Initial new-test typing and an
+incorrect fictional endpoint path were corrected before the passing run; those
+failed runs are not reported as passes.
+
+The final full Desktop regression run passes **324 files, 3,979 tests**, with
+11 existing skips, in 304.36 seconds. Exact candidates and operators must be
+rebuilt from clean source before use; previously serving
+Lambdas are unchanged. This is transport/source evidence, not hosted ambiguity,
+concurrent claim, installed-app or PHI activation evidence. Canonical SQL and
+the 105-migration identity are unchanged.
+
+Prior Desktop documentation head `f43bbca` CI runs `37544290731` and
+`37544283819`, and runtime `d9b0a74` runs `37543645583` and `37543639510`,
+are terminal failures. The inspected main jobs fail at **Dependency security
+gate**; independent connection/message and fixture/browser jobs pass. A gated
+deployed-backend job can report success while its secret-dependent steps are
+skipped; it is not hosted acceptance. The full audit is not waived.

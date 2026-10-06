@@ -26,7 +26,7 @@ async function main() {
   // are copied out of the profile and no secret value is fetched by this operator.
   const database = createRdsDataAdministrativeDatabase({ clusterArn: configuration.clusterArn, secretArn: configuration.secretArn,
     databaseName: configuration.qualificationDatabaseName, region: REGION }, { purpose: 'reviewed_production_schema_migration' },
-    new RDSDataClient({ region: REGION, credentials: fromIni({ profile: PROFILE }) }));
+    new RDSDataClient({ region: REGION, credentials: fromIni({ profile: PROFILE }), maxAttempts: 1 }));
   // Do not silently broaden the source-reviewed historical transition.
   const migrations = loadClinicalCoreMigrations('dist/aws-clinical-core/production-migrations').slice(0, EXPORT_RECOVERY_UPGRADE.countAfter);
   const result = await runQualificationSchemaUpgrade(database, migrations, configuration, command as 'inspect' | 'upgrade');

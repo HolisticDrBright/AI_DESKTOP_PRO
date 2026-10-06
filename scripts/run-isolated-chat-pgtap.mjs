@@ -6,7 +6,7 @@ if (!clusterArn?.includes(":cluster:ai-clinical-core-synthetic-")
   || !secretArn?.includes(":secret:rds!cluster-")
   || !/^alp_chat_rls_synthetic_[a-z0-9_]{1,30}$/.test(databaseName ?? "")
   || !migrationPath || !testPath) throw new Error("isolated_chat_test_configuration_refused");
-const client = new RDSDataClient({ region: "us-east-2" });
+const client = new RDSDataClient({ region: "us-east-2", maxAttempts: 1 });
 const base = { resourceArn: clusterArn, secretArn };
 
 function split(sql) {

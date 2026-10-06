@@ -35,7 +35,7 @@ const identity = observeSyntheticMemberIdentity();
 if (identity.Account !== account) throw new Error('AWS account mismatch; no write attempted.');
 const foundation = aws('cloudformation', 'describe-stacks', '--stack-name', stack).Stacks?.[0];
 const outputs = assertQualificationConsentFoundation(foundation);
-const client = new RDSDataClient({ region, credentials: fromIni({ profile }) });
+const client = new RDSDataClient({ region, credentials: fromIni({ profile }), maxAttempts: 1 });
 const base = { resourceArn: outputs.DatabaseClusterArn, secretArn: outputs.DatabaseSecretArn, database };
 const query = (sql, parameters = [], transactionId) => client.send(new ExecuteStatementCommand({ ...base, sql, parameters, transactionId }));
 let transactionId;

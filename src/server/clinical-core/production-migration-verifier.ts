@@ -38,7 +38,7 @@ async function verify() {
   const directory = process.env.CLINICAL_PRODUCTION_MIGRATIONS?.trim()
     || path.join(process.cwd(), "dist", "aws-clinical-core", "production-migrations");
   const migrations = loadClinicalCoreMigrations(directory);
-  const client = new RDSDataClient({ region });
+  const client = new RDSDataClient({ region, maxAttempts: 1 });
   const common = { resourceArn, secretArn, database };
   const begun = await client.send(new BeginTransactionCommand(common));
   const transactionId = begun.transactionId;

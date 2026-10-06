@@ -28,7 +28,7 @@ async function main() {
   const migrations = loadClinicalCoreMigrations('dist/aws-clinical-core/production-migrations').slice(0, CARE_MESSAGING_UPGRADE.countAfter);
   const database = createRdsDataAdministrativeDatabase({ clusterArn: configuration.clusterArn, secretArn: configuration.secretArn,
     databaseName: configuration.qualificationDatabaseName, region }, { purpose: 'reviewed_production_schema_migration' },
-  new RDSDataClient({ region, credentials: fromIni({ profile }) }));
+  new RDSDataClient({ region, credentials: fromIni({ profile }), maxAttempts: 1 }));
   // A physical rollback rehearsal is mandatory in this shipped write entry point.
   // No review placeholder, changed migration or alternate database can bypass it.
   const rehearsal = command === 'upgrade' ? await runCareMessagingSchemaUpgrade(database, migrations, configuration, 'rehearse') : undefined;

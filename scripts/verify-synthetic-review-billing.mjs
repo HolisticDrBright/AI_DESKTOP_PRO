@@ -23,7 +23,7 @@ const common = {
   secretArn: required("CLINICAL_DATABASE_SECRET_ARN"),
   database: required("CLINICAL_DATABASE_NAME"),
 };
-const client = new RDSDataClient({ region: process.env.AWS_REGION });
+const client = new RDSDataClient({ region: process.env.AWS_REGION, maxAttempts: 1 });
 
 async function execute(sql, transactionId, parameters = []) {
   return client.send(new ExecuteStatementCommand({
