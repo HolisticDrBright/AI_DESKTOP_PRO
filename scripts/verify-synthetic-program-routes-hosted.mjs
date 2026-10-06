@@ -139,6 +139,70 @@ async function main(){
   const denied=await fetch(api+path,{method:'POST',headers:{authorization:'Bearer '+tokens[wrongRole],'content-type':'application/json'},body:JSON.stringify(body),redirect:'error'});
   assert(denied.status===401||denied.status===403,'final_route_role_boundary_failed');
  }
+ // A fictional practice template is safe to author only if this isolated test
+ // organization has no other active SOAP template. Never overwrite a clinic choice.
+ const templateName='Fictional hosted SOAP template';
+ const templateSections=[{key:'S',label:'Subjective',guidance:'Fictional test observations only.'},
+  {key:'P',label:'Plan',guidance:'Fictional test follow-up only.'}];
+ const templateList=await request('workforce','/clinical-core/workforce/note-templates',{action:'list'},200);
+ const activeSoap=templateList.data?.templates?.filter(t=>t.noteType==='soap'&&t.status==='active');
+ assert(Array.isArray(activeSoap)&&activeSoap.length<=1&&(!activeSoap.length||activeSoap[0].name===templateName),
+  'fictional_template_slot_not_isolated');
+ let templateId=activeSoap[0]?.templateId;
+ let templateRead=templateId?await request('workforce','/clinical-core/workforce/note-templates',
+  {action:'read',templateId},200):null;
+ if(!templateId){
+  const saved=await request('workforce','/clinical-core/workforce/note-templates',{
+   action:'save_draft',noteType:'soap',name:templateName,sections:templateSections},200);
+  assert(saved.data?.status==='draft'&&saved.data.templateId,'fictional_template_draft_failed');
+  templateId=saved.data.templateId;
+  templateRead=await request('workforce','/clinical-core/workforce/note-templates',{action:'read',templateId},200);
+ }
+ const draft=templateRead.data?.versions?.find(v=>v.status==='draft');
+ const currentTemplate=templateRead.data?.versions?.find(v=>v.status==='published');
+ assert(templateRead.data?.name===templateName&&templateRead.data.noteType==='soap'
+  &&(!currentTemplate||isDeepStrictEqual(currentTemplate.sections,templateSections))
+  &&(!draft||isDeepStrictEqual(draft.sections,templateSections)),'fictional_template_content_changed');
+ if(draft){
+  const stale=await request('workforce','/clinical-core/workforce/note-templates',
+   {action:'publish',templateId,contentSha256:'0'.repeat(64)},409);
+  assert(stale.error==='digest_stale','fictional_template_stale_digest_allowed');
+  const publishedTemplate=await request('workforce','/clinical-core/workforce/note-templates',
+   {action:'publish',templateId,contentSha256:draft.contentSha256},200);
+  assert(publishedTemplate.data?.status==='published'&&publishedTemplate.data.contentSha256===draft.contentSha256,
+   'fictional_template_publish_failed');
+ }
+ const draftingContext=await request('workforce','/clinical-core/workforce/note-drafting-context',
+  {action:'resolve',noteType:'soap'},200);
+ assert(draftingContext.data?.template?.templateId===templateId,'fictional_drafting_template_id_mismatch');
+ assert(isDeepStrictEqual(draftingContext.data.template.sections.map(({key,label,guidance})=>({key,label,guidance:guidance??null})),
+  templateSections.map(({key,label,guidance})=>({key,label,guidance:guidance??null}))),
+  'fictional_drafting_sections_mismatch');
+ assert(draftingContext.data.context?.breadth==='none','fictional_drafting_breadth_mismatch');
+ // `none` means no prior chart was requested or searched, not an available empty chart.
+ assert(draftingContext.data.context.available===false
+  &&draftingContext.data.context.withheldReason===null,'fictional_drafting_context_claimed_prior_chart');
+ // Keep a second, unpublished fictional draft to prove the stale-digest
+ // refusal on every replay. A failed publish must not create a live template.
+ const probeName='Fictional stale-digest probe';
+ const probeSections=[{key:'T',label:'Test',guidance:'Fictional test content only.'}];
+ const narrative=templateList.data.templates.filter(t=>t.noteType==='narrative'&&t.status==='active');
+ assert(narrative.length<=1&&(!narrative.length||narrative[0].name===probeName),
+  'fictional_digest_probe_slot_not_isolated');
+ let probeId=narrative[0]?.templateId;
+ if(!probeId){
+  const saved=await request('workforce','/clinical-core/workforce/note-templates',{
+   action:'save_draft',noteType:'narrative',name:probeName,sections:probeSections},200);
+  assert(saved.data?.status==='draft'&&saved.data.templateId,'fictional_digest_probe_draft_failed');
+  probeId=saved.data.templateId;
+ }
+ const probeRead=await request('workforce','/clinical-core/workforce/note-templates',{action:'read',templateId:probeId},200);
+ assert(probeRead.data?.name===probeName&&probeRead.data.versions.length===1
+  &&probeRead.data.versions[0].status==='draft'
+  &&isDeepStrictEqual(probeRead.data.versions[0].sections,probeSections),'fictional_digest_probe_changed');
+ const staleProbe=await request('workforce','/clinical-core/workforce/note-templates',
+  {action:'publish',templateId:probeId,contentSha256:'0'.repeat(64)},409);
+ assert(staleProbe.error==='digest_stale','fictional_digest_probe_published_stale');
  // A real hosted assignment journey, but with only fictional content and an
  // intentionally unresolved product. It may not become an approved catalog item.
  const stack=JSON.parse(execFileSync('aws',['cloudformation','describe-stacks','--stack-name','ai-clinical-core-synthetic-staging','--profile',profile,'--region',region,'--output','json'],{encoding:'utf8',windowsHide:true})).Stacks[0];
@@ -324,7 +388,8 @@ async function main(){
    fictionalFormCreatedOrReused:true,packetWithoutConsentRefused,deniedPacketNotPersisted,intakeJourney,
    finalDomainReadRoutes:finalReads.length+1,finalDomainRoleAndAnonymousRefusals:finalReads.length+1,
    fictionalCartCompiledWithUnresolvedProductExcluded:true,fictionalCartReplayIdempotent:true,cartDeliveryNotImplemented:true,
-   fictionalDisputeRaisedAcknowledgedAndUpheld:true,fictionalDisputeOwnerReadback:true,fictionalDisputeForeignOwnerRefused:true},
-  evidenceScope:approvedConsentTest?'hosted fictional program assignment, owner consent/form-packet and program-dispute journey; no public consult endpoint, governed catalog release, provider OAuth, device test or PHI approval':'hosted fictional program assignment and program-dispute journey, draft-only intake form and consent refusal; no public consult endpoint, form publication, packet delivery, governed catalog release, provider OAuth, device test or PHI approval'}));
+   fictionalDisputeRaisedAcknowledgedAndUpheld:true,fictionalDisputeOwnerReadback:true,fictionalDisputeForeignOwnerRefused:true,
+   fictionalNoteTemplatePublishedAndResolved:true,fictionalNoteTemplateDigestRefusalTested:true},
+  evidenceScope:approvedConsentTest?'hosted fictional program assignment, owner consent/form-packet, program dispute and practitioner note-template journey; no generated note, public consult endpoint, governed catalog release, provider OAuth, device test or PHI approval':'hosted fictional program assignment, program dispute and practitioner note-template journey, draft-only intake form and consent refusal; no generated note, public consult endpoint, form publication, packet delivery, governed catalog release, provider OAuth, device test or PHI approval'}));
 }
 main().catch(error=>{console.error(JSON.stringify({verdict:'blocked',error:/^[a-z0-9_]+$/.test(error.message)?error.message:'hosted_verification_failed'}));process.exitCode=1;});
