@@ -88,6 +88,10 @@ The hosted real-JWT fictional run then got expected read responses from all ten 
 - PHI remains disabled. Do not infer commercial readiness, HIPAA compliance, or readiness for real patients from this document.
 - After the source-lockfile update to `source-map-js@1.2.2`, the full Desktop dependency audit reports five high findings through the development-only `braces` chain. A runtime-only audit reports zero findings. The full CI security gate is not green and must not be silently weakened; the upstream `braces` advisory currently lists no patched version.
 
+## Current Desktop clinical build checkpoint — October 6
+
+At source `24532a4`, `npm run build:clinical` completed locally (236 static pages generated), and `npm run check:clinical-bundle` passed: 291 client chunks contained no synthetic identity, demo-only copy or the 17 server-only markers checked by the scanner. The V2 branch `d8737f8` hosted App verification completed successfully. This is local build and bundle evidence, **not** a hosted Desktop release, a physical device test or PHI approval. Desktop hosted CI still fails in its dependency-security step before the build because the unpatched development-only `braces` chain is present; the gate was not bypassed. The qualification AWS account still has only the older-source personal-storage candidate deployed, with export bucket and export-review parameters empty. A clean build cannot stand in for missing hosted acceptance or reviewed candidate configuration.
+
 ## Narrow staging migration rehearsal
 
 The source-bound program-assignment audit now reports no findings, and focused program and specimen-context tests pass. The staging ledger has 33 entries. Its only source-version alias is the previously reviewed `20260902230000` workforce directory row, whose digest matches source `20260821049700`. The source manifest also contains an older-numbered, unapplied lab-specimen-context migration; it must precede program assignments.
