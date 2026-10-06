@@ -1,5 +1,6 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { execFileSync, spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 
 // Exercise the shipped entry point, not only its shared validation helper.
 // No inherited AWS profile, token, secret or user configuration is passed to it.
@@ -19,6 +20,12 @@ beforeAll(() => {
 }, 40000);
 
 describe('qualification fixture operator direct invocation', () => {
+  it('pins both STS and RDS credentials to the synthetic member profile', () => {
+    const source = readFileSync('src/server/clinical-core/qualification-target-operator.ts', 'utf8');
+    expect(source).toContain('const profile = "ai-synthetic-member"');
+    expect(source).toContain('assertQualificationOperatorIdentity(identity, configuration.expectedAccountId)');
+    expect(source).toContain('credentials: fromIni({ profile })');
+  });
   for (const [name, override, refusal] of [
     ['PHI enabled', { PHI_ALLOWED: 'true' }, 'activation_boundary_refused'],
     ['unconfirmed write', { CONFIRM_QUALIFICATION_TARGET: 'false' }, 'activation_boundary_refused'],

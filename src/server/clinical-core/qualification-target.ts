@@ -44,6 +44,16 @@ const DB_NAME = /^[a-z][a-z0-9_]{0,62}$/;
 export const PRODUCTION_ACCOUNT_ID = "173535830222";
 const RESERVED = new Set(["postgres", "rdsadmin", "template0", "template1", "clinical_core"]);
 
+/** Direct operator invocations must not bypass the wrapper's account and assumed-role check. */
+export function assertQualificationOperatorIdentity(value: unknown, expectedAccountId: string): void {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new QualificationTargetError("account_boundary_refused");
+  const identity = value as { Account?: unknown; Arn?: unknown };
+  if (identity.Account !== expectedAccountId || typeof identity.Arn !== "string"
+    || !new RegExp(`^arn:aws:sts::${expectedAccountId}:assumed-role/[A-Za-z0-9_+=,.@/-]+$`).test(identity.Arn)) {
+    throw new QualificationTargetError("account_boundary_refused");
+  }
+}
+
 /** A qualification database name must be a valid identifier, name itself as a qualification target, and never be the
  * staging database, a maintenance database or the canonical `clinical_core` name any staging stack could resolve to. */
 export function assertQualificationDatabaseName(name: string, stagingDatabaseName: string): void {

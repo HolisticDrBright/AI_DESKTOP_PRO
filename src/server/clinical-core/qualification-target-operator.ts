@@ -3,9 +3,11 @@ if (typeof window !== "undefined") {
 }
 
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { RDSDataClient } from "@aws-sdk/client-rds-data";
+import { fromIni } from "@aws-sdk/credential-provider-ini";
 import { loadClinicalCoreMigrations } from "./migrations";
-import { assertQualificationConfiguration, createQualificationDatabase, inspectQualificationTarget, QualificationTargetError } from "./qualification-target";
+import { assertQualificationConfiguration, assertQualificationOperatorIdentity, createQualificationDatabase, inspectQualificationTarget, QualificationTargetError } from "./qualification-target";
 import { provisionQualificationFixtures, QualificationFixtureError } from "./qualification-fixtures";
 import { createRdsDataAdministrativeDatabase } from "./rds-data-database";
 import { loadQualificationFixtureManifest } from "./qualification-fixture-manifest";
@@ -37,7 +39,13 @@ async function run() {
   // `fixtures` must enforce the same account/ARN/database checks as inspect/create,
   // even when the operator is called directly rather than through PowerShell.
   assertQualificationConfiguration(configuration, region);
-  const client = new RDSDataClient({ region });
+  // Pin STS and RDS to the same short-lived member profile. Ambient root login,
+  // environment access keys and a direct invocation cannot redirect the writer.
+  const profile = "ai-synthetic-member";
+  const identity = JSON.parse(execFileSync("aws", ["sts", "get-caller-identity", "--profile", profile, "--region", region, "--output", "json"],
+    { encoding: "utf8", timeout: 30000, stdio: ["ignore", "pipe", "pipe"] }));
+  assertQualificationOperatorIdentity(identity, configuration.expectedAccountId);
+  const client = new RDSDataClient({ region, credentials: fromIni({ profile }) });
   if (command === "inspect") {
     console.log(JSON.stringify(await inspectQualificationTarget(client, configuration)));
     return;

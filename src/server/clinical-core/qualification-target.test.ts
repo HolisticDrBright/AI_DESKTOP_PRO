@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { assertQualificationConfiguration, assertQualificationDatabaseName, createQualificationDatabase, inspectQualificationTarget, QualificationTargetError } from "./qualification-target";
+import { assertQualificationConfiguration, assertQualificationDatabaseName, assertQualificationOperatorIdentity, createQualificationDatabase, inspectQualificationTarget, QualificationTargetError } from "./qualification-target";
 
 // The isolated qualification database: created empty on the synthetic cluster, never the populated staging database.
 const CONFIG = {
@@ -31,6 +31,16 @@ function client(state: { databases: Record<string, { ledger?: Array<string> }> }
 }
 
 describe("qualification target", () => {
+  test("direct operator accepts only the pinned account's assumed-role session", () => {
+    expect(() => assertQualificationOperatorIdentity({ Account: CONFIG.expectedAccountId,
+      Arn: `arn:aws:sts::${CONFIG.expectedAccountId}:assumed-role/QualificationOperator/fictional-session` }, CONFIG.expectedAccountId)).not.toThrow();
+    for (const identity of [null, {}, { Account: CONFIG.expectedAccountId },
+      { Account: CONFIG.expectedAccountId, Arn: `arn:aws:iam::${CONFIG.expectedAccountId}:root` },
+      { Account: CONFIG.expectedAccountId, Arn: `arn:aws:iam::${CONFIG.expectedAccountId}:user/long-lived` },
+      { Account: "173535830222", Arn: "arn:aws:sts::173535830222:assumed-role/Other/session" }]) {
+      expect(() => assertQualificationOperatorIdentity(identity, CONFIG.expectedAccountId)).toThrow("account_boundary_refused");
+    }
+  });
   test("names: must be a qualification name, never the staging, canonical or maintenance database", () => {
     expect(() => assertQualificationDatabaseName("clinical_core_qualification", "clinical_core")).not.toThrow();
     for (const name of ["clinical_core", "postgres", "rdsadmin", "template1", "clinical_core_staging", "Clinical_Qualification", "qualification-db"]) {
