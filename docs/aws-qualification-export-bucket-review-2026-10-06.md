@@ -18,6 +18,8 @@ The source candidate template grants export object operations only under `person
 
 The reviewed older candidate at `a300c63` predates the current source. Between that source and Desktop `f5f2660`, the personal-storage API appends an owner-scoped `GET /privacy-export/job/current` route and related tests. The current locally generated personal-storage `index.js` SHA-256 is `e676d187ca6d1d4559130667c9128fccaabfa5307319e483bea56559f85a3bfd`; template SHA-256 is `b21e61d80ab4f3c32718cd2558183ed359d396727c527db95d8aeba31100c44a`. `cfn-lint` passed on that generated template. Neither artifact was uploaded or deployed by this inspection. The previous source-bound technical review hash cannot be reused as if it covered the new route or export delivery.
 
+Subsequent checkpoint: the current-source personal-storage Lambda and JWT route were deployed under a **new** technical review while keeping `ExportBucketName` and `ExportReviewSha256` empty. See [the October 6 hosted evidence](aws-qualification-2026-10-05.md#current-source-personal-storage-candidate--october-6). This does not complete any export-delivery or retention gate below.
+
 ## Release and policy gates still open
 
 1. Record a separate owner decision for the proposed **48-hour fictional export download window**. This is not a decision about original health records, backups, or production retention. The S3 lifecycle's three-day current-object expiration is a backstop, not proof of a 48-hour deletion service level.
