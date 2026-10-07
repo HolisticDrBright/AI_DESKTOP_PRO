@@ -1912,7 +1912,7 @@ not run the suite.
 Hosted source CI **37630753091** and **37630760785** at 7841540 are terminal
 success; the preceding 38fb366 and 090e8de runs are also terminal success.
 CI proves source/browser checks, not hosted migration or device acceptance.
-AST-only graph: **13,314 nodes, 27,120 edges, 939 communities**; 50 zero-node
+Final AST-only graph: **13,316 nodes, 27,122 edges, 946 communities**; 50 zero-node
 files absent, HTML skipped for graph size, no LLM/API cost.
 
 Fresh AWS STS is member **588966314750**. The first new inspection ended
