@@ -80,6 +80,28 @@ database ledger and source-compatible recovery requirements.
 
 AWS review semantics: [CreateChangeSet](https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_CreateChangeSet.html).
 
+## Authenticated consumer checks
+
+```powershell
+npm run verify:synthetic-care-consumer
+```
+
+The checker binds to the deployed 5b6f8aa identity API and its exact ZIP digest,
+the synthetic member account, the native consumer pool and the five existing
+fictional persona records held in Secrets Manager. It refuses dirty runtime
+source, non-fictional credentials, an incorrect token owner or audience, a
+short-lived token, a changed deployment and oversized or mismatched responses.
+It neither creates accounts nor resets passwords. Sign-in metadata and read
+audits may change; it requests no clinical-data mutation.
+
+Each authentic session checks the synthetic posture, the refusal of old
+ID-less erasure, a one-item thread export and erasure-history retrieval. A
+successful report under `dist/synthetic-care-consumer/HARNESS_COMMIT/` contains
+only statuses and counts, never credentials, tokens or record content. A
+failure stops at the first broken boundary. These checks do not verify new
+erasure admission or receipts, workforce access, self-service registration,
+cross-owner isolation, browser rendering or physical mobile acceptance.
+
 ## Deployment and recovery still required
 
 1. Independently verify the ZIP after uploading it under its exact source/hash
