@@ -101,6 +101,9 @@ inventory ([DescribeChangeSet](https://docs.aws.amazon.com/AWSCloudFormation/lat
 The source template's ARN reference is a possible explanation for the extra
 dependency, not proof of a harmless runtime no-op. The deployment path must
 resolve and qualify that dependency without silently relaxing the gate.
+The full upload receipt, both live projections, repaired-verifier refusal and
+scope correction are archived in
+[Intent upload audit](evidence/2026-10-07-care-intent-upload-audit.json).
 
 ## Remaining release work
 
