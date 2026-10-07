@@ -7,13 +7,13 @@ const artifact=JSON.parse(execFileSync(process.execPath,['scripts/build-aws-prod
 test('actual canonical artifact and every ordered actual ledger row are required',()=>{
   const expected=qualificationConsentArtifact(artifact);
   assert.doesNotThrow(()=>assertQualificationConsentLedger('clinical_core_qualification',expected,expected));
-  for(const rows of [expected.slice(0,104),expected.slice(0,103),[...expected,{version:'20261007010000',sha256:'a'.repeat(64)}],
+  for(const rows of [expected.slice(0,105),expected.slice(0,104),expected.slice(0,103),[...expected,{version:'20261007010000',sha256:'a'.repeat(64)}],
     expected.map((m,i)=>i===0?{...m,sha256:'a'.repeat(64)}:m),[expected[1],expected[0],...expected.slice(2)],
     expected.map((m,i)=>i===1?expected[0]:m)])assert.throws(()=>assertQualificationConsentLedger('clinical_core_qualification',rows,expected),/ledger_refused/);
   assert.throws(()=>assertQualificationConsentLedger('clinical_core',expected,expected),/ledger_refused/);
   assert.throws(()=>assertQualificationConsentLedger('clinical_core_qualification',expected,expected.map(m=>({...m,sha256:'a'.repeat(64)}))),/ledger_refused/);
 });
-test('changed artifact or history cannot be passed off as the reviewed 105 ledger',()=>{
+test('changed artifact or history cannot be passed off as the reviewed 106 ledger',()=>{
   const copy=structuredClone(artifact);copy.files[copy.manifest.migrations[0].file]+='\n-- tampered';
   assert.throws(()=>qualificationConsentArtifact(copy),/artifact_refused/);
   copy.manifest.migrations=copy.manifest.migrations.slice(0,103);assert.throws(()=>qualificationConsentArtifact(copy),/artifact_refused/);

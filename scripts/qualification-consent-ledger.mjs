@@ -1,10 +1,10 @@
 import {createHash} from 'node:crypto';
 const sha=value=>createHash('sha256').update(value).digest('hex');
-export const QUALIFICATION_CONSENT_LEDGER = '7da8e4ed999a3298bccc4ef33e7a1005201db45fa2b46682622a208486f17743';
+export const QUALIFICATION_CONSENT_LEDGER = '514959bf0d32de55ded312509ae2ebe39a0fdde9f59246b096b0c41ba63f4f9b';
 /** Exact immutable ordered artifact, not count or last-version substitution. */
 export function qualificationConsentArtifact(artifact) {
   const entries=artifact?.manifest?.migrations;
-  if(artifact?.manifest?.contract_version!=='clinical-core-migrations/1' || !Array.isArray(entries) || entries.length!==105
+  if(artifact?.manifest?.contract_version!=='clinical-core-migrations/1' || !Array.isArray(entries) || entries.length!==106
     || !artifact.files || entries.some((m,i)=>!/^\d{14}$/.test(m.version) || typeof artifact.files[m.file]!=='string'
       || i>0 && entries[i-1].version>=m.version))throw new Error('qualification_consent_artifact_refused');
   const rows=entries.map(m=>({version:m.version,sha256:sha(artifact.files[m.file].replace(/\r\n/g,'\n'))}));
@@ -12,8 +12,8 @@ export function qualificationConsentArtifact(artifact) {
   return rows;
 }
 export function assertQualificationConsentLedger(actualDatabase,records,expected) {
-  if(actualDatabase!=='clinical_core_qualification' || !Array.isArray(records) || records.length!==105
-    || !Array.isArray(expected) || expected.length!==105
+  if(actualDatabase!=='clinical_core_qualification' || !Array.isArray(records) || records.length!==106
+    || !Array.isArray(expected) || expected.length!==106
     || sha(expected.map(m=>`${m.version}:${m.sha256}`).join('\n'))!==QUALIFICATION_CONSENT_LEDGER
     || records.some((r,i)=>r?.version!==expected[i].version || r?.sha256!==expected[i].sha256))throw new Error('qualification_consent_ledger_refused');
 }

@@ -9,8 +9,8 @@ import { verifyCareConsentRegistrationSchema } from './care-connections-schema-u
 import { bindCareClaimRecoveryDatabase } from './care-claim-recovery-database-binding';
 import type { CareConnectionFunctionBinding } from './care-connections-database-binding';
 
-/** Prepared transition, NOT the canonical ledger or an activation review. The
- * registered artifact remains 105 until privacy disposition and integration. */
+/** Exact registered 105-to-106 transition. Registration is not deployment,
+ * approval of immutable-record disposition, or PHI activation evidence. */
 export const CARE_CLAIM_RECOVERY_UPGRADE = Object.freeze({
   from: '7da8e4ed999a3298bccc4ef33e7a1005201db45fa2b46682622a208486f17743',
   to: '514959bf0d32de55ded312509ae2ebe39a0fdde9f59246b096b0c41ba63f4f9b',
@@ -96,9 +96,20 @@ async function verify(tx: ClinicalCoreTransaction, migrations: ClinicalCoreMigra
     }
   } catch { fail('verification_failed'); }
 }
+/** Admit the canonical successor for consent registration without upgrading,
+ * granting consent, or accepting an older/mixed live ledger. */
+export async function verifyCareClaimRecoveryRegistrationTarget(tx: ClinicalCoreTransaction,
+  migrations: ClinicalCoreMigration[], c: QualificationUpgradeConfiguration) {
+  assertCareClaimRecoveryUpgrade(c, migrations);
+  if ((await tx.query<{ name: string }>('select current_database() as name')).rows[0]?.name !== c.qualificationDatabaseName)
+    fail('boundary_refused');
+  if (await history(tx, migrations) !== 106) fail('history_refused');
+  await inventory(tx, 106);
+  await verify(tx, migrations, 106);
+}
 export type CareClaimRecoveryUpgradeResult = {
   contract: 'care-claim-recovery-schema-upgrade/1'; command: 'inspect' | 'rehearse' | 'upgrade'; execution: 'qualification';
-  phiAllowed: false; activation: 'blocked'; canonical: false; observedMigrationCount: number; applied: boolean;
+  phiAllowed: false; activation: 'blocked'; canonical: true; observedMigrationCount: number; applied: boolean;
   alreadyApplied: boolean; rolledBack: boolean; dataPreserved: true; tableCount: number; rowCount: number;
   dataSha256: string; fromReleaseSha256: string; toReleaseSha256: string;
 };
@@ -108,7 +119,7 @@ class RehearsalRollback extends Error {
 
 /** Qualification-only preparation. Calling this library needs the independently
  * observed member account/foundation boundary. The prepared source operator
- * supplies that boundary; this is still not canonical promotion or activation. */
+ * supplies that boundary; canonical registration is not deployment or activation. */
 export async function runCareClaimRecoverySchemaUpgrade(database: ClinicalCoreDatabase, suppliedMigrations: ClinicalCoreMigration[],
   suppliedConfiguration: QualificationUpgradeConfiguration, command: 'inspect' | 'rehearse' | 'upgrade'): Promise<CareClaimRecoveryUpgradeResult> {
   const migrations = suppliedMigrations.map(m => ({ ...m })), c = { ...suppliedConfiguration };
@@ -156,7 +167,7 @@ export async function runCareClaimRecoverySchemaUpgrade(database: ClinicalCoreDa
       if (applied && (await fingerprint(tx, afterTables.added)).rows !== 0) fail('data_changed');
       stage = 'contract_verification'; await verify(tx, migrations, finalCount);
       const result: CareClaimRecoveryUpgradeResult = { contract: 'care-claim-recovery-schema-upgrade/1', command, execution: 'qualification',
-        phiAllowed: false, activation: 'blocked', canonical: false, observedMigrationCount: finalCount, applied,
+        phiAllowed: false, activation: 'blocked', canonical: true, observedMigrationCount: finalCount, applied,
         alreadyApplied: count === 106, rolledBack: false, dataPreserved: true, tableCount: afterTables.tables.length,
         rowCount: before.rows, dataSha256: after.sha256, fromReleaseSha256: CARE_CLAIM_RECOVERY_UPGRADE.from,
         toReleaseSha256: CARE_CLAIM_RECOVERY_UPGRADE.to };

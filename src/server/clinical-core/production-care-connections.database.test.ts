@@ -10,7 +10,7 @@ import { parseCareConnectionResponse, type CareConnectionRequest } from '../../c
 import { createProductionCareMessaging } from './production-care-messaging';
 import { bindCareConnectionDatabase, type CareConnectionFunctionBinding } from './care-connections-database-binding';
 
-// Real 105 canonical production migrations; fictional data only.
+// Real 106 canonical production migrations; fictional data only.
 // PGlite serializes transactions. These are not multi-session AWS race tests.
 let db: PGlite;
 let org: string, foreignOrg: string, owner: string, other: string, staff: string, outsider: string, patient: string;
@@ -66,7 +66,7 @@ const withdraw = (connectionId: string, expectedVersion: number): CareConnection
 beforeAll(async () => {
   const { manifest, files } = JSON.parse(execFileSync(process.execPath, ['scripts/build-aws-production-clinical-core.mjs', '--json'],
     { encoding: 'utf8', timeout: 10000, maxBuffer: 8 * 1024 * 1024 }));
-  expect(manifest.migrations).toHaveLength(105); // The 104 prefix remains immutable.
+  expect(manifest.migrations).toHaveLength(106); // The 104 prefix remains immutable.
   db = new PGlite({ extensions: { pgcrypto } });
   for (const migration of manifest.migrations) await db.exec(files[migration.file]);
   const sql: string = files['20261006020000_production_care_connections.sql'];
@@ -137,7 +137,7 @@ describe('unreleased production connection and consent port, actual API role and
       from pg_class c join pg_namespace n on n.oid=c.relnamespace where c.relkind='r'
       and n.nspname in ('clinical_core','clinical_private','clinical_audit','clinical_reference','commercial_reference')
       and not(n.nspname='clinical_core' and c.relname='schema_migrations')`);
-    expect(tables.rows).toHaveLength(207);
+    expect(tables.rows).toHaveLength(209);
     expect(tables.rows.filter(t => t.name === 'clinical_core.care_consent_texts')).toHaveLength(1);
     expect((await db.query<{ n: number }>('select count(*)::int n from clinical_core.care_consent_texts')).rows[0].n).toBe(0);
   });

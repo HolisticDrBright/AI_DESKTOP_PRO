@@ -12,7 +12,7 @@ const coverage = JSON.parse(readFileSync('infra/aws-clinical-core/covered-entity
 test('shipped metadata covers every scoped immutable table in the real canonical SQL', () => {
   assert.deepEqual(immutableDispositionErrors(sql, coverage.tables), []);
   const pending = coverage.tables.filter(entry => entry.appendOnly === true);
-  assert.equal(pending.length, 42);
+  assert.equal(pending.length, 44);
   for (const entry of pending) {
     const omitted = coverage.tables.map(row => row === entry ? {...row, appendOnly:undefined, disposition:undefined} : row);
     assert.ok(immutableDispositionErrors(sql, omitted).some(message => message.startsWith(entry.table)), entry.table);

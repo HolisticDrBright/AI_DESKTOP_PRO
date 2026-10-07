@@ -6,6 +6,19 @@ import { clinicalUuid, type ClinicalCoreDatabase, type ClinicalCoreTransaction }
 import type { ClinicalCoreMigration } from './migrations';
 import type { QualificationUpgradeConfiguration } from './qualification-schema-upgrade';
 import { assertCareConnectionsUpgrade, CARE_CONNECTIONS_UPGRADE, CareConnectionsUpgradeError, verifyCareConsentRegistrationTarget } from './care-connections-schema-upgrade';
+import { assertCareClaimRecoveryUpgrade, CARE_CLAIM_RECOVERY_UPGRADE, CareClaimRecoveryUpgradeError,
+  verifyCareClaimRecoveryRegistrationTarget } from './care-claim-recovery-schema-upgrade';
+
+/** Preserve exact historical 105 admission; current 106 admission is separately
+ * pinned. A count alone never authorizes either artifact or a mixed live target. */
+export function assertCareConsentCopyRelease(c: QualificationUpgradeConfiguration, migrations: ClinicalCoreMigration[]) {
+  if (migrations.length === 105) {
+    assertCareConnectionsUpgrade(c, migrations);
+    return { count: 105 as const, release: CARE_CONNECTIONS_UPGRADE.to, verify: verifyCareConsentRegistrationTarget };
+  }
+  assertCareClaimRecoveryUpgrade(c, migrations);
+  return { count: 106 as const, release: CARE_CLAIM_RECOVERY_UPGRADE.to, verify: verifyCareClaimRecoveryRegistrationTarget };
+}
 
 const schema = z.object({ contract: z.literal('care-consent-copy/1'), artifactId: z.string().uuid(), organizationId: z.string().uuid(),
   scope: careConsentScope, artifactVersion: z.string().min(1).max(64), contentSha256: z.string().regex(/^[a-f0-9]{64}$/),
@@ -28,7 +41,7 @@ export function parseCareConsentCopy(value: unknown): CareConsentCopy {
 }
 export type CareConsentCopyMode = 'inventory' | 'inspect' | 'rehearse' | 'register';
 type Receipt = { contract: 'care-consent-copy-registration/1'; command: CareConsentCopyMode; execution: 'qualification';
-  phiAllowed: false; activation: 'blocked'; migrationCount: 105; migrationReleaseSha256: string;
+  phiAllowed: false; activation: 'blocked'; migrationCount: 105 | 106; migrationReleaseSha256: string;
   approvalsCreated: false; grantsCreated: false; copyInserted: boolean; copyPresent: boolean | null;
   artifactId: string | null; contentSha256: string | null; rolledBack: boolean;
   inventory?: { approvedArtifacts: number; registeredCopies: number } };
@@ -65,13 +78,13 @@ async function approvedCopy(tx: ClinicalCoreTransaction, copy: CareConsentCopy, 
 export async function runCareConsentCopyRegistration(database: ClinicalCoreDatabase, suppliedMigrations: ClinicalCoreMigration[],
   suppliedConfiguration: QualificationUpgradeConfiguration, command: CareConsentCopyMode, suppliedCopy?: unknown): Promise<Receipt> {
   const migrations = suppliedMigrations.map(m => ({ ...m })), configuration = { ...suppliedConfiguration };
-  assertCareConnectionsUpgrade(configuration, migrations);
+  const release = assertCareConsentCopyRelease(configuration, migrations);
   if (!['inventory', 'inspect', 'rehearse', 'register'].includes(command) || command === 'inventory' && suppliedCopy !== undefined)
     fail('copy_invalid');
   const copy = command === 'inventory' ? undefined : parseCareConsentCopy(suppliedCopy);
   const write = command === 'rehearse' || command === 'register';
   const base: Receipt = { contract: 'care-consent-copy-registration/1', command, execution: 'qualification', phiAllowed: false,
-    activation: 'blocked', migrationCount: 105, migrationReleaseSha256: CARE_CONNECTIONS_UPGRADE.to, approvalsCreated: false,
+    activation: 'blocked', migrationCount: release.count, migrationReleaseSha256: release.release, approvalsCreated: false,
     grantsCreated: false, copyInserted: false, copyPresent: null, artifactId: copy?.artifactId ?? null,
     contentSha256: copy?.contentSha256 ?? null, rolledBack: false };
   try {
@@ -85,7 +98,7 @@ export async function runCareConsentCopyRegistration(database: ClinicalCoreDatab
           fail('target_refused');
         await tx.query('lock table clinical_core.care_consent_texts,clinical_core.schema_migrations in share row exclusive mode');
       }
-      await verifyCareConsentRegistrationTarget(tx, migrations, configuration);
+      await release.verify(tx, migrations, configuration);
       if (!copy) {
         const row = (await tx.query<{ approved: number; copies: number }>(`select
           (select count(*)::int from clinical_core.consent_artifacts where status='approved') as approved,
@@ -110,7 +123,7 @@ export async function runCareConsentCopyRegistration(database: ClinicalCoreDatab
       if (inspected.copyPresent !== error.priorPresent) fail('verification_failed');
       return { ...error.receipt, copyInserted: false, copyPresent: inspected.copyPresent, rolledBack: true };
     }
-    if (error instanceof CareConsentCopyError || error instanceof CareConnectionsUpgradeError) throw error;
+    if (error instanceof CareConsentCopyError || error instanceof CareConnectionsUpgradeError || error instanceof CareClaimRecoveryUpgradeError) throw error;
     // Provider/SQL text may contain sensitive parameters. Expose only fixed categories.
     throw new CareConsentCopyError('operation_failed');
   }

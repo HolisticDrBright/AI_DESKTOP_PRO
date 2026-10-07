@@ -13,7 +13,7 @@ const baseline = JSON.parse(execFileSync(process.execPath, ['scripts/build-aws-p
   encoding: 'utf8', timeout: 10000, maxBuffer: 8 * 1024 * 1024,
 }));
 const ledger = sha(baseline.manifest.migrations.slice(0, 104).map(m => `${m.version}:${sha(baseline.files[m.file])}`).join('\n'));
-if (baseline.manifest.migrations.length !== 105 || baseline.manifest.migrations.at(-1).version !== '20261006020000'
+if (baseline.manifest.migrations.length !== 106 || baseline.manifest.migrations[104].version !== '20261006020000'
   || ledger !== '57fdf022f0fdd7d70be12384d6e6d54caab1a0ddb4965a884e4d59eec4c552b0') throw new Error('care_connection_baseline_changed');
 const sourceCommit = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
 const sourceDirty = !!execFileSync('git', ['status', '--porcelain', '--untracked-files=all', '--',
@@ -36,7 +36,7 @@ writeFileSync(resolve(out, 'care-connections.sql'), sql);
 // Compute it from all predecessor bytes and the exact proposed overlay, then
 // compare the upgrade library's independent pins rather than inventing a hash.
 const plannedMigrationCount = 105;
-const proposedLedger = sha(baseline.manifest.migrations.map(m => `${m.version}:${sha(baseline.files[m.file])}`).join('\n'));
+const proposedLedger = sha(baseline.manifest.migrations.slice(0, 105).map(m => `${m.version}:${sha(baseline.files[m.file])}`).join('\n'));
 const upgrade = createRequire(import.meta.url)(resolve(out, 'upgrade-library.cjs')).CARE_CONNECTIONS_UPGRADE;
 if (!upgrade || upgrade.from !== ledger || upgrade.to !== proposedLedger || upgrade.version !== '20261006020000'
   || upgrade.countBefore !== 104 || upgrade.countAfter !== plannedMigrationCount) throw new Error('care_connection_upgrade_identity_changed');

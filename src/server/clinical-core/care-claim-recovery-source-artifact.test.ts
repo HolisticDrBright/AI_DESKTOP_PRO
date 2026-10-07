@@ -29,10 +29,10 @@ afterAll(()=>{
   rmSync(target,{recursive:true,force:true});
 });
 describe('unreleased claim recovery mapping',()=>{
-  it('pins 105 but never claims this overlay is canonical or deployed',()=>{
+  it('pins the original 105 predecessor and registered 106 without claiming deployment',()=>{
     expect(manifest).toMatchObject({contract:'care-claim-recovery-source-candidate/1',status:'unreleased',deployable:false,
       predecessor:{migrationCount:105,ledgerReleaseSha256:'7da8e4ed999a3298bccc4ef33e7a1005201db45fa2b46682622a208486f17743'},
-      overlay:{canonical:false,hostedVerified:false},activation:'blocked',phiAllowed:false,seededApprovals:false,seededIdentities:false,seededConsents:false});
+      overlay:{canonical:true,hostedVerified:false},activation:'blocked',phiAllowed:false,seededApprovals:false,seededIdentities:false,seededConsents:false});
     expect(manifest.sourceCommit).toMatch(/^[a-f0-9]{40}$/);expect(typeof manifest.sourceDirty).toBe('boolean');
     expect(manifest).not.toHaveProperty('migrationReleaseSha256');
   });
@@ -45,8 +45,8 @@ describe('unreleased claim recovery mapping',()=>{
     expect(manifest.libraries.map(l=>l.file)).toEqual(['api-library.cjs','service-library.cjs','database-binding-library.cjs','schema-upgrade-library.cjs']);
     for(const l of manifest.libraries)expect(l.sha256).toBe(sha(readFileSync(join(directory,l.file))));
   });
-  it('emits an exact unregistered transition with the original 105 prefix and no deployment authority',()=>{
-    expect(manifest.preparedTransition).toMatchObject({status:'unregistered',canonical:false,qualificationOnly:true,operatorReleased:true,
+  it('emits an exact registered transition with the original 105 prefix and no deployment authority',()=>{
+    expect(manifest.preparedTransition).toMatchObject({status:'canonical_registered',canonical:true,qualificationOnly:true,operatorReleased:true,
       fromLedgerSha256:manifest.predecessor.ledgerReleaseSha256,migrationCount:106,tableCountBefore:207,tableCountAfter:209,
       mandatoryRollbackRehearsal:true});
     const bytes=readFileSync(join(directory,manifest.preparedTransition.manifest.file),'utf8');
@@ -55,7 +55,7 @@ describe('unreleased claim recovery mapping',()=>{
     expect(prepared.contract_version).toBe('clinical-core-migrations/1');expect(prepared.migrations).toHaveLength(106);
     const baseline=JSON.parse(execFileSync(process.execPath,['scripts/build-aws-production-clinical-core.mjs','--json'],
       {encoding:'utf8',timeout:10000,maxBuffer:8*1024*1024}));
-    expect(prepared.migrations.slice(0,105)).toEqual(baseline.manifest.migrations);
+    expect(prepared.migrations.slice(0,105)).toEqual(baseline.manifest.migrations.slice(0,105));
     for(const m of prepared.migrations.slice(0,105))
       expect(readFileSync(join(directory,'prepared-migrations',m.file),'utf8')).toBe(baseline.files[m.file]);
     expect(prepared.migrations[105]).toEqual({version:'20261006030000',file:'20261006030000_production_care_claim_recovery.sql'});
@@ -79,16 +79,16 @@ describe('unreleased claim recovery mapping',()=>{
   it('names the pending route, dispositions and real integration obligations',()=>{
     expect(manifest.proposedRoutes).toEqual(['POST /clinical-core/consumer/connection-claims']);
     expect(manifest.proposedCoveredEntityMapping).toEqual(expect.arrayContaining([
-      expect.objectContaining({table:'clinical_core.care_claim_requests',status:'inventory_and_disposition_pending'}),
-      expect.objectContaining({table:'clinical_audit.care_claim_events',status:'inventory_and_disposition_pending'}),
+      expect.objectContaining({table:'clinical_core.care_claim_requests',status:'inventory_integrated_disposition_blocked'}),
+      expect.objectContaining({table:'clinical_audit.care_claim_events',status:'inventory_integrated_disposition_blocked'}),
     ]));
     expect(manifest.reviewRequired).toContain('separate claim recovery');
     expect(manifest.remaining.join(' ')).toContain('id-less legacy uncertainty');
     expect(manifest.remaining.join(' ')).toContain('real multi-session race');
   });
-  it('parses the proposed 209-table mapping without treating retained parents or inventory as deletion authority',()=>{
+  it('parses the registered 209-table mapping without treating retained parents or inventory as deletion authority',()=>{
     const coverage=JSON.parse(readFileSync('infra/aws-clinical-core/covered-entity-coverage.json','utf8'));
-    const proposed=parseCoveredEntityCoverage({...coverage,tables:[...coverage.tables,...manifest.proposedCoveredEntityMapping]});
+    const proposed=parseCoveredEntityCoverage(coverage);
     expect(proposed.tables).toHaveLength(209);
     expect(proposed.tables.find(row=>row.table==='clinical_core.care_claim_requests'))
       .toMatchObject({dependsOn:['clinical_core.patient_connections'],appendOnly:true});

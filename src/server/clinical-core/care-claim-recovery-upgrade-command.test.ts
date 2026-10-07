@@ -14,7 +14,7 @@ const migrations: ClinicalCoreMigration[] = artifact.manifest.migrations.map((m:
   version: m.version, name: m.file.slice(15, -4), sql: artifact.files[m.file], sha256: sha(artifact.files[m.file]),
 }));
 const sql = readFileSync('infra/aws-clinical-core/production-candidates/care-claim-recovery.sql', 'utf8').replace(/\r\n?/g, '\n');
-migrations.push({ version: CARE_CLAIM_RECOVERY_UPGRADE.version, name: 'production_care_claim_recovery', sql, sha256: sha(sql) });
+expect(migrations[105].sql).toBe(sql);
 const build = { sourceCommit: '1'.repeat(40), clean: true };
 const confirm = '--confirm-fictional-care-claim-recovery-upgrade';
 const caller = { Account: '588966314750', Arn: 'arn:aws:sts::588966314750:assumed-role/FictionalOperator/session' };
@@ -25,7 +25,7 @@ const stack = { StackStatus: 'CREATE_COMPLETE',
   StackId: 'arn:aws:cloudformation:us-east-2:588966314750:stack/ai-clinical-core-qualification-foundation/fictional',
   Outputs: Object.entries(values).map(([OutputKey, OutputValue]) => ({ OutputKey, OutputValue })) };
 const result = (command: 'inspect' | 'rehearse' | 'upgrade'): Awaited<ReturnType<typeof runCareClaimRecoverySchemaUpgrade>> => ({
-  contract: 'care-claim-recovery-schema-upgrade/1', command, execution: 'qualification', phiAllowed: false, activation: 'blocked', canonical: false,
+  contract: 'care-claim-recovery-schema-upgrade/1', command, execution: 'qualification', phiAllowed: false, activation: 'blocked', canonical: true,
   observedMigrationCount: command === 'upgrade' ? 106 : 105, applied: command === 'upgrade', alreadyApplied: false,
   rolledBack: command === 'rehearse', dataPreserved: true, tableCount: command === 'upgrade' ? 209 : 207,
   rowCount: 8, dataSha256: 'a'.repeat(64), fromReleaseSha256: CARE_CLAIM_RECOVERY_UPGRADE.from, toReleaseSha256: CARE_CLAIM_RECOVERY_UPGRADE.to,
@@ -59,7 +59,7 @@ describe('prepared recovery operator admission (fictional observations, not AWS 
   it('allows dirty read-only inspection without claiming clean release evidence', async () => {
     const { d, events } = fixture();
     expect(await executeCareClaimRecoveryUpgradeCommand(['inspect'], { ...build, clean: false }, d)).toMatchObject({
-      canonical: false, operatorSource: { clean: false }, operatorScope: 'prepared_qualification_only', rehearsal: null,
+      canonical: true, operatorSource: { clean: false }, operatorScope: 'prepared_qualification_only', rehearsal: null,
     });
     expect(events).toEqual(['caller', 'foundation', 'artifact', 'client', 'inspect']);
   });
@@ -91,7 +91,7 @@ describe('prepared recovery operator admission (fictional observations, not AWS 
     const upgraded = await executeCareClaimRecoveryUpgradeCommand(['upgrade', confirm], build, d);
     expect(events).toEqual(['caller', 'foundation', 'artifact', 'client', 'rehearse', 'caller', 'foundation', 'upgrade']);
     expect(d.run.mock.calls[0].slice(0, 3)).toEqual(d.run.mock.calls[1].slice(0, 3));
-    expect(upgraded).toMatchObject({ canonical: false, phiAllowed: false, activation: 'blocked',
+    expect(upgraded).toMatchObject({ canonical: true, phiAllowed: false, activation: 'blocked',
       rehearsal: { rolledBack: true, rowCount: 8 }, awsAccountId: '588966314750' });
     expect(JSON.stringify(upgraded)).not.toMatch(/secretArn|DatabaseSecretArn|FictionalOperator/);
   });
@@ -109,7 +109,7 @@ describe('prepared recovery operator admission (fictional observations, not AWS 
     }
   });
   it('does not trust a bare rolledBack flag or incomplete/inconsistent rehearsal receipt', async () => {
-    for (const change of [{ rolledBack: false }, { dataPreserved: false }, { canonical: true }, { dataSha256: 'not-a-digest' },
+    for (const change of [{ rolledBack: false }, { dataPreserved: false }, { canonical: false }, { dataSha256: 'not-a-digest' },
       { phiAllowed: true }, { observedMigrationCount: 104 }, { tableCount: 206 }, { applied: true },
       { toReleaseSha256: 'b'.repeat(64) }, { command: 'upgrade' }, { rowCount: -1 }]) {
       const { d } = fixture(); d.run.mockResolvedValueOnce({ ...result('rehearse'), ...change } as ReturnType<typeof result>);

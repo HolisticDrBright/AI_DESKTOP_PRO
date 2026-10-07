@@ -42,11 +42,11 @@ const atReceipt = (change: (tx: Parameters<Intercept>[1]) => Promise<void>) => d
 beforeAll(async () => {
   const { manifest, files } = JSON.parse(execFileSync(process.execPath, ['scripts/build-aws-production-clinical-core.mjs', '--json'],
     { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024, timeout: 10000 }));
-  expect(manifest.migrations).toHaveLength(105); // Canonical prefix remains unchanged.
+  expect(manifest.migrations).toHaveLength(106); // The exact historical 105 prefix remains unchanged.
   migrations = manifest.migrations.map((m: { version: string; file: string }) => ({ version: m.version, name: m.file.slice(15, -4),
     sql: files[m.file], sha256: sha(files[m.file]) }));
   const sql = readFileSync('infra/aws-clinical-core/production-candidates/care-claim-recovery.sql', 'utf8').replace(/\r\n?/g, '\n');
-  migrations.push({ version: CARE_CLAIM_RECOVERY_UPGRADE.version, name: 'production_care_claim_recovery', sql, sha256: sha(sql) });
+  expect(migrations[105].sql).toBe(sql);
   pg = new PGlite({ extensions: { pgcrypto } });
   expect((await applyProductionClinicalCoreMigrations(database(), migrations.slice(0, 105))).tableCount).toBe(128);
   await pg.query("insert into clinical_core.organizations(id,organization_label) values($1,'FICTIONAL recovery upgrade')", [org]);
@@ -74,7 +74,7 @@ describe('prepared preserving claim recovery 105 to 106 transition', () => {
   it('inspects read only without DDL and refuses the observed staging database', async () => {
     const queries: string[] = [];
     expect(await run('inspect', database(async sql => { queries.push(sql); }))).toMatchObject({ observedMigrationCount: 105,
-      tableCount: 207, rowCount: 3, applied: false, canonical: false, phiAllowed: false });
+      tableCount: 207, rowCount: 3, applied: false, canonical: true, phiAllowed: false });
     expect(queries[0]).toContain('read only'); expect(queries.some(q => /^(insert|update|create|alter)/i.test(q))).toBe(false);
     await expect(run('upgrade', database(undefined, 'clinical_core'))).rejects.toThrow('boundary_refused'); await predecessor();
   });
@@ -152,7 +152,7 @@ describe('prepared preserving claim recovery 105 to 106 transition', () => {
     const upgraded = await executeCareClaimRecoveryUpgradeCommand(['upgrade', '--confirm-fictional-care-claim-recovery-upgrade'],
       { sourceCommit: '1'.repeat(40), clean: true }, dependencies);
     expect(upgraded).toMatchObject({ observedMigrationCount: 106, tableCount: 209, applied: true, alreadyApplied: false,
-      rowCount: 3, dataSha256: before.dataSha256, activation: 'blocked', phiAllowed: false, canonical: false });
+      rowCount: 3, dataSha256: before.dataSha256, activation: 'blocked', phiAllowed: false, canonical: true });
     expect(upgraded.rehearsal).toEqual({ rolledBack: true, dataSha256: before.dataSha256, rowCount: 3 });
     expect(observations).toEqual(['caller', 'foundation', 'caller', 'foundation']);
     await pg.query("insert into clinical_core.care_claim_requests(organization_id,consumer_person_id,request_id,status) values($1,$2,$3,'cancelled')", [org, owner, request]);

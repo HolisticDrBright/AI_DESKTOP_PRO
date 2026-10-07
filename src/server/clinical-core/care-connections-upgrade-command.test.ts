@@ -11,7 +11,7 @@ import { executeCareConnectionsUpgradeCommand } from './care-connections-upgrade
 // separate SQL suite proves rollback, preservation and drift checks.
 const artifact = JSON.parse(execFileSync(process.execPath, ['scripts/build-aws-production-clinical-core.mjs', '--json'],
   { encoding: 'utf8', timeout: 10000, maxBuffer: 8 * 1024 * 1024 }));
-const migrations: ClinicalCoreMigration[] = artifact.manifest.migrations.map((m: { version: string; file: string }) => ({
+const migrations: ClinicalCoreMigration[] = artifact.manifest.migrations.slice(0, 105).map((m: { version: string; file: string }) => ({
   version: m.version, name: m.file.slice(15, -4), sql: artifact.files[m.file],
   sha256: createHash('sha256').update(artifact.files[m.file]).digest('hex'),
 }));

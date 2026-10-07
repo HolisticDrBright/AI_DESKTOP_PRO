@@ -7,7 +7,7 @@ import { createRdsDataClinicalCoreDatabase, type RdsDataConfiguration } from './
 import { resolveQualificationExecution } from './qualification-execution';
 
 export type CareMessagingBuild = {
-  sourceCommit: string; sourceClean: boolean; migrationCount: 105; migrationReleaseSha256: string;
+  sourceCommit: string; sourceClean: boolean; migrationCount: 106; migrationReleaseSha256: string;
   functions: readonly { schema: string; name: string; sha256: string; callable: boolean }[];
 };
 type Environment = Record<string, string | undefined>;
@@ -18,7 +18,7 @@ const tables = ['clinical_core.care_message_thread_links', 'clinical_core.care_m
 /** Checks deployment identity, not approval. A well-shaped review hash is never
  * created here or claimed to represent an executed review. */
 function binding(e: Environment, build: CareMessagingBuild) {
-  if (!commit.test(build.sourceCommit) || !hash.test(build.migrationReleaseSha256) || build.migrationCount !== 105
+  if (!commit.test(build.sourceCommit) || !hash.test(build.migrationReleaseSha256) || build.migrationCount !== 106
     || e.SOURCE_COMMIT !== build.sourceCommit || e.MIGRATION_RELEASE_SHA256 !== build.migrationReleaseSha256
     || e.CARE_MESSAGING_ACTIVATION !== 'blocked' && e.CARE_MESSAGING_ACTIVATION !== 'approved'
     || e.PHI_ALLOWED !== 'false' && e.PHI_ALLOWED !== 'true' || e.AWS_REGION !== 'us-east-2') throw new Error('binding_refused');

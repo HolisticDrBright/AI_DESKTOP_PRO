@@ -23,7 +23,7 @@ function verifyResult(result: CareClaimRecoveryUpgradeResult, command: 'inspect'
   const count = result.observedMigrationCount;
   if (result.contract !== 'care-claim-recovery-schema-upgrade/1' || result.command !== command
     || result.execution !== 'qualification' || result.phiAllowed !== false || result.activation !== 'blocked'
-    || result.canonical !== false || result.dataPreserved !== true || ![105, 106].includes(count)
+    || result.canonical !== true || result.dataPreserved !== true || ![105, 106].includes(count)
     || result.tableCount !== (count === 105 ? 207 : 209)
     || result.fromReleaseSha256 !== CARE_CLAIM_RECOVERY_UPGRADE.from || result.toReleaseSha256 !== CARE_CLAIM_RECOVERY_UPGRADE.to
     || !/^[a-f0-9]{64}$/.test(result.dataSha256) || !Number.isSafeInteger(result.rowCount) || result.rowCount < 0

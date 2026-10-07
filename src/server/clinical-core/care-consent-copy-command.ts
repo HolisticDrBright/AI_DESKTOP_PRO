@@ -4,8 +4,9 @@ import type { ClinicalCoreDatabase } from './database';
 import type { ClinicalCoreMigration } from './migrations';
 import type { QualificationUpgradeConfiguration } from './qualification-schema-upgrade';
 import { qualificationUpgradeFromAws, QUALIFICATION_UPGRADE_AWS } from './qualification-upgrade-aws-binding';
-import { assertCareConnectionsUpgrade, CARE_CONNECTIONS_UPGRADE } from './care-connections-schema-upgrade';
-import { CareConsentCopyError, parseCareConsentCopy, runCareConsentCopyRegistration, type CareConsentCopyMode } from './care-consent-copy-registration';
+import { CARE_CONNECTIONS_UPGRADE } from './care-connections-schema-upgrade';
+import { CARE_CLAIM_RECOVERY_UPGRADE } from './care-claim-recovery-schema-upgrade';
+import { assertCareConsentCopyRelease, CareConsentCopyError, parseCareConsentCopy, runCareConsentCopyRegistration, type CareConsentCopyMode } from './care-consent-copy-registration';
 export type CareConsentCopyBuild = { sourceCommit: string; clean: boolean };
 export type CareConsentCopyDependencies = { readCopy: (path: string) => unknown; loadMigrations: () => ClinicalCoreMigration[];
   observeCaller: () => unknown; observeFoundation: () => unknown;
@@ -27,11 +28,12 @@ export async function executeCareConsentCopyCommand(args: readonly string[], sup
   const copy = command === 'inventory' ? undefined : parseCareConsentCopy(dependencies.readCopy(file.slice(12)));
   const migrations = dependencies.loadMigrations().map(m => ({ ...m }));
   const caller = dependencies.observeCaller();
+  const transition = migrations.length === 105 ? CARE_CONNECTIONS_UPGRADE : CARE_CLAIM_RECOVERY_UPGRADE;
   const configuration = { ...qualificationUpgradeFromAws(caller, dependencies.observeFoundation()),
-    fromReleaseSha256: CARE_CONNECTIONS_UPGRADE.from, toReleaseSha256: CARE_CONNECTIONS_UPGRADE.to };
+    fromReleaseSha256: transition.from, toReleaseSha256: transition.to };
   const { Account, Arn } = caller as { Account: string; Arn: string };
   const operatorPrincipalSha256 = createHash('sha256').update(JSON.stringify({ Account, Arn })).digest('hex');
-  assertCareConnectionsUpgrade(configuration, migrations);
+  assertCareConsentCopyRelease(configuration, migrations);
   const database = dependencies.createDatabase(configuration), run = dependencies.run ?? runCareConsentCopyRegistration;
   const rehearsal = command === 'register' ? await run(database, migrations, configuration, 'rehearse', copy) : undefined;
   if (rehearsal && rehearsal.rolledBack !== true) throw new CareConsentCopyError('verification_failed');

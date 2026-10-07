@@ -15,8 +15,8 @@ beforeAll(() => {
     encoding: 'utf8', maxBuffer: 8 * 1024 * 1024, timeout: 15000,
   }));
   const sql: string = artifact.files['20261006020000_production_care_connections.sql'];
-  build = { sourceCommit, sourceClean: true, migrationCount: 105,
-    migrationReleaseSha256: '7da8e4ed999a3298bccc4ef33e7a1005201db45fa2b46682622a208486f17743',
+  build = { sourceCommit, sourceClean: true, migrationCount: 106,
+    migrationReleaseSha256: '514959bf0d32de55ded312509ae2ebe39a0fdde9f59246b096b0c41ba63f4f9b',
     functions: [...sql.matchAll(/create(?: or replace)? function ([a-z_]+\.[a-z_]+)\([^]*?as \$\$([^]*?)\$\$/g)]
       .map(([, name, body]) => ({ name, bodySha256: createHash('sha256').update(body).digest('hex'), apiExecute: name.startsWith('clinical_core.') })) };
 });

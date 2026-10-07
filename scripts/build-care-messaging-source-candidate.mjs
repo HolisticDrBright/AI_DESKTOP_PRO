@@ -15,7 +15,7 @@ const baseline = JSON.parse(execFileSync(process.execPath, ['scripts/build-aws-p
 // includes filenames; they are different identities and must never be confused.
 const ledgerReleaseSha256 = sha(baseline.manifest.migrations.slice(0, 103).map(m => `${m.version}:${sha(baseline.files[m.file])}`).join('\n'));
 const migrationReleaseSha256 = sha(baseline.manifest.migrations.map(m => `${m.version}:${sha(baseline.files[m.file])}`).join('\n'));
-if (baseline.manifest.migrations.length !== 105 || baseline.manifest.migrations.at(-2).version !== '20261006010000'
+if (baseline.manifest.migrations.length !== 106 || baseline.manifest.migrations[103].version !== '20261006010000'
   || ledgerReleaseSha256 !== '9bc30d04930816a523a7dc67b95944fba1d294dad4d71cf7585158fbc3a874aa') throw new Error('care_message_baseline_changed');
 const sourceCommit = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
 const sourceDirty = execFileSync('git', ['status', '--porcelain', '--untracked-files=all', '--',
@@ -27,7 +27,7 @@ writeFileSync(out + '/care-messaging.sql', schema);
 const manifest = {
   contract: 'care-messaging-source-candidate/1', status: 'unreleased', deployable: false,
   sourceCommit, sourceDirty, baselineMigrationCount: 103, baselineLedgerReleaseSha256: ledgerReleaseSha256,
-  migrationCount: 105, migrationReleaseSha256, migrationAssemblySha256: baseline.releaseHash,
+  migrationCount: 106, migrationReleaseSha256, migrationAssemblySha256: baseline.releaseHash,
   schemaSha256: sha(schema), librarySha256: sha(readFileSync(out + '/candidate-library.cjs')),
   proposedRoutes: ['POST /clinical-core/consumer/messages', 'POST /clinical-core/workforce/messages', 'POST /clinical-core/consumer/messages/export'],
   newTables: ['clinical_core.care_message_thread_links', 'clinical_core.care_message_receipts', 'clinical_core.care_message_cancellations', 'clinical_audit.care_message_access_events'],

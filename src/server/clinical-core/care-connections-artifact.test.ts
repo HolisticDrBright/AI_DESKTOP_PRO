@@ -50,7 +50,7 @@ describe('care connections deployment artifact', () => {
     expect(manifest.deploymentZipBytes).toBe(readFileSync(join(directory, 'deployment.zip')).length);
     expect(template.Parameters.SourceCommit.AllowedValues).toEqual([manifest.sourceCommit]);
     expect(template.Parameters.MigrationReleaseSha256.AllowedValues).toEqual([manifest.migrationReleaseSha256]);
-    expect(manifest.migrationReleaseSha256).toBe('7da8e4ed999a3298bccc4ef33e7a1005201db45fa2b46682622a208486f17743');
+    expect(manifest.migrationReleaseSha256).toBe('514959bf0d32de55ded312509ae2ebe39a0fdde9f59246b096b0c41ba63f4f9b');
     expect(manifest.functions).toHaveLength(7);
     expect(template.Parameters.EnabledConsentScopes.Default).toBe('');
     expect(template.Resources.Function.Properties.Code).toEqual({ S3Bucket: { Ref: 'CodeBucket' }, S3Key: { Ref: 'CodeKey' }, S3ObjectVersion: { Ref: 'CodeVersion' } });

@@ -12,7 +12,7 @@ import {bindCareClaimRecoveryDatabase,validateCareClaimFunctions} from './care-c
 import {parseCareClaimResponse,careClaimRequest,type CareClaimRequest} from '../../contracts/careClaimRecovery';
 import type {CareConnectionFunctionBinding} from './care-connections-database-binding';
 
-// The actual immutable 105 artifact plus an UNRELEASED overlay. Fictional rows
+// The actual registered 106 artifact; no deployment or activation is implied. Fictional rows
 // only. PGlite serializes transactions: these are NOT hosted multi-session races.
 let db:PGlite,org:string,foreignOrg:string,owner:string,other:string,staff:string,patient:string;
 let predecessor:CareConnectionFunctionBinding[],pins:CareConnectionFunctionBinding[],bound:ClinicalCoreDatabase;
@@ -57,13 +57,13 @@ async function raw(request:unknown,c=context()){
 beforeAll(async()=>{
   const {manifest,files}=JSON.parse(execFileSync(process.execPath,['scripts/build-aws-production-clinical-core.mjs','--json'],
     {encoding:'utf8',timeout:10000,maxBuffer:8*1024*1024}));
-  expect(manifest.migrations).toHaveLength(105);
+  expect(manifest.migrations).toHaveLength(106);
   expect(sha(manifest.migrations.map((m:{version:string;file:string})=>`${m.version}:${sha(files[m.file])}`).join('\n')))
-    .toBe('7da8e4ed999a3298bccc4ef33e7a1005201db45fa2b46682622a208486f17743');
+    .toBe('514959bf0d32de55ded312509ae2ebe39a0fdde9f59246b096b0c41ba63f4f9b');
   db=new PGlite({extensions:{pgcrypto}});
   for(const m of manifest.migrations)await db.exec(files[m.file]);
   const overlay=readFileSync('infra/aws-clinical-core/production-candidates/care-claim-recovery.sql','utf8').replace(/\r\n?/g,'\n');
-  await db.exec(overlay);
+  expect(files['20261006030000_production_care_claim_recovery.sql']).toBe(overlay);
   predecessor=functions(files['20261006020000_production_care_connections.sql']);pins=functions(overlay);
   bound=bindCareClaimRecoveryDatabase(database,predecessor,pins);
   for(const table of ['clinical_core.care_claim_requests','clinical_audit.care_claim_events'])

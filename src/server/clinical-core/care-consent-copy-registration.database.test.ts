@@ -6,7 +6,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { ClinicalCoreDatabase, ClinicalCoreTransaction } from './database';
 import type { ClinicalCoreMigration } from './migrations';
 import { applyProductionClinicalCoreMigrations } from './production-migrations';
-import { CARE_CONNECTIONS_UPGRADE } from './care-connections-schema-upgrade';
+import { CARE_CLAIM_RECOVERY_UPGRADE } from './care-claim-recovery-schema-upgrade';
 import type { QualificationUpgradeConfiguration } from './qualification-schema-upgrade';
 import { parseCareConsentCopy, runCareConsentCopyRegistration, type CareConsentCopy, type CareConsentCopyMode } from './care-consent-copy-registration';
 
@@ -19,7 +19,7 @@ const configuration: QualificationUpgradeConfiguration = { expectedAccountId: '5
   activation: 'blocked', clusterArn: 'arn:aws:rds:us-east-2:588966314750:cluster:synthetic-test',
   secretArn: 'arn:aws:secretsmanager:us-east-2:588966314750:secret:synthetic-test',
   qualificationDatabaseName: 'clinical_core_qualification', stagingDatabaseName: 'clinical_core',
-  fromReleaseSha256: CARE_CONNECTIONS_UPGRADE.from, toReleaseSha256: CARE_CONNECTIONS_UPGRADE.to };
+  fromReleaseSha256: CARE_CLAIM_RECOVERY_UPGRADE.from, toReleaseSha256: CARE_CLAIM_RECOVERY_UPGRADE.to };
 type Intercept = (sql: string, tx: { query: (sql: string, args?: unknown[]) => Promise<unknown> }) => Promise<void>;
 const database = (intercept?: Intercept, name = 'clinical_core_qualification'): ClinicalCoreDatabase => ({
   transaction: work => pg.transaction(async tx => work({ query: async (sql: string, args: readonly unknown[] = []) => {
@@ -48,7 +48,7 @@ beforeAll(async () => {
   migrations = artifact.manifest.migrations.map((m: { version: string; file: string }) => ({ version: m.version, name: m.file.slice(15, -4),
     sql: artifact.files[m.file], sha256: sha(artifact.files[m.file]) }));
   pg = new PGlite({ extensions: { pgcrypto } });
-  expect((await applyProductionClinicalCoreMigrations(database(), migrations)).tableCount).toBe(128);
+  expect((await applyProductionClinicalCoreMigrations(database(), migrations)).tableCount).toBe(130);
   expect(await run('inventory')).toMatchObject({ inventory: { approvedArtifacts: 0, registeredCopies: 0 } });
 }, 60000);
 beforeEach(async () => {
@@ -144,7 +144,7 @@ describe('qualification-only consent-copy registration', () => {
       (select count(*) from clinical_core.consent_artifacts)::int artifacts,(select count(*) from clinical_core.consent_grants)::int grants`);
     expect(await run('rehearse')).toMatchObject({ rolledBack: true, copyPresent: false, copyInserted: false }); expect(await countCopy()).toBe(0);
     const registered = await run(); expect(registered).toMatchObject({ copyInserted: true, copyPresent: true, approvalsCreated: false,
-      grantsCreated: false, phiAllowed: false, activation: 'blocked', migrationCount: 105 });
+      grantsCreated: false, phiAllowed: false, activation: 'blocked', migrationCount: 106 });
     expect(JSON.stringify(registered)).not.toMatch(/FICTIONAL|Exact copy|secretArn|fictional-/);
     expect(await run()).toMatchObject({ copyPresent: true, copyInserted: false }); expect(await countCopy()).toBe(1);
     expect(await run('rehearse')).toMatchObject({ rolledBack: true, copyPresent: true, copyInserted: false });

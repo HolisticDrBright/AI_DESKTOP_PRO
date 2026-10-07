@@ -55,8 +55,8 @@ async function replacement() {
 beforeAll(async () => {
   const { manifest, files } = JSON.parse(execFileSync(process.execPath, ['scripts/build-aws-production-clinical-core.mjs', '--json'], { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024, timeout: 10000 }));
   const sql: string = files['20261006010000_production_care_messaging.sql'];
-  messagingBuild = { sourceCommit: '1'.repeat(40), sourceClean: true, migrationCount: 105,
-    migrationReleaseSha256: '7da8e4ed999a3298bccc4ef33e7a1005201db45fa2b46682622a208486f17743',
+  messagingBuild = { sourceCommit: '1'.repeat(40), sourceClean: true, migrationCount: 106,
+    migrationReleaseSha256: '514959bf0d32de55ded312509ae2ebe39a0fdde9f59246b096b0c41ba63f4f9b',
     functions: [...sql.matchAll(/create function (clinical_(?:core|private))\.(production_care_message_[a-z]+)\([^]*?security definer set search_path='' as \$\$([^]*?)\$\$/g)]
       .map(([, schema, name, body]) => ({ schema, name, sha256: createHash('sha256').update(body).digest('hex'), callable: schema === 'clinical_core' })) };
   db = new PGlite({ extensions: { pgcrypto } });

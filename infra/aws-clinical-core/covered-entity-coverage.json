@@ -2,6 +2,23 @@
   "record": "covered-entity-coverage/1",
   "tables": [
     {
+      "table": "clinical_core.care_claim_requests",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "ownerColumn": "consumer_person_id",
+      "dependsOn": ["clinical_core.patient_connections"],
+      "appendOnly": true,
+      "disposition": "Blocked by immutable trigger until a separately reviewed clinic retention/disposition procedure exists; inventory is not deletion authority."
+    },
+    {
+      "table": "clinical_audit.care_claim_events",
+      "scope": "organization_column",
+      "column": "organization_id",
+      "ownerColumn": "consumer_person_id",
+      "appendOnly": true,
+      "disposition": "Blocked by immutable trigger until a separately reviewed clinic retention/disposition procedure exists; inventory is not deletion authority."
+    },
+    {
       "table": "clinical_core.care_consent_texts",
       "scope": "organization_column",
       "column": "organization_id",

@@ -48,8 +48,8 @@ describe('unreleased connection candidate mapping', () => {
   it('derives the canonical source upgrade identity without claiming hosted verification', () => {
     const { manifest: baseline, files } = JSON.parse(execFileSync(process.execPath,
       ['scripts/build-aws-production-clinical-core.mjs', '--json'], { encoding: 'utf8', timeout: 10000, maxBuffer: 8 * 1024 * 1024 }));
-    expect(baseline.migrations).toHaveLength(105);
-    const ledger = baseline.migrations.map((m: { version: string; file: string }) => `${m.version}:${sha(files[m.file])}`).join('\n');
+    expect(baseline.migrations).toHaveLength(106);
+    const ledger = baseline.migrations.slice(0,105).map((m: { version: string; file: string }) => `${m.version}:${sha(files[m.file])}`).join('\n');
     expect(manifest.proposedUpgrade).toEqual({ version: '20261006020000', migrationCount: 105,
       ledgerReleaseSha256: sha(ledger), canonical: true, hostedVerified: false, cliOperatorAvailable: true });
     expect(manifest.proposedUpgrade.ledgerReleaseSha256).toBe('7da8e4ed999a3298bccc4ef33e7a1005201db45fa2b46682622a208486f17743');

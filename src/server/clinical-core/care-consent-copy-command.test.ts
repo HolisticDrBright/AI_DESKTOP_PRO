@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import type { ClinicalCoreDatabase } from './database';
 import type { ClinicalCoreMigration } from './migrations';
 import type { QualificationUpgradeConfiguration } from './qualification-schema-upgrade';
-import { CARE_CONNECTIONS_UPGRADE } from './care-connections-schema-upgrade';
+import { CARE_CLAIM_RECOVERY_UPGRADE } from './care-claim-recovery-schema-upgrade';
 import { executeCareConsentCopyCommand } from './care-consent-copy-command';
 import { runCareConsentCopyRegistration } from './care-consent-copy-registration';
 
@@ -29,7 +29,7 @@ const stack = { StackStatus: 'CREATE_COMPLETE',
   Outputs: Object.entries(values).map(([OutputKey, OutputValue]) => ({ OutputKey, OutputValue })) };
 type Receipt = Awaited<ReturnType<typeof runCareConsentCopyRegistration>>;
 const result = (command: Receipt['command']): Receipt => ({ contract: 'care-consent-copy-registration/1', command,
-  execution: 'qualification', phiAllowed: false, activation: 'blocked', migrationCount: 105, migrationReleaseSha256: CARE_CONNECTIONS_UPGRADE.to,
+  execution: 'qualification', phiAllowed: false, activation: 'blocked', migrationCount: 106, migrationReleaseSha256: CARE_CLAIM_RECOVERY_UPGRADE.to,
   approvalsCreated: false, grantsCreated: false, copyInserted: command === 'register', copyPresent: command === 'register',
   artifactId: copy.artifactId, contentSha256: copy.contentSha256, rolledBack: command === 'rehearse' });
 function fixture() {
@@ -94,7 +94,7 @@ describe('qualification consent-copy command admission and replay', () => {
     expect(events).toEqual(['copy', 'artifact', 'caller', 'foundation', 'client', 'rehearse', 'register']);
     expect(d.run.mock.calls[0].filter((_, i) => i !== 3)).toEqual(d.run.mock.calls[1].filter((_, i) => i !== 3));
     expect(d.createDatabase.mock.calls[0][0]).toMatchObject({ qualificationDatabaseName: 'clinical_core_qualification',
-      expectedAccountId: '588966314750', phiAllowed: false, activation: 'blocked', toReleaseSha256: CARE_CONNECTIONS_UPGRADE.to });
+      expectedAccountId: '588966314750', phiAllowed: false, activation: 'blocked', toReleaseSha256: CARE_CLAIM_RECOVERY_UPGRADE.to });
     expect(receipt.rehearsal).toEqual({ rolledBack: true, copyPresent: false }); expect(receipt.operatorPrincipalSha256).toBe(sha(JSON.stringify(caller)));
     expect(JSON.stringify(receipt)).not.toMatch(/FICTIONAL|secretArn|FictionalOperator|content\"/);
   });

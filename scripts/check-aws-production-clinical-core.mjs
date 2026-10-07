@@ -16,7 +16,7 @@ const errors = [];
 const assert = (condition, message) => { if (!condition) errors.push(message); };
 
 assert(manifest.contract_version === "clinical-core-migrations/1", "generated manifest contract is invalid");
-assert(manifest.migrations.length === 105, "expected ten transformed migrations and ninety-five production overlays");
+assert(manifest.migrations.length === 106, "expected ten transformed migrations and ninety-six production overlays");
 assert(manifest.migrations.some(entry => entry.file === '20260920120000_production_owned_correction_lists.sql'), "correction lists overlay missing");
 assert(manifest.migrations.some(entry => entry.file === '20260920130000_production_owned_privacy_export_recovery.sql'), "export recovery overlay missing");
 assert(manifest.migrations.some(entry => entry.file === '20260920140000_production_owned_privacy_export_settlement.sql'), "export settlement overlay missing");
@@ -26,8 +26,9 @@ assert(manifest.migrations.some(entry => entry.file === '20260920170000_producti
 assert(manifest.migrations.some(entry => entry.file === '20260921010000_production_owned_privacy_export_part_sizes.sql'), "export part-size overlay missing");
 assert(manifest.migrations.some(entry => entry.file === '20260922010000_production_record_source_regime.sql'), "record source-regime overlay missing");
 assert(manifest.migrations.some(entry => entry.file === '20260928010000_production_owned_privacy_export_discovery.sql'), "owner export discovery overlay missing");
-assert(manifest.migrations.at(-2)?.file === '20261006010000_production_care_messaging.sql', "historical care messaging overlay must remain penultimate");
-assert(manifest.migrations.at(-1)?.file === '20261006020000_production_care_connections.sql', "care connection overlay must be last");
+assert(manifest.migrations[103]?.file === '20261006010000_production_care_messaging.sql', "historical care messaging overlay must remain migration 104");
+assert(manifest.migrations[104]?.file === '20261006020000_production_care_connections.sql', "historical care connection overlay must remain migration 105");
+assert(manifest.migrations.at(-1)?.file === '20261006030000_production_care_claim_recovery.sql', "care claim recovery overlay must be last");
 const connectionSql = readFileSync(path.join(directory, '20261006020000_production_care_connections.sql'), 'utf8');
 assert(createHash('sha256').update(connectionSql).digest('hex') === '0ade0879e0a5b5468461249d8dd39ffd8ea64fa51860e21af6a55cfc256642c5',
   "canonical connection SQL must preserve the reviewed candidate bytes");

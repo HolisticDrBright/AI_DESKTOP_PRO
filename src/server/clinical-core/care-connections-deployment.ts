@@ -8,11 +8,11 @@ import { createRdsDataClinicalCoreDatabase, type RdsDataConfiguration } from './
 import { resolveQualificationExecution } from './qualification-execution';
 
 export type CareConnectionsBuild = {
-  sourceCommit: string; sourceClean: boolean; migrationCount: 105; migrationReleaseSha256: string;
+  sourceCommit: string; sourceClean: boolean; migrationCount: 106; migrationReleaseSha256: string;
   functions: readonly CareConnectionFunctionBinding[];
 };
 type Environment = Record<string, string | undefined>;
-const release = '7da8e4ed999a3298bccc4ef33e7a1005201db45fa2b46682622a208486f17743';
+const release = '514959bf0d32de55ded312509ae2ebe39a0fdde9f59246b096b0c41ba63f4f9b';
 const hash = /^[a-f0-9]{64}$/;
 
 /** Review identifiers are supplied by the release operator, not generated here.
@@ -24,7 +24,7 @@ export function createCareConnectionsHandler(environment: Environment, suppliedB
   try {
     const e = { ...environment }, build = structuredClone(suppliedBuild);
     const functions = validateCareConnectionFunctions(build.functions);
-    if (!/^[a-f0-9]{40}$/.test(build.sourceCommit) || build.migrationCount !== 105
+    if (!/^[a-f0-9]{40}$/.test(build.sourceCommit) || build.migrationCount !== 106
       || build.migrationReleaseSha256 !== release || e.SOURCE_COMMIT !== build.sourceCommit
       || e.MIGRATION_RELEASE_SHA256 !== release || e.AWS_REGION !== 'us-east-2'
       || !/^https:\/\/cognito-idp\.us-east-2\.amazonaws\.com\/us-east-2_[A-Za-z0-9]+$/.test(e.CONSUMER_ISSUER ?? '')

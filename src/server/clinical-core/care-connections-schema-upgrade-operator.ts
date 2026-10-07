@@ -16,7 +16,7 @@ const aws = (args: string[]) => JSON.parse(execFileSync('aws', [...args, '--prof
 executeCareConnectionsUpgradeCommand(process.argv.slice(2), __CARE_CONNECTIONS_UPGRADE_BUILD__, {
   observeCaller: () => aws(['sts', 'get-caller-identity']),
   observeFoundation: () => aws(['cloudformation', 'describe-stacks', '--stack-name', foundation]),
-  loadMigrations: () => loadClinicalCoreMigrations('dist/aws-clinical-core/production-migrations'),
+  loadMigrations: () => loadClinicalCoreMigrations('dist/aws-clinical-core/production-migrations').slice(0, 105),
   createDatabase: c => createRdsDataAdministrativeDatabase({ clusterArn: c.clusterArn, secretArn: c.secretArn,
     databaseName: c.qualificationDatabaseName, region }, { purpose: 'reviewed_production_schema_migration' },
     new RDSDataClient({ region, credentials: fromIni({ profile }), maxAttempts: 1 })),
