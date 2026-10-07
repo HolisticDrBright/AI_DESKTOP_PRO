@@ -147,6 +147,40 @@ dependency mutation, live binding changes, unread pagination, metadata drift,
 disabled rollback, non-Code context changes and the absence of execution,
 schema, report-authority and target-override commands.
 
+The actual run at Desktop `8d5c8ad` and matched V2 `c7d76cc` completed on
+October 7. ZIP `5c6b489e789b704a5936d2f52ff78dbffb9f9d4521ccbd347e072acfa2e0b25d`
+was uploaded as encrypted S3 version `90cXIgm3VBS6lPJymSyY0fvWVZsiyWBJ` and
+downloaded byte-for-byte. Fresh complete preparations preceded both writes.
+Proposal `care-intent-b7f045bc93c35bd02e47dfd8afb755c6` passed the separate
+dependency classification, with unchanged live bindings before and after.
+An independent read-only recheck at `2026-10-07T22:02:48.240Z` classified the
+same exact scope and confirmed that the original strict profile still refused
+it. Both raw projections and their hashes are retained in
+[Dependency audit](evidence/2026-10-07-care-intent-dependency-audit.json).
+
+The proposal is unexecuted. The deployed Lambda remains `5b6f8aa`, and the
+database remains live47/source46 with 88 tables and 23,985 rows. This closes
+the explicit proposal-shape classification step, not deployment, functional
+recovery, intent migration, erased-outcome acceptance or PHI readiness. The
+subsequent test-only repair `a15b1d6` is not the uploaded candidate's source.
+Any future candidate must bind its exact selected source pair; do not relabel
+this historical upload as a newer source or execute from saved JSON authority.
+
+Local verification at `a15b1d6` passed all 341 Desktop files: 4,307 tests passed
+and 11 skipped. The preserved test deadline remained five seconds. The earlier
+bundled rollback case timed out; it was split into three independently bounded
+cases, retaining every mutation, refusal, preservation and predecessor check.
+All 30 cases in that file passed in isolation. A full run concurrent with the
+eight-worker AST refresh then had two timing failures, which remain archived;
+the unchanged full suite passed once that job had finished. Do not run the
+resource-heavy graph refresh concurrently with full embedded-database testing.
+This is local verification, not hosted CI or device acceptance.
+
+The unchanged V2 source at `c7d76cc` passed 216 files and 2,509 tests, with one
+file/test skipped; typecheck and lint passed. Its store gate remains
+`not_submittable` with eight blockers. Neither these source tests nor the
+classification report activate any commercial or PHI capability.
+
 ## Remaining release work
 
 1. Run and qualify exact-version upload and an explicitly scoped deployment proposal
