@@ -11,6 +11,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "test:lint-root-matcher": "node --test scripts/lint-root-matcher.test.mjs",
     "typecheck": "tsc --noEmit",
     "build:lab-range-tools": "node scripts/build-lab-range-tools.mjs",
     "test:e2e": "playwright test",
@@ -145,12 +146,16 @@
     "esbuild": "^0.28.2",
     "eslint": "^9.39.5",
     "eslint-config-next": "^15.5.25",
+    "fast-glob": "file:vendor/next-root-glob",
     "playwright": "^1.61.1",
     "tailwindcss": "^4.3.2",
     "typescript": "^5.9.3",
     "vitest": "4.1.11"
   },
   "overrides": {
+    "@next/eslint-plugin-next@15.5.25": {
+      "fast-glob": "$fast-glob"
+    },
     "nanoid": "3.3.18",
     "postcss": "8.5.23",
     "sharp": "0.35.5"

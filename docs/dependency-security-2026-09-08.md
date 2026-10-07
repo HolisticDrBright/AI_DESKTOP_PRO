@@ -1,5 +1,8 @@
 # Dependency security repair — September 8, 2026
 
+Historical checkpoint. For the later lint-chain advisory and source repair,
+see [October 6 dependency security evidence](dependency-security-2026-10-06.md).
+
 **Source candidate only; deployment of this security patch is still required.**
 PHI remains disabled and no clinical/content policy was changed.
 

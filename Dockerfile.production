@@ -2,6 +2,7 @@ FROM public.ecr.aws/docker/library/node:22-bookworm-slim AS dependencies
 
 WORKDIR /app
 COPY package.json package-lock.json ./
+COPY vendor/next-root-glob ./vendor/next-root-glob
 RUN npm ci
 
 FROM public.ecr.aws/docker/library/node:22-bookworm-slim AS builder

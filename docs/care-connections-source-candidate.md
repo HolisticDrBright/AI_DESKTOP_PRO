@@ -595,3 +595,16 @@ focused verification remains separate from this preceding full-run receipt.
 The recovery suites and source builder are now in the independent connection
 CI job. These changes do not waive the full dependency-security gate, which
 still reports five High findings in the lint-tool chain.
+
+## Later lint security repair
+
+The local full dependency audit now reports zero known findings after replacing
+the pinned Next lint plugin's sole directory-matcher dependency. See
+[the repair and exact verification scope](dependency-security-2026-10-06.md).
+The audit is not narrowed or waived; Next/React/TypeScript lint enforcement is
+preserved. Both container definitions include the local adapter. The first
+two-worker full regression had two timeout failures; both unchanged affected
+suites passed focused verification and a complete one-worker run passed
+331 files, 4,143 tests and 11 existing skips. New CI and container evidence must
+be observed separately. No serving connection route, canonical schema,
+qualification fleet, consent, approval, PHI flag or mobile build changed.
