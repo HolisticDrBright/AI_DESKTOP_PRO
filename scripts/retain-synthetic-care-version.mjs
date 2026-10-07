@@ -92,14 +92,28 @@ function aws(args) {
     {encoding: 'utf8', timeout: 30000, maxBuffer: 1024 * 1024, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe']}));}
   catch {fail('version_aws_outcome_unconfirmed');}
 }
+export function runCareVersionChild(run, stage) {
+  if (!['build', 'preflight', 'postflight'].includes(stage)) fail('version_child_stage');
+  try {return run();} catch (error) {
+    // A child may include its whole command or transport response in its error.
+    // Forward only a bounded machine refusal code, never that diagnostic text.
+    const code = String(error?.stderr ?? '').slice(0, 4096).match(
+      /(?:^|\r?\n)synthetic_care_release_refused:([a-z0-9_]{1,80})(?:\r?\n|$)/)?.[1];
+    fail(`version_${stage}_${code ?? (error?.code === 'ETIMEDOUT' ? 'timeout' : 'child_failed')}`);
+  }
+}
 async function main() {
   if (process.argv.length !== 3 || process.argv[2] !== '--retain-reviewed-fictional-code-only') fail('arguments');
   const root = process.cwd(), harness = careSourceSnapshot(root, 'desktop'); observeSyntheticMemberIdentity();
   const child = file => execFileSync(process.execPath, [resolve(root, 'scripts', file),
     ...(file.startsWith('verify-') ? ['--inspect-deployed-fictional-only'] : [])],
   {encoding: 'utf8', timeout: 180000, maxBuffer: 2 * 1024 * 1024, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe']});
-  child('build-care-erasure-schema-upgrade.mjs');
-  const report = JSON.parse(child('verify-deployed-synthetic-care.mjs')); verifyCareVersionPreflight(report, harness);
+  runCareVersionChild(() => child('build-care-erasure-schema-upgrade.mjs'), 'build');
+  const readInspection = stage => {
+    const output = runCareVersionChild(() => child('verify-deployed-synthetic-care.mjs'), stage);
+    try {return JSON.parse(output);} catch {fail(`version_${stage}_output`);}
+  };
+  const report = readInspection('preflight'); verifyCareVersionPreflight(report, harness);
   const latest = aws(['lambda', 'get-function-configuration', '--function-name', P.functionName]);
   verifyCareVersionLatest(latest, report.revisionId);
   const unchanged = () => {if (canonical(careSourceSnapshot(root, 'desktop')) !== canonical(harness)) fail('version_source_changed');};
@@ -108,7 +122,7 @@ async function main() {
   // Publishing may change service bookkeeping. Code and executable settings may not change.
   verifyCareVersionLatest(after, after.RevisionId); verifyRetainedCareVersion(
     aws(['lambda', 'get-function-configuration', '--function-name', P.functionName, '--qualifier', retained.version]), after);
-  const postflight = JSON.parse(child('verify-deployed-synthetic-care.mjs'));
+  const postflight = readInspection('postflight');
   verifyCareVersionPreflight(postflight, harness); unchanged();
   if (postflight.templateSha256 !== report.templateSha256 || postflight.apiInventorySha256 !== report.apiInventorySha256
     || canonical(postflight.database) !== canonical(report.database)) fail('version_target_changed');

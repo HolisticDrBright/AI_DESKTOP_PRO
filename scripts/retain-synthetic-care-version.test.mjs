@@ -4,7 +4,7 @@ import {readFileSync} from 'node:fs';
 import {CARE_RELEASE as P} from './synthetic-care-release.mjs';
 import {DEPLOYED_CARE as D} from './verify-deployed-synthetic-care.mjs';
 import {CARE_VERSION_DESCRIPTION as description, verifyCareVersionPreflight, verifyCareVersionLatest,
-  verifyRetainedCareVersion, retainCareVersion} from './retain-synthetic-care-version.mjs';
+  verifyRetainedCareVersion, retainCareVersion, runCareVersionChild} from './retain-synthetic-care-version.mjs';
 const checksum = Buffer.from(D.zip, 'hex').toString('base64'), arn = `arn:aws:lambda:${P.region}:${P.account}:function:${P.functionName}`;
 const harness = {commit: 'a'.repeat(40), clean: true, files: 100, sha256: 'b'.repeat(64)}, now = 1700000000000;
 function plan() {return {contract: 'synthetic-care-deployed-inspection/1', observedAt: new Date(now).toISOString(), account: P.account,
@@ -98,4 +98,17 @@ test('retention has no alias, traffic, environment, permission, fixture, erasure
   assert.doesNotMatch(script, /'update-alias'|'create-alias'|'update-function-code'|'update-function-configuration'|'update-integration'|'add-permission'|'execute-change-set'|'upgrade'/);
   assert.match(script, /functionalRollbackVerified: false/); assert.match(script, /afterUpgradeVerified: false/);
   assert.match(script, /trafficChanged: false/); assert.match(script, /upgradeAuthorized: false/);
+});
+
+test('child failures preserve their stage and bounded refusal, never command, response or secret text', () => {
+  assert.equal(runCareVersionChild(() => 'result', 'build'), 'result');
+  for (const [stage, error, expected] of [
+    ['preflight', {stderr: 'synthetic_care_release_refused:deployed_inspection\n'}, 'version_preflight_deployed_inspection'],
+    ['postflight', {stderr: 'sensitive response\nsynthetic_care_release_refused:source_dirty\n'}, 'version_postflight_source_dirty'],
+    ['preflight', {code: 'ETIMEDOUT', message: 'secret command'}, 'version_preflight_timeout'],
+    ['build', {stderr: 'token=fictional-secret\n'}, 'version_build_child_failed'],
+    ['postflight', {stderr: 'synthetic_care_release_refused:token=fictional-secret\n'}, 'version_postflight_child_failed'],
+  ]) assert.throws(() => runCareVersionChild(() => {throw error;}, stage), e =>
+    e.message === `synthetic_care_release_refused:${expected}`);
+  assert.throws(() => runCareVersionChild(() => 'unused', 'unreviewed'));
 });
