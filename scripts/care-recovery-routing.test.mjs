@@ -6,7 +6,7 @@ import {DEPLOYED_CARE as D} from './verify-deployed-synthetic-care.mjs';
 import {PERSONA_EMAILS,CARE_CONSUMER_CASES} from './verify-synthetic-care-consumer.mjs';
 import {CARE_RECOVERY_ROUTE as R,canonical,recoveryPermission,verifyRecoveryPolicy,verifyRecoveryIntegration,
  verifyRecoveryStage,verifyRecoveryMetric,rehearseCareRecovery,verifyRecoveryResponse} from './care-recovery-routing.mjs';
-import {recoveryArgs,recoveryAwsOutput,recoveryMissingPolicy,verifyRecoveryLatestPolicy,verifyRecoveryInspector,recoveryFailureCode} from './rehearse-synthetic-care-routing.mjs';
+import {recoveryArgs,recoveryAwsOutput,recoveryMissingPolicy,verifyRecoveryLatestPolicy,verifyRecoveryInspector,recoveryFailureCode,RECOVERY_AUTH_TRANSPORT} from './rehearse-synthetic-care-routing.mjs';
 const sid='alp-care-recovery-'+'a'.repeat(32),digest='b'.repeat(64);
 function stage(id='original'){return {StageName:'$default',AutoDeploy:true,DeploymentId:id,
  LastDeploymentStatusMessage:`Successfully deployed stage with deployment ID '${id}'`,
@@ -59,6 +59,13 @@ test('only the fixed synthetic confirmation argument is accepted; no target or s
  recoveryArgs(['--rehearse-existing-fictional-version']);
  for(const args of [[],['--approve'],['--rehearse-existing-fictional-version','--phi'],
  ['--rehearse-existing-fictional-version','--target','other']])assert.throws(()=>recoveryArgs(args));
+});
+test('authentication uses fresh connections across blocking inspections without extra attempts or longer deadlines',()=>{
+ assert.deepEqual(RECOVERY_AUTH_TRANSPORT,{httpsAgent:{keepAlive:false,maxSockets:1},connectionTimeout:10000,requestTimeout:30000});
+ assert.ok(Object.isFrozen(RECOVERY_AUTH_TRANSPORT));assert.ok(Object.isFrozen(RECOVERY_AUTH_TRANSPORT.httpsAgent));
+ const script=readFileSync(new URL('./rehearse-synthetic-care-routing.mjs',import.meta.url),'utf8');
+ assert.match(script,/new CognitoIdentityProviderClient\(\{region:P.region,credentials,maxAttempts:1,\s*requestHandler:RECOVERY_AUTH_TRANSPORT\}\)/);
+ assert.match(script,/InitiateAuthCommand[\s\S]*?AbortSignal.timeout\(30000\)/);
 });
 test('AWS empty success is allowed only for remove-permission, never for observations',()=>{
  assert.deepEqual(recoveryAwsOutput(['lambda','remove-permission'],'\n'),{});

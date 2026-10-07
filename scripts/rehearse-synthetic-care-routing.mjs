@@ -18,6 +18,10 @@ import {CARE_RECOVERY_ROUTE as R,canonical,recoveryPermission,rehearseCareRecove
  verifyRecoveryIntegration,verifyRecoveryMetric} from './care-recovery-routing.mjs';
 const secretArn='arn:aws:secretsmanager:us-east-2:588966314750:secret:ai-longevity-pro/synthetic-staging/testflight-personas-piSA7p';
 const check=(ok,code)=>{if(!ok)fail('recovery_'+code);};
+// Blocking AWS CLI inspections can leave an idle pooled socket's close event
+// pending. Authentication gets a fresh connection, never a longer deadline or retry.
+export const RECOVERY_AUTH_TRANSPORT=Object.freeze({httpsAgent:Object.freeze({keepAlive:false,maxSockets:1}),
+ connectionTimeout:10000,requestTimeout:30000});
 let phase='entry';
 export function recoveryFailureCode(error,at){
  const phases=['entry','arguments','source','principal','lock','build','artifact','inspector','personas','rehearsal','write_report'];
@@ -79,7 +83,8 @@ async function main(){
  try{writeFileSync(lock,JSON.stringify({runId,harness,pid:process.pid})+'\n',{flag:'wx'});}catch{fail('recovery_operator_lock');}
  const recordFile=resolve(directory,runId+'.events.jsonl');let admitted=false,restored=false,rows=[];
  const credentials=fromIni({profile}),s3=new S3Client({region:P.region,credentials,maxAttempts:1}),
-  secrets=new SecretsManagerClient({region:P.region,credentials,maxAttempts:1}),cognito=new CognitoIdentityProviderClient({region:P.region,credentials,maxAttempts:1});
+  secrets=new SecretsManagerClient({region:P.region,credentials,maxAttempts:1}),cognito=new CognitoIdentityProviderClient({region:P.region,credentials,maxAttempts:1,
+   requestHandler:RECOVERY_AUTH_TRANSPORT});
  try{
   phase='build';
   runCareVersionChild(()=>execFileSync(process.execPath,[resolve(root,'scripts/build-care-erasure-schema-upgrade.mjs')],
