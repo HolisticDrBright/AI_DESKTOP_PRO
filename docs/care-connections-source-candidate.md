@@ -828,3 +828,90 @@ synthetic deployments, real-service/concurrency/recovery/rollback matrices,
 physical iOS/Android, provider/store/clinical-source/security/retention reviews
 and independent PHI approvals remain. All six original phases are partial;
 neither app is commercial or PHI ready. PHI stays off and paid builds stay held.
+
+## October 6 canonical recovery release and historical admission
+
+Desktop registration `b9248d02032d0db9bae72c46625dc37412decf88` and follow-on
+source-gate hardening `cf8d388c3f37e10d896453e95df00b5c626d4168` are pushed
+and independently remote-matched. The gate pins both historical ledger hashes,
+the full 106 ledger and the exact recovery SQL digest. The exact recovery SQL is now migration 106,
+`20261006030000_production_care_claim_recovery.sql`, with digest
+`033ea35ff3d8932a7b3ca13ee9968f072fbe33e7311a2ad010d8cad80b6f0ca8`.
+Its frozen historical header still describes the original unreleased overlay;
+registration preserves those bytes rather than rewriting the reviewed function
+identity. Registration is not policy approval, deployment or PHI activation.
+
+The canonical ledger hash is
+`514959bf0d32de55ded312509ae2ebe39a0fdde9f59246b096b0c41ba63f4f9b`;
+the assembly hash, which also includes filenames, is
+`fb63e0db3d9a6ff3c8020312452591b92660c5d6fc2940eae717345d85c41107`.
+The exact historical 104 and 105 prefixes retain their old identities. The
+104-to-105 connection operator intentionally selects and verifies only the 105
+prefix. The recovery operator still admits only the exact 105-to-106 transition.
+The current connection and messaging builders and inspection/consent ledger
+checks bind to 106; rebuild older artifacts and target manifests before use.
+Do not relabel an older deployed handler or documentation commit as this runtime.
+
+Coverage now inventories 209 tables, including both recovery tables with pending
+immutable disposition. All 44 scoped immutable tables retain that condition.
+Neither table may be deleted through generic clinic cleanup. The fresh canonical
+operator checks 130 application tables, 86 contract functions and zero seeded
+clinical rows; exact historical predecessor checks remain separately pinned.
+The consent registrar accepts the exact 105 or 106 artifact only against its
+matching live ledger. Mixed releases, altered SQL and a current artifact against
+an older database refuse. It never creates an approval or patient grant.
+
+Local evidence includes the actual 106 SQL, API-role metadata and privacy mapping,
+preserving historical upgrade/rollback tests, and new real-database consent-release
+admission/refusal tests. Typecheck and full lint pass, as do 62 Node cases covering
+whole-ledger/target observation, immutable disposition and capacity. The complete
+Desktop regression passed 335 files and 4,179 tests, with 11 existing skips,
+in 484.01 seconds (documented timezone, unrelated anon-key unset). The follow-on
+source-gate-only change passed its standalone check; unit/runtime SQL is unchanged.
+Final typecheck and full lint also pass. CI 37577290425/37577294695 (registration)
+and 37577854246/37577859916 (gate hardening) are in progress, not terminal passes.
+Earlier runtime 29d2322 has terminal-success CI 37575632168/37575628205;
+that does not qualify this newer release or a mobile binary.
+
+The final clean-source operator built from cf8d388 has SHA-256
+`cb03961f1a52e7187bc9394ab6b0a3f0f56e4377199a2373b96f0468002049ef`,
+with source manifest SHA-256
+`47b6de250db1ea1647c9bda00764f0eac64b0351c4bc4ae8d0a9ee8b933f0de1`.
+A fresh AWS inspection initially failed at transaction start, with no transaction
+or migration admitted. A member-profile read-only begin/read/rollback probe then
+passed and observed qualification database 105. A new inspection and rollback
+rehearsal passed, preserving all 46 fictional rows and digest
+`129abce49aec8e4f3f8e73f6c10c18e94827d0ae0108e176419aede5d36280bc`.
+The startup failure remains unexplained; later success is not a diagnosed fix.
+After the full regression, the final clean-source operator repeated mandatory
+rollback rehearsal, re-observed the fixed member/foundation boundary and committed
+the 105-to-106 upgrade. It verified unchanged old-row digest and 46 rows and both
+new tables empty. A separate post-commit inspection verified 106 migrations,
+209 tables, 46 rows and full-inventory digest
+`fab53d6241e6cc38f36acfacb86453ded7f23dd7d5d1a77b7cdd79fcaa146950`.
+This latter digest includes the two empty tables and is not the predecessor's
+207-table digest. Source/API-role metadata is verified; business races are not.
+A current-source consent registrar inventory passed against the actual 106 target:
+six existing approved artifacts, zero registered copies, no insertion, approval
+or grant. No provider/consent activation or route deployment occurred. Fresh AWS
+readback still reports foundation CREATE_COMPLETE, PHI false, activation blocked,
+qualification execution disabled as infrastructure, and API 6zt8e9qz04 with 26
+routes and no care messaging, connection or recovery routes.
+
+The rebuilt covered-entity operator embeds the validated 209-table inventory
+and has SHA-256
+`08c99dc2ffc4fb9ef17fb589f982cf1809940de4c14f978cfd72f0f52bc71d45`.
+The final AST-only graph has 12,983 nodes, 26,250 edges and 897 communities; 49 files
+produced no nodes and HTML was skipped for size. No LLM/API cost or canvas edit.
+
+Next is recovery route/Lambda/template/fleet/target/inspector integration and
+separately reviewed
+activation. V2 legacy drain and second-device discovery, durable erase correlation,
+complete clinic privacy/retained amendments, registrar audit and production program
+assignments still require engineering. Matched synthetic deployments, real-service,
+concurrent race/recovery/rollback acceptance, physical iOS/Android, Core purchase/
+restore/provider acceptance, verified clinical source releases and independent
+security/retention/agreement reviews and PHI approvals remain. All six original
+phase scopes are preserved and partial; neither app is commercial or PHI ready.
+PHI stays off, paid builds held, and clinical holds/exclusions/source verification
+requirements are unchanged.
