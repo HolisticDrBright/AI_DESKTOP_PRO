@@ -59,9 +59,11 @@ async function inventory(tx:ClinicalCoreTransaction,successor:boolean){
 /** Exact within-engine schema equality includes all old columns, constraints,
  * indexes, policies, triggers and effective ACL entries, not only row counts/RLS. */
 async function preservedSchema(tx:ClinicalCoreTransaction,tables:Table[]){
- const digests:string[]=[];
- for(const table of tables){
-  const row=(await tx.query<{digest:string}>(`select encode(sha256(convert_to(jsonb_build_object(
+ const names=tables.map(base.tableName);
+ // Preserve the exact per-table encoding and ordered digest list, while
+ // avoiding two full sets of per-table remote round trips during inspection.
+ const result=(await tx.query<{relation_name:string;digest:string}>(`select selected.name relation_name,
+  encode(sha256(convert_to(jsonb_build_object(
    'relation',jsonb_build_object('kind',c.relkind,'rls',c.relrowsecurity,'forced',c.relforcerowsecurity,'owner',c.relowner::regrole::text,
      'acl',coalesce(c.relacl,acldefault('r',c.relowner))::text),
    'columns',(select jsonb_agg(jsonb_build_object('name',a.attname,'type',format_type(a.atttypid,a.atttypmod),
@@ -73,10 +75,11 @@ async function preservedSchema(tx:ClinicalCoreTransaction,tables:Table[]){
    'policies',(select jsonb_agg(to_jsonb(p)-'oid'-'polrelid' order by p.polname) from pg_policy p where p.polrelid=c.oid),
    'triggers',(select jsonb_agg(jsonb_build_object('enabled',t.tgenabled,'def',pg_get_triggerdef(t.oid)) order by t.tgname)
      from pg_trigger t where t.tgrelid=c.oid and not t.tgisinternal)
-  )::text,'UTF8')),'hex') digest from pg_class c where c.oid=$1::regclass`,[base.tableName(table)])).rows[0]?.digest;
-  if(!row||!/^[a-f0-9]{64}$/.test(row))fail('verification_failed');digests.push(row);
- }
- return sha(JSON.stringify(digests));
+  )::text,'UTF8')),'hex') digest from jsonb_array_elements_text($1::jsonb) with ordinality selected(name,position)
+   join pg_class c on c.oid=selected.name::regclass order by selected.position`,[JSON.stringify(names)])).rows;
+ if(result.length!==names.length||result.some((row,i)=>row.relation_name!==names[i]||!/^[a-f0-9]{64}$/.test(row.digest)))
+  fail('verification_failed','preserved_schema_inventory');
+ return sha(JSON.stringify(result.map(row=>row.digest)));
 }
 async function verifySuccessor(tx:ClinicalCoreTransaction,m:ClinicalCoreMigration[],overlay:ClinicalCoreMigration){
  const functions=[

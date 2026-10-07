@@ -77,6 +77,23 @@ describe('blocked preserving intent successor operator library',()=>{
   expect(queries.some(sql=>/^(create|alter|insert|update|delete|lock)/i.test(sql))).toBe(false);
   await expect(run('rehearse',database(undefined,'clinical_core_qualification'))).rejects.toThrow('boundary_refused');await predecessor();
  });
+ it('batches schema reads without changing the legacy ordered per-table schema digest',async()=>{
+  const queries:{sql:string;parameters:readonly unknown[]}[]=[];
+  const wrapped:ClinicalCoreDatabase={transaction:work=>database().transaction(tx=>work({query:async<Row extends Record<string,unknown>>(sql:string,parameters:readonly unknown[]=[])=>{
+   if(sql.includes('jsonb_array_elements_text($1::jsonb) with ordinality selected'))queries.push({sql,parameters});
+   return tx.query<Row>(sql,parameters);
+  }}))};
+  const inspected=await run('inspect',wrapped);expect(queries).toHaveLength(2);
+  const query=queries[0],names=JSON.parse(String(query.parameters[0])) as string[];
+  expect(names).toHaveLength(88);expect(queries[1]).toEqual(query);
+  // Freeze the pre-batching query form as an independent per-table oracle.
+  const old=query.sql.replace('select selected.name relation_name,\n  encode','select encode')
+   .replace(/from jsonb_array_elements_text\(\$1::jsonb\) with ordinality selected\(name,position\)[\s\S]*$/,
+    'from pg_class c where c.oid=$1::regclass');
+  const digests:string[]=[];
+  for(const name of names)digests.push((await pg.query<{digest:string}>(old,[name])).rows[0].digest);
+  expect(inspected.schemaSha256).toBe(sha(JSON.stringify(digests)));
+ },30000);
  it('runs the actual overlay and rolls back, independently proving history, original receipts, schema and data unchanged',async()=>{
   const before=await run('inspect'),r=await run('rehearse');
   expect(r).toMatchObject({rolledBack:true,observedMigrationCount:47,tableCount:88,applied:false,

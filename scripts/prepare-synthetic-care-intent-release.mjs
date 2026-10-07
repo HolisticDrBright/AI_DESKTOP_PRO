@@ -3,6 +3,7 @@ import {execFileSync} from 'node:child_process';
 import {readFileSync,mkdirSync,writeFileSync} from 'node:fs';
 import {resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
+import {randomUUID} from 'node:crypto';
 import {S3Client,HeadObjectCommand,GetObjectCommand} from '@aws-sdk/client-s3';
 import {fromIni} from '@aws-sdk/credential-provider-ini';
 import {CARE_RELEASE as P,sha256,normalizedText,buildCareIdentityBundle} from './synthetic-care-release.mjs';
@@ -41,22 +42,30 @@ function aws(args){
   {encoding:'utf8',timeout:30000,maxBuffer:4*1024*1024,windowsHide:true,stdio:['ignore','pipe','pipe']}));}
  catch{refuseIntent('aws_observation');}
 }
-function child(root,args){
+export function careIntentChildFailure(error,phase){
+ if(!['build','inspect'].includes(phase))return 'inspector_phase_refused';
+ if(error?.code==='ETIMEDOUT')return 'inspector_'+phase+'_deadline';
+ const stderr=Buffer.isBuffer(error?.stderr)?error.stderr.toString('utf8'):typeof error?.stderr==='string'?error.stderr:'';
+ const code=stderr.trim();
+ const safe=/^(boundary_refused|artifact_refused|history_refused|inventory_refused|upgrade_busy|data_changed|verification_failed|upgrade_failed|api_recovery_required)(?::(transaction_start|transaction_settings|database_identity|operator_locks|history|inventory|writer_locks|before_verification|before_fingerprint|before_schema|after_history|after_inventory|after_schema|after_fingerprint|contract_verification|rollback_readback|preserved_schema_inventory))?(?::(?:begin|statement|commit|rollback|unknown)_(?:database_resuming|database_unavailable|access_denied|token_expired|credentials_unavailable|timeout|aborted|transaction_missing|statement_timeout|service_unavailable|connection_reset|unknown))?$/;
+ return safe.test(code)?'inspector_'+phase+'_'+code.replaceAll(':','_'):'inspector_'+phase+'_failed';
+}
+function child(root,args,phase){
  try{return execFileSync(process.execPath,args,{cwd:root,encoding:'utf8',timeout:180000,
   maxBuffer:2*1024*1024,windowsHide:true,stdio:['ignore','pipe','pipe']});}
- catch{refuseIntent('inspector_build_or_execution');}
+ catch(error){refuseIntent(careIntentChildFailure(error,phase));}
 }
 export async function prepareCareIntentRelease(root,mobileRoot,directory){
  const current=careIntentCurrent(root,mobileRoot),candidate=readCareIntentCandidate(directory);
  verifyCareIntentCandidate(candidate.manifest,candidate.release,candidate.bundle,candidate.zip,current);
  if(!(await buildCareIdentityBundle(root)).equals(candidate.bundle))refuseIntent('rebuilt_bundle');
  const unchanged=()=>{if(canonical(careIntentCurrent(root,mobileRoot))!==canonical(current))refuseIntent('source_changed');};
- child(root,[resolve(root,'scripts/build-care-erasure-intent-operator.mjs')]);
+ child(root,[resolve(root,'scripts/build-care-erasure-intent-operator.mjs')],'build');
  const operatorDir=resolve(root,'dist/aws-clinical-core/care-erasure-intent-operator');
  verifyCareIntentOperator(JSON.parse(readFileSync(resolve(operatorDir,'artifact-manifest.json'),'utf8')),
   readFileSync(resolve(operatorDir,'index.cjs')),current);
  const inspect=()=>{unchanged();observeSyntheticMemberIdentity();
-  return verifyCareIntentInspector(JSON.parse(child(root,[resolve(operatorDir,'index.cjs'),'inspect'])),current);};
+  return verifyCareIntentInspector(JSON.parse(child(root,[resolve(operatorDir,'index.cjs'),'inspect'],'inspect')),current);};
  const control=()=>{
   unchanged();observeSyntheticMemberIdentity();
   const resources=aws(['cloudformation','describe-stack-resources','--stack-name',P.stack]);
@@ -108,7 +117,17 @@ async function main(){
  const args=process.argv.slice(2);
  if(args.length!==5||args[0]!=='--v2-root'||args[2]!=='--candidate'||args[4]!=='--prepare-fictional-intent-code-only'
   ||args[1].startsWith('--')||args[3].startsWith('--'))refuseIntent('arguments');
- const directory=resolve(args[3]),report=await prepareCareIntentRelease(process.cwd(),resolve(args[1]),directory);
+ const directory=resolve(args[3]);let report;
+ try{report=await prepareCareIntentRelease(process.cwd(),resolve(args[1]),directory);}
+ catch(error){
+  const code=/^synthetic_care_intent_release_refused:[a-z0-9_]{1,180}$/.test(error?.message??'')
+   ?error.message:'synthetic_care_intent_release_refused:preparation';
+  const output=resolve(directory,'preparation-findings');mkdirSync(output,{recursive:true});
+  writeFileSync(resolve(output,Date.now()+'-'+randomUUID()+'.json'),JSON.stringify({
+   contract:'synthetic-care-intent-preparation-finding/1',at:new Date().toISOString(),code,
+   awsMutationPerformed:false,deployed:false,schemaChanged:false,hostedAcceptance:false,phiAllowed:false})+'\n',{flag:'wx'});
+  throw error;
+ }
  const output=resolve(directory,'preparations');mkdirSync(output,{recursive:true});
  const file=resolve(output,sha256(canonical(report))+'.json');
  writeFileSync(file,JSON.stringify(report,null,2)+'\n',{flag:'wx'});

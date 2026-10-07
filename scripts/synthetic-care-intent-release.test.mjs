@@ -7,7 +7,7 @@ import {execFileSync} from 'node:child_process';
 import {CARE_RELEASE as P,sha256,careReleaseZip} from './synthetic-care-release.mjs';
 import {INTENT_RELEASE,careIntentMigrationBinding,careIntentMobileBinding,createCareIntentCandidate,
  verifyCareIntentCandidate} from './synthetic-care-intent-release.mjs';
-import {verifyCareIntentInspector,verifyCareIntentOperator} from './prepare-synthetic-care-intent-release.mjs';
+import {verifyCareIntentInspector,verifyCareIntentOperator,careIntentChildFailure} from './prepare-synthetic-care-intent-release.mjs';
 const clone=structuredClone;
 function current(){
  const snapshot={commit:'a'.repeat(40),clean:true,files:3,sha256:'b'.repeat(64)};
@@ -136,4 +136,15 @@ test('read-only command rebuilds actual source and independently re-observes liv
  assert.match(operator,/maxAttempts:1/);assert.match(operator,/createCareErasureOperatorClient\(client\)/);
  assert.match(operator,/finally\(\(\)=>\{client\?\.destroy\(\)/);
  assert.doesNotMatch(operator,/error\.message|error\.stack|console\.(?:log|error)\(error\)/);
+});
+test('failed preflight diagnostics preserve actual bounded stage or deadline, not SQL, credentials or raw child errors',()=>{
+ assert.equal(careIntentChildFailure({code:'ETIMEDOUT',message:'aws secret value'},'inspect'),'inspector_inspect_deadline');
+ assert.equal(careIntentChildFailure({stderr:Buffer.from('upgrade_failed:transaction_start:begin_database_resuming\n')},'inspect'),
+  'inspector_inspect_upgrade_failed_transaction_start_begin_database_resuming');
+ for(const stderr of ['upgrade_failed:select_secret','verification_failed\nTOKEN: private',
+  'upgrade_failed:transaction_start:begin_token_expired extra-secret','raw command with secret','AWS failure']){
+  assert.equal(careIntentChildFailure({stderr,message:'private sql'},'inspect'),'inspector_inspect_failed');
+ }
+ assert.equal(careIntentChildFailure({stderr:'boundary_refused'},'build'),'inspector_build_boundary_refused');
+ assert.equal(careIntentChildFailure({stderr:'boundary_refused'},'upgrade'),'inspector_phase_refused');
 });
