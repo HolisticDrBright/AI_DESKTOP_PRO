@@ -23,30 +23,24 @@ function verify(r: CareErasureUpgradeResult, command: 'inspect' | 'rehearse' | '
     || command !== 'upgrade' && r.applied !== false || command === 'upgrade' && (count !== 47 || r.applied !== !r.alreadyApplied))
     throw new CareErasureUpgradeError('verification_failed');
 }
-/** Embedded artifacts and observed fixed member/foundation; upgrade always rehearses
- * and re-observes before its preserving transaction. No skip, target or review override. */
+/** Legacy public operator is inspection/rollback-only. Lasting release belongs to
+ * the fresh observed-routing pipeline; a confirmation cannot substitute for it. */
 export async function executeCareErasureUpgradeCommand(args: readonly string[], suppliedBuild: CareErasureUpgradeBuild,
   d: CareErasureUpgradeDependencies) {
   const build = { ...suppliedBuild }, [command, confirm, ...extra] = args;
   if (extra.length || !['inspect', 'rehearse', 'upgrade'].includes(command) || !/^[a-f0-9]{40}$/.test(build.sourceCommit)
     || typeof build.clean !== 'boolean' || command === 'inspect' && confirm !== undefined
     || command !== 'inspect' && (!build.clean || confirm !== '--confirm-fictional-care-erasure-upgrade')) refuse();
+  if (command === 'upgrade') refuse();
   const c = careErasureUpgradeFromAws(d.observeCaller(), d.observeFoundation());
   const m = d.loadMigrations().map(x => ({ ...x })), reference = d.loadReferenceMigrations().map(x => ({ ...x }));
   assertCareErasureUpgrade(c, m, reference);
   const database = d.createDatabase({ ...c }), run = d.run ?? runCareErasureSchemaUpgrade;
   const invoke = (mode: 'inspect' | 'rehearse' | 'upgrade') => run(database, m.map(x => ({ ...x })),
     reference.map(x => ({ ...x })), { ...c }, mode);
-  let rehearsal: CareErasureUpgradeResult | null = null;
-  if (command === 'upgrade') {
-    rehearsal = await invoke('rehearse'); verify(rehearsal, 'rehearse');
-    const current = careErasureUpgradeFromAws(d.observeCaller(), d.observeFoundation());
-    if (JSON.stringify(current) !== JSON.stringify(c)) refuse();
-    assertCareErasureUpgrade(c, m, reference);
-  }
   const result = await invoke(command as 'inspect' | 'rehearse' | 'upgrade');
   verify(result, command as 'inspect' | 'rehearse' | 'upgrade');
   return { ...result, operatorSource: build, awsAccountId: CARE_ERASURE_AWS.account, foundation: CARE_ERASURE_AWS.foundation,
-    rehearsal: rehearsal ? { rolledBack: true, rowCount: rehearsal.rowCount, dataSha256: rehearsal.dataSha256 } : null,
+    rehearsal: null,
     acceptance: false, phiActivation: false, apiDeploymentPerformed: false };
 }

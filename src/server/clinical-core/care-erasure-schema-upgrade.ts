@@ -117,7 +117,7 @@ async function fingerprint(tx: ClinicalCoreTransaction, tables: Table[]) {
   rows.sort((a, b) => a.table_name.localeCompare(b.table_name));
   if (rows.length !== tables.length || new Set(rows.map(r => r.table_name)).size !== tables.length
     || rows.some(r => !Number.isSafeInteger(r.row_count) || r.row_count < 0 || r.row_count > maximumRows || !/^[a-f0-9]{64}$/.test(r.sha256))) fail('inventory_refused');
-  return { sha256: sha(JSON.stringify(rows)), rows: rows.reduce((n, r) => n + r.row_count, 0) };
+  return { sha256: sha(JSON.stringify(rows)), rows: rows.reduce((n, r) => n + r.row_count, 0), entries: rows };
 }
 function body(m: ClinicalCoreMigration[], functionName: string) {
   let found: string | undefined;
@@ -186,6 +186,7 @@ export const careErasurePreservation = Object.freeze({ tableQuery: TABLES, table
 export type CareErasureUpgradeResult = { contract: 'care-erasure-schema-upgrade/1'; execution: 'synthetic-staging'; phiAllowed: false;
   command: 'inspect' | 'rehearse' | 'upgrade'; observedMigrationCount: 46 | 47; sourceMigrationCount: 45 | 46; tableCount: number;
   rowCount: number; dataSha256: string; dataPreserved: true; applied: boolean; alreadyApplied: boolean; rolledBack: boolean;
+  originalDataSha256?: string; originalRowCount?: number;
   fromLedgerSha256: string; toLedgerSha256: string; referenceLedgerSha256: string };
 class RehearsalRollback extends Error { constructor(readonly result: CareErasureUpgradeResult) { super('synthetic_rehearsal_rollback'); } }
 /** Only the exact staging successor, with all clinical and reference rows preserved.
@@ -233,9 +234,15 @@ export async function runCareErasureSchemaUpgrade(database: ClinicalCoreDatabase
       stage = 'after_fingerprint'; const after = await fingerprint(tx, applied ? afterTables.old : afterTables.tables);
       if (before.sha256 !== after.sha256 || before.rows !== after.rows || applied && (await fingerprint(tx, afterTables.added)).rows !== 0) fail('data_changed');
       stage = 'contract_verification'; await verify(tx, m, final);
+      // Derive the old-table witness from the same complete fingerprint, not a
+      // third SQL scan or a second snapshot. No row is discarded except the
+      // explicitly new receipt table, whose own schema/count remain verified.
+      const oldEntries = after.entries.filter(x => x.table_name !== newName);
+      const original = { sha256: sha(JSON.stringify(oldEntries)), rows: oldEntries.reduce((n, r) => n + r.row_count, 0) };
       const result: CareErasureUpgradeResult = { contract: 'care-erasure-schema-upgrade/1', execution: 'synthetic-staging', phiAllowed: false,
         command, observedMigrationCount: final ? 47 : 46, sourceMigrationCount: final ? 46 : 45, tableCount: afterTables.tables.length,
         rowCount: before.rows, dataSha256: after.sha256, dataPreserved: true, applied, alreadyApplied: successor, rolledBack: false,
+        originalDataSha256: original.sha256, originalRowCount: original.rows,
         fromLedgerSha256: CARE_ERASURE_UPGRADE.liveBefore, toLedgerSha256: CARE_ERASURE_UPGRADE.liveAfter, referenceLedgerSha256: CARE_ERASURE_UPGRADE.reference };
       if (command === 'rehearse') throw new RehearsalRollback(result);
       return result;

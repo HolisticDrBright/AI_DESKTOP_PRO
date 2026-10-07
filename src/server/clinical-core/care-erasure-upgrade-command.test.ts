@@ -71,20 +71,23 @@ describe('fixed synthetic erasure upgrade command, fictional transports only', (
       await expect(executeCareErasureUpgradeCommand(['inspect'], build, d)).rejects.toThrow('boundary_refused'); expect(d.createDatabase).not.toHaveBeenCalled();
     }
   });
-  it('inspects only and upgrade cannot bypass a verified rehearsal and a fresh target observation', async () => {
+  it('allows inspection and rollback rehearsal but legacy upgrade is refused before all AWS/database work', async () => {
     const inspect = dependencies();
     expect(await executeCareErasureUpgradeCommand(['inspect'], build, inspect.d)).toMatchObject({ command: 'inspect', applied: false, acceptance: false });
     expect(inspect.events).toEqual(['caller', 'foundation', 'client', 'inspect']);
     const { d, events } = dependencies();
-    expect(await executeCareErasureUpgradeCommand(['upgrade', '--confirm-fictional-care-erasure-upgrade'], build, d)).toMatchObject({ command: 'upgrade', applied: true,
-      rehearsal: { rolledBack: true }, acceptance: false, phiActivation: false });
-    expect(events).toEqual(['caller', 'foundation', 'client', 'rehearse', 'caller', 'foundation', 'upgrade']);
+    expect(await executeCareErasureUpgradeCommand(['rehearse', '--confirm-fictional-care-erasure-upgrade'], build, d)).toMatchObject({ command: 'rehearse', applied: false, rolledBack: true,
+      acceptance: false, phiActivation: false });
+    expect(events).toEqual(['caller', 'foundation', 'client', 'rehearse']);
+    const held = dependencies();
+    await expect(executeCareErasureUpgradeCommand(['upgrade', '--confirm-fictional-care-erasure-upgrade'], build, held.d)).rejects.toThrow('boundary_refused');
+    expect(held.events).toEqual([]);
   });
-  it('refuses a false/altered rehearsal report and a changed target before any upgrade', async () => {
+  it('refuses a false/altered rollback report, without exposing any lasting upgrade', async () => {
     for (const patch of [{ rolledBack: false }, { execution: 'qualification' }, { sourceMigrationCount: 46 }, { fromLedgerSha256: 'f'.repeat(64) },
       { dataPreserved: false }, { phiAllowed: true }]) {
       const { d, events } = dependencies(); d.run = vi.fn(async () => ({ ...result('rehearse'), ...patch } as CareErasureUpgradeResult));
-      await expect(executeCareErasureUpgradeCommand(['upgrade', '--confirm-fictional-care-erasure-upgrade'], build, d)).rejects.toThrow('verification_failed'); expect(events).not.toContain('upgrade');
+      await expect(executeCareErasureUpgradeCommand(['rehearse', '--confirm-fictional-care-erasure-upgrade'], build, d)).rejects.toThrow('verification_failed'); expect(events).not.toContain('upgrade');
     }
     const { d, events } = dependencies(); let reads = 0;
     d.observeFoundation = () => { reads++; return { Stacks: [{ ...stack, StackStatus: reads === 1 ? 'UPDATE_COMPLETE' : 'UPDATE_IN_PROGRESS' }] }; };

@@ -81,7 +81,7 @@ describe('blocked preserving intent successor operator library',()=>{
   const before=await run('inspect'),r=await run('rehearse');
   expect(r).toMatchObject({rolledBack:true,observedMigrationCount:47,tableCount:88,applied:false,
    rowCount:before.rowCount,dataSha256:before.dataSha256,schemaSha256:before.schemaSha256});await predecessor();
- });
+ },30000); // Multiple complete SQL fingerprints and rollback over 12k+ fictional rows; transport deadlines are unchanged.
  it('refuses an unapplied terminal predecessor instead of implicitly upgrading the parent',async()=>{
   const terminal=m.at(-1)!;await pg.query('delete from clinical_core.schema_migrations where version=$1',[terminal.version]);
   try{await expect(run('upgrade')).rejects.toThrow('history_refused');}

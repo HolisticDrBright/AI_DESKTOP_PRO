@@ -238,6 +238,6 @@ test('actual runner has no identity, execution-role, code, SQL upgrade, paid bui
  assert.doesNotMatch(script,/'upgrade'|'update-function-code'|'update-function-configuration'|'put-role-policy'|'execute-change-set'|AdminCreateUser|AdminSetUserPassword|SignUpCommand|PhiAllowed=true/);
  assert.match(script,/sourceRebuiltNow:false/);assert.match(script,/maxAttempts:1/);
  assert.match(script,/Name=Resource,Value=/);assert.doesNotMatch(script,/Name=ExecutedVersion/);
- assert.match(script,/if\(!admitted\|\|restored\)/);assert.match(script,/flag:'wx'/);
+ assert.match(script,/\(!admitted\|\|restored\)&&\(!custody.admitted\|\|custody.finished\)/);assert.match(script,/flag:'wx'/);
  assert.equal(canonical({b:2,a:1}),canonical({a:1,b:2}));
 });

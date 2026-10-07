@@ -74,14 +74,27 @@ export function verifyRecoveryInspector(operator,bytes,harness){
   &&operator.embeddedMigrations===true&&operator.embeddedReferenceMigrations===true&&operator.targetOverrides===false
   &&operator.sha256===sha256(bytes),'inspector_artifact');
 }
-async function main(){
- phase='arguments';recoveryArgs(process.argv.slice(2));const root=process.cwd();
+/** No successful continuation is certified until its durable completion entry
+ * exists. Unknown database/report outcomes leave custody admitted but unsettled. */
+export async function continueCareRecovery(report,transport,afterRecovery,record,custody){
+ if(afterRecovery===undefined)return report;
+ check(typeof afterRecovery==='function','continuation');
+ await record('continuation_admitted');custody.admitted=true;
+ const continuation=await afterRecovery(report,transport);
+ await record('continuation_completed');custody.finished=true;
+ return {recovery:report,continuation};
+}
+/** The optional continuation is trusted source wiring, never a CLI/report override.
+ * Its work remains inside the same exclusive operator custody. A failed continuation
+ * retains the lock for independent diagnosis; it must never trigger an automatic retry. */
+export async function runCareRecovery(afterRecovery){
+ const root=process.cwd();
  phase='source';const harness=careSourceSnapshot(root,'desktop');phase='principal';observeSyntheticMemberIdentity();
  // Serialize local runners, and preserve a stale lock after unknown restoration.
  phase='lock';const directory=resolve(root,'dist/synthetic-care-routing');mkdirSync(directory,{recursive:true});
  const runId=randomBytes(16).toString('hex'),sid='alp-care-recovery-'+runId,lock=resolve(directory,'operator.lock');
  try{writeFileSync(lock,JSON.stringify({runId,harness,pid:process.pid})+'\n',{flag:'wx'});}catch{fail('recovery_operator_lock');}
- const recordFile=resolve(directory,runId+'.events.jsonl');let admitted=false,restored=false,rows=[];
+ const recordFile=resolve(directory,runId+'.events.jsonl'),custody={admitted:false,finished:false};let admitted=false,restored=false,rows=[];
  const credentials=fromIni({profile}),s3=new S3Client({region:P.region,credentials,maxAttempts:1}),
   secrets=new SecretsManagerClient({region:P.region,credentials,maxAttempts:1}),cognito=new CognitoIdentityProviderClient({region:P.region,credentials,maxAttempts:1,
    requestHandler:RECOVERY_AUTH_TRANSPORT});
@@ -192,12 +205,16 @@ async function main(){
   phase='rehearsal';const result=await rehearseCareRecovery(d,sid);unchanged();phase='write_report';
   const file=resolve(directory,runId+'.json');writeFileSync(file,JSON.stringify({...result,harness,observedAt:new Date().toISOString(),
    sourceRebuiltNow:false,immutableReviewedArtifactVerified:true,operatorJournal:recordFile},null,2)+'\n',{flag:'wx'});
-  console.log(JSON.stringify({report:file,...result,harness}));
+  const report={report:file,...result,harness};
+  unchanged();return await continueCareRecovery(report,transport,afterRecovery,
+   async stage=>{appendFileSync(recordFile,JSON.stringify({stage,at:new Date().toISOString()})+'\n');},custody);
  }finally{
   for(const row of rows)if(row&&typeof row==='object')delete row.password;s3.destroy();secrets.destroy();cognito.destroy();
-  if(!admitted||restored){const recorded=JSON.parse(readFileSync(lock,'utf8'));if(recorded.runId===runId)unlinkSync(lock);}
+  if((!admitted||restored)&&(!custody.admitted||custody.finished)){
+   const recorded=JSON.parse(readFileSync(lock,'utf8'));if(recorded.runId===runId)unlinkSync(lock);}
  }
 }
+async function main(){phase='arguments';recoveryArgs(process.argv.slice(2));console.log(JSON.stringify(await runCareRecovery()));}
 if(process.argv[1]&&import.meta.url===pathToFileURL(resolve(process.argv[1])).href)main().catch(error=>{
  console.error(recoveryFailureCode(error,phase));process.exitCode=1;
 });

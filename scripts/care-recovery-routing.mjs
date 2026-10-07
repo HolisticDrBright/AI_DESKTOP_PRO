@@ -48,7 +48,7 @@ export function verifyRecoveryMetric(response,start,end,minimum){
  }
  check(Number.isSafeInteger(sum)&&sum>=minimum,'version_not_observed');return sum;
 }
-function verifyPhase(observations){
+export function verifyRecoveryPhase(observations){
  const modes=Object.keys(PERSONA_EMAILS),pairs=new Set(),requests=new Set();
  check(Array.isArray(observations)&&observations.length===20,'case_count');
  for(const o of observations){const spec=CARE_CONSUMER_CASES.find(c=>c.name===o.case),pair=`${o.persona}:${o.case}`;
@@ -62,7 +62,7 @@ function verifyPhase(observations){
  * UpdateIntegration has no service-side compare-and-swap. This requires a single
  * synthetic operator, checks before/after every switch and never overwrites unrelated drift. */
 export async function rehearseCareRecovery(d,sid){
- recoveryPermission(sid);const events=[],observations={},started=d.now();let grantAttempted=false,switchAttempted=false,returned=false,returnedDeployment,error;
+ recoveryPermission(sid);const events=[],observations={},started=d.now();let grantAttempted=false,switchAttempted=false,returned=false,returnedDeployment,retainedDeployment,metricWitness,error;
  const record=async(stage,detail={})=>{const event={stage,at:new Date(d.now()).toISOString(),...detail};await d.record(event);events.push(event);};
  const before=await d.inspect();await record('preflight');
  check(before?.source===D.desktop&&before.zip===D.zip&&before.s3Version===D.version&&before.artifactVerified===true
@@ -80,24 +80,26 @@ export async function rehearseCareRecovery(d,sid){
    &&value.routesSha256===initial.routesSha256&&value.authorizersSha256===initial.authorizersSha256
    &&value.otherIntegrationsSha256===initial.otherIntegrationsSha256&&value.latestPolicySha256===initial.latestPolicySha256,'control_drift');};
  try{
-  observations.baseline=verifyPhase(await d.consumerPhase('baseline'));
+  observations.baseline=verifyRecoveryPhase(await d.consumerPhase('baseline'));
   const fresh=await d.transport();guard(fresh,CARE_RECOVERY_ROUTE.latestArn);check(fresh.policy===null,'permission_changed');
   await record('permission_admitted');grantAttempted=true;await d.addPermission(sid);
   const granted=await d.transport();guard(granted,CARE_RECOVERY_ROUTE.latestArn);verifyRecoveryPolicy(granted.policy,sid,true);
   await record('switch_admitted');switchAttempted=true;await d.switchUri(CARE_RECOVERY_ROUTE.retainedArn);
   const retained=await d.waitDeployment(initial.stage.DeploymentId,CARE_RECOVERY_ROUTE.retainedArn);guard(retained,CARE_RECOVERY_ROUTE.retainedArn);
   check(retained.stage.DeploymentId!==initial.stage.DeploymentId,'deployment_not_changed');verifyRecoveryPolicy(retained.policy,sid,true);
+  retainedDeployment=retained.stage.DeploymentId;
   const windowStart=Math.floor(d.now()/60000)*60000;
-  observations.retained=verifyPhase(await d.consumerPhase('retained'));
+  observations.retained=verifyRecoveryPhase(await d.consumerPhase('retained'));
   const afterRetained=await d.transport();guard(afterRetained,CARE_RECOVERY_ROUTE.retainedArn);verifyRecoveryPolicy(afterRetained.policy,sid,true);
   check(afterRetained.stage.DeploymentId===retained.stage.DeploymentId,'retained_deployment_changed');
   await record('retained_cases_verified',{deploymentId:retained.stage.DeploymentId,caseCount:20});
   await record('return_admitted');await d.switchUri(CARE_RECOVERY_ROUTE.latestArn);
   const restored=await d.waitDeployment(retained.stage.DeploymentId,CARE_RECOVERY_ROUTE.latestArn);guard(restored,CARE_RECOVERY_ROUTE.latestArn);
   check(restored.stage.DeploymentId!==retained.stage.DeploymentId,'return_not_deployed');returned=true;returnedDeployment=restored.stage.DeploymentId;
-  observations.returned=verifyPhase(await d.consumerPhase('returned'));
+  observations.returned=verifyRecoveryPhase(await d.consumerPhase('returned'));
   const end=Math.ceil(d.now()/60000)*60000;
   const metric=await d.waitMetric(windowStart,end,20);verifyRecoveryMetric(metric,windowStart,end,20);
+  metricWitness={start:windowStart,end,minimum:20,response:structuredClone(metric)};
   await record('return_cases_and_metric_verified',{deploymentId:restored.stage.DeploymentId,caseCount:20});
  }catch(cause){error=cause;}
  finally{
@@ -132,13 +134,17 @@ export async function rehearseCareRecovery(d,sid){
  const after=await d.inspect();
  check(canonical(after)===canonical(before),'postflight_drift');
  const all=Object.values(observations).flat();check(new Set(all.map(o=>o.requestId)).size===60,'repeated_phase_request');
+ const finalTransport=await d.transport();guard(finalTransport,CARE_RECOVERY_ROUTE.latestArn);
+ check(finalTransport.policy===null&&finalTransport.stage.DeploymentId===returnedDeployment,'final_transport_changed');
  await record('completed');
  return {contract:'synthetic-care-retained-routing-rehearsal/1',scope:'preupgrade-retained-routing-only',execution:'synthetic-staging',
   account:P.account,retainedVersion:CARE_RECOVERY_ROUTE.version,baselineDatabase:before.database,
+  transportWitness:{restored:finalTransport,originalDeployment:initial.stage.DeploymentId,retainedDeployment,returnedDeployment},metricWitness,
   verdict:'pass',observations,events,functionalRoutingRecoveryVerified:true,returnToCandidateVerified:true,
   temporaryPermissionRemoved:true,originalRoutingRestored:true,awsMutationPerformed:true,
   schemaChanged:false,afterUpgradeVerified:false,terminalReceiptRecoveryVerified:false,upgradeAuthorized:false,
-  fullJourneyAcceptance:false,physicalDeviceAcceptance:false,phiAllowed:false,paidMobileBuildStarted:false,startedAt:new Date(started).toISOString()};
+  fullJourneyAcceptance:false,physicalDeviceAcceptance:false,phiAllowed:false,paidMobileBuildStarted:false,startedAt:new Date(started).toISOString(),
+  completedAt:new Date(d.now()).toISOString()};
 }
 export function verifyRecoveryResponse(spec,response,value){verifyCareConsumerAnswer(spec,response.status,value);
  const requestId=response.headers.get('apigw-requestid');check(typeof requestId==='string','request_id');

@@ -166,7 +166,7 @@ describe('exact preserving synthetic staging erasure successor', () => {
     const broken = database(async s => { if (s.startsWith('insert into clinical_core.schema_migrations')) throw Error('secret provider detail'); });
     await expect(run('upgrade', broken)).rejects.toMatchObject({ category: 'upgrade_failed', stage: 'ledger_receipt', message: 'upgrade_failed' }); await predecessor();
   });
-  it('command rehearses, re-observes the fixed target, applies once and preserves populated receipts on replay', async () => {
+  it('legacy command cannot commit; the preserving transaction applies once and preserves populated receipts on replay', async () => {
     const observations: string[] = [], a = CARE_ERASURE_AWS;
     const d = { observeCaller: () => { observations.push('caller'); return { Account: a.account, Arn: `arn:aws:sts::${a.account}:assumed-role/FictionalOperator/session` }; },
       observeFoundation: () => { observations.push('foundation'); return { Stacks: [{ StackStatus: 'UPDATE_COMPLETE',
@@ -175,13 +175,17 @@ describe('exact preserving synthetic staging erasure successor', () => {
           ClinicalApiId: a.apiId, DatabaseClusterArn: a.clusterArn, DatabaseSecretArn: a.secretArn }).map(([OutputKey, OutputValue]) => ({ OutputKey, OutputValue })) }] }; },
       loadMigrations: () => migrations, loadReferenceMigrations: () => reference, createDatabase: () => database() };
     const before = await run('inspect');
-    const r = await executeCareErasureUpgradeCommand(['upgrade', '--confirm-fictional-care-erasure-upgrade'], { sourceCommit: '1'.repeat(40), clean: true }, d);
+    await expect(executeCareErasureUpgradeCommand(['upgrade', '--confirm-fictional-care-erasure-upgrade'], { sourceCommit: '1'.repeat(40), clean: true }, d)).rejects.toThrow('boundary_refused');
+    expect(observations).toEqual([]);
+    const rehearsal = await run('rehearse');
+    expect(rehearsal).toMatchObject({ rolledBack: true, dataSha256: before.dataSha256, rowCount: before.rowCount });
+    const r = await run('upgrade');
     expect(r).toMatchObject({ observedMigrationCount: 47, sourceMigrationCount: 46, tableCount: 88, applied: true, alreadyApplied: false,
-      dataSha256: before.dataSha256, rowCount: before.rowCount, acceptance: false, apiDeploymentPerformed: false, phiAllowed: false,
-      rehearsal: { rolledBack: true, rowCount: before.rowCount, dataSha256: before.dataSha256 } });
-    expect(observations).toEqual(['caller', 'foundation', 'caller', 'foundation']);
+      dataSha256: before.dataSha256, rowCount: before.rowCount, phiAllowed: false,
+      originalDataSha256: before.dataSha256, originalRowCount: before.rowCount });
     await pg.query("insert into clinical_core.care_data_erasure_requests(owner_id,request_id,scope,outcome) values($1,$2,'domain','cancelled')", [owner, randomUUID()]);
     const after = await run('inspect'); expect(after.rowCount).toBe(before.rowCount + 1);
+    expect(after.originalDataSha256).toBe(before.dataSha256); expect(after.originalRowCount).toBe(before.rowCount);
     expect(await run('upgrade')).toMatchObject({ applied: false, alreadyApplied: true, dataSha256: after.dataSha256 });
     expect(await run('rehearse')).toMatchObject({ rolledBack: true, observedMigrationCount: 47, dataSha256: after.dataSha256 });
     expect(JSON.stringify(after)).not.toMatch(/FICTIONAL|synthetic_label|secretArn|syn_erasure_upgrade/);

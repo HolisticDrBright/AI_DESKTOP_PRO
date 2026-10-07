@@ -1,8 +1,9 @@
 # Synthetic care release preparation
 
 This release binds the request-ID erasure API to the matching V2 source, the
-existing synthetic database and its preserved historical alias. It prepares
-artifacts only. It does not deploy, authorize deletion, qualify a mobile binary
+existing synthetic database and its preserved historical alias. Preparation
+builds artifacts only; the separate fresh-recovery command below can apply the
+exact preserving parent SQL in synthetic staging. Neither action authorizes deletion, qualifies a mobile binary
 or activate real patient data. All six commercial-readiness phases remain partial.
 
 ## Build and inspect
@@ -190,8 +191,9 @@ inventory. It changes no schema, clinical record, consent/provider release,
 Lambda code, execution role, activation or mobile build. A passing report is
 `preupgrade-retained-routing-only`: it does not authorize SQL, prove recovery of
 terminal receipts after upgrade, certify a full patient journey or count as
-physical-device/PHI acceptance. The lasting parent and successor release remain
-held until their required recovery and preservation gates are implemented.
+physical-device/PHI acceptance. The separate parent release command below must
+observe a fresh recovery during that invocation; this report cannot authorize it.
+The intent successor remains held.
 
 AWS references: [UpdateIntegration](https://docs.aws.amazon.com/cli/latest/reference/apigatewayv2/update-integration.html),
 [AddPermission](https://docs.aws.amazon.com/lambda/latest/api/API_AddPermission.html),
@@ -250,10 +252,54 @@ The `upgrade` command always returns `api_recovery_required` before AWS access.
 There is no report-file, environment, review-hash or confirmation override.
 Implement and physically observe the schema-compatible API recovery and return
 to candidate before adding the lasting invocation and canonical registration.
-The earlier parent upgrade executable remains held under the required order
-above; its confirmation option does not meet the recovery prerequisite.
+The legacy parent operator now refuses `upgrade` before AWS observation.
+Its confirmation option cannot bypass the recovery prerequisite. Only the
+fresh observer pipeline below provides a supported lasting parent release.
 
 This runner changes no API traffic, records, provider releases, retention
 approval or activation. `hostedAcceptance`, `recoveryAcceptance` and
 `activationApproved` remain false. All six original commercial scopes remain
 partial until their hosted, device, provider and human gates are satisfied.
+
+## Fresh recovery gated parent release
+
+Run from the committed, clean Desktop checkout with the existing immutable
+request-ID-aware deployed artifact available under its exact source directory:
+
+```powershell
+npm run release:synthetic-care-erasure
+```
+
+This command has no target, saved-report, skip, approval or PHI override. It builds
+a source-bound embedded database port, then performs the actual 60-request
+retained-version routing rehearsal with real Cognito identities, API Gateway
+responses and version-specific CloudWatch observations. The same exclusive
+local operator lock remains held through rollback rehearsal, preserving SQL,
+independent database readback and final transport verification. A failed or
+unknown continuation retains that lock for independent diagnosis; never delete
+it or rerun merely because observation timed out.
+
+Before commit, the pipeline checks the clean source again, compares the exact
+returned API transport, and requires the recovery to have completed within five
+minutes. It observes member STS and the completed fixed foundation for every
+database operation. Initial inspection and rollback rehearsal must match all
+original rows, the live46/source45 ledger and reference ledger. The transaction
+locks preserve the historical alias, every old table and all old rows. The
+independent post-commit inspection must show live47/source46, the empty receipt
+table, unchanged original-row count/digest and the expected permissions and
+function bodies. Original-table readback derives its digest from the complete
+per-table fingerprint in the same snapshot, not a second scan or prefix.
+
+Successful reports have `synthetic-care-erasure-release/1` and are stored beside
+the fresh routing report as `.release.json`. They prove this preserving schema
+release only. Terminal receipt and cancellation journeys after upgrade, the
+intent successor and its compatible recovery, second-device convergence,
+physical device acceptance and the other five commercial scopes remain separate
+work. They are not qualification or production activation evidence.
+
+API Gateway has no service-side compare-and-swap for this switch. The local
+lock serializes these tools, not unrelated external operators; use one synthetic
+operator and treat any independently observed drift as a refusal. After this
+parent is applied, never restore the earlier ID-less ZIP or reverse the ledger.
+PHI, clinical holds, source-verification requirements and the paid-build hold
+remain unchanged.
