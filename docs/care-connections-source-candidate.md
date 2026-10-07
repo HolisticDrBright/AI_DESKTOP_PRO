@@ -2087,3 +2087,76 @@ project/provider configuration and separate PHI activation remain human gates.
 holds, exclusions and source verification preserved.** V2 runtime remains
 811f55b3d6841dc01d64e966ef29a8183c887fbf. Shared Graphify §368 records this
 milestone with a modification-time/prefix guard; the canvas is untouched.
+
+
+## October 7 Hosted parent cancellation first acceptance
+
+Desktop **3ef5f6030918b9565769ef93514273d789370560**, clean source fingerprint
+**5d18d5ff6fc8344dcb46e5335164652207f282289ff731a5f09b9d82cc4005c6**,
+completed real synthetic acceptance at **2026-10-07T19:19:01.527Z**.
+Run **745f4a73feb5bf99adc2b5e16288f0e2** passed all **35 distinct real Gateway
+requests** across the five existing fictional owners. Each owner had two
+separate real Cognito sign-ins, plus a different owner for receipt isolation.
+
+All seven mandatory cases passed per owner: an absent receipt stays unresolved;
+cancellation precedes admission; another authenticated session reads the same
+cancelled outcome; repeated settlement stays cancelled; a late erasure request
+is refused as cancelled; the second session still converges afterward; a foreign
+owner sees no receipt. Before every late erasure request, an independent bounded
+SQL read proved the cancellation row for that exact owner/request with a null
+receipt. No existing clinical content was erased.
+
+Complete before/after readback preserves all **23,980 original rows** and their
+SHA **bb0a6ecafad1da1f595c577124fe8e03a0e495cb524018b3f51f2e19392f3a55**.
+The new terminal table contains exactly **five cancellation rows**, so the total
+is **23,985 rows /88 tables /live47 /source46**. Complete current digest:
+**29e413773ffb4e263421b312501242384e5f6085b3930fd6339fa9100ab53351**.
+A separate follow-up inspector repeated those counts/digests, found no operator
+lock, and confirmed the unchanged Active 5b6f8aa handler revision/code checksum.
+Archive: Desktop **docs/evidence/2026-10-07-care-erasure-cancellation.json**.
+
+Two earlier invocations stopped before writes: the first CLI inventory omitted
+raw IAM pagination evidence; the second refused the API's incomplete single
+route page. Both journals record `mutationAdmitted:false`, and neither is
+acceptance. The repair observes raw bounded pages, requires terminal pagination,
+refuses repeated/malformed tokens and keeps every IAM/route assertion. It does
+not normalize missing authority into success. The supported command is
+`npm run verify:synthetic-care-cancellation`; unknown mutating responses are never
+automatically repeated and retain local custody for diagnosis.
+
+Local **80/80 release checks**, focused lint and standalone typecheck pass.
+The new harness has 13 local negative/contract tests, including actual-observer
+wiring and complete page collection. The full runtime suite was not rerun here.
+AST-only Desktop **13,406 nodes /27,540 edges /940 communities**, 52 zero-node
+files absent, HTML skipped for size, no LLM cost. Hosted CI at 16165e9 remains
+in progress with browser dependency downloads pending; 3ef5f60's runs
+**37672150485/37672142446** are queued, not claimed green. V2 runtime remains
+811f55b3d6841dc01d64e966ef29a8183c887fbf; this does not create an installed update.
+
+This acceptance is **parent-cancellation-first-only**. Actual erased outcomes,
+erasure lost-reply recovery, compatible retained-version routing after parent
+upgrade, intent registration/discovery, fresh successor/canonical transition,
+cross-clinic acceptance and physical two-device behavior remain engineering
+or device acceptance work. No schema, provider release, policy approval, PHI
+activation or paid mobile build changed. Never dispose of terminal receipts
+or restore the old ID-less ZIP after live47.
+
+V2's current `--require-submittable` store check still returns
+**not_submittable** with eight blockers: requested Core clinical scope review;
+complete privacy-notice review; store products; paid-app/merchant agreements;
+production HealthKit artifact inspection; physical device matrix; separate
+production build authorization; production backend activation. Declaration
+consistency is not submission permission, and these eight store blockers are
+not an exhaustive list of engineering across the two apps.
+
+All **six original scopes remain partial**: continuity/legacy reconciliation;
+owned lab/document/voice delivery; full privacy/retention/clinic amendments and
+cross-store disposition; eligible source-verified clinical releases; Core
+**$19.99** store/provider acceptance; exact matched API/Desktop/mobile,
+rollback/load/security/recovery and physical iOS/Android/five-persona journeys.
+Actual security/retention reviews, executed agreement coverage against the real
+project/runtime/provider configuration and separately reviewed PHI activation
+remain human gates. **Neither app is commercial or PHI ready; PHI OFF; paid
+builds held; clinical holds, exclusions and source verification preserved.**
+Shared Graphify §369 records this evidence with a prefix/modification-time guard;
+the canvas remains untouched.

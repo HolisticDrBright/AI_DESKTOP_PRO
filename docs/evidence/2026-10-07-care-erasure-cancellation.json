@@ -1,0 +1,459 @@
+{
+  "contract": "synthetic-care-erasure-cancellation-historical-evidence/1",
+  "observedRunId": "745f4a73feb5bf99adc2b5e16288f0e2",
+  "qualificationEvidence": false,
+  "activationEvidence": false,
+  "phiAllowed": false,
+  "report": {
+    "contract": "synthetic-care-erasure-cancellation-acceptance/1",
+    "scope": "parent-cancellation-first-only",
+    "execution": "synthetic-staging",
+    "account": "588966314750",
+    "source": {
+      "commit": "3ef5f6030918b9565769ef93514273d789370560",
+      "clean": true,
+      "files": 1614,
+      "sha256": "5d18d5ff6fc8344dcb46e5335164652207f282289ff731a5f09b9d82cc4005c6"
+    },
+    "deployedSource": "5b6f8aa45347d33757ac9bfb34658e2e09daefd3",
+    "deployedZip": "644967eec4241c19f2365aabc7cec304f200f95622c8ef3a0188f57633dd64db",
+    "before": {
+      "contract": "care-erasure-schema-upgrade/1",
+      "execution": "synthetic-staging",
+      "phiAllowed": false,
+      "command": "inspect",
+      "observedMigrationCount": 47,
+      "sourceMigrationCount": 46,
+      "tableCount": 88,
+      "rowCount": 23980,
+      "dataSha256": "80dbaee8186e330773a90c6848b82f3cae19c267ba66161a06c62321b38856ba",
+      "dataPreserved": true,
+      "applied": false,
+      "alreadyApplied": true,
+      "rolledBack": false,
+      "originalDataSha256": "bb0a6ecafad1da1f595c577124fe8e03a0e495cb524018b3f51f2e19392f3a55",
+      "originalRowCount": 23980,
+      "fromLedgerSha256": "2563a6bbe70c75bbb2e9c423aececf6cf92eaead44f28da7a8c457225e0ed393",
+      "toLedgerSha256": "99ad59a94bab717a4e1299979db177394e931c9ebb7f40aa8be1ba1d99d52148",
+      "referenceLedgerSha256": "83d51dc056b41f47b5fb3d6020201163915faa2116004e3692af9bb41aad0f62",
+      "operatorSource": {
+        "sourceCommit": "3ef5f6030918b9565769ef93514273d789370560",
+        "clean": true
+      },
+      "awsAccountId": "588966314750",
+      "foundation": "ai-clinical-core-synthetic-staging",
+      "rehearsal": null,
+      "acceptance": false,
+      "phiActivation": false,
+      "apiDeploymentPerformed": false
+    },
+    "after": {
+      "contract": "care-erasure-schema-upgrade/1",
+      "execution": "synthetic-staging",
+      "phiAllowed": false,
+      "command": "inspect",
+      "observedMigrationCount": 47,
+      "sourceMigrationCount": 46,
+      "tableCount": 88,
+      "rowCount": 23985,
+      "dataSha256": "29e413773ffb4e263421b312501242384e5f6085b3930fd6339fa9100ab53351",
+      "dataPreserved": true,
+      "applied": false,
+      "alreadyApplied": true,
+      "rolledBack": false,
+      "originalDataSha256": "bb0a6ecafad1da1f595c577124fe8e03a0e495cb524018b3f51f2e19392f3a55",
+      "originalRowCount": 23980,
+      "fromLedgerSha256": "2563a6bbe70c75bbb2e9c423aececf6cf92eaead44f28da7a8c457225e0ed393",
+      "toLedgerSha256": "99ad59a94bab717a4e1299979db177394e931c9ebb7f40aa8be1ba1d99d52148",
+      "referenceLedgerSha256": "83d51dc056b41f47b5fb3d6020201163915faa2116004e3692af9bb41aad0f62",
+      "operatorSource": {
+        "sourceCommit": "3ef5f6030918b9565769ef93514273d789370560",
+        "clean": true
+      },
+      "awsAccountId": "588966314750",
+      "foundation": "ai-clinical-core-synthetic-staging",
+      "rehearsal": null,
+      "acceptance": false,
+      "phiActivation": false,
+      "apiDeploymentPerformed": false
+    },
+    "control": {
+      "revision": "c7d671c2-b7d8-4fd3-8647-e6ef4c0c1228",
+      "codeSha256": "ZEln7sQkHBnyNlqrx87DBPIA+VYiyO86AYj1djPdZNs=",
+      "templateSha256": "dfd973cb9ba14323bc25f64219a91ce1ace63f5dd88e1b496ee25513bdad5dc2",
+      "routesSha256": "7df650b3a01185ba59985b670f349941d2595292ea660ccaf197f4d8b42a1105",
+      "authorizersSha256": "3b730ddbceef5ceac120f3fe2c81d2eff76f638e25d2f11f06451357a550297b",
+      "integrationsSha256": "710df282b74213710e8e538f74422b86f6f2f6ab48c2bf74fa59b7d8bc2b6a60",
+      "stageSha256": "0b1221f8cff3c80b852a445efa61aa369829eed758c217ba835d76e19d401eac",
+      "policySha256": "4ff1a3770547bb5fadcda9e245532e3f4770c4f745529df30f6ec80a22d1fa47",
+      "roleSha256": "8904bb47ebff513f08239504338591ce66a3b810be383420ae817c4567842d68",
+      "routeCount": 51,
+      "iamVerified": true,
+      "loggingVerified": true,
+      "phiAllowed": false
+    },
+    "observations": [
+      {
+        "persona": "regular_cycle",
+        "case": "absent_receipt",
+        "erasureRequestId": "0d40e913-398d-497c-b210-979dec1c7a30",
+        "requestId": "E4zYDg57CYcEPpQ=",
+        "status": 200,
+        "outcome": "unresolved",
+        "verified": true
+      },
+      {
+        "persona": "regular_cycle",
+        "case": "cancel_before_admission",
+        "erasureRequestId": "0d40e913-398d-497c-b210-979dec1c7a30",
+        "requestId": "E4ze7jevCYcEQKQ=",
+        "status": 200,
+        "outcome": "cancelled",
+        "verified": true
+      },
+      {
+        "persona": "regular_cycle",
+        "case": "second_session_receipt",
+        "erasureRequestId": "0d40e913-398d-497c-b210-979dec1c7a30",
+        "requestId": "E4zf4hRZCYcEPdw=",
+        "status": 200,
+        "outcome": "cancelled",
+        "verified": true
+      },
+      {
+        "persona": "regular_cycle",
+        "case": "idempotent_settle",
+        "erasureRequestId": "0d40e913-398d-497c-b210-979dec1c7a30",
+        "requestId": "E4zgKgTniYcEPDg=",
+        "status": 200,
+        "outcome": "cancelled",
+        "verified": true
+      },
+      {
+        "persona": "regular_cycle",
+        "case": "late_admission_refused",
+        "erasureRequestId": "0d40e913-398d-497c-b210-979dec1c7a30",
+        "requestId": "E4znDjjSiYcEJmQ=",
+        "status": 200,
+        "outcome": "cancelled",
+        "verified": true
+      },
+      {
+        "persona": "regular_cycle",
+        "case": "second_session_after_late",
+        "erasureRequestId": "0d40e913-398d-497c-b210-979dec1c7a30",
+        "requestId": "E4znOjFxCYcEJKg=",
+        "status": 200,
+        "outcome": "cancelled",
+        "verified": true
+      },
+      {
+        "persona": "regular_cycle",
+        "case": "cross_owner_receipt_absent",
+        "erasureRequestId": "0d40e913-398d-497c-b210-979dec1c7a30",
+        "requestId": "E4znUjdDiYcEJSA=",
+        "status": 200,
+        "outcome": "unresolved",
+        "verified": true
+      },
+      {
+        "persona": "hormonal_contraception",
+        "case": "absent_receipt",
+        "erasureRequestId": "e9dddebc-6a3c-484c-9506-94320616954b",
+        "requestId": "E4zodgsbCYcEJuQ=",
+        "status": 200,
+        "outcome": "unresolved",
+        "verified": true
+      },
+      {
+        "persona": "hormonal_contraception",
+        "case": "cancel_before_admission",
+        "erasureRequestId": "e9dddebc-6a3c-484c-9506-94320616954b",
+        "requestId": "E4zvYixqCYcEJmQ=",
+        "status": 200,
+        "outcome": "cancelled",
+        "verified": true
+      },
+      {
+        "persona": "hormonal_contraception",
+        "case": "second_session_receipt",
+        "erasureRequestId": "e9dddebc-6a3c-484c-9506-94320616954b",
+        "requestId": "E4zvlipcCYcEJYw=",
+        "status": 200,
+        "outcome": "cancelled",
+        "verified": true
+      },
+      {
+        "persona": "hormonal_contraception",
+        "case": "idempotent_settle",
+        "erasureRequestId": "e9dddebc-6a3c-484c-9506-94320616954b",
+        "requestId": "E4zvpi--CYcEJDw=",
+        "status": 200,
+        "outcome": "cancelled",
+        "verified": true
+      },
+      {
+        "persona": "hormonal_contraception",
+        "case": "late_admission_refused",
+        "erasureRequestId": "e9dddebc-6a3c-484c-9506-94320616954b",
+        "requestId": "E4z21hcKCYcEJOQ=",
+        "status": 200,
+        "outcome": "cancelled",
+        "verified": true
+      },
+      {
+        "persona": "hormonal_contraception",
+        "case": "second_session_after_late",
+        "erasureRequestId": "e9dddebc-6a3c-484c-9506-94320616954b",
+        "requestId": "E4z28gTSCYcEJWA=",
+        "status": 200,
+        "outcome": "cancelled",
+        "verified": true
+      },
+      {
+        "persona": "hormonal_contraception",
+        "case": "cross_owner_receipt_absent",
+        "erasureRequestId": "e9dddebc-6a3c-484c-9506-94320616954b",
+        "requestId": "E4z2_hfmiYcEJOQ=",
+        "status": 200,
+        "outcome": "unresolved",
+        "verified": true
+      },
+      {
+        "persona": "irregular_cycle",
+        "case": "absent_receipt",
+        "erasureRequestId": "4eabfba1-da65-4d89-9fbc-6b26e1703593",
+        "requestId": "E4z31gtwiYcEJIA=",
+        "status": 200,
+        "outcome": "unresolved",
+        "verified": true
+      },
+      {
+        "persona": "irregular_cycle",
+        "case": "cancel_before_admission",
+        "erasureRequestId": "4eabfba1-da65-4d89-9fbc-6b26e1703593",
+        "requestId": "E4z-qjf7iYcEJEQ=",
+        "status": 200,
+        "outcome": "cancelled",
+        "verified": true
+      },
+      {
+        "persona": "irregular_cycle",
+        "case": "second_session_receipt",
+        "erasureRequestId": "4eabfba1-da65-4d89-9fbc-6b26e1703593",
+        "requestId": "E4z-9ga_CYcEJlg=",
+        "status": 200,
+        "outcome": "cancelled",
+        "verified": true
+      },
+      {
+        "persona": "irregular_cycle",
+        "case": "idempotent_settle",
+        "erasureRequestId": "4eabfba1-da65-4d89-9fbc-6b26e1703593",
+        "requestId": "E4z-_iwKiYcEJMw=",
+        "status": 200,
+        "outcome": "cancelled",
+        "verified": true
+      },
+      {
+        "persona": "irregular_cycle",
+        "case": "late_admission_refused",
+        "erasureRequestId": "4eabfba1-da65-4d89-9fbc-6b26e1703593",
+        "requestId": "E40FshVkCYcEJ6g=",
+        "status": 200,
+        "outcome": "cancelled",
+        "verified": true
+      },
+      {
+        "persona": "irregular_cycle",
+        "case": "second_session_after_late",
+        "erasureRequestId": "4eabfba1-da65-4d89-9fbc-6b26e1703593",
+        "requestId": "E40FyiF9CYcEJEQ=",
+        "status": 200,
+        "outcome": "cancelled",
+        "verified": true
+      },
+      {
+        "persona": "irregular_cycle",
+        "case": "cross_owner_receipt_absent",
+        "erasureRequestId": "4eabfba1-da65-4d89-9fbc-6b26e1703593",
+        "requestId": "E40F1ickiYcEJJA=",
+        "status": 200,
+        "outcome": "unresolved",
+        "verified": true
+      },
+      {
+        "persona": "perimenopause",
+        "case": "absent_receipt",
+        "erasureRequestId": "2e19e2fb-9134-40c0-97ba-7e4238410380",
+        "requestId": "E40GwiQkCYcEJWA=",
+        "status": 200,
+        "outcome": "unresolved",
+        "verified": true
+      },
+      {
+        "persona": "perimenopause",
+        "case": "cancel_before_admission",
+        "erasureRequestId": "2e19e2fb-9134-40c0-97ba-7e4238410380",
+        "requestId": "E40NyhE6CYcEJEQ=",
+        "status": 200,
+        "outcome": "cancelled",
+        "verified": true
+      },
+      {
+        "persona": "perimenopause",
+        "case": "second_session_receipt",
+        "erasureRequestId": "2e19e2fb-9134-40c0-97ba-7e4238410380",
+        "requestId": "E40N9iM1CYcEJCA=",
+        "status": 200,
+        "outcome": "cancelled",
+        "verified": true
+      },
+      {
+        "persona": "perimenopause",
+        "case": "idempotent_settle",
+        "erasureRequestId": "2e19e2fb-9134-40c0-97ba-7e4238410380",
+        "requestId": "E40ODiB2iYcEJ4Q=",
+        "status": 200,
+        "outcome": "cancelled",
+        "verified": true
+      },
+      {
+        "persona": "perimenopause",
+        "case": "late_admission_refused",
+        "erasureRequestId": "2e19e2fb-9134-40c0-97ba-7e4238410380",
+        "requestId": "E40UshiAiYcEJuQ=",
+        "status": 200,
+        "outcome": "cancelled",
+        "verified": true
+      },
+      {
+        "persona": "perimenopause",
+        "case": "second_session_after_late",
+        "erasureRequestId": "2e19e2fb-9134-40c0-97ba-7e4238410380",
+        "requestId": "E40UxjixCYcEJIA=",
+        "status": 200,
+        "outcome": "cancelled",
+        "verified": true
+      },
+      {
+        "persona": "perimenopause",
+        "case": "cross_owner_receipt_absent",
+        "erasureRequestId": "2e19e2fb-9134-40c0-97ba-7e4238410380",
+        "requestId": "E40U0i48iYcEJMw=",
+        "status": 200,
+        "outcome": "unresolved",
+        "verified": true
+      },
+      {
+        "persona": "menopause",
+        "case": "absent_receipt",
+        "erasureRequestId": "ac4a90de-8a15-4b60-82d4-b83c5df692a5",
+        "requestId": "E40VogUBiYcEJ7w=",
+        "status": 200,
+        "outcome": "unresolved",
+        "verified": true
+      },
+      {
+        "persona": "menopause",
+        "case": "cancel_before_admission",
+        "erasureRequestId": "ac4a90de-8a15-4b60-82d4-b83c5df692a5",
+        "requestId": "E40cXjjJiYcEJUA=",
+        "status": 200,
+        "outcome": "cancelled",
+        "verified": true
+      },
+      {
+        "persona": "menopause",
+        "case": "second_session_receipt",
+        "erasureRequestId": "ac4a90de-8a15-4b60-82d4-b83c5df692a5",
+        "requestId": "E40ckjJ4CYcEJRQ=",
+        "status": 200,
+        "outcome": "cancelled",
+        "verified": true
+      },
+      {
+        "persona": "menopause",
+        "case": "idempotent_settle",
+        "erasureRequestId": "ac4a90de-8a15-4b60-82d4-b83c5df692a5",
+        "requestId": "E40coiHOCYcEJdg=",
+        "status": 200,
+        "outcome": "cancelled",
+        "verified": true
+      },
+      {
+        "persona": "menopause",
+        "case": "late_admission_refused",
+        "erasureRequestId": "ac4a90de-8a15-4b60-82d4-b83c5df692a5",
+        "requestId": "E40jSjXMiYcEPpA=",
+        "status": 200,
+        "outcome": "cancelled",
+        "verified": true
+      },
+      {
+        "persona": "menopause",
+        "case": "second_session_after_late",
+        "erasureRequestId": "ac4a90de-8a15-4b60-82d4-b83c5df692a5",
+        "requestId": "E40jXia7iYcEJOQ=",
+        "status": 200,
+        "outcome": "cancelled",
+        "verified": true
+      },
+      {
+        "persona": "menopause",
+        "case": "cross_owner_receipt_absent",
+        "erasureRequestId": "ac4a90de-8a15-4b60-82d4-b83c5df692a5",
+        "requestId": "E40jbhXFCYcEPxw=",
+        "status": 200,
+        "outcome": "unresolved",
+        "verified": true
+      }
+    ],
+    "verdict": "pass",
+    "cancelFirstVerified": true,
+    "lateAdmissionRefusalVerified": true,
+    "secondAuthenticatedSessionVerified": true,
+    "crossOwnerReceiptIsolationVerified": true,
+    "originalDataPreserved": true,
+    "terminalCancellationRowsAdded": 5,
+    "erasedOutcomeVerified": false,
+    "lostReplyErasureVerified": false,
+    "retainedRoutingRecoveryVerified": false,
+    "fullJourneyAcceptance": false,
+    "physicalDeviceAcceptance": false,
+    "qualificationEvidence": false,
+    "activationEvidence": false,
+    "phiAllowed": false,
+    "paidMobileBuildStarted": false,
+    "completedAt": "2026-10-07T19:19:01.527Z",
+    "journal": "C:\\Users\\Brand\\Documents\\Codex\\2026-08-18\\referenced-chatgpt-conversation-this-is-an\\work\\DESKTOP_COMMERCIAL_20261005\\dist\\synthetic-care-cancellation\\745f4a73feb5bf99adc2b5e16288f0e2.events.jsonl"
+  },
+  "priorPreflightFindings": [
+    {
+      "runId": "25c00726d5951f38ef60cb588b1d3e62",
+      "sourceCommit": "0e3f746e55591e6d3aa9ed5c66065e6460755096",
+      "events": [
+        {
+          "at": "2026-10-07T19:02:18.364Z",
+          "stage": "finding",
+          "code": "synthetic_care_release_refused:deployed_role_authority",
+          "mutationAdmitted": false
+        }
+      ],
+      "accepted": false
+    },
+    {
+      "runId": "4c6114846acde1e7871d4f6b4076d453",
+      "sourceCommit": "eae97d91d8c6806a5daeed1fb73badbf17825411",
+      "events": [
+        {
+          "at": "2026-10-07T19:05:16.994Z",
+          "stage": "finding",
+          "code": "synthetic_care_release_refused:erasure_cancellation_routes",
+          "mutationAdmitted": false
+        }
+      ],
+      "accepted": false
+    }
+  ]
+}
