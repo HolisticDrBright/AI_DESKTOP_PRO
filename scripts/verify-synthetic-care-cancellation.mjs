@@ -49,6 +49,7 @@ export function verifyCancellationControlPlane(o,source){
  template.Resources.IdentityApiFunction.Properties.Code.S3ObjectVersion=D.version;
  check(canonical(o.template)===canonical(template),'template');
  verifyCareVersionLatest(o.fn,o.fn?.RevisionId);
+ check(Array.isArray(o.logGroups?.logGroups)&&!o.logGroups.nextToken,'log_inventory');
  verifyDeployedCareRole(o,source);
  check(Array.isArray(o.integrations?.Items)&&!o.integrations.NextToken
   &&o.integrations.Items.filter(i=>i.IntegrationId===R.integrationId).length===1,'integrations');
@@ -121,20 +122,20 @@ export async function runCareCancellation(){
     roleName=resources.StackResources?.find(r=>r.LogicalResourceId==='IdentityApiRole')?.PhysicalResourceId;
    check(typeof roleName==='string'&&/^[A-Za-z0-9+=,.@_-]{1,64}$/.test(roleName),'role_name');
    const raw=aws(['cloudformation','get-template','--stack-name',P.stack]).TemplateBody,
-    inline=aws(['iam','list-role-policies','--role-name',roleName]);
-   check(inline.PolicyNames?.length<=10&&!inline.IsTruncated,'role_policies');
+    inline=aws(['iam','list-role-policies','--role-name',roleName,'--no-paginate']);
+   check(inline.PolicyNames?.length<=10&&inline.IsTruncated===false,'role_policies');
    return verifyCancellationControlPlane({
     foundation:aws(['cloudformation','describe-stacks','--stack-name',P.foundation]),
     stack:aws(['cloudformation','describe-stacks','--stack-name',P.stack]),
     template:typeof raw==='string'?JSON.parse(raw):raw,
     fn:aws(['lambda','get-function-configuration','--function-name',P.functionName]),resources,
     role:aws(['iam','get-role','--role-name',roleName]),
-    attached:aws(['iam','list-attached-role-policies','--role-name',roleName]),inline,
+    attached:aws(['iam','list-attached-role-policies','--role-name',roleName,'--no-paginate']),inline,
     policies:inline.PolicyNames.map(name=>aws(['iam','get-role-policy','--role-name',roleName,'--policy-name',name])),
-    logGroups:aws(['logs','describe-log-groups','--log-group-name-prefix','/ai-clinical-core/synthetic-staging/identity-api']),
-    integrations:aws(['apigatewayv2','get-integrations','--api-id',P.apiId]),
-    routes:aws(['apigatewayv2','get-routes','--api-id',P.apiId]),
-    authorizers:aws(['apigatewayv2','get-authorizers','--api-id',P.apiId]),
+    logGroups:aws(['logs','describe-log-groups','--log-group-name-prefix','/ai-clinical-core/synthetic-staging/identity-api','--no-paginate']),
+    integrations:aws(['apigatewayv2','get-integrations','--api-id',P.apiId,'--no-paginate']),
+    routes:aws(['apigatewayv2','get-routes','--api-id',P.apiId,'--no-paginate']),
+    authorizers:aws(['apigatewayv2','get-authorizers','--api-id',P.apiId,'--no-paginate']),
     stage:aws(['apigatewayv2','get-stage','--api-id',P.apiId,'--stage-name','$default']),
     latestPolicy:aws(['lambda','get-policy','--function-name',P.functionName])},source);
   };

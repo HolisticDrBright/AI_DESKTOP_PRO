@@ -70,6 +70,8 @@ test('post-parent control plane pins exact code, source template, JWT authority,
   o=>o.routes.Items.pop(),o=>o.routes.Items[0].AuthorizationType='NONE',
   o=>o.authorizers.Items[0].JwtConfiguration.Audience.push('other'),
   o=>o.authorizers.NextToken='hidden',o=>o.routes.Items.push(o.routes.Items[0]),
+  o=>delete o.inline.IsTruncated,o=>delete o.attached.IsTruncated,
+  o=>o.logGroups.nextToken='hidden',
   o=>o.policies[0].PolicyDocument.Statement[0].Resource='*',
   o=>o.attached.AttachedPolicies.push({PolicyArn:'AdministratorAccess'}),
   o=>o.role.Role.AssumeRolePolicyDocument.Statement[0].Principal.Service='ec2.amazonaws.com',
@@ -89,6 +91,8 @@ test('actual runner binds fixed synthetic observers, exact S3 stream and bounded
  assert.match(script,/observeSyntheticMemberIdentity\(\)/);
  assert.match(script,/careSourceSnapshot\(root,'desktop'\)/);
  assert.match(script,/maxAttempts:1/);
+ assert.equal((script.match(/'--no-paginate'/g)??[]).length,6);
+ assert.match(script,/inline.IsTruncated===false/);
  assert.match(script,/where owner_id=cast\(:owner as uuid\) and request_id=cast\(:request as uuid\) limit 2/);
  assert.match(script,/if\(!mutationAdmitted\|\|settled\)/);
  assert.doesNotMatch(script,/AdminCreateUser|AdminSetUserPassword|PutObjectCommand|update-integration|update-function|execute-change-set|UPDATE |DELETE |INSERT |process.env|\['upgrade'\]/);
