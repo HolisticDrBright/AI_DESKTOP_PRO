@@ -303,3 +303,42 @@ operator and treat any independently observed drift as a refusal. After this
 parent is applied, never restore the earlier ID-less ZIP or reverse the ledger.
 PHI, clinical holds, source-verification requirements and the paid-build hold
 remain unchanged.
+
+## Parent cancellation acceptance
+
+After the parent is applied at live47/source46, run the separate fixed-target
+acceptance command from a committed, clean checkout:
+
+```powershell
+npm run verify:synthetic-care-cancellation
+```
+
+It checks the exact deployed request-ID-aware ZIP, version-specific stored
+bytes, source-bound embedded SQL inspector, completed synthetic foundation,
+all 51 JWT routes, execution role, encrypted logs and original unqualified
+integration. It never invokes the earlier pre-parent release command or
+restores the ID-less ZIP.
+
+Each of the five existing fictional owners gets one new random domain-request
+ID. Three real Cognito sign-ins establish two distinct same-owner sessions and
+one other owner. The seven mandatory API cases per owner are absent receipt,
+cancellation before admission, second-session receipt, repeated settlement,
+late erasure admission returning cancelled, second-session convergence after
+that admission and cross-owner receipt absence. Before the late erasure
+request, a separate bounded read against the exact owner and ID must prove
+the cancellation is stored with a null receipt.
+
+The runner writes only five cancellation tombstones through the consumer API;
+it does not erase existing clinical content or seed records. Complete independent
+database inspection must preserve the original-table count and digest, and
+the total count must grow by exactly five rows. API responses must carry 35
+distinct real Gateway request IDs. Missing, refused or skipped cases never pass.
+
+The append-only journal records admission before each request. An unknown
+mutating response is not retried and leaves the shared local operator lock
+for diagnosis. Never remove that lock because an observation timed out.
+Successful evidence has scope `parent-cancellation-first-only`, not complete
+erasure acceptance. Actual erased outcomes, lost-reply recovery, compatible
+retained-version routing, intent registration/discovery, canonical successor
+transition and physical second-device testing remain separate requirements.
+Qualification, production activation and PHI evidence flags remain false.
