@@ -70,7 +70,10 @@ async function fingerprint(tx: ClinicalCoreTransaction, tables: Table[]) {
     || rows.some(r => !Number.isSafeInteger(r.row_count) || r.row_count < 0 || r.row_count > 5000 || !/^[a-f0-9]{64}$/.test(r.sha256))) fail('inventory_refused');
   return { sha256: sha(JSON.stringify(rows)), rows: rows.reduce((n, r) => n + r.row_count, 0) };
 }
-async function verify(tx: ClinicalCoreTransaction, migration: ClinicalCoreMigration) {
+/** Verify immutable connection dependencies without admitting a ledger or
+ * executing application work. A later preserving transition must admit its own
+ * exact history, inventory and artifact before using this metadata verifier. */
+export async function verifyCareConsentRegistrationSchema(tx: ClinicalCoreTransaction, migration: ClinicalCoreMigration) {
   const functions = ['clinical_private.guard_care_consent_text', 'clinical_private.serialize_care_consent_release',
     'clinical_private.protect_care_consent_artifact', 'clinical_private.care_connection_actor',
     'clinical_private.care_connection_artifact', 'clinical_core.create_sync_invitation',
@@ -139,7 +142,7 @@ export async function verifyCareConsentRegistrationTarget(tx: ClinicalCoreTransa
     fail('boundary_refused');
   if (await history(tx, migrations) !== 105) fail('history_refused');
   await inventory(tx, 105);
-  await verify(tx, migrations[104]);
+  await verifyCareConsentRegistrationSchema(tx, migrations[104]);
 }
 
 /** Exact fictional qualification transition. Never touches staging, drops rows,
@@ -191,7 +194,7 @@ export async function runCareConnectionsSchemaUpgrade(database: ClinicalCoreData
       const after = await fingerprint(tx, applied ? afterTables.old : afterTables.tables);
       if (before.sha256 !== after.sha256 || before.rows !== after.rows) fail('data_changed');
       if (applied && (await fingerprint(tx, afterTables.added)).rows !== 0) fail('data_changed');
-      if (finalCount === 105) { stage = 'contract_verification'; await verify(tx, migrations[104]); }
+      if (finalCount === 105) { stage = 'contract_verification'; await verifyCareConsentRegistrationSchema(tx, migrations[104]); }
       const result: Result = { contract: 'care-connections-schema-upgrade/1', command, execution: 'qualification', phiAllowed: false,
         activation: 'blocked', observedMigrationCount: finalCount, applied, alreadyApplied: count === 105, rolledBack: false,
         dataPreserved: true, tableCount: afterTables.tables.length, rowCount: before.rows, dataSha256: after.sha256,

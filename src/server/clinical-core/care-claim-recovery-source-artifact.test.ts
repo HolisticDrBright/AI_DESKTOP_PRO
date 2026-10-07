@@ -9,6 +9,9 @@ type Manifest={contract:string;status:string;deployable:boolean;sourceCommit:str
   predecessor:{migrationCount:number;ledgerReleaseSha256:string};overlay:{file:string;sha256:string;bytes:number;canonical:boolean;hostedVerified:boolean};
   libraries:{file:string;sha256:string}[];functions:{name:string;bodySha256:string;apiExecute:boolean}[];
   dependencyFunctions:{name:string;bodySha256:string;apiExecute:boolean}[];proposedRoutes:string[];
+  preparedTransition:{status:string;canonical:boolean;qualificationOnly:boolean;operatorReleased:boolean;fromLedgerSha256:string;
+    toLedgerSha256:string;migrationCount:number;tableCountBefore:number;tableCountAfter:number;mandatoryRollbackRehearsal:boolean;
+    manifest:{file:string;sha256:string}};
   proposedCoveredEntityMapping:{table:string;status:string}[];reviewRequired:string;
   activation:string;phiAllowed:boolean;seededApprovals:boolean;seededIdentities:boolean;seededConsents:boolean;remaining:string[]};
 let manifest:Manifest;
@@ -37,8 +40,28 @@ describe('unreleased claim recovery mapping',()=>{
     const functions=[...sql.matchAll(/create(?: or replace)? function ([a-z_]+\.[a-z_]+)\([^]*?as \$\$([^]*?)\$\$/g)]
       .map(([,name,body])=>({name,bodySha256:sha(body),apiExecute:name.startsWith('clinical_core.')}));
     expect(manifest.functions).toEqual(functions);expect(functions).toHaveLength(2);expect(manifest.dependencyFunctions).toHaveLength(7);
-    expect(manifest.libraries.map(l=>l.file)).toEqual(['api-library.cjs','service-library.cjs','database-binding-library.cjs']);
+    expect(manifest.libraries.map(l=>l.file)).toEqual(['api-library.cjs','service-library.cjs','database-binding-library.cjs','schema-upgrade-library.cjs']);
     for(const l of manifest.libraries)expect(l.sha256).toBe(sha(readFileSync(join(directory,l.file))));
+  });
+  it('emits an exact unregistered transition with the original 105 prefix and no deployment authority',()=>{
+    expect(manifest.preparedTransition).toMatchObject({status:'unregistered',canonical:false,qualificationOnly:true,operatorReleased:false,
+      fromLedgerSha256:manifest.predecessor.ledgerReleaseSha256,migrationCount:106,tableCountBefore:207,tableCountAfter:209,
+      mandatoryRollbackRehearsal:true});
+    const bytes=readFileSync(join(directory,manifest.preparedTransition.manifest.file),'utf8');
+    expect(manifest.preparedTransition.manifest.sha256).toBe(sha(bytes));
+    const prepared=JSON.parse(bytes) as {contract_version:string;migrations:{version:string;file:string}[]};
+    expect(prepared.contract_version).toBe('clinical-core-migrations/1');expect(prepared.migrations).toHaveLength(106);
+    const baseline=JSON.parse(execFileSync(process.execPath,['scripts/build-aws-production-clinical-core.mjs','--json'],
+      {encoding:'utf8',timeout:10000,maxBuffer:8*1024*1024}));
+    expect(prepared.migrations.slice(0,105)).toEqual(baseline.manifest.migrations);
+    for(const m of prepared.migrations.slice(0,105))
+      expect(readFileSync(join(directory,'prepared-migrations',m.file),'utf8')).toBe(baseline.files[m.file]);
+    expect(prepared.migrations[105]).toEqual({version:'20261006030000',file:'20261006030000_production_care_claim_recovery.sql'});
+    expect(readFileSync(join(directory,'prepared-migrations',prepared.migrations[105].file),'utf8'))
+      .toBe(readFileSync(join(directory,manifest.overlay.file),'utf8'));
+    expect(sha(prepared.migrations.map(m=>`${m.version}:${sha(readFileSync(join(directory,'prepared-migrations',m.file)))}`).join('\n')))
+      .toBe(manifest.preparedTransition.toLedgerSha256);
+    expect(manifest.deployable).toBe(false);expect(manifest.activation).toBe('blocked');
   });
   it('names the pending route, dispositions and real integration obligations',()=>{
     expect(manifest.proposedRoutes).toEqual(['POST /clinical-core/consumer/connection-claims']);

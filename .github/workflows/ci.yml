@@ -32,9 +32,9 @@ jobs:
         run: |
           npx vitest run src/contracts/careConnections.test.ts src/server/clinical-core/production-care-connections.database.test.ts src/server/clinical-core/production-care-connections-api.test.ts src/server/clinical-core/care-connections-source-artifact.test.ts src/server/clinical-core/care-connections-schema-upgrade.database.test.ts
           npm run build:care-connections-source
-      - name: Unreleased claim receipt and settlement overlay (fictional embedded database only)
+      - name: Unreleased claim receipt, settlement and preserving upgrade (fictional embedded database only)
         run: |
-          npx vitest run src/server/clinical-core/care-claim-recovery.database.test.ts src/server/clinical-core/care-claim-recovery-api.test.ts src/server/clinical-core/care-claim-recovery-source-artifact.test.ts
+          npx vitest run src/server/clinical-core/care-claim-recovery.database.test.ts src/server/clinical-core/care-claim-recovery-api.test.ts src/server/clinical-core/care-claim-recovery-source-artifact.test.ts src/server/clinical-core/care-claim-recovery-schema-upgrade.database.test.ts
           npm run build:care-claim-recovery-source
       - name: Bound qualification-only connection upgrade command (no AWS calls)
         run: |

@@ -608,3 +608,70 @@ suites passed focused verification and a complete one-worker run passed
 331 files, 4,143 tests and 11 existing skips. New CI and container evidence must
 be observed separately. No serving connection route, canonical schema,
 qualification fleet, consent, approval, PHI flag or mobile build changed.
+
+## Prepared recovery schema transition
+
+The source artifact now includes a qualification-only preserving transition from
+the exact 105 ledger to the proposed 106 ledger. It carries all original 105
+files byte for byte plus the unchanged recovery overlay as
+`20261006030000_production_care_claim_recovery.sql`. The canonical manifest
+still contains 105 migrations and its coverage still contains 207 tables.
+The proposed transition is explicitly unregistered, noncanonical and
+non-deployable; no AWS operator entry point is released by this increment.
+
+The predecessor ledger is
+`7da8e4ed999a3298bccc4ef33e7a1005201db45fa2b46682622a208486f17743`;
+the proposed ledger is
+`514959bf0d32de55ded312509ae2ebe39a0fdde9f59246b096b0c41ba63f4f9b`.
+Both are source identities, not review hashes or activation authority.
+The library refuses changed prefixes, altered overlay bytes, duplicate versions,
+unknown or mismatched database history, staging, production activation and PHI.
+It pins the actual qualification database name, takes the migration/fixture locks
+and locks the observed tables in consistent order before applying DDL.
+
+Bounded database-side fingerprints prove that all 207 predecessor tables are
+unchanged and both added tables are empty on first admission. Same-count row
+rewrites and unexpected new decisions fail the transaction. The final metadata
+check exercises the actual API-role binding, including function bodies,
+privileges, forced RLS and immutable triggers, without a business command or
+new grant. Replay includes populated recovery and audit rows in its fingerprint.
+Rehearsal throws to roll back, then opens a new read-only transaction to verify
+the actual predecessor state and its data digest. Reports contain counts and
+digests, not clinical content, codes or secrets.
+
+Local focused verification passes **58 tests across five suites**, including
+10 new actual-SQL transition cases and the existing connection upgrade and
+command-admission suites. Typecheck and changed-file lint pass. The canonical
+105 gate and 207-table coverage pass unchanged. The source builder emits and
+hashes the prepared migration manifest and fourth schema-upgrade library.
+This is fictional PGlite evidence, not hosted SQL, distributed concurrency,
+rollback on AWS, a complete full regression, or physical-device acceptance.
+
+Canonical promotion still requires both tables' inventory and reviewed privacy
+disposition, plus an independently account/foundation-bound operator whose
+upgrade command mandates this rehearsal. Append-only decisions and audit rows
+must not be mislabeled as deletable records, stripped of their immutable
+triggers, or retained without authority to make coverage pass. Actual route,
+Lambda/template/fleet/capacity/inspector integration, safe legacy drain,
+second-device request discovery and the remaining production transfers and
+privacy/assignment ports remain engineering. No consent or review was created,
+no AWS work occurred, and PHI and paid-build restrictions are unchanged.
+
+The subsequent read-only AWS inspection observed the approved synthetic member
+role in account 588966314750 and the qualification foundation's PHI-disabled,
+blocked boundary. The actual database still has **105 migrations, 207 tables
+and 46 fictional rows**, digest
+`129abce49aec8e4f3f8e73f6c10c18e94827d0ae0108e176419aede5d36280bc`.
+The initial inspection failed before transaction start; credential resolution and
+a separate begin/rollback probe succeeded, and the subsequent same read-only
+operator inspection passed. The initial cause was not established or relabeled
+as a code repair. No migration, provider release, consent or activation changed.
+The inspected operator was a dirty local build, so this is present database
+inspection, not exact-source release qualification of this new transition.
+
+Desktop CI at the preceding dependency-repair head
+`7630cb360328127b6f92e66422797333b324dc9f` completed successfully on run
+37564525163, including the full audit, physical Linux Node 22 dependency-stage
+check, normal full unit suite, clinical build and client scan. That run predates
+the prepared transition and does not qualify its new source. Deployed-backend
+tests remain separately secret-gated; a green job is not positive AWS acceptance.

@@ -19,7 +19,8 @@ const sourceCommit=execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).tr
 const sourceDirty=!!execFileSync('git',['status','--porcelain','--untracked-files=all','--','src','scripts','infra','package.json','package-lock.json','.gitattributes','.github'],{encoding:'utf8'}).trim();
 mkdirSync(out,{recursive:true});
 const libraries=[];
-for(const [name,entry] of [['api','care-claim-recovery-api.ts'],['service','care-claim-recovery.ts'],['database-binding','care-claim-recovery-database-binding.ts']]){
+for(const [name,entry] of [['api','care-claim-recovery-api.ts'],['service','care-claim-recovery.ts'],
+  ['database-binding','care-claim-recovery-database-binding.ts'],['schema-upgrade','care-claim-recovery-schema-upgrade.ts']]){
   const file=`${name}-library.cjs`;
   await build({entryPoints:[`src/server/clinical-core/${entry}`],outfile:resolve(out,file),platform:'node',target:'node22',format:'cjs',
     bundle:true,minify:true,legalComments:'none'});
@@ -32,10 +33,24 @@ const binding=createRequire(import.meta.url)(resolve(out,'database-binding-libra
 binding.validateCareClaimFunctions(overlayFunctions);
 if(dependencyFunctions.length!==7)throw new Error('care_claim_dependency_invalid');
 writeFileSync(resolve(out,'care-claim-recovery.sql'),sql);
+const upgrade=createRequire(import.meta.url)(resolve(out,'schema-upgrade-library.cjs')).CARE_CLAIM_RECOVERY_UPGRADE;
+const proposedFile=`${upgrade.version}_production_care_claim_recovery.sql`;
+const proposedMigrations=[...baseline.manifest.migrations,{version:upgrade.version,file:proposedFile}];
+const proposedLedger=sha([...baseline.manifest.migrations.map(m=>`${m.version}:${sha(baseline.files[m.file])}`),
+  `${upgrade.version}:${sha(sql)}`].join('\n'));
+if(upgrade.from!==ledger||upgrade.to!==proposedLedger||upgrade.sqlSha256!==sha(sql))throw new Error('care_claim_prepared_upgrade_invalid');
+const preparedDirectory=resolve(out,'prepared-migrations');mkdirSync(preparedDirectory,{recursive:true});
+for(const m of baseline.manifest.migrations)writeFileSync(resolve(preparedDirectory,m.file),baseline.files[m.file]);
+writeFileSync(resolve(preparedDirectory,proposedFile),sql);
+const preparedManifest=JSON.stringify({contract_version:'clinical-core-migrations/1',migrations:proposedMigrations},null,2)+'\n';
+writeFileSync(resolve(preparedDirectory,'manifest.json'),preparedManifest);
 const manifest={contract:'care-claim-recovery-source-candidate/1',status:'unreleased',deployable:false,sourceCommit,sourceDirty,
   predecessor:{migrationCount:105,ledgerReleaseSha256:ledger,canonicalAssemblySha256:baseline.releaseHash},
   overlay:{file:'care-claim-recovery.sql',sha256:sha(sql),bytes:Buffer.byteLength(sql),canonical:false,hostedVerified:false},
   libraries,dependencyFunctions,functions:overlayFunctions,
+  preparedTransition:{status:'unregistered',canonical:false,qualificationOnly:true,operatorReleased:false,
+    fromLedgerSha256:upgrade.from,toLedgerSha256:upgrade.to,migrationCount:106,tableCountBefore:207,tableCountAfter:209,
+    mandatoryRollbackRehearsal:true,manifest:{file:'prepared-migrations/manifest.json',sha256:sha(preparedManifest)}},
   proposedRoutes:['POST /clinical-core/consumer/connection-claims'],
   reviewRequired:'separate claim recovery/settlement review; source digests are not review evidence',
   proposedCoveredEntityMapping:[
@@ -45,7 +60,7 @@ const manifest={contract:'care-claim-recovery-source-candidate/1',status:'unrele
       dependsOn:['clinical_core.organizations','clinical_core.persons'],appendOnly:true,status:'inventory_and_disposition_pending'},
   ],
   activation:'blocked',phiAllowed:false,seededApprovals:false,seededIdentities:false,seededConsents:false,
-  remaining:['canonical preserving 105-prefix promotion with upgrade/rollback and table inventory integration',
+  remaining:['canonical 105-prefix promotion and reviewed disposition; release qualification-only upgrade operator with observed account/foundation binding',
     'V2 request-id journal migration preserving id-less legacy uncertainty; explicit receipt and settlement UI',
     'new route/Lambda/template/fleet/qualification target and capacity integration',
     'reviewed metadata binding and independent recovery/security/retention review',
