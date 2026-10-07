@@ -1939,3 +1939,74 @@ Security, retention, actual agreement/project/runtime/provider coverage and
 separate PHI activation remain human gates. **All six original scopes are
 partial. Neither app is commercial or PHI ready. PHI OFF; paid builds held;
 clinical holds, exclusions and source-verification requirements preserved.**
+
+## October 7 Retained routing recovery acceptance
+
+The real AWS pre-upgrade routing drill passed on Desktop harness
+**a1fd539980023a47fbe4d2bda77f24a61ff9e982**, clean source fingerprint
+**342c77090b562dae97134f7f5e8bfa75bd221ab330e3199cb3fe6f3a06001570**.
+V2 runtime remains **811f55b3d6841dc01d64e966ef29a8183c887fbf**; no native build
+or physical-device evidence changed. The Desktop archive is
+`docs/evidence/2026-10-07-care-retained-routing.json`; its historical source
+binding is not a claim that later documentation commits ran the drill.
+
+Five existing fictional Cognito accounts made **60 distinct actual API Gateway
+requests**: 20 before switching, 20 on retained Lambda version 1, and 20 after
+return. Every phase verified consumer synthetic posture, refusal of ID-less
+erasure, bounded thread export and erasure history. Retained deployment
+**cyb3k4** and return deployment **14f2tb** were observed. Actual version metrics
+corroborated the run; independent CloudWatch readback for resource
+`wxv734oi12-synthetic-identity:1`, 17:23–17:26 UTC, returned **20 invocations at
+17:24 UTC**. This is functional recovery routing evidence, not just retained
+bytes, a source test or a deployment-success label.
+
+The temporary invocation grant was bounded to member **588966314750**, this API
+and version 1. The runner restored the original unqualified integration and
+proved the temporary policy absent, with other integrations, routes,
+authorizers, original invocation policy and Lambda revision unchanged.
+Independent full database inspections matched **87 tables / 23,980 rows**,
+data digest **bb0a6ecafad1da1f595c577124fe8e03a0e495cb524018b3f51f2e19392f3a55**,
+live46/source45 and the exact reference ledger. The exclusive runner lock was
+removed only after confirmed restoration. No schema, clinical record, identity,
+provider/consent release, execution role, PHI setting or paid build changed.
+
+The first attempt stopped before its journal existed; its generic failure did
+not prove a cause. Two later attempts failed after switch admission and
+positively verified restoration; neither is a pass. Request-level diagnostics
+identified the latter failure as a 30-second Cognito authentication timeout
+before the first retained request. Fresh authentication connections addressed
+the idle-pool risk after blocking CLI inspections; the final full run passed
+without longer deadlines, retries, skipped cases or weaker guards. Records
+contain case/status/request IDs and body hashes, not credentials or health text.
+Connection behavior follows the
+[AWS SDK keep-alive configuration](https://docs.aws.amazon.com/sdk-for-javascript/v3/developer-guide/node-reusing-connections.html);
+the earlier failures are not attributed to an API defect.
+
+Local release suite **57/57**, including **25 routing/failure cases**, and
+typecheck/lint pass. CI at 9644023 and 6ef7f27 is terminal success; the newest
+a1fd539 runs were still in progress at the last observation. Earlier full
+runtime suite evidence remains 340 files / 4,300 passed / 11 existing skips;
+that whole suite was not rerun for this script-only increment.
+
+The accepted scope is **preupgrade-retained-routing-only**. It does not prove
+terminal-receipt recovery after upgrade, authorize SQL, certify owner isolation
+or second-device journeys, qualify production, or substitute for physical
+iOS/Android testing. Implement the fresh recovery-gated lasting invocation and
+canonical release transition next, then apply preserving parent/successor only
+after their exact handler and rollback prerequisites pass. Never restore the
+old ID-less API after live47 or roll back the receipt ledger.
+
+All six original scopes remain partial: continuity and legacy reconciliation;
+owned lab/document/voice delivery; full privacy, clinic amendments and
+cross-store disposition; eligible source-verified clinical releases; Core
+$19.99 store/provider acceptance; exact matched releases, rollback/load/security/
+recovery and physical iOS/Android/five-persona acceptance. Security and retention
+reviews, actual executed agreement/project/runtime/provider coverage and
+separate PHI activation approvals remain human gates. **Neither app is
+commercial or PHI ready. PHI OFF, paid builds held, clinical holds/exclusions/
+source verification preserved.**
+
+AST-only Desktop refresh completed at **13,350 nodes / 27,296 edges / 937
+communities**; 50 zero-node files remain absent and HTML is skipped for size.
+Shared Graphify **§367** preserves the complete prior normalized prefix;
+the canvas is untouched. These map updates are not runtime acceptance.
