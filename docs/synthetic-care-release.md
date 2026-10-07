@@ -102,6 +102,30 @@ failure stops at the first broken boundary. These checks do not verify new
 erasure admission or receipts, workforce access, self-service registration,
 cross-owner isolation, browser rendering or physical mobile acceptance.
 
+## Inspect the deployed successor
+
+```powershell
+npm run build:aws-care-erasure-upgrade
+npm run verify:deployed-synthetic-care
+```
+
+This read-only path supports the reviewed deployed 5b6f8aa ZIP and its exact S3
+version without relaxing the original one-shot preparer's old-code guard. It
+rebuilds the current handler and compares its actual bytes with the deployed
+artifact, downloads that exact version, and checks the live stack, parameters,
+function configuration, all 51 identity routes and their native JWT authorities.
+It also inspects the actual IAM role and policies, including trust, absence of
+attached policies, resource-bound permissions and logging encryption/retention.
+An unchanged template cannot conceal a manually broadened role. Sensitive
+configuration values never become credentials in the report.
+
+The preserving database operator must be rebuilt from the clean current source.
+Its inspection verifies the existing 46-entry staging ledger, historical alias,
+two-entry reference ledger and original 87-table inventory. The recorded row
+count and data digest are a fresh observation, not an assertion that read-audit
+growth must equal an earlier count. The report does not authorize a migration,
+execute a change set, rehearse recovery or certify an application journey.
+
 ## Deployment and recovery still required
 
 1. Independently verify the ZIP after uploading it under its exact source/hash
