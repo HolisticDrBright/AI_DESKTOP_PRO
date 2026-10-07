@@ -382,3 +382,12 @@ custody. Passing scope is `post-parent-existing-cancellation-routing-only`.
 It proves recovery of cancelled receipts, not actual erasure, lost-reply erasure,
 the blocked intent successor, physical devices, complete privacy readiness or
 PHI activation.
+
+## Intent aware successor preparation
+
+The separate build and read-only preflight are described in
+[Synthetic care intent release](synthetic-care-intent-release.md).
+The October 7 source candidate and real AWS preparation evidence are archived
+in [Intent preparation evidence](evidence/2026-10-07-care-intent-preparation.json).
+That evidence does not authorize schema application, deployment, activation or
+restoration of the parent API after a future intent upgrade.

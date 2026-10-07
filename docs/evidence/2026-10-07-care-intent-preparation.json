@@ -1,0 +1,181 @@
+{
+  "contract": "care-intent-preparation-evidence/1",
+  "scope": "exact-code-build-and-read-only-aws-preparation",
+  "built": {
+    "directory": "C:\\Users\\Brand\\Documents\\Codex\\2026-08-18\\referenced-chatgpt-conversation-this-is-an\\work\\DESKTOP_COMMERCIAL_20261005\\dist\\synthetic-care-intent-release\\f2cc482c8cc5fe3b87a5a8935c3a132a5c57c577\\9529cd03d55bde8f877bc4a2c2278bd1b295e84c",
+    "desktopCommit": "f2cc482c8cc5fe3b87a5a8935c3a132a5c57c577",
+    "mobileCommit": "9529cd03d55bde8f877bc4a2c2278bd1b295e84c",
+    "zipSha256": "7d8da3602db11117171cd5a20d374d5c7d5c64d6054dfef28f7cbf5c12255a5a",
+    "built": true,
+    "deployed": false,
+    "schemaChanged": false,
+    "canonicalRegistered": false,
+    "paidMobileBuildStarted": false,
+    "phiAllowed": false
+  },
+  "preparation": {
+    "contract": "synthetic-care-intent-preparation/1",
+    "observedAt": "2026-10-07T20:49:27.624Z",
+    "execution": "synthetic-staging",
+    "account": "588966314750",
+    "region": "us-east-2",
+    "desktop": {
+      "commit": "f2cc482c8cc5fe3b87a5a8935c3a132a5c57c577",
+      "clean": true,
+      "files": 1621,
+      "sha256": "6a503d099aaf8c76ae4c8d8a079ef18486d38c45c9e687f7d0e8309d05569689"
+    },
+    "mobile": {
+      "source": {
+        "commit": "9529cd03d55bde8f877bc4a2c2278bd1b295e84c",
+        "clean": true,
+        "files": 911,
+        "sha256": "713b627bd68c7c5dcaab6203eb94eb1008cca38d94a5526da0fe69dfeeeff784"
+      },
+      "contractSha256": "2987ab778e93ab3663fb820a6854476084b9d9e3a07c3dab90a29d94f655c3c6",
+      "requestJournalSha256": "aa7009ca92c0b2779d5dce1d5bf76c5902a42e5efdf6fda7ec38d3d5840a6f7d",
+      "transportSha256": "0d7bec420f3fd5d4c9e624ccdd2b21df700d705365fb2ae7ab29431ff3e308aa",
+      "easSha256": "bdc8d2f5714f58e2af58fb3314c91f6f7b2be4dad1a303fb3e556dd18dd7816b",
+      "built": false,
+      "deviceVerified": false,
+      "recoveryContractSha256": "5d991aa388a61942e2de99236fcd85308d1d1bf60a919f8c9aeb43ff1333de35",
+      "recoveryUiSha256": "ecb594ee5ebe5820d2bee8ea4780a747f135f6db014c8b7743d646481c30a375"
+    },
+    "candidateZipSha256": "7d8da3602db11117171cd5a20d374d5c7d5c64d6054dfef28f7cbf5c12255a5a",
+    "predecessor": {
+      "desktop": "5b6f8aa45347d33757ac9bfb34658e2e09daefd3",
+      "mobile": "11197e527a1ffc9317513837087e347531076957",
+      "zip": "644967eec4241c19f2365aabc7cec304f200f95622c8ef3a0188f57633dd64db",
+      "version": "hruo6Qx4lq5maqBp.E_Kp.x1utrFXFPh",
+      "bytes": 1818387,
+      "codeSha256": "ZEln7sQkHBnyNlqrx87DBPIA+VYiyO86AYj1djPdZNs="
+    },
+    "control": {
+      "revision": "c7d671c2-b7d8-4fd3-8647-e6ef4c0c1228",
+      "codeSha256": "ZEln7sQkHBnyNlqrx87DBPIA+VYiyO86AYj1djPdZNs=",
+      "templateSha256": "dfd973cb9ba14323bc25f64219a91ce1ace63f5dd88e1b496ee25513bdad5dc2",
+      "routesSha256": "7df650b3a01185ba59985b670f349941d2595292ea660ccaf197f4d8b42a1105",
+      "authorizersSha256": "3b730ddbceef5ceac120f3fe2c81d2eff76f638e25d2f11f06451357a550297b",
+      "integrationsSha256": "710df282b74213710e8e538f74422b86f6f2f6ab48c2bf74fa59b7d8bc2b6a60",
+      "stageSha256": "f74821cb020d0b2372bffde59f2111e77ef5d38ec75ec89710adbae09c6d443a",
+      "policySha256": "4ff1a3770547bb5fadcda9e245532e3f4770c4f745529df30f6ec80a22d1fa47",
+      "roleSha256": "8904bb47ebff513f08239504338591ce66a3b810be383420ae817c4567842d68",
+      "routeCount": 51,
+      "iamVerified": true,
+      "loggingVerified": true,
+      "phiAllowed": false
+    },
+    "database": {
+      "contract": "care-erasure-intent-upgrade/1",
+      "command": "inspect",
+      "execution": "synthetic-staging",
+      "phiAllowed": false,
+      "observedMigrationCount": 47,
+      "sourceMigrationCount": 46,
+      "tableCount": 88,
+      "rowCount": 23985,
+      "dataSha256": "29e413773ffb4e263421b312501242384e5f6085b3930fd6339fa9100ab53351",
+      "schemaSha256": "629df9a05ecd1f7534204f1ee6ab9116a4a5544d86b5296f993a04d263d62bba",
+      "dataPreserved": true,
+      "schemaPreserved": true,
+      "applied": false,
+      "alreadyApplied": false,
+      "rolledBack": false,
+      "fromLedgerSha256": "99ad59a94bab717a4e1299979db177394e931c9ebb7f40aa8be1ba1d99d52148",
+      "toLedgerSha256": "447cf4ea8c8da3decbaa7edea964f97d9e3bdb029c38723bf3a5767c38679a50",
+      "referenceLedgerSha256": "83d51dc056b41f47b5fb3d6020201163915faa2116004e3692af9bb41aad0f62",
+      "canonicalRegistered": false,
+      "hostedAcceptance": false,
+      "recoveryAcceptance": false,
+      "activationApproved": false,
+      "operatorSource": {
+        "sourceCommit": "f2cc482c8cc5fe3b87a5a8935c3a132a5c57c577",
+        "clean": true
+      },
+      "awsAccountId": "588966314750",
+      "foundation": "ai-clinical-core-synthetic-staging",
+      "rollbackReadback": false,
+      "lastingUpgradeAvailable": false,
+      "apiDeploymentPerformed": false,
+      "recoveryDrillPerformed": false,
+      "acceptance": false,
+      "phiActivation": false
+    },
+    "predecessorExactVersionReadback": true,
+    "sourceRebuiltNow": true,
+    "awsMutationPerformed": false,
+    "candidateUploaded": false,
+    "deployed": false,
+    "schemaChanged": false,
+    "canonicalRegistered": false,
+    "freshCompatibleRecoveryPerformed": false,
+    "lastingSchemaUpgradeAuthorized": false,
+    "hostedAcceptance": false,
+    "paidMobileBuildStarted": false,
+    "phiAllowed": false
+  },
+  "firstAttempt": {
+    "source": "9d38c49193d84a2a29c90ee1749bb9a78e01b3e5",
+    "candidateZipSha256": "4b4fd20cdf2c3177321a9393bb44ab06b577e37e431f662ce0b1e4ed0e2eb370",
+    "terminalExitCode": 1,
+    "refusal": "synthetic_care_intent_release_refused:inspector_build_or_execution",
+    "cause": "unproven_by_first_attempt",
+    "mutationPerformed": false,
+    "hostedAcceptance": false
+  },
+  "separateOldSourceInspection": {
+    "source": "9d38c49193d84a2a29c90ee1749bb9a78e01b3e5",
+    "terminalExitCode": 0,
+    "command": "inspect",
+    "observedMigrationCount": 47,
+    "sourceMigrationCount": 46,
+    "tableCount": 88,
+    "rowCount": 23985,
+    "dataSha256": "29e413773ffb4e263421b312501242384e5f6085b3930fd6339fa9100ab53351",
+    "schemaSha256": "629df9a05ecd1f7534204f1ee6ab9116a4a5544d86b5296f993a04d263d62bba",
+    "applied": false,
+    "hostedAcceptance": false
+  },
+  "localVerification": {
+    "intentArtifactTests": 8,
+    "focusedDatabaseApiOperatorTests": 106,
+    "parentReleaseRecoveryTests": 88,
+    "workflowNegativeTests": 2,
+    "typecheck": "pass",
+    "focusedLint": "pass",
+    "fullDesktopSuite": {
+      "status": "passed",
+      "files": 341,
+      "passed": 4305,
+      "skipped": 11,
+      "total": 4316
+    },
+    "v2RecoveryContractTransportUi": {
+      "files": 5,
+      "passed": 60
+    },
+    "firstFocusedRun": {
+      "passed": 100,
+      "failed": 1,
+      "failure": "five_second_timeout_in_multi_pass_preservation_case",
+      "notCountedAsPass": true
+    },
+    "isolatedDiagnostic": {
+      "passed": 3,
+      "skipped": 23,
+      "notACompleteSuite": true
+    },
+    "repair": "schema batching preserves original ordered per-table digest; multi-pass preservation cases retain all assertions and bounded explicit deadline"
+  },
+  "candidateUploaded": false,
+  "deployed": false,
+  "schemaChanged": false,
+  "canonicalRegistered": false,
+  "erasedJourneyVerified": false,
+  "lostReplyVerified": false,
+  "physicalDeviceVerified": false,
+  "commercialReady": false,
+  "phiReady": false,
+  "phiAllowed": false,
+  "paidMobileBuildStarted": false
+}
