@@ -63,6 +63,7 @@
     "build:aws-production-clinical-core": "node scripts/build-aws-production-clinical-core.mjs",
     "build:care-messaging-source": "node scripts/build-care-messaging-source-candidate.mjs",
     "build:care-connections-source": "node scripts/build-care-connections-source-candidate.mjs",
+    "build:care-claim-recovery-source": "node scripts/build-care-claim-recovery-source-candidate.mjs",
     "build:aws-care-messaging-upgrade": "node scripts/build-care-messaging-schema-upgrade.mjs",
     "build:aws-care-connections-upgrade": "node scripts/build-care-connections-schema-upgrade.mjs",
     "build:aws-care-consent-copy": "node scripts/build-care-consent-copy-operator.mjs",

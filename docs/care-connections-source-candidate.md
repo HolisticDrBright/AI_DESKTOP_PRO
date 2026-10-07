@@ -527,3 +527,71 @@ CI runs 37550894195 and 37550890399 were in progress at inspection, not green.
 Nothing was uploaded to AWS. Build again from the intended exact runtime source
 before reviewing a new deployment; a documentation head is not interchangeable
 with an artifact's compiled source identity.
+
+## Claim receipt and permanent settlement source
+
+The separate `build:care-claim-recovery-source` builder now produces an
+unreleased, non-deployable overlay on the unchanged canonical 105 ledger. It
+does not apply SQL or register a route. Its proposed consumer route is
+`POST /clinical-core/consumer/connection-claims`; requests carry a UUID and
+one of `claim`, `receipt` or `settle`. The authenticated owner and clinic come
+from the verified identity, never from the request body.
+
+Claim and settlement take the same transaction advisory lock for the exact
+owner, clinic and request identity before a connection can be written. If the
+claim commits first, receipt and settlement recover its immutable historical
+receipt without claiming again or granting consent. If settlement commits
+first, it permanently records cancellation and a later claim with that identity
+is refused. Reading an absent receipt returns `unresolved` and creates no
+decision. Cancellation applies to that command, not to the current clinic link.
+
+Successful receipt replay checks present access to the chart and link. Revoked,
+archived or replaced links return only `withheld`, without chart or connection
+identifiers. A paused but accessible link may return the historical command
+receipt; it is not a current connection-status assertion. A separate current
+status read remains necessary. Receipt and settlement can be used during an
+account-deletion fence; a new claim cannot. Another owner or clinic cannot read
+the decision. UUIDs are canonicalized before correlation.
+
+The two new tables are immutable, forced-RLS and inaccessible directly to the
+API role. Decision rows store a token hash only. Separate audit rows contain
+the owner, organization, request, action, outcome and timestamp, not the code,
+hash or receipt body. Per-transaction metadata checks pin the seven existing
+105 connection functions and the two recovery functions, their safety metadata,
+table privilege boundaries and required triggers before business work. This
+is not whole-ledger qualification or a review. The API additionally requires
+a distinct claim-recovery review; no review is created by the builder or tests.
+
+Local focused verification passes **61 tests across three suites**, including
+the real canonical SQL plus overlay under the actual API role, both sequential
+admission orders, lost-reply recovery, exact replay, isolation, withholding,
+deletion fencing, response-failure rollback, metadata drift and source artifact
+mapping. PGlite serializes transactions: these are not live multi-session races
+or physical second-device acceptance. Source artifact hashes identify emitted
+bytes, not approvals, deployed code or a canonical migration.
+
+Integration remains engineering. Promote through a preserving 105-prefix
+upgrade and rollback operator, integrate both tables into the covered-entity
+inventory and reviewed disposition, wire the route into the connection
+Lambda/template and qualification fleet, then implement V2's request-id journal
+and explicit receipt/settlement controls. Existing V2 v1 entries have no request
+identity: preserve their unresolved state rather than fabricating a server
+receipt or clearing them to permit a retry. The existing 105 claim route is
+unchanged and is not covered by request-id settlement. Exact matched releases
+must deliberately adopt the new contract without a legacy fallback.
+
+Hosted deployment, real concurrent claim/cancellation, revocation races,
+second-device convergence and physical iOS/Android evidence remain required.
+PHI stays off, paid mobile builds remain held, and all clinical holds and source
+verification requirements are preserved. Neither app is commercial or PHI ready.
+
+The subsequent full Desktop regression passed **331 files, 4,143 tests and 11
+existing skips** in 355.23 seconds, with the documented timezone and unrelated
+anon-key variable unset. Typecheck and changed-file lint passed. The literal
+JSON-array refusal was independently checked against the actual 105 artifact
+and overlay, then its test-case wrapper was corrected so Vitest passes the
+array itself rather than spreading an empty array into no argument. Final
+focused verification remains separate from this preceding full-run receipt.
+The recovery suites and source builder are now in the independent connection
+CI job. These changes do not waive the full dependency-security gate, which
+still reports five High findings in the lint-tool chain.
