@@ -994,3 +994,91 @@ processing/delivery; full privacy; clinical knowledge/safety; Core store/provide
 acceptance; matched release/security/physical qualification. Neither app is
 commercial or PHI ready. PHI stays off, paid builds held, and all clinical holds,
 exclusions and source-verification requirements are unchanged.
+## October 6 durable synthetic erasure recovery
+
+Desktop runtime `22bf5f9adb0962e0c9643203c55edcf5072e270b` and V2 runtime
+`78db95bc7edf0bc5f3d481e01feeb88cf2f5d826` are pushed and independently
+remote-matched on the existing commercial branches (PR67 and PR21).
+This supersedes the earlier statement that durable synthetic erase correlation
+across an app restart was unimplemented. It is source-verified, not deployed or
+device-verified, and it does not complete the full privacy phase.
+
+Synthetic migration46, `20261006040000_synthetic_care_erasure_recovery.sql`,
+adds an immutable owner/request-ID receipt or cancellation fence. The mutation
+and receipt commit in one transaction under the same owner lock. Receipt
+absence is `unresolved`, not failure. Settlement returns an already committed
+receipt or fences an unseen request; a delayed original cannot erase newer
+records under that ID. A changed scope conflicts. Direct API table access and
+the old uncorrelated SQL erase are refused; the HTTP service also refuses the
+old ID-less destructive action. Historical erasure history remains readable.
+
+The replacement erase scopes empty-thread deletion and retained-thread counts
+to this owner's connections; the historical implementation had considered
+threads belonging to other accounts. Signed forms, cancellation records, clinic
+messages, and the existing domain/closure retention distinctions are preserved.
+The new migration is `production_transform:false`; all historical synthetic
+migration bytes and the canonical production106 bundle remain unchanged.
+**Do not apply synthetic46 to clinical_core_qualification or production.**
+
+V2 saves and reads back an encrypted owner/environment request journal before
+dispatch. It requires an explicit saved-request review before removal. After an
+interruption or restart, the owner can check the exact receipt or confirm stopping
+late arrival; no destructive action runs on mount or is automatically retried.
+Authorization loss, an opened-view change, an organization change, a device
+erasure fence, or a destination/channel change prevents opened results or journal
+writes from being accepted. The journal is included in the same organization-
+scoped device export/removal inventory. Terminal IDs are not silently dropped;
+the local journal refuses growth past128 identities. Production still renders
+the separate retained-correspondence/privacy path, not this synthetic deletion.
+
+Local final verification passed:
+
+- Desktop: **335 files,4,203 passed tests,11 existing skips**,286.37 seconds,
+  with the documented timezone/unrelated anon-key unset; no waived failures.
+  The focused database/migration/transport set passed245/245 and the final
+  database/migration/error-classifier set206/206.
+- V2: **213 passed files,one existing skipped file,2,488 passed tests,one
+  existing skipped test**,32.86 seconds. Recovery tests cover lost committed
+  replies, restart without replay, both settlement orders, retained pending
+  intent after a failed receipt save, wrong receipts and account loss. The
+  initial focused set75/75 and render/export recovery set70/70 passed; final
+  full suite includes the extra rendered prerequisite/disabled-removal test.
+- Both typechecks and linters, API build/JWT/least-privilege gate, production106
+  zero-seeded-row gate,209-table coverage, PHI-disabled workloads, V2 HIPAA
+  baseline/capabilities, TestFlight source scan363 files and four-surface
+  disclosure gate pass. Desktop/V2 lifecycle contracts match after LF
+  normalization, including section-specific export validation. Earlier failed
+  runs led to repairs; they are not represented as passes.
+- Root AST graphs were updated without LLM/API cost: Desktop13,016 nodes,
+  26,327 edges,917 communities; V2 6,053 nodes,12,573 edges,456 communities.
+  Fifty Desktop and35 V2 zero-node files remain absent; HTML was skipped for
+  size. An accidentally generated Expo-only snapshot was preserved under
+  the ignored root graph backup, not left as an untracked source folder.
+
+Current runtime CI is not yet terminal: Desktop37584469004/37584464170 in
+progress; V2 37584475362/37584471459 queued. The prior a9006fc Desktop runs
+37581127383/37581124168 have terminal success; that does not qualify this
+new release. No hosted deletion, deployment, migration, fixture, consent
+registration, provider activation, paid mobile build or PHI activation occurred.
+
+Next engineering must provide a preserving synthetic45-to46 upgrade operator
+and exact matched identity-API/V2 rollout with rollback evidence before using
+this path. Do not transplant this migration into the production qualification
+database. Real multi-session races, connection withdrawal and second-device
+journeys must be hosted-tested against the correct synthetic target. Older
+requests without an ID, another device's lost intent, or a removed local journal
+cannot be retroactively declared failed by this journal; these require explicit
+reconciliation and further discovery/lifecycle work.
+
+The full original scopes remain partial: account/plan continuity and legacy
+provenance; owned processing and durable delivery; complete privacy, retained
+clinic amendments and cross-store disposition; eligible verified clinical
+knowledge and safety; Core $19.99 purchases/restore and provider acceptance;
+exact matched releases, rollback/load/security/recovery and physical
+iOS/Android/five-persona qualification. Reviewed deployment bindings/operators,
+legacy claim drain/second-device discovery, distinct registrar audit identity
+and production program assignments also remain. Independent security,
+retention and agreement/runtime reviews and separate PHI approvals are required
+after the engineering and acceptance work. Neither app is commercial or PHI
+ready; PHI OFF, paid builds held, clinical holds/exclusions/source verification
+unchanged.
