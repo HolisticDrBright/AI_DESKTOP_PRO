@@ -1662,3 +1662,61 @@ acceptance, source-verified clinical releases and separate security/retention/
 agreement-project-runtime-provider reviews are still required. Neither app is
 commercial or PHI ready. PHI OFF, paid builds held, clinical holds/exclusions
 and source-verification requirements unchanged.
+
+## October 7 Durable erasure intent source candidate
+
+Desktop source ad59aae8e9da16bb607cb460114d570138270ed2 is pushed and
+remote-matched on agent/commercial-readiness-20261005, PR67. This introduces
+immutable owner/request/scope intent registration before destructive admission
+and owner-scoped UUID-keyset discovery. The original terminal function is
+preserved under a private predecessor name; its raw API execute grant is revoked.
+The guarded wrapper refuses new deletion without the exact prior intent.
+Cancellation and receipt recovery still support historical terminal UUIDs.
+A cancelled UUID never becomes prepared again. Discovery never reissues deletion.
+
+This is a BLOCKED SOURCE CANDIDATE, not a canonical migration or serving release.
+The SQL is infra/aws-clinical-core/source-candidates/care-erasure-intents.sql.
+The separate service and contract libraries are not imported by the live identity
+handler. No preserving operator exists and no AWS schema, routes, identity,
+provider, consent or activation changed. Existing canonical staging history
+remains source46/live46 with its historical alias; this candidate requires the
+source46 terminal schema, whose lasting application remains outstanding.
+
+Local checks: 19 actual PGlite database tests pass using the non-superuser API role
+for boundary assertions; 4 release-mapping tests pass; installed typecheck and
+focused lint pass; the existing clinical-core gate and 32 release-tool checks pass.
+The full local Desktop suite passes: 338 files, 4,255 tests and 11 existing skips,
+293.21 seconds. The process used America/Los_Angeles and cleared the stray test
+CLINICAL_SUPABASE_ANON_KEY setting; no provider credentials were printed or changed.
+The tests cover lost prepare replies, terminal replay, both cancellation orders,
+owner isolation, immutable intents, raw/helper/predecessor grant denial, malformed
+paging/replies, old receipts, explicit legacy counts and rollback on receipt failure.
+They do not prove real AWS transaction races, hosted recovery or physical devices.
+
+Commands: npm run test:care-erasure-recovery-source and
+npm run build:care-erasure-recovery-source. The clean build binds source46 history
+52f2027ba0db0fd570bc4714fadf5ccd39e2caabf992081cb24be56497a52017 and normalized
+overlay aa96e287e3a67095ee523030b9d00a9f015563fe0926c3c405ca90bf91e8dd8d.
+Its metadata declares deployable, operatorExists, handlerIntegrated,
+clientIntegrated, hostedVerified, deviceVerified and productionApproved false.
+Source hashes are not review hashes. The SQL bytes are LF-pinned.
+
+Discovery coverage is committed_owner_records_not_global_clearance. An empty page
+or a completed scan does not fence unregistered/in-flight requests or certify
+all-device clearance. New UUIDs can be inserted behind a cursor, so refresh is
+required and no atomic scan is promised. Older ID-less erasures are counted,
+never correlated by timestamps or similar counts. Immutable intent/terminal
+retention still needs a reviewed disposition policy; provider copies are outside
+this candidate's coverage.
+
+Next: register and preserve the migration through a reviewed operator with
+rollback/data proof, integrate API actions and exact schema/code release mapping,
+then implement V2 server preparation before dispatch, durable journal and
+owner-paged discovery with explicit receipt/settlement recovery controls.
+Run real concurrent/lost-reply/second-device and denial journeys before activation.
+The actual API recovery drill, registration/bootstrap deployment, legacy drain,
+registrar audit identity, production assignments, qualification candidates,
+complete privacy/clinic amendments/disposition, matched releases, physical devices,
+Core19.99 store/provider acceptance and eligible source-verified clinical releases
+remain. All six original scopes remain partial. Neither app is commercial or
+PHI ready; PHI OFF, paid builds held, clinical holds and verification unchanged.
