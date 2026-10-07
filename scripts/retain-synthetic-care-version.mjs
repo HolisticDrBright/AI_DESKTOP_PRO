@@ -99,7 +99,17 @@ export function runCareVersionChild(run, stage) {
     // Forward only a bounded machine refusal code, never that diagnostic text.
     const code = String(error?.stderr ?? '').slice(0, 4096).match(
       /(?:^|\r?\n)synthetic_care_release_refused:([a-z0-9_]{1,80})(?:\r?\n|$)/)?.[1];
-    fail(`version_${stage}_${code ?? (error?.code === 'ETIMEDOUT' ? 'timeout' : 'child_failed')}`);
+    // The embedded read-only SQL inspector uses a different bounded error
+    // vocabulary. Preserve its known stage, never arbitrary stderr/SQL/claims.
+    const inspector = String(error?.stderr ?? '').slice(0, 4096).trim();
+    const categories=['boundary_refused','artifact_refused','history_refused','inventory_refused','upgrade_busy','data_changed','verification_failed','upgrade_failed'];
+    const stages=['transaction_start','transaction_settings','database_identity','operator_locks','history','inventory','writer_locks',
+      'before_verification','before_fingerprint','migration_ddl','ledger_receipt','after_history','after_inventory','after_fingerprint','contract_verification',
+      'receipt_table_contract','receipt_schema_contract',
+      ...['clinical_core.care_data_erase','clinical_private.care_data_immutable','clinical_core.care_data_erasure_request'].map(n=>'function_contract:'+n)];
+    const category=categories.find(c=>inspector===c||stages.some(s=>inspector===c+':'+s));
+    const schemaCode=category?'schema_'+inspector.replace(/[:.]/g,'_'):undefined;
+    fail(`version_${stage}_${code ?? schemaCode ?? (error?.code === 'ETIMEDOUT' ? 'timeout' : 'child_failed')}`);
   }
 }
 async function main() {

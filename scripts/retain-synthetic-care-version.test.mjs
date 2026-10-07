@@ -106,6 +106,12 @@ test('child failures preserve their stage and bounded refusal, never command, re
     ['preflight', {stderr: 'synthetic_care_release_refused:deployed_inspection\n'}, 'version_preflight_deployed_inspection'],
     ['postflight', {stderr: 'sensitive response\nsynthetic_care_release_refused:source_dirty\n'}, 'version_postflight_source_dirty'],
     ['preflight', {code: 'ETIMEDOUT', message: 'secret command'}, 'version_preflight_timeout'],
+    ['preflight', {stderr: 'upgrade_failed:transaction_start\n'}, 'version_preflight_schema_upgrade_failed_transaction_start'],
+    ['preflight', {stderr: 'history_refused:history\n'}, 'version_preflight_schema_history_refused_history'],
+    ['postflight', {stderr: 'verification_failed:function_contract:clinical_core.care_data_erase\n'},
+      'version_postflight_schema_verification_failed_function_contract_clinical_core_care_data_erase'],
+    ['preflight', {stderr: 'upgrade_failed:secret_data\n'}, 'version_preflight_child_failed'],
+    ['preflight', {stderr: 'secret_data\nupgrade_failed:transaction_start\n'}, 'version_preflight_child_failed'],
     ['build', {stderr: 'token=fictional-secret\n'}, 'version_build_child_failed'],
     ['postflight', {stderr: 'synthetic_care_release_refused:token=fictional-secret\n'}, 'version_postflight_child_failed'],
   ]) assert.throws(() => runCareVersionChild(() => {throw error;}, stage), e =>
