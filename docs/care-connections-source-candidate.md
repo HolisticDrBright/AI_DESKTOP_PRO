@@ -2010,3 +2010,80 @@ AST-only Desktop refresh completed at **13,350 nodes / 27,296 edges / 937
 communities**; 50 zero-node files remain absent and HTML is skipped for size.
 Shared Graphify **§367** preserves the complete prior normalized prefix;
 the canvas is untouched. These map updates are not runtime acceptance.
+
+## October 7 Fresh recovery gated preserving parent release
+
+The synthetic parent is now **hosted applied**, not merely source complete.
+Desktop source **16165e9f650de0757c86cb8c4e069ecdfd1fd630** contains the
+release gate at d7a5cca and bounded inspector diagnostics at 16165e9.
+The legacy parent `upgrade` command refuses before AWS access. The supported
+`npm run release:synthetic-care-erasure` performs fresh real routing recovery
+inside the same local operator custody as rollback rehearsal, commit and readback;
+no saved report, target, skip, environment approval or PHI override is accepted.
+
+The accepted run is **f9543ac1ecfb0d89b788925f9ca9b0a3**, member account
+588966314750, Ohio, staging `clinical_core`. Clean source fingerprint:
+**aef0b0cff09917fe2c34bdceee70c1cc85b022c3ef6067e09bd14f731236952b**.
+Five existing fictional Cognito personas made **60 distinct real Gateway
+requests** across baseline, retained version1 and return phases. Retained
+deployment **5ddzr6**, returned **fso85o**, and actual version metrics show
+**20 invocations at 18:21 UTC**. Recovery completed
+**2026-10-07T18:24:46.167Z**. Permission removal, original routing, unchanged
+Lambda revision, IAM/logging and full pre-upgrade database fingerprints passed.
+
+After initial inspection and actual transactional rollback rehearsal, the
+parent committed and independently read back at
+**2026-10-07T18:27:45.200Z**. State is **live47/source46, 88 tables**.
+All **23,980 original rows** and historical alias/reference history are preserved;
+the new terminal receipt table is empty. Original-row digest:
+**bb0a6ecafad1da1f595c577124fe8e03a0e495cb524018b3f51f2e19392f3a55**.
+The complete 88-table readback digest is
+**80dbaee8186e330773a90c6848b82f3cae19c267ba66161a06c62321b38856ba**;
+its difference represents the added empty table, not a waived row mismatch.
+The operator lock was removed only after durable continuation completion.
+
+An independent post-release inspection confirmed the same state and unchanged
+active 5b6f8aa handler/code SHA/revision. A further **20 actual authenticated
+consumer smoke cases** passed at **18:30:43.971Z**: synthetic posture, ID-less
+erase refusal, bounded thread export and history for all five personas.
+These smoke cases do not test the new terminal receipt or cancellation journey.
+Archive: Desktop **docs/evidence/2026-10-07-care-parent-release.json** contains
+the full fresh recovery, preserving release and post-release smoke reports.
+The previous d7a5cca attempt stopped during read-only preflight with
+`version_preflight_child_failed`; its cause is unproven, no routing/schema
+mutation was admitted, and independent full readback matched the old state.
+That failed attempt remains recorded rather than being counted as acceptance.
+
+Local **67/67 release checks**, **59/59 database/command tests**, typecheck,
+focused lint and synthetic clinical-core gate pass. A redundant third data scan
+was removed by deriving the original-table digest from the same complete
+per-table fingerprint. Two initial parent tests exceeded their 5s deadlines
+before that repair. One pre-existing multi-transaction intent rollback test
+exceeded 5s; its deadline is now 30s with every assertion unchanged and no AWS
+deadline, skip or verification weakened. The documented final database run is
+59/59 in 112.42s. Source CI at a1fd539 and documentation 080c17c is terminal success;
+current d7a5cca/16165e9 CI was still running at the last observation, not claimed
+green. Earlier full runtime 340 files/4,300 passed/11 skips is historical, not a new
+whole-suite run. Desktop AST refresh: **13,377 nodes /27,401 edges /924 communities**,
+51 zero-node files absent, HTML skipped for size, no LLM cost.
+
+**Next remains engineering:** build the post-parent compatible recovery/receipt
+acceptance runner and observe receipt, cancellation-first/late admission,
+lost-reply/replay, isolation and second-device journeys; then the exact
+intent-aware handler, fresh gated successor and canonical transition.
+The intent successor is still unapplied and its lasting command remains blocked.
+Never restore the old ID-less ZIP after live47 or dispose of terminal receipts.
+The existing pre-upgrade release command intentionally cannot be rerun against
+live47 as if it were a new upgrade authorization.
+
+All six original scopes remain partial: continuity/legacy reconciliation;
+owned lab/document/voice delivery; full privacy/clinic amendments/cross-store
+disposition; eligible source-verified clinical releases; Core **$19.99** store
+and provider acceptance; exact matched API/Desktop/mobile, rollback/load/security/
+recovery and physical iOS/Android/five-persona acceptance. Actual policy and
+security/retention reviews, executed agreement coverage against real runtime/
+project/provider configuration and separate PHI activation remain human gates.
+**Neither app is commercial or PHI ready. PHI OFF; paid builds held; clinical
+holds, exclusions and source verification preserved.** V2 runtime remains
+811f55b3d6841dc01d64e966ef29a8183c887fbf. Shared Graphify §368 records this
+milestone with a modification-time/prefix guard; the canvas is untouched.
