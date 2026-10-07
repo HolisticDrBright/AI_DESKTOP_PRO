@@ -2,6 +2,7 @@ import {beforeAll,afterAll,beforeEach,describe,it,expect} from 'vitest';
 import {PGlite} from '@electric-sql/pglite';
 import {pgcrypto} from '@electric-sql/pglite/contrib/pgcrypto';
 import {readFileSync} from 'node:fs';
+import {randomUUID} from 'node:crypto';
 import {CARE_DATA_LIFECYCLE_ACK,type CareDataRequest} from '../../contracts/careDataLifecycle';
 import {createCareDataLifecycle} from './care-data-lifecycle';
 import {ClinicalCoreDatabaseRejection,type ClinicalCoreDatabase} from './database';
@@ -24,12 +25,17 @@ const database:ClinicalCoreDatabase={transaction:work=>db.transaction(async tx=>
   catch(cause){
    const message=cause instanceof Error?cause.message:String(cause);
    throw new ClinicalCoreDatabaseRejection(INVALID.test(message)?'request_invalid'
+    :/\bcare_data_conflict\b/.test(message)?'conflict'
     :FORBIDDEN.test(message)?'identity_refused':'operation_refused');
   }
  }});
 })};
-const call=(input:CareDataRequest,actor=owner,pool:'consumer'|'workforce'='consumer')=>
- createCareDataLifecycle(database)(context(actor,pool),input);
+const call=async(input:CareDataRequest,actor=owner,pool:'consumer'|'workforce'='consumer')=>{
+ const result=await createCareDataLifecycle(database)(context(actor,pool),input.action==='erase'
+  ?{action:'erase_request',scope:input.scope,requestId:randomUUID()}:input);
+ if(result.action==='erase_request'&&result.receipt)return result.receipt;
+ return result;
+};
 
 const phases=[{id:'phase-1',title:'Phase one',days:1,transition:'scheduled',
  items:[{id:'lesson-a',title:'Fictional lesson',kind:'lesson',instructions:'Read it.',released:true}]},
@@ -57,6 +63,7 @@ async function seed(over:{linkState?:string;clinicReply?:boolean}={}){
  // between cases is harness plumbing, so the triggers are stood down only for the reset
  // and are back in force for every assertion below.
  await db.exec(`set session_replication_role = 'replica';
+  delete from clinical_core.care_data_erasure_requests;
   delete from clinical_core.care_data_erasures;
   delete from clinical_core.program_phase_authorizations; delete from clinical_core.program_assignment_completions;
   delete from clinical_core.program_assignment_audit; delete from clinical_core.program_assignments;
@@ -266,6 +273,91 @@ describe('owner erasure',()=>{
  });
 });
 
+describe('correlated owner erasure recovery',()=>{
+ const execute=(action:'erase_request'|'erase_receipt'|'settle_erasure',requestId=id(91),actor=owner,scope:'domain'|'account_closure'='domain')=>
+  createCareDataLifecycle(database)(context(actor),{action,scope,requestId});
+ it('replays the exact receipt without deleting records added after the first request',async()=>{
+  const first=await execute('erase_request');
+  await db.query("insert into clinical_core.care_message_threads(id,connection_id,subject) values($1,$2,'New fictional message')",[id(80),connection]);
+  await db.query(`insert into clinical_core.care_messages(thread_id,sender_id,sender_pool,request_id,request_hash,acknowledgement,body)
+   values($1,$2,'consumer',$3,'new','care-messages/1','Added after erase')`,[id(80),owner,id(81)]);
+  const retry=await execute('erase_request');
+  expect(retry).toEqual(first);
+  const recovered=await execute('erase_receipt');
+  expect(recovered).toEqual({...first,action:'erase_receipt'});
+  expect((await exportAll('messages'))).toHaveLength(1);
+  expect((await db.query('select * from clinical_core.care_data_erasures')).rows).toHaveLength(1);
+ });
+ it('receipt absence neither writes a fence nor claims failure',async()=>{
+  expect(await execute('erase_receipt')).toEqual({action:'erase_receipt',scope:'domain',requestId:id(91),outcome:'unresolved',receipt:null});
+  expect((await db.query('select * from clinical_core.care_data_erasure_requests')).rows).toHaveLength(0);
+  expect(await execute('erase_request')).toMatchObject({outcome:'erased'});
+ });
+ it('settle-first fences a delayed original and is idempotent',async()=>{
+  const settled=await execute('settle_erasure');
+  expect(settled).toMatchObject({outcome:'cancelled',receipt:null});
+  expect(await execute('settle_erasure')).toEqual(settled);
+  expect(await execute('erase_request')).toEqual({...settled,action:'erase_request'});
+  expect(await execute('erase_receipt')).toEqual({...settled,action:'erase_receipt'});
+  expect((await exportAll('messages'))).toHaveLength(2);
+  expect((await db.query('select * from clinical_core.care_data_erasures')).rows).toHaveLength(0);
+ });
+ it('erase-first settlement returns committed receipt instead of inventing cancellation',async()=>{
+  const result=await execute('erase_request');
+  expect(await execute('settle_erasure')).toEqual({...result,action:'settle_erasure'});
+ });
+ it('refuses a changed scope under the same owner and request id',async()=>{
+  await execute('settle_erasure');
+  for(const action of ['erase_request','erase_receipt','settle_erasure'] as const)
+   await expect(execute(action,id(91),owner,'account_closure')).rejects.toMatchObject({category:'conflict'});
+  expect((await exportAll('messages'))).toHaveLength(2);
+ });
+ it('does not leak another owner receipt even if its UUID is known',async()=>{
+  await execute('erase_request');
+  expect(await execute('erase_receipt',id(91),other)).toMatchObject({outcome:'unresolved',receipt:null});
+  expect(await execute('settle_erasure',id(91),other)).toMatchObject({outcome:'cancelled',receipt:null});
+  expect(await execute('erase_receipt')).toMatchObject({outcome:'erased'});
+ });
+ it('does not delete or count another owner empty or clinic-populated thread',async()=>{
+  const otherPatient=id(82),otherConnection=id(83);
+  await db.query("insert into clinical_core.patient_records(id,organization_id,synthetic_record_key) values($1,$2,'patient_syn_lifecycle_02')",[otherPatient,org]);
+  await db.query("insert into clinical_core.patient_connections(id,organization_id,patient_record_id,consumer_person_id,state,verified_at) values($1,$2,$3,$4,'verified',now())",
+   [otherConnection,org,otherPatient,other]);
+  for(const thread of [id(84),id(85)])await db.query("insert into clinical_core.care_message_threads(id,connection_id,subject) values($1,$2,'Other owner')",[thread,otherConnection]);
+  await db.query(`insert into clinical_core.care_messages(thread_id,sender_id,sender_pool,request_id,request_hash,acknowledgement,body)
+   values($1,$2,'workforce',$3,'other-clinic','care-messages/1','Other owner clinic reply')`,[id(85),clinician,id(86)]);
+  expect(await execute('erase_request')).toMatchObject({outcome:'erased',receipt:{threadsErased:1,threadsRetained:0}});
+  expect((await db.query('select id from clinical_core.care_message_threads where connection_id=$1',[otherConnection])).rows).toHaveLength(2);
+ });
+ it('rolls deletion back when durable receipt insertion fails',async()=>{
+  await db.exec(`create function clinical_private.test_receipt_failure() returns trigger language plpgsql as $$
+   begin raise exception 'fictional receipt failure'; end $$;
+   create trigger fictional_receipt_failure before insert on clinical_core.care_data_erasure_requests for each row
+   execute function clinical_private.test_receipt_failure();`);
+  try{
+   await expect(execute('erase_request')).rejects.toBeTruthy();
+   expect((await exportAll('messages'))).toHaveLength(2);
+   expect((await db.query('select * from clinical_core.care_data_erasures')).rows).toHaveLength(0);
+  }finally{await db.exec('drop trigger fictional_receipt_failure on clinical_core.care_data_erasure_requests; drop function clinical_private.test_receipt_failure();');}
+ });
+ it('keeps receipts immutable and denies API table access or uncorrelated destructive calls',async()=>{
+  await execute('settle_erasure');
+  for(const query of ['update clinical_core.care_data_erasure_requests set scope=\'account_closure\'','delete from clinical_core.care_data_erasure_requests'])
+   await expect(db.query(query)).rejects.toMatchObject({message:expect.stringContaining('care_data_erasure_immutable')});
+  await expect(createCareDataLifecycle(database)(context(),{action:'erase',scope:'domain'})).rejects.toMatchObject({category:'request_invalid'});
+  for(const query of ['select * from clinical_core.care_data_erasure_requests',"select clinical_core.care_data_erase('{\"action\":\"erase\",\"scope\":\"domain\"}'::jsonb)"])
+   await expect(db.transaction(async tx=>{await tx.exec('set local role clinical_core_api');await tx.query(query);})).rejects.toBeTruthy();
+ });
+ it('rejects foreign-body ownership, invalid IDs, workforce and production',async()=>{
+  for(const request of [{action:'erase_request',scope:'domain',requestId:'invalid'},
+    {action:'erase_request',scope:'domain',requestId:id(91),ownerId:other}]){
+   await expect(createCareDataLifecycle(database)(context(),request)).rejects.toMatchObject({category:'request_invalid'});
+  }
+  await expect(createCareDataLifecycle(database)(context(clinician,'workforce'),{action:'erase_receipt',scope:'domain',requestId:id(91)})).rejects.toMatchObject({category:'identity_refused'});
+  await expect(createCareDataLifecycle(database)({...context(),environment:'production'} as never,{action:'erase_request',scope:'domain',requestId:id(91)})).rejects.toMatchObject({category:'identity_refused'});
+ });
+});
+
 describe('the narrowed append-only refusal',()=>{
  it('still refuses a delete with no erasure running',async()=>{
   for(const table of ['care_messages','care_message_settlements']){
@@ -303,7 +395,8 @@ describe('the narrowed append-only refusal',()=>{
    await tx.exec('set local role clinical_core_api');
    await tx.query('select clinical_private.set_request_context($1,$2,$3,$4,$5,$6,$7)',
     [owner,org,'consumer','subject-'+owner,'consent_management','synthetic-staging','synthetic_only']);
-   await tx.query('select clinical_core.care_data_erase($1::jsonb) as data',[JSON.stringify({action:'erase',scope:'domain'})]);
+   await tx.query('select clinical_core.care_data_erasure_request($1::jsonb) as data',
+    [JSON.stringify({action:'erase_request',scope:'domain',requestId:randomUUID()})]);
    const flag=await tx.query<{value:string}>("select coalesce(current_setting('clinical_private.care_erasure',true),'') as value");
    expect(flag.rows[0]!.value).toBe('');
   });

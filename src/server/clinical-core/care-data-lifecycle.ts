@@ -17,6 +17,9 @@ export class CareDataError extends Error {
 const FUNCTIONS: Record<CareDataRequest['action'], string> = {
   export: 'clinical_core.care_data_export',
   erase: 'clinical_core.care_data_erase',
+  erase_request: 'clinical_core.care_data_erasure_request',
+  erase_receipt: 'clinical_core.care_data_erasure_request',
+  settle_erasure: 'clinical_core.care_data_erasure_request',
   erasure_history: 'clinical_core.care_data_erasure_history',
 };
 export function createCareDataLifecycle(database: ClinicalCoreDatabase) {
@@ -30,6 +33,9 @@ export function createCareDataLifecycle(database: ClinicalCoreDatabase) {
     const parsed = careDataRequest.safeParse(body);
     if (!parsed.success) throw new CareDataError('request_invalid');
     const request: CareDataRequest = parsed.data;
+    // Old clients cannot create an uncorrelated destructive request. Historical
+    // receipts remain readable; only the ID-bound action is admitted now.
+    if (request.action === 'erase') throw new CareDataError('request_invalid');
     try {
       return await database.transaction(async tx => {
         await tx.query('select clinical_private.set_request_context($1,$2,$3,$4,$5,$6,$7)', [

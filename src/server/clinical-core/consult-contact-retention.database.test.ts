@@ -163,8 +163,8 @@ describe('what a purge removes and what it keeps',()=>{
    await tx.exec('set local role clinical_core_api');
    await tx.query('select clinical_private.set_request_context($1,$2,$3,$4,$5,$6,$7)',
     [consumer,org,'consumer','subject-'+consumer,'consent_management','synthetic-staging','synthetic_only']);
-   await tx.query('select clinical_core.care_data_erase($1::jsonb)',
-    [JSON.stringify({action:'erase',scope:'account_closure'})]);
+   await tx.query('select clinical_core.care_data_erasure_request($1::jsonb)',
+    [JSON.stringify({action:'erase_request',scope:'account_closure',requestId:'b0000000-0000-4000-8000-000000000099'})]);
   });
   const {rows}=await db.query<{count:number}>(
    'select count(*)::int as count from clinical_core.consult_requests where id=$1',[requestId]);

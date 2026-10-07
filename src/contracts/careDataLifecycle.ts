@@ -18,6 +18,7 @@ import {programPhases} from './programAssignments';
 export const CARE_DATA_LIFECYCLE_ACK = 'care-data-lifecycle/1' as const;
 const cursor = z.string().min(1).max(200);
 const when = z.string().datetime({offset: true});
+const requestUuid = z.string().uuid().regex(/^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/);
 
 export const careDataSection = z.enum(['threads', 'messages', 'settlements', 'assignments', 'completions',
   'authorizations', 'intake_packets', 'intake_responses', 'signatures', 'consult_requests']);
@@ -31,6 +32,8 @@ export const careDataRequest = z.discriminatedUnion('action', [
     limit: z.number().int().min(1).max(100).optional(), after: cursor.optional(),
   }).strict(),
   z.object({action: z.literal('erase'), scope: careDataEraseScope}).strict(),
+  z.object({action: z.enum(['erase_request', 'erase_receipt', 'settle_erasure']),
+    scope: careDataEraseScope, requestId: requestUuid}).strict(),
   z.object({action: z.literal('erasure_history')}).strict(),
 ]);
 export type CareDataRequest = z.infer<typeof careDataRequest>;
@@ -98,20 +101,29 @@ const erasureCounts = {
   lateAdmissionRefusable: z.boolean(),
 };
 
+export const careDataEraseReceipt = z.object({
+  action: z.literal('erase'), scope: careDataEraseScope, erasureId: z.string().uuid(), ...erasureCounts,
+  retainedReason: z.literal('cancellation_refusal_must_outlive_late_admission').nullable(),
+  threadsRetainedReason: z.literal('thread_holds_another_participant_record').nullable(),
+  packetsRetainedReason: z.literal('packet_is_the_clinic_record_of_what_was_asked').nullable(),
+  signaturesRetainedReason: z.literal('signature_is_the_recorded_basis_for_care_already_given').nullable(),
+  disputesRetainedReason: z.literal('dispute_records_a_decision_and_the_disagreement_with_it').nullable(),
+}).strict();
+export const careDataErasureResult = z.object({
+  action: z.enum(['erase_request', 'erase_receipt', 'settle_erasure']),
+  scope: careDataEraseScope, requestId: requestUuid,
+  outcome: z.enum(['erased', 'cancelled', 'unresolved']), receipt: careDataEraseReceipt.nullable(),
+}).strict();
+export type CareDataErasureResult = z.infer<typeof careDataErasureResult>;
+
 export const careDataResponse = z.discriminatedUnion('action', [
   z.object({
     action: z.literal('export'), section: careDataSection, next: cursor.nullable(),
     items: z.array(z.union([thread, message, settlement, assignment, completion, authorization,
       intakePacket, intakeResponse, signature, consultRequest])).max(100),
   }).strict(),
-  z.object({
-    action: z.literal('erase'), scope: careDataEraseScope, erasureId: z.string().uuid(), ...erasureCounts,
-    retainedReason: z.literal('cancellation_refusal_must_outlive_late_admission').nullable(),
-    threadsRetainedReason: z.literal('thread_holds_another_participant_record').nullable(),
-    packetsRetainedReason: z.literal('packet_is_the_clinic_record_of_what_was_asked').nullable(),
-    signaturesRetainedReason: z.literal('signature_is_the_recorded_basis_for_care_already_given').nullable(),
-    disputesRetainedReason: z.literal('dispute_records_a_decision_and_the_disagreement_with_it').nullable(),
-  }).strict(),
+  careDataEraseReceipt,
+  careDataErasureResult,
   z.object({
     action: z.literal('erasure_history'),
     erasures: z.array(z.object({erasureId: z.string().uuid(), scope: careDataEraseScope,
@@ -119,12 +131,27 @@ export const careDataResponse = z.discriminatedUnion('action', [
   }).strict(),
 ]);
 export type CareDataResponse = z.infer<typeof careDataResponse>;
+const sectionRow={threads:thread,messages:message,settlements:settlement,assignments:assignment,
+  completions:completion,authorizations:authorization,intake_packets:intakePacket,
+  intake_responses:intakeResponse,signatures:signature,consult_requests:consultRequest};
 
 export function parseCareDataResponse(input: CareDataRequest, value: unknown): CareDataResponse {
   const result = careDataResponse.parse(value);
   if (result.action !== input.action) throw new Error('care_data_response_mismatch');
+  if ('requestId' in result && 'requestId' in input) {
+    if (result.requestId !== input.requestId || result.scope !== input.scope
+      || (result.outcome === 'erased') !== (result.receipt !== null)
+      || (result.outcome === 'unresolved' && result.action !== 'erase_receipt')) {
+      throw new Error('care_data_response_mismatch');
+    }
+    if (result.receipt) parseCareDataResponse({action: 'erase', scope: input.scope}, result.receipt);
+  }
   if (result.action === 'export' && input.action === 'export' && result.section !== input.section) {
     throw new Error('care_data_response_mismatch');
+  }
+  if(result.action==='export'&&input.action==='export'){
+    if(result.items.length>(input.limit??100))throw new Error('care_data_response_mismatch');
+    for(const item of result.items)if(!sectionRow[input.section].safeParse(item).success)throw new Error('care_data_response_mismatch');
   }
   if (result.action === 'erase' && input.action === 'erase' && result.scope !== input.scope) {
     throw new Error('care_data_response_mismatch');

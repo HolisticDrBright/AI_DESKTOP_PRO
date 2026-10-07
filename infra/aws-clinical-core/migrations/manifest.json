@@ -215,6 +215,11 @@
       "version": "20260930200000",
       "file": "20260930200000_synthetic_consult_contact_retention.sql",
       "production_transform": false
+    },
+    {
+      "version": "20261006040000",
+      "file": "20261006040000_synthetic_care_erasure_recovery.sql",
+      "production_transform": false
     }
   ]
 }

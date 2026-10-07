@@ -2,6 +2,7 @@ import {beforeAll,afterAll,beforeEach,describe,it,expect} from 'vitest';
 import {PGlite} from '@electric-sql/pglite';
 import {pgcrypto} from '@electric-sql/pglite/contrib/pgcrypto';
 import {readFileSync} from 'node:fs';
+import {randomUUID} from 'node:crypto';
 import {createHash} from 'node:crypto';
 
 /**
@@ -27,13 +28,15 @@ const digest=(value:string)=>createHash('sha256').update(value).digest('hex');
 // each one asserts its context.
 const purposeFor=(fn:string)=>fn.startsWith('care_data')?'consent_management':'clinical_data';
 async function rpc(fn:string,request:unknown,actor=owner,pool:'workforce'|'consumer'='consumer'){
+ const erased=fn==='care_data_erase';
+ if(erased){fn='care_data_erasure_request';request={...(request as Record<string,unknown>),action:'erase_request',requestId:randomUUID()};}
  return db.transaction(async tx=>{
   await tx.exec('set local role clinical_core_api');
   await tx.query('select clinical_private.set_request_context($1,$2,$3,$4,$5,$6,$7)',
    [actor,org,pool,'subject-'+actor,purposeFor(fn),'synthetic-staging','synthetic_only']);
   const {rows}=await tx.query<{data:Record<string,unknown>}>(
    `select clinical_core.${fn}($1::jsonb) as data`,[JSON.stringify(request)]);
-  return rows[0].data;
+  return erased?rows[0].data.receipt as Record<string,unknown>:rows[0].data;
  });
 }
 /** The clinic's own calls need `clinical_data`, so they get their own helper. */
