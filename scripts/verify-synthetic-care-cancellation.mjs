@@ -31,6 +31,21 @@ const entries=(rows,k,v)=>{
   &&new Set(rows.map(x=>x[k])).size===rows.length,'target_bindings');
  return Object.fromEntries(rows.map(x=>[x[k],x[v]]));
 };
+/** Read every bounded raw service page; CLI auto-pagination must not conceal
+ * whether the final page was observed. Injectable call is tests only. */
+export function collectCancellationInventory(call,args,itemsKey,tokenKey){
+ const items=[],seen=new Set();let token;
+ for(let page=0;page<10;page++){
+  const answer=call([...args,'--no-paginate',...(token?['--next-token',token]:[])]);
+  check(Array.isArray(answer?.[itemsKey])&&answer[itemsKey].length<=300,'inventory_page');
+  items.push(...answer[itemsKey]);check(items.length<=2000,'inventory_bound');
+  token=answer[tokenKey];
+  if(token===undefined||token===null)return {[itemsKey]:items};
+  check(typeof token==='string'&&token.length>0&&token.length<=2048&&!seen.has(token),'inventory_token');
+  seen.add(token);
+ }
+ fail('erasure_cancellation_inventory_pages');
+}
 export function verifyCancellationControlPlane(o,source){
  const foundation=o.foundation?.Stacks?.[0],stack=o.stack?.Stacks?.[0];
  for(const [item,name,response] of [[foundation,P.foundation,o.foundation],[stack,P.stack,o.stack]])
@@ -132,10 +147,10 @@ export async function runCareCancellation(){
     role:aws(['iam','get-role','--role-name',roleName]),
     attached:aws(['iam','list-attached-role-policies','--role-name',roleName,'--no-paginate']),inline,
     policies:inline.PolicyNames.map(name=>aws(['iam','get-role-policy','--role-name',roleName,'--policy-name',name])),
-    logGroups:aws(['logs','describe-log-groups','--log-group-name-prefix','/ai-clinical-core/synthetic-staging/identity-api','--no-paginate']),
-    integrations:aws(['apigatewayv2','get-integrations','--api-id',P.apiId,'--no-paginate']),
-    routes:aws(['apigatewayv2','get-routes','--api-id',P.apiId,'--no-paginate']),
-    authorizers:aws(['apigatewayv2','get-authorizers','--api-id',P.apiId,'--no-paginate']),
+    logGroups:collectCancellationInventory(aws,['logs','describe-log-groups','--log-group-name-prefix','/ai-clinical-core/synthetic-staging/identity-api','--limit','50'],'logGroups','nextToken'),
+    integrations:collectCancellationInventory(aws,['apigatewayv2','get-integrations','--api-id',P.apiId,'--max-results','100'],'Items','NextToken'),
+    routes:collectCancellationInventory(aws,['apigatewayv2','get-routes','--api-id',P.apiId,'--max-results','100'],'Items','NextToken'),
+    authorizers:collectCancellationInventory(aws,['apigatewayv2','get-authorizers','--api-id',P.apiId,'--max-results','100'],'Items','NextToken'),
     stage:aws(['apigatewayv2','get-stage','--api-id',P.apiId,'--stage-name','$default']),
     latestPolicy:aws(['lambda','get-policy','--function-name',P.functionName])},source);
   };

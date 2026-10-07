@@ -4,7 +4,7 @@ import {readFileSync} from 'node:fs';
 import {CARE_RELEASE as P} from './synthetic-care-release.mjs';
 import {DEPLOYED_CARE as D} from './verify-deployed-synthetic-care.mjs';
 import {CARE_RECOVERY_ROUTE as R} from './care-recovery-routing.mjs';
-import {verifyCancellationControlPlane,cancellationFailureCode} from './verify-synthetic-care-cancellation.mjs';
+import {verifyCancellationControlPlane,cancellationFailureCode,collectCancellationInventory} from './verify-synthetic-care-cancellation.mjs';
 const source=JSON.parse(readFileSync(new URL('../infra/aws-clinical-core/identity-api-extension.json',import.meta.url),'utf8'));
 function observation(){
  const template=structuredClone(source);for(const name of P.absentRoutes)delete template.Resources[name];
@@ -91,7 +91,8 @@ test('actual runner binds fixed synthetic observers, exact S3 stream and bounded
  assert.match(script,/observeSyntheticMemberIdentity\(\)/);
  assert.match(script,/careSourceSnapshot\(root,'desktop'\)/);
  assert.match(script,/maxAttempts:1/);
- assert.equal((script.match(/'--no-paginate'/g)??[]).length,6);
+ assert.equal((script.match(/'--no-paginate'/g)??[]).length,3);
+ assert.equal((script.match(/collectCancellationInventory\(aws,/g)??[]).length,4);
  assert.match(script,/inline.IsTruncated===false/);
  assert.match(script,/where owner_id=cast\(:owner as uuid\) and request_id=cast\(:request as uuid\) limit 2/);
  assert.match(script,/if\(!mutationAdmitted\|\|settled\)/);
@@ -99,4 +100,23 @@ test('actual runner binds fixed synthetic observers, exact S3 stream and bounded
  assert.equal(cancellationFailureCode(new Error('raw health text secret')),'synthetic_care_release_refused:erasure_cancellation_failed');
  assert.equal(cancellationFailureCode(new Error('synthetic_care_release_refused:erasure_cancellation_case')),
   'synthetic_care_release_refused:erasure_cancellation_case');
+});
+test('all raw inventory pages must terminate within bounds; repeated, absent or malformed pages refuse',()=>{
+ const calls=[];
+ const result=collectCancellationInventory(args=>{calls.push(args);
+  return calls.length===1?{Items:[{RouteKey:'first'}],NextToken:'next'}:{Items:[{RouteKey:'second'}]};},
+  ['apigatewayv2','get-routes'],'Items','NextToken');
+ assert.deepEqual(result,{Items:[{RouteKey:'first'},{RouteKey:'second'}]});
+ assert.deepEqual(calls,[['apigatewayv2','get-routes','--no-paginate'],
+  ['apigatewayv2','get-routes','--no-paginate','--next-token','next']]);
+ assert.deepEqual(collectCancellationInventory(()=>({logGroups:[]}),['logs','describe-log-groups'],'logGroups','nextToken'),{logGroups:[]});
+ for(const bad of [{},null,{Items:Array(301).fill({})},{Items:[],NextToken:''},
+  {Items:[],NextToken:7},{Items:[],NextToken:'x'.repeat(2049)}]){
+  assert.throws(()=>collectCancellationInventory(()=>bad,['test'],'Items','NextToken'));
+ }
+ assert.throws(()=>collectCancellationInventory(()=>({Items:[],NextToken:'repeated'}),['test'],'Items','NextToken'),/inventory_token/);
+ let pages=0;
+ assert.throws(()=>collectCancellationInventory(()=>({Items:[],NextToken:String(++pages)}),['test'],'Items','NextToken'),/inventory_pages/);
+ pages=0;
+ assert.throws(()=>collectCancellationInventory(()=>({Items:Array(300).fill({}),NextToken:String(++pages)}),['test'],'Items','NextToken'),/inventory_bound/);
 });
