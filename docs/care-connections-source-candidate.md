@@ -675,3 +675,89 @@ Desktop CI at the preceding dependency-repair head
 check, normal full unit suite, clinical build and client scan. That run predates
 the prepared transition and does not qualify its new source. Deployed-backend
 tests remain separately secret-gated; a green job is not positive AWS acceptance.
+
+## Bound recovery operator and AWS rollback rehearsal
+
+The prepared recovery artifact now includes a self-contained qualification-only
+operator. Runtime source is `98214ef86e0cd71e29e27fff039ba6e3f3a76784`.
+Its clean build embeds the exact 105 predecessor files and recovery overlay;
+an adjacent file, current working directory or environment cannot replace that
+SQL. The operator SHA-256 is
+`d96ba26a33b0dd70d4b7ea379caf9022eca5d14ca819e45cd387e0359b4763a8`.
+The prepared manifest SHA-256 is
+`78410ea8bb2169b6ac5847bb14798d912b12ff82b67639f76f48297eeef64a53`.
+These are source identities, not security, consent or retention approvals.
+
+The entry point uses only `ai-synthetic-member`, Ohio and the named qualification
+foundation. It obtains STS and DescribeStacks observations itself, rejects root,
+production, incomplete stacks, staging, PHI and activation, and creates the
+database client only after exact artifact admission. `upgrade` requires a clean
+build and the explicit fictional-only confirmation, runs a rollback rehearsal,
+validates its complete result and observes AWS again before the apply transaction.
+A changed cluster, secret, account or foundation boundary refuses that apply.
+Each transaction still independently checks the actual database name, ledger,
+inventory, data fingerprints and API-role metadata. Rehearsal and apply are not
+an atomic snapshot; fictional records are not frozen between transactions.
+The operator accepts no target, profile, release, review or skip-rehearsal override.
+
+Build and inspect using:
+
+```powershell
+npm run build:care-claim-recovery-source
+node dist/aws-clinical-core/care-claim-recovery-source/qualification-upgrade-operator.cjs inspect
+node dist/aws-clinical-core/care-claim-recovery-source/qualification-upgrade-operator.cjs rehearse --confirm-fictional-care-claim-recovery-upgrade
+```
+
+On October 6 the initial dirty-build read-only inspection failed at transaction
+start. A separate credential-resolution and begin/rollback probe succeeded;
+the same operator's later read-only inspection passed. The initial cause remains
+unknown, not repaired or assumed harmless. The subsequent **clean runtime build**
+above completed the actual AWS rollback rehearsal in account 588966314750.
+It applied the proposed DDL only inside the transaction, checked the recovery
+metadata under the API role, rolled back and opened a new read-only transaction.
+The observed state after rollback is **105 migrations, 207 tables, 46 fictional
+rows**, unchanged digest
+`129abce49aec8e4f3f8e73f6c10c18e94827d0ae0108e176419aede5d36280bc`.
+The result reports `rolledBack:true`, `applied:false`, `canonical:false`,
+`phiAllowed:false` and `activation:blocked`. No lasting migration, record,
+consent, provider release or activation changed; the route was not deployed.
+This qualifies that rollback rehearsal, not a lasting upgrade, recovery business
+requests, a multi-session race or a mobile journey.
+
+Local focused verification passes **83 tests across five suites**, including
+the command through the real preserving runner and actual SQL, exact-source
+artifact admission, changed-target refusals, incomplete rollback receipts and
+replay after recovery rows are populated. Typecheck and full lint pass; the full
+dependency audit reports zero findings. The canonical 105 schema and 207-table
+coverage gates pass unchanged, as do the workload and target-example gates.
+The complete Desktop regression passed **333 files, 4,165 tests and 11 existing
+skips**, 617.00 seconds, with the documented timezone and unrelated anon-key
+variable unset. AST-only Graphify updated to 12,953 nodes, 26,181 edges and 914
+communities; 49 zero-node files remain absent and HTML was skipped for size.
+No semantic-model or API cost was incurred. Runtime source was pushed to
+`agent/commercial-readiness-20261005`, independently matched to the remote.
+Exact-runtime CI 37572918749 and 37572915717 was queued/in progress at inspection,
+not a terminal green result. Documentation heads are not substituted for the
+operator's compiled source identity.
+The read-only capacity preflight for the current scripted fleet observed a
+150-execution limit, 136 unreserved, 37 requested reservations and 27 additional
+reservations, leaving the required floor intact. Its registry still omits the
+connection candidate; that integration gap must be repaired before calling it
+a complete connection/recovery fleet preflight. This is not hosted acceptance
+or an approval to remove per-function caps.
+V2 exact-head CI at `4595f44f47c4684cd3107dcb519167995424ee16` is now terminal
+success on both 37571284334 and 37571280473; that is source-CI evidence, not a
+new installed binary.
+
+Canonical registration and both immutable tables' honest inventory/disposition
+mapping remain engineering, with deletion blocked until a separately reviewed
+procedure exists. Do not strip their immutable triggers or invent retention
+approval. Route/Lambda/template/fleet/capacity/inspector integration, V2 legacy
+drain and second-device discovery, complete clinic privacy/amendment ports,
+registrar audit and production program assignments still remain. Then exact
+matched synthetic deployments need real transfer, messaging, recovery,
+concurrency, rollback and provider/store matrices, physical iOS/Android testing,
+clinical-source/security/retention reviews and independent PHI approvals.
+All six original phases remain partial; neither app is commercial or PHI ready.
+PHI stays off, paid mobile builds stay held, and clinical holds, exclusions and
+source-verification gates are unchanged.
