@@ -121,6 +121,34 @@ test("2: search and filters narrow the queue", async ({ page }) => {
   await expect(page.getByTestId(`thread-${THREAD_B}`)).toHaveCount(0);
 });
 
+test("2b: a delayed older list response cannot replace the current status filter", async ({ page }) => {
+  await page.goto("/inbox");
+  await expect(page.getByTestId(`thread-${THREAD_A}`)).toBeVisible();
+  let held: { route: import('@playwright/test').Route; response: import('@playwright/test').APIResponse } | undefined;
+  let acknowledge: () => void = () => {};
+  const captured = new Promise<void>(resolve => { acknowledge = resolve; });
+  await page.route('**/api/live/inbox/list', async route => {
+    if (route.request().postDataJSON().status !== 'open') return route.continue();
+    // Obtain the real fixture API's old answer, then deliberately deliver it
+    // after the newer filter response. No timing sleep or invented list data.
+    held = { route, response: await route.fetch() };
+    acknowledge();
+  });
+  await page.getByLabel('Filter by status').selectOption('open');
+  await captured;
+  await page.getByLabel('Filter by status').selectOption('resolved');
+  await expect(page.getByText('Invoice question — March visit')).toBeVisible();
+  await expect(page.getByTestId(`thread-${THREAD_A}`)).toHaveCount(0);
+  const staleDelivered = page.waitForResponse(response => response.url().endsWith('/api/live/inbox/list')
+    && response.request().postDataJSON().status === 'open');
+  await held!.route.fulfill({ response: held!.response });
+  await staleDelivered;
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+  await expect(page.getByLabel('Filter by status')).toHaveValue('resolved');
+  await expect(page.getByText('Invoice question — March visit')).toBeVisible();
+  await expect(page.getByTestId(`thread-${THREAD_A}`)).toHaveCount(0);
+});
+
 test("3: deterministic urgent invariant — visible without any AI, never a diagnosis", async ({ page }) => {
   await openThread(page, THREAD_C);
   // The read mutation is server-owned and completes independently of the
