@@ -25,7 +25,7 @@ type Category = 'boundary_refused' | 'artifact_refused' | 'history_refused' | 'i
 export class CareErasureUpgradeError extends Error {
   constructor(readonly category: Category, readonly stage?: string) { super(category); }
 }
-function fail(category: Category): never { throw new CareErasureUpgradeError(category); }
+function fail(category: Category, stage?: string): never { throw new CareErasureUpgradeError(category, stage); }
 const object = (v: unknown): Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v)
   ? v as Record<string, unknown> : fail('boundary_refused');
 /** Fixed member STS + completed synthetic foundation. No caller/environment target overrides. */
@@ -142,7 +142,7 @@ async function verify(tx: ClinicalCoreTransaction, m: ClinicalCoreMigration[], s
       and not exists(select 1 from aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a where a.grantee=0)) valid
       from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname=$6 and p.proname=$7`,
     [f.name + f.signature, f.result, f.definer, body(m.slice(0, successor ? 46 : 45), f.name), f.api, schema, fname])).rows[0]?.valid;
-    if (valid !== true) fail('verification_failed');
+    if (valid !== true) fail('verification_failed', `function_contract:${f.name}`);
   }
   if (!successor) {
     if ((await tx.query<{ absent: boolean }>("select to_regprocedure('clinical_core.care_data_erasure_request(jsonb)') is null absent")).rows[0]?.absent !== true)
@@ -159,7 +159,7 @@ async function verify(tx: ClinicalCoreTransaction, m: ClinicalCoreMigration[], s
     and exists(select 1 from pg_constraint k where k.conrelid=c.oid and k.contype='p'
       and pg_get_constraintdef(k.oid)='PRIMARY KEY (owner_id, request_id)') valid
     from pg_class c where c.oid='clinical_core.care_data_erasure_requests'::regclass`)).rows[0]?.valid;
-  if (valid !== true) fail('verification_failed');
+  if (valid !== true) fail('verification_failed', 'receipt_table_contract');
   // PostgreSQL 18 exposes NOT NULL as additional pg_constraint rows, while
   // Aurora's older major versions use attnotnull. Compare those via columns.
   const cols = (await tx.query(`select attname name,format_type(atttypid,atttypmod) type,attnotnull required,
@@ -168,7 +168,7 @@ async function verify(tx: ClinicalCoreTransaction, m: ClinicalCoreMigration[], s
     where a.attrelid=$1::regclass and a.attnum>0 and not a.attisdropped order by a.attnum`, [newName])).rows;
   const constraints = (await tx.query(`select contype::text kind,convalidated validated,pg_get_constraintdef(oid) definition
     from pg_constraint where conrelid=$1::regclass and contype<>'n' order by contype,pg_get_constraintdef(oid)`, [newName])).rows;
-  if (sha(JSON.stringify({ cols, constraints })) !== '5d1c88f1c605d77e0d9ccc613e700c5f6cba3a7691518d09909fedde203b0031') fail('verification_failed');
+  if (sha(JSON.stringify({ cols, constraints })) !== '5d1c88f1c605d77e0d9ccc613e700c5f6cba3a7691518d09909fedde203b0031') fail('verification_failed', 'receipt_schema_contract');
 }
 export type CareErasureUpgradeResult = { contract: 'care-erasure-schema-upgrade/1'; execution: 'synthetic-staging'; phiAllowed: false;
   command: 'inspect' | 'rehearse' | 'upgrade'; observedMigrationCount: 46 | 47; sourceMigrationCount: 45 | 46; tableCount: number;
