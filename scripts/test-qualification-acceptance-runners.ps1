@@ -305,6 +305,38 @@ Invoke-Case 'messaging with a different observed ledger' { Assert-QualificationS
 Set-MessagingStack
 Invoke-Case 'messaging cannot use a drain posture' { Assert-QualificationStacks $messagingTarget @('care-messaging') 'us-east-2' 'drain' } 'qualification_target_refused:messaging_version_or_posture'
 
+# 9. Version three requires connections and recovery remains separately gated.
+$versionThree = Write-Target @{ schemaVersion = 'aws-clinical-core-qualification-target/3' } -PatchStacks @{ 'care-messaging' = $messagingStack; 'care-connections' = 'ai-clinical-core-qualification-care-connections' }
+Invoke-Case 'version three can bind an export-only journey' { Export-Run $versionThree } $null
+Invoke-Case 'version three missing its new stack' { Export-Run (Write-Target @{ schemaVersion = 'aws-clinical-core-qualification-target/3' } -PatchStacks @{ 'care-messaging' = $messagingStack }) } 'qualification_target_refused:stacks'
+$connectionTarget = Read-QualificationTarget $versionThree 'us-east-2'
+$connectionStack = 'ai-clinical-core-qualification-care-connections'
+function Set-ConnectionStack([string]$Enabled = 'false', [string]$ObservedEnabled = 'false', [string]$Review = '', [string]$Release = ('b' * 64)) {
+  $body = CandidateStack | ConvertFrom-Json
+  $body.Parameters += [pscustomobject]@{ ParameterKey = 'MigrationReleaseSha256'; ParameterValue = $Release }
+  $body.Parameters += [pscustomobject]@{ ParameterKey = 'ClaimRecoveryEnabled'; ParameterValue = $Enabled }
+  $body.Parameters += [pscustomobject]@{ ParameterKey = 'ClaimRecoveryReviewSha256'; ParameterValue = $Review }
+  $body.Outputs += [pscustomobject]@{ OutputKey = 'MigrationReleaseSha256'; OutputValue = ('b' * 64) }
+  $body.Outputs += [pscustomobject]@{ OutputKey = 'DatabaseName'; OutputValue = 'clinical_core_qualification' }
+  $body.Outputs += [pscustomobject]@{ OutputKey = 'ClaimRecoveryEnabled'; OutputValue = $ObservedEnabled }
+  $global:StackOutputs[$connectionStack] = $body | ConvertTo-Json -Depth 6 -Compress
+}
+Set-ConnectionStack
+Assert-QualificationStacks $connectionTarget @('care-connections') 'us-east-2'
+$global:passed++
+Invoke-Case 'connection stack refuses a version two manifest' { Assert-QualificationStacks $messagingTarget @('care-connections') 'us-east-2' } 'qualification_target_refused:connection_version_or_posture'
+Set-ConnectionStack -Enabled 'true'
+Invoke-Case 'recovery output disagrees with requested opt-in' { Assert-QualificationStacks $connectionTarget @('care-connections') 'us-east-2' } 'qualification_target_refused:recovery_posture'
+Set-ConnectionStack -Enabled 'true' -ObservedEnabled 'true'
+Invoke-Case 'enabled recovery lacks its independent review' { Assert-QualificationStacks $connectionTarget @('care-connections') 'us-east-2' } 'qualification_target_refused:recovery_review'
+Set-ConnectionStack -Enabled 'true' -ObservedEnabled 'true' -Review ('c' * 64)
+Assert-QualificationStacks $connectionTarget @('care-connections') 'us-east-2'
+$global:passed++
+Set-ConnectionStack -Release ('c' * 64)
+Invoke-Case 'connection stack uses another ledger' { Assert-QualificationStacks $connectionTarget @('care-connections') 'us-east-2' } 'qualification_target_refused:messaging_release'
+Set-ConnectionStack
+Invoke-Case 'connections cannot use a drain posture' { Assert-QualificationStacks $connectionTarget @('care-connections') 'us-east-2' 'drain' } 'qualification_target_refused:connection_version_or_posture'
+
 foreach ($name in 'CLINICAL_WORKFORCE_ID_TOKEN','CLINICAL_CONSUMER_ID_TOKEN','CLINICAL_FOREIGN_CONSUMER_ID_TOKEN','CLINICAL_STALE_CONSUMER_ID_TOKEN') { Remove-Item "Env:$name" -ErrorAction SilentlyContinue }
 $cleanupTarget = [System.IO.Path]::GetFullPath($work)
 $cleanupParent = [System.IO.Path]::GetDirectoryName($cleanupTarget)

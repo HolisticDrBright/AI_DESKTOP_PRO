@@ -2,7 +2,7 @@ import {execFileSync} from 'node:child_process';
 import {mkdtempSync,readFileSync,statSync,unlinkSync,rmdirSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {CareObservationError,CARE_OBSERVER} from './care-messaging-qualification-observer.mjs';
+import {CareObservationError,CARE_OBSERVER,CARE_CONNECTION_OBSERVER} from './care-messaging-qualification-observer.mjs';
 import {SYNTHETIC_MEMBER_PROFILE} from './synthetic-aws-principal.mjs';
 import {fromIni} from '@aws-sdk/credential-provider-ini';
 import {RDSDataClient,BeginTransactionCommand,ExecuteStatementCommand,RollbackTransactionCommand} from '@aws-sdk/client-rds-data';
@@ -45,15 +45,17 @@ export function inspectionArguments(service,operation,parameters,outputFile){
  if(outputFile)args.push(outputFile);
  return [...args,'--profile',SYNTHETIC_MEMBER_PROFILE,'--region',CARE_OBSERVER.region,'--output','json','--no-cli-pager'];
 }
-export function inspectionAwsReader(execute=execFileSync){
+export function inspectionAwsReader(execute=execFileSync,candidate='care-messaging'){
+ if(!['care-messaging','care-connections'].includes(candidate))throw new CareObservationError('read_operation_refused');
+ const stack=candidate==='care-connections'?CARE_CONNECTION_OBSERVER.stack:CARE_OBSERVER.stack;
  return async(service,operation,parameters,outputFile)=>{
   const args=inspectionArguments(service,operation,parameters,outputFile);
   try{return JSON.parse(execute('aws',args,{encoding:'utf8',timeout:30000,maxBuffer:4*1024*1024,windowsHide:true,stdio:['ignore','pipe','pipe']}));}
   catch(error){
    // Only AWS's exact DescribeStacks missing-stack response means absence.
-   const missing=`An error occurred (ValidationError) when calling the DescribeStacks operation: Stack with id ${CARE_OBSERVER.stack} does not exist`;
+   const missing=`An error occurred (ValidationError) when calling the DescribeStacks operation: Stack with id ${stack} does not exist`;
    const stderr=String(error?.stderr??'').trim();
-   if(service==='cloudformation'&&operation==='describe-stacks'&&parameters.StackName===CARE_OBSERVER.stack
+   if(service==='cloudformation'&&operation==='describe-stacks'&&parameters.StackName===stack
     &&[missing,'aws: [ERROR]: '+missing].includes(stderr))
     throw new CareObservationError('stack_missing');
    throw new CareObservationError('aws_read_failed');

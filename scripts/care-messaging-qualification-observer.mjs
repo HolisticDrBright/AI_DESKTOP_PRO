@@ -2,8 +2,9 @@ import {createHash} from 'node:crypto';
 import {careMessagingZip} from './care-messaging-zip.mjs';
 import {QUALIFICATION_CONSENT_LEDGER} from './qualification-consent-ledger.mjs';
 
-export const CARE_OBSERVER={account:'588966314750',region:'us-east-2',database:'clinical_core_qualification',
- foundation:'ai-clinical-core-qualification-foundation',stack:'ai-clinical-core-qualification-care-messaging'};
+export const CARE_OBSERVER=Object.freeze({account:'588966314750',region:'us-east-2',database:'clinical_core_qualification',
+ foundation:'ai-clinical-core-qualification-foundation',stack:'ai-clinical-core-qualification-care-messaging'});
+export const CARE_CONNECTION_OBSERVER=Object.freeze({...CARE_OBSERVER,stack:'ai-clinical-core-qualification-care-connections'});
 export class CareObservationError extends Error{constructor(category){super(category);this.category=category;}}
 const refuse=category=>{throw new CareObservationError(category);};
 const sha=value=>createHash('sha256').update(value).digest('hex');
@@ -21,14 +22,21 @@ function pairs(rows,key,value){
  return result;
 }
 export function assertCareArtifact({manifest,code,templateBytes,zip},head){
- if(!record(manifest)||manifest.contract!=='care-messaging-deployment/1'||manifest.sourceClean!==true
+ return assertArtifact({manifest,code,templateBytes,zip},head,'care-messaging');
+}
+export function assertCareConnectionsArtifact(artifact,head){return assertArtifact(artifact,head,'care-connections');}
+function assertArtifact({manifest,code,templateBytes,zip},head,candidate){
+ if(!record(manifest)||manifest.contract!==candidate+'-deployment/1'||manifest.sourceClean!==true
   ||manifest.sourceCommit!==head||!/^[a-f0-9]{40}$/.test(head)||manifest.migrationCount!==106
   ||manifest.migrationReleaseSha256!==QUALIFICATION_CONSENT_LEDGER||manifest.deploymentPerformed!==false
   ||!Buffer.isBuffer(code)||!Buffer.isBuffer(templateBytes)||!Buffer.isBuffer(zip)
   ||manifest.codeSha256!==sha(code)||manifest.templateSha256!==sha(templateBytes)
   ||manifest.deploymentZipSha256!==sha(zip)||manifest.deploymentZipBytes!==zip.length)refuse('artifact_refused');
  if(!careMessagingZip(code).equals(zip))refuse('artifact_refused');
- same(manifest.defaults,{phiAllowed:false,activation:'blocked',qualification:'disabled'},'artifact_refused');
+ same(manifest.defaults,{phiAllowed:false,activation:'blocked',qualification:'disabled',
+  ...(candidate==='care-connections'?{claimRecoveryEnabled:false}:{})},'artifact_refused');
+ if(candidate==='care-connections'&&(!Array.isArray(manifest.functions)||manifest.functions.length!==7
+  ||!Array.isArray(manifest.claimFunctions)||manifest.claimFunctions.length!==2))refuse('artifact_refused');
  let template;try{template=JSON.parse(templateBytes.toString('utf8'));}catch{refuse('artifact_refused');}
  same(template.Parameters?.SourceCommit?.AllowedValues,[head],'artifact_refused');
  same(template.Parameters?.MigrationReleaseSha256?.AllowedValues,[QUALIFICATION_CONSENT_LEDGER],'artifact_refused');
@@ -47,10 +55,17 @@ export function assertCareFoundation(stack){
  return o;
 }
 export function assertCareBinding(binding,artifact,foundation){
+ return assertBinding(binding,artifact,foundation,'care-messaging');
+}
+export function assertCareConnectionsBinding(binding,artifact,foundation){return assertBinding(binding,artifact,foundation,'care-connections');}
+const scopes=['programs','protocols_supplements','nutrition','appointments','messaging','forms_checkins','symptoms_adherence',
+ 'wearables','reproductive_health','lab_summaries','lab_results_import','lab_specimen_context','billing_links','research_n_of_1'];
+function assertBinding(binding,artifact,foundation,candidate){
  const keys=['contract','sourceCommit','migrationReleaseSha256','apiId','organizationId','consumerIssuer','consumerAudience',
   'workforceIssuer','workforceAudience','codeBucket','codeKey','codeVersion','secretKmsKeyArn','logsKmsKeyArn','alarmTopicArn','subjects','reviews'];
+ if(candidate==='care-connections')keys.push('claimRecoveryEnabled','enabledConsentScopes');
  if(!record(binding)||Object.keys(binding).length!==keys.length||keys.some(k=>!Object.hasOwn(binding,k))
-  ||binding.contract!=='care-messaging-qualification-binding/1'||binding.sourceCommit!==artifact.manifest.sourceCommit
+  ||binding.contract!==candidate+'-qualification-binding/1'||binding.sourceCommit!==artifact.manifest.sourceCommit
   ||binding.migrationReleaseSha256!==QUALIFICATION_CONSENT_LEDGER||binding.apiId!==foundation.ApiId||!uuid.test(binding.organizationId??''))refuse('binding_refused');
  for(const pool of ['consumer','workforce']){
   if(!/^https:\/\/cognito-idp\.us-east-2\.amazonaws\.com\/us-east-2_[A-Za-z0-9]+$/.test(binding[pool+'Issuer']??'')
@@ -64,16 +79,24 @@ export function assertCareBinding(binding,artifact,foundation){
  if(!/^arn:aws:sns:us-east-2:588966314750:[A-Za-z0-9_-]+$/.test(binding.alarmTopicArn??''))refuse('binding_refused');
  if(!Array.isArray(binding.subjects)||binding.subjects.length<3||binding.subjects.length>4||binding.subjects.some(s=>!uuid.test(s))
   ||new Set(binding.subjects).size!==binding.subjects.length)refuse('binding_refused');
- const reviews=['database','workforceMfa','messaging','retention','qualification'];
+ const reviews=['database','workforceMfa',...(candidate==='care-connections'?['connection','consent']:['messaging']),'retention','qualification'];
+ if(candidate==='care-connections'){
+  if(typeof binding.claimRecoveryEnabled!=='boolean'||!Array.isArray(binding.enabledConsentScopes)
+   ||binding.enabledConsentScopes.some(s=>!scopes.includes(s))||new Set(binding.enabledConsentScopes).size!==binding.enabledConsentScopes.length)
+   refuse('binding_refused');
+  if(binding.claimRecoveryEnabled)reviews.push('claimRecovery');
+ }
  if(!record(binding.reviews)||Object.keys(binding.reviews).length!==reviews.length||reviews.some(k=>!hash.test(binding.reviews[k]??'')
   ||/^0+$/.test(binding.reviews[k])))refuse('review_binding_refused');
  // Hash syntax and exact equality never claim a human review actually occurred.
  return binding;
 }
-function expectedParameters(b,f){return {ApiId:b.apiId,ConsumerIssuer:b.consumerIssuer,ConsumerAudience:b.consumerAudience,
+function expectedParameters(b,f,candidate){return {ApiId:b.apiId,ConsumerIssuer:b.consumerIssuer,ConsumerAudience:b.consumerAudience,
  WorkforceIssuer:b.workforceIssuer,WorkforceAudience:b.workforceAudience,OrganizationId:b.organizationId,PhiAllowed:'false',Activation:'blocked',
  ActivationEvidenceSha256:'',DatabaseReviewSha256:b.reviews.database,WorkforceMfaReviewSha256:b.reviews.workforceMfa,
- MessagingReviewSha256:b.reviews.messaging,RetentionReviewSha256:b.reviews.retention,DatabaseClusterArn:f.DatabaseClusterArn,
+ ...(candidate==='care-connections'?{ConnectionReviewSha256:b.reviews.connection,ConsentReviewSha256:b.reviews.consent,
+  ClaimRecoveryEnabled:String(b.claimRecoveryEnabled),ClaimRecoveryReviewSha256:b.reviews.claimRecovery??'',EnabledConsentScopes:b.enabledConsentScopes.join(',')}
+  :{MessagingReviewSha256:b.reviews.messaging}),RetentionReviewSha256:b.reviews.retention,DatabaseClusterArn:f.DatabaseClusterArn,
  DatabaseSecretArn:f.DatabaseSecretArn,DatabaseName:CARE_OBSERVER.database,SecretKmsKeyArn:b.secretKmsKeyArn,LogsKmsKeyArn:b.logsKmsKeyArn,
  AlarmTopicArn:b.alarmTopicArn,CodeBucket:b.codeBucket,CodeKey:b.codeKey,CodeVersion:b.codeVersion,SourceCommit:b.sourceCommit,
  MigrationReleaseSha256:b.migrationReleaseSha256,QualificationExecution:'enabled',QualificationAccountId:CARE_OBSERVER.account,
@@ -102,16 +125,22 @@ function policy(value){
    .map(([k,x])=>[k,['Action','Resource'].includes(k)?normalize(Array.isArray(x)?x:[x]):normalize(x)]));
  };return normalize(value);
 }
-const routes=[['RouteConsumerMessages','ConsumerAuthorizer','POST /clinical-core/consumer/messages'],
+const messagingRoutes=[['RouteConsumerMessages','ConsumerAuthorizer','POST /clinical-core/consumer/messages'],
  ['RouteWorkforceMessages','WorkforceAuthorizer','POST /clinical-core/workforce/messages'],
  ['RouteConsumerExport','ConsumerAuthorizer','POST /clinical-core/consumer/messages/export']];
+const connectionRoutes=[['RouteConsumerConnection','ConsumerAuthorizer','POST /clinical-core/consumer/connection'],
+ ['RouteWorkforceConnection','WorkforceAuthorizer','POST /clinical-core/workforce/connection'],
+ ['RouteConsumerClaimRecovery','ConsumerAuthorizer','POST /clinical-core/consumer/connection-claims']];
 
 /** Dependencies must make their own actual read-only AWS/ledger observations.
  * This verifies deployment bindings, NOT approvals, runtime acceptance or PHI.
  * Repeated metadata reads detect ordinary concurrent deployment drift, not an
  * atomic AWS snapshot or subsequent changes after this inspection. */
-export async function inspectCareMessagingQualification({artifact,head,binding,readAws,readCodeVersion,inspectLedger}){
- const a=assertCareArtifact(artifact,head),c=CARE_OBSERVER;
+export async function inspectCareMessagingQualification(input){return inspectCareQualification(input,'care-messaging');}
+export async function inspectCareConnectionsQualification(input){return inspectCareQualification(input,'care-connections');}
+async function inspectCareQualification({artifact,head,binding,readAws,readCodeVersion,inspectLedger},candidate){
+ const a=assertArtifact(artifact,head,candidate),c=candidate==='care-connections'?CARE_CONNECTION_OBSERVER:CARE_OBSERVER;
+ const routes=candidate==='care-connections'?connectionRoutes:messagingRoutes;
  const transport=readAws,observations=[];
  readAws=async(service,operation,parameters)=>{
   const result=await transport(service,operation,parameters);
@@ -126,7 +155,7 @@ export async function inspectCareMessagingQualification({artifact,head,binding,r
  if(caller?.Account!==c.account||!/^arn:aws:sts::588966314750:assumed-role\/[A-Za-z0-9_+=,.@/-]+$/.test(caller?.Arn??''))refuse('principal_refused');
  const startFoundation=await readAws('cloudformation','describe-stacks',{StackName:c.foundation});
  if(startFoundation?.Stacks?.length!==1)refuse('foundation_refused');const f=assertCareFoundation(startFoundation.Stacks[0]);
- if(binding)assertCareBinding(binding,a,f);
+ if(binding)assertBinding(binding,a,f,candidate);
  const ledger=await inspectLedger(f);
  if(ledger?.database!==c.database||ledger?.release!==QUALIFICATION_CONSENT_LEDGER||ledger?.rolledBack!==true||ledger?.rows!==106)refuse('ledger_refused');
  const api=await readAws('apigatewayv2','get-api',{ApiId:f.ApiId});
@@ -143,17 +172,18 @@ export async function inspectCareMessagingQualification({artifact,head,binding,r
  if(!binding)refuse('reviewed_binding_required');
  if(start?.Stacks?.length!==1)refuse('stack_refused');const stack=start.Stacks[0];
  if(!['CREATE_COMPLETE','UPDATE_COMPLETE'].includes(stack.StackStatus)||!stack.StackId?.startsWith(`arn:aws:cloudformation:${c.region}:${c.account}:stack/${c.stack}/`))refuse('stack_refused');
- const p=expectedParameters(binding,f);same(pairs(stack.Parameters,'ParameterKey','ParameterValue'),p,'parameters_refused');
+ const p=expectedParameters(binding,f,candidate);same(pairs(stack.Parameters,'ParameterKey','ParameterValue'),p,'parameters_refused');
  const output=pairs(stack.Outputs,'OutputKey','OutputValue');
  same(output,{PhiAllowed:'false',Activation:'blocked',SourceCommit:head,MigrationReleaseSha256:QUALIFICATION_CONSENT_LEDGER,
-  DatabaseName:c.database,QualificationExecution:'enabled',FunctionName:f.ApiId+'-care-messaging'},'outputs_refused');
+  DatabaseName:c.database,QualificationExecution:'enabled',FunctionName:f.ApiId+'-'+candidate,
+  ...(candidate==='care-connections'?{ClaimRecoveryEnabled:String(binding.claimRecoveryEnabled)}:{})},'outputs_refused');
  const template=await readAws('cloudformation','get-template',{StackName:c.stack,TemplateStage:'Original'});
  let actualTemplate=template?.TemplateBody;try{if(typeof actualTemplate==='string')actualTemplate=JSON.parse(actualTemplate);}catch{refuse('template_refused');}
  same(actualTemplate,a.template,'template_refused');
  const r=resources(await readAws('cloudformation','list-stack-resources',{StackName:c.stack}));
  same(Object.keys(r).sort(),Object.keys(a.template.Resources).sort(),'resources_refused');
  for(const [id,value] of Object.entries(r))if(value.ResourceType!==a.template.Resources[id].Type)refuse('resources_refused');
- const arn=`arn:aws:lambda:${c.region}:${c.account}:function:${f.ApiId}-care-messaging`;
+ const arn=`arn:aws:lambda:${c.region}:${c.account}:function:${f.ApiId}-${candidate}`;
  if(r.Function.PhysicalResourceId!==output.FunctionName)refuse('function_refused');
  const fn=await readAws('lambda','get-function-configuration',{FunctionName:arn});
  const vars=evaluate(a.template.Resources.Function.Properties.Environment.Variables,{...p,'AWS::AccountId':c.account},{});

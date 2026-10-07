@@ -10,6 +10,8 @@ type Manifest={contract:string;status:string;deployable:boolean;sourceCommit:str
   predecessor:{migrationCount:number;ledgerReleaseSha256:string};overlay:{file:string;sha256:string;bytes:number;canonical:boolean;hostedVerified:boolean};
   libraries:{file:string;sha256:string}[];functions:{name:string;bodySha256:string;apiExecute:boolean}[];
   dependencyFunctions:{name:string;bodySha256:string;apiExecute:boolean}[];proposedRoutes:string[];
+  deploymentIntegration:{status:string;builder:string;inspector:string;targetContract:string;claimRecoveryDefault:boolean;
+    independentReviewRequired:boolean;additionalReservedConcurrency:number;deploymentPerformed:boolean;hostedAcceptance:boolean};
   preparedTransition:{status:string;canonical:boolean;qualificationOnly:boolean;operatorReleased:boolean;fromLedgerSha256:string;
     toLedgerSha256:string;migrationCount:number;tableCountBefore:number;tableCountAfter:number;mandatoryRollbackRehearsal:boolean;
     manifest:{file:string;sha256:string};operator:{file:string;sha256:string;scope:string;embeddedMigrations:boolean;
@@ -76,8 +78,20 @@ describe('unreleased claim recovery mapping',()=>{
       throw new Error('operator unexpectedly accepted an override');}
     catch(error){expect(String((error as {stderr?:Buffer}).stderr)).toContain('boundary_refused');}
   });
-  it('names the pending route, dispositions and real integration obligations',()=>{
+  it('maps the integrated but unactivated route without treating source integration as deployment',()=>{
     expect(manifest.proposedRoutes).toEqual(['POST /clinical-core/consumer/connection-claims']);
+    expect(manifest.deploymentIntegration).toEqual({status:'source_implemented_hosted_unverified',
+      builder:'scripts/build-aws-care-connections.mjs',inspector:'scripts/inspect-care-connections-qualification.mjs',
+      targetContract:'aws-clinical-core-qualification-target/3',claimRecoveryDefault:false,independentReviewRequired:true,
+      additionalReservedConcurrency:0,deploymentPerformed:false,hostedAcceptance:false});
+    const builder=readFileSync(manifest.deploymentIntegration.builder,'utf8');
+    expect(builder).toContain("['ConsumerClaimRecovery', 'Consumer', 'consumer/connection-claims']");
+    expect(builder).toContain("ClaimRecoveryEnabled: { Type: 'String', Default: 'false'");
+    expect(builder).toContain('ClaimRecoveryReviewSha256');
+    expect(readFileSync(manifest.deploymentIntegration.inspector,'utf8')).toContain("runCareInspection('care-connections')");
+    const example=JSON.parse(readFileSync('infra/aws-clinical-core/qualification-target-connections.example.json','utf8'));
+    expect(example.schemaVersion).toBe(manifest.deploymentIntegration.targetContract);
+    expect(example.stacks['care-connections']).toBe('ai-clinical-core-qualification-care-connections');
     expect(manifest.proposedCoveredEntityMapping).toEqual(expect.arrayContaining([
       expect.objectContaining({table:'clinical_core.care_claim_requests',status:'inventory_integrated_disposition_blocked'}),
       expect.objectContaining({table:'clinical_audit.care_claim_events',status:'inventory_integrated_disposition_blocked'}),

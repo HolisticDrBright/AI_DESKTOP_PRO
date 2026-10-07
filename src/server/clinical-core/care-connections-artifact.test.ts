@@ -10,7 +10,7 @@ import { basename, dirname, join, resolve } from 'node:path';
 let directory: string;
 type Value = null | string | number | boolean | Value[] | { [name: string]: Value };
 type Template = { Parameters: Record<string, { Default?: Value; AllowedValues?: string[] }>; Conditions: Record<string, Value>; Resources: Record<string, { Type: string; Properties: Record<string, Value> }>; Rules: Record<string, Value> };
-let template: Template, manifest: { sourceCommit: string; sourceClean: boolean; migrationReleaseSha256: string; codeSha256: string; templateSha256: string; deploymentZipSha256: string; deploymentZipBytes: number; functions: unknown[]; defaults: unknown };
+let template: Template, manifest: { sourceCommit: string; sourceClean: boolean; migrationReleaseSha256: string; codeSha256: string; templateSha256: string; deploymentZipSha256: string; deploymentZipBytes: number; functions: unknown[]; claimFunctions: unknown[]; defaults: unknown };
 function evaluate(value: Value, parameters: Record<string, Value>): unknown {
   if (value === null || typeof value !== 'object') return value;
   if (Array.isArray(value)) return value.map(v => evaluate(v, parameters));
@@ -52,10 +52,13 @@ describe('care connections deployment artifact', () => {
     expect(template.Parameters.MigrationReleaseSha256.AllowedValues).toEqual([manifest.migrationReleaseSha256]);
     expect(manifest.migrationReleaseSha256).toBe('514959bf0d32de55ded312509ae2ebe39a0fdde9f59246b096b0c41ba63f4f9b');
     expect(manifest.functions).toHaveLength(7);
+    expect(manifest.claimFunctions).toHaveLength(2);
+    expect(template.Parameters.ClaimRecoveryEnabled.Default).toBe('false');
+    expect(template.Parameters.ClaimRecoveryReviewSha256.Default).toBe('');
     expect(template.Parameters.EnabledConsentScopes.Default).toBe('');
     expect(template.Resources.Function.Properties.Code).toEqual({ S3Bucket: { Ref: 'CodeBucket' }, S3Key: { Ref: 'CodeKey' }, S3ObjectVersion: { Ref: 'CodeVersion' } });
     expect(template.Parameters.CodeVersion).not.toHaveProperty('Default');
-    expect(manifest.defaults).toEqual({ phiAllowed: false, activation: 'blocked', qualification: 'disabled' });
+    expect(manifest.defaults).toEqual({ phiAllowed: false, activation: 'blocked', qualification: 'disabled', claimRecoveryEnabled: false });
   });
   it('has logs-only permissions by default and no broad data/third-party/administrative grants', () => {
     const p = defaults(); expect(evaluate(template.Conditions.Enabled, p)).toBe(false);
@@ -99,21 +102,31 @@ describe('care connections deployment artifact', () => {
       expect((condition['Fn::And'] as Value[]).length).toBeLessThanOrEqual(10);
     }
   });
-  it('creates exactly the two JWT-authorized routes, separate pools and exact invoke permissions', () => {
+  it('creates three JWT-authorized routes, separate pools and exact invoke permissions', () => {
     const routes = Object.values(template.Resources).filter(r => r.Type === 'AWS::ApiGatewayV2::Route');
-    expect(routes.map(r => r.Properties.RouteKey).sort()).toEqual(['POST /clinical-core/consumer/connection', 'POST /clinical-core/workforce/connection']);
+    expect(routes.map(r => r.Properties.RouteKey).sort()).toEqual(['POST /clinical-core/consumer/connection', 'POST /clinical-core/consumer/connection-claims', 'POST /clinical-core/workforce/connection']);
     for (const route of routes) {
       expect(route.Properties.AuthorizationType).toBe('JWT');
       expect(route.Properties.AuthorizerId).toEqual({ Ref: String(route.Properties.RouteKey).includes('/workforce/') ? 'WorkforceAuthorizer' : 'ConsumerAuthorizer' });
     }
     expect(Object.values(template.Resources).filter(r => r.Type === 'AWS::ApiGatewayV2::Authorizer')).toHaveLength(2);
     const invoke = Object.values(template.Resources).filter(r => r.Type === 'AWS::Lambda::Permission');
-    expect(invoke).toHaveLength(2); for (const permission of invoke) {
+    expect(invoke).toHaveLength(3); for (const permission of invoke) {
       expect(permission.Properties.SourceAccount).toEqual({ Ref: 'AWS::AccountId' });
       expect(JSON.stringify(permission.Properties.SourceArn)).toMatch(/\/POST\/clinical-core\/(consumer|workforce)\/connection/);
       expect(JSON.stringify(permission.Properties.SourceArn)).not.toContain('/*/*/');
     }
     expect(template.Resources.Integration.Properties.TimeoutInMillis).toBe(30000); expect(template.Resources.Function.Properties.Timeout).toBe(29);
+  });
+  it('cannot enable recovery merely by enabling connections; opt-in and independent review are both required', () => {
+    const p = qualified(); expect(evaluate(template.Conditions.Enabled, p)).toBe(true);
+    expect(evaluate(template.Conditions.RecoveryEnabled, p)).toBe(false);
+    expect(evaluate(template.Conditions.RecoveryEnabled, { ...p, ClaimRecoveryEnabled: 'true' })).toBe(false);
+    const reviewed = { ...p, ClaimRecoveryEnabled: 'true', ClaimRecoveryReviewSha256: 'fictional-reviewed-shape' };
+    expect(evaluate(template.Conditions.RecoveryEnabled, reviewed)).toBe(true);
+    for (const key of reviews) expect(evaluate(template.Conditions.RecoveryEnabled, { ...reviewed, [key]: '' })).toBe(false);
+    expect(evaluate(template.Conditions.RecoveryEnabled, { ...reviewed, PhiAllowed: 'true' })).toBe(false);
+    expect(template.Rules.ReviewedRecovery).toMatchObject({ RuleCondition: { 'Fn::Equals': [{ Ref: 'ClaimRecoveryEnabled' }, 'true'] } });
   });
   it('uses count-only API 5xx and Lambda alarms with actions disabled when blocked', () => {
     expect(template.Resources.ApiServerErrors.Properties).toMatchObject({ Namespace: 'AWS/ApiGateway', MetricName: '5xx', Dimensions: [{ Name: 'ApiId', Value: { Ref: 'ApiId' } }] });

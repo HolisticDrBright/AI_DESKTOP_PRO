@@ -18,6 +18,30 @@ const parameters = (): Record<string, string | undefined> => ({ DatabaseClusterA
   SourceCommit: "a".repeat(40), QualificationIdentitySubjects: "11111111-2222-4333-8444-555555555555,66666666-7777-4888-8999-000000000000,22222222-3333-4444-8555-666666666666" });
 
 describe("qualification target manifest", () => {
+  test("version three requires twelve stacks and separately observes recovery posture and its review", () => {
+    expect(() => loadQualificationTargetManifest("infra/aws-clinical-core/qualification-target-connections.example.json")).toThrow("target_placeholder");
+    const value = { ...filled(), schemaVersion: "aws-clinical-core-qualification-target/3", stacks: {
+      ...(filled().stacks as Record<string, string>), "care-messaging": "ai-clinical-core-qualification-care-messaging",
+      "care-connections": "ai-clinical-core-qualification-care-connections" } };
+    const m = validateQualificationTargetManifest(value); expect(Object.keys(m.stacks)).toHaveLength(12);
+    for (const schemaVersion of ["aws-clinical-core-qualification-target/1", "aws-clinical-core-qualification-target/2"])
+      expect(() => validateQualificationTargetManifest({ ...value, schemaVersion })).toThrow("target_manifest_invalid");
+    const missing = { ...value.stacks }; delete (missing as Record<string, string>)["care-connections"];
+    expect(() => validateQualificationTargetManifest({ ...value, stacks: missing })).toThrow("target_manifest_invalid");
+    const outputs = { PhiAllowed: "false", Activation: "blocked", QualificationExecution: "enabled", SourceCommit: m.sourceCommit,
+      DatabaseName: m.databaseName, MigrationReleaseSha256: m.migrationReleaseHash, ClaimRecoveryEnabled: "false" };
+    const p = { ...parameters(), MigrationReleaseSha256: m.migrationReleaseHash, ClaimRecoveryEnabled: "false", ClaimRecoveryReviewSha256: "" };
+    const check = (o: Record<string, string | undefined> = outputs, input: Record<string, string | undefined> = p) =>
+      assertQualificationStackOutputs("care-connections", o, m, input, "CREATE_COMPLETE");
+    expect(() => check()).not.toThrow();
+    expect(() => check(outputs, { ...p, ClaimRecoveryEnabled: undefined })).toThrow("target_stack_refused");
+    expect(() => check({ ...outputs, ClaimRecoveryEnabled: "true" })).toThrow("target_stack_refused");
+    expect(() => check({ ...outputs, ClaimRecoveryEnabled: "true" }, { ...p, ClaimRecoveryEnabled: "true" })).toThrow("target_stack_refused");
+    expect(() => check({ ...outputs, ClaimRecoveryEnabled: "true" }, { ...p, ClaimRecoveryEnabled: "true", ClaimRecoveryReviewSha256: "c".repeat(64) })).not.toThrow();
+    expect(() => check(outputs, { ...p, MigrationReleaseSha256: "c".repeat(64) })).toThrow("target_stack_refused");
+    expect(() => assertQualificationStackOutputs("care-connections", outputs, manifest(), p, "CREATE_COMPLETE")).toThrow("target_stack_refused");
+    expect(() => assertQualificationStackOutputs("care-connections", outputs, m, p, "CREATE_COMPLETE", "drain")).toThrow("target_stack_refused");
+  });
   test("version two requires eleven stacks and verifies the messaging ledger in both parameters and outputs", () => {
     expect(() => loadQualificationTargetManifest("infra/aws-clinical-core/qualification-target-messaging.example.json")).toThrow("target_placeholder");
     const legacy = filled();

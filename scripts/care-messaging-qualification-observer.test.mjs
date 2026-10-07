@@ -203,6 +203,7 @@ test('second whole-ledger inspection and immutable package comparison must still
 });
 test('inspection entrypoint has rollback-only whole-ledger queries and no write command',()=>{
  const text=readFileSync(new URL('./inspect-care-messaging-qualification.mjs',import.meta.url),'utf8')+
+  readFileSync(new URL('./care-qualification-inspection-cli.mjs',import.meta.url),'utf8')+
   readFileSync(new URL('./care-messaging-inspection-io.mjs',import.meta.url),'utf8');
  assert.match(text,/set transaction isolation level repeatable read read only/);assert.match(text,/assertQualificationConsentLedger/);
  assert.match(text,/new RollbackTransactionCommand/);assert.doesNotMatch(text,/CommitTransactionCommand|INSERT INTO|UPDATE clinical|PhiAllowed=true/);

@@ -11,11 +11,15 @@ import {createCareClaimRecovery} from './care-claim-recovery';
 import {bindCareClaimRecoveryDatabase,validateCareClaimFunctions} from './care-claim-recovery-database-binding';
 import {parseCareClaimResponse,careClaimRequest,type CareClaimRequest} from '../../contracts/careClaimRecovery';
 import type {CareConnectionFunctionBinding} from './care-connections-database-binding';
+import {createCareConnectionsHandler,type CareConnectionsBuild} from './care-connections-deployment';
+import {CARE_CLAIM_RECOVERY_ROUTE} from './care-claim-recovery-api';
+import type {ApiGatewayV2Event} from './aws-identity-api';
 
 // The actual registered 106 artifact; no deployment or activation is implied. Fictional rows
 // only. PGlite serializes transactions: these are NOT hosted multi-session races.
 let db:PGlite,org:string,foreignOrg:string,owner:string,other:string,staff:string,patient:string;
 let predecessor:CareConnectionFunctionBinding[],pins:CareConnectionFunctionBinding[],bound:ClinicalCoreDatabase;
+let compiled:CareConnectionsBuild;
 const sha=(s:string)=>createHash('sha256').update(s,'utf8').digest('hex');
 const subject=(id:string)=>'FICTIONAL-subject-'+id;
 const context=(person=owner,organization=org,pool:'consumer'|'workforce'='consumer',purpose:ProductionClinicalRequestContext['purpose']='identity_link'):ProductionClinicalRequestContext=>({
@@ -65,6 +69,8 @@ beforeAll(async()=>{
   const overlay=readFileSync('infra/aws-clinical-core/production-candidates/care-claim-recovery.sql','utf8').replace(/\r\n?/g,'\n');
   expect(files['20261006030000_production_care_claim_recovery.sql']).toBe(overlay);
   predecessor=functions(files['20261006020000_production_care_connections.sql']);pins=functions(overlay);
+  compiled={sourceCommit:'1'.repeat(40),sourceClean:true,migrationCount:106,
+    migrationReleaseSha256:'514959bf0d32de55ded312509ae2ebe39a0fdde9f59246b096b0c41ba63f4f9b',functions:predecessor,claimFunctions:pins};
   bound=bindCareClaimRecoveryDatabase(database,predecessor,pins);
   for(const table of ['clinical_core.care_claim_requests','clinical_audit.care_claim_events'])
     expect((await db.query<{n:number}>(`select count(*)::int n from ${table}`)).rows[0].n).toBe(0);
@@ -82,6 +88,32 @@ beforeEach(async()=>{
 });
 
 describe('exact claim recovery, actual SQL/API role',()=>{
+  it('runs claim, lost-reply receipt and settlement through the artifact handler and real API-role SQL without granting consent',async()=>{
+    const invitation=await issue(),requestId=randomUUID(),clock=Date.now(),review=sha('FICTIONAL review input, not approval');
+    const e={SOURCE_COMMIT:compiled.sourceCommit,MIGRATION_RELEASE_SHA256:compiled.migrationReleaseSha256,AWS_REGION:'us-east-2',
+      CARE_CONNECTIONS_ACTIVATION:'blocked',PHI_ALLOWED:'false',DEPLOYMENT_ACCOUNT_ID:'588966314750',
+      CLINICAL_DATABASE_CLUSTER_ARN:'arn:aws:rds:us-east-2:588966314750:cluster:fictional',
+      CLINICAL_DATABASE_SECRET_ARN:'arn:aws:secretsmanager:us-east-2:588966314750:secret:fictional',CLINICAL_DATABASE_NAME:'clinical_core_qualification',
+      CONSUMER_ISSUER:'https://cognito-idp.us-east-2.amazonaws.com/us-east-2_FictionalC',CONSUMER_AUDIENCE:'c'.repeat(26),
+      WORKFORCE_ISSUER:'https://cognito-idp.us-east-2.amazonaws.com/us-east-2_FictionalW',WORKFORCE_AUDIENCE:'w'.repeat(26),
+      CARE_CONNECTIONS_ORGANIZATION_ID:org,DATABASE_REVIEW_SHA256:review,WORKFORCE_MFA_REVIEW_SHA256:review,
+      CONNECTION_REVIEW_SHA256:review,CONSENT_REVIEW_SHA256:review,RETENTION_REVIEW_SHA256:review,
+      CARE_CLAIM_RECOVERY_ENABLED:'true',CARE_CLAIM_RECOVERY_REVIEW_SHA256:review,QUALIFICATION_EXECUTION:'enabled',
+      QUALIFICATION_REVIEW_SHA256:review,QUALIFICATION_ACCOUNT_ID:'588966314750',QUALIFICATION_IDENTITY_SUBJECTS:[subject(owner),subject(other),subject(staff)].join(',')};
+    const handle=createCareConnectionsHandler(e,compiled,()=>database,()=>clock);
+    const gateway=(body:unknown,actor=owner):ApiGatewayV2Event=>({routeKey:CARE_CLAIM_RECOVERY_ROUTE,headers:{'content-type':'application/json'},body:JSON.stringify(body),
+      requestContext:{authorizer:{jwt:{claims:{iss:e.CONSUMER_ISSUER,aud:e.CONSUMER_AUDIENCE,sub:subject(actor),token_use:'id',
+        'custom:person_id':actor,'custom:organization_id':org,'custom:production_bound':'true',email_verified:true,
+        iat:Math.floor(clock/1000)-10,exp:Math.floor(clock/1000)+1000,auth_time:Math.floor(clock/1000)-10}}}}});
+    const claimed=await handle(gateway({action:'claim',requestId,token:invitation.token}));
+    expect(claimed).toMatchObject({statusCode:200,headers:{'x-clinical-execution':'qualification'}});
+    expect(JSON.parse(claimed.body).data).toMatchObject({requestId,status:'committed',connection:{connectionId:invitation.connectionId,patientRecordId:patient}});
+    for(const action of ['receipt','settle'])expect((await handle(gateway({action,requestId}))).body).toBe(claimed.body);
+    expect(JSON.parse((await handle(gateway({action:'receipt',requestId},other))).body).data).toEqual({requestId,status:'unresolved'});
+    const cancelledId=randomUUID();expect(JSON.parse((await handle(gateway({action:'settle',requestId:cancelledId}))).body).data).toEqual({requestId:cancelledId,status:'cancelled'});
+    expect((await handle(gateway({action:'claim',requestId:cancelledId,token:invitation.token}))).statusCode).toBe(409);
+    expect((await db.query<{n:number}>('select count(*)::int n from clinical_core.consent_grants where connection_id=$1',[invitation.connectionId])).rows[0].n).toBe(0);
+  });
   it('reads an absent receipt as unresolved without deciding or claiming',async()=>{
     const requestId=randomUUID();expect(await receipt(requestId)).toEqual({requestId,status:'unresolved'});
     expect((await db.query('select * from clinical_core.care_claim_requests where organization_id=$1',[org])).rows).toHaveLength(0);

@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import type { ApiGatewayV2Event } from './aws-identity-api';
 import type { ClinicalCoreDatabase, ClinicalCoreTransaction } from './database';
 import { createCareConnectionsHandler, type CareConnectionsBuild } from './care-connections-deployment';
+import { CARE_CLAIM_RECOVERY_ROUTE } from './care-claim-recovery-api';
 
 // Fictional placeholders only. No review or approval is created by this suite.
 const sourceCommit = '1'.repeat(40), review = '2'.repeat(64), now = 1800000000000;
@@ -18,6 +19,8 @@ beforeAll(() => {
   build = { sourceCommit, sourceClean: true, migrationCount: 106,
     migrationReleaseSha256: '514959bf0d32de55ded312509ae2ebe39a0fdde9f59246b096b0c41ba63f4f9b',
     functions: [...sql.matchAll(/create(?: or replace)? function ([a-z_]+\.[a-z_]+)\([^]*?as \$\$([^]*?)\$\$/g)]
+      .map(([, name, body]) => ({ name, bodySha256: createHash('sha256').update(body).digest('hex'), apiExecute: name.startsWith('clinical_core.') })),
+    claimFunctions: [...artifact.files['20261006030000_production_care_claim_recovery.sql'].matchAll(/create(?: or replace)? function ([a-z_]+\.[a-z_]+)\([^]*?as \$\$([^]*?)\$\$/g)]
       .map(([, name, body]) => ({ name, bodySha256: createHash('sha256').update(body).digest('hex'), apiExecute: name.startsWith('clinical_core.') })) };
 });
 const env = (): Record<string, string | undefined> => ({ SOURCE_COMMIT: sourceCommit, MIGRATION_RELEASE_SHA256: build.migrationReleaseSha256,
@@ -39,8 +42,11 @@ const event = (body: unknown = { action: 'connection' }, pool: 'consumer' | 'wor
     iat: now / 1000 - 10, exp: now / 1000 + 1000, auth_time: now / 1000 - 10 } } } },
 });
 function transport(valid = true, response: unknown = { connection: null }) {
-  const query = vi.fn(async (sql: string) => sql.startsWith('with expected') ? { rows: [{ valid }] }
-    : sql.includes('production_care_connection_request') ? { rows: [{ data: response }] } : { rows: [] });
+  const query = vi.fn(async (sql: string, args: readonly unknown[] = []) => {
+    void args;
+    return sql.startsWith('with expected') ? { rows: [{ valid }] }
+      : /production_care_(?:connection|claim)_request/.test(sql) ? { rows: [{ data: response }] } : { rows: [] };
+  });
   const database: ClinicalCoreDatabase = { transaction: work => work({ query } as unknown as ClinicalCoreTransaction) };
   const factory = vi.fn(() => database);
   return { query, factory };
@@ -127,6 +133,43 @@ describe('artifact-bound connection runtime', () => {
       { WORKFORCE_MFA_REVIEW_SHA256: '' }, { DEPLOYMENT_ACCOUNT_ID: '588966314750' }, { CLINICAL_DATABASE_NAME: 'clinical_core_qualification' }]) {
       const denied = transport(); expect((await createCareConnectionsHandler({ ...production, ...changed }, build, denied.factory)(event())).statusCode).toBe(503);
       expect(denied.factory).not.toHaveBeenCalled();
+    }
+  });
+  it.each([undefined, '', 'false', 'yes', 'TRUE'])('keeps recovery disabled for opt-in %s without breaking connections', async enabled => {
+    const t = transport(), handle = createCareConnectionsHandler({ ...env(), CARE_CLAIM_RECOVERY_ENABLED: enabled }, build, t.factory, () => now);
+    const response = await handle({ ...event({ action: 'receipt', requestId: person }), routeKey: CARE_CLAIM_RECOVERY_ROUTE });
+    expect(response.statusCode).toBe(503); expect(response.headers).not.toHaveProperty('x-clinical-execution');
+    expect(t.factory).not.toHaveBeenCalled(); expect((await handle(event())).statusCode).toBe(200);
+  });
+  it.each([undefined, '', 'not-a-review'])('refuses an enabled recovery route without independent review %s', async reviewHash => {
+    const t = transport(), handle = createCareConnectionsHandler({ ...env(), CARE_CLAIM_RECOVERY_ENABLED: 'true',
+      CARE_CLAIM_RECOVERY_REVIEW_SHA256: reviewHash }, build, t.factory, () => now);
+    expect((await handle({ ...event({ action: 'receipt', requestId: person }), routeKey: CARE_CLAIM_RECOVERY_ROUTE })).statusCode).toBe(503);
+    expect(t.factory).not.toHaveBeenCalled(); expect((await handle(event())).statusCode).toBe(200);
+  });
+  it('binds recovery to both compiled contracts, captures its review and rechecks every transaction', async () => {
+    const t = transport(true, { requestId: person, status: 'unresolved' }), e = { ...env(), CARE_CLAIM_RECOVERY_ENABLED: 'true',
+      CARE_CLAIM_RECOVERY_REVIEW_SHA256: review }, b = structuredClone(build);
+    const handle = createCareConnectionsHandler(e, b, t.factory, () => now);
+    e.CARE_CLAIM_RECOVERY_ENABLED = 'false'; e.CARE_CLAIM_RECOVERY_REVIEW_SHA256 = ''; b.claimFunctions[0].bodySha256 = 'changed';
+    const request = { ...event({ action: 'receipt', requestId: person }), routeKey: CARE_CLAIM_RECOVERY_ROUTE };
+    for (let i = 0; i < 2; i++) expect(await handle(request)).toMatchObject({ statusCode: 200, headers: { 'x-clinical-execution': 'qualification' },
+      body: JSON.stringify({ data: { requestId: person, status: 'unresolved' } }) });
+    expect(t.factory).toHaveBeenCalledOnce(); expect(t.query.mock.calls.filter(([sql]) => sql.startsWith('with expected'))).toHaveLength(4);
+    const expected = t.query.mock.calls.filter(([sql]) => sql.startsWith('with expected')).map(([, pins]) => JSON.parse((pins as string[])[0]));
+    expect(expected.map(v => v.length)).toEqual([7, 2, 7, 2]);
+  });
+  it('refuses drift in the recovery SQL before context setup or claim execution', async () => {
+    const t = transport(); t.query.mockImplementation(async (sql: string) => ({ rows: [{ valid: !sql.includes('care_claim_requests') }] }));
+    const handle = createCareConnectionsHandler({ ...env(), CARE_CLAIM_RECOVERY_ENABLED: 'true', CARE_CLAIM_RECOVERY_REVIEW_SHA256: review }, build, t.factory, () => now);
+    expect((await handle({ ...event({ action: 'receipt', requestId: person }), routeKey: CARE_CLAIM_RECOVERY_ROUTE })).statusCode).toBe(503);
+    expect(t.query).toHaveBeenCalledTimes(2); expect(t.query.mock.calls.some(([sql]) => sql.includes('set_request_context'))).toBe(false);
+  });
+  it('refuses malformed compiled recovery pins before any data client', async () => {
+    for (const pins of [[], build.claimFunctions.slice(1), build.claimFunctions.map(f => ({ ...f, bodySha256: '' })),
+      build.claimFunctions.map(f => ({ ...f, apiExecute: !f.apiExecute }))]) {
+      const t = transport(); const handle = createCareConnectionsHandler(env(), { ...build, claimFunctions: pins }, t.factory, () => now);
+      expect((await handle(event())).statusCode).toBe(503); expect(t.factory).not.toHaveBeenCalled();
     }
   });
 });

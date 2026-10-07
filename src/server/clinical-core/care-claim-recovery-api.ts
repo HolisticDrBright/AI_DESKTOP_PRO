@@ -10,7 +10,8 @@ import type {createCareClaimRecovery} from './care-claim-recovery';
 
 export const CARE_CLAIM_RECOVERY_ROUTE='POST /clinical-core/consumer/connection-claims';
 export type CareClaimRecoveryConfiguration=CareConnectionConfiguration&{claimRecoveryReviewSha256?:string};
-/** Source-only gateway handler. No Lambda/route registration or activation. */
+/** Consumer-only recovery boundary. Deployment opt-in and an independent review
+ * are enforced by the artifact-bound handler; this API never approves either. */
 export function createCareClaimRecoveryApi(input:{configuration:CareClaimRecoveryConfiguration;
   operations:()=>ReturnType<typeof createCareClaimRecovery>;now?:()=>number}){
   const c=structuredClone(input.configuration),execution=recordingWorkforceExecution(c),hash=/^[a-f0-9]{64}$/;

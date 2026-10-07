@@ -12,7 +12,7 @@ import { assertQualificationDatabaseName, PRODUCTION_ACCOUNT_ID } from "./qualif
  * themselves, so a direct CLI invocation cannot bypass the binding, and refuse any ambient override that disagrees.
  */
 export type QualificationTargetManifest = {
-  schemaVersion: "aws-clinical-core-qualification-target/1" | "aws-clinical-core-qualification-target/2";
+  schemaVersion: "aws-clinical-core-qualification-target/1" | "aws-clinical-core-qualification-target/2" | "aws-clinical-core-qualification-target/3";
   environment: "synthetic-staging";
   dataClassification: "synthetic_only";
   containsPhi: false;
@@ -62,6 +62,9 @@ const LEGACY_CANDIDATES = ["personal-storage", "privacy-operations", "owned-lab"
 // Version 1 remains an exact historical ten-stack target, never a messaging target.
 // Version 2 requires all eleven; an omitted messaging deployment cannot pass silently.
 const MESSAGING_CANDIDATES = [...LEGACY_CANDIDATES, "care-messaging"] as const;
+// Version 3 adds the separately reviewed connection/recovery deployment.
+// Historical manifests cannot silently qualify this new twelfth stack.
+const CONNECTION_CANDIDATES = [...MESSAGING_CANDIDATES, "care-connections"] as const;
 const API_ID = /^[a-z0-9]{10}$/, REGION = /^[a-z]{2}-[a-z]+-\d$/, BUCKET = /^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/, STACK = /^[A-Za-z][A-Za-z0-9-]{0,127}$/, HEX40 = /^[a-f0-9]{40}$/, HEX64 = /^[a-f0-9]{64}$/;
 const CLUSTER = /^arn:aws:rds:([a-z0-9-]+):(\d{12}):cluster:[A-Za-z0-9-]{1,63}$/, SECRET = /^arn:aws:secretsmanager:([a-z0-9-]+):(\d{12}):secret:[A-Za-z0-9/_+=.@!-]+$/;
 const PLACEHOLDER = /replace|^0+$|^REPLACE/i;
@@ -87,13 +90,13 @@ export function loadQualificationTargetManifest(file: string): QualificationTarg
 export function validateQualificationTargetManifest(value: unknown): QualificationTargetManifest {
   if (!isRecord(value) || Object.keys(value).length !== TOP.length || TOP.some((k) => !(k in value))) throw new QualificationTargetManifestError("target_manifest_invalid", "keys");
   if (Object.keys(value).some((k) => FORBIDDEN_KEY.test(k))) throw new QualificationTargetManifestError("target_manifest_invalid", "keys");
-  if (!["aws-clinical-core-qualification-target/1", "aws-clinical-core-qualification-target/2"].includes(String(value.schemaVersion)) || value.environment !== "synthetic-staging" || value.dataClassification !== "synthetic_only" || value.containsPhi !== false) {
+  if (!["aws-clinical-core-qualification-target/1", "aws-clinical-core-qualification-target/2", "aws-clinical-core-qualification-target/3"].includes(String(value.schemaVersion)) || value.environment !== "synthetic-staging" || value.dataClassification !== "synthetic_only" || value.containsPhi !== false) {
     throw new QualificationTargetManifestError("target_manifest_invalid", "posture");
   }
   const account = str(value.awsAccountId, "awsAccountId"), region = str(value.awsRegion, "awsRegion");
   if (!/^\d{12}$/.test(account) || !REGION.test(region)) throw new QualificationTargetManifestError("target_manifest_invalid", "awsAccountId");
   if (account === PRODUCTION_ACCOUNT_ID || account === "000000000000") throw new QualificationTargetManifestError("target_account_refused", "awsAccountId");
-  if (value.schemaVersion === "aws-clinical-core-qualification-target/2" && (account !== "588966314750" || region !== "us-east-2")) throw new QualificationTargetManifestError("target_account_refused", "messagingTarget");
+  if (value.schemaVersion !== "aws-clinical-core-qualification-target/1" && (account !== "588966314750" || region !== "us-east-2")) throw new QualificationTargetManifestError("target_account_refused", "careTarget");
   const apiId = str(value.apiId, "apiId"), apiOrigin = str(value.apiOrigin, "apiOrigin");
   if (!API_ID.test(apiId) || apiOrigin !== `https://${apiId}.execute-api.${region}.amazonaws.com`) throw new QualificationTargetManifestError("target_manifest_invalid", "apiOrigin");
   const cluster = str(value.databaseClusterArn, "databaseClusterArn").match(CLUSTER), secret = str(value.databaseSecretArn, "databaseSecretArn").match(SECRET);
@@ -119,7 +122,8 @@ export function validateQualificationTargetManifest(value: unknown): Qualificati
   const designated = designatedSubjects(identitySubjects);
   if (new Set(designated).size !== designated.length) throw new QualificationTargetManifestError("target_manifest_invalid", "identitySubjects");
   const stackValues = value.stacks;
-  const CANDIDATES = value.schemaVersion === "aws-clinical-core-qualification-target/2" ? MESSAGING_CANDIDATES : LEGACY_CANDIDATES;
+  const CANDIDATES = value.schemaVersion === "aws-clinical-core-qualification-target/3" ? CONNECTION_CANDIDATES
+    : value.schemaVersion === "aws-clinical-core-qualification-target/2" ? MESSAGING_CANDIDATES : LEGACY_CANDIDATES;
   if (!isRecord(stackValues) || CANDIDATES.some((c) => !(c in stackValues)) || Object.keys(stackValues).length !== CANDIDATES.length) throw new QualificationTargetManifestError("target_manifest_invalid", "stacks");
   const stacks: Record<string, string> = {};
   for (const candidate of CANDIDATES) {
@@ -183,6 +187,7 @@ export const QUALIFICATION_STACK_SPECS: Record<string, QualificationStackSpec> =
   "owned-lab": { api: "ClinicalApiId", buckets: [] },
   "owned-voice": { api: "ClinicalApiId", buckets: [] },
   "care-messaging": { api: "ApiId", buckets: [] },
+  "care-connections": { api: "ApiId", buckets: [] },
 };
 const USABLE_STACK_STATUS = new Set(["CREATE_COMPLETE", "UPDATE_COMPLETE", "UPDATE_ROLLBACK_COMPLETE", "IMPORT_COMPLETE", "IMPORT_ROLLBACK_COMPLETE"]);
 
@@ -201,7 +206,8 @@ export function assertQualificationStackOutputs(candidate: string, outputs: Reco
   const spec = QUALIFICATION_STACK_SPECS[candidate];
   if (!spec) refuse();
   if (!manifest.stacks[candidate]) refuse();
-  if (candidate === "care-messaging" && (manifest.schemaVersion !== "aws-clinical-core-qualification-target/2" || posture !== "qualification")) refuse();
+  if (candidate === "care-messaging" && (manifest.schemaVersion === "aws-clinical-core-qualification-target/1" || posture !== "qualification")) refuse();
+  if (candidate === "care-connections" && (manifest.schemaVersion !== "aws-clinical-core-qualification-target/3" || posture !== "qualification")) refuse();
   if (outputs.PhiAllowed !== "false") refuse();
   if (posture === "drain") {
     if (outputs.Activation !== "draining" || outputs.QualificationExecution !== "disabled") refuse();
@@ -214,8 +220,14 @@ export function assertQualificationStackOutputs(candidate: string, outputs: Reco
     if (parameters[name] === undefined || parameters[name] !== expected[name]) refuse();
   }
   if (parameters.SourceCommit !== manifest.sourceCommit) refuse();
-  if (candidate === "care-messaging" && (parameters.MigrationReleaseSha256 !== manifest.migrationReleaseHash
+  if (["care-messaging", "care-connections"].includes(candidate) && (parameters.MigrationReleaseSha256 !== manifest.migrationReleaseHash
     || outputs.MigrationReleaseSha256 !== manifest.migrationReleaseHash || outputs.DatabaseName !== manifest.databaseName)) refuse();
+  if (candidate === "care-connections") {
+    if (!["false", "true"].includes(parameters.ClaimRecoveryEnabled ?? "")
+      || outputs.ClaimRecoveryEnabled !== parameters.ClaimRecoveryEnabled) refuse();
+    const review = parameters.ClaimRecoveryReviewSha256;
+    if (parameters.ClaimRecoveryEnabled === "true" && (!HEX64.test(review ?? "") || /^0+$/.test(review ?? ""))) refuse();
+  }
   // The stack serves exactly the designated fictional identities: an undesignated subject would be refused by the outer
   // qualification gate, and a missing one (the second consumer, or the retention service when the sweep is under test)
   // would make its case untestable. A draining candidate serves nobody, so its subject list is not required.

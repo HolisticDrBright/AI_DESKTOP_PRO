@@ -2,6 +2,9 @@ if (typeof window !== 'undefined') throw new Error('care-connections-deployment 
 import type { ApiGatewayV2Event, ApiGatewayV2Response } from './aws-identity-api';
 import type { ClinicalCoreDatabase } from './database';
 import { bindCareConnectionDatabase, validateCareConnectionFunctions, type CareConnectionFunctionBinding } from './care-connections-database-binding';
+import { bindCareClaimRecoveryDatabase, validateCareClaimFunctions } from './care-claim-recovery-database-binding';
+import { CARE_CLAIM_RECOVERY_ROUTE, createCareClaimRecoveryApi } from './care-claim-recovery-api';
+import { createCareClaimRecovery } from './care-claim-recovery';
 import { createProductionCareConnectionApi } from './production-care-connections-api';
 import { createProductionCareConnections } from './production-care-connections';
 import { createRdsDataClinicalCoreDatabase, type RdsDataConfiguration } from './rds-data-database';
@@ -10,6 +13,7 @@ import { resolveQualificationExecution } from './qualification-execution';
 export type CareConnectionsBuild = {
   sourceCommit: string; sourceClean: boolean; migrationCount: 106; migrationReleaseSha256: string;
   functions: readonly CareConnectionFunctionBinding[];
+  claimFunctions: readonly CareConnectionFunctionBinding[];
 };
 type Environment = Record<string, string | undefined>;
 const release = '514959bf0d32de55ded312509ae2ebe39a0fdde9f59246b096b0c41ba63f4f9b';
@@ -24,6 +28,7 @@ export function createCareConnectionsHandler(environment: Environment, suppliedB
   try {
     const e = { ...environment }, build = structuredClone(suppliedBuild);
     const functions = validateCareConnectionFunctions(build.functions);
+    const claimFunctions = validateCareClaimFunctions(build.claimFunctions);
     if (!/^[a-f0-9]{40}$/.test(build.sourceCommit) || build.migrationCount !== 106
       || build.migrationReleaseSha256 !== release || e.SOURCE_COMMIT !== build.sourceCommit
       || e.MIGRATION_RELEASE_SHA256 !== release || e.AWS_REGION !== 'us-east-2'
@@ -47,12 +52,14 @@ export function createCareConnectionsHandler(environment: Environment, suppliedB
     // Empty means every new scope is disabled, not an implicit all-scopes grant.
     const enabledScopes = e.ENABLED_CONSENT_SCOPES === undefined || e.ENABLED_CONSENT_SCOPES === ''
       ? [] : e.ENABLED_CONSENT_SCOPES.split(',');
-    let database: ClinicalCoreDatabase | undefined;
-    const getDatabase = () => database ??= bindCareConnectionDatabase(databaseFactory({
+    let rawDatabase: ClinicalCoreDatabase | undefined, database: ClinicalCoreDatabase | undefined, recoveryDatabase: ClinicalCoreDatabase | undefined;
+    const getRawDatabase = () => rawDatabase ??= databaseFactory({
       clusterArn: e.CLINICAL_DATABASE_CLUSTER_ARN ?? '', secretArn: e.CLINICAL_DATABASE_SECRET_ARN ?? '',
       databaseName: e.CLINICAL_DATABASE_NAME ?? '', region: e.AWS_REGION,
-    }), functions);
-    return createProductionCareConnectionApi({ configuration: {
+    });
+    const getDatabase = () => database ??= bindCareConnectionDatabase(getRawDatabase(), functions);
+    const getRecoveryDatabase = () => recoveryDatabase ??= bindCareClaimRecoveryDatabase(getRawDatabase(), functions, claimFunctions);
+    const configuration = {
       consumerIssuer: e.CONSUMER_ISSUER ?? '', consumerAudience: e.CONSUMER_AUDIENCE ?? '',
       workforceIssuer: e.WORKFORCE_ISSUER ?? '', workforceAudience: e.WORKFORCE_AUDIENCE ?? '',
       organizationId: e.CARE_CONNECTIONS_ORGANIZATION_ID ?? '', phiAllowed: e.PHI_ALLOWED === 'true', activation,
@@ -60,10 +67,27 @@ export function createCareConnectionsHandler(environment: Environment, suppliedB
       databaseReviewSha256: e.DATABASE_REVIEW_SHA256, mfaReviewSha256: e.WORKFORCE_MFA_REVIEW_SHA256,
       connectionReviewSha256: e.CONNECTION_REVIEW_SHA256, consentReviewSha256: e.CONSENT_REVIEW_SHA256,
       enabledScopes,
-    }, operations: () => createProductionCareConnections(getDatabase()), now });
+    };
+    const connections = createProductionCareConnectionApi({ configuration,
+      operations: () => createProductionCareConnections(getDatabase()), now });
+    // A separate opt-in and review, not an implied consequence of enabling
+    // connections. A missing/malformed recovery gate must not disable ordinary
+    // status/withdrawal. Disabled recovery carries no qualification assertion.
+    let recovery: (event: ApiGatewayV2Event) => Promise<ApiGatewayV2Response> = async () => unavailable();
+    if (e.CARE_CLAIM_RECOVERY_ENABLED === 'true') {
+      try {
+        recovery = createCareClaimRecoveryApi({ configuration: { ...configuration,
+          claimRecoveryReviewSha256: e.CARE_CLAIM_RECOVERY_REVIEW_SHA256 },
+        operations: () => createCareClaimRecovery(getRecoveryDatabase()), now });
+      } catch { /* Refuse this route before constructing any database client. */ }
+    }
+    return event => event.routeKey === CARE_CLAIM_RECOVERY_ROUTE ? recovery(event) : connections(event);
   } catch {
     // A malformed deployment is not labelled as a qualified execution.
-    return async () => ({ statusCode: 503, headers: { 'content-type': 'application/json', 'cache-control': 'no-store',
-      'x-content-type-options': 'nosniff' }, body: JSON.stringify({ error: 'service_unavailable' }) });
+    return async () => unavailable();
   }
+}
+function unavailable(): ApiGatewayV2Response {
+  return { statusCode: 503, headers: { 'content-type': 'application/json', 'cache-control': 'no-store',
+    'x-content-type-options': 'nosniff' }, body: JSON.stringify({ error: 'service_unavailable' }) };
 }

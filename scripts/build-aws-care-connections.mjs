@@ -20,13 +20,17 @@ const functions = [...sql.matchAll(/create(?: or replace)? function (clinical_(?
   .map(([, schema, name, body]) => ({ name: `${schema}.${name}`, bodySha256: sha(body),
     apiExecute: schema === 'clinical_core' }));
 if (functions.length !== 7 || new Set(functions.map(f => f.name)).size !== 7) throw new Error('care_connection_build_contract_invalid');
+const claimSql = artifact.files['20261006030000_production_care_claim_recovery.sql'];
+const claimFunctions = [...claimSql.matchAll(/create(?: or replace)? function (clinical_(?:core|private))\.([a-z_]+)\([^]*?security definer set search_path='' as \$\$([^]*?)\$\$/g)]
+  .map(([, schema, name, body]) => ({ name: `${schema}.${name}`, bodySha256: sha(body), apiExecute: schema === 'clinical_core' }));
+if (claimFunctions.length !== 2 || new Set(claimFunctions.map(f => f.name)).size !== 2) throw new Error('care_claim_build_contract_invalid');
 const sourceCommit = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
 const sourceClean = !execFileSync('git', ['status', '--porcelain', '--untracked-files=all', '--',
   'src', 'scripts', 'infra', 'package.json', 'package-lock.json', '.gitattributes', '.github'], { encoding: 'utf8' }).trim();
 mkdirSync(out, { recursive: true });
 await build({ entryPoints: ['src/server/clinical-core/care-connections-lambda.ts'], outfile: `${out}/index.js`, bundle: true,
   platform: 'node', target: 'node22', format: 'cjs', minify: true, legalComments: 'none',
-  define: { __CARE_CONNECTIONS_BUILD__: JSON.stringify({ sourceCommit, sourceClean, migrationCount: 106, migrationReleaseSha256, functions }) } });
+  define: { __CARE_CONNECTIONS_BUILD__: JSON.stringify({ sourceCommit, sourceClean, migrationCount: 106, migrationReleaseSha256, functions, claimFunctions }) } });
 const ref = name => ({ Ref: name }), sub = value => ({ 'Fn::Sub': value });
 const nonempty = name => ({ 'Fn::Not': [{ 'Fn::Equals': [ref(name), ''] }] });
 const hash = { Type: 'String', Default: '', AllowedPattern: '^$|^[a-f0-9]{64}$' };
@@ -43,6 +47,7 @@ const template = {
     PhiAllowed: { Type: 'String', Default: 'false', AllowedValues: ['false', 'true'] },
     Activation: { Type: 'String', Default: 'blocked', AllowedValues: ['blocked', 'approved'] },
     ActivationEvidenceSha256: hash, DatabaseReviewSha256: hash, WorkforceMfaReviewSha256: hash, ConnectionReviewSha256: hash, ConsentReviewSha256: hash, RetentionReviewSha256: hash,
+    ClaimRecoveryEnabled: { Type: 'String', Default: 'false', AllowedValues: ['false', 'true'] }, ClaimRecoveryReviewSha256: hash,
     EnabledConsentScopes: { Type: 'String', Default: '', AllowedPattern: '^$|^(programs|protocols_supplements|nutrition|appointments|messaging|forms_checkins|symptoms_adherence|wearables|reproductive_health|lab_summaries|lab_results_import|lab_specimen_context|billing_links|research_n_of_1)(,(programs|protocols_supplements|nutrition|appointments|messaging|forms_checkins|symptoms_adherence|wearables|reproductive_health|lab_summaries|lab_results_import|lab_specimen_context|billing_links|research_n_of_1))*$' },
     DatabaseClusterArn: { Type: 'String', AllowedPattern: '^arn:aws:rds:us-east-2:[0-9]{12}:cluster:[A-Za-z0-9-]{1,63}$' },
     DatabaseSecretArn: { Type: 'String', AllowedPattern: '^arn:aws:secretsmanager:us-east-2:[0-9]{12}:secret:[A-Za-z0-9/_+=.@!-]+$' },
@@ -61,8 +66,13 @@ const template = {
     Active: { 'Fn::And': [{ 'Fn::Equals': [ref('PhiAllowed'), 'true'] }, { 'Fn::Equals': [ref('Activation'), 'approved'] },
       { 'Fn::Equals': [ref('AWS::AccountId'), '173535830222'] }, { 'Fn::Equals': [ref('AWS::Region'), 'us-east-2'] }, { Condition: 'ProductionReviewsPresent' }] },
     ...qualificationConditions(reviewed), HasAlarmRecipient: nonempty('AlarmTopicArn'),
+    RecoveryEnabled: { 'Fn::And': [{ Condition: 'Enabled' }, { 'Fn::Equals': [ref('ClaimRecoveryEnabled'), 'true'] }, nonempty('ClaimRecoveryReviewSha256')] },
   },
   Rules: {
+    ReviewedRecovery: { RuleCondition: { 'Fn::Equals': [ref('ClaimRecoveryEnabled'), 'true'] }, Assertions: [
+      { Assert: nonempty('ClaimRecoveryReviewSha256'), AssertDescription: 'Independent recovery review required' },
+      { Assert: { 'Fn::Or': [{ 'Fn::Equals': [ref('QualificationExecution'), 'enabled'] }, { 'Fn::Equals': [ref('PhiAllowed'), 'true'] }] }, AssertDescription: 'Reviewed serving posture required for recovery' },
+    ] },
     ...qualificationRules({ extra: [...reviewed.map(name => ({ Assert: nonempty(name), AssertDescription: `${name} required for qualification` })),
       { Assert: { 'Fn::Equals': [ref('DatabaseName'), 'clinical_core_qualification'] }, AssertDescription: 'Isolated qualification database required' }] }),
     ReviewedProduction: { RuleCondition: { 'Fn::Equals': [ref('PhiAllowed'), 'true'] }, Assertions: [
@@ -101,6 +111,7 @@ const template = {
         CARE_CONNECTIONS_EVIDENCE_SHA256: ref('ActivationEvidenceSha256'), DATABASE_REVIEW_SHA256: ref('DatabaseReviewSha256'),
         WORKFORCE_MFA_REVIEW_SHA256: ref('WorkforceMfaReviewSha256'), CONNECTION_REVIEW_SHA256: ref('ConnectionReviewSha256'), CONSENT_REVIEW_SHA256: ref('ConsentReviewSha256'),
         ENABLED_CONSENT_SCOPES: ref('EnabledConsentScopes'), RETENTION_REVIEW_SHA256: ref('RetentionReviewSha256'),
+        CARE_CLAIM_RECOVERY_ENABLED: ref('ClaimRecoveryEnabled'), CARE_CLAIM_RECOVERY_REVIEW_SHA256: ref('ClaimRecoveryReviewSha256'),
         CLINICAL_DATABASE_CLUSTER_ARN: ref('DatabaseClusterArn'), CLINICAL_DATABASE_SECRET_ARN: ref('DatabaseSecretArn'), CLINICAL_DATABASE_NAME: ref('DatabaseName'),
         SOURCE_COMMIT: ref('SourceCommit'), MIGRATION_RELEASE_SHA256: ref('MigrationReleaseSha256'), DEPLOYMENT_ACCOUNT_ID: ref('AWS::AccountId'),
         ...qualificationEnvironment(),
@@ -117,7 +128,8 @@ const template = {
   },
   Outputs: { PhiAllowed: { Value: ref('PhiAllowed') }, Activation: { Value: ref('Activation') }, SourceCommit: { Value: ref('SourceCommit') },
     MigrationReleaseSha256: { Value: ref('MigrationReleaseSha256') }, DatabaseName: { Value: ref('DatabaseName') },
-    QualificationExecution: { Value: { 'Fn::If': ['Qualification', 'enabled', 'disabled'] } }, FunctionName: { Value: ref('Function') } },
+    QualificationExecution: { Value: { 'Fn::If': ['Qualification', 'enabled', 'disabled'] } }, FunctionName: { Value: ref('Function') },
+    ClaimRecoveryEnabled: { Value: { 'Fn::If': ['RecoveryEnabled', 'true', 'false'] } } },
 };
 template.Conditions.QualificationPosture['Fn::And'].push(
   { 'Fn::Equals': [ref('AWS::AccountId'), '588966314750'] }, { 'Fn::Equals': [ref('AWS::Region'), 'us-east-2'] },
@@ -126,7 +138,8 @@ for (const pool of ['Consumer', 'Workforce']) template.Resources[`${pool}Authori
   Type: 'AWS::ApiGatewayV2::Authorizer', Properties: { ApiId: ref('ApiId'), Name: sub(`\${ApiId}-care-connections-${pool.toLowerCase()}`), AuthorizerType: 'JWT',
     IdentitySource: ['$request.header.Authorization'], JwtConfiguration: { Issuer: ref(`${pool}Issuer`), Audience: [ref(`${pool}Audience`)] } },
 };
-for (const [name, pool, path] of [['ConsumerConnection', 'Consumer', 'consumer/connection'], ['WorkforceConnection', 'Workforce', 'workforce/connection']]) {
+for (const [name, pool, path] of [['ConsumerConnection', 'Consumer', 'consumer/connection'], ['WorkforceConnection', 'Workforce', 'workforce/connection'],
+  ['ConsumerClaimRecovery', 'Consumer', 'consumer/connection-claims']]) {
   template.Resources[`Route${name}`] = { Type: 'AWS::ApiGatewayV2::Route', Properties: { ApiId: ref('ApiId'), RouteKey: `POST /clinical-core/${path}`,
     AuthorizationType: 'JWT', AuthorizerId: ref(`${pool}Authorizer`), Target: { 'Fn::Join': ['/', ['integrations', ref('Integration')]] } } };
   template.Resources[`Invoke${name}`] = { Type: 'AWS::Lambda::Permission', Properties: { FunctionName: ref('Function'), Action: 'lambda:InvokeFunction',
@@ -138,6 +151,6 @@ writeFileSync(`${out}/deployment.zip`,zip);
 writeFileSync(`${out}/artifact-manifest.json`, JSON.stringify({ contract: 'care-connections-deployment/1', sourceCommit, sourceClean,
   migrationCount: 106, migrationReleaseSha256, codeSha256: sha(readFileSync(`${out}/index.js`)), templateSha256: sha(readFileSync(`${out}/template.json`)),
   deploymentZipSha256:sha(zip), deploymentZipBytes:zip.length,
-  functions, defaults: { phiAllowed: false, activation: 'blocked', qualification: 'disabled' }, deploymentPerformed: false,
+  functions, claimFunctions, defaults: { phiAllowed: false, activation: 'blocked', qualification: 'disabled', claimRecoveryEnabled: false }, deploymentPerformed: false,
   remaining: ['independent reviews', 'hosted target/operator binding and acceptance', 'approved consent-copy registration and independent operator audit', 'clinic lifecycle/amendments', 'V2 production consent wiring', 'device acceptance'] }, null, 2) + '\n');
 console.log('Built care connections deployment candidate: artifact-pinned, blocked/logs-only by default. No AWS access or activation.');

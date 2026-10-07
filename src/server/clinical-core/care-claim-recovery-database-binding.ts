@@ -12,7 +12,7 @@ export function validateCareClaimFunctions(supplied:readonly CareConnectionFunct
     ||!specs.some(s=>s[0]===p.name&&s[2]===p.apiExecute)))throw new Error('care_claim_binding_invalid');
   return pins;
 }
-/** Check both the immutable 105 claim dependency and this unreleased overlay
+/** Check both the immutable 105 claim dependency and canonical 106 recovery
  * inside each transaction, under the API role, before identity or claim work. */
 export function bindCareClaimRecoveryDatabase(database:ClinicalCoreDatabase,
   predecessor:readonly CareConnectionFunctionBinding[],supplied:readonly CareConnectionFunctionBinding[]):ClinicalCoreDatabase{
