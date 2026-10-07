@@ -35,6 +35,7 @@ jobs:
       - name: Unreleased claim receipt, settlement and preserving upgrade (fictional embedded database only)
         run: |
           npx vitest run src/server/clinical-core/care-claim-recovery.database.test.ts src/server/clinical-core/care-claim-recovery-api.test.ts src/server/clinical-core/care-claim-recovery-source-artifact.test.ts src/server/clinical-core/care-claim-recovery-schema-upgrade.database.test.ts
+          npx vitest run src/server/clinical-core/care-claim-recovery-upgrade-command.test.ts
           npm run build:care-claim-recovery-source
       - name: Bound qualification-only connection upgrade command (no AWS calls)
         run: |

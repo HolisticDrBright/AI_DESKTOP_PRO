@@ -9,6 +9,7 @@ import type { ClinicalCoreMigration } from './migrations';
 import { applyProductionClinicalCoreMigrations } from './production-migrations';
 import type { QualificationUpgradeConfiguration } from './qualification-schema-upgrade';
 import { CARE_CLAIM_RECOVERY_UPGRADE, runCareClaimRecoverySchemaUpgrade } from './care-claim-recovery-schema-upgrade';
+import { executeCareClaimRecoveryUpgradeCommand } from './care-claim-recovery-upgrade-command';
 
 const sha = (s: string) => createHash('sha256').update(s).digest('hex');
 const configuration: QualificationUpgradeConfiguration = { expectedAccountId: '588966314750', region: 'us-east-2', phiAllowed: false,
@@ -134,13 +135,34 @@ describe('prepared preserving claim recovery 105 to 106 transition', () => {
   });
   it('applies once and then preserves populated request and audit rows on inspection, replay and rehearsal', async () => {
     const before = await run('inspect');
-    expect(await run('upgrade')).toMatchObject({ observedMigrationCount: 106, tableCount: 209, applied: true, alreadyApplied: false,
+    const observations: string[] = [];
+    // Real command -> real preserving runner -> real embedded SQL, with only
+    // STS/DescribeStacks and the database name fictionalized. Not AWS proof.
+    const dependencies = {
+      observeCaller: () => { observations.push('caller'); return { Account: '588966314750',
+        Arn: 'arn:aws:sts::588966314750:assumed-role/FictionalOperator/session' }; },
+      observeFoundation: () => { observations.push('foundation'); return { Stacks: [{ StackStatus: 'CREATE_COMPLETE',
+        StackId: 'arn:aws:cloudformation:us-east-2:588966314750:stack/ai-clinical-core-qualification-foundation/fictional',
+        Outputs: Object.entries({ PhiAllowed: 'false', Activation: 'blocked', QualificationExecution: 'disabled',
+          DatabaseName: configuration.qualificationDatabaseName, DatabaseClusterArn: configuration.clusterArn,
+          DatabaseSecretArn: configuration.secretArn }).map(([OutputKey, OutputValue]) => ({ OutputKey, OutputValue })) }] }; },
+      loadMigrations: () => migrations,
+      createDatabase: () => database(),
+    };
+    const upgraded = await executeCareClaimRecoveryUpgradeCommand(['upgrade', '--confirm-fictional-care-claim-recovery-upgrade'],
+      { sourceCommit: '1'.repeat(40), clean: true }, dependencies);
+    expect(upgraded).toMatchObject({ observedMigrationCount: 106, tableCount: 209, applied: true, alreadyApplied: false,
       rowCount: 3, dataSha256: before.dataSha256, activation: 'blocked', phiAllowed: false, canonical: false });
+    expect(upgraded.rehearsal).toEqual({ rolledBack: true, dataSha256: before.dataSha256, rowCount: 3 });
+    expect(observations).toEqual(['caller', 'foundation', 'caller', 'foundation']);
     await pg.query("insert into clinical_core.care_claim_requests(organization_id,consumer_person_id,request_id,status) values($1,$2,$3,'cancelled')", [org, owner, request]);
     await pg.query("insert into clinical_audit.care_claim_events(organization_id,consumer_person_id,request_id,action,outcome) values($1,$2,$3,'settle','cancelled')", [org, owner, request]);
     const after = await run('inspect'); expect(after).toMatchObject({ observedMigrationCount: 106, rowCount: 5, alreadyApplied: true });
     expect(await run('upgrade')).toMatchObject({ applied: false, alreadyApplied: true, dataSha256: after.dataSha256, rowCount: 5 });
     expect(await run('rehearse')).toMatchObject({ rolledBack: true, alreadyApplied: true, dataSha256: after.dataSha256, rowCount: 5 });
+    expect(await executeCareClaimRecoveryUpgradeCommand(['upgrade', '--confirm-fictional-care-claim-recovery-upgrade'],
+      { sourceCommit: '1'.repeat(40), clean: true }, dependencies)).toMatchObject({ applied: false, alreadyApplied: true, rowCount: 5,
+        dataSha256: after.dataSha256, rehearsal: { rolledBack: true, dataSha256: after.dataSha256, rowCount: 5 } });
     expect(JSON.stringify(after)).not.toMatch(/FICTIONAL|secretArn|subject_fictional|first_name/);
   });
 });

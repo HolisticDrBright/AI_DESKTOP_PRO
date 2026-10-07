@@ -107,7 +107,8 @@ class RehearsalRollback extends Error {
 }
 
 /** Qualification-only preparation. Calling this library needs the independently
- * observed member account/foundation boundary; no AWS entry point is released. */
+ * observed member account/foundation boundary. The prepared source operator
+ * supplies that boundary; this is still not canonical promotion or activation. */
 export async function runCareClaimRecoverySchemaUpgrade(database: ClinicalCoreDatabase, suppliedMigrations: ClinicalCoreMigration[],
   suppliedConfiguration: QualificationUpgradeConfiguration, command: 'inspect' | 'rehearse' | 'upgrade'): Promise<CareClaimRecoveryUpgradeResult> {
   const migrations = suppliedMigrations.map(m => ({ ...m })), c = { ...suppliedConfiguration };

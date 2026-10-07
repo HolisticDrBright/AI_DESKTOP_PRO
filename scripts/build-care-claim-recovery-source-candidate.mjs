@@ -44,13 +44,25 @@ for(const m of baseline.manifest.migrations)writeFileSync(resolve(preparedDirect
 writeFileSync(resolve(preparedDirectory,proposedFile),sql);
 const preparedManifest=JSON.stringify({contract_version:'clinical-core-migrations/1',migrations:proposedMigrations},null,2)+'\n';
 writeFileSync(resolve(preparedDirectory,'manifest.json'),preparedManifest);
+// Self-contained operator: adjacent dist files, cwd and environment cannot
+// substitute a different migration history after the source artifact is built.
+const embeddedMigrations=proposedMigrations.map(m=>({version:m.version,name:m.file.slice(15,-4),
+  sql:m.version===upgrade.version?sql:baseline.files[m.file],
+  sha256:sha(m.version===upgrade.version?sql:baseline.files[m.file])}));
+const operatorFile='qualification-upgrade-operator.cjs';
+await build({entryPoints:['src/server/clinical-core/care-claim-recovery-schema-upgrade-operator.ts'],outfile:resolve(out,operatorFile),
+  bundle:true,platform:'node',target:'node22',format:'cjs',minify:false,sourcemap:false,legalComments:'none',treeShaking:true,
+  define:{__CARE_CLAIM_RECOVERY_UPGRADE_BUILD__:JSON.stringify({sourceCommit,clean:!sourceDirty}),
+    __CARE_CLAIM_RECOVERY_MIGRATIONS__:JSON.stringify(embeddedMigrations)}});
 const manifest={contract:'care-claim-recovery-source-candidate/1',status:'unreleased',deployable:false,sourceCommit,sourceDirty,
   predecessor:{migrationCount:105,ledgerReleaseSha256:ledger,canonicalAssemblySha256:baseline.releaseHash},
   overlay:{file:'care-claim-recovery.sql',sha256:sha(sql),bytes:Buffer.byteLength(sql),canonical:false,hostedVerified:false},
   libraries,dependencyFunctions,functions:overlayFunctions,
-  preparedTransition:{status:'unregistered',canonical:false,qualificationOnly:true,operatorReleased:false,
+  preparedTransition:{status:'unregistered',canonical:false,qualificationOnly:true,operatorReleased:true,
     fromLedgerSha256:upgrade.from,toLedgerSha256:upgrade.to,migrationCount:106,tableCountBefore:207,tableCountAfter:209,
-    mandatoryRollbackRehearsal:true,manifest:{file:'prepared-migrations/manifest.json',sha256:sha(preparedManifest)}},
+    mandatoryRollbackRehearsal:true,manifest:{file:'prepared-migrations/manifest.json',sha256:sha(preparedManifest)},
+    operator:{file:operatorFile,sha256:sha(readFileSync(resolve(out,operatorFile))),scope:'prepared_qualification_only',
+      embeddedMigrations:true,observedTarget:true,postRehearsalTargetRecheck:true,migrationPerformed:false}},
   proposedRoutes:['POST /clinical-core/consumer/connection-claims'],
   reviewRequired:'separate claim recovery/settlement review; source digests are not review evidence',
   proposedCoveredEntityMapping:[
@@ -60,7 +72,7 @@ const manifest={contract:'care-claim-recovery-source-candidate/1',status:'unrele
       dependsOn:['clinical_core.organizations','clinical_core.persons'],appendOnly:true,status:'inventory_and_disposition_pending'},
   ],
   activation:'blocked',phiAllowed:false,seededApprovals:false,seededIdentities:false,seededConsents:false,
-  remaining:['canonical 105-prefix promotion and reviewed disposition; release qualification-only upgrade operator with observed account/foundation binding',
+  remaining:['canonical 105-prefix promotion and reviewed disposition; hosted verification of the qualification-only bound upgrade operator',
     'V2 request-id journal migration preserving id-less legacy uncertainty; explicit receipt and settlement UI',
     'new route/Lambda/template/fleet/qualification target and capacity integration',
     'reviewed metadata binding and independent recovery/security/retention review',

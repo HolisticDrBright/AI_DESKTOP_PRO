@@ -11,7 +11,8 @@ type Manifest={contract:string;status:string;deployable:boolean;sourceCommit:str
   dependencyFunctions:{name:string;bodySha256:string;apiExecute:boolean}[];proposedRoutes:string[];
   preparedTransition:{status:string;canonical:boolean;qualificationOnly:boolean;operatorReleased:boolean;fromLedgerSha256:string;
     toLedgerSha256:string;migrationCount:number;tableCountBefore:number;tableCountAfter:number;mandatoryRollbackRehearsal:boolean;
-    manifest:{file:string;sha256:string}};
+    manifest:{file:string;sha256:string};operator:{file:string;sha256:string;scope:string;embeddedMigrations:boolean;
+      observedTarget:boolean;postRehearsalTargetRecheck:boolean;migrationPerformed:boolean}};
   proposedCoveredEntityMapping:{table:string;status:string}[];reviewRequired:string;
   activation:string;phiAllowed:boolean;seededApprovals:boolean;seededIdentities:boolean;seededConsents:boolean;remaining:string[]};
 let manifest:Manifest;
@@ -44,7 +45,7 @@ describe('unreleased claim recovery mapping',()=>{
     for(const l of manifest.libraries)expect(l.sha256).toBe(sha(readFileSync(join(directory,l.file))));
   });
   it('emits an exact unregistered transition with the original 105 prefix and no deployment authority',()=>{
-    expect(manifest.preparedTransition).toMatchObject({status:'unregistered',canonical:false,qualificationOnly:true,operatorReleased:false,
+    expect(manifest.preparedTransition).toMatchObject({status:'unregistered',canonical:false,qualificationOnly:true,operatorReleased:true,
       fromLedgerSha256:manifest.predecessor.ledgerReleaseSha256,migrationCount:106,tableCountBefore:207,tableCountAfter:209,
       mandatoryRollbackRehearsal:true});
     const bytes=readFileSync(join(directory,manifest.preparedTransition.manifest.file),'utf8');
@@ -62,6 +63,17 @@ describe('unreleased claim recovery mapping',()=>{
     expect(sha(prepared.migrations.map(m=>`${m.version}:${sha(readFileSync(join(directory,'prepared-migrations',m.file)))}`).join('\n')))
       .toBe(manifest.preparedTransition.toLedgerSha256);
     expect(manifest.deployable).toBe(false);expect(manifest.activation).toBe('blocked');
+  });
+  it('emits a hashed self-contained prepared operator that refuses invalid commands without AWS calls',()=>{
+    const operator=manifest.preparedTransition.operator;
+    expect(operator).toMatchObject({scope:'prepared_qualification_only',embeddedMigrations:true,observedTarget:true,
+      postRehearsalTargetRecheck:true,migrationPerformed:false});
+    const file=join(directory,operator.file);expect(operator.sha256).toBe(sha(readFileSync(file)));
+    expect(()=>execFileSync(process.execPath,[file,'upgrade','--skip-rehearsal'],{encoding:'utf8',timeout:10000}))
+      .toThrow();
+    try{execFileSync(process.execPath,[file,'inspect','--database=clinical_core'],{encoding:'utf8',timeout:10000,stdio:['ignore','pipe','pipe']});
+      throw new Error('operator unexpectedly accepted an override');}
+    catch(error){expect(String((error as {stderr?:Buffer}).stderr)).toContain('boundary_refused');}
   });
   it('names the pending route, dispositions and real integration obligations',()=>{
     expect(manifest.proposedRoutes).toEqual(['POST /clinical-core/consumer/connection-claims']);
