@@ -48,6 +48,8 @@ jobs:
         run: |
           npx vitest run src/server/clinical-core/care-erasure-schema-upgrade.database.test.ts src/server/clinical-core/care-erasure-upgrade-command.test.ts
           npm run build:aws-care-erasure-upgrade
+          npx vitest run src/server/clinical-core/care-erasure-intent-upgrade.database.test.ts src/server/clinical-core/care-erasure-intent-command.test.ts
+          npm run build:aws-care-erasure-intent-inspector
       - name: Qualification-only exact approved consent copy (no AWS calls or approvals)
         run: |
           npx vitest run src/server/clinical-core/care-consent-copy-registration.database.test.ts src/server/clinical-core/care-consent-copy-command.test.ts

@@ -175,3 +175,39 @@ AWS semantics: [PublishVersion](https://docs.aws.amazon.com/lambda/latest/api/AP
 Reviewed security/retention/provider configuration, real agreement coverage,
 Core $19.99 store/provider acceptance and separate PHI activation remain gates.
 Clinical holds/exclusions/source verification and the mobile-build hold remain.
+
+## Intent inspection and rollback runner
+
+`npm run build:aws-care-erasure-intent-inspector` produces the embedded runner
+at `dist/aws-clinical-core/care-erasure-intent-operator/index.cjs`. Its manifest
+binds the exact source commit, clean status, parent 46-source migration history,
+two reference migrations and the blocked successor SQL digest. The target is
+fixed to member account 588966314750, Ohio, synthetic staging `clinical_core`.
+Qualification and production target overrides are refused before opening a
+database. Build and inspection do not authorize release or PHI activation.
+
+```powershell
+node dist/aws-clinical-core/care-erasure-intent-operator/index.cjs inspect
+node dist/aws-clinical-core/care-erasure-intent-operator/index.cjs rehearse --confirm-fictional-intent-rollback
+```
+
+Inspection requires the exact terminal parent to be applied: live47/source46,
+or the already-applied successor live48/source47. The older live46/source45
+target is refused; this runner never applies the parent automatically. A
+rollback rehearsal requires a clean build, performs initial inspection,
+transactional DDL with rollback, and independent final inspection. It compares
+complete bounded data digests, schema, counts and history, then freshly checks
+the AWS account and completed foundation. Drift or missing prerequisites is a
+refusal, not a skipped pass.
+
+The `upgrade` command always returns `api_recovery_required` before AWS access.
+There is no report-file, environment, review-hash or confirmation override.
+Implement and physically observe the schema-compatible API recovery and return
+to candidate before adding the lasting invocation and canonical registration.
+The earlier parent upgrade executable remains held under the required order
+above; its confirmation option does not meet the recovery prerequisite.
+
+This runner changes no API traffic, records, provider releases, retention
+approval or activation. `hostedAcceptance`, `recoveryAcceptance` and
+`activationApproved` remain false. All six original commercial scopes remain
+partial until their hosted, device, provider and human gates are satisfied.

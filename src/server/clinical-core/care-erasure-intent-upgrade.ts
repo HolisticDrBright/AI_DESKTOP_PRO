@@ -6,7 +6,8 @@ import {assertCareErasureUpgrade,CARE_ERASURE_UPGRADE,careErasurePreservation as
  type CareErasureUpgradeConfiguration} from './care-erasure-schema-upgrade';
 
 /** Separate blocked release identity. Do not append it to the canonical ledger
- * until the matched API recovery/release review is complete. No CLI is provided. */
+ * until the matched API recovery/release review is complete. The separate CLI
+ * permits only inspection and rollback rehearsal, never lasting upgrade. */
 export const CARE_ERASURE_INTENT_UPGRADE=Object.freeze({version:'20261007010000',name:'synthetic_care_erasure_intents',
  sqlSha256:'4be2ca72b0486bec171f16c5299c898d70bfbdbfd3143c4bb216fccc329299ec'});
 const sha=(value:string)=>createHash('sha256').update(value).digest('hex');

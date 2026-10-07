@@ -35,7 +35,8 @@ export function sourceMapping(migrations,sql,sourceCommit,sourceDirty){
  if(digest(JSON.stringify(liveBefore))!=='99ad59a94bab717a4e1299979db177394e931c9ebb7f40aa8be1ba1d99d52148')
   throw new Error('care_erasure_recovery_parent_refused');
  return {contract:'care-erasure-recovery-source-candidate/1',status:'blocked_source_only',sourceCommit,sourceDirty,
-  deployable:false,canonicalRegistered:false,operatorExists:false,preservingOperatorLibrary:true,handlerIntegrated:true,matchedMobileRelease:false,
+  deployable:false,canonicalRegistered:false,operatorExists:false,preservingOperatorLibrary:true,
+  inspectionRehearsalExecutable:true,lastingUpgradeExecutable:false,handlerIntegrated:true,matchedMobileRelease:false,
   clientIntegration:'requires_matched_v2_source_evidence',
   hostedVerified:false,deviceVerified:false,productionApproved:false,phiAllowed:false,
   predecessor:p,overlay:{file:'care-erasure-intents.sql',sha256:digest(sql),bytes:Buffer.byteLength(sql)},
@@ -49,7 +50,7 @@ export function sourceMapping(migrations,sql,sourceCommit,sourceDirty){
    discoveryCoverage:'committed_owner_records_not_global_clearance',wholeScanIsAtomic:false},
   retention:{intentRecords:'immutable_no_deletion_authority',reviewedPolicy:false,
    clinicDisposition:'not_implemented_by_this_candidate',providerCopies:'not_covered'},
-  remaining:['canonical migration registration and reviewed preserving operator with rollback/data proof',
+  remaining:['canonical migration registration and lasting preserving operator gated by actual API recovery',
    'API action routing plus exact code/schema release mapping and real API recovery rehearsal',
    'bind V2 prepare-before-dispatch, durable journal, owner discovery and recovery UI to this exact server release',
    'real concurrent requests, lost replies, second-device recovery and denied-owner hosted acceptance',

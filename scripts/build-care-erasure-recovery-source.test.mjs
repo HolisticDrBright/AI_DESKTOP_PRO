@@ -14,6 +14,8 @@ test('exact normalized predecessor and blocked metadata; no code hash is an appr
  assert.equal(m.predecessor,CARE_ERASURE_RECOVERY_PARENT);
  assert.equal(m.handlerIntegrated,true);
  assert.equal(m.preservingOperatorLibrary,true);
+ assert.equal(m.inspectionRehearsalExecutable,true);
+ assert.equal(m.lastingUpgradeExecutable,false);
  assert.equal(m.candidateLedgerMapping.sourceAfterCount,47);
  assert.equal(m.candidateLedgerMapping.liveBeforeCount,47);
  assert.equal(m.candidateLedgerMapping.liveAfterCount,48);
