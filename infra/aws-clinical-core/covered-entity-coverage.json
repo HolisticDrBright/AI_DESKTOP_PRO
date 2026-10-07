@@ -11,11 +11,15 @@
     },
     {
       "table": "clinical_audit.care_message_access_events",
+      "appendOnly": true,
+      "disposition": "Blocked by immutable trigger until a separately reviewed clinic retention/disposition procedure exists; inventory is not deletion authority.",
       "scope": "organization_column",
       "column": "organization_id"
     },
     {
       "table": "clinical_core.care_message_thread_links",
+      "appendOnly": true,
+      "disposition": "Blocked by immutable trigger until a separately reviewed clinic retention/disposition procedure exists; inventory is not deletion authority.",
       "scope": "parent",
       "column": "connection_id",
       "parent": "clinical_core.patient_connections",
@@ -24,6 +28,8 @@
     },
     {
       "table": "clinical_core.care_message_receipts",
+      "appendOnly": true,
+      "disposition": "Blocked by immutable trigger until a separately reviewed clinic retention/disposition procedure exists; inventory is not deletion authority.",
       "scope": "parent",
       "column": "conversation_id",
       "parent": "clinical_core.care_message_thread_links",
@@ -32,6 +38,8 @@
     },
     {
       "table": "clinical_core.care_message_cancellations",
+      "appendOnly": true,
+      "disposition": "Blocked by immutable trigger until a separately reviewed clinic retention/disposition procedure exists; inventory is not deletion authority.",
       "scope": "parent",
       "column": "connection_id",
       "parent": "clinical_core.patient_connections",
@@ -46,6 +54,8 @@
     },
     {
       "table": "clinical_audit.events",
+      "appendOnly": true,
+      "disposition": "Blocked by immutable trigger until a separately reviewed clinic retention/disposition procedure exists; inventory is not deletion authority.",
       "scope": "organization_column",
       "column": "organization_id"
     },
@@ -72,6 +82,8 @@
     },
     {
       "table": "clinical_core.appointment_status_events",
+      "appendOnly": true,
+      "disposition": "Blocked by immutable trigger until a separately reviewed clinic retention/disposition procedure exists; inventory is not deletion authority.",
       "scope": "organization_column",
       "column": "organization_id",
       "dependsOn": [
@@ -194,6 +206,8 @@
     },
     {
       "table": "clinical_core.clinical_note_versions",
+      "appendOnly": true,
+      "disposition": "Blocked by immutable trigger until a separately reviewed clinic retention/disposition procedure exists; inventory is not deletion authority.",
       "scope": "parent",
       "column": "note_id",
       "parent": "clinical_core.clinical_notes",
@@ -249,6 +263,8 @@
     },
     {
       "table": "clinical_core.consent_grants",
+      "appendOnly": true,
+      "disposition": "Blocked by immutable trigger until a separately reviewed clinic retention/disposition procedure exists; inventory is not deletion authority.",
       "scope": "organization_column",
       "column": "organization_id",
       "dependsOn": [
@@ -259,6 +275,8 @@
     },
     {
       "table": "clinical_core.consumer_clinical_record_versions",
+      "appendOnly": true,
+      "disposition": "Blocked by immutable trigger until a separately reviewed clinic retention/disposition procedure exists; inventory is not deletion authority.",
       "scope": "organization_column",
       "column": "organization_id",
       "dependsOn": [
@@ -368,6 +386,8 @@
     },
     {
       "table": "clinical_core.hypothesis_reviews",
+      "appendOnly": true,
+      "disposition": "Blocked by immutable trigger until a separately reviewed clinic retention/disposition procedure exists; inventory is not deletion authority.",
       "scope": "organization_column",
       "column": "organization_id",
       "dependsOn": [
@@ -427,6 +447,8 @@
     },
     {
       "table": "clinical_core.lab_specimen_context_versions",
+      "appendOnly": true,
+      "disposition": "Blocked by immutable trigger until a separately reviewed clinic retention/disposition procedure exists; inventory is not deletion authority.",
       "scope": "organization_column",
       "column": "organization_id",
       "dependsOn": [
@@ -512,6 +534,8 @@
     },
     {
       "table": "clinical_core.note_addenda",
+      "appendOnly": true,
+      "disposition": "Blocked by immutable trigger until a separately reviewed clinic retention/disposition procedure exists; inventory is not deletion authority.",
       "scope": "parent",
       "column": "note_id",
       "parent": "clinical_core.clinical_notes",
@@ -533,6 +557,8 @@
     },
     {
       "table": "clinical_core.note_signatures",
+      "appendOnly": true,
+      "disposition": "Blocked by immutable trigger until a separately reviewed clinic retention/disposition procedure exists; inventory is not deletion authority.",
       "scope": "parent",
       "column": "note_id",
       "parent": "clinical_core.clinical_notes",
@@ -834,6 +860,8 @@
     },
     {
       "table": "clinical_core.question_answers",
+      "appendOnly": true,
+      "disposition": "Blocked by immutable trigger until a separately reviewed clinic retention/disposition procedure exists; inventory is not deletion authority.",
       "scope": "parent",
       "column": "question_id",
       "parent": "clinical_core.differential_questions",
@@ -844,6 +872,8 @@
     },
     {
       "table": "clinical_core.question_feedback",
+      "appendOnly": true,
+      "disposition": "Blocked by immutable trigger until a separately reviewed clinic retention/disposition procedure exists; inventory is not deletion authority.",
       "scope": "parent",
       "column": "question_id",
       "parent": "clinical_core.differential_questions",
@@ -854,6 +884,8 @@
     },
     {
       "table": "clinical_core.question_status_transitions",
+      "appendOnly": true,
+      "disposition": "Blocked by immutable trigger until a separately reviewed clinic retention/disposition procedure exists; inventory is not deletion authority.",
       "scope": "parent",
       "column": "question_id",
       "parent": "clinical_core.differential_questions",
@@ -1133,6 +1165,8 @@
     },
     {
       "table": "clinical_private.recording_access_events",
+      "appendOnly": true,
+      "disposition": "Blocked by immutable trigger until a separately reviewed clinic retention/disposition procedure exists; inventory is not deletion authority.",
       "scope": "parent",
       "column": "encounter_id",
       "parent": "clinical_core.encounters",
@@ -1144,6 +1178,8 @@
     },
     {
       "table": "clinical_private.recording_authority_events",
+      "appendOnly": true,
+      "disposition": "Blocked by immutable trigger until a separately reviewed clinic retention/disposition procedure exists; inventory is not deletion authority.",
       "scope": "parent",
       "column": "encounter_id",
       "parent": "clinical_private.recording_controls",
@@ -1159,6 +1195,8 @@
     },
     {
       "table": "clinical_private.recording_cleanup_access_events",
+      "appendOnly": true,
+      "disposition": "Blocked by immutable trigger until a separately reviewed clinic retention/disposition procedure exists; inventory is not deletion authority.",
       "scope": "parent",
       "column": "recording_id",
       "parent": "clinical_private.encounter_captures",
@@ -1171,6 +1209,8 @@
     },
     {
       "table": "clinical_private.recording_cleanup_attempt_events",
+      "appendOnly": true,
+      "disposition": "Blocked by immutable trigger until a separately reviewed clinic retention/disposition procedure exists; inventory is not deletion authority.",
       "scope": "parent",
       "column": "attempt_id",
       "parent": "clinical_private.recording_cleanup_attempts",
@@ -1181,6 +1221,8 @@
     },
     {
       "table": "clinical_private.recording_cleanup_attempts",
+      "appendOnly": true,
+      "disposition": "Blocked by immutable trigger until a separately reviewed clinic retention/disposition procedure exists; inventory is not deletion authority.",
       "scope": "parent",
       "column": "recording_id",
       "parent": "clinical_private.recording_cleanup_intents",
@@ -1193,6 +1235,8 @@
     },
     {
       "table": "clinical_private.recording_cleanup_intent_events",
+      "appendOnly": true,
+      "disposition": "Blocked by immutable trigger until a separately reviewed clinic retention/disposition procedure exists; inventory is not deletion authority.",
       "scope": "parent",
       "column": "recording_id",
       "parent": "clinical_private.recording_cleanup_intents",
@@ -1229,6 +1273,8 @@
     },
     {
       "table": "clinical_private.recording_cleanup_review_events",
+      "appendOnly": true,
+      "disposition": "Blocked by immutable trigger until a separately reviewed clinic retention/disposition procedure exists; inventory is not deletion authority.",
       "scope": "organization_column",
       "column": "organization_id",
       "dependsOn": [
@@ -1237,6 +1283,8 @@
     },
     {
       "table": "clinical_private.recording_cleanup_run_results",
+      "appendOnly": true,
+      "disposition": "Blocked by immutable trigger until a separately reviewed clinic retention/disposition procedure exists; inventory is not deletion authority.",
       "scope": "parent",
       "column": "run_id",
       "parent": "clinical_private.recording_cleanup_runs",
@@ -1247,6 +1295,8 @@
     },
     {
       "table": "clinical_private.recording_cleanup_runs",
+      "appendOnly": true,
+      "disposition": "Blocked by immutable trigger until a separately reviewed clinic retention/disposition procedure exists; inventory is not deletion authority.",
       "scope": "parent",
       "column": "recording_id",
       "parent": "clinical_private.recording_cleanup_intents",
@@ -1258,6 +1308,8 @@
     },
     {
       "table": "clinical_private.recording_cleanup_subjects",
+      "appendOnly": true,
+      "disposition": "Blocked by immutable trigger until a separately reviewed clinic retention/disposition procedure exists; inventory is not deletion authority.",
       "scope": "parent",
       "column": "recording_id",
       "parent": "clinical_private.encounter_captures",
@@ -1279,6 +1331,8 @@
     },
     {
       "table": "clinical_private.recording_consent_grants",
+      "appendOnly": true,
+      "disposition": "Blocked by immutable trigger until a separately reviewed clinic retention/disposition procedure exists; inventory is not deletion authority.",
       "scope": "parent",
       "column": "participant_id",
       "parent": "clinical_private.recording_participants",
@@ -1296,6 +1350,8 @@
     },
     {
       "table": "clinical_private.recording_consent_withdrawals",
+      "appendOnly": true,
+      "disposition": "Blocked by immutable trigger until a separately reviewed clinic retention/disposition procedure exists; inventory is not deletion authority.",
       "scope": "parent",
       "column": "grant_id",
       "parent": "clinical_private.recording_consent_grants",
@@ -1314,6 +1370,8 @@
     },
     {
       "table": "clinical_private.recording_dispositions",
+      "appendOnly": true,
+      "disposition": "Blocked by immutable trigger until a separately reviewed clinic retention/disposition procedure exists; inventory is not deletion authority.",
       "scope": "parent",
       "column": "recording_id",
       "parent": "clinical_private.encounter_captures",
@@ -1324,6 +1382,8 @@
     },
     {
       "table": "clinical_private.recording_drafting_events",
+      "appendOnly": true,
+      "disposition": "Blocked by immutable trigger until a separately reviewed clinic retention/disposition procedure exists; inventory is not deletion authority.",
       "scope": "parent",
       "column": "recording_id",
       "parent": "clinical_private.encounter_captures",
@@ -1360,6 +1420,8 @@
     },
     {
       "table": "clinical_private.recording_lifecycle_commands",
+      "appendOnly": true,
+      "disposition": "Blocked by immutable trigger until a separately reviewed clinic retention/disposition procedure exists; inventory is not deletion authority.",
       "scope": "parent",
       "column": "recording_id",
       "parent": "clinical_private.encounter_captures",
@@ -1370,6 +1432,8 @@
     },
     {
       "table": "clinical_private.recording_lifecycle_events",
+      "appendOnly": true,
+      "disposition": "Blocked by immutable trigger until a separately reviewed clinic retention/disposition procedure exists; inventory is not deletion authority.",
       "scope": "parent",
       "column": "recording_id",
       "parent": "clinical_private.encounter_captures",
@@ -1380,6 +1444,8 @@
     },
     {
       "table": "clinical_private.recording_object_intents",
+      "appendOnly": true,
+      "disposition": "Blocked by immutable trigger until a separately reviewed clinic retention/disposition procedure exists; inventory is not deletion authority.",
       "scope": "parent",
       "column": "recording_id",
       "parent": "clinical_private.encounter_captures",
@@ -1395,6 +1461,8 @@
     },
     {
       "table": "clinical_private.recording_participant_commands",
+      "appendOnly": true,
+      "disposition": "Blocked by immutable trigger until a separately reviewed clinic retention/disposition procedure exists; inventory is not deletion authority.",
       "scope": "parent",
       "column": "participant_id",
       "parent": "clinical_private.recording_participants",
@@ -1406,6 +1474,8 @@
     },
     {
       "table": "clinical_private.recording_participants",
+      "appendOnly": true,
+      "disposition": "Blocked by immutable trigger until a separately reviewed clinic retention/disposition procedure exists; inventory is not deletion authority.",
       "scope": "parent",
       "column": "encounter_id",
       "parent": "clinical_private.recording_controls",
@@ -1416,6 +1486,8 @@
     },
     {
       "table": "clinical_private.recording_proposed_notes",
+      "appendOnly": true,
+      "disposition": "Blocked by immutable trigger until a separately reviewed clinic retention/disposition procedure exists; inventory is not deletion authority.",
       "scope": "parent",
       "column": "recording_id",
       "parent": "clinical_private.encounter_captures",
@@ -1431,6 +1503,8 @@
     },
     {
       "table": "clinical_private.recording_reconciliation_events",
+      "appendOnly": true,
+      "disposition": "Blocked by immutable trigger until a separately reviewed clinic retention/disposition procedure exists; inventory is not deletion authority.",
       "scope": "parent",
       "column": "recording_id",
       "parent": "clinical_private.encounter_captures",
@@ -1452,6 +1526,8 @@
     },
     {
       "table": "clinical_private.recording_segment_events",
+      "appendOnly": true,
+      "disposition": "Blocked by immutable trigger until a separately reviewed clinic retention/disposition procedure exists; inventory is not deletion authority.",
       "scope": "parent",
       "column": "segment_id",
       "parent": "clinical_private.recording_segments",
@@ -1486,6 +1562,8 @@
     },
     {
       "table": "clinical_private.recording_transcription_artifacts",
+      "appendOnly": true,
+      "disposition": "Blocked by immutable trigger until a separately reviewed clinic retention/disposition procedure exists; inventory is not deletion authority.",
       "scope": "parent",
       "column": "recording_id",
       "parent": "clinical_private.encounter_captures",
@@ -1501,6 +1579,8 @@
     },
     {
       "table": "clinical_private.recording_transcription_events",
+      "appendOnly": true,
+      "disposition": "Blocked by immutable trigger until a separately reviewed clinic retention/disposition procedure exists; inventory is not deletion authority.",
       "scope": "parent",
       "column": "recording_id",
       "parent": "clinical_private.encounter_captures",
@@ -1528,6 +1608,8 @@
     },
     {
       "table": "clinical_private.recording_transcripts",
+      "appendOnly": true,
+      "disposition": "Blocked by immutable trigger until a separately reviewed clinic retention/disposition procedure exists; inventory is not deletion authority.",
       "scope": "parent",
       "column": "recording_id",
       "parent": "clinical_private.encounter_captures",

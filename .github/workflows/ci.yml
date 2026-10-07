@@ -24,6 +24,7 @@ jobs:
         run: |
           npm run check:aws-production-clinical-core
           npm run check:aws-covered-entity-coverage
+          node --test scripts/covered-entity-disposition.test.mjs
       - name: Fictional embedded database only; no AWS access or activation
         run: npx vitest run src/server/clinical-core/production-care-messaging.database.test.ts src/server/clinical-core/production-care-messaging-api.test.ts src/server/clinical-core/care-messaging-schema-upgrade.database.test.ts src/server/clinical-core/care-messaging-deployment.test.ts src/server/clinical-core/care-messaging-artifact.test.ts
       - name: Build explicitly non-deployable source artifact

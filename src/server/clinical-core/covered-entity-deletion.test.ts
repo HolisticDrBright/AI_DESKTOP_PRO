@@ -53,6 +53,59 @@ const quiet: Answer = (sql) => sql.startsWith("select count(*)::int as holds") ?
   : { rowCount: 3 };
 
 describe("the shipped coverage manifest", () => {
+  it("preserves immutable inventory warnings instead of treating them as deletion authority", () => {
+    const entry = shipped().tables.find(row => row.table === 'clinical_core.care_consent_texts');
+    expect(entry).toMatchObject({ appendOnly: true, disposition: expect.stringContaining('separately reviewed') });
+    expect(() => planCoveredEntityDeletion(shipped())).toThrow('disposition_review_required');
+  });
+
+  it("refuses pending immutable disposition after checking holds, before inventory or purging files", async () => {
+    let purged = false;
+    const { database: db, statements } = database(quiet);
+    await expect(deleteCoveredEntityContent({ database: db, organizationId: ORGANIZATION, coverage: shipped(),
+      termination: { confirmed: true, terminationReference: 'fictional-termination/1' },
+      objects: { purge: async () => { purged = true; return { purged: 1, absent: 0, failed: 0 }; } },
+    })).rejects.toThrow('disposition_review_required');
+    expect(statements).toHaveLength(1);
+    expect(statements[0]).toMatch(/^select count\(\*\)::int as holds/);
+    expect(purged).toBe(false);
+  });
+
+  it("preserves legal-hold refusal even when immutable disposition is pending", async () => {
+    const { database: db, statements } = database(() => ({ rows: [{ holds: 1 }] }));
+    await expect(deleteCoveredEntityContent({ database: db, organizationId: ORGANIZATION, coverage: shipped(),
+      termination: { confirmed: true, terminationReference: 'fictional-termination/1' },
+    })).rejects.toThrow('legal_hold_present');
+    expect(statements).toHaveLength(1);
+  });
+
+  it("does not let caller mutation across the hold query remove pending disposition", async () => {
+    const coverage = shipped();
+    const { database: db, statements } = database(() => {
+      coverage.tables.splice(0);
+      return { rows: [{ holds: 0 }] };
+    });
+    await expect(deleteCoveredEntityContent({ database: db, organizationId: ORGANIZATION, coverage,
+      termination: { confirmed: true, terminationReference: 'fictional-termination/1' },
+    })).rejects.toThrow('disposition_review_required');
+    expect(statements).toHaveLength(1);
+  });
+
+  it("refuses malformed immutable metadata instead of ignoring it", () => {
+    for (const metadata of [{ appendOnly: false }, { appendOnly: 'true' }, { appendOnly: true },
+      { appendOnly: true, disposition: '' }, { disposition: 'Unreviewed retention and destruction procedure.' }]) {
+      expect(() => parseCoveredEntityCoverage({ record: COVERED_ENTITY_COVERAGE_RECORD,
+        tables: [{ table: 'clinical_core.notes', scope: 'organization_column', column: 'organization_id', ...metadata }],
+      })).toThrow('coverage_malformed');
+    }
+  });
+
+  it("still permits read-only inspection of records whose disposition is pending", async () => {
+    const { database: db, statements } = database(quiet);
+    await expect(inspectCoveredEntityContent({ database: db, organizationId: ORGANIZATION, coverage: shipped() })).resolves.toMatchObject({ holds: false });
+    expect(statements.some(sql => /^(delete|update|insert)/i.test(sql))).toBe(false);
+  });
+
   it("accounts for the schema and every chain ends at the organization", () => {
     const coverage = shipped();
     expect(coverage.tables.length).toBeGreaterThan(150);
@@ -146,6 +199,15 @@ describe("destroying one covered entity's information", () => {
     await expect(deleteCoveredEntityContent({ database: db, organizationId: ORGANIZATION, coverage: small(), termination }))
       .rejects.toThrow("legal_hold_present");
     expect(statements.filter((sql) => sql.startsWith("delete"))).toEqual([]);
+  });
+
+  it("refuses missing or malformed hold observations rather than interpreting them as no hold", async () => {
+    for (const rows of [[], [{holds:-1}], [{holds:NaN}], [{holds:'0'}], [{holds:0},{holds:0}]]) {
+      const { database: db, statements } = database(() => ({ rows }));
+      await expect(deleteCoveredEntityContent({ database: db, organizationId: ORGANIZATION, coverage: small(), termination }))
+        .rejects.toThrow('hold_observation_invalid');
+      expect(statements).toHaveLength(1);
+    }
   });
 
   it("purges stored objects from an inventory read before any row is deleted, and rolls back if that does not finish", async () => {

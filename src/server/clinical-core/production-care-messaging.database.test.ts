@@ -138,6 +138,13 @@ describe('unreleased production messaging over canonical inbox', () => {
     const inspect = (organizationId = org) => inspectCoveredEntityContent({ database: admin, organizationId, coverage });
     expect((await inspect()).rows).toContainEqual({ table: 'clinical_core.care_message_receipts', rows: 1 });
     expect((await inspect(otherOrg)).holds).toBe(false);
+    let purged = false;
+    await expect(deleteCoveredEntityContent({ database: admin, organizationId: org, coverage,
+      termination: { confirmed: true, terminationReference: 'fictional-review' },
+      objects: { purge: async () => { purged = true; return { purged: 0, absent: 0, failed: 0 }; } },
+    })).rejects.toThrow('disposition_review_required');
+    expect(purged).toBe(false);
+    expect((await inspect()).rows).toContainEqual({ table: 'clinical_core.care_message_receipts', rows: 1 });
     await db.query("insert into clinical_private.owned_legal_holds(owner_id,reason_code,placed_by) values($1,'owner_dispute',$2)", [owner, staff]);
     expect((await inspect()).holds).toBe(true);
     await expect(deleteCoveredEntityContent({ database: admin, organizationId: org, coverage,

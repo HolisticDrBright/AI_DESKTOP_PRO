@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { immutableDispositionErrors } from './covered-entity-disposition.mjs';
 
 /**
  * A covered entity's information can only be destroyed if the schema says where it is. Every table the production
@@ -44,6 +45,9 @@ function createdTables(source) {
 }
 
 const tables = createdTables(sql);
+// This is inventory, not a retention approval. A known immutable in-scope table
+// must preserve its pending disposition instead of reaching a destructive plan.
+errors.push(...immutableDispositionErrors(sql, coverage.tables));
 assert(tables.size > 150, `expected the artifact to create the full schema, saw ${tables.size} tables`);
 
 const declared = new Map(coverage.tables.map((entry) => [entry.table, entry]));

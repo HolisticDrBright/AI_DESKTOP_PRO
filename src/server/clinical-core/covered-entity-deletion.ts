@@ -33,9 +33,10 @@ export const RETAINED_CLASSES = [
 ] as const;
 export type RetainedClass = (typeof RETAINED_CLASSES)[number];
 
+type PendingImmutableDisposition = { appendOnly?: true; disposition?: string };
 export type CoveredEntityCoverageEntry =
-  | { table: string; scope: "organization_column"; column: string; objectKeyColumns?: string[]; dependsOn?: string[] }
-  | { table: string; scope: "parent"; column: string; parent: string; parentColumn: string; objectKeyColumns?: string[]; dependsOn?: string[] }
+  | ({ table: string; scope: "organization_column"; column: string; objectKeyColumns?: string[]; dependsOn?: string[] } & PendingImmutableDisposition)
+  | ({ table: string; scope: "parent"; column: string; parent: string; parentColumn: string; objectKeyColumns?: string[]; dependsOn?: string[] } & PendingImmutableDisposition)
   | { table: string; scope: "retained"; class: RetainedClass; reason: string };
 
 export type CoveredEntityCoverage = {
@@ -47,7 +48,9 @@ export type CoveredEntityDeletionCategory =
   | "coverage_malformed"
   | "organization_invalid"
   | "termination_unconfirmed"
+  | "disposition_review_required"
   | "legal_hold_present"
+  | "hold_observation_invalid"
   | "object_inventory_too_large"
   | "objects_not_purged"
   | "content_remains";
@@ -86,19 +89,25 @@ export function parseCoveredEntityCoverage(value: unknown): CoveredEntityCoverag
     seen.add(entry.table);
     const dependsOn = entry.dependsOn === undefined ? undefined
       : Array.isArray(entry.dependsOn) && entry.dependsOn.every((name) => typeof name === "string" && TABLE.test(name))
-        ? (entry.dependsOn as string[]) : malformed();
+        ? [...entry.dependsOn as string[]] : malformed();
     const objectKeyColumns = entry.objectKeyColumns === undefined ? undefined
       : Array.isArray(entry.objectKeyColumns) && entry.objectKeyColumns.length > 0
         && entry.objectKeyColumns.every((name) => typeof name === "string" && COLUMN.test(name))
-        ? (entry.objectKeyColumns as string[]) : malformed();
+        ? [...entry.objectKeyColumns as string[]] : malformed();
+    const immutable: PendingImmutableDisposition = {};
+    if (entry.appendOnly !== undefined || entry.disposition !== undefined) {
+      if (entry.scope === 'retained' || entry.appendOnly !== true || typeof entry.disposition !== 'string'
+        || entry.disposition.trim().length < 20 || entry.disposition.length > 2000) malformed();
+      immutable.appendOnly = true; immutable.disposition = entry.disposition;
+    }
     if (entry.scope === "organization_column") {
       if (typeof entry.column !== "string" || !COLUMN.test(entry.column)) malformed();
-      entries.push({ table: entry.table, scope: "organization_column", column: entry.column, ...(objectKeyColumns ? { objectKeyColumns } : {}), ...(dependsOn ? { dependsOn } : {}) });
+      entries.push({ table: entry.table, scope: "organization_column", column: entry.column, ...immutable, ...(objectKeyColumns ? { objectKeyColumns } : {}), ...(dependsOn ? { dependsOn } : {}) });
     } else if (entry.scope === "parent") {
       if (typeof entry.column !== "string" || !COLUMN.test(entry.column)
         || typeof entry.parent !== "string" || !TABLE.test(entry.parent)
         || typeof entry.parentColumn !== "string" || !COLUMN.test(entry.parentColumn)) malformed();
-      entries.push({ table: entry.table, scope: "parent", column: entry.column, parent: entry.parent, parentColumn: entry.parentColumn, ...(objectKeyColumns ? { objectKeyColumns } : {}), ...(dependsOn ? { dependsOn } : {}) });
+      entries.push({ table: entry.table, scope: "parent", column: entry.column, parent: entry.parent, parentColumn: entry.parentColumn, ...immutable, ...(objectKeyColumns ? { objectKeyColumns } : {}), ...(dependsOn ? { dependsOn } : {}) });
     } else if (entry.scope === "retained") {
       if (typeof entry.class !== "string" || !(RETAINED_CLASSES as readonly string[]).includes(entry.class)
         || typeof entry.reason !== "string" || entry.reason.trim().length < 20) malformed();
@@ -168,6 +177,8 @@ export function rowPredicate(table: string, coverage: CoveredEntityCoverage, dep
 }
 
 export function planCoveredEntityDeletion(coverage: CoveredEntityCoverage): Array<{ table: string; sql: string }> {
+  const pending = coverage.tables.find(entry => entry.scope !== 'retained' && entry.appendOnly === true);
+  if (pending) throw new CoveredEntityDeletionError('disposition_review_required', pending.table);
   return deletionOrder(coverage).map((table) => ({ table, sql: `delete from ${table} where ${rowPredicate(table, coverage)}` }));
 }
 
@@ -223,7 +234,11 @@ where h.released_at is null and (
 
 async function holdsPresent(tx: ClinicalCoreTransaction, organizationId: string): Promise<boolean> {
   const result = await tx.query<{ holds: number }>(HOLDS, [clinicalUuid(organizationId)]);
-  return Number(result.rows[0]?.holds ?? 0) > 0;
+  const count = result.rows[0]?.holds;
+  if (result.rows.length !== 1 || !Number.isSafeInteger(count) || count < 0) {
+    throw new CoveredEntityDeletionError('hold_observation_invalid');
+  }
+  return count > 0;
 }
 
 /** Read-only: what the clinic still holds, table by table, and how many stored objects hang off it. */
@@ -233,16 +248,18 @@ export async function inspectCoveredEntityContent(input: {
   coverage: CoveredEntityCoverage;
   objectKeyLimit?: number;
 }): Promise<{ organizationId: string; rows: Array<{ table: string; rows: number }>; objects: number; holds: boolean }> {
-  if (!UUID.test(input.organizationId)) throw new CoveredEntityDeletionError("organization_invalid");
-  return input.database.transaction(async (tx) => {
+  const { database, organizationId, objectKeyLimit } = input;
+  const coverage = parseCoveredEntityCoverage(input.coverage);
+  if (!UUID.test(organizationId)) throw new CoveredEntityDeletionError("organization_invalid");
+  return database.transaction(async (tx) => {
     const rows: Array<{ table: string; rows: number }> = [];
-    for (const step of planCoveredEntityVerification(input.coverage)) {
-      const result = await tx.query<{ remaining: number }>(step.sql, [clinicalUuid(input.organizationId)]);
+    for (const step of planCoveredEntityVerification(coverage)) {
+      const result = await tx.query<{ remaining: number }>(step.sql, [clinicalUuid(organizationId)]);
       const remaining = Number(result.rows[0]?.remaining ?? 0);
       if (remaining > 0) rows.push({ table: step.table, rows: remaining });
     }
-    const keys = await inventoryObjectKeys(tx, input.organizationId, input.coverage, input.objectKeyLimit ?? 50_000);
-    return { organizationId: input.organizationId, rows, objects: keys.length, holds: await holdsPresent(tx, input.organizationId) };
+    const keys = await inventoryObjectKeys(tx, organizationId, coverage, objectKeyLimit ?? 50_000);
+    return { organizationId, rows, objects: keys.length, holds: await holdsPresent(tx, organizationId) };
   });
 }
 
@@ -267,8 +284,10 @@ async function inventoryObjectKeys(
 /**
  * Destroy one covered entity's information in one transaction. Object stores are purged first, from an inventory read
  * before any row is deleted, because a deleted row can no longer say what object it pointed at; a purge that does not
- * finish rolls the whole run back rather than leaving rows that claim objects still exist. Afterwards every in-scope
- * table is counted again and a non-zero count fails the run.
+ * finish stops the database work. Database rollback does not restore a deleted
+ * external object; this is not cross-store atomic erasure. Pending immutable
+ * disposition refuses after the read-only hold check, before inventory, DML or object-store work.
+ * Afterwards every in-scope table is counted again and a non-zero count fails.
  */
 export async function deleteCoveredEntityContent(input: {
   database: ClinicalCoreDatabase;
@@ -278,18 +297,22 @@ export async function deleteCoveredEntityContent(input: {
   objects?: CoveredEntityObjectPurger;
   objectKeyLimit?: number;
 }): Promise<CoveredEntityDeletionReport> {
-  if (!UUID.test(input.organizationId)) throw new CoveredEntityDeletionError("organization_invalid");
-  if (input.termination.confirmed !== true || !REFERENCE.test(input.termination.terminationReference)) {
+  const { database, organizationId, objects: purger, objectKeyLimit } = input;
+  const termination = { ...input.termination };
+  if (!UUID.test(organizationId)) throw new CoveredEntityDeletionError("organization_invalid");
+  if (termination.confirmed !== true || !REFERENCE.test(termination.terminationReference)) {
     throw new CoveredEntityDeletionError("termination_unconfirmed");
   }
-  const parameters = [clinicalUuid(input.organizationId)];
-  return input.database.transaction(async (tx) => {
-    if (await holdsPresent(tx, input.organizationId)) throw new CoveredEntityDeletionError("legal_hold_present");
+  const coverage = parseCoveredEntityCoverage(input.coverage);
+  const parameters = [clinicalUuid(organizationId)];
+  return database.transaction(async (tx) => {
+    if (await holdsPresent(tx, organizationId)) throw new CoveredEntityDeletionError("legal_hold_present");
+    const deletion = planCoveredEntityDeletion(coverage); // Before any irrecoverable object purge.
 
-    const keys = await inventoryObjectKeys(tx, input.organizationId, input.coverage, input.objectKeyLimit ?? 50_000);
+    const keys = await inventoryObjectKeys(tx, organizationId, coverage, objectKeyLimit ?? 50_000);
     let objects = { inventoried: keys.length, purged: 0, absent: 0, failed: 0 };
-    if (keys.length > 0 && input.objects) {
-      const outcome = await input.objects.purge(keys);
+    if (keys.length > 0 && purger) {
+      const outcome = await purger.purge(keys);
       objects = { inventoried: keys.length, purged: outcome.purged, absent: outcome.absent, failed: outcome.failed };
       if (outcome.failed > 0 || outcome.purged + outcome.absent !== keys.length) {
         throw new CoveredEntityDeletionError("objects_not_purged");
@@ -297,30 +320,30 @@ export async function deleteCoveredEntityContent(input: {
     }
 
     const deleted: Array<{ table: string; rows: number }> = [];
-    for (const step of planCoveredEntityDeletion(input.coverage)) {
+    for (const step of deletion) {
       const result = await tx.query(step.sql, parameters);
       const rows = Number(result.rowCount ?? 0);
       if (rows > 0) deleted.push({ table: step.table, rows });
     }
-    for (const step of planCoveredEntityVerification(input.coverage)) {
+    for (const step of planCoveredEntityVerification(coverage)) {
       const result = await tx.query<{ remaining: number }>(step.sql, parameters);
       if (Number(result.rows[0]?.remaining ?? 0) > 0) throw new CoveredEntityDeletionError("content_remains", step.table);
     }
 
     const retained = RETAINED_CLASSES
-      .map((name) => ({ class: name, tables: input.coverage.tables.filter((entry) => entry.scope === "retained" && entry.class === name).length }))
+      .map((name) => ({ class: name, tables: coverage.tables.filter((entry) => entry.scope === "retained" && entry.class === name).length }))
       .filter((row) => row.tables > 0);
-    const certifies = { database: true, objectStores: keys.length === 0 || Boolean(input.objects) };
+    const certifies = { database: true, objectStores: keys.length === 0 || Boolean(purger) };
     return {
       record: COVERED_ENTITY_DELETION_RECORD,
-      organizationId: input.organizationId,
-      terminationReference: input.termination.terminationReference,
+      organizationId,
+      terminationReference: termination.terminationReference,
       deleted,
       retained,
       objects,
       certifies,
       evidenceSha256: createHash("sha256").update(JSON.stringify([
-        COVERED_ENTITY_DELETION_RECORD, input.organizationId, input.termination.terminationReference, deleted, objects, certifies,
+        COVERED_ENTITY_DELETION_RECORD, organizationId, termination.terminationReference, deleted, objects, certifies,
       ])).digest("hex"),
     };
   });

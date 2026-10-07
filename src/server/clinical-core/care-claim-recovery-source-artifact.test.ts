@@ -4,6 +4,7 @@ import {createHash} from 'node:crypto';
 import {mkdtempSync,readFileSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {basename,dirname,join,resolve} from 'node:path';
+import {parseCoveredEntityCoverage,planCoveredEntityDeletion,type CoveredEntityCoverageEntry} from './covered-entity-deletion';
 let directory:string;
 type Manifest={contract:string;status:string;deployable:boolean;sourceCommit:string;sourceDirty:boolean;
   predecessor:{migrationCount:number;ledgerReleaseSha256:string};overlay:{file:string;sha256:string;bytes:number;canonical:boolean;hostedVerified:boolean};
@@ -13,7 +14,7 @@ type Manifest={contract:string;status:string;deployable:boolean;sourceCommit:str
     toLedgerSha256:string;migrationCount:number;tableCountBefore:number;tableCountAfter:number;mandatoryRollbackRehearsal:boolean;
     manifest:{file:string;sha256:string};operator:{file:string;sha256:string;scope:string;embeddedMigrations:boolean;
       observedTarget:boolean;postRehearsalTargetRecheck:boolean;migrationPerformed:boolean}};
-  proposedCoveredEntityMapping:{table:string;status:string}[];reviewRequired:string;
+  proposedCoveredEntityMapping:(CoveredEntityCoverageEntry & {status:string})[];reviewRequired:string;
   activation:string;phiAllowed:boolean;seededApprovals:boolean;seededIdentities:boolean;seededConsents:boolean;remaining:string[]};
 let manifest:Manifest;
 const sha=(bytes:string|Buffer)=>createHash('sha256').update(bytes).digest('hex');
@@ -84,5 +85,15 @@ describe('unreleased claim recovery mapping',()=>{
     expect(manifest.reviewRequired).toContain('separate claim recovery');
     expect(manifest.remaining.join(' ')).toContain('id-less legacy uncertainty');
     expect(manifest.remaining.join(' ')).toContain('real multi-session race');
+  });
+  it('parses the proposed 209-table mapping without treating retained parents or inventory as deletion authority',()=>{
+    const coverage=JSON.parse(readFileSync('infra/aws-clinical-core/covered-entity-coverage.json','utf8'));
+    const proposed=parseCoveredEntityCoverage({...coverage,tables:[...coverage.tables,...manifest.proposedCoveredEntityMapping]});
+    expect(proposed.tables).toHaveLength(209);
+    expect(proposed.tables.find(row=>row.table==='clinical_core.care_claim_requests'))
+      .toMatchObject({dependsOn:['clinical_core.patient_connections'],appendOnly:true});
+    expect(proposed.tables.find(row=>row.table==='clinical_audit.care_claim_events'))
+      .toMatchObject({appendOnly:true,disposition:expect.stringContaining('separately reviewed')});
+    expect(()=>planCoveredEntityDeletion(proposed)).toThrow('disposition_review_required');
   });
 });

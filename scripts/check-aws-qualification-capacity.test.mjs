@@ -36,11 +36,17 @@ test('capacity preflight loads recording templates without a persisted dist arti
   const functions=reservedFunctions(template,'6zt8e9qz04');
   assert.ok(functions.some(f=>f.name==='6zt8e9qz04-recording-authority'&&f.desired===2));
 });
-test('the eleventh messaging candidate adds its exact two reservations to fleet capacity',()=>{
-  assert.equal(CAPACITY_CANDIDATES.length,11);assert.equal(new Set(CAPACITY_CANDIDATES).size,11);
+test('messaging and connections add their exact reservations to fleet capacity',()=>{
+  assert.equal(CAPACITY_CANDIDATES.length,12);assert.equal(new Set(CAPACITY_CANDIDATES).size,12);
   assert.ok(CAPACITY_CANDIDATES.includes('care-messaging'));
   assert.deepEqual(reservedFunctions(loadCapacityTemplate('care-messaging'),'6zt8e9qz04'),[{name:'6zt8e9qz04-care-messaging',desired:2}]);
-  assert.equal(assessCapacity({ConcurrentExecutions:150,UnreservedConcurrentExecutions:136},[{name:'old-fleet',desired:35,existing:10},{name:'care-messaging',desired:2,existing:0}]).additionalReserved,27);
+  assert.ok(CAPACITY_CANDIDATES.includes('care-connections'));
+  assert.deepEqual(reservedFunctions(loadCapacityTemplate('care-connections'),'6zt8e9qz04'),[{name:'6zt8e9qz04-care-connections',desired:2}]);
+  const report=assessCapacity({ConcurrentExecutions:150,UnreservedConcurrentExecutions:136},[{name:'old-fleet',desired:35,existing:10},
+    {name:'care-messaging',desired:2,existing:0},{name:'care-connections',desired:2,existing:0}]);
+  assert.equal(report.requestedReserved,39);assert.equal(report.additionalReserved,29);assert.equal(report.ready,true);
+  assert.equal(assessCapacity({ConcurrentExecutions:150,UnreservedConcurrentExecutions:128},[{name:'old-fleet',desired:35,existing:10},
+    {name:'care-messaging',desired:2,existing:0},{name:'care-connections',desired:2,existing:0}]).ready,false);
 });
 test('capacity observation refuses root, IAM user, foreign account and missing principal',()=>{
   assert.doesNotThrow(()=>assertCapacityPrincipal({Account:'588966314750',Arn:'arn:aws:sts::588966314750:assumed-role/QualificationOperator/session'}));

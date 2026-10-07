@@ -7,21 +7,22 @@ import {CANDIDATES,loadTemplate} from './build-aws-qualification-parameters.mjs'
 
 // The historical parameter-example registry still owns ten source-independent
 // examples. Messaging pins its exact source SHA and is built separately, but its
-// two reservations must never disappear from the complete fleet preflight.
-export const CAPACITY_CANDIDATES = [...Object.keys(CANDIDATES),'care-messaging'];
+// messaging and connection reservations must not disappear from fleet preflight.
+export const CAPACITY_CANDIDATES = [...Object.keys(CANDIDATES),'care-messaging','care-connections'];
 export function assertCapacityPrincipal(identity) {
   if(identity?.Account !== '588966314750' || typeof identity?.Arn !== 'string'
     || !/^arn:aws:sts::588966314750:assumed-role\/[A-Za-z0-9_+=,.@/-]+$/.test(identity.Arn)) throw new Error('synthetic_assumed_role_required');
 }
 export function loadCapacityTemplate(candidateName) {
-  if(candidateName !== 'care-messaging')return loadTemplate(candidateName);
-  const directory=mkdtempSync(join(tmpdir(),'qualification-messaging-capacity-'));
+  if(!['care-messaging','care-connections'].includes(candidateName))return loadTemplate(candidateName);
+  const prefix=`qualification-${candidateName}-capacity-`;
+  const directory=mkdtempSync(join(tmpdir(),prefix));
   try {
-    execFileSync(process.execPath,['scripts/build-aws-care-messaging.mjs','--out-dir='+directory],{stdio:'pipe',timeout:60_000,windowsHide:true});
+    execFileSync(process.execPath,[`scripts/build-aws-${candidateName}.mjs`,'--out-dir='+directory],{stdio:'pipe',timeout:60_000,windowsHide:true});
     return JSON.parse(readFileSync(join(directory,'template.json'),'utf8'));
   } finally {
     const target=resolve(directory);
-    if(dirname(target)!==resolve(tmpdir()) || !basename(target).startsWith('qualification-messaging-capacity-'))throw new Error('temporary_cleanup_boundary_refused');
+    if(dirname(target)!==resolve(tmpdir()) || !basename(target).startsWith(prefix))throw new Error('temporary_cleanup_boundary_refused');
     rmSync(target,{recursive:true,force:true});
   }
 }
