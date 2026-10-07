@@ -151,6 +151,52 @@ AWS semantics: [PublishVersion](https://docs.aws.amazon.com/lambda/latest/api/AP
 
 ## Deployment and recovery still required
 
+### Retained routing rehearsal before the schema change
+
+From a clean Desktop checkout, run:
+
+```powershell
+node scripts/rehearse-synthetic-care-routing.mjs --rehearse-existing-fictional-version
+```
+
+The fixed member-account runner independently reads the deployed immutable ZIP,
+full current database fingerprint and histories, execution-role permissions,
+logging, JWT routes and retained version 1 configuration. It uses the existing
+five fictional Cognito personas for 20 real API Gateway requests before the
+switch, 20 against the retained version and 20 after return to the original
+unqualified integration. Each phase requires distinct gateway request IDs and
+verified response contracts. Actual CloudWatch `Resource=function:1` invocation
+metrics must corroborate the retained-version requests; a retained ZIP or
+successful deployment alone cannot pass.
+
+The only mutations are a temporary permission on version 1 scoped to this
+account and API, and two changes to the fixed identity integration URI. The
+original latest policy, other integrations, routes, authorizers and Lambda
+revision must remain unchanged. Both auto-deploy transitions and the return
+deployment are observed. Cleanup uses the version-policy revision and proves
+the temporary grant is absent. A lost mutation response is reconciled, not
+blindly replayed. Unrelated drift is not overwritten to manufacture restoration.
+
+`dist/synthetic-care-routing/` contains a source-bound result and append-only
+events. An exclusive local lock prevents overlapping local runners and remains
+after unconfirmed restoration. A stale lock is not evidence of a running process;
+inspect the actual process and remote integration/policy before manual recovery.
+API Gateway has no compare-and-swap integration update, so this requires a single
+synthetic operator and does not claim atomic protection against outside writers.
+
+The independent final fingerprint must equal the initial one. This runner only
+accepts live46/source45 with the exact original reference ledger and 87-table
+inventory. It changes no schema, clinical record, consent/provider release,
+Lambda code, execution role, activation or mobile build. A passing report is
+`preupgrade-retained-routing-only`: it does not authorize SQL, prove recovery of
+terminal receipts after upgrade, certify a full patient journey or count as
+physical-device/PHI acceptance. The lasting parent and successor release remain
+held until their required recovery and preservation gates are implemented.
+
+AWS references: [UpdateIntegration](https://docs.aws.amazon.com/cli/latest/reference/apigatewayv2/update-integration.html),
+[AddPermission](https://docs.aws.amazon.com/lambda/latest/api/API_AddPermission.html),
+[version metrics](https://docs.aws.amazon.com/lambda/latest/dg/monitoring-metrics-view.html).
+
 1. Independently verify the ZIP after uploading it under its exact source/hash
    key. Reobserve the live target and review a Lambda-only change set. A saved
    preparation is a dated observation, not an execution permit.
