@@ -50,9 +50,38 @@ one attempt, explicit disposal and machine-only diagnostics; no SQL, payload
 or credentials are logged. Failed preparations receive separate finding files
 and cannot be presented as successful reports.
 
+## Exact upload and unexecuted proposal
+
+```powershell
+npm run upload:synthetic-care-intent-release -- --v2-root "<V2 checkout>" --candidate "<exact build directory>" --upload-fictional-intent-code-only
+npm run prepare:synthetic-care-intent-code-change -- --v2-root "<V2 checkout>" --candidate "<exact build directory>" --prepare-fictional-intent-code-change-only
+```
+
+The proposal command includes the upload, so it does not require a separate
+upload run. It rebuilds the current source and makes fresh AWS and database
+observations before admission. Storage uses a create-only PUT, exact version
+HEAD, and bounded download with checksum and byte equality. An identical
+collision is reused only after readback; an unknown response is not retried.
+
+Before proposing a change, the command repeats the complete live preparation.
+The live template must match the source with the four already absent routes
+removed and the existing 51-route annotation preserved. Only the Lambda code
+key and its exact object version may change. All other parameters use their
+previous values. The created change set must contain exactly one modification
+to the existing Lambda's Code property, with no resource replacement. The
+command has no execution, SQL, fixture, activation, or paid-build operation.
+
+A shared operator lock and flushed journal cover both writes. Admissions are
+recorded before remote calls. A lost write response or unresolved readback
+keeps that run's lock and journal; diagnose it with read-only observations
+before any further write. Do not delete the lock or repeat the command merely
+because an observation timed out. The deterministic change-set name and client
+token support reconciliation, not automatic replay. A settled unexecuted
+proposal still does not prove deployed runtime compatibility or schema safety.
+
 ## Remaining release work
 
-1. Add and qualify exact-version upload and a code-only deployment proposal
+1. Run and qualify exact-version upload and a code-only deployment proposal
    against freshly re-observed state. Preserve all 51 existing identity JWT
    routes, the four absent source routes, environment, execution role and logs.
 2. Deploy and read back the exact intent-aware code while the parent schema
