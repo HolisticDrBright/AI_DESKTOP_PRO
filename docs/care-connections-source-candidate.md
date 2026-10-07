@@ -2160,3 +2160,69 @@ remain human gates. **Neither app is commercial or PHI ready; PHI OFF; paid
 builds held; clinical holds, exclusions and source verification preserved.**
 Shared Graphify §369 records this evidence with a prefix/modification-time guard;
 the canvas remains untouched.
+
+## October 7 Hosted post parent cancellation routing recovery
+
+The fixed synthetic AWS drill passed at **2026-10-07T20:04:49.274Z** from
+Desktop **5efc2c135e3f3c0b3826a672907dfa278776d368**, clean fingerprint
+**fec2aea218fe46b88d5c2569b420d02890327a936fc7c1a3bf33b73468f07294**.
+Run **235a48a11d6cb0b7c80a3b88c77f66ac** executed all **75 distinct Gateway
+requests**: 20 consumer checks and five existing cancellation-receipt reads
+in each baseline, retained and returned phase. The existing request IDs came
+from bounded owner-scoped database reads, not saved reports or supplied IDs.
+Every receipt retained the same owner, ID, cancelled outcome and answer hash.
+
+The original deployment **fso85o** routed through immutable request-ID-aware
+version1 at **zxoyba**, then returned to the original unqualified handler at
+**lztzr5**. Actual version-specific invocation metrics totaled **25** in the
+observed window. Successful deployments, unchanged JWT/role/log bounds, removal
+of the temporary invocation permission and an independent postflight database
+comparison were mandatory. All **23,985 rows/88 tables/live47/source46** stayed
+exact at full SHA **29e413773ffb4e263421b312501242384e5f6085b3930fd6339fa9100ab53351**.
+The original 23,980 rows stayed at
+**bb0a6ecafad1da1f595c577124fe8e03a0e495cb524018b3f51f2e19392f3a55**.
+No record, cancellation, fixture, code, schema, execution-role grant, consent or
+provider release was changed. The operator completed and removed its own lock.
+
+Archive: Desktop **docs/evidence/2026-10-07-care-post-parent-routing.json**.
+It preserves the complete accepted report and the first2066b03 attempt, which
+failed before permission admission with a transaction-start refusal. Its precise
+cause is unproven; it is not acceptance. Follow-up reads found the correct
+database, unchanged Lambda/code/revision, original integration and no retained
+permission. Source5efc2c1 adds bounded operator transport categories, fresh
+bounded connections, client disposal and durable failure journaling. It never
+retries an ambiguous send or logs credentials, SQL, payloads or error bodies.
+
+Local **88/88 release/recovery checks**, **12/12 focused operator/command/resume
+tests**, focused lint and typecheck passed. No full runtime-suite or physical
+device pass is claimed. All seven CI browser dependency installations now have
+a **10-minute step limit** with commands, browser test suites, shards and the
+existing deployed-secret gate preserved. Two parsed-workflow negative tests
+reject missing limits, hidden failures, new skips and command substitution.
+The new YAML test dependency is the exact existing4.3.2 package, explicitly
+declared; its lock change is only that declaration. Step limits follow the
+[GitHub workflow syntax](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idstepstimeout-minutes).
+The previously observed live16165e9 CI jobs remain in browser installation;
+new source runs are queued, not green. Existing jobs were not cancelled/restarted
+or counted as hosted backend acceptance.
+
+Scope is **post-parent-existing-cancellation-routing-only**. It does not prove
+actual erased outcomes, lost-reply erasure, second-device/native behavior,
+cross-clinic isolation, intent registration/discovery or the blocked intent
+successor. Next engineering remains exact intent-aware handler qualification,
+fresh compatible successor recovery and canonical release, isolated real
+erased/lost-reply/replay journeys, continuity/legacy claim drain and missing-journal
+reconciliation, owned lab/document/voice delivery, complete privacy and clinic
+amendment/disposition, reviewed candidate bindings/registrar authority and
+production program assignments. Never restore the old ID-less ZIP, discard
+terminal receipts, or use this saved report as migration authorization.
+
+All **six original phases remain partial**. Source-verified eligible clinical
+releases with holds/exclusions, Core **$19.99** purchase/restore/cancel and
+provider/store acceptance, exact matched API/Desktop/mobile releases and
+rollback/load/security/recovery plus physical iOS/Android/five-persona journeys
+remain. Actual security/retention reviews, executed agreement coverage against
+the real project/runtime/providers and separate PHI activation are human gates.
+V2 runtime811f55b and deployed API5b6f8aa remain unchanged. **Neither app is
+commercial or PHI ready; PHI OFF; paid builds held.** Graphify§370 appends this
+milestone with a full-prefix/modification-time guard; the canvas remains untouched.

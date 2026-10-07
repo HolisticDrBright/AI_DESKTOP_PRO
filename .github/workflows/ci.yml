@@ -46,6 +46,8 @@ jobs:
           npm run build:aws-care-connections-upgrade
       - name: Preserving synthetic erasure upgrade and historical alias (no AWS calls)
         run: |
+          npm run test:ci-browser-download
+          npx vitest run src/server/clinical-core/care-erasure-operator-client.test.ts
           npx vitest run src/server/clinical-core/care-erasure-schema-upgrade.database.test.ts src/server/clinical-core/care-erasure-upgrade-command.test.ts
           npm run build:aws-care-erasure-upgrade
           npx vitest run src/server/clinical-core/care-erasure-intent-upgrade.database.test.ts src/server/clinical-core/care-erasure-intent-command.test.ts
@@ -87,6 +89,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx playwright install --with-deps chromium
+        timeout-minutes: 10
       - name: Verify generated browser audio with fictional AWS responses; no real patient audio
         run: |
           node scripts/live-stub-server.mjs &
@@ -265,6 +268,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx playwright install --with-deps chromium
+        timeout-minutes: 10
       - run: npm run build:clinical
       - name: Honest refusals against a DOWN backend (no process started — that is the point)
         run: |
@@ -293,6 +297,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx playwright install --with-deps chromium
+        timeout-minutes: 10
       - run: npm run build:clinical
       - name: Run every live suite against the committed contract fixture
         env:
@@ -340,6 +345,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx playwright install --with-deps chromium
+        timeout-minutes: 10
       # This job runs `next dev` (E2E_DEV_SERVER=1), not `next start`.
       # `next start` forces NODE_ENV=production, which the deployed-runtime
       # detector treats as a deployment signal, and a deployed runtime is
@@ -378,6 +384,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx playwright install --with-deps chromium
+        timeout-minutes: 10
       - run: npm run build:clinical
       # CLINICAL_COPILOT_MODE=fixture plus THREE deployed-runtime markers,
       # AND CLINICAL_CONTRACT_FIXTURE=1. The point of the job is that none
@@ -414,6 +421,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx playwright install --with-deps chromium
+        timeout-minutes: 10
       - run: npm run build:clinical
       # The counterpart to e2e-copilot-readiness. Identical governed
       # records — registry kind `synthetic_fixture`, activation
@@ -459,6 +467,7 @@ jobs:
         run: npm ci
       - if: steps.gate.outputs.run == 'true'
         run: npx playwright install --with-deps chromium
+        timeout-minutes: 10
       - if: steps.gate.outputs.run == 'true'
         run: npm run build:clinical
       - if: steps.gate.outputs.run == 'true'
