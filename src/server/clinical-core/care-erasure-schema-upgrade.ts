@@ -168,6 +168,15 @@ async function verify(tx: ClinicalCoreTransaction, m: ClinicalCoreMigration[], s
     where a.attrelid=$1::regclass and a.attnum>0 and not a.attisdropped order by a.attnum`, [newName])).rows;
   const constraints = (await tx.query(`select contype::text kind,convalidated validated,pg_get_constraintdef(oid) definition
     from pg_constraint where conrelid=$1::regclass and contype<>'n' order by contype,pg_get_constraintdef(oid)`, [newName])).rows;
+  // AWS and PGlite return the exact same definitions under different database
+  // collations. Canonicalize only the unordered constraint set using ordinal
+  // string comparison; retain every definition, validation flag and duplicate.
+  // Columns still keep their physical order. Never normalize SQL or whitelist
+  // another schema digest to make a hosted mismatch pass.
+  constraints.sort((a, b) => {
+    const left = `${a.kind}\u0000${a.definition}`, right = `${b.kind}\u0000${b.definition}`;
+    return left < right ? -1 : left > right ? 1 : 0;
+  });
   if (sha(JSON.stringify({ cols, constraints })) !== '5d1c88f1c605d77e0d9ccc613e700c5f6cba3a7691518d09909fedde203b0031') fail('verification_failed', 'receipt_schema_contract');
 }
 export type CareErasureUpgradeResult = { contract: 'care-erasure-schema-upgrade/1'; execution: 'synthetic-staging'; phiAllowed: false;

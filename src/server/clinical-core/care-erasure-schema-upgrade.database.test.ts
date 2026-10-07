@@ -77,6 +77,20 @@ describe('exact preserving synthetic staging erasure successor', () => {
       applied: false, tableCount: 87, dataSha256: before.dataSha256, rowCount: before.rowCount });
     await predecessor();
   });
+  it.each(['reverse', 'rotate', 'hosted-collation'])('accepts only the identical constraint set despite %s result ordering', async order => {
+    const reordered: ClinicalCoreDatabase = { transaction: work => database().transaction(tx => work({ query: async <Row extends Record<string, unknown>>
+      (s: string, p: readonly unknown[] = []) => {
+        const r = await tx.query<Row>(s, p);
+        if (!s.startsWith('select contype::text kind')) return r;
+        const rows = [...r.rows];
+        if (order === 'reverse') rows.reverse();
+        else if (order === 'rotate') rows.push(rows.shift()!);
+        else [rows[0], rows[1]] = [rows[1], rows[0]]; // Observed AWS collation versus PGlite.
+        return { ...r, rows };
+      } })) };
+    expect(await run('rehearse', reordered)).toMatchObject({ rolledBack: true, observedMigrationCount: 46 });
+    await predecessor();
+  });
   it('refuses missing/renamed historical alias, altered catalog ledger, unknown or altered core history', async () => {
     const alias = migrations.find(x => x.version === '20260821049700')!;
     await pg.query("delete from clinical_core.schema_migrations where version='20260902230000'");
@@ -140,6 +154,9 @@ describe('exact preserving synthetic staging erasure successor', () => {
       'revoke execute on function clinical_core.care_data_erasure_request(jsonb) from clinical_core_api',
       "alter function clinical_core.care_data_erasure_request(jsonb) set search_path=public",
       'alter table clinical_core.care_data_erasure_requests drop constraint care_data_erasure_requests_scope_check',
+      'alter table clinical_core.care_data_erasure_requests drop constraint care_data_erasure_requests_owner_id_fkey',
+      'alter table clinical_core.care_data_erasure_requests drop constraint care_data_erasure_requests_outcome_check',
+      'alter table clinical_core.care_data_erasure_requests add constraint weakened_receipt_contract check(true)',
       'alter table clinical_core.care_data_erasure_requests alter column scope drop not null',
       'alter table clinical_core.care_data_erasure_requests alter column settled_at drop default',
       'alter table clinical_core.care_data_erasure_requests disable trigger care_data_erasure_requests_immutable'])('refuses contract drift and rolls back %s', async sql => {
