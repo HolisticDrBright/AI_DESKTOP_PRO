@@ -117,6 +117,8 @@ jobs:
         run: npm run test:synthetic-aws-principal
       - name: Keep fictional identity timeout changes narrow
         run: npm run test:synthetic-identity-timeout
+      - name: Bind fictional API/mobile sources and refuse unsafe schema rollback (no AWS calls)
+        run: npm run test:synthetic-care-release
       - name: Dependency security gate
         run: npm audit --audit-level=high
       - name: Preserve pinned Next lint rules with the bounded root matcher

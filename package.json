@@ -48,6 +48,8 @@
     "test:qualification-log-recovery": "node --test scripts/prepare-qualification-log-recovery.test.mjs",
     "test:synthetic-aws-principal": "node --test scripts/synthetic-aws-principal.test.mjs",
     "test:synthetic-identity-timeout": "node --test scripts/prepare-synthetic-identity-timeout.test.mjs",
+    "build:synthetic-care-release": "node scripts/build-synthetic-care-release.mjs",
+    "test:synthetic-care-release": "node --test scripts/synthetic-care-release.test.mjs",
     "check:aws-production-readiness": "node scripts/check-aws-production-readiness.mjs",
     "test:aws-production-readiness": "node scripts/check-aws-production-readiness.test.mjs",
     "check:aws-first-real-data-pilot": "node scripts/check-aws-first-real-data-pilot.mjs",
