@@ -1319,3 +1319,112 @@ program assignments remain engineering. Security, retention, actual agreement/
 project/runtime/provider coverage and separate PHI approvals remain independent
 review gates. Clinical holds/exclusions/source verification are unchanged.
 PHI OFF; no lasting migration, fixture, consent/provider release or paid build.
+
+## October 7 synthetic identity API deployment
+
+The request-ID-aware identity API is now deployed in synthetic staging. This
+does not complete authenticated erasure acceptance, API recovery, native-device
+verification, commercial readiness or PHI readiness. The database remains at its
+previous preserved history; no receipt migration or patient-data activation was
+performed.
+
+Desktop tooling commits c79189c7b3543eccb5d36817e0b5b3c8994ded64 and
+5b6f8aa45347d33757ac9bfb34658e2e09daefd3 are pushed on the existing branch/PR67.
+V2 source remains 11197e527a1ffc9317513837087e347531076957. New uploader and
+change-set tools are documented in docs/synthetic-care-release.md; their
+credential-free suite passes 14/14, with no skips. Full lint and authenticated
+API gate pass; typecheck passed before the second script-only increment. The
+earlier full Desktop4236/V22492 results retain their original source scope;
+neither full application suite was rerun for these tooling-only commits.
+Desktop4e0b7f9 CI37594222846/37594215363 is terminal success. At the final read,
+c79189c CI37595977957 is success,37595970927 remains active;5b6f8aa
+CI37596703754/37596695070 remains active. V211197e5's two CI runs remain green.
+Pending or skipped jobs are not passes.
+
+### Actual artifact and change set
+
+The uploader rebuilds current source and reobserves STS, the fixed foundation,
+stack/template/function/JWT routes and full database inventory before its
+create-only write. It verifies owner, region, enabled versioning, exact KMS key,
+source metadata, byte count and SHA-256 by downloading the exact S3 version.
+Wrong or ambiguous upload outcomes, stale preparation, overrun/short/stalled
+streams, mismatched checksums, redirects and nonidentical collisions refuse.
+No blind overwrite, retry or artifact deletion is implemented.
+
+An initial c79189c source artifact b9d27543ec7c7a9a52fab989d534110b3151379e0c5e55b004feca14a3cfa88c
+was uploaded/read back at2026-10-07T08:46:53.672Z, version
+N4e.6M9UU9y_ColOQj2pmFDpx9tNdeLB; it was not deployed. After the second tooling
+increment, the actual deployed artifact is:
+
+- Desktop source:5b6f8aa45347d33757ac9bfb34658e2e09daefd3.
+- Mobile source binding:11197e527a1ffc9317513837087e347531076957; built:false/deviceVerified:false.
+- ZIP SHA-256:644967eec4241c19f2365aabc7cec304f200f95622c8ef3a0188f57633dd64db,1,818,387bytes.
+- Bucket:ai-clinical-core-synthetic-clinicaldocumentsbucket-1wv5abdrcnn7.
+- Key:clinical-core/authenticated-api/care-release/5b6f8aa45347d33757ac9bfb34658e2e09daefd3/644967eec4241c19f2365aabc7cec304f200f95622c8ef3a0188f57633dd64db.zip.
+- Exact S3 version:hruo6Qx4lq5maqBp.E_Kp.x1utrFXFPh.
+- Change set:arn:aws:cloudformation:us-east-2:588966314750:changeSet/care-release-1c598354d9e398432cf74aa2e6cad22e/8de53f04-c098-492b-a241-9a4aab9a7bd8.
+- Reviewed template canonical SHA-256:dfd973cb9ba14323bc25f64219a91ce1ace63f5dd88e1b496ee25513bdad5dc2.
+- Report directory:dist/synthetic-care-release/5b6f8aa45347d33757ac9bfb34658e2e09daefd3/11197e527a1ffc9317513837087e347531076957/change-sets/1c598354d9e398432cf74aa2e6cad22e0bdad191ac5d6dc380831fc61773fab1.
+
+The source tool creates and inspects an unexecuted change set only. Execution
+was a separate controlled operator step after another full live preparation,
+source check, observed function revision and freshly reverified AWS change set.
+Only the existing Lambda Code changed, with Code.S3ObjectVersion pinned and
+the obsolete route-count output corrected. All other ten parameters, IAM,
+environment declarations, authorizers and routes stayed unchanged; the four
+source-only routes remain absent. No code tool silently executed its plan.
+
+### Independent deployment checks
+
+CloudFormation completed UPDATE_COMPLETE at2026-10-07T08:55:40.839Z. Function
+wxv734oi12-synthetic-identity is Active/Successful, nodejs22.x,index.handler,
+arm64,256MB,29seconds, no layer/VPC additions, with exactly the existing seven
+identifier environment variables. Actual CodeSha256 is
+ZEln7sQkHBnyNlqrx87DBPIA+VYiyO86AYj1djPdZNs= and revision
+ce2df715-719f-464f-bc73-5a24e0220483. The deployed template, all eleven resolved
+parameters, pinned object version, unchanged integration, all51 JWT identity
+routes and all112 API routes were independently checked. Full route inventory
+digest remains96dd1d133a73a8ecea3804cf95346e3da5ad0d64e6d659a6d26f1959458017cd.
+
+Actual GET consumer records without a token and POST consumer care-data with
+no token or an invalid token each returned401. These are gateway-denial proofs,
+not authenticated consumer/workforce journeys, runtime legacy-erasure refusal
+or cross-owner/clinic acceptance. No forged authorizer claims or substituted
+health data were used.
+
+The separately rebuilt5b6f8aa inspection operator confirmed the original
+46 live/core entries (45 source),87 non-ledger tables,23,980 rows and entire
+data digestbb0a6ecafad1da1f595c577124fe8e03a0e495cb524018b3f51f2e19392f3a55
+unchanged. Reference history remains2 entries. It reports applied:false,
+alreadyApplied:false,acceptance:false,phiActivation:false. No fixture, consent,
+provider release, lasting migration or paid build occurred.
+
+### Next engineering and review gates
+
+The old-baseline preparation/upload/change-set commands are deliberately
+one-shot: they require old58f code and the historical output32. They now refuse
+this deployed successor. Do not edit pins or falsify observations to rerun them.
+Extend the deployment/recovery operator with an explicit reviewed deployed5b6f8aa
+binding, exact version/template/source provenance and post-deployment checks.
+
+Next: use/create designated fictional Cognito identities with their authentic
+sessions, verify safe authenticated legacy refusal and unaffected consumer/
+workforce routes, implement and rehearse source-verified schema-compatible
+recovery, then perform the preserving staging upgrade only after those checks.
+Never restore old ID-less58f code after live ledger47; never down-migrate or
+discard receipts. The saved local lab-test envelope is not on the required
+fictional email domain and was not decrypted, reused or reset. No real account
+is a substitute for fictional qualification.
+
+All six original scopes remain partial: account/plan continuity and legacy
+provenance; owned processing/durable cross-app delivery; complete privacy and
+retained clinic amendments/cross-store disposition; eligible verified clinical
+knowledge/safety; Core19.99 purchase/restore/cancel/provider/store acceptance;
+exact matched release/rollback/load/security/recovery and physical iOS/Android/
+five-persona acceptance. Legacy claim drain, second-device pending discovery,
+missing-journal reconciliation, distinct registrar audit identity, production
+program assignments and reviewed qualification candidate deployment still need
+engineering. Security/retention and actual agreement/project/runtime/provider
+coverage remain separate reviewed gates. Neither app is commercial or PHI
+ready. PHI remains OFF, clinical holds/exclusions/source verification preserved,
+paid mobile builds held.
