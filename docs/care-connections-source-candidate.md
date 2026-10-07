@@ -1214,3 +1214,108 @@ identity and production program assignments also remain engineering. Security,
 retention, actual agreement/project/runtime/provider coverage and separate PHI
 activation approvals remain independent review gates. Neither app is commercial
 or PHI ready. All six phases remain partial.
+
+## October 7 matched synthetic care release preparation
+
+Desktop source **2321fd451240cd89c8a478f7e99a1612a1c0d589** and V2 source
+**e6a5c7bed168ccc983f8c0b1ad818cddf8716c88** are committed and pushed, with
+remote branch heads independently matched. This increment prepares the release;
+it does not deploy it or make either app commercial or PHI ready.
+
+### Source fixes and verification
+
+- The synthetic release builder binds exact clean Desktop/V2 source commits and
+  file inventories, byte-matching LF-normalized care-data contracts, the mobile
+  journal/transport, both native synthetic profiles, compiled API bytes and
+  exact synthetic core/reference histories. The ZIP has only index.js and
+  release.json, fixed timestamps and standard CRC32 records. Preparation
+  rebuilds the actual current API before any AWS request; a rehashed replacement
+  artifact cannot stand in for that source. A standard independent ZIP reader
+  checked all CRCs and exact extracted bytes.
+- The read-only preparation command verifies fixed member identity, foundation,
+  stack, parameters, full existing template/IAM declarations, active function
+  code/configuration, integration, JWT issuer/audience, all 51 identity routes,
+  and a same-source embedded operator's database inspection. It changes only the
+  proposed code-key parameter and obsolete route-count output. The four source
+  routes absent from staging remain absent. Source output now correctly says55;
+  the prepared existing-stack output says51 rather than historical32.
+- Android's synthetic-physical-test channel previously fell through to development
+  and lost the synthetic warning posture. A regression reproduced that and the
+  profile mismatch before the fix. It now resolves to the synthetic posture;
+  both next-build profiles explicitly use synthetic-testflight. Production
+  storage remains refused. The enforced tests live in __tests__, because the
+  existing lib/releasePosture.test.ts is outside the configured discovery pattern.
+- The image-parser subprocess test separately bounds Node/module startup and
+  retains its three-second detector watchdog. A deliberate post-handshake hang
+  proves the watchdog kills the worker. No parser refusal or positive PNG
+  assertion was removed, and there is no retry.
+- V2 full final suite: **215 files,2,492 passed,1 existing skip**,36.11seconds;
+  actual installed TypeScript compiler, Expo lint and TestFlight source gate pass.
+  The earlier loaded run had one child-startup timeout; it was not called passed.
+- Desktop release tests5/5 with negative matrices and care-data/command tests39/39
+  pass; typecheck, full lint and authenticated API gate pass. The loaded full run
+  had two bounded child-process timeouts (4,234 passed,2 failed,11 skipped).
+  After the competing graph/mobile jobs ended, the complete unchanged Desktop
+  suite passed **337 files,4,236 passed,11 existing skips**,271.44seconds. The
+  earlier failure remains recorded; no tests or deadlines were waived.
+
+### Actual AWS observation and artifact identity
+
+At **2026-10-07T08:23:30.736Z**, the command prepared the fixed synthetic
+588966314750/us-east-2/clinical_core/APIwxv734oi12 target. It still ran ZIP
+58f5978301be218896b269a44438fecb8ae89a690bee6671008b64f215f14247,
+Lambda revision6b1d2617-30a8-4e01-be1e-5087b6dd1188,Timeout29,51 JWT identity
+routes and the original live46/source45 database history. All **23,980 rows**
+remained, full-data digest
+bb0a6ecafad1da1f595c577124fe8e03a0e495cb524018b3f51f2e19392f3a55.
+The destination artifact bucket was independently observed as versioned and
+encrypted with the fixed clinical KMS key. This is inspection, not deployment.
+
+- Candidate ZIP: **ae8b0d62e21708057ec279654db09ac2109aaeccce385035b885d6dec03ce106**,
+  **1,818,387 bytes**.
+- Emitted path:
+  dist/synthetic-care-release/2321fd451240cd89c8a478f7e99a1612a1c0d589/e6a5c7bed168ccc983f8c0b1ad818cddf8716c88/.
+- Preparation subdirectory:
+  preparation/f20ce0571d223529e15f6385418884403554a6d738ba301768e9f6587142a8c3/.
+- Same-source erasure operator index.cjs:
+  **df734e9d53845248fb3d780fa7e0c50d6c1044d68542b51638872a5dfbec692f**.
+  It inspected only; the previous54814c8 rehearsal remains a separate identity.
+- Preparation marks awsMutationPerformed:false,candidateUploaded:false,
+  changeSetCreated:false,deployed:false,hostedAcceptance:false,
+  rollbackRehearsed:false,phiAllowed:false,paidMobileBuildStarted:false.
+
+The previous Desktop54814c8 and doc7f87116 CI pairs and V2cb858da CI pairs are
+now terminal success. New V2e6a5c7b CI37593402068/37593395470 is terminal success.
+Desktop2321fd4 CI37593412783/37593405855 was in progress at the last observation.
+New documentation heads must be checked separately; a saved report never
+qualifies a later rebuilt artifact.
+
+### Exact next actions and remaining scope
+
+Use **Desktop docs/synthetic-care-release.md** for build/prepare commands.
+The next cloud step is independent exact-ZIP upload verification and a freshly
+observed, reviewed Lambda-only change set. Deploy the request-ID-aware handler
+before the schema change and prove safe legacy refusal plus unaffected routes.
+Then rehearse explicitly schema-compatible recovery before the lasting
+preserving upgrade. **Do not restore the old ID-less API after live47, down-
+migrate, or discard receipts.** A prepared re-forward policy is not a rollback
+rehearsal. Documentation-only HEAD changes still require a fresh same-source
+build/inspection under these strict commands.
+
+Paid native builds remain held. The next actual binaries need physical
+iOS/Android restart, ambiguous delivery, exact receipt/settlement, second-device
+convergence, isolation and retained-record tests. A matched mobile source is not
+a matched mobile binary.
+
+All six original phases remain partial: account/plan continuity and legacy
+provenance; owned processing/durable cross-app delivery; complete privacy,
+retained clinic amendments and interruption-safe cross-store disposition;
+eligible verified clinical knowledge/safety; Core19.99 purchase/restore/cancel
+and provider/store acceptance; exact release/rollback/load/security/recovery and
+physical five-persona iOS/Android acceptance. Legacy claim drain, second-device
+pending discovery and missing-journal reconciliation, reviewed candidate
+deployment operators/bindings, distinct registrar audit identity and production
+program assignments remain engineering. Security, retention, actual agreement/
+project/runtime/provider coverage and separate PHI approvals remain independent
+review gates. Clinical holds/exclusions/source verification are unchanged.
+PHI OFF; no lasting migration, fixture, consent/provider release or paid build.
