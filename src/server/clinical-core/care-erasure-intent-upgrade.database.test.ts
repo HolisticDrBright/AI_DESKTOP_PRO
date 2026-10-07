@@ -103,7 +103,10 @@ describe('blocked preserving intent successor operator library',()=>{
  ])('rolls back original/reference data changes or unexpected seeded intents: %s',async sql=>{
   const before=await run('inspect');await expect(run('upgrade',atReceipt(async tx=>{await tx.query(sql);}))).rejects.toThrow('data_changed');
   expect((await run('inspect')).dataSha256).toBe(before.dataSha256);await predecessor();
- });
+ // Four complete 88-table fingerprint/schema passes qualify rollback and
+ // preservation, not a five-second API response SLA. Keep all assertions and
+ // SQL deadlines; give this intentionally expensive case a bounded budget.
+ },30000);
  it.each([
   'grant select on clinical_core.care_data_erasure_requests to clinical_core_api',
   'alter table clinical_core.care_data_erasure_requests drop constraint care_data_erasure_requests_scope_check',

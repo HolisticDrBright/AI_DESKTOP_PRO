@@ -124,6 +124,8 @@ jobs:
         run: npm run test:synthetic-identity-timeout
       - name: Bind fictional API/mobile sources and refuse unsafe schema rollback (no AWS calls)
         run: npm run test:synthetic-care-release
+      - name: Intent-aware exact-source artifact and read-only preflight refusals
+        run: npm run test:synthetic-care-intent-release
       - name: Keep owner erasure recovery libraries blocked and bound to their exact predecessor
         run: |
           npm run test:care-erasure-recovery-source
