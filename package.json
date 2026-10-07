@@ -55,6 +55,7 @@
     "verify:deployed-synthetic-care": "node scripts/verify-deployed-synthetic-care.mjs --inspect-deployed-fictional-only",
     "verify:synthetic-care-consumer": "node scripts/verify-synthetic-care-consumer.mjs --verify-existing-fictional-personas",
     "verify:synthetic-care-cancellation": "node scripts/verify-synthetic-care-cancellation.mjs --verify-fictional-cancellation-first",
+    "rehearse:synthetic-care-post-parent": "node scripts/rehearse-synthetic-care-routing.mjs --rehearse-post-parent-fictional-receipts",
     "upload:synthetic-care-release": "node scripts/upload-synthetic-care-release.mjs",
     "prepare:synthetic-care-code-change": "node scripts/prepare-synthetic-care-code-change.mjs",
     "check:aws-production-readiness": "node scripts/check-aws-production-readiness.mjs",

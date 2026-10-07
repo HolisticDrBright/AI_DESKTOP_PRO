@@ -46,7 +46,10 @@ export function collectCancellationInventory(call,args,itemsKey,tokenKey){
  }
  fail('erasure_cancellation_inventory_pages');
 }
-export function verifyCancellationControlPlane(o,source){
+export function verifyCancellationControlPlane(o,source){return verifyBoundCancellationControlPlane(o,source,R.latestArn);}
+/** The retained-route verifier is separate; it never relabels the observed URI. */
+export function verifyRetainedCancellationControlPlane(o,source){return verifyBoundCancellationControlPlane(o,source,R.retainedArn);}
+function verifyBoundCancellationControlPlane(o,source,uri){
  const foundation=o.foundation?.Stacks?.[0],stack=o.stack?.Stacks?.[0];
  for(const [item,name,response] of [[foundation,P.foundation,o.foundation],[stack,P.stack,o.stack]])
   check(response?.Stacks?.length===1&&['CREATE_COMPLETE','UPDATE_COMPLETE'].includes(item?.StackStatus)
@@ -68,7 +71,7 @@ export function verifyCancellationControlPlane(o,source){
  verifyDeployedCareRole(o,source);
  check(Array.isArray(o.integrations?.Items)&&!o.integrations.NextToken
   &&o.integrations.Items.filter(i=>i.IntegrationId===R.integrationId).length===1,'integrations');
- verifyRecoveryIntegration(o.integrations.Items.find(i=>i.IntegrationId===R.integrationId),R.latestArn);
+ verifyRecoveryIntegration(o.integrations.Items.find(i=>i.IntegrationId===R.integrationId),uri);
  verifyRecoveryStage(o.stage);verifyRecoveryLatestPolicy(o.latestPolicy);
  check(Array.isArray(o.routes?.Items)&&!o.routes.NextToken&&Array.isArray(o.authorizers?.Items)&&!o.authorizers.NextToken
   &&new Set(o.routes.Items.map(r=>r.RouteKey)).size===o.routes.Items.length,'routes');

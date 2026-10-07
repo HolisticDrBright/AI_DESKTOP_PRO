@@ -5,8 +5,8 @@ import {CARE_RELEASE as P,sha256} from './synthetic-care-release.mjs';
 import {DEPLOYED_CARE as D} from './verify-deployed-synthetic-care.mjs';
 import {PERSONA_EMAILS,CARE_CONSUMER_CASES} from './verify-synthetic-care-consumer.mjs';
 import {CARE_RECOVERY_ROUTE as R,canonical,recoveryPermission,verifyRecoveryPolicy,verifyRecoveryIntegration,
- verifyRecoveryStage,verifyRecoveryMetric,rehearseCareRecovery,verifyRecoveryResponse} from './care-recovery-routing.mjs';
-import {recoveryArgs,recoveryAwsOutput,recoveryMissingPolicy,verifyRecoveryLatestPolicy,verifyRecoveryInspector,recoveryFailureCode,RECOVERY_AUTH_TRANSPORT} from './rehearse-synthetic-care-routing.mjs';
+ verifyRecoveryStage,verifyRecoveryMetric,rehearseCareRecovery,rehearseCarePostParentRecovery,verifyPostParentReceiptPhase,verifyRecoveryResponse} from './care-recovery-routing.mjs';
+import {recoveryArgs,postParentRecoveryArgs,recoveryAwsOutput,recoveryMissingPolicy,verifyRecoveryLatestPolicy,verifyRecoveryInspector,recoveryFailureCode,RECOVERY_AUTH_TRANSPORT} from './rehearse-synthetic-care-routing.mjs';
 const sid='alp-care-recovery-'+'a'.repeat(32),digest='b'.repeat(64);
 function stage(id='original'){return {StageName:'$default',AutoDeploy:true,DeploymentId:id,
  LastDeploymentStatusMessage:`Successfully deployed stage with deployment ID '${id}'`,
@@ -38,6 +38,91 @@ function fixture(){
  return {d,state,calls,events};
 }
 const mutations=f=>f.calls.filter(c=>c==='add'||c==='remove'||c.startsWith('switch:'));
+function postParentFixture(){
+ const f=fixture();let request=0;
+ f.d.inspect=async()=>{f.calls.push('inspect');const p=preflight();
+  p.database={...p.database,liveCount:47,sourceCount:46,tableCount:88,liveLedger:P.liveAfter,
+   originalRows:1229,originalDataSha256:digest};return p;};
+ f.d.receiptPhase=async phase=>{f.calls.push('receipts:'+phase);
+  return Object.keys(PERSONA_EMAILS).map((persona,i)=>({persona,case:'existing_cancelled_receipt',
+   erasureRequestId:`00000000-0000-4000-8000-${String(i+1).padStart(12,'0')}`,status:200,outcome:'cancelled',
+   requestId:'receipt-request-'+(++request),bodySha256:digest,verified:true}));};
+ f.d.waitMetric=async(start,end,minimum)=>{f.calls.push('metric');assert.equal(minimum,25);assert.ok(end>start);
+  return {Label:'Invocations',Datapoints:[{Timestamp:new Date(start).toISOString(),Sum:25,Unit:'Count'}]};};
+ return f;
+}
+test('post-parent entry point has one fixed argument and no source, target, receipt, report or upgrade override',()=>{
+ postParentRecoveryArgs(['--rehearse-post-parent-fictional-receipts']);
+ for(const args of [[],['--rehearse-existing-fictional-version'],['--rehearse-post-parent-fictional-receipts','--upgrade'],
+  ['--rehearse-post-parent-fictional-receipts','--report','saved'],['--rehearse-post-parent-fictional-receipts','--receipt','id']])
+ assert.throws(()=>postParentRecoveryArgs(args));
+ const script=readFileSync(new URL('./rehearse-synthetic-care-routing.mjs',import.meta.url),'utf8');
+ assert.match(script,/runCarePostParentRecovery\(\)\{return runBoundCareRecovery\(undefined,true\);\}/);
+ assert.match(script,/where owner_id=cast\(:owner as uuid\).*?order by request_id limit 2/);
+ assert.match(script,/found.numberOfRecordsUpdated===0&&found.records\?\.length===1/);
+ assert.match(script,/action:'erase_receipt'/);
+ assert.doesNotMatch(script,/process.env|\['upgrade'\]|settle_erasure|action:'erase_request'/);
+});
+test('post-parent recovery proves seventy-five distinct responses and unchanged complete data, not erasure or activation',async()=>{
+ const f=postParentFixture(),result=await rehearseCarePostParentRecovery(f.d,sid);
+ assert.equal(result.verdict,'pass');assert.equal(result.scope,'post-parent-existing-cancellation-routing-only');
+ assert.equal(result.contract,'synthetic-care-post-parent-routing-rehearsal/1');
+ assert.equal(result.afterUpgradeVerified,true);assert.equal(result.terminalReceiptRecoveryVerified,true);
+ assert.equal(Object.values(result.observations).flat().length,75);
+ assert.equal(result.metricWitness.minimum,25);
+ for(const key of ['erasedOutcomeVerified','lostReplyErasureVerified','upgradeAuthorized','schemaChanged','fullJourneyAcceptance',
+  'physicalDeviceAcceptance','phiAllowed','paidMobileBuildStarted'])assert.equal(result[key],false);
+ assert.deepEqual(mutations(f),['add','switch:'+R.retainedArn,'switch:'+R.latestArn,'remove']);
+ assert.equal(f.calls.filter(c=>c==='inspect').length,2);
+});
+test('post-parent profile refuses pre-parent, successor or mismatched data ledgers before any route change',async()=>{
+ for(const mutate of [p=>p.database.liveCount=46,p=>p.database.sourceCount=45,p=>p.database.tableCount=87,
+  p=>p.database.liveLedger=P.liveBefore,p=>p.database.liveCount=48,p=>p.harness.clean=false,
+  p=>delete p.database.originalDataSha256,p=>p.database.originalRows=p.database.rows,p=>p.database.originalRows=-1]){
+  const f=postParentFixture(),read=f.d.inspect;f.d.inspect=async()=>{const p=await read();mutate(p);return p;};
+  await assert.rejects(rehearseCarePostParentRecovery(f.d,sid));assert.deepEqual(mutations(f),[]);
+ }
+});
+test('existing receipt phase rejects missing, duplicate, unresolved, foreign, malformed or unverified responses',async()=>{
+ for(const mutate of [v=>v.pop(),v=>v.push(v[0]),v=>v[1]=v[0],v=>v[0].persona='other',v=>v[0].outcome='unresolved',
+  v=>v[0].erasureRequestId='saved-report',v=>v[0].verified=false,v=>v[0].status=403,v=>v[0].bodySha256='unknown',
+  v=>v[0].requestId='short',v=>v[1].erasureRequestId=v[0].erasureRequestId]){
+  const f=postParentFixture(),read=f.d.receiptPhase;f.d.receiptPhase=async phase=>{const v=await read(phase);mutate(v);return v;};
+  await assert.rejects(rehearseCarePostParentRecovery(f.d,sid));assert.deepEqual(mutations(f),[]);
+ }
+ assert.throws(()=>verifyPostParentReceiptPhase(null));
+});
+test('receipt changes or unknown reads while retained restore the original route, never replay or pass',async()=>{
+ for(const kind of ['id','body','lost_reply']){
+  const f=postParentFixture(),read=f.d.receiptPhase;
+  f.d.receiptPhase=async phase=>{const v=await read(phase);if(phase==='retained'){
+   if(kind==='id')v[0].erasureRequestId='00000000-0000-4000-8000-000000000099';
+   if(kind==='body')v[0].bodySha256='c'.repeat(64);
+   if(kind==='lost_reply')throw Error('unknown receipt response');
+  }return v;};
+  await assert.rejects(rehearseCarePostParentRecovery(f.d,sid));
+  assert.deepEqual(mutations(f),['add','switch:'+R.retainedArn,'switch:'+R.latestArn,'remove']);
+  assert.equal(f.calls.filter(c=>c==='receipts:retained').length,1);
+  assert.equal(f.state.integration.IntegrationUri,R.latestArn);assert.equal(f.state.policy,null);
+ }
+});
+test('post-parent missing version invocation evidence and changed rows or receipt digest never certify recovery',async()=>{
+ for(const kind of ['metric','rows','receipt_digest']){
+  const f=postParentFixture();
+  if(kind==='metric')f.d.waitMetric=async(start)=>({Label:'Invocations',Datapoints:[{Timestamp:new Date(start).toISOString(),Sum:24,Unit:'Count'}]});
+  else{let count=0;const read=f.d.inspect;f.d.inspect=async()=>{const p=await read();if(++count===2){
+   if(kind==='rows')p.database.rows++;else p.database.dataSha256='c'.repeat(64);
+  }return p;};}
+  await assert.rejects(rehearseCarePostParentRecovery(f.d,sid));
+  assert.equal(f.state.integration.IntegrationUri,R.latestArn);assert.equal(f.state.policy,null);
+ }
+});
+test('receipt gateway identity must be unique across all seventy-five actual requests',async()=>{
+ const f=postParentFixture(),read=f.d.receiptPhase;
+ f.d.receiptPhase=async phase=>{const v=await read(phase);v[0].requestId='request-1';return v;};
+ await assert.rejects(rehearseCarePostParentRecovery(f.d,sid),/repeated_phase_request/);
+ assert.equal(f.state.integration.IntegrationUri,R.latestArn);assert.equal(f.state.policy,null);
+});
 
 test('failure diagnostics preserve only bounded machine codes and fixed phases, never credentials or response text',()=>{
  for(const [error,at,expected] of [

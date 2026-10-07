@@ -342,3 +342,43 @@ erasure acceptance. Actual erased outcomes, lost-reply recovery, compatible
 retained-version routing, intent registration/discovery, canonical successor
 transition and physical second-device testing remain separate requirements.
 Qualification, production activation and PHI evidence flags remain false.
+
+## Post parent receipt routing recovery
+
+Use the separate fixed post-parent command after cancellation acceptance has
+created an existing terminal cancellation for each of the five fictional owners:
+
+```powershell
+npm run rehearse:synthetic-care-post-parent
+```
+
+This path requires live47/source46 and 88 tables. It rebuilds the inspector from
+the clean current source, checks the deployed and retained request-ID-aware
+code against the exact immutable S3 object, and reads each owner's existing
+cancellation directly from the database. Saved reports, environment variables
+and command-line request IDs cannot substitute for those reads. More than one
+matching cancellation per owner is ambiguous and refused; no arbitrary row
+is selected.
+
+Each of the baseline, retained-version and returned-handler phases runs the
+20 existing consumer checks and five authenticated cancellation-receipt reads.
+Acceptance requires 75 distinct Gateway request IDs, the same per-owner receipt
+and answer hash in every phase, at least 25 actual retained-version invocations,
+observed successful routing deployments, removal of the temporary invocation
+permission, and identical independent full-database fingerprints before and
+after. Bounded raw inventory pagination is used in both recovery profiles.
+
+Only the existing integration URI and its temporary retained-version invocation
+permission change. No schema, Lambda code, environment, execution-role grant,
+fixture, consent, provider release, cancellation or clinical record is written.
+The post-parent command exposes no continuation or migration hook. The existing
+pre-parent command retains its original ledger requirements and cannot be used
+against the applied parent.
+
+An unknown grant, switch or receipt response is reconciled, not blindly retried.
+The runner attempts a separately observed return to the original handler before
+removing its temporary permission; unconfirmed restoration retains operator
+custody. Passing scope is `post-parent-existing-cancellation-routing-only`.
+It proves recovery of cancelled receipts, not actual erasure, lost-reply erasure,
+the blocked intent successor, physical devices, complete privacy readiness or
+PHI activation.

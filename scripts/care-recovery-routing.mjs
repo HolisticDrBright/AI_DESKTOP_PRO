@@ -61,16 +61,35 @@ export function verifyRecoveryPhase(observations){
 /** No flag/report can manufacture acceptance: the CLI supplies only actual observers.
  * UpdateIntegration has no service-side compare-and-swap. This requires a single
  * synthetic operator, checks before/after every switch and never overwrites unrelated drift. */
-export async function rehearseCareRecovery(d,sid){
+export async function rehearseCareRecovery(d,sid){return rehearseBoundCareRecovery(d,sid,false);}
+/** Separate fixed post-parent profile. This cannot authorize a migration or
+ * accept the pre-parent ledger, and it only reads existing terminal receipts. */
+export async function rehearseCarePostParentRecovery(d,sid){return rehearseBoundCareRecovery(d,sid,true);}
+export function verifyPostParentReceiptPhase(values){
+ const modes=Object.keys(PERSONA_EMAILS),seen=new Set(),requests=new Set(),ids=new Set();
+ check(Array.isArray(values)&&values.length===5,'receipt_case_count');
+ for(const value of values){
+  check(modes.includes(value.persona)&&!seen.has(value.persona)&&value.case==='existing_cancelled_receipt'
+   &&/^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(value.erasureRequestId??'')
+   &&!ids.has(value.erasureRequestId)&&value.status===200&&value.outcome==='cancelled'&&value.verified===true
+   &&/^[A-Za-z0-9_=+/-]{8,160}$/.test(value.requestId??'')&&!requests.has(value.requestId)
+   &&/^[a-f0-9]{64}$/.test(value.bodySha256??''),'receipt_case');
+  seen.add(value.persona);requests.add(value.requestId);ids.add(value.erasureRequestId);
+ }
+ return structuredClone(values);
+}
+async function rehearseBoundCareRecovery(d,sid,postParent){
  recoveryPermission(sid);const events=[],observations={},started=d.now();let grantAttempted=false,switchAttempted=false,returned=false,returnedDeployment,retainedDeployment,metricWitness,error;
  const record=async(stage,detail={})=>{const event={stage,at:new Date(d.now()).toISOString(),...detail};await d.record(event);events.push(event);};
  const before=await d.inspect();await record('preflight');
  check(before?.source===D.desktop&&before.zip===D.zip&&before.s3Version===D.version&&before.artifactVerified===true
   &&before.iamVerified===true&&before.loggingVerified===true&&before.harness?.clean===true
   &&/^[a-f0-9]{40}$/.test(before.harness.commit??'')&&/^[a-f0-9]{64}$/.test(before.harness.sha256??'')
-  &&before.database?.liveCount===46&&before.database.sourceCount===45&&before.database.tableCount===87
-  &&before.database.liveLedger===P.liveBefore&&before.database.referenceLedger===P.reference
+  &&before.database?.liveCount===(postParent?47:46)&&before.database.sourceCount===(postParent?46:45)&&before.database.tableCount===(postParent?88:87)
+  &&before.database.liveLedger===(postParent?P.liveAfter:P.liveBefore)&&before.database.referenceLedger===P.reference
   &&Number.isSafeInteger(before.database.rows)&&before.database.rows>=0&&/^[a-f0-9]{64}$/.test(before.database.dataSha256??''),'preflight_binding');
+ if(postParent)check(Number.isSafeInteger(before.database.originalRows)&&before.database.originalRows>=0
+  &&before.database.rows>=before.database.originalRows+5&&/^[a-f0-9]{64}$/.test(before.database.originalDataSha256??''),'parent_data_binding');
  const initial=await d.transport();verifyRecoveryIntegration(initial.integration,CARE_RECOVERY_ROUTE.latestArn);verifyRecoveryStage(initial.stage);
  check(initial.policy===null,'preexisting_version_permission');
  check(typeof initial.revisionId==='string'&&initial.revisionId.length>0
@@ -79,8 +98,20 @@ export async function rehearseCareRecovery(d,sid){
   check(canonical(comparableStage(value.stage))===canonical(comparableStage(initial.stage))&&value.revisionId===initial.revisionId
    &&value.routesSha256===initial.routesSha256&&value.authorizersSha256===initial.authorizersSha256
    &&value.otherIntegrationsSha256===initial.otherIntegrationsSha256&&value.latestPolicySha256===initial.latestPolicySha256,'control_drift');};
+ const phase=async name=>{
+  const consumer=verifyRecoveryPhase(await d.consumerPhase(name));
+  if(!postParent)return consumer;
+  const receipts=verifyPostParentReceiptPhase(await d.receiptPhase(name));
+  if(name!=='baseline'){
+   const baseline=observations.baseline.filter(v=>v.case==='existing_cancelled_receipt');
+   check(receipts.every(v=>baseline.some(b=>b.persona===v.persona&&b.erasureRequestId===v.erasureRequestId
+    &&b.bodySha256===v.bodySha256)),'receipt_changed');
+  }
+  return [...consumer,...receipts];
+ };
+ const phaseCount=postParent?25:20;
  try{
-  observations.baseline=verifyRecoveryPhase(await d.consumerPhase('baseline'));
+  observations.baseline=await phase('baseline');
   const fresh=await d.transport();guard(fresh,CARE_RECOVERY_ROUTE.latestArn);check(fresh.policy===null,'permission_changed');
   await record('permission_admitted');grantAttempted=true;await d.addPermission(sid);
   const granted=await d.transport();guard(granted,CARE_RECOVERY_ROUTE.latestArn);verifyRecoveryPolicy(granted.policy,sid,true);
@@ -89,18 +120,18 @@ export async function rehearseCareRecovery(d,sid){
   check(retained.stage.DeploymentId!==initial.stage.DeploymentId,'deployment_not_changed');verifyRecoveryPolicy(retained.policy,sid,true);
   retainedDeployment=retained.stage.DeploymentId;
   const windowStart=Math.floor(d.now()/60000)*60000;
-  observations.retained=verifyRecoveryPhase(await d.consumerPhase('retained'));
+  observations.retained=await phase('retained');
   const afterRetained=await d.transport();guard(afterRetained,CARE_RECOVERY_ROUTE.retainedArn);verifyRecoveryPolicy(afterRetained.policy,sid,true);
   check(afterRetained.stage.DeploymentId===retained.stage.DeploymentId,'retained_deployment_changed');
-  await record('retained_cases_verified',{deploymentId:retained.stage.DeploymentId,caseCount:20});
+  await record('retained_cases_verified',{deploymentId:retained.stage.DeploymentId,caseCount:phaseCount});
   await record('return_admitted');await d.switchUri(CARE_RECOVERY_ROUTE.latestArn);
   const restored=await d.waitDeployment(retained.stage.DeploymentId,CARE_RECOVERY_ROUTE.latestArn);guard(restored,CARE_RECOVERY_ROUTE.latestArn);
   check(restored.stage.DeploymentId!==retained.stage.DeploymentId,'return_not_deployed');returned=true;returnedDeployment=restored.stage.DeploymentId;
-  observations.returned=verifyRecoveryPhase(await d.consumerPhase('returned'));
+  observations.returned=await phase('returned');
   const end=Math.ceil(d.now()/60000)*60000;
-  const metric=await d.waitMetric(windowStart,end,20);verifyRecoveryMetric(metric,windowStart,end,20);
-  metricWitness={start:windowStart,end,minimum:20,response:structuredClone(metric)};
-  await record('return_cases_and_metric_verified',{deploymentId:restored.stage.DeploymentId,caseCount:20});
+  const metric=await d.waitMetric(windowStart,end,phaseCount);verifyRecoveryMetric(metric,windowStart,end,phaseCount);
+  metricWitness={start:windowStart,end,minimum:phaseCount,response:structuredClone(metric)};
+  await record('return_cases_and_metric_verified',{deploymentId:restored.stage.DeploymentId,caseCount:phaseCount});
  }catch(cause){error=cause;}
  finally{
   // Even a lost add/switch response is reconciled before deciding what to undo.
@@ -133,16 +164,18 @@ export async function rehearseCareRecovery(d,sid){
  if(error)throw error;
  const after=await d.inspect();
  check(canonical(after)===canonical(before),'postflight_drift');
- const all=Object.values(observations).flat();check(new Set(all.map(o=>o.requestId)).size===60,'repeated_phase_request');
+ const all=Object.values(observations).flat();check(new Set(all.map(o=>o.requestId)).size===phaseCount*3,'repeated_phase_request');
  const finalTransport=await d.transport();guard(finalTransport,CARE_RECOVERY_ROUTE.latestArn);
  check(finalTransport.policy===null&&finalTransport.stage.DeploymentId===returnedDeployment,'final_transport_changed');
  await record('completed');
- return {contract:'synthetic-care-retained-routing-rehearsal/1',scope:'preupgrade-retained-routing-only',execution:'synthetic-staging',
+ return {contract:postParent?'synthetic-care-post-parent-routing-rehearsal/1':'synthetic-care-retained-routing-rehearsal/1',
+  scope:postParent?'post-parent-existing-cancellation-routing-only':'preupgrade-retained-routing-only',execution:'synthetic-staging',
   account:P.account,retainedVersion:CARE_RECOVERY_ROUTE.version,baselineDatabase:before.database,
   transportWitness:{restored:finalTransport,originalDeployment:initial.stage.DeploymentId,retainedDeployment,returnedDeployment},metricWitness,
   verdict:'pass',observations,events,functionalRoutingRecoveryVerified:true,returnToCandidateVerified:true,
   temporaryPermissionRemoved:true,originalRoutingRestored:true,awsMutationPerformed:true,
-  schemaChanged:false,afterUpgradeVerified:false,terminalReceiptRecoveryVerified:false,upgradeAuthorized:false,
+  schemaChanged:false,afterUpgradeVerified:postParent,terminalReceiptRecoveryVerified:postParent,
+  erasedOutcomeVerified:false,lostReplyErasureVerified:false,upgradeAuthorized:false,
   fullJourneyAcceptance:false,physicalDeviceAcceptance:false,phiAllowed:false,paidMobileBuildStarted:false,startedAt:new Date(started).toISOString(),
   completedAt:new Date(d.now()).toISOString()};
 }

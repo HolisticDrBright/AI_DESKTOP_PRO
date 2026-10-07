@@ -4,7 +4,7 @@ import {readFileSync} from 'node:fs';
 import {CARE_RELEASE as P} from './synthetic-care-release.mjs';
 import {DEPLOYED_CARE as D} from './verify-deployed-synthetic-care.mjs';
 import {CARE_RECOVERY_ROUTE as R} from './care-recovery-routing.mjs';
-import {verifyCancellationControlPlane,cancellationFailureCode,collectCancellationInventory} from './verify-synthetic-care-cancellation.mjs';
+import {verifyCancellationControlPlane,verifyRetainedCancellationControlPlane,cancellationFailureCode,collectCancellationInventory} from './verify-synthetic-care-cancellation.mjs';
 const source=JSON.parse(readFileSync(new URL('../infra/aws-clinical-core/identity-api-extension.json',import.meta.url),'utf8'));
 function observation(){
  const template=structuredClone(source);for(const name of P.absentRoutes)delete template.Resources[name];
@@ -78,6 +78,14 @@ test('post-parent control plane pins exact code, source template, JWT authority,
   o=>o.logGroups.logGroups[0].retentionInDays=1,o=>o.logGroups.logGroups[0].kmsKeyId='other',
   o=>o.latestPolicy.Policy=JSON.stringify({Version:'2012-10-17',Statement:[]}),
  ]){const value=observation();mutate(value);assert.throws(()=>verifyCancellationControlPlane(value,source));}
+});
+test('retained verification inspects the actual qualified URI without normalizing it to the current handler',()=>{
+ const value=observation();assert.throws(()=>verifyRetainedCancellationControlPlane(value,source));
+ value.integrations.Items[0].IntegrationUri=R.retainedArn;
+ assert.equal(verifyRetainedCancellationControlPlane(value,source).routeCount,51);
+ assert.throws(()=>verifyCancellationControlPlane(value,source));
+ value.integrations.Items[0].IntegrationUri=R.latestArn+':2';
+ assert.throws(()=>verifyRetainedCancellationControlPlane(value,source));
 });
 test('only incidental role last-use and log volume metadata are excluded from the stable control digest',()=>{
  const a=observation(),b=observation();

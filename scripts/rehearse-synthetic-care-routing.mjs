@@ -7,6 +7,7 @@ import {pathToFileURL} from 'node:url';
 import {S3Client,HeadObjectCommand,GetObjectCommand} from '@aws-sdk/client-s3';
 import {SecretsManagerClient,GetSecretValueCommand} from '@aws-sdk/client-secrets-manager';
 import {CognitoIdentityProviderClient,InitiateAuthCommand} from '@aws-sdk/client-cognito-identity-provider';
+import {RDSDataClient,ExecuteStatementCommand} from '@aws-sdk/client-rds-data';
 import {fromIni} from '@aws-sdk/credential-provider-ini';
 import {CARE_RELEASE as P,careSourceSnapshot,normalizedText,sha256,refuseCareRelease as fail} from './synthetic-care-release.mjs';
 import {DEPLOYED_CARE as D,verifyDeployedCareArtifact,verifyDeployedCareObservation} from './verify-deployed-synthetic-care.mjs';
@@ -14,8 +15,10 @@ import {verifyCareStoredArtifact,readCareArtifact} from './upload-synthetic-care
 import {verifyCareVersionLatest,verifyRetainedCareVersion,runCareVersionChild} from './retain-synthetic-care-version.mjs';
 import {PERSONA_EMAILS,CARE_CONSUMER_CASES,verifyPersonaRecords,verifyPersonaClaims,boundedCareJson} from './verify-synthetic-care-consumer.mjs';
 import {observeSyntheticMemberIdentity,SYNTHETIC_MEMBER_PROFILE as profile} from './synthetic-aws-principal.mjs';
-import {CARE_RECOVERY_ROUTE as R,canonical,recoveryPermission,rehearseCareRecovery,verifyRecoveryResponse,verifyRecoveryStage,
+import {CARE_RECOVERY_ROUTE as R,canonical,recoveryPermission,rehearseCareRecovery,rehearseCarePostParentRecovery,verifyRecoveryResponse,verifyRecoveryStage,
  verifyRecoveryIntegration,verifyRecoveryMetric} from './care-recovery-routing.mjs';
+import {verifyCancellationDatabase,verifyCancellationAnswer,verifyCancellationStoredReceipt} from './care-erasure-cancellation.mjs';
+import {collectCancellationInventory,verifyCancellationControlPlane} from './verify-synthetic-care-cancellation.mjs';
 const secretArn='arn:aws:secretsmanager:us-east-2:588966314750:secret:ai-longevity-pro/synthetic-staging/testflight-personas-piSA7p';
 const check=(ok,code)=>{if(!ok)fail('recovery_'+code);};
 // Blocking AWS CLI inspections can leave an idle pooled socket's close event
@@ -41,6 +44,7 @@ export function recoveryFailureCode(error,at){
  return 'synthetic_care_release_refused:recovery_'+safePhase+(error?.code==='ETIMEDOUT'?'_timeout':'_failed');
 }
 export function recoveryArgs(args){check(args.length===1&&args[0]==='--rehearse-existing-fictional-version','arguments');}
+export function postParentRecoveryArgs(args){check(args.length===1&&args[0]==='--rehearse-post-parent-fictional-receipts','arguments');}
 export function recoveryAwsOutput(args,stdout){
  if(args[0]==='lambda'&&args[1]==='remove-permission'&&typeof stdout==='string'&&stdout.trim()==='')return {};
  try{return JSON.parse(stdout);}catch{fail('recovery_aws_outcome_unconfirmed');}
@@ -88,6 +92,11 @@ export async function continueCareRecovery(report,transport,afterRecovery,record
  * Its work remains inside the same exclusive operator custody. A failed continuation
  * retains the lock for independent diagnosis; it must never trigger an automatic retry. */
 export async function runCareRecovery(afterRecovery){
+ return runBoundCareRecovery(afterRecovery,false);
+}
+/** No continuation/migration hook is exposed by the post-parent entry point. */
+export async function runCarePostParentRecovery(){return runBoundCareRecovery(undefined,true);}
+async function runBoundCareRecovery(afterRecovery,postParent){
  const root=process.cwd();
  phase='source';const harness=careSourceSnapshot(root,'desktop');phase='principal';observeSyntheticMemberIdentity();
  // Serialize local runners, and preserve a stale lock after unknown restoration.
@@ -97,7 +106,7 @@ export async function runCareRecovery(afterRecovery){
  const recordFile=resolve(directory,runId+'.events.jsonl'),custody={admitted:false,finished:false};let admitted=false,restored=false,rows=[];
  const credentials=fromIni({profile}),s3=new S3Client({region:P.region,credentials,maxAttempts:1}),
   secrets=new SecretsManagerClient({region:P.region,credentials,maxAttempts:1}),cognito=new CognitoIdentityProviderClient({region:P.region,credentials,maxAttempts:1,
-   requestHandler:RECOVERY_AUTH_TRANSPORT});
+   requestHandler:RECOVERY_AUTH_TRANSPORT}),rds=new RDSDataClient({region:P.region,credentials,maxAttempts:1,requestHandler:RECOVERY_AUTH_TRANSPORT});
  try{
   phase='build';
   runCareVersionChild(()=>execFileSync(process.execPath,[resolve(root,'scripts/build-care-erasure-schema-upgrade.mjs')],
@@ -108,19 +117,20 @@ export async function runCareRecovery(afterRecovery){
   phase='inspector';const operatorDir=resolve(root,'dist/aws-clinical-core/care-erasure-schema-upgrade'),operator=JSON.parse(readFileSync(resolve(operatorDir,'artifact-manifest.json'),'utf8'));
   verifyRecoveryInspector(operator,readFileSync(resolve(operatorDir,'index.cjs')),harness);
   const unchanged=()=>check(canonical(careSourceSnapshot(root,'desktop'))===canonical(harness),'harness_changed');
+  const inventory=(args,key,token)=>collectCancellationInventory(aws,args,key,token);
   const getVersionPolicy=()=>aws(['lambda','get-policy','--function-name',P.functionName,'--qualifier',R.version],true);
   const transport=async()=>{
    unchanged();observeSyntheticMemberIdentity();
    const latest=aws(['lambda','get-function-configuration','--function-name',P.functionName]);verifyCareVersionLatest(latest,latest.RevisionId);
    verifyRetainedCareVersion(aws(['lambda','get-function-configuration','--function-name',P.functionName,'--qualifier',R.version]),latest);
-   const integrations=aws(['apigatewayv2','get-integrations','--api-id',P.apiId]);
+   const integrations=inventory(['apigatewayv2','get-integrations','--api-id',P.apiId,'--max-results','100'],'Items','NextToken');
    check(Array.isArray(integrations.Items)&&!integrations.NextToken&&integrations.Items.filter(i=>i.IntegrationId===R.integrationId).length===1,'integration_inventory');
    const basePolicy=aws(['lambda','get-policy','--function-name',P.functionName]);verifyRecoveryLatestPolicy(basePolicy);
    return {integration:integrations.Items.find(i=>i.IntegrationId===R.integrationId),
     otherIntegrationsSha256:sha256(canonical(integrations.Items.filter(i=>i.IntegrationId!==R.integrationId))),
     stage:aws(['apigatewayv2','get-stage','--api-id',P.apiId,'--stage-name','$default']),
-    routesSha256:sha256(canonical(aws(['apigatewayv2','get-routes','--api-id',P.apiId]))),
-    authorizersSha256:sha256(canonical(aws(['apigatewayv2','get-authorizers','--api-id',P.apiId]))),
+    routesSha256:sha256(canonical(inventory(['apigatewayv2','get-routes','--api-id',P.apiId,'--max-results','100'],'Items','NextToken'))),
+    authorizersSha256:sha256(canonical(inventory(['apigatewayv2','get-authorizers','--api-id',P.apiId,'--max-results','100'],'Items','NextToken'))),
     revisionId:latest.RevisionId,policy:getVersionPolicy(),latestPolicySha256:sha256(canonical(basePolicy))};
   };
   const inspect=async()=>{
@@ -132,29 +142,71 @@ export async function runCareRecovery(afterRecovery){
    check((await readCareArtifact(object.Body,manifest,signal)).equals(zip),'stored_artifact');
    const foundation=aws(['cloudformation','describe-stacks','--stack-name',P.foundation]),stack=aws(['cloudformation','describe-stacks','--stack-name',P.stack]);
    const body=aws(['cloudformation','get-template','--stack-name',P.stack]).TemplateBody,template=typeof body==='string'?JSON.parse(body):body;
-   const fn=aws(['lambda','get-function-configuration','--function-name',P.functionName]),integrations=aws(['apigatewayv2','get-integrations','--api-id',P.apiId]),
-    routes=aws(['apigatewayv2','get-routes','--api-id',P.apiId]),authorizers=aws(['apigatewayv2','get-authorizers','--api-id',P.apiId]),
+   const fn=aws(['lambda','get-function-configuration','--function-name',P.functionName]),integrations=inventory(['apigatewayv2','get-integrations','--api-id',P.apiId,'--max-results','100'],'Items','NextToken'),
+    routes=inventory(['apigatewayv2','get-routes','--api-id',P.apiId,'--max-results','100'],'Items','NextToken'),authorizers=inventory(['apigatewayv2','get-authorizers','--api-id',P.apiId,'--max-results','100'],'Items','NextToken'),
     resources=aws(['cloudformation','describe-stack-resources','--stack-name',P.stack]);
    const roleName=resources.StackResources?.find(r=>r.LogicalResourceId==='IdentityApiRole')?.PhysicalResourceId;
    check(typeof roleName==='string'&&/^[A-Za-z0-9+=,.@_-]{1,64}$/.test(roleName),'role_name');
    const role=aws(['iam','get-role','--role-name',roleName]),attached=aws(['iam','list-attached-role-policies','--role-name',roleName,'--no-paginate']),
     inline=aws(['iam','list-role-policies','--role-name',roleName,'--no-paginate']),
     policies=['AuroraDataApiTransactionOnly','ManagedDatabaseCredentialRead','BoundedFunctionLogging'].map(name=>aws(['iam','get-role-policy','--role-name',roleName,'--policy-name',name])),
-    logGroups=aws(['logs','describe-log-groups','--log-group-name-prefix','/ai-clinical-core/synthetic-staging/identity-api']);
+    logGroups=inventory(['logs','describe-log-groups','--log-group-name-prefix','/ai-clinical-core/synthetic-staging/identity-api','--limit','50'],'logGroups','nextToken');
    const raw=runCareVersionChild(()=>execFileSync(process.execPath,[resolve(operatorDir,'index.cjs'),'inspect'],
-    {encoding:'utf8',timeout:120000,maxBuffer:1024*1024,windowsHide:true,stdio:['ignore','pipe','pipe']}),'preflight');
+    {encoding:'utf8',timeout:180000,maxBuffer:2*1024*1024,windowsHide:true,stdio:['ignore','pipe','pipe']}),'preflight');
    let database;try{database=JSON.parse(raw);}catch{fail('recovery_database_output');}
-   const proof=verifyDeployedCareObservation({caller,foundation,stack,template,fn,integrations,routes,authorizers,database,resources,role,attached,inline,policies,logGroups},
-    JSON.parse(normalizedText(root,'infra/aws-clinical-core/identity-api-extension.json')),manifest,harness);
+   const source=JSON.parse(normalizedText(root,'infra/aws-clinical-core/identity-api-extension.json'));
+   const observation={caller,foundation,stack,template,fn,integrations,routes,authorizers,database,resources,role,attached,inline,policies,logGroups};
+   let proof;
+   if(postParent){
+    verifyCancellationDatabase(database,harness);
+    proof=verifyCancellationControlPlane({...observation,stage:aws(['apigatewayv2','get-stage','--api-id',P.apiId,'--stage-name','$default']),
+     latestPolicy:aws(['lambda','get-policy','--function-name',P.functionName])},source);
+   }else proof=verifyDeployedCareObservation(observation,source,manifest,harness);
    unchanged();return {source:D.desktop,zip:D.zip,s3Version:D.version,artifactVerified:true,iamVerified:true,loggingVerified:true,harness,
-    templateSha256:proof.templateSha256,apiInventorySha256:proof.apiInventorySha256,revisionId:fn.RevisionId,
+    templateSha256:proof.templateSha256,...(postParent?{routesSha256:proof.routesSha256,authorizersSha256:proof.authorizersSha256,
+     roleSha256:proof.roleSha256}:{apiInventorySha256:proof.apiInventorySha256}),revisionId:fn.RevisionId,
     database:{liveCount:database.observedMigrationCount,sourceCount:database.sourceMigrationCount,tableCount:database.tableCount,
-     rows:database.rowCount,dataSha256:database.dataSha256,liveLedger:database.fromLedgerSha256,referenceLedger:database.referenceLedgerSha256}};
+     rows:database.rowCount,dataSha256:database.dataSha256,liveLedger:postParent?database.toLedgerSha256:database.fromLedgerSha256,
+     referenceLedger:database.referenceLedgerSha256,...(postParent?{originalRows:database.originalRowCount,
+      originalDataSha256:database.originalDataSha256}:{})}};
   };
   // Load only the existing five fictional identities. No emails/accounts/passwords are created or reset.
   phase='personas';const secret=await secrets.send(new GetSecretValueCommand({SecretId:secretArn}),{abortSignal:AbortSignal.timeout(30000)});
   check(secret.ARN===secretArn&&typeof secret.SecretString==='string'&&Buffer.byteLength(secret.SecretString)<=65536,'persona_secret');
   rows=JSON.parse(secret.SecretString);verifyPersonaRecords(rows);
+  const receiptIds=new Map();
+  // Discover only actual existing cancellations belonging to the five fictional
+  // owners. Historical reports and command-line values cannot supply these IDs.
+  const receiptPhase=async name=>{
+   const observations=[];
+   for(const row of rows){
+    unchanged();observeSyntheticMemberIdentity();
+    const found=await rds.send(new ExecuteStatementCommand({resourceArn:P.cluster,secretArn:P.secret,database:P.database,
+     sql:"select request_id::text,scope,outcome,receipt is null as receipt_absent from clinical_core.care_data_erasure_requests where owner_id=cast(:owner as uuid) and scope='domain' and outcome='cancelled' and receipt is null order by request_id limit 2",
+     parameters:[{name:'owner',value:{stringValue:row.personId}}]}),{abortSignal:AbortSignal.timeout(30000)});
+    check(found.numberOfRecordsUpdated===0&&found.records?.length===1,'existing_receipt_inventory');
+    const columns=found.records[0];
+    check(columns.length===4&&columns.slice(0,3).every(v=>typeof v.stringValue==='string')
+     &&typeof columns[3].booleanValue==='boolean','existing_receipt_shape');
+    const id=columns[0].stringValue;
+    verifyCancellationStoredReceipt([{scope:columns[1].stringValue,outcome:columns[2].stringValue,receiptAbsent:columns[3].booleanValue}]);
+    if(name==='baseline')receiptIds.set(row.mode,id);else check(receiptIds.get(row.mode)===id,'existing_receipt_changed');
+    const auth=await cognito.send(new InitiateAuthCommand({ClientId:P.consumerClient,AuthFlow:'USER_PASSWORD_AUTH',
+     AuthParameters:{USERNAME:row.email,PASSWORD:row.password}}),{abortSignal:AbortSignal.timeout(30000)});
+    let token=auth.AuthenticationResult?.IdToken;check(typeof token==='string','persona_id_token');
+    verifyPersonaClaims(JSON.parse(Buffer.from(token.split('.')[1],'base64url').toString('utf8')),row);
+    try{
+     const input={action:'erase_receipt',scope:'domain',requestId:id};
+     const response=await fetch(`https://${P.apiId}.execute-api.${P.region}.amazonaws.com/clinical-core/consumer/care-data`,
+      {method:'POST',headers:{'content-type':'application/json',authorization:`Bearer ${token}`},body:JSON.stringify(input),
+       redirect:'error',signal:AbortSignal.timeout(30000)});
+     const value=await boundedCareJson(response),answer=verifyCancellationAnswer(input,'cancelled',response,value),
+      observation={persona:row.mode,case:'existing_cancelled_receipt',erasureRequestId:id,...answer,bodySha256:sha256(canonical(value))};
+     observations.push(observation);
+     appendFileSync(recordFile,JSON.stringify({stage:'existing_receipt_verified',phase:name,at:new Date().toISOString(),...observation})+'\n');
+    }finally{token=undefined;}
+   }return observations;
+  };
   const consumerPhase=async name=>{
    check(['baseline','retained','returned'].includes(name),'consumer_phase');
    const observations=[];
@@ -176,7 +228,7 @@ export async function runCareRecovery(afterRecovery){
     }}finally{token=undefined;}
    }return observations;
   };
-  const d={now:Date.now,inspect,transport,consumerPhase,
+  const d={now:Date.now,inspect,transport,consumerPhase,...(postParent?{receiptPhase}:{}),
    record:async event=>{if(event.stage==='permission_admitted')admitted=true;if(event.stage==='routing_and_permission_restored')restored=true;
     appendFileSync(recordFile,JSON.stringify(event)+'\n',{encoding:'utf8'});},
    addPermission:async id=>{const statement=recoveryPermission(id);const answer=aws(['lambda','add-permission','--function-name',P.functionName,'--qualifier',R.version,
@@ -202,19 +254,22 @@ export async function runCareRecovery(afterRecovery){
      await pause(10000);
     }fail('recovery_metric_timeout');
    }};
-  phase='rehearsal';const result=await rehearseCareRecovery(d,sid);unchanged();phase='write_report';
+  phase='rehearsal';const result=await (postParent?rehearseCarePostParentRecovery(d,sid):rehearseCareRecovery(d,sid));unchanged();phase='write_report';
   const file=resolve(directory,runId+'.json');writeFileSync(file,JSON.stringify({...result,harness,observedAt:new Date().toISOString(),
    sourceRebuiltNow:false,immutableReviewedArtifactVerified:true,operatorJournal:recordFile},null,2)+'\n',{flag:'wx'});
   const report={report:file,...result,harness};
   unchanged();return await continueCareRecovery(report,transport,afterRecovery,
    async stage=>{appendFileSync(recordFile,JSON.stringify({stage,at:new Date().toISOString()})+'\n');},custody);
  }finally{
-  for(const row of rows)if(row&&typeof row==='object')delete row.password;s3.destroy();secrets.destroy();cognito.destroy();
+  for(const row of rows)if(row&&typeof row==='object')delete row.password;s3.destroy();secrets.destroy();cognito.destroy();rds.destroy();
   if((!admitted||restored)&&(!custody.admitted||custody.finished)){
    const recorded=JSON.parse(readFileSync(lock,'utf8'));if(recorded.runId===runId)unlinkSync(lock);}
  }
 }
-async function main(){phase='arguments';recoveryArgs(process.argv.slice(2));console.log(JSON.stringify(await runCareRecovery()));}
+async function main(){phase='arguments';const args=process.argv.slice(2);
+ if(args[0]==='--rehearse-post-parent-fictional-receipts'){
+  postParentRecoveryArgs(args);console.log(JSON.stringify(await runCarePostParentRecovery()));
+ }else{recoveryArgs(args);console.log(JSON.stringify(await runCareRecovery()));}}
 if(process.argv[1]&&import.meta.url===pathToFileURL(resolve(process.argv[1])).href)main().catch(error=>{
  console.error(recoveryFailureCode(error,phase));process.exitCode=1;
 });
