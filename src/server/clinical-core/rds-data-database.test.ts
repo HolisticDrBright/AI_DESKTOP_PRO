@@ -151,6 +151,9 @@ describe("Aurora RDS Data API transaction adapter", () => {
   });
 
   test.each([
+    ["care_erasure_intent_required", "request_invalid"],
+    ["care_data_invalid", "request_invalid"],
+    ["care_data_forbidden", "identity_refused"],
     ["recording_access_refused", "operation_refused"],
     ["recording_capture_refused", "operation_refused"],
     ["recording_representative_authority_required", "operation_refused"],

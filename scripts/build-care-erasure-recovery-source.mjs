@@ -1,4 +1,4 @@
-/** Blocked source libraries only. No handler, operator, AWS request, or approval. */
+/** Blocked source libraries only. No deployed handler, operator, AWS request, or approval. */
 import {createHash} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
 import {readFileSync,mkdirSync,writeFileSync} from 'node:fs';
@@ -25,7 +25,8 @@ export function sourceMapping(migrations,sql,sourceCommit,sourceDirty){
   ||!/revoke all on function clinical_core\.care_data_erasure_request_v1_terminal\(jsonb\) from public,clinical_core_api;/.test(sql))
   throw new Error('care_erasure_recovery_overlay_refused');
  return {contract:'care-erasure-recovery-source-candidate/1',status:'blocked_source_only',sourceCommit,sourceDirty,
-  deployable:false,canonicalRegistered:false,operatorExists:false,handlerIntegrated:false,clientIntegrated:false,
+  deployable:false,canonicalRegistered:false,operatorExists:false,handlerIntegrated:true,matchedMobileRelease:false,
+  clientIntegration:'requires_matched_v2_source_evidence',
   hostedVerified:false,deviceVerified:false,productionApproved:false,phiAllowed:false,
   predecessor:p,overlay:{file:'care-erasure-intents.sql',sha256:digest(sql),bytes:Buffer.byteLength(sql)},
   futureTarget:{account:'588966314750',region:'us-east-2',database:'clinical_core',execution:'synthetic-staging',
@@ -37,7 +38,7 @@ export function sourceMapping(migrations,sql,sourceCommit,sourceDirty){
    clinicDisposition:'not_implemented_by_this_candidate',providerCopies:'not_covered'},
   remaining:['canonical migration registration and reviewed preserving operator with rollback/data proof',
    'API action routing plus exact code/schema release mapping and real API recovery rehearsal',
-   'V2 prepare-before-dispatch, durable journal, bounded owner discovery and explicit recovery UI',
+   'bind V2 prepare-before-dispatch, durable journal, owner discovery and recovery UI to this exact server release',
    'real concurrent requests, lost replies, second-device recovery and denied-owner hosted acceptance',
    'matched mobile/Desktop/API release and physical device verification',
    'separate security, retention, provider and PHI activation approvals']};

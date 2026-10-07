@@ -4,7 +4,7 @@ import { createAwsIdentityApiHandler, type ApiGatewayV2Event } from "./aws-ident
 import type { LabSpecimenTransfer } from "../../contracts/labSpecimenTransfer";
 import { isProductionPilotRouteAllowed, isProductionPilotConsentScopeAllowed } from "./production-pilot-policy";
 import { ClinicalStateError } from "./aws-clinical-state";
-import type {ClinicalCoreDatabase,ClinicalCoreTransaction} from './database';
+import {ClinicalCoreDatabaseRejection,type ClinicalCoreDatabase,type ClinicalCoreTransaction} from './database';
 
 const PERSON = "11111111-1111-4111-8111-111111111111";
 const ORG = "22222222-2222-4222-8222-222222222222";
@@ -15,6 +15,44 @@ const WORKFORCE_ISSUER = "https://cognito-idp.us-east-2.amazonaws.com/us-east-2_
 const CONSUMER_ISSUER = "https://cognito-idp.us-east-2.amazonaws.com/us-east-2_Consumer";
 const WORKFORCE_AUD = "workforceclient000000000000";
 const CONSUMER_AUD = "consumerclient0000000000000";
+
+describe('synthetic erasure intent recovery API source routing',()=>{
+ function setup(data:unknown){
+  const query=vi.fn(async()=>({rows:[{data}]}));
+  const database:ClinicalCoreDatabase={transaction:work=>work({query:query as ClinicalCoreTransaction['query']})};
+  const run=createAwsIdentityApiHandler({database,adapter:adapter(),configuration:{workforceIssuer:WORKFORCE_ISSUER,
+   workforceAudience:WORKFORCE_AUD,consumerIssuer:CONSUMER_ISSUER,consumerAudience:CONSUMER_AUD}});
+  return {run,query};
+ }
+ test('routes exact preparation and bounded discovery through the existing authenticated consumer route',async()=>{
+  for(const [body,data,fn] of [
+   [{action:'prepare_erasure',requestId:ARTIFACT,scope:'domain'},
+    {action:'prepare_erasure',requestId:ARTIFACT,scope:'domain',outcome:'prepared',receipt:null},'care_data_prepare_erasure'],
+   [{action:'discover_erasure_requests',limit:50},{action:'discover_erasure_requests',items:[],next:null,
+    legacyUncorrelatedErasureCount:0,coverage:'committed_owner_records_not_global_clearance'},'care_data_discover_erasures'],
+  ] as const){
+   const t=setup(data),result=await t.run(event('POST /clinical-core/consumer/care-data','consumer',body,{exp:Date.now()/1000+60}));
+   expect(result.statusCode).toBe(200);expect(JSON.parse(result.body)).toEqual({data});
+   expect(t.query).toHaveBeenCalledWith(`select clinical_core.${fn}($1::jsonb) as data`,[JSON.stringify(body)]);
+  }
+ });
+ test('refuses expired/workforce claims and body ownership overrides before recovery SQL',async()=>{
+  const input={action:'prepare_erasure',requestId:ARTIFACT,scope:'domain'};
+  for(const e of [event('POST /clinical-core/consumer/care-data','consumer',input,{exp:1}),
+   event('POST /clinical-core/consumer/care-data','workforce',input,{exp:Date.now()/1000+60}),
+   event('POST /clinical-core/consumer/care-data','consumer',{...input,ownerId:PERSON},{exp:Date.now()/1000+60})]){
+   const t=setup({});expect([400,403]).toContain((await t.run(e)).statusCode);expect(t.query).not.toHaveBeenCalled();
+  }
+ });
+ test('a malformed recovery response is service-unavailable, not success',async()=>{
+  const t=setup({action:'discover_erasure_requests',items:[],next:null,legacyUncorrelatedErasureCount:0,coverage:'account_clear'});
+  expect((await t.run(event('POST /clinical-core/consumer/care-data','consumer',{action:'discover_erasure_requests'},{exp:Date.now()/1000+60}))).statusCode).toBe(503);
+ });
+ test('an uninstalled or unavailable recovery schema is not reported as a successful read or invalid sign-in',async()=>{
+  const t=setup({});t.query.mockRejectedValue(new ClinicalCoreDatabaseRejection('operation_refused'));
+  expect((await t.run(event('POST /clinical-core/consumer/care-data','consumer',{action:'discover_erasure_requests'},{exp:Date.now()/1000+60}))).statusCode).toBe(503);
+ });
+});
 
 function adapter(): AwsSyntheticIdentityConsentAdapter {
   return {

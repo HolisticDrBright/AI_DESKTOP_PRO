@@ -46,6 +46,12 @@ begin
  if found then
   if _intent.scope<>_scope then raise exception using errcode='23505',message='care_data_conflict'; end if;
  else
+  -- A second device must reconcile the admitted intent before starting another.
+  -- The same owner lock covers this check, insert, erase and settlement.
+  if exists(select 1 from clinical_core.care_data_erasure_intents i where i.owner_id=_actor
+   and not exists(select 1 from clinical_core.care_data_erasure_requests r
+    where r.owner_id=i.owner_id and r.request_id=i.request_id)) then
+   raise exception using errcode='23505',message='care_data_conflict'; end if;
   insert into clinical_core.care_data_erasure_intents(owner_id,request_id,scope) values(_actor,_id,_scope);
  end if;
  return jsonb_build_object('action','prepare_erasure','requestId',_id,'scope',_scope,'outcome','prepared','receipt',null);

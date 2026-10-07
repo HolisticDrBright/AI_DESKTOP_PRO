@@ -3,7 +3,7 @@ import {ClinicalCoreDatabaseRejection,type ClinicalCoreDatabase} from './databas
 import type {ClinicalRequestContext} from './aws-identity-consent';
 import {CareDataError} from './care-data-lifecycle';
 
-/** Source candidate only: not wired into the deployed identity handler. Owner
+/** Synthetic source candidate: routed in source, not hosted qualified. Owner
  * identity comes exclusively from the authenticated context, never the body. */
 export function createCareErasureRecovery(database:ClinicalCoreDatabase){
  return async(context:ClinicalRequestContext,body:unknown)=>{
@@ -22,7 +22,8 @@ export function createCareErasureRecovery(database:ClinicalCoreDatabase){
    return parseCareErasureRecoveryResponse(input,typeof raw==='string'?JSON.parse(raw):raw);
   });}catch(error){
    if(error instanceof ClinicalCoreDatabaseRejection)throw new CareDataError(error.category==='conflict'?'conflict'
-    :error.category==='request_invalid'?'request_invalid':'identity_refused');
+    :error.category==='request_invalid'?'request_invalid'
+    :error.category==='identity_refused'?'identity_refused':'service_unavailable');
    throw new CareDataError('service_unavailable');
   }
  };

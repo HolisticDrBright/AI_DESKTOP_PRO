@@ -22,7 +22,8 @@ const database:ClinicalCoreDatabase={transaction:work=>db.transaction(async tx=>
   catch(cause){
    const message=cause instanceof Error?cause.message:String(cause);
    throw new ClinicalCoreDatabaseRejection(/care_data_invalid|care_erasure_intent_required/.test(message)?'request_invalid'
-    :/care_data_conflict/.test(message)?'conflict':/care_data_forbidden/.test(message)?'identity_refused':'operation_refused');
+    :/care_data_conflict/.test(message)?'conflict'
+    :/care_data_forbidden|request_context_refused|synthetic_context_refused/.test(message)?'identity_refused':'operation_refused');
   }
  }});
 })};
@@ -112,7 +113,8 @@ describe('blocked source candidate: durable owner erasure intents',()=>{
   expect(await discover(50,undefined,other)).toMatchObject({items:[],legacyUncorrelatedErasureCount:0});
  });
  it('pages mixed prepared and terminal records without duplicates or omissions',async()=>{
-  await prepare(id(102));await prepare(id(100));await terminal('settle_erasure',id(101));await terminal('settle_erasure',id(102));
+  await prepare(id(100));await terminal('settle_erasure',id(100));
+  await terminal('settle_erasure',id(101));await prepare(id(102));
   const all:string[]=[];let after:string|undefined;
   for(let i=0;i<3;i++){
    const page=await discover(1,after);if(page.action!=='discover_erasure_requests')throw new Error('wrong response');
@@ -191,11 +193,17 @@ describe('blocked source candidate: durable owner erasure intents',()=>{
   try{await expect(prepare()).rejects.toMatchObject({category:'identity_refused'});expect(await messages()).toBe(1);}
   finally{await db.query("update clinical_core.identities set status='active' where person_id=$1",[owner]);}
  });
- it('never silently upgrades canonical history or registers this source candidate in the live handler',()=>{
+ it('never silently upgrades canonical history; routing exists only in source',()=>{
   const manifest=readFileSync('infra/aws-clinical-core/migrations/manifest.json','utf8');
   expect(JSON.parse(manifest).migrations).toHaveLength(46);
   expect(manifest).not.toContain('care-erasure-intents');
   const handler=readFileSync('src/server/clinical-core/aws-identity-api.ts','utf8');
-  expect(handler).not.toContain('createCareErasureRecovery');
+  expect(handler).toContain('createCareErasureRecovery');
+  expect(handler).toContain("body.action==='prepare_erasure'||body.action==='discover_erasure_requests'");
+ });
+ it('refuses another UUID while an admitted owner intent is unresolved, then allows it after exact cancellation',async()=>{
+  await prepare(id(100));await expect(prepare(id(101))).rejects.toMatchObject({category:'conflict'});
+  expect(await messages()).toBe(1);await terminal('settle_erasure',id(100));
+  expect(await prepare(id(101))).toMatchObject({outcome:'prepared'});
  });
 });

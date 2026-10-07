@@ -7,6 +7,7 @@ import {createCareMessaging,CareMessageError} from './care-messaging';
 import {createProgramAssignments,ProgramAssignmentError} from './program-assignments';
 import {createExternalCalendarConnections,ExternalCalendarError} from './external-calendar-connections';
 import {createCareDataLifecycle,CareDataError} from './care-data-lifecycle';
+import {createCareErasureRecovery} from './care-erasure-recovery';
 import {createPublicConsultIntake,createConsultLinkAdmin,createConsultRequestReview,ConsultRequestError} from './consult-requests';
 import {createIntakeFormAdmin,createIntakePacketWorkforce,createIntakePacketConsumer,IntakeFormError} from './intake-forms';
 import {createDisputeConsumer,createDisputeWorkforce,createRevisionConsumer,createRevisionWorkforce,ClinicalDisputeError} from './clinical-disputes';
@@ -302,6 +303,7 @@ function createIdentityApiHandler<Context extends ClinicalRequestContext>(input:
   const programAssignments=input.database ? createProgramAssignments(input.database) : undefined;
   const calendarConnections=input.database ? createExternalCalendarConnections(input.database) : undefined;
   const careDataLifecycle=input.database ? createCareDataLifecycle(input.database) : undefined;
+  const careErasureRecovery=input.database ? createCareErasureRecovery(input.database) : undefined;
   const publicConsultIntake=input.database ? createPublicConsultIntake(input.database) : undefined;
   const consultLinks=input.database ? createConsultLinkAdmin(input.database) : undefined;
   const consultRequests=input.database ? createConsultRequestReview(input.database) : undefined;
@@ -379,7 +381,12 @@ function createIdentityApiHandler<Context extends ClinicalRequestContext>(input:
         const expiry=Number(claims?.exp);
         if(!Number.isFinite(expiry)||expiry*1000<=Date.now())return response(403,{error:"identity_refused"});
         if(Object.keys(event.queryStringParameters??{}).length)return response(400,{error:"request_invalid"});
-        return response(200,{data:await careDataLifecycle(context,parseBody(event))});
+        const body=parseBody(event);
+        if(body.action==='prepare_erasure'||body.action==='discover_erasure_requests'){
+          if(!careErasureRecovery)return response(503,{error:'service_unavailable'});
+          return response(200,{data:await careErasureRecovery(context,body)});
+        }
+        return response(200,{data:await careDataLifecycle(context,body)});
       }
       if (route.operation === "disputes_workforce" || route.operation === "disputes_consumer"
         || route.operation === "revisions_workforce" || route.operation === "revisions_consumer") {

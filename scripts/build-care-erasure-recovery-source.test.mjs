@@ -12,7 +12,9 @@ const commit='a'.repeat(40);
 test('exact normalized predecessor and blocked metadata; no code hash is an approval',()=>{
  const m=sourceMapping(canonical,overlay,commit,false);
  assert.equal(m.predecessor,CARE_ERASURE_RECOVERY_PARENT);
- for(const key of ['deployable','canonicalRegistered','operatorExists','handlerIntegrated','clientIntegrated',
+ assert.equal(m.handlerIntegrated,true);
+ assert.equal(m.clientIntegration,'requires_matched_v2_source_evidence');
+ for(const key of ['deployable','canonicalRegistered','operatorExists','matchedMobileRelease',
   'hostedVerified','deviceVerified','productionApproved','phiAllowed'])assert.equal(m[key],false,key);
  assert.equal(m.retention.reviewedPolicy,false);assert.equal(m.recoverySemantics.wholeScanIsAtomic,false);
  assert.equal(m.overlay.sha256,digest(overlay));assert.equal(m.futureTarget.account,'588966314750');
