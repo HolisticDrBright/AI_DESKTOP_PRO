@@ -1870,3 +1870,72 @@ Separate security/retention/actual agreement-project-runtime-provider reviews
 and PHI activation approvals remain human gates. All six original scopes are
 partial; neither app is commercial or PHI ready. PHI OFF, paid builds held,
 clinical holds/exclusions/source-verification requirements preserved.
+
+## October 7 Fixed intent inspection and rollback executable
+
+Desktop source **784154086cb8469f21235be60008a776f1df7068** is pushed and
+remote-matched on PR67. V2 runtime remains
+**811f55b3d6841dc01d64e966ef29a8183c887fbf**; this increment changes no mobile
+runtime, native build or device evidence.
+
+The embedded runner is built with
+`npm run build:aws-care-erasure-intent-inspector` and emitted at
+`dist/aws-clinical-core/care-erasure-intent-operator/index.cjs`. Clean artifact
+SHA256 is **071a2abbb1d3915c7264166764b49dbfa0b26922b5a07d803b535e5b8aa0d638**.
+It binds exact source46/reference2/overlay artifacts and the fixed synthetic
+member account, completed foundation, cluster, secret, database and API.
+`inspect` is read-only. `rehearse --confirm-fictional-intent-rollback` requires
+a clean source build, initial inspection, transactional rollback with independent
+readback, final complete data/schema/history comparison and fresh AWS observation.
+Wrong accounts, changed/missing outputs, overrides, artifact drift, altered
+results and approval claims fail closed.
+
+The executable deliberately has no lasting-upgrade route:
+`upgrade` returns `api_recovery_required` before AWS access. Neither a saved
+report nor an environment flag nor a confirmation substitutes for actual API
+recovery. This is an inspection/rehearsal executable, not the completed release
+operator. Source mapping now explicitly separates
+`inspectionRehearsalExecutable:true` from
+`lastingUpgradeExecutable:false`; `operatorExists:false` still means no
+approved lasting release invocation. Canonical registration and deployability
+remain false. Parent/operator pins and all migration SQL bytes are unchanged.
+
+Local focused **37/37** (26 database successor cases plus 11 command cases);
+compiler/lint, clinical-core gate, source mapping **4/4**, and clean builds pass.
+Final documented `npm run test:unit`: **340 files, 4,300 passed, 11 existing
+skips, 296.82 seconds**. The first raw invocation failed with two hook timeouts
+and a missing required TZ; it is not a pass. Windows recorded a standby
+transition during that run. The documented rerun changes no tests, skips or
+deadlines. An earlier `npm test` invocation had no such package script and did
+not run the suite.
+
+Hosted source CI **37630753091** and **37630760785** at 7841540 are terminal
+success; the preceding 38fb366 and 090e8de runs are also terminal success.
+CI proves source/browser checks, not hosted migration or device acceptance.
+AST-only graph: **13,314 nodes, 27,120 edges, 939 communities**; 50 zero-node
+files absent, HTML skipped for graph size, no LLM/API cost.
+
+Fresh AWS STS is member **588966314750**. The first new inspection ended
+`upgrade_failed:transaction_start`; the direct read reported
+`DatabaseResumingException`. A subsequent inspection reached the database
+and returned **history_refused:history**, correctly refusing the unapplied
+terminal parent. Final direct read: **clinical_core, 46 migrations, zero records
+updated**. Lambda remains Active/Successful at codeSHA
+**ZEln7sQkHBnyNlqrx87DBPIA+VYiyO86AYj1djPdZNs=**, revision
+**c7d671c2-b7d8-4fd3-8647-e6ef4c0c1228**. These refusals are not positive hosted
+acceptance or a full data fingerprint. No lasting schema, records, traffic,
+provider/consent releases, PHI settings or paid builds changed.
+
+Next: implement and execute the schema-compatible API recovery and return-to-
+candidate drill; gate the lasting parent/successor invocation on observations
+from that drill; register the versioned canonical successor without rewriting
+history; then run actual lost-reply, cancellation, late-admission, owner isolation
+and second-device journeys. Legacy drain/ID-less reconciliation, bootstrap and
+registrar authority, production assignments and qualification acceptance,
+complete clinic amendments/disposition/privacy, eligible verified clinical
+releases, Core $19.99 store/provider acceptance, matched releases and physical
+iOS/Android/five-persona acceptance remain engineering or verification work.
+Security, retention, actual agreement/project/runtime/provider coverage and
+separate PHI activation remain human gates. **All six original scopes are
+partial. Neither app is commercial or PHI ready. PHI OFF; paid builds held;
+clinical holds, exclusions and source-verification requirements preserved.**
