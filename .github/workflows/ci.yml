@@ -42,6 +42,10 @@ jobs:
         run: |
           npx vitest run src/server/clinical-core/care-consent-copy-registration.database.test.ts src/server/clinical-core/care-consent-copy-command.test.ts
           npm run build:aws-care-consent-copy
+      - name: Artifact-bound connection handler and default-blocked template (no AWS calls)
+        run: |
+          npx vitest run src/server/clinical-core/care-connections-deployment.test.ts src/server/clinical-core/care-connections-artifact.test.ts
+          npm run build:aws-care-connections
       - name: Versioned target and complete fleet capacity regressions (no AWS access)
         run: |
           npx vitest run src/server/clinical-core/qualification-target-manifest.test.ts src/server/clinical-core/qualification-target-observation.test.ts
@@ -58,6 +62,7 @@ jobs:
           npm run build:aws-care-messaging
           pip install --disable-pip-version-check --quiet cfn-lint==1.55.0
           cfn-lint dist/aws-clinical-core/care-messaging/template.json
+          cfn-lint dist/aws-clinical-core/care-connections/template.json
   e2e-aws-recording-consent:
     name: Browser suite (AWS recording controls, generated audio and cookie refusal)
     runs-on: ubuntu-latest

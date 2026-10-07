@@ -57,8 +57,8 @@ const manifest = {
   connectionCode: { alphabet: 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789', symbols: 13, entropyBits: 65, expirationHours: 24, stored: 'sha256_only' },
   activation: 'blocked', phiAllowed: false, seededApprovals: false, seededConsents: false,
   remaining: ['hosted preserving 104-prefix upgrade with rollback evidence using the bound CLI operator',
-    'reviewed clinic retention/disposition procedure for the immutable copy table', 'reviewed consent-copy registration operator',
-    'handler using the emitted per-transaction database binding and independently reviewed deployment template', 'V2 verified text display and compare-and-set acknowledgement',
+    'reviewed clinic retention/disposition procedure for the immutable copy table', 'approved exact-copy package and registrar audit identity',
+    'independent deployment template review and hosted handler acceptance (build:aws-care-connections)', 'V2 verified text display and compare-and-set acknowledgement',
     'actual qualification JWT identities, exact-source deployment and hosted concurrent races',
     'matched mobile and Desktop releases and physical-device acceptance', 'independent security, MFA, consent and provider reviews'],
 };

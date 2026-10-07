@@ -67,6 +67,7 @@
     "build:aws-care-connections-upgrade": "node scripts/build-care-connections-schema-upgrade.mjs",
     "build:aws-care-consent-copy": "node scripts/build-care-consent-copy-operator.mjs",
     "build:aws-care-messaging": "node scripts/build-aws-care-messaging.mjs",
+    "build:aws-care-connections": "node scripts/build-aws-care-connections.mjs",
     "inspect:aws-care-messaging-qualification": "node scripts/inspect-care-messaging-qualification.mjs",
     "test:care-messaging-qualification-observer": "node --test scripts/care-messaging-qualification-observer.test.mjs",
     "build:aws-recording-authority": "node scripts/build-aws-recording-authority.mjs",

@@ -13,17 +13,24 @@ const specs = [
   ['clinical_core.production_care_connection_request', '(jsonb)', 'jsonb', 'v', true],
 ] as const;
 
-/** Deployed-contract metadata check, not whole-ledger inspection or approval.
- * The later handler must supply function digests from its compiled artifact.
- * It never uses an administrative role or reads patient/consent copy content. */
-export function bindCareConnectionDatabase(database: ClinicalCoreDatabase,
-  suppliedFunctions: readonly CareConnectionFunctionBinding[]): ClinicalCoreDatabase {
+/** Capture and validate compiled metadata before any data client is created. */
+export function validateCareConnectionFunctions(
+  suppliedFunctions: readonly CareConnectionFunctionBinding[]): CareConnectionFunctionBinding[] {
   const functions = suppliedFunctions.map(f => ({ ...f }));
   if (functions.length !== specs.length || new Set(functions.map(f => f.name)).size !== specs.length
     || functions.some(f => !/^[a-f0-9]{64}$/.test(f.bodySha256)
       || !specs.some(s => s[0] === f.name && s[4] === f.apiExecute))) {
     throw new Error('care_connection_contract_binding_invalid');
   }
+  return functions;
+}
+
+/** Deployed-contract metadata check, not whole-ledger inspection or approval.
+ * The handler supplies function digests from its compiled artifact.
+ * It never uses an administrative role or reads patient/consent copy content. */
+export function bindCareConnectionDatabase(database: ClinicalCoreDatabase,
+  suppliedFunctions: readonly CareConnectionFunctionBinding[]): ClinicalCoreDatabase {
+  const functions = validateCareConnectionFunctions(suppliedFunctions);
   const expected = JSON.stringify(specs.map(([qualified, arguments_, result, volatility, callable]) => {
     const [schema, name] = qualified.split('.');
     return { schema, name, signature: qualified + arguments_, result, volatility, callable,

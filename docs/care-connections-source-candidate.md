@@ -2,8 +2,10 @@
 
 This unreleased candidate implements the database and API contract for linking
 a consumer account to a clinic chart and reviewing, granting and withdrawing
-sharing consent. It is locally testable, not deployable. It does not register
-consent copy, approve policies, create identities or enable PHI.
+sharing consent. The source libraries are locally testable and non-deployable;
+the separate AWS builder now emits a default-blocked Lambda candidate and
+template. Neither is a hosted release. The API does not register consent copy,
+approve policies, create identities or enable PHI.
 
 ## Contract and safeguards
 
@@ -71,8 +73,9 @@ Old deployed artifacts and target manifests have not been promoted.
 The source manifest records `canonical: true`, `hostedVerified: false` and
 `cliOperatorAvailable: true`. The original candidate file is retained as a
 reviewed byte-for-byte reference; the builder refuses a difference. The API
-remains unreleased and non-deployable: a schema and upgrade operator are not
-a serving connection handler or V2 consent interface.
+remains unreleased. Its source-library artifact is non-deployable; the separate
+default-blocked Lambda/template below does not provide V2 consent integration
+or establish hosted acceptance.
 
 The preserving-upgrade library pins the complete predecessor and proposed
 successor, account, Ohio region, qualification database and PHI-off posture.
@@ -449,3 +452,66 @@ operator-created approval, invented review hash or fallback copy may satisfy
 that prerequisite. Retained clinic amendments/disposition, program assignments,
 matched serving/device/provider/store/security/retention/recovery evidence and
 the unwaived dependency security finding remain open.
+
+## October 6 connection Lambda and blocked release template
+
+`npm run build:aws-care-connections` builds `index.js`, a versioned-object
+deployment ZIP, `template.json` and their exact byte hashes under
+`dist/aws-clinical-core/care-connections`. The compiled handler pins source,
+clean serving posture, all 105 migrations and the seven connection function
+digests. It validates these inputs before constructing a clinical API-role
+database client; every business transaction still checks deployed function
+bodies, signatures, grants, forced RLS and safety triggers. Environment and
+compiled metadata are captured before asynchronous work, so later mutation
+cannot retarget a cached handler. The ledger gate remains separate from these
+per-transaction metadata checks.
+
+The template creates only the two POST routes, each with its own consumer or
+workforce JWT authorizer and exact API invocation permission. Blocked defaults
+permit only bounded encrypted logs. Database execution, the exact secret and
+secret-bound KMS decrypt are conditional on separately supplied reviews.
+Database, workforce MFA, connection, consent and retention review identifiers
+remain distinct; the builder supplies none. Production approval and synthetic
+qualification are separate conditions. Qualification is pinned to account
+588966314750, Ohio and `clinical_core_qualification`, with PHI false and
+activation blocked. Invalid deployments do not emit a qualification marker.
+
+`EnabledConsentScopes` defaults to empty. This enables no new sharing grant;
+status and withdrawal remain available to a valid identity. Unknown or duplicate
+scopes refuse before client construction. The template retains encrypted logs,
+count-only API/Lambda alarms, immutable S3 code version, exact source/ledger
+parameters and bounded two-execution concurrency. CloudFormation conditions
+stay within the ten-item conjunction limit. It never uploads, deploys or signs
+reviews.
+
+Local focused evidence passes 64 tests across five suites, including the emitted
+Lambda's actual blocked response, configuration capture, wrong account/region,
+missing independent reviews, deployed-contract drift, cross-clinic identity,
+stale sign-in, separate workforce issuance and withdrawal with scopes disabled.
+Initial builder/fictional-response mistakes were corrected before that passing
+run. A subsequent isolated-child environment typing error was corrected without
+changing the runtime or weakening a gate. CloudFormation lint passes for the
+actual generated template; CI YAML parses, canonical gate remains 105 with
+zero seeded rows and coverage remains 207 tables.
+
+Both registrar runtime CI runs 37548701302 and 37548695045 are now terminal
+failures at the unchanged Dependency security gate. The inspected first run's
+independent connection/message and fixture-browser jobs passed. Secret-gated
+backend steps do not prove live acceptance. The security finding stays unwaived.
+
+Next engineering includes adding this twelfth candidate to a new qualification
+target/fleet/capacity contract, actual V2 POST connection and exact-copy consent
+review/grant/status/withdrawal wiring, and a distinct registrar operator audit
+event. The current V2 clinic adapter still issues the older GET connection
+request and expects its older response shape; it has not been silently switched
+or given a production fallback. Real approved copy packages, independent
+template review, exact matched deployment, hosted claim/grant races, all other
+hosted/device/provider/store/security/retention/recovery evidence remain required.
+All six original phases remain partial. No AWS resource, consent, approval,
+provider release, installed app or paid build changed in this increment.
+
+Final full local regression passes **328 files, 4,082 tests and 11 existing
+skips**, in 413.52 seconds, with the documented timezone and the unrelated
+Supabase anon-key variable unset. Standalone typecheck and changed-file lint
+pass after the child-environment typing repair. This is source evidence, not
+hosted transfer, native permission, store or PHI activation evidence.
