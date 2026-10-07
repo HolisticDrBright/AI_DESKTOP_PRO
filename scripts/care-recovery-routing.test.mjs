@@ -48,6 +48,10 @@ test('failure diagnostics preserve only bounded machine codes and fixed phases, 
  [{message:'synthetic_care_release_refused:token=fictional-secret'},'personas','recovery_personas_failed'],
  [{message:'synthetic_care_release_refused:allowed\nsecret'},'rehearsal','recovery_rehearsal_failed'],
  [{message:'sensitive health response'},'malicious phase','recovery_entry_failed'],
+ [{name:'NotAuthorizedException',message:'credential response'},'retained_authenticate_regular_cycle','recovery_retained_authenticate_regular_cycle_not_authorized'],
+ [{name:'TimeoutError',message:'network response'},'retained_regular_cycle_posture','recovery_retained_regular_cycle_posture_timeout'],
+ [{name:'SyntaxError',message:'health body'},'returned_menopause_care_export','recovery_returned_menopause_care_export_invalid_json'],
+ [{name:'DangerousServerPayload',message:'raw'},'retained_authenticate_regular_cycle','recovery_retained_authenticate_regular_cycle_failed'],
  ])assert.equal(recoveryFailureCode(error,at),'synthetic_care_release_refused:'+expected);
 });
 

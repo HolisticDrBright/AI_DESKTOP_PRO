@@ -12,7 +12,7 @@ import {CARE_RELEASE as P,careSourceSnapshot,normalizedText,sha256,refuseCareRel
 import {DEPLOYED_CARE as D,verifyDeployedCareArtifact,verifyDeployedCareObservation} from './verify-deployed-synthetic-care.mjs';
 import {verifyCareStoredArtifact,readCareArtifact} from './upload-synthetic-care-release.mjs';
 import {verifyCareVersionLatest,verifyRetainedCareVersion,runCareVersionChild} from './retain-synthetic-care-version.mjs';
-import {CARE_CONSUMER_CASES,verifyPersonaRecords,verifyPersonaClaims,boundedCareJson} from './verify-synthetic-care-consumer.mjs';
+import {PERSONA_EMAILS,CARE_CONSUMER_CASES,verifyPersonaRecords,verifyPersonaClaims,boundedCareJson} from './verify-synthetic-care-consumer.mjs';
 import {observeSyntheticMemberIdentity,SYNTHETIC_MEMBER_PROFILE as profile} from './synthetic-aws-principal.mjs';
 import {CARE_RECOVERY_ROUTE as R,canonical,recoveryPermission,rehearseCareRecovery,verifyRecoveryResponse,verifyRecoveryStage,
  verifyRecoveryIntegration,verifyRecoveryMetric} from './care-recovery-routing.mjs';
@@ -20,12 +20,20 @@ const secretArn='arn:aws:secretsmanager:us-east-2:588966314750:secret:ai-longevi
 const check=(ok,code)=>{if(!ok)fail('recovery_'+code);};
 let phase='entry';
 export function recoveryFailureCode(error,at){
- const safePhase=['entry','arguments','source','principal','lock','build','artifact','inspector','personas','rehearsal','write_report'].includes(at)?at:'entry';
+ const phases=['entry','arguments','source','principal','lock','build','artifact','inspector','personas','rehearsal','write_report'];
+ for(const name of ['baseline','retained','returned'])for(const mode of Object.keys(PERSONA_EMAILS)){
+  phases.push(name+'_authenticate_'+mode);
+  for(const spec of CARE_CONSUMER_CASES)phases.push(name+'_'+mode+'_'+spec.name);
+ }
+ const safePhase=phases.includes(at)?at:'entry';
  const known=/^synthetic_care_release_refused:([a-z0-9_]{1,140})$/.exec(error?.message??'');
  if(known)return 'synthetic_care_release_refused:'+known[1];
  if(error?.message==='synthetic_member_principal_refused')return 'synthetic_care_release_refused:recovery_'+safePhase+'_principal_refused';
  const consumer=/^synthetic_care_consumer_refused:([a-z0-9_]{1,80})$/.exec(error?.message??'');
  if(consumer)return 'synthetic_care_release_refused:recovery_consumer_'+consumer[1];
+ const names={NotAuthorizedException:'not_authorized',TooManyRequestsException:'rate_limited',UserNotConfirmedException:'not_confirmed',
+  PasswordResetRequiredException:'reset_required',TimeoutError:'timeout',AbortError:'aborted',SyntaxError:'invalid_json',TypeError:'transport_type_error'};
+ if(Object.hasOwn(names,error?.name??''))return 'synthetic_care_release_refused:recovery_'+safePhase+'_'+names[error.name];
  return 'synthetic_care_release_refused:recovery_'+safePhase+(error?.code==='ETIMEDOUT'?'_timeout':'_failed');
 }
 export function recoveryArgs(args){check(args.length===1&&args[0]==='--rehearse-existing-fictional-version','arguments');}
@@ -129,18 +137,24 @@ async function main(){
   phase='personas';const secret=await secrets.send(new GetSecretValueCommand({SecretId:secretArn}),{abortSignal:AbortSignal.timeout(30000)});
   check(secret.ARN===secretArn&&typeof secret.SecretString==='string'&&Buffer.byteLength(secret.SecretString)<=65536,'persona_secret');
   rows=JSON.parse(secret.SecretString);verifyPersonaRecords(rows);
-  const consumerPhase=async()=>{
+  const consumerPhase=async name=>{
+   check(['baseline','retained','returned'].includes(name),'consumer_phase');
    const observations=[];
    for(const row of rows){
+    phase=name+'_authenticate_'+row.mode;
+    appendFileSync(recordFile,JSON.stringify({stage:'consumer_authentication_admitted',phase:name,persona:row.mode,at:new Date().toISOString()})+'\n');
     const auth=await cognito.send(new InitiateAuthCommand({ClientId:P.consumerClient,AuthFlow:'USER_PASSWORD_AUTH',
      AuthParameters:{USERNAME:row.email,PASSWORD:row.password}}),{abortSignal:AbortSignal.timeout(30000)});
     let token=auth.AuthenticationResult?.IdToken;check(typeof token==='string','persona_id_token');
     verifyPersonaClaims(JSON.parse(Buffer.from(token.split('.')[1],'base64url').toString('utf8')),row);
     try{for(const spec of CARE_CONSUMER_CASES){
+     phase=name+'_'+row.mode+'_'+spec.name;
      const response=await fetch(`https://${P.apiId}.execute-api.${P.region}.amazonaws.com${spec.path}`,{method:spec.body?'POST':'GET',
       headers:{'content-type':'application/json',authorization:`Bearer ${token}`},body:spec.body?JSON.stringify(spec.body):undefined,
       redirect:'error',signal:AbortSignal.timeout(30000)});
-     const value=await boundedCareJson(response);observations.push({persona:row.mode,...verifyRecoveryResponse(spec,response,value)});
+     const value=await boundedCareJson(response),observation={persona:row.mode,...verifyRecoveryResponse(spec,response,value)};
+     observations.push(observation);
+     appendFileSync(recordFile,JSON.stringify({stage:'consumer_case_verified',phase:name,at:new Date().toISOString(),...observation})+'\n');
     }}finally{token=undefined;}
    }return observations;
   };
