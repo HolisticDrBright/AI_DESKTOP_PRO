@@ -1795,3 +1795,78 @@ tests. Separate security, retention, actual agreement-project-runtime-provider
 reviews and PHI activation approvals remain human gates. All six original scopes
 remain partial; neither app is commercial or PHI ready. PHI OFF, paid builds held,
 clinical holds/exclusions and source-verification requirements unchanged.
+
+## October 7 Preserving intent upgrade library and release mapping
+
+Desktop source 38fb3667860e8ba0a46c86bbb96ef1838bd67c42 is pushed and
+remote-matched on agent/commercial-readiness-20261005, PR67. V2 runtime remains
+811f55b3d6841dc01d64e966ef29a8183c887fbf. This adds an administrative operator
+library candidate, not an AWS command or authorization to apply it. The
+canonical staging manifest is unchanged at source46.
+
+The library supports inspect, rollback rehearsal and an idempotent successor
+transaction. It refuses an unapplied terminal predecessor, wrong account,
+database, region, PHI posture, reference history or altered SQL. The historical
+alias is preserved verbatim. Operator and writer locks protect the transaction;
+every admitted original/reference/receipt row is fingerprinted within the
+existing 100,000-row per-table bound. A bounded prefix never counts as a full
+preservation check. An independently read-back inspection verifies rollback.
+
+Preserved schema checks include old columns, defaults, constraints, indexes,
+policies, triggers and ACLs, not only counts and row-level security flags.
+Successor checks pin exact function bodies, search paths, execute authority,
+the immutable intent trigger, all four intent columns and their defaults and
+constraints. Raw table/helper/predecessor API authority is refused. A failure
+rolls the disposable transaction back without hiding its bounded stage.
+
+The separate candidate maps source46/live47 to source47/live48 using migration
+20261007010000 synthetic_care_erasure_intents. Exact overlay bytes remain
+4be2ca72b0486bec171f16c5299c898d70bfbdbfd3143c4bb216fccc329299ec.
+Candidate source-after digest is
+02026932fff5a37db42a17a1c4f80bd38a759cf8e2ccb2f4d53b8299c66065e7;
+live-after digest is
+447cf4ea8c8da3decbaa7edea964f97d9e3bdb029c38723bf3a5767c38679a50.
+No canonical ledger has been rewritten. The clean source builder now emits
+the preserving operator library SHA
+193ce599d901cab7251e246e0ef403cc1b02fa3cca594d387cb902619a598e44.
+CI builds the blocked libraries and tests mapping drift. Metadata says
+preservingOperatorLibrary true, while operatorExists and deployable remain
+false because a reviewed AWS executable/invocation is not provided.
+
+Final local checks: 339 Desktop files, 4,289 passed, 11 existing skips,
+303.82 seconds; installed compiler and lint pass; focused predecessor/successor
+database tests pass 54/54, source mapping 4/4 and clinical-core gate passes.
+The new successor suite has 26 cases against actual disposable PGlite SQL.
+Only the database name is substituted; these tests do not establish real AWS
+lock races, upgrade/recovery, hosted journeys or device acceptance. Initial
+column-drift test failed on diagnostic order; schema comparison now precedes
+data comparison, preserving the original negative assertion. An interim
+compiler failure on optional alias narrowing was repaired before the final run.
+
+Read-only AWS inspection reconfirmed account588966314750, clinical_core,
+46 live/source45 migrations, 87 tables and 23,980 rows with unchanged digest
+bb0a6ecafad1da1f595c577124fe8e03a0e495cb524018b3f51f2e19392f3a55 and
+reference history83d51dc056b41f47b5fb3d6020201163915faa2116004e3692af9bb41aad0f62.
+The first SDK inspection ended with upgrade_failed:transaction_start;
+a direct read confirmed migration count46 and the repeated full read-only
+inspection passed. The original failure is not a pass or a proven cold-start
+diagnosis. That inspection used the uncommitted source build and is not release
+qualification. Lambda code/revision readback remains
+ZEln7sQkHBnyNlqrx87DBPIA+VYiyO86AYj1djPdZNs= /
+c7d671c2-b7d8-4fd3-8647-e6ef4c0c1228, Active/Successful.
+No lasting schema, record, API traffic, provider/consent release, PHI or paid
+mobile build changed.
+
+Next: implement the reviewed AWS invocation and canonical release transition,
+complete the real schema-compatible API recovery/return-to-candidate drill,
+then apply preserving successors only after their prerequisites pass. Run
+authentic hosted lost-reply/cancel/late-admission/owner-isolation/second-device
+journeys with exact matched sources. Legacy drain and ID-less reconciliation,
+registration/bootstrap, registrar identity, production assignments,
+qualification candidate acceptance, complete privacy/clinic amendments and
+disposition, eligible source-verified clinical releases, Core19.99 store/provider
+acceptance and matched releases/physical iOS/Android/five personas remain.
+Separate security/retention/actual agreement-project-runtime-provider reviews
+and PHI activation approvals remain human gates. All six original scopes are
+partial; neither app is commercial or PHI ready. PHI OFF, paid builds held,
+clinical holds/exclusions/source-verification requirements preserved.
