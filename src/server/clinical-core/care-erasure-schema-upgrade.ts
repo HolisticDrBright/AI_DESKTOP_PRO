@@ -102,17 +102,21 @@ async function inventory(tx: ClinicalCoreTransaction, successor: boolean) {
   return { tables, old, added: tables.filter(t => name(t) === newName) };
 }
 async function fingerprint(tx: ClinicalCoreTransaction, tables: Table[]) {
+  // Staging contains over 12k audit rows. Bound database work, not evidence:
+  // hash every admitted row and refuse an over-limit table rather than
+  // certifying a prefix. Only counts and digests cross the data transport.
+  const maximumRows = 100000;
   const rows: ({ table_name: string; row_count: number; sha256: string } & Record<string, unknown>)[] = [];
   for (let offset = 0; offset < tables.length; offset += 20) {
     const sql = tables.slice(offset, offset + 20).map(t => `select '${name(t)}' table_name,count(*)::int row_count,
       encode(sha256(convert_to(coalesce(string_agg(row_hash,'' order by row_hash),''),'UTF8')),'hex') sha256
-      from (select encode(sha256(convert_to(to_jsonb(t)::text,'UTF8')),'hex') row_hash from ${qualified(t)} t limit 5001) bounded`).join('\nunion all\n');
+      from (select encode(sha256(convert_to(to_jsonb(t)::text,'UTF8')),'hex') row_hash from ${qualified(t)} t limit ${maximumRows + 1}) bounded`).join('\nunion all\n');
     if (Buffer.byteLength(sql) > 20000) fail('inventory_refused');
     rows.push(...(await tx.query<typeof rows[number]>(sql)).rows);
   }
   rows.sort((a, b) => a.table_name.localeCompare(b.table_name));
   if (rows.length !== tables.length || new Set(rows.map(r => r.table_name)).size !== tables.length
-    || rows.some(r => !Number.isSafeInteger(r.row_count) || r.row_count < 0 || r.row_count > 5000 || !/^[a-f0-9]{64}$/.test(r.sha256))) fail('inventory_refused');
+    || rows.some(r => !Number.isSafeInteger(r.row_count) || r.row_count < 0 || r.row_count > maximumRows || !/^[a-f0-9]{64}$/.test(r.sha256))) fail('inventory_refused');
   return { sha256: sha(JSON.stringify(rows)), rows: rows.reduce((n, r) => n + r.row_count, 0) };
 }
 function body(m: ClinicalCoreMigration[], functionName: string) {
@@ -230,7 +234,7 @@ export async function runCareErasureSchemaUpgrade(database: ClinicalCoreDatabase
         || inspected.rowCount !== error.result.rowCount || inspected.dataSha256 !== error.result.dataSha256) fail('verification_failed');
       return { ...inspected, command: 'rehearse', rolledBack: true };
     }
-    if (error instanceof CareErasureUpgradeError) throw error;
+    if (error instanceof CareErasureUpgradeError) throw new CareErasureUpgradeError(error.category, error.stage ?? stage);
     throw new CareErasureUpgradeError('upgrade_failed', stage);
   }
 }

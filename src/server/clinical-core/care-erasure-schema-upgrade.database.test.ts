@@ -42,6 +42,9 @@ beforeAll(async () => {
   await pg.query("insert into clinical_core.organizations(id,synthetic_label) values($1,'FICTIONAL erasure upgrade')", [org]);
   await pg.query("insert into clinical_core.persons(id,synthetic_subject_key) values($1,'syn_erasure_upgrade')", [owner]);
   await pg.query("insert into clinical_reference.knowledge_sources(stable_id,environment) values('src_fictional_erasure_upgrade','synthetic-staging')");
+  // Real staging already exceeds the old qualification-only 5k bound.
+  await pg.query(`insert into clinical_audit.events(organization_id,actor_person_id,action,resource_type,resource_id,purpose)
+    select $1,$2,'consent.granted','consent',$2,'consent_management' from generate_series(1,12001)`, [org, owner]);
 }, 60000);
 afterAll(async () => { await pg?.close(); });
 describe('exact preserving synthetic staging erasure successor', () => {
@@ -63,7 +66,7 @@ describe('exact preserving synthetic staging erasure successor', () => {
     const r = await run('inspect', database(async s => { queries.push(s); }));
     expect(r).toMatchObject({ observedMigrationCount: 46, sourceMigrationCount: 45, tableCount: 87, applied: false, alreadyApplied: false,
       fromLedgerSha256: CARE_ERASURE_UPGRADE.liveBefore, referenceLedgerSha256: CARE_ERASURE_UPGRADE.reference });
-    expect(r.rowCount).toBeGreaterThanOrEqual(3);
+    expect(r.rowCount).toBeGreaterThanOrEqual(12004);
     expect(queries[0]).toContain('read only'); expect(queries.some(s => /^(create|alter|insert|update|delete|lock)/i.test(s))).toBe(false);
     for (const name of ['clinical_core_qualification', 'clinical_core_production']) await expect(run('upgrade', database(undefined, name))).rejects.toThrow('boundary_refused');
     await predecessor();
@@ -105,13 +108,33 @@ describe('exact preserving synthetic staging erasure successor', () => {
       expect((await run('inspect')).dataSha256).toBe(before.dataSha256); await predecessor();
     }
   });
-  it('refuses RLS loss, undeclared tables and changed function contracts without leaving DDL', async () => {
-    for (const sql of ['alter table clinical_core.persons disable row level security',
-      'alter table clinical_core.care_data_erasure_requests disable row level security',
-      'create table clinical_private.unreviewed_erasure_table(id int)']) {
-      await expect(run('upgrade', atReceipt(async tx => { await tx.query(sql); }))).rejects.toThrow('inventory_refused'); await predecessor();
-    }
-    for (const sql of ['grant execute on function clinical_core.care_data_erase(jsonb) to clinical_core_api',
+  it('detects a changed row beyond a 5k prefix without weakening append-only audit protections', async () => {
+    await pg.query(`insert into clinical_reference.knowledge_sources(stable_id,environment)
+      select 'src_fictional_tail_'||n,'synthetic-staging' from generate_series(1,12001) n`);
+    const before = await run('inspect');
+    await expect(run('upgrade', atReceipt(async tx => {
+      await tx.query("update clinical_reference.knowledge_sources set review_status='rejected' where stable_id='src_fictional_tail_12001'");
+    }))).rejects.toThrow('data_changed');
+    expect((await run('inspect')).dataSha256).toBe(before.dataSha256); await predecessor();
+    // Leave these fictional rows for replay/preservation coverage; no trigger
+    // or immutability guard is disabled to manufacture the failure.
+  });
+  it('never treats a bounded prefix as complete data-preservation evidence', async () => {
+    const overBound: ClinicalCoreDatabase = { transaction: work => database().transaction(tx => work({ query: async <Row extends Record<string, unknown>>
+      (s: string, p: readonly unknown[] = []) => {
+        const r = await tx.query<Row>(s, p);
+        if (s.includes('string_agg(row_hash')) return { ...r, rows: r.rows.map(x => x.table_name === 'clinical_audit.events'
+          ? { ...x, row_count: 100001 } : x) };
+        return r;
+      } })) };
+    await expect(run('upgrade', overBound)).rejects.toThrow('inventory_refused'); await predecessor();
+  });
+  it.each(['alter table clinical_core.persons disable row level security',
+    'alter table clinical_core.care_data_erasure_requests disable row level security',
+    'create table clinical_private.unreviewed_erasure_table(id int)'])('refuses inventory drift and rolls back %s', async sql => {
+    await expect(run('upgrade', atReceipt(async tx => { await tx.query(sql); }))).rejects.toThrow('inventory_refused'); await predecessor();
+  });
+  it.each(['grant execute on function clinical_core.care_data_erase(jsonb) to clinical_core_api',
       'grant select(request_id) on clinical_core.care_data_erasure_requests to clinical_core_api',
       'grant select on clinical_core.care_data_erasure_requests to public',
       'revoke execute on function clinical_core.care_data_erasure_request(jsonb) from clinical_core_api',
@@ -119,9 +142,8 @@ describe('exact preserving synthetic staging erasure successor', () => {
       'alter table clinical_core.care_data_erasure_requests drop constraint care_data_erasure_requests_scope_check',
       'alter table clinical_core.care_data_erasure_requests alter column scope drop not null',
       'alter table clinical_core.care_data_erasure_requests alter column settled_at drop default',
-      'alter table clinical_core.care_data_erasure_requests disable trigger care_data_erasure_requests_immutable']) {
-      await expect(run('upgrade', atReceipt(async tx => { await tx.query(sql); }))).rejects.toThrow('verification_failed'); await predecessor();
-    }
+      'alter table clinical_core.care_data_erasure_requests disable trigger care_data_erasure_requests_immutable'])('refuses contract drift and rolls back %s', async sql => {
+    await expect(run('upgrade', atReceipt(async tx => { await tx.query(sql); }))).rejects.toThrow('verification_failed'); await predecessor();
   });
   it('rolls back a database failure before recording the successor and hides SQL/provider details', async () => {
     const broken = database(async s => { if (s.startsWith('insert into clinical_core.schema_migrations')) throw Error('secret provider detail'); });
