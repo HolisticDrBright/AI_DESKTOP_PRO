@@ -105,9 +105,51 @@ The full upload receipt, both live projections, repaired-verifier refusal and
 scope correction are archived in
 [Intent upload audit](evidence/2026-10-07-care-intent-upload-audit.json).
 
+## Separate integration dependency qualification
+
+The original single-resource command still refuses the two-resource change
+above. A separate, nonexecuting command handles only the exact observed
+dependency shape:
+
+```powershell
+npm run prepare:synthetic-care-intent-dependency-change -- --v2-root "<V2 checkout>" --candidate "<exact current build directory>" --prepare-fictional-intent-dependency-change-only
+```
+
+This command performs the same fresh source rebuild, independent database
+inspection and versioned artifact upload. It preserves the full default view
+with two affected resources and the full property-value view with one. The
+only second resource allowed is the existing `IdentityApiIntegration`, without
+replacement, whose single dynamic `IntegrationUri` dependency must be caused
+by `IdentityApiFunction.Arn`. Any extra resource, detail, property or pagination
+is refused. This is an explicit two-resource scope, not a single-resource pass.
+
+The live stack template must differ from the proposed template only in the
+Lambda object version; the code-key parameter is independently bound to the
+verified upload. The integration resource must retain the exact `Fn::GetAtt`
+reference, API parameter, AWS proxy configuration, timeout and payload format.
+Actual stack resource IDs, the existing Lambda ARN, revision, code checksum,
+full resolved Lambda property context and integration configuration are
+checked before and after proposal creation. The two projections must have
+identical metadata and parameters, standard deployment and rollback enabled.
+
+A successful report classifies the preserved dependency but explicitly leaves
+`integrationNoOpProven`, `executionAdmissible` and `deployed` false. AWS describes
+dynamic evaluations as references whose target values depend on the update;
+an unchanged template reference does not prove the update's runtime result
+([ResourceChangeDetail](https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_ResourceChangeDetail.html)).
+Any subsequent execution needs its own admitted operator, exact post-execution
+integration and control-plane readback, compatible retained-version recovery
+and before/after database verification. Neither this command nor a saved
+classification report can perform or authorize that continuation.
+
+Targeted tests preserve the original refusal and cover extra resources,
+dependency mutation, live binding changes, unread pagination, metadata drift,
+disabled rollback, non-Code context changes and the absence of execution,
+schema, report-authority and target-override commands.
+
 ## Remaining release work
 
-1. Run and qualify exact-version upload and a code-only deployment proposal
+1. Run and qualify exact-version upload and an explicitly scoped deployment proposal
    against freshly re-observed state. Preserve all 51 existing identity JWT
    routes, the four absent source routes, environment, execution role and logs.
 2. Deploy and read back the exact intent-aware code while the parent schema

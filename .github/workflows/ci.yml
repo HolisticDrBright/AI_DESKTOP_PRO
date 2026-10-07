@@ -128,6 +128,8 @@ jobs:
         run: npm run test:synthetic-care-intent-release
       - name: Intent code upload and single-resource change-set refusals
         run: npm run test:synthetic-care-intent-upload
+      - name: Explicit two-resource integration dependency scope (no AWS execution)
+        run: npm run test:synthetic-care-intent-dependency
       - name: Keep owner erasure recovery libraries blocked and bound to their exact predecessor
         run: |
           npm run test:care-erasure-recovery-source

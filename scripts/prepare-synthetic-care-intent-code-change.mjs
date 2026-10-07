@@ -6,6 +6,7 @@ import {pathToFileURL} from 'node:url';
 import {CARE_RELEASE as P,normalizedText,sha256} from './synthetic-care-release.mjs';
 import {DEPLOYED_CARE as D} from './verify-deployed-synthetic-care.mjs';
 import {canonical} from './care-recovery-routing.mjs';
+import {CARE_RECOVERY_ROUTE as R,verifyRecoveryIntegration} from './care-recovery-routing.mjs';
 import {verifyCareCodeChangeSet} from './prepare-synthetic-care-code-change.mjs';
 import {runCareIntentUpload,verifyIntentUploadPreparation,intentFailureCode} from './upload-synthetic-care-intent-release.mjs';
 import {collectCancellationInventory} from './verify-synthetic-care-cancellation.mjs';
@@ -71,12 +72,78 @@ export function verifyCareIntentChangeSetViews(summary,detailed,actualTemplate,i
  return {summarySha256:sha256(canonical(summary)),propertyValuesSha256:sha256(canonical(detailed)),
   summaryResourceCount:summary.Changes.length,propertyValuesResourceCount:detailed.Changes.length};
 }
+/** A separate, explicitly two-resource qualification profile. It does not
+ * relax the single-resource guard or prove that a dynamic dependency is inert.
+ * Raw views remain evidence, and live integration readback/recovery are still
+ * mandatory after any separately admitted execution. */
+export function verifyCareIntentDependencyViews(summary,detailed,actualTemplate,input,binding,live){
+ const expectedIntegration={Type:'AWS::ApiGatewayV2::Integration',Properties:{ApiId:{Ref:'ClinicalApiId'},
+  IntegrationType:'AWS_PROXY',IntegrationUri:{'Fn::GetAtt':['IdentityApiFunction','Arn']},
+  PayloadFormatVersion:'2.0',TimeoutInMillis:30000}};
+ const restored=structuredClone(input.template);restored.Resources.IdentityApiFunction.Properties.Code.S3ObjectVersion=D.version;
+ if(canonical(restored)!==canonical(live?.template)
+  ||canonical(actualTemplate)!==canonical(input.template)
+  ||canonical(input.template.Resources.IdentityApiIntegration)!==canonical(expectedIntegration)
+  ||canonical(input.template.Resources.IdentityApiFunction.Properties.FunctionName)!==canonical({'Fn::Sub':'${ClinicalApiId}-synthetic-identity'})
+  ||live.fn?.FunctionArn!==R.latestArn||live.fn.FunctionName!==P.functionName
+  ||live.fn.CodeSha256!==Buffer.from(D.zip,'hex').toString('base64')
+  ||typeof live.fn.RevisionId!=='string'||!live.fn.RevisionId
+  ||live.fn.State!=='Active'||live.fn.LastUpdateStatus!=='Successful')refuseIntent('dependency_live_binding');
+ try{verifyRecoveryIntegration(live.integration,R.latestArn);}catch{refuseIntent('dependency_live_integration');}
+ const resources=live.resources?.StackResources;
+ const fn=resources?.filter(r=>r.LogicalResourceId==='IdentityApiFunction'),integration=resources?.filter(r=>r.LogicalResourceId==='IdentityApiIntegration');
+ if(live.resources?.NextToken||fn?.length!==1||integration?.length!==1
+  ||fn[0].PhysicalResourceId!==P.functionName||fn[0].ResourceType!=='AWS::Lambda::Function'
+  ||integration[0].PhysicalResourceId!==R.integrationId||integration[0].ResourceType!=='AWS::ApiGatewayV2::Integration'
+  ||[fn[0],integration[0]].some(r=>!['CREATE_COMPLETE','UPDATE_COMPLETE'].includes(r.ResourceStatus)))refuseIntent('dependency_stack_binding');
+ const metadata=value=>{const copy=structuredClone(value);delete copy.Changes;return copy;};
+ if(canonical(metadata(summary))!==canonical(metadata(detailed))
+  ||canonical(summary?.DeploymentConfig)!==canonical({Mode:'STANDARD',DisableRollback:false})
+  ||canonical(summary.NotificationARNs)!==canonical([])||canonical(summary.RollbackConfiguration)!==canonical({})
+  ||summary.Tags?.length||summary.RootChangeSetId||summary.ParentChangeSetId)refuseIntent('dependency_metadata');
+ if(summary.Changes?.length!==2||detailed.Changes?.length!==1
+  ||summary.Changes[0]?.ResourceChange?.LogicalResourceId!=='IdentityApiFunction'
+  ||summary.Changes[1]?.Type!=='Resource')refuseIntent('dependency_resource_scope');
+ const dep=summary.Changes[1].ResourceChange;
+ const expectedDependency={Action:'Modify',LogicalResourceId:'IdentityApiIntegration',PhysicalResourceId:R.integrationId,
+  ResourceType:'AWS::ApiGatewayV2::Integration',Replacement:'False',Scope:['Properties'],Details:[{
+   Target:{Attribute:'Properties',Name:'IntegrationUri',RequiresRecreation:'Never'},Evaluation:'Dynamic',
+   ChangeSource:'ResourceAttribute',CausingEntity:'IdentityApiFunction.Arn'}]};
+ if(canonical(dep)!==canonical(expectedDependency)
+  ||canonical(Object.keys(summary.Changes[1]).sort())!==canonical(['ResourceChange','Type']))refuseIntent('dependency_resource_scope');
+ // Exhaustively validate both raw inventories above BEFORE isolating the
+ // Lambda for the existing strict code/context validator. Never filter away
+ // arbitrary resources, dependencies or pagination.
+ const lambdaView={...summary,Changes:[summary.Changes[0]]};
+ verifyCareIntentChangeSetViews(lambdaView,detailed,actualTemplate,input,binding);
+ const properties=JSON.parse(detailed.Changes[0].ResourceChange.BeforeContext).Properties;
+ const actualProperties={FunctionName:live.fn.FunctionName,Runtime:live.fn.Runtime,Architectures:live.fn.Architectures,
+  Handler:live.fn.Handler,Role:live.fn.Role,MemorySize:String(live.fn.MemorySize),Timeout:String(live.fn.Timeout),
+  LoggingConfig:live.fn.LoggingConfig,Environment:structuredClone(live.fn.Environment),
+  Code:{S3Bucket:P.bucket,S3Key:`clinical-core/authenticated-api/care-release/${D.desktop}/${D.zip}.zip`,S3ObjectVersion:D.version}};
+ if(actualProperties.Environment?.Variables?.CLINICAL_DATABASE_SECRET_ARN!==P.secret)refuseIntent('dependency_secret_binding');
+ actualProperties.Environment.Variables.CLINICAL_DATABASE_SECRET_ARN='****';
+ if(canonical(properties)!==canonical(actualProperties))refuseIntent('dependency_function_context');
+ return {contract:'synthetic-care-intent-dependency-projection/1',
+  summarySha256:sha256(canonical(summary)),propertyValuesSha256:sha256(canonical(detailed)),
+  summaryResourceCount:2,propertyValuesResourceCount:1,affectedResources:['IdentityApiFunction','IdentityApiIntegration'],
+  liveTemplateSha256:sha256(canonical(live.template)),liveIntegrationSha256:sha256(canonical(live.integration)),
+  liveFunctionRevision:live.fn.RevisionId,integrationArn:R.latestArn,integrationId:R.integrationId,
+  integrationDependencyClassified:true,integrationNoOpProven:false,postExecutionReadbackRequired:true,
+  freshCompatibleRecoveryRequired:true,executionAdmissible:false,deployed:false,phiAllowed:false};
+}
 function aws(args){
  try{return JSON.parse(execFileSync('aws',[...args,'--profile',profile,'--region',P.region,'--output','json'],
   {encoding:'utf8',windowsHide:true,timeout:30000,maxBuffer:4*1024*1024,stdio:['ignore','pipe','pipe']}));}
  catch{refuseIntent('code_change_aws_unconfirmed');}
 }
 export async function proposeCareIntentCodeChange(root,directory,context){
+ return proposeIntentChange(root,directory,context,false);
+}
+export async function proposeCareIntentDependencyCodeChange(root,directory,context){
+ return proposeIntentChange(root,directory,context,true);
+}
+async function proposeIntentChange(root,directory,context,dependencyProfile){
  const {candidate,current,artifact,preparation,unchanged,record,admit}=context;
  const manifest=candidate.manifest,source=JSON.parse(normalizedText(root,'infra/aws-clinical-core/identity-api-extension.json'));
  const input=careIntentCodeChangeInputs(source,preparation,manifest,artifact,current);
@@ -85,7 +152,18 @@ export async function proposeCareIntentCodeChange(root,directory,context){
  const stackId=stack.Stacks?.[0]?.StackId;
  if(stack.Stacks?.length!==1||!['CREATE_COMPLETE','UPDATE_COMPLETE'].includes(stack.Stacks[0].StackStatus)
   ||!stackId?.startsWith(`arn:aws:cloudformation:${P.region}:${P.account}:stack/${P.stack}/`))refuseIntent('proposal_stack');
- const digest=sha256(canonical({input,desktop:manifest.desktop,mobile:manifest.mobile})),name='care-intent-'+digest.slice(0,32);
+ const observeDependency=()=>{
+  const raw=aws(['cloudformation','get-template','--stack-name',stackId,'--template-stage','Original']).TemplateBody;
+  return {template:typeof raw==='string'?JSON.parse(raw):raw,
+   fn:aws(['lambda','get-function-configuration','--function-name',P.functionName]),
+   integration:aws(['apigatewayv2','get-integration','--api-id',P.apiId,'--integration-id',R.integrationId]),
+   resources:aws(['cloudformation','describe-stack-resources','--stack-name',stackId,'--no-paginate'])};
+ };
+ const live=dependencyProfile?observeDependency():undefined;
+ if(dependencyProfile&&(sha256(canonical(live.template))!==preparation.control.templateSha256
+  ||live.fn.RevisionId!==preparation.control.revision))refuseIntent('dependency_preparation_drift');
+ const digest=sha256(canonical({input,desktop:manifest.desktop,mobile:manifest.mobile,
+  ...(dependencyProfile?{profile:'explicit-integration-arn-dependency/1'}:{})})),name='care-intent-'+digest.slice(0,32);
  const out=resolve(directory,'change-sets',digest);mkdirSync(out,{recursive:true});
  for(const [file,data] of [['template.json',input.template],['parameters.json',input.parameters]]){
   const bytes=JSON.stringify(data,null,2)+'\n',path=resolve(out,file);
@@ -102,7 +180,7 @@ export async function proposeCareIntentCodeChange(root,directory,context){
   admit({stage:'change_set_create_admitted',stackId,name,clientToken:digest});
   const created=aws(['cloudformation','create-change-set','--stack-name',stackId,'--change-set-name',name,
    '--change-set-type','UPDATE','--client-token',digest,'--capabilities','CAPABILITY_IAM',
-   '--description',`Synthetic intent code only ${manifest.desktop.commit}; PHI off; no schema change`,
+   '--description',`Synthetic intent ${dependencyProfile?'Code and integration ARN dependency':'code only'} ${manifest.desktop.commit}; PHI off; no schema change`,
    '--template-body',`file://${resolve(out,'template.json').replaceAll('\\','/')}`,
    '--parameters',`file://${resolve(out,'parameters.json').replaceAll('\\','/')}`]);
   if(created.StackId!==stackId)refuseIntent('created_proposal');id=created.Id;
@@ -119,11 +197,22 @@ export async function proposeCareIntentCodeChange(root,directory,context){
  const summary=aws(['cloudformation','describe-change-set','--stack-name',stackId,'--change-set-name',id,'--no-include-property-values','--no-paginate']);
  record({stage:'change_set_projection_readback',summaryResourceCount:summary.Changes?.length??null,
   propertyValuesResourceCount:set.Changes?.length??null,summarySha256:sha256(canonical(summary)),propertyValuesSha256:sha256(canonical(set))});
- const projections=verifyCareIntentChangeSetViews(summary,set,typeof raw==='string'?JSON.parse(raw):raw,input,{stackId,name,id});unchanged();
- const report={contract:'synthetic-care-intent-code-change/1',observedAt:new Date().toISOString(),
+ const proposedTemplate=typeof raw==='string'?JSON.parse(raw):raw;
+ const projections=dependencyProfile
+  ?verifyCareIntentDependencyViews(summary,set,proposedTemplate,input,{stackId,name,id},live)
+  :verifyCareIntentChangeSetViews(summary,set,proposedTemplate,input,{stackId,name,id});unchanged();
+ if(dependencyProfile){
+  const returned=observeDependency();
+  if(canonical(returned)!==canonical(live))refuseIntent('dependency_live_drift');
+  record({stage:'dependency_live_readback_unchanged',integrationSha256:projections.liveIntegrationSha256});
+ }
+ const report={contract:dependencyProfile?'synthetic-care-intent-dependency-code-change/1':'synthetic-care-intent-code-change/1',observedAt:new Date().toISOString(),
   execution:'synthetic-staging',account:P.account,region:P.region,desktop:current.desktop,mobile:current.mobile,
   artifact,preparation,projections,stackId,changeSetId:id,changeSetName:name,templateSha256:sha256(canonical(input.template)),
-  changeSetCreated:found.length===0,reused:found.length===1,verifiedChange:'one existing Lambda Code property only',
+  changeSetCreated:found.length===0,reused:found.length===1,
+  verifiedChange:dependencyProfile?'two affected resources: Lambda Code plus the preserved integration ARN dependency':'one existing Lambda Code property only',
+  ...(dependencyProfile?{executionAdmissible:false,integrationNoOpProven:false,postExecutionReadbackRequired:true,
+   freshCompatibleRecoveryRequired:true,liveDependencyBinding:live}:{}),
   changeSetExecutionStatus:set.ExecutionStatus,deployed:false,schemaChanged:false,canonicalRegistered:false,
   freshCompatibleRecoveryPerformed:false,hostedAcceptance:false,paidMobileBuildStarted:false,phiAllowed:false};
  const file=resolve(out,sha256(canonical(report))+'.json');writeFileSync(file,JSON.stringify(report,null,2)+'\n',{flag:'wx'});
