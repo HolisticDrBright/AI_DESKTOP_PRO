@@ -38,6 +38,29 @@ There are 51 deployed identity routes. Source defines 55; the four absent
 routes stay absent. The candidate fixes only the obsolete route-count output
 and changes only the code-key parameter; IAM and authorization stay unchanged.
 
+## Verified code-artifact upload
+
+With both source commits clean, build the candidate and same-source inspection
+operator above. The uploader itself reruns preparation against live AWS before
+any write; a saved plan or fabricated checksum cannot substitute for that check.
+
+```powershell
+npm run upload:synthetic-care-release -- --v2-root C:/path/to/V2 --candidate dist/synthetic-care-release/DESKTOP_HEAD/V2_HEAD --upload-fictional-code-only
+```
+
+Only the fixed synthetic code bucket/key is writable. Region, owner, enabled
+versioning and the exact KMS key are verified. A conditional create-only put
+cannot overwrite an existing key. A 412 is reusable only after exact-version
+HEAD and a bounded actual download agree on source metadata, encryption, byte
+length and SHA-256. A 409, timeout, access denial, wrong object or unknown result
+is not success and never triggers a blind retry or deletion. The recorded S3
+version ID must be pinned as `Code.S3ObjectVersion` in the subsequent reviewed
+Lambda-only change set; deploying a mutable latest key is not sufficient. Upload alone is
+not deployment, recovery rehearsal or hosted application acceptance.
+
+AWS semantics: [conditional PutObject](https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutObject.html)
+and [version-specific GetObject](https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObject.html).
+
 ## Deployment and recovery still required
 
 1. Independently verify the ZIP after uploading it under its exact source/hash
