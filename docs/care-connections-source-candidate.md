@@ -1082,3 +1082,135 @@ retention and agreement/runtime reviews and separate PHI approvals are required
 after the engineering and acceptance work. Neither app is commercial or PHI
 ready; PHI OFF, paid builds held, clinical holds/exclusions/source verification
 unchanged.
+
+## October 7 preserving staging erasure upgrade and Inbox filter repair
+
+Desktop source `54814c8c73588174ee2b349afd7c83b04bfeb0dc` is pushed and
+independently remote-matched on agent/commercial-readiness-20261005 (PR67).
+It includes the preserving upgrade operator, full-inventory bound repair,
+explicit bounded acceptance-test timeout, cross-database constraint comparison
+repair and the Inbox response-race repair. V2 runtime
+`78db95bc7edf0bc5f3d481e01feeb88cf2f5d826` is unchanged; a documentation
+update is not a mobile release.
+
+The preserving operator is now implemented and its rollback rehearsal has run
+against AWS. This supersedes the previous unimplemented-operator statement, but
+not the matched rollout requirement. The exact source migration remains46,
+version20261006040000, SQL SHA
+`3890daeb708511a0f651abd95456906048fb9f4a7bc1ef754b731e9d673dab91`.
+The actual staging core ledger includes the historical20260902230000 alias of
+20260821049700; the operator preserves it verbatim. Source45 is46 live entries,
+and source46 would be47 live entries. It also preserves the separate two-entry
+clinical_reference catalog history and every clinical/commercial reference row.
+
+Exact bindings and identities:
+
+- Fixed member profile ai-synthetic-member, account588966314750, us-east-2,
+  foundation ai-clinical-core-synthetic-staging, databaseclinical_core,
+  APIwxv734oi12. Assumed-role STS and completed foundation outputs are observed
+  before admission. Root, production and qualification targets are refused.
+- Live predecessor ledger
+  `2563a6bbe70c75bbb2e9c423aececf6cf92eaead44f28da7a8c457225e0ed393`;
+  planned successor
+  `99ad59a94bab717a4e1299979db177394e931c9ebb7f40aa8be1ba1d99d52148`;
+  separate catalog ledger
+  `83d51dc056b41f47b5fb3d6020201163915faa2116004e3692af9bb41aad0f62`.
+- The actual preserving inventory is87 non-ledger tables, not the smaller
+  qualification inventory. The planned new empty receipt table makes88.
+  Staging has23,980 rows, including12,171 immutable audit events. Every
+  admitted row is hashed in the database. The100,000-row per-table bound
+  refuses a larger table; it never certifies a truncated prefix.
+- Operator commands are inspect, rehearse and upgrade. Mutating/rehearsal
+  commands require a clean compiled source and the exact fictional-only
+  confirmation. Upgrade must first verify a real rollback rehearsal and then
+  reobserve the fixed account/foundation. No target, skip, review or activation
+  overrides exist. Results explicitly state acceptance:false,
+  phiActivation:false and apiDeploymentPerformed:false.
+
+Real AWS rehearsal at that exact clean54814c8 source passed and rolled back.
+A separate inspect afterward confirmed46 live entries/source45,87 tables and
+all23,980 rows with the unchanged full-data digest
+`bb0a6ecafad1da1f595c577124fe8e03a0e495cb524018b3f51f2e19392f3a55`.
+The operator ZIP is not a Lambda: the self-contained CLI index.cjs hash is
+`98e74bde9da5a477362632d18c91c0512aa21635519554db59d9571629c9c517`;
+its artifact-manifest.json hash is
+`89b2a11a3c449cd787c5312f932ad665ae04fb1ff6d6104d5c3b008117608737`.
+A future rebuild at another commit has a different artifact identity.
+
+Two actual qualification defects were repaired, not waived. The original5,000
+row bound could not admit staging's audit history; tests now include12,001 audit
+rows and a12,001-row reference history and detect a changed late row. AWS and
+PGlite returned identical receipt constraint definitions in different collation
+orders. The comparison now ordinally sorts the unordered constraint set only;
+SQL definitions, validation flags, duplicates, physical column order, types,
+nullability and defaults remain exact. Missing/weakened constraints, grants,
+RLS, triggers, function bodies, ledger aliases and catalog history still refuse.
+Earlier failed rehearsals rolled back and independent reads preserved the
+original digest. No new schema digest was invented or whitelisted.
+
+The earlier Desktop CI at0c86731 had a unit timeout and, in one run, an Inbox
+filter failure. The multi-transaction24k-row test now has an explicit30-second
+deadline with unchanged assertions, not a global timeout or skip. A new browser
+regression deliberately holds the old API response until the newer resolved
+filter has rendered. It failed on the original client after the late answer,
+proving an out-of-order response defect. Inbox now admits only the latest request
+for current filters, ignores stale errors/results, and uses current filters for
+read-receipt and action refreshes. Unmount invalidates pending list completions.
+The complete21-test Inbox browser suite passed with no retries in2.6minutes,
+including the forced stale response and the existing persistence, conflict,
+refusal, workflow, membership and cross-surface proofs. This uses a loopback
+fictional contract service and Chromium, not AWS business or device acceptance.
+
+Final local verification for54814c8 passed: **337 files,4,236 tests passed,
+11 existing skips**,301.32seconds, with the documented timezone and unrelated
+anon-key unset; no assertion was waived. The focused schema/command set passed
+33/33, including unordered identical constraint sets and missing/weakened schema
+refusals. Final typecheck and full lint passed after the Inbox change. The
+unchanged production106 zero-seeded-row gate,209-table coverage and PHI-disabled
+workload gate passed; no canonical or historical migration bytes changed.
+The earlier d1096ce full run also passed4,236 tests in283.10seconds, before the
+Inbox client change. Earlier failures remain failures, not reclassified passes.
+AST-only Desktop Graphify is13,081 nodes,26,514 edges,921 communities;50
+zero-node files remain absent and HTML was skipped for size, without LLM/API cost.
+
+The current-source GitHub runs37589826721/37589818434 are in progress at
+readback, not terminal passes. Prior Desktop e82e02d runs37584760042 and
+37584765893 now both have terminal success. V2 documentation head30c012b,
+carrying unchanged78db95b runtime, has37584774782/37584769535 terminal success;
+the earlier78db95b runs were cancelled, not passed. Secret-gated hosted CI
+success must not be confused with physical AWS service acceptance.
+
+**Do not run upgrade yet without the exact matched identity-API/V2 rollout and
+rollback procedure.** The new schema revokes the old ID-less erase contract;
+installing it alone does not qualify old clients or an old serving handler.
+Build the fixed CLI with npm run build:aws-care-erasure-upgrade; inspect is
+read-only, and rehearse --confirm-fictional-care-erasure-upgrade rolls back.
+Keep production106 and clinical_core_qualification separate: synthetic46 is
+production_transform:false and must never be transplanted into either.
+No permanent AWS migration, deployed API, fixture, consent/provider registration,
+paid mobile build or activation occurred in this milestone. PHI remains OFF.
+
+Remaining original phase scope is unchanged:
+
+1. Account and plan continuity still needs legacy provenance/claim drain,
+   second-device pending discovery and reconciliation of requests without
+   recoverable device journals. A local erase journal cannot prove an older
+   ID-less request failed.
+2. Owned lab/document/voice processing and durable cross-app delivery need the
+   matched hosted interruption, replay, withdrawal and real multi-session matrix.
+3. Complete privacy still includes retained clinic amendments and interruption-
+   safe cross-store disposition. This staging rehearsal is not production
+   deletion authority or full erasure fulfillment.
+4. Clinical knowledge/ranges/safety needs actual eligible source-verification
+   releases and preserved holds/exclusions, not approval fabricated from tests.
+5. Core19.99 purchases, restore/cancel and provider/store acceptance remain.
+   Peptides and longevity stay excluded from initial Core activation.
+6. Exact matched API/Desktop/mobile candidates, rollback/load/security/recovery
+   and physical iOS/Android/five-persona acceptance remain. Paid mobile builds
+   stay held until updates are complete and authorized.
+
+Reviewed candidate deployment bindings/operators, distinct registrar audit
+identity and production program assignments also remain engineering. Security,
+retention, actual agreement/project/runtime/provider coverage and separate PHI
+activation approvals remain independent review gates. Neither app is commercial
+or PHI ready. All six phases remain partial.
