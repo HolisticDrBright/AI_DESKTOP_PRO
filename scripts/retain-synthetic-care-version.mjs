@@ -107,7 +107,9 @@ export function runCareVersionChild(run, stage) {
       'before_verification','before_fingerprint','migration_ddl','ledger_receipt','after_history','after_inventory','after_fingerprint','contract_verification',
       'receipt_table_contract','receipt_schema_contract',
       ...['clinical_core.care_data_erase','clinical_private.care_data_immutable','clinical_core.care_data_erasure_request'].map(n=>'function_contract:'+n)];
-    const category=categories.find(c=>inspector===c||stages.some(s=>inspector===c+':'+s));
+    const transports=['begin','statement','commit','rollback','unknown'].flatMap(p=>['database_resuming','database_unavailable','access_denied',
+      'token_expired','credentials_unavailable','timeout','aborted','transaction_missing','statement_timeout','service_unavailable','connection_reset','unknown'].map(r=>p+'_'+r));
+    const category=categories.find(c=>inspector===c||stages.some(s=>inspector===c+':'+s||transports.some(t=>inspector===c+':'+s+':'+t)));
     const schemaCode=category?'schema_'+inspector.replace(/[:.]/g,'_'):undefined;
     fail(`version_${stage}_${code ?? schemaCode ?? (error?.code === 'ETIMEDOUT' ? 'timeout' : 'child_failed')}`);
   }

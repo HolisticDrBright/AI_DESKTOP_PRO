@@ -260,6 +260,10 @@ async function runBoundCareRecovery(afterRecovery,postParent){
   const report={report:file,...result,harness};
   unchanged();return await continueCareRecovery(report,transport,afterRecovery,
    async stage=>{appendFileSync(recordFile,JSON.stringify({stage,at:new Date().toISOString()})+'\n');},custody);
+ }catch(error){
+  appendFileSync(recordFile,JSON.stringify({stage:'finding',at:new Date().toISOString(),code:recoveryFailureCode(error,phase),
+   mutationAdmitted:admitted,restorationObserved:restored,continuationAdmitted:custody.admitted,continuationFinished:custody.finished})+'\n');
+  throw error;
  }finally{
   for(const row of rows)if(row&&typeof row==='object')delete row.password;s3.destroy();secrets.destroy();cognito.destroy();rds.destroy();
   if((!admitted||restored)&&(!custody.admitted||custody.finished)){

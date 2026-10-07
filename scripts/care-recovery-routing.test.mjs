@@ -62,6 +62,7 @@ test('post-parent entry point has one fixed argument and no source, target, rece
  assert.match(script,/found.numberOfRecordsUpdated===0&&found.records\?\.length===1/);
  assert.match(script,/action:'erase_receipt'/);
  assert.doesNotMatch(script,/process.env|\['upgrade'\]|settle_erasure|action:'erase_request'/);
+ assert.match(script,/stage:'finding'.*?recoveryFailureCode\(error,phase\)/s);
 });
 test('post-parent recovery proves seventy-five distinct responses and unchanged complete data, not erasure or activation',async()=>{
  const f=postParentFixture(),result=await rehearseCarePostParentRecovery(f.d,sid);
