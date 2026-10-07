@@ -915,3 +915,82 @@ security/retention/agreement reviews and PHI approvals remain. All six original
 phase scopes are preserved and partial; neither app is commercial or PHI ready.
 PHI stays off, paid builds held, and clinical holds/exclusions/source verification
 requirements are unchanged.
+
+## October 6 connection recovery deployment integration
+
+Desktop runtime `a9006fc9045e3869cf3d156ff47721ea1f4cfdc2` is pushed and
+independently remote-matched. This supersedes the earlier statement that recovery
+route/template/fleet/target/inspector integration was still unbuilt. No V2 runtime
+or mobile binary changed in this increment.
+
+The existing care-connections Lambda now includes
+`POST /clinical-core/consumer/connection-claims`, with a consumer JWT authorizer
+and an exact-path invoke permission. It uses the same two reserved executions;
+no extra recovery function or reservation was introduced. Compiled metadata
+pins the seven connection functions and two canonical recovery functions. Each
+recovery transaction checks both sets through the API role before business work.
+
+Recovery defaults off and requires both `ClaimRecoveryEnabled=true` and a
+separate `ClaimRecoveryReviewSha256`, in addition to the base serving reviews
+and posture. A missing/malformed recovery gate refuses that route without
+creating a database client or disabling normal connection status/withdrawal.
+It does not create approvals, consent grants or an automatic reconnection.
+
+The new target contract `aws-clinical-core-qualification-target/3` requires all
+twelve candidate stacks, including care messaging and care connections.
+Historical /1 and /2 targets remain exact historical contracts and cannot
+qualify the new connection stack. The unfilled example is
+`infra/aws-clinical-core/qualification-target-connections.example.json`; its
+placeholders are not review evidence and it is refused as a run target.
+
+`npm run inspect:aws-care-connections-qualification` rebuilds the exact clean
+checkout before read-only AWS calls. For a deployed candidate it requires a
+separately filled reviewed binding via `--binding=<file>` and compares actual
+stack parameters/outputs, template, ZIP/version, configuration, IAM, JWT routes,
+integration, permissions, alarms and repeated observations with the entire
+ledger. It never deploys, writes an approval, registers consent or certifies
+business acceptance. Hash syntax/equality is not proof that a human reviewed it.
+The source-only recovery manifest now points to this separate deployment
+candidate while remaining non-deployable and activation-blocked itself.
+
+Local verification passed: full Desktop **335 files, 4,193 tests, 11 existing
+skips**, 266.88 seconds with the documented timezone and unrelated anon-key
+unset; the final release-mapping assertion was separately rerun, **6/6**.
+The five focused integration suites passed **106/106**, the two deployment
+inspector suites **66/66**, PowerShell target-binding negatives **75/75**, and
+capacity **9/9**. Final typecheck/full lint, canonical106 with zero seeded rows,
+209-table coverage, PHI-disabled workload and emitted CloudFormation lint pass.
+The handler-to-API-role SQL journey tests committed/lost-reply receipt,
+settlement-before-claim, cross-owner refusal and zero consent grants using
+fictional PGlite records. Serialized local transactions are not hosted
+multi-session race or physical-device evidence.
+
+Actual read-only AWS evidence at this exact source: the first inspection
+returned `database_resuming` before a transaction or write was admitted.
+The cluster then reported available with its HTTP endpoint enabled. A fresh
+inspection verified the whole 106 ledger, rollback and repeated exact missing
+stack response, returning **not_deployed**, mutations=false, acceptance=false,
+PHI=false in account588966314750/databaseclinical_core_qualification. This
+successful read is not a cold-start reliability repair. API6zt8e9qz04 still has
+26 routes and no connection or messaging route. No AWS deployment, migration,
+fixture, provider release, consent registration or activation occurred here.
+
+CI37581127383/37581124168 for a9006fc are in progress, not terminal passes.
+Prior cf8d388 CI37577854246/37577859916 now has terminal success; that is not
+current-source hosted acceptance. AST-only Graphify has 13,008 nodes,
+26,320 edges and 908 communities; 50 zero-node files remain absent and HTML
+was skipped for size. No LLM/API cost or canvas edit.
+
+Next engineering still includes the reviewed deployment operator and actual
+candidate binding, V2 legacy drain/second-device pending-claim discovery, durable
+erase request correlation across restart, complete clinic privacy and retained
+amendments with interruption-safe cross-store disposition, distinct registrar
+audit identity and production program assignments. Then exact matched synthetic
+releases, hosted service/concurrency/recovery/rollback acceptance, physical
+iOS/Android, Core purchase/restore and provider tests, verified clinical-source
+releases and independent security/retention/agreement reviews and PHI approvals
+remain. All six original scopes are partial: account/plan continuity; owned
+processing/delivery; full privacy; clinical knowledge/safety; Core store/provider
+acceptance; matched release/security/physical qualification. Neither app is
+commercial or PHI ready. PHI stays off, paid builds held, and all clinical holds,
+exclusions and source-verification requirements are unchanged.
