@@ -1522,3 +1522,78 @@ iOS/Android/five-persona acceptance. Provider/agreement/project/runtime coverage
 retention and security policies and separate PHI activation still require actual
 review. Neither app is commercial or PHI ready. PHI OFF, paid mobile builds held,
 clinical holds/exclusions/source verification unchanged.
+
+## October 7 immutable synthetic API recovery prerequisite
+
+At `2026-10-07T11:00:27.279Z`, clean Desktop harness
+`34d0193022a1545acfd727a8e5456c0e80c34d4c` retained and independently
+read back Lambda version **1**:
+`arn:aws:lambda:us-east-2:588966314750:function:wxv734oi12-synthetic-identity:1`.
+The retained application source is still
+`5b6f8aa45347d33757ac9bfb34658e2e09daefd3`, with deployed ZIP
+`644967eec4241c19f2365aabc7cec304f200f95622c8ef3a0188f57633dd64db`
+and S3 version `hruo6Qx4lq5maqBp.E_Kp.x1utrFXFPh`. No serving release or
+mobile binary changed. Publishing changed Lambda bookkeeping revision to
+`c7d671c2-b7d8-4fd3-8647-e6ef4c0c1228`, not the executable settings.
+
+The tool performs fresh complete deployed inspection before publication,
+service-side code/revision guards, bounded actual version inventory, qualified
+readback of all executable configuration, and a second complete deployed
+inspection. An existing exact version is reusable without a new publication.
+Unknown publication results are not retried. It contains no alias, integration,
+permission, code/configuration update, clinical-data or schema mutation method.
+
+The first attempt at2994648 stopped without a report. Independent inventory
+showed only $LATEST, so no version existed; a separate read-only inspection
+then passed. The cause of that attempt is unproven. Repair34d0193 preserves a
+bounded child refusal and its preflight/postflight stage without printing
+commands, tokens or transport responses. The subsequent actual run passed.
+
+Evidence is in Desktop
+`dist/synthetic-care-retained-version/34d0193022a1545acfd727a8e5456c0e80c34d4c/1791370827282.json`.
+Preflight and postflight are in
+`dist/synthetic-care-deployed/34d0193022a1545acfd727a8e5456c0e80c34d4c/`,
+files1791370769653.json and1791370826565.json. Both verify actual IAM/logging,
+exact-version S3 readback, the unchanged template and 51 identity JWT routes,
+**46 live/45 source ledger entries,87 non-ledger tables,23,980 rows** and full-data
+SHA `bb0a6ecafad1da1f595c577124fe8e03a0e495cb524018b3f51f2e19392f3a55`.
+The two-entry reference history is unchanged. No alias/traffic switch, SQL
+upgrade, fixture/consent/provider release, PHI activation or paid build occurred.
+
+**Retained configuration is not functional recovery acceptance.** Version1 has
+not been exercised through a recovery traffic switch or after live ledger47.
+The report explicitly sets recoveryRehearsed, functionalRollbackVerified,
+afterUpgradeVerified and upgradeAuthorized false. A genuinely source-verified,
+schema-compatible recovery and return-to-candidate rehearsal remains required
+before the permanent preserving upgrade. An identical ZIP under another key,
+maintenance-only fallback or compatible source test cannot substitute. Never
+restore old58f ID-less code after47, down-migrate or discard receipts.
+
+Source commits2994648/34d0193 are pushed on Desktop's commercial branch/PR67.
+The final local release-tool suite is **32/32 pass**, including unknown outcome,
+configuration drift, pagination, reuse and sanitized child-failure negatives;
+focused lint passes. Typecheck passed at2994648 before the final MJS-only repair.
+Earlier full Desktop4236/V22492 suites retain their original source scopes.
+Desktop9f953ab CI37601300901/37601294830 and2f3ac56 CI37601676214/37601669764
+are terminal success; V2ed8689d CI37601690138/37601683010 is terminal success.
+New2994648 CI37610533967/37610528088 and34d0193 CI37610946797/37610939442
+are active/queued at readback, not passes. AST-only Desktop Graphify now has
+13,210 nodes,26,882 edges,940 communities;50 zero-node files remain absent,
+HTML skipped for size,no LLM/API cost.
+
+Next engineering still includes authentic workforce/isolation checks, real
+functional recovery, preserving staging SQL and request-ID/receipt/settlement
+journeys, reviewed self-service/bootstrap deployment, legacy claim drain,
+second-device pending discovery and missing-journal reconciliation, distinct
+registrar audit identity, production program assignments and reviewed
+qualification candidate deployment. Hosted export/retention/recording/drafting
+acceptance, exact matched releases and physical iOS/Android/five-persona
+acceptance still require execution. Core19.99 purchase/restore/cancel and provider/
+store acceptance remain open, as do eligible clinical-source releases, retained
+clinic amendments and cross-store privacy disposition. These are not all human-only.
+
+All six original scopes remain partial and unchanged. Reviewed security,
+retention and actual agreement/project/runtime/provider coverage, policy
+choices and separate PHI activation are independent gates. Neither app is
+commercial or PHI ready. PHI remains OFF, paid mobile builds held, clinical
+holds/exclusions/source-verification requirements preserved.
