@@ -1428,3 +1428,97 @@ engineering. Security/retention and actual agreement/project/runtime/provider
 coverage remain separate reviewed gates. Neither app is commercial or PHI
 ready. PHI remains OFF, clinical holds/exclusions/source verification preserved,
 paid mobile builds held.
+
+## October 7 authenticated consumer acceptance and deployed authority inspection
+
+The deployed identity API remains source
+`5b6f8aa45347d33757ac9bfb34658e2e09daefd3`, ZIP
+`644967eec4241c19f2365aabc7cec304f200f95622c8ef3a0188f57633dd64db`,
+exact S3 version `hruo6Qx4lq5maqBp.E_Kp.x1utrFXFPh`. No serving code,
+schema, fixture, consent/provider release or PHI flag changed in this increment.
+
+### Authenticated AWS evidence
+
+At `2026-10-07T09:22:22.005Z`, clean Desktop checker source
+`938d37f6fcba4107cb1043b386b2a36e77566038` ran the five existing fictional
+persona accounts through real Cognito sign-in and the real API Gateway.
+All **20 required HTTP cases passed**: each persona received synthetic posture
+200, legacy ID-less erasure 400/request_invalid, one-item thread-export query
+200, and erasure-history query 200. Each export was empty; this proves the
+authorized empty-response contract, not message content, transfer or isolation.
+Credentials and JWTs stayed in process memory and never entered the report.
+The result is in Desktop
+`dist/synthetic-care-consumer/938d37f6fcba4107cb1043b386b2a36e77566038/1791364942006.json`.
+
+No password reset, account creation, consent grant, erasure admission or
+settlement was requested. Sign-in metadata and read audit activity were not
+assumed immutable. New request-ID erasure receipts, workforce journeys,
+self-service registration, cross-owner/clinic isolation and physical device
+acceptance remain unverified by this checker.
+
+### Live deployment and permission evidence
+
+At `2026-10-07T09:31:22.417Z`, clean inspection source
+`7548bb860ab2c9c6ef7fbdabf7973996a925b9f3` independently rebuilt the handler,
+downloaded the exact deployed S3 version and verified live stack parameters,
+template, configuration, 51 identity JWT routes, actual IAM trust and all three
+inline policies, absence of attached policies, and encrypted 30-day logging.
+The function revision remains `ce2df715-719f-464f-bc73-5a24e0220483`.
+The fresh preserving operator confirmed **46 live entries /45 source entries,
+87 non-ledger tables,23,980 rows**, full-data digest
+`bb0a6ecafad1da1f595c577124fe8e03a0e495cb524018b3f51f2e19392f3a55`,
+and the unchanged two-entry reference history.
+
+The result is in Desktop
+`dist/synthetic-care-deployed/7548bb860ab2c9c6ef7fbdabf7973996a925b9f3/1791365482418.json`.
+Its historical `previousCodeSha256` field came from a normalized comparison,
+not a contemporaneous observation of old code. Source
+`9f953ab1877246904270be8f4fd31c8143573d35` removes that misleading report field;
+the underlying AWS checks are unchanged. Do not count the historical field as
+observed deployed evidence.
+
+The first inspection at5a2d6fb refused: AWS CLI aggregation omitted
+`IsTruncated`. Repair7548bb8 uses bounded, non-paginated IAM reads and still
+refuses missing or true truncation flags. No permission check was weakened and
+no IAM policy changed. The corrected hosted inspection passed.
+
+### Engineering and rollout still required
+
+The target has **no POST /clinical-core/consumer/account/bootstrap route**
+(actual get-routes returned an empty list). The route exists in the separate
+source account extension; designated persona sign-in does not prove a deployed
+self-service registration/bootstrap journey. Implement the reviewed account
+deployment and verify it with fictional identities; do not forge claims or
+widen authorization to bypass the missing route.
+
+Use `npm run verify:synthetic-care-consumer` for the bound authenticated check.
+For current deployed inspection, rebuild the clean preserving operator with
+`npm run build:aws-care-erasure-upgrade`, then run
+`npm run verify:deployed-synthetic-care`. Old-baseline prepare/upload/change-set
+commands remain deliberately one-shot. Neither new verifier permits mutation,
+recovery, permanent SQL upgrade or activation.
+
+New local release/verifier suite: **24/24 pass**, focused lint clean, typecheck
+passed before the final MJS-only increments, authenticated API gate passed.
+Earlier full Desktop4236/V22492 suites retain their original source scope.
+Desktop0511df1 CI37597928331/37597922136 is now terminal success.
+Checker938d37f CI37600110106/37600105257 and later source CI were still active
+at the recorded readback, not accepted as passed.
+
+Next engineering remains a real, source-verified, schema-compatible API
+recovery rehearsal; authentic workforce and isolation checks; the preserving
+staging upgrade and request-ID/receipt/settlement journeys; registration
+deployment; legacy claim drain, second-device pending discovery and missing
+journal reconciliation; distinct registrar audit identity; reviewed qualification
+candidate deployment and production program assignments. Never restore old58f
+ID-less code after live ledger47, down-migrate or discard erasure receipts.
+
+All six original scopes remain partial: account/plan continuity and legacy
+provenance; owned processing and durable cross-app delivery; complete privacy,
+retained clinic amendments and cross-store disposition; eligible source-verified
+clinical knowledge and safety; Core19.99 purchase/restore/cancel/provider/store
+acceptance; exact matched releases, rollback/load/security/recovery and physical
+iOS/Android/five-persona acceptance. Provider/agreement/project/runtime coverage,
+retention and security policies and separate PHI activation still require actual
+review. Neither app is commercial or PHI ready. PHI OFF, paid mobile builds held,
+clinical holds/exclusions/source verification unchanged.
