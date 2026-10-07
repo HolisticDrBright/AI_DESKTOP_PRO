@@ -42,6 +42,9 @@ export function verifyDeployedCareObservation(observation, source, manifest, har
   historical.fn.CodeSha256 = Buffer.from(P.previousZipSha256, 'hex').toString('base64');
   const checked = verifyCareObservation(historical, source, {desktop: {commit: harness.commit}, key: manifest.key});
   verifyDeployedCareRole(observation, source);
+  // This value belongs to the normalized historical verifier, not a current
+  // AWS observation. Do not report it as if the old code was observed live.
+  delete checked.observed.previousCodeSha256;
   return {...checked.observed, deployedCodeSha256: observation.fn.CodeSha256,
     templateSha256: sha256(canonical(observation.template)), exactObjectVersion: DEPLOYED_CARE.version};
 }

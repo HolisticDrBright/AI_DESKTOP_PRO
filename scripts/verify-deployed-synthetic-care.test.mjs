@@ -55,6 +55,7 @@ test('deployed successor verification preserves the historical guard and refuses
   const o = observation(), before = structuredClone(o);
   const result = verifyDeployedCareObservation(o, source, {key}, harness);
   assert.deepEqual(o, before); assert.equal(result.routeCount, 51); assert.equal(result.exactObjectVersion, D.version);
+  assert.equal('previousCodeSha256' in result, false);
   for (const mutate of [o => delete o.template.Resources.IdentityApiFunction.Properties.Code.S3ObjectVersion,
     o => o.template.Resources.IdentityApiFunction.Properties.Code.S3ObjectVersion = 'latest', o => o.template.Outputs.RoutesEnabled.Value = '32',
     o => o.fn.CodeSha256 = Buffer.from(P.previousZipSha256, 'hex').toString('base64'),
