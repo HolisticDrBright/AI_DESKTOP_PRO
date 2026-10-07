@@ -126,6 +126,29 @@ count and data digest are a fresh observation, not an assertion that read-audit
 growth must equal an earlier count. The report does not authorize a migration,
 execute a change set, rehearse recovery or certify an application journey.
 
+## Retain the deployed recovery version
+
+```powershell
+npm run retain:synthetic-care-version
+```
+
+This command retains a numbered immutable version of the exact deployed 5b6f8aa
+handler. A fresh full deployed inspection, the clean harness source, live role
+permissions, encrypted logging and the old database ledger must all agree before
+publication. AWS receives both the expected code checksum and revision ID. A
+bounded version inventory reconciles an existing identical retained version
+without publishing again; an unknown publication result is not retried.
+
+Qualified configuration readback and a second full deployed inspection verify
+the retained code, executable settings and unchanged target. Reports under
+`dist/synthetic-care-retained-version/HARNESS_COMMIT/` distinguish a new
+publication from reuse. The command does not change aliases, API integrations,
+live traffic, permissions or schema. Publication is a recovery prerequisite,
+not a functional rollback drill, a successful journey after the database upgrade
+or permission to apply that upgrade. Those remain separately required below.
+
+AWS semantics: [PublishVersion](https://docs.aws.amazon.com/lambda/latest/api/API_PublishVersion.html).
+
 ## Deployment and recovery still required
 
 1. Independently verify the ZIP after uploading it under its exact source/hash
