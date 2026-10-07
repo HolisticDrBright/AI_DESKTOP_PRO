@@ -44,6 +44,10 @@ jobs:
           npx vitest run src/server/clinical-core/care-connections-database-binding.test.ts
           npx vitest run src/server/clinical-core/rds-single-attempt-client.test.ts src/server/clinical-core/rds-data-database.test.ts src/server/clinical-core/rds-resume-retry.test.ts
           npm run build:aws-care-connections-upgrade
+      - name: Preserving synthetic erasure upgrade and historical alias (no AWS calls)
+        run: |
+          npx vitest run src/server/clinical-core/care-erasure-schema-upgrade.database.test.ts src/server/clinical-core/care-erasure-upgrade-command.test.ts
+          npm run build:aws-care-erasure-upgrade
       - name: Qualification-only exact approved consent copy (no AWS calls or approvals)
         run: |
           npx vitest run src/server/clinical-core/care-consent-copy-registration.database.test.ts src/server/clinical-core/care-consent-copy-command.test.ts

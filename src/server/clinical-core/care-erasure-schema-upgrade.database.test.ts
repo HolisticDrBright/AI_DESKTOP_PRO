@@ -1,0 +1,150 @@
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { PGlite } from '@electric-sql/pglite';
+import { pgcrypto } from '@electric-sql/pglite/contrib/pgcrypto';
+import { createHash, randomUUID } from 'node:crypto';
+import type { ClinicalCoreDatabase, ClinicalCoreTransaction } from './database';
+import { applyClinicalCoreMigrations, loadClinicalCoreMigrations, type ClinicalCoreMigration } from './migrations';
+import { applyGovernedCatalogMigrations, loadGovernedCatalogMigrations } from './catalog-migrations';
+import { CARE_ERASURE_AWS, CARE_ERASURE_UPGRADE, runCareErasureSchemaUpgrade, type CareErasureUpgradeConfiguration } from './care-erasure-schema-upgrade';
+import { executeCareErasureUpgradeCommand } from './care-erasure-upgrade-command';
+const sha = (s: string) => createHash('sha256').update(s).digest('hex');
+const configuration: CareErasureUpgradeConfiguration = { account: CARE_ERASURE_AWS.account, region: CARE_ERASURE_AWS.region,
+  databaseName: CARE_ERASURE_AWS.databaseName, clusterArn: CARE_ERASURE_AWS.clusterArn, secretArn: CARE_ERASURE_AWS.secretArn,
+  phiAllowed: false, environment: 'synthetic-staging', dataClassification: 'synthetic_only' };
+let pg: PGlite, migrations: ClinicalCoreMigration[], reference: ClinicalCoreMigration[];
+const org = randomUUID(), owner = randomUUID();
+type Inner = { query: (s: string, p?: unknown[]) => Promise<unknown> };
+type Intercept = (s: string, tx: Inner) => Promise<void>;
+// Actual SQL, constraints, privileges, data digests and rollback. Only the
+// database's name and AWS metadata are substituted; not hosted/race evidence.
+const database = (intercept?: Intercept, name = 'clinical_core'): ClinicalCoreDatabase => ({
+  transaction: work => pg.transaction(async tx => work({ query: async (s: string, p: readonly unknown[] = []) => {
+    if (intercept) await intercept(s, tx);
+    if (s === 'select current_database() as name') return { rows: [{ name }] };
+    return tx.query(s, [...p]);
+  } } as ClinicalCoreTransaction)),
+});
+const run = (mode: 'inspect' | 'rehearse' | 'upgrade', db = database()) => runCareErasureSchemaUpgrade(db, migrations, reference, configuration, mode);
+const atReceipt = (change: (tx: Inner) => Promise<void>) => database(async (s, tx) => {
+  if (s.startsWith('insert into clinical_core.schema_migrations')) await change(tx);
+});
+const predecessor = async () => {
+  expect((await pg.query<{ n: number }>('select count(*)::int n from clinical_core.schema_migrations')).rows[0]?.n).toBe(46);
+  expect((await pg.query<{ absent: boolean }>("select to_regclass('clinical_core.care_data_erasure_requests') is null absent")).rows[0]?.absent).toBe(true);
+};
+beforeAll(async () => {
+  migrations = loadClinicalCoreMigrations(); reference = loadGovernedCatalogMigrations();
+  pg = new PGlite({ extensions: { pgcrypto } });
+  await applyClinicalCoreMigrations(database(), migrations.slice(0, 45));
+  const alias = migrations.find(x => x.version === '20260821049700')!;
+  await pg.query('insert into clinical_core.schema_migrations(version,name,sha256) values($1,$2,$3)', ['20260902230000', alias.name, alias.sha256]);
+  await applyGovernedCatalogMigrations(database(), reference);
+  await pg.query("insert into clinical_core.organizations(id,synthetic_label) values($1,'FICTIONAL erasure upgrade')", [org]);
+  await pg.query("insert into clinical_core.persons(id,synthetic_subject_key) values($1,'syn_erasure_upgrade')", [owner]);
+  await pg.query("insert into clinical_reference.knowledge_sources(stable_id,environment) values('src_fictional_erasure_upgrade','synthetic-staging')");
+}, 60000);
+afterAll(async () => { await pg?.close(); });
+describe('exact preserving synthetic staging erasure successor', () => {
+  it('refuses different database/account/region/PHI and changed core or reference artifacts before a transaction', async () => {
+    let opened = false; const never: ClinicalCoreDatabase = { transaction: async () => { opened = true; throw Error('unexpected'); } };
+    for (const patch of [{ account: '173535830222' }, { region: 'us-west-2' }, { databaseName: 'clinical_core_qualification' },
+      { phiAllowed: true }, { environment: 'production-clinical' }, { clusterArn: CARE_ERASURE_AWS.clusterArn + '-other' }, { dataClassification: 'phi' }]) {
+      await expect(runCareErasureSchemaUpgrade(never, migrations, reference, { ...configuration, ...patch } as CareErasureUpgradeConfiguration, 'upgrade')).rejects.toThrow('boundary_refused');
+    }
+    for (const changed of [migrations.slice(0, 45), [...migrations, migrations[45]], migrations.map((m, i) => i === 0 || i === 45
+      ? { ...m, sql: m.sql + '\nselect 1;', sha256: sha(m.sql + '\nselect 1;') } : m)]) {
+      await expect(runCareErasureSchemaUpgrade(never, changed, reference, configuration, 'upgrade')).rejects.toThrow('artifact_refused');
+    }
+    await expect(runCareErasureSchemaUpgrade(never, migrations, reference.slice(0, 1), configuration, 'upgrade')).rejects.toThrow('artifact_refused');
+    expect(opened).toBe(false); await predecessor();
+  });
+  it('inspects read only, includes the separate catalog, and refuses qualification/production database names', async () => {
+    const queries: string[] = [];
+    const r = await run('inspect', database(async s => { queries.push(s); }));
+    expect(r).toMatchObject({ observedMigrationCount: 46, sourceMigrationCount: 45, tableCount: 87, applied: false, alreadyApplied: false,
+      fromLedgerSha256: CARE_ERASURE_UPGRADE.liveBefore, referenceLedgerSha256: CARE_ERASURE_UPGRADE.reference });
+    expect(r.rowCount).toBeGreaterThanOrEqual(3);
+    expect(queries[0]).toContain('read only'); expect(queries.some(s => /^(create|alter|insert|update|delete|lock)/i.test(s))).toBe(false);
+    for (const name of ['clinical_core_qualification', 'clinical_core_production']) await expect(run('upgrade', database(undefined, name))).rejects.toThrow('boundary_refused');
+    await predecessor();
+  });
+  it('runs the actual successor then rolls it back and independently reads original data/history', async () => {
+    const before = await run('inspect');
+    expect(await run('rehearse')).toMatchObject({ command: 'rehearse', rolledBack: true, observedMigrationCount: 46,
+      applied: false, tableCount: 87, dataSha256: before.dataSha256, rowCount: before.rowCount });
+    await predecessor();
+  });
+  it('refuses missing/renamed historical alias, altered catalog ledger, unknown or altered core history', async () => {
+    const alias = migrations.find(x => x.version === '20260821049700')!;
+    await pg.query("delete from clinical_core.schema_migrations where version='20260902230000'");
+    try { await expect(run('upgrade')).rejects.toThrow('history_refused'); }
+    finally { await pg.query("insert into clinical_core.schema_migrations(version,name,sha256) values('20260902230000',$1,$2)", [alias.name, alias.sha256]); }
+    for (const [table, entry] of [['clinical_core.schema_migrations', migrations[0]], ['clinical_reference.schema_migrations', reference[0]]] as const) {
+      await pg.query(`update ${table} set sha256=$1 where version=$2`, ['f'.repeat(64), entry.version]);
+      try { await expect(run('upgrade')).rejects.toThrow('history_refused'); }
+      finally { await pg.query(`update ${table} set sha256=$1 where version=$2`, [entry.sha256, entry.version]); }
+    }
+    await pg.query("update clinical_core.schema_migrations set name='renamed_alias' where version='20260902230000'");
+    try { await expect(run('upgrade')).rejects.toThrow('history_refused'); }
+    finally { await pg.query("update clinical_core.schema_migrations set name=$1 where version='20260902230000'", [alias.name]); }
+    await predecessor();
+  });
+  it('captures artifacts and configuration before asynchronous caller mutation', async () => {
+    const supplied = migrations.map(x => ({ ...x })), refs = reference.map(x => ({ ...x })), c = { ...configuration }; let changed = false;
+    const r = await runCareErasureSchemaUpgrade(database(async () => {
+      if (changed) return; changed = true; supplied[45].sql += '\nselect 1;'; refs[0].sql += '\nselect 1;'; c.databaseName = 'clinical_core_qualification';
+    }), supplied, refs, c, 'rehearse');
+    expect(r).toMatchObject({ rolledBack: true, observedMigrationCount: 46 }); await predecessor();
+  });
+  it('rolls back same-count clinical/reference changes and an unexpected seeded cancellation', async () => {
+    const before = await run('inspect');
+    for (const change of [async (tx: Inner) => { await tx.query("update clinical_core.organizations set synthetic_label='FICTIONAL changed' where id=$1", [org]); },
+      async (tx: Inner) => { await tx.query("update clinical_reference.knowledge_sources set review_status='rejected' where stable_id='src_fictional_erasure_upgrade'"); },
+      async (tx: Inner) => { await tx.query("insert into clinical_core.care_data_erasure_requests(owner_id,request_id,scope,outcome) values($1,$2,'domain','cancelled')", [owner, randomUUID()]); }]) {
+      await expect(run('upgrade', atReceipt(change))).rejects.toThrow('data_changed');
+      expect((await run('inspect')).dataSha256).toBe(before.dataSha256); await predecessor();
+    }
+  });
+  it('refuses RLS loss, undeclared tables and changed function contracts without leaving DDL', async () => {
+    for (const sql of ['alter table clinical_core.persons disable row level security',
+      'alter table clinical_core.care_data_erasure_requests disable row level security',
+      'create table clinical_private.unreviewed_erasure_table(id int)']) {
+      await expect(run('upgrade', atReceipt(async tx => { await tx.query(sql); }))).rejects.toThrow('inventory_refused'); await predecessor();
+    }
+    for (const sql of ['grant execute on function clinical_core.care_data_erase(jsonb) to clinical_core_api',
+      'grant select(request_id) on clinical_core.care_data_erasure_requests to clinical_core_api',
+      'grant select on clinical_core.care_data_erasure_requests to public',
+      'revoke execute on function clinical_core.care_data_erasure_request(jsonb) from clinical_core_api',
+      "alter function clinical_core.care_data_erasure_request(jsonb) set search_path=public",
+      'alter table clinical_core.care_data_erasure_requests drop constraint care_data_erasure_requests_scope_check',
+      'alter table clinical_core.care_data_erasure_requests alter column scope drop not null',
+      'alter table clinical_core.care_data_erasure_requests alter column settled_at drop default',
+      'alter table clinical_core.care_data_erasure_requests disable trigger care_data_erasure_requests_immutable']) {
+      await expect(run('upgrade', atReceipt(async tx => { await tx.query(sql); }))).rejects.toThrow('verification_failed'); await predecessor();
+    }
+  });
+  it('rolls back a database failure before recording the successor and hides SQL/provider details', async () => {
+    const broken = database(async s => { if (s.startsWith('insert into clinical_core.schema_migrations')) throw Error('secret provider detail'); });
+    await expect(run('upgrade', broken)).rejects.toMatchObject({ category: 'upgrade_failed', stage: 'ledger_receipt', message: 'upgrade_failed' }); await predecessor();
+  });
+  it('command rehearses, re-observes the fixed target, applies once and preserves populated receipts on replay', async () => {
+    const observations: string[] = [], a = CARE_ERASURE_AWS;
+    const d = { observeCaller: () => { observations.push('caller'); return { Account: a.account, Arn: `arn:aws:sts::${a.account}:assumed-role/FictionalOperator/session` }; },
+      observeFoundation: () => { observations.push('foundation'); return { Stacks: [{ StackStatus: 'UPDATE_COMPLETE',
+        StackId: `arn:aws:cloudformation:${a.region}:${a.account}:stack/${a.foundation}/fictional`,
+        Outputs: Object.entries({ PhiAllowed: 'false', Environment: 'synthetic-staging', DataClassification: 'synthetic_only', DatabaseName: a.databaseName,
+          ClinicalApiId: a.apiId, DatabaseClusterArn: a.clusterArn, DatabaseSecretArn: a.secretArn }).map(([OutputKey, OutputValue]) => ({ OutputKey, OutputValue })) }] }; },
+      loadMigrations: () => migrations, loadReferenceMigrations: () => reference, createDatabase: () => database() };
+    const before = await run('inspect');
+    const r = await executeCareErasureUpgradeCommand(['upgrade', '--confirm-fictional-care-erasure-upgrade'], { sourceCommit: '1'.repeat(40), clean: true }, d);
+    expect(r).toMatchObject({ observedMigrationCount: 47, sourceMigrationCount: 46, tableCount: 88, applied: true, alreadyApplied: false,
+      dataSha256: before.dataSha256, rowCount: before.rowCount, acceptance: false, apiDeploymentPerformed: false, phiAllowed: false,
+      rehearsal: { rolledBack: true, rowCount: before.rowCount, dataSha256: before.dataSha256 } });
+    expect(observations).toEqual(['caller', 'foundation', 'caller', 'foundation']);
+    await pg.query("insert into clinical_core.care_data_erasure_requests(owner_id,request_id,scope,outcome) values($1,$2,'domain','cancelled')", [owner, randomUUID()]);
+    const after = await run('inspect'); expect(after.rowCount).toBe(before.rowCount + 1);
+    expect(await run('upgrade')).toMatchObject({ applied: false, alreadyApplied: true, dataSha256: after.dataSha256 });
+    expect(await run('rehearse')).toMatchObject({ rolledBack: true, observedMigrationCount: 47, dataSha256: after.dataSha256 });
+    expect(JSON.stringify(after)).not.toMatch(/FICTIONAL|synthetic_label|secretArn|syn_erasure_upgrade/);
+  });
+});
