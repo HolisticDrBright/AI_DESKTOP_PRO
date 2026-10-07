@@ -130,8 +130,10 @@ async function main() {
     const roleName = resources.StackResources?.find(r => r.LogicalResourceId === 'IdentityApiRole')?.PhysicalResourceId;
     if (typeof roleName !== 'string' || !/^[A-Za-z0-9+=,.@_-]{1,64}$/.test(roleName)) fail('deployed_role_name');
     const role = aws(['iam', 'get-role', '--role-name', roleName]);
-    const attached = aws(['iam', 'list-attached-role-policies', '--role-name', roleName]);
-    const inline = aws(['iam', 'list-role-policies', '--role-name', roleName]);
+    // AWS CLI's paginator strips IsTruncated. Inspect one bounded service page
+    // instead, and refuse a truncated response rather than assuming completeness.
+    const attached = aws(['iam', 'list-attached-role-policies', '--role-name', roleName, '--no-paginate']);
+    const inline = aws(['iam', 'list-role-policies', '--role-name', roleName, '--no-paginate']);
     const policies = ['AuroraDataApiTransactionOnly', 'ManagedDatabaseCredentialRead', 'BoundedFunctionLogging']
       .map(name => aws(['iam', 'get-role-policy', '--role-name', roleName, '--policy-name', name]));
     const logGroups = aws(['logs', 'describe-log-groups', '--log-group-name-prefix', '/ai-clinical-core/synthetic-staging/identity-api']);
@@ -145,8 +147,8 @@ async function main() {
       || canonical(aws(['apigatewayv2', 'get-authorizers', '--api-id', P.apiId])) !== canonical(authorizers)
       || canonical(careSourceSnapshot(root, 'desktop')) !== canonical(harness)) fail('deployed_state_changed');
     verifyDeployedCareRole({fn, resources, role: aws(['iam', 'get-role', '--role-name', roleName]),
-      attached: aws(['iam', 'list-attached-role-policies', '--role-name', roleName]),
-      inline: aws(['iam', 'list-role-policies', '--role-name', roleName]),
+      attached: aws(['iam', 'list-attached-role-policies', '--role-name', roleName, '--no-paginate']),
+      inline: aws(['iam', 'list-role-policies', '--role-name', roleName, '--no-paginate']),
       policies: policies.map(p => aws(['iam', 'get-role-policy', '--role-name', roleName, '--policy-name', p.PolicyName])),
       logGroups: aws(['logs', 'describe-log-groups', '--log-group-name-prefix', '/ai-clinical-core/synthetic-staging/identity-api'])},
     JSON.parse(normalizedText(root, 'infra/aws-clinical-core/identity-api-extension.json')));

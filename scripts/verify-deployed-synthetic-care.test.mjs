@@ -71,6 +71,7 @@ test('live IAM and log resources cannot drift independently of the unchanged tem
     o => o.role.Role.AssumeRolePolicyDocument.Statement[0].Principal.Service = 'ec2.amazonaws.com',
     o => o.attached.AttachedPolicies.push({PolicyArn: 'arn:aws:iam::aws:policy/AdministratorAccess'}),
     o => o.attached.IsTruncated = true, o => o.inline.IsTruncated = true,
+    o => delete o.attached.IsTruncated, o => delete o.inline.IsTruncated,
     o => o.inline.PolicyNames.push('Extra'), o => o.policies.push(o.policies[0]),
     o => o.policies[0].PolicyDocument.Statement[0].Resource = '*', o => o.policies[1].PolicyDocument.Statement[1].Action = 'kms:*',
     o => delete o.policies[1].PolicyDocument.Statement[1].Condition, o => o.policies[2].PolicyDocument.Statement[0].Resource = '*',
@@ -89,4 +90,5 @@ test('inspection exposes no mutation, upgrade, recovery or activation operation'
   assert.doesNotMatch(script, /PutObjectCommand|create-change-set|execute-change-set|update-function-code|update-stack|execute-statement|\['upgrade'\]/);
   assert.match(script, /upgradeAuthorized: false/); assert.match(script, /rollbackRehearsed: false/);
   assert.match(script, /journeyAcceptance: false/);
+  assert.equal((script.match(/'--no-paginate'/g) ?? []).length, 4);
 });
