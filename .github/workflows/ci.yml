@@ -119,6 +119,8 @@ jobs:
         run: npm run test:synthetic-identity-timeout
       - name: Bind fictional API/mobile sources and refuse unsafe schema rollback (no AWS calls)
         run: npm run test:synthetic-care-release
+      - name: Keep owner erasure recovery libraries blocked and bound to their exact predecessor
+        run: npm run test:care-erasure-recovery-source
       - name: Dependency security gate
         run: npm audit --audit-level=high
       - name: Preserve pinned Next lint rules with the bounded root matcher

@@ -1,0 +1,72 @@
+/** Blocked source libraries only. No handler, operator, AWS request, or approval. */
+import {createHash} from 'node:crypto';
+import {execFileSync} from 'node:child_process';
+import {readFileSync,mkdirSync,writeFileSync} from 'node:fs';
+import {resolve} from 'node:path';
+import {pathToFileURL} from 'node:url';
+import {build} from 'esbuild';
+
+export const CARE_ERASURE_RECOVERY_PARENT=Object.freeze({
+ count:46,historySha256:'52f2027ba0db0fd570bc4714fadf5ccd39e2caabf992081cb24be56497a52017',
+ terminalVersion:'20261006040000',terminalSha256:'3890daeb708511a0f651abd95456906048fb9f4a7bc1ef754b731e9d673dab91',
+});
+export const digest=value=>createHash('sha256').update(value).digest('hex');
+export const normalized=value=>value.replace(/\r\n?/g,'\n');
+export function sourceMapping(migrations,sql,sourceCommit,sourceDirty){
+ const p=CARE_ERASURE_RECOVERY_PARENT;
+ if(!Array.isArray(migrations)||migrations.length!==p.count
+  ||!migrations.every((m,i)=>/^\d{14}$/.test(m.version)&&/^[a-z0-9_]+$/.test(m.name)
+    &&m.sha256===digest(m.sql)&&(!i||m.version>migrations[i-1].version))
+  ||digest(JSON.stringify(migrations.map(({version,name,sha256})=>({version,name,sha256}))))!==p.historySha256
+  ||migrations.at(-1).version!==p.terminalVersion||migrations.at(-1).sha256!==p.terminalSha256
+  ||!/^[a-f0-9]{40}$/.test(sourceCommit)||typeof sourceDirty!=='boolean')throw new Error('care_erasure_recovery_parent_refused');
+ if(typeof sql!=='string'||sql!==normalized(sql)||!sql.startsWith('-- BLOCKED SYNTHETIC SOURCE CANDIDATE.')
+  ||!/alter function clinical_core\.care_data_erasure_request\(jsonb\) rename to care_data_erasure_request_v1_terminal;/.test(sql)
+  ||!/revoke all on function clinical_core\.care_data_erasure_request_v1_terminal\(jsonb\) from public,clinical_core_api;/.test(sql))
+  throw new Error('care_erasure_recovery_overlay_refused');
+ return {contract:'care-erasure-recovery-source-candidate/1',status:'blocked_source_only',sourceCommit,sourceDirty,
+  deployable:false,canonicalRegistered:false,operatorExists:false,handlerIntegrated:false,clientIntegrated:false,
+  hostedVerified:false,deviceVerified:false,productionApproved:false,phiAllowed:false,
+  predecessor:p,overlay:{file:'care-erasure-intents.sql',sha256:digest(sql),bytes:Buffer.byteLength(sql)},
+  futureTarget:{account:'588966314750',region:'us-east-2',database:'clinical_core',execution:'synthetic-staging',
+   qualificationDatabaseRefused:'clinical_core_qualification',productionRefused:true},
+  recoverySemantics:{registerBeforeErase:true,automaticDestructiveReplay:false,immutableIntents:true,
+   terminalHistoryPreserved:true,unknownAbsenceIsClearance:false,legacyUuidFabrication:false,
+   discoveryCoverage:'committed_owner_records_not_global_clearance',wholeScanIsAtomic:false},
+  retention:{intentRecords:'immutable_no_deletion_authority',reviewedPolicy:false,
+   clinicDisposition:'not_implemented_by_this_candidate',providerCopies:'not_covered'},
+  remaining:['canonical migration registration and reviewed preserving operator with rollback/data proof',
+   'API action routing plus exact code/schema release mapping and real API recovery rehearsal',
+   'V2 prepare-before-dispatch, durable journal, bounded owner discovery and explicit recovery UI',
+   'real concurrent requests, lost replies, second-device recovery and denied-owner hosted acceptance',
+   'matched mobile/Desktop/API release and physical device verification',
+   'separate security, retention, provider and PHI activation approvals']};
+}
+export async function buildSource(){
+ if(process.argv.length!==2)throw new Error('care_erasure_recovery_arguments_refused');
+ const directory='infra/aws-clinical-core/migrations/';
+ const manifest=JSON.parse(readFileSync(directory+'manifest.json','utf8'));
+ if(manifest.contract_version!=='clinical-core-migrations/1')throw new Error('care_erasure_recovery_manifest_refused');
+ const migrations=manifest.migrations.map(m=>{
+  if(!/^\d{14}_[a-z0-9_]+\.sql$/.test(m.file)||!m.file.startsWith(m.version+'_'))throw new Error('care_erasure_recovery_manifest_refused');
+  const sql=normalized(readFileSync(directory+m.file,'utf8'));
+  return {version:m.version,name:m.file.slice(15,-4),sql,sha256:digest(sql)};
+ });
+ const sql=normalized(readFileSync('infra/aws-clinical-core/source-candidates/care-erasure-intents.sql','utf8'));
+ const sourceCommit=execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim();
+ const sourceDirty=!!execFileSync('git',['status','--porcelain','--untracked-files=all','--',
+  'src','scripts','infra','package.json','package-lock.json','.gitattributes','.github'],{encoding:'utf8'}).trim();
+ const mapping=sourceMapping(migrations,sql,sourceCommit,sourceDirty);
+ const out=resolve('dist/aws-clinical-core/care-erasure-recovery-source');mkdirSync(out,{recursive:true});
+ const libraries=[];
+ for(const [file,entry] of [['service-library.cjs','src/server/clinical-core/care-erasure-recovery.ts'],
+  ['contract-library.cjs','src/contracts/careErasureRecovery.ts']]){
+  await build({entryPoints:[entry],outfile:resolve(out,file),bundle:true,platform:'node',target:'node22',format:'cjs',legalComments:'none'});
+  libraries.push({file,sha256:digest(readFileSync(resolve(out,file)))});
+ }
+ writeFileSync(resolve(out,'care-erasure-intents.sql'),sql);
+ writeFileSync(resolve(out,'manifest.json'),JSON.stringify({...mapping,libraries},null,2)+'\n');
+ console.log(JSON.stringify({built:true,status:mapping.status,sourceCommit,sourceDirty,deployable:false,
+  overlaySha256:mapping.overlay.sha256,phiAllowed:false}));
+}
+if(process.argv[1]&&import.meta.url===pathToFileURL(resolve(process.argv[1])).href)await buildSource();
