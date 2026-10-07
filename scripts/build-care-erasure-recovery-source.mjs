@@ -10,6 +10,8 @@ export const CARE_ERASURE_RECOVERY_PARENT=Object.freeze({
  count:46,historySha256:'52f2027ba0db0fd570bc4714fadf5ccd39e2caabf992081cb24be56497a52017',
  terminalVersion:'20261006040000',terminalSha256:'3890daeb708511a0f651abd95456906048fb9f4a7bc1ef754b731e9d673dab91',
 });
+export const CARE_ERASURE_RECOVERY_SUCCESSOR=Object.freeze({version:'20261007010000',name:'synthetic_care_erasure_intents',
+ sqlSha256:'4be2ca72b0486bec171f16c5299c898d70bfbdbfd3143c4bb216fccc329299ec'});
 export const digest=value=>createHash('sha256').update(value).digest('hex');
 export const normalized=value=>value.replace(/\r\n?/g,'\n');
 export function sourceMapping(migrations,sql,sourceCommit,sourceDirty){
@@ -20,15 +22,26 @@ export function sourceMapping(migrations,sql,sourceCommit,sourceDirty){
   ||digest(JSON.stringify(migrations.map(({version,name,sha256})=>({version,name,sha256}))))!==p.historySha256
   ||migrations.at(-1).version!==p.terminalVersion||migrations.at(-1).sha256!==p.terminalSha256
   ||!/^[a-f0-9]{40}$/.test(sourceCommit)||typeof sourceDirty!=='boolean')throw new Error('care_erasure_recovery_parent_refused');
- if(typeof sql!=='string'||sql!==normalized(sql)||!sql.startsWith('-- BLOCKED SYNTHETIC SOURCE CANDIDATE.')
+ if(typeof sql!=='string'||sql!==normalized(sql)||digest(sql)!==CARE_ERASURE_RECOVERY_SUCCESSOR.sqlSha256
+  ||!sql.startsWith('-- BLOCKED SYNTHETIC SOURCE CANDIDATE.')
   ||!/alter function clinical_core\.care_data_erasure_request\(jsonb\) rename to care_data_erasure_request_v1_terminal;/.test(sql)
   ||!/revoke all on function clinical_core\.care_data_erasure_request_v1_terminal\(jsonb\) from public,clinical_core_api;/.test(sql))
   throw new Error('care_erasure_recovery_overlay_refused');
+ const before=migrations.map(({version,name,sha256})=>({version,name,sha256}));
+ const alias=before.find(v=>v.version==='20260821049700');
+ if(!alias)throw new Error('care_erasure_recovery_parent_refused');
+ const liveBefore=[...before,{...alias,version:'20260902230000'}].sort((a,b)=>a.version<b.version?-1:a.version>b.version?1:0);
+ const successor={version:CARE_ERASURE_RECOVERY_SUCCESSOR.version,name:CARE_ERASURE_RECOVERY_SUCCESSOR.name,sha256:digest(sql)};
+ if(digest(JSON.stringify(liveBefore))!=='99ad59a94bab717a4e1299979db177394e931c9ebb7f40aa8be1ba1d99d52148')
+  throw new Error('care_erasure_recovery_parent_refused');
  return {contract:'care-erasure-recovery-source-candidate/1',status:'blocked_source_only',sourceCommit,sourceDirty,
-  deployable:false,canonicalRegistered:false,operatorExists:false,handlerIntegrated:true,matchedMobileRelease:false,
+  deployable:false,canonicalRegistered:false,operatorExists:false,preservingOperatorLibrary:true,handlerIntegrated:true,matchedMobileRelease:false,
   clientIntegration:'requires_matched_v2_source_evidence',
   hostedVerified:false,deviceVerified:false,productionApproved:false,phiAllowed:false,
   predecessor:p,overlay:{file:'care-erasure-intents.sql',sha256:digest(sql),bytes:Buffer.byteLength(sql)},
+  candidateLedgerMapping:{migration:successor,sourceBeforeCount:46,sourceAfterCount:47,liveBeforeCount:47,liveAfterCount:48,
+   sourceAfterSha256:digest(JSON.stringify([...before,successor])),liveBeforeSha256:digest(JSON.stringify(liveBefore)),
+   liveAfterSha256:digest(JSON.stringify([...liveBefore,successor])),historicalAliasPreserved:true,canonicalRegistered:false},
   futureTarget:{account:'588966314750',region:'us-east-2',database:'clinical_core',execution:'synthetic-staging',
    qualificationDatabaseRefused:'clinical_core_qualification',productionRefused:true},
   recoverySemantics:{registerBeforeErase:true,automaticDestructiveReplay:false,immutableIntents:true,
@@ -60,7 +73,8 @@ export async function buildSource(){
  const mapping=sourceMapping(migrations,sql,sourceCommit,sourceDirty);
  const out=resolve('dist/aws-clinical-core/care-erasure-recovery-source');mkdirSync(out,{recursive:true});
  const libraries=[];
- for(const [file,entry] of [['service-library.cjs','src/server/clinical-core/care-erasure-recovery.ts'],
+ for(const [file,entry] of [['preserving-operator-library.cjs','src/server/clinical-core/care-erasure-intent-upgrade.ts'],
+  ['service-library.cjs','src/server/clinical-core/care-erasure-recovery.ts'],
   ['contract-library.cjs','src/contracts/careErasureRecovery.ts']]){
   await build({entryPoints:[entry],outfile:resolve(out,file),bundle:true,platform:'node',target:'node22',format:'cjs',legalComments:'none'});
   libraries.push({file,sha256:digest(readFileSync(resolve(out,file)))});

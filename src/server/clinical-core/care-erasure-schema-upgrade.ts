@@ -179,6 +179,10 @@ async function verify(tx: ClinicalCoreTransaction, m: ClinicalCoreMigration[], s
   });
   if (sha(JSON.stringify({ cols, constraints })) !== '5d1c88f1c605d77e0d9ccc613e700c5f6cba3a7691518d09909fedde203b0031') fail('verification_failed', 'receipt_schema_contract');
 }
+/** Source-only reuse by the intent successor. This exports no database grant or
+ * transport and leaves the historical operator's pins and behavior unchanged. */
+export const careErasurePreservation = Object.freeze({ tableQuery: TABLES, tableName: name, qualified,
+  fingerprint, functionBodySha256: body, verifyTerminal: verify });
 export type CareErasureUpgradeResult = { contract: 'care-erasure-schema-upgrade/1'; execution: 'synthetic-staging'; phiAllowed: false;
   command: 'inspect' | 'rehearse' | 'upgrade'; observedMigrationCount: 46 | 47; sourceMigrationCount: 45 | 46; tableCount: number;
   rowCount: number; dataSha256: string; dataPreserved: true; applied: boolean; alreadyApplied: boolean; rolledBack: boolean;

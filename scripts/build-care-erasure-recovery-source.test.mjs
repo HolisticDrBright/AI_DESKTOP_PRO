@@ -13,6 +13,12 @@ test('exact normalized predecessor and blocked metadata; no code hash is an appr
  const m=sourceMapping(canonical,overlay,commit,false);
  assert.equal(m.predecessor,CARE_ERASURE_RECOVERY_PARENT);
  assert.equal(m.handlerIntegrated,true);
+ assert.equal(m.preservingOperatorLibrary,true);
+ assert.equal(m.candidateLedgerMapping.sourceAfterCount,47);
+ assert.equal(m.candidateLedgerMapping.liveBeforeCount,47);
+ assert.equal(m.candidateLedgerMapping.liveAfterCount,48);
+ assert.equal(m.candidateLedgerMapping.historicalAliasPreserved,true);
+ assert.equal(m.candidateLedgerMapping.canonicalRegistered,false);
  assert.equal(m.clientIntegration,'requires_matched_v2_source_evidence');
  for(const key of ['deployable','canonicalRegistered','operatorExists','matchedMobileRelease',
   'hostedVerified','deviceVerified','productionApproved','phiAllowed'])assert.equal(m[key],false,key);
@@ -28,7 +34,7 @@ test('changed SQL, omitted predecessor, reordered history, and extra migration r
  }
 });
 test('missing guard, publicly callable predecessor, newline drift and invalid source binding refuse',()=>{
- for(const sql of [overlay.replace('BLOCKED SYNTHETIC SOURCE CANDIDATE.','READY'),
+ for(const sql of [overlay+'-- drift\n',overlay.replace('BLOCKED SYNTHETIC SOURCE CANDIDATE.','READY'),
   overlay.replace('care_data_erasure_request_v1_terminal(jsonb) from public,clinical_core_api;',
    'care_data_erasure_request_v1_terminal(jsonb) from public;'),overlay.replaceAll('\n','\r\n')]){
   assert.throws(()=>sourceMapping(canonical,sql,commit,false),/overlay_refused/);
