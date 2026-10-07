@@ -6,7 +6,7 @@ import {DEPLOYED_CARE as D} from './verify-deployed-synthetic-care.mjs';
 import {PERSONA_EMAILS,CARE_CONSUMER_CASES} from './verify-synthetic-care-consumer.mjs';
 import {CARE_RECOVERY_ROUTE as R,canonical,recoveryPermission,verifyRecoveryPolicy,verifyRecoveryIntegration,
  verifyRecoveryStage,verifyRecoveryMetric,rehearseCareRecovery,verifyRecoveryResponse} from './care-recovery-routing.mjs';
-import {recoveryArgs,recoveryAwsOutput,recoveryMissingPolicy,verifyRecoveryLatestPolicy,verifyRecoveryInspector} from './rehearse-synthetic-care-routing.mjs';
+import {recoveryArgs,recoveryAwsOutput,recoveryMissingPolicy,verifyRecoveryLatestPolicy,verifyRecoveryInspector,recoveryFailureCode} from './rehearse-synthetic-care-routing.mjs';
 const sid='alp-care-recovery-'+'a'.repeat(32),digest='b'.repeat(64);
 function stage(id='original'){return {StageName:'$default',AutoDeploy:true,DeploymentId:id,
  LastDeploymentStatusMessage:`Successfully deployed stage with deployment ID '${id}'`,
@@ -38,6 +38,18 @@ function fixture(){
  return {d,state,calls,events};
 }
 const mutations=f=>f.calls.filter(c=>c==='add'||c==='remove'||c.startsWith('switch:'));
+
+test('failure diagnostics preserve only bounded machine codes and fixed phases, never credentials or response text',()=>{
+ for(const [error,at,expected] of [
+ [{message:'synthetic_member_principal_refused'},'principal','recovery_principal_principal_refused'],
+ [{message:'synthetic_care_release_refused:recovery_restoration_unconfirmed'},'rehearsal','recovery_restoration_unconfirmed'],
+ [{message:'synthetic_care_consumer_refused:token_binding'},'rehearsal','recovery_consumer_token_binding'],
+ [{code:'ETIMEDOUT',message:'secret command'},'source','recovery_source_timeout'],
+ [{message:'synthetic_care_release_refused:token=fictional-secret'},'personas','recovery_personas_failed'],
+ [{message:'synthetic_care_release_refused:allowed\nsecret'},'rehearsal','recovery_rehearsal_failed'],
+ [{message:'sensitive health response'},'malicious phase','recovery_entry_failed'],
+ ])assert.equal(recoveryFailureCode(error,at),'synthetic_care_release_refused:'+expected);
+});
 
 test('only the fixed synthetic confirmation argument is accepted; no target or success overrides',()=>{
  recoveryArgs(['--rehearse-existing-fictional-version']);

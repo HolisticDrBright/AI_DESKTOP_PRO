@@ -18,6 +18,16 @@ import {CARE_RECOVERY_ROUTE as R,canonical,recoveryPermission,rehearseCareRecove
  verifyRecoveryIntegration,verifyRecoveryMetric} from './care-recovery-routing.mjs';
 const secretArn='arn:aws:secretsmanager:us-east-2:588966314750:secret:ai-longevity-pro/synthetic-staging/testflight-personas-piSA7p';
 const check=(ok,code)=>{if(!ok)fail('recovery_'+code);};
+let phase='entry';
+export function recoveryFailureCode(error,at){
+ const safePhase=['entry','arguments','source','principal','lock','build','artifact','inspector','personas','rehearsal','write_report'].includes(at)?at:'entry';
+ const known=/^synthetic_care_release_refused:([a-z0-9_]{1,140})$/.exec(error?.message??'');
+ if(known)return 'synthetic_care_release_refused:'+known[1];
+ if(error?.message==='synthetic_member_principal_refused')return 'synthetic_care_release_refused:recovery_'+safePhase+'_principal_refused';
+ const consumer=/^synthetic_care_consumer_refused:([a-z0-9_]{1,80})$/.exec(error?.message??'');
+ if(consumer)return 'synthetic_care_release_refused:recovery_consumer_'+consumer[1];
+ return 'synthetic_care_release_refused:recovery_'+safePhase+(error?.code==='ETIMEDOUT'?'_timeout':'_failed');
+}
 export function recoveryArgs(args){check(args.length===1&&args[0]==='--rehearse-existing-fictional-version','arguments');}
 export function recoveryAwsOutput(args,stdout){
  if(args[0]==='lambda'&&args[1]==='remove-permission'&&typeof stdout==='string'&&stdout.trim()==='')return {};
@@ -53,21 +63,23 @@ export function verifyRecoveryInspector(operator,bytes,harness){
   &&operator.sha256===sha256(bytes),'inspector_artifact');
 }
 async function main(){
- recoveryArgs(process.argv.slice(2));const root=process.cwd(),harness=careSourceSnapshot(root,'desktop');observeSyntheticMemberIdentity();
+ phase='arguments';recoveryArgs(process.argv.slice(2));const root=process.cwd();
+ phase='source';const harness=careSourceSnapshot(root,'desktop');phase='principal';observeSyntheticMemberIdentity();
  // Serialize local runners, and preserve a stale lock after unknown restoration.
- const directory=resolve(root,'dist/synthetic-care-routing');mkdirSync(directory,{recursive:true});
+ phase='lock';const directory=resolve(root,'dist/synthetic-care-routing');mkdirSync(directory,{recursive:true});
  const runId=randomBytes(16).toString('hex'),sid='alp-care-recovery-'+runId,lock=resolve(directory,'operator.lock');
  try{writeFileSync(lock,JSON.stringify({runId,harness,pid:process.pid})+'\n',{flag:'wx'});}catch{fail('recovery_operator_lock');}
  const recordFile=resolve(directory,runId+'.events.jsonl');let admitted=false,restored=false,rows=[];
  const credentials=fromIni({profile}),s3=new S3Client({region:P.region,credentials,maxAttempts:1}),
   secrets=new SecretsManagerClient({region:P.region,credentials,maxAttempts:1}),cognito=new CognitoIdentityProviderClient({region:P.region,credentials,maxAttempts:1});
  try{
+  phase='build';
   runCareVersionChild(()=>execFileSync(process.execPath,[resolve(root,'scripts/build-care-erasure-schema-upgrade.mjs')],
    {encoding:'utf8',timeout:30000,maxBuffer:1024*1024,windowsHide:true,stdio:['ignore','pipe','pipe']}),'build');
-  const artifactDir=resolve(root,'dist/synthetic-care-release',D.desktop,D.mobile),manifest=JSON.parse(readFileSync(resolve(artifactDir,'artifact-manifest.json'),'utf8')),
+  phase='artifact';const artifactDir=resolve(root,'dist/synthetic-care-release',D.desktop,D.mobile),manifest=JSON.parse(readFileSync(resolve(artifactDir,'artifact-manifest.json'),'utf8')),
    release=JSON.parse(readFileSync(resolve(artifactDir,'release.json'),'utf8')),bundle=readFileSync(resolve(artifactDir,'index.js')),zip=readFileSync(resolve(artifactDir,'candidate.zip'));
   verifyDeployedCareArtifact(manifest,release,bundle,zip);
-  const operatorDir=resolve(root,'dist/aws-clinical-core/care-erasure-schema-upgrade'),operator=JSON.parse(readFileSync(resolve(operatorDir,'artifact-manifest.json'),'utf8'));
+  phase='inspector';const operatorDir=resolve(root,'dist/aws-clinical-core/care-erasure-schema-upgrade'),operator=JSON.parse(readFileSync(resolve(operatorDir,'artifact-manifest.json'),'utf8'));
   verifyRecoveryInspector(operator,readFileSync(resolve(operatorDir,'index.cjs')),harness);
   const unchanged=()=>check(canonical(careSourceSnapshot(root,'desktop'))===canonical(harness),'harness_changed');
   const getVersionPolicy=()=>aws(['lambda','get-policy','--function-name',P.functionName,'--qualifier',R.version],true);
@@ -114,7 +126,7 @@ async function main(){
      rows:database.rowCount,dataSha256:database.dataSha256,liveLedger:database.fromLedgerSha256,referenceLedger:database.referenceLedgerSha256}};
   };
   // Load only the existing five fictional identities. No emails/accounts/passwords are created or reset.
-  const secret=await secrets.send(new GetSecretValueCommand({SecretId:secretArn}),{abortSignal:AbortSignal.timeout(30000)});
+  phase='personas';const secret=await secrets.send(new GetSecretValueCommand({SecretId:secretArn}),{abortSignal:AbortSignal.timeout(30000)});
   check(secret.ARN===secretArn&&typeof secret.SecretString==='string'&&Buffer.byteLength(secret.SecretString)<=65536,'persona_secret');
   rows=JSON.parse(secret.SecretString);verifyPersonaRecords(rows);
   const consumerPhase=async()=>{
@@ -158,7 +170,7 @@ async function main(){
      await pause(10000);
     }fail('recovery_metric_timeout');
    }};
-  const result=await rehearseCareRecovery(d,sid);unchanged();
+  phase='rehearsal';const result=await rehearseCareRecovery(d,sid);unchanged();phase='write_report';
   const file=resolve(directory,runId+'.json');writeFileSync(file,JSON.stringify({...result,harness,observedAt:new Date().toISOString(),
    sourceRebuiltNow:false,immutableReviewedArtifactVerified:true,operatorJournal:recordFile},null,2)+'\n',{flag:'wx'});
   console.log(JSON.stringify({report:file,...result,harness}));
@@ -168,5 +180,5 @@ async function main(){
  }
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(resolve(process.argv[1])).href)main().catch(error=>{
- console.error(error.message?.startsWith('synthetic_care_release_refused:')?error.message:'synthetic_care_release_refused:recovery_failed');process.exitCode=1;
+ console.error(recoveryFailureCode(error,phase));process.exitCode=1;
 });
