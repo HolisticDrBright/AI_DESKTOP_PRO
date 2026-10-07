@@ -8,7 +8,7 @@ import {DEPLOYED_CARE as D} from './verify-deployed-synthetic-care.mjs';
 import {canonical} from './care-recovery-routing.mjs';
 import {createCareIntentCandidate,careIntentMigrationBinding} from './synthetic-care-intent-release.mjs';
 import {verifyIntentUploadPreparation,intentFailureCode,createIntentUploadCustody} from './upload-synthetic-care-intent-release.mjs';
-import {careIntentCodeChangeInputs} from './prepare-synthetic-care-intent-code-change.mjs';
+import {careIntentCodeChangeInputs,verifyCareIntentChangeSetViews} from './prepare-synthetic-care-intent-code-change.mjs';
 import {verifyCareCodeChangeSet} from './prepare-synthetic-care-code-change.mjs';
 const source=JSON.parse(readFileSync(new URL('../infra/aws-clinical-core/identity-api-extension.json',import.meta.url),'utf8'));
 const now=Date.parse('2026-10-07T22:00:00.000Z');
@@ -76,7 +76,7 @@ test('proposal pins exact downloaded object version while preserving all non-Cod
  const changedSource=structuredClone(source);changedSource.Resources.IdentityApiFunction.Properties.Timeout=30;
  assert.throws(()=>careIntentCodeChangeInputs(changedSource,f.preparation,f.candidate.manifest,f.artifact,f.current));
 });
-test('existing strict change-set shape guard rejects an intent proposal that alters any other resource',()=>{
+function changeSetFixture(){
  const f=fixture();f.preparation.observedAt=new Date().toISOString();
  const input=careIntentCodeChangeInputs(source,f.preparation,f.candidate.manifest,f.artifact,f.current);
  const binding={stackId:`arn:aws:cloudformation:${P.region}:${P.account}:stack/${P.stack}/fictional`,
@@ -89,12 +89,51 @@ test('existing strict change-set shape guard rejects an intent proposal that alt
   Parameters:Object.entries(params).map(([ParameterKey,ParameterValue])=>({ParameterKey,ParameterValue})),
   Changes:[{Type:'Resource',ResourceChange:{Action:'Modify',LogicalResourceId:'IdentityApiFunction',PhysicalResourceId:P.functionName,
    ResourceType:'AWS::Lambda::Function',Replacement:'False',Scope:['Properties'],Details:[{Target:{Attribute:'Properties',Name:'Code',RequiresRecreation:'Never'},ChangeSource:'DirectModification'}]}}]};
+ return {set,input,binding,f};
+}
+test('existing strict change-set shape guard rejects an intent proposal that alters any other resource',()=>{
+ const {set,input,binding}=changeSetFixture();
  verifyCareCodeChangeSet(set,input.template,input,binding);
  for(const change of [s=>s.Changes[0].ResourceChange.LogicalResourceId='IdentityApiRole',
   s=>s.Changes[0].ResourceChange.Details[0].Target.Name='Environment',s=>s.Changes[0].ResourceChange.Replacement='True',
   s=>s.ExecutionStatus='EXECUTE_COMPLETE',s=>s.NextToken='unread',s=>s.Changes.push(structuredClone(s.Changes[0]))]){
   const changed=structuredClone(set);change(changed);assert.throws(()=>verifyCareCodeChangeSet(changed,input.template,input,binding));
  }
+});
+
+test('both CloudFormation views and complete property contexts are mandatory; a hidden dependency is not a pass',()=>{
+ const make=()=>{
+  const value=changeSetFixture(),{set,input}=value;
+  const detailed=structuredClone(set),before={Properties:{FunctionName:P.functionName,Timeout:'29',
+   Code:{S3Bucket:P.bucket,S3Key:`clinical-core/authenticated-api/care-release/${D.desktop}/${D.zip}.zip`,S3ObjectVersion:D.version}}};
+  const after=structuredClone(before);after.Properties.Code.S3Key=value.f.candidate.manifest.key;
+  after.Properties.Code.S3ObjectVersion=value.f.artifact.versionId;
+  const change=detailed.Changes[0].ResourceChange;
+  change.BeforeContext=JSON.stringify(before);change.AfterContext=JSON.stringify(after);
+  change.Details=['S3ObjectVersion','S3Key'].map(name=>({ChangeSource:'DirectModification',Evaluation:'Static',
+   Target:{Attribute:'Properties',Name:'Code',RequiresRecreation:'Never',Path:'/Properties/Code/'+name,
+    BeforeValue:before.Properties.Code[name],AfterValue:after.Properties.Code[name],AttributeChangeType:'Modify'}}));
+  return {...value,detailed,before,after,input};
+ };
+ const f=make();assert.equal(verifyCareIntentChangeSetViews(f.set,f.detailed,f.input.template,f.input,f.binding).summaryResourceCount,1);
+ for(const change of [
+  f=>f.set.Changes.push({Type:'Resource',ResourceChange:{Action:'Modify',LogicalResourceId:'IdentityApiIntegration',
+   PhysicalResourceId:'2k0pka6',ResourceType:'AWS::ApiGatewayV2::Integration',Replacement:'False',Scope:['Properties'],
+   Details:[{Target:{Attribute:'Properties',Name:'IntegrationUri',RequiresRecreation:'Never'},Evaluation:'Dynamic',
+    ChangeSource:'ResourceAttribute',CausingEntity:'IdentityApiFunction.Arn'}]}}),
+  f=>f.detailed.Changes.push(structuredClone(f.detailed.Changes[0])),f=>f.set.NextToken='unread',f=>f.detailed.NextToken='unread',
+  f=>f.detailed.Changes[0].ResourceChange.AfterContext=undefined,
+  f=>f.detailed.Changes[0].ResourceChange.BeforeContext='{broken',
+  f=>{f.after.Properties.Timeout='30';f.detailed.Changes[0].ResourceChange.AfterContext=JSON.stringify(f.after);},
+  f=>{f.after.Properties.Role='other';f.detailed.Changes[0].ResourceChange.AfterContext=JSON.stringify(f.after);},
+  f=>{f.after.Properties.Code.S3Bucket='other';f.detailed.Changes[0].ResourceChange.AfterContext=JSON.stringify(f.after);},
+  f=>f.detailed.Changes[0].ResourceChange.Details[0].Target.BeforeValue='other',
+  f=>f.detailed.Changes[0].ResourceChange.Details[0].Target.AfterValue='other',
+  f=>f.detailed.Changes[0].ResourceChange.Details[0].Target.Path='/Properties/Code/S3Bucket',
+  f=>f.detailed.Changes[0].ResourceChange.Details[0].Target.AttributeChangeType='Remove',
+  f=>f.detailed.Changes[0].ResourceChange.Details[0].Evaluation='Dynamic',
+  f=>f.detailed.Changes[0].ResourceChange.Details.pop()
+ ]){const changed=make();change(changed);assert.throws(()=>verifyCareIntentChangeSetViews(changed.set,changed.detailed,changed.input.template,changed.input,changed.binding));}
 });
 test('CLI has no saved-report, target, execution or SQL override and preserves write custody until settled',()=>{
  const upload=readFileSync(new URL('./upload-synthetic-care-intent-release.mjs',import.meta.url),'utf8');
@@ -106,6 +145,8 @@ test('CLI has no saved-report, target, execution or SQL override and preserves w
  assert.match(upload,/maxAttempts:1/);assert.match(upload,/operator.lock/);
  assert.match(proposal,/collectCancellationInventory\(aws,\['cloudformation','list-change-sets'/);
  assert.match(proposal,/'--client-token',digest/);assert.match(proposal,/verifyCareCodeChangeSet/);
+ assert.match(proposal,/'--no-include-property-values','--no-paginate'/);
+ assert.match(proposal,/verifyCareIntentChangeSetViews\(summary,set/);
  assert.doesNotMatch(upload+proposal,/'execute-change-set'|'update-stack'|'update-function-code'|'execute-statement'|'commit-transaction'|--report|--target|process\.env/);
  const shared=readFileSync(new URL('./upload-synthetic-care-release.mjs',import.meta.url),'utf8');
  assert.match(shared,/IfNoneMatch: '\*'/);

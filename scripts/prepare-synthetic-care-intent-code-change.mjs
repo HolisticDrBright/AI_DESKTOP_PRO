@@ -29,6 +29,48 @@ export function careIntentCodeChangeInputs(source,preparation,manifest,artifact,
  return {template:expected,parameters:names.map(ParameterKey=>ParameterKey==='LambdaCodeKey'
   ?{ParameterKey,ParameterValue:manifest.key}:{ParameterKey,UsePreviousValue:true})};
 }
+/** Neither projection may hide another affected resource. Property contexts
+ * must prove the exact code-key/version delta, not just a target named Code. */
+export function verifyCareIntentChangeSetViews(summary,detailed,actualTemplate,input,binding){
+ try{
+  verifyCareCodeChangeSet(summary,actualTemplate,input,binding);
+  verifyCareCodeChangeSet(detailed,actualTemplate,input,binding);
+ }catch{refuseIntent('proposal_projection_scope');}
+ const change=detailed.Changes[0].ResourceChange;
+ let before,after;
+ try{
+  if(typeof change.BeforeContext!=='string'||typeof change.AfterContext!=='string'
+   ||Buffer.byteLength(change.BeforeContext)>65536||Buffer.byteLength(change.AfterContext)>65536)throw new Error();
+  before=JSON.parse(change.BeforeContext);after=JSON.parse(change.AfterContext);
+ }catch{refuseIntent('proposal_property_context');}
+ const oldKey=`clinical-core/authenticated-api/care-release/${D.desktop}/${D.zip}.zip`;
+ const newKey=input.parameters.find(p=>p.ParameterKey==='LambdaCodeKey').ParameterValue;
+ const newVersion=input.template.Resources.IdentityApiFunction.Properties.Code.S3ObjectVersion;
+ const expectedOld={S3Bucket:P.bucket,S3Key:oldKey,S3ObjectVersion:D.version};
+ const expectedNew={S3Bucket:P.bucket,S3Key:newKey,S3ObjectVersion:newVersion};
+ if(!before||!after||canonical(Object.keys(before))!==canonical(['Properties'])
+  ||canonical(Object.keys(after))!==canonical(['Properties'])
+  ||before.Properties?.FunctionName!==P.functionName||after.Properties?.FunctionName!==P.functionName
+  ||canonical(before.Properties.Code)!==canonical(expectedOld)||canonical(after.Properties.Code)!==canonical(expectedNew))
+  refuseIntent('proposal_property_context');
+ const restored=structuredClone(after);restored.Properties.Code=before.Properties.Code;
+ if(canonical(restored)!==canonical(before))refuseIntent('proposal_non_code_context');
+ const changes=new Set();
+ for(const item of change.Details){
+  const t=item.Target,path=t.Path;
+  const version=path==='/Properties/Code/S3ObjectVersion',key=path==='/Properties/Code/S3Key';
+  if(!version&&!key||t.AttributeChangeType!=='Modify'
+   ||t.BeforeValue!==(version?D.version:oldKey)||t.AfterValue!==(version?newVersion:newKey)
+   ||!['Static','Dynamic'].includes(item.Evaluation)
+   ||version&&(item.ChangeSource!=='DirectModification'||item.Evaluation!=='Static')
+   ||key&&item.ChangeSource==='ParameterReference'&&(item.CausingEntity!=='LambdaCodeKey'||item.Evaluation!=='Static'))
+   refuseIntent('proposal_property_delta');
+  changes.add(path);
+ }
+ if(changes.size!==2)refuseIntent('proposal_property_delta');
+ return {summarySha256:sha256(canonical(summary)),propertyValuesSha256:sha256(canonical(detailed)),
+  summaryResourceCount:summary.Changes.length,propertyValuesResourceCount:detailed.Changes.length};
+}
 function aws(args){
  try{return JSON.parse(execFileSync('aws',[...args,'--profile',profile,'--region',P.region,'--output','json'],
   {encoding:'utf8',windowsHide:true,timeout:30000,maxBuffer:4*1024*1024,stdio:['ignore','pipe','pipe']}));}
@@ -69,15 +111,18 @@ export async function proposeCareIntentCodeChange(root,directory,context){
  record({stage:'change_set_observed',stackId,name,id,reused:found.length===1});
  let set;
  for(let n=0;n<20;n++){
-  set=aws(['cloudformation','describe-change-set','--stack-name',stackId,'--change-set-name',id,'--include-property-values']);
+  set=aws(['cloudformation','describe-change-set','--stack-name',stackId,'--change-set-name',id,'--include-property-values','--no-paginate']);
   if(!['CREATE_PENDING','CREATE_IN_PROGRESS'].includes(set.Status))break;
   await new Promise(done=>setTimeout(done,2000));
  }
  const raw=aws(['cloudformation','get-template','--stack-name',stackId,'--change-set-name',id,'--template-stage','Original']).TemplateBody;
- verifyCareCodeChangeSet(set,typeof raw==='string'?JSON.parse(raw):raw,input,{stackId,name,id});unchanged();
+ const summary=aws(['cloudformation','describe-change-set','--stack-name',stackId,'--change-set-name',id,'--no-include-property-values','--no-paginate']);
+ record({stage:'change_set_projection_readback',summaryResourceCount:summary.Changes?.length??null,
+  propertyValuesResourceCount:set.Changes?.length??null,summarySha256:sha256(canonical(summary)),propertyValuesSha256:sha256(canonical(set))});
+ const projections=verifyCareIntentChangeSetViews(summary,set,typeof raw==='string'?JSON.parse(raw):raw,input,{stackId,name,id});unchanged();
  const report={contract:'synthetic-care-intent-code-change/1',observedAt:new Date().toISOString(),
   execution:'synthetic-staging',account:P.account,region:P.region,desktop:current.desktop,mobile:current.mobile,
-  artifact,stackId,changeSetId:id,changeSetName:name,templateSha256:sha256(canonical(input.template)),
+  artifact,preparation,projections,stackId,changeSetId:id,changeSetName:name,templateSha256:sha256(canonical(input.template)),
   changeSetCreated:found.length===0,reused:found.length===1,verifiedChange:'one existing Lambda Code property only',
   changeSetExecutionStatus:set.ExecutionStatus,deployed:false,schemaChanged:false,canonicalRegistered:false,
   freshCompatibleRecoveryPerformed:false,hostedAcceptance:false,paidMobileBuildStarted:false,phiAllowed:false};

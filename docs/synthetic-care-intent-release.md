@@ -69,6 +69,11 @@ removed and the existing 51-route annotation preserved. Only the Lambda code
 key and its exact object version may change. All other parameters use their
 previous values. The created change set must contain exactly one modification
 to the existing Lambda's Code property, with no resource replacement. The
+command reads both the default and property-value projections without hidden
+pagination. Both must meet that same resource limit. Complete before/after
+contexts and detail paths must prove exactly the expected code key and object
+version changed, with every other property preserved. An extra dependency in
+either projection is refused, even when omitted from the other view. The
 command has no execution, SQL, fixture, activation, or paid-build operation.
 
 A shared operator lock and flushed journal cover both writes. Admissions are
@@ -78,6 +83,24 @@ before any further write. Do not delete the lock or repeat the command merely
 because an observation timed out. The deterministic change-set name and client
 token support reconciliation, not automatic replay. A settled unexecuted
 proposal still does not prove deployed runtime compatibility or schema safety.
+
+## October 7 projection finding
+
+The exact artifact at Desktop `bad6ee1` and V2 `70e1196` was uploaded and
+downloaded successfully. Its unexecuted change set's property-value view listed
+only the Lambda, so that first runner issued a success report. Independent
+default-view readback listed a second modification to `IdentityApiIntegration`,
+with a dynamic `IntegrationUri` dependency on `IdentityApiFunction.Arn`.
+The first proposal report is therefore **not qualified deployment evidence**.
+The code and database remain unchanged; do not execute that proposal.
+
+Both views are now required, with negative tests for hidden dependencies,
+pagination, incomplete contexts and non-code changes. AWS documents property
+values as additional detail, not permission to discard the default resource
+inventory ([DescribeChangeSet](https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_DescribeChangeSet.html)).
+The source template's ARN reference is a possible explanation for the extra
+dependency, not proof of a harmless runtime no-op. The deployment path must
+resolve and qualify that dependency without silently relaxing the gate.
 
 ## Remaining release work
 
