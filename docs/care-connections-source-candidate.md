@@ -515,3 +515,15 @@ skips**, in 413.52 seconds, with the documented timezone and the unrelated
 Supabase anon-key variable unset. Standalone typecheck and changed-file lint
 pass after the child-environment typing repair. This is source evidence, not
 hosted transfer, native permission, store or PHI activation evidence.
+
+The pushed clean source is `694121a145d7dd679654a3f89e1609c99088de99`.
+Its clean rebuild passes CloudFormation lint and emits ZIP SHA-256
+`a9f6c34c8ec84e59e024e7649dd3a73bbcf99417c34489304c7d06a3ee3d5149`
+(789,061 bytes), code SHA-256
+`2e31a0dcd3ea01674db0310f86a2e54d7fe1d7136d43afefa80bfb1777731d19`,
+and template SHA-256
+`f7801c8c6f27c03a6be0b012b8703c86649423a5106ca95281ec35010a59b609`.
+CI runs 37550894195 and 37550890399 were in progress at inspection, not green.
+Nothing was uploaded to AWS. Build again from the intended exact runtime source
+before reviewing a new deployment; a documentation head is not interchangeable
+with an artifact's compiled source identity.
