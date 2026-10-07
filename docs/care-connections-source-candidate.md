@@ -761,3 +761,70 @@ clinical-source/security/retention reviews and independent PHI approvals.
 All six original phases remain partial; neither app is commercial or PHI ready.
 PHI stays off, paid mobile builds stay held, and clinical holds, exclusions and
 source-verification gates are unchanged.
+
+## October 6 immutable disposition and connection capacity repairs
+
+The coverage parser previously discarded `appendOnly` and `disposition`.
+The generic deletion path could consequently purge external objects before an
+immutable database trigger refused deletion. Database rollback does not restore
+deleted storage objects. The parser now preserves and validates those fields,
+captures the admitted inputs before asynchronous work, and refuses pending
+immutable disposition after the read-only legal-hold check but before inventory,
+database mutation or any purger call. Missing or malformed hold observations
+are refused rather than treated as zero. Read-only inspection remains available.
+
+The canonical 207-table inventory now explicitly marks all 42 in-scope tables
+with unconditional `block_update_delete()` triggers as pending disposition.
+The coverage gate derives this requirement from actual canonical SQL; negative
+tests remove each annotation in turn and must fail. No trigger, retention policy,
+clinical hold, source-verification condition or exclusion was relaxed. The
+operator embeds the validated mapping and its LF-normalized SHA-256 at build
+time. `COVERAGE_PATH`, extra arguments and truncated replacement manifests
+cannot substitute another mapping before credential or AWS access.
+
+The prepared recovery manifest's two proposed table mappings now parse with the
+existing inventory as 209 entries. They retain pending immutable disposition;
+their dependencies name only the in-scope connection table, not retained person
+or organization shells. This is proposed inventory, not canonical migration
+registration, deletion authority or approval of a clinic retention procedure.
+The canonical assembly remains 105 migrations and seeds no approval rows.
+
+The capacity registry now includes both care messaging and care connections,
+building their actual templates in isolated temporary directories. The read-only
+AWS preflight in account 588966314750 observed a limit of 150, 136 unreserved,
+39 requested reserved executions and 29 additional executions. It passes the
+unchanged 100-unit unreserved floor, with a minimum current total of 143. No cap
+was removed, no reservation changed and no resource was deployed. This covers
+the current scripted candidate fleet, not future providers or hosted acceptance.
+The foundation still reports PHI false, activation blocked and qualification
+execution disabled as infrastructure. API 6zt8e9qz04 has 26 routes and no care
+messaging, connection or recovery route.
+
+The final focused run passes 49 tests across four suites, including actual
+canonical SQL under PGlite, unchanged legal-hold enforcement and refusal before
+purger invocation with correspondence still present. The 12 Node cases cover
+capacity and negative immutable mapping checks. Typecheck and lint pass. The
+full regression passed 334 files and 4,175 tests, with 11 existing skips, in
+633.63 seconds using the documented timezone and unrelated anon-key variable
+unset. The final focused run also verifies the last changed test assertions.
+Desktop runtime 98214ef has terminal-success CI 37572915717/37572918749; V2
+documentation head 67aa6f6 has terminal-success CI 37573148175/37573144869.
+Those results do not qualify these newer runtime repairs or an installed binary.
+
+Runtime repairs are pushed at `29d2322cf4f0095c98de7f43489d42840ada2fbe`,
+independently matched to the remote. Its built covered-entity operator SHA-256 is
+`6b3f83a0453c78feacbd7850108ba339fa1998bf1c5c7940d3829b05ad145714`.
+CI 37575632168 and 37575628205 is in progress, not terminal success. The final
+AST-only graph has 12,967 nodes, 26,202 edges and 911 communities; 49 zero-node
+source files remain absent and HTML was skipped for size. No LLM/API cost.
+
+Next remains canonical recovery registration and route/Lambda/template/fleet/
+target/inspector integration, V2 legacy drain and second-device discovery,
+complete clinic privacy and retained amendments, durable erase reconciliation,
+registrar audit and production program assignments. Clinic-wide disposition
+still needs a separately reviewed procedure and an interruption-safe cross-store
+design; refusing an unsafe path is not completion of that workflow. Then matched
+synthetic deployments, real-service/concurrency/recovery/rollback matrices,
+physical iOS/Android, provider/store/clinical-source/security/retention reviews
+and independent PHI approvals remain. All six original phases are partial;
+neither app is commercial or PHI ready. PHI stays off and paid builds stay held.
