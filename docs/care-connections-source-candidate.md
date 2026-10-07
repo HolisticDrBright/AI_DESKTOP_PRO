@@ -1720,3 +1720,78 @@ complete privacy/clinic amendments/disposition, matched releases, physical devic
 Core19.99 store/provider acceptance and eligible source-verified clinical releases
 remain. All six original scopes remain partial. Neither app is commercial or
 PHI ready; PHI OFF, paid builds held, clinical holds and verification unchanged.
+
+## October 7 Paired erasure recovery source integration
+
+Desktop runtime 8faddc7cbd428d9bde3d960c99fe1dc7963d0675 and V2 runtime
+811f55b3d6841dc01d64e966ef29a8183c887fbf are pushed and remote-matched on
+the existing commercial-readiness branches, PR67 and PR21. The prior dated
+source-candidate section remains historical evidence; this section supersedes
+its statement that API routing and V2 source integration are not implemented.
+
+The existing synthetic consumer care-data route now accepts prepare_erasure
+and discover_erasure_requests. It derives the owner from authenticated claims,
+checks current expiry, and rejects body ownership overrides before SQL.
+Recovery uses the existing database/API authority; no new API URL or IAM grant
+is introduced. An absent schema or internal database fault returns unavailable,
+not success or a misleading invalid-sign-in message. Actual RDS error
+classification now recognizes care_erasure_intent_required as an invalid request.
+
+V2 writes and verifies the exact local intent before server preparation.
+Only a verified prepared reply permits the destructive request. A lost,
+refused or malformed preparation reply keeps the same UUID pending and never
+falls through to deletion. Receipt and explicit settlement recovery do not
+retry preparation or deletion. A terminal preparation reply is recorded without
+a new deletion. Recovery on another authorized device saves the selected exact
+ID locally before reading or cancelling it, and refuses to overwrite another
+pending or lifetime-completed ID.
+
+The privacy screen can page committed owner requests, read exact receipts and
+explicitly stop late arrival. An owner-level PostgreSQL lock refuses another
+new UUID while a committed prepared intent is unresolved. Local/remote pending
+records, further pages and legacy uncorrelated records block a new removal.
+An empty page or completed scan is not all-device clearance; unregistered or
+in-transit requests are not certified. No request is sent by rendering the list.
+Authorization/background invalidation clears opened recovery data. Production
+still uses the separate retained-message privacy component, not this synthetic
+candidate.
+
+Final local evidence: Desktop 338 files, 4,263 passed, 11 existing skips,
+289.74 seconds; V2 217 files, 2,509 passed, 1 existing skip, 28.57 seconds.
+The Desktop run uses America/Los_Angeles with the stray test-only environment
+key cleared in that process. Installed compilers and lint pass on both.
+Desktop focused database/API/RDS classification checks pass 230/230; source
+mapping passes 4/4; clinical-core gate passes; retaining/deployed/release tools
+pass 17/17. V2 focused journal/transport/render checks pass 59/59, TestFlight
+source gate passes 365 files, and capabilities gate passes. The earlier
+Desktop full run failed two fixture error-classification assertions; the
+fixture was corrected to match the real RDS identity classification, and the
+fresh full run above passed without weakening those assertions.
+
+The normalized Desktop/V2 recovery contracts match exactly at SHA-256
+5d991aa388a61942e2de99236fcd85308d1d1bf60a919f8c9aeb43ff1333de35.
+A clean source build binds predecessor source46 history
+52f2027ba0db0fd570bc4714fadf5ccd39e2caabf992081cb24be56497a52017 and overlay
+4be2ca72b0486bec171f16c5299c898d70bfbdbfd3143c4bb216fccc329299ec (9,225 bytes).
+Its source handlerIntegrated flag is true; deployable, canonicalRegistered,
+operatorExists, matchedMobileRelease, hostedVerified, deviceVerified,
+productionApproved and phiAllowed remain false. Source identity is not a
+review hash or a matched serving release. The actual serving API remains
+5b6f8aa45347d33757ac9bfb34658e2e09daefd3 with mobile binding 11197e5.
+No AWS operation, lasting schema application, traffic switch, consent/provider
+release, TestFlight/Android build or PHI activation occurred for this integration.
+
+Next engineering is the preserving operator and canonical migration/release
+mapping, including historical alias, original rows, grants and terminal receipts;
+the real schema-compatible API recovery and return-to-candidate rehearsal;
+then authentic hosted preparation/lost-reply/cancellation races, owner isolation
+and second-device recovery. Run those with exact matched sources before device
+acceptance. Legacy claim drain and ID-less erasure reconciliation, registration/
+bootstrap, registrar audit identity, production assignments and qualification
+candidate acceptance remain. Complete privacy/clinic amendments/disposition,
+source-verified clinical releases, Core19.99 store/provider acceptance and exact
+matched releases/physical iOS/Android/five personas are not proved by these
+tests. Separate security, retention, actual agreement-project-runtime-provider
+reviews and PHI activation approvals remain human gates. All six original scopes
+remain partial; neither app is commercial or PHI ready. PHI OFF, paid builds held,
+clinical holds/exclusions and source-verification requirements unchanged.
