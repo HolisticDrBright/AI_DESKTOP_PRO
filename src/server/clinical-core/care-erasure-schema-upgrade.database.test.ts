@@ -113,14 +113,17 @@ describe('exact preserving synthetic staging erasure successor', () => {
     }), supplied, refs, c, 'rehearse');
     expect(r).toMatchObject({ rolledBack: true, observedMigrationCount: 46 }); await predecessor();
   });
-  it('rolls back same-count clinical/reference changes and an unexpected seeded cancellation', async () => {
+  // Each complete rollback + independent inspection keeps the existing test
+  // deadline. Bundling all three round trips made the unrelated third case
+  // inherit the first two's elapsed time under parallel embedded-db load.
+  it.each([
+    ['same-count clinical change', async (tx: Inner) => { await tx.query("update clinical_core.organizations set synthetic_label='FICTIONAL changed' where id=$1", [org]); }],
+    ['same-count reference change', async (tx: Inner) => { await tx.query("update clinical_reference.knowledge_sources set review_status='rejected' where stable_id='src_fictional_erasure_upgrade'"); }],
+    ['unexpected seeded cancellation', async (tx: Inner) => { await tx.query("insert into clinical_core.care_data_erasure_requests(owner_id,request_id,scope,outcome) values($1,$2,'domain','cancelled')", [owner, randomUUID()]); }],
+  ] as const)('rolls back %s and independently verifies preservation', async (_name, change) => {
     const before = await run('inspect');
-    for (const change of [async (tx: Inner) => { await tx.query("update clinical_core.organizations set synthetic_label='FICTIONAL changed' where id=$1", [org]); },
-      async (tx: Inner) => { await tx.query("update clinical_reference.knowledge_sources set review_status='rejected' where stable_id='src_fictional_erasure_upgrade'"); },
-      async (tx: Inner) => { await tx.query("insert into clinical_core.care_data_erasure_requests(owner_id,request_id,scope,outcome) values($1,$2,'domain','cancelled')", [owner, randomUUID()]); }]) {
-      await expect(run('upgrade', atReceipt(change))).rejects.toThrow('data_changed');
-      expect((await run('inspect')).dataSha256).toBe(before.dataSha256); await predecessor();
-    }
+    await expect(run('upgrade', atReceipt(change))).rejects.toThrow('data_changed');
+    expect((await run('inspect')).dataSha256).toBe(before.dataSha256); await predecessor();
   });
   it('detects a changed row beyond a 5k prefix without weakening append-only audit protections', async () => {
     await pg.query(`insert into clinical_reference.knowledge_sources(stable_id,environment)
