@@ -61,6 +61,25 @@ not deployment, recovery rehearsal or hosted application acceptance.
 AWS semantics: [conditional PutObject](https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutObject.html)
 and [version-specific GetObject](https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObject.html).
 
+## Reviewable code-only change set
+
+```powershell
+npm run prepare:synthetic-care-code-change -- --v2-root C:/path/to/V2 --candidate dist/synthetic-care-release/DESKTOP_HEAD/V2_HEAD --prepare-code-change-only
+```
+
+This reruns the full live preparation and version-specific S3 readback, pins the
+actual version into the Lambda code declaration and creates an UPDATE change
+set. It verifies the proposed AWS template, all resolved parameters and every
+resource change. Only the existing identity Lambda's Code may change; its role,
+environment, JWT routes and database remain untouched. Incomplete, paginated,
+wrong-target or non-code changes cannot receive a review report. The tool has
+no stack-execution method. An AVAILABLE change set is not a deployed candidate,
+an API recovery rehearsal, hosted journey evidence or a PHI approval. Its target
+must be freshly checked again before execution, particularly the still-old
+database ledger and source-compatible recovery requirements.
+
+AWS review semantics: [CreateChangeSet](https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_CreateChangeSet.html).
+
 ## Deployment and recovery still required
 
 1. Independently verify the ZIP after uploading it under its exact source/hash
