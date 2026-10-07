@@ -36,6 +36,15 @@ const predecessorLedger = createHash('sha256').update(manifest.migrations.slice(
   `${version}:${createHash('sha256').update(readFileSync(path.join(directory, file), 'utf8')).digest('hex')}`).join('\n')).digest('hex');
 assert(predecessorLedger === '57fdf022f0fdd7d70be12384d6e6d54caab1a0ddb4965a884e4d59eec4c552b0',
   "the complete historical 104-migration ledger must remain unchanged");
+const ledgerFor = count => createHash('sha256').update(manifest.migrations.slice(0, count).map(({ version, file }) =>
+  `${version}:${createHash('sha256').update(readFileSync(path.join(directory, file), 'utf8')).digest('hex')}`).join('\n')).digest('hex');
+assert(ledgerFor(105) === '7da8e4ed999a3298bccc4ef33e7a1005201db45fa2b46682622a208486f17743',
+  "the complete historical 105-migration ledger must remain unchanged");
+assert(ledgerFor(106) === '514959bf0d32de55ded312509ae2ebe39a0fdde9f59246b096b0c41ba63f4f9b',
+  "canonical recovery release must contain the exact registered 106-migration ledger");
+const recoverySql = readFileSync(path.join(directory, '20261006030000_production_care_claim_recovery.sql'), 'utf8');
+assert(createHash('sha256').update(recoverySql).digest('hex') === '033ea35ff3d8932a7b3ca13ee9968f072fbe33e7311a2ad010d8cad80b6f0ca8',
+  "canonical recovery SQL must preserve the exact rehearsed overlay bytes");
 assert(connectionSql.includes('care_consent_texts force row level security')
   && connectionSql.includes('care_consent_texts_immutable')
   && connectionSql.includes('care_consent_release_serialized'), "connection consent safeguards missing");
