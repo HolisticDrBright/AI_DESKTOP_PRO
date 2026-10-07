@@ -168,5 +168,5 @@ describe('exact preserving synthetic staging erasure successor', () => {
     expect(await run('upgrade')).toMatchObject({ applied: false, alreadyApplied: true, dataSha256: after.dataSha256 });
     expect(await run('rehearse')).toMatchObject({ rolledBack: true, observedMigrationCount: 47, dataSha256: after.dataSha256 });
     expect(JSON.stringify(after)).not.toMatch(/FICTIONAL|synthetic_label|secretArn|syn_erasure_upgrade/);
-  });
+  }, 30000); // Multiple real preserving/rehearsal transactions over 24k fictional rows.
 });
