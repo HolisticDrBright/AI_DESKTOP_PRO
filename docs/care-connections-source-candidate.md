@@ -1597,3 +1597,68 @@ retention and actual agreement/project/runtime/provider coverage, policy
 choices and separate PHI activation are independent gates. Neither app is
 commercial or PHI ready. PHI remains OFF, paid mobile builds held, clinical
 holds/exclusions/source-verification requirements preserved.
+
+## October 7 V2 contradictory erasure receipt repair
+
+V2 source `5a446ecee0c757f8c42d96773918897ee50b6102` is pushed and
+remote-matched on agent/v2-commercial-20261005/PR21. It adds consistency checks
+before an erasure receipt can clear the durable owner request, both in the
+actual care-data transport and in the journal's injected recovery boundary.
+It does not change Desktop runtime, SQL, deployed AWS resources or a mobile binary.
+
+The new negative test failed against the old client: a receipt retaining a
+cancellation row with no retention reason was accepted as terminal. The repair
+requires a retention reason exactly when its count is positive, refuses domain
+receipts claiming deletion of signatures/packets/disputes/consult requests or
+cancellation tombstones, and refuses closure receipts claiming those rows were
+retained. Shared threads containing another participant's record remain valid
+retained records. Counts are not estimated or substituted.
+
+A contradictory send or recovered receipt leaves the exact pending UUID intact.
+After a lost reply, a later consistent receipt can resolve that same intent
+without repeating deletion. Transport tests cover send, receipt read and
+settlement responses, distinguishing uncertain mutation from unavailable read.
+These are consistency checks, not proof that a server erased data or a
+certification of full-account, original-clinic-record or cross-store deletion.
+
+Final local verification: **2,498 tests passed /1 existing skip,216 files,
+31.97 seconds**, installed TypeScript clean, Expo lint clean, TestFlight source
+check passed with364 source files scanned. The initial four focused suites
+passed47 tests before the two final transport/recovery cases; the full run
+includes those final cases. No intercepted response counts as real AWS/device
+acceptance. New-source hosted CI is not yet accepted as passed. Earlier
+Desktop2994648 CI37610533967/37610528088 and V27b5522c
+CI37611554369/37611546865 are terminal success, not proof for this repair.
+AST-only V2 Graphify updated to6,076 nodes,12,620 edges,450 communities;
+35 zero-node files remain absent,HTML skipped,no LLM/API cost.
+
+### Lost journal and second device work remains
+
+The current server request table contains only terminal erased/cancelled
+outcomes. Its history endpoint omits request UUIDs and bounds the old summaries
+to50. A journal that is absent or an empty history cannot prove that a request
+never left another device or will not arrive late. This repair does not close
+that gap or reconcile pre-journal requests.
+
+The remaining implementation must durably register intent before destructive
+dispatch, expose bounded owner-scoped discovery with request IDs and exact
+states, and let another authorized device reconcile or explicitly fence the
+same ID without reissuing deletion. Discovery and terminal settlement must be
+serializable with admission; a negative read is not a cancellation fence.
+Historical ID-less requests need an explicit transition/reconciliation path;
+timestamps or similar counts cannot manufacture correlation. Preserve immutable
+receipts, revoked legacy erase authority, exact historical migration bytes and
+all original rows during any new preserving upgrade. No new SQL or registration
+workflow was implemented or activated in this increment.
+
+The real schema-compatible API recovery drill and request-ID hosted journeys
+remain outstanding. API source5b6f8aa and retained version1 remain the dated
+AWS evidence; this newer V2 source is not their matched mobile binary. The
+self-service/bootstrap deployment, legacy claim drain, registrar identity,
+production assignments, qualification candidate acceptance and complete privacy
+workflows also remain engineering. All six original scopes remain partial;
+matched releases, physical iOS/Android/five personas, Core19.99 store/provider
+acceptance, source-verified clinical releases and separate security/retention/
+agreement-project-runtime-provider reviews are still required. Neither app is
+commercial or PHI ready. PHI OFF, paid builds held, clinical holds/exclusions
+and source-verification requirements unchanged.
