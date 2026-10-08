@@ -400,10 +400,11 @@ synthetic command is:
 node scripts/release-synthetic-care-registered.mjs --v2-root <exact-V2-checkout> --artifact <exact-current-candidate-directory> --release-fictional-registered-with-fresh-recovery
 ```
 
-The interrupted-release read-only observer below is implemented and locally
-tested. Do not start this command until explicit recovery of a dead writer's
-still-installed version2 permission or retained routing is also qualified.
-Read-only inspection deliberately cannot repair those two remote states.
+The interrupted-release read-only observer and the separate compensating
+restoration operator below are implemented. Source and local tests establish
+their distinct boundaries; actual AWS qualification remains required. Read-only
+inspection deliberately cannot repair routing or permission state. The first
+synthetic release is a qualification attempt, not production promotion.
 
 Its own upload and proposal bind the new clean source pair. The encrypted
 immutable object is downloaded, both complete proposal views inspected, and
@@ -500,10 +501,57 @@ interrupted results are not converted into successful release results.
 erasure, hosted acceptance, release acceptance, physical acceptance and PHI
 remain false. A failed routing rehearsal requires a separately admitted fresh
 rehearsal even when routing is now safe. A dead writer leaving qualified routing
-or a temporary permission requires a distinct, bound compensating-restoration
-path; that path remains engineering. Never remove the lock, invoke the old
+or a temporary permission requires the distinct, bound compensating-restoration
+operator below. Never remove the lock, invoke the old
 proposal-only reconciler or rerun the release to work around this refusal.
 
 Local verification uses fictional ports and filesystem fixtures, not AWS
 qualification. The original six scopes remain incomplete. Paid mobile builds
 remain held and all clinical exclusions and source-verification gates remain.
+
+### Compensating restoration after a stopped writer
+
+Use the original artifact and clean frozen application checkout. The current
+operator must be clean and must retain the same mobile source, migration release
+and template. This command runs on the Windows operator host:
+
+```
+node scripts/restore-synthetic-care-registered-routing.mjs --v2-root <exact-V2-checkout> --artifact <interrupted-run-artifact> --application-root <clean-frozen-application-checkout> --restore-fictional-registered-routing-only
+```
+
+The original release must have admitted the exact version2 permission and its
+successor byte/revision readback. Both original writer and any earlier restoration
+writer must be stopped. Two actual observations verify the executed proposal,
+latest candidate bytes, retained predecessor bytes, full IAM/JWT/control inventory,
+exact stored version and unchanged canonical database. Retained routing is checked
+under its explicit profile; raw responses are not rewritten to look like LATEST.
+A foreign route, permission, revision, incomplete execution or changed source
+refuses before a write.
+
+Only two AWS mutations are available: returning the known identity integration
+to LATEST, and removing the exact admitted version2 statement using its observed
+permission revision. Each admission is appended and flushed to the original
+journal before its request. The original failed prefix remains byte-for-byte
+unchanged. A lost response leads to observation, never a second request. On a
+subsequent invocation, an existing return or removal admission is reconciled from
+the actual service, not replayed. An unconfirmed mutation keeps the original lock.
+
+A Windows kernel mutex excludes concurrent restoration operators and relinquishes
+ownership after process loss. A dead read-only inspection guard can be archived
+after its process and settlement are checked; the admitted release lock is never
+removed by this helper. Local Windows tests exercise mutex contention, actual
+parent-process termination and stale inspection-guard archival. They are not AWS
+or mobile acceptance.
+
+Two final complete observations must show LATEST with a successful API deployment,
+no version2 policy, identical candidate and predecessor bytes, and unchanged data.
+The restoration receipt and original lock archive are flushed and read back before
+only that local release lock is retired. The original failure remains a failure;
+the receipt certifies current restoration, not functional recovery, erasure,
+release, device or PHI acceptance. A fresh independently admitted functional
+rehearsal after a failed release is still required. Its standalone operator remains
+engineering; do not re-execute an already executed proposal to obtain a rehearsal.
+
+The complete compensating path still needs actual AWS qualification. No provider
+activation, schema replay, patient-data write, paid build or PHI switch is available
+through this operator. All six original commercial-readiness scopes remain partial.

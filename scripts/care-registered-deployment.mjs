@@ -3,8 +3,8 @@
  * binds all observers itself, keeps durable custody and completes recovery. */
 import {CARE_RELEASE as P,sha256} from './synthetic-care-release.mjs';
 import {verifyCareRegisteredCandidate,refuseRegistered} from './synthetic-care-registered-release.mjs';
-import {canonical} from './care-recovery-routing.mjs';
-import {verifyCareRegisteredPredecessorControl,verifyCareRegisteredSuccessorControl,
+import {canonical,CARE_RECOVERY_ROUTE as R} from './care-recovery-routing.mjs';
+import {verifyCareRegisteredPredecessorControl,verifyCareRegisteredSuccessorControl,verifyCareRegisteredRoutingControl,
  verifyCareRegisteredDatabase} from './care-registered-preflight.mjs';
 import {careRegisteredCodeTemplateInputs,verifyCareRegisteredUnexecutedProposalViews,
  verifyCareRegisteredExecutedProposalViews} from './care-registered-code-change.mjs';
@@ -52,7 +52,19 @@ export function verifyCareRegisteredReconciledDeployment(w,candidate,current,sou
  return {...result,contract:'synthetic-care-registered-reconciled-deployment/1',operatorSource:structuredClone(operator),
   originalExecutionOutcome:'unconfirmed',retryPerformed:false};
 }
-function verifyRegisteredDeploymentObservation(w,candidate,current,sourceText,artifact,started,now,databaseCurrent){
+/** Restoration observes the admitted retained route as itself. No observed
+ * response is rewritten to impersonate LATEST, nor is recovery certified. */
+export function verifyCareRegisteredRestorationDeployment(w,candidate,current,sourceText,artifact,operator,started,now,version){
+ check(version===undefined||version==='2','restoration_version');
+ check(equal(operator.mobile,current.mobile)&&equal(operator.migrations,current.migrations)
+  &&operator.templateSha256===current.templateSha256,'reconciliation_operator_binding');
+ check(Date.parse(w.after?.observedAt)>=started,'reconciliation_observation');
+ const result=verifyRegisteredDeploymentObservation(w,candidate,current,sourceText,artifact,Date.parse(w.before?.observedAt),now,operator,version);
+ return {...result,contract:'synthetic-care-registered-restoration-deployment/1',operatorSource:structuredClone(operator),
+  observedRoutingVersion:version??'$LATEST',integrationNoOpProven:version===undefined,
+  originalExecutionOutcome:'unconfirmed',retryPerformed:false};
+}
+function verifyRegisteredDeploymentObservation(w,candidate,current,sourceText,artifact,started,now,databaseCurrent,routingVersion){
  check(keys(w,['contract','current','artifact','executionAdmittedAt','before','after','codeBytes'])
   &&w.contract==='synthetic-care-registered-deployment-observation/1'
   &&equal(w.current,current)&&equal(w.artifact,artifact),'witness_binding');
@@ -70,7 +82,8 @@ function verifyRegisteredDeploymentObservation(w,candidate,current,sourceText,ar
   const expected=structuredClone(b[key]);expected.ExecutionStatus='EXECUTE_COMPLETE';
   check(equal(a[key],expected),'executed_projection_changed');
  }
- const control=verifyCareRegisteredSuccessorControl(a.raw,JSON.parse(sourceText),candidate,current,artifact);
+ const control=routingVersion===undefined?verifyCareRegisteredSuccessorControl(a.raw,JSON.parse(sourceText),candidate,current,artifact)
+  :verifyCareRegisteredRoutingControl(a.raw,JSON.parse(sourceText),candidate,current,artifact,routingVersion);
  check(a.raw.fn.RevisionId!==b.raw.fn.RevisionId,'revision_not_changed');
  const expectedFunction=structuredClone(b.raw.fn);
  for(const key of ['CodeSha256','CodeSize','RevisionId'])expectedFunction[key]=a.raw.fn[key];
@@ -81,8 +94,15 @@ function verifyRegisteredDeploymentObservation(w,candidate,current,sourceText,ar
   expectedFunction.LastModified=a.raw.fn.LastModified;
  }
  check(equal(a.raw.fn,expectedFunction),'function_metadata_changed');
- for(const key of ['functionConfigurationSha256','routesSha256','authorizersSha256','integrationsSha256',
+ for(const key of ['functionConfigurationSha256','routesSha256','authorizersSha256',
   'policySha256','roleSha256','identityRouteCount','apiRouteCount'])check(control[key]===before.control[key],'authority_changed');
+ const expectedIntegrations=structuredClone(b.raw.integrations);
+ if(routingVersion!==undefined){
+  const owned=expectedIntegrations.Items.filter(v=>v.IntegrationId===R.integrationId);
+  check(owned.length===1&&owned[0].IntegrationUri===R.latestArn,'restoration_integration');
+  owned[0].IntegrationUri=R.latestArn+':'+routingVersion;
+ }
+ check(equal(a.raw.integrations,expectedIntegrations),'authority_changed');
  check(equal(physicalResources(a.raw.resources),physicalResources(b.raw.resources)),'resource_identity_changed');
  check(equal(a.raw.foundation,b.raw.foundation),'foundation_changed');
  check(equal(stageConfig(a.raw.stage),stageConfig(b.raw.stage)),'stage_configuration_changed');

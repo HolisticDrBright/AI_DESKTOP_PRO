@@ -20,6 +20,7 @@ import {observeIntentControlRaw,downloadIntentFunction,intentPolicyAbsent} from 
 import {REGISTERED_UPLOAD_TRANSPORT} from './upload-synthetic-care-registered-release.mjs';
 import {collectCancellationInventory} from './verify-synthetic-care-cancellation.mjs';
 import {observeSyntheticMemberIdentity,assertSyntheticMemberIdentity,SYNTHETIC_MEMBER_PROFILE as profile} from './synthetic-aws-principal.mjs';
+import {splitRegisteredRestorationJournal} from './care-registered-restoration-custody.mjs';
 const check=(ok,code)=>{if(!ok)refuseRegistered('release_reconciliation_'+code);};
 const equal=(a,b)=>canonical(a)===canonical(b);
 const exact=(o,n)=>o&&typeof o==='object'&&!Array.isArray(o)&&equal(Object.keys(o).sort(),[...n].sort());
@@ -51,6 +52,12 @@ const sha=v=>/^[a-f0-9]{64}$/.test(v??'');
  * into a successful prefix. A hard crash need not have a terminal finding. */
 export async function verifyInterruptedRegisteredReleaseCustody(c,candidate,sourceText,now,readEvidence){
  const current=frozenCurrent(candidate);verifyCareRegisteredCandidate(candidate,current);
+ const suffix=splitRegisteredRestorationJournal(c?.journalBytes,current,now);
+ if(suffix.restoration){
+  const base=await verifyInterruptedRegisteredReleaseCustody({...c,journalBytes:suffix.originalJournalBytes},candidate,sourceText,now,readEvidence);
+  check(base.scope==='execution'&&base.sid,'restoration_without_admission');
+  return {...base,originalJournalSha256:base.journalSha256,journalSha256:sha256(c.journalBytes),restoration:suffix.restoration};
+ }
  check(Buffer.isBuffer(c?.lockBytes)&&c.lockBytes.length<=16384&&Buffer.isBuffer(c.journalBytes)
   &&c.journalBytes.length<=1024*1024&&c.journalBytes.at(-1)===10,'custody_bytes');
  let lock,events;
@@ -166,6 +173,7 @@ export async function runRegisteredReleaseReconciliation(candidate,operator,cust
  const guard=async()=>{
   check(equal(await d.current(),operator)&&equal(await d.applicationCurrent(),saved.current),'source_changed');
   check(await d.writerStopped(saved.lock.pid)===true,'writer_active');
+  if(saved.restoration)check(started-saved.restoration.lastAt>=60000&&await d.writerStopped(saved.restoration.pid)===true,'restoration_writer_active');
   const bytes=await d.custody();check(bytes.lockBytes.equals(custody.lockBytes)&&bytes.journalBytes.equals(custody.journalBytes),'custody_changed');
   for(const e of saved.evidenceReferences){const actual=await d.evidence(e.file,e.kind);
    check(Buffer.isBuffer(actual)&&sha256(actual)===e.sha256,'archived_evidence_changed');}
@@ -257,12 +265,14 @@ async function reconcileUnexecutedRelease(candidate,operator,saved,sourceText,d,
   awsMutationPerformed:false,deletionCertified:false,deployed:false,recoveryRehearsed:false,schemaChanged:false,
   hostedAcceptance:false,erasureAccepted:false,releaseAccepted:false,physicalDeviceAcceptance:false,phiAllowed:false,paidMobileBuildStarted:false};
 }
-function bounded(file,max=4*1024*1024){
+export function readRegisteredReleaseBounded(file,max=4*1024*1024){
  const a=lstatSync(file);check(a.isFile()&&!a.isSymbolicLink()&&a.size>0&&a.size<=max,'file');const bytes=readFileSync(file),b=lstatSync(file);
  check(a.ino===b.ino&&a.size===b.size&&a.mtimeMs===b.mtimeMs&&bytes.length===a.size,'file_changed');return bytes;
 }
-function directory(root,parts){let d=realpathSync(root);for(const p of parts){d=resolve(d,p);const s=lstatSync(d);
+const bounded=readRegisteredReleaseBounded;
+export function registeredReleaseDirectory(root,parts){let d=realpathSync(root);for(const p of parts){d=resolve(d,p);const s=lstatSync(d);
  check(s.isDirectory()&&!s.isSymbolicLink(),'directory');}return d;}
+const directory=registeredReleaseDirectory;
 export function readRegisteredReleaseEvidence(out,candidate,file,kind){
  check(['before','admission'].includes(kind)&&typeof file==='string'&&resolve(file)===resolve(out,basename(file)),'evidence_path');
  const pattern=kind==='before'?new RegExp('^'+candidate.manifest.zipSha256+'\\.before-[a-f0-9]{64}\\.json$')
@@ -294,6 +304,35 @@ function aws(args,missingPolicyVersion){
   {encoding:'utf8',windowsHide:true,timeout:30000,maxBuffer:4*1024*1024,stdio:['ignore','pipe','pipe'],
    env:{...process.env,AWS_MAX_ATTEMPTS:'1',AWS_RETRY_MODE:'standard',AWS_PAGER:''}});return text.trim()?JSON.parse(text):{};
  }catch(e){if(intentPolicyAbsent(args,missingPolicyVersion,e))return null;refuseRegistered('release_reconciliation_aws_unconfirmed');}
+}
+/** Shared actual read-only observers for the separate compensating operator.
+ * Source roots are independently bound; no transport or report can be supplied
+ * through either public command. The returned clients must always be closed. */
+export function createRegisteredRestorationObservers(root,mobileRoot,artifactDirectory,applicationRoot,candidate,operator,c){
+ const database=buildCareRegisteredDatabaseObserver(root,operator),predecessor=readCareRegisteredPredecessor(root),
+  client=new S3Client({region:P.region,credentials:fromIni({profile}),maxAttempts:1,requestHandler:REGISTERED_UPLOAD_TRANSPORT});
+ const unchangedArtifact=()=>{const fresh=readCareRegisteredCandidate(artifactDirectory);
+  check(['zip','bundle','releaseBytes','manifestBytes'].every(k=>fresh[k].equals(candidate[k])),'artifact_changed');};
+ return {close:()=>client.destroy(),port:{now:Date.now,
+  evidence:async(file,kind)=>readRegisteredReleaseEvidence(c.out,candidate,file,kind),
+  current:async()=>{unchangedArtifact();return careRegisteredCurrent(root,mobileRoot);},
+  applicationCurrent:async()=>careRegisteredCurrent(applicationRoot,mobileRoot),identity:async()=>observeSyntheticMemberIdentity(),
+  writerStopped:async pid=>stoppedUploadWriter(pid),custody:async()=>{c.guard.verify();return {
+   lockBytes:bounded(c.lock,16384),journalBytes:bounded(c.journal,1024*1024)};},
+  rebuild:()=>inspectCareRegisteredArtifact(applicationRoot,mobileRoot,artifactDirectory),database,control:async()=>observeIntentControlRaw(),
+  latest:fn=>downloadIntentFunction(fn,candidate),
+  retainedPolicy:async()=>aws(['lambda','get-policy','--function-name',P.functionName,'--qualifier','2'],'2'),
+  retained:async()=>{const configuration=aws(['lambda','get-function-configuration','--function-name',P.functionName,'--qualifier','2']),
+   bytes=await downloadIntentFunction(configuration,predecessor),policy=aws(['lambda','get-policy','--function-name',P.functionName,'--qualifier','2'],'2');
+   return {configuration,sha256:sha256(bytes),bytes:bytes.length,policy};},
+  apiDeployment:async id=>aws(['apigatewayv2','get-deployment','--api-id',P.apiId,'--deployment-id',id]),
+  storage:()=>inspectRegisteredUploadObject(candidate,(command,options={})=>client.send(command,
+   {...options,abortSignal:options.abortSignal??AbortSignal.timeout(30000)})),
+  proposal:async b=>{const t=aws(['cloudformation','get-template','--stack-name',b.stackId,'--change-set-name',b.id,'--template-stage','Original']).TemplateBody;
+   return {summary:aws(['cloudformation','describe-change-set','--stack-name',b.stackId,'--change-set-name',b.id,'--no-include-property-values','--no-paginate']),
+    detailed:aws(['cloudformation','describe-change-set','--stack-name',b.stackId,'--change-set-name',b.id,'--include-property-values','--no-paginate']),
+    template:typeof t==='string'?JSON.parse(t):t};},
+ }};
 }
 export async function reconcileRegisteredRelease(root,mobileRoot,artifactDirectory,applicationRoot){
  check(!Object.entries(process.env).some(([k,v])=>/^AWS_ENDPOINT_URL(?:_|$)/.test(k)&&v),'endpoint_override');
