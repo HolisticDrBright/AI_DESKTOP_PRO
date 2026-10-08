@@ -137,7 +137,7 @@ jobs:
       - name: Executed intent reconciliation and current-operator continuation (no AWS execution)
         run: node --test scripts/care-intent-resumption-deployment.test.mjs scripts/care-intent-interruption.test.mjs scripts/care-intent-resumption-custody.test.mjs
       - name: Read-only admitted successor reconciliation and fingerprint separation (no AWS execution)
-        run: node --test scripts/care-intent-postcommit.test.mjs
+        run: node --test scripts/care-intent-postcommit.test.mjs scripts/care-intent-postcommit-settlement.test.mjs
       - name: Keep owner erasure recovery libraries blocked and bound to their exact predecessor
         run: |
           npm run test:care-erasure-recovery-source

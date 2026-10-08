@@ -452,13 +452,51 @@ lint passed; CI YAML parsed and all 108 archived journal events, including 95
 unique Gateway requests, validated. Earlier operator `7399e59` completed both
 hosted CI runs successfully; that is not CI evidence for this new source.
 
+Clean Desktop `92225545187275d443bbde0e066168ded2583d12` and V2 documentation
+`31f5ee6db53b768753e163586374271f67dfccdc` then completed the actual AWS
+read-only command with exit0 at **2026-10-08 02:20:54 UTC**. It rebuilt the exact
+original API bundle, downloaded latest/retained/historical and encrypted S3
+bytes, verified executed projections and preserved authority/routes, and
+independently read the same successor database twice. Original rows, complete
+digest and empty intent table matched. Both custodies stayed intact and no
+permission, routing, schema or fixture write occurred. Evidence:
+[Successor reconciliation](evidence/2026-10-08-care-intent-successor-reconciliation.json).
+This qualifies current read-only reconciliation, not a fresh recovery rehearsal,
+complete release, successful erasure, canonical registration or lock retirement.
+
+## Explicit archival of reconciled custody
+
+The separate archival command requires two fresh complete successor/service
+reconciliations from its real observer, current clean source and both exact
+historical locks/journals. It takes an exclusive third guard, writes and rereads
+create-only immutable copies before removal, and then retires only the two
+unchanged local locks. Original journals remain. Any stale observation, changed
+source, service/database/custody/archive drift or interrupted removal preserves
+the third guard and recoverable copies; it never retries or recreates custody.
+
+```powershell
+node scripts/settle-synthetic-care-intent-postcommit.mjs --v2-root "<V2 checkout>" --candidate "<original deployed build directory>" --archive-reconciled-fictional-intent-custody-only
+```
+
+Its terminal outcome is **reconciled committed successor, not release acceptance**.
+There is no remote mutation, schema replay, new routing rehearsal, erased-outcome
+certification, canonical registration or PHI approval. Ten focused custody and
+archival checks passed, including second-observation loss, source/authority/archive
+drift and interrupted second removal; focused lint passed. Actual archival has
+not yet run. Audit copies normalize LF only in tests for Windows checkout;
+production still hashes exact original custody bytes without normalization.
+The final combined recovery/source/custody rerun passed **49 tests**;
+typecheck, focused lint and CI YAML parsing passed. AST-only refresh completed
+afterward with 13,681 nodes and 28,914 edges. This does not extend the earlier
+4,309-test full-suite claim to subsequent source changes or physical devices.
+
 ## Remaining release and commercial work
 
 1. Qualify the new clean-source read-only successor reconciliation against AWS.
    Preserve both locks, journals, 51 identity JWT routes, four absent source
    routes, roles and logs. Any differing observation is a finding, not permission
    to replay the schema or restore an incompatible handler.
-2. Implement and qualify explicit postcommit custody settlement with immutable
+2. Qualify the implemented explicit postcommit custody settlement with immutable
    archival and current independent service/database checks. Do not represent
    the historical failed release as a successful fresh recovery rehearsal.
 3. Deliberately register the exact already-applied migration canonically,

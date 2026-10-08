@@ -5,8 +5,11 @@ import {resolve} from 'node:path';
 import {CARE_INTENT_POSTCOMMIT as F,verifyCarePostcommitCustody,verifyCareIntentSuccessorInspector} from './care-intent-postcommit.mjs';
 import {careIntentPostcommitArgs} from './reconcile-synthetic-care-intent-postcommit.mjs';
 import {careIntentResumptionFixture} from './test-fixtures/care-intent-resumption.mjs';
-const lock=readFileSync(new URL('../docs/evidence/2026-10-08-care-intent-resumption.operator.lock.json',import.meta.url));
-const journal=readFileSync(new URL('../docs/evidence/2026-10-08-care-intent-resumption.events.jsonl',import.meta.url));
+// Audit copies use canonical LF regardless of checkout EOL. The production
+// custody reader still hashes exact original bytes without normalization.
+const audit=name=>Buffer.from(readFileSync(new URL('../docs/evidence/'+name,import.meta.url),'utf8').replaceAll('\r\n','\n'));
+const lock=audit('2026-10-08-care-intent-resumption.operator.lock.json');
+const journal=audit('2026-10-08-care-intent-resumption.events.jsonl');
 const saved=JSON.parse(lock),application=saved.applicationCurrent;
 const original={runId:F.parentRunId,lockSha256:F.parentLockSha256,journalSha256:F.parentJournalSha256};
 test('exact admitted journal identifies historical custody but never success, replay or settlement',()=>{
@@ -19,6 +22,7 @@ test('changed, absent, truncated, normalized or appended custody cannot stand in
  for(const [a,b] of [[undefined,journal],[new Uint8Array(lock),journal],[lock,Buffer.alloc(0)],
   [lock.subarray(0,lock.length-1),journal],[lock,journal.subarray(0,journal.length-1)],
   [Buffer.from(JSON.stringify(saved)),journal],[lock,Buffer.concat([journal,Buffer.from('{}\n')])],
+  [Buffer.from(lock.toString().replaceAll('\n','\r\n')),journal],[lock,Buffer.from(journal.toString().replaceAll('\n','\r\n'))],
   [lock,Buffer.from(journal.toString().replace('postinspect','inspect'))]])
   assert.throws(()=>verifyCarePostcommitCustody(a,b,original,application),/postcommit_custody_digest/);
  for(const change of [x=>x.runId='a'.repeat(32),x=>x.lockSha256='a'.repeat(64),x=>x.journalSha256='a'.repeat(64)]){

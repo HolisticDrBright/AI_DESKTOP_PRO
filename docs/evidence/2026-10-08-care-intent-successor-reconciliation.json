@@ -1,0 +1,447 @@
+{
+  "contract": "synthetic-care-intent-postcommit-reconciliation/1",
+  "observedAt": "2026-10-08T02:20:54.749Z",
+  "applicationCurrent": {
+    "desktop": {
+      "commit": "0e38c130fa212a7a418301b4b72094c649f8f2fe",
+      "clean": true,
+      "files": 1638,
+      "sha256": "e3595bcb0e569dc017d30f59a4397c2e9650b442cbfd473d2ae5ea25f3ba8ff9"
+    },
+    "mobile": {
+      "source": {
+        "commit": "1488a3bf85aca5e2c9a7b8b5c7179e314397dc66",
+        "clean": true,
+        "files": 911,
+        "sha256": "63a6fec3c650889cd7b47810d2317fa434278aa5e78d5aa8c3a30b48863169cb"
+      },
+      "contractSha256": "2987ab778e93ab3663fb820a6854476084b9d9e3a07c3dab90a29d94f655c3c6",
+      "requestJournalSha256": "aa7009ca92c0b2779d5dce1d5bf76c5902a42e5efdf6fda7ec38d3d5840a6f7d",
+      "transportSha256": "0d7bec420f3fd5d4c9e624ccdd2b21df700d705365fb2ae7ab29431ff3e308aa",
+      "easSha256": "bdc8d2f5714f58e2af58fb3314c91f6f7b2be4dad1a303fb3e556dd18dd7816b",
+      "built": false,
+      "deviceVerified": false,
+      "recoveryContractSha256": "5d991aa388a61942e2de99236fcd85308d1d1bf60a919f8c9aeb43ff1333de35",
+      "recoveryUiSha256": "ecb594ee5ebe5820d2bee8ea4780a747f135f6db014c8b7743d646481c30a375"
+    },
+    "migrations": {
+      "parent": {
+        "sourceBefore": "1da8cf4c3c8edfa1f3fc2d3230940c65eb33f1e0ad61f25582112c34766f3e22",
+        "sourceAfter": "52f2027ba0db0fd570bc4714fadf5ccd39e2caabf992081cb24be56497a52017",
+        "liveBefore": "2563a6bbe70c75bbb2e9c423aececf6cf92eaead44f28da7a8c457225e0ed393",
+        "liveAfter": "99ad59a94bab717a4e1299979db177394e931c9ebb7f40aa8be1ba1d99d52148",
+        "reference": "83d51dc056b41f47b5fb3d6020201163915faa2116004e3692af9bb41aad0f62",
+        "sourceCount": 46,
+        "liveBeforeCount": 46,
+        "liveAfterCount": 47,
+        "historicalAliasPreserved": true
+      },
+      "overlay": {
+        "version": "20261007010000",
+        "name": "synthetic_care_erasure_intents",
+        "sha256": "4be2ca72b0486bec171f16c5299c898d70bfbdbfd3143c4bb216fccc329299ec"
+      },
+      "overlayBytes": 9225,
+      "sourceBefore": "52f2027ba0db0fd570bc4714fadf5ccd39e2caabf992081cb24be56497a52017",
+      "sourceAfter": "02026932fff5a37db42a17a1c4f80bd38a759cf8e2ccb2f4d53b8299c66065e7",
+      "liveBefore": "99ad59a94bab717a4e1299979db177394e931c9ebb7f40aa8be1ba1d99d52148",
+      "liveAfter": "447cf4ea8c8da3decbaa7edea964f97d9e3bdb029c38723bf3a5767c38679a50",
+      "reference": "83d51dc056b41f47b5fb3d6020201163915faa2116004e3692af9bb41aad0f62",
+      "sourceBeforeCount": 46,
+      "sourceAfterCount": 47,
+      "liveBeforeCount": 47,
+      "liveAfterCount": 48,
+      "tablesBefore": 88,
+      "tablesAfter": 89,
+      "historicalAliasPreserved": true,
+      "canonicalRegistered": false
+    },
+    "templateSha256": "33f017d4172ac6c586a0600ad58cdc49ff76b4eb28e39c1db71f3c8da982aa24"
+  },
+  "operatorCurrent": {
+    "desktop": {
+      "commit": "92225545187275d443bbde0e066168ded2583d12",
+      "clean": true,
+      "files": 1653,
+      "sha256": "2c8ec2fdc428089b7857b3ac49701fc4415646a7fb04285692cbabac834af29d"
+    },
+    "mobile": {
+      "source": {
+        "commit": "31f5ee6db53b768753e163586374271f67dfccdc",
+        "clean": true,
+        "files": 911,
+        "sha256": "7aa44cc92ad7d013d183d400ab61c81ee230d25d80b145eb2c6610f1a15f225e"
+      },
+      "contractSha256": "2987ab778e93ab3663fb820a6854476084b9d9e3a07c3dab90a29d94f655c3c6",
+      "requestJournalSha256": "aa7009ca92c0b2779d5dce1d5bf76c5902a42e5efdf6fda7ec38d3d5840a6f7d",
+      "transportSha256": "0d7bec420f3fd5d4c9e624ccdd2b21df700d705365fb2ae7ab29431ff3e308aa",
+      "easSha256": "bdc8d2f5714f58e2af58fb3314c91f6f7b2be4dad1a303fb3e556dd18dd7816b",
+      "built": false,
+      "deviceVerified": false,
+      "recoveryContractSha256": "5d991aa388a61942e2de99236fcd85308d1d1bf60a919f8c9aeb43ff1333de35",
+      "recoveryUiSha256": "ecb594ee5ebe5820d2bee8ea4780a747f135f6db014c8b7743d646481c30a375"
+    },
+    "migrations": {
+      "parent": {
+        "sourceBefore": "1da8cf4c3c8edfa1f3fc2d3230940c65eb33f1e0ad61f25582112c34766f3e22",
+        "sourceAfter": "52f2027ba0db0fd570bc4714fadf5ccd39e2caabf992081cb24be56497a52017",
+        "liveBefore": "2563a6bbe70c75bbb2e9c423aececf6cf92eaead44f28da7a8c457225e0ed393",
+        "liveAfter": "99ad59a94bab717a4e1299979db177394e931c9ebb7f40aa8be1ba1d99d52148",
+        "reference": "83d51dc056b41f47b5fb3d6020201163915faa2116004e3692af9bb41aad0f62",
+        "sourceCount": 46,
+        "liveBeforeCount": 46,
+        "liveAfterCount": 47,
+        "historicalAliasPreserved": true
+      },
+      "overlay": {
+        "version": "20261007010000",
+        "name": "synthetic_care_erasure_intents",
+        "sha256": "4be2ca72b0486bec171f16c5299c898d70bfbdbfd3143c4bb216fccc329299ec"
+      },
+      "overlayBytes": 9225,
+      "sourceBefore": "52f2027ba0db0fd570bc4714fadf5ccd39e2caabf992081cb24be56497a52017",
+      "sourceAfter": "02026932fff5a37db42a17a1c4f80bd38a759cf8e2ccb2f4d53b8299c66065e7",
+      "liveBefore": "99ad59a94bab717a4e1299979db177394e931c9ebb7f40aa8be1ba1d99d52148",
+      "liveAfter": "447cf4ea8c8da3decbaa7edea964f97d9e3bdb029c38723bf3a5767c38679a50",
+      "reference": "83d51dc056b41f47b5fb3d6020201163915faa2116004e3692af9bb41aad0f62",
+      "sourceBeforeCount": 46,
+      "sourceAfterCount": 47,
+      "liveBeforeCount": 47,
+      "liveAfterCount": 48,
+      "tablesBefore": 88,
+      "tablesAfter": 89,
+      "historicalAliasPreserved": true,
+      "canonicalRegistered": false
+    },
+    "templateSha256": "33f017d4172ac6c586a0600ad58cdc49ff76b4eb28e39c1db71f3c8da982aa24"
+  },
+  "sourceRepresentations": {
+    "applicationDesktop": "canonical-git",
+    "applicationMobile": "windows-crlf-legacy-text",
+    "operatorDesktop": "canonical-git",
+    "operatorMobile": "windows-crlf-legacy-text"
+  },
+  "runtime": {
+    "desktop": {
+      "files": 1381,
+      "sha256": "69cbf787cc150561d990a90340c652277ee87dd84c6cc1139fbddb5efb0247c7",
+      "operatorRepairs": [
+        {
+          "file": "src/server/clinical-core/care-erasure-intent-upgrade.ts",
+          "beforeSha256": "591904ba330510a6277276daf3a935ddd64057bd8b91866d73019e68fb4b83b8",
+          "afterSha256": "bd8f1ca655c62d27f015fd9bf8391118c2b63144a0d87883bd45a360c40c50f5"
+        },
+        {
+          "file": "src/server/clinical-core/care-erasure-intent-command.test.ts",
+          "beforeSha256": "c5093ad03ddf8f0a2d7434b2a4d5f9e5efc686e111e2c54065b3e4905cf054fa",
+          "afterSha256": "00157cca066c11f47c6f8c27fe8728291f2f00c5311e82a032cee9928798301c"
+        },
+        {
+          "file": "src/server/clinical-core/care-erasure-intent-upgrade.database.test.ts",
+          "beforeSha256": "f3702767b01021f4ec92479d1e4b9b9511cca6be7e0e0d5121b95d3d35f01031",
+          "afterSha256": "8cd25523bd121af7dd2b3d7959941aeba5f0f37d71dd07ba731b3bf9e5f8d9b8"
+        }
+      ],
+      "operatorRepairsSha256": "4ac89a3699845eaa468cf9646bf8129d1c29b447cc6fc516924419a9b8823567",
+      "readOnlyProfile": true
+    },
+    "mobile": {
+      "files": 909,
+      "sha256": "e75ceda60e10ac53dedaf3e3a1bf38f07cd70efda24da7216dd6edf1f8d5c938"
+    }
+  },
+  "interruption": {
+    "runId": "cc190186dd49bd98865d1f4da43e73e7",
+    "pid": 168220,
+    "binding": {
+      "stackId": "arn:aws:cloudformation:us-east-2:588966314750:stack/ai-clinical-core-synthetic-staging-authenticated-api/ce395280-9696-11f1-bb00-06d23d41b203",
+      "name": "care-intent-667a54856f253350d6f4f3e51120f1ed",
+      "id": "arn:aws:cloudformation:us-east-2:588966314750:changeSet/care-intent-667a54856f253350d6f4f3e51120f1ed/8e42ff1a-a00e-4675-9abb-b51060ed3046"
+    },
+    "artifactVersion": "lagGFfNd0kIrsydunYd2WvicsWEX9tLC",
+    "retainedVersion": "2",
+    "remoteSuccessProven": false,
+    "replayAuthorized": false,
+    "lock": "C:\\Users\\Brand\\Documents\\Codex\\2026-08-18\\referenced-chatgpt-conversation-this-is-an\\work\\DESKTOP_COMMERCIAL_20261005\\dist\\synthetic-care-routing\\operator.lock",
+    "journal": "C:\\Users\\Brand\\Documents\\Codex\\2026-08-18\\referenced-chatgpt-conversation-this-is-an\\work\\DESKTOP_COMMERCIAL_20261005\\dist\\synthetic-care-intent-release\\0e38c130fa212a7a418301b4b72094c649f8f2fe\\1488a3bf85aca5e2c9a7b8b5c7179e314397dc66\\uploads\\cc190186dd49bd98865d1f4da43e73e7.events.jsonl",
+    "lockSha256": "72757b3401472a40db201ec686d28f619d15767f23f553c30474ca6ef07e3f83",
+    "journalSha256": "ed35fbb6f6803e235dfba80c6d1e839c97b96f18961f75e63d40b56ccc6e7121",
+    "previousProcessAbsent": true,
+    "originalCustodyRetained": true
+  },
+  "execution": "synthetic-staging",
+  "account": "588966314750",
+  "zipSha256": "f8f995e09879eb7b45d17ffc5f18d5ecb9867f21c0a0795eacb3fd31ccaa0216",
+  "deployedDownloadSha256": "f8f995e09879eb7b45d17ffc5f18d5ecb9867f21c0a0795eacb3fd31ccaa0216",
+  "retainedDownloadSha256": "f8f995e09879eb7b45d17ffc5f18d5ecb9867f21c0a0795eacb3fd31ccaa0216",
+  "predecessorDownload": {
+    "sha256": "644967eec4241c19f2365aabc7cec304f200f95622c8ef3a0188f57633dd64db",
+    "bytes": 1818387,
+    "exactBytesVerified": true
+  },
+  "revision": "f0bb13e8-e726-4ea8-86d3-459e19106df0",
+  "retainedVersion": "2",
+  "artifact": {
+    "bucket": "ai-clinical-core-synthetic-clinicaldocumentsbucket-1wv5abdrcnn7",
+    "key": "clinical-core/authenticated-api/care-intent-release/0e38c130fa212a7a418301b4b72094c649f8f2fe/f8f995e09879eb7b45d17ffc5f18d5ecb9867f21c0a0795eacb3fd31ccaa0216.zip",
+    "versionId": "lagGFfNd0kIrsydunYd2WvicsWEX9tLC",
+    "sha256": "f8f995e09879eb7b45d17ffc5f18d5ecb9867f21c0a0795eacb3fd31ccaa0216",
+    "bytes": 1826076,
+    "encryption": "aws:kms",
+    "kmsKeyArn": "arn:aws:kms:us-east-2:588966314750:key/c13ec29d-0e47-4c02-9136-f371bcbb7900",
+    "exactVersionReadbackVerified": true
+  },
+  "projections": {
+    "contract": "synthetic-care-intent-executed-dependency-projection/1",
+    "summarySha256": "05caae3789301a1c7698e4b7cd251ffc73caf819259ccf57360a906465b04895",
+    "propertyValuesSha256": "3233309d3a0ad6066b65fdb7fd4ae506ede9accb7af584885426d0e97efe9e7e",
+    "summaryResourceCount": 2,
+    "propertyValuesResourceCount": 1,
+    "affectedResources": [
+      "IdentityApiFunction",
+      "IdentityApiIntegration"
+    ],
+    "historicalTemplateSha256": "dfd973cb9ba14323bc25f64219a91ce1ace63f5dd88e1b496ee25513bdad5dc2",
+    "immutablePredecessorRevision": "c4c34715-7ae9-4274-a8b9-c4d1129432b7",
+    "immutablePredecessorVersion": "1",
+    "executionCompleteObserved": true,
+    "liveIntegrationSha256": "1a374a499707380e9faff0b1ebb4535d27526bec3459ecae3cb1990bf4032bc3",
+    "integrationArn": "arn:aws:lambda:us-east-2:588966314750:function:wxv734oi12-synthetic-identity",
+    "integrationId": "2k0pka6",
+    "integrationDependencyClassified": true,
+    "integrationNoOpProven": false,
+    "postExecutionReadbackRequired": true,
+    "freshCompatibleRecoveryRequired": true,
+    "executionAdmissible": false,
+    "deployed": false,
+    "phiAllowed": false
+  },
+  "control": {
+    "revision": "f0bb13e8-e726-4ea8-86d3-459e19106df0",
+    "codeSha256": "+PmV4Jh563tF0X/8XxjV7LmGfyHAoHlerLP9McyqAhY=",
+    "templateSha256": "792a03fd683b1b4dd57010ede77a821213ed206f486af091a8b05d19eca40704",
+    "routesSha256": "7df650b3a01185ba59985b670f349941d2595292ea660ccaf197f4d8b42a1105",
+    "authorizersSha256": "3b730ddbceef5ceac120f3fe2c81d2eff76f638e25d2f11f06451357a550297b",
+    "integrationsSha256": "710df282b74213710e8e538f74422b86f6f2f6ab48c2bf74fa59b7d8bc2b6a60",
+    "stageSha256": "60737f91237e5c812c9e51a6c9d8483d216dd1619a87d4774dad37e2e2b11bc7",
+    "policySha256": "4ff1a3770547bb5fadcda9e245532e3f4770c4f745529df30f6ec80a22d1fa47",
+    "roleSha256": "8904bb47ebff513f08239504338591ce66a3b810be383420ae817c4567842d68",
+    "routeCount": 51,
+    "iamVerified": true,
+    "loggingVerified": true,
+    "phiAllowed": false
+  },
+  "transport": {
+    "integration": {
+      "ConnectionType": "INTERNET",
+      "IntegrationId": "2k0pka6",
+      "IntegrationMethod": "POST",
+      "IntegrationType": "AWS_PROXY",
+      "IntegrationUri": "arn:aws:lambda:us-east-2:588966314750:function:wxv734oi12-synthetic-identity",
+      "PayloadFormatVersion": "2.0",
+      "TimeoutInMillis": 30000
+    },
+    "stage": {
+      "AccessLogSettings": {
+        "DestinationArn": "arn:aws:logs:us-east-2:588966314750:log-group:/ai-clinical-core/synthetic-staging/api-access",
+        "Format": "{\"requestId\":\"$context.requestId\",\"routeKey\":\"$context.routeKey\",\"status\":\"$context.status\",\"responseLength\":\"$context.responseLength\"}"
+      },
+      "AutoDeploy": true,
+      "CreatedDate": "2026-08-12T19:41:06+00:00",
+      "DefaultRouteSettings": {
+        "DetailedMetricsEnabled": true,
+        "ThrottlingBurstLimit": 20,
+        "ThrottlingRateLimit": 10
+      },
+      "DeploymentId": "4pvty5",
+      "LastDeploymentStatusMessage": "Successfully deployed stage with deployment ID '4pvty5'",
+      "LastUpdatedDate": "2026-10-08T01:45:27+00:00",
+      "RouteSettings": {},
+      "StageName": "$default",
+      "StageVariables": {},
+      "Tags": {
+        "aws:cloudformation:stack-name": "ai-clinical-core-synthetic-staging",
+        "DataClassification": "synthetic_only",
+        "Environment": "synthetic-staging",
+        "aws:cloudformation:logical-id": "ClinicalApiStage",
+        "aws:cloudformation:stack-id": "arn:aws:cloudformation:us-east-2:588966314750:stack/ai-clinical-core-synthetic-staging/b5c4daf0-9685-11f1-8a52-0aaf591c50c1"
+      }
+    },
+    "policy": null,
+    "revisionId": "f0bb13e8-e726-4ea8-86d3-459e19106df0",
+    "routesSha256": "7df650b3a01185ba59985b670f349941d2595292ea660ccaf197f4d8b42a1105",
+    "authorizersSha256": "3b730ddbceef5ceac120f3fe2c81d2eff76f638e25d2f11f06451357a550297b",
+    "otherIntegrationsSha256": "fd452e4f2836dec2606cb8c96be4a338573addd50acfe110acc4fe985bef5277",
+    "latestPolicySha256": "4ff1a3770547bb5fadcda9e245532e3f4770c4f745529df30f6ec80a22d1fa47"
+  },
+  "databaseBefore": {
+    "contract": "care-erasure-intent-upgrade/1",
+    "command": "inspect",
+    "execution": "synthetic-staging",
+    "phiAllowed": false,
+    "observedMigrationCount": 48,
+    "sourceMigrationCount": 47,
+    "tableCount": 89,
+    "rowCount": 23985,
+    "dataSha256": "d7f7c07d521aa1b68c4ffa7273a871b1a1d5763e725a87b8a97cd3a4fd981d1b",
+    "schemaSha256": "629df9a05ecd1f7534204f1ee6ab9116a4a5544d86b5296f993a04d263d62bba",
+    "dataPreserved": true,
+    "schemaPreserved": true,
+    "applied": false,
+    "alreadyApplied": true,
+    "rolledBack": false,
+    "originalDataSha256": "29e413773ffb4e263421b312501242384e5f6085b3930fd6339fa9100ab53351",
+    "originalRowCount": 23985,
+    "completeDataSha256": "d7f7c07d521aa1b68c4ffa7273a871b1a1d5763e725a87b8a97cd3a4fd981d1b",
+    "completeRowCount": 23985,
+    "intentRowCount": 0,
+    "fromLedgerSha256": "99ad59a94bab717a4e1299979db177394e931c9ebb7f40aa8be1ba1d99d52148",
+    "toLedgerSha256": "447cf4ea8c8da3decbaa7edea964f97d9e3bdb029c38723bf3a5767c38679a50",
+    "referenceLedgerSha256": "83d51dc056b41f47b5fb3d6020201163915faa2116004e3692af9bb41aad0f62",
+    "canonicalRegistered": false,
+    "hostedAcceptance": false,
+    "recoveryAcceptance": false,
+    "activationApproved": false,
+    "operatorSource": {
+      "sourceCommit": "92225545187275d443bbde0e066168ded2583d12",
+      "clean": true
+    },
+    "awsAccountId": "588966314750",
+    "foundation": "ai-clinical-core-synthetic-staging",
+    "rollbackReadback": false,
+    "lastingUpgradeAvailable": false,
+    "apiDeploymentPerformed": false,
+    "recoveryDrillPerformed": false,
+    "acceptance": false,
+    "phiActivation": false
+  },
+  "databaseAfter": {
+    "contract": "care-erasure-intent-upgrade/1",
+    "command": "inspect",
+    "execution": "synthetic-staging",
+    "phiAllowed": false,
+    "observedMigrationCount": 48,
+    "sourceMigrationCount": 47,
+    "tableCount": 89,
+    "rowCount": 23985,
+    "dataSha256": "d7f7c07d521aa1b68c4ffa7273a871b1a1d5763e725a87b8a97cd3a4fd981d1b",
+    "schemaSha256": "629df9a05ecd1f7534204f1ee6ab9116a4a5544d86b5296f993a04d263d62bba",
+    "dataPreserved": true,
+    "schemaPreserved": true,
+    "applied": false,
+    "alreadyApplied": true,
+    "rolledBack": false,
+    "originalDataSha256": "29e413773ffb4e263421b312501242384e5f6085b3930fd6339fa9100ab53351",
+    "originalRowCount": 23985,
+    "completeDataSha256": "d7f7c07d521aa1b68c4ffa7273a871b1a1d5763e725a87b8a97cd3a4fd981d1b",
+    "completeRowCount": 23985,
+    "intentRowCount": 0,
+    "fromLedgerSha256": "99ad59a94bab717a4e1299979db177394e931c9ebb7f40aa8be1ba1d99d52148",
+    "toLedgerSha256": "447cf4ea8c8da3decbaa7edea964f97d9e3bdb029c38723bf3a5767c38679a50",
+    "referenceLedgerSha256": "83d51dc056b41f47b5fb3d6020201163915faa2116004e3692af9bb41aad0f62",
+    "canonicalRegistered": false,
+    "hostedAcceptance": false,
+    "recoveryAcceptance": false,
+    "activationApproved": false,
+    "operatorSource": {
+      "sourceCommit": "92225545187275d443bbde0e066168ded2583d12",
+      "clean": true
+    },
+    "awsAccountId": "588966314750",
+    "foundation": "ai-clinical-core-synthetic-staging",
+    "rollbackReadback": false,
+    "lastingUpgradeAvailable": false,
+    "apiDeploymentPerformed": false,
+    "recoveryDrillPerformed": false,
+    "acceptance": false,
+    "phiActivation": false
+  },
+  "reportIsNotAuthority": true,
+  "deploymentReconciled": true,
+  "sourceQualified": true,
+  "custodyAcquired": false,
+  "awsMutationPerformed": false,
+  "compatibleRecoveryVerified": false,
+  "schemaChanged": false,
+  "canonicalRegistered": false,
+  "hostedAcceptance": false,
+  "physicalDeviceAcceptance": false,
+  "phiAllowed": false,
+  "paidMobileBuildStarted": false,
+  "postcommitCustody": {
+    "runId": "bccd1492d8dae22401676387cdba66ec",
+    "pid": 143700,
+    "parentRunId": "cc190186dd49bd98865d1f4da43e73e7",
+    "savedOperatorCurrent": {
+      "desktop": {
+        "commit": "7399e59a99131e5701ea30f6306d8c89be88e6b8",
+        "clean": true,
+        "files": 1650,
+        "sha256": "b323ecf4bb252c7950523ee1e7381a5d812b14a5bd9fdfb6e1688883ddf93d98"
+      },
+      "mobile": {
+        "source": {
+          "commit": "315e8deaa7e0e37d77c949dfefaadb595b605612",
+          "clean": true,
+          "files": 911,
+          "sha256": "d55fdaadb34569e93bdbbb83fb305475032c089072bb98470afc64857511656f"
+        },
+        "contractSha256": "2987ab778e93ab3663fb820a6854476084b9d9e3a07c3dab90a29d94f655c3c6",
+        "requestJournalSha256": "aa7009ca92c0b2779d5dce1d5bf76c5902a42e5efdf6fda7ec38d3d5840a6f7d",
+        "transportSha256": "0d7bec420f3fd5d4c9e624ccdd2b21df700d705365fb2ae7ab29431ff3e308aa",
+        "easSha256": "bdc8d2f5714f58e2af58fb3314c91f6f7b2be4dad1a303fb3e556dd18dd7816b",
+        "built": false,
+        "deviceVerified": false,
+        "recoveryContractSha256": "5d991aa388a61942e2de99236fcd85308d1d1bf60a919f8c9aeb43ff1333de35",
+        "recoveryUiSha256": "ecb594ee5ebe5820d2bee8ea4780a747f135f6db014c8b7743d646481c30a375"
+      },
+      "migrations": {
+        "parent": {
+          "sourceBefore": "1da8cf4c3c8edfa1f3fc2d3230940c65eb33f1e0ad61f25582112c34766f3e22",
+          "sourceAfter": "52f2027ba0db0fd570bc4714fadf5ccd39e2caabf992081cb24be56497a52017",
+          "liveBefore": "2563a6bbe70c75bbb2e9c423aececf6cf92eaead44f28da7a8c457225e0ed393",
+          "liveAfter": "99ad59a94bab717a4e1299979db177394e931c9ebb7f40aa8be1ba1d99d52148",
+          "reference": "83d51dc056b41f47b5fb3d6020201163915faa2116004e3692af9bb41aad0f62",
+          "sourceCount": 46,
+          "liveBeforeCount": 46,
+          "liveAfterCount": 47,
+          "historicalAliasPreserved": true
+        },
+        "overlay": {
+          "version": "20261007010000",
+          "name": "synthetic_care_erasure_intents",
+          "sha256": "4be2ca72b0486bec171f16c5299c898d70bfbdbfd3143c4bb216fccc329299ec"
+        },
+        "overlayBytes": 9225,
+        "sourceBefore": "52f2027ba0db0fd570bc4714fadf5ccd39e2caabf992081cb24be56497a52017",
+        "sourceAfter": "02026932fff5a37db42a17a1c4f80bd38a759cf8e2ccb2f4d53b8299c66065e7",
+        "liveBefore": "99ad59a94bab717a4e1299979db177394e931c9ebb7f40aa8be1ba1d99d52148",
+        "liveAfter": "447cf4ea8c8da3decbaa7edea964f97d9e3bdb029c38723bf3a5767c38679a50",
+        "reference": "83d51dc056b41f47b5fb3d6020201163915faa2116004e3692af9bb41aad0f62",
+        "sourceBeforeCount": 46,
+        "sourceAfterCount": 47,
+        "liveBeforeCount": 47,
+        "liveAfterCount": 48,
+        "tablesBefore": 88,
+        "tablesAfter": 89,
+        "historicalAliasPreserved": true,
+        "canonicalRegistered": false
+      },
+      "templateSha256": "33f017d4172ac6c586a0600ad58cdc49ff76b4eb28e39c1db71f3c8da982aa24"
+    },
+    "lockSha256": "53d4e579ec83323df899bcaa2f3b69d4e6e78d859921f2737826bcc8a80362e4",
+    "journalSha256": "a6cb52d7f5f3dd6d198871b8edf37f8120383c46f80c61f6d696084a4a71e0e4",
+    "commitAdmitted": true,
+    "remoteSuccessProven": false,
+    "replayAuthorized": false,
+    "custodySettled": false,
+    "lock": "C:\\Users\\Brand\\Documents\\Codex\\2026-08-18\\referenced-chatgpt-conversation-this-is-an\\work\\DESKTOP_COMMERCIAL_20261005\\dist\\synthetic-care-routing\\operator.resume.lock",
+    "journal": "C:\\Users\\Brand\\Documents\\Codex\\2026-08-18\\referenced-chatgpt-conversation-this-is-an\\work\\DESKTOP_COMMERCIAL_20261005\\dist\\synthetic-care-intent-release\\0e38c130fa212a7a418301b4b72094c649f8f2fe\\1488a3bf85aca5e2c9a7b8b5c7179e314397dc66\\resumptions\\bccd1492d8dae22401676387cdba66ec.events.jsonl",
+    "previousProcessAbsent": true,
+    "originalCustodyRetained": true
+  },
+  "successorReconciled": true,
+  "custodySettled": false,
+  "currentRecoveryAcceptance": false,
+  "replayAuthorized": false
+}
