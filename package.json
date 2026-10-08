@@ -97,6 +97,8 @@
     "build:synthetic-care-registered-release": "node scripts/build-synthetic-care-registered-release.mjs",
     "inspect:synthetic-care-registered-artifact": "node scripts/inspect-synthetic-care-registered-artifact.mjs",
     "test:synthetic-care-registered-release": "node --test scripts/synthetic-care-registered-release.test.mjs",
+    "prepare:synthetic-care-registered-release": "node scripts/prepare-synthetic-care-registered-release.mjs",
+    "test:synthetic-care-registered-preflight": "node --test scripts/care-registered-preflight.test.mjs",
     "test:care-erasure-recovery-source": "node --test scripts/build-care-erasure-recovery-source.test.mjs",
     "build:aws-care-consent-copy": "node scripts/build-care-consent-copy-operator.mjs",
     "build:aws-care-messaging": "node scripts/build-aws-care-messaging.mjs",

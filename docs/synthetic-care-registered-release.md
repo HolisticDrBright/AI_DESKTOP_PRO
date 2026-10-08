@@ -4,7 +4,8 @@ The current artifact binds the registered source47/live48 synthetic history to
 one clean Desktop and V2 source pair. It replaces the build format for future
 care releases; it does not revive the retired parent-schema release or change
 the classification of its failed run. Build and local inspection are implemented.
-The live deployment/recovery/acceptance runner is still engineering work.
+The fixed-target live read-only preflight is implemented. The deployment,
+recovery and full-fictional-acceptance runner is still engineering work.
 Neither app is commercial or PHI ready. PHI remains off and paid mobile builds
 remain held.
 
@@ -60,6 +61,45 @@ not prove source equivalence: `verifyCareRegisteredCandidate` explicitly reports
 clean sources, compares actual code bytes, and rechecks their snapshots; only
 that local inspection reports `sourceRebuilt:true`. It still reports no live
 target observation, deployment, release acceptance or device acceptance.
+
+## Current live read only preflight
+
+After the current clean pair is built, run:
+
+```powershell
+npm run prepare:synthetic-care-registered-release -- --v2-root "<V2 checkout>" --artifact "<directory returned by build>" --inspect-fictional-current-release-only
+```
+
+This command independently rebuilds the actual candidate, compiles a clean
+current canonical database inspector, and observes AWS itself. It has no
+report-loading, target, profile, approval, upload or deployment argument. It
+uses the synthetic member role, not the root-resolving staging profile.
+
+The predecessor is pinned to the exact deployed0e38c130/1488a3bf ZIP and its
+stored object version. Managed Lambda, retained version2 and S3 bytes are
+downloaded and compared with that immutable ZIP; presigned URLs stay in memory.
+The complete current template,11 parameters, resource IDs/status, seven-variable
+environment, encrypted30-day logs, scoped IAM,51 owned JWT routes within the
+112-route API, authorizers, integration/stage and invocation permission are
+checked directly. Unknown differences are not normalized to the older5b6f8aa
+generation. The retained intent-aware version must have no invoke permission.
+
+Two new compiled database observations must show the registered source47/live48
+history,89 tables,23,985 preserved rows and zero new intents. Full and original
+digests are checked separately; the historical witness remains historical.
+Source, principal, controls, database and retained configuration are rechecked.
+A missing page, wrong owner/environment, stale or changed observation refuses.
+
+A preflight observation still reports `deployAuthorized:false`, no AWS or SQL
+mutation, no recovery rehearsal, no hosted journey acceptance and no PHI/device
+approval. It does not verify a new candidate's CloudFormation execution. The
+future release runner must repeat current observations in-process, qualify its
+executed projections and bind a compatible recovery and all mandatory journeys;
+it cannot load this printed report as authority.
+
+The new preflight tests use fictional transports. Record a later actual command
+receipt separately with its exact source pair and terminal result; a local test
+or old registration receipt is not a hosted preflight pass.
 
 ## Remaining live runner engineering
 
