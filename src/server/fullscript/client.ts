@@ -92,7 +92,8 @@ export function readFullscriptConfiguration(
   }
   let redirect: URL;
   try { redirect = new URL(redirectUri); } catch { throw new FullscriptUnavailableError(); }
-  if (redirect.protocol !== "https:" || redirect.username || redirect.password || redirect.hash) {
+  if (redirect.protocol !== "https:" || redirect.username || redirect.password || redirect.hash
+    || redirect.search || redirect.pathname !== CALLBACK_PATH) {
     throw new FullscriptUnavailableError();
   }
   if (configuredAuthorize && configuredAuthorize !== canonical.authorizeUrl) {
