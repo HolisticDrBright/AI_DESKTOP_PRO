@@ -46,7 +46,34 @@ publication. Fresh AWS observations, reconciled custody, compatible routing
 recovery, rollback rehearsal, guarded schema continuation and independent
 successor readback remain required before the release can finish.
 
-## Build and read only preparation
+The real candidate passed this source qualification at operator source
+**c7296b5e9cb0a1f61e3a93bb2a92c891e5fb6e00** and V2 handoff source
+**9d1b9392ac79f738d590d0cc9de20466b397c71a**. The application remains
+**0e38c130/1488a3bf**, ZIP
+**f8f995e09879eb7b45d17ffc5f18d5ecb9867f21c0a0795eacb3fd31ccaa0216**.
+All **1,384** guarded Desktop runtime/infrastructure/dependency entries and
+**909** V2 runtime/catalog/build/dependency entries match their original Git
+content. The fresh handler bundle equals the candidate exactly. Eighteen
+legacy V2 text files account for its explicitly recorded Windows snapshot
+representation; the original candidate's source hash is unchanged.
+
+Verification passed **14** new source checks, **106** existing release/recovery
+and historical checks, typecheck and focused lint. The CI workflow parsed with
+its new source-only test step. Full Desktop passed **341 files, 4,309 tests,
+11 skips** in **261.34 seconds**, without an overlapping graph refresh.
+Separate read-only AWS observations still show the same healthy Lambda
+revision and UPDATE_COMPLETE stack. The failed process is absent and the
+original lock remains. These observations do not acquire custody or prove
+complete hosted release reconciliation. Source audit:
+[Resumption source audit](evidence/2026-10-08-care-intent-resumption-source.json).
+
+## Initial build and read only preparation
+
+These commands describe the initial predecessor-bound release procedure.
+They are not a resume command for the already deployed, interrupted release;
+the old preparation intentionally refuses when its predecessor is no longer
+live. Preserve the original lock and use fresh interruption reconciliation
+before any further admission.
 
 ```powershell
 npm run build:synthetic-care-intent-release -- --v2-root "<V2 checkout>"
