@@ -118,9 +118,10 @@ export function createAwsGovernedCatalogReader(
              join clinical_reference.catalog_products p
                on p.stable_id = v.product_stable_id and p.active_version = v.version
              where p.review_status = 'approved'
+               and p.environment = $3 and p.contains_phi = false
                and ($1 = '' or v.product_stable_id > $1)
              order by v.product_stable_id limit $2`,
-            [input.cursor ?? "", input.limit + 1],
+            [input.cursor ?? "", input.limit + 1, environment],
           );
           const pageRows = rows.rows.slice(0, input.limit);
           const productIds = pageRows.map((row) => row.product_stable_id);
@@ -132,9 +133,10 @@ export function createAwsGovernedCatalogReader(
              join clinical_reference.product_labels l
                on l.stable_id = v.label_stable_id and l.active_version = v.version
              where l.review_status = 'approved'
+               and l.environment = $2 and l.contains_phi = false
                and l.product_stable_id = any(string_to_array($1, ','))
              order by l.product_stable_id`,
-            [productIds.join(",")],
+            [productIds.join(","), environment],
           )).rows;
           const labelsByProduct = new Map(labels.map((row) => [row.product_stable_id, toLabel(row)]));
           const offers = productIds.length === 0 ? [] : (await tx.query<OfferRow>(
@@ -143,11 +145,18 @@ export function createAwsGovernedCatalogReader(
              from commercial_reference.affiliate_offer_versions v
              join commercial_reference.affiliate_offers o
                on o.stable_id = v.offer_stable_id and o.active_version = v.version
+             join clinical_reference.catalog_products p on p.stable_id = v.product_stable_id
+             join clinical_reference.catalog_product_versions pv
+               on pv.product_stable_id = p.stable_id and pv.version = p.active_version
              where o.review_status = 'approved'
                and v.direct_order_allowed = true and v.declared_restricted = false
+               and v.environment = $2 and p.environment = $2 and p.contains_phi = false
+               and p.review_status = 'approved'
+               and pv.product_type = 'supplement' and pv.access_tier = 'open'
+               and pv.direct_order_allowed = true and pv.declared_restricted = false
                and v.product_stable_id = any(string_to_array($1, ','))
              order by v.offer_stable_id`,
-            [productIds.join(",")],
+            [productIds.join(","), environment],
           )).rows;
           return {
             products: pageRows.map((row) => toProduct(row, labelsByProduct.get(row.product_stable_id))),
@@ -185,10 +194,11 @@ export function createAwsGovernedCatalogReader(
              left join clinical_reference.protocol_template_items i
                on i.template_stable_id = v.template_stable_id and i.template_version = v.version
              where t.review_status = 'approved'
+               and t.environment = $3 and t.contains_phi = false
                and ($1 = '' or v.template_stable_id > $1)
              group by v.template_stable_id, v.version, v.title, v.summary, v.source_refs
              order by v.template_stable_id limit $2`,
-            [input.cursor ?? "", input.limit + 1],
+            [input.cursor ?? "", input.limit + 1, environment],
           );
           const pageRows = rows.rows.slice(0, input.limit);
           const templateIds = pageRows.map((row) => row.template_stable_id);
@@ -198,9 +208,12 @@ export function createAwsGovernedCatalogReader(
                     s.conditional_logic, s.adjustment_logic, s.duration, s.timing,
                     s.intervention_id, s.product_stable_id, s.source_refs::text as source_refs_json
              from clinical_reference.protocol_template_steps s
+             join clinical_reference.protocol_templates t
+               on t.stable_id = s.template_stable_id and t.active_version = s.template_version
              where s.template_stable_id = any(string_to_array($1, ','))
+               and t.review_status = 'approved' and t.environment = $2 and t.contains_phi = false
              order by s.template_stable_id, s.sequence`,
-            [templateIds.join(",")],
+            [templateIds.join(","), environment],
           )).rows;
           const stepsByTemplate = new Map<string, StepRow[]>();
           for (const step of steps) {

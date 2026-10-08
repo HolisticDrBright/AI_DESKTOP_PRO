@@ -52,6 +52,9 @@ export function validateGovernedCatalogBoundary({ migration, manifest, importer,
   assert(errors, ledger?.file === "20260819173000_governed_reference_catalog.sql", "catalog migration is missing from the ordered ledger");
   const enrichmentLedger = manifest.migrations?.find((entry) => entry.version === "20260820030000");
   assert(errors, enrichmentLedger?.file === "20260820030000_governed_catalog_enrichment.sql", "catalog enrichment migration is missing from the ordered ledger");
+  assert(errors, reader.includes("pv.direct_order_allowed = true and pv.declared_restricted = false")
+    && reader.includes("pv.product_type = 'supplement' and pv.access_tier = 'open'"),
+  "offer reads must revalidate the current eligible product");
   assert(errors, catalogRunner.includes('schema: "clinical_reference"')
     && catalogRunner.includes("governed-catalog-migrations"), "catalog needs an independent migration ledger and lock");
   assert(errors, importer.includes("manifest_hash_mismatch") && importer.includes("content_hash_mismatch"), "importer must verify manifest and record hashes");
