@@ -7,7 +7,7 @@ import {resolve} from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {CARE_RELEASE as P,careSourceSnapshot,careSourceEntry,sha256,buildCareIdentityBundle} from './synthetic-care-release.mjs';
 import {careIntentCurrent,createCareIntentCandidate} from './synthetic-care-intent-release.mjs';
-import {parseCareGitBlobs,readHistoricalCareSource,verifyCareRuntimeEntries,qualifyCareIntentResumptionSource} from './care-intent-resumption-source.mjs';
+import {parseCareGitBlobs,readHistoricalCareSource,verifyCareHistoricalSnapshot,verifyCareRuntimeEntries,qualifyCareIntentResumptionSource} from './care-intent-resumption-source.mjs';
 import {careIntentResumptionSourceArgs} from './qualify-synthetic-care-intent-resumption-source.mjs';
 const git=(root,args)=>execFileSync('git',args,{cwd:root,encoding:'utf8',timeout:10000,windowsHide:true,stdio:['ignore','pipe','pipe']});
 function fixture(t){
@@ -59,6 +59,29 @@ test('current source hashing keeps LF text normalization and byte-exact binary s
  assert.deepEqual(careSourceEntry('src/value.ts',Buffer.from('a\r\nb\r')),careSourceEntry('src/value.ts',Buffer.from('a\nb\n')));
  assert.notDeepEqual(careSourceEntry('src/value.bin',Buffer.from('a\r\n')),careSourceEntry('src/value.bin',Buffer.from('a\n')));
  assert.notDeepEqual(careSourceEntry('src/value.ts',Buffer.from('a')),careSourceEntry('src/other.ts',Buffer.from('a')));
+});
+test('legacy Windows text snapshot is explicitly reconstructed while canonical Git runtime remains byte-bound',t=>{
+ const f=fixture(t);git(f.root,['config','core.autocrlf','true']);
+ f.put('expo/Dockerfile','FROM fictional\r\n');f.put('expo/bun.lock','lock\r\n');
+ f.put('expo/data.csv','a,b\r\n1,2\r\n');f.put('expo/tool.py','print(1)\r\n');
+ f.put('expo/assets/image.bin',Buffer.from([0,255,13,10]));f.commit();
+ const disk=careSourceSnapshot(f.root,'v2'),historical=readHistoricalCareSource(f.root,'v2',disk.commit);
+ assert.notEqual(historical.snapshot.sha256,disk.sha256);assert.deepEqual(historical.windowsSnapshot,disk);
+ assert.equal(verifyCareHistoricalSnapshot(historical,disk),'windows-crlf-legacy-text');
+ assert.equal(verifyCareHistoricalSnapshot(historical,historical.snapshot),'canonical-git');
+ assert.deepEqual(historical.windowsConvertedFiles,['expo/Dockerfile','expo/bun.lock','expo/data.csv','expo/tool.py']);
+ assert.throws(()=>verifyCareHistoricalSnapshot(historical,{...disk,sha256:'f'.repeat(64)}),/historical_snapshot/);
+});
+test('binary formats and explicitly LF or non-text files are not rewritten to fit a recorded digest',t=>{
+ const f=fixture(t);git(f.root,['config','core.autocrlf','true']);
+ f.put('.gitattributes','expo/pinned.csv text eol=lf\nexpo/binary.csv -text\n');
+ f.put('expo/pinned.csv','a,b\n');f.put('expo/binary.csv',Buffer.from([0,255,10]));f.put('expo/assets/image.bin',Buffer.from('binary\n'));
+ const commit=f.commit(),h=readHistoricalCareSource(f.root,'v2',commit);
+ assert.deepEqual(h.snapshot,h.windowsSnapshot);assert.deepEqual(h.windowsConvertedFiles,[]);
+});
+test('custom checkout filters cannot qualify legacy conversion and are never executed',t=>{
+ const f=fixture(t);f.put('.gitattributes','expo/data.csv filter=custom\n');f.put('expo/data.csv','a,b\n');
+ const commit=f.commit();assert.throws(()=>readHistoricalCareSource(f.root,'v2',commit),/attribute_conversion/);
 });
 test('historical V2 snapshot includes evidence source while runtime comparison excludes only the named release handoff',t=>{
  const f=fixture(t);f.put('expo/app/(tabs)/plan.tsx','export const plan = 1;\n');f.put('expo/docs/six-phase-current-evidence-2026-10-05.md','old\n');

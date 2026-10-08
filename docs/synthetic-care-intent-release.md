@@ -13,7 +13,18 @@ The interrupted application's immutable source must remain distinct from the
 repaired operator's current clean source. The source-only qualifier reconstructs
 both original snapshots from full ancestor commits and independently hashes
 size-framed Git blobs. Text retains the established LF normalization; binary
-assets are byte-exact. Missing, truncated, modified, duplicated, oversized,
+assets are byte-exact. Older snapshots treated Dockerfiles, ignore files, CSV,
+lock, TOML, patch and Python files as raw bytes. For that legacy format, the
+qualifier reconstructs one explicit Windows CRLF checkout representation from
+the original Git bytes and historical EOL attributes. It reports that
+representation separately from the canonical Git digest; it never chooses
+individual file variants to fit a desired hash. Binary data, explicit LF or
+non-text attributes, and custom checkout filters cannot enter the conversion.
+Runtime comparison still uses canonical Git bytes and the API bundle must
+match exactly. [Git attributes documentation](https://git-scm.com/docs/gitattributes)
+describes the underlying checkout conversion.
+
+Missing, truncated, modified, duplicated, oversized,
 symlink or gitlink entries refuse. The existing candidate ZIP and complete
 release must match these original snapshots, and a fresh current handler build
 must equal the original bundled code byte-for-byte.

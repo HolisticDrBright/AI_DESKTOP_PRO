@@ -46,7 +46,43 @@ export function readHistoricalCareSource(root,kind,commit){
  const objects=[...new Set(rows.map(r=>r.oid))];
  const blobs=parseCareGitBlobs(git(root,['cat-file','--batch'],objects.join('\n')+'\n'),objects);
  const entries=rows.map(r=>careSourceEntry(r.file,blobs.get(r.oid)));
- return {snapshot:{commit,clean:true,files:entries.length,sha256:sha256(JSON.stringify(entries))},entries};
+ // The original snapshot classified these text formats as byte-exact. Git
+ // checkout may have converted their LF blobs to CRLF on Windows. Reconstruct
+ // one explicit whole-checkout representation, never per-file guesses fitted
+ // to a desired digest. Canonical Git entries remain the runtime comparison.
+ const legacyRows=rows.filter(r=>/\.(?:csv|lock|toml|patch|py)$/.test(r.file)
+  ||/(?:^|\/)(?:Dockerfile|\.dockerignore|\.easignore|\.gitignore)$/.test(r.file));
+ const attrs=new Map();
+ if(legacyRows.length){
+  const records=git(root,['check-attr','--source='+commit,'-z','--stdin','text','eol','filter','working-tree-encoding'],
+   legacyRows.map(r=>r.file).join('\0')+'\0').toString('utf8').split('\0');
+  check(records.pop()===''&&records.length===legacyRows.length*12,'attributes');
+  const wanted=new Set(legacyRows.map(r=>r.file));
+  for(let n=0;n<records.length;n+=3){const [file,key,value]=records.slice(n,n+3);
+   check(wanted.has(file)&&['text','eol','filter','working-tree-encoding'].includes(key),'attribute_record');
+   if(!attrs.has(file))attrs.set(file,{});check(!Object.hasOwn(attrs.get(file),key),'attribute_duplicate');attrs.get(file)[key]=value;
+  }
+ }
+ const converted=[];
+ const windowsEntries=rows.map(r=>{
+  const bytes=blobs.get(r.oid),a=attrs.get(r.file);let data=bytes;
+  if(a&&a.text!=='unset'&&a.eol!=='lf'){
+   check(['set','auto','unspecified'].includes(a.text)&&['crlf','unspecified'].includes(a.eol)
+    &&['unset','unspecified'].includes(a.filter)&&['unset','unspecified'].includes(a['working-tree-encoding']),'attribute_conversion');
+   // NUL, malformed UTF-8, embedded CR or unknown formats are not text conversion candidates.
+   if(!bytes.includes(0)&&!bytes.includes(13)&&Buffer.from(bytes.toString('utf8')).equals(bytes)&&bytes.includes(10)){
+    data=Buffer.from(bytes.toString('utf8').replaceAll('\n','\r\n'));converted.push(r.file);
+   }
+  }
+  return careSourceEntry(r.file,data);
+ });
+ const snapshot=values=>({commit,clean:true,files:values.length,sha256:sha256(JSON.stringify(values))});
+ return {snapshot:snapshot(entries),windowsSnapshot:snapshot(windowsEntries),windowsConvertedFiles:converted,entries};
+}
+export function verifyCareHistoricalSnapshot(history,expected){
+ if(canonical(history.snapshot)===canonical(expected))return 'canonical-git';
+ check(canonical(history.windowsSnapshot)===canonical(expected),'historical_snapshot');
+ return 'windows-crlf-legacy-text';
 }
 const runtimePath=(kind,file)=>kind==='desktop'
  ? file.startsWith('src/')||file.startsWith('infra/')||['package.json','package-lock.json','.gitattributes'].includes(file)
@@ -69,21 +105,23 @@ export async function qualifyCareIntentResumptionSource(root,mobileRoot,candidat
  check(candidate?.release?.desktop&&candidate.release.mobile?.source,'candidate');
  const applicationDesktop=readHistoricalCareSource(root,'desktop',candidate.release.desktop.commit);
  const applicationMobile=readHistoricalCareSource(mobileRoot,'v2',candidate.release.mobile.source.commit);
- check(canonical(applicationDesktop.snapshot)===canonical(candidate.release.desktop)
-  &&canonical(applicationMobile.snapshot)===canonical(candidate.release.mobile.source),'historical_snapshot');
+ const sourceRepresentations={applicationDesktop:verifyCareHistoricalSnapshot(applicationDesktop,candidate.release.desktop),
+  applicationMobile:verifyCareHistoricalSnapshot(applicationMobile,candidate.release.mobile.source)};
  const operatorDesktop=readHistoricalCareSource(root,'desktop',operatorCurrent.desktop.commit);
  const operatorMobile=readHistoricalCareSource(mobileRoot,'v2',operatorCurrent.mobile.source.commit);
- check(canonical(operatorDesktop.snapshot)===canonical(operatorCurrent.desktop)
-  &&canonical(operatorMobile.snapshot)===canonical(operatorCurrent.mobile.source),'checkout_tree');
+ sourceRepresentations.operatorDesktop=verifyCareHistoricalSnapshot(operatorDesktop,operatorCurrent.desktop);
+ sourceRepresentations.operatorMobile=verifyCareHistoricalSnapshot(operatorMobile,operatorCurrent.mobile.source);
  const runtime={desktop:verifyCareRuntimeEntries('desktop',applicationDesktop.entries,operatorDesktop.entries),
   mobile:verifyCareRuntimeEntries('v2',applicationMobile.entries,operatorMobile.entries)};
- const applicationCurrent={...operatorCurrent,desktop:applicationDesktop.snapshot,
-  mobile:{...operatorCurrent.mobile,source:applicationMobile.snapshot}};
+ const applicationCurrent={...operatorCurrent,desktop:structuredClone(candidate.release.desktop),
+  mobile:{...operatorCurrent.mobile,source:structuredClone(candidate.release.mobile.source)}};
  verifyCareIntentCandidate(candidate.manifest,candidate.release,candidate.bundle,candidate.zip,applicationCurrent);
  const bundle=await buildCareIdentityBundle(root);
  check(bundle.equals(candidate.bundle),'rebuilt_bundle');
  check(canonical(careIntentCurrent(root,mobileRoot))===canonical(operatorCurrent),'checkout_changed');
- return {contract:'synthetic-care-intent-resumption-source/1',applicationCurrent,operatorCurrent,runtime,
+ return {contract:'synthetic-care-intent-resumption-source/1',applicationCurrent,operatorCurrent,runtime,sourceRepresentations,
+  canonicalGitSources:{applicationDesktop:applicationDesktop.snapshot,applicationMobile:applicationMobile.snapshot,
+   operatorDesktop:operatorDesktop.snapshot,operatorMobile:operatorMobile.snapshot},
   bundleSha256:sha256(bundle),zipSha256:candidate.manifest.zipSha256,historicalSourcesVerified:true,
   currentRuntimeByteMatched:true,awsObserved:false,custodyAcquired:false,deployed:false,schemaChanged:false,
   hostedAcceptance:false,physicalDeviceAcceptance:false,phiAllowed:false,paidMobileBuildStarted:false};
