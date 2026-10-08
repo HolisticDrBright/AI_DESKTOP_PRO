@@ -7,8 +7,10 @@ resumed release passed 95 actual Gateway recovery observations, restored
 routing and removed its temporary permission. Its schema commit is present:
 source47/live48, 89 tables, with all 23,985 original rows unchanged. The runner
 then stopped at postinspection because it compared fingerprints of different
-table inventories. Both custody locks remain, and the repaired verification
-has not yet qualified or settled that hosted run. This is not a completed
+table inventories. Subsequent actual read-only reconciliation qualified the
+committed successor, and a separate archival run preserved exact custody before
+retiring its temporary locks. The failed release stays failed; canonical
+registration and full erasure journeys are still open. This is not a completed
 erasure feature, an installed mobile release, or permission to use PHI.
 
 ## Application and operator source qualification
@@ -426,8 +428,8 @@ preserve the exact run identity and failure. Original local custody is intact.
 ## Read only successor reconciliation
 
 The original resumption command still requires the parent schema and unchanged
-runtime source. Do not run it against the committed successor or delete either
-lock to make it start. The separate postcommit command inspects this one
+runtime source. Do not run it against the committed successor or recreate its
+retired locks to make it start. Before archival, the separate postcommit command inspected this one
 admitted run, pins both original custody hashes and the failed operator's
 ancestor snapshots, and permits only the three named operator-library/test
 repairs. All other application, migration, infrastructure, dependency and V2
@@ -444,6 +446,8 @@ schema, routing, permission or custody mutation; a saved report is not input
 authority. Its result cannot feed the parent-schema release runner. A pass
 would establish current reconciliation only, not fresh routing recovery,
 canonical registration, lock retirement, device acceptance or PHI approval.
+After archival this fixed command refuses because the original locks no longer
+exist. It is a historical qualification path, not the next registration command.
 
 The completed focused rerun passed **43 tests**, including unchanged historical
 interruption/refusal tests and a new regression proving that an allowed operator
@@ -482,27 +486,36 @@ Its terminal outcome is **reconciled committed successor, not release acceptance
 There is no remote mutation, schema replay, new routing rehearsal, erased-outcome
 certification, canonical registration or PHI approval. Ten focused custody and
 archival checks passed, including second-observation loss, source/authority/archive
-drift and interrupted second removal; focused lint passed. Actual archival has
-not yet run. Audit copies normalize LF only in tests for Windows checkout;
+drift and interrupted second removal; focused lint passed. Audit copies normalize LF only in tests for Windows checkout;
 production still hashes exact original custody bytes without normalization.
 The final combined recovery/source/custody rerun passed **49 tests**;
 typecheck, focused lint and CI YAML parsing passed. AST-only refresh completed
 afterward with 13,681 nodes and 28,914 edges. This does not extend the earlier
 4,309-test full-suite claim to subsequent source changes or physical devices.
 
+Actual archival completed with exit0 under clean Desktop `a13da56` / V2
+documentation `02eec56`. Run `b065dd1d15ce4412bad61e6801bc0c57` performed two
+new actual reconciliations; the final observation is **2026-10-08 02:35:19 UTC**.
+It archived and independently verified all four original byte streams, removed
+only the unchanged original and secondary locks, then closed its own guard.
+Original journals remain and the retired locks are recoverable from the archive.
+An independent filesystem check confirmed all three guards absent and the four
+archived hashes unchanged. No AWS, schema or patient record mutation occurred.
+[Custody retirement receipt](evidence/2026-10-08-care-intent-custody-retirement.json).
+This settles the admitted operation as a reconciled committed successor; the
+historical failed release stays failed and no fresh routing/erasure acceptance
+is substituted. The original parent-schema resume command is not reusable.
+
 ## Remaining release and commercial work
 
-1. Qualify the new clean-source read-only successor reconciliation against AWS.
-   Preserve both locks, journals, 51 identity JWT routes, four absent source
-   routes, roles and logs. Any differing observation is a finding, not permission
-   to replay the schema or restore an incompatible handler.
-2. Qualify the implemented explicit postcommit custody settlement with immutable
-   archival and current independent service/database checks. Do not represent
-   the historical failed release as a successful fresh recovery rehearsal.
-3. Deliberately register the exact already-applied migration canonically,
+1. Preserve the settled custody archive, original journals, 51 identity JWT
+   routes, four absent source routes, roles and logs. The new read-only profile
+   is qualified for the now-archived interruption, not a generic future release.
+   Never recreate or reuse the original parent-schema resume path.
+2. Deliberately register the exact already-applied migration canonically,
    preserving ordered live receipts and the historical alias; keep the public
    intent CLI's direct `upgrade` refusal. No schema replay or ledger rewrite.
-4. Execute isolated fictional prepared/erased/cancelled, lost-reply,
+3. Execute isolated fictional prepared/erased/cancelled, lost-reply,
    second-session discovery, concurrency, replay and cross-owner journeys.
    Cancelled receipts alone do not prove erased outcomes or native recovery.
 
