@@ -141,6 +141,8 @@ test('failed preflight diagnostics preserve actual bounded stage or deadline, no
  assert.equal(careIntentChildFailure({code:'ETIMEDOUT',message:'aws secret value'},'inspect'),'inspector_inspect_deadline');
  assert.equal(careIntentChildFailure({stderr:Buffer.from('upgrade_failed:transaction_start:begin_database_resuming\n')},'inspect'),
   'inspector_inspect_upgrade_failed_transaction_start_begin_database_resuming');
+ assert.equal(careIntentChildFailure({stderr:'upgrade_failed:transaction_start:begin_transport_type_error'},'inspect'),
+  'inspector_inspect_upgrade_failed_transaction_start_begin_transport_type_error');
  for(const stderr of ['upgrade_failed:select_secret','verification_failed\nTOKEN: private',
   'upgrade_failed:transaction_start:begin_token_expired extra-secret','raw command with secret','AWS failure']){
   assert.equal(careIntentChildFailure({stderr,message:'private sql'},'inspect'),'inspector_inspect_failed');

@@ -1,12 +1,11 @@
 if (typeof window !== 'undefined') throw new Error('care-erasure-operator-client is server-only');
 import type { RdsDataCommandClient } from './rds-data-database';
+import {BeginTransactionCommand,ExecuteStatementCommand,CommitTransactionCommand,RollbackTransactionCommand} from '@aws-sdk/client-rds-data';
 
-const phases: Record<string, string> = { BeginTransactionCommand: 'begin', ExecuteStatementCommand: 'statement',
-  CommitTransactionCommand: 'commit', RollbackTransactionCommand: 'rollback' };
 const reasons: Record<string, string> = { DatabaseResumingException: 'database_resuming', DatabaseUnavailableException: 'database_unavailable',
   AccessDeniedException: 'access_denied', ExpiredTokenException: 'token_expired', CredentialsProviderError: 'credentials_unavailable',
   TimeoutError: 'timeout', AbortError: 'aborted', TransactionNotFoundException: 'transaction_missing',
-  StatementTimeoutException: 'statement_timeout', ServiceUnavailableError: 'service_unavailable' };
+  StatementTimeoutException: 'statement_timeout', ServiceUnavailableError: 'service_unavailable',TypeError:'transport_type_error' };
 /** Machine diagnostics only: no message, SQL, parameters, credential, body or
  * stack is retained. This wrapper never retries or changes a transaction. */
 export function createCareErasureOperatorClient(sdk: RdsDataCommandClient) {
@@ -14,8 +13,13 @@ export function createCareErasureOperatorClient(sdk: RdsDataCommandClient) {
   return {
     failure: () => diagnostic,
     client: { async send(command: unknown): Promise<Record<string, unknown>> {
-      const name = command !== null && typeof command === 'object' ? command.constructor.name : '';
-      const phase = Object.hasOwn(phases, name) ? phases[name] : 'unknown';
+      // Bundlers may rename constructors with numeric suffixes. Actual SDK
+      // identity survives that transformation; a spoofed name must not claim
+      // COMMIT uncertainty and admit successor reconciliation.
+      const phase = command instanceof BeginTransactionCommand ? 'begin'
+        : command instanceof ExecuteStatementCommand ? 'statement'
+          : command instanceof CommitTransactionCommand ? 'commit'
+            : command instanceof RollbackTransactionCommand ? 'rollback' : 'unknown';
       try {
         const answer = await sdk.send(command);
         // A successful resume/statement resolves its previous failure. Cleanup

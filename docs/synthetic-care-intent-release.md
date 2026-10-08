@@ -242,6 +242,29 @@ they are not this new runner's deployed artifacts.
 
 ## Remaining release work
 
+The first connected attempt, exact source **bf46a984/0a094f87**, ended with a
+read-only transaction-start failure before any upload or deployment admission.
+Run **27a71ceb2dd6be363cfbdc37b595e955** is terminal with exit1; no write was
+admitted and its custody closed normally. The original failure cause remains
+unclassified, not asserted to be an AWS outage or a passing resume.
+
+Subsequent native and bundled read-only probes succeeded and independently
+confirmed the same **23,985 rows/88 tables/live47/source46**, data SHA
+**29e413773ffb4e263421b312501242384e5f6085b3930fd6339fa9100ab53351**,
+schema SHA **629df9a05ecd1f7534204f1ee6ab9116a4a5544d86b5296f993a04d263d62bba**.
+The bundled diagnostic came from dirty follow-up source and is not release
+admission evidence. The repair replaces brittle constructor-name transaction
+diagnostics with actual SDK instance identity, preserving COMMIT classification
+under bundling while refusing spoofed names. Raw error messages, SQL and
+credentials remain excluded. Evidence:
+[Connected attempt audit](evidence/2026-10-08-care-intent-live-attempt.json).
+
+The follow-up repair passed **44** focused database/operator tests and **8**
+bounded diagnostic tests. Its full Desktop suite passed **341 files, 4,309 tests,
+11 skips** in **286.77 seconds**, with the existing deadlines unchanged and
+no concurrent AST scan. Typecheck and lint passed without warnings. This does not turn the failed hosted
+attempt into a pass; a new exact clean source pair must be built and qualified.
+
 1. Run and qualify exact-version upload and an explicitly scoped deployment proposal
    against freshly re-observed state. Preserve all 51 existing identity JWT
    routes, the four absent source routes, environment, execution role and logs.
