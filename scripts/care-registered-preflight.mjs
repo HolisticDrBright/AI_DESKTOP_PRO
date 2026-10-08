@@ -1,7 +1,7 @@
 /** Current registered release preflight. Verification only; no upload, execute,
  * schema replay, custody retirement, fixture write or activation port exists. */
 import {CARE_RELEASE as P,sha256} from './synthetic-care-release.mjs';
-import {CARE_REGISTERED as C,assertCareRegisteredCurrent,verifyCareRegisteredCandidate,refuseRegistered} from './synthetic-care-registered-release.mjs';
+import {CARE_REGISTERED as C,assertCareRegisteredCurrent,verifyCareRegisteredCandidate,verifyCareRegisteredArtifactBinding,refuseRegistered} from './synthetic-care-registered-release.mjs';
 import {CARE_CANONICAL as M} from './care-canonical-migrations.mjs';
 import {CARE_INTENT_POSTCOMMIT as B} from './care-intent-postcommit.mjs';
 import {CARE_RECOVERY_ROUTE as R,canonical,verifyRecoveryIntegration,verifyRecoveryStage} from './care-recovery-routing.mjs';
@@ -35,9 +35,18 @@ export function careRegisteredPredecessorTemplate(source){
  expected.Resources.IdentityApiFunction.Properties.Code.S3ObjectVersion=C.predecessorVersion;return expected;
 }
 export function verifyCareRegisteredFunction(fn,retained=false){
- check(fn?.FunctionName===P.functionName&&fn.FunctionArn===R.latestArn+(retained?':2':'')
-  &&fn.Version===(retained?'2':'$LATEST')&&fn.State==='Active'&&fn.LastUpdateStatus==='Successful'
-  &&fn.CodeSha256===Buffer.from(C.predecessorZip,'hex').toString('base64')&&fn.CodeSize===C.predecessorBytes
+ return verifyRegisteredFunctionProfile(fn,C.predecessorZip,C.predecessorBytes,retained?'2':'$LATEST');
+}
+/** Successor bytes are checked as successor bytes, never rewritten to pass the
+ * known predecessor check. This is verification only, not execution admission. */
+export function verifyCareRegisteredSuccessorFunction(fn,candidate,current){
+ verifyCareRegisteredCandidate(candidate,current);
+ return verifyRegisteredFunctionProfile(fn,candidate.manifest.zipSha256,candidate.zip.length,'$LATEST');
+}
+function verifyRegisteredFunctionProfile(fn,zip,bytes,version){
+ check(fn?.FunctionName===P.functionName&&fn.FunctionArn===R.latestArn+(version==='$LATEST'?'':':'+version)
+  &&fn.Version===version&&fn.State==='Active'&&fn.LastUpdateStatus==='Successful'
+  &&fn.CodeSha256===Buffer.from(zip,'hex').toString('base64')&&fn.CodeSize===bytes
   &&typeof fn.RevisionId==='string'&&fn.RevisionId.length>0&&fn.RevisionId.length<=128,'function_identity');
  const environment={CLINICAL_DATABASE_CLUSTER_ARN:P.cluster,CLINICAL_DATABASE_SECRET_ARN:P.secret,CLINICAL_DATABASE_NAME:P.database,
   CLINICAL_CONSUMER_ISSUER:`https://cognito-idp.${P.region}.amazonaws.com/${P.consumerPool}`,CLINICAL_CONSUMER_AUDIENCE:P.consumerClient,
@@ -62,7 +71,19 @@ export function verifyCareRegisteredFunction(fn,retained=false){
 /** Exact known predecessor and complete live authority, with no normalization
  * to an older code generation and no acceptance of missing inventory pages. */
 export function verifyCareRegisteredPredecessorControl(o,source){
- const expected=careRegisteredPredecessorTemplate(source),foundation=o.foundation?.Stacks?.[0],stack=o.stack?.Stacks?.[0];
+ return verifyRegisteredControlInventory(o,source,careRegisteredPredecessorTemplate(source),parameterValues(),verifyCareRegisteredFunction);
+}
+export function verifyCareRegisteredSuccessorControl(o,source,candidate,current,artifact){
+ verifyCareRegisteredArtifactBinding(candidate,current,artifact);
+ const expected=careRegisteredPredecessorTemplate(source);
+ expected.Resources.IdentityApiFunction.Properties.Code.S3ObjectVersion=artifact.versionId;
+ return verifyRegisteredControlInventory(o,source,expected,{...parameterValues(),LambdaCodeKey:artifact.key},
+  fn=>verifyCareRegisteredSuccessorFunction(fn,candidate,current));
+}
+/** Both profiles exhaust the same actual inventory; no raw response is patched
+ * or reduced before the common authority and configuration checks. */
+function verifyRegisteredControlInventory(o,source,expected,expectedParameters,verifyFunction){
+ const foundation=o.foundation?.Stacks?.[0],stack=o.stack?.Stacks?.[0];
  check(o.foundation?.Stacks?.length===1&&foundation.StackName===P.foundation
   &&['CREATE_COMPLETE','UPDATE_COMPLETE'].includes(foundation.StackStatus)
   &&foundation.StackId?.startsWith(`arn:aws:cloudformation:${P.region}:${P.account}:stack/${P.foundation}/`),'foundation_identity');
@@ -70,7 +91,7 @@ export function verifyCareRegisteredPredecessorControl(o,source){
  for(const [key,value] of Object.entries({PhiAllowed:'false',Environment:'synthetic-staging',DataClassification:'synthetic_only',
   DatabaseName:P.database,ClinicalApiId:P.apiId,DatabaseClusterArn:P.cluster,DatabaseSecretArn:P.secret}))check(outputs[key]===value,'foundation_boundary');
  check(o.stack?.Stacks?.length===1&&stack.StackName===P.stack&&stack.StackId===CARE_REGISTERED_PREDECESSOR.stackId
-  &&stack.StackStatus==='UPDATE_COMPLETE'&&canonical(map(stack.Parameters,'ParameterKey','ParameterValue'))===canonical(parameterValues())
+  &&stack.StackStatus==='UPDATE_COMPLETE'&&canonical(map(stack.Parameters,'ParameterKey','ParameterValue'))===canonical(expectedParameters)
   &&canonical(o.template)===canonical(expected),'stack_template_parameters');
  const resources=inventory(o.resources,'StackResources','LogicalResourceId');
  check(resources.length===Object.keys(expected.Resources).length
@@ -79,7 +100,7 @@ export function verifyCareRegisteredPredecessorControl(o,source){
    &&typeof r.PhysicalResourceId==='string'&&r.PhysicalResourceId.length>0),'resources');
  const physical=name=>resources.find(r=>r.LogicalResourceId===name)?.PhysicalResourceId;
  check(physical('IdentityApiFunction')===P.functionName&&physical('IdentityApiIntegration')===R.integrationId,'physical_target');
- const fnConfig=verifyCareRegisteredFunction(o.fn);verifyDeployedCareRole(o,source);
+ const fnConfig=verifyFunction(o.fn);verifyDeployedCareRole(o,source);
  inventory(o.logGroups,'logGroups','logGroupName');
  const integrations=inventory(o.integrations,'Items','IntegrationId'),routes=inventory(o.routes,'Items','RouteId'),authorizers=inventory(o.authorizers,'Items','AuthorizerId');
  check(integrations.filter(x=>x.IntegrationId===R.integrationId).length===1,'identity_integration');

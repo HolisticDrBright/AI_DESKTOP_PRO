@@ -79,6 +79,17 @@ export function verifyCareRegisteredCandidate(candidate,current){
  return {contract:CARE_REGISTERED.contract,byteVerified:true,sourceRebuilt:false,zipSha256:expected.manifest.zipSha256,
   schemaReplayAuthorized:false,releaseAccepted:false,phiAllowed:false};
 }
+/** Exact immutable storage binding only, not upload or execution authority. */
+export function verifyCareRegisteredArtifactBinding(candidate,current,artifact){
+ verifyCareRegisteredCandidate(candidate,current);
+ check(keys(artifact,['bucket','key','versionId','sha256','bytes','reused','encryption','kmsKeyArn','exactVersionReadbackVerified'])
+  &&artifact.bucket===P.bucket&&artifact.key===candidate.manifest.key&&artifact.sha256===candidate.manifest.zipSha256
+  &&artifact.bytes===candidate.zip.length&&artifact.exactVersionReadbackVerified===true&&typeof artifact.reused==='boolean'
+  &&artifact.encryption==='aws:kms'&&artifact.kmsKeyArn===P.keyArn&&typeof artifact.versionId==='string'
+  &&artifact.versionId.length>0&&artifact.versionId.length<=1024&&!/[\u0000-\u0020\u007f]/.test(artifact.versionId)
+  &&artifact.versionId!=='null','artifact_binding');
+ return structuredClone(artifact);
+}
 export async function buildCareRegisteredCandidate(root,mobileRoot){
  const current=careRegisteredCurrent(root,mobileRoot),bundle=await buildCareIdentityBundle(root);
  check(canonical(careRegisteredCurrent(root,mobileRoot))===canonical(current),'source_changed');

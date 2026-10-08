@@ -1,12 +1,12 @@
 /** Registered-history code-change qualification. Pure verification, not an
  * AWS observer, execution permission or replacement for recovery/acceptance. */
 import {CARE_RELEASE as P,sha256} from './synthetic-care-release.mjs';
-import {CARE_REGISTERED as C,assertCareRegisteredCurrent,verifyCareRegisteredCandidate,refuseRegistered} from './synthetic-care-registered-release.mjs';
+import {CARE_REGISTERED as C,assertCareRegisteredCurrent,verifyCareRegisteredCandidate,verifyCareRegisteredArtifactBinding,refuseRegistered} from './synthetic-care-registered-release.mjs';
 import {CARE_REGISTERED_PREDECESSOR as B,careRegisteredPredecessorTemplate,
  verifyCareRegisteredPredecessorControl} from './care-registered-preflight.mjs';
 import {canonical,CARE_RECOVERY_ROUTE as R} from './care-recovery-routing.mjs';
 import {verifyRegisteredUploadPreflight} from './upload-synthetic-care-registered-release.mjs';
-import {verifyCareCodeChangeSet} from './prepare-synthetic-care-code-change.mjs';
+import {verifyCareCodeChangeSet,verifyExecutedCareCodeChangeSet} from './prepare-synthetic-care-code-change.mjs';
 const check=(ok,code)=>{if(!ok)refuseRegistered('proposal_'+code);};
 const equal=(a,b)=>canonical(a)===canonical(b);
 const keys=(o,names)=>o&&typeof o==='object'&&!Array.isArray(o)&&equal(Object.keys(o).sort(),[...names].sort());
@@ -24,12 +24,7 @@ export function careRegisteredCodeTemplateInputs(sourceText,candidate,current,ar
  check(typeof sourceText==='string'&&sha256(sourceText)===current.templateSha256,'source_template');
  let source;try{source=JSON.parse(sourceText);}catch{refuseRegistered('proposal_source_template');}
  const template=careRegisteredPredecessorTemplate(source);
- check(keys(artifact,['bucket','key','versionId','sha256','bytes','reused','encryption','kmsKeyArn','exactVersionReadbackVerified'])
-  &&artifact.bucket===P.bucket&&artifact.key===candidate.manifest.key&&artifact.sha256===candidate.manifest.zipSha256
-  &&artifact.bytes===candidate.zip.length&&artifact.exactVersionReadbackVerified===true&&typeof artifact.reused==='boolean'
-  &&artifact.encryption==='aws:kms'&&artifact.kmsKeyArn===P.keyArn&&typeof artifact.versionId==='string'
-  &&artifact.versionId.length>0&&artifact.versionId.length<=1024&&!/[\u0000-\u0020\u007f]/.test(artifact.versionId)
-  &&artifact.versionId!=='null','artifact');
+ verifyCareRegisteredArtifactBinding(candidate,current,artifact);
  const names=Object.keys(template.Parameters);
  check(names.length===11&&names.includes('LambdaCodeKey'),'parameters');
  template.Resources.IdentityApiFunction.Properties.Code.S3ObjectVersion=artifact.versionId;
@@ -80,6 +75,14 @@ export function verifyCareRegisteredProposalViews(summary,detailed,actualTemplat
  * observer independently binds the frozen application, clean current operator,
  * fresh database/control reads and custody. No archived report is authority. */
 export function verifyCareRegisteredUnexecutedProposalViews(summary,detailed,actualTemplate,input,binding,raw,sourceText,expectedControl,current,candidate,artifact,now){
+ return verifyRegisteredProjection(summary,detailed,actualTemplate,input,binding,raw,sourceText,expectedControl,current,candidate,artifact,now,'AVAILABLE');
+}
+/** Actual completed views are a distinct observation profile. Do not change
+ * their state to AVAILABLE to reuse an unexecuted proposal receipt. */
+export function verifyCareRegisteredExecutedProposalViews(summary,detailed,actualTemplate,input,binding,rawBefore,sourceText,expectedControl,current,candidate,artifact,now){
+ return verifyRegisteredProjection(summary,detailed,actualTemplate,input,binding,rawBefore,sourceText,expectedControl,current,candidate,artifact,now,'EXECUTE_COMPLETE');
+}
+function verifyRegisteredProjection(summary,detailed,actualTemplate,input,binding,raw,sourceText,expectedControl,current,candidate,artifact,now,executionStatus){
  check(equal(careRegisteredCodeTemplateInputs(sourceText,candidate,current,artifact),input),'inputs_changed');
  const fixed=careRegisteredChangeSetBinding(input,current,artifact);
  check(binding?.stackId===fixed.stackId&&binding.name===fixed.name&&typeof binding.id==='string'
@@ -109,8 +112,9 @@ export function verifyCareRegisteredUnexecutedProposalViews(summary,detailed,act
  const integration={Type:'AWS::ApiGatewayV2::Integration',Properties:{ApiId:{Ref:'ClinicalApiId'},IntegrationType:'AWS_PROXY',
   IntegrationUri:{'Fn::GetAtt':['IdentityApiFunction','Arn']},PayloadFormatVersion:'2.0',TimeoutInMillis:30000}};
  check(equal(input.template.Resources.IdentityApiIntegration,integration),'integration_template');
- try{verifyCareCodeChangeSet({...summary,Changes:[summary.Changes[0]]},actualTemplate,input,binding);
-  verifyCareCodeChangeSet(detailed,actualTemplate,input,binding);}catch{refuseRegistered('proposal_projection_scope');}
+ const verifySet=executionStatus==='AVAILABLE'?verifyCareCodeChangeSet:verifyExecutedCareCodeChangeSet;
+ try{verifySet({...summary,Changes:[summary.Changes[0]]},actualTemplate,input,binding);
+  verifySet(detailed,actualTemplate,input,binding);}catch{refuseRegistered('proposal_projection_scope');}
  const change=detailed.Changes[0].ResourceChange;
  check(keys(detailed.Changes[0],['Type','ResourceChange'])&&keys(change,['Action','LogicalResourceId','PhysicalResourceId',
   'ResourceType','Replacement','Scope','Details','BeforeContext','AfterContext']),'property_context_scope');
@@ -136,7 +140,7 @@ export function verifyCareRegisteredUnexecutedProposalViews(summary,detailed,act
  const inventory=details=>details.map(canonical).sort();
  check([[version,key],[version,parameter],[{...key,Evaluation:'Dynamic'},version,parameter]]
   .some(expected=>equal(inventory(change.Details),inventory(expected))),'property_delta');
- return {contract:'synthetic-care-registered-proposal-projection/1',current:structuredClone(current),
+ return {contract:executionStatus==='AVAILABLE'?'synthetic-care-registered-proposal-projection/1':'synthetic-care-registered-executed-projection/1',current:structuredClone(current),
   stackId:binding.stackId,changeSetId:binding.id,changeSetName:binding.name,summarySha256:sha256(canonical(summary)),
   propertyValuesSha256:sha256(canonical(detailed)),summaryResourceCount:2,propertyValuesResourceCount:1,
   affectedResources:['IdentityApiFunction','IdentityApiIntegration'],predecessorControl:control,

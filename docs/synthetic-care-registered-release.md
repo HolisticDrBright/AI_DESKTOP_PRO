@@ -289,6 +289,20 @@ checkout now yields identical bytes. An actual local rebuild of Desktop4a29/
 V2 38ea matched the already-uploaded e5d8 artifact exactly. This is local source
 evidence, not AWS deployment or device acceptance.
 
+The actual fresh combined-operation reconciliation completed at
+`2026-10-08T06:16:13.320Z`, using clean6db operator source and independently
+rebuilt frozen4a29/38ea application source. Repeated exact storage/proposal and
+predecessor observations, plus two unchanged canonical inventory inspections,
+passed. The original57f235 operation remains failed. Its exact journal is
+unchanged; the local lock was retired only after a recoverable lock archive
+and fsynced reconciliation receipt were read back. The remote artifact and
+unexecuted proposal were not changed. Both active local locks were checked
+absent. The first reconciliation attempt failed before settlement with an
+unknown Begin diagnostic; neither later success rewrites that failure.
+This historical reconciliation receipt does not authorize execution of the
+old proposal or a current candidate. Fresh current-source observations remain
+mandatory. The running API and installed mobile71 remain unchanged.
+
 The next operator must use its own observations, never supplied report flags:
 
 1. Independently rebuild the frozen candidate and qualify its exact application
@@ -319,10 +333,53 @@ custody until independently reconciled; do not recreate retired locks.
 
 ## Verification and whole goal
 
+### Registered execution and post-execution readback source
+
+`care-registered-deployment.mjs` now provides the current-history execution
+and readback primitives. They are not a public deployment command: no AWS
+transport, saved-report loader, profile/target override, standalone schema
+operation or activation port is present. A fixed live runner and compatible
+traffic-recovery orchestration remain required before deployment.
+
+Execution requires the independent source/predecessor preflight, two complete
+fresh predecessor/database/proposal observations, repeated exact stored-version
+readback, stable source/principal and durable custody. The journal admission must
+finish before the one execute call. A lost response is followed by observations
+of the same stack and change set, never another execute call or replacement
+proposal. An exhausted observation budget is unconfirmed, not a terminal AWS
+failure, and cannot retire admitted custody.
+
+Post-execution verification keeps `EXECUTE_COMPLETE` separate from `AVAILABLE`.
+It exhausts both raw projections and actual controls, compares the exact
+downloaded candidate ZIP, immutable code pointer, stack parameters and physical
+resource identities, and permits no IAM, JWT-route, logging, environment or
+stage-configuration expansion. Function metadata may change only code checksum,
+size, revision and its valid modification timestamp. Both canonical database
+inspections must preserve the recorded inventory and source-bound ledger.
+The predecessor and successor use distinct expected-code profiles against the
+same raw inventory; successor responses are never rewritten to pass an old-code
+check. Neither an executed proposal nor a deployment proof substitutes for
+compatible recovery, patient journeys, a matched mobile release or PHI review.
+
+The credential-free suite covers successful and lost-reply execution, failed
+admission, unknown target, source/principal/custody drift, stale preflight,
+changed exact storage, all incomplete/failing execution states, hidden control
+mutations and exact-byte/database refusals. These are fictional transports,
+not AWS execution or hosted acceptance. The initial positive stage fixture used
+an invalid hyphenated deployment id and was corrected to the existing AWS-shaped
+id constraint; no production check was relaxed.
+
+CloudFormation's separate execution-state vocabulary and property-value
+projection are documented in [DescribeChangeSet](https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_DescribeChangeSet.html).
+The one execute call binds its client request token and target as documented in
+[ExecuteChangeSet](https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_ExecuteChangeSet.html).
+
 The artifact/mapping suite passes18 tests, including actual clean paired-source
-fixture builds and an invented bundle that fails independent rebuilding. All
-care-script suites pass261 tests. Final typecheck/lint and CI YAML pass;16
-canonical database/historical-command tests pass. The earlier full Desktop
+fixture builds and an invented bundle that fails independent rebuilding. The
+current care-script suites pass322 tests, including the new execution and
+post-execution verification suite. Focused related suites pass44/44. Final
+typecheck/lint and CI/package syntax checks pass. No full local Desktop
+database suite was rerun for this increment. The earlier full Desktop
 run passes4,314 tests/11 skips; it predates this artifact increment and is not
 its full-suite or hosted CI evidence. New CI runs the artifact suite explicitly.
 No artifact-level test is an AWS or physical-device acceptance result.
