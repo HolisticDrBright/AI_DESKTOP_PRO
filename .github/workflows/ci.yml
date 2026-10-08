@@ -144,7 +144,7 @@ jobs:
           npm run build:care-erasure-recovery-source
       - name: Current canonical mapping, registered artifact and read-only inspection (no AWS execution)
         run: |
-          node --test scripts/care-canonical-migrations.test.mjs scripts/synthetic-care-registered-release.test.mjs scripts/care-registered-preflight.test.mjs scripts/care-registered-upload.test.mjs scripts/care-registered-upload-reconciliation.test.mjs scripts/care-registered-code-change.test.mjs scripts/care-registered-proposal-reconciliation.test.mjs scripts/care-registered-deployment.test.mjs scripts/care-registered-routing.test.mjs scripts/care-registered-live-runner.test.mjs scripts/care-registered-release-reconciliation.test.mjs scripts/care-registered-routing-restoration.test.mjs
+          node --test scripts/care-canonical-migrations.test.mjs scripts/synthetic-care-registered-release.test.mjs scripts/care-registered-preflight.test.mjs scripts/care-registered-upload.test.mjs scripts/care-registered-upload-reconciliation.test.mjs scripts/care-registered-code-change.test.mjs scripts/care-registered-proposal-reconciliation.test.mjs scripts/care-registered-deployment.test.mjs scripts/care-registered-routing.test.mjs scripts/care-registered-live-runner.test.mjs scripts/care-registered-release-reconciliation.test.mjs scripts/care-registered-routing-restoration.test.mjs scripts/care-registered-standalone.test.mjs
           npx vitest run src/server/clinical-core/care-erasure-canonical-registration.database.test.ts
           npm run build:care-intent-canonical-inspector
       - name: Dependency security gate

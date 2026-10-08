@@ -555,3 +555,43 @@ engineering; do not re-execute an already executed proposal to obtain a rehearsa
 The complete compensating path still needs actual AWS qualification. No provider
 activation, schema replay, patient-data write, paid build or PHI switch is available
 through this operator. All six original commercial-readiness scopes remain partial.
+
+### Fresh standalone rehearsal core
+
+`care-registered-standalone.mjs` and `care-registered-standalone-custody.mjs`
+implement the separate orchestration and journal required for a fresh rehearsal
+after the original release failed. They do not expose an AWS command. The
+credential-free test command is `npm run test:synthetic-care-registered-standalone`.
+Its fictional transports are not hosted evidence.
+
+A fresh run has its own ID, writer and purpose; it pins the original failed
+lock and journal byte digests and preserves that original result. It refuses an
+existing standalone journal instead of resuming a mutating test. Clean current
+operator and frozen application sources are independent and must agree on
+mobile source, migration release and template. Original archived admissions,
+source rebuild, stored version, latest and retained bytes, deployed API stage,
+full control and canonical data are independently checked. Two pre-test reads
+and their flushed archive precede the fresh rehearsal admission. Every later
+admission is flushed and parsed before its associated write. Original and new
+evidence files remain guarded throughout the run.
+
+The returned functional report is not accepted from its pass flags. The core
+revalidates all 105 cases, distinct per-persona request IDs, real compiled intent
+contract answers, stable cancelled receipts, all three phases, qualified-version
+metric, source and database bindings. Two final actual-observer reads must
+preserve code, authority, projections, stored bytes and data and show LATEST with
+no retained-version permission. A durable completion archive is separate from
+the original failure. These tests use fictional observers; production transport
+construction remains required. There is no code/schema write, proposal execution,
+erasure, provider activation, release or PHI grant in this core.
+
+The stopped-run parser accepts each exact hard-crash prefix and binds its new
+permission SID to the new run ID. Unknown/reordered fields, incomplete archives,
+false failure attribution and premature completion refuse. A stopped run is
+not automatically rerun, unlocked or certified by this parser. Remaining source
+integration: the fixed AWS constructor, Windows custody acquisition and durable
+settlement, a distinct stopped-standalone compensating/read-only operator, and
+fresh frozen-application/independent-operator live recovery construction. Those
+must be implemented and negatively tested before exposing the command, then
+qualified against AWS. The staged07ca object and the currently running older
+API are unchanged by this source work. All six readiness scopes remain open.
