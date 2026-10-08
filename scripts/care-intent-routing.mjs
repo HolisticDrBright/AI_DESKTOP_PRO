@@ -8,6 +8,19 @@ import {CARE_RECOVERY_ROUTE as R,canonical,verifyRecoveryIntegration,verifyRecov
 import {careIntentFunctionConfig,verifyCareIntentRecovery} from './care-intent-release.mjs';
 import {PERSONA_EMAILS} from './verify-synthetic-care-consumer.mjs';
 const check=(ok,code)=>{if(!ok)refuseIntent('routing_'+code);};
+/** Publication may advance the mutable latest revision. Rebind only after
+ * independent full-configuration and exact-byte readback; no other metadata,
+ * authority, runtime setting or code change is permitted. */
+export function verifyIntentPublicationLatest(after,before,candidate){
+ check(before?.FunctionArn===R.latestArn&&before.Version==='$LATEST'
+  &&before.State==='Active'&&before.LastUpdateStatus==='Successful'
+  &&before.CodeSha256===Buffer.from(candidate.manifest.zipSha256,'hex').toString('base64')
+  &&before.CodeSize===candidate.zip.length&&typeof before.RevisionId==='string'&&before.RevisionId.length>0
+  &&typeof after?.RevisionId==='string'&&after.RevisionId.length>0,'publication_latest_identity');
+ const snapshot=structuredClone(after);snapshot.RevisionId=before.RevisionId;
+ check(canonical(snapshot)===canonical(before),'publication_latest_drift');
+ return structuredClone(after);
+}
 export function verifyIntentRetainedCode(value,bytes,latest,candidate){
  check(typeof value?.Version==='string'&&/^[1-9][0-9]{0,19}$/.test(value.Version)&&value.Version!=='1'
   &&value.FunctionArn===`${R.latestArn}:${value.Version}`&&value.State==='Active'
@@ -43,16 +56,17 @@ export function verifyIntentDenialPhase(values,phase){
  }return structuredClone(values);
 }
 export async function rehearseCareIntentRouting(input,d,sid){
- const {candidate,current,latest,baseline}=input;
+ const {candidate,current,latest:beforeLatest,baseline}=input;
  verifyCareIntentCandidate(candidate.manifest,candidate.release,candidate.bundle,candidate.zip,current);
- check(latest?.FunctionArn===R.latestArn&&latest.Version==='$LATEST'&&latest.State==='Active'&&latest.LastUpdateStatus==='Successful'
-  &&latest.CodeSha256===Buffer.from(candidate.manifest.zipSha256,'hex').toString('base64')&&latest.CodeSize===candidate.zip.length,'latest_code');
+ check(beforeLatest?.FunctionArn===R.latestArn&&beforeLatest.Version==='$LATEST'&&beforeLatest.State==='Active'&&beforeLatest.LastUpdateStatus==='Successful'
+  &&beforeLatest.CodeSha256===Buffer.from(candidate.manifest.zipSha256,'hex').toString('base64')&&beforeLatest.CodeSize===candidate.zip.length,'latest_code');
  const start=d.now(),events=[],observations={},preSchemaDenials=[];
  const record=async(stage,detail={})=>{const e={stage,at:new Date(d.now()).toISOString(),...detail};await d.record(e);events.push(e);};
  const guardSource=async()=>check(canonical(await d.current())===canonical(current),'source_drift');
  await guardSource();
  const before=await d.inspect();check(canonical(before)===canonical(baseline),'preflight_database');
  const retained=await d.retain();
+ const latest=verifyIntentPublicationLatest(retained.latestConfiguration,beforeLatest,candidate);
  const version=verifyIntentRetainedCode(retained.configuration,retained.codeBytes,latest,candidate),uri=`${R.latestArn}:${version}`;
  intentRecoveryPermission(sid,version);
  const initial=await d.transport(version);verifyRecoveryIntegration(initial.integration,R.latestArn);verifyRecoveryStage(initial.stage);

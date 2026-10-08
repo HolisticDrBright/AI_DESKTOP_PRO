@@ -242,6 +242,54 @@ they are not this new runner's deployed artifacts.
 
 ## Remaining release work
 
+### October 7 Code deployed with recovery incomplete
+
+Connected run **cc190186dd49bd98865d1f4da43e73e7** deployed exact Desktop
+**0e38c130fa212a7a418301b4b72094c649f8f2fe**, embedded V2 source
+**1488a3bf85aca5e2c9a7b8b5c7179e314397dc66**. ZIP
+**f8f995e09879eb7b45d17ffc5f18d5ecb9867f21c0a0795eacb3fd31ccaa0216**,
+**1,826,076 bytes**, is in encrypted version **lagGFfNd0kIrsydunYd2WvicsWEX9tLC**.
+AWS completed the reviewed change at **2026-10-08T00:24:50.652Z**. The exact
+managed-code download and preserved routes/authority/configuration passed.
+
+The run published and downloaded matching retained **version2**, then stopped
+with exit1 at **2026-10-08T00:26:22.372Z**, `runner_transport_revision`.
+Latest revision changed from **55d9104d-5ca4-47f8-a948-0365eb4dda1e** to
+**f0bb13e8-e726-4ea8-86d3-459e19106df0** across publication. No permission grant,
+traffic switch or schema commit was admitted. The original operator lock remains;
+do not delete it, blindly rerun the initial predecessor pipeline or replay any
+admitted write. A source-bound interruption/resumption path must freshly
+reconcile this exact deployment, published version and parent schema first.
+
+Independent readback at **2026-10-08T00:32:38.982Z** verified both ZIP downloads,
+all **51** identity routes and authority/logging, original latest integration
+and stage **lztzr5**, and actual absence of version2 permission. A clean-source
+database inspection retained **23,985 rows/88 tables/live47/source46** and the
+same data/schema hashes. A separate five-persona real-Cognito smoke passed
+**20** original consumer cases, including legacy erasure refusal. These
+dirty-operator-source readbacks cannot grant release admission, and do not prove
+retained traffic recovery, an erased outcome or an installed mobile update.
+Archive: [Deployment and finding](evidence/2026-10-08-care-intent-deployment-finding.json).
+
+The source repair rebinds publication's latest revision only after independent
+full-configuration equality except revision and exact-byte readback. Role,
+runtime, code, environment, description, dates and unexpected metadata drift
+still refuse before permission/traffic admission. The observed AWS CLI
+`aws: [ERROR]:` policy-absence format is now recognized only for the exact
+qualified GetPolicy command and ResourceNotFoundException; denied or unrelated
+calls remain findings. **101** expanded release/recovery/historical tests pass,
+including **32** focused checks. Full Desktop passes **341 files, 4,309 tests,
+11 skips**, **275.49 seconds**, with existing deadlines and no concurrent AST
+scan. Typecheck and focused lint pass. The graph refresh follows the full run.
+
+The next implementation must distinguish the exact deployed application source
+pair from the repaired operator's clean source identity. It must reconcile the
+same interrupted custody against independently observed code/version, change-set,
+permissions, routing and parent-ledger fingerprints, not load a report as write
+authority or pretend the old predecessor is still deployed. Preserve the
+original failed journal and build new custody for any further admitted actions.
+Do not replay upload, execution or publication merely to restart the pipeline.
+
 The first connected attempt, exact source **bf46a984/0a094f87**, ended with a
 read-only transaction-start failure before any upload or deployment admission.
 Run **27a71ceb2dd6be363cfbdc37b595e955** is terminal with exit1; no write was

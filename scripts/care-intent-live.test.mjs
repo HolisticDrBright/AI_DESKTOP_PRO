@@ -6,9 +6,23 @@ import {CARE_RECOVERY_ROUTE as R,canonical} from './care-recovery-routing.mjs';
 import {careControlSource as source,careControlObservation} from './test-fixtures/care-control.mjs';
 import {careIntentContinuationFixture} from './test-fixtures/care-intent-continuation.mjs';
 import {verifyCancellationControlPlane} from './verify-synthetic-care-cancellation.mjs';
-import {verifyIntentLiveControl,verifyIntentCodeLocation} from './care-intent-live.mjs';
+import {verifyIntentLiveControl,verifyIntentCodeLocation,intentPolicyAbsent} from './care-intent-live.mjs';
 import {executeIntentChange,intentReleaseArgs,verifyIntentReleasePort} from './release-synthetic-care-intent.mjs';
 const clone=structuredClone;
+test('only exact qualified policy absence is admitted with either observed AWS CLI error format',()=>{
+ const args=['lambda','get-policy','--function-name',P.functionName,'--qualifier','2'];
+ const missing='An error occurred (ResourceNotFoundException) when calling the GetPolicy operation: The resource you requested does not exist.';
+ for(const stderr of [missing,'aws: [ERROR]: '+missing+'\n\nAdditional error details:\nType: User\n']){
+  assert.equal(intentPolicyAbsent(args,'2',{stderr:Buffer.from(stderr)}),true);
+  for(const other of [undefined,'1','3','$LATEST'])assert.equal(intentPolicyAbsent(args,other,{stderr}),false);
+ }
+ for(const stderr of [missing.replace('ResourceNotFoundException','AccessDeniedException'),
+  missing.replace('GetPolicy','GetFunction'),'transport failure','prefix '+missing,''])
+  assert.equal(intentPolicyAbsent(args,'2',{stderr}),false);
+ for(const other of [['lambda','get-policy','--function-name','other','--qualifier','2'],
+  args.slice(0,-2),[...args,'--other'],['lambda','get-function','--function-name',P.functionName,'--qualifier','2']])
+  assert.equal(intentPolicyAbsent(other,'2',{stderr:missing}),false);
+});
 function fixture(){
  const s=careIntentContinuationFixture().supplied,old=careControlObservation(),control=verifyCancellationControlPlane(old,source);
  const input={template:clone(old.template)},before={binding:{stackId:old.stack.Stacks[0].StackId,id:'fictional-change-set'},

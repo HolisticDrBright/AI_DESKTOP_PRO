@@ -85,11 +85,11 @@ async function runLiveRecovery(root,context,before,input,source,latest,schema,st
  const credentials=fromIni({profile}),secrets=new SecretsManagerClient({region:P.region,credentials,maxAttempts:1,requestHandler:RECOVERY_AUTH_TRANSPORT}),
   cognito=new CognitoIdentityProviderClient({region:P.region,credentials,maxAttempts:1,requestHandler:RECOVERY_AUTH_TRANSPORT}),
   rds=new RDSDataClient({region:P.region,credentials,maxAttempts:1,requestHandler:RECOVERY_AUTH_TRANSPORT});
- let rows=[];const receiptIds=new Map(),authenticationIds=new Set();
+ let rows=[],currentLatest=latest;const receiptIds=new Map(),authenticationIds=new Set();
  const transport=async version=>{
   unchanged();const raw=observeIntentControlRaw(),uri=raw.integrations.Items.find(i=>i.IntegrationId===R.integrationId)?.IntegrationUri;
   verifyIntentLiveControl(raw,source,input,candidate,before,preparation,uri===R.latestArn?undefined:version);
-  check(raw.fn.RevisionId===latest.RevisionId,'transport_revision');
+  check(raw.fn.RevisionId===currentLatest.RevisionId,'transport_revision');
   return transportFrom(raw,version);
  };
  const authenticate=async row=>{
@@ -111,7 +111,10 @@ async function runLiveRecovery(root,context,before,input,source,latest,schema,st
   check(secret.ARN===secretArn&&typeof secret.SecretString==='string'&&Buffer.byteLength(secret.SecretString)<=65536,'persona_secret');
   rows=JSON.parse(secret.SecretString);verifyPersonaRecords(rows);
   const ports={now:Date.now,current:async()=>careIntentCurrent(root,context.mobileRoot),inspect:()=>schema('inspect'),record,admit:context.admit,
-   retain:()=>retainIntentFunction(latest,candidate,context),transport,
+   retain:async()=>{
+    const retained=await retainIntentFunction(latest,candidate,context);
+    currentLatest=retained.latestConfiguration;return retained;
+   },transport,
    consumerPhase:async phase=>{
     const observations=[];
     for(const row of rows){let token=await authenticate(row);

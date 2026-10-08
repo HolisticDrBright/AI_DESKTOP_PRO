@@ -2,14 +2,14 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {CARE_RECOVERY_ROUTE as R} from './care-recovery-routing.mjs';
 import {careIntentContinuationFixture} from './test-fixtures/care-intent-continuation.mjs';
-import {rehearseCareIntentRouting,intentRecoveryPermission,verifyIntentRecoveryPolicy,verifyIntentRetainedCode,verifyIntentDenialPhase} from './care-intent-routing.mjs';
+import {rehearseCareIntentRouting,intentRecoveryPermission,verifyIntentRecoveryPolicy,verifyIntentRetainedCode,verifyIntentDenialPhase,verifyIntentPublicationLatest} from './care-intent-routing.mjs';
 const sid='alp-care-intent-recovery-'+'a'.repeat(32),clone=structuredClone;
 function fixture(){
  const s=careIntentContinuationFixture().supplied,r=s.recovery,calls=[];
  let time=Date.parse(r.startedAt),state=clone(s.deployment.after.transport),n=0;
  state.stage.DeploymentId='original';state.stage.LastDeploymentStatusMessage="Successfully deployed stage with deployment ID 'original'";
  const d={now:()=>time,current:async()=>clone(s.current),inspect:async()=>clone(s.preparation.database),
-  retain:async()=>({configuration:clone(r.retained.configuration),codeBytes:Buffer.from(r.retained.codeBytes)}),
+  retain:async()=>({configuration:clone(r.retained.configuration),codeBytes:Buffer.from(r.retained.codeBytes),latestConfiguration:clone(s.deployment.after.fn)}),
   transport:async()=>clone(state),record:async e=>calls.push(e.stage),admit:async e=>calls.push(e.stage),
   consumerPhase:async name=>{calls.push('consumer_'+name);return clone(r.observations[name].filter(v=>v.case!=='existing_cancelled_receipt'));},
   receiptPhase:async name=>clone(r.observations[name].filter(v=>v.case==='existing_cancelled_receipt')),
@@ -30,6 +30,35 @@ test('separate intent profile uses exact version 2 bytes, all 95 Gateway observa
  assert.equal(r.databaseAfter.rowCount,23985);assert.equal(r.phiAllowed,false);assert.equal(r.hostedAcceptance,false);
  assert.equal(f.calls.filter(v=>v==='switch').length,1);assert.equal(f.calls.filter(v=>v==='return').length,1);
  assert.equal(f.state.integration.IntegrationUri,R.latestArn);assert.equal(f.state.policy,null);
+});
+
+test('published latest revision is freshly rebound without allowing any other metadata or authority drift',async()=>{
+ const f=fixture(),prior=clone(f.input.latest),after={...clone(prior),RevisionId:'post-publication-revision'};
+ assert.deepEqual(verifyIntentPublicationLatest(after,prior,f.input.candidate),after);
+ assert.deepEqual(f.input.latest,prior);
+ const old=f.d.retain;f.d.retain=async()=>{
+  const retained=await old();retained.latestConfiguration=clone(after);
+  f.state.revisionId=after.RevisionId;return retained;
+ };
+ const report=await rehearseCareIntentRouting(f.input,f.d,sid);
+ assert.equal(report.transportWitness.restored.revisionId,after.RevisionId);
+ assert.equal(f.calls.filter(x=>x==='switch').length,1);
+});
+
+test('missing publication witness or changed code, role, settings, description or metadata refuses before traffic admission',async()=>{
+ for(const mutate of [r=>delete r.latestConfiguration,r=>r.latestConfiguration.RevisionId='',
+  r=>r.latestConfiguration.Role='other',r=>r.latestConfiguration.CodeSha256='other',
+  r=>r.latestConfiguration.CodeSize++,r=>r.latestConfiguration.Timeout++,
+  r=>r.latestConfiguration.Environment.Variables.PHI_ALLOWED='true',
+  r=>r.latestConfiguration.Version='2',r=>r.latestConfiguration.State='Pending',
+  r=>r.latestConfiguration.Description='unexpected',r=>r.latestConfiguration.LastModified='changed',
+  r=>r.latestConfiguration.RuntimeVersionConfig={RuntimeVersionArn:'unexpected'},
+  r=>r.latestConfiguration.UnknownFutureSetting='not-preserved']){
+  const f=fixture(),old=f.d.retain;
+  f.d.retain=async()=>{const result=await old();mutate(result);return result;};
+  await assert.rejects(rehearseCareIntentRouting(f.input,f.d,sid));
+  assert.equal(f.calls.includes('add'),false);assert.equal(f.calls.includes('switch'),false);
+ }
 });
 test('incompatible retained versions and unsigned/wrong-scope policies cannot be admitted',async()=>{
  for(const change of [v=>v.Version='1',v=>v.FunctionArn=R.retainedArn,v=>v.CodeSha256='wrong',

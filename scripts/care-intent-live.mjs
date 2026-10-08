@@ -6,11 +6,17 @@ import {DEPLOYED_CARE as D} from './verify-deployed-synthetic-care.mjs';
 import {refuseIntent} from './synthetic-care-intent-release.mjs';
 import {CARE_RECOVERY_ROUTE as R,canonical,verifyRecoveryIntegration} from './care-recovery-routing.mjs';
 import {careIntentFunctionConfig} from './care-intent-release.mjs';
-import {verifyIntentRetainedCode} from './care-intent-routing.mjs';
+import {verifyIntentRetainedCode,verifyIntentPublicationLatest} from './care-intent-routing.mjs';
 import {collectCancellationInventory,verifyCancellationControlPlane} from './verify-synthetic-care-cancellation.mjs';
 import {readCareArtifact} from './upload-synthetic-care-release.mjs';
 import {SYNTHETIC_MEMBER_PROFILE as profile,observeSyntheticMemberIdentity} from './synthetic-aws-principal.mjs';
 const check=(ok,code)=>{if(!ok)refuseIntent('live_'+code);};
+export function intentPolicyAbsent(args,version,error){
+ const stderr=Buffer.isBuffer(error?.stderr)?error.stderr.toString('utf8'):error?.stderr??'';
+ return typeof version==='string'&&/^[1-9][0-9]{0,19}$/.test(version)&&version!=='1'
+  &&canonical(args)===canonical(['lambda','get-policy','--function-name',P.functionName,'--qualifier',version])
+  &&/^(?:aws: \[ERROR\]: )?An error occurred \(ResourceNotFoundException\) when calling the GetPolicy operation:/.test(stderr.trim());
+}
 export function intentAws(args,missingPolicyVersion){
  try{
   const raw=execFileSync('aws',[...args,'--profile',profile,'--region',P.region,'--output','json'],
@@ -19,10 +25,7 @@ export function intentAws(args,missingPolicyVersion){
  }catch(error){
   // Only the exact qualified GetPolicy absence is a null. No other access,
   // transport or service error is treated as missing data.
-  const stderr=Buffer.isBuffer(error?.stderr)?error.stderr.toString('utf8'):error?.stderr??'';
-  if(missingPolicyVersion&&/^[1-9][0-9]{0,19}$/.test(missingPolicyVersion)&&missingPolicyVersion!=='1'
-   &&canonical(args)===canonical(['lambda','get-policy','--function-name',P.functionName,'--qualifier',missingPolicyVersion])
-   &&/^An error occurred \(ResourceNotFoundException\) when calling the GetPolicy operation:/.test(stderr.trim()))return null;
+  if(intentPolicyAbsent(args,missingPolicyVersion,error))return null;
   refuseIntent('live_aws_outcome_unconfirmed');
  }
 }
@@ -135,6 +138,10 @@ export async function retainIntentFunction(latest,candidate,context){
  const configuration=intentAws(['lambda','get-function-configuration','--function-name',P.functionName,'--qualifier',version]);
  check(configuration.Description===description,'retained_description');
  const codeBytes=await downloadIntentFunction(configuration,candidate);verifyIntentRetainedCode(configuration,codeBytes,latest,candidate);
- context.record({stage:'intent_retained_bytes_verified',version,sha256:sha256(codeBytes)});
- return {configuration,codeBytes};
+ const latestConfiguration=verifyIntentPublicationLatest(
+  intentAws(['lambda','get-function-configuration','--function-name',P.functionName]),latest,candidate);
+ await downloadIntentFunction(latestConfiguration,candidate);
+ context.record({stage:'intent_retained_bytes_verified',version,sha256:sha256(codeBytes),
+  beforeLatestRevision:latest.RevisionId,latestRevision:latestConfiguration.RevisionId});
+ return {configuration,codeBytes,latestConfiguration};
 }
