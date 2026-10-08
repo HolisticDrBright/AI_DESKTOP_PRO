@@ -56,8 +56,8 @@ export function careRegisteredStandaloneFixture(parse){
   save:async(kind,bytes)=>{const file=kind+'-'+sha256(bytes);f.files.set(file,bytes);return file;},evidence:async file=>f.files.get(file),parseIntent:parse,
  };
  const personaIds=Object.keys(PERSONA_EMAILS).map((_,i)=>`${String(i+1).padStart(8,'0')}-0000-4000-8000-000000000001`);
- f.routing={now:()=>f.now,current:async()=>structuredClone(f.current),identity:f.port.identity,parseIntent:parse,
-  inspect:async()=>({...structuredClone(f.after.database),operatorSource:{sourceCommit:f.current.desktop.commit,clean:true},observedAt:new Date(f.now).toISOString()}),
+ f.routing={now:()=>f.now,current:async()=>structuredClone(f.current),observerCurrent:async()=>structuredClone(f.operator),identity:f.port.identity,parseIntent:parse,
+  inspect:async()=>({...structuredClone(f.after.database),observedAt:new Date(f.now).toISOString()}),
   transport:async()=>({raw:structuredClone(f.after.raw),policy:structuredClone(f.policy)}),retained:f.port.retained,
   consumerPhase:async phase=>{f.now+=1000;return Object.keys(PERSONA_EMAILS).flatMap((persona,i)=>CARE_CONSUMER_CASES.map((spec,j)=>({
    persona,case:spec.name,requestId:`consumer-${phase}-${i}-${j}`,status:spec.status,verified:true,bodySha256:'d'.repeat(64)})));},

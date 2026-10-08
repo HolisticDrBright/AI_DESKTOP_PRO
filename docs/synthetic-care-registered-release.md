@@ -549,18 +549,20 @@ The restoration receipt and original lock archive are flushed and read back befo
 only that local release lock is retired. The original failure remains a failure;
 the receipt certifies current restoration, not functional recovery, erasure,
 release, device or PHI acceptance. A fresh independently admitted functional
-rehearsal after a failed release is still required. Its standalone operator remains
-engineering; do not re-execute an already executed proposal to obtain a rehearsal.
+rehearsal after a failed release is still required. The standalone operator below
+implements that separate admission; do not re-execute an already executed proposal
+to obtain a rehearsal.
 
 The complete compensating path still needs actual AWS qualification. No provider
 activation, schema replay, patient-data write, paid build or PHI switch is available
 through this operator. All six original commercial-readiness scopes remain partial.
 
-### Fresh standalone rehearsal core
+### Fresh standalone rehearsal and stopped recovery
 
 `care-registered-standalone.mjs` and `care-registered-standalone-custody.mjs`
 implement the separate orchestration and journal required for a fresh rehearsal
-after the original release failed. They do not expose an AWS command. The
+after the original release failed. The fixed live constructor is
+`rehearse-synthetic-care-registered-standalone.mjs`. The
 credential-free test command is `npm run test:synthetic-care-registered-standalone`.
 Its fictional transports are not hosted evidence.
 
@@ -581,17 +583,60 @@ contract answers, stable cancelled receipts, all three phases, qualified-version
 metric, source and database bindings. Two final actual-observer reads must
 preserve code, authority, projections, stored bytes and data and show LATEST with
 no retained-version permission. A durable completion archive is separate from
-the original failure. These tests use fictional observers; production transport
-construction remains required. There is no code/schema write, proposal execution,
+the original failure. Local tests use fictional observers; actual AWS qualification
+remains required. There is no code/schema write, proposal execution,
 erasure, provider activation, release or PHI grant in this core.
 
 The stopped-run parser accepts each exact hard-crash prefix and binds its new
 permission SID to the new run ID. Unknown/reordered fields, incomplete archives,
 false failure attribution and premature completion refuse. A stopped run is
-not automatically rerun, unlocked or certified by this parser. Remaining source
-integration: the fixed AWS constructor, Windows custody acquisition and durable
-settlement, a distinct stopped-standalone compensating/read-only operator, and
-fresh frozen-application/independent-operator live recovery construction. Those
-must be implemented and negatively tested before exposing the command, then
-qualified against AWS. The staged07ca object and the currently running older
-API are unchanged by this source work. All six readiness scopes remain open.
+not automatically rerun, unlocked or certified by this parser.
+
+The public constructor acquires the Windows restoration mutex and inspection
+guard. It seeds and flushes a parseable admission-free journal before exclusively
+creating its own shared operator lock. The creation verifier remains live and
+checks the exact lock/journal bytes and file identities. Durable archive and
+receipt readback precede retirement of only that own local lock. Every directory,
+evidence basename, digest and size is bounded; an existing operator lock is held.
+The fixed recovery transport uses the frozen application's contract parser and
+the independently clean current operator's database inspector. Reports name both
+sources. The SDK profile, account, region, predecessor and routes are fixed;
+single-attempt writes, credentials kept in memory and client destruction remain.
+
+```sh
+npm run rehearse:synthetic-care-registered-standalone -- --v2-root "<exact frozen V2>" --artifact "<original interrupted artifact>" --application-root "<clean frozen Desktop>" --original-run "<original 32-character run ID>" --rehearse-fictional-registered-only
+```
+
+The original archive must be unique, exact, independently verified and incomplete.
+Its source pair is not replaced by the current application pair. This command
+performs a separately admitted synthetic routing test, not a source deployment.
+It has no target/profile/report/PHI/build override.
+
+For an interrupted standalone writer, use the same arguments with
+`--restore-stopped-fictional-standalone-only` instead. Both original and standalone
+writers, and any prior compensation writer, must be stopped and settled. This
+mode constructs observations itself and can only return the admitted route to
+LATEST and remove the exact own SID at its observed revision. Lost replies admit
+observation, never replay. Pre-grant interruption can settle without an AWS write.
+Completed custody gets read-only observations and refuses route/permission drift
+before recording a repair admission; it does not requalify the previous test.
+Original release and standalone prefixes/outcomes are preserved independently.
+
+`test:synthetic-care-registered-standalone-live` covers the actual local filesystem
+constructor, seed, exclusive lock, evidence and receipt retirement plus source
+attribution and negative CLI boundaries. `test:synthetic-care-registered-standalone-restoration`
+covers failed/interrupted/completed journals, changed authorities, lost replies,
+late completion, independent compensator attribution and original evidence drift.
+These tests do not contact AWS. New source construction is implemented and locally
+verified, not hosted qualified. The staged07ca object and the running older API
+are unchanged. All six original readiness scopes remain open, PHI OFF and paid
+mobile builds HELD.
+
+Local recheck for this constructor increment: all407 care-script tests pass,
+including22 new filesystem/live-boundary and stopped-standalone tests, with no
+failures or skips (65.638 seconds). Typecheck, focused lint with zero warnings,
+package/workflow parsing and diff checks pass. The first workflow-parse check
+used an unavailable `yaml` module; the rerun with installed `js-yaml` passed.
+No full Desktop database-suite rerun, AWS mutation or paid mobile build occurred
+in this source verification. CI for the prior a3e0c62 source completed successfully
+in runs37805926406 and37805917604; that is not CI evidence for this new increment.

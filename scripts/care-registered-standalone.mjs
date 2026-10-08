@@ -1,5 +1,5 @@
 /** Fresh independently admitted functional rehearsal after a failed release.
- * This is a tested orchestration core, not yet an exposed AWS command. Its
+ * The public runner constructs fixed observers and durable custody. Its
  * ports cannot execute a proposal, write code/schema or launch a mobile build. */
 import {CARE_RELEASE as P,sha256} from './synthetic-care-release.mjs';
 import {canonical,verifyRecoveryStage,verifyRecoveryPhase,verifyPostParentReceiptPhase,verifyRecoveryMetric} from './care-recovery-routing.mjs';
@@ -16,17 +16,17 @@ const inventory=v=>{const copy=structuredClone(v);delete copy.observedAt;return 
 const databaseContents=v=>{const copy=inventory(v);delete copy.operatorSource;return copy;};
 const falseFlags=['schemaChanged','hostedAcceptance','erasureAccepted','releaseAccepted','physicalDeviceAcceptance','phiAllowed','paidMobileBuildStarted'];
 export function verifyRegisteredStandaloneRecovery(report,input,operator,started,now,parseIntent){
- const {candidate,current}=input;assertCareRegisteredCurrent(operator);
+ const {candidate,current}=input;assertCareRegisteredCurrent(operator);const observerSource=input.observerSource??current;
  check(report?.contract==='synthetic-care-registered-routing-rehearsal/1'&&report.scope==='known-intent-predecessor-current-schema'
-  &&report.execution==='synthetic-staging'&&report.account===P.account&&equal(report.current,current)
+  &&report.execution==='synthetic-staging'&&report.account===P.account&&equal(report.current,current)&&equal(report.observerSource,observerSource)
   &&report.zipSha256===candidate.manifest.zipSha256&&report.predecessorZipSha256===candidate.release.predecessor.zipSha256
   &&report.retainedVersion==='2'&&report.verdict==='pass'&&report.functionalRoutingRecoveryVerified===true
   &&report.returnToCandidateVerified===true&&report.temporaryPermissionRemoved===true&&report.reportIsNotAuthority===true
   &&falseFlags.every(k=>report[k]===false),'recovery_report');
  const begin=Date.parse(report.startedAt),end=Date.parse(report.completedAt);
  check(Number.isFinite(begin)&&Number.isFinite(end)&&begin>=started&&end>=begin&&end<=now,'recovery_time');
- verifyCareRegisteredDatabase(report.databaseBefore,current,begin,Date.parse(report.databaseBefore?.observedAt));
- verifyCareRegisteredDatabase(report.databaseAfter,current,begin,end);
+ verifyCareRegisteredDatabase(report.databaseBefore,observerSource,begin,Date.parse(report.databaseBefore?.observedAt));
+ verifyCareRegisteredDatabase(report.databaseAfter,observerSource,begin,end);
  check(equal(inventory(report.databaseBefore),inventory(report.databaseAfter)),'recovery_database');
  check(equal(Object.keys(report.observations??{}).sort(),['baseline','retained','returned'])
   &&equal(Object.keys(report.intents??{}).sort(),['baseline','retained','returned']),'recovery_phases');
@@ -51,21 +51,31 @@ export function verifyRegisteredStandaloneRecovery(report,input,operator,started
   &&report.events[2].stage==='registered_compatible_routing_completed'&&report.events[2].version==='2','recovery_events');
  return report;
 }
-/** Tests supply fictional transports. A future public runner must construct
+/** Tests supply fictional transports. The public runner must construct
  * every port from the fixed target and actual service, never from a report. */
 export async function runRegisteredStandaloneRehearsal(candidate,operator,c,sourceText,d){
- assertCareRegisteredCurrent(operator);const started=d.now(),current=Object.fromEntries(['desktop','mobile','migrations','templateSha256'].map(k=>[k,candidate.manifest[k]]));
+ assertCareRegisteredCurrent(operator);const observedStart=d.now(),started=c.initialEvent?Date.parse(c.initialEvent.at):observedStart,
+  current=Object.fromEntries(['desktop','mobile','migrations','templateSha256'].map(k=>[k,candidate.manifest[k]]));
+ check(Number.isFinite(started)&&started<=observedStart&&observedStart-started<=120000,'initialization_time');
  verifyCareRegisteredCandidate(candidate,current);
  const original=await d.originalCustody(),saved=await verifyInterruptedRegisteredReleaseCustody(original,candidate,sourceText,started,d.originalEvidence);
  check(saved.scope==='execution'&&!saved.events.some(e=>e.stage==='registered_upload_completed'),'original_incomplete_execution');
  const deployed=saved.events.find(e=>e.stage==='registered_deployed_bytes_control_verified');check(deployed,'original_deployment_admission');
  const origin={runId:saved.lock.runId,lockSha256:sha256(original.lockBytes),journalSha256:sha256(original.journalBytes)},
   lock=verifyRegisteredStandaloneLock(c.lockBytes,current,operator,origin);
- check(c.journalBytes.length===0,'fresh_custody_required');let journalBytes=Buffer.from(c.journalBytes),writeAdmitted=false;
+ const firstEvent={at:new Date(started).toISOString(),stage:'registered_standalone_started',runId:lock.runId,
+  originalRunId:origin.runId,originalLockSha256:origin.lockSha256,originalJournalSha256:origin.journalSha256};
+ if(c.initialEvent){
+  check(lock.pid===d.pid&&typeof d.verifyCreatedCustody==='function'&&equal(c.initialEvent,firstEvent)
+   &&c.journalBytes.equals(Buffer.from(JSON.stringify(firstEvent)+'\n')),'fresh_initialization');
+  d.verifyCreatedCustody();
+ }else check(c.journalBytes.length===0,'fresh_custody_required');
+ let journalBytes=Buffer.from(c.journalBytes),writeAdmitted=false;
  const ownEvidenceReferences=[];
  const caller=await d.identity();assertSyntheticMemberIdentity(caller);
  const guard=async()=>{
   check(equal(await d.current(),operator)&&equal(await d.applicationCurrent(),current),'source_changed');
+  if(c.initialEvent)d.verifyCreatedCustody();
   check(await d.writerStopped(saved.lock.pid)===true,'original_writer_active');
   if(saved.restoration)check(started-saved.restoration.lastAt>=60000&&await d.writerStopped(saved.restoration.pid)===true,'original_restoration_active');
   const originBytes=await d.originalCustody(),own=await d.custody();
@@ -109,7 +119,8 @@ export async function runRegisteredStandaloneRehearsal(candidate,operator,c,sour
   check(equal(stage(a.raw.stage),stage(b.raw.stage))&&equal(a.summary,b.summary)&&equal(a.detailed,b.detailed)&&equal(a.template,b.template),'projection_changed');
   if(!returned)check(equal(a.apiDeployment,b.apiDeployment),'routing_changed');
  };
- await append('registered_standalone_started',{runId:lock.runId,originalRunId:origin.runId,originalLockSha256:origin.lockSha256,originalJournalSha256:origin.journalSha256},new Date(started).toISOString());
+ if(c.initialEvent)await guard();
+ else await append('registered_standalone_started',{runId:lock.runId,originalRunId:origin.runId,originalLockSha256:origin.lockSha256,originalJournalSha256:origin.journalSha256},new Date(started).toISOString());
  try{
   await guard();const rebuilt=await d.rebuild();check(rebuilt?.byteVerified===true&&rebuilt.sourceRebuilt===true
    &&rebuilt.zipSha256===candidate.manifest.zipSha256&&rebuilt.desktopCommit===current.desktop.commit&&rebuilt.mobileCommit===current.mobile.source.commit
@@ -118,7 +129,7 @@ export async function runRegisteredStandaloneRehearsal(candidate,operator,c,sour
   const before={contract:'synthetic-care-registered-standalone-before/1',runId:lock.runId,applicationSource:current,operatorSource:operator,
    original:origin,startedAt:new Date(started).toISOString(),observations:[first,second]},archived=await archive('standalone-before',before);
   await append('registered_standalone_before_archived',archived);await append('registered_standalone_rehearsal_admitted',{beforeSha256:archived.sha256});
-  const input={candidate,current,artifact:saved.artifact,sourceText,latest:second.raw.fn};
+  const input={candidate,current,observerSource:operator,artifact:saved.artifact,sourceText,latest:second.raw.fn};
   const recovery=await d.recovery(input,{
    recoverySid:'alp-care-intent-recovery-'+lock.runId,
    verify:()=>d.verifyLocal(journalBytes),

@@ -104,7 +104,8 @@ test('final candidate, database or authority drift cannot be hidden by a success
  }
 });
 test('completion independently revalidates actual answers, identities, phases, database and metric rather than booleans',async()=>{
- const f=fixture(),r=await run(f),input={candidate:f.candidate,current:f.current};
+ const f=fixture(),r=await run(f),input={candidate:f.candidate,current:f.current,observerSource:f.operator};
+ assert.doesNotThrow(()=>verifyRegisteredStandaloneRecovery(r.recovery,input,f.operator,Date.parse(r.recovery.startedAt),f.now,parse));
  for(const mutate of [v=>v.observations.retained.pop(),v=>v.intents.returned[0].status=503,v=>v.intents.retained[0].requestId=v.intents.baseline[0].requestId,
   v=>v.intents.retained[0].value.data.items[0].requestId='00000000-0000-4000-8000-000000000001',v=>v.metricWitness.response.Datapoints=[],
   v=>v.metricWitness.minimum=0,v=>v.observations.extra=[],v=>v.databaseAfter.historicalInspection.intentRowCount++,

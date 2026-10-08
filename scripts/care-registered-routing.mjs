@@ -1,7 +1,7 @@
 /** Current-schema recovery to the exact older intent-aware version, then back
  * to current bytes. No migration, erasure, report loader or CLI is exposed. */
 import {CARE_RELEASE as P,sha256} from './synthetic-care-release.mjs';
-import {CARE_REGISTERED as C,verifyCareRegisteredCandidate,refuseRegistered} from './synthetic-care-registered-release.mjs';
+import {CARE_REGISTERED as C,assertCareRegisteredCurrent,verifyCareRegisteredCandidate,refuseRegistered} from './synthetic-care-registered-release.mjs';
 import {verifyCareRegisteredRoutingControl,verifyCareRegisteredFunction,verifyCareRegisteredSuccessorFunction,
  verifyCareRegisteredDatabase} from './care-registered-preflight.mjs';
 import {CARE_RECOVERY_ROUTE as R,canonical,verifyRecoveryPhase,verifyPostParentReceiptPhase,verifyRecoveryMetric} from './care-recovery-routing.mjs';
@@ -48,6 +48,10 @@ export function verifyRegisteredIntentPhase(values,phase,receipts,parse){
  * observation or failed restoration leaves admitted operator custody intact. */
 export async function rehearseCareRegisteredRouting(input,d,sid){
  const {candidate,current,artifact,sourceText,latest}=input;
+ const observerSource=input.observerSource??current;assertCareRegisteredCurrent(observerSource);
+ check(equal(observerSource.mobile,current.mobile)&&equal(observerSource.migrations,current.migrations)
+  &&observerSource.templateSha256===current.templateSha256,'observer_binding');
+ check(equal(observerSource,current)||typeof d.observerCurrent==='function','observer_guard_required');
  verifyCareRegisteredCandidate(candidate,current);
  const source=JSON.parse(sourceText);check(sha256(sourceText)===current.templateSha256,'source_template');
  const version=CARE_REGISTERED_RECOVERY_VERSION,uri=R.latestArn+':'+version;
@@ -56,9 +60,10 @@ export async function rehearseCareRegisteredRouting(input,d,sid){
  const record=async(stage,detail={})=>{const e={stage,at:new Date(d.now()).toISOString(),...detail};await d.record(e);events.push(e);};
  const caller=await d.identity();assertSyntheticMemberIdentity(caller);
  const sourceGuard=async()=>{check(equal(await d.current(),current),'source_changed');await d.custody();
+  check(equal(await (d.observerCurrent??d.current)(),observerSource),'observer_source_changed');
   const fresh=await d.identity();assertSyntheticMemberIdentity(fresh);check(equal(fresh,caller),'principal_changed');};
  await sourceGuard();
- const before=verifyCareRegisteredDatabase(await d.inspect(),current,started,d.now()),initial=await d.transport();
+ const before=verifyCareRegisteredDatabase(await d.inspect(),observerSource,started,d.now()),initial=await d.transport();
  const initialControl=verifyCareRegisteredRoutingControl(initial.raw,source,candidate,current,artifact);
  check(equal(initial.raw.fn,latest)&&initial.policy===null,'initial_transport');
  const retained=await d.retained();
@@ -131,13 +136,13 @@ export async function rehearseCareRegisteredRouting(input,d,sid){
   }catch{refuseRegistered('routing_restoration_unconfirmed');}}
  }
  if(error)throw error;
- await sourceGuard();const after=verifyCareRegisteredDatabase(await d.inspect(),current,started,d.now());
+ await sourceGuard();const after=verifyCareRegisteredDatabase(await d.inspect(),observerSource,started,d.now());
  check(equal(databaseInventory(before),databaseInventory(after)),'database_changed');
  const finalRetained=await d.retained();check(equal(finalRetained,retained),'retained_changed');
  const restored=guard(await d.transport(),R.latestArn);
  check(restored.policy===null&&restored.raw.stage.DeploymentId===returnedDeployment,'final_transport_drift');
  const report={contract:'synthetic-care-registered-routing-rehearsal/1',scope:'known-intent-predecessor-current-schema',
-  execution:'synthetic-staging',account:P.account,current,zipSha256:candidate.manifest.zipSha256,
+  execution:'synthetic-staging',account:P.account,current,observerSource,zipSha256:candidate.manifest.zipSha256,
   predecessorZipSha256:C.predecessorZip,retainedVersion:version,verdict:'pass',databaseBefore:before,databaseAfter:after,
   observations,intents,metricWitness,initialControl,transportWitness:{initial:initial.raw.stage.DeploymentId,
    retainedDeployment,returnedDeployment,restored},functionalRoutingRecoveryVerified:true,returnToCandidateVerified:true,

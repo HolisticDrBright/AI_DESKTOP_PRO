@@ -36,20 +36,25 @@ export async function compileRegisteredIntentParser(root){
  const parser=await import('data:text/javascript;base64,'+Buffer.from(result.outputFiles[0].contents).toString('base64'));
  check(typeof parser.parseCareErasureRecoveryResponse==='function','parser_export');return parser.parseCareErasureRecoveryResponse;
 }
-/** Invoked by the combined fixed live release, under its same durable
+/** Invoked by the combined release or separately admitted rehearsal, under
+ * its own durable
  * custody. This function cannot stand alone as activation or release evidence. */
-export async function runCareRegisteredLiveRecovery(root,mobileRoot,input,custody){
+export async function runCareRegisteredLiveRecovery(root,mobileRoot,input,custody,observerRoot=root){
  check(!Object.entries(process.env).some(([k,v])=>/^AWS_ENDPOINT_URL(?:_|$)/.test(k)&&v),'endpoint_override');
  check(custody&&['verify','record','admit'].every(k=>typeof custody[k]==='function'),'custody_required');
  const {current}=input;check(canonical(careRegisteredCurrent(root,mobileRoot))===canonical(current),'source');
+ const observerSource=input.observerSource??current;
+ check(canonical(careRegisteredCurrent(observerRoot,mobileRoot))===canonical(observerSource),'observer_source');
+ const sid=custody.recoverySid??'alp-care-intent-recovery-'+randomBytes(16).toString('hex');intentRecoveryPermission(sid,'2');
  observeSyntheticMemberIdentity();const predecessor=readCareRegisteredPredecessor(root),
-  inspect=buildCareRegisteredDatabaseObserver(root,current),parseIntent=await compileRegisteredIntentParser(root);
+  inspect=buildCareRegisteredDatabaseObserver(observerRoot,observerSource),parseIntent=await compileRegisteredIntentParser(root);
  const credentials=fromIni({profile}),options={region:P.region,credentials,maxAttempts:1,requestHandler:RECOVERY_AUTH_TRANSPORT},
   secrets=new SecretsManagerClient(options),cognito=new CognitoIdentityProviderClient(options),
   rds=new RDSDataClient({region:P.region,credentials,maxAttempts:1,requestHandler:RECOVERY_AUTH_TRANSPORT});
  let rows=[];const authenticationIds=new Set(),receiptIds=new Map();
  const unchanged=()=>{check(!Object.entries(process.env).some(([k,v])=>/^AWS_ENDPOINT_URL(?:_|$)/.test(k)&&v),'endpoint_override');
-  check(canonical(careRegisteredCurrent(root,mobileRoot))===canonical(current),'source_changed');custody.verify();observeSyntheticMemberIdentity();};
+  check(canonical(careRegisteredCurrent(root,mobileRoot))===canonical(current),'source_changed');
+  check(canonical(careRegisteredCurrent(observerRoot,mobileRoot))===canonical(observerSource),'observer_source_changed');custody.verify();observeSyntheticMemberIdentity();};
  const transport=async()=>{unchanged();return {raw:observeIntentControlRaw(),policy:aws(['lambda','get-policy','--function-name',P.functionName,'--qualifier','2'],'2')};};
  const authenticate=async row=>{
   unchanged();const auth=await cognito.send(new InitiateAuthCommand({ClientId:P.consumerClient,AuthFlow:'USER_PASSWORD_AUTH',
@@ -69,6 +74,7 @@ export async function runCareRegisteredLiveRecovery(root,mobileRoot,input,custod
   check(secret.ARN===secretArn&&typeof secret.SecretString==='string'&&Buffer.byteLength(secret.SecretString)<=65536,'persona_secret');
   rows=JSON.parse(secret.SecretString);verifyPersonaRecords(rows);
   return await rehearseCareRegisteredRouting(input,{now:Date.now,parseIntent,inspect,
+   observerCurrent:async()=>{unchanged();return careRegisteredCurrent(observerRoot,mobileRoot);},
    current:async()=>careRegisteredCurrent(root,mobileRoot),identity:async()=>observeSyntheticMemberIdentity(),custody:async()=>{unchanged();},
    record:custody.record,admit:async e=>{unchanged();await custody.admit(e);},transport,
    retained:async()=>{unchanged();const configuration=aws(['lambda','get-function-configuration','--function-name',P.functionName,'--qualifier','2']),
@@ -122,6 +128,6 @@ export async function runCareRegisteredLiveRecovery(root,mobileRoot,input,custod
      await pause(10000);
     }refuseRegistered('routing_live_metric_unconfirmed');
    },
-  },'alp-care-intent-recovery-'+randomBytes(16).toString('hex'));
+  },sid);
  }finally{for(const row of rows)if(row&&typeof row==='object')delete row.password;rows=[];secrets.destroy();cognito.destroy();rds.destroy();}
 }

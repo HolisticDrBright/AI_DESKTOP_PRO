@@ -30,8 +30,16 @@ export function registeredRoutingRestorationArguments(a){
  * constructs all observations itself, not from caller-supplied reports. */
 export async function runRegisteredRoutingRestoration(candidate,operator,c,sourceText,d){
  assertCareRegisteredCurrent(operator);const started=d.now(),saved=await verifyInterruptedRegisteredReleaseCustody(c,candidate,sourceText,started,d.evidence);
- check(Number.isSafeInteger(d.pid)&&d.pid>0,'operator_pid');
  check(saved.scope==='execution'&&saved.sid,'no_recovery_admission');
+ return runRegisteredRoutingCompensation(candidate,operator,c,sourceText,d,saved,started);
+}
+/** Internal shared compensation after a profile-specific custody verifier.
+ * Public commands must construct saved from their exact journal, not a report.
+ * Ports exist for negative tests; none can grant or replay a deployment. */
+export async function runRegisteredRoutingCompensation(candidate,operator,c,sourceText,d,saved,started=d.now()){
+ assertCareRegisteredCurrent(operator);
+ check(Number.isSafeInteger(d.pid)&&d.pid>0,'operator_pid');
+ check(saved.scope==='execution','no_execution_admission');
  check(equal(operator.mobile,saved.current.mobile)&&equal(operator.migrations,saved.current.migrations)
   &&operator.templateSha256===saved.current.templateSha256,'operator_binding');
  if(saved.restoration)check(equal(saved.restoration.operatorSource,operator),'restoration_operator_changed');
@@ -78,6 +86,9 @@ export async function runRegisteredRoutingRestoration(candidate,operator,c,sourc
   if(!permissionChange)check(equal(a.policy,b.policy),'permission_changed');
  };
  const initial=await observe(),confirmed=await observe();same(initial,confirmed);
+ // Completed test custody admits observations only. Refuse drift before even
+ // appending a compensating admission, preserving its read-only journal grammar.
+ if(saved.readOnlyCompletion)check(initial.uri===R.latestArn&&initial.policy===null,'completed_readonly_drift');
  const append=async(stage,detail={})=>{
   await guard();const e={at:new Date(d.now()).toISOString(),stage,...detail},expected=Buffer.concat([journalBytes,Buffer.from(JSON.stringify(e)+'\n')]);
   const actual=await d.record(e);check(Buffer.isBuffer(actual)&&actual.equals(expected),'admission_durability');journalBytes=expected;await guard();return e;
@@ -90,6 +101,7 @@ export async function runRegisteredRoutingRestoration(candidate,operator,c,sourc
   // A lost response admits observation only. No second update is issued.
   await d.waitLatest(returnAdmission.previousDeployment);actual=await observe();same(initial,actual,true);
  }else if(actual.uri!==R.latestArn){
+  check(!saved.readOnlyCompletion,'completed_readonly_drift');
   returnAdmission=await append('registered_stopped_return_admitted',{previousDeployment:actual.raw.stage.DeploymentId});
   mutated=true;try{await d.returnLatest();}catch{/* outcome unknown: observe, never replay */}
   await d.waitLatest(returnAdmission.previousDeployment);actual=await observe();same(initial,actual,true);
@@ -99,6 +111,7 @@ export async function runRegisteredRoutingRestoration(candidate,operator,c,sourc
   // Unknown removal is not permission to retry against a newer revision.
   check(actual.policy===null,'prior_removal_unconfirmed');
  }else if(actual.policy!==null){
+  check(!saved.readOnlyCompletion,'completed_readonly_drift');
   verifyIntentRecoveryPolicy(actual.policy,saved.sid,'2',true);
   permissionAdmission=await append('registered_stopped_permission_remove_admitted',{revision:actual.policy.RevisionId});
   mutated=true;try{await d.removePermission(saved.sid,permissionAdmission.revision);}catch{/* observe exact absence below */}

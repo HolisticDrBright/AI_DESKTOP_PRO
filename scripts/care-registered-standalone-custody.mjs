@@ -43,7 +43,7 @@ export function verifyRegisteredStandaloneLock(bytes,current,operator,original){
 }
 /** Parses every prefix, including a hard crash without a finding. Historical
  * success is descriptive only: the stopped operator still needs actual reads. */
-export async function verifyRegisteredStandaloneCustody(c,current,operator,original,now,readEvidence,{settled=true}={}){
+export async function verifyRegisteredStandaloneCustody(c,current,operator,original,now,readEvidence,{settled=true,restorationOperator=operator}={}){
  const lock=verifyRegisteredStandaloneLock(c?.lockBytes,current,operator,original);
  check(Buffer.isBuffer(c?.journalBytes)&&c.journalBytes.length>0&&c.journalBytes.length<=1024*1024,'journal_bytes');
  const split=splitRegisteredRestorationJournal(c.journalBytes,current,now);let events;
@@ -54,7 +54,7 @@ export async function verifyRegisteredStandaloneCustody(c,current,operator,origi
   const t=Date.parse(e.at);check(Number.isFinite(t)&&t>=prior&&t<=now,'event_time');prior=t;
  }
  check(Number.isFinite(now)&&(!settled||now-prior>=60000),'writer_settlement');
- if(split.restoration)check(equal(split.restoration.operatorSource,operator),'restoration_operator');
+ if(split.restoration)check(equal(split.restoration.operatorSource,restorationOperator),'restoration_operator');
  const first=events[0];check(first.stage==='registered_standalone_started'&&first.runId===lock.runId
   &&first.originalRunId===original.runId&&first.originalLockSha256===original.lockSha256
   &&first.originalJournalSha256===original.journalSha256,'start_binding');
@@ -88,7 +88,8 @@ export async function verifyRegisteredStandaloneCustody(c,current,operator,origi
  if(finding)check(typeof finding.writeAdmitted==='boolean'&&finding.writeAdmitted===writeAdmitted
   &&/^synthetic_care_registered_release_refused:[a-z0-9_]{1,180}$/.test(finding.code)
   &&state!=='registered_standalone_completed','finding');
- if(split.restoration)check(!completed,'restoration_after_success');
+ if(split.restoration&&completed)check(split.restoration.events.every(e=>['registered_stopped_restoration_started','registered_stopped_restoration_observed'].includes(e.stage)),
+  'completed_readonly_restoration');
  return {lock,current,operator,events,state,before,beforeBytes,sid,completed,evidenceReferences,writeAdmitted,
   journalSha256:sha256(c.journalBytes),originalJournalSha256:sha256(split.originalJournalBytes),
   originalRunOutcome:finding?'failed':completed?'completed':'interrupted',originalFailure:finding?.code??null,
