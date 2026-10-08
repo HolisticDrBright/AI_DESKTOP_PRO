@@ -40,6 +40,7 @@ async function mount(t,assignments=false){
         const fixture=window.assignmentFixture;
         fixture.calls.push(request);
         if(request.action==='assign'){
+          if(fixture.mode==='conflict')return new Response('{}',{status:409});
           fixture.assigned=true;
           if(fixture.mode==='lost-reply')throw new Error('fictional_lost_reply_after_commit');
           return new Response(JSON.stringify({data:{action:'assign',enrollmentId:'88888888-8888-4888-8888-888888888888',
@@ -235,6 +236,17 @@ test('a lost share reply is uncertain, never called unchanged or automatically r
   await page.getByRole('button',{name:'Load / refresh assignments'}).click();
   await page.getByText('Fictional assigned program',{exact:true}).waitFor();
   assert.equal(await page.evaluate(()=>window.assignmentFixture.calls.filter(call=>call.action==='assign').length),1);
+});
+
+test('an explicit share conflict is a refusal, never success or an automatic retry',async t=>{
+  const page=await mount(t,true);
+  await page.evaluate(()=>{window.assignmentFixture.mode='conflict';});
+  await page.getByRole('button',{name:'Share with this patient'}).click();
+  await page.getByRole('alert').filter({hasText:'Nothing was assigned'}).waitFor({timeout:3000});
+  assert.doesNotMatch(await page.locator('body').innerText(),/could not confirm|Shared with the patient app/);
+  assert.equal(await page.getByRole('status').count(),0);
+  assert.equal(await page.evaluate(()=>window.assignmentFixture.assigned),false);
+  assert.deepEqual(await page.evaluate(()=>window.assignmentFixture.calls.filter(call=>['assign','status'].includes(call.action)).map(call=>call.action)),['assign']);
 });
 
 test('a share receipt for other content is not presented as verified success',async t=>{
