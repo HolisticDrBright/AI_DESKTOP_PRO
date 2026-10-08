@@ -58,7 +58,8 @@ export function careRegisteredStandaloneFixture(parse){
  const personaIds=Object.keys(PERSONA_EMAILS).map((_,i)=>`${String(i+1).padStart(8,'0')}-0000-4000-8000-000000000001`);
  f.routing={now:()=>f.now,current:async()=>structuredClone(f.current),observerCurrent:async()=>structuredClone(f.operator),identity:f.port.identity,parseIntent:parse,
   inspect:async()=>({...structuredClone(f.after.database),observedAt:new Date(f.now).toISOString()}),
-  transport:async()=>({raw:structuredClone(f.after.raw),policy:structuredClone(f.policy)}),retained:f.port.retained,
+  transport:async()=>({raw:structuredClone(f.after.raw),policy:structuredClone(f.policy)}),
+  retained:async()=>({...structuredClone(f.retained),policy:structuredClone(f.policy)}),
   consumerPhase:async phase=>{f.now+=1000;return Object.keys(PERSONA_EMAILS).flatMap((persona,i)=>CARE_CONSUMER_CASES.map((spec,j)=>({
    persona,case:spec.name,requestId:`consumer-${phase}-${i}-${j}`,status:spec.status,verified:true,bodySha256:'d'.repeat(64)})));},
   receiptPhase:async phase=>Object.keys(PERSONA_EMAILS).map((persona,i)=>({persona,case:'existing_cancelled_receipt',erasureRequestId:personaIds[i],
