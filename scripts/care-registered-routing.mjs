@@ -15,6 +15,55 @@ const stageConfig=v=>{const s=structuredClone(v);for(const k of ['DeploymentId',
 const databaseInventory=v=>{const s=structuredClone(v);delete s.observedAt;return s;};
 export const CARE_REGISTERED_RECOVERY_VERSION='2';
 
+/** A permission operation can change Lambda's revision and modification time.
+ * This exception belongs to one durably admitted operation, not to every read.
+ * All other raw configuration, code bytes and policy remain exact. */
+function retainedPermissionTransition(before,after,policy,start,end){
+ check(equal(after.policy,policy),'retained_permission_policy');
+ const immutable=value=>{const copy=structuredClone(value);delete copy.policy;
+  delete copy.configuration.RevisionId;delete copy.configuration.LastModified;return copy;};
+ check(equal(immutable(before),immutable(after)),'retained_permission_configuration');
+ const old=before.configuration,next=after.configuration,
+  revisionChanged=old.RevisionId!==next.RevisionId,timeChanged=old.LastModified!==next.LastModified;
+ check(revisionChanged===timeChanged,'retained_permission_metadata');
+ if(revisionChanged){
+  const oldTime=Date.parse(old.LastModified),newTime=Date.parse(next.LastModified);
+  check(Number.isFinite(start)&&Number.isFinite(end)&&end>=start
+   &&typeof old.LastModified==='string'&&typeof next.LastModified==='string'
+   &&Number.isFinite(oldTime)&&Number.isFinite(newTime)&&newTime>=oldTime&&newTime>=start&&newTime<=end
+   &&typeof next.RevisionId==='string'&&next.RevisionId.length>0&&next.RevisionId.length<=160,'retained_permission_window');
+ }
+ return structuredClone(after);
+}
+
+/** Revalidate the full snapshots, not caller-supplied "verified" flags. */
+export function verifyRegisteredRetainedPermissionLineage(lineage,started,completed,expectedSid){
+ check(keys(lineage,['sid','operations'])&&(!expectedSid||lineage.sid===expectedSid),'retained_lineage_identity');
+ intentRecoveryPermission(lineage.sid,CARE_REGISTERED_RECOVERY_VERSION);
+ check(Array.isArray(lineage.operations)&&lineage.operations.length===2,'retained_lineage_count');
+ let previous;
+ for(const [index,operation] of lineage.operations.entries()){
+  check(keys(operation,['action','startedAt','observedAt','before','after'])
+   &&operation.action===(index===0?'add':'remove'),'retained_lineage_operation');
+  check(keys(operation.before,['configuration','sha256','bytes','policy'])
+   &&keys(operation.after,['configuration','sha256','bytes','policy'])
+   &&operation.before.sha256===C.predecessorZip&&operation.before.bytes===C.predecessorBytes,'retained_lineage_bytes');
+  verifyCareRegisteredFunction(operation.before.configuration,true);
+  verifyCareRegisteredFunction(operation.after.configuration,true);
+  const start=Date.parse(operation.startedAt),end=Date.parse(operation.observedAt);
+  check(Number.isFinite(start)&&Number.isFinite(end)&&start>=started&&end<=completed
+   &&(!previous||start>=Date.parse(previous.observedAt)),'retained_lineage_time');
+  if(index===0){check(operation.before.policy===null,'retained_lineage_initial_policy');
+   verifyIntentRecoveryPolicy(operation.after.policy,lineage.sid,CARE_REGISTERED_RECOVERY_VERSION,true);
+  }else{check(equal(operation.before,previous.after)&&operation.after.policy===null,'retained_lineage_chain');
+   verifyIntentRecoveryPolicy(operation.before.policy,lineage.sid,CARE_REGISTERED_RECOVERY_VERSION,true);
+  }
+  retainedPermissionTransition(operation.before,operation.after,index===0?operation.after.policy:null,start,end);
+  previous=operation;
+ }
+ return {before:structuredClone(lineage.operations[0].before),after:structuredClone(previous.after)};
+}
+
 /** The parser is compiled from the bound application contract by the live
  * observer. This verifies real answers rather than accepting a verified flag. */
 export function verifyRegisteredIntentAnswer(action,status,value,expectedId,parse){
@@ -69,6 +118,14 @@ export async function rehearseCareRegisteredRouting(input,d,sid){
  const retained=await d.retained();
  check(equal(verifyCareRegisteredFunction(retained.configuration,true),verifyCareRegisteredSuccessorFunction(latest,candidate,current))
   &&retained.policy===null&&retained.sha256===C.predecessorZip&&retained.bytes===C.predecessorBytes,'retained_predecessor');
+ let expectedRetained=structuredClone(retained),permissionStarted,permissionObserved=false;
+ const retainedPermissionLineage={sid,operations:[]};
+ const permissionObservation=async(action,prior,actual,policy,start)=>{
+  const end=d.now(),checked=retainedPermissionTransition(prior,actual,policy,start,end);
+  retainedPermissionLineage.operations.push({action,startedAt:new Date(start).toISOString(),observedAt:new Date(end).toISOString(),
+   before:structuredClone(prior),after:checked});
+  return checked;
+ };
  const guard=(o,target)=>{
   const proof=verifyCareRegisteredRoutingControl(o.raw,source,candidate,current,artifact,target===uri?version:undefined);
   check([R.latestArn,uri].includes(target)&&equal(o.raw.fn,latest)
@@ -95,9 +152,13 @@ export async function rehearseCareRegisteredRouting(input,d,sid){
  try{
   observations.baseline=await phase('baseline');
   const fresh=guard(await d.transport(),R.latestArn);check(fresh.policy===null,'preexisting_permission');
+  check(equal(await d.retained(),expectedRetained),'retained_before_permission');
   await sourceGuard();await d.admit({stage:'registered_recovery_permission_admitted',version,sid});granted=true;
+  permissionStarted=d.now();
   await d.addPermission(sid,version);
   const allowed=guard(await d.transport(),R.latestArn);verifyIntentRecoveryPolicy(allowed.policy,sid,version,true);
+  expectedRetained=await permissionObservation('add',expectedRetained,await d.retained(),allowed.policy,permissionStarted);
+  permissionObserved=true;
   await sourceGuard();await d.admit({stage:'registered_recovery_switch_admitted',version});switched=true;
   await d.switchUri(uri);const retainedRoute=guard(await d.waitDeployment(initial.raw.stage.DeploymentId,uri),uri);
   check(retainedRoute.raw.stage.DeploymentId!==initial.raw.stage.DeploymentId,'retained_not_deployed');
@@ -126,9 +187,19 @@ export async function rehearseCareRegisteredRouting(input,d,sid){
     check(actual.raw.stage.DeploymentId!==prior,'compensating_return_unconfirmed');returned=true;returnedDeployment=actual.raw.stage.DeploymentId;
    }
    guard(actual,R.latestArn);check(!switched||actual.raw.stage.DeploymentId===returnedDeployment,'return_unconfirmed');
+   const cleanupRetained=await d.retained();
+   try{
+    if(!permissionObserved&&actual.policy!==null){
+     verifyIntentRecoveryPolicy(actual.policy,sid,version,true);
+     expectedRetained=await permissionObservation('add',expectedRetained,cleanupRetained,actual.policy,permissionStarted);
+     permissionObserved=true;
+    }else check(equal(cleanupRetained,expectedRetained),'retained_before_cleanup');
+   }catch(cause){error??=cause;}
    if(actual.policy!==null){verifyIntentRecoveryPolicy(actual.policy,sid,version,true);await sourceGuard();
     await d.admit({stage:'registered_recovery_permission_cleanup_admitted',version});
+    const cleanupStarted=d.now();
     await d.removePermission(sid,version,actual.policy.RevisionId);
+    expectedRetained=await permissionObservation('remove',cleanupRetained,await d.retained(),null,cleanupStarted);
    }
    const clean=guard(await d.transport(),R.latestArn);
    check(clean.policy===null&&(!switched||clean.raw.stage.DeploymentId===returnedDeployment),'permission_cleanup_unconfirmed');
@@ -138,13 +209,14 @@ export async function rehearseCareRegisteredRouting(input,d,sid){
  if(error)throw error;
  await sourceGuard();const after=verifyCareRegisteredDatabase(await d.inspect(),observerSource,started,d.now());
  check(equal(databaseInventory(before),databaseInventory(after)),'database_changed');
- const finalRetained=await d.retained();check(equal(finalRetained,retained),'retained_changed');
+ const finalRetained=await d.retained();check(equal(finalRetained,expectedRetained),'retained_changed');
+ verifyRegisteredRetainedPermissionLineage(retainedPermissionLineage,started,d.now(),sid);
  const restored=guard(await d.transport(),R.latestArn);
  check(restored.policy===null&&restored.raw.stage.DeploymentId===returnedDeployment,'final_transport_drift');
  const report={contract:'synthetic-care-registered-routing-rehearsal/1',scope:'known-intent-predecessor-current-schema',
   execution:'synthetic-staging',account:P.account,current,observerSource,zipSha256:candidate.manifest.zipSha256,
   predecessorZipSha256:C.predecessorZip,retainedVersion:version,verdict:'pass',databaseBefore:before,databaseAfter:after,
-  observations,intents,metricWitness,initialControl,transportWitness:{initial:initial.raw.stage.DeploymentId,
+  observations,intents,metricWitness,initialControl,retainedPermissionLineage,transportWitness:{initial:initial.raw.stage.DeploymentId,
    retainedDeployment,returnedDeployment,restored},functionalRoutingRecoveryVerified:true,returnToCandidateVerified:true,
   temporaryPermissionRemoved:true,schemaChanged:false,hostedAcceptance:false,erasureAccepted:false,releaseAccepted:false,
   physicalDeviceAcceptance:false,phiAllowed:false,paidMobileBuildStarted:false,reportIsNotAuthority:true,

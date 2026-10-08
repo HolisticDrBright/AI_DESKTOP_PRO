@@ -16,6 +16,7 @@ const clone=structuredClone,sid='alp-care-intent-recovery-'+'b'.repeat(32);
 function fixture(){
  const f=careRegisteredDeploymentFixture(),state={now:f.completed,raw:clone(f.after.raw),policy:null,writes:[],sequence:0},events=[];
  const configuration=clone(f.before.raw.fn);configuration.Version='2';configuration.FunctionArn=R.latestArn+':2';
+ configuration.LastModified=new Date(state.now-1000).toISOString();
  const retained={configuration,sha256:C.predecessorZip,bytes:C.predecessorBytes,policy:null},
   ids=Object.keys(PERSONA_EMAILS).map((_,i)=>`${String(i+1).padStart(8,'0')}-0000-4000-8000-000000000001`);
  const receiptRows=phase=>Object.keys(PERSONA_EMAILS).map((persona,i)=>({persona,case:'existing_cancelled_receipt',erasureRequestId:ids[i],
@@ -24,7 +25,7 @@ function fixture(){
   identity:async()=>({Account:P.account,Arn:`arn:aws:sts::${P.account}:assumed-role/OrganizationAccountAccessRole/fictional`,UserId:'fictional'}),
   inspect:async()=>({...clone(f.after.database),observedAt:new Date(state.now).toISOString()}),
   record:async e=>events.push(e),admit:async e=>events.push(e),
-  transport:async()=>({raw:clone(state.raw),policy:clone(state.policy)}),retained:async()=>clone(retained),
+  transport:async()=>({raw:clone(state.raw),policy:clone(state.policy)}),retained:async()=>({...clone(retained),policy:clone(state.policy)}),
   consumerPhase:async phase=>{state.now+=1000;return Object.keys(PERSONA_EMAILS).flatMap((persona,i)=>CARE_CONSUMER_CASES.map((s,j)=>({
    persona,case:s.name,requestId:`consumer-${phase}-${i}-${j}`,status:s.status,verified:true,bodySha256:'d'.repeat(64)})));},
   receiptPhase:async phase=>receiptRows(phase),
@@ -47,6 +48,101 @@ function fixture(){
  return {f,input,d,state,events,retained,receiptRows};
 }
 const run=x=>rehearseCareRegisteredRouting(x.input,x.d,sid);
+
+function permissionMetadataFixture(){
+ const x=fixture();
+ for(const method of ['addPermission','removePermission']){
+  const original=x.d[method];x.d[method]=async(...args)=>{
+   await original(...args);x.state.now+=10;
+   x.retained.configuration.RevisionId='fictional-'+method;
+   x.retained.configuration.LastModified=new Date(x.state.now).toISOString();
+  };
+ }
+ return x;
+}
+
+test('AWS permission mutations may update retained revision and timestamp only inside their own admitted windows',async()=>{
+ const x=permissionMetadataFixture(),report=await run(x);
+ assert.equal(report.verdict,'pass');assert.equal(x.state.policy,null);
+ const witnesses=report.retainedPermissionLineage.operations;
+ assert.equal(witnesses.length,2);
+ assert.deepEqual(witnesses.map(e=>e.action),['add','remove']);
+ assert(witnesses.every(e=>e.before.configuration.RevisionId!==e.after.configuration.RevisionId));
+});
+
+for(const kind of ['revision_only','timestamp_only','future','backdated','malformed','code','runtime','environment','bytes','extra']){
+ test(`permission metadata cannot conceal retained drift: ${kind}`,async()=>{
+  const x=permissionMetadataFixture(),add=x.d.addPermission,initial=clone(x.retained.configuration);
+  x.d.addPermission=async(...args)=>{await add(...args);const c=x.retained.configuration;
+   if(kind==='revision_only')c.LastModified=initial.LastModified;
+   if(kind==='timestamp_only')c.RevisionId=initial.RevisionId;
+   if(kind==='future')c.LastModified=new Date(x.state.now+60000).toISOString();
+   if(kind==='backdated')c.LastModified=new Date(x.state.now-60000).toISOString();
+   if(kind==='malformed')c.LastModified='invalid';
+   if(kind==='code')c.CodeSha256='unrelated';
+   if(kind==='runtime')c.RuntimeVersionConfig={RuntimeVersionArn:'other'};
+   if(kind==='environment')c.Environment.Variables.PHI_ALLOWED='true';
+   if(kind==='bytes')x.retained.bytes++;
+   if(kind==='extra')c.Unexpected='unobserved configuration';
+  };
+  await assert.rejects(run(x));
+  assert.equal(x.events.some(e=>e.stage==='registered_compatible_routing_completed'),false);
+  assert.equal(x.state.writes.includes(R.latestArn+':2'),false);
+ });
+}
+
+test('retained metadata drift without a permission admission cannot pass even with a plausible timestamp',async()=>{
+ const x=permissionMetadataFixture(),phase=x.d.consumerPhase;
+ x.d.consumerPhase=async name=>{const value=await phase(name);if(name==='returned'){
+  x.retained.configuration.RevisionId='unrelated-revision';
+  x.retained.configuration.LastModified=new Date(x.state.now).toISOString();
+ }return value;};
+ await assert.rejects(run(x));assert.equal(x.state.policy,null);
+ assert.equal(x.events.some(e=>e.stage==='registered_compatible_routing_completed'),false);
+});
+
+test('lost permission-add reply is compensated but never converted into successful recovery',async()=>{
+ const x=permissionMetadataFixture(),add=x.d.addPermission;
+ x.d.addPermission=async(...args)=>{await add(...args);throw Error('lost add response');};
+ await assert.rejects(run(x),/lost add response/);assert.equal(x.state.policy,null);
+ assert.equal(x.events.some(e=>e.stage==='registered_compatible_routing_completed'),false);
+});
+
+for(const changed of ['addPermission','removePermission']){
+ test(`one permission operation may leave metadata unchanged while ${changed} changes it`,async()=>{
+  const x=fixture(),operation=x.d[changed];x.d[changed]=async(...args)=>{
+   await operation(...args);x.state.now+=10;x.retained.configuration.RevisionId='only-'+changed;
+   x.retained.configuration.LastModified=new Date(x.state.now).toISOString();
+  };
+  assert.equal((await run(x)).verdict,'pass');assert.equal(x.state.policy,null);
+ });
+}
+
+test('metadata changes before admission or after cleanup are not permission lineage',async()=>{
+ for(const at of ['before_admission','after_cleanup']){
+  const x=permissionMetadataFixture(),read=x.d.retained;let reads=0;
+  x.d.retained=async()=>{const value=await read();reads++;
+   if((at==='before_admission'&&reads===2)||(at==='after_cleanup'&&x.state.writes.at(-1)==='remove'&&reads===6)){
+    value.configuration.RevisionId='unrelated';value.configuration.LastModified=new Date(x.state.now).toISOString();
+   }return value;};
+  await assert.rejects(run(x));
+  if(at==='before_admission')assert.deepEqual(x.state.writes,[]);
+  assert.equal(x.events.some(e=>e.stage==='registered_compatible_routing_completed'),false);
+ }
+});
+
+test('remove-time configuration drift and a lost cleanup response cannot certify recovery',async()=>{
+ for(const kind of ['code','metadata','lost_reply']){
+  const x=permissionMetadataFixture(),remove=x.d.removePermission;x.d.removePermission=async(...args)=>{
+   await remove(...args);
+   if(kind==='code')x.retained.configuration.CodeSha256='unrelated';
+   if(kind==='metadata')x.retained.configuration.LastModified=new Date(x.state.now+1000).toISOString();
+   if(kind==='lost_reply')throw Error('lost remove response');
+  };
+  await assert.rejects(run(x),/routing_restoration_unconfirmed/);assert.equal(x.state.policy,null);
+  assert.equal(x.events.some(e=>e.stage==='registered_compatible_routing_completed'),false);
+ }
+});
 test('current-schema routing visits actual older intent code, verifies105 observations and returns without granting release',async()=>{
  const x=fixture(),r=await run(x);
  assert.equal(r.retainedVersion,'2');assert.equal(r.predecessorZipSha256,C.predecessorZip);

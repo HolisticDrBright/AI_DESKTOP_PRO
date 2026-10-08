@@ -11,6 +11,51 @@ let parse;before(async()=>{parse=await compileRegisteredIntentParser(process.cwd
 const fixture=()=>careRegisteredStandaloneFixture(parse),run=f=>runRegisteredStandaloneRehearsal(f.candidate,f.operator,f.custody,f.sourceText,f.port),
  writes=f=>f.calls.filter(v=>['grant','remove',R.latestArn,R.latestArn+':2'].includes(v));
 const checkCustody=(f,settled=true)=>verifyRegisteredStandaloneCustody(f.encode(),f.current,f.operator,f.origin,f.now+61000,f.port.evidence,{settled});
+
+function metadataFixture(){
+ const f=fixture();f.retained.configuration.LastModified=new Date(f.now-1000).toISOString();
+ for(const method of ['addPermission','removePermission']){
+  const original=f.routing[method];f.routing[method]=async(...args)=>{
+   await original(...args);f.now+=10;f.retained.configuration.RevisionId='permission-'+method;
+   f.retained.configuration.LastModified=new Date(f.now).toISOString();
+  };
+ }
+ return f;
+}
+
+test('standalone completion binds both retained metadata transitions to the actual before and repeated after observations',async()=>{
+ const f=metadataFixture(),report=await run(f);
+ assert.equal(report.recoveryRehearsed,true);assert.equal((await checkCustody(f)).originalRunOutcome,'completed');
+ const operations=report.recovery.retainedPermissionLineage.operations;
+ assert.equal(operations.length,2);assert.equal(operations[0].before.configuration.RevisionId,'fictional-revision');
+ assert.equal(operations[1].after.configuration.RevisionId,'permission-removePermission');
+ assert.equal(report.recovery.retainedPermissionLineage.sid,'alp-care-intent-recovery-'+f.lock.runId);
+ assert.equal(f.originalEvents.at(-1).stage,'registered_upload_finding');
+});
+
+test('a reported permission lineage cannot bypass full snapshot, clock, policy and run-identity binding',async()=>{
+ for(const mutate of [r=>delete r.retainedPermissionLineage,r=>r.retainedPermissionLineage.operations.pop(),
+  r=>r.retainedPermissionLineage.operations.reverse(),r=>r.retainedPermissionLineage.sid='alp-care-intent-recovery-'+'e'.repeat(32),
+  r=>r.retainedPermissionLineage.operations[0].before.sha256='f'.repeat(64),
+  r=>r.retainedPermissionLineage.operations[1].before.configuration.RevisionId='unrelated',
+  r=>r.retainedPermissionLineage.operations[1].after.configuration.LastModified='invalid',
+  r=>r.retainedPermissionLineage.operations[0].startedAt='2020-01-01T00:00:00Z',
+  r=>r.retainedPermissionLineage.operations[1].after.policy={Policy:'{}'},
+  r=>r.retainedPermissionLineage.operations[1].verified=true]){
+  const f=metadataFixture(),recovery=f.port.recovery;f.port.recovery=async(...args)=>{const r=await recovery(...args);mutate(r);return r;};
+  await assert.rejects(run(f));assert.equal(f.events.some(e=>e.stage==='registered_standalone_completed'),false);
+  assert.equal((await checkCustody(f)).originalRunOutcome,'failed');
+ }
+});
+
+test('metadata drift after the verified cleanup is not normalized away by the standalone observer',async()=>{
+ const f=metadataFixture(),recovery=f.port.recovery;f.port.recovery=async(...args)=>{
+  const r=await recovery(...args);f.retained.configuration.RevisionId='external-change';
+  f.retained.configuration.LastModified=new Date(f.now).toISOString();return r;
+ };
+ await assert.rejects(run(f),/state_changed/);assert.equal(f.policy,null);
+ assert.equal(f.events.some(e=>e.stage==='registered_standalone_completed'),false);
+});
 test('fresh rehearsal visits both versions and verifies 105 cases without replaying the failed release',async()=>{
  const f=fixture(),original=Buffer.from(f.original.journalBytes),r=await run(f);
  assert.equal(r.recoveryRehearsed,true);assert.equal(r.originalRunOutcome,'failed');assert.equal(r.originalResultPreserved,true);

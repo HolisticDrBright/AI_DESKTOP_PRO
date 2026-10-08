@@ -8,7 +8,7 @@ import {verifyInterruptedRegisteredReleaseCustody} from './reconcile-synthetic-c
 import {verifyRegisteredStandaloneLock,verifyRegisteredStandaloneCustody} from './care-registered-standalone-custody.mjs';
 import {verifyCareRegisteredRestorationDeployment} from './care-registered-deployment.mjs';
 import {verifyCareRegisteredDatabase,verifyCareRegisteredFunction,verifyCareRegisteredSuccessorFunction} from './care-registered-preflight.mjs';
-import {verifyRegisteredIntentPhase} from './care-registered-routing.mjs';
+import {verifyRegisteredIntentPhase,verifyRegisteredRetainedPermissionLineage} from './care-registered-routing.mjs';
 import {assertSyntheticMemberIdentity} from './synthetic-aws-principal.mjs';
 const check=(ok,c)=>{if(!ok)refuseRegistered('standalone_'+c);};
 const equal=(a,b)=>canonical(a)===canonical(b);
@@ -49,6 +49,7 @@ export function verifyRegisteredStandaloneRecovery(report,input,operator,started
   &&report.events[0].caseCount===105&&report.events[0].version==='2'
   &&report.events[1].stage==='registered_recovery_route_permission_restored'
   &&report.events[2].stage==='registered_compatible_routing_completed'&&report.events[2].version==='2','recovery_events');
+ verifyRegisteredRetainedPermissionLineage(report.retainedPermissionLineage,begin,end);
  return report;
 }
 /** Tests supply fictional transports. The public runner must construct
@@ -111,8 +112,9 @@ export async function runRegisteredStandaloneRehearsal(candidate,operator,c,sour
   check(apiDeployment?.DeploymentId===raw.stage.DeploymentId&&apiDeployment.DeploymentStatus==='DEPLOYED','api_deployment');
   await guard();return {observedAt:witness.after.observedAt,database,raw,deployment,retained,storage,apiDeployment,...views};
  };
- const same=(a,b,returned=false)=>{
-  check(equal(inventory(a.database),inventory(b.database))&&equal(a.raw.fn,b.raw.fn)&&equal(a.storage,b.storage)&&equal(a.retained,b.retained),'state_changed');
+ const same=(a,b,returned=false,lineage)=>{
+  const retainedMatches=lineage?equal(a.retained,lineage.before)&&equal(b.retained,lineage.after):equal(a.retained,b.retained);
+  check(equal(inventory(a.database),inventory(b.database))&&equal(a.raw.fn,b.raw.fn)&&equal(a.storage,b.storage)&&retainedMatches,'state_changed');
   for(const k of ['functionConfigurationSha256','resourcesSha256','templateSha256','parametersSha256','routesSha256','authorizersSha256',
    'integrationsSha256','policySha256','roleSha256','identityRouteCount','apiRouteCount'])check(a.deployment.control[k]===b.deployment.control[k],'authority_changed');
   const stage=v=>{const s=structuredClone(v);for(const k of ['DeploymentId','LastUpdatedDate','LastDeploymentStatusMessage'])delete s[k];return s;};
@@ -141,9 +143,11 @@ export async function runRegisteredStandaloneRehearsal(candidate,operator,c,sour
     await append(stage,detail);if(stage==='registered_recovery_permission_admitted')writeAdmitted=true;},
   });
   verifyRegisteredStandaloneRecovery(recovery,input,operator,started,d.now(),d.parseIntent);
+  const retainedLineage=verifyRegisteredRetainedPermissionLineage(recovery.retainedPermissionLineage,
+   Date.parse(recovery.startedAt),Date.parse(recovery.completedAt),'alp-care-intent-recovery-'+lock.runId);
   check(equal(databaseContents(recovery.databaseBefore),databaseContents(first.database))
    &&equal(databaseContents(recovery.databaseAfter),databaseContents(first.database)),'rehearsal_database_binding');
-  const third=await observe(),fourth=await observe();same(first,third,true);same(third,fourth);
+  const third=await observe(),fourth=await observe();same(first,third,true,retainedLineage);same(third,fourth);
   check(equal(recovery.initialControl,first.deployment.control)&&equal(recovery.transportWitness.restored.raw,fourth.raw)
    &&recovery.transportWitness.restored.policy===null&&recovery.transportWitness.initial===first.raw.stage.DeploymentId
    &&recovery.transportWitness.returnedDeployment===fourth.raw.stage.DeploymentId
