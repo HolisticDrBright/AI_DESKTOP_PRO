@@ -226,6 +226,17 @@ test('publication refresh cannot bless a changed, stale, partial or unconfirmed 
   assert.equal(x.events.some(e=>e.stage==='registered_change_set_verified_unexecuted'),false,kind);
  }
 });
+test('publication re-observes both proposal views after its potentially slow preflight refresh',async()=>{
+ const x=executionFixture();renewalPort(x);const refresh=x.port.refreshPreflight,create=x.port.create;
+ x.port.create=async fixed=>{const result=await create(fixed);x.f.now+=10000;return result;};
+ x.port.refreshPreflight=async()=>{
+  const result=await refresh();
+  x.f.summary.ExecutionStatus='EXECUTE_COMPLETE';x.f.detailed.ExecutionStatus='EXECUTE_COMPLETE';
+  return result;
+ };
+ await assert.rejects(propose(x));assert.equal(x.creates(),1);assert.equal(x.saved.length,0);
+ assert.equal(x.events.some(e=>e.stage==='registered_change_set_verified_unexecuted'),false);
+});
 test('renewal refuses stale/future/changed/partial observations before create admission',async()=>{
  for(const kind of ['stale','future','control','source','phi','missing_database','wrong_database','identity','unknown']){
   const x=executionFixture();renewalPort(x);const refresh=x.port.refreshPreflight;

@@ -74,7 +74,11 @@ export async function runCareRegisteredProposal(candidate,current,sourceText,pre
   if(!['CREATE_PENDING','CREATE_IN_PROGRESS'].includes(detailed?.Status))break;
   await port.wait(2000);
  }
- const summary=await port.describe(binding,false),actualTemplate=await port.template(binding),raw=await guard(true,true);
+ const raw=await guard(true,true),summary=await port.describe(binding,false);
+ // A complete preflight can take minutes. Its earlier proposal views cannot
+ // establish that the proposal is still unexecuted when the report is saved.
+ detailed=await port.describe(binding,true);
+ const actualTemplate=await port.template(binding);
  const projection=verifyCareRegisteredProposalViews(summary,detailed,actualTemplate,input,binding,raw,sourceText,
   activePreparation,current,candidate,artifact,port.now());
  const report={contract:'synthetic-care-registered-code-change/1',observedAt:new Date(port.now()).toISOString(),

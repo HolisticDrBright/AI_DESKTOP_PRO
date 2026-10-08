@@ -726,7 +726,11 @@ check crossed that deadline, correctly preventing a completed proposal result.
 Before publishing, the constructor now obtains a fresh complete read-only
 preflight when time has elapsed, binds its original controls, both canonical
 database observations, source and principal, and rechecks the exact proposal
-projections. The saved report names that new qualifying observation. The final
+ projections. Both proposal views and the template are re-read after this
+ potentially slow observation, so an intervening execution or missing proposal
+ cannot be reported from cached views. A separate negative test reproduces that
+ stale-projection defect before the repair. The saved report names the new
+ qualifying observation. The final
 guard still forbids renewal after saving, and the120-second limit remains.
 Slow saves, slow control reads, stale/future/partial observations, changed
 controls, changed identity and unknown replies still refuse. No create or
