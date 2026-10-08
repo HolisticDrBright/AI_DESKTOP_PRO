@@ -45,7 +45,8 @@ export async function runCareRegisteredLiveRecovery(root,mobileRoot,input,custod
  observeSyntheticMemberIdentity();const predecessor=readCareRegisteredPredecessor(root),
   inspect=buildCareRegisteredDatabaseObserver(root,current),parseIntent=await compileRegisteredIntentParser(root);
  const credentials=fromIni({profile}),options={region:P.region,credentials,maxAttempts:1,requestHandler:RECOVERY_AUTH_TRANSPORT},
-  secrets=new SecretsManagerClient(options),cognito=new CognitoIdentityProviderClient(options),rds=new RDSDataClient(options);
+  secrets=new SecretsManagerClient(options),cognito=new CognitoIdentityProviderClient(options),
+  rds=new RDSDataClient({region:P.region,credentials,maxAttempts:1,requestHandler:RECOVERY_AUTH_TRANSPORT});
  let rows=[];const authenticationIds=new Set(),receiptIds=new Map();
  const unchanged=()=>{check(!Object.entries(process.env).some(([k,v])=>/^AWS_ENDPOINT_URL(?:_|$)/.test(k)&&v),'endpoint_override');
   check(canonical(careRegisteredCurrent(root,mobileRoot))===canonical(current),'source_changed');custody.verify();observeSyntheticMemberIdentity();};

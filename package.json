@@ -111,6 +111,8 @@
     "test:synthetic-care-registered-routing": "node --test scripts/care-registered-routing.test.mjs",
     "release:synthetic-care-registered": "node scripts/release-synthetic-care-registered.mjs",
     "test:synthetic-care-registered-live-runner": "node --test scripts/care-registered-live-runner.test.mjs",
+    "reconcile:synthetic-care-registered-release": "node scripts/reconcile-synthetic-care-registered-release.mjs",
+    "test:synthetic-care-registered-release-reconciliation": "node --test scripts/care-registered-release-reconciliation.test.mjs",
     "test:care-erasure-recovery-source": "node --test scripts/build-care-erasure-recovery-source.test.mjs",
     "build:aws-care-consent-copy": "node scripts/build-care-consent-copy-operator.mjs",
     "build:aws-care-messaging": "node scripts/build-aws-care-messaging.mjs",

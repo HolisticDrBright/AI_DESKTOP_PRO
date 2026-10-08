@@ -37,6 +37,22 @@ export function verifyCareRegisteredBeforeExecution(before,candidate,current,sou
 /** Exhaust actual post-execution observations. A completed change set is not
  * a byte proof, a byte proof is not an authority proof, and none is recovery. */
 export function verifyCareRegisteredDeployment(w,candidate,current,sourceText,artifact,started,now){
+ return verifyRegisteredDeploymentObservation(w,candidate,current,sourceText,artifact,started,now,current);
+}
+/** A stopped writer's historical admission remains historical. A new clean
+ * operator inspects the database under its own source identity; neither raw
+ * observation is rewritten to impersonate the other source. This profile
+ * proves present deployment state, not completion of recovery or acceptance. */
+export function verifyCareRegisteredReconciledDeployment(w,candidate,current,sourceText,artifact,operator,started,now){
+ check(equal(operator.mobile,current.mobile)&&equal(operator.migrations,current.migrations)
+  &&operator.templateSha256===current.templateSha256,'reconciliation_operator_binding');
+ check(Date.parse(w.after?.observedAt)>=started,'reconciliation_observation');
+ const beforeStarted=Date.parse(w.before?.observedAt);
+ const result=verifyRegisteredDeploymentObservation(w,candidate,current,sourceText,artifact,beforeStarted,now,operator);
+ return {...result,contract:'synthetic-care-registered-reconciled-deployment/1',operatorSource:structuredClone(operator),
+  originalExecutionOutcome:'unconfirmed',retryPerformed:false};
+}
+function verifyRegisteredDeploymentObservation(w,candidate,current,sourceText,artifact,started,now,databaseCurrent){
  check(keys(w,['contract','current','artifact','executionAdmittedAt','before','after','codeBytes'])
   &&w.contract==='synthetic-care-registered-deployment-observation/1'
   &&equal(w.current,current)&&equal(w.artifact,artifact),'witness_binding');
@@ -71,8 +87,12 @@ export function verifyCareRegisteredDeployment(w,candidate,current,sourceText,ar
  check(equal(a.raw.foundation,b.raw.foundation),'foundation_changed');
  check(equal(stageConfig(a.raw.stage),stageConfig(b.raw.stage)),'stage_configuration_changed');
  check(Buffer.isBuffer(w.codeBytes)&&w.codeBytes.equals(candidate.zip),'downloaded_bytes');
- const db=verifyCareRegisteredDatabase(a.database,current,admitted,afterTime);
- check(equal(databaseInventory(db),databaseInventory(b.database)),'database_changed');
+ const db=verifyCareRegisteredDatabase(a.database,databaseCurrent,admitted,afterTime);
+ const beforeDatabase=databaseInventory(b.database),afterDatabase=databaseInventory(db);
+ // Both identities were separately checked above. Compare the complete
+ // database inventory excluding only the source attribution and read time.
+ delete beforeDatabase.operatorSource;delete afterDatabase.operatorSource;
+ check(equal(afterDatabase,beforeDatabase),'database_changed');
  return {contract:'synthetic-care-registered-deployment-readback/1',execution:'synthetic-staging',account:P.account,
   observedAt:a.observedAt,current:structuredClone(current),zipSha256:candidate.manifest.zipSha256,
   codeVersion:artifact.versionId,stackId:b.binding.stackId,changeSetId:b.binding.id,

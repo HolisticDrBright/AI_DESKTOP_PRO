@@ -400,9 +400,10 @@ synthetic command is:
 node scripts/release-synthetic-care-registered.mjs --v2-root <exact-V2-checkout> --artifact <exact-current-candidate-directory> --release-fictional-registered-with-fresh-recovery
 ```
 
-Do not start this new command until its interrupted-release read-only
-reconciliation path is implemented and qualified. The known custody safeguards
-prevent blind retries but do not themselves finish recovery after a dead writer.
+The interrupted-release read-only observer below is implemented and locally
+tested. Do not start this command until explicit recovery of a dead writer's
+still-installed version2 permission or retained routing is also qualified.
+Read-only inspection deliberately cannot repair those two remote states.
 
 Its own upload and proposal bind the new clean source pair. The encrypted
 immutable object is downloaded, both complete proposal views inspected, and
@@ -436,9 +437,9 @@ One `registered-artifact-upload-release` custody spans all operations. Before
 and admission files, journal and receipts are separate from the immutable
 artifact. A failed or exhausted admitted operation retains its lock. The old
 upload-only and stopped-unexecuted-proposal reconcilers intentionally cannot
-settle this larger journal. A dedicated read-only interrupted-execution/recovery
-reconciler remains engineering; do not remove or recreate the lock or rerun a
-write after an unknown outcome. The new command is not yet hosted-qualified.
+settle this larger journal. The dedicated interrupted-release reconciler is
+described below; do not remove or recreate the lock or rerun a write after an
+unknown outcome. Neither live command is yet hosted-qualified.
 Its terminal result distinguishes the upload receipt from code/recovery
 evidence; neither is full erasure acceptance, release acceptance or PHI approval.
 
@@ -455,3 +456,54 @@ releases; Core19.99 store/provider acceptance; matched API/Desktop/mobile and
 physical iOS/Android/five-persona, rollback/load/security/recovery verification.
 Clinical holds and exclusions remain. Reviewed policies, actual provider
 agreement/runtime coverage and separate PHI activation are still required.
+
+### Interrupted release inspection
+
+The fixed read-only command is:
+
+```
+node scripts/reconcile-synthetic-care-registered-release.mjs --v2-root <exact-V2-checkout> --artifact <interrupted-run-artifact> --application-root <clean-frozen-application-checkout> --reconcile-fictional-registered-execution-only
+```
+
+The clean current operator and the clean frozen application are separately
+bound to the same V2 source, template and migration release. The original
+writer must be stopped; its exact lock and journal must remain unchanged.
+The observer accepts only a complete, ordered journal prefix, including every
+known admission. Unknown stages, fields, duplicate keys or truncated records
+retain custody. A hard crash need not have produced a terminal finding.
+
+Before execution, it repeatedly downloads the old managed code and retained
+version2, checks the full old authority and canonical database, and observes
+the exact candidate object. An ambiguous PUT stays `unknown` even if the object
+is now exact or absent. Absence is not a deletion certificate. An admitted
+change-set creation with a lost reply must be located as the exact complete,
+AVAILABLE proposal. Missing, unfinished, executed or foreign proposals refuse.
+
+After execution admission, the two archived complete before observations and
+the admission file must retain their byte digests and content-addressed names.
+They establish the historical input, not current service state. The observer
+checks two fresh complete CloudFormation projections, exact candidate downloads,
+configuration, IAM, routes, resources, API deployment status, retained version2
+bytes and unchanged canonical database. The current database inspection names
+the current operator; it is never rewritten to impersonate the frozen writer.
+
+Only a complete current successor with latest routing and no version2 policy
+can settle an admitted execution. In-progress execution, qualified routing,
+remaining permission, missing object, incomplete inventory or any source,
+principal, process, journal, admission or authority drift retains the lock.
+The observer contains no execution, routing, permission, SQL, provider or build
+write. Exact local custody is archived and a durable reconciliation receipt is
+read back before only the local operator lock is removed. Original failed or
+interrupted results are not converted into successful release results.
+
+`deployed:true` describes the independently observed successor only. Recovery,
+erasure, hosted acceptance, release acceptance, physical acceptance and PHI
+remain false. A failed routing rehearsal requires a separately admitted fresh
+rehearsal even when routing is now safe. A dead writer leaving qualified routing
+or a temporary permission requires a distinct, bound compensating-restoration
+path; that path remains engineering. Never remove the lock, invoke the old
+proposal-only reconciler or rerun the release to work around this refusal.
+
+Local verification uses fictional ports and filesystem fixtures, not AWS
+qualification. The original six scopes remain incomplete. Paid mobile builds
+remain held and all clinical exclusions and source-verification gates remain.
