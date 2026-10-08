@@ -30,7 +30,7 @@ export const sha256 = v => createHash('sha256').update(v).digest('hex');
 export const normalizedText = (root, file) => readFileSync(resolve(root, file), 'utf8').replace(/\r\n?/g, '\n');
 export async function buildCareIdentityBundle(root) {
   const {build} = await import('esbuild');
-  const result = await build({entryPoints: [resolve(root, 'src/server/clinical-core/aws-identity-lambda.ts')],
+  const result = await build({absWorkingDir: resolve(root), entryPoints: [resolve(root, 'src/server/clinical-core/aws-identity-lambda.ts')],
     write: false, bundle: true, platform: 'node', target: 'node22', format: 'cjs', minify: false,
     sourcemap: false, legalComments: 'none', treeShaking: true, logLevel: 'warning'});
   if (result.outputFiles?.length !== 1) refuseCareRelease('build_outputs');

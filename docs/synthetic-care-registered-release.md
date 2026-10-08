@@ -222,7 +222,8 @@ Successful proposal custody settles only after both views and final readback.
 Any admitted upload or proposal with an unknown outcome retains custody. The
 upload-only reconciliation command intentionally refuses the combined proposal
 purpose: do not delete that lock, retry creation or substitute a saved report.
-A compatible proposal reconciliation/execution operator is still required.
+A separate read-only combined-proposal reconciliation operator is described
+below. Registered execution and compatible recovery are still required.
 An unexecuted proposal reports `executionAdmissible:false`, not release approval.
 
 The fourteen proposal tests use fictional transports, including lost create
@@ -250,6 +251,43 @@ contexts still permit only key/version changes; arbitrary duplicate paths,
 extra fields, wrong values and non-code changes remain refused. Six orderings
 and eleven invalid mutations are tested. This source repair does not qualify
 the historical live run or settle its custody, and no execution occurred.
+
+### Reconcile a stopped combined proposal
+
+The new operator supports a completed exact upload followed by a failed,
+observed, unexecuted proposal. It does not generalize an unknown upload or
+unobserved creation into a pass; those unsupported shapes retain custody.
+Use a clean checkout of the candidate's exact frozen Desktop commit as the
+application root, separately from the current clean operator checkout:
+
+```powershell
+npm run reconcile:synthetic-care-registered-proposal -- --v2-root "<matched V2 checkout>" --artifact "<frozen candidate directory>" --application-root "<clean frozen Desktop checkout>" --reconcile-fictional-registered-proposal-only
+```
+
+The command independently rebuilds that application, compares its exact source
+pair and candidate bytes, inspects the live canonical database twice with the
+current compiled operator, and observes the complete current predecessor
+controls, exact S3 version and both CloudFormation projections repeatedly.
+It requires the original writer to be stopped, a settled bounded journal, a
+matching assumed principal and unchanged sources, storage, proposal and data.
+It accepts no saved report, target/profile override, skip, upload, execution,
+schema or paid-build option. It preserves the original failed outcome.
+
+Only after a durable receipt and recoverable archive are read back does it
+retire that exact local lock under the shared reconciliation guard. The original
+journal, artifact, remote object and unexecuted proposal remain untouched.
+The receipt is not execution authority. A fresh matched candidate, deployment
+qualification, compatible traffic recovery and all hosted journeys are still
+required. Eight credential-free tests cover boundaries, late drift, both raw
+views, database preservation and failed archival; they are not a hosted result.
+
+The independent frozen-source rebuild also exposed a directory-dependent
+bundle: esbuild used the operator's launch directory when writing source-path
+comments. A separate regression failed before setting `absWorkingDir` to the
+application root. Launching from either the frozen checkout or the operator
+checkout now yields identical bytes. An actual local rebuild of Desktop4a29/
+V2 38ea matched the already-uploaded e5d8 artifact exactly. This is local source
+evidence, not AWS deployment or device acceptance.
 
 The next operator must use its own observations, never supplied report flags:
 

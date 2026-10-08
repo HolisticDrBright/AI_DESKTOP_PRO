@@ -12,12 +12,18 @@ const equal=(a,b)=>canonical(a)===canonical(b);
 const keys=(o,names)=>o&&typeof o==='object'&&!Array.isArray(o)&&equal(Object.keys(o).sort(),[...names].sort());
 
 export function careRegisteredCodeChangeInputs(sourceText,candidate,current,preflight,artifact,now){
- verifyCareRegisteredCandidate(candidate,current);
  verifyRegisteredUploadPreflight(preflight,candidate,current,now);
+ const input=careRegisteredCodeTemplateInputs(sourceText,candidate,current,artifact);
+ check(sha256(canonical(careRegisteredPredecessorTemplate(JSON.parse(sourceText))))===preflight.control?.templateSha256,'predecessor_template');
+ return input;
+}
+/** Static input binding only. Reconciliation must supply its own live reads;
+ * this never establishes preflight freshness, write or execution admission. */
+export function careRegisteredCodeTemplateInputs(sourceText,candidate,current,artifact){
+ verifyCareRegisteredCandidate(candidate,current);
  check(typeof sourceText==='string'&&sha256(sourceText)===current.templateSha256,'source_template');
  let source;try{source=JSON.parse(sourceText);}catch{refuseRegistered('proposal_source_template');}
  const template=careRegisteredPredecessorTemplate(source);
- check(sha256(canonical(template))===preflight.control?.templateSha256,'predecessor_template');
  check(keys(artifact,['bucket','key','versionId','sha256','bytes','reused','encryption','kmsKeyArn','exactVersionReadbackVerified'])
   &&artifact.bucket===P.bucket&&artifact.key===candidate.manifest.key&&artifact.sha256===candidate.manifest.zipSha256
   &&artifact.bytes===candidate.zip.length&&artifact.exactVersionReadbackVerified===true&&typeof artifact.reused==='boolean'
@@ -67,11 +73,19 @@ export function parseRegisteredPropertyContext(text){
 export function verifyCareRegisteredProposalViews(summary,detailed,actualTemplate,input,binding,raw,sourceText,preflight,current,candidate,artifact,now){
  const rebuilt=careRegisteredCodeChangeInputs(sourceText,candidate,current,preflight,artifact,now);
  check(equal(rebuilt,input),'inputs_changed');
+ return verifyCareRegisteredUnexecutedProposalViews(summary,detailed,actualTemplate,input,binding,raw,sourceText,
+  preflight.control,current,candidate,artifact,now);
+}
+/** Complete unexecuted projection verification only. The stopped-operation
+ * observer independently binds the frozen application, clean current operator,
+ * fresh database/control reads and custody. No archived report is authority. */
+export function verifyCareRegisteredUnexecutedProposalViews(summary,detailed,actualTemplate,input,binding,raw,sourceText,expectedControl,current,candidate,artifact,now){
+ check(equal(careRegisteredCodeTemplateInputs(sourceText,candidate,current,artifact),input),'inputs_changed');
  const fixed=careRegisteredChangeSetBinding(input,current,artifact);
  check(binding?.stackId===fixed.stackId&&binding.name===fixed.name&&typeof binding.id==='string'
   &&new RegExp('^arn:aws:cloudformation:'+P.region+':'+P.account+':changeSet/'+fixed.name+'/[A-Za-z0-9-]{1,128}$').test(binding.id),'binding');
  const source=JSON.parse(sourceText),control=verifyCareRegisteredPredecessorControl(raw,source);
- check(equal(control,preflight.control),'control_changed');
+ check(equal(control,expectedControl),'control_changed');
  const metadata=set=>{const copy=structuredClone(set);delete copy.Changes;return copy;};
  const allowed=['StackId','StackName','ChangeSetName','ChangeSetId','Status','ExecutionStatus','Capabilities','NotificationARNs',
   'RollbackConfiguration','DeploymentConfig','Parameters','CreationTime','Description','Tags','IncludeNestedStacks','ImportExistingResources'];

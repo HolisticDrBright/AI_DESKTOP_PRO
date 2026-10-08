@@ -122,6 +122,15 @@ test('real paired clean-source builder and independent rebuild pass without any 
   const cli=await runCareRegisteredBuild(p.desktop,['--v2-root',p.mobile]);assert.equal(cli.directory,dir);
  }finally{dispose(p.root);}
 });
+test('frozen application rebuild bytes do not depend on the operator working directory',()=>{
+ const p=pair();try{
+  const moduleUrl=new URL('./synthetic-care-release.mjs',import.meta.url).href;
+  const code=`import {buildCareIdentityBundle} from ${JSON.stringify(moduleUrl)}; process.stdout.write((await buildCareIdentityBundle(process.argv[1])).toString('base64'));`;
+  const buildAt=cwd=>execFileSync(process.execPath,['--input-type=module','-e',code,p.desktop],{
+   cwd,encoding:'utf8',windowsHide:true,timeout:30000,maxBuffer:1024*1024,stdio:['ignore','pipe','pipe']});
+  assert.equal(buildAt(p.desktop),buildAt(process.cwd()));
+ }finally{dispose(p.root);}
+});
 test('a consistently rehashed invented bundle passes only byte checks and fails the actual source rebuild',async()=>{
  const p=pair();try{const c=createCareRegisteredCandidate(careRegisteredCurrent(p.desktop,p.mobile),Buffer.from('exports.handler=()=>"invented";'));
   verifyCareRegisteredCandidate(c,c.current);const dir=writeCareRegisteredCandidate(p.desktop,c);
