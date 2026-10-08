@@ -644,11 +644,21 @@ async function verifySubject(tx: ClinicalCoreTransaction, input: CatalogReviewIn
     declared_restricted: boolean;
     direct_order_allowed: boolean;
     product_review_status: string | null;
+    product_environment: string | null;
+    product_type: string | null;
+    product_access_tier: string | null;
+    product_declared_restricted: boolean | null;
+    product_direct_order_allowed: boolean | null;
   }>(
     `select v.environment, v.declared_restricted, v.direct_order_allowed,
-            p.review_status as product_review_status
+            p.review_status as product_review_status, p.environment as product_environment,
+            pv.product_type, pv.access_tier as product_access_tier,
+            pv.declared_restricted as product_declared_restricted,
+            pv.direct_order_allowed as product_direct_order_allowed
      from commercial_reference.affiliate_offer_versions v
      left join clinical_reference.catalog_products p on p.stable_id = v.product_stable_id
+     left join clinical_reference.catalog_product_versions pv
+       on pv.product_stable_id = p.stable_id and pv.version = p.active_version
      where v.offer_stable_id = $1 and v.version = $2`,
     [input.stableId, input.version],
   );
@@ -657,6 +667,9 @@ async function verifySubject(tx: ClinicalCoreTransaction, input: CatalogReviewIn
   if (row.environment !== input.environment
     || (input.outcome === "approved" && row.direct_order_allowed && (
       row.declared_restricted || row.product_review_status !== "approved"
+      || row.product_environment !== input.environment || row.product_type !== "supplement"
+      || row.product_access_tier !== "open" || row.product_declared_restricted !== false
+      || row.product_direct_order_allowed !== true
     ))) precondition();
 }
 
@@ -671,12 +684,15 @@ async function updateRegistry(tx: ClinicalCoreTransaction, input: CatalogReviewI
     );
     return;
   }
+  // Withdrawing THIS active version must withdraw its read authority. A rejected
+  // successor, however, must not silently revoke a different approved version.
   await tx.query(
     `update ${schema}.${table}
-     set review_status = case when active_version is null then $2 else review_status end,
+     set review_status = case when active_version is null or active_version = $3 then $2 else review_status end,
+         active_version = case when active_version = $3 then null else active_version end,
          updated_at = clock_timestamp()
      where stable_id = $1`,
-    [input.stableId, input.outcome === "rejected" ? "rejected" : "needs_review"],
+    [input.stableId, input.outcome === "rejected" ? "rejected" : "needs_review", input.version],
   );
 }
 
