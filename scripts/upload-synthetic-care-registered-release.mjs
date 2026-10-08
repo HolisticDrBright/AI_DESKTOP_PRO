@@ -104,12 +104,13 @@ export function registeredOperationDirectory(root,current,candidate){
  for(const part of ['synthetic-care-registered-operations',current.desktop.commit,current.mobile.source.commit,candidate.manifest.zipSha256])step(part);
  return directory;
 }
-export async function uploadCareRegisteredRelease(root,mobileRoot,directory,proposal){
+export async function uploadCareRegisteredRelease(root,mobileRoot,directory,proposal,release=false){
  check(proposal===undefined||typeof proposal==='function','proposal_callback');
+ check(typeof release==='boolean'&&(!release||typeof proposal==='function'),'release_callback');
  const current=careRegisteredCurrent(root,mobileRoot),candidate=readCareRegisteredCandidate(directory);
  verifyCareRegisteredCandidate(candidate,current);observeSyntheticMemberIdentity();
  const out=registeredOperationDirectory(root,current,candidate);
- const custody=createIntentUploadCustody(root,out,current,proposal?'registered-artifact-upload-proposal':'registered-artifact-upload');
+ const custody=createIntentUploadCustody(root,out,current,release?'registered-artifact-upload-release':proposal?'registered-artifact-upload-proposal':'registered-artifact-upload');
  const client=new S3Client({region:P.region,credentials:fromIni({profile}),maxAttempts:1,requestHandler:REGISTERED_UPLOAD_TRANSPORT});
  let transportFailure;
  try{
@@ -142,7 +143,7 @@ export async function uploadCareRegisteredRelease(root,mobileRoot,directory,prop
    };
    await unchanged();verifyRegisteredUploadPreflight(fresh,candidate,current,Date.now());
    proposed=await proposal({candidate,current,artifact:report.artifact,preparation:fresh,unchanged,
-    operationsDirectory:out,record:custody.record,admit:custody.admit});
+    operationsDirectory:out,record:custody.record,admit:custody.admit,verify:custody.verify});
    await unchanged();
   }
   custody.record({stage:'registered_upload_completed',receipt});custody.settle();

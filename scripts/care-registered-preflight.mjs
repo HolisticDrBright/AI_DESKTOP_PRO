@@ -74,15 +74,22 @@ export function verifyCareRegisteredPredecessorControl(o,source){
  return verifyRegisteredControlInventory(o,source,careRegisteredPredecessorTemplate(source),parameterValues(),verifyCareRegisteredFunction);
 }
 export function verifyCareRegisteredSuccessorControl(o,source,candidate,current,artifact){
+ return verifyCareRegisteredRoutingControl(o,source,candidate,current,artifact);
+}
+/** The one retained predecessor is admitted only for a temporary recovery
+ * route. Actual responses remain intact; all other inventory checks are shared. */
+export function verifyCareRegisteredRoutingControl(o,source,candidate,current,artifact,retainedVersion){
+ check(retainedVersion===undefined||retainedVersion===CARE_REGISTERED_PREDECESSOR.retainedVersion,'routing_version');
  verifyCareRegisteredArtifactBinding(candidate,current,artifact);
  const expected=careRegisteredPredecessorTemplate(source);
  expected.Resources.IdentityApiFunction.Properties.Code.S3ObjectVersion=artifact.versionId;
  return verifyRegisteredControlInventory(o,source,expected,{...parameterValues(),LambdaCodeKey:artifact.key},
-  fn=>verifyCareRegisteredSuccessorFunction(fn,candidate,current));
+  fn=>verifyCareRegisteredSuccessorFunction(fn,candidate,current),
+  retainedVersion?`${R.latestArn}:${retainedVersion}`:R.latestArn);
 }
 /** Both profiles exhaust the same actual inventory; no raw response is patched
  * or reduced before the common authority and configuration checks. */
-function verifyRegisteredControlInventory(o,source,expected,expectedParameters,verifyFunction){
+function verifyRegisteredControlInventory(o,source,expected,expectedParameters,verifyFunction,uri=R.latestArn){
  const foundation=o.foundation?.Stacks?.[0],stack=o.stack?.Stacks?.[0];
  check(o.foundation?.Stacks?.length===1&&foundation.StackName===P.foundation
   &&['CREATE_COMPLETE','UPDATE_COMPLETE'].includes(foundation.StackStatus)
@@ -104,7 +111,7 @@ function verifyRegisteredControlInventory(o,source,expected,expectedParameters,v
  inventory(o.logGroups,'logGroups','logGroupName');
  const integrations=inventory(o.integrations,'Items','IntegrationId'),routes=inventory(o.routes,'Items','RouteId'),authorizers=inventory(o.authorizers,'Items','AuthorizerId');
  check(integrations.filter(x=>x.IntegrationId===R.integrationId).length===1,'identity_integration');
- verifyRecoveryIntegration(integrations.find(x=>x.IntegrationId===R.integrationId),R.latestArn);
+ verifyRecoveryIntegration(integrations.find(x=>x.IntegrationId===R.integrationId),uri);
  verifyRecoveryStage(o.stage);verifyRecoveryLatestPolicy(o.latestPolicy);
  const policy=JSON.parse(o.latestPolicy.Policy);
  check(physical('IdentityApiInvokePermission')===policy.Statement[0].Sid,'invoke_physical');

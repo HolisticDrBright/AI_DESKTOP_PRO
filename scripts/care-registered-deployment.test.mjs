@@ -118,6 +118,25 @@ test('missing independent preflight or stale/changed exact storage cannot admit 
   assert.equal(x.events.some(e=>e.stage==='registered_change_execute_admitted'),false);
  }
 });
+test('slow complete observations renew through the real preflight port, never by refreshing an old report timestamp',async()=>{
+ const x=execution(),oldTime=x.f.preflight.observedAt;let calls=0,beforeCalls=0;
+ x.port.preflight=async()=>{const r=structuredClone(x.f.preflight);if(++calls===2){x.state.now+=180000;r.observedAt=new Date(x.state.now).toISOString();}return r;};
+ const observe=x.port.before;x.port.before=async()=>{const b=await observe();if(++beforeCalls===2){
+  b.observedAt=new Date(x.state.now).toISOString();b.database.observedAt=b.observedAt;}return b;};
+ x.port.after=async()=>{x.state.now+=30000;const after=structuredClone(x.f.after);
+  after.observedAt=new Date(x.state.now).toISOString();after.database.observedAt=after.observedAt;
+  return {after,codeBytes:Buffer.from(x.f.candidate.zip)};};
+ const r=await run(x);assert.equal(r.deployed,true);assert.equal(calls,2);assert.equal(x.f.preflight.observedAt,oldTime);
+ assert.equal(x.state.executes,1);
+});
+test('renewed preflight source, role, rebuild or authority refusal cannot admit execution',async()=>{
+ for(const kind of ['control','rebuild','source','failed']){
+  const x=execution();let count=0;const observe=x.port.preflight;x.port.preflight=async()=>{const r=await observe();if(++count===2){
+   if(kind==='failed')throw Error('renewal failed');if(kind==='control')r.control.revision+='changed';
+   if(kind==='rebuild')r.independentSourceRebuildVerified=false;if(kind==='source')r.current.desktop.sha256='0'.repeat(64);
+  }return r;};await assert.rejects(run(x));assert.equal(x.state.executes,0);
+ }
+});
 test('terminal failure, unknown target, partial inventory or exhausted observation cannot certify or replay execution',async()=>{
  for(const kind of ['failed','target','page','pending','readback','source_after']){
   const x=execution(),observe=x.port.execution;

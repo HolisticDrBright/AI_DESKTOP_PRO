@@ -1,6 +1,6 @@
 /** Current registered-history execution/readback primitives. No public CLI,
  * saved-report loader or AWS transport is exposed. The eventual live runner
- * must bind all observers itself, keep durable custody and complete recovery. */
+ * binds all observers itself, keeps durable custody and completes recovery. */
 import {CARE_RELEASE as P,sha256} from './synthetic-care-release.mjs';
 import {verifyCareRegisteredCandidate,refuseRegistered} from './synthetic-care-registered-release.mjs';
 import {canonical} from './care-recovery-routing.mjs';
@@ -100,17 +100,22 @@ export async function runCareRegisteredExecution(candidate,current,sourceText,ar
   check(r?.state==='stored_exact_version'&&r.bytesVerified===true&&r.versionId===artifact.versionId
    &&r.sha256===candidate.manifest.zipSha256&&r.bytes===candidate.zip.length&&r.deletionCertified===false,'storage_binding');return r;};
  const firstStorage=await storage(),before=await port.before();
- verifyCareRegisteredBeforeExecution(before,candidate,current,sourceText,artifact,started,port.now());await guard();
+ const first=verifyCareRegisteredBeforeExecution(before,candidate,current,sourceText,artifact,started,port.now());await guard();
+ // Two complete service/database observations can outlive the initial
+ // preflight. Renew from the actual observer, not a saved report or timestamp
+ // edit, before the final fresh observation and admission.
+ const renewed=await port.preflight();
+ verifyRegisteredUploadPreflight(renewed,candidate,current,port.now());
+ check(equal(renewed.control,preparation.control)&&equal(first.control,renewed.control),'renewed_control_changed');await guard();
  // A final complete read is necessary after local preparation. Timestamp or
  // saved receipt flags cannot stand in for this observation.
  const finalBefore=await port.before();
- const first=verifyCareRegisteredBeforeExecution(before,candidate,current,sourceText,artifact,started,port.now()),
-  last=verifyCareRegisteredBeforeExecution(finalBefore,candidate,current,sourceText,artifact,started,port.now());
+ const last=verifyCareRegisteredBeforeExecution(finalBefore,candidate,current,sourceText,artifact,started,port.now());
  const comparable=b=>{const copy=structuredClone(b);delete copy.observedAt;delete copy.database.observedAt;
   delete copy.raw.role.Role.RoleLastUsed;for(const group of copy.raw.logGroups.logGroups)delete group.storedBytes;return copy;};
  check(equal(first,last)&&equal(comparable(before),comparable(finalBefore))&&equal(last.control,preparation.control),'before_changed');
  check(equal(await storage(),firstStorage),'storage_changed');await guard();
- verifyRegisteredUploadPreflight(preparation,candidate,current,port.now());
+ verifyRegisteredUploadPreflight(renewed,candidate,current,port.now());
  const admitted=new Date(port.now()).toISOString();
  verifyCareRegisteredBeforeExecution(finalBefore,candidate,current,sourceText,artifact,started,port.now());
  const binding=finalBefore.binding,token=sha256(canonical({contract:'care-registered-execution-input/1',binding,current,artifact}));

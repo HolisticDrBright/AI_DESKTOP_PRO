@@ -80,7 +80,10 @@ function durable(file,value){
 }
 export async function prepareCareRegisteredCodeChange(root,mobileRoot,directory){
  check(!Object.entries(process.env).some(([k,v])=>/^AWS_ENDPOINT_URL(?:_|$)/.test(k)&&v),'endpoint_override');
- return uploadCareRegisteredRelease(root,mobileRoot,directory,async c=>{
+ return uploadCareRegisteredRelease(root,mobileRoot,directory,c=>proposeCareRegisteredLive(root,c));
+}
+/** Internal live composition, never a caller-supplied proposal report. */
+export async function proposeCareRegisteredLive(root,c){
   const sourceText=normalizedText(root,'infra/aws-clinical-core/identity-api-extension.json');let out;
   const folder=fixed=>{
    const name=resolve(c.operationsDirectory,'proposal-'+fixed.digest);
@@ -107,7 +110,6 @@ export async function prepareCareRegisteredCodeChange(root,mobileRoot,directory)
    saveReport:async(fixed,report)=>durable(resolve(folder(fixed),sha256(canonical(report))+'.json'),report),
   });
   return {directory:out,...proposed};
- });
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(resolve(process.argv[1])).href){
  Promise.resolve().then(()=>careRegisteredProposalArguments(process.argv.slice(2)))

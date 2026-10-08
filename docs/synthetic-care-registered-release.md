@@ -335,11 +335,13 @@ custody until independently reconciled; do not recreate retired locks.
 
 ### Registered execution and post-execution readback source
 
-`care-registered-deployment.mjs` now provides the current-history execution
-and readback primitives. They are not a public deployment command: no AWS
-transport, saved-report loader, profile/target override, standalone schema
-operation or activation port is present. A fixed live runner and compatible
-traffic-recovery orchestration remain required before deployment.
+`care-registered-deployment.mjs` provides the current-history execution and
+readback primitives. The fixed live composition is now
+`release-synthetic-care-registered.mjs`; it binds actual AWS, source, bytes,
+proposal and compiled inspection observers, rather than loading an approval
+report. The underlying primitive still has no transport, profile/target
+override, standalone schema operation or activation port. This new live
+composition has not yet run against AWS.
 
 Execution requires the independent source/predecessor preflight, two complete
 fresh predecessor/database/proposal observations, repeated exact stored-version
@@ -361,6 +363,11 @@ same raw inventory; successor responses are never rewritten to pass an old-code
 check. Neither an executed proposal nor a deployment proof substitutes for
 compatible recovery, patient journeys, a matched mobile release or PHI review.
 
+Slow observation cycles renew through the real preflight observer before the
+last fresh full observation. No saved report timestamp is updated. The first
+observation is validated when read; the last one and renewed preflight must
+still be fresh at admission, with the same exhaustive inventories.
+
 The credential-free suite covers successful and lost-reply execution, failed
 admission, unknown target, source/principal/custody drift, stale preflight,
 changed exact storage, all incomplete/failing execution states, hidden control
@@ -376,13 +383,70 @@ The one execute call binds its client request token and target as documented in
 
 The artifact/mapping suite passes18 tests, including actual clean paired-source
 fixture builds and an invented bundle that fails independent rebuilding. The
-current care-script suites pass322 tests, including the new execution and
-post-execution verification suite. Focused related suites pass44/44. Final
+current care-script suites pass336 tests, including execution, current-schema
+routing and live-composition boundary suites. The newest focused suites pass24/24. Final
 typecheck/lint and CI/package syntax checks pass. No full local Desktop
 database suite was rerun for this increment. The earlier full Desktop
 run passes4,314 tests/11 skips; it predates this artifact increment and is not
 its full-suite or hosted CI evidence. New CI runs the artifact suite explicitly.
 No artifact-level test is an AWS or physical-device acceptance result.
+
+### Fixed live code update and current schema recovery
+
+After clean source, independent rebuild, tests and CI are verified, the fixed
+synthetic command is:
+
+```
+node scripts/release-synthetic-care-registered.mjs --v2-root <exact-V2-checkout> --artifact <exact-current-candidate-directory> --release-fictional-registered-with-fresh-recovery
+```
+
+Do not start this new command until its interrupted-release read-only
+reconciliation path is implemented and qualified. The known custody safeguards
+prevent blind retries but do not themselves finish recovery after a dead writer.
+
+Its own upload and proposal bind the new clean source pair. The encrypted
+immutable object is downloaded, both complete proposal views inspected, and
+two complete before observations archived. The exact final observation and
+execution admission are durably saved before the one execution request. A lost
+reply is observed on the same stack and change set, never retried. Complete
+successor bytes, configuration, IAM, JWT routes, logs, resources, integration
+and canonical data/schema history are checked after execution.
+
+Recovery uses the actual older intent-aware version **2**, pinned to the known
+0e38c130 predecessor ZIP and full configuration; it does not publish a clone of
+the new code or invoke the id-less historical version1. Only the API integration
+temporarily targets version2. The latest function's new bytes remain untouched.
+The same full raw inventory is verified against an explicit retained-URI profile;
+responses are not patched to pass a latest-URI check. Five fictional personas
+run35 cases each on latest, retained2 and returned latest: four ordinary owner
+reads/refusals, existing cancelled receipts, current-schema discovery of those
+exact receipts and refusal of prepare without a request ID. The105 cases and
+qualified Lambda invocation metric are mandatory. Discovery is parsed by a
+fresh compilation of the actual application contract.
+
+Admission is flushed before permission grant, each routing switch and cleanup.
+A distinct compensating return is allowed only if independently observed
+authority remains unchanged and the target is one of the two admitted URIs.
+An unrelated route or authority change is not overwritten. Final reads must
+show the returned API deployment, no temporary permission, unchanged retained
+bytes and unchanged database. Secrets and tokens remain in memory and are not
+written to evidence; only fictional account records are used.
+
+One `registered-artifact-upload-release` custody spans all operations. Before
+and admission files, journal and receipts are separate from the immutable
+artifact. A failed or exhausted admitted operation retains its lock. The old
+upload-only and stopped-unexecuted-proposal reconcilers intentionally cannot
+settle this larger journal. A dedicated read-only interrupted-execution/recovery
+reconciler remains engineering; do not remove or recreate the lock or rerun a
+write after an unknown outcome. The new command is not yet hosted-qualified.
+Its terminal result distinguishes the upload receipt from code/recovery
+evidence; neither is full erasure acceptance, release acceptance or PHI approval.
+
+The database checks are inspection only. No migrations, down migrations,
+ledger rewrites, erasure fixture writes, provider activation or paid mobile
+builds are available through this command. The prepared/erased, cancellation
+race, lost-reply, second-device, replay, cross-owner and consent-withdrawal
+journeys remain a separate required hosted matrix.
 
 The original six scopes remain partial: plan continuity/legacy reconciliation;
 owned lab/document/voice delivery; complete privacy/holds/export/erasure and

@@ -37,7 +37,7 @@ export function intentFailureCode(error){
 /** Filesystem custody, not deployment authority. Admission is flushed before
  * the remote request; an unknown outcome deliberately retains its lock. */
 export function createIntentUploadCustody(root,out,current,purpose='intent-artifact-upload-proposal'){
- if(!['intent-artifact-upload-proposal','registered-artifact-upload','registered-artifact-upload-proposal'].includes(purpose))refuseIntent('custody_purpose');
+ if(!['intent-artifact-upload-proposal','registered-artifact-upload','registered-artifact-upload-proposal','registered-artifact-upload-release'].includes(purpose))refuseIntent('custody_purpose');
  const directory=resolve(root,'dist/synthetic-care-routing');
  mkdirSync(directory,{recursive:true});mkdirSync(out,{recursive:true});
  const runId=randomBytes(16).toString('hex'),lock=resolve(directory,'operator.lock'),journal=resolve(out,runId+'.events.jsonl');
@@ -50,7 +50,8 @@ export function createIntentUploadCustody(root,out,current,purpose='intent-artif
   const fd=openSync(journal,'a');
   try{writeFileSync(fd,JSON.stringify({at:new Date().toISOString(),...event})+'\n');fsyncSync(fd);}finally{closeSync(fd);}
  };
- return {runId,lock,journal,record,
+ const verify=()=>{if(canonical(JSON.parse(readFileSync(lock,'utf8')))!==canonical(saved))refuseIntent('custody_changed');};
+ return {runId,lock,journal,record,verify,
   admit:event=>{record(event);admitted=true;},
   settle:()=>{settled=true;},
   get admitted(){return admitted;},
