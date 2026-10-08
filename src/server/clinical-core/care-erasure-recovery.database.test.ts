@@ -91,6 +91,72 @@ describe('canonical synthetic history: durable owner erasure intents',()=>{
   expect(await prepare()).toMatchObject({outcome:'cancelled',receipt:null});expect(await messages()).toBe(1);
   expect(await discover()).toMatchObject({items:[{outcome:'cancelled',intentRegistered:true}]});
  });
+ it('recovers a lost terminal reply through read-only discovery without dispatching another erase',async()=>{
+  await prepare();
+  // The API transaction commits, but this fictional client's receive path loses the reply.
+  const committed=await terminal('erase_request');
+  if(committed.action!=='erase_request'||committed.outcome!=='erased')throw new Error('missing committed fixture');
+  const before=(await db.query('select * from clinical_core.care_data_erasure_requests where owner_id=$1',[owner])).rows;
+  const secondSession=createCareDataLifecycle(database);
+  const recovered=await secondSession(context(),{action:'erase_receipt',requestId:id(100),scope:'domain'});
+  expect(recovered).toEqual({...committed,action:'erase_receipt'});
+  const page=await createCareErasureRecovery(database)(context(),{action:'discover_erasure_requests'});
+  expect(page).toMatchObject({items:[{requestId:id(100),outcome:'erased',receipt:committed.receipt}]});
+  expect((await db.query('select * from clinical_core.care_data_erasure_requests where owner_id=$1',[owner])).rows).toEqual(before);
+  expect((await db.query<{n:number}>('select count(*)::int n from clinical_core.care_data_erasures where owner_id=$1',[owner])).rows[0]!.n).toBe(1);
+ });
+ it.each(['erase_first','cancel_first'] as const)('converges on one immutable terminal in the %s serialized order',async order=>{
+  // PGlite is one session: these are both serial orders, NOT an Aurora concurrency proof.
+  await prepare();
+  const first=await terminal(order==='erase_first'?'erase_request':'settle_erasure');
+  const second=await terminal(order==='erase_first'?'settle_erasure':'erase_request');
+  if((first.action!=='erase_request'&&first.action!=='settle_erasure')
+   ||(second.action!=='erase_request'&&second.action!=='settle_erasure'))throw new Error('unexpected terminal response');
+  const expected=order==='erase_first'?'erased':'cancelled';
+  expect(first.outcome).toBe(expected);expect(second.outcome).toBe(expected);
+  expect(second.receipt).toEqual(first.receipt);
+  expect(await terminal('erase_receipt')).toEqual({...first,action:'erase_receipt'});
+  expect(await terminal('settle_erasure')).toEqual({...first,action:'settle_erasure'});
+  expect(await prepare()).toEqual({...first,action:'prepare_erasure'});
+  expect((await db.query<{n:number}>('select count(*)::int n from clinical_core.care_data_erasure_requests where owner_id=$1',[owner])).rows[0]!.n).toBe(1);
+  expect((await db.query<{n:number}>('select count(*)::int n from clinical_core.care_data_erasures where owner_id=$1',[owner])).rows[0]!.n).toBe(order==='erase_first'?1:0);
+  expect(await messages()).toBe(order==='erase_first'?0:1);
+ });
+ it('keeps owner privacy recovery available after actual messaging-consent withdrawal and link pause',async()=>{
+  const artifact=id(190);
+  await db.query(`insert into clinical_core.consent_artifacts(id,organization_id,scope,artifact_version,content_sha256,jurisdiction,status,approved_at,approved_by_person_id)
+   values($1,$2,'messaging','fictional-recovery-withdrawal',$3,'TEST','approved',now(),$4)`,[artifact,org,'a'.repeat(64),clinician]);
+  await database.transaction(async tx=>{
+   await tx.query('select clinical_private.set_request_context($1,$2,$3,$4,$5,$6,$7)',[owner,org,'consumer','subject-'+owner,'consent_management','synthetic-staging','synthetic_only']);
+   await tx.query('select * from clinical_core.record_consent_grant($1,$2,$3,$4,$5)',[connection,artifact,'messaging','patient_app','self']);
+   const revoked=await tx.query<{status:string;version:number}>('select * from clinical_core.revoke_consent_grant($1,$2,$3)',[connection,'messaging','patient_request']);
+   expect(revoked.rows[0]).toMatchObject({status:'revoked',version:2});
+  });
+  await db.query("update clinical_core.patient_connections set state='paused' where id=$1",[connection]);
+  try{
+   expect(await prepare()).toMatchObject({outcome:'prepared'});
+   expect(await discover()).toMatchObject({items:[{outcome:'prepared'}]});
+   expect(await terminal('settle_erasure')).toMatchObject({outcome:'cancelled'});
+   expect(await terminal('erase_receipt')).toMatchObject({outcome:'cancelled'});
+   expect(await messages()).toBe(1);
+  }finally{
+   await db.query("update clinical_core.patient_connections set state='verified' where id=$1",[connection]);
+  }
+  // This asserts privacy availability, not clinical-message refusal or a hosted consent test.
+ });
+ it('preserves another owner message byte-for-byte while erasing only the admitted owner',async()=>{
+  const foreignMessage=id(191),foreignPatient=id(193),foreignConnection=id(194),foreignThread=id(195);
+  await db.query("insert into clinical_core.patient_records(id,organization_id,synthetic_record_key) values($1,$2,'patient_syn_foreign_recovery')",[foreignPatient,org]);
+  await db.query("insert into clinical_core.patient_connections(id,organization_id,patient_record_id,consumer_person_id,state,verified_at) values($1,$2,$3,$4,'verified',now())",[foreignConnection,org,foreignPatient,other]);
+  await db.query("insert into clinical_core.care_message_threads(id,connection_id,subject) values($1,$2,'Fictional unrelated owner thread')",[foreignThread,foreignConnection]);
+  await db.query("insert into clinical_core.care_messages(id,thread_id,sender_id,sender_pool,request_id,request_hash,acknowledgement,body) values($1,$2,$3,'consumer',$4,'foreign-fixture','care-messages/1','FICTIONAL unrelated owner record')",[foreignMessage,foreignThread,other,id(192)]);
+  const before=(await db.query('select * from clinical_core.care_messages where id=$1',[foreignMessage])).rows;
+  await prepare();const erased=await terminal('erase_request');
+  expect(erased).toMatchObject({outcome:'erased',receipt:{messagesErased:1,threadsRetained:0}});
+  expect((await db.query('select * from clinical_core.care_messages where id=$1',[foreignMessage])).rows).toEqual(before);
+  expect(await messages()).toBe(1);
+  expect(await discover(50,undefined,other)).toMatchObject({items:[]});
+ });
  it('allows exact cancellation before registration and never changes it back to prepared',async()=>{
   await terminal('settle_erasure');expect(await prepare()).toMatchObject({outcome:'cancelled'});
   expect(await terminal('erase_request')).toMatchObject({outcome:'cancelled'});
