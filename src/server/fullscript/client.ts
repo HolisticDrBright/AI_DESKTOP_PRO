@@ -206,10 +206,11 @@ async function tokenRequest(
   grant: Record<string, string>,
   fetcher: typeof fetch = fetch,
 ): Promise<FullscriptToken> {
+  const signal = AbortSignal.timeout(10_000);
   const response = await fetcher(`${configuration.apiOrigin}/oauth/token`, {
     method: "POST",
     redirect: "manual",
-    signal: AbortSignal.timeout(10_000),
+    signal,
     headers: { "content-type": "application/json", accept: "application/json" },
     body: JSON.stringify({
       ...grant,
@@ -220,11 +221,46 @@ async function tokenRequest(
   if (!response?.ok || !response.headers.get("content-type")?.includes("application/json")) {
     throw new FullscriptUnavailableError("Fullscript token exchange failed.");
   }
-  const raw = await response.text();
-  if (Buffer.byteLength(raw) > 64_000) throw new FullscriptUnavailableError();
+  const raw = await boundedFullscriptBody(response, 64_000, signal);
   let parsed: unknown;
   try { parsed = JSON.parse(raw); } catch { throw new FullscriptUnavailableError(); }
   return parseToken(parsed);
+}
+
+/** Bound decoded bytes while reading, not after buffering the provider body.
+ * Content-Length is an early refusal hint, not decoded-size authority (the
+ * transport may decompress). The same request deadline covers a stalled body.
+ */
+async function boundedFullscriptBody(response: Response, limit: number, signal: AbortSignal): Promise<string> {
+  const declared = response.headers.get("content-length");
+  if (!response.body || (declared !== null && (!/^\d+$/.test(declared)
+    || !Number.isSafeInteger(Number(declared)) || Number(declared) > limit))) {
+    void response.body?.cancel().catch(() => undefined);
+    throw new FullscriptUnavailableError();
+  }
+  const reader = response.body.getReader(), chunks: Uint8Array[] = [];
+  let received = 0, complete = false;
+  const abort = () => { void reader.cancel().catch(() => undefined); };
+  signal.addEventListener("abort", abort, { once: true });
+  try {
+    while (true) {
+      if (signal.aborted) throw new FullscriptUnavailableError();
+      const part = await reader.read();
+      if (signal.aborted) throw new FullscriptUnavailableError();
+      if (part.done) { complete = true; break; }
+      if (!(part.value instanceof Uint8Array) || part.value.byteLength > limit - received)
+        throw new FullscriptUnavailableError();
+      received += part.value.byteLength;
+      chunks.push(part.value);
+    }
+    return Buffer.concat(chunks, received).toString("utf8");
+  } catch {
+    throw new FullscriptUnavailableError();
+  } finally {
+    signal.removeEventListener("abort", abort);
+    if (!complete) abort();
+    reader.releaseLock();
+  }
 }
 
 function parseToken(value: unknown): FullscriptToken {
@@ -314,12 +350,13 @@ export class FullscriptApiClient {
     query?: Record<string, string>,
     extraHeaders?: Record<string, string>,
   ): Promise<Record<string, unknown>> {
+    const signal = AbortSignal.timeout(12_000);
     const url = new URL(`${this.configuration.apiOrigin}${path}`);
     for (const [key, value] of Object.entries(query ?? {})) url.searchParams.set(key, value);
     const response = await this.fetcher(url, {
       method,
       redirect: "manual",
-      signal: AbortSignal.timeout(12_000),
+      signal,
       headers: {
         authorization: `Bearer ${this.accessToken}`,
         accept: "application/json",
@@ -331,8 +368,7 @@ export class FullscriptApiClient {
     if (!response?.ok || !response.headers.get("content-type")?.includes("application/json")) {
       throw new FullscriptUnavailableError("Fullscript request failed.");
     }
-    const raw = await response.text();
-    if (Buffer.byteLength(raw) > 2_000_000) throw new FullscriptUnavailableError();
+    const raw = await boundedFullscriptBody(response, 2_000_000, signal);
     try {
       const value: unknown = JSON.parse(raw);
       if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("shape");
