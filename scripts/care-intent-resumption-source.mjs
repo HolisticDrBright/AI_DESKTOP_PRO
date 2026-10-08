@@ -98,9 +98,34 @@ export function verifyCareRuntimeEntries(kind,application,operator){
  check(old.length>0&&canonical(old)===canonical(now),'runtime_changed');
  return {files:now.length,sha256:sha256(canonical(now))};
 }
+// The failed postinspection is an operator-library defect, not an API change.
+// This separate READ-ONLY profile permits only its three named source repairs.
+// The original resumption verifier above stays strict and cannot admit them.
+const postcommitOperatorPaths=Object.freeze([
+ 'src/server/clinical-core/care-erasure-intent-upgrade.ts',
+ 'src/server/clinical-core/care-erasure-intent-command.test.ts',
+ 'src/server/clinical-core/care-erasure-intent-upgrade.database.test.ts',
+]);
+export function verifyCarePostcommitRuntimeEntries(application,operator){
+ const excluded=new Set(postcommitOperatorPaths);
+ const repairs=postcommitOperatorPaths.map(file=>{
+  const before=application.filter(e=>e.file===file),after=operator.filter(e=>e.file===file);
+  check(before.length===1&&after.length===1&&[before[0],after[0]].every(e=>/^[a-f0-9]{64}$/.test(e.sha256)),'postcommit_repair_shape');
+  return {file,beforeSha256:before[0].sha256,afterSha256:after[0].sha256};
+ });
+ check(repairs[0].beforeSha256!==repairs[0].afterSha256,'postcommit_repair_missing');
+ const guarded=verifyCareRuntimeEntries('desktop',application.filter(e=>!excluded.has(e.file)),operator.filter(e=>!excluded.has(e.file)));
+ return {...guarded,operatorRepairs:repairs,operatorRepairsSha256:sha256(canonical(repairs)),readOnlyProfile:true};
+}
 /** Verify from fresh local Git, disk and build observations. The returned
  * distinction is not proof of what AWS runs; fresh service readbacks are owed. */
 export async function qualifyCareIntentResumptionSource(root,mobileRoot,candidate){
+ return qualifyCareIntentSource(root,mobileRoot,candidate,false);
+}
+export async function qualifyCareIntentPostcommitSource(root,mobileRoot,candidate){
+ return qualifyCareIntentSource(root,mobileRoot,candidate,true);
+}
+async function qualifyCareIntentSource(root,mobileRoot,candidate,postcommit){
  const operatorCurrent=careIntentCurrent(root,mobileRoot);
  check(candidate?.release?.desktop&&candidate.release.mobile?.source,'candidate');
  const applicationDesktop=readHistoricalCareSource(root,'desktop',candidate.release.desktop.commit);
@@ -111,7 +136,8 @@ export async function qualifyCareIntentResumptionSource(root,mobileRoot,candidat
  const operatorMobile=readHistoricalCareSource(mobileRoot,'v2',operatorCurrent.mobile.source.commit);
  sourceRepresentations.operatorDesktop=verifyCareHistoricalSnapshot(operatorDesktop,operatorCurrent.desktop);
  sourceRepresentations.operatorMobile=verifyCareHistoricalSnapshot(operatorMobile,operatorCurrent.mobile.source);
- const runtime={desktop:verifyCareRuntimeEntries('desktop',applicationDesktop.entries,operatorDesktop.entries),
+ const runtime={desktop:postcommit?verifyCarePostcommitRuntimeEntries(applicationDesktop.entries,operatorDesktop.entries)
+  :verifyCareRuntimeEntries('desktop',applicationDesktop.entries,operatorDesktop.entries),
   mobile:verifyCareRuntimeEntries('v2',applicationMobile.entries,operatorMobile.entries)};
  const applicationCurrent={...operatorCurrent,desktop:structuredClone(candidate.release.desktop),
   mobile:{...operatorCurrent.mobile,source:structuredClone(candidate.release.mobile.source)}};
@@ -119,10 +145,11 @@ export async function qualifyCareIntentResumptionSource(root,mobileRoot,candidat
  const bundle=await buildCareIdentityBundle(root);
  check(bundle.equals(candidate.bundle),'rebuilt_bundle');
  check(canonical(careIntentCurrent(root,mobileRoot))===canonical(operatorCurrent),'checkout_changed');
- return {contract:'synthetic-care-intent-resumption-source/1',applicationCurrent,operatorCurrent,runtime,sourceRepresentations,
+ return {contract:postcommit?'synthetic-care-intent-postcommit-source/1':'synthetic-care-intent-resumption-source/1',applicationCurrent,operatorCurrent,runtime,sourceRepresentations,
   canonicalGitSources:{applicationDesktop:applicationDesktop.snapshot,applicationMobile:applicationMobile.snapshot,
    operatorDesktop:operatorDesktop.snapshot,operatorMobile:operatorMobile.snapshot},
   bundleSha256:sha256(bundle),zipSha256:candidate.manifest.zipSha256,historicalSourcesVerified:true,
-  currentRuntimeByteMatched:true,awsObserved:false,custodyAcquired:false,deployed:false,schemaChanged:false,
+  currentRuntimeByteMatched:!postcommit,apiBundleByteMatched:true,guardedApplicationFilesMatched:true,
+  awsObserved:false,custodyAcquired:false,deployed:false,schemaChanged:false,
   hostedAcceptance:false,physicalDeviceAcceptance:false,phiAllowed:false,paidMobileBuildStarted:false};
 }

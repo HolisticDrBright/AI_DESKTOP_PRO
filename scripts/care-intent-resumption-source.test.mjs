@@ -7,7 +7,8 @@ import {resolve} from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {CARE_RELEASE as P,careSourceSnapshot,careSourceEntry,sha256,buildCareIdentityBundle} from './synthetic-care-release.mjs';
 import {careIntentCurrent,createCareIntentCandidate} from './synthetic-care-intent-release.mjs';
-import {parseCareGitBlobs,readHistoricalCareSource,verifyCareHistoricalSnapshot,verifyCareRuntimeEntries,qualifyCareIntentResumptionSource} from './care-intent-resumption-source.mjs';
+import {parseCareGitBlobs,readHistoricalCareSource,verifyCareHistoricalSnapshot,verifyCareRuntimeEntries,qualifyCareIntentResumptionSource,
+ verifyCarePostcommitRuntimeEntries,qualifyCareIntentPostcommitSource} from './care-intent-resumption-source.mjs';
 import {careIntentResumptionSourceArgs} from './qualify-synthetic-care-intent-resumption-source.mjs';
 const git=(root,args)=>execFileSync('git',args,{cwd:root,encoding:'utf8',timeout:10000,windowsHide:true,stdio:['ignore','pipe','pipe']});
 function fixture(t){
@@ -173,4 +174,40 @@ test('source-only CLI has no AWS target, approval, report authority, custody ove
   ['--v2-root','',...args.slice(2)]])assert.throws(()=>careIntentResumptionSourceArgs(changed),/resume_source_arguments/);
  const code=readFileSync(new URL('./care-intent-resumption-source.mjs',import.meta.url),'utf8');
  assert.doesNotMatch(code,/from ['"]@aws-sdk|intentAws\(|unlinkSync|renameSync|writeFileSync|process\.env/);
+});
+test('postcommit source profile excludes only three present named operator files and keeps original resumption strict',()=>{
+ const entry=file=>({file,sha256:sha256(file)}),paths=['src/server/clinical-core/care-erasure-intent-upgrade.ts',
+  'src/server/clinical-core/care-erasure-intent-command.test.ts','src/server/clinical-core/care-erasure-intent-upgrade.database.test.ts'];
+ const app=[...paths.map(entry),entry('src/server/clinical-core/aws-identity-lambda.ts'),entry('infra/migration.sql'),entry('package.json')];
+ const now=structuredClone(app);now[0].sha256='a'.repeat(64);
+ const r=verifyCarePostcommitRuntimeEntries(app,now);assert.equal(r.files,3);assert.equal(r.operatorRepairs.length,3);
+ assert.throws(()=>verifyCareRuntimeEntries('desktop',app,now),/runtime_changed/);
+ assert.throws(()=>verifyCarePostcommitRuntimeEntries(app,app),/repair_missing/);
+ for(const change of [x=>x[3].sha256='a'.repeat(64),x=>x[4].sha256='a'.repeat(64),x=>x[5].sha256='a'.repeat(64),
+  x=>x.push(entry('src/server/clinical-core/another-operator.ts')),x=>x.splice(0,1),x=>x.push(x[0]),x=>x[0].sha256='not-a-digest']){
+  const x=structuredClone(now);change(x);assert.throws(()=>verifyCarePostcommitRuntimeEntries(app,x));
+ }
+});
+test('postcommit qualification rebuilds actual API bytes and refuses any other application edit',async t=>{
+ const f=await pairedFixture(t),base='src/server/clinical-core/';
+ // Rebuild an application snapshot which includes the three existing operator files.
+ for(const name of ['care-erasure-intent-upgrade.ts','care-erasure-intent-command.test.ts','care-erasure-intent-upgrade.database.test.ts'])
+  f.d.put(base+name,'export const value = 1;\n');
+ f.d.commit();const app=careIntentCurrent(f.d.root,f.v.root),candidate=createCareIntentCandidate(app,await buildCareIdentityBundle(f.d.root));
+ f.d.put(base+'care-erasure-intent-upgrade.ts','export const value = 2;\n');f.d.commit();
+ const r=await qualifyCareIntentPostcommitSource(f.d.root,f.v.root,candidate);
+ assert.equal(r.contract,'synthetic-care-intent-postcommit-source/1');assert.equal(r.apiBundleByteMatched,true);
+ assert.equal(r.currentRuntimeByteMatched,false);assert.equal(r.schemaChanged,false);assert.equal(r.custodyAcquired,false);
+ await assert.rejects(qualifyCareIntentResumptionSource(f.d.root,f.v.root,candidate),/runtime_changed/);
+ f.d.put(base+'aws-identity-lambda.ts','exports.handler = async () => ({statusCode: 200});\n');f.d.commit();
+ await assert.rejects(qualifyCareIntentPostcommitSource(f.d.root,f.v.root,candidate),/runtime_changed/);
+});
+test('an allowed operator path cannot alter the actual API bundle through an existing import',async t=>{
+ const f=await pairedFixture(t),base='src/server/clinical-core/';
+ for(const name of ['care-erasure-intent-upgrade.ts','care-erasure-intent-command.test.ts','care-erasure-intent-upgrade.database.test.ts'])
+  f.d.put(base+name,'export const value = 1;\n');
+ f.d.put(base+'aws-identity-lambda.ts',"import {value} from './care-erasure-intent-upgrade'; export const handler=async()=>({statusCode:value});\n");
+ f.d.commit();const app=careIntentCurrent(f.d.root,f.v.root),candidate=createCareIntentCandidate(app,await buildCareIdentityBundle(f.d.root));
+ f.d.put(base+'care-erasure-intent-upgrade.ts','export const value = 2;\n');f.d.commit();
+ await assert.rejects(qualifyCareIntentPostcommitSource(f.d.root,f.v.root,candidate),/rebuilt_bundle/);
 });

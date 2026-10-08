@@ -144,7 +144,11 @@ function schemaResult(r,command,current,baseline){
   &&r.awsAccountId===P.account&&r.foundation===P.foundation&&r.phiAllowed===false
   &&canonical(r.operatorSource)===canonical({sourceCommit:current.desktop.commit,clean:true})
   &&r.observedMigrationCount===(successor?48:47)&&r.sourceMigrationCount===(successor?47:46)
-  &&r.tableCount===(successor?89:88)&&r.rowCount===baseline.rowCount&&r.dataSha256===baseline.dataSha256
+  &&r.tableCount===(successor?89:88)&&r.rowCount===baseline.rowCount
+  &&r.originalRowCount===baseline.rowCount&&r.originalDataSha256===baseline.dataSha256
+  &&r.completeRowCount===baseline.rowCount&&r.intentRowCount===0&&hash(r.completeDataSha256)
+  &&r.dataSha256===(command==='postinspect'?r.completeDataSha256:baseline.dataSha256)
+  &&(successor||r.completeDataSha256===baseline.dataSha256)
   &&r.schemaSha256===baseline.schemaSha256&&r.dataPreserved===true&&r.schemaPreserved===true
   &&r.applied===(command==='upgrade')&&r.alreadyApplied===(command==='postinspect')&&r.rolledBack===(command==='rehearse')
   &&r.fromLedgerSha256===current.migrations.liveBefore&&r.toLedgerSha256===INTENT_RELEASE.liveAfter
@@ -208,6 +212,8 @@ async function continueIntentSchema({candidate,current,operatorCurrent,deployed,
  }
  if(!commitResponseLost)committed=schemaResult(receipt,'upgrade',operatorCurrent,baseline);
  await unchanged();const after=await invoke('postinspect');
+ const completed=commitResponseLost?committed.successorSnapshot:committed;
+ check(after.completeDataSha256===completed.completeDataSha256,'schema_successor_snapshot');
  verifyRestoredTransport(await d.transport(),restored,deployed.latest);
  await d.record({stage:'intent_schema_independent_readback',liveAfter:current.migrations.liveAfter,commitResponseLost});
  return {contract:'synthetic-care-intent-schema-release/1',execution:'synthetic-staging',account:P.account,current,operatorCurrent,

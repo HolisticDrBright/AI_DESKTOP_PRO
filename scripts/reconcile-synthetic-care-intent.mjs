@@ -8,7 +8,7 @@ import {fromIni} from '@aws-sdk/credential-provider-ini';
 import {CARE_RELEASE as P,sha256,normalizedText} from './synthetic-care-release.mjs';
 import {DEPLOYED_CARE as D,verifyDeployedCareArtifact} from './verify-deployed-synthetic-care.mjs';
 import {careIntentCurrent,readCareIntentCandidate,refuseIntent} from './synthetic-care-intent-release.mjs';
-import {qualifyCareIntentResumptionSource} from './care-intent-resumption-source.mjs';
+import {qualifyCareIntentResumptionSource,qualifyCareIntentPostcommitSource,readHistoricalCareSource,verifyCareHistoricalSnapshot} from './care-intent-resumption-source.mjs';
 import {verifyCareIntentResumedDeployment,verifyCareIntentHistoricalDownload} from './care-intent-resumption-deployment.mjs';
 import {readCareIntentInterruption} from './care-intent-interruption.mjs';
 import {loadCareIntentDatabasePort} from './release-synthetic-care-intent.mjs';
@@ -18,6 +18,7 @@ import {intentAws as aws,observeIntentControlRaw,downloadIntentFunction} from '.
 import {canonical} from './care-recovery-routing.mjs';
 import {intentFailureCode} from './upload-synthetic-care-intent-release.mjs';
 import {SYNTHETIC_MEMBER_PROFILE as profile,observeSyntheticMemberIdentity} from './synthetic-aws-principal.mjs';
+import {readCarePostcommitCustody,verifyCareIntentSuccessorInspector} from './care-intent-postcommit.mjs';
 const check=(ok,code)=>{if(!ok)refuseIntent('reconcile_'+code);};
 export function careIntentReconcileArgs(a){
  check(a.length===5&&a[0]==='--v2-root'&&a[2]==='--candidate'
@@ -26,17 +27,30 @@ export function careIntentReconcileArgs(a){
 }
 const template=result=>typeof result.TemplateBody==='string'?JSON.parse(result.TemplateBody):result.TemplateBody;
 export async function observeCareIntentResumption(root,mobileRoot,directory){
- const started=Date.now(),candidate=readCareIntentCandidate(directory),qualified=await qualifyCareIntentResumptionSource(root,mobileRoot,candidate);
+ return observeCareIntentReconciliation(root,mobileRoot,directory,false);
+}
+/** Successor-only inspection; it cannot feed the parent-schema release runner. */
+export async function observeCareIntentPostcommit(root,mobileRoot,directory){
+ return observeCareIntentReconciliation(root,mobileRoot,directory,true);
+}
+async function observeCareIntentReconciliation(root,mobileRoot,directory,postcommit){
+ const started=Date.now(),candidate=readCareIntentCandidate(directory),qualified=postcommit
+  ?await qualifyCareIntentPostcommitSource(root,mobileRoot,candidate):await qualifyCareIntentResumptionSource(root,mobileRoot,candidate);
  const {applicationCurrent,operatorCurrent}=qualified;
  const interruption=readCareIntentInterruption(root,directory,applicationCurrent,candidate);
+ const custody=postcommit?readCarePostcommitCustody(root,directory,interruption,applicationCurrent):undefined;
+ if(custody)verifyCareHistoricalSnapshot(readHistoricalCareSource(mobileRoot,'v2',custody.savedOperatorCurrent.mobile.source.commit),custody.savedOperatorCurrent.mobile.source);
  const unchanged=()=>{
   check(canonical(careIntentCurrent(root,mobileRoot))===canonical(operatorCurrent)
    &&readFileSync(resolve(directory,'candidate.zip')).equals(candidate.zip),'source_drift');
   check(canonical(readCareIntentInterruption(root,directory,applicationCurrent,candidate))===canonical(interruption),'custody_drift');
+  if(custody)check(canonical(readCarePostcommitCustody(root,directory,interruption,applicationCurrent))===canonical(custody),'postcommit_custody_drift');
  };
  unchanged();observeSyntheticMemberIdentity();
  const sourceText=normalizedText(root,'infra/aws-clinical-core/identity-api-extension.json'),source=JSON.parse(sourceText);
- const schema=loadCareIntentDatabasePort(root,operatorCurrent),baseline=verifyCareIntentInspector(await schema('inspect'),operatorCurrent);
+ const schema=loadCareIntentDatabasePort(root,operatorCurrent),inspect=async()=>postcommit
+  ?verifyCareIntentSuccessorInspector(await schema('inspect'),operatorCurrent):verifyCareIntentInspector(await schema('inspect'),operatorCurrent),
+  baseline=await inspect();
  unchanged();const first=observeIntentControlRaw();
  check(first.template?.Resources?.IdentityApiFunction?.Properties?.Code?.S3ObjectVersion===interruption.artifactVersion,'code_version_locator');
  const previousDir=resolve(root,'dist/synthetic-care-release',D.desktop,D.mobile),previous={
@@ -68,7 +82,7 @@ export async function observeCareIntentResumption(root,mobileRoot,directory){
  const w={contract:'synthetic-care-intent-resumption-observations/1',observedAt:new Date().toISOString(),applicationCurrent,operatorCurrent,
   source,sourceText,raw:first,predecessor,retained,artifact,binding,...projection,codeBytes,retainedPolicy:policy()};
  const deployed=verifyCareIntentResumedDeployment(w,candidate,applicationCurrent,operatorCurrent,started,Date.now());
- unchanged();const after=verifyCareIntentInspector(await schema('inspect'),operatorCurrent);
+ unchanged();const after=await inspect();
  check(canonical(after)===canonical(baseline),'database_drift');
  const returnedRaw=observeIntentControlRaw(),returnedViews=views();
  check(canonical(returnedViews)===canonical(projection),'execution_drift');
@@ -77,7 +91,7 @@ export async function observeCareIntentResumption(root,mobileRoot,directory){
  check(canonical(final.latest)===canonical(deployed.latest)&&canonical(final.control)===canonical(deployed.control)
   &&canonical(final.transport)===canonical(deployed.transport),'live_drift');
  unchanged();
- const result={contract:'synthetic-care-intent-live-reconciliation/1',observedAt:final.observedAt,
+ const result={contract:postcommit?'synthetic-care-intent-postcommit-reconciliation/1':'synthetic-care-intent-live-reconciliation/1',observedAt:final.observedAt,
   applicationCurrent,operatorCurrent,sourceRepresentations:qualified.sourceRepresentations,runtime:qualified.runtime,
   interruption,execution:'synthetic-staging',account:P.account,zipSha256:candidate.manifest.zipSha256,
   deployedDownloadSha256:sha256(codeBytes),retainedDownloadSha256:sha256(retained.codeBytes),predecessorDownload:predecessor.download,
@@ -86,6 +100,12 @@ export async function observeCareIntentResumption(root,mobileRoot,directory){
   deploymentReconciled:true,sourceQualified:true,custodyAcquired:false,awsMutationPerformed:false,
   compatibleRecoveryVerified:false,schemaChanged:false,canonicalRegistered:false,hostedAcceptance:false,
   physicalDeviceAcceptance:false,phiAllowed:false,paidMobileBuildStarted:false};
+ if(postcommit){
+  result.postcommitCustody=custody;result.successorReconciled=true;result.custodySettled=false;
+  result.currentRecoveryAcceptance=false;result.replayAuthorized=false;
+  // No transport/schema mutation port escapes the read-only successor profile.
+  return {result};
+ }
  return {result,candidate,qualified,interruption,deployment:returned,baseline,schema,unchanged,started};
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(resolve(process.argv[1])).href){

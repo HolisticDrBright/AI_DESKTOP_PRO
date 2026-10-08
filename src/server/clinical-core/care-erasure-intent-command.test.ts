@@ -18,6 +18,7 @@ function result(command:'inspect'|'rehearse'|'upgrade',successor=false):CareEras
  return {contract:'care-erasure-intent-upgrade/1',command,execution:'synthetic-staging',phiAllowed:false,
   observedMigrationCount:successor?48:47,sourceMigrationCount:successor?47:46,tableCount:successor?89:88,rowCount:10,
   dataSha256:'b'.repeat(64),schemaSha256:'c'.repeat(64),dataPreserved:true,schemaPreserved:true,applied:false,
+  originalDataSha256:'b'.repeat(64),originalRowCount:10,completeDataSha256:'b'.repeat(64),completeRowCount:10,intentRowCount:0,
   alreadyApplied:successor,rolledBack:command==='rehearse',fromLedgerSha256:CARE_ERASURE_UPGRADE.liveAfter,
   toLedgerSha256:'447cf4ea8c8da3decbaa7edea964f97d9e3bdb029c38723bf3a5767c38679a50',referenceLedgerSha256:CARE_ERASURE_UPGRADE.reference,
   canonicalRegistered:false,hostedAcceptance:false,recoveryAcceptance:false,activationApproved:false};

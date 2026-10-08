@@ -66,6 +66,8 @@ test('lost COMMIT reply inspects once without replay or manufactured commit rece
 test('invalid receipts, changed preserved data, failed rollback or unknown admission never complete',async()=>{
  for(const command of ['inspect','rehearse','upgrade','postinspect'])for(const patch of [
   {dataSha256:'f'.repeat(64)},{schemaSha256:'f'.repeat(64)},{rowCount:23986},{dataPreserved:false},{schemaPreserved:false},
+  {originalDataSha256:'f'.repeat(64)},{originalRowCount:23986},{completeDataSha256:'f'.repeat(64)},
+  {completeRowCount:23986},{intentRowCount:1},
   {referenceLedgerSha256:'f'.repeat(64)},{phiAllowed:true},{operatorSource:{sourceCommit:'f'.repeat(40),clean:true}},
   {canonicalRegistered:true},{hostedAcceptance:true},{tableCount:999}]){
   const f=fixture(),schema=f.d.schema;let reads=0;
@@ -74,6 +76,17 @@ test('invalid receipts, changed preserved data, failed rollback or unknown admis
   assert.equal(f.calls.includes('intent_schema_independent_readback'),false);}
  const f=fixture();f.d.admit=async()=>{throw Error('journal unavailable');};
  await assert.rejects(releaseCareIntent(f.supplied,f.d));assert.equal(f.calls.includes('upgrade'),false);
+});
+
+test('successor readback uses complete and original scopes separately and refuses intervening complete-digest drift',async()=>{
+ const f=fixture(),r=await releaseCareIntent(f.supplied,f.d);
+ assert.notEqual(r.after.dataSha256,r.before.dataSha256);
+ assert.equal(r.after.originalDataSha256,r.before.dataSha256);
+ assert.equal(r.after.completeDataSha256,r.committed.completeDataSha256);
+ const changed=fixture(),schema=changed.d.schema;let reads=0;
+ changed.d.schema=async c=>{const value=await schema(c);if(c==='inspect'&&++reads>1){value.dataSha256='4'.repeat(64);value.completeDataSha256=value.dataSha256;}return value;};
+ await assert.rejects(releaseCareIntent(changed.supplied,changed.d),/schema_successor_snapshot/);
+ assert.equal(changed.calls.filter(c=>c==='upgrade').length,1);
 });
 test('ports cannot rewrite snapshotted witnesses or age out recovery to gain schema admission',async()=>{
  for(const mutation of [f=>{f.supplied.current.desktop.commit='f'.repeat(40);},f=>{f.transport.revisionId='drift';

@@ -8,6 +8,8 @@ import {applyClinicalCoreMigrations,loadClinicalCoreMigrations,type ClinicalCore
 import {applyGovernedCatalogMigrations,loadGovernedCatalogMigrations} from './catalog-migrations';
 import {CARE_ERASURE_AWS,type CareErasureUpgradeConfiguration} from './care-erasure-schema-upgrade';
 import {CARE_ERASURE_INTENT_UPGRADE,careErasureIntentMapping,runCareErasureIntentUpgrade} from './care-erasure-intent-upgrade';
+import {releaseCareIntent} from '../../../scripts/care-intent-release.mjs';
+import {careIntentContinuationFixture} from '../../../scripts/test-fixtures/care-intent-continuation.mjs';
 const sha=(v:string)=>createHash('sha256').update(v).digest('hex');
 const owner='70000000-0000-4000-8000-000000000001',org='70000000-0000-4000-8000-000000000002';
 const request='70000000-0000-4000-8000-000000000003',pending='70000000-0000-4000-8000-000000000004';
@@ -156,11 +158,24 @@ describe('blocked preserving intent successor operator library',()=>{
    .rejects.toMatchObject({category:'upgrade_failed',stage:'ledger_receipt',message:'upgrade_failed'});await predecessor();
  });
  it('applies once to a disposable database and preserves old terminal and new pending records on idempotent replay',async()=>{
-  const before=await run('inspect'),r=await run('upgrade');
+  const before=await run('inspect'),fixture=careIntentContinuationFixture();
+  const receipt=async(command:'inspect'|'rehearse'|'upgrade')=>({...fixture.supplied.preparation.database,...await run(command),
+   operatorSource:{sourceCommit:fixture.supplied.current.desktop.commit,clean:true},awsAccountId:CARE_ERASURE_AWS.account,foundation:CARE_ERASURE_AWS.foundation} as Awaited<ReturnType<typeof fixture.d.schema>>);
+  const baseline=await receipt('inspect');fixture.supplied.preparation.database=baseline;
+  fixture.supplied.recovery.databaseBefore=structuredClone(baseline);fixture.supplied.recovery.databaseAfter=structuredClone(baseline);
+  fixture.d.schema=receipt;
+  // Exercise the real continuation against SQL-derived receipts. The empty
+  // new table changes the complete digest; transport/source ports alone are
+  // fictional. No mocked digest can hide this integration mismatch again.
+  const released=await releaseCareIntent(fixture.supplied,fixture.d),r=released.committed;
   expect(r).toMatchObject({observedMigrationCount:48,sourceMigrationCount:47,tableCount:89,applied:true,alreadyApplied:false,
    dataSha256:before.dataSha256,schemaSha256:before.schemaSha256});
+  const empty=await run('inspect');expect(empty.intentRowCount).toBe(0);
+  expect(empty.dataSha256).not.toBe(before.dataSha256);expect(empty.originalDataSha256).toBe(before.dataSha256);
+  expect(empty.completeDataSha256).toBe(r.completeDataSha256);expect(released.after.dataSha256).toBe(empty.dataSha256);
   await pg.query("insert into clinical_core.care_data_erasure_intents(owner_id,request_id,scope) values($1,$2,'domain')",[owner,pending]);
   const after=await run('inspect');expect(after.rowCount).toBe(before.rowCount+1);
+  expect(after.originalRowCount).toBe(before.rowCount);expect(after.originalDataSha256).toBe(before.dataSha256);expect(after.intentRowCount).toBe(1);
   expect(await run('upgrade')).toMatchObject({applied:false,alreadyApplied:true,dataSha256:after.dataSha256});
   expect(await run('rehearse')).toMatchObject({rolledBack:true,observedMigrationCount:48,dataSha256:after.dataSha256});
   expect((await pg.query('select request_id from clinical_core.care_data_erasure_requests')).rows).toEqual([{request_id:request}]);

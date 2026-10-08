@@ -29,6 +29,7 @@ export function careIntentContinuationFixture(){
  const baseline={contract:'care-erasure-intent-upgrade/1',command:'inspect',operatorSource:{sourceCommit:current.desktop.commit,clean:true},
   awsAccountId:P.account,foundation:P.foundation,execution:'synthetic-staging',phiAllowed:false,observedMigrationCount:47,
   sourceMigrationCount:46,tableCount:88,rowCount:23985,dataSha256:'1'.repeat(64),schemaSha256:'2'.repeat(64),
+  originalDataSha256:'1'.repeat(64),originalRowCount:23985,completeDataSha256:'1'.repeat(64),completeRowCount:23985,intentRowCount:0,
   fromLedgerSha256:current.migrations.liveBefore,toLedgerSha256:current.migrations.liveAfter,referenceLedgerSha256:current.migrations.reference,
   dataPreserved:true,schemaPreserved:true,...flags(['applied','alreadyApplied','rolledBack','canonicalRegistered','hostedAcceptance',
    'recoveryAcceptance','activationApproved','rollbackReadback','lastingUpgradeAvailable','apiDeploymentPerformed','recoveryDrillPerformed',
@@ -74,6 +75,8 @@ export function careIntentContinuationFixture(){
   transport:async()=>{calls.push('transport');return clone(transport);},record:async x=>{calls.push(x.stage);},admit:async x=>{calls.push(x.stage);},
   schema:async command=>{calls.push(command);const prior=applied;if(command==='upgrade')applied=true;
    return {...clone(baseline),command,observedMigrationCount:applied?48:47,sourceMigrationCount:applied?47:46,
+    dataSha256:applied&&command!=='upgrade'?'3'.repeat(64):baseline.dataSha256,
+    completeDataSha256:applied?'3'.repeat(64):baseline.dataSha256,
     tableCount:applied?89:88,applied:command==='upgrade',alreadyApplied:prior,rolledBack:command==='rehearse'};}};
  return {supplied,d,calls,transport,advance:ms=>time+=ms};
 }

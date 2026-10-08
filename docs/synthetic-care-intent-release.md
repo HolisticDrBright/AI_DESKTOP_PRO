@@ -2,9 +2,13 @@
 
 The intent-aware API artifact binds V2 request preparation and discovery to
 the exact Desktop handler and preserving schema transition. Exact application
-source **0e38c130/1488a3bf** is deployed to the synthetic identity API, but its
-connected release stopped before recovery traffic or a schema commit. The
-database remains source46/live47 with 88 tables. This is not a completed
+source **0e38c130/1488a3bf** is deployed to the synthetic identity API. The
+resumed release passed 95 actual Gateway recovery observations, restored
+routing and removed its temporary permission. Its schema commit is present:
+source47/live48, 89 tables, with all 23,985 original rows unchanged. The runner
+then stopped at postinspection because it compared fingerprints of different
+table inventories. Both custody locks remain, and the repaired verification
+has not yet qualified or settled that hosted run. This is not a completed
 erasure feature, an installed mobile release, or permission to use PHI.
 
 ## Application and operator source qualification
@@ -349,13 +353,15 @@ including **32** focused checks. Full Desktop passes **341 files, 4,309 tests,
 11 skips**, **275.49 seconds**, with existing deadlines and no concurrent AST
 scan. Typecheck and focused lint pass. The graph refresh follows the full run.
 
-The next implementation must distinguish the exact deployed application source
+At that checkpoint, the next implementation had to distinguish the exact deployed application source
 pair from the repaired operator's clean source identity. It must reconcile the
 same interrupted custody against independently observed code/version, change-set,
 permissions, routing and parent-ledger fingerprints, not load a report as write
 authority or pretend the old predecessor is still deployed. Preserve the
 original failed journal and build new custody for any further admitted actions.
 Do not replay upload, execution or publication merely to restart the pipeline.
+That application/operator distinction and executed-service reconciliation were
+implemented in `7399e59` and used in the resumed run below.
 
 The first connected attempt, exact source **bf46a984/0a094f87**, ended with a
 read-only transaction-start failure before any upload or deployment admission.
@@ -380,21 +386,85 @@ bounded diagnostic tests. Its full Desktop suite passed **341 files, 4,309 tests
 no concurrent AST scan. Typecheck and lint passed without warnings. This does not turn the failed hosted
 attempt into a pass; a new exact clean source pair must be built and qualified.
 
-1. Run and qualify exact-version upload and an explicitly scoped deployment proposal
-   against freshly re-observed state. Preserve all 51 existing identity JWT
-   routes, the four absent source routes, environment, execution role and logs.
-2. Deploy and read back the exact intent-aware code while the parent schema
-   still applies. Preparation/discovery must stay unavailable until the schema
-   exists; existing terminal receipt recovery must remain intact.
-3. Retain the compatible handler and run fresh actual recovery, including
-   observed Gateway responses, retained-version invocation metrics, return
-   deployment and removal of temporary invocation permission.
-4. Hosted-verify the implemented source-bound, in-lock preserving continuation
-   with real rollback rehearsal, lasting application and independent readback,
-   then deliberately register the qualified migration canonically. Keep the
-   public intent CLI's direct `upgrade` refusal. A saved report or owner
-   confirmation cannot replace fresh recovery.
-5. Execute isolated fictional prepared/erased/cancelled, lost-reply,
+## Resumed release and postinspection repair
+
+Clean operator `7399e59` with V2 documentation source `315e8de` resumed the
+original admitted deployment without repeating its upload, CloudFormation
+execution or immutable-version publication. Run `bccd1492d8dae22401676387cdba66ec`
+ended with exit1 at **2026-10-08 01:53:19 UTC**, after schema admission and
+before settlement. Version 2 recovery passed 25 baseline, 25 retained and 25
+returned cases, plus 20 preparation/discovery refusals before schema release.
+All 95 observations have distinct Gateway request IDs. The journal recorded
+the metric verification stage, but its raw metric response was not archived;
+no complete successful release report exists.
+
+Independent read-only database inspections confirmed live48/source47 and an
+empty new intent table. The original 88-table fingerprint remains
+`29e413773ffb4e263421b312501242384e5f6085b3930fd6339fa9100ab53351`;
+the complete 89-table fingerprint is
+`d7f7c07d521aa1b68c4ffa7273a871b1a1d5763e725a87b8a97cd3a4fd981d1b`.
+The old schema fingerprint and all 23,985 original rows are unchanged. A narrow
+service readback found the active exact code, unqualified-latest integration
+and no retained-version permission. These observations establish the committed
+successor, not full erasure acceptance or custody settlement.
+
+The repair derives original and complete fingerprints from the same SQL
+snapshot and compares each against the matching inventory. The fictional
+continuation fixture now uses distinct predecessor and successor digests, and
+the SQL-backed regression passes actual upgrade/inspection receipts through
+the real continuation. Focused checks passed 38 database/command tests and
+14 continuation/deployment tests. Typecheck and lint passed. The full Desktop
+suite passed 341 files, 4,309 tests, 11 skips in 260.20 seconds, without a
+concurrent graph refresh. The subsequent read-only reconciliation profile has
+separate verification; it is not retrospectively covered by that full run.
+
+[Resumption audit](evidence/2026-10-08-care-intent-resumption-audit.json),
+[journal audit copy](evidence/2026-10-08-care-intent-resumption.events.jsonl),
+and [immutable secondary-lock copy](evidence/2026-10-08-care-intent-resumption.operator.lock.json)
+preserve the exact run identity and failure. Original local custody is intact.
+
+## Read only successor reconciliation
+
+The original resumption command still requires the parent schema and unchanged
+runtime source. Do not run it against the committed successor or delete either
+lock to make it start. The separate postcommit command inspects this one
+admitted run, pins both original custody hashes and the failed operator's
+ancestor snapshots, and permits only the three named operator-library/test
+repairs. All other application, migration, infrastructure, dependency and V2
+runtime files must match; a fresh API bundle must still be byte-identical to
+the deployed original. It does not claim every operator source file is unchanged.
+
+```powershell
+node scripts/reconcile-synthetic-care-intent-postcommit.mjs --v2-root "<V2 checkout>" --candidate "<original deployed build directory>" --inspect-admitted-fictional-intent-successor-only
+```
+
+The command reads actual services, exact S3/code bytes, roles, routes, policy,
+executed projections and two successor database snapshots. It performs no
+schema, routing, permission or custody mutation; a saved report is not input
+authority. Its result cannot feed the parent-schema release runner. A pass
+would establish current reconciliation only, not fresh routing recovery,
+canonical registration, lock retirement, device acceptance or PHI approval.
+
+The completed focused rerun passed **43 tests**, including unchanged historical
+interruption/refusal tests and a new regression proving that an allowed operator
+file cannot change API bytes through an existing import. Typecheck and focused
+lint passed; CI YAML parsed and all 108 archived journal events, including 95
+unique Gateway requests, validated. Earlier operator `7399e59` completed both
+hosted CI runs successfully; that is not CI evidence for this new source.
+
+## Remaining release and commercial work
+
+1. Qualify the new clean-source read-only successor reconciliation against AWS.
+   Preserve both locks, journals, 51 identity JWT routes, four absent source
+   routes, roles and logs. Any differing observation is a finding, not permission
+   to replay the schema or restore an incompatible handler.
+2. Implement and qualify explicit postcommit custody settlement with immutable
+   archival and current independent service/database checks. Do not represent
+   the historical failed release as a successful fresh recovery rehearsal.
+3. Deliberately register the exact already-applied migration canonically,
+   preserving ordered live receipts and the historical alias; keep the public
+   intent CLI's direct `upgrade` refusal. No schema replay or ledger rewrite.
+4. Execute isolated fictional prepared/erased/cancelled, lost-reply,
    second-session discovery, concurrency, replay and cross-owner journeys.
    Cancelled receipts alone do not prove erased outcomes or native recovery.
 

@@ -127,6 +127,7 @@ async function verifySuccessor(tx:ClinicalCoreTransaction,m:ClinicalCoreMigratio
 export type CareErasureIntentUpgradeResult={contract:'care-erasure-intent-upgrade/1';command:'inspect'|'rehearse'|'upgrade';
  execution:'synthetic-staging';phiAllowed:false;observedMigrationCount:47|48;sourceMigrationCount:46|47;
  tableCount:number;rowCount:number;dataSha256:string;schemaSha256:string;dataPreserved:true;schemaPreserved:true;
+ originalDataSha256:string;originalRowCount:number;completeDataSha256:string;completeRowCount:number;intentRowCount:number;
  applied:boolean;alreadyApplied:boolean;rolledBack:boolean;fromLedgerSha256:string;toLedgerSha256:string;referenceLedgerSha256:string;
  canonicalRegistered:false;hostedAcceptance:false;recoveryAcceptance:false;activationApproved:false};
 class RehearsalRollback extends Error{constructor(readonly result:CareErasureIntentUpgradeResult){super('intent_rehearsal_rollback');}}
@@ -164,11 +165,21 @@ export async function runCareErasureIntentUpgrade(database:ClinicalCoreDatabase,
   if(JSON.stringify(afterTables.old)!==JSON.stringify(beforeTables.old))fail('inventory_refused');
   stage='after_schema';if(await preservedSchema(tx,afterTables.old)!==oldSchema)fail('verification_failed','preserved_schema_changed');
   stage='after_fingerprint';const after=await base.fingerprint(tx,applied?afterTables.old:afterTables.tables);
-  if(before.sha256!==after.sha256||before.rows!==after.rows||applied&&(await base.fingerprint(tx,afterTables.added)).rows!==0)fail('data_changed');
+  const addedFingerprint=applied?await base.fingerprint(tx,afterTables.added):undefined;
+  if(before.sha256!==after.sha256||before.rows!==after.rows||applied&&addedFingerprint?.rows!==0)fail('data_changed');
   stage='contract_verification';if(final)await verifySuccessor(tx,m,overlay);else await base.verifyTerminal(tx,m,true);
+  // A successor inspection includes the new table in its complete digest even
+  // when that table is empty. Preserve a separate exact old-table witness from
+  // this same snapshot; never compare two different inventories as one digest.
+  const completeEntries=[...after.entries,...(addedFingerprint?.entries??[])].sort((a,b)=>a.table_name.localeCompare(b.table_name));
+  const originalEntries=completeEntries.filter(x=>x.table_name!==added);
+  const originalRows=originalEntries.reduce((n,r)=>n+r.row_count,0),completeRows=completeEntries.reduce((n,r)=>n+r.row_count,0);
   const result:CareErasureIntentUpgradeResult={contract:'care-erasure-intent-upgrade/1',command,execution:'synthetic-staging',phiAllowed:false,
    observedMigrationCount:final?48:47,sourceMigrationCount:final?47:46,tableCount:afterTables.tables.length,rowCount:before.rows,
    dataSha256:after.sha256,schemaSha256:oldSchema,dataPreserved:true,schemaPreserved:true,applied,alreadyApplied:successor,rolledBack:false,
+   originalDataSha256:sha(JSON.stringify(originalEntries)),originalRowCount:originalRows,
+   completeDataSha256:sha(JSON.stringify(completeEntries)),completeRowCount:completeRows,
+   intentRowCount:completeRows-originalRows,
    fromLedgerSha256:p.liveBeforeSha256,toLedgerSha256:p.liveAfterSha256,referenceLedgerSha256:p.referenceSha256,
    canonicalRegistered:false,hostedAcceptance:false,recoveryAcceptance:false,activationApproved:false};
   if(command==='rehearse')throw new RehearsalRollback(result);return result;
