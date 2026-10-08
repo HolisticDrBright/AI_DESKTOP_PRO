@@ -4,8 +4,9 @@ The current artifact binds the registered source47/live48 synthetic history to
 one clean Desktop and V2 source pair. It replaces the build format for future
 care releases; it does not revive the retired parent-schema release or change
 the classification of its failed run. Build and local inspection are implemented.
-The fixed-target live read-only preflight and encrypted exact-version upload are implemented. The deployment,
-recovery and full-fictional-acceptance runner is still engineering work.
+The fixed-target live read-only preflight, encrypted exact-version upload and
+unexecuted code-change proposal are implemented. Execution, compatible recovery
+and the full-fictional-acceptance runner are still engineering work.
 Neither app is commercial or PHI ready. PHI remains off and paid mobile builds
 remain held.
 
@@ -184,6 +185,50 @@ one SDK attempt and bounded requests. This does not establish the cause of an
 earlier error whose category was not recorded.
 
 ## Remaining live runner engineering
+
+### Prepare an unexecuted current history proposal
+
+From the clean committed source pair, build a new registered candidate and run:
+
+```powershell
+npm run prepare:synthetic-care-registered-code-change -- --v2-root "<V2 checkout>" --artifact "<new candidate directory>" --prepare-fictional-registered-code-change-only
+```
+
+This command performs its own upload and a new complete live preflight under
+one durable custody lock. It cannot load an old upload or preflight report as
+authority. The template changes the existing Lambda's exact immutable code key
+and object version. All other parameters use their previous values, the four
+known absent routes remain absent, and the registered database is inspected,
+not replayed. The command has no stack-execution or mobile-build option.
+
+Both raw CloudFormation views are qualified. The summary must identify exactly
+the Lambda Code modification and its Gateway integration ARN dependency. The
+property-value view must explain exactly the code key and object-version changes
+against the complete actual predecessor configuration. Duplicate JSON fields,
+unknown resources, pagination, new permissions, non-code properties and changed
+controls refuse. Classifying the integration dependency does not prove it is a
+no-op; post-execution readback and compatible traffic recovery are still needed.
+See [AWS DescribeChangeSet](https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_DescribeChangeSet.html)
+for the two projection modes and execution statuses.
+
+A complete listing is observed before creation. An exact existing proposal is
+verified without another create. A new creation is journaled before its request,
+uses a fixed source/version-bound token and one CLI attempt, and is never replayed
+after an uncertain response. Source, assumed identity, controls and freshness
+are checked before creation and after observation. Proposal input and report
+files are exclusive, fsynced and read back outside the immutable artifact.
+
+Successful proposal custody settles only after both views and final readback.
+Any admitted upload or proposal with an unknown outcome retains custody. The
+upload-only reconciliation command intentionally refuses the combined proposal
+purpose: do not delete that lock, retry creation or substitute a saved report.
+A compatible proposal reconciliation/execution operator is still required.
+An unexecuted proposal reports `executionAdmissible:false`, not release approval.
+
+The new thirteen proposal tests use fictional transports, including lost create
+responses, both projection inventories, post-create drift, stale preparation,
+idempotent existing-proposal inspection and false-positive context parsing.
+No new actual CloudFormation proposal or execution is implied by those tests.
 
 The next operator must use its own observations, never supplied report flags:
 

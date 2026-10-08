@@ -104,11 +104,12 @@ export function registeredOperationDirectory(root,current,candidate){
  for(const part of ['synthetic-care-registered-operations',current.desktop.commit,current.mobile.source.commit,candidate.manifest.zipSha256])step(part);
  return directory;
 }
-export async function uploadCareRegisteredRelease(root,mobileRoot,directory){
+export async function uploadCareRegisteredRelease(root,mobileRoot,directory,proposal){
+ check(proposal===undefined||typeof proposal==='function','proposal_callback');
  const current=careRegisteredCurrent(root,mobileRoot),candidate=readCareRegisteredCandidate(directory);
  verifyCareRegisteredCandidate(candidate,current);observeSyntheticMemberIdentity();
  const out=registeredOperationDirectory(root,current,candidate);
- const custody=createIntentUploadCustody(root,out,current,'registered-artifact-upload');
+ const custody=createIntentUploadCustody(root,out,current,proposal?'registered-artifact-upload-proposal':'registered-artifact-upload');
  const client=new S3Client({region:P.region,credentials:fromIni({profile}),maxAttempts:1,requestHandler:REGISTERED_UPLOAD_TRANSPORT});
  let transportFailure;
  try{
@@ -129,8 +130,23 @@ export async function uploadCareRegisteredRelease(root,mobileRoot,directory){
    },
   });
   const receipt=resolve(out,custody.runId+'.json');durableReport(receipt,{runId:custody.runId,journal:custody.journal,...report});
+  // The nonexecuting proposal CLI supplies its own code callback, never a
+  // report or environment override. Keep this same custody across both writes.
+  let proposed;
+  if(proposal){
+   const fresh=await observeCareRegisteredPreflight(root,mobileRoot,directory);
+   const unchanged=async()=>{
+    check(canonical(careRegisteredCurrent(root,mobileRoot))===canonical(current),'source_changed');
+    const read=readCareRegisteredCandidate(directory);
+    check(['zip','bundle','releaseBytes','manifestBytes'].every(k=>read[k].equals(candidate[k])),'artifact_changed');
+   };
+   await unchanged();verifyRegisteredUploadPreflight(fresh,candidate,current,Date.now());
+   proposed=await proposal({candidate,current,artifact:report.artifact,preparation:fresh,unchanged,
+    operationsDirectory:out,record:custody.record,admit:custody.admit});
+   await unchanged();
+  }
   custody.record({stage:'registered_upload_completed',receipt});custody.settle();
-  return {receipt,runId:custody.runId,journal:custody.journal,...report,operatorCustodySettled:true};
+  return {receipt,runId:custody.runId,journal:custody.journal,...report,...(proposed?{proposal:proposed}:{}),operatorCustodySettled:true};
  }catch(error){const bounded=registeredPreflightFailureCode(error),code=bounded.endsWith(':preflight_failed')&&transportFailure?transportFailure:bounded;
   custody.record({stage:'registered_upload_finding',code,writeAdmitted:custody.admitted});throw Error(code);}
  finally{client.destroy();custody.close();}
