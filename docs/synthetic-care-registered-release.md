@@ -713,3 +713,24 @@ Broad verification after this fix:413 care-script tests pass,0 failures/skips
 single-attempt AWS read now classifies the actual version2 response as qualified
 policy absence. The complete stopped-run observer must still rerun from a clean
 committed operator; this one read does not replace either full observation.
+
+### Report publication freshness
+
+The exact cbb8fce/38ea48c synthetic run252f634aad58c2f2a443589dd26b6834
+stopped at18:25:27.669Z with proposal_preflight_renewal_required. Its verified
+artifact upload and new unexecuted proposal remain historical evidence; no
+execution admission or code deployment occurred. The saved proposal report
+used a preflight almost120 seconds old. Durable readback and the final principal
+check crossed that deadline, correctly preventing a completed proposal result.
+
+Before publishing, the constructor now obtains a fresh complete read-only
+preflight when time has elapsed, binds its original controls, both canonical
+database observations, source and principal, and rechecks the exact proposal
+projections. The saved report names that new qualifying observation. The final
+guard still forbids renewal after saving, and the120-second limit remains.
+Slow saves, slow control reads, stale/future/partial observations, changed
+controls, changed identity and unknown replies still refuse. No create or
+execute retry is introduced. The new publication regression fails against the
+old implementation and passes after the repair; the negative refresh matrix
+passes too. Actual stopped-run custody settlement and a fresh source-bound
+release remain separate hosted work. PHI and paid mobile builds remain off.

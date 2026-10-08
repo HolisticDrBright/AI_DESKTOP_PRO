@@ -196,6 +196,36 @@ test('renewal admits a delayed local preparation only after a new complete prefl
  x.port.writeInput=async()=>{x.f.now+=120001;};
  await propose(x);assert.equal(count(),1);assert.equal(x.creates(),1);
 });
+test('publication renews before saving a nearly expired report; a bounded save cannot spend an old preflight window',async()=>{
+ const x=executionFixture(),count=renewalPort(x),create=x.port.create,save=x.port.saveReport;
+ x.port.control=async()=>{x.f.now+=35000;return structuredClone(x.f.raw);};
+ x.port.create=async fixed=>{const result=await create(fixed);x.f.now+=10000;return result;};
+ x.port.saveReport=async(...args)=>{await save(...args);x.f.now+=6000;};
+ const original=x.f.preflight.observedAt,report=await propose(x);
+ assert.equal(count(),1);assert.equal(x.creates(),1);assert.equal(x.saved.length,1);
+ assert.equal(report.preflightRenewals,1);assert.notEqual(report.preflightObservedAt,original);
+ assert.equal(x.f.preflight.observedAt,original);
+ assert.equal(x.events.at(-1).stage,'registered_change_set_verified_unexecuted');
+ assert.equal(report.deployed,false);assert.equal(report.executionAdmissible,false);
+});
+test('publication refresh cannot bless a changed, stale, partial or unconfirmed observer after create',async()=>{
+ for(const kind of ['stale','future','control','missing_database','identity','unknown']){
+  const x=executionFixture();renewalPort(x);const refresh=x.port.refreshPreflight,create=x.port.create;
+  x.port.create=async fixed=>{const result=await create(fixed);x.f.now+=10000;return result;};
+  x.port.refreshPreflight=async()=>{
+   if(kind==='unknown')throw Error('unconfirmed read');
+   const r=await refresh();
+   if(kind==='stale')r.observedAt=new Date(x.f.now-120001).toISOString();
+   if(kind==='future')r.observedAt=new Date(x.f.now+1).toISOString();
+   if(kind==='control')r.control.revision+='changed';
+   if(kind==='missing_database')delete r.databaseAfter;
+   if(kind==='identity')x.caller.Arn+='different';return r;
+  };
+  await assert.rejects(propose(x),undefined,kind);assert.equal(x.creates(),1,kind);
+  assert.equal(x.saved.length,0,kind);
+  assert.equal(x.events.some(e=>e.stage==='registered_change_set_verified_unexecuted'),false,kind);
+ }
+});
 test('renewal refuses stale/future/changed/partial observations before create admission',async()=>{
  for(const kind of ['stale','future','control','source','phi','missing_database','wrong_database','identity','unknown']){
   const x=executionFixture();renewalPort(x);const refresh=x.port.refreshPreflight;

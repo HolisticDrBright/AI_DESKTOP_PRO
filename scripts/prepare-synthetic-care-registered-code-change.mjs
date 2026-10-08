@@ -31,13 +31,18 @@ export async function runCareRegisteredProposal(candidate,current,sourceText,pre
   await port.unchanged();const caller=await port.identity();assertSyntheticMemberIdentity(caller);
   check(canonical(caller)===canonical(first),'principal_changed');
  };
- const guard=async(allowRenewal=true)=>{
+ const guard=async(allowRenewal=true,publication=false)=>{
   await unchangedPrincipal();
   // Renew only elapsed time, never a caught validation failure. The public
   // constructor performs a complete new read-only preflight, not a timestamp
   // edit, stored report or replay of an admitted create.
   const time=Date.parse(activePreparation.observedAt),now=port.now();
-  if(Number.isFinite(time)&&Number.isFinite(now)&&now-time>120000){
+  // A report near the deadline can expire during its own durable readback and
+  // final control check. Before publication, obtain a fresh complete observer
+  // result when time has elapsed. Never renew after saving the report: its
+  // recorded preflight must remain the one the final strict guard verifies.
+  const publicationRefresh=publication&&typeof port.refreshPreflight==='function'&&now>time;
+  if(Number.isFinite(time)&&Number.isFinite(now)&&(now-time>120000||publicationRefresh)){
    check(allowRenewal&&typeof port.refreshPreflight==='function'&&renewals<4,'preflight_renewal_required');
    const started=port.now(),fresh=await port.refreshPreflight();
    await unchangedPrincipal();verifyRegisteredUploadPreflight(fresh,candidate,current,port.now());
@@ -69,7 +74,7 @@ export async function runCareRegisteredProposal(candidate,current,sourceText,pre
   if(!['CREATE_PENDING','CREATE_IN_PROGRESS'].includes(detailed?.Status))break;
   await port.wait(2000);
  }
- const summary=await port.describe(binding,false),actualTemplate=await port.template(binding),raw=await guard();
+ const summary=await port.describe(binding,false),actualTemplate=await port.template(binding),raw=await guard(true,true);
  const projection=verifyCareRegisteredProposalViews(summary,detailed,actualTemplate,input,binding,raw,sourceText,
   activePreparation,current,candidate,artifact,port.now());
  const report={contract:'synthetic-care-registered-code-change/1',observedAt:new Date(port.now()).toISOString(),
