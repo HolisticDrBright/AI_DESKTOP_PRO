@@ -76,7 +76,12 @@ export async function verifyInterruptedRegisteredReleaseCustody(c,candidate,sour
  }
  check(Number.isFinite(now)&&now-prior>=60000,'writer_settlement');
  const finding=events.at(-1).stage==='registered_upload_finding'?events.at(-1):undefined;
- if(finding)check(typeof finding.writeAdmitted==='boolean'&&/^synthetic_care_registered_release_refused:[a-z0-9_]{1,180}$/.test(finding.code),'failure');
+ // The writer also records this exact finite identity refusal. Recognizing
+ // its historical label never supplies current authority: reconciliation
+ // still requires a fresh assumed-role identity and complete service reads.
+ if(finding)check(typeof finding.writeAdmitted==='boolean'
+  &&(finding.code==='synthetic_member_principal_refused'
+   ||/^synthetic_care_registered_release_refused:[a-z0-9_]{1,180}$/.test(finding.code)),'failure');
  const rows=finding?events.slice(0,-1):events;let i=0;
  const take=stage=>{const e=rows[i++];check(e?.stage===stage,'journal_order');return e;};
  check(take('registered_upload_started').runId===lock.runId,'run_id');
