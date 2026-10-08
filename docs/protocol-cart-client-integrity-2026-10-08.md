@@ -19,6 +19,12 @@ The Chromium suite bundles the actual React product and assignment panels and ru
 
 Run `npm run test:protocol-cart-browser` for the browser suite. Run the contract, session, database and existing rendered-view tests together with Vitest for the corresponding source and SQL checks.
 
-## Remaining delivery requirements
+## Program sharing outcomes
+
+An additional actual-panel check reproduced three assignment UI defects: recursive refresh was suppressed by the held busy flag after a confirmed share, a subsequent status-read failure could not be distinguished from the accepted mutation, and a lost reply was incorrectly described as unchanged. The panel now performs one explicit status read after a verified share or phase-release receipt. A failed read preserves the confirmed mutation notice, while an authorization refusal clears the clinic context.
+
+An unverified share response is uncertain, not a successful or unchanged assignment. Its content digest must match the selected preview. An uncertain result clears the preview and requires a status check before another attempt; there is no automatic mutation retry. Five additional browser cases cover confirmed share, unavailable status read, lost reply, mismatched receipt and authorization loss during the follow-up read. The final Chromium suite contains eighteen tests. Fictional lost-reply fixtures qualify the UI behavior only; real concurrent delivery and cross-device recovery remain hosted acceptance requirements.
+
+## Remaining provider delivery requirements
 
 The manifest still returns `delivery.state: not_implemented`. No Fullscript cart, order or charge is created. Provider delivery needs governed catalog resolution, patient and clinic binding, reviewed quantities, patient-specific safety checks, durable idempotency and reconciliation of uncertain outcomes before synthetic hosted acceptance. Component tests do not substitute for those checks, matched release deployment, physical mobile testing, or PHI approval.

@@ -33,9 +33,26 @@ async function mount(t,assignments=false){
   await page.evaluate(()=>{
     const manifestId='11111111-1111-4111-8111-111111111111';
     window.cartFixture={mode:'valid',calls:[],pending:[],signals:[],readChange:{}};
+    window.assignmentFixture={mode:'valid',calls:[],assigned:false};
     window.fetch=async(url,options)=>{
       if(url==='/api/live/program-assignments'){
         const request=JSON.parse(options.body),versionId='22222222-2222-4222-8222-222222222222';
+        const fixture=window.assignmentFixture;
+        fixture.calls.push(request);
+        if(request.action==='assign'){
+          fixture.assigned=true;
+          if(fixture.mode==='lost-reply')throw new Error('fictional_lost_reply_after_commit');
+          return new Response(JSON.stringify({data:{action:'assign',enrollmentId:'88888888-8888-4888-8888-888888888888',
+            sourceDigest:(fixture.mode==='wrong-receipt'?'e':'d').repeat(64),state:'offered',revision:'1',duplicate:false}}),{status:200});
+        }
+        if(request.action==='status'){
+          if(fixture.mode==='status-unavailable')return new Response('{}',{status:503});
+          if(fixture.mode==='status-denied')return new Response('{}',{status:403});
+          return new Response(JSON.stringify({data:{action:'status',assignments:fixture.assigned?[{
+            enrollmentId:'88888888-8888-4888-8888-888888888888',title:'Fictional assigned program',state:'offered',revision:'1',
+            patientRecordId:'66666666-6666-4666-8666-666666666666',connectionId:'55555555-5555-4555-8555-555555555555',
+            phaseIndex:0,phaseCount:1,finished:false,completedCount:0,assignedAt:'2026-10-08T12:00:00Z',updatedAt:'2026-10-08T12:00:00Z'}]:[]}}),{status:200});
+        }
         const phases=[{id:'phase-1',title:'Fictional lesson phase',days:7,transition:'scheduled',
           items:[{id:'lesson-1',title:'Fictional lesson',kind:'lesson',instructions:'Fictional education only',released:true}]}];
         const data=request.action==='connections'
@@ -187,4 +204,55 @@ for(const reason of ['session','cross-tab','hidden'])test(`assignment ${reason} 
   assert.equal(await page.getByTestId('program-preview').count(),0);
   await page.getByRole('button',{name:'Load linked patients'}).click();
   assert.equal(await page.getByLabel('Linked patient').inputValue(),'');
+});
+
+test('a confirmed share refreshes assignment status once and preserves the confirmation',async t=>{
+  const page=await mount(t,true);
+  await page.getByRole('button',{name:'Share with this patient'}).click();
+  await page.getByText('Fictional assigned program',{exact:true}).waitFor({timeout:3000});
+  assert.match(await page.getByRole('status').innerText(),/Shared with the patient app/);
+  assert.deepEqual(await page.evaluate(()=>window.assignmentFixture.calls.filter(call=>['assign','status'].includes(call.action)).map(call=>call.action)),['assign','status']);
+});
+
+test('an unavailable post-share read does not undo or misreport the confirmed assignment',async t=>{
+  const page=await mount(t,true);
+  await page.evaluate(()=>{window.assignmentFixture.mode='status-unavailable';});
+  await page.getByRole('button',{name:'Share with this patient'}).click();
+  await page.getByRole('alert').filter({hasText:'assignment list'}).waitFor({timeout:3000});
+  assert.match(await page.getByRole('status').innerText(),/Shared with the patient app/);
+  assert.equal(await page.evaluate(()=>window.assignmentFixture.calls.filter(call=>call.action==='assign').length),1);
+  assert.doesNotMatch(await page.locator('body').innerText(),/Nothing was changed/);
+});
+
+test('a lost share reply is uncertain, never called unchanged or automatically retried',async t=>{
+  const page=await mount(t,true);
+  await page.evaluate(()=>{window.assignmentFixture.mode='lost-reply';});
+  await page.getByRole('button',{name:'Share with this patient'}).click();
+  await page.getByRole('alert').filter({hasText:'could not confirm'}).waitFor({timeout:3000});
+  assert.doesNotMatch(await page.locator('body').innerText(),/Nothing was changed|Shared with the patient app/);
+  assert.equal(await page.evaluate(()=>window.assignmentFixture.calls.filter(call=>call.action==='assign').length),1);
+  assert.equal(await page.getByRole('button',{name:'Share with this patient'}).isDisabled(),true);
+  await page.getByRole('button',{name:'Load / refresh assignments'}).click();
+  await page.getByText('Fictional assigned program',{exact:true}).waitFor();
+  assert.equal(await page.evaluate(()=>window.assignmentFixture.calls.filter(call=>call.action==='assign').length),1);
+});
+
+test('a share receipt for other content is not presented as verified success',async t=>{
+  const page=await mount(t,true);
+  await page.evaluate(()=>{window.assignmentFixture.mode='wrong-receipt';});
+  await page.getByRole('button',{name:'Share with this patient'}).click();
+  await page.getByRole('alert').filter({hasText:'could not confirm'}).waitFor({timeout:3000});
+  assert.equal(await page.getByRole('status').count(),0);
+  assert.equal(await page.evaluate(()=>window.assignmentFixture.calls.filter(call=>call.action==='assign').length),1);
+});
+
+test('authorization loss during the post-share read drops the opened clinic context',async t=>{
+  const page=await mount(t,true);
+  await page.evaluate(()=>{window.assignmentFixture.mode='status-denied';});
+  await page.getByRole('button',{name:'Share with this patient'}).click();
+  await page.getByRole('alert').filter({hasText:'Access changed'}).waitFor({timeout:3000});
+  assert.equal(await page.getByRole('status').count(),0);
+  assert.equal(await page.getByLabel('Linked patient').count(),0);
+  assert.equal(await page.getByTestId('program-source-picker').count(),0);
+  assert.equal(await page.evaluate(()=>window.assignmentFixture.calls.filter(call=>call.action==='assign').length),1);
 });
