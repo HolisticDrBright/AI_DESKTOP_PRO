@@ -123,6 +123,23 @@ test('the original failed result stays failed even after AWS independently shows
  const r=await run(f);assert.equal(r.originalRunOutcome,'failed');assert.equal(r.originalFailure,f.events.at(-1).code);
  assert.equal(r.routeRestoredAtObservation,true);assert.equal(r.recoveryRehearsed,false);
 });
+
+test('a recorded finite principal refusal can be reconciled only through fresh identity and complete observations',async()=>{
+ const f=fixture();f.events.push({at:new Date(f.completed).toISOString(),stage:'registered_upload_finding',
+  code:'synthetic_member_principal_refused',writeAdmitted:true});f.custody=f.encode();
+ const original=Buffer.from(f.custody.journalBytes),r=await run(f);
+ assert.equal(r.originalRunOutcome,'failed');assert.equal(r.originalFailure,'synthetic_member_principal_refused');
+ assert.equal(r.deployed,true);assert.equal(r.recoveryRehearsed,false);assert.equal(r.awsMutationPerformed,false);
+ assert.equal(f.custody.journalBytes.equals(original),true);
+ const foreign=fixture();foreign.events=structuredClone(f.events);foreign.custody=foreign.encode();
+ foreign.port.identity=async()=>({Account:'173535830222',Arn:'arn:aws:iam::173535830222:root'});
+ await assert.rejects(run(foreign),/synthetic_member_principal_refused/);
+ for(const code of ['synthetic_member_principal_refused_extra','synthetic_member_principal_refused:detail',
+  'Bearer private-value','synthetic_care_intent_release_refused:foreign']){
+  const x=fixture();x.events=structuredClone(f.events);x.events.at(-1).code=code;x.custody=x.encode();
+  await assert.rejects(run(x),/release_reconciliation_failure/);
+ }
+});
 test('a failed recovery suffix is checked in order but never becomes successful recovery evidence',async()=>{
  const f=fixture(),id=f.before.binding.id,at=new Date(f.completed).toISOString();
  f.events.push(...[
