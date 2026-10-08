@@ -47,7 +47,10 @@ export function verifyCareRegisteredReconciledDeployment(w,candidate,current,sou
  check(equal(operator.mobile,current.mobile)&&equal(operator.migrations,current.migrations)
   &&operator.templateSha256===current.templateSha256,'reconciliation_operator_binding');
  check(Date.parse(w.after?.observedAt)>=started,'reconciliation_observation');
- const beforeStarted=Date.parse(w.before?.observedAt);
+ // The database is read before the enclosing control-plane snapshot is
+ // finished. Keep both historical timestamps intact and retain the database
+ // age bound against that enclosing snapshot and the admission instant.
+ const beforeStarted=Date.parse(w.before?.database?.observedAt);
  const result=verifyRegisteredDeploymentObservation(w,candidate,current,sourceText,artifact,beforeStarted,now,operator);
  return {...result,contract:'synthetic-care-registered-reconciled-deployment/1',operatorSource:structuredClone(operator),
   originalExecutionOutcome:'unconfirmed',retryPerformed:false};
@@ -59,7 +62,7 @@ export function verifyCareRegisteredRestorationDeployment(w,candidate,current,so
  check(equal(operator.mobile,current.mobile)&&equal(operator.migrations,current.migrations)
   &&operator.templateSha256===current.templateSha256,'reconciliation_operator_binding');
  check(Date.parse(w.after?.observedAt)>=started,'reconciliation_observation');
- const result=verifyRegisteredDeploymentObservation(w,candidate,current,sourceText,artifact,Date.parse(w.before?.observedAt),now,operator,version);
+ const result=verifyRegisteredDeploymentObservation(w,candidate,current,sourceText,artifact,Date.parse(w.before?.database?.observedAt),now,operator,version);
  return {...result,contract:'synthetic-care-registered-restoration-deployment/1',operatorSource:structuredClone(operator),
   observedRoutingVersion:version??'$LATEST',integrationNoOpProven:version===undefined,
   originalExecutionOutcome:'unconfirmed',retryPerformed:false};

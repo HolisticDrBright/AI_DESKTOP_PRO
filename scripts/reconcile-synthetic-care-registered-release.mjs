@@ -83,6 +83,7 @@ export async function verifyInterruptedRegisteredReleaseCustody(c,candidate,sour
   &&(finding.code==='synthetic_member_principal_refused'
    ||/^synthetic_care_registered_release_refused:[a-z0-9_]{1,180}$/.test(finding.code)),'failure');
  const rows=finding?events.slice(0,-1):events;let i=0;
+ const originalStarted=Date.parse(rows[0]?.at);
  const take=stage=>{const e=rows[i++];check(e?.stage===stage,'journal_order');return e;};
  check(take('registered_upload_started').runId===lock.runId,'run_id');
  const result={lock,events,current,evidenceReferences:[],journalSha256:sha256(c.journalBytes),
@@ -121,7 +122,7 @@ export async function verifyInterruptedRegisteredReleaseCustody(c,candidate,sour
   let value;try{value=JSON.parse(bytes.toString('utf8'));}catch{refuseRegistered('release_reconciliation_before_json');}
   check(bytes.equals(Buffer.from(JSON.stringify(value,null,2)+'\n'))&&equal(value.input,input)&&equal(value.binding,binding),'before_binding');
   befores.push(value);archiveTimes.push(Date.parse(e.at));
-  verifyCareRegisteredBeforeExecution(value,candidate,current,sourceText,artifact,Date.parse(value.observedAt),Date.parse(e.at));
+  verifyCareRegisteredBeforeExecution(value,candidate,current,sourceText,artifact,originalStarted,Date.parse(e.at));
  }
  if(i===rows.length)return early();
  check(befores.length===2,'before_count');
@@ -136,9 +137,9 @@ export async function verifyInterruptedRegisteredReleaseCustody(c,candidate,sour
   &&equal(admission,{at:execute.at,stage:execute.stage,stackId:execute.stackId,changeSetId:execute.changeSetId,
    clientToken:execute.clientToken,beforeSha256:sha256(canonical(before)),artifact,current}),'admission_bytes');
  for(let n=0;n<befores.length;n++){
-  const b=befores[n];verifyCareRegisteredBeforeExecution(b,candidate,current,sourceText,artifact,Date.parse(b.observedAt),archiveTimes[n]);
+  const b=befores[n];verifyCareRegisteredBeforeExecution(b,candidate,current,sourceText,artifact,originalStarted,archiveTimes[n]);
  }
- verifyCareRegisteredBeforeExecution(before,candidate,current,sourceText,artifact,Date.parse(before.observedAt),Date.parse(execute.at));
+ verifyCareRegisteredBeforeExecution(before,candidate,current,sourceText,artifact,originalStarted,Date.parse(execute.at));
  check(verified.summarySha256===sha256(canonical(before.summary))&&verified.propertyValuesSha256===sha256(canonical(before.detailed)),'verified_projection');
  // Validate every permitted suffix as a state transition, not a whitelist.
  let state='execute',sid;

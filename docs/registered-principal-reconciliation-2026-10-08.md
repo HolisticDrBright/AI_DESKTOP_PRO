@@ -20,3 +20,13 @@ The repaired operator must be attributed separately from that immutable
 application source. Read-only reconciliation, a separately admitted recovery
 rehearsal, and positive functional acceptance remain distinct requirements.
 No paid mobile build or real patient data is authorized by this change.
+
+The first repaired hosted observation then refused historical freshness before
+reaching a new AWS inspection. A database read naturally finishes before the
+enclosing snapshot; the old reconciliation reader required it to be no earlier
+than that later snapshot. A second failing-before regression gives those reads
+distinct timestamps. Historical journal validation now uses the original run
+start, while deployment reconciliation uses the historical database-read time
+as its lower bound. The five-minute database age and two-minute admission
+snapshot bounds stay enforced; future and stale reads still refuse. Current
+database observations still require the new operator's start and source.
