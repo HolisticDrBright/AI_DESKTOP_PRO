@@ -11,6 +11,11 @@ type Connections=Extract<ProgramAssignmentResponse,{action:'connections'}>;
 type Programs=Extract<ProgramAssignmentResponse,{action:'programs'}>;
 type Preview=Extract<ProgramAssignmentResponse,{action:'preview'}>;
 
+const postAssignment=(input:ProgramAssignmentRequest)=>fetch('/api/live/program-assignments',{
+ method:'POST',credentials:'same-origin',cache:'no-store',headers:{'content-type':'application/json'},
+ body:JSON.stringify(input),signal:AbortSignal.timeout(25000),
+});
+
 /**
  * Assigning a published program to a linked patient app account, and seeing where
  * each assignment has got to.
@@ -39,7 +44,7 @@ export function AppProgramAssignmentsPanel(){
  const [busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState('');
  const working=useRef(false),epoch=useRef(0),alive=useRef(true);
  function clear(){epoch.current++;working.current=false;setBusy(false);setStatus(null);setLinks(null);
-  setPrograms(null);setPreview(null);setNotice('');}
+  setPrograms(null);setPreview(null);setNotice('');setConnectionId('');setProgramVersionId('');}
  useEffect(()=>{
   alive.current=true;const lifecycleEpoch=epoch;
   const stop=onWorkforceSessionChange(()=>{clear();setError('Session changed. Refresh assignments.');});
@@ -52,9 +57,9 @@ export function AppProgramAssignmentsPanel(){
   if(working.current)return;
   working.current=true;setBusy(true);setError('');setNotice('');
   const generation=epoch.current;
+  const mutation=input.action==='assign'||input.action==='release';
   try{
-   const response=await fetch('/api/live/program-assignments',{method:'POST',credentials:'same-origin',cache:'no-store',
-    headers:{'content-type':'application/json'},body:JSON.stringify(input),signal:AbortSignal.timeout(25000)});
+   const response=await postAssignment(input);
    if(!alive.current||epoch.current!==generation)return;
    if(!response.ok){
     if(response.status===401||response.status===403){clear();setError('Access changed. Sign in and check your clinic access before refreshing.');return;}
@@ -70,15 +75,38 @@ export function AppProgramAssignmentsPanel(){
    if(data.action==='programs')setPrograms(data);
    if(data.action==='preview')setPreview(data);
    if(data.action==='assign'){
+    if(input.action!=='assign'||preview?.programVersionId!==input.programVersionId
+     ||preview.sourceDigest!==data.sourceDigest)throw new Error('assignment_receipt_mismatch');
     setNotice(data.duplicate
      ? 'That guide was already shared with this patient. Nothing changed and it was not shared twice.'
      : 'Shared with the patient app. They choose whether to add it; their plan is unchanged until they do.');
     setPreview(null);setProgramVersionId('');
-    void run({action:'status'});
    }
    if(data.action==='release')setNotice('Phase released. The patient can move on once their steps are done and the phase has elapsed.');
+   if(data.action==='assign'||data.action==='release'){
+    setStatus(null);
+    // The mutation has a verified receipt. This is one read, not recursive run()
+    // while its working flag is held, and never a second mutation.
+    try{
+     const read={action:'status'}as const,refreshed=await postAssignment(read);
+     if(!alive.current||epoch.current!==generation)return;
+     if(refreshed.status===401||refreshed.status===403){clear();setError('Access changed. Sign in and check your clinic access before refreshing.');return;}
+     if(!refreshed.ok)throw new Error('refresh_refused');
+     const latest=parseProgramAssignmentResponse(read,(await refreshed.json()).data);
+     if(!alive.current||epoch.current!==generation)return;
+     if(latest.action!=='status')throw new Error('refresh_mismatch');
+     setStatus(latest);
+    }catch{
+     if(alive.current&&epoch.current===generation)setError('The change was confirmed, but the assignment list could not be refreshed. Use Load / refresh assignments to check it.');
+    }
+   }
   }catch{
-   if(alive.current&&epoch.current===generation)setError('Program assignments are unavailable. Nothing was changed.');
+   if(alive.current&&epoch.current===generation){
+    if(mutation){setPreview(null);setStatus(null);}
+    setError(mutation
+     ?'We could not confirm whether the change was saved. Check current assignments before trying again. No automatic retry was made.'
+     :'Program assignments could not be verified. Refresh to check current access.');
+   }
   }finally{if(alive.current&&epoch.current===generation){working.current=false;setBusy(false);}}
  }
 

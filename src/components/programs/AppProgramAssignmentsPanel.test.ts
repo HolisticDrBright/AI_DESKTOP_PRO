@@ -2,8 +2,8 @@ import {describe,expect,it} from 'vitest';
 import {readFileSync} from 'node:fs';
 
 /**
- * The panel is asserted at source level because this repository has no component
- * render harness. What matters here is not layout: it is that the panel authors no
+ * These source assertions complement the actual Chromium panel lifecycle suite.
+ * What matters here is not layout: it is that the panel authors no
  * clinical content, states plainly what sharing does and does not do, and treats a
  * refused revision as the server deciding rather than something to retry.
  */
@@ -43,7 +43,9 @@ describe('the practitioner assignment panel',()=>{
  it('reports a refusal as a decision, not as something to retry',()=>{
   expect(source).toContain('response.status===409');
   expect(source).toContain('Nothing was assigned');
-  expect(source).toContain('Nothing was changed');
+  expect(source).not.toContain('Nothing was changed');
+  expect(source).toContain('We could not confirm whether the change was saved');
+  expect(source).toContain('No automatic retry was made');
  });
  it('clears on access loss and on the tab being hidden',()=>{
   expect(source).toContain('onWorkforceSessionChange');

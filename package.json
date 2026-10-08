@@ -68,6 +68,7 @@
     "verify:synthetic-care-cancellation": "node scripts/verify-synthetic-care-cancellation.mjs --verify-fictional-cancellation-first",
     "rehearse:synthetic-care-post-parent": "node scripts/rehearse-synthetic-care-routing.mjs --rehearse-post-parent-fictional-receipts",
     "test:ci-browser-download": "node --test scripts/ci-browser-download.test.mjs",
+    "test:protocol-cart-browser": "node --test scripts/protocol-cart-browser.test.mjs",
     "upload:synthetic-care-release": "node scripts/upload-synthetic-care-release.mjs",
     "prepare:synthetic-care-code-change": "node scripts/prepare-synthetic-care-code-change.mjs",
     "check:aws-production-readiness": "node scripts/check-aws-production-readiness.mjs",

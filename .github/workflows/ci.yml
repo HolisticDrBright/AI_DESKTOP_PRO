@@ -90,6 +90,8 @@ jobs:
       - run: npm ci
       - run: npx playwright install --with-deps chromium
         timeout-minutes: 10
+      - name: Verify version-scoped product lists in React StrictMode (fictional transport only)
+        run: npm run test:protocol-cart-browser
       - name: Verify generated browser audio with fictional AWS responses; no real patient audio
         run: |
           node scripts/live-stub-server.mjs &

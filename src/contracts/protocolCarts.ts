@@ -24,9 +24,16 @@ export const cartLine = z.object({
   phaseId: z.string(), itemId: z.string(), title: z.string(),
   productId: z.string(), dose: z.string(),
   ingredientKeys: z.array(z.string()).min(1).max(40),
-  purchaseUrl: z.string().url().nullable(),
+  purchaseUrl: z.string().max(2048).url().refine(value => {
+    const url = new URL(value);
+    return url.protocol === 'https:' && !url.username && !url.password;
+  }).nullable(),
   included: z.boolean(), exclusionReason: cartExclusionReason.nullable(),
-}).strict();
+}).strict().superRefine((line, context) => {
+  if (line.included ? line.exclusionReason !== null || line.purchaseUrl === null : line.exclusionReason === null) {
+    context.addIssue({code: z.ZodIssueCode.custom, message: 'cart_line_inclusion_mismatch'});
+  }
+});
 export type CartLine = z.infer<typeof cartLine>;
 
 export const protocolCartRequest = z.discriminatedUnion('action', [
@@ -53,7 +60,16 @@ export const protocolCartResponse = z.union([
     contentSha256: hash,
     // Stated by the clinic, not assumed by the screen: nothing has been sent anywhere.
     delivery: z.object({ state: z.literal('not_implemented'), detail: z.string() }).strict(),
-  }).strict(),
+  }).strict().superRefine((manifest, context) => {
+    const included = manifest.lines.filter(line => line.included).length;
+    if (manifest.includedCount !== included || manifest.excludedCount !== manifest.lines.length - included) {
+      context.addIssue({code: z.ZodIssueCode.custom, message: 'cart_line_count_mismatch'});
+    }
+    const identities = manifest.lines.map(line => JSON.stringify([line.phaseId, line.itemId]));
+    if (new Set(identities).size !== identities.length) {
+      context.addIssue({code: z.ZodIssueCode.custom, message: 'cart_line_identity_duplicate'});
+    }
+  }),
   z.object({
     action: z.literal('compile'), manifestId: uuid, programVersion: z.number().int().positive(),
     includedCount: z.number().int().min(0), excludedCount: z.number().int().min(0),
@@ -65,6 +81,9 @@ export type ProtocolCartResponse = z.infer<typeof protocolCartResponse>;
 export const parseProtocolCartResponse = (request: ProtocolCartRequest, raw: unknown) => {
   const parsed = protocolCartResponse.parse(raw);
   if (parsed.action !== request.action) throw new Error('response_action_mismatch');
+  if (request.action === 'read' && parsed.action === 'read' && parsed.manifestId !== request.manifestId) {
+    throw new Error('response_manifest_mismatch');
+  }
   return parsed;
 };
 
