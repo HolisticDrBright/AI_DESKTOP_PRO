@@ -36,11 +36,12 @@ export function intentFailureCode(error){
 }
 /** Filesystem custody, not deployment authority. Admission is flushed before
  * the remote request; an unknown outcome deliberately retains its lock. */
-export function createIntentUploadCustody(root,out,current){
+export function createIntentUploadCustody(root,out,current,purpose='intent-artifact-upload-proposal'){
+ if(!['intent-artifact-upload-proposal','registered-artifact-upload'].includes(purpose))refuseIntent('custody_purpose');
  const directory=resolve(root,'dist/synthetic-care-routing');
  mkdirSync(directory,{recursive:true});mkdirSync(out,{recursive:true});
  const runId=randomBytes(16).toString('hex'),lock=resolve(directory,'operator.lock'),journal=resolve(out,runId+'.events.jsonl');
- const saved={runId,pid:process.pid,purpose:'intent-artifact-upload-proposal',desktop:current.desktop,mobile:current.mobile};
+ const saved={runId,pid:process.pid,purpose,desktop:current.desktop,mobile:current.mobile};
  let handle;
  try{handle=openSync(lock,'wx');writeFileSync(handle,JSON.stringify(saved)+'\n');fsyncSync(handle);}
  catch{refuseIntent('operator_lock');}finally{if(handle!==undefined)closeSync(handle);}

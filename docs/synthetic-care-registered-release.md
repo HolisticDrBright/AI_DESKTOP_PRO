@@ -4,7 +4,7 @@ The current artifact binds the registered source47/live48 synthetic history to
 one clean Desktop and V2 source pair. It replaces the build format for future
 care releases; it does not revive the retired parent-schema release or change
 the classification of its failed run. Build and local inspection are implemented.
-The fixed-target live read-only preflight is implemented. The deployment,
+The fixed-target live read-only preflight and encrypted exact-version upload are implemented. The deployment,
 recovery and full-fictional-acceptance runner is still engineering work.
 Neither app is commercial or PHI ready. PHI remains off and paid mobile builds
 remain held.
@@ -107,6 +107,40 @@ it cannot load this printed report as authority.
 The new preflight tests use fictional transports. Record a later actual command
 receipt separately with its exact source pair and terminal result; a local test
 or old registration receipt is not a hosted preflight pass.
+
+## Registered artifact upload
+
+After building the clean current source pair, run:
+
+```powershell
+npm run upload:synthetic-care-registered-release -- --v2-root "<V2 checkout>" --artifact "<directory returned by build>" --upload-fictional-registered-code-only
+```
+
+The command performs its own complete live preflight and observes source,
+principal and predecessor controls again immediately before admitting a write.
+It does not load printed or saved preflight reports. Freshness and source are
+checked again after the potentially slow control observation. Bucket location,
+versioning and exact KMS encryption are verified. The create-only upload binds
+both source commits and the ZIP digest; only an exact precondition collision
+can reuse an existing object. The returned object version is checked with HEAD
+and a bounded actual download. Unknown outcomes are never retried as writes.
+
+Operational receipts and fsynced admission journals are stored separately under
+`dist/synthetic-care-registered-operations/<Desktop>/<V2>/<ZIP>/`, preserving the
+four-file artifact. Each parent and the shared-lock directory refuse junctions.
+The existing shared operator lock records the registered-upload purpose and
+excludes competing operators. A write admission is durable before S3 is called.
+Any uncertain write or later failed verification retains its lock and journal
+for reconciliation; process termination or a saved receipt does not settle it.
+Successful receipts are fsynced and read back before custody is released.
+
+The uploader exposes no execution, database replay, target/profile override,
+PHI activation or paid-build option. An uploaded candidate is not a deployment
+or acceptance pass. Proposal/execution, compatible recovery and the complete
+fictional matrix below remain engineering. Credential-free tests cover upload
+ordering, preflight/source/principal/control drift, slow-observation expiry,
+lost write replies, custody and path isolation; actual AWS receipts must be
+recorded separately for the exact committed pair.
 
 ## Remaining live runner engineering
 
