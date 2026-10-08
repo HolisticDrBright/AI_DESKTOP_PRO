@@ -589,6 +589,12 @@ replay and foreign-owner acceptance. The old parent release/resumer cannot be
 reused. All original commercial scopes, clinical holds and source-verification
 requirements remain; PHI is off and paid mobile builds remain held.
 
+The current registered artifact build and independent local source inspection
+are now implemented separately in `scripts/synthetic-care-registered-release.mjs`.
+See `docs/synthetic-care-registered-release.md` for their exact source/byte
+checks and the still-unimplemented live runner. This does not deploy the
+candidate, replay SQL or establish full acceptance.
+
 ## Hosted current registration result
 
 The clean-source read-only inspector passed at **2026-10-08 03:12:17.984 UTC**,

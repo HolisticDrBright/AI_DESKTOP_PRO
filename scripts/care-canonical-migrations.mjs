@@ -13,6 +13,15 @@ export const CARE_CANONICAL=Object.freeze({parentCount:46,count:47,liveCount:48,
 const sha=v=>createHash('sha256').update(v).digest('hex');
 const check=(ok,reason)=>{if(!ok)throw Error('care_canonical_migrations_refused:'+reason);};
 const rows=m=>m.map(({version,name,sha256})=>({version,name,sha256}));
+/** Expected descriptor only, not a database observation or release approval. */
+export function canonicalCareRegistrationDescriptor(){
+ const c=CARE_CANONICAL;
+ return {contract:'care-intent-canonical-mapping/1',canonicalRegistered:true,sourceMigrationCount:c.count,
+  liveMigrationCount:c.liveCount,sourceLedgerSha256:c.sourceSha256,liveLedgerSha256:c.liveSha256,
+  referenceLedgerSha256:c.referenceSha256,historicalParentCount:c.parentCount,historicalParentSha256:c.parentSha256,
+  historicalAliasPreserved:true,migration:{version:c.version,name:c.name,sha256:c.sqlSha256},
+  schemaReplayAuthorized:false,ledgerRewriteAuthorized:false,productionApproved:false,phiAllowed:false};
+}
 export function readCareMigrationManifest(root,folder='migrations',file='manifest.json'){
  const directory=resolve(root,'infra/aws-clinical-core',folder);
  const manifest=JSON.parse(readFileSync(resolve(directory,file),'utf8'));
@@ -42,11 +51,7 @@ export function canonicalCareMapping(migrations,reference,overlay){
  const live=[...rows(migrations),{version:'20260902230000',name:alias.name,sha256:alias.sha256}]
   .sort((a,b)=>a.version<b.version?-1:a.version>b.version?1:0);
  check(sha(JSON.stringify(live))===c.liveSha256,'live_history');
- return {contract:'care-intent-canonical-mapping/1',canonicalRegistered:true,sourceMigrationCount:c.count,
-  liveMigrationCount:c.liveCount,sourceLedgerSha256:c.sourceSha256,liveLedgerSha256:c.liveSha256,
-  referenceLedgerSha256:c.referenceSha256,historicalParentCount:c.parentCount,historicalParentSha256:c.parentSha256,
-  historicalAliasPreserved:true,migration:{version:c.version,name:c.name,sha256:c.sqlSha256},
-  schemaReplayAuthorized:false,ledgerRewriteAuthorized:false,productionApproved:false,phiAllowed:false};
+ return canonicalCareRegistrationDescriptor();
 }
 export function readCanonicalCareMigrations(root){
  const {manifest,migrations}=readCareMigrationManifest(root),reference=readCareMigrationManifest(root,'catalog-migrations').migrations;
