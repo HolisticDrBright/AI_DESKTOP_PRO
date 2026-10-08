@@ -306,7 +306,7 @@ export function registeredReconciliationAwsDiagnostic(args,error){
  const phase=phases[Array.isArray(args)?args.slice(0,2).join('/'):'']??'unknown';
  const stderr=Buffer.isBuffer(error?.stderr)?error.stderr.toString('utf8'):error?.stderr;
  const denied=typeof stderr==='string'&&stderr.length<=65536
-  &&/^(?:aws: \[ERROR\]: )?An error occurred \((?:AccessDenied|AccessDeniedException|UnauthorizedOperation)\) when calling the [A-Za-z]+ operation:/.test(stderr.trim());
+  &&/^(?:aws: \[ERROR\]: )?An error occurred \((?:AccessDenied|AccessDeniedException|UnauthorizedOperation)\) when calling the [A-Za-z]+ operation(?: \(reached max retries: 0\))?:/.test(stderr.trim());
  const reason=error?.code==='ENOBUFS'?'output_limit':error?.code==='ETIMEDOUT'?'timeout'
   :error?.signal==='SIGTERM'?'terminated':error?.name==='SyntaxError'?'json'
    :denied?'access_denied':'unknown';

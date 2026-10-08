@@ -14,8 +14,11 @@ const check=(ok,code)=>{if(!ok)refuseIntent('live_'+code);};
 export function intentPolicyAbsent(args,version,error){
  const stderr=Buffer.isBuffer(error?.stderr)?error.stderr.toString('utf8'):error?.stderr??'';
  return typeof version==='string'&&/^[1-9][0-9]{0,19}$/.test(version)&&version!=='1'
+  &&typeof stderr==='string'&&stderr.length<=65536
   &&canonical(args)===canonical(['lambda','get-policy','--function-name',P.functionName,'--qualifier',version])
-  &&/^(?:aws: \[ERROR\]: )?An error occurred \(ResourceNotFoundException\) when calling the GetPolicy operation:/.test(stderr.trim());
+  // AWS_MAX_ATTEMPTS=1 adds this exact zero-retry annotation even for a
+  // definitive ResourceNotFound reply. It admits no other failure or retry.
+  &&/^(?:aws: \[ERROR\]: )?An error occurred \(ResourceNotFoundException\) when calling the GetPolicy operation(?: \(reached max retries: 0\))?:/.test(stderr.trim());
 }
 export function intentAws(args,missingPolicyVersion){
  try{

@@ -682,3 +682,34 @@ with0 warnings pass. Two renewal positives failed before the source fix. No
 full Desktop database-suite rerun. This is source evidence, not successful
 hosted renewal, reconciliation, deployment or erasure acceptance; new CI must
 be observed separately. V2 source and all PHI/build/clinical holds are unchanged.
+
+### October 8 frozen dependency layout and exact AWS absence header
+
+The frozen d3a0f05 checkout's dependency junction changed esbuild's embedded
+module paths, including paths used by generated initialization code. Its bundle
+was 1,855,147 bytes instead of 1,822,566. Replacing only that ignored junction
+with a normal copy of the same installed dependencies reproduced the original
+bundle byte for byte, SHA95f86da0180533f1007da4e258ac3a1b9bd03608cacfbcc7827230b27d88579b.
+The target dependencies, tracked frozen source and byte verifier were unchanged.
+
+The subsequent read-only reconciliation stopped with
+release_reconciliation_aws_retained_policy_unknown_unconfirmed. An independent
+exact version2 GetPolicy read identified the format difference: AWS_MAX_ATTEMPTS=1
+adds `(reached max retries: 0)` before the response header's colon. The old parser
+refused even the expected ResourceNotFoundException. The repaired parser accepts
+only that exact optional annotation for the exact qualified GetPolicy absence,
+still excluding version1, changed function/operation, denied or transport errors,
+other retry counts and oversized/non-string error content. Diagnostics recognize
+the same annotation on denied reads but never classify those as absence.
+
+The new absence regression and denied-diagnostic case both fail before and pass
+after the repair. Focused25 tests pass,0 failures/skips. This establishes parsing,
+not stopped-run settlement: the original failure, journal, unexecuted proposal
+and shared lock remain intact until a new complete read-only observation passes.
+No deployment, schema, provider, fixture, paid build or PHI activation occurred.
+
+Broad verification after this fix:413 care-script tests pass,0 failures/skips
+(51.271 seconds), typecheck and focused lint0 warnings pass. The exact
+single-attempt AWS read now classifies the actual version2 response as qualified
+policy absence. The complete stopped-run observer must still rerun from a clean
+committed operator; this one read does not replace either full observation.

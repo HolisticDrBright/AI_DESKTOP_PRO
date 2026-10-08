@@ -22,6 +22,8 @@ test('reconciliation AWS diagnostics name finite phases and reasons without reta
  for(const [error,reason] of [[{code:'ENOBUFS'},'output_limit'],[{code:'ENOBUFS',signal:'SIGTERM'},'output_limit'],
   [{signal:'SIGTERM'},'terminated'],[{name:'SyntaxError'},'json'],
   [{stderr:'aws: [ERROR]: An error occurred (AccessDeniedException) when calling the GetPolicy operation: private'},'access_denied'],
+  [{stderr:'aws: [ERROR]: An error occurred (AccessDeniedException) when calling the GetPolicy operation (reached max retries: 0): private'},'access_denied'],
+  [{stderr:'aws: [ERROR]: An error occurred (AccessDeniedException) when calling the GetPolicy operation (reached max retries: 1): private'},'unknown'],
   [{stderr:'ResourceNotFoundException private'},'unknown'],[{stderr:'x'.repeat(65537)},'unknown'],[{},'unknown']])
   assert.equal(registeredReconciliationAwsDiagnostic(['lambda','get-policy'],error),'release_reconciliation_aws_retained_policy_'+reason+'_unconfirmed');
 });

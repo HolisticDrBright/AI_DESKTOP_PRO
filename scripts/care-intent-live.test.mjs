@@ -23,6 +23,22 @@ test('only exact qualified policy absence is admitted with either observed AWS C
   args.slice(0,-2),[...args,'--other'],['lambda','get-function','--function-name',P.functionName,'--qualifier','2']])
   assert.equal(intentPolicyAbsent(other,'2',{stderr:missing}),false);
 });
+test('single-attempt GetPolicy absence admits only the exact zero-retry header',()=>{
+ const args=['lambda','get-policy','--function-name',P.functionName,'--qualifier','2'];
+ const missing='An error occurred (ResourceNotFoundException) when calling the GetPolicy operation (reached max retries: 0): The resource you requested does not exist.';
+ for(const prefix of ['','aws: [ERROR]: ']){
+  assert.equal(intentPolicyAbsent(args,'2',{stderr:prefix+missing}),true);
+  assert.equal(intentPolicyAbsent(args,'2',{stderr:Buffer.from(prefix+missing)}),true);
+ }
+ for(const stderr of [missing.replace('ResourceNotFoundException','AccessDeniedException'),
+  missing.replace('GetPolicy','GetFunction'),missing.replace('retries: 0','retries: 1'),
+  missing.replace('retries: 0','retries: -1'),missing.replace('retries: 0','retries: 00'),
+  missing.replace(' (reached max retries: 0)',' (unknown qualifier)'),
+  'prefix '+missing,missing+'x'.repeat(65536),{},null])
+  assert.equal(intentPolicyAbsent(args,'2',{stderr}),false);
+ for(const version of [undefined,'1','3','$LATEST'])assert.equal(intentPolicyAbsent(args,version,{stderr:missing}),false);
+ assert.equal(intentPolicyAbsent(args.slice(0,-2),'2',{stderr:missing}),false);
+});
 function fixture(){
  const s=careIntentContinuationFixture().supplied,old=careControlObservation(),control=verifyCancellationControlPlane(old,source);
  const input={template:clone(old.template)},before={binding:{stackId:old.stack.Stacks[0].StackId,id:'fictional-change-set'},
