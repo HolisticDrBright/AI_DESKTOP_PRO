@@ -140,6 +140,27 @@ test('a recorded finite principal refusal can be reconciled only through fresh i
   await assert.rejects(run(x),/release_reconciliation_failure/);
  }
 });
+
+test('historical database read may precede its enclosing snapshot without losing the original freshness bounds',async()=>{
+ const prepare=()=>{
+  const f=fixture();for(const [name,b] of [['before1',f.before],['before2',f.before2]]){
+   b.database.observedAt=new Date(Date.parse(b.observedAt)-1000).toISOString();
+   f.files.set(name,Buffer.from(JSON.stringify(b,null,2)+'\n'));
+  }
+  f.admission.beforeSha256=sha256(canonical(f.before2));
+  f.files.set('admission',Buffer.from(JSON.stringify(f.admission,null,2)+'\n'));
+  f.events.find(e=>e.file==='before1').sha256=sha256(f.files.get('before1'));
+  f.events.find(e=>e.file==='before2').sha256=sha256(f.files.get('before2'));
+  f.events.at(-1).admissionSha256=sha256(canonical(f.admission));f.custody=f.encode();return f;
+ };
+ const f=prepare(),r=await run(f);assert.equal(r.deployed,true);assert.equal(r.recoveryRehearsed,false);
+ for(const offset of [1,-300001]){
+  const x=prepare();x.before.database.observedAt=new Date(Date.parse(x.before.observedAt)+offset).toISOString();
+  x.files.set('before1',Buffer.from(JSON.stringify(x.before,null,2)+'\n'));
+  x.events.find(e=>e.file==='before1').sha256=sha256(x.files.get('before1'));x.custody=x.encode();
+  await assert.rejects(run(x),/database_freshness/);
+ }
+});
 test('a failed recovery suffix is checked in order but never becomes successful recovery evidence',async()=>{
  const f=fixture(),id=f.before.binding.id,at=new Date(f.completed).toISOString();
  f.events.push(...[
